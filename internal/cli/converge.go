@@ -481,11 +481,11 @@ func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Si
 		if !ok {
 			return fmt.Errorf("runtime configuration for %s: module declaration is missing", guest.Name)
 		}
-		declaration, resolveErr := resolvedDeclarationForGuest(declaration, resolvedGuest)
+		resolvedDeclaration, resolveErr := resolvedDeclarationForGuest(declaration, resolvedGuest)
 		if resolveErr != nil {
 			return fmt.Errorf("runtime configuration for %s: %w", guest.Name, resolveErr)
 		}
-		config, err := appliance.RenderRuntimeConfig(s, guest, declaration)
+		config, err := appliance.RenderRuntimeConfig(s, guest, resolvedDeclaration)
 		if err != nil {
 			return fmt.Errorf("render runtime configuration for %s: %w", guest.Name, err)
 		}
@@ -497,7 +497,7 @@ func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Si
 		if err := appliance.InstallRuntimeConfig(ctx, runner, guest.Address, user, config); err != nil {
 			return fmt.Errorf("install runtime configuration for %s: %w", guest.Name, err)
 		}
-		if err := appliance.InstallArtifactIdentity(ctx, runner, guest.Address, user, declaration.Artifact); err != nil {
+		if err := appliance.InstallArtifactIdentity(ctx, runner, guest.Address, user, resolvedDeclaration.Artifact); err != nil {
 			return fmt.Errorf("install artifact identity for %s: %w", guest.Name, err)
 		}
 	}
