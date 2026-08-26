@@ -31,6 +31,8 @@ artifact_filename() {
 }
 for name in $names; do
   artifact="$root/$name/$(artifact_filename "$name")"
+  scan_root="$root/.scan-root/$name"
+  mounted=0
   if [ "$name" = boetticher-firewall ]; then
     artifact="$root/$name/boetticher-firewall-1.0.0-amd64.qcow2"
   fi
@@ -43,12 +45,39 @@ for name in $names; do
   fi
   mkdir -p "$(dirname "$report")"
   if [ ! -s "$manifest" ]; then
-    tar -tf "$artifact" > "$manifest"
+    echo "HOLD: package manifest is missing for $name: $manifest" >&2
+    exit 2
+  fi
+  rm -rf "$scan_root"
+  mkdir -p "$scan_root"
+  if [ "$name" = boetticher-firewall ]; then
+    for tool in guestmount guestunmount; do
+      if ! command -v "$tool" >/dev/null 2>&1; then
+        echo "HOLD: $tool is required to scan the firewall rootfs" >&2
+        exit 2
+      fi
+    done
+    guestmount -a "$artifact" -i --ro "$scan_root"
+    mounted=1
+  else
+    tar --zstd -xf "$artifact" -C "$scan_root"
   fi
   # Keep unfixed findings in the report. Policy evaluation is performed by the
   # qualification command after this raw, machine-readable scan completes.
-  trivy fs --scanners vuln,secret --format json --output "$report" "$artifact"
-  trivy fs --scanners vuln,secret --format cyclonedx --output "$sbom" "$artifact"
+  if ! trivy fs --scanners vuln,secret --format json --output "$report" "$scan_root"; then
+    if [ "$mounted" -eq 1 ]; then guestunmount "$scan_root" || true; fi
+    rm -rf "$scan_root"
+    exit 2
+  fi
+  if ! trivy fs --scanners vuln,secret --format cyclonedx --output "$sbom" "$scan_root"; then
+    if [ "$mounted" -eq 1 ]; then guestunmount "$scan_root" || true; fi
+    rm -rf "$scan_root"
+    exit 2
+  fi
+  if [ "$mounted" -eq 1 ]; then
+    guestunmount "$scan_root"
+  fi
+  rm -rf "$scan_root"
   module=$name
   provider=""
   case "$name" in

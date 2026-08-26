@@ -248,10 +248,11 @@ build_firewall() {
     --run-command 'usermod --append --groups sudo labadmin' \
     --run-command 'passwd --lock labadmin' \
     --run-command 'printf "%s\\n" "labadmin ALL=(ALL) NOPASSWD:/usr/bin/systemctl, /usr/sbin/nft, /usr/sbin/kea-dhcp4, /usr/sbin/kea-dhcp-ddns" > /etc/sudoers.d/boetticher && chmod 0440 /etc/sudoers.d/boetticher' \
+    --run-command 'dpkg-query -W -f="${binary:Package}\\t${Version}\\n" | sort > /var/lib/boetticher/package-manifest.txt' \
     --run-command 'systemctl enable boetticher-first-boot.service || true' \
     --run-command 'systemctl disable --now systemd-networkd-wait-online.service || true'
   sha256sum "$image" > "$destination/content.sha256"
-  virt-cat -a "$image" /var/lib/dpkg/status > "$destination/package-manifest.txt"
+  virt-cat -a "$image" /var/lib/boetticher/package-manifest.txt > "$destination/package-manifest.txt"
   ./scripts/smoke-firewall-image.sh "$image"
 }
 
