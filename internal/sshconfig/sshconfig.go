@@ -195,7 +195,7 @@ func writeHost(b *strings.Builder, aliases []string, hostName, user, hostKeyAlia
 	if bastion {
 		b.WriteString("    RequestTTY no\n    ForwardAgent no\n    ForwardX11 no\n")
 	} else if throughBastion {
-		b.WriteString("    ProxyJump lab-bastion\n")
+		b.WriteString("    ProxyJump lab-bastion\n    StrictHostKeyChecking accept-new\n")
 	}
 	b.WriteString("\n")
 }

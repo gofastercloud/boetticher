@@ -512,7 +512,7 @@ func applianceSSHRunner(s model.Site, siteDir, hostAlias string) proxmox.SSHRunn
 	return proxmox.SSHRunner{
 		IdentityFile:  model.ExpandUserPath(s.SSHIdentityFile),
 		ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),
-		StrictHostKey: "ask",
+		StrictHostKey: "accept-new",
 		HostAlias:     hostAlias,
 	}
 }

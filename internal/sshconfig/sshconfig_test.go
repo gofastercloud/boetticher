@@ -24,6 +24,7 @@ func TestRenderUsesBastionAndCanonicalHostKey(t *testing.T) {
 		"HostName 10.10.20.10",
 		"ProxyJump lab-bastion",
 		"HostKeyAlias lab-dns-01.lab.home.arpa",
+		"StrictHostKeyChecking accept-new",
 		"IdentityFile ",
 		"IdentitiesOnly yes",
 	} {

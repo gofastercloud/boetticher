@@ -90,7 +90,7 @@ func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 	} else {
 		fmt.Fprintf(out, "Source: collected journal for %s\n", component.Hostname)
 	}
-	runner := proxmox.SSHRunner{ConfigFile: filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"), HostAlias: collector.Name, StrictHostKey: "ask"}
+	runner := proxmox.SSHRunner{ConfigFile: filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"), HostAlias: collector.Name, StrictHostKey: "accept-new"}
 	data, err := runner.RunArgs(context.Background(), collector.Address, model.DefaultAdminSSHUser, argsForJournal)
 	if err != nil {
 		return fmt.Errorf("read journal for %s: %w", component.Hostname, err)

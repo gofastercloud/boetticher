@@ -77,6 +77,21 @@ func TestSSHRunnerPreservesJournalArgumentsWithoutShellInterpolation(t *testing.
 	}
 }
 
+func TestSSHRunnerUsesBoundedTOFUForFreshApplianceHostKeys(t *testing.T) {
+	runner := SSHRunner{StrictHostKey: "accept-new", HostAlias: "lab-dns-01"}
+	args, err := runner.commandArgs("10.10.20.10", "labadmin", []string{"true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "StrictHostKeyChecking=accept-new") {
+		t.Fatalf("fresh appliance probe does not enroll a new host key safely: %#v", args)
+	}
+	if strings.Contains(joined, "StrictHostKeyChecking=no") {
+		t.Fatalf("fresh appliance probe disables host-key verification: %#v", args)
+	}
+}
+
 func TestConfigureManagementNetworkValidatesUnchangedHOMEAndVLANState(t *testing.T) {
 	runner := &fakeRunner{}
 	if err := ConfigureManagementNetwork(context.Background(), runner, "192.0.2.10", "labadmin"); err != nil {
