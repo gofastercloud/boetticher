@@ -12,6 +12,9 @@ done
 printf '%s\n' "$packages" | grep -q '^Package: openssh-server$' || exit 1
 printf '%s\n' "$(virt-cat -a "$image" /etc/passwd)" | grep -q '^labadmin:' || { echo "firewall image is missing labadmin" >&2; exit 1; }
 virt-ls -a "$image" /etc/sysctl.d | grep -qx 'boetticher-forwarding.conf'
+for setting in 'net.ipv4.ip_forward=0' 'net.ipv6.conf.all.forwarding=0'; do
+  virt-cat -a "$image" /etc/sysctl.d/boetticher-forwarding.conf | grep -Fxq "$setting" || { echo "firewall image is missing fail-closed forwarding setting: $setting" >&2; exit 1; }
+done
 virt-ls -a "$image" /usr/lib/boetticher | grep -qx 'boetticher-first-boot.sh'
 virt-cat -a "$image" /etc/ssh/sshd_config.d/boetticher-host-key.conf | grep -qx 'HostKey /var/lib/boetticher/identity/ssh/ssh_host_ed25519_key'
 for setting in 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' 'PermitRootLogin prohibit-password'; do

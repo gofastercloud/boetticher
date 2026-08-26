@@ -27,7 +27,7 @@ case "$name" in
     test ! -e "$rootfs/root/.ssh/authorized_keys"
     ;;
   boetticher-dns-blocky)
-    run blocky --version
+    chroot "$rootfs" /usr/local/bin/blocky --version 2>&1 | grep -Fq '0.34.0'
     run pdns_server --version
     run chronyd --version
     test -x "$rootfs/usr/local/bin/blocky"

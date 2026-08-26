@@ -120,3 +120,29 @@ func TestVerifyGatewayReadinessChecksAllGatewayServices(t *testing.T) {
 		}
 	}
 }
+
+func TestVerifyFirewallBootstrapNetworkChecksStableRolesAndAddresses(t *testing.T) {
+	runner := &dnsReadinessRunner{}
+	if err := verifyFirewallBootstrapNetwork(context.Background(), runner); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 1 {
+		t.Fatalf("bootstrap network commands = %d, want 1", len(runner.commands))
+	}
+	command := runner.commands[0]
+	for _, required := range []string{
+		"ip link show dev \"$interface\"",
+		"trusted0",
+		"10.10.10.1/24",
+		"servers0",
+		"10.10.20.1/24",
+		"sandbox0",
+		"10.10.50.1/24",
+		"mgmt0",
+		"10.10.99.1/24",
+	} {
+		if !strings.Contains(command, required) {
+			t.Fatalf("firewall bootstrap network check omitted %q: %s", required, command)
+		}
+	}
+}

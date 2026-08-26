@@ -204,6 +204,9 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		if err := proxmox.WaitForSSH(context.Background(), firewallRunner, "10.10.99.1", model.DefaultAdminSSHUser, 30, 2*time.Second); err != nil {
 			return fmt.Errorf("HOLD: managed gateway is not reachable before dependent appliances: %w", err)
 		}
+		if err := verifyFirewallBootstrapNetwork(context.Background(), firewallRunner); err != nil {
+			return fmt.Errorf("HOLD: managed gateway bootstrap network is not ready before runtime configuration: %w", err)
+		}
 		if err := installCredentialsForGuest(context.Background(), firewallRunner, "lab-fw-01", credentialBindings, secretValues); err != nil {
 			return fmt.Errorf("install managed gateway credentials: %w", err)
 		}
@@ -392,6 +395,17 @@ func verifyGatewayReadiness(ctx context.Context, runner proxmox.CommandRunner, a
 	command := "set -eu; sudo -n nft -c -f /etc/nftables.conf; sudo -n systemctl is-active nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony; test \"$(sudo -n sysctl -n net.ipv4.ip_forward)\" = 1"
 	if _, err := runner.Run(ctx, address, model.DefaultAdminSSHUser, command); err != nil {
 		return fmt.Errorf("gateway policy, DHCP, NTP, and forwarding checks failed: %w", err)
+	}
+	return nil
+}
+
+func verifyFirewallBootstrapNetwork(ctx context.Context, runner proxmox.CommandRunner) error {
+	if runner == nil {
+		return errors.New("firewall bootstrap network runner is required")
+	}
+	command := "set -eu; for interface in wan0 trusted0 servers0 sandbox0 mgmt0; do sudo -n ip link show dev \"$interface\" >/dev/null; done; sudo -n ip -4 -o addr show dev trusted0 | grep -Fq '10.10.10.1/24'; sudo -n ip -4 -o addr show dev servers0 | grep -Fq '10.10.20.1/24'; sudo -n ip -4 -o addr show dev sandbox0 | grep -Fq '10.10.50.1/24'; sudo -n ip -4 -o addr show dev mgmt0 | grep -Fq '10.10.99.1/24'"
+	if _, err := runner.Run(ctx, "10.10.99.1", model.DefaultAdminSSHUser, command); err != nil {
+		return fmt.Errorf("role-named interfaces or static addresses are not ready: %w", err)
 	}
 	return nil
 }
