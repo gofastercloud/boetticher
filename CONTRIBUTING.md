@@ -30,7 +30,7 @@ installation state.
 - Keep changes narrow and describe the user-visible contract.
 - Include tests and documentation for new behaviour.
 - Preserve explicit `PASS`, `HOLD`, `FAIL`, `NOT TESTED`, and `INCONCLUSIVE` states.
-- Do not claim live Proxmox, OPNsense, DNS, network, or recovery acceptance from local tests alone.
+- Do not claim live Proxmox, Debian gateway, DNS, network, or recovery acceptance from local tests alone.
 - Do not add generic VM/LXC lifecycle management or silently adopt user guests.
 - Do not weaken SSH host-key verification or bypass an ownership boundary to make a test pass.
 - Use an imperative commit subject and keep commits cohesive.

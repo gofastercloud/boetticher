@@ -12,7 +12,6 @@ used by this repository’s V1 design.
 | Project | Maintainer / copyright holder | License | Role in boetticher |
 | --- | --- | --- | --- |
 | [Proxmox VE](https://www.proxmox.com/en/proxmox-virtual-environment) | [Proxmox project](https://git.proxmox.com/) and Proxmox Server Solutions GmbH | Majority AGPLv3 or similar FLOSS license; see the [Proxmox developer/licensing page](https://proxmox.com/en/about/open-source/developers) | Hypervisor, host networking, guest lifecycle, API, and native backups |
-| [OPNsense](https://opnsense.org/) | [OPNsense project](https://github.com/opnsense); founded and supported by [Deciso B.V.](https://docs.opnsense.org/relations/deciso.html) | [BSD 2-Clause](https://docs.opnsense.org/legal.html) for the OPNsense project, with component-specific notices | Routing, NAT, firewall, Kea DHCP, and the security boundary |
 | [Zabbix](https://www.zabbix.com/) | Zabbix SIA and Zabbix contributors | [AGPLv3](https://www.zabbix.com/license) | Platform monitoring, dashboards, checks, and alerting |
 | [Ansible](https://www.ansible.com/) | Ansible community / Red Hat | [GPLv3](https://github.com/ansible/ansible/blob/devel/COPYING) | Guest configuration convergence |
 | [OpenTofu](https://opentofu.org/) | OpenTofu community / Linux Foundation | [MPL-2.0](https://github.com/opentofu/opentofu/blob/main/LICENSE) | Bounded platform guest provisioning |

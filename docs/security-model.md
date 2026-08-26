@@ -1,18 +1,51 @@
 # Security model
 
-OPNsense is the enforced inter-zone boundary with default-deny policy. Proxmox is not a router. The intended high-level policy is:
+boetticher is a fun, opinionated pre-alpha project. Its security model is
+explicit and testable, but it is not an audited production appliance.
 
-| Source | Internet | TRUSTED | SERVERS | SANDBOX | MGMT |
-| --- | --- | --- | --- | --- | --- |
-| TRUSTED | allowed | local | explicit services | denied | approved admin services |
-| SERVERS | restricted egress | denied | local | denied | explicit monitor/admin paths |
-| SANDBOX | allowed | denied | denied | policy-dependent | denied |
-| MGMT | restricted | diagnostics | management | diagnostics | local |
+## Managed gateway
 
-SANDBOX receives DNS and NTP from OPNsense and does not receive the internal DNS addresses. The proposed DHCP `/32`/option-121 behavior is a hardening experiment, not an isolation claim. Routed isolation comes from OPNsense; virtual east-west SANDBOX isolation requires the Proxmox firewall; physical east-west isolation requires switch/client isolation.
+In managed mode, `lab-fw-01` is a small Debian QEMU/KVM VM with its own guest
+kernel. It runs nftables, Kea, and the small services needed by SANDBOX. It is
+the inter-zone routing and filtering boundary. The default input and forward
+policies are drop; stateful established/related traffic and documented service
+paths are allowed explicitly. Internal traffic is not NATed. Intended internal
+networks are masqueraded only when leaving `wan0`.
 
-Kea is the DHCP lease authority and its D2 agent sends authenticated RFC2136 updates to PowerDNS Authoritative on the DNS platform nodes. AdGuard Home remains the client-facing resolver and forwards the static `lab.home.arpa` and per-zone dynamic child zones to the authoritative layer. Dynamic lease discovery is not workload ownership: a registered client is not imported into OpenTofu, Zabbix, backups, SSH policy, or convergence.
+Proxmox performs VLAN classification by attaching separate firewall vNICs to
+`vmbr1` with tags 10, 20, 50, and 99. The firewall sees ordinary interfaces
+named `wan0`, `trusted0`, `servers0`, `sandbox0`, and `mgmt0`; it does not see a
+trunk and does not create VLAN subinterfaces. Proxmox is already trusted to
+attach guests to the right bridge and VLAN. A compromised hypervisor can bypass
+guest firewall guarantees.
 
-The platform is IPv4-only in V1. Internal services use the installation’s private Root/Issuing CA hierarchy. Zabbix and the portal use TLS/mTLS according to the model. CA private keys remain in encrypted SOPS data; server private keys are generated and retained on their managed endpoints outside Git. The portal never receives SOPS credentials or API tokens.
+Forwarding is disabled while the gateway is being prepared. boetticher renders
+one namespaced ruleset, validates it with `nft -c`, retains the previous known-
+good file, applies the replacement transactionally, and enables IPv4 forwarding
+only after the policy and services are ready. IPv6 forwarding is disabled in
+v0.2.
 
-The initial trust transition starts on the HOME side and ends with scoped Proxmox/OPNsense identities. The `lab-jump` account is separate from the normal administrative account, has no useful shell, disables TTY/X11/agent forwarding, and is restricted to modelled internal TCP/22 destinations. SSH retains host-key verification and uses `HostKeyAlias` for canonical internal identities. No generated config may use `StrictHostKeyChecking no` or `/dev/null` known-hosts.
+SANDBOX may use the gateway for DHCP, public DNS, and NTP, but cannot reach the
+TRUSTED, SERVERS, or MGMT networks. The deny rules precede Internet egress.
+MGMT is intentionally small and administrative; it is not a general
+"important servers" VLAN.
+
+## External gateway
+
+External mode is bring-your-own-firewall. boetticher owns the Proxmox-side
+trunk and publishes the fixed VLAN, gateway, DHCP, DNS, NTP, and policy intent,
+but does not manage or inspect the appliance's internal configuration. The
+operator's appliance is trusted to implement the contract. boetticher can
+perform observable black-box checks, not prove the appliance's hidden rule
+ordering.
+
+## Other boundaries
+
+The controller is separate from Proxmox. SOPS encrypts platform secrets and
+the Age private identity stays outside Git. CA private keys remain controller-
+side; endpoint private keys are generated on managed hosts where practical.
+The Proxmox SSH bastion is the normal path to internal hosts. The portal is
+static generated documentation; live state belongs in Zabbix.
+
+The platform is IPv4-only in v0.2. Dynamic DHCP DNS registration publishes a
+lease-derived name; it never makes that workload boetticher-managed.

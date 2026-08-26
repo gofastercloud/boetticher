@@ -2,11 +2,6 @@
 useDefault = true
 
 [[allowlists]]
-description = "Qualified OPNsense patch notation is not a credential"
-regexTarget = "line"
-regexes = ['26\.7\.2_2']
-
-[[allowlists]]
 description = "Historical pre-rename command prose is not a credential"
 regexTarget = "line"
 regexes = ['homelab bootstrap']

@@ -7,12 +7,12 @@
     owner: root
     group: root
     mode: '0644'
-  when: inventory_hostname in (groups.get('proxmox', []) + groups.get('dns', []) + groups.get('portal', []) + ['lab-monitor-01'])
+  when: inventory_hostname in (groups.get('proxmox', []) + groups.get('dns', []) + groups.get('firewall', []) + groups.get('portal', []) + ['lab-monitor-01'])
 
 - name: Register the pinned Zabbix repository for managed agents
   ansible.builtin.apt:
     deb: /var/cache/zabbix-release_7.0-5+debian12_all.deb
-  when: inventory_hostname in (groups.get('proxmox', []) + groups.get('dns', []) + groups.get('portal', []) + ['lab-monitor-01'])
+  when: inventory_hostname in (groups.get('proxmox', []) + groups.get('dns', []) + groups.get('firewall', []) + groups.get('portal', []) + ['lab-monitor-01'])
 
 - name: Install Zabbix Agent 2 on managed platform hosts
   ansible.builtin.apt:
@@ -20,7 +20,7 @@
     state: present
     update_cache: true
     cache_valid_time: 3600
-  when: inventory_hostname in (groups.get('proxmox', []) + groups.get('dns', []) + groups.get('portal', []) + ['lab-monitor-01'])
+  when: inventory_hostname in (groups.get('proxmox', []) + groups.get('dns', []) + groups.get('firewall', []) + groups.get('portal', []) + ['lab-monitor-01'])
 
 - name: Configure Zabbix Agent 2 on managed platform hosts
   ansible.builtin.template:
@@ -30,7 +30,7 @@
     group: root
     mode: '0644'
   notify: restart zabbix-agent2
-  when: inventory_hostname in (groups.get('proxmox', []) + groups.get('dns', []) + groups.get('portal', []) + ['lab-monitor-01'])
+  when: inventory_hostname in (groups.get('proxmox', []) + groups.get('dns', []) + groups.get('firewall', []) + groups.get('portal', []) + ['lab-monitor-01'])
 
 - name: Enable Zabbix Agent 2 on managed platform hosts
   ansible.builtin.service:

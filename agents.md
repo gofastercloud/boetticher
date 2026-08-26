@@ -9,20 +9,20 @@ states the engineering guardrails that keep those contracts intact.
 boetticher is an opinionated v0.1 Proxmox distribution, not a generic homelab
 framework. The canonical model is deterministic for a fixed platform version,
 site, enabled official modules, and relevant secret metadata. Its model
-revision drives OpenTofu, Ansible, OPNsense, Zabbix, SSH, portal, inventory,
+revision drives OpenTofu, Ansible, gateway policy, Zabbix, SSH, portal, inventory,
 and verification projections.
 
-boetticher owns only declared platform resources: Proxmox, OPNsense, the
+boetticher owns only declared platform resources: Proxmox, the managed gateway, the
 dual DNS/NTP guests, monitoring, portal, owned bridges/VLAN policy, PKI,
 backups, and evidence. Proxmox owns user workloads. Unknown guests are
 informational, never drift, and never targets for deletion or import.
 
 ## Architecture invariants
 
-- OPNsense owns routing, NAT, firewalling, Kea DHCP, and the inter-zone boundary.
+- The managed Debian gateway owns routing, NAT, nftables, Kea DHCP, and the inter-zone boundary. External mode publishes a contract only.
 - `vmbr0` is the HOME/upstream bridge; `vmbr1` is the internal VLAN-aware bridge.
 - V1 is IPv4-only with VLANs 10 TRUSTED, 20 SERVERS, 50 SANDBOX, and 99 MGMT.
-- Proxmox is the normal bootstrap/recovery SSH bastion. OPNsense SSH is break-glass only.
+- Proxmox is the normal bootstrap/recovery SSH bastion. The managed gateway is reached through that path.
 - Physical NIC identity uses observed hardware evidence; interface enumeration order is never architecture.
 - Secrets are SOPS-encrypted. The Age private identity, OpenTofu state, plans, caches, and temporary credentials stay outside Git.
 - The portal is passive generated static documentation. Zabbix owns live observability.
@@ -46,7 +46,7 @@ regression tests for ownership boundaries, negative security paths, deterministi
 revisions, secret handling, and NIC/bootstrap safety.
 
 Local tests prove source behaviour only. They do not prove a live Proxmox or
-OPNsense installation, authenticated network journey, physical VLAN isolation,
+Debian gateway installation, authenticated network journey, physical VLAN isolation,
 dynamic-DNS replication, or disaster recovery. Preserve `HOLD`, `NOT TESTED`,
 and `INCONCLUSIVE` when those gates have not been exercised.
 

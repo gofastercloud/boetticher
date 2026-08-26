@@ -1,9 +1,8 @@
 locals {
   desired = jsondecode(file(var.model_file))
-  # This is an ownership boundary, not a guest-discovery mechanism. The V1
-  # generated model contains only these platform IDs; filtering defensively
-  # ensures an accidental user workload entry can never become a resource.
-  platform_vmids = toset([100, 110, 111, 120, 130])
+  # This is an ownership boundary, not a guest-discovery mechanism. Only
+  # resources already present in the generated platform model are managed.
+  platform_vmids = toset([for guest in local.desired.guests : guest.vmid if guest.vmid >= 100 && guest.vmid <= 499])
   guests = {
     for guest in local.desired.guests : tostring(guest.vmid) => guest
     if contains(local.platform_vmids, guest.vmid)
@@ -22,12 +21,12 @@ resource "proxmox_virtual_environment_vm" "firewall" {
   node_name       = local.desired.node
   vm_id           = each.value.vmid
   name            = each.value.name
-  description     = "boetticher OPNsense firewall"
+  description     = "boetticher managed Debian gateway"
   tags            = each.value.tags
   on_boot         = true
   started         = true
   bios            = "seabios"
-  boot_order      = ["scsi0", "ide2"]
+  boot_order      = ["scsi0"]
   stop_on_destroy = false
 
   agent {
@@ -49,24 +48,18 @@ resource "proxmox_virtual_environment_vm" "firewall" {
     size         = each.value.disk_gib
   }
 
-  cdrom {
-    file_id   = var.opnsense_iso_file_id
-    interface = "ide2"
-  }
-
-  network_device {
-    bridge   = "vmbr0"
-    firewall = true
-  }
-
-  # OPNsense owns the 802.1Q trunk. Do not put a VLAN tag on this device.
-  network_device {
-    bridge   = "vmbr1"
-    firewall = true
+  dynamic "network_device" {
+    for_each = each.value.nics
+    content {
+      bridge      = network_device.value.bridge
+      firewall    = true
+      vlan_id     = network_device.value.vlan == 0 ? null : network_device.value.vlan
+      mac_address = network_device.value.mac
+    }
   }
 
   operating_system {
-    type = "other"
+    type = "l26"
   }
 
   lifecycle {

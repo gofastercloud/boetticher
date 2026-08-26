@@ -1,58 +1,64 @@
 # Installation
 
-V1 starts from a fresh Proxmox VE x86 host on the existing HOME/upstream network. The host must use the fixed product node name `lab-proxmox-01`; arbitrary node names are not supported by the V1 model.
+boetticher runs from a separate macOS or Linux controller and builds a small
+platform on a fresh Proxmox host. The controller holds the private site
+repository, Age identity, SOPS access, CA signing authority, and runtime state;
+the Proxmox host is a target, not the controller.
 
-The foundation needs at least 4 logical CPU threads, 16 GiB RAM, and 128 GiB usable storage. 4+ cores, 32 GiB RAM, and 256 GiB or more leaves useful room for user workloads. One physical Ethernet NIC is enough; a second NIC and managed 802.1Q switch are recommended for physical VLAN breakout.
+Supported controllers are macOS arm64/amd64 and Linux arm64/amd64. Native
+Windows is outside the v0.2 contract. One physical NIC is enough for managed
+mode; a second NIC and managed VLAN switch provide physical access to the
+internal zones. External-firewall mode requires both NICs.
 
-## Controller and state
-
-Supported controller platforms are macOS arm64, macOS amd64, Linux arm64, and Linux amd64. The controller is a separate operator machine, not the target Proxmox host; preflight refuses a confidently detected Proxmox controller. Native Windows is out of scope. WSL2 may be used only after a separate test confirms the required SSH, Age, SOPS, OpenTofu, and Ansible behavior.
-
-`boetticher init` creates a private site repository containing:
-
-- `site.yml` and `.sops.yaml` with only the public Age recipient;
-- encrypted SOPS documents under `secrets/`;
-- platform/version locks and generated non-secret model, inventory, portal, and status artifacts.
-
-The Age private identity is created at `~/.config/boetticher/age/identity.txt` (or the explicit path supplied to `init`) with restrictive permissions. It is never written to the site repository. Before destructive bootstrap, make and verify an independent recovery copy. The CLI requires `--recovery-confirmed` for the live path.
-
-Git may contain desired state, encrypted secrets, and non-secret status output. OpenTofu state, plans, provider caches, Ansible caches, bootstrap state, temporary credentials, and other runtime material stay outside Git and are treated as potentially sensitive.
-
-## Sequence
-
-1. Run `boetticher init --site-dir my-boetticher`.
-2. Secure the independent Age recovery copy.
-3. Reach fresh Proxmox on its HOME-side DHCP address and run `boetticher bootstrap-endpoint set ADDRESS --site my-boetticher`.
-4. Run `boetticher preflight --site my-boetticher --live`. This identifies the active upstream NIC and proposes exactly one safe unused trunk NIC, or reports virtual-only/multiple-candidate state.
-5. If multiple candidates remain, repeat with `--trunk-interface IFACE`; do not select by enumeration order.
-6. Generate/check the SSH file with `boetticher ssh-config --site my-boetticher --force --install-include`.
-7. Run `boetticher bootstrap --site my-boetticher --opnsense-iso VERIFIED_ISO --recovery-confirmed`, adding `--trunk-interface IFACE` only when required by discovery. For the dedicated-data-disk profile, set `storage_device` to the stable data-disk `/dev/disk/by-id/...` path and add `--storage-confirmed` after reviewing it; bootstrap creates the fixed LVM and Proxmox storage layout. Bootstrap owns the verified OPNsense ISO because it creates and starts the firewall VM.
-8. Run `boetticher provision --site my-boetticher` and `boetticher converge --site my-boetticher` after the OPNsense API is available. Provision creates the DNS, monitor, and portal guests; it does not manage arbitrary user guests.
-9. Run `boetticher verify --site my-boetticher`, `boetticher doctor --site my-boetticher`, and `boetticher portal build --site my-boetticher`.
-
-The initial bootstrap trust transition is: operator authentication to fresh Proxmox → operator SSH key → `labadmin` and forwarding-only `lab-jump` → scoped Proxmox API token → direct encrypted SOPS handoff. Interactive secrets are not accepted through command arguments, persistent environment variables, logs, or generated files.
-
-## The important OPNsense first run
-
-OPNsense bootstrap is a core capability, not an optional documentation step. The required repeatable sequence is:
+## Create the site
 
 ```text
-fresh Proxmox
-→ create firewall VM
-→ unattended OPNsense installation/bootstrap
-→ establish WAN and internal VLAN/trunk interfaces
-→ establish MGMT reachability
-→ create scoped automation identities
-→ capture API credentials directly into SOPS
-→ authenticate through supported APIs
-→ converge Kea/firewall/network policy
-→ remove temporary bootstrap privilege
-→ repeat from a clean installation
+boetticher init --site-dir my-boetticher
 ```
 
-The source build covers the deterministic contract, Proxmox VM creation,
-secure secret handling, network configuration, and generated state boundary.
-The unattended OPNsense installer and management interface/address transition
-still need a real first run on exact OPNsense 26.7.2_2. Until then,
-`boetticher bootstrap` stops after the Proxmox portion; that is a deliberate
-reminder that the live part has not been tried yet.
+Use `--external-firewall` to create the bring-your-own-firewall contract. The
+default is the managed Debian gateway. The site repository contains desired
+state, encrypted SOPS documents, and non-secret generated projections. The Age
+private identity is outside Git at `~/.config/boetticher/age/identity.txt` (or
+the explicit path supplied to `init`). Keep an independent recovery copy before
+running a destructive bootstrap.
+
+## Bootstrap
+
+1. Install a supported fresh Proxmox host and connect to its HOME-side DHCP
+   address.
+2. Record that address with
+   `boetticher bootstrap-endpoint set ADDRESS --site my-boetticher`.
+3. Run `boetticher preflight --site my-boetticher --live`. It identifies the
+   physical upstream interface conservatively and proposes a safe trunk
+   candidate. Multiple candidates require `--trunk-interface`.
+4. Run `boetticher ssh-config --site my-boetticher --force --install-include`.
+5. Run `boetticher bootstrap --site my-boetticher --recovery-confirmed`.
+   Dedicated storage also requires `--storage-confirmed` after reviewing the
+   stable `/dev/disk/by-id/...` device.
+
+Managed mode creates VM 100, `lab-fw-01`, as a Debian VM with one ordinary vNIC
+for WAN and one Proxmox-tagged vNIC for each internal zone. The managed gateway
+receives no 802.1Q trunk and has no VLAN subinterfaces.
+
+External mode does not create VM 100. It requires a distinct physical vmbr1
+trunk and publishes `generated/network/external-firewall-contract.md`. The
+external appliance, DHCP, and its own recovery remain operator-owned.
+
+## Provision and converge
+
+```text
+boetticher provision --site my-boetticher
+boetticher converge --site my-boetticher
+boetticher verify --site my-boetticher
+boetticher doctor --site my-boetticher
+```
+
+The managed path configures Debian networking, nftables, Kea, sandbox DNS/NTP,
+DNS/NTP guests, Zabbix, the portal, PKI certificates, and platform backups.
+The external path configures the boetticher-owned platform and leaves the
+firewall appliance alone.
+
+See [the external firewall contract](networking/external-firewall.md),
+[storage](storage/dedicated-data-disk.md), and the recovery guides for
+the detailed operational paths.

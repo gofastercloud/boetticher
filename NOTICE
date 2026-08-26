@@ -13,12 +13,4 @@ majority of its code under GNU Affero General Public License version 3 or a
 similar FLOSS license. boetticher uses the documented Proxmox API and native
 host tooling; it is not a Proxmox product and is not endorsed by Proxmox.
 
-OPNsense acknowledgement
-------------------------
-OPNsense is an open-source firewall project founded by and associated with
-Deciso B.V. The OPNsense project describes its software as available under the
-BSD 2-Clause license. boetticher provisions and configures OPNsense through
-its supported installation and API surfaces; it is not an OPNsense product and
-is not endorsed by OPNsense or Deciso.
-
 See THIRD_PARTY_NOTICES.md for source, license, trademark, and project links.
