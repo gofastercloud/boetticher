@@ -179,6 +179,8 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err != nil {
 		return err
 	}
+	virtualOnlyRequested := s.PhysicalNetwork.Mode == model.ModeVirtualOnly && s.PhysicalNetwork.Trunk.Name == "" && *trunkInterface == ""
+	discovery = honorRequestedPhysicalMode(discovery, s.PhysicalNetwork.Mode, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
 	printPhysicalDiscovery(out, discovery)
 	if discovery.Mode == networkmodel.ModeSelectionNeeded {
 		return errors.New("multiple eligible trunk interfaces require --trunk-interface selection before bootstrap can mutate networking")
@@ -217,7 +219,10 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if discovery.Trunk != nil {
 		configuredTrunk = discovery.Trunk.Name
 	}
-	postDiscovery, err := proxmox.AnalyzePhysicalNetwork(postInterfaces, s.BootstrapAddress, configuredTrunk)
+	postDiscovery := discovery
+	if !virtualOnlyRequested {
+		postDiscovery, err = proxmox.AnalyzePhysicalNetwork(postInterfaces, s.BootstrapAddress, configuredTrunk)
+	}
 	if err != nil {
 		if trunkChanged {
 			return rollbackTrunkChange(ctx, client, plan.Node, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network mutation failed physical validation", err)
@@ -308,6 +313,20 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	}
 	fmt.Fprintln(out, "Initial root/bootstrap authentication: no longer required for routine boetticher access")
 	return nil
+}
+
+// honorRequestedPhysicalMode keeps a fresh virtual-only site virtual-only even
+// when hardware discovery finds one eligible spare interface. A physical
+// trunk enters the model only through an explicit selection or an already
+// persisted boetticher trunk binding.
+func honorRequestedPhysicalMode(discovery networkmodel.Discovery, desiredMode, configuredTrunk, explicitTrunk string) networkmodel.Discovery {
+	if desiredMode == model.ModeVirtualOnly && configuredTrunk == "" && explicitTrunk == "" {
+		discovery.Mode = networkmodel.ModeVirtualOnly
+		discovery.Trunk = nil
+		discovery.Explanation = "site explicitly requests virtual-only networking; eligible spare interfaces remain unclaimed"
+		discovery.Status = "PASS"
+	}
+	return discovery
 }
 
 func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan proxmox.Plan, siteDir, publicKey, knownHosts, identityFile string) error {
