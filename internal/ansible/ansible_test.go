@@ -143,6 +143,22 @@ func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
 	}
 }
 
+func TestVariablesDoNotRenderBlockyForAdGuardSites(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	site.ModuleConfig = map[string]model.ModuleConfig{}
+	site.ModuleConfig["dns"] = model.ModuleConfig{Provider: string(model.DNSProviderAdGuard)}
+	variables, err := Variables(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(variables), "upstreams:\n") {
+		t.Fatal("AdGuard variables unexpectedly contain Blocky configuration")
+	}
+	if !strings.Contains(string(variables), `"recursive_provider": "adguard"`) {
+		t.Fatal("AdGuard provider was not retained in the generated DNS plan")
+	}
+}
+
 func TestFirewallInterfaceBindingsCarryStableRoleMACs(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	variables, err := Variables(site)

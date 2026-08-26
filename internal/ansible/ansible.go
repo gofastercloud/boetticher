@@ -122,9 +122,12 @@ func Variables(s model.Site) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	blockyConfig, err := dns.RenderBlockyConfig(dnsPlan)
-	if err != nil {
-		return nil, err
+	var blockyConfig []byte
+	if dnsPlan.RecursiveProvider == string(model.DNSProviderBlocky) {
+		blockyConfig, err = dns.RenderBlockyConfig(dnsPlan)
+		if err != nil {
+			return nil, err
+		}
 	}
 	loggingUploads := map[string]string{}
 	for _, component := range s.PlatformComponents() {
