@@ -65,6 +65,10 @@ type Plan struct {
 	GatewayImageURL string      `json:"gateway_image_url"`
 	GatewaySHA512   string      `json:"gateway_sha512"`
 	Guests          []GuestPlan `json:"guests"`
+	// ArtifactFiles is controller-local evidence and is intentionally excluded
+	// from canonical model output. It maps qualified definitions to the exact
+	// bytes that may be imported into Proxmox.
+	ArtifactFiles map[string]string `json:"-"`
 }
 
 type NetworkInterface struct {
@@ -291,6 +295,10 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	if err := s.Validate(); err != nil {
 		return Plan{}, err
 	}
+	storagePlan, err := storage.PlanFromSite(s)
+	if err != nil {
+		return Plan{}, err
+	}
 	revision, err := s.Revision()
 	if err != nil {
 		return Plan{}, err
@@ -317,6 +325,13 @@ func PlanFromSite(s model.Site) (Plan, error) {
 					guest.Artifact = declaration.Artifact
 					guest.Persistent = append([]model.PersistentState(nil), declaration.Persistent...)
 					guest.Volumes = append([]model.PersistentVolumeDeclaration(nil), declaration.Volumes...)
+					for index := range guest.Volumes {
+						for _, resolved := range storagePlan.Volumes {
+							if resolved.Module == guest.Volumes[index].Module && resolved.Name == guest.Volumes[index].Name && resolved.Guest == guest.Volumes[index].Guest {
+								guest.Volumes[index].Storage = resolved.Storage
+							}
+						}
+					}
 					break
 				}
 			}
@@ -356,7 +371,38 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		guests = append(guests, guest)
 	}
 	sort.Slice(guests, func(i, j int) bool { return guests[i].VMID < guests[j].VMID })
-	return Plan{ModelRevision: revision, ManagedBy: "boetticher", Node: s.ProxmoxNode, Storage: guestStorage, GatewayImage: model.QualifiedGatewayImage, GatewayImageURL: model.QualifiedGatewayImageURL, GatewaySHA512: model.QualifiedGatewayImageSHA512, Guests: guests}, nil
+	return Plan{ModelRevision: revision, ManagedBy: "boetticher", Node: s.ProxmoxNode, Storage: guestStorage, GatewayImage: model.QualifiedGatewayImage, GatewayImageURL: model.QualifiedGatewayImageURL, GatewaySHA512: model.QualifiedGatewayImageSHA512, Guests: guests, ArtifactFiles: map[string]string{}}, nil
+}
+
+func artifactKey(artifact model.Artifact) string {
+	return strings.Join([]string{artifact.Name, artifact.Version, artifact.Provider, artifact.Architecture, artifact.Kind, artifact.DefinitionSHA256, artifact.ContentSHA256}, "|")
+}
+
+// ResolveQualifiedArtifacts binds every appliance in a Proxmox plan to
+// controller-side qualification evidence. It does not mutate Proxmox or the
+// canonical model. Missing evidence is a HOLD before any guest mutation.
+func ResolveQualifiedArtifacts(root string, plan Plan, require bool) (Plan, error) {
+	resolved := plan
+	resolved.Guests = append([]GuestPlan(nil), plan.Guests...)
+	resolved.ArtifactFiles = map[string]string{}
+	for index := range resolved.Guests {
+		guest := &resolved.Guests[index]
+		if guest.Artifact.Name == "" {
+			continue
+		}
+		artifact, evidence, err := artifacts.ResolveArtifactEvidence(root, guest.Artifact)
+		if err != nil {
+			if require {
+				return Plan{}, fmt.Errorf("HOLD: %s: %w", guest.Name, err)
+			}
+			continue
+		}
+		guest.Artifact = artifact
+		if evidence.ArtifactPath != "" {
+			resolved.ArtifactFiles[artifactKey(artifact)] = evidence.ArtifactPath
+		}
+	}
+	return resolved, nil
 }
 
 func fixturePersistent(module, guest string) []model.PersistentState {
@@ -453,12 +499,14 @@ func EnsureFirewallVM(ctx context.Context, client *Client, plan Plan) error {
 	if client == nil {
 		return errors.New("Proxmox client is required")
 	}
-	imageFileID, err := client.EnsureCloudImage(ctx, plan.Node, "local", plan.GatewayImage+".qcow2", plan.GatewayImageURL, plan.GatewaySHA512)
-	if err != nil {
-		return fmt.Errorf("prepare qualified gateway image: %w", err)
-	}
 	for _, guest := range plan.Guests {
 		if guest.Kind == KindQEMU {
+			filename := fmt.Sprintf("%s-%s-%s.qcow2", guest.Artifact.Name, guest.Artifact.Version, guest.Artifact.Architecture)
+			source := plan.ArtifactFiles[artifactKey(guest.Artifact)]
+			if err := ensureArtifactInStorage(ctx, client, plan.Node, "local", "images", filename, guest.Artifact.ContentSHA256, source); err != nil {
+				return fmt.Errorf("prepare qualified firewall artifact: %w", err)
+			}
+			imageFileID := "local:images/" + filename
 			return ensureQEMU(ctx, client, plan, guest, imageFileID)
 		}
 	}
@@ -721,16 +769,17 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 		return fmt.Errorf("inspect VM %s: %w", guest.Name, err)
 	}
 	params := url.Values{
-		"name":    {guest.Name},
-		"memory":  {strconv.Itoa(guest.MemoryMiB)},
-		"cores":   {strconv.Itoa(guest.Cores)},
-		"scsihw":  {"virtio-scsi-single"},
-		"ostype":  {"l26"},
-		"onboot":  {"1"},
-		"agent":   {"1"},
-		"boot":    {"order=scsi0;net0"},
-		"serial0": {"socket"},
-		"tags":    {strings.Join(guest.Tags, ";")},
+		"name":        {guest.Name},
+		"description": {artifactDescription(guest.Artifact)},
+		"memory":      {strconv.Itoa(guest.MemoryMiB)},
+		"cores":       {strconv.Itoa(guest.Cores)},
+		"scsihw":      {"virtio-scsi-single"},
+		"ostype":      {"l26"},
+		"onboot":      {"1"},
+		"agent":       {"1"},
+		"boot":        {"order=scsi0;net0"},
+		"serial0":     {"socket"},
+		"tags":        {strings.Join(guest.Tags, ";")},
 	}
 	for index, nic := range guest.NICs {
 		value := fmt.Sprintf("virtio,bridge=%s,firewall=1,macaddr=%s", nic.Bridge, nic.MAC)
@@ -770,6 +819,9 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		if err := validateExistingGuestIdentity(current, guest); err != nil {
 			return err
 		}
+		if err := validateExistingGuestVolumes(current, guest); err != nil {
+			return err
+		}
 		return ensureExistingGuestTags(ctx, client, plan, guest, current)
 	}
 	if !IsNotFound(err) {
@@ -781,9 +833,14 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 	if guest.Artifact.ContentSHA256 == "" {
 		return fmt.Errorf("NOT BUILT: guest %s artifact %s has no qualified content checksum", guest.Name, guest.Artifact.Name)
 	}
-	template := "local:vztmpl/" + guest.Artifact.Name + "-" + guest.Artifact.Version + "-" + guest.Artifact.Architecture + ".tar.zst"
+	filename := guest.Artifact.Name + "-" + guest.Artifact.Version + "-" + guest.Artifact.Architecture + ".tar.zst"
+	if err := ensureArtifactInStorage(ctx, client, plan.Node, "local", "vztmpl", filename, guest.Artifact.ContentSHA256, plan.ArtifactFiles[artifactKey(guest.Artifact)]); err != nil {
+		return fmt.Errorf("prepare appliance template for %s: %w", guest.Name, err)
+	}
+	template := "local:vztmpl/" + filename
 	params := url.Values{
 		"hostname":     {guest.Hostname},
+		"description":  {artifactDescription(guest.Artifact)},
 		"ostemplate":   {template},
 		"memory":       {strconv.Itoa(guest.MemoryMiB)},
 		"cores":        {strconv.Itoa(guest.Cores)},
@@ -794,8 +851,81 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		"tags":         {strings.Join(guest.Tags, ";")},
 		"net0":         {fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,ip=%s/24,gw=%s", guest.VLAN, guest.Address, gatewayFor(guest.Zone))},
 	}
+	for index, volume := range guest.Volumes {
+		value, err := persistentVolumeParam(volume)
+		if err != nil {
+			return fmt.Errorf("validate persistent volume %s for %s: %w", volume.Name, guest.Name, err)
+		}
+		params.Set(fmt.Sprintf("mp%d", index), value)
+	}
 	if err := client.CreateLXC(ctx, plan.Node, guest.VMID, params); err != nil {
 		return fmt.Errorf("create container %s: %w", guest.Name, err)
+	}
+	return nil
+}
+
+func persistentVolumeParam(volume model.PersistentVolumeDeclaration) (string, error) {
+	if volume.Storage == "" || volume.SizeGiB <= 0 || volume.MountPath == "" || strings.ContainsAny(volume.MountPath, ",\r\n") || !strings.HasPrefix(volume.MountPath, "/") {
+		return "", errors.New("volume requires Core-resolved storage, positive size, and an absolute safe mount path")
+	}
+	backup := "0"
+	if volume.Backup {
+		backup = "1"
+	}
+	return fmt.Sprintf("%s:%d,mp=%s,backup=%s", volume.Storage, volume.SizeGiB, volume.MountPath, backup), nil
+}
+
+func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) error {
+	for index, volume := range expected.Volumes {
+		wanted, err := persistentVolumeParam(volume)
+		if err != nil {
+			return err
+		}
+		key := fmt.Sprintf("mp%d", index)
+		observed, _ := current[key].(string)
+		if observed != wanted {
+			return fmt.Errorf("HOLD: guest %s has persistent volume %s=%q, expected %q", expected.Name, key, observed, wanted)
+		}
+	}
+	return nil
+}
+
+func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage, content, filename, checksum, source string) error {
+	if checksum == "" {
+		return errors.New("artifact content checksum is required")
+	}
+	entries, err := client.StorageContent(ctx, node, storage, content)
+	if err != nil {
+		return fmt.Errorf("inspect %s artifact storage: %w", content, err)
+	}
+	for _, entry := range entries {
+		if entry.Filename != filename && !strings.HasSuffix(entry.VolID, "/"+filename) {
+			continue
+		}
+		observed := entry.Checksum
+		if observed == "" {
+			observed = entry.CSum
+		}
+		if observed == "" {
+			return fmt.Errorf("stored artifact %s has no checksum evidence", filename)
+		}
+		if !strings.EqualFold(observed, checksum) {
+			return fmt.Errorf("stored artifact %s checksum %s does not match qualified %s", filename, observed, checksum)
+		}
+		return nil
+	}
+	if source == "" {
+		return fmt.Errorf("qualified artifact %s is not present in Proxmox storage and no local artifact bytes are recorded", filename)
+	}
+	actual, err := artifacts.ContentSHA256ForFile(source)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(actual, checksum) {
+		return fmt.Errorf("local artifact %s checksum %s does not match qualified %s", filename, actual, checksum)
+	}
+	if err := client.UploadStorageFile(ctx, node, storage, content, source, filename); err != nil {
+		return fmt.Errorf("upload %s: %w", filename, err)
 	}
 	return nil
 }
@@ -817,7 +947,18 @@ func validateExistingGuestIdentity(current map[string]any, expected GuestPlan) e
 			return fmt.Errorf("guest %s has unexpected %s %q, expected %q", expected.Name, key, got, want)
 		}
 	}
+	if expected.Artifact.Name != "" {
+		observed, _ := current["description"].(string)
+		wanted := artifactDescription(expected.Artifact)
+		if observed != wanted {
+			return fmt.Errorf("HOLD: guest %s has artifact identity %q, expected %q; appliance replacement is required", expected.Name, observed, wanted)
+		}
+	}
 	return nil
+}
+
+func artifactDescription(artifact model.Artifact) string {
+	return fmt.Sprintf("boetticher-artifact=%s@%s definition=%s content=%s", artifact.Name, artifact.Version, artifact.DefinitionSHA256, artifact.ContentSHA256)
 }
 
 func ensureExistingGuestTags(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) error {

@@ -62,6 +62,10 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 		fmt.Fprintln(out, "  Destructive actions: NOT RUN (dry-run)")
 		if plan, planErr := proxmox.PlanFromSite(s); planErr == nil {
+			qualified, qualifyErr := proxmox.ResolveQualifiedArtifacts(*siteDir, plan, false)
+			if qualifyErr == nil {
+				plan = qualified
+			}
 			fmt.Fprintln(out, "  Appliances:")
 			for _, guest := range plan.Guests {
 				status := "definition resolved"
@@ -84,6 +88,14 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return err
 	}
+	proxmoxPlan, err := proxmox.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
+	proxmoxPlan, err = proxmox.ResolveQualifiedArtifacts(*siteDir, proxmoxPlan, true)
+	if err != nil {
+		return err
+	}
 	proxmoxClient, _, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
 	if err != nil {
 		return fmt.Errorf("load Proxmox client for platform deployment: %w", err)
@@ -95,12 +107,8 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		if err := proxmoxClient.EnsureDirectoryStorage(context.Background(), backup.DedicatedStorageID, backup.DedicatedStoragePath); err != nil {
 			return fmt.Errorf("ensure dedicated backup storage: %w", err)
 		}
-	} else if err := proxmoxClient.EnsureDirectoryStorageContent(context.Background(), "local", "/var/lib/vz", []string{"backup", "images", "rootdir"}); err != nil {
+	} else if err := proxmoxClient.EnsureDirectoryStorageContent(context.Background(), "local", "/var/lib/vz", []string{"backup", "images", "rootdir", "vztmpl"}); err != nil {
 		return fmt.Errorf("ensure single-disk Proxmox storage: %w", err)
-	}
-	proxmoxPlan, err := proxmox.PlanFromSite(s)
-	if err != nil {
-		return err
 	}
 	if err := proxmox.Provision(context.Background(), proxmoxClient, proxmoxPlan, ""); err != nil {
 		return fmt.Errorf("deploy platform guests: %w", err)

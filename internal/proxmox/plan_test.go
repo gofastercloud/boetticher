@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
+	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/model"
 )
 
@@ -29,6 +32,38 @@ func TestFoundationPlanIsDeterministic(t *testing.T) {
 	}
 	if first.GatewayImageURL != model.QualifiedGatewayImageURL || first.GatewaySHA512 != model.QualifiedGatewayImageSHA512 {
 		t.Fatalf("gateway image pin is incomplete: %#v", first)
+	}
+}
+
+func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Guests = plan.Guests[:1]
+	guest := plan.Guests[0]
+	artifactFile := filepath.Join(t.TempDir(), "appliance.tar.zst")
+	if err := os.WriteFile(artifactFile, []byte("qualified appliance"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := artifacts.EvidenceForFile(artifactFile, guest.Artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = artifactFile
+	root := t.TempDir()
+	if err := artifacts.WriteEvidence(root, guest.Artifact.Name, evidence); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := ResolveQualifiedArtifacts(root, plan, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Guests[0].Artifact.ContentSHA256 == "" {
+		t.Fatal("qualified content checksum was not carried into the deployment plan")
+	}
+	if _, err := ResolveQualifiedArtifacts(t.TempDir(), plan, true); err == nil {
+		t.Fatal("missing qualification evidence was accepted")
 	}
 }
 

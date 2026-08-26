@@ -271,7 +271,17 @@ func runModuleChange(args []string, out interface{ Write([]byte) (int, error) },
 		return err
 	}
 	fmt.Fprintf(out, "  Configuration: saved (model %s)\n", mustRevision(resolved))
-	if err := runDeploy([]string{"--site", *siteDir}, out); err != nil {
+	deployArgs := []string{"--site", *siteDir, "--age-identity", *ageIdentity}
+	if *proxmoxCA != "" {
+		deployArgs = append(deployArgs, "--proxmox-ca", *proxmoxCA)
+	}
+	if *insecure {
+		deployArgs = append(deployArgs, "--insecure")
+	}
+	if *confirm || *purge {
+		deployArgs = append(deployArgs, "--confirm")
+	}
+	if err := runDeploy(deployArgs, out); err != nil {
 		return fmt.Errorf("deploy module change: %w", err)
 	}
 	return nil
