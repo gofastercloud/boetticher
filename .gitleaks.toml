@@ -11,7 +11,12 @@ description = "Historical pre-rename command prose is not a credential"
 regexTarget = "line"
 regexes = ['homelab bootstrap']
 
-[[allowlists]]
-description = "One historical installation sentence was flagged as a credential despite containing only prose"
-commits = ['c72ccf18ad0130b1ff9994f5b7be6de7b90cac7c']
-paths = ['docs/installation.md']
+[[rules]]
+id = "generic-api-key"
+
+    [[rules.allowlists]]
+    description = "One historical installation sentence was flagged as a credential despite containing only prose"
+    condition = "AND"
+    regexTarget = "line"
+    regexes = ['credential handoff, VLAN/Kea/firewall API adapters, and generated']
+    paths = ['docs/installation\.md']
