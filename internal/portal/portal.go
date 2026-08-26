@@ -314,7 +314,7 @@ func copyDocs(outputDir, docsDir, revision string) error {
 }
 
 func sortedComponents(s model.Site) []model.Component {
-	copyComponents := append([]model.Component(nil), s.Components...)
+	copyComponents := s.PlatformComponents()
 	sort.Slice(copyComponents, func(i, j int) bool { return copyComponents[i].Name < copyComponents[j].Name })
 	return copyComponents
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/backup"
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/firewall"
+	"github.com/gofastercloud/boetticher/internal/logging"
 	"github.com/gofastercloud/boetticher/internal/model"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 	"github.com/gofastercloud/boetticher/internal/portal"
@@ -117,6 +118,28 @@ func writeModelProjections(dir string, s model.Site) error {
 	}
 	if err := writeProjection(filepath.Join(dir, "generated", "storage", "desired-state.json"), storagePlan); err != nil {
 		return err
+	}
+	loggingPlan, err := logging.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
+	if err := writeProjection(filepath.Join(dir, "generated", "logging", "desired-state.json"), loggingPlan); err != nil {
+		return err
+	}
+	if err := writePublic(filepath.Join(dir, "generated", "logging", "journal-remote.conf"), []byte(logging.CollectorConfiguration(loggingPlan))); err != nil {
+		return err
+	}
+	if err := writePublic(filepath.Join(dir, "generated", "logging", "journal-remote.service.d", "boetticher.conf"), []byte(logging.CollectorServiceOverride(loggingPlan))); err != nil {
+		return err
+	}
+	if dnsPlan.RecursiveProvider == string(model.DNSProviderBlocky) {
+		blockyConfig, renderErr := dns.RenderBlockyConfig(dnsPlan)
+		if renderErr != nil {
+			return renderErr
+		}
+		if err := writePublic(filepath.Join(dir, "generated", "dns", "blocky.yml"), blockyConfig); err != nil {
+			return err
+		}
 	}
 	if err := writeProjection(filepath.Join(dir, "generated", "proxmox", "desired-state.json"), proxmoxPlan); err != nil {
 		return err
@@ -272,7 +295,7 @@ func writeCurrentStatus(dir, revision string) error {
 
 func sortedSSHComponents(s model.Site) []model.Component {
 	components := []model.Component{}
-	for _, m := range s.Components {
+	for _, m := range s.PlatformComponents() {
 		if m.SSHManaged {
 			components = append(components, m)
 		}

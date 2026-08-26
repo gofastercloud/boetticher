@@ -86,6 +86,51 @@ func SignServerCSR(authority Authority, csrPEM, name, domain string, aliases []s
 	}, nil
 }
 
+// SignClientCSR signs a client-auth CSR whose private key remains on the
+// managed endpoint. The identity is limited to the modelled endpoint name.
+func SignClientCSR(authority Authority, csrPEM, name, domain string, now time.Time) (ClientCertificate, error) {
+	if err := ValidateClientName(name); err != nil {
+		return ClientCertificate{}, err
+	}
+	block, _ := pem.Decode([]byte(csrPEM))
+	if block == nil || block.Type != "CERTIFICATE REQUEST" {
+		return ClientCertificate{}, fmt.Errorf("client CSR PEM block missing")
+	}
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		return ClientCertificate{}, fmt.Errorf("parse client CSR: %w", err)
+	}
+	if err := csr.CheckSignature(); err != nil {
+		return ClientCertificate{}, fmt.Errorf("verify client CSR signature: %w", err)
+	}
+	wanted := "client-" + name + "." + domain
+	if csr.Subject.CommonName != wanted || len(csr.DNSNames) != 0 || len(csr.IPAddresses) != 0 || len(csr.EmailAddresses) != 0 || len(csr.URIs) != 0 {
+		return ClientCertificate{}, fmt.Errorf("client CSR identity is not approved for %s", name)
+	}
+	issuingKey, err := parseECKey(authority.IssuingKeyPEM)
+	if err != nil {
+		return ClientCertificate{}, fmt.Errorf("parse issuing key: %w", err)
+	}
+	issuingCert, err := parseCert(authority.IssuingCertPEM)
+	if err != nil {
+		return ClientCertificate{}, fmt.Errorf("parse issuing certificate: %w", err)
+	}
+	template, err := certificateTemplate(wanted, now, false)
+	if err != nil {
+		return ClientCertificate{}, err
+	}
+	template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
+	der, err := x509.CreateCertificate(rand.Reader, template, issuingCert, csr.PublicKey, issuingKey)
+	if err != nil {
+		return ClientCertificate{}, fmt.Errorf("sign client CSR: %w", err)
+	}
+	fingerprint := sha256.Sum256(der)
+	return ClientCertificate{
+		Name: name, CertPEM: marshalCert(der), ChainPEM: marshalCert(der) + authority.IssuingCertPEM,
+		Fingerprint: fmt.Sprintf("sha256:%x", fingerprint[:]),
+	}, nil
+}
+
 func sameDNSNames(got, want []string) bool {
 	if len(got) != len(want) {
 		return false

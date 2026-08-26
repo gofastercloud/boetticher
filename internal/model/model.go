@@ -17,9 +17,9 @@ const (
 	APIVersion                  = "boetticher/v3"
 	SchemaVersion               = 3
 	PlatformVersion             = "0.3.1"
-	QualifiedGatewayImage       = "debian-13-genericcloud-amd64"
-	QualifiedGatewayImageURL    = "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
-	QualifiedGatewayImageSHA512 = "77429b411b39b43f914dc9d14bf34aa315489a1a12b5429f72e5b483bdda23c65698d33443c85d3f3ad7c3a0828ae60845406d6b99646342554d17abae29c2a3"
+	QualifiedGatewayImage       = "debian-13-genericcloud-amd64-20260327-2429"
+	QualifiedGatewayImageURL    = "https://cloud.debian.org/images/cloud/trixie/20260327-2429/debian-13-genericcloud-amd64-20260327-2429.qcow2"
+	QualifiedGatewayImageSHA512 = "09559ec27d263997827dd8cddf76e97ea8e0f1803380aa501ea7eaa4b4968cd76ffef4ec7eb07ef1a9ccbeb0925a5020492ea9ed53eb167d62f3a2285039912c"
 	ZabbixSeries                = "7.0 LTS"
 	AuthoritativeDNS            = "PowerDNS Authoritative"
 	AuthoritativeDNSVersion     = "4.9.17"
@@ -60,9 +60,20 @@ const (
 	TagNTP                      = "ntp"
 	TagObservability            = "observability"
 	TagPortal                   = "portal"
+	TagCorePortal               = "boetticher-core-portal"
 )
 
 var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
+
+// ModuleOwnershipTag returns the single Proxmox-safe ownership proof used for
+// every first-party module guest. Invalid names return an empty tag so callers
+// fail closed instead of creating an ambiguous ownership representation.
+func ModuleOwnershipTag(module string) string {
+	if !modelTokenPattern.MatchString(module) {
+		return ""
+	}
+	return "boetticher-module-" + module
+}
 
 type Site struct {
 	APIVersion       string                  `json:"api_version"`
@@ -93,7 +104,7 @@ type TestedVersions struct {
 }
 
 type Gateway struct {
-	Mode string `yaml:"mode" json:"mode"`
+	Mode string `yaml:"mode" json:"mode" jsonschema:"enum=managed,enum=external"`
 }
 
 type Network struct {
@@ -108,7 +119,7 @@ type Network struct {
 type PhysicalNetwork struct {
 	Upstream PhysicalNIC `yaml:"upstream" json:"upstream"`
 	Trunk    PhysicalNIC `yaml:"trunk" json:"trunk"`
-	Mode     string      `yaml:"mode" json:"mode"`
+	Mode     string      `yaml:"mode" json:"mode" jsonschema:"enum=virtual-only,enum=physical-trunk"`
 }
 
 type PhysicalNIC struct {
@@ -329,7 +340,7 @@ func NewDefaultSite(installationID, ageRecipient string) Site {
 		{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "SERVERS", Address: "10.10.20.20", Role: "Zabbix", DNSAliases: []string{"monitor"}, URL: "https://monitor." + DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "monitoring"},
 		{Name: "lab-log-01", VMID: LoggingVMID, Hostname: "lab-log-01", Zone: "SERVERS", Address: "10.10.20.40", Role: "Central systemd journal", DNSAliases: []string{"logs"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "logging"},
 	} {
-		component.Tags = []string{TagBoetticher, TagManaged, TagModule, "module-" + component.Module, TagBackup}
+		component.Tags = []string{TagBoetticher, TagManaged, TagModule, "module-" + component.Module, ModuleOwnershipTag(component.Module), TagBackup}
 		component.SSHUser, component.SSHPort = DefaultAdminSSHUser, 22
 		component.Logging = component.Module != "logging"
 		site.Components = append(site.Components, component)
@@ -368,7 +379,7 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 		},
 		Components: []Component{
 			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: "10.10.99.5", Role: "Proxmox host", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork}, URL: "https://proxmox." + DefaultDomain + ":8006", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Logging: true},
-			{Name: "lab-portal-01", VMID: PortalVMID, Hostname: "lab-portal-01", Zone: "SERVERS", Address: "10.10.20.30", Role: "Generated platform portal", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagPortal, TagBackup}, URL: "https://portal." + DefaultDomain, DNSAliases: []string{"portal"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Logging: true},
+			{Name: "lab-portal-01", VMID: PortalVMID, Hostname: "lab-portal-01", Zone: "SERVERS", Address: "10.10.20.30", Role: "Generated platform portal", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagPortal, TagCorePortal, TagBackup}, URL: "https://portal." + DefaultDomain, DNSAliases: []string{"portal"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Logging: true},
 		},
 	}
 	return site

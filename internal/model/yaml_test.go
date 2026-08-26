@@ -14,7 +14,7 @@ storage_profile: single-disk
 gateway:
   mode: managed
 tested_versions:
-  gateway: debian-13-genericcloud-amd64
+  gateway: debian-13-genericcloud-amd64-20260327-2429
   zabbix: "7.0 LTS"
 network:
   domain: lab.home.arpa
@@ -97,7 +97,7 @@ func TestParseSiteConfigAppliesV3Defaults(t *testing.T) {
 
 func TestDNSProviderIsTypedAndStrict(t *testing.T) {
 	config, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  dns:\n    provider: adguard\n"))
-	if err != nil || config.Modules["dns"].Provider != "adguard" {
+	if err != nil || config.Modules.DNS == nil || config.Modules.DNS.Provider != DNSProviderAdGuard {
 		t.Fatalf("adguard provider was not accepted: %#v %v", config, err)
 	}
 	if _, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  monitoring:\n    provider: blocky\n")); err == nil || !strings.Contains(err.Error(), "modules.monitoring.provider") {
@@ -105,6 +105,9 @@ func TestDNSProviderIsTypedAndStrict(t *testing.T) {
 	}
 	if _, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  dns:\n    enabled: false\n")); err == nil || !strings.Contains(err.Error(), "mandatory module") {
 		t.Fatalf("DNS disable was accepted: %v", err)
+	}
+	if _, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  logging:\n    enabled: false\n")); err == nil || !strings.Contains(err.Error(), "modules.logging.enabled") {
+		t.Fatalf("logging disable was accepted: %v", err)
 	}
 }
 

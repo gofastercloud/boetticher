@@ -12,3 +12,8 @@
   ansible.builtin.service:
     name: adguardhome
     state: restarted
+
+- name: restart blocky
+  ansible.builtin.service:
+    name: blocky
+    state: restarted

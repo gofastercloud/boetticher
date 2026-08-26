@@ -26,10 +26,48 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 		"lab-dns-01 ansible_host=10.10.20.10",
 		"ProxyJump=lab-bastion",
 		"HostKeyAlias=lab-dns-01.lab.home.arpa",
+		"ansible_remote_tmp=/tmp/boetticher-ansible",
 		"[managed:children]",
+		"[logging]",
+		"lab-log-01 ansible_host=10.10.20.40",
 	} {
 		if !strings.Contains(first, expected) {
 			t.Errorf("inventory missing %q", expected)
+		}
+	}
+}
+
+func TestInventoryUsesBootstrapAddressForProxmoxTransport(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	site.BootstrapAddress = "192.0.2.5"
+	inventory, err := Inventory(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(inventory, "lab-proxmox-01 ansible_host=192.0.2.5") {
+		t.Fatalf("Proxmox inventory did not use bootstrap address:\n%s", inventory)
+	}
+	if strings.Contains(inventory, "lab-proxmox-01 ansible_host=10.10.99.5") {
+		t.Fatal("Proxmox inventory used the internal management address for controller transport")
+	}
+}
+
+func TestGeneratedSSHConfigPathIsBoundToInventoryProjection(t *testing.T) {
+	got := generatedSSHConfigPath("/tmp/site/generated/ansible/inventory.ini")
+	if got != "/tmp/site/generated/ssh/boetticher.conf" {
+		t.Fatalf("generated SSH config path = %q", got)
+	}
+}
+
+func TestLimitedRunRejectsShellSyntaxInInventoryIdentity(t *testing.T) {
+	for _, value := range []string{"lab-fw-01", "lab_dns_01", "lab.fw"} {
+		if !safeInventoryIdentity(value) {
+			t.Fatalf("safe inventory identity %q was rejected", value)
+		}
+	}
+	for _, value := range []string{"lab-fw-01;rm", "lab-fw-01 --limit all", ""} {
+		if safeInventoryIdentity(value) {
+			t.Fatalf("unsafe inventory identity %q was accepted", value)
 		}
 	}
 }
@@ -76,6 +114,16 @@ func TestEndpointTLSKeysAreGeneratedLocallyAndNeverSuppliedByController(t *testi
 	}
 }
 
+func TestGuestPlaybookProjectsLoggingClientsBeyondTheCollector(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "ansible", "site.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "inventory_hostname in logging_upload_configs or inventory_hostname == 'lab-log-01'") {
+		t.Fatal("managed guest playbook does not apply the logging client role to endpoint sources")
+	}
+}
+
 func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	variables, err := Variables(site)
@@ -90,6 +138,8 @@ func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
 		`"authoritative_dns_port": "5353"`,
 		`"trusted.lab.home.arpa"`,
 		`"sandbox.lab.home.arpa"`,
+		`"blocky_config"`,
+		`upstreams:\n    groups:\n        default:`,
 	} {
 		if !strings.Contains(text, expected) {
 			t.Errorf("Ansible variables missing %q", expected)
@@ -97,6 +147,47 @@ func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
 	}
 	if strings.Contains(text, "c2VjcmV0") {
 		t.Fatal("generated Ansible variables contain secret material")
+	}
+}
+
+func TestVariablesDoNotRenderBlockyForAdGuardSites(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	site.ModuleConfig = map[string]model.ModuleConfig{"dns": {Provider: string(model.DNSProviderAdGuard)}}
+	variables, err := Variables(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(variables), "upstreams:\n") {
+		t.Fatal("AdGuard variables unexpectedly contain Blocky configuration")
+	}
+	if !strings.Contains(string(variables), `"recursive_provider": "adguard"`) {
+		t.Fatal("AdGuard provider was not retained in the generated DNS plan")
+	}
+}
+
+func TestDNSAppliancePathCannotInstallAResolver(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, task := range []string{"Install pinned AdGuard Home archive", "Install AdGuard Home under its own service directory"} {
+		start := strings.Index(text, "- name: "+task)
+		if start < 0 {
+			t.Fatalf("DNS role task %q is missing", task)
+		}
+		end := strings.Index(text[start:], "\n- name:")
+		if end < 0 {
+			end = len(text) - start
+		}
+		block := text[start : start+end]
+		if !strings.Contains(block, "not (boetticher_appliance_artifact | default(false) | bool)") {
+			t.Fatalf("DNS appliance path can still run resolver installation task %q:\n%s", task, block)
+		}
+	}
+	if !strings.Contains(text, "Require the qualified AdGuard binary in an appliance") || !strings.Contains(text, "/opt/AdGuardHome/AdGuardHome --version") {
+		t.Fatal("AdGuard appliance path does not assert that the selected binary is image-provided")
 	}
 }
 
@@ -127,14 +218,15 @@ func TestDNSRoleDoesNotPlaceTSIGSecretsInProcessArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "stdin: >-") || !strings.Contains(text, "INSERT OR REPLACE INTO tsigkeys") {
-		t.Fatal("DNS role does not provide TSIG material through protected sqlite3 stdin")
+	if strings.Contains(text, "ddns_tsig_secret") || strings.Contains(text, "INSERT OR REPLACE INTO tsigkeys") {
+		t.Fatal("DNS role still receives or persists TSIG material through Ansible variables")
 	}
-	if strings.Contains(text, "pdnsutil\n      - tsigkey\n      - import") || strings.Contains(text, "- \"{{ ddns_tsig_secret }}\"") {
-		t.Fatal("DNS role still places the TSIG secret in a process argument")
+	kea, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "firewall", "templates", "kea-dhcp-ddns.conf.j2"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(text, "no_log: true") {
-		t.Fatal("DNS role does not suppress secret-bearing task output")
+	if !strings.Contains(string(kea), "secret-file") || strings.Contains(string(kea), "{{ ddns_tsig_secret }}") {
+		t.Fatal("Kea does not consume its TSIG through the systemd credential runtime file")
 	}
 }
 

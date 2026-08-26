@@ -87,7 +87,7 @@ func InstallCommand(spec CredentialSpec) ([]string, error) {
 	if err := Validate([]CredentialSpec{spec}); err != nil {
 		return nil, err
 	}
-	return []string{"systemd-creds", "encrypt", "--name=" + spec.Name, "/dev/stdin", spec.StorePath}, nil
+	return []string{"sudo", "-n", "systemd-creds", "encrypt", "--name=" + spec.Name, "/dev/stdin", spec.StorePath}, nil
 }
 
 // StdinRunner is the narrow transport needed for secret installation.

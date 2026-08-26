@@ -4,6 +4,9 @@ distribution: debian
 release: "13"
 architecture: amd64
 init: systemd
+source:
+  mirror: https://snapshot.debian.org/archive/debian/20260327T000000Z/
+  snapshot: 20260327T000000Z
 runtime:
   - ca-certificates
   - systemd
@@ -12,6 +15,19 @@ runtime:
   - nftables
   - journald
   - systemd-journal-upload
+  - openssh-server
+  - sudo
+  - bash
+  - iputils-ping
+administration:
+  user: labadmin
+  shell: /bin/bash
+  password_authentication: false
+first_boot:
+  service: boetticher-first-boot.service
+  operator_key_path: /run/boetticher/bootstrap/operator.pub
+  artifact_identity_path: /usr/lib/boetticher/artifact.json
+  runtime_config_path: /etc/boetticher/module.yaml
 logging:
   local_system_max_use: 256M
   upload_service: systemd-journal-upload.service

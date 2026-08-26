@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/firewall"
+	"github.com/gofastercloud/boetticher/internal/logging"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/zabbix"
 )
@@ -31,7 +33,11 @@ func Inventory(s model.Site) (string, error) {
 	b.WriteString("[proxmox]\n")
 	for _, component := range components {
 		if component.Name == "lab-proxmox-01" {
-			writeHost(&b, component, false)
+			address := component.Address
+			if s.BootstrapAddress != "" {
+				address = s.BootstrapAddress
+			}
+			writeHostAt(&b, component, address, false)
 		}
 	}
 	b.WriteString("\n[dns]\n")
@@ -52,6 +58,12 @@ func Inventory(s model.Site) (string, error) {
 			writeHost(&b, component, true)
 		}
 	}
+	b.WriteString("\n[logging]\n")
+	for _, component := range components {
+		if component.Name == "lab-log-01" {
+			writeHost(&b, component, true)
+		}
+	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		b.WriteString("\n[firewall]\n")
 		for _, component := range components {
@@ -60,21 +72,25 @@ func Inventory(s model.Site) (string, error) {
 			}
 		}
 	}
-	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\n")
+	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\n")
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		b.WriteString("firewall\n")
 	}
 	b.WriteString("\n")
-	b.WriteString("[managed:vars]\nansible_connection=ssh\nansible_python_interpreter=/usr/bin/python3\nansible_host_key_checking=true\n")
+	b.WriteString("[managed:vars]\nansible_connection=ssh\nansible_python_interpreter=/usr/bin/python3\nansible_remote_tmp=/tmp/boetticher-ansible\nansible_host_key_checking=true\n")
 	return b.String(), nil
 }
 
 func writeHost(b *strings.Builder, component model.Component, throughBastion bool) {
+	writeHostAt(b, component, component.Address, throughBastion)
+}
+
+func writeHostAt(b *strings.Builder, component model.Component, address string, throughBastion bool) {
 	user := component.SSHUser
 	if user == "" {
 		user = model.DefaultAdminSSHUser
 	}
-	fmt.Fprintf(b, "%s ansible_host=%s ansible_user=%s", component.Name, component.Address, user)
+	fmt.Fprintf(b, "%s ansible_host=%s ansible_user=%s", component.Name, address, user)
 	if throughBastion {
 		fmt.Fprintf(b, " ansible_ssh_common_args='-o ProxyJump=lab-bastion -o HostKeyAlias=%s.%s'", component.Hostname, model.DefaultDomain)
 	} else {
@@ -103,20 +119,44 @@ func Variables(s model.Site) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	loggingPlan, err := logging.PlanFromSite(s)
+	if err != nil {
+		return nil, err
+	}
+	var blockyConfig []byte
+	if dnsPlan.RecursiveProvider == string(model.DNSProviderBlocky) {
+		blockyConfig, err = dns.RenderBlockyConfig(dnsPlan)
+		if err != nil {
+			return nil, err
+		}
+	}
+	loggingUploads := map[string]string{}
+	for _, component := range s.PlatformComponents() {
+		if component.Logging && component.Name != logging.CollectorName {
+			loggingUploads[component.Name] = logging.UploadConfiguration(loggingPlan, component.Name)
+		}
+	}
 	value := struct {
-		ModelRevision               string        `json:"model_revision"`
-		Domain                      string        `json:"domain"`
-		IPv4Only                    bool          `json:"ipv4_only"`
-		AuthoritativeDNS            string        `json:"authoritative_dns"`
-		AuthoritativeDNSVersion     string        `json:"authoritative_dns_version"`
-		AuthoritativePackageVersion string        `json:"authoritative_package_version"`
-		AuthoritativeDNSPort        string        `json:"authoritative_dns_port"`
-		DynamicZones                []string      `json:"dynamic_zones"`
-		AdGuardForwardZones         []string      `json:"adguard_forward_zones"`
-		DNSPlan                     dns.Plan      `json:"dns_plan"`
-		FirewallPlan                firewall.Plan `json:"firewall_plan"`
-		ZabbixPlan                  zabbix.Plan   `json:"zabbix_plan"`
-	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, zabbixPlan}
+		ModelRevision               string            `json:"model_revision"`
+		Domain                      string            `json:"domain"`
+		IPv4Only                    bool              `json:"ipv4_only"`
+		AuthoritativeDNS            string            `json:"authoritative_dns"`
+		AuthoritativeDNSVersion     string            `json:"authoritative_dns_version"`
+		AuthoritativePackageVersion string            `json:"authoritative_package_version"`
+		AuthoritativeDNSPort        string            `json:"authoritative_dns_port"`
+		DynamicZones                []string          `json:"dynamic_zones"`
+		AdGuardForwardZones         []string          `json:"adguard_forward_zones"`
+		DNSPlan                     dns.Plan          `json:"dns_plan"`
+		FirewallPlan                firewall.Plan     `json:"firewall_plan"`
+		ZabbixPlan                  zabbix.Plan       `json:"zabbix_plan"`
+		BlockyConfig                string            `json:"blocky_config"`
+		LoggingPlan                 logging.Plan      `json:"logging_plan"`
+		LoggingCollectorConfig      string            `json:"logging_collector_config"`
+		LoggingServiceOverride      string            `json:"logging_collector_service_override"`
+		LoggingUploadConfigs        map[string]string `json:"logging_upload_configs"`
+		LoggingClientCertificates   map[string]string `json:"logging_client_certificates"`
+		LoggingCollectorCertificate string            `json:"logging_collector_certificate"`
+	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, zabbixPlan, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), loggingUploads, map[string]string{}, ""}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err
@@ -137,6 +177,20 @@ func dynamicZoneNames(zones []dns.DynamicZone) []string {
 // file. The playbook itself must obtain any future secret material through an
 // approved runtime mechanism.
 func Run(ctx context.Context, playbook, inventory string, variables []byte) error {
+	return run(ctx, playbook, inventory, variables, "")
+}
+
+// RunLimited executes the same generated playbook against one known inventory
+// identity. The limit is validated before it becomes an Ansible argument so a
+// readiness stage cannot turn into an arbitrary command or host selector.
+func RunLimited(ctx context.Context, playbook, inventory string, variables []byte, limit string) error {
+	if !safeInventoryIdentity(limit) {
+		return errors.New("Ansible limit must be one safe inventory identity")
+	}
+	return run(ctx, playbook, inventory, variables, limit)
+}
+
+func run(ctx context.Context, playbook, inventory string, variables []byte, limit string) error {
 	if playbook == "" || inventory == "" {
 		return errors.New("Ansible playbook and inventory are required")
 	}
@@ -144,11 +198,34 @@ func Run(ctx context.Context, playbook, inventory string, variables []byte) erro
 	if err != nil {
 		return fmt.Errorf("ansible-playbook is required: %w", err)
 	}
-	command := exec.CommandContext(ctx, executable, "-i", inventory, playbook, "--extra-vars", "@-")
+	args := []string{"-i", inventory, playbook, "--extra-vars", "@-", "--ssh-common-args", "-F " + generatedSSHConfigPath(inventory)}
+	if limit != "" {
+		args = append(args, "--limit", limit)
+	}
+	command := exec.CommandContext(ctx, executable, args...)
 	command.Stdin = strings.NewReader(string(variables))
 	command.Env = append(os.Environ(), "ANSIBLE_HOST_KEY_CHECKING=True")
 	if _, err := command.CombinedOutput(); err != nil {
 		return fmt.Errorf("ansible-playbook failed: %w", err)
 	}
 	return nil
+}
+
+// generatedSSHConfigPath derives the site-local SSH projection from the
+// generated inventory location. Passing it directly to Ansible keeps the
+// deploy transport independent of a user's global ~/.ssh/config includes.
+func generatedSSHConfigPath(inventory string) string {
+	return filepath.Clean(filepath.Join(filepath.Dir(inventory), "..", "ssh", "boetticher.conf"))
+}
+
+func safeInventoryIdentity(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, character := range value {
+		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '-' || character == '_' || character == '.') {
+			return false
+		}
+	}
+	return true
 }

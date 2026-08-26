@@ -75,7 +75,7 @@ func containsTag(tags []string, wanted string) bool {
 func TestMonitoringCanBeDisabledWithoutRemovingOtherModules(t *testing.T) {
 	config := testConfig(model.GatewayModeManaged)
 	disabled := false
-	config.Modules = map[string]model.ModuleConfig{"monitoring": {Enabled: &disabled}}
+	config.Modules.Monitoring = &model.ToggleModuleConfig{Enabled: &disabled}
 	site, _, err := Compose(config)
 	if err != nil {
 		t.Fatal(err)
@@ -93,13 +93,19 @@ func TestMonitoringCanBeDisabledWithoutRemovingOtherModules(t *testing.T) {
 	}
 }
 
-func TestDNSCannotBeDisabled(t *testing.T) {
-	config := testConfig(model.GatewayModeManaged)
+func TestDNSConfigurationHasNoLifecycleToggle(t *testing.T) {
+	var config model.ModulesConfig
 	disabled := false
-	config.Modules = map[string]model.ModuleConfig{"dns": {Enabled: &disabled}}
-	_, _, err := Compose(config)
-	if err == nil || !strings.Contains(err.Error(), "modules.dns.enabled") {
-		t.Fatalf("unexpected DNS disable result: %v", err)
+	if err := config.Set("dns", model.ModuleConfig{Enabled: &disabled}); err == nil || !strings.Contains(err.Error(), "modules.dns.enabled") {
+		t.Fatalf("DNS lifecycle toggle was accepted: %v", err)
+	}
+}
+
+func TestLoggingConfigurationHasNoLifecycleToggle(t *testing.T) {
+	var config model.ModulesConfig
+	disabled := false
+	if err := config.Set("logging", model.ModuleConfig{Enabled: &disabled}); err == nil || !strings.Contains(err.Error(), "modules.logging.enabled") {
+		t.Fatalf("logging lifecycle toggle was accepted: %v", err)
 	}
 }
 
@@ -109,7 +115,7 @@ func TestExternalGatewayRequiresExplicitManagedFirewallDisable(t *testing.T) {
 		t.Fatalf("external mode without explicit firewall disable was accepted: %v", err)
 	}
 	disabled := false
-	config.Modules = map[string]model.ModuleConfig{"firewall": {Enabled: &disabled}}
+	config.Modules.Firewall = &model.ToggleModuleConfig{Enabled: &disabled}
 	site, _, err := Compose(config)
 	if err != nil {
 		t.Fatal(err)
@@ -126,8 +132,7 @@ func TestExternalGatewayRequiresExplicitManagedFirewallDisable(t *testing.T) {
 
 func TestUnknownModuleIsRejected(t *testing.T) {
 	config := testConfig(model.GatewayModeManaged)
-	config.Modules = map[string]model.ModuleConfig{"not-real": {}}
-	_, _, err := Compose(config)
+	_, err := FirstPartyRegistry().resolve(config, map[string]model.ModuleConfig{"not-real": {}})
 	if err == nil || !strings.Contains(err.Error(), "modules.not-real") {
 		t.Fatalf("unknown module was accepted: %v", err)
 	}
@@ -139,7 +144,8 @@ func TestDependenciesActivateTransitivelyInStableOrder(t *testing.T) {
 		{Name: "service", Version: "1.0.0", Policy: DefaultOff, DependsOn: []string{"base"}, Requires: []Capability{"base"}},
 	})
 	service := true
-	resolved, err := registry.Resolve(model.SiteConfig{Modules: map[string]model.ModuleConfig{"service": {Enabled: &service}}})
+	base := model.NewDefaultSite("test", "age1test")
+	resolved, err := registry.resolve(model.ConfigFromSite(base), map[string]model.ModuleConfig{"service": {Enabled: &service}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +160,8 @@ func TestDependencyCycleIsRejected(t *testing.T) {
 		{Name: "b", Version: "1.0.0", Policy: DefaultOff, DependsOn: []string{"a"}},
 	})
 	enabled := true
-	_, err := registry.Resolve(model.SiteConfig{Modules: map[string]model.ModuleConfig{"a": {Enabled: &enabled}}})
+	base := model.NewDefaultSite("test", "age1test")
+	_, err := registry.resolve(model.ConfigFromSite(base), map[string]model.ModuleConfig{"a": {Enabled: &enabled}})
 	if err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("dependency cycle was accepted: %v", err)
 	}

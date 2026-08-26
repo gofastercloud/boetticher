@@ -1,0 +1,27 @@
+version: 2
+ethernets:
+  wan0:
+    match:
+      macaddress: 02:00:00:00:01:01
+    set-name: wan0
+    dhcp4: true
+  trusted0:
+    match:
+      macaddress: 02:00:00:00:01:02
+    set-name: trusted0
+    addresses: [10.10.10.1/24]
+  servers0:
+    match:
+      macaddress: 02:00:00:00:01:03
+    set-name: servers0
+    addresses: [10.10.20.1/24]
+  sandbox0:
+    match:
+      macaddress: 02:00:00:00:01:04
+    set-name: sandbox0
+    addresses: [10.10.50.1/24]
+  mgmt0:
+    match:
+      macaddress: 02:00:00:00:01:05
+    set-name: mgmt0
+    addresses: [10.10.99.1/24]

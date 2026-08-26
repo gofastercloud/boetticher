@@ -54,7 +54,7 @@ func composeComponents(base []model.Component, resolved []ResolvedModule) []mode
 		}
 		for _, component := range module.Definition.Components {
 			component.Module = module.Definition.Name
-			component.Tags = append(component.Tags, model.TagBoetticher, model.TagManaged, model.TagModule, "module-"+module.Definition.Name, model.TagBackup)
+			component.Tags = append(component.Tags, model.TagBoetticher, model.TagManaged, model.TagModule, "module-"+module.Definition.Name, model.ModuleOwnershipTag(module.Definition.Name), model.TagBackup)
 			component.SSHUser = model.DefaultAdminSSHUser
 			component.SSHPort = 22
 			component.Logging = module.Definition.Name != "logging"

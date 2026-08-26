@@ -99,18 +99,22 @@ func volumesFor(module, guest string) []model.PersistentVolumeDeclaration {
 	volume := func(name, mount string, size int, backup bool) model.PersistentVolumeDeclaration {
 		return model.PersistentVolumeDeclaration{Name: name, Module: module, Guest: guest, SizeGiB: size, MountPath: mount, Placement: model.StorageDefault, Backup: backup}
 	}
+	identity := volume("ssh-identity", "/var/lib/boetticher/identity/ssh", 1, true)
 	switch module {
 	case "dns":
-		return []model.PersistentVolumeDeclaration{volume("powerdns-database", "/var/lib/powerdns", 8, true)}
+		return []model.PersistentVolumeDeclaration{identity, volume("powerdns-database", "/var/lib/powerdns", 8, true)}
 	case "monitoring":
-		return []model.PersistentVolumeDeclaration{volume("postgresql-data", "/var/lib/postgresql", 16, true)}
+		return []model.PersistentVolumeDeclaration{identity, volume("postgresql-data", "/var/lib/postgresql", 16, true)}
 	case "firewall":
-		return []model.PersistentVolumeDeclaration{volume("kea-leases", "/var/lib/kea", 4, true)}
+		return []model.PersistentVolumeDeclaration{identity, volume("kea-leases", "/var/lib/kea", 4, true)}
 	case "logging":
+		// Central journals are a bounded secondary evidence cache. The logging
+		// appliance remains in the platform backup set, while this high-churn
+		// volume is intentionally excluded from guest backups.
 		v := volume("journal", "/var/log/journal/remote", 10, false)
 		v.Placement = model.StoragePreferDataDisk
-		return []model.PersistentVolumeDeclaration{v}
+		return []model.PersistentVolumeDeclaration{identity, v}
 	default:
-		return nil
+		return []model.PersistentVolumeDeclaration{identity}
 	}
 }

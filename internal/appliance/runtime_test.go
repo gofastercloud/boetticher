@@ -60,7 +60,7 @@ func TestInstallRuntimeConfigUsesFixedCommandAndStdin(t *testing.T) {
 	if string(runner.data) != string(config) {
 		t.Fatalf("runtime config stdin = %q", runner.data)
 	}
-	if !strings.Contains(runner.command, "module.yaml") || strings.Contains(runner.command, string(config)) {
+	if !strings.Contains(runner.command, "install-runtime-state module-config") || strings.Contains(runner.command, "sh -c") || strings.Contains(runner.command, string(config)) {
 		t.Fatalf("unsafe runtime config command: %q", runner.command)
 	}
 }
@@ -71,7 +71,7 @@ func TestInstallArtifactIdentityContainsQualifiedMetadataOnly(t *testing.T) {
 	if err := InstallArtifactIdentity(context.Background(), runner, "10.10.20.10", "labadmin", artifact); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(runner.command, string(runner.data)) || !strings.Contains(string(runner.data), `"content_sha256": "content"`) {
+	if strings.Contains(runner.command, string(runner.data)) || !strings.Contains(runner.command, "install-runtime-state artifact-identity") || !strings.Contains(string(runner.data), `"content_sha256": "content"`) {
 		t.Fatalf("artifact identity was not sent as expected: command=%q stdin=%q", runner.command, runner.data)
 	}
 	if strings.Contains(string(runner.data), "secret") {

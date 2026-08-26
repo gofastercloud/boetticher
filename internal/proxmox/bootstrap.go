@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 )
@@ -18,11 +19,100 @@ type CommandRunner interface {
 	Run(ctx context.Context, address, user, command string) ([]byte, error)
 }
 
+// ArgsCommandRunner executes a fixed remote executable with separate
+// arguments. Callers use this for untrusted-but-validated read filters so the
+// transport never has to assemble a shell command.
+type ArgsCommandRunner interface {
+	RunArgs(ctx context.Context, address, user string, args []string) ([]byte, error)
+}
+
+type StdinCommandRunner interface {
+	CommandRunner
+	RunWithStdin(context.Context, string, string, string, io.Reader) ([]byte, error)
+}
+
+// WaitForSSH is a bounded readiness gate used after an appliance is started.
+// Guest creation is not treated as reachability proof: an authenticated
+// command through the configured SSH path must succeed before deployment
+// continues. The runner owns the transport, including ProxyJump, so this
+// works for internal guests that are reachable only through the bastion.
+func WaitForSSH(ctx context.Context, runner CommandRunner, address, user string, attempts int, interval time.Duration) error {
+	if runner == nil {
+		return errors.New("SSH readiness runner is required")
+	}
+	if net.ParseIP(address) == nil || user == "" || attempts < 1 {
+		return errors.New("SSH readiness identity is invalid")
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("SSH readiness cancelled for %s: %w", address, err)
+		}
+		_, err := runner.Run(ctx, address, user, "true")
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if attempt+1 < attempts {
+			timer := time.NewTimer(interval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return fmt.Errorf("SSH readiness cancelled for %s: %w", address, ctx.Err())
+			case <-timer.C:
+			}
+		}
+	}
+	return fmt.Errorf("HOLD: SSH readiness failed for %s@%s after %d attempts: %w", user, address, attempts, lastErr)
+}
+
+// WaitForCommand is a bounded post-SSH readiness gate for infrastructure
+// helpers whose files and packages are installed by first boot. It uses the
+// same authenticated transport as WaitForSSH and accepts only a fixed command
+// supplied by Core.
+func WaitForCommand(ctx context.Context, runner CommandRunner, address, user, command string, attempts int, interval time.Duration) error {
+	if runner == nil {
+		return errors.New("command readiness runner is required")
+	}
+	if net.ParseIP(address) == nil || user == "" || command == "" || attempts < 1 {
+		return errors.New("command readiness identity is invalid")
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("command readiness cancelled for %s: %w", address, err)
+		}
+		if _, err := runner.Run(ctx, address, user, command); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if attempt+1 < attempts {
+			timer := time.NewTimer(interval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return fmt.Errorf("command readiness cancelled for %s: %w", address, ctx.Err())
+			case <-timer.C:
+			}
+		}
+	}
+	return fmt.Errorf("HOLD: command readiness failed for %s@%s after %d attempts: %w", user, address, attempts, lastErr)
+}
+
 type SSHRunner struct {
 	Port          int
 	KnownHosts    string
 	StrictHostKey string
 	IdentityFile  string
+	ConfigFile    string
+	HostAlias     string
 }
 
 // DiscoverPhysicalNetworkViaSSH uses the existing fresh-host trust path before
@@ -60,7 +150,14 @@ func DiscoverPhysicalNetworkViaSSH(ctx context.Context, runner CommandRunner, ad
 }
 
 func (r SSHRunner) Run(ctx context.Context, address, user, command string) ([]byte, error) {
-	return r.run(ctx, address, user, command, os.Stdin)
+	return r.runArgs(ctx, address, user, []string{command}, os.Stdin)
+}
+
+// RunArgs executes one fixed remote executable and its arguments. OpenSSH
+// receives the executable and arguments separately; no local shell fragment
+// is constructed from caller input.
+func (r SSHRunner) RunArgs(ctx context.Context, address, user string, commandArgs []string) ([]byte, error) {
+	return r.runArgs(ctx, address, user, commandArgs, os.Stdin)
 }
 
 // RunWithStdin executes one validated remote command while streaming the
@@ -70,15 +167,66 @@ func (r SSHRunner) RunWithStdin(ctx context.Context, address, user, command stri
 	if stdin == nil {
 		return nil, errors.New("SSH stdin is required")
 	}
-	return r.run(ctx, address, user, command, stdin)
+	return r.runArgs(ctx, address, user, []string{command}, stdin)
 }
 
-func (r SSHRunner) run(ctx context.Context, address, user, command string, stdin io.Reader) ([]byte, error) {
+const managementInterfaceConfig = `auto vmbr1.99
+iface vmbr1.99 inet static
+    address 10.10.99.5/24
+    vlan-raw-device vmbr1
+    up ip route replace 10.10.0.0/16 via 10.10.99.1 dev vmbr1.99
+    down ip route del 10.10.0.0/16 via 10.10.99.1 dev vmbr1.99 || true
+`
+
+// ConfigureManagementNetwork establishes the fixed virtual-only Proxmox
+// management leg. It never changes vmbr0, its member, or the default route.
+func ConfigureManagementNetwork(ctx context.Context, runner StdinCommandRunner, address, user string) error {
+	if runner == nil {
+		return errors.New("management network runner is required")
+	}
+	install := "sudo -n install -D -m 0644 /dev/stdin /etc/network/interfaces.d/boetticher-management"
+	if _, err := runner.RunWithStdin(ctx, address, user, install, strings.NewReader(managementInterfaceConfig)); err != nil {
+		return fmt.Errorf("install Proxmox management interface configuration: %w", err)
+	}
+	verify := `sudo -n sh -c 'set -eu
+before_vmbr0_addr=$(ip -4 -j addr show dev vmbr0)
+before_default_route=$(ip -4 -j route show default)
+ifreload -a
+test "$(ip -4 -j addr show dev vmbr0)" = "$before_vmbr0_addr"
+test "$(ip -4 -j route show default)" = "$before_default_route"
+ip -4 addr show dev vmbr1.99 | grep -Fq "inet 10.10.99.5/24"
+ip -4 route show 10.10.0.0/16 | grep -Fq "10.10.0.0/16 via 10.10.99.1 dev vmbr1.99"
+ip -d link show dev vmbr1 | grep -Eq "vlan_filtering (1|on)"
+'`
+	if _, err := runner.Run(ctx, address, user, verify); err != nil {
+		return fmt.Errorf("apply and verify Proxmox management interface configuration: %w", err)
+	}
+	return nil
+}
+
+func (r SSHRunner) runArgs(ctx context.Context, address, user string, commandArgs []string, stdin io.Reader) ([]byte, error) {
+	args, err := r.commandArgs(address, user, commandArgs)
+	if err != nil {
+		return nil, err
+	}
+	process := exec.CommandContext(ctx, "ssh", args...)
+	process.Stdin = stdin
+	output, err := process.Output()
+	if err != nil {
+		return nil, fmt.Errorf("SSH bootstrap command failed: %w", err)
+	}
+	return output, nil
+}
+
+func (r SSHRunner) commandArgs(address, user string, commandArgs []string) ([]string, error) {
 	if net.ParseIP(address) == nil {
 		return nil, fmt.Errorf("Proxmox bootstrap address must be an IP address")
 	}
 	if user == "" {
 		return nil, errors.New("bootstrap SSH user is required")
+	}
+	if len(commandArgs) == 0 || commandArgs[0] == "" {
+		return nil, errors.New("SSH remote command is required")
 	}
 	args := []string{"-o", "BatchMode=no", "-o", "ForwardAgent=no", "-o", "ForwardX11=no"}
 	strictHostKey := r.StrictHostKey
@@ -89,20 +237,25 @@ func (r SSHRunner) run(ctx context.Context, address, user, command string, stdin
 	if r.KnownHosts != "" {
 		args = append(args, "-o", "UserKnownHostsFile="+r.KnownHosts)
 	}
+	if r.ConfigFile != "" {
+		args = append(args, "-F", r.ConfigFile)
+	}
 	if r.Port != 0 {
 		args = append(args, "-p", fmt.Sprint(r.Port))
 	}
 	if r.IdentityFile != "" {
 		args = append(args, "-i", r.IdentityFile)
 	}
-	args = append(args, user+"@"+address, command)
-	process := exec.CommandContext(ctx, "ssh", args...)
-	process.Stdin = stdin
-	output, err := process.Output()
-	if err != nil {
-		return nil, fmt.Errorf("SSH bootstrap command failed: %w", err)
+	target := address
+	if r.HostAlias != "" {
+		if !safeID(r.HostAlias) {
+			return nil, errors.New("SSH host alias is not a safe identifier")
+		}
+		target = r.HostAlias
 	}
-	return output, nil
+	args = append(args, user+"@"+target)
+	args = append(args, commandArgs...)
+	return args, nil
 }
 
 func InstallOperatorKey(ctx context.Context, runner CommandRunner, address, initialUser, publicKey string) error {

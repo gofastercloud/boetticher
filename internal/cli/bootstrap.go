@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -8,6 +9,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -177,6 +180,8 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err != nil {
 		return err
 	}
+	virtualOnlyRequested := s.PhysicalNetwork.Mode == model.ModeVirtualOnly && s.PhysicalNetwork.Trunk.Name == "" && *trunkInterface == ""
+	discovery = honorRequestedPhysicalMode(discovery, s.PhysicalNetwork.Mode, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
 	printPhysicalDiscovery(out, discovery)
 	if discovery.Mode == networkmodel.ModeSelectionNeeded {
 		return errors.New("multiple eligible trunk interfaces require --trunk-interface selection before bootstrap can mutate networking")
@@ -187,10 +192,15 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err := proxmox.EnsureVirtualBridge(ctx, client, plan.Node); err != nil {
 		return err
 	}
+	if err := proxmox.ConfigureManagementNetwork(ctx, runner, s.BootstrapAddress, *initialUser); err != nil {
+		return err
+	}
 	if s.StorageProfile == "single-disk" {
-		if err := client.EnsureDirectoryStorageContent(ctx, "local", "/var/lib/vz", []string{"backup", "images", "rootdir"}); err != nil {
+		if err := client.EnsureDirectoryStorageContent(ctx, "local", "/var/lib/vz", []string{"backup", "images", "rootdir", "snippets", "vztmpl"}); err != nil {
 			return fmt.Errorf("ensure single-disk Proxmox storage: %w", err)
 		}
+	} else if err := client.EnsureDirectoryStorageContent(ctx, "local", "/var/lib/vz", []string{"images", "rootdir", "vztmpl", "snippets"}); err != nil {
+		return fmt.Errorf("ensure local Proxmox artifact storage: %w", err)
 	}
 	trunkChanged := false
 	if discovery.Trunk != nil && discovery.Trunk.Bridge != "vmbr1" {
@@ -210,7 +220,10 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if discovery.Trunk != nil {
 		configuredTrunk = discovery.Trunk.Name
 	}
-	postDiscovery, err := proxmox.AnalyzePhysicalNetwork(postInterfaces, s.BootstrapAddress, configuredTrunk)
+	postDiscovery := discovery
+	if !virtualOnlyRequested {
+		postDiscovery, err = proxmox.AnalyzePhysicalNetwork(postInterfaces, s.BootstrapAddress, configuredTrunk)
+	}
 	if err != nil {
 		if trunkChanged {
 			return rollbackTrunkChange(ctx, client, plan.Node, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network mutation failed physical validation", err)
@@ -241,6 +254,9 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err != nil {
 		return fmt.Errorf("HOLD: recompute platform plan after physical binding: %w", err)
 	}
+	if err := buildDefaultArtifacts(ctx, client, plan, *siteDir, publicKey, *knownHosts, model.ExpandUserPath(s.SSHIdentityFile)); err != nil {
+		return err
+	}
 	plan, err = proxmox.ResolveQualifiedArtifacts(*siteDir, plan, true)
 	if err != nil {
 		return err
@@ -254,14 +270,6 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err := rebuildPortal(*siteDir, s); err != nil {
 		return fmt.Errorf("HOLD: bootstrap network binding was persisted but portal could not be regenerated: %w", err)
 	}
-	if s.Gateway.Mode == model.GatewayModeManaged {
-		if err := proxmox.EnsureFirewallVM(ctx, client, plan); err != nil {
-			return err
-		}
-		if err := client.StartVM(ctx, plan.Node, model.ProxmoxVMID); err != nil {
-			return fmt.Errorf("start managed gateway VM: %w", err)
-		}
-	}
 	hostKey, err := sshconfig.ScanHostKey(ctx, s.BootstrapAddress)
 	if err != nil {
 		return fmt.Errorf("record Proxmox SSH host identity: %w", err)
@@ -274,13 +282,14 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 		return err
 	}
 	if err := writeProjection(filepath.Join(*siteDir, "generated", "bootstrap.json"), struct {
-		ModelRevision    string `json:"model_revision"`
-		ProxmoxVersion   string `json:"proxmox_version"`
-		BootstrapAddress string `json:"bootstrap_address"`
-		SSHHostKey       string `json:"ssh_host_key"`
-		GatewayVMID      int    `json:"gateway_vmid,omitempty"`
-		Status           string `json:"status"`
-	}{plan.ModelRevision, version, s.BootstrapAddress, hostKey, func() int {
+		ModelRevision     string `json:"model_revision"`
+		ProxmoxVersion    string `json:"proxmox_version"`
+		BootstrapAddress  string `json:"bootstrap_address"`
+		SSHHostKey        string `json:"ssh_host_key"`
+		OperatorPublicKey string `json:"operator_public_key"`
+		GatewayVMID       int    `json:"gateway_vmid,omitempty"`
+		Status            string `json:"status"`
+	}{plan.ModelRevision, version, s.BootstrapAddress, hostKey, publicKey, func() int {
 		if s.Gateway.Mode == model.GatewayModeManaged {
 			return model.ProxmoxVMID
 		}
@@ -299,10 +308,117 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	}
 	fmt.Fprintf(out, "Proxmox bootstrap: PASS authenticated with scoped identity on %s\n", version)
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		fmt.Fprintln(out, "Managed gateway VM: PASS created or already present and started")
+		fmt.Fprintln(out, "Managed gateway VM: deferred to boetticher deploy")
 	} else {
 		fmt.Fprintln(out, "External gateway: PASS physical VLAN trunk recorded; appliance remains operator-managed")
 	}
 	fmt.Fprintln(out, "Initial root/bootstrap authentication: no longer required for routine boetticher access")
 	return nil
+}
+
+// honorRequestedPhysicalMode keeps a fresh virtual-only site virtual-only even
+// when hardware discovery finds one eligible spare interface. A physical
+// trunk enters the model only through an explicit selection or an already
+// persisted boetticher trunk binding.
+func honorRequestedPhysicalMode(discovery networkmodel.Discovery, desiredMode, configuredTrunk, explicitTrunk string) networkmodel.Discovery {
+	if desiredMode == model.ModeVirtualOnly && configuredTrunk == "" && explicitTrunk == "" {
+		discovery.Mode = networkmodel.ModeVirtualOnly
+		discovery.Trunk = nil
+		discovery.Explanation = "site explicitly requests virtual-only networking; eligible spare interfaces remain unclaimed"
+		discovery.Status = "PASS"
+	}
+	return discovery
+}
+
+func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan proxmox.Plan, siteDir, publicKey, knownHosts, identityFile string) error {
+	base, err := artifacts.ArtifactFor("base")
+	if err != nil {
+		return err
+	}
+	if _, _, err := artifacts.ResolveArtifactEvidence(siteDir, base); err == nil {
+		if _, err := proxmox.ResolveQualifiedArtifacts(siteDir, plan, true); err == nil {
+			return nil
+		}
+	}
+	if client == nil {
+		return errors.New("Proxmox client is required for appliance construction")
+	}
+	if err := proxmox.EnsureBuilderVM(ctx, client, plan, publicKey); err != nil {
+		return err
+	}
+	if err := client.StartVM(ctx, plan.Node, model.BuilderVMID); err != nil {
+		return fmt.Errorf("start temporary appliance builder: %w", err)
+	}
+	builderAddress, err := proxmox.WaitForQEMUIPv4(ctx, client, plan.Node, model.BuilderVMID, 60, 5*time.Second)
+	if err != nil {
+		return err
+	}
+	builderRunner := proxmox.SSHRunner{KnownHosts: knownHosts, StrictHostKey: "accept-new", IdentityFile: identityFile}
+	if err := proxmox.WaitForSSH(ctx, builderRunner, builderAddress, model.DefaultAdminSSHUser, 60, 5*time.Second); err != nil {
+		return fmt.Errorf("HOLD: temporary appliance builder SSH is not ready: %w", err)
+	}
+	if err := proxmox.WaitForCommand(ctx, builderRunner, builderAddress, model.DefaultAdminSSHUser, "test -f /run/boetticher-builder-ready", 60, 5*time.Second); err != nil {
+		return fmt.Errorf("HOLD: temporary appliance builder cloud-init is not ready: %w", err)
+	}
+	sourceRoot, sourceErr := applianceBuildSourceRoot()
+	var archive []byte
+	if sourceErr == nil {
+		archive, err = artifacts.BuildSourceArchive(sourceRoot)
+	} else {
+		archive, err = artifacts.BuildEmbeddedSourceArchive()
+	}
+	if err != nil {
+		return fmt.Errorf("prepare public appliance build inputs: %w", err)
+	}
+	if _, err := builderRunner.RunWithStdin(ctx, builderAddress, model.DefaultAdminSSHUser, "set -eu; install -d -m 0755 /home/labadmin/build; tar -xzf - -C /home/labadmin/build", bytes.NewReader(archive)); err != nil {
+		return fmt.Errorf("transfer public appliance build definitions: %w", err)
+	}
+	if _, err := builderRunner.Run(ctx, builderAddress, model.DefaultAdminSSHUser, "sudo -n /usr/local/sbin/boetticher-build"); err != nil {
+		return fmt.Errorf("qualify default appliance artifacts on temporary builder: %w", err)
+	}
+	result, err := builderRunner.Run(ctx, builderAddress, model.DefaultAdminSSHUser, "tar -czf - -C /home/labadmin/build generated/artifacts")
+	if err != nil {
+		return fmt.Errorf("retrieve qualified appliance evidence: %w", err)
+	}
+	if err := artifacts.ExtractBuildArchive(result, siteDir); err != nil {
+		return fmt.Errorf("extract qualified appliance evidence: %w", err)
+	}
+	if err := artifacts.RebindEvidencePaths(siteDir); err != nil {
+		return fmt.Errorf("bind qualified evidence to controller artifact bytes: %w", err)
+	}
+	if err := proxmox.DestroyBuilderVM(ctx, client, plan.Node); err != nil {
+		return err
+	}
+	return nil
+}
+
+func applianceBuildSourceRoot() (string, error) {
+	candidates := make([]string, 0, 3)
+	if workingDirectory, err := os.Getwd(); err == nil {
+		candidates = append(candidates, workingDirectory)
+	}
+	if executable, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Dir(executable))
+	}
+	if _, file, _, ok := runtime.Caller(0); ok {
+		candidates = append(candidates, filepath.Dir(file))
+	}
+	for _, candidate := range candidates {
+		for current := filepath.Clean(candidate); current != filepath.Dir(current); current = filepath.Dir(current) {
+			if buildSourceRoot(current) {
+				return current, nil
+			}
+		}
+	}
+	return "", errors.New("HOLD: public appliance build definitions are unavailable; run the release CLI from its build bundle or a boetticher source checkout")
+}
+
+func buildSourceRoot(root string) bool {
+	for _, relative := range artifacts.PublicBuildInputs {
+		info, err := os.Stat(filepath.Join(root, relative))
+		if err != nil || (!info.IsDir() && !info.Mode().IsRegular()) {
+			return false
+		}
+	}
+	return true
 }

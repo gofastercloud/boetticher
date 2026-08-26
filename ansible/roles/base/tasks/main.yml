@@ -8,12 +8,125 @@
       - chrony
       - nginx
       - openssl
+      - systemd-journal-remote
     state: present
     update_cache: true
     cache_valid_time: 3600
+  when: inventory_hostname in groups.get('proxmox', [])
 
 - name: Enable chrony
   ansible.builtin.service:
     name: chrony
     enabled: true
     state: started
+
+- name: Install bounded local journald configuration
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Write bounded local journald configuration
+  ansible.builtin.copy:
+    content: "[Journal]\nSystemMaxUse={{ logging_plan.local_journal_max_use }}\nRuntimeMaxUse=64M\n"
+    dest: /etc/systemd/journald.conf.d/boetticher.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart journald
+
+- name: Create endpoint-local logging identity directory
+  ansible.builtin.file:
+    path: /var/lib/boetticher/identity/logging
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  when: inventory_hostname in logging_upload_configs
+
+- name: Generate endpoint-local logging private key
+  ansible.builtin.command:
+    argv: [openssl, genpkey, -algorithm, EC, -pkeyopt, ec_paramgen_curve:P-256, -out, "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key"]
+  args:
+    creates: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key"
+  when: inventory_hostname in logging_upload_configs
+
+- name: Generate endpoint-local logging CSR
+  ansible.builtin.command:
+    argv: [openssl, req, -new, -sha256, -key, "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key", -subj, "/CN=client-{{ inventory_hostname }}.{{ domain }}", -out, "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.csr"]
+  args:
+    creates: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.csr"
+  when: inventory_hostname in logging_upload_configs
+
+- name: Fetch endpoint-local logging CSR for controller signing
+  ansible.builtin.fetch:
+    src: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.csr"
+    dest: "{{ pki_csr_output_dir }}/logging-{{ inventory_hostname }}.csr.pem"
+    flat: true
+  when:
+    - inventory_hostname in logging_upload_configs
+    - pki_bootstrap_phase | default(false) | bool
+
+- name: Install the platform CA for endpoint journal upload
+  ansible.builtin.copy:
+    content: "{{ client_ca_pem }}"
+    dest: /var/lib/boetticher/identity/logging/ca.crt
+    owner: root
+    group: root
+    mode: '0644'
+  when: inventory_hostname in logging_upload_configs
+
+- name: Install the controller-signed endpoint journal certificate
+  ansible.builtin.copy:
+    content: "{{ logging_client_certificates[inventory_hostname] }}"
+    dest: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.crt"
+    owner: root
+    group: root
+    mode: '0644'
+  no_log: true
+  when:
+    - inventory_hostname in logging_upload_configs
+    - logging_client_certificates[inventory_hostname] | default('') | length > 0
+
+- name: Install the asynchronous journal-upload configuration skeleton
+  ansible.builtin.copy:
+    content: "{{ logging_upload_configs[inventory_hostname] }}"
+    dest: /etc/systemd/journal-upload.conf
+    owner: root
+    group: root
+    mode: '0644'
+  when: inventory_hostname in logging_upload_configs
+
+- name: Enable asynchronous journal upload after endpoint certificate installation
+  ansible.builtin.service:
+    name: systemd-journal-upload
+    enabled: true
+    state: started
+  when:
+    - inventory_hostname in logging_upload_configs
+    - logging_client_certificates[inventory_hostname] | default('') | length > 0
+
+- name: Create declared systemd credential drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item.key }}.d"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop: "{{ (credential_dropins[inventory_hostname] | default({})) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Install declared systemd credential drop-ins
+  ansible.builtin.copy:
+    content: "{{ item.value }}"
+    dest: "/etc/systemd/system/{{ item.key }}.d/boetticher-credentials.conf"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ (credential_dropins[inventory_hostname] | default({})) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  notify: reload systemd

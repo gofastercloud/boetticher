@@ -6,61 +6,14 @@
       - dns_plan.authoritative_implementation == 'PowerDNS Authoritative'
       - dns_plan.authoritative_version == '4.9.17'
       - dns_plan.authoritative_port == '5353'
-      - not (dns_plan.ddns.enabled | bool) or (ddns_tsig_secret is defined and ddns_tsig_secret | length > 0)
-    fail_msg: "DNS convergence requires the generated PowerDNS, AdGuard, and DDNS contract"
+    fail_msg: "DNS deployment requires the generated PowerDNS, recursive-provider, and DDNS contract"
   no_log: true
   when: inventory_hostname in groups.get('dns', [])
 
-- name: Install DNS service dependencies
-  ansible.builtin.apt:
-    name:
-      - ca-certificates
-      - curl
-      - gpg
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
-  when: inventory_hostname in groups.get('dns', [])
-
-- name: Create the APT keyring directory
-  ansible.builtin.file:
-    path: /etc/apt/keyrings
-    state: directory
-    owner: root
-    group: root
-    mode: '0755'
-  when: inventory_hostname in groups.get('dns', [])
-
-- name: Install the qualified PowerDNS repository key
-  ansible.builtin.get_url:
-    url: https://repo.powerdns.com/FD380FBB-pub.asc
-    dest: /etc/apt/keyrings/auth-49-pub.asc
-    owner: root
-    group: root
-    mode: '0644'
-  when: inventory_hostname in groups.get('dns', [])
-
-- name: Configure the qualified PowerDNS repository
-  ansible.builtin.deb822_repository:
-    name: boetticher-powerdns
-    types: deb
-    uris: http://repo.powerdns.com/debian
-    suites: trixie-auth-49
-    components:
-      - main
-    signed_by: /etc/apt/keyrings/auth-49-pub.asc
-    state: present
-  register: powerdns_repository
-  when: inventory_hostname in groups.get('dns', [])
-
-- name: Install the qualified PowerDNS package
-  ansible.builtin.apt:
-    name:
-      - "pdns-server={{ dns_plan.authoritative_package_version }}"
-      - "pdns-backend-sqlite3={{ dns_plan.authoritative_package_version }}"
-      - sqlite3
-    state: present
-    update_cache: "{{ powerdns_repository.changed | default(false) }}"
+- name: Require qualified PowerDNS software in the appliance
+  ansible.builtin.command:
+    argv: [sh, -c, "command -v pdns_server && command -v pdnsutil && command -v sqlite3"]
+  changed_when: false
   when: inventory_hostname in groups.get('dns', [])
 
 - name: Check the installed PowerDNS version
@@ -116,24 +69,6 @@
     mode: '0640'
   notify: restart pdns
   when: inventory_hostname in groups.get('dns', [])
-
-- name: Store the deterministic Kea DDNS TSIG keys without exposing secrets in argv
-  ansible.builtin.command:
-    argv:
-      - sqlite3
-      - /var/lib/powerdns/pdns.sqlite3
-    stdin: >-
-      INSERT OR REPLACE INTO tsigkeys (name, algorithm, secret) VALUES
-      ('{{ item.tsig_key_name | replace("'", "''") }}',
-       '{{ dns_plan.ddns.tsig_algorithm }}',
-       '{{ ddns_tsig_secret | replace("'", "''") }}');
-    stdin_add_newline: true
-  loop: "{{ dns_plan.ddns.zones }}"
-  changed_when: false
-  no_log: true
-  when:
-    - inventory_hostname == 'lab-dns-01'
-    - dns_plan.ddns.enabled | bool
 
 - name: Read current PowerDNS zones on the primary
   ansible.builtin.command: pdnsutil zone list-all
@@ -211,7 +146,10 @@
     owner: root
     group: root
     mode: '0644'
-  when: inventory_hostname in groups.get('dns', [])
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'adguard'
+    - not (boetticher_appliance_artifact | default(false) | bool)
 
 - name: Install AdGuard Home under its own service directory
   ansible.builtin.unarchive:
@@ -219,7 +157,18 @@
     dest: /opt
     remote_src: true
     creates: /opt/AdGuardHome/AdGuardHome
-  when: inventory_hostname in groups.get('dns', [])
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'adguard'
+    - not (boetticher_appliance_artifact | default(false) | bool)
+
+- name: Require the qualified AdGuard binary in an appliance
+  ansible.builtin.command: /opt/AdGuardHome/AdGuardHome --version
+  changed_when: false
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'adguard'
+    - boetticher_appliance_artifact | default(false) | bool
 
 - name: Configure AdGuard Home as the client-facing resolver
   ansible.builtin.template:
@@ -229,7 +178,9 @@
     group: root
     mode: '0600'
   notify: restart adguardhome
-  when: inventory_hostname in groups.get('dns', [])
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'adguard'
 
 - name: Install AdGuard Home systemd unit
   ansible.builtin.template:
@@ -241,7 +192,70 @@
   notify:
     - reload systemd
     - restart adguardhome
-  when: inventory_hostname in groups.get('dns', [])
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'adguard'
+
+- name: Assert the qualified Blocky binary is present
+  ansible.builtin.command: blocky --version
+  register: blocky_version
+  changed_when: false
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'blocky'
+
+- name: Refuse an unsupported Blocky release
+  ansible.builtin.assert:
+    that: "'0.34.0' in blocky_version.stdout"
+    fail_msg: "The installed Blocky resolver is not the qualified 0.34.0 release"
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'blocky'
+
+- name: Install the canonical Blocky configuration
+  ansible.builtin.copy:
+    content: "{{ blocky_config }}"
+    dest: /etc/blocky/config.yml
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart blocky
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'blocky'
+
+- name: Validate the canonical Blocky configuration with the installed binary
+  ansible.builtin.command: blocky validate --config /etc/blocky/config.yml
+  changed_when: false
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'blocky'
+
+- name: Check for an active AdGuard service on a Blocky appliance
+  ansible.builtin.command: systemctl is-active --quiet adguardhome
+  register: adguard_service_state
+  changed_when: false
+  failed_when: false
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'blocky'
+
+- name: Refuse an active unselected AdGuard resolver
+  ansible.builtin.assert:
+    that: adguard_service_state.rc != 0
+    fail_msg: "AdGuard Home is active while Blocky is the selected DNS provider"
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'blocky'
+
+- name: Enable the qualified Blocky service
+  ansible.builtin.service:
+    name: blocky
+    enabled: true
+    state: started
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'blocky'
 
 - name: Enable DNS services
   ansible.builtin.service:
@@ -250,5 +264,13 @@
     state: started
   loop:
     - pdns
-    - adguardhome
   when: inventory_hostname in groups.get('dns', [])
+
+- name: Enable AdGuard Home when selected
+  ansible.builtin.service:
+    name: adguardhome
+    enabled: true
+    state: started
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'adguard'

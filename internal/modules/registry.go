@@ -101,10 +101,17 @@ type ResolvedModule struct {
 }
 
 func (r Registry) Resolve(config model.SiteConfig) ([]ResolvedModule, error) {
-	if err := validateModuleConfigNames(r, config.Modules); err != nil {
+	return r.resolve(config, config.Modules.Map())
+}
+
+// resolve accepts a resolved lookup projection for synthetic registry tests
+// and internal registry composition. Persisted SiteConfig uses ModulesConfig,
+// which remains deliberately typed and strict.
+func (r Registry) resolve(config model.SiteConfig, configs map[string]model.ModuleConfig) ([]ResolvedModule, error) {
+	if err := validateModuleConfigNames(r, configs); err != nil {
 		return nil, err
 	}
-	for name, moduleConfig := range config.Modules {
+	for name, moduleConfig := range configs {
 		if moduleConfig.Provider != "" && name != "dns" {
 			return nil, fmt.Errorf("modules.%s.provider: provider selection is only supported by dns", name)
 		}
@@ -115,10 +122,13 @@ func (r Registry) Resolve(config model.SiteConfig) ([]ResolvedModule, error) {
 	active := map[string]bool{}
 	reasons := map[string]string{}
 	for _, definition := range r.Definitions() {
-		requested, exists := config.Modules[definition.Name]
+		requested, exists := configs[definition.Name]
 		enabled := defaultEnabled(definition.Policy)
 		reason := "default"
 		if definition.Policy == Mandatory {
+			if exists && requested.Enabled != nil && !*requested.Enabled {
+				return nil, fmt.Errorf("modules.%s.enabled: %s is mandatory and cannot be disabled", definition.Name, definition.Name)
+			}
 			enabled, reason = true, "mandatory"
 		} else if exists && requested.Enabled != nil {
 			enabled = *requested.Enabled
@@ -129,12 +139,9 @@ func (r Registry) Resolve(config model.SiteConfig) ([]ResolvedModule, error) {
 			reasons[definition.Name] = reason
 		}
 	}
-	if dnsConfig, exists := config.Modules["dns"]; exists && dnsConfig.Enabled != nil && !*dnsConfig.Enabled {
-		return nil, fmt.Errorf("modules.dns.enabled: dns is mandatory and cannot be disabled")
-	}
 	if config.Gateway.Mode == model.GatewayModeExternal {
 		if _, hasFirewall := r.definitions["firewall"]; hasFirewall {
-			firewallConfig, exists := config.Modules["firewall"]
+			firewallConfig, exists := configs["firewall"]
 			if !exists || firewallConfig.Enabled == nil || *firewallConfig.Enabled {
 				return nil, fmt.Errorf("modules.firewall.enabled: external gateway mode requires the managed firewall module to be explicitly disabled")
 			}
@@ -150,7 +157,7 @@ func (r Registry) Resolve(config model.SiteConfig) ([]ResolvedModule, error) {
 			if _, ok := r.definitions[dependency]; !ok {
 				return nil, fmt.Errorf("modules.%s: dependency %q is not registered", name, dependency)
 			}
-			if requested, exists := config.Modules[dependency]; exists && requested.Enabled != nil && !*requested.Enabled {
+			if requested, exists := configs[dependency]; exists && requested.Enabled != nil && !*requested.Enabled {
 				return nil, fmt.Errorf("modules.%s: required dependency %q is explicitly disabled", name, dependency)
 			}
 			if !active[dependency] {
@@ -215,7 +222,7 @@ func (r Registry) Resolve(config model.SiteConfig) ([]ResolvedModule, error) {
 			continue
 		}
 		reason := "default"
-		if requested, exists := config.Modules[definition.Name]; exists && requested.Enabled != nil {
+		if requested, exists := configs[definition.Name]; exists && requested.Enabled != nil {
 			reason = "explicit"
 		}
 		result = append(result, ResolvedModule{Definition: definition, Enabled: false, Reason: reason, State: "Disabled"})

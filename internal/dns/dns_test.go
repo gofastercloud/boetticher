@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"gopkg.in/yaml.v3"
 )
 
 func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
@@ -67,8 +68,7 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 
 func TestRecursiveProviderSelectionIsTypedAndProviderNeutral(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
-	site.ModuleConfig = map[string]model.ModuleConfig{}
-	site.ModuleConfig["dns"] = model.ModuleConfig{Provider: string(model.DNSProviderAdGuard)}
+	site.ModuleConfig = map[string]model.ModuleConfig{"dns": {Provider: string(model.DNSProviderAdGuard)}}
 	plan, err := PlanFromSite(site)
 	if err != nil {
 		t.Fatal(err)
@@ -80,6 +80,52 @@ func TestRecursiveProviderSelectionIsTypedAndProviderNeutral(t *testing.T) {
 		if strings.Contains(upstream, "lab.home.arpa") {
 			t.Fatalf("authoritative namespace leaked into public upstreams: %q", upstream)
 		}
+	}
+}
+
+func TestRenderBlockyConfigPinsAuthoritativeZonesWithoutPublicFallback(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := RenderBlockyConfig(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded BlockyConfig
+	if err := yaml.Unmarshal(config, &decoded); err != nil {
+		t.Fatalf("Blocky config is not valid YAML: %v", err)
+	}
+	if len(decoded.Upstreams.Groups["default"]) != 2 || decoded.Upstreams.Groups["default"][0] != "https://cloudflare-dns.com/dns-query" {
+		t.Fatalf("unexpected Blocky upstream group: %#v", decoded.Upstreams)
+	}
+	if decoded.Conditional.FallbackUpstream {
+		t.Fatal("Blocky authoritative mappings allow public fallback")
+	}
+	if got := decoded.Blocking.Denylists[FilteringPolicyGroup]; len(got) != 1 || got[0] != FilteringPolicyFile {
+		t.Fatalf("unexpected Blocky denylist: %#v", decoded.Blocking.Denylists)
+	}
+	if got := decoded.Blocking.ClientGroupsBlock["default"]; len(got) != 1 || got[0] != FilteringPolicyGroup {
+		t.Fatalf("unexpected Blocky client group: %#v", decoded.Blocking.ClientGroupsBlock)
+	}
+	for _, zone := range []string{"lab.home.arpa", "trusted.lab.home.arpa", "servers.lab.home.arpa", "sandbox.lab.home.arpa", "mgmt.lab.home.arpa", "10.10.10.in-addr.arpa"} {
+		if got := decoded.Conditional.Mapping[zone]; got != "127.0.0.1:5353" {
+			t.Fatalf("unexpected PowerDNS mapping for %q: %#v", zone, got)
+		}
+	}
+	if decoded.Ports.DNS != 53 || decoded.Caching.MinTime != "5m" {
+		t.Fatalf("unexpected Blocky ports/cache config: %#v", decoded)
+	}
+}
+
+func TestRenderBlockyConfigRejectsOtherProvider(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.RecursiveProvider = string(model.DNSProviderAdGuard)
+	if _, err := RenderBlockyConfig(plan); err == nil {
+		t.Fatal("Blocky renderer accepted AdGuard provider")
 	}
 }
 

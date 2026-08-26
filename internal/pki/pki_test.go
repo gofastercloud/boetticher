@@ -63,6 +63,36 @@ func TestSignServerCSRAcceptsOnlyApprovedSANs(t *testing.T) {
 	}
 }
 
+func TestSignClientCSRKeepsEndpointKeyOutsideControllerCertificate(t *testing.T) {
+	authority, err := GenerateAuthority(time.Unix(0, 0), "lab.home.arpa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: "client-lab-proxmox-01.lab.home.arpa"}}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate, err := SignClientCSR(authority, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: request})), "lab-proxmox-01", "lab.home.arpa", time.Unix(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if certificate.CertPEM == "" || certificate.KeyPEM != "" {
+		t.Fatalf("client CSR signer returned unexpected key material: %#v", certificate)
+	}
+	block, _ := pem.Decode([]byte(certificate.CertPEM))
+	parsed, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parsed.ExtKeyUsage) != 1 || parsed.ExtKeyUsage[0] != x509.ExtKeyUsageClientAuth {
+		t.Fatalf("client CSR certificate has wrong usage: %v", parsed.ExtKeyUsage)
+	}
+}
+
 func TestClientNameCannotEscapeRuntimeDirectory(t *testing.T) {
 	if err := ValidateClientName("../outside"); err == nil {
 		t.Fatal("path traversal client name was accepted")

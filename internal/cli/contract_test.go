@@ -45,6 +45,16 @@ func TestUsageIsGeneratedFromCommandMetadata(t *testing.T) {
 	}
 }
 
+func TestRootShortHelpListsCurrentCommands(t *testing.T) {
+	var output bytes.Buffer
+	if err := Run([]string{"-h"}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "boetticher deploy") {
+		t.Fatalf("root short help omitted deploy: %s", output.String())
+	}
+}
+
 func TestPublicHelpPathsDoNotFail(t *testing.T) {
 	for _, args := range [][]string{
 		{"init", "--help"}, {"preflight", "-h"}, {"bootstrap", "--help"}, {"deploy", "--help"},
@@ -59,6 +69,31 @@ func TestPublicHelpPathsDoNotFail(t *testing.T) {
 		if output.Len() == 0 {
 			t.Errorf("%v produced no help output", args)
 		}
+	}
+}
+
+func TestNestedHelpPathsArePathAwareAndSubstantive(t *testing.T) {
+	paths := []string{
+		"firewall diff", "dhcp leases", "network trunk status", "pki trust export",
+		"module disable", "config schema", "portal build",
+	}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			var output bytes.Buffer
+			args := append(strings.Fields(path), "--help")
+			if err := Run(args, &output, &output); err != nil {
+				t.Fatal(err)
+			}
+			text := output.String()
+			for _, section := range []string{"Purpose:", "Usage:", "Arguments:", "Options:", "Safety:", "Examples:", "Related commands:"} {
+				if !strings.Contains(text, section) {
+					t.Errorf("nested help %q is missing %s: %s", path, section, text)
+				}
+			}
+			if strings.Contains(text, "Run boetticher "+strings.Fields(path)[0]+" with --help") {
+				t.Errorf("nested help %q contains recursive hint: %s", path, text)
+			}
+		})
 	}
 }
 

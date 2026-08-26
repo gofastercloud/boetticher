@@ -1,6 +1,6 @@
 PidFile=/run/zabbix/zabbix_agent2.pid
 LogType=system
-Server=10.10.99.20
-ServerActive=10.10.99.20
+Server=10.10.20.20
+ServerActive=10.10.20.20
 Hostname={{ zabbix_agent_hostname | default(inventory_hostname) }}
 Include=/etc/zabbix/zabbix_agent2.d/*.conf

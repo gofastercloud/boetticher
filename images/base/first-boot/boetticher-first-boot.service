@@ -1,0 +1,13 @@
+[Unit]
+Description=Install the Core-injected operator key for labadmin
+After=local-fs.target cloud-init.service
+Before=ssh.service
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/boetticher/boetticher-first-boot.sh
+NoNewPrivileges=no
+ProtectSystem=full
+ProtectHome=no
+
+[Install]
+WantedBy=multi-user.target

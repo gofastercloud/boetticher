@@ -39,6 +39,20 @@ func TestClientUsesTokenAndDecodesEnvelope(t *testing.T) {
 	}
 }
 
+func TestQEMUAgentNetworkInterfacesUsesGuestAgentEndpoint(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/lab-proxmox-01/qemu/190/agent/network-get-interfaces" {
+			t.Fatalf("unexpected guest-agent request: %s %s", r.Method, r.URL.Path)
+		}
+		return response([]byte(`{"data":[{"name":"eth0","hardware-address":"02:00:00:00:00:01","ip-addresses":[{"ip-address":"127.0.0.1","ip-address-type":"ipv4"},{"ip-address":"192.0.2.15","ip-address-type":"ipv4"}]}]}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	interfaces, err := client.QEMUAgentNetworkInterfaces(context.Background(), "lab-proxmox-01", 190)
+	if err != nil || len(interfaces) != 1 || interfaces[0].IPAddresses[1].IPAddress != "192.0.2.15" {
+		t.Fatalf("QEMUAgentNetworkInterfaces() = %#v, %v", interfaces, err)
+	}
+}
+
 func TestCreateTokenUsesFormEncoding(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/x-www-form-urlencoded" {
@@ -54,6 +68,42 @@ func TestCreateTokenUsesFormEncoding(t *testing.T) {
 	secret, err := client.CreateToken(context.Background(), "labadmin@pve", "boetticher")
 	if err != nil || secret != "token-secret" {
 		t.Fatalf("CreateToken() = %q, %v", secret, err)
+	}
+}
+
+func TestCreateVMWaitsForProxmoxTaskBeforeReturning(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu":
+			return response([]byte(`{"data":"UPID:pve:create-vm"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:create-vm/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		default:
+			t.Fatalf("unexpected VM creation request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.CreateVM(context.Background(), "node", 190, url.Values{"name": {"lab-builder-01"}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateLXCWaitsForProxmoxTaskBeforeReturning(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc":
+			return response([]byte(`{"data":"UPID:pve:create-lxc"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:create-lxc/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		default:
+			t.Fatalf("unexpected LXC creation request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.CreateLXC(context.Background(), "node", 110, url.Values{"hostname": {"lab-dns-01"}}); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -223,4 +273,8 @@ func TestImportDiskUsesThePinnedStoragePlan(t *testing.T) {
 
 func response(data []byte) *http.Response {
 	return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(data)))}
+}
+
+func apiResponse(status int, data string) *http.Response {
+	return &http.Response{StatusCode: status, Status: http.StatusText(status), Header: make(http.Header), Body: io.NopCloser(strings.NewReader(data))}
 }

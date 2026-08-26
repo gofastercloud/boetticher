@@ -2,15 +2,20 @@ package proxmox
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/modules"
 )
 
 func TestFoundationPlanIsDeterministic(t *testing.T) {
@@ -36,6 +41,72 @@ func TestFoundationPlanIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestFoundationPlanUsesGatewayFirstDeploymentOrder(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	order := make([]string, 0, len(plan.Guests))
+	for _, guest := range plan.Guests {
+		order = append(order, guest.Name)
+	}
+	want := []string{"lab-fw-01", "lab-dns-01", "lab-dns-02", "lab-log-01", "lab-monitor-01", "lab-portal-01"}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("deployment order = %#v, want %#v", order, want)
+	}
+}
+
+func TestComposedPlanUsesResolvedCapabilityOrder(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	order := make(map[string]int, len(plan.Guests))
+	for index, guest := range plan.Guests {
+		order[guest.Name] = index
+	}
+	for _, pair := range [][2]string{{"lab-fw-01", "lab-dns-01"}, {"lab-dns-01", "lab-log-01"}, {"lab-dns-01", "lab-monitor-01"}, {"lab-log-01", "lab-portal-01"}} {
+		if order[pair[0]] >= order[pair[1]] {
+			t.Fatalf("deployment order %q before %q was not respected: %#v", pair[0], pair[1], order)
+		}
+	}
+}
+
+func TestComposedDNSGuestsReceiveOnlyTheirOwnPersistentVolumes(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, guest := range plan.Guests {
+		if guest.Name != "lab-dns-01" && guest.Name != "lab-dns-02" {
+			continue
+		}
+		if len(guest.Persistent) != 2 || len(guest.Volumes) != 2 {
+			t.Fatalf("DNS guest %s received shared declaration state: persistent=%#v volumes=%#v", guest.Name, guest.Persistent, guest.Volumes)
+		}
+		for _, state := range guest.Persistent {
+			if state.Guest != guest.Name {
+				t.Fatalf("DNS guest %s received persistent state for %s", guest.Name, state.Guest)
+			}
+		}
+		for _, volume := range guest.Volumes {
+			if volume.Guest != guest.Name {
+				t.Fatalf("DNS guest %s received volume for %s", guest.Name, volume.Guest)
+			}
+		}
+	}
+}
+
 func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {
@@ -52,9 +123,18 @@ func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	evidence.ArtifactPath = artifactFile
-	evidence.PackageManifestSHA = strings.Repeat("a", 64)
-	evidence.SBOMSHA256 = strings.Repeat("b", 64)
-	evidence.TrivyReportSHA256 = strings.Repeat("c", 64)
+	for filename, content := range map[string]string{"package-manifest.txt": "package: test\n", "sbom.json": "{}\n", "trivy.json": "{\"Results\":[]}\n"} {
+		if err := os.WriteFile(filepath.Join(filepath.Dir(artifactFile), filename), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	evidence.PackageManifestSHA, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactFile), "package-manifest.txt"), "package manifest")
+	evidence.SBOMSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactFile), "sbom.json"), "SBOM")
+	evidence.TrivyReportSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactFile), "trivy.json"), "Trivy report")
+	evidence, err = artifacts.QualifyEvidence(evidence, artifacts.ScanSummary{Completed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
 	root := t.TempDir()
 	if err := artifacts.WriteEvidence(root, guest.Artifact.Name, evidence); err != nil {
 		t.Fatal(err)
@@ -68,6 +148,30 @@ func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
 	}
 	if _, err := ResolveQualifiedArtifacts(t.TempDir(), plan, true); err == nil {
 		t.Fatal("missing qualification evidence was accepted")
+	}
+}
+
+func TestLXCBootstrapKeyUsesProxmoxRootInjectionContract(t *testing.T) {
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator"
+	params, err := lxcBootstrapKeyParams(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := params.Get("ssh-public-keys"); got != key {
+		t.Fatalf("LXC bootstrap key parameter = %q, want %q", got, key)
+	}
+	if _, err := lxcBootstrapKeyParams("not-a-key"); err == nil {
+		t.Fatal("invalid LXC bootstrap key was accepted")
+	}
+}
+
+func TestLXCBootstrapKeyCanBeOmittedForPlanRendering(t *testing.T) {
+	params, err := lxcBootstrapKeyParams("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(params) != 0 {
+		t.Fatalf("empty bootstrap key produced Proxmox parameters: %#v", params)
 	}
 }
 
@@ -148,7 +252,7 @@ func TestQEMUPersistentVolumeParamsUseCoreResolvedStorage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := params["scsi1"]; got != modelStorageIDForTest+":4,backup=1" {
+	if got := params["scsi1"]; got != modelStorageIDForTest+":4,backup=1,serial=boetticher-firewall-lab-fw-01-kea-leases" {
 		t.Fatalf("unexpected persistent QEMU disk: %q", got)
 	}
 }
@@ -162,7 +266,137 @@ func TestQEMUPersistentVolumeParamsRejectUnresolvedStorage(t *testing.T) {
 	}
 }
 
+func TestExistingQEMUPersistentVolumesRequireStableIdentity(t *testing.T) {
+	guest := GuestPlan{Volumes: []model.PersistentVolumeDeclaration{{
+		Name: "kea-leases", Module: "firewall", Guest: "lab-fw-01", SizeGiB: 4,
+		MountPath: "/var/lib/kea", Storage: modelStorageIDForTest, Backup: true,
+	}}}
+	plan := Plan{}
+	if err := validateExistingQEMUVolumes(map[string]any{
+		"scsi1": modelStorageIDForTest + ":4,backup=1,serial=boetticher-firewall-lab-fw-01-kea-leases",
+	}, plan, guest); err != nil {
+		t.Fatalf("stable QEMU volume identity was rejected: %v", err)
+	}
+	for _, observed := range []string{
+		modelStorageIDForTest + ":4,backup=1",
+		modelStorageIDForTest + ":4,backup=1,serial=boetticher-firewall-lab-fw-01-other",
+	} {
+		if err := validateExistingQEMUVolumes(map[string]any{"scsi1": observed}, plan, guest); err == nil || !strings.Contains(err.Error(), "HOLD") {
+			t.Fatalf("QEMU volume without the expected stable identity was accepted: %q / %v", observed, err)
+		}
+	}
+}
+
 const modelStorageIDForTest = "boetticher-thin"
+
+func TestEnsureArtifactInStorageVerifiesPostUploadChecksum(t *testing.T) {
+	artifactPath := filepath.Join(t.TempDir(), "artifact.tar.zst")
+	content := []byte("qualified appliance bytes")
+	if err := os.WriteFile(artifactPath, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	checksum := fmt.Sprintf("%x", sha256.Sum256(content))
+	filename := "boetticher-logging-1.0.0-amd64.tar.zst"
+	storageReads := 0
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+			storageReads++
+			if storageReads == 1 {
+				return response([]byte(`{"data":[]}`))
+			}
+			return response([]byte(`{"data":[{"volid":"local:vztmpl/boetticher-logging-1.0.0-amd64.tar.zst","filename":"boetticher-logging-1.0.0-amd64.tar.zst","checksum":"` + checksum + `"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected artifact storage request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := ensureArtifactInStorage(context.Background(), client, "node", "local", "vztmpl", filename, checksum, artifactPath); err != nil {
+		t.Fatalf("ensureArtifactInStorage() = %v", err)
+	}
+	if storageReads != 2 {
+		t.Fatalf("storage reads = %d, want pre-upload and post-upload verification", storageReads)
+	}
+}
+
+func TestEnsureArtifactInStorageHoldsOnPostUploadChecksumMismatch(t *testing.T) {
+	artifactPath := filepath.Join(t.TempDir(), "artifact.tar.zst")
+	content := []byte("qualified appliance bytes")
+	if err := os.WriteFile(artifactPath, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	checksum := fmt.Sprintf("%x", sha256.Sum256(content))
+	filename := "boetticher-logging-1.0.0-amd64.tar.zst"
+	storageReads := 0
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+			storageReads++
+			if storageReads == 1 {
+				return response([]byte(`{"data":[]}`))
+			}
+			return response([]byte(`{"data":[{"filename":"` + filename + `","checksum":"` + strings.Repeat("a", 64) + `"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected artifact storage request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := ensureArtifactInStorage(context.Background(), client, "node", "local", "vztmpl", filename, checksum, artifactPath); err == nil || !strings.Contains(err.Error(), "does not match qualified") {
+		t.Fatalf("post-upload checksum mismatch was not rejected: %v", err)
+	}
+}
+
+func TestEnsureFirewallHoldsUnownedFixedIDBeforeArtifactUpload(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var firewall GuestPlan
+	for _, guest := range plan.Guests {
+		if guest.Kind == KindQEMU {
+			firewall = guest
+			break
+		}
+	}
+	if firewall.VMID == 0 {
+		t.Fatal("test fixture has no firewall guest")
+	}
+	config, err := json.Marshal(map[string]any{
+		"name":        firewall.Name,
+		"hostname":    firewall.Hostname,
+		"description": artifactDescription(firewall.Artifact),
+		"tags":        "boetticher;managed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploadAttempted := false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/qemu/100/config") {
+			return response(append([]byte(`{"data":`), append(config, '}')...))
+		}
+		if strings.Contains(r.URL.Path, "/storage/local/") || strings.HasSuffix(r.URL.Path, "/upload") {
+			uploadAttempted = true
+			return response([]byte(`{"data":[]}`))
+		}
+		t.Fatalf("unexpected request while checking fixed-ID ownership: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err = EnsureFirewallVM(context.Background(), client, plan)
+	if err == nil || !strings.Contains(err.Error(), "canonical ownership proof") {
+		t.Fatalf("unowned firewall VM was not held: %v", err)
+	}
+	if uploadAttempted {
+		t.Fatal("artifact storage was touched before fixed-ID ownership was proven")
+	}
+}
 
 func TestPlatformGuestPlanCarriesTagsForBackupAndVisibility(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
@@ -203,13 +437,82 @@ func TestExistingGuestTagsAreReconciled(t *testing.T) {
 		if err := r.ParseForm(); err != nil {
 			t.Errorf("parse tag update form: %v", err)
 		}
-		if got := canonicalTags(r.Form.Get("tags")); got != canonicalTags("backup;boetticher;managed;module;module-firewall") {
+		if got := canonicalTags(r.Form.Get("tags")); got != canonicalTags("backup;boetticher;boetticher-module-firewall;managed;module;module-firewall") {
 			t.Errorf("tags = %q", got)
 		}
 		return response([]byte(`{"data":null}`))
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	if err := ensureExistingGuestTags(context.Background(), client, plan, plan.Guests[0], map[string]any{"tags": "boetticher"}); err != nil {
+	if err := ensureExistingGuestTags(context.Background(), client, plan, plan.Guests[0], map[string]any{"tags": "boetticher-module-firewall"}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReservedModuleGuestsRequireOwnershipProofBeforeTagReconciliation(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, guest := range plan.Guests {
+		if guest.Owner == "" || !strings.HasPrefix(guest.Owner, "boetticher/module/") {
+			continue
+		}
+		if err := ensureExistingGuestTags(context.Background(), nil, plan, guest, map[string]any{"tags": "boetticher;managed"}); err == nil || !strings.Contains(err.Error(), "canonical tag") {
+			t.Fatalf("guest %d accepted without canonical ownership proof: %v", guest.VMID, err)
+		}
+	}
+}
+
+func TestEveryFixedGuestIdentityRequiresCanonicalOwnershipProof(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, guest := range plan.Guests {
+		current := map[string]any{
+			"name": guest.Name, "hostname": guest.Hostname,
+			"description": artifactDescription(guest.Artifact),
+			"tags":        "boetticher;managed",
+		}
+		if err := validateExistingGuestIdentity(current, guest); err == nil || !strings.Contains(err.Error(), "canonical ownership proof") {
+			t.Fatalf("fixed guest %d was accepted without ownership proof: %v", guest.VMID, err)
+		}
+	}
+}
+
+func TestEveryFixedGuestKindCollisionHoldsBeforeCreation(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range plan.Guests {
+		expected := expected
+		t.Run(fmt.Sprintf("%s-%d", expected.Name, expected.VMID), func(t *testing.T) {
+			transport := roundTripFunc(func(r *http.Request) *http.Response {
+				qemuPath := "/api2/json/nodes/lab-proxmox-01/qemu/" + strconv.Itoa(expected.VMID) + "/config"
+				lxcPath := "/api2/json/nodes/lab-proxmox-01/lxc/" + strconv.Itoa(expected.VMID) + "/config"
+				switch {
+				case expected.Kind == KindQEMU && r.Method == http.MethodGet && r.URL.Path == qemuPath:
+					return apiResponse(http.StatusNotFound, `{"errors":"missing qemu"}`)
+				case expected.Kind == KindQEMU && r.Method == http.MethodGet && r.URL.Path == lxcPath:
+					return response([]byte(`{"data":{"name":"user-lxc"}}`))
+				case expected.Kind == KindLXC && r.Method == http.MethodGet && r.URL.Path == qemuPath:
+					return response([]byte(`{"data":{"name":"user-qemu"}}`))
+				default:
+					t.Fatalf("unexpected request after fixed-ID collision: %s %s", r.Method, r.URL.Path)
+					return nil
+				}
+			})
+			client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+			var collisionErr error
+			if expected.Kind == KindQEMU {
+				collisionErr = ensureQEMU(context.Background(), client, plan, expected)
+			} else {
+				collisionErr = ensureLXC(context.Background(), client, plan, expected)
+			}
+			if collisionErr == nil || !strings.Contains(collisionErr.Error(), "HOLD") {
+				t.Fatalf("fixed-ID kind collision was not held: %v", collisionErr)
+			}
+		})
 	}
 }

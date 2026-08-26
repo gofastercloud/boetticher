@@ -125,6 +125,17 @@ type Node struct {
 	Type   string `json:"type"`
 }
 
+type GuestAgentAddress struct {
+	IPAddress string `json:"ip-address"`
+	IPType    string `json:"ip-address-type"`
+}
+
+type GuestAgentInterface struct {
+	Name            string              `json:"name"`
+	HardwareAddress string              `json:"hardware-address"`
+	IPAddresses     []GuestAgentAddress `json:"ip-addresses"`
+}
+
 type StorageContent struct {
 	VolID    string `json:"volid"`
 	Filename string `json:"filename"`
@@ -162,7 +173,14 @@ func (c *Client) CreateVM(ctx context.Context, node string, vmid int, params url
 		params = url.Values{}
 	}
 	params.Set("vmid", strconv.Itoa(vmid))
-	return c.Post(ctx, path.Join("/nodes", node, "qemu"), params, nil)
+	var upid string
+	if err := c.Post(ctx, path.Join("/nodes", node, "qemu"), params, &upid); err != nil {
+		return err
+	}
+	if upid != "" {
+		return c.WaitTask(ctx, node, upid)
+	}
+	return nil
 }
 
 func (c *Client) ImportDisk(ctx context.Context, node string, vmid int, source, storage, format string) (string, error) {
@@ -194,6 +212,10 @@ func (c *Client) StartVM(ctx context.Context, node string, vmid int) error {
 	return c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "start"), nil, nil)
 }
 
+func (c *Client) StopVM(ctx context.Context, node string, vmid int) error {
+	return c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "stop"), nil, nil)
+}
+
 func (c *Client) CreateLXC(ctx context.Context, node string, vmid int, params url.Values) error {
 	if vmid <= 0 || node == "" {
 		return errors.New("Proxmox node and positive VMID are required")
@@ -202,7 +224,14 @@ func (c *Client) CreateLXC(ctx context.Context, node string, vmid int, params ur
 		params = url.Values{}
 	}
 	params.Set("vmid", strconv.Itoa(vmid))
-	return c.Post(ctx, path.Join("/nodes", node, "lxc"), params, nil)
+	var upid string
+	if err := c.Post(ctx, path.Join("/nodes", node, "lxc"), params, &upid); err != nil {
+		return err
+	}
+	if upid != "" {
+		return c.WaitTask(ctx, node, upid)
+	}
+	return nil
 }
 
 func (c *Client) SetLXCConfig(ctx context.Context, node string, vmid int, params url.Values) error {
@@ -218,6 +247,41 @@ func (c *Client) StartLXC(ctx context.Context, node string, vmid int) error {
 
 func (c *Client) QEMUConfig(ctx context.Context, node string, vmid int, out any) error {
 	return c.Get(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "config"), nil, out)
+}
+
+// GuestConfig inspects both Proxmox guest kinds for a VMID. A reserved
+// identity must be held when the opposite guest kind occupies it; treating a
+// kind mismatch as absence would turn an ownership collision into a create
+// attempt.
+func (c *Client) GuestConfig(ctx context.Context, node string, vmid int) (GuestKind, map[string]any, error) {
+	var qemu map[string]any
+	err := c.QEMUConfig(ctx, node, vmid, &qemu)
+	if err == nil {
+		return KindQEMU, qemu, nil
+	}
+	if !IsNotFound(err) {
+		return "", nil, err
+	}
+	var lxc map[string]any
+	err = c.LXCConfig(ctx, node, vmid, &lxc)
+	if err == nil {
+		return KindLXC, lxc, nil
+	}
+	return "", nil, err
+}
+
+// QEMUAgentNetworkInterfaces reads only guest-agent network evidence. It is
+// used to discover the temporary DHCP-backed builder address; no operator or
+// module identity is inferred from a hostname or arbitrary user address.
+func (c *Client) QEMUAgentNetworkInterfaces(ctx context.Context, node string, vmid int) ([]GuestAgentInterface, error) {
+	if node == "" || vmid <= 0 {
+		return nil, errors.New("node and positive VMID are required")
+	}
+	var interfaces []GuestAgentInterface
+	if err := c.Get(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "agent", "network-get-interfaces"), nil, &interfaces); err != nil {
+		return nil, fmt.Errorf("read QEMU guest-agent network interfaces: %w", err)
+	}
+	return interfaces, nil
 }
 
 func (c *Client) LXCConfig(ctx context.Context, node string, vmid int, out any) error {
@@ -323,6 +387,58 @@ func (c *Client) UploadStorageFile(ctx context.Context, node, storage, content, 
 	return nil
 }
 
+// UploadStorageText uploads deterministic non-secret cloud-init content to a
+// snippets storage class without creating a controller-side plaintext file.
+func (c *Client) UploadStorageText(ctx context.Context, node, storage, content, filename, value string) error {
+	if node == "" || storage == "" || content == "" || filename == "" {
+		return errors.New("node, storage, content, and filename are required")
+	}
+	if strings.ContainsAny(filename, "/\\\r\n") {
+		return errors.New("uploaded filename must be a plain filename")
+	}
+	body := &bytes.Buffer{}
+	multipartWriter := multipart.NewWriter(body)
+	if err := multipartWriter.WriteField("content", content); err != nil {
+		return err
+	}
+	part, err := multipartWriter.CreateFormFile("filename", filename)
+	if err != nil {
+		return err
+	}
+	if _, err := part.Write([]byte(value)); err != nil {
+		return err
+	}
+	if err := multipartWriter.Close(); err != nil {
+		return err
+	}
+	base, err := url.Parse(c.BaseURL)
+	if err != nil {
+		return err
+	}
+	base.Path = path.Join(base.Path, "/nodes", node, "storage", storage, "upload")
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, base.String(), body)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+	if c.Token != "" {
+		request.Header.Set("Authorization", c.Token)
+	}
+	response, err := c.HTTP.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	if err != nil {
+		return err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return &APIError{StatusCode: response.StatusCode, Status: response.Status, Message: strings.TrimSpace(string(data))}
+	}
+	return nil
+}
+
 // DownloadURL asks Proxmox to download a pinned image and verify it before
 // making it available in storage. The checksum is sent as an API form field,
 // never placed in a shell command or a generated public artifact.
@@ -394,7 +510,10 @@ func (c *Client) EnsureCloudImage(ctx context.Context, node, storage, filename, 
 		if observed == "" {
 			observed = content.CSum
 		}
-		if observed != "" && !strings.EqualFold(observed, checksum) {
+		if observed == "" {
+			return "", fmt.Errorf("existing gateway image %q has no checksum evidence", filename)
+		}
+		if !strings.EqualFold(observed, checksum) {
 			return "", fmt.Errorf("existing gateway image %q has a different checksum", filename)
 		}
 		return content.VolID, nil
@@ -412,6 +531,13 @@ func (c *Client) EnsureCloudImage(ctx context.Context, node, storage, filename, 
 	}
 	for _, content := range contents {
 		if path.Base(content.Filename) == filename || strings.HasSuffix(content.VolID, "/"+filename) {
+			observed := content.Checksum
+			if observed == "" {
+				observed = content.CSum
+			}
+			if observed == "" || !strings.EqualFold(observed, checksum) {
+				return "", fmt.Errorf("downloaded gateway image %q has no matching checksum evidence", filename)
+			}
 			return content.VolID, nil
 		}
 	}

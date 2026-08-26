@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 type GuestSummary struct {
@@ -41,8 +43,9 @@ func PurgeModule(ctx context.Context, client *Client, plan Plan, module string) 
 			}
 			return fmt.Errorf("inspect module guest %d before purge: %w", guest.VMID, err)
 		}
-		if tags, _ := current["tags"].(string); !hasOwnerTag(tags, owner) {
-			return fmt.Errorf("refusing to purge %s: namespaced owner tag is absent", guest.Name)
+		ownerTag := model.ModuleOwnershipTag(module)
+		if ownerTag == "" || !hasOwnerTag(currentTags(current), ownerTag) {
+			return fmt.Errorf("refusing to purge %s: canonical owner tag %q is absent", guest.Name, ownerTag)
 		}
 		if err := validateExistingGuest(current, guest); err != nil {
 			return fmt.Errorf("refusing to purge %s: ownership proof failed: %w", guest.Name, err)
@@ -57,7 +60,7 @@ func PurgeModule(ctx context.Context, client *Client, plan Plan, module string) 
 
 func hasOwnerTag(tags, owner string) bool {
 	for _, tag := range strings.Split(tags, ";") {
-		if tag == owner || tag == strings.ReplaceAll(owner, "/", "-") {
+		if tag == owner {
 			return true
 		}
 	}
@@ -78,6 +81,45 @@ const (
 	PlatformOwnership = "boetticher platform"
 	UserOwnership     = "user-managed"
 )
+
+type BuilderAudit struct {
+	Exists bool
+	Owned  bool
+	Name   string
+	Status string
+}
+
+// InspectBuilder is a read-only check for the transient bootstrap builder.
+// A present builder is actionable state: successful bootstrap removes it, and
+// an unowned object at the reserved VMID is a collision, never a resource to
+// adopt.
+func InspectBuilder(ctx context.Context, client *Client, node string) (BuilderAudit, error) {
+	if client == nil || node == "" {
+		return BuilderAudit{}, fmt.Errorf("Proxmox client and node are required")
+	}
+	kind, current, err := client.GuestConfig(ctx, node, model.BuilderVMID)
+	if IsNotFound(err) {
+		return BuilderAudit{}, nil
+	}
+	if err != nil {
+		return BuilderAudit{}, fmt.Errorf("inspect temporary builder: %w", err)
+	}
+	if kind != KindQEMU {
+		return BuilderAudit{Exists: true, Name: fmt.Sprintf("%s guest at VMID %d", kind, model.BuilderVMID)}, nil
+	}
+	return classifyBuilder(current), nil
+}
+
+func classifyBuilder(current map[string]any) BuilderAudit {
+	name, _ := current["name"].(string)
+	status, _ := current["status"].(string)
+	return BuilderAudit{
+		Exists: true,
+		Owned:  name == "lab-builder-01" && hasOwnerTag(currentTags(current), builderOwnerTag),
+		Name:   name,
+		Status: status,
+	}
+}
 
 // ClassifyGuests is deliberately a pure ownership projection. Unknown guests
 // are informational and never become part of the desired-state plan.

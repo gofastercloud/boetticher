@@ -239,6 +239,14 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 			path  string
 			check func() error
 		}{"platform ownership plan", filepath.Join(*siteDir, "generated", "proxmox", "desired-state.json"), func() error { return checkPlatformOwnership(s) }},
+		struct {
+			name  string
+			path  string
+			check func() error
+		}{"qualified appliance evidence", filepath.Join(*siteDir, "generated", "artifacts"), func() error {
+			_, err := qualifiedProxmoxPlan(*siteDir, s)
+			return err
+		}},
 	)
 	failed := false
 	for _, check := range checks {
@@ -284,7 +292,19 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		fmt.Fprintf(out, "Bootstrap endpoint    PASS %s and SSH host key\n", s.BootstrapAddress)
 	}
 	if *live {
-		plan, planErr := proxmox.PlanFromSite(s)
+		if builder, builderErr := inspectBuilder(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure); builderErr != nil {
+			fmt.Fprintf(out, "Artifact builder       NOT TESTED (%v)\n", builderErr)
+		} else if builder.Exists {
+			failed = true
+			if builder.Owned {
+				fmt.Fprintf(out, "Artifact builder       HOLD stale owned builder VMID %d status=%s; bootstrap cleanup or diagnosis is required\n", model.BuilderVMID, valueOrPlaceholder(builder.Status))
+			} else {
+				fmt.Fprintf(out, "Artifact builder       HOLD VMID %d is occupied without canonical builder ownership (name=%s)\n", model.BuilderVMID, valueOrPlaceholder(builder.Name))
+			}
+		} else {
+			fmt.Fprintln(out, "Artifact builder       PASS temporary builder absent")
+		}
+		plan, planErr := qualifiedProxmoxPlan(*siteDir, s)
 		if planErr != nil {
 			failed = true
 			fmt.Fprintf(out, "Platform guests       FAIL invalid platform plan: %v\n", planErr)
@@ -357,6 +377,14 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		return fmt.Errorf("doctor found absent or inconsistent projections")
 	}
 	return nil
+}
+
+func inspectBuilder(siteDir string, s model.Site, ageIdentity, proxmoxCA string, insecure bool) (proxmox.BuilderAudit, error) {
+	client, _, err := loadProxmoxClient(siteDir, s, ageIdentity, proxmoxCA, insecure)
+	if err != nil {
+		return proxmox.BuilderAudit{}, err
+	}
+	return proxmox.InspectBuilder(context.Background(), client, s.ProxmoxNode)
 }
 
 func reportDedicatedStorageHost(ctx context.Context, s model.Site, plan storage.Plan, out interface{ Write([]byte) (int, error) }) error {
@@ -478,6 +506,10 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 			}
 			return nil
 		}},
+		{"qualified appliance evidence", func() error {
+			_, err := qualifiedProxmoxPlan(siteDir, s)
+			return err
+		}},
 		{"SSH bastion allow-list", func() error {
 			policy, err := sshconfig.RenderBastionPolicy(s)
 			if err != nil {
@@ -502,6 +534,14 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 	return results
 }
 
+func qualifiedProxmoxPlan(siteDir string, s model.Site) (proxmox.Plan, error) {
+	plan, err := proxmox.PlanFromSite(s)
+	if err != nil {
+		return proxmox.Plan{}, err
+	}
+	return proxmox.ResolveQualifiedArtifacts(siteDir, plan, true)
+}
+
 func mustRevision(s model.Site) string {
 	revision, err := s.Revision()
 	if err != nil {
@@ -515,15 +555,17 @@ func checkPlatformOwnership(s model.Site) error {
 	if err != nil {
 		return err
 	}
-	want := []int{model.DNS01VMID, model.DNS02VMID, model.MonitorVMID, model.PortalVMID}
-	if s.Gateway.Mode == model.GatewayModeManaged {
-		want = append([]int{model.ProxmoxVMID}, want...)
+	wantSet := make(map[int]struct{})
+	for _, component := range s.PlatformComponents() {
+		if component.VMID != 0 {
+			wantSet[component.VMID] = struct{}{}
+		}
 	}
-	if len(plan.Guests) != len(want) {
-		return fmt.Errorf("platform plan contains %d guests; expected %d", len(plan.Guests), len(want))
+	if len(plan.Guests) != len(wantSet) {
+		return fmt.Errorf("platform plan contains %d guests; expected %d", len(plan.Guests), len(wantSet))
 	}
-	for index, guest := range plan.Guests {
-		if guest.VMID != want[index] {
+	for _, guest := range plan.Guests {
+		if _, ok := wantSet[guest.VMID]; !ok {
 			return fmt.Errorf("platform plan contains unexpected VMID %d", guest.VMID)
 		}
 	}

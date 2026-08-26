@@ -33,7 +33,7 @@ func runAccess(args []string, out interface{ Write([]byte) (int, error) }) error
 		fmt.Fprintf(out, "  %-13s ssh %s\n", m.Role, alias)
 	}
 	fmt.Fprintln(out, "Web")
-	for _, m := range s.Components {
+	for _, m := range s.PlatformComponents() {
 		if m.URL != "" {
 			fmt.Fprintf(out, "  %-13s %s\n", m.Role, m.URL)
 		}

@@ -4,6 +4,10 @@ kind: qemu
 base: boetticher-base
 base_version: 0.3.1
 architecture: amd64
+base_input:
+  name: debian-13-genericcloud-amd64-20260327-2429
+  url: https://cloud.debian.org/images/cloud/trixie/20260327-2429/debian-13-genericcloud-amd64-20260327-2429.qcow2
+  sha512: 09559ec27d263997827dd8cddf76e97ea8e0f1803380aa501ea7eaa4b4968cd76ffef4ec7eb07ef1a9ccbeb0925a5020492ea9ed53eb167d62f3a2285039912c
 services:
   - nftables
   - kea-dhcp4

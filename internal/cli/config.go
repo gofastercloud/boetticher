@@ -8,6 +8,7 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
+	"github.com/gofastercloud/boetticher/internal/schema"
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
@@ -49,11 +50,9 @@ func runConfig(args []string, out interface{ Write([]byte) (int, error) }) error
 		_, err = out.Write(data)
 		return err
 	case "schema":
-		_, err := out.Write([]byte(embeddedSiteSchema))
+		_, err := out.Write(schema.Data())
 		return err
 	default:
 		return fmt.Errorf("unknown config command %q", args[0])
 	}
 }
-
-const embeddedSiteSchema = `{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"boetticher v3 SiteConfig","type":"object","additionalProperties":false,"properties":{"api_version":{"const":"boetticher/v3"},"platform_version":{"const":"0.3.1"},"schema_version":{"const":3},"modules":{"type":"object","additionalProperties":false,"properties":{"dns":{"type":"object","additionalProperties":false,"properties":{"provider":{"enum":["blocky","adguard"]}}},"monitoring":{"type":"object","additionalProperties":false,"properties":{"enabled":{"type":"boolean"}}},"firewall":{"type":"object","additionalProperties":false,"properties":{"enabled":{"type":"boolean"}}}}}}}` + "\n"

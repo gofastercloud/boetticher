@@ -6,20 +6,12 @@
       - firewall_plan.mode == 'managed'
       - firewall_ruleset is defined
       - firewall_ruleset | length > 0
-      - ddns_tsig_secret is defined
-      - ddns_tsig_secret | length > 0
   no_log: true
 
-- name: Install managed gateway services
-  ansible.builtin.apt:
-    name:
-      - nftables
-      - kea-dhcp4-server
-      - kea-dhcp-ddns-server
-      - dnsmasq
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
+- name: Require qualified gateway software in the appliance
+  ansible.builtin.command:
+    argv: [sh, -c, "command -v nft && command -v kea-dhcp4 && command -v kea-dhcp-ddns && command -v dnsmasq"]
+  changed_when: false
 
 - name: Disable forwarding before gateway convergence
   ansible.builtin.copy:
@@ -62,6 +54,9 @@
     name: systemd-networkd
     enabled: true
     state: started
+
+- name: Load credential drop-ins before starting gateway services
+  ansible.builtin.meta: flush_handlers
 
 - name: Install the candidate boetticher nftables ruleset
   ansible.builtin.copy:

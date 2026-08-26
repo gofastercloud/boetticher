@@ -13,9 +13,21 @@ func EvidencePath(root, name string) string {
 }
 
 func WriteEvidence(root, name string, evidence Evidence) error {
-	if root == "" || name == "" || evidence.ContentSHA256 == "" || evidence.DefinitionSHA256 == "" {
-		return fmt.Errorf("artifact evidence requires root, name, definition digest, and content digest")
+	if root == "" || name == "" || evidence.ArtifactPath == "" || evidence.ContentSHA256 == "" || evidence.DefinitionSHA256 == "" {
+		return fmt.Errorf("artifact evidence requires root, name, artifact path, definition digest, and content digest")
 	}
+	if evidence.Qualified {
+		if !evidence.qualifiedByEvaluator {
+			return fmt.Errorf("qualified artifact evidence must be produced by the qualification evaluator")
+		}
+		if err := validateQualificationDigests(evidence); err != nil {
+			return fmt.Errorf("qualified artifact evidence is incomplete: %w", err)
+		}
+	}
+	return writeEvidence(root, name, evidence)
+}
+
+func writeEvidence(root, name string, evidence Evidence) error {
 	data, err := json.MarshalIndent(evidence, "", "  ")
 	if err != nil {
 		return err
@@ -42,4 +54,60 @@ func WriteEvidence(root, name string, evidence Evidence) error {
 		return err
 	}
 	return os.Rename(tmpName, EvidencePath(root, name))
+}
+
+// RebindEvidencePaths converts builder-local artifact paths into controller
+// paths after a successful evidence archive transfer, then re-hashes each
+// local artifact before writing the evidence record.
+func RebindEvidencePaths(root string) error {
+	if root == "" {
+		return fmt.Errorf("artifact evidence root is required")
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "generated", "artifacts"))
+	if err != nil {
+		return fmt.Errorf("read transferred artifact evidence: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(root, "generated", "artifacts", entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var evidence Evidence
+		if err := json.Unmarshal(data, &evidence); err != nil {
+			return fmt.Errorf("decode transferred evidence %s: %w", entry.Name(), err)
+		}
+		if evidence.Artifact.Name == "" {
+			return fmt.Errorf("transferred evidence %s has no artifact identity", entry.Name())
+		}
+		filename := fmt.Sprintf("%s-%s-%s.tar.zst", evidence.Artifact.Name, evidence.Artifact.Version, evidence.Artifact.Architecture)
+		if evidence.Artifact.Kind == "qemu" {
+			filename = fmt.Sprintf("%s-%s-%s.qcow2", evidence.Artifact.Name, evidence.Artifact.Version, evidence.Artifact.Architecture)
+		}
+		artifactPath := filepath.Join(root, "generated", "artifacts", evidence.Artifact.Name, filename)
+		verified, err := EvidenceForFile(artifactPath, evidence.Artifact)
+		if err != nil {
+			return fmt.Errorf("verify transferred artifact %s: %w", evidence.Artifact.Name, err)
+		}
+		if verified.ContentSHA256 != evidence.ContentSHA256 {
+			return fmt.Errorf("transferred artifact %s content checksum differs from evidence", evidence.Artifact.Name)
+		}
+		evidence.ArtifactPath = artifactPath
+		if !evidence.Qualified {
+			return fmt.Errorf("transferred evidence %s is not qualified", evidence.Artifact.Name)
+		}
+		if err := validateQualificationDigests(evidence); err != nil {
+			return fmt.Errorf("transferred evidence %s is incomplete: %w", evidence.Artifact.Name, err)
+		}
+		if err := verifyQualificationInputs(evidence); err != nil {
+			return fmt.Errorf("transferred evidence %s is not bound to its qualification inputs: %w", evidence.Artifact.Name, err)
+		}
+		if err := writeEvidence(root, evidence.Artifact.Name, evidence); err != nil {
+			return err
+		}
+	}
+	return nil
 }

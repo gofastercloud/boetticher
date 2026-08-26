@@ -32,6 +32,12 @@ informational, never drift, and never targets for deletion or import.
 - Modules are compiled into the release and emit declarations only. Core owns
   privileged mutation, fixed resource identities, appliance artifacts, runtime
   credentials, and replacement/persistence policy.
+- Reserved fixed guest identities, including the temporary builder VMID 190,
+  fail closed with `HOLD` for any unowned or wrong-kind occupant; boetticher
+  never allocates around a collision or adds ownership tags to prove ownership.
+- Bootstrap builds deployable appliances only through the bounded temporary
+  Linux builder. `make image-check` validates definitions; `make images` and
+  Trivy qualification produce the real artifact evidence required for deploy.
 - Official LXC appliances use the pinned Debian 13 boetticher base. Services run
   non-root where practical, and systemd credentials are the standard secret
   delivery path. PowerDNS backend persistence is an explicit third-party

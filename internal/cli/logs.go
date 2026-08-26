@@ -2,9 +2,11 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,7 +17,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
-var safeUnit = regexp.MustCompile(`^[A-Za-z0-9_.@:-]+\.service$`)
+var safeUnit = regexp.MustCompile(`^[A-Za-z0-9_.@:%+-]+$`)
 
 func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
@@ -28,11 +30,18 @@ func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if fs.NArg() > 1 {
+		return errors.New("logs accepts at most one managed HOST")
+	}
 	if *limit < 1 || *limit > 500 {
 		return fmt.Errorf("--limit must be between 1 and 500")
 	}
-	if *unit != "" && !safeUnit.MatchString(*unit) {
-		return fmt.Errorf("--unit is not a safe systemd service unit")
+	if *unit != "" {
+		normalized, err := normalizeJournalUnit(*unit)
+		if err != nil {
+			return err
+		}
+		*unit = normalized
 	}
 	validPriorities := map[string]bool{"emerg": true, "alert": true, "crit": true, "err": true, "warning": true, "notice": true, "info": true, "debug": true}
 	if *priority != "" && !validPriorities[*priority] {
@@ -58,27 +67,18 @@ func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 	if !ok {
 		return fmt.Errorf("%q is not a known boetticher-managed endpoint", host)
 	}
-	argsForJournal := []string{"journalctl", "--no-pager", "--output=short-iso", "--lines=" + strconv.Itoa(*limit), "_HOSTNAME=" + component.Hostname}
-	if *unit != "" {
-		argsForJournal = append(argsForJournal, "_SYSTEMD_UNIT="+*unit)
+	collector, collectorOK := findManagedEndpoint(s, "lab-log-01")
+	if !collectorOK {
+		return fmt.Errorf("mandatory logging collector lab-log-01 is not present in the desired model")
 	}
-	if sinceArg != "" {
-		argsForJournal = append(argsForJournal, "--since="+sinceArg)
-	}
-	if *priority != "" {
-		argsForJournal = append(argsForJournal, "-p", *priority)
-	}
-	quoted := make([]string, len(argsForJournal))
-	for i, value := range argsForJournal {
-		quoted[i] = shellQuote(value)
-	}
-	command := strings.Join(quoted, " ")
-	if component.Name == "lab-log-01" && fs.NArg() == 0 {
+	argsForJournal, source := journalQuery(component, collector, *limit, *unit, sinceArg, *priority)
+	if component.Name == collector.Name && fs.NArg() == 0 {
 		fmt.Fprintln(out, "Source: collector-local journal")
 	} else {
-		fmt.Fprintf(out, "Source: collected journal for %s\n", component.Hostname)
+		fmt.Fprintf(out, "Source: %s\n", source)
 	}
-	data, err := (proxmox.SSHRunner{}).Run(context.Background(), component.Address, model.DefaultAdminSSHUser, command)
+	runner := proxmox.SSHRunner{ConfigFile: filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"), HostAlias: collector.Name, StrictHostKey: "accept-new"}
+	data, err := runner.RunArgs(context.Background(), collector.Address, model.DefaultAdminSSHUser, argsForJournal)
 	if err != nil {
 		return fmt.Errorf("read journal for %s: %w", component.Hostname, err)
 	}
@@ -97,7 +97,7 @@ func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 }
 
 func findManagedEndpoint(s model.Site, wanted string) (model.Component, bool) {
-	for _, component := range s.PlatformComponents() {
+	for _, component := range managedEndpointComponents(s) {
 		if component.Name == wanted || component.Hostname == wanted {
 			return component, true
 		}
@@ -110,4 +110,54 @@ func findManagedEndpoint(s model.Site, wanted string) (model.Component, bool) {
 	return model.Component{}, false
 }
 
-func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
+// managedEndpointComponents includes retained module guests as read-only
+// diagnostic targets. Retention preserves the module ownership identity, so a
+// retained guest remains addressable without making it an active deployment
+// resource.
+func managedEndpointComponents(s model.Site) []model.Component {
+	components := s.PlatformComponents()
+	known := make(map[string]struct{}, len(components))
+	for _, component := range components {
+		known[component.Name] = struct{}{}
+	}
+	for _, retained := range s.RetainedModules {
+		for _, component := range retained.Guests {
+			if _, exists := known[component.Name]; exists {
+				continue
+			}
+			components = append(components, component)
+			known[component.Name] = struct{}{}
+		}
+	}
+	return components
+}
+
+func journalQuery(component, collector model.Component, limit int, unit, since, priority string) ([]string, string) {
+	args := []string{"journalctl", "--no-pager", "--output=short-iso", "--lines=" + strconv.Itoa(limit)}
+	source := "collector-local journal"
+	if component.Name != collector.Name {
+		args = append(args, "--directory=/var/log/journal/remote")
+		source = "collected journal for " + component.Hostname
+	}
+	args = append(args, "_HOSTNAME="+component.Hostname)
+	if unit != "" {
+		args = append(args, "_SYSTEMD_UNIT="+unit)
+	}
+	if since != "" {
+		args = append(args, "--since="+since)
+	}
+	if priority != "" {
+		args = append(args, "-p", priority)
+	}
+	return args, source
+}
+
+func normalizeJournalUnit(value string) (string, error) {
+	if value == "" || !safeUnit.MatchString(value) || strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") || strings.Contains(value, "..") {
+		return "", fmt.Errorf("--unit is not a safe systemd unit")
+	}
+	if !strings.Contains(value, ".") {
+		return value + ".service", nil
+	}
+	return value, nil
+}
