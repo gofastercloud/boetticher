@@ -67,28 +67,15 @@ func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 	if !ok {
 		return fmt.Errorf("%q is not a known boetticher-managed endpoint", host)
 	}
-	argsForJournal := []string{"journalctl", "--no-pager", "--output=short-iso", "--lines=" + strconv.Itoa(*limit)}
 	collector, collectorOK := findManagedEndpoint(s, "lab-log-01")
 	if !collectorOK {
 		return fmt.Errorf("mandatory logging collector lab-log-01 is not present in the desired model")
 	}
-	if component.Name != collector.Name {
-		argsForJournal = append(argsForJournal, "--directory=/var/log/journal/remote")
-	}
-	argsForJournal = append(argsForJournal, "_HOSTNAME="+component.Hostname)
-	if *unit != "" {
-		argsForJournal = append(argsForJournal, "_SYSTEMD_UNIT="+*unit)
-	}
-	if sinceArg != "" {
-		argsForJournal = append(argsForJournal, "--since="+sinceArg)
-	}
-	if *priority != "" {
-		argsForJournal = append(argsForJournal, "-p", *priority)
-	}
+	argsForJournal, source := journalQuery(component, collector, *limit, *unit, sinceArg, *priority)
 	if component.Name == collector.Name && fs.NArg() == 0 {
 		fmt.Fprintln(out, "Source: collector-local journal")
 	} else {
-		fmt.Fprintf(out, "Source: collected journal for %s\n", component.Hostname)
+		fmt.Fprintf(out, "Source: %s\n", source)
 	}
 	runner := proxmox.SSHRunner{ConfigFile: filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"), HostAlias: collector.Name, StrictHostKey: "accept-new"}
 	data, err := runner.RunArgs(context.Background(), collector.Address, model.DefaultAdminSSHUser, argsForJournal)
@@ -110,7 +97,7 @@ func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 }
 
 func findManagedEndpoint(s model.Site, wanted string) (model.Component, bool) {
-	for _, component := range s.PlatformComponents() {
+	for _, component := range managedEndpointComponents(s) {
 		if component.Name == wanted || component.Hostname == wanted {
 			return component, true
 		}
@@ -121,6 +108,48 @@ func findManagedEndpoint(s model.Site, wanted string) (model.Component, bool) {
 		}
 	}
 	return model.Component{}, false
+}
+
+// managedEndpointComponents includes retained module guests as read-only
+// diagnostic targets. Retention preserves the module ownership identity, so a
+// retained guest remains addressable without making it an active deployment
+// resource.
+func managedEndpointComponents(s model.Site) []model.Component {
+	components := s.PlatformComponents()
+	known := make(map[string]struct{}, len(components))
+	for _, component := range components {
+		known[component.Name] = struct{}{}
+	}
+	for _, retained := range s.RetainedModules {
+		for _, component := range retained.Guests {
+			if _, exists := known[component.Name]; exists {
+				continue
+			}
+			components = append(components, component)
+			known[component.Name] = struct{}{}
+		}
+	}
+	return components
+}
+
+func journalQuery(component, collector model.Component, limit int, unit, since, priority string) ([]string, string) {
+	args := []string{"journalctl", "--no-pager", "--output=short-iso", "--lines=" + strconv.Itoa(limit)}
+	source := "collector-local journal"
+	if component.Name != collector.Name {
+		args = append(args, "--directory=/var/log/journal/remote")
+		source = "collected journal for " + component.Hostname
+	}
+	args = append(args, "_HOSTNAME="+component.Hostname)
+	if unit != "" {
+		args = append(args, "_SYSTEMD_UNIT="+unit)
+	}
+	if since != "" {
+		args = append(args, "--since="+since)
+	}
+	if priority != "" {
+		args = append(args, "-p", priority)
+	}
+	return args, source
 }
 
 func normalizeJournalUnit(value string) (string, error) {

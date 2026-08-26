@@ -2,8 +2,11 @@ package cli
 
 import (
 	"io"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 func TestLogsRejectsMultipleHostsBeforeLoadingSite(t *testing.T) {
@@ -27,5 +30,50 @@ func TestNormalizeJournalUnitRejectsShellAndPathSyntax(t *testing.T) {
 		if _, err := normalizeJournalUnit(value); err == nil {
 			t.Fatalf("unsafe unit %q was accepted", value)
 		}
+	}
+}
+
+func TestJournalQueryUsesCollectorRemoteStoreAndStableHostMatch(t *testing.T) {
+	component := model.Component{Name: "lab-dns-01", Hostname: "lab-dns-01", Address: "10.10.20.10"}
+	collector := model.Component{Name: "lab-log-01", Hostname: "lab-log-01", Address: "10.10.20.40"}
+	got, source := journalQuery(component, collector, 25, "blocky.service", "2026-08-27T00:00:00Z", "warning")
+	want := []string{
+		"journalctl", "--no-pager", "--output=short-iso", "--lines=25",
+		"--directory=/var/log/journal/remote", "_HOSTNAME=lab-dns-01",
+		"_SYSTEMD_UNIT=blocky.service", "--since=2026-08-27T00:00:00Z", "-p", "warning",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("remote journal query = %#v, want %#v", got, want)
+	}
+	if source != "collected journal for lab-dns-01" {
+		t.Fatalf("remote journal source = %q", source)
+	}
+	if strings.Contains(strings.Join(got, " "), "lab-dns-01/") {
+		t.Fatal("remote journal query derived a user-controlled journal path")
+	}
+}
+
+func TestJournalQueryUsesCollectorLocalJournalForCollector(t *testing.T) {
+	collector := model.Component{Name: "lab-log-01", Hostname: "lab-log-01", Address: "10.10.20.40"}
+	got, source := journalQuery(collector, collector, 10, "", "", "")
+	want := []string{"journalctl", "--no-pager", "--output=short-iso", "--lines=10", "_HOSTNAME=lab-log-01"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("collector-local journal query = %#v, want %#v", got, want)
+	}
+	if source != "collector-local journal" {
+		t.Fatalf("collector-local source = %q", source)
+	}
+}
+
+func TestFindManagedEndpointIncludesRetainedModuleGuest(t *testing.T) {
+	site := model.NewSite("installation", "age1example", model.GatewayModeManaged)
+	retained := model.Component{
+		Name: "lab-monitor-01", Hostname: "lab-monitor-01", Address: "10.10.20.20",
+		Module: "monitoring", ProductOwned: true,
+	}
+	site.RetainedModules = []model.RetainedModule{{Module: "monitoring", Disposition: "retained", Guests: []model.Component{retained}}}
+	got, ok := findManagedEndpoint(site, "lab-monitor-01")
+	if !ok || got.Name != retained.Name || got.Address != retained.Address {
+		t.Fatalf("retained endpoint lookup = %#v, %t", got, ok)
 	}
 }
