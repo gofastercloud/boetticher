@@ -107,7 +107,7 @@ func validateCommandForm(t *testing.T, fields []string) {
 		"firewall":           {"--site": true, "--live": true, "--json": true},
 		"dhcp":               {"--site": true, "--live": true, "--json": true},
 		"storage":            {"--site": true, "--live": true, "--confirmed": true},
-		"module":             {"--site": true, "--dry-run": true, "--confirm": true, "--purge": true},
+		"module":             {"--site": true, "--dry-run": true, "--confirm": true, "--purge": true, "--age-identity": true, "--proxmox-ca": true, "--insecure": true},
 		"config":             {"--site": true},
 	}
 	command := fields[1]

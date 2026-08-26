@@ -92,6 +92,10 @@ func (c *Client) Put(ctx context.Context, endpoint string, form url.Values, out 
 	return c.request(ctx, http.MethodPut, endpoint, nil, form, out)
 }
 
+func (c *Client) Delete(ctx context.Context, endpoint string) error {
+	return c.request(ctx, http.MethodDelete, endpoint, nil, nil, nil)
+}
+
 func (c *Client) Version(ctx context.Context) (string, error) {
 	var result struct {
 		Version string `json:"version"`

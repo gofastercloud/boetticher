@@ -3,7 +3,10 @@ package proxmox
 import (
 	"context"
 	"fmt"
+	"path"
 	"sort"
+	"strconv"
+	"strings"
 )
 
 type GuestSummary struct {
@@ -11,6 +14,54 @@ type GuestSummary struct {
 	Name   string    `json:"name"`
 	Status string    `json:"status"`
 	Kind   GuestKind `json:"-"`
+}
+
+// PurgeModule removes only guests whose current identity and namespaced owner
+// tag still match the module plan. It never searches by a free VMID or adopts
+// an object whose ownership cannot be proved.
+func PurgeModule(ctx context.Context, client *Client, plan Plan, module string) error {
+	if client == nil {
+		return fmt.Errorf("Proxmox client is required")
+	}
+	owner := "boetticher/module/" + module
+	for _, guest := range plan.Guests {
+		if guest.Owner != owner {
+			continue
+		}
+		var current map[string]any
+		var err error
+		if guest.Kind == KindQEMU {
+			err = client.QEMUConfig(ctx, plan.Node, guest.VMID, &current)
+		} else {
+			err = client.LXCConfig(ctx, plan.Node, guest.VMID, &current)
+		}
+		if err != nil {
+			if IsNotFound(err) {
+				continue
+			}
+			return fmt.Errorf("inspect module guest %d before purge: %w", guest.VMID, err)
+		}
+		if tags, _ := current["tags"].(string); !hasOwnerTag(tags, owner) {
+			return fmt.Errorf("refusing to purge %s: namespaced owner tag is absent", guest.Name)
+		}
+		if err := validateExistingGuest(current, guest); err != nil {
+			return fmt.Errorf("refusing to purge %s: ownership proof failed: %w", guest.Name, err)
+		}
+		endpoint := path.Join("/nodes", plan.Node, string(guest.Kind), strconv.Itoa(guest.VMID))
+		if err := client.Delete(ctx, endpoint); err != nil {
+			return fmt.Errorf("purge module guest %s: %w", guest.Name, err)
+		}
+	}
+	return nil
+}
+
+func hasOwnerTag(tags, owner string) bool {
+	for _, tag := range strings.Split(tags, ";") {
+		if tag == owner || tag == strings.ReplaceAll(owner, "/", "-") {
+			return true
+		}
+	}
+	return false
 }
 
 type GuestAudit struct {

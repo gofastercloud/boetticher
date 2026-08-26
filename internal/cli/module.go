@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
+	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
@@ -174,6 +176,9 @@ func runModuleChange(args []string, out interface{ Write([]byte) (int, error) },
 	dryRun := fs.Bool("dry-run", false, "validate and display the plan without changing the site")
 	confirm := fs.Bool("confirm", false, "confirm a site configuration mutation")
 	purge := fs.Bool("purge", false, "remove retained module resources; requires --confirm")
+	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
+	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
+	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS")
 	if err := fs.Parse(remaining); err != nil {
 		return err
 	}
@@ -213,8 +218,22 @@ func runModuleChange(args []string, out interface{ Write([]byte) (int, error) },
 	if !*confirm {
 		return errors.New("module changes require --confirm; use --dry-run to inspect the plan")
 	}
+	oldSite, err := site.Load(*siteDir)
+	if err != nil {
+		return err
+	}
 	if *purge {
-		return errors.New("purge planning is available, but destructive guest removal requires the live ownership provider")
+		client, _, err := loadProxmoxClient(*siteDir, oldSite, *ageIdentity, *proxmoxCA, *insecure)
+		if err != nil {
+			return fmt.Errorf("load Proxmox client for module purge: %w", err)
+		}
+		oldPlan, err := proxmox.PlanFromSite(oldSite)
+		if err != nil {
+			return err
+		}
+		if err := proxmox.PurgeModule(context.Background(), client, oldPlan, name); err != nil {
+			return err
+		}
 	}
 	if err := site.SaveConfig(*siteDir, model.ConfigFromSite(resolved)); err != nil {
 		return err
