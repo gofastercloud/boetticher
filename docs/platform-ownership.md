@@ -11,6 +11,10 @@ Arbitrary user VMs and LXCs remain outside the model, OpenTofu state, Ansible
 inventory, Zabbix ownership, backup guarantee, and deletion logic. They may use
 the provided network simply by attaching a NIC to `vmbr1` and selecting a VLAN:
 
+Platform guests carry canonical `boetticher` and `managed` tags. The `backup`
+tag marks a declared platform guest for the platform backup projection; it is
+metadata and does not cause user workloads to be adopted or backed up.
+
 ```text
 Create VM/LXC in Proxmox → attach to vmbr1 → choose a zone VLAN → boot
 ```
