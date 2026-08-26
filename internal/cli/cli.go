@@ -102,6 +102,12 @@ func runInit(args []string, out interface{ Write([]byte) (int, error) }) error {
 		return err
 	}
 	revision, _ := created.Revision()
+	if err := writeModelProjections(*siteDir, created); err != nil {
+		return err
+	}
+	if err := rebuildPortal(*siteDir, created); err != nil {
+		return err
+	}
 	fmt.Fprintf(out, "Initialized private site repository: %s\n", *siteDir)
 	fmt.Fprintf(out, "Age identity: %s (outside Git)\n", model.ExpandUserPath(*ageIdentity))
 	fmt.Fprintf(out, "Model revision: %s\n", revision)
@@ -261,7 +267,11 @@ func runPortalBuild(args []string, out interface{ Write([]byte) (int, error) }) 
 	if *output == "" {
 		*output = filepath.Join(*siteDir, "generated", "portal")
 	}
-	evidence := loadEvidence(*siteDir)
+	revision, err := s.Revision()
+	if err != nil {
+		return err
+	}
+	evidence := loadEvidence(*siteDir, revision)
 	if err := portal.Build(s, *output, *docsDir, evidence, time.Now()); err != nil {
 		return err
 	}
@@ -297,6 +307,12 @@ func runBootstrapEndpoint(args []string, out interface{ Write([]byte) (int, erro
 		}
 		s.BootstrapAddress = net.ParseIP(address).To4().String()
 		if err := site.Save(*siteDir, s); err != nil {
+			return err
+		}
+		if err := writeModelProjections(*siteDir, s); err != nil {
+			return err
+		}
+		if err := rebuildPortal(*siteDir, s); err != nil {
 			return err
 		}
 		fmt.Fprintf(out, "Recorded upstream Proxmox bootstrap address: %s\n", s.BootstrapAddress)
@@ -712,6 +728,9 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		{"OPNsense policy", filepath.Join(*siteDir, "generated", "opnsense", "desired-policy.json"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "opnsense", "desired-policy.json"), revision)
 		}},
+		{"OPNsense bootstrap", filepath.Join(*siteDir, "generated", "opnsense", "bootstrap.json"), func() error {
+			return checkRevisionFile(filepath.Join(*siteDir, "generated", "opnsense", "bootstrap.json"), revision)
+		}},
 		{"Proxmox desired state", filepath.Join(*siteDir, "generated", "proxmox", "desired-state.json"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "proxmox", "desired-state.json"), revision)
 		}},
@@ -753,6 +772,7 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 	} else {
 		fmt.Fprintf(out, "Physical trunk        PASS %s attached\n", s.PhysicalTrunk)
 	}
+	fmt.Fprintln(out, "OPNsense bootstrap    HOLD exact unattended installer/interface/API sequence requires fresh-host qualification")
 	if s.BootstrapAddress == "" {
 		fmt.Fprintln(out, "Bootstrap endpoint    ABSENT (record the HOME-side Proxmox address)")
 	} else if !*live {
@@ -891,9 +911,9 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	}
 	fmt.Fprintf(out, "Proxmox bootstrap: PASS authenticated with scoped identity on %s\n", version)
 	fmt.Fprintln(out, "Firewall VM: PASS created or already present and started")
-	fmt.Fprintln(out, "OPNsense installation/bootstrap: NOT TESTED until the qualified unattended installer path is exercised on a fresh VM")
+	fmt.Fprintln(out, "OPNsense installation/bootstrap: HOLD qualified unattended installer and interface-address path not yet exercised on a fresh VM")
 	fmt.Fprintln(out, "Initial root/bootstrap authentication: no longer required for routine Lab-in-a-Box access")
-	return nil
+	return errors.New("HOLD: OPNsense greenfield bootstrap is not yet qualified; Proxmox trust transition completed")
 }
 
 func runProvision(args []string, out interface{ Write([]byte) (int, error) }) error {
@@ -996,6 +1016,16 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 	if err != nil {
 		return err
 	}
+	var runtimeVariables map[string]any
+	if err := json.Unmarshal(variables, &runtimeVariables); err != nil {
+		return fmt.Errorf("decode Ansible variables: %w", err)
+	}
+	runtimeVariables["portal_source_dir"] = filepath.Join(*siteDir, "generated", "portal")
+	variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
+	if err != nil {
+		return err
+	}
+	variables = append(variables, '\n')
 	inventoryPath := filepath.Join(*siteDir, "generated", "ansible", "inventory.ini")
 	if err := ansible.Run(context.Background(), *playbook, inventoryPath, variables); err != nil {
 		return err
@@ -1176,6 +1206,10 @@ func writeModelProjections(dir string, s model.Site) error {
 	if err != nil {
 		return err
 	}
+	opnsenseBootstrap, err := opnsense.BootstrapPlanFromSite(s)
+	if err != nil {
+		return err
+	}
 	if err := writeProjection(filepath.Join(dir, "generated", "inventory.json"), struct {
 		ModelRevision string         `json:"model_revision"`
 		Modules       []model.Module `json:"modules"`
@@ -1183,6 +1217,9 @@ func writeModelProjections(dir string, s model.Site) error {
 		return err
 	}
 	if err := writeProjection(filepath.Join(dir, "generated", "opnsense", "desired-policy.json"), opnsensePlan); err != nil {
+		return err
+	}
+	if err := writeProjection(filepath.Join(dir, "generated", "opnsense", "bootstrap.json"), opnsenseBootstrap); err != nil {
 		return err
 	}
 	if err := writeProjection(filepath.Join(dir, "generated", "proxmox", "desired-state.json"), proxmoxPlan); err != nil {
@@ -1193,6 +1230,9 @@ func writeModelProjections(dir string, s model.Site) error {
 		Target        string         `json:"target"`
 		Modules       []model.Module `json:"modules"`
 	}{revision, model.ZabbixSeries, normalized.Modules}); err != nil {
+		return err
+	}
+	if err := writeCurrentStatus(dir, revision); err != nil {
 		return err
 	}
 	inventory, err := ansible.Inventory(s)
@@ -1209,9 +1249,12 @@ func writeModelProjections(dir string, s model.Site) error {
 	if err := writePublic(filepath.Join(dir, "generated", "ansible", "variables.json"), variables); err != nil {
 		return err
 	}
-	sshContent, err := sshconfig.Render(s, time.Now().UTC())
-	if err != nil {
-		return err
+	sshContent := "# Managed by Lab-in-a-Box. Do not edit.\n# labinabox-model-revision: " + revision + "\n# Bootstrap endpoint is not configured; run homelab bootstrap-endpoint set ADDRESS.\n"
+	if s.BootstrapAddress != "" {
+		sshContent, err = sshconfig.Render(s, time.Now().UTC())
+		if err != nil {
+			return err
+		}
 	}
 	if err := writePublic(filepath.Join(dir, "generated", "ssh", "labinabox.conf"), []byte(sshContent)); err != nil {
 		return err
@@ -1228,7 +1271,11 @@ func writeAccessProjection(dir string, s model.Site) error {
 }
 
 func rebuildPortal(dir string, s model.Site) error {
-	return portal.Build(s, filepath.Join(dir, "generated", "portal"), "docs", loadEvidence(dir), time.Now().UTC())
+	revision, err := s.Revision()
+	if err != nil {
+		return err
+	}
+	return portal.Build(s, filepath.Join(dir, "generated", "portal"), "docs", loadEvidence(dir, revision), time.Now().UTC())
 }
 
 func writeProjection(path string, value any) error {
@@ -1250,18 +1297,40 @@ func checkRevisionFile(path, revision string) error {
 	return nil
 }
 
-func loadEvidence(dir string) portal.Evidence {
+func loadEvidence(dir, expectedRevision string) portal.Evidence {
 	data, err := os.ReadFile(filepath.Join(dir, "generated", "verification.json"))
 	if err != nil {
 		return portal.Evidence{}
 	}
 	var document struct {
-		Evidence portal.Evidence `json:"evidence"`
+		ModelRevision string          `json:"model_revision"`
+		Evidence      portal.Evidence `json:"evidence"`
 	}
-	if json.Unmarshal(data, &document) == nil {
+	if json.Unmarshal(data, &document) == nil && document.ModelRevision == expectedRevision {
 		return document.Evidence
 	}
 	return portal.Evidence{}
+}
+
+func writeCurrentStatus(dir, revision string) error {
+	status := "NOT TESTED"
+	data, err := os.ReadFile(filepath.Join(dir, "generated", "status.json"))
+	if err == nil {
+		var current struct {
+			ModelRevision string `json:"model_revision"`
+			Status        string `json:"status"`
+		}
+		if json.Unmarshal(data, &current) == nil && current.ModelRevision == revision && current.Status != "" {
+			status = current.Status
+		} else if current.Status != "" {
+			status = "STALE"
+		}
+	}
+	return writeProjection(filepath.Join(dir, "generated", "status.json"), struct {
+		ModelRevision string `json:"model_revision"`
+		Status        string `json:"status"`
+		GeneratedAt   string `json:"generated_at"`
+	}{revision, status, time.Now().UTC().Format(time.RFC3339)})
 }
 
 func sortedSSHModules(s model.Site) []model.Module {

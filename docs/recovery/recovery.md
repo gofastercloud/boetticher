@@ -1,9 +1,21 @@
 # Recovery
 
-The minimum control-plane recovery set is the private site repository plus an independent Age private-identity copy.
+The minimum control-plane recovery set is:
 
-- Proxmox root loss: fresh supported Proxmox, bootstrap, and reconstruct from site state.
-- OPNsense loss: recreate the VM and reapply the authenticated API convergence.
-- DNS loss: recreate either DNS node independently; the pair is service redundancy, not host redundancy.
-- Changed HOME DHCP address: run `homelab bootstrap-endpoint set ADDRESS`, then regenerate SSH configuration.
-- Lost operator device: issue a new client certificate and SSH key; revoke the old certificate.
+```text
+private site repository
++ independent Age private-identity copy
+```
+
+The repository contains desired state, encrypted secrets, version locks, and non-secret evidence. It does not contain the Age private identity, OpenTofu state, plans, caches, bootstrap state, or temporary credentials.
+
+Recovery paths:
+
+- **Proxmox OS loss:** install the supported release, restore the HOME-side address, set the endpoint, and repeat the qualified bootstrap.
+- **OPNsense loss:** recreate VM 100, repeat the exact installer/interface/API gate, import the resulting API credential through stdin, then converge policy.
+- **DNS loss:** rebuild either DNS node independently; dual DNS/NTP is service redundancy, not host redundancy.
+- **Changed HOME DHCP address:** use `homelab bootstrap-endpoint set ADDRESS`, regenerate SSH, and run `homelab doctor --live`; never scan or guess.
+- **Lost operator device:** issue a new SSH key/client certificate and record/revoke the old certificate as appropriate.
+- **Data-disk loss:** restore Proxmox backups if available, then reconstruct platform state from the site repository and Age identity. Same-disk backups are not disaster recovery.
+
+No recovery is considered proven until the deployed model revision, authenticated access path, and negative security journeys are reverified.

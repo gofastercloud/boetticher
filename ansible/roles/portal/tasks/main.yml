@@ -1,5 +1,46 @@
 ---
-- name: Publish generated portal directory
-  ansible.builtin.debug:
-    msg: "The controller publishes generated/portal atomically to lab-portal-01"
-  when: inventory_hostname == 'lab-portal-01'
+- name: Require a controller-built portal artifact
+  ansible.builtin.assert:
+    that:
+      - portal_source_dir is defined
+      - portal_source_dir | length > 0
+    fail_msg: "portal_source_dir must point to the controller-built static portal"
+
+- name: Create portal document root
+  ansible.builtin.file:
+    path: /var/www/labinabox
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Publish generated portal
+  ansible.builtin.copy:
+    src: "{{ portal_source_dir }}/"
+    dest: /var/www/labinabox/
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Configure nginx for the generated portal
+  ansible.builtin.copy:
+    dest: /etc/nginx/sites-available/labinabox.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      server {
+          listen 80 default_server;
+          server_name _;
+          root /var/www/labinabox;
+          index index.html;
+          location / { try_files $uri $uri/ =404; }
+      }
+  notify: reload nginx
+
+- name: Enable generated portal nginx site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/labinabox.conf
+    dest: /etc/nginx/sites-enabled/labinabox.conf
+    state: link
+  notify: reload nginx

@@ -1,5 +1,50 @@
 # Installation
 
-Run `homelab init` on a supported controller. It creates a private site repository, an external Age identity, encrypted SOPS documents, and deterministic model metadata. Make an independent Age recovery copy before running destructive bootstrap.
+V1 starts from a fresh Proxmox VE x86 host on the existing HOME/upstream network. The host must use the fixed product node name `lab-proxmox-01`; arbitrary node names are not supported by the V1 model.
 
-`homelab preflight` validates controller platform and required tools. `bootstrap` begins from the HOME-side Proxmox DHCP address, creates the firewall VM, and performs the release-blocking unattended OPNsense integration. `provision` creates the foundation guests; `converge` applies policy and services.
+## Controller and state
+
+Supported controller platforms are macOS arm64, macOS amd64, Linux arm64, and Linux amd64. Native Windows is out of scope. WSL2 may be used only after a separate test confirms the required SSH, Age, SOPS, OpenTofu, and Ansible behavior.
+
+`homelab init` creates a private site repository containing:
+
+- `site.yml` and `.sops.yaml` with only the public Age recipient;
+- encrypted SOPS documents under `secrets/`;
+- platform/version locks and generated non-secret model, inventory, portal, and evidence artifacts.
+
+The Age private identity is created at `~/.config/labinabox/age/identity.txt` (or the explicit path supplied to `init`) with restrictive permissions. It is never written to the site repository. Before destructive bootstrap, make and verify an independent recovery copy. The CLI requires `--recovery-confirmed` for the live path.
+
+Git may contain desired state, encrypted secrets, and non-secret evidence. OpenTofu state, plans, provider caches, Ansible caches, bootstrap state, temporary credentials, and other runtime material stay outside Git and are treated as potentially sensitive.
+
+## Sequence
+
+1. Run `homelab init --site-dir my-homelab`.
+2. Secure the independent Age recovery copy.
+3. Run `homelab preflight --site my-homelab`.
+4. Reach fresh Proxmox on its HOME-side DHCP address and run `homelab bootstrap-endpoint set ADDRESS`.
+5. Generate/check the SSH file with `homelab ssh-config --force --install-include`.
+6. Run `homelab bootstrap --opnsense-iso VERIFIED_ISO --recovery-confirmed`.
+7. Run `homelab provision` and `homelab converge` after the OPNsense API is available.
+8. Run `homelab verify`, `homelab doctor`, and `homelab portal build`.
+
+The initial bootstrap trust transition is: operator authentication to fresh Proxmox → operator SSH key → `labadmin` and forwarding-only `lab-jump` → scoped Proxmox API token → direct encrypted SOPS handoff. Interactive secrets are not accepted through command arguments, persistent environment variables, logs, or generated files.
+
+## Release-blocking OPNsense gate
+
+OPNsense bootstrap is a core capability, not an optional documentation step. The required repeatable sequence is:
+
+```text
+fresh Proxmox
+→ create firewall VM
+→ unattended OPNsense installation/bootstrap
+→ establish WAN and internal VLAN/trunk interfaces
+→ establish MGMT reachability
+→ create scoped automation identities
+→ capture API credentials directly into SOPS
+→ authenticate through supported APIs
+→ converge Kea/firewall/network policy
+→ remove temporary bootstrap privilege
+→ repeat from a wiped environment
+```
+
+The source build currently implements and tests the deterministic contract, Proxmox VM creation, credential handoff, VLAN/Kea/firewall API adapters, and generated evidence boundary. It does not claim that the unattended OPNsense installer or the management interface-address transition is live-qualified. `homelab bootstrap` therefore reports `HOLD` after the Proxmox portion until this gate is exercised on the exact qualified OPNsense patch without manual OPNsense surgery.

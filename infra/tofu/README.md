@@ -1,10 +1,7 @@
 # OpenTofu integration boundary
 
-The Go controller owns the deterministic model and local runtime state. This directory is the V1 integration boundary for the authenticated Proxmox provider configuration that will create:
+This stack consumes `generated/proxmox/desired-state.json`, so the canonical Go model remains the single source for guest identity, address, VLAN, gateway, sizing, and storage selection. The HCL does not contain site-specific credentials or a second hand-maintained inventory.
 
-- `lab-fw-01` VM;
-- `lab-dns-01`, `lab-dns-02`, `lab-monitor-01`, and `lab-portal-01` LXCs;
-- `vmbr1` and its VLAN-aware configuration;
-- the selected storage profile.
+The pinned `bpg/proxmox` provider configuration manages the firewall VM and Debian LXC foundation guests. The provider token is supplied at runtime through a generated, short-lived, or SOPS-decoded variable; it is never committed. OpenTofu state, plans, plugin caches, and lock material are runtime state and stay outside the private site repository.
 
-The provider, backend, imports, locking, and clean-host recovery path must be qualified before live bootstrap is considered complete. No live credentials or state belong in this repository.
+`vmbr1` creation and the initial Proxmox trust transition remain in the controller’s guarded API path because they are bootstrap-sensitive network operations. Provider apply, import, backend/locking behavior, prevent-destroy behavior, and clean-host recovery must be qualified on a real Proxmox node before V1 is called operationally proven. Run `tofu fmt -check` locally; a successful syntax check is not live apply evidence.

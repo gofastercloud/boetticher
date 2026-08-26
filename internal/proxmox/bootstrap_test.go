@@ -41,4 +41,7 @@ func TestCreateScopedCredentialsCapturesOnlyReturnedSecret(t *testing.T) {
 	if strings.Contains(runner.command, "opaque-token-secret") {
 		t.Fatal("returned token secret was interpolated into the remote command")
 	}
+	if strings.Contains(runner.command, "|| true") {
+		t.Fatal("credential bootstrap must not mask identity or privilege errors")
+	}
 }
