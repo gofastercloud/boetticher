@@ -34,6 +34,7 @@ type Plan struct {
 	Boundary       string         `json:"boundary"`
 	IPv4Only       bool           `json:"ipv4_only"`
 	InternalParent string         `json:"internal_parent"`
+	AddressAliases []AddressAlias `json:"address_aliases"`
 	VLANs          []VLANPlan     `json:"vlans"`
 	Zones          []ZonePlan     `json:"zones"`
 	FirewallRules  []FirewallRule `json:"firewall_rules"`
@@ -64,13 +65,22 @@ type ClasslessRoute struct {
 	Router      string `json:"router"`
 }
 
+type AddressAlias struct {
+	Name        string   `json:"name"`
+	Type        string   `json:"type"`
+	Values      []string `json:"values"`
+	Description string   `json:"description"`
+}
+
 type FirewallRule struct {
+	Sequence        int    `json:"sequence"`
 	Description     string `json:"description"`
 	Source          string `json:"source"`
 	Destination     string `json:"destination"`
 	Action          string `json:"action"`
 	Protocol        string `json:"protocol"`
 	DestinationPort string `json:"destination_port,omitempty"`
+	IPVersion       string `json:"ip_version"`
 }
 
 // PlanFromSite is the canonical, deterministic OPNsense projection. The
@@ -110,6 +120,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		Boundary:       "opnsense",
 		IPv4Only:       true,
 		InternalParent: "vtnet1",
+		AddressAliases: addressAliases(s),
 		VLANs:          vlanPlans(s),
 		Zones:          zones,
 		FirewallRules:  firewallRules(s),
@@ -179,24 +190,72 @@ func poolForNetwork(network string) string {
 	return base.String()[:strings.LastIndex(base.String(), ".")+1] + "100-" + base.String()[:strings.LastIndex(base.String(), ".")+1] + "199"
 }
 
+func addressAliases(s model.Site) []AddressAlias {
+	zones := append([]model.Zone(nil), s.Network.Zones...)
+	sort.Slice(zones, func(i, j int) bool { return zones[i].VLAN < zones[j].VLAN })
+	values := make([]string, 0, len(zones))
+	for _, zone := range zones {
+		values = append(values, zone.Network)
+	}
+	return []AddressAlias{
+		{Name: "boetticher-internal-v4", Type: "network", Values: values, Description: "boetticher V1 internal IPv4 networks"},
+	}
+}
+
 func firewallRules(s model.Site) []FirewallRule {
 	networks := make(map[string]string, len(s.Network.Zones))
+	gateways := make(map[string]string, len(s.Network.Zones))
 	for _, zone := range s.Network.Zones {
 		networks[zone.Name] = zone.Network
+		gateways[zone.Name] = zone.Gateway
 	}
-	// Rules are named and ordered so the convergence layer can identify its
-	// own records without deleting rules owned by the operator or OPNsense.
-	return []FirewallRule{
-		{Description: "boetticher sandbox deny trusted", Source: networks["SANDBOX"], Destination: networks["TRUSTED"], Action: "block", Protocol: "any"},
-		{Description: "boetticher sandbox deny servers", Source: networks["SANDBOX"], Destination: networks["SERVERS"], Action: "block", Protocol: "any"},
-		{Description: "boetticher sandbox deny management", Source: networks["SANDBOX"], Destination: networks["MGMT"], Action: "block", Protocol: "any"},
-		{Description: "boetticher trusted to server DNS HTTPS", Source: networks["TRUSTED"], Destination: networks["SERVERS"], Action: "pass", Protocol: "tcp", DestinationPort: "53,443"},
-		{Description: "boetticher trusted to server DNS NTP", Source: networks["TRUSTED"], Destination: networks["SERVERS"], Action: "pass", Protocol: "udp", DestinationPort: "53,123"},
-		{Description: "boetticher trusted to management HTTPS", Source: networks["TRUSTED"], Destination: networks["MGMT"], Action: "pass", Protocol: "tcp", DestinationPort: "443,8006"},
-		{Description: "boetticher services to monitor", Source: networks["SERVERS"], Destination: networks["MGMT"], Action: "pass", Protocol: "tcp", DestinationPort: "10051"},
-		{Description: "boetticher management to services", Source: networks["MGMT"], Destination: networks["SERVERS"], Action: "pass", Protocol: "tcp", DestinationPort: "22,53,443"},
-		{Description: "boetticher management to server DNS NTP", Source: networks["MGMT"], Destination: networks["SERVERS"], Action: "pass", Protocol: "udp", DestinationPort: "53,123"},
+	// Rules are named and explicitly sequenced. Internal denies precede broad
+	// egress, and every rule is IPv4-only so the V1 policy cannot accidentally
+	// become an IPv6 bypass.
+	rules := []FirewallRule{}
+	add := func(description, source, destination, action, protocol, ports string) {
+		rules = append(rules, FirewallRule{Sequence: len(rules) + 1, Description: "boetticher " + description, Source: source, Destination: destination, Action: action, Protocol: protocol, DestinationPort: ports, IPVersion: "inet"})
 	}
+	for _, zone := range []string{"TRUSTED", "SERVERS", "SANDBOX", "MGMT"} {
+		add(strings.ToLower(zone)+" DHCP to OPNsense", networks[zone], gateways[zone], "pass", "udp", "67")
+	}
+	add("sandbox DNS TCP to OPNsense", networks["SANDBOX"], gateways["SANDBOX"], "pass", "tcp", "53")
+	add("sandbox DNS UDP to OPNsense", networks["SANDBOX"], gateways["SANDBOX"], "pass", "udp", "53")
+	add("sandbox NTP to OPNsense", networks["SANDBOX"], gateways["SANDBOX"], "pass", "udp", "123")
+	add("sandbox deny trusted", networks["SANDBOX"], networks["TRUSTED"], "block", "any", "")
+	add("sandbox deny servers", networks["SANDBOX"], networks["SERVERS"], "block", "any", "")
+	add("sandbox deny management", networks["SANDBOX"], networks["MGMT"], "block", "any", "")
+	add("sandbox internet egress", networks["SANDBOX"], "internet", "pass", "any", "")
+
+	add("trusted DNS TCP to platform", networks["TRUSTED"], networks["SERVERS"], "pass", "tcp", "53")
+	add("trusted DNS UDP to platform", networks["TRUSTED"], networks["SERVERS"], "pass", "udp", "53")
+	add("trusted NTP to platform", networks["TRUSTED"], networks["SERVERS"], "pass", "udp", "123")
+	add("trusted user services", networks["TRUSTED"], networks["SERVERS"], "pass", "tcp", "443")
+	add("trusted administration", networks["TRUSTED"], networks["MGMT"], "pass", "tcp", "22,443,8006")
+	add("trusted deny remaining servers", networks["TRUSTED"], networks["SERVERS"], "block", "any", "")
+	add("trusted deny remaining management", networks["TRUSTED"], networks["MGMT"], "block", "any", "")
+	add("trusted deny sandbox", networks["TRUSTED"], networks["SANDBOX"], "block", "any", "")
+
+	add("servers DNS TCP to platform", networks["SERVERS"], networks["SERVERS"], "pass", "tcp", "53")
+	add("servers NTP to platform", networks["SERVERS"], networks["SERVERS"], "pass", "udp", "123")
+	add("servers to monitor", networks["SERVERS"], networks["MGMT"], "pass", "tcp", "10051")
+	add("servers restricted update egress", networks["SERVERS"], "internet", "pass", "tcp", "80,443")
+	add("servers restricted DNS TCP egress", networks["SERVERS"], "internet", "pass", "tcp", "53,853")
+	add("servers restricted DNS UDP egress", networks["SERVERS"], "internet", "pass", "udp", "53")
+	add("servers deny trusted", networks["SERVERS"], networks["TRUSTED"], "block", "any", "")
+	add("servers deny sandbox", networks["SERVERS"], networks["SANDBOX"], "block", "any", "")
+	add("servers deny remaining management", networks["SERVERS"], networks["MGMT"], "block", "any", "")
+
+	add("management DNS TCP to platform", networks["MGMT"], networks["SERVERS"], "pass", "tcp", "53")
+	add("management DNS UDP to platform", networks["MGMT"], networks["SERVERS"], "pass", "udp", "53")
+	add("management NTP to platform", networks["MGMT"], networks["SERVERS"], "pass", "udp", "123")
+	add("management administration", networks["MGMT"], networks["SERVERS"], "pass", "tcp", "22,53,80,443")
+	add("management diagnostic trusted", networks["MGMT"], networks["TRUSTED"], "pass", "icmp", "")
+	add("management restricted egress", networks["MGMT"], "internet", "pass", "tcp", "443")
+	add("management deny sandbox", networks["MGMT"], networks["SANDBOX"], "block", "any", "")
+	add("management deny remaining trusted", networks["MGMT"], networks["TRUSTED"], "block", "any", "")
+	add("management deny remaining servers", networks["MGMT"], networks["SERVERS"], "block", "any", "")
+	return rules
 }
 
 // KeaSubnetPayload is kept public so offline contract tests and a future
@@ -374,11 +433,13 @@ func (p Plan) FirewallPayloads() []map[string]any {
 	result := make([]map[string]any, 0, len(p.FirewallRules))
 	for _, rule := range p.FirewallRules {
 		value := map[string]any{
+			"sequence":        rule.Sequence,
 			"description":     rule.Description,
 			"source_net":      rule.Source,
 			"destination_net": rule.Destination,
 			"action":          rule.Action,
 			"protocol":        rule.Protocol,
+			"ipprotocol":      rule.IPVersion,
 		}
 		if rule.DestinationPort != "" {
 			value["destination_port"] = rule.DestinationPort
@@ -402,11 +463,13 @@ func (c *Client) ApplyFirewall(ctx context.Context, plan Plan) error {
 			return fmt.Errorf("search firewall rule %s: %w", desired.Description, err)
 		}
 		value := map[string]any{
+			"sequence":        desired.Sequence,
 			"description":     desired.Description,
 			"source_net":      desired.Source,
 			"destination_net": desired.Destination,
 			"action":          desired.Action,
 			"protocol":        desired.Protocol,
+			"ipprotocol":      desired.IPVersion,
 		}
 		if desired.DestinationPort != "" {
 			value["destination_port"] = desired.DestinationPort

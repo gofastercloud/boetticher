@@ -51,6 +51,63 @@ func TestKeaPayloadHasNormalGatewayOptions(t *testing.T) {
 	}
 }
 
+func TestFirewallPolicyIsExplicitAndOrdered(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.IPv4Only || len(plan.AddressAliases) != 1 || plan.AddressAliases[0].Name != "boetticher-internal-v4" {
+		t.Fatalf("unexpected IPv4 boundary model: %#v", plan)
+	}
+	seen := map[string]bool{}
+	firstInternet := 0
+	for index, rule := range plan.FirewallRules {
+		if rule.Sequence != index+1 || rule.IPVersion != "inet" {
+			t.Fatalf("firewall rule sequence/family is not deterministic: %#v", rule)
+		}
+		if seen[rule.Description] {
+			t.Fatalf("duplicate managed firewall description %q", rule.Description)
+		}
+		seen[rule.Description] = true
+		if rule.Destination == "internet" && firstInternet == 0 {
+			firstInternet = rule.Sequence
+		}
+	}
+	if firstInternet == 0 {
+		t.Fatal("expected explicit Internet egress rules")
+	}
+	for _, rule := range plan.FirewallRules {
+		if rule.Source == "10.10.50.0/24" && rule.Destination != "internet" && rule.Action == "block" && rule.Sequence > firstInternet {
+			t.Fatalf("SANDBOX internal deny follows broad egress: %#v", rule)
+		}
+	}
+	want := map[string]struct {
+		source, destination, action, protocol, port string
+	}{
+		"boetticher sandbox deny trusted":    {"10.10.50.0/24", "10.10.10.0/24", "block", "any", ""},
+		"boetticher sandbox deny servers":    {"10.10.50.0/24", "10.10.20.0/24", "block", "any", ""},
+		"boetticher sandbox deny management": {"10.10.50.0/24", "10.10.99.0/24", "block", "any", ""},
+		"boetticher sandbox internet egress": {"10.10.50.0/24", "internet", "pass", "any", ""},
+		"boetticher trusted administration":  {"10.10.10.0/24", "10.10.99.0/24", "pass", "tcp", "22,443,8006"},
+		"boetticher servers to monitor":      {"10.10.20.0/24", "10.10.99.0/24", "pass", "tcp", "10051"},
+	}
+	for description, expected := range want {
+		found := false
+		for _, rule := range plan.FirewallRules {
+			if rule.Description == description {
+				found = true
+				if rule.Source != expected.source || rule.Destination != expected.destination || rule.Action != expected.action || rule.Protocol != expected.protocol || rule.DestinationPort != expected.port {
+					t.Fatalf("rule %s changed: %#v", description, rule)
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("missing explicit rule %s", description)
+		}
+	}
+}
+
 func TestKeaPayloadHasPerZoneDDNSContractWithoutEmbeddingSecretsInDesiredState(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	plan, err := PlanFromSite(site)
