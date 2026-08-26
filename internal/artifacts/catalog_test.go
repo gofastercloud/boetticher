@@ -44,6 +44,7 @@ func TestResolveArtifactEvidenceRejectsChangedBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	evidence.ArtifactPath = path
+	evidence = completeQualificationEvidence(evidence)
 	if err := WriteEvidence(root, artifact.Name, evidence); err != nil {
 		t.Fatal(err)
 	}
@@ -56,6 +57,13 @@ func TestResolveArtifactEvidenceRejectsChangedBytes(t *testing.T) {
 	if _, _, err := ResolveArtifactEvidence(root, artifact); err == nil {
 		t.Fatal("changed artifact bytes were accepted")
 	}
+}
+
+func completeQualificationEvidence(evidence Evidence) Evidence {
+	evidence.PackageManifestSHA = strings.Repeat("a", 64)
+	evidence.SBOMSHA256 = strings.Repeat("b", 64)
+	evidence.TrivyReportSHA256 = strings.Repeat("c", 64)
+	return evidence
 }
 
 func TestBuiltInArtifactsSharePinnedBase(t *testing.T) {

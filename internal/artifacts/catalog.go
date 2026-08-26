@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 )
@@ -75,6 +76,9 @@ func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artif
 	if evidence.ContentSHA256 == "" {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s has no content checksum", requested.Name)
 	}
+	if err := validateQualificationDigests(evidence); err != nil {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s qualification evidence is incomplete: %w", requested.Name, err)
+	}
 	if evidence.ArtifactPath != "" {
 		verified, err := EvidenceForFile(evidence.ArtifactPath, requested)
 		if err != nil {
@@ -87,6 +91,22 @@ func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artif
 	resolved := requested
 	resolved.ContentSHA256 = evidence.ContentSHA256
 	return resolved, evidence, nil
+}
+
+var sha256Pattern = regexp.MustCompile(`^[a-fA-F0-9]{64}$`)
+
+func validateQualificationDigests(evidence Evidence) error {
+	for name, value := range map[string]string{
+		"content_sha256":          evidence.ContentSHA256,
+		"package_manifest_sha256": evidence.PackageManifestSHA,
+		"sbom_sha256":             evidence.SBOMSHA256,
+		"trivy_report_sha256":     evidence.TrivyReportSHA256,
+	} {
+		if !sha256Pattern.MatchString(value) {
+			return fmt.Errorf("%s must be a SHA-256 digest", name)
+		}
+	}
+	return nil
 }
 
 const (

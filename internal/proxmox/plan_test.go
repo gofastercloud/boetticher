@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/artifacts"
@@ -51,6 +52,9 @@ func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	evidence.ArtifactPath = artifactFile
+	evidence.PackageManifestSHA = strings.Repeat("a", 64)
+	evidence.SBOMSHA256 = strings.Repeat("b", 64)
+	evidence.TrivyReportSHA256 = strings.Repeat("c", 64)
 	root := t.TempDir()
 	if err := artifacts.WriteEvidence(root, guest.Artifact.Name, evidence); err != nil {
 		t.Fatal(err)
