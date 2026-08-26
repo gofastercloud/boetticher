@@ -323,6 +323,58 @@ func (c *Client) UploadStorageFile(ctx context.Context, node, storage, content, 
 	return nil
 }
 
+// UploadStorageText uploads deterministic non-secret cloud-init content to a
+// snippets storage class without creating a controller-side plaintext file.
+func (c *Client) UploadStorageText(ctx context.Context, node, storage, content, filename, value string) error {
+	if node == "" || storage == "" || content == "" || filename == "" {
+		return errors.New("node, storage, content, and filename are required")
+	}
+	if strings.ContainsAny(filename, "/\\\r\n") {
+		return errors.New("uploaded filename must be a plain filename")
+	}
+	body := &bytes.Buffer{}
+	multipartWriter := multipart.NewWriter(body)
+	if err := multipartWriter.WriteField("content", content); err != nil {
+		return err
+	}
+	part, err := multipartWriter.CreateFormFile("filename", filename)
+	if err != nil {
+		return err
+	}
+	if _, err := part.Write([]byte(value)); err != nil {
+		return err
+	}
+	if err := multipartWriter.Close(); err != nil {
+		return err
+	}
+	base, err := url.Parse(c.BaseURL)
+	if err != nil {
+		return err
+	}
+	base.Path = path.Join(base.Path, "/nodes", node, "storage", storage, "upload")
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, base.String(), body)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+	if c.Token != "" {
+		request.Header.Set("Authorization", c.Token)
+	}
+	response, err := c.HTTP.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	if err != nil {
+		return err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return &APIError{StatusCode: response.StatusCode, Status: response.Status, Message: strings.TrimSpace(string(data))}
+	}
+	return nil
+}
+
 // DownloadURL asks Proxmox to download a pinned image and verify it before
 // making it available in storage. The checksum is sent as an API form field,
 // never placed in a shell command or a generated public artifact.

@@ -70,6 +70,7 @@ type Plan struct {
 	// bytes that may be imported into Proxmox.
 	ArtifactFiles     map[string]string `json:"-"`
 	OperatorPublicKey string            `json:"-"`
+	CloudInitFiles    CloudInitFiles    `json:"-"`
 }
 
 type NetworkInterface struct {
@@ -944,6 +945,20 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 		"boot":        {"order=scsi0;net0"},
 		"serial0":     {"socket"},
 		"tags":        {strings.Join(guest.Tags, ";")},
+	}
+	if guest.Name == "lab-fw-01" && plan.CloudInitFiles.UserData != "" {
+		names := cloudInitSnippetNames(guest.VMID)
+		for key, value := range map[string]string{"meta": plan.CloudInitFiles.MetaData, "user": plan.CloudInitFiles.UserData, "network": plan.CloudInitFiles.NetworkConfig} {
+			if value == "" {
+				return errors.New("firewall cloud-init input is incomplete")
+			}
+			if err := client.UploadStorageText(ctx, plan.Node, "local", "snippets", names[key], value); err != nil {
+				return fmt.Errorf("upload firewall cloud-init %s: %w", key, err)
+			}
+		}
+		params.Set("cicustom", cloudInitCICustom(guest.VMID))
+		params.Set("ciuser", model.DefaultAdminSSHUser)
+		params.Set("ipconfig0", "ip=dhcp")
 	}
 	if plan.OperatorPublicKey != "" {
 		params.Set("sshkeys", plan.OperatorPublicKey)

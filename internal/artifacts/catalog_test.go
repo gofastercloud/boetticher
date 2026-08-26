@@ -167,7 +167,7 @@ func TestApplianceBootstrapInputsContainNoOperatorKeyOrSiteState(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(firstBoot)
-	if !strings.Contains(text, "/run/boetticher/bootstrap/operator.pub") || strings.Contains(text, "ssh-ed25519 AAAA") {
+	if !strings.Contains(text, "/run/boetticher/bootstrap/operator.pub") || !strings.Contains(text, "/root/.ssh/authorized_keys") || strings.Contains(text, "ssh-ed25519 AAAA") {
 		t.Fatalf("first-boot contract does not use injected-only operator access: %s", text)
 	}
 	for _, relative := range []string{"firewall/nocloud/meta-data", "firewall/nocloud/network-config", "firewall/nocloud/user-data"} {

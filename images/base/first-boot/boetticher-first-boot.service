@@ -1,8 +1,6 @@
 [Unit]
 Description=Install the Core-injected operator key for labadmin
 After=local-fs.target ssh.service
-ConditionPathExists=/run/boetticher/bootstrap/operator.pub
-
 [Service]
 Type=oneshot
 ExecStart=/usr/lib/boetticher/boetticher-first-boot.sh

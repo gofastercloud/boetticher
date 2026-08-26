@@ -104,6 +104,19 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return err
 	}
 	proxmoxPlan.OperatorPublicKey = operatorPublicKey
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		for _, guest := range proxmoxPlan.Guests {
+			if guest.Name != "lab-fw-01" {
+				continue
+			}
+			cloudInit, renderErr := proxmox.RenderFirewallCloudInit(guest)
+			if renderErr != nil {
+				return fmt.Errorf("render firewall first-boot cloud-init: %w", renderErr)
+			}
+			proxmoxPlan.CloudInitFiles = cloudInit
+			break
+		}
+	}
 	proxmoxClient, _, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
 	if err != nil {
 		return fmt.Errorf("load Proxmox client for platform deployment: %w", err)
