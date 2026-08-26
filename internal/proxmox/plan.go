@@ -68,7 +68,8 @@ type Plan struct {
 	// ArtifactFiles is controller-local evidence and is intentionally excluded
 	// from canonical model output. It maps qualified definitions to the exact
 	// bytes that may be imported into Proxmox.
-	ArtifactFiles map[string]string `json:"-"`
+	ArtifactFiles     map[string]string `json:"-"`
+	OperatorPublicKey string            `json:"-"`
 }
 
 type NetworkInterface struct {
@@ -823,6 +824,9 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 		"serial0":     {"socket"},
 		"tags":        {strings.Join(guest.Tags, ";")},
 	}
+	if plan.OperatorPublicKey != "" {
+		params.Set("sshkeys", plan.OperatorPublicKey)
+	}
 	volumeParams, err := qemuPersistentVolumeParams(plan, guest)
 	if err != nil {
 		return fmt.Errorf("validate persistent volumes for %s: %w", guest.Name, err)
@@ -931,6 +935,9 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		"rootfs":       {fmt.Sprintf("%s:%d", plan.Storage, guest.DiskGiB)},
 		"tags":         {strings.Join(guest.Tags, ";")},
 		"net0":         {fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,ip=%s/24,gw=%s", guest.VLAN, guest.Address, gatewayFor(guest.Zone))},
+	}
+	if plan.OperatorPublicKey != "" {
+		params.Set("ssh-public-keys", plan.OperatorPublicKey)
 	}
 	for index, volume := range guest.Volumes {
 		value, err := persistentVolumeParam(volume)

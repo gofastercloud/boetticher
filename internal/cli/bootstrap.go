@@ -269,13 +269,14 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 		return err
 	}
 	if err := writeProjection(filepath.Join(*siteDir, "generated", "bootstrap.json"), struct {
-		ModelRevision    string `json:"model_revision"`
-		ProxmoxVersion   string `json:"proxmox_version"`
-		BootstrapAddress string `json:"bootstrap_address"`
-		SSHHostKey       string `json:"ssh_host_key"`
-		GatewayVMID      int    `json:"gateway_vmid,omitempty"`
-		Status           string `json:"status"`
-	}{plan.ModelRevision, version, s.BootstrapAddress, hostKey, func() int {
+		ModelRevision     string `json:"model_revision"`
+		ProxmoxVersion    string `json:"proxmox_version"`
+		BootstrapAddress  string `json:"bootstrap_address"`
+		SSHHostKey        string `json:"ssh_host_key"`
+		OperatorPublicKey string `json:"operator_public_key"`
+		GatewayVMID       int    `json:"gateway_vmid,omitempty"`
+		Status            string `json:"status"`
+	}{plan.ModelRevision, version, s.BootstrapAddress, hostKey, publicKey, func() int {
 		if s.Gateway.Mode == model.GatewayModeManaged {
 			return model.ProxmoxVMID
 		}

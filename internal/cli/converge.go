@@ -98,6 +98,11 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return err
 	}
+	operatorPublicKey, err := loadBootstrapOperatorKey(*siteDir)
+	if err != nil {
+		return err
+	}
+	proxmoxPlan.OperatorPublicKey = operatorPublicKey
 	proxmoxClient, _, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
 	if err != nil {
 		return fmt.Errorf("load Proxmox client for platform deployment: %w", err)
@@ -239,6 +244,23 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	fmt.Fprintf(out, "Deployment: PASS mode=%s model=%s (storage %s)\n", s.Gateway.Mode, firewallPlan.ModelRevision, storagePlan.GuestStorage)
 	return nil
+}
+
+func loadBootstrapOperatorKey(siteDir string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(siteDir, "generated", "bootstrap.json"))
+	if err != nil {
+		return "", fmt.Errorf("read bootstrap operator key evidence: %w", err)
+	}
+	var evidence struct {
+		OperatorPublicKey string `json:"operator_public_key"`
+	}
+	if err := json.Unmarshal(data, &evidence); err != nil {
+		return "", fmt.Errorf("decode bootstrap operator key evidence: %w", err)
+	}
+	if evidence.OperatorPublicKey == "" {
+		return "", errors.New("HOLD: bootstrap operator public key evidence is absent; rerun bootstrap")
+	}
+	return evidence.OperatorPublicKey, nil
 }
 
 // installModuleRuntimeConfigs is the deployment boundary for the common
