@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -60,6 +61,28 @@ func TestPublicDocumentationMatchesV03Model(t *testing.T) {
 		if !strings.Contains(commands, want) {
 			t.Errorf("command reference is missing %q", want)
 		}
+	}
+}
+
+func TestV3SchemaMatchesRuntimeVersion(t *testing.T) {
+	root := repositoryRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "schemas", "site.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Properties map[string]struct {
+			Const any `json:"const"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if schema.Properties["api_version"].Const != model.APIVersion {
+		t.Fatalf("schema api_version does not match model: %#v", schema.Properties["api_version"].Const)
+	}
+	if schema.Properties["schema_version"].Const != float64(model.SchemaVersion) {
+		t.Fatalf("schema_version does not match model: %#v", schema.Properties["schema_version"].Const)
 	}
 }
 

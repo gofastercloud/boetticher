@@ -39,6 +39,14 @@ type Registry struct {
 	definitions map[string]ModuleDefinition
 }
 
+func NewRegistry(definitions []ModuleDefinition) Registry {
+	result := Registry{definitions: make(map[string]ModuleDefinition, len(definitions))}
+	for _, definition := range definitions {
+		result.definitions[definition.Name] = definition
+	}
+	return result
+}
+
 func FirstPartyRegistry() Registry {
 	return Registry{definitions: map[string]ModuleDefinition{
 		"dns": {
@@ -102,13 +110,13 @@ func (r Registry) Resolve(config model.SiteConfig) ([]ResolvedModule, error) {
 		return nil, fmt.Errorf("modules.dns.enabled: dns is mandatory and cannot be disabled")
 	}
 	if config.Gateway.Mode == model.GatewayModeExternal {
-		firewallConfig, exists := config.Modules["firewall"]
-		if !exists || firewallConfig.Enabled == nil || *firewallConfig.Enabled {
-			return nil, fmt.Errorf("modules.firewall.enabled: external gateway mode requires the managed firewall module to be explicitly disabled")
+		if _, hasFirewall := r.definitions["firewall"]; hasFirewall {
+			firewallConfig, exists := config.Modules["firewall"]
+			if !exists || firewallConfig.Enabled == nil || *firewallConfig.Enabled {
+				return nil, fmt.Errorf("modules.firewall.enabled: external gateway mode requires the managed firewall module to be explicitly disabled")
+			}
 		}
 		active["firewall"] = false
-	} else if !active["firewall"] {
-		return nil, fmt.Errorf("gateway.mode: managed mode requires the firewall module or an external gateway")
 	}
 	for name := range active {
 		if !active[name] {
@@ -116,8 +124,32 @@ func (r Registry) Resolve(config model.SiteConfig) ([]ResolvedModule, error) {
 		}
 		definition := r.definitions[name]
 		for _, dependency := range definition.DependsOn {
+			if _, ok := r.definitions[dependency]; !ok {
+				return nil, fmt.Errorf("modules.%s: dependency %q is not registered", name, dependency)
+			}
+			if requested, exists := config.Modules[dependency]; exists && requested.Enabled != nil && !*requested.Enabled {
+				return nil, fmt.Errorf("modules.%s: required dependency %q is explicitly disabled", name, dependency)
+			}
 			if !active[dependency] {
-				return nil, fmt.Errorf("modules.%s: dependency %q is disabled", name, dependency)
+				active[dependency] = true
+				reasons[dependency] = "dependency"
+			}
+		}
+	}
+	// Repeat until dependencies of newly activated dependencies are included.
+	changed := true
+	for changed {
+		changed = false
+		for name, enabled := range active {
+			if !enabled {
+				continue
+			}
+			for _, dependency := range r.definitions[name].DependsOn {
+				if !active[dependency] {
+					active[dependency] = true
+					reasons[dependency] = "dependency"
+					changed = true
+				}
 			}
 		}
 	}
@@ -161,7 +193,6 @@ func (r Registry) Resolve(config model.SiteConfig) ([]ResolvedModule, error) {
 		}
 		result = append(result, ResolvedModule{Definition: definition, Enabled: false, Reason: "disabled", State: "Disabled"})
 	}
-	sort.SliceStable(result, func(i, j int) bool { return result[i].Definition.Name < result[j].Definition.Name })
 	return result, nil
 }
 

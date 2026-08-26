@@ -14,6 +14,7 @@ import (
 )
 
 const (
+	APIVersion                  = "boetticher/v3"
 	SchemaVersion               = 3
 	PlatformVersion             = "0.3.0"
 	QualifiedGatewayImage       = "debian-13-genericcloud-amd64"
@@ -280,7 +281,7 @@ func NewDefaultSite(installationID, ageRecipient string) Site {
 
 func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 	site := Site{
-		APIVersion:      "boetticher/v3",
+		APIVersion:      APIVersion,
 		PlatformVersion: PlatformVersion,
 		SchemaVersion:   SchemaVersion,
 		StorageProfile:  "single-disk",
@@ -363,7 +364,7 @@ func (s Site) Normalize() Site {
 }
 
 func (s Site) Validate() error {
-	if s.APIVersion != "boetticher/v3" || s.SchemaVersion != SchemaVersion {
+	if s.APIVersion != APIVersion || s.SchemaVersion != SchemaVersion {
 		return fmt.Errorf("site schema %q/%d is not supported by boetticher v0.3; recreate the site with boetticher init", s.APIVersion, s.SchemaVersion)
 	}
 	if s.PlatformVersion == "" {

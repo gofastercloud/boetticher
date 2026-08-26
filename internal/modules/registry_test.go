@@ -132,3 +132,30 @@ func TestUnknownModuleIsRejected(t *testing.T) {
 		t.Fatalf("unknown module was accepted: %v", err)
 	}
 }
+
+func TestDependenciesActivateTransitivelyInStableOrder(t *testing.T) {
+	registry := NewRegistry([]ModuleDefinition{
+		{Name: "base", Version: "1.0.0", Policy: DefaultOff, Provides: []Capability{"base"}},
+		{Name: "service", Version: "1.0.0", Policy: DefaultOff, DependsOn: []string{"base"}, Requires: []Capability{"base"}},
+	})
+	service := true
+	resolved, err := registry.Resolve(model.SiteConfig{Modules: map[string]model.ModuleConfig{"service": {Enabled: &service}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved) != 2 || resolved[0].Definition.Name != "base" || resolved[0].Reason != "dependency" || resolved[1].Definition.Name != "service" {
+		t.Fatalf("unexpected dependency resolution: %#v", resolved)
+	}
+}
+
+func TestDependencyCycleIsRejected(t *testing.T) {
+	registry := NewRegistry([]ModuleDefinition{
+		{Name: "a", Version: "1.0.0", Policy: DefaultOff, DependsOn: []string{"b"}},
+		{Name: "b", Version: "1.0.0", Policy: DefaultOff, DependsOn: []string{"a"}},
+	})
+	enabled := true
+	_, err := registry.Resolve(model.SiteConfig{Modules: map[string]model.ModuleConfig{"a": {Enabled: &enabled}}})
+	if err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("dependency cycle was accepted: %v", err)
+	}
+}

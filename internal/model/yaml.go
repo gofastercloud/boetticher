@@ -46,7 +46,7 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 	if probe.APIVersion == "" {
 		return SiteConfig{}, fmt.Errorf("site.yml: api_version is required and must be boetticher/v3")
 	}
-	if probe.APIVersion != "boetticher/v3" {
+	if probe.APIVersion != APIVersion {
 		return SiteConfig{}, fmt.Errorf("site schema %q is not supported by boetticher v0.3; recreate the site with boetticher init", probe.APIVersion)
 	}
 	var config SiteConfig
