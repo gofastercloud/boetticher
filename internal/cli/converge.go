@@ -160,7 +160,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			if guest.Name != "lab-fw-01" {
 				continue
 			}
-			cloudInit, renderErr := proxmox.RenderFirewallCloudInit(guest)
+			cloudInit, renderErr := proxmox.RenderFirewallCloudInitWithKey(guest, operatorPublicKey)
 			if renderErr != nil {
 				return fmt.Errorf("render firewall first-boot cloud-init: %w", renderErr)
 			}

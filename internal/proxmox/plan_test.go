@@ -91,6 +91,30 @@ func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
 	}
 }
 
+func TestLXCBootstrapKeyUsesProxmoxRootInjectionContract(t *testing.T) {
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator"
+	params, err := lxcBootstrapKeyParams(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := params.Get("ssh-public-keys"); got != key {
+		t.Fatalf("LXC bootstrap key parameter = %q, want %q", got, key)
+	}
+	if _, err := lxcBootstrapKeyParams("not-a-key"); err == nil {
+		t.Fatal("invalid LXC bootstrap key was accepted")
+	}
+}
+
+func TestLXCBootstrapKeyCanBeOmittedForPlanRendering(t *testing.T) {
+	params, err := lxcBootstrapKeyParams("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(params) != 0 {
+		t.Fatalf("empty bootstrap key produced Proxmox parameters: %#v", params)
+	}
+}
+
 func TestManagedFirewallUsesTaggedPerZoneVNICs(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {

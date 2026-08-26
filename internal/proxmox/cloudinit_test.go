@@ -27,6 +27,28 @@ func TestFirewallCloudInitUsesStableInterfaceIdentities(t *testing.T) {
 	}
 }
 
+func TestFirewallCloudInitInjectsOperatorKeyOnlyAtDeployment(t *testing.T) {
+	guest := GuestPlan{Name: "lab-fw-01", Address: "10.10.99.1", NICs: []GuestNIC{{Name: "mgmt0", MAC: "02:00:00:00:01:05", Method: "static", Address: "10.10.99.1"}}}
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator"
+	files, err := RenderFirewallCloudInitWithKey(guest, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(files.UserData, "ssh_authorized_keys:") || !strings.Contains(files.UserData, key) {
+		t.Fatalf("firewall bootstrap key was not injected into deployment-only NoCloud data: %s", files.UserData)
+	}
+	if strings.Contains(files.MetaData+files.NetworkConfig, key) {
+		t.Fatal("operator key leaked into unrelated NoCloud documents")
+	}
+}
+
+func TestFirewallCloudInitRejectsInvalidOperatorKey(t *testing.T) {
+	guest := GuestPlan{Name: "lab-fw-01", Address: "10.10.99.1", NICs: []GuestNIC{{Name: "mgmt0", MAC: "02:00:00:00:01:05", Method: "static", Address: "10.10.99.1"}}}
+	if _, err := RenderFirewallCloudInitWithKey(guest, "not-a-key"); err == nil {
+		t.Fatal("invalid operator key was accepted")
+	}
+}
+
 func TestFirewallCloudInitDoesNotDuplicateStaticPrefixLength(t *testing.T) {
 	guest := GuestPlan{Name: "lab-fw-01", Address: "10.10.99.1", NICs: []GuestNIC{
 		{Name: "trusted0", MAC: "02:00:00:00:01:02", Method: "static", Address: "10.10.10.1"},

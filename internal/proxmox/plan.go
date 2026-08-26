@@ -1021,6 +1021,9 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 		params.Set("ipconfig0", "ip=dhcp")
 	}
 	if plan.OperatorPublicKey != "" {
+		if err := ValidatePublicKey(plan.OperatorPublicKey); err != nil {
+			return err
+		}
 		params.Set("sshkeys", plan.OperatorPublicKey)
 	}
 	volumeParams, err := qemuPersistentVolumeParams(plan, guest)
@@ -1132,8 +1135,14 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		"tags":         {strings.Join(guest.Tags, ";")},
 		"net0":         {fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,ip=%s/24,gw=%s", guest.VLAN, guest.Address, gatewayFor(guest.Zone))},
 	}
-	if plan.OperatorPublicKey != "" {
-		params.Set("ssh-public-keys", plan.OperatorPublicKey)
+	bootstrapParams, err := lxcBootstrapKeyParams(plan.OperatorPublicKey)
+	if err != nil {
+		return fmt.Errorf("validate appliance bootstrap key for %s: %w", guest.Name, err)
+	}
+	for key, values := range bootstrapParams {
+		for _, value := range values {
+			params.Add(key, value)
+		}
 	}
 	for index, volume := range guest.Volumes {
 		value, err := persistentVolumeParam(volume)
@@ -1146,6 +1155,20 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		return fmt.Errorf("create container %s: %w", guest.Name, err)
 	}
 	return nil
+}
+
+// lxcBootstrapKeyParams is the only operator-key input accepted by appliance
+// creation. Proxmox writes this key into the container's root bootstrap
+// identity; the image first-boot service copies it to labadmin and removes the
+// bootstrap copy before normal deployment configuration begins.
+func lxcBootstrapKeyParams(publicKey string) (url.Values, error) {
+	if publicKey == "" {
+		return url.Values{}, nil
+	}
+	if err := ValidatePublicKey(publicKey); err != nil {
+		return nil, err
+	}
+	return url.Values{"ssh-public-keys": {publicKey}}, nil
 }
 
 func persistentVolumeParam(volume model.PersistentVolumeDeclaration) (string, error) {

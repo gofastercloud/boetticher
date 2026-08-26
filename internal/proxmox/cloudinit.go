@@ -14,6 +14,20 @@ type CloudInitFiles struct {
 // RenderFirewallCloudInit creates only first-boot transport state. Runtime
 // firewall policy, DHCP scopes, and forwarding remain deployment-derived.
 func RenderFirewallCloudInit(guest GuestPlan) (CloudInitFiles, error) {
+	return renderFirewallCloudInit(guest, "")
+}
+
+// RenderFirewallCloudInitWithKey adds the deployment-time operator key to the
+// NoCloud user configuration. The key is transport state only; it is not part
+// of the firewall artifact or the canonical site model.
+func RenderFirewallCloudInitWithKey(guest GuestPlan, operatorPublicKey string) (CloudInitFiles, error) {
+	if err := ValidatePublicKey(operatorPublicKey); err != nil {
+		return CloudInitFiles{}, err
+	}
+	return renderFirewallCloudInit(guest, operatorPublicKey)
+}
+
+func renderFirewallCloudInit(guest GuestPlan, operatorPublicKey string) (CloudInitFiles, error) {
 	if guest.Name != "lab-fw-01" || guest.Address != "10.10.99.1" {
 		return CloudInitFiles{}, fmt.Errorf("unexpected firewall bootstrap identity %s/%s", guest.Name, guest.Address)
 	}
@@ -30,9 +44,14 @@ func RenderFirewallCloudInit(guest GuestPlan) (CloudInitFiles, error) {
 			fmt.Fprintf(&network, "    addresses: [%s/24]\n", nic.Address)
 		}
 	}
+	userData := "#cloud-config\nhostname: lab-fw-01\nmanage_etc_hosts: true\nusers:\n  - name: labadmin\n    shell: /bin/bash\n    groups: [sudo]\n    sudo: [\"ALL=(ALL) NOPASSWD:/usr/bin/systemctl, /usr/sbin/nft, /usr/sbin/kea-dhcp4, /usr/sbin/kea-dhcp-ddns\"]\n"
+	if operatorPublicKey != "" {
+		userData += "    ssh_authorized_keys:\n      - " + operatorPublicKey + "\n"
+	}
+	userData += "ssh_pwauth: false\ndisable_root: true\nwrite_files:\n  - path: /etc/sysctl.d/boetticher-forwarding.conf\n    permissions: '0644'\n    content: |\n      net.ipv4.ip_forward=0\n      net.ipv6.conf.all.forwarding=0\n"
 	return CloudInitFiles{
 		MetaData:      "instance-id: boetticher-firewall-1.0.0\nlocal-hostname: lab-fw-01\n",
-		UserData:      "#cloud-config\nhostname: lab-fw-01\nmanage_etc_hosts: true\nusers:\n  - name: labadmin\n    shell: /bin/bash\n    groups: [sudo]\n    sudo: [\"ALL=(ALL) NOPASSWD:/usr/bin/systemctl, /usr/sbin/nft, /usr/sbin/kea-dhcp4, /usr/sbin/kea-dhcp-ddns\"]\nssh_pwauth: false\ndisable_root: true\nwrite_files:\n  - path: /etc/sysctl.d/boetticher-forwarding.conf\n    permissions: '0644'\n    content: |\n      net.ipv4.ip_forward=0\n      net.ipv6.conf.all.forwarding=0\n",
+		UserData:      userData,
 		NetworkConfig: network.String(),
 	}, nil
 }
