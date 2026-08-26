@@ -254,14 +254,6 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err := rebuildPortal(*siteDir, s); err != nil {
 		return fmt.Errorf("HOLD: bootstrap network binding was persisted but portal could not be regenerated: %w", err)
 	}
-	if s.Gateway.Mode == model.GatewayModeManaged {
-		if err := proxmox.EnsureFirewallVM(ctx, client, plan); err != nil {
-			return err
-		}
-		if err := client.StartVM(ctx, plan.Node, model.ProxmoxVMID); err != nil {
-			return fmt.Errorf("start managed gateway VM: %w", err)
-		}
-	}
 	hostKey, err := sshconfig.ScanHostKey(ctx, s.BootstrapAddress)
 	if err != nil {
 		return fmt.Errorf("record Proxmox SSH host identity: %w", err)
@@ -299,7 +291,7 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	}
 	fmt.Fprintf(out, "Proxmox bootstrap: PASS authenticated with scoped identity on %s\n", version)
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		fmt.Fprintln(out, "Managed gateway VM: PASS created or already present and started")
+		fmt.Fprintln(out, "Managed gateway VM: deferred to boetticher deploy")
 	} else {
 		fmt.Fprintln(out, "External gateway: PASS physical VLAN trunk recorded; appliance remains operator-managed")
 	}

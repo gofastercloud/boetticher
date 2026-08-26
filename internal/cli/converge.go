@@ -112,6 +112,14 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	} else if err := proxmoxClient.EnsureDirectoryStorageContent(context.Background(), "local", "/var/lib/vz", []string{"backup", "images", "rootdir", "vztmpl"}); err != nil {
 		return fmt.Errorf("ensure single-disk Proxmox storage: %w", err)
 	}
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		if err := proxmox.EnsureFirewallVM(context.Background(), proxmoxClient, proxmoxPlan); err != nil {
+			return fmt.Errorf("create managed gateway appliance: %w", err)
+		}
+		if err := proxmoxClient.StartVM(context.Background(), proxmoxPlan.Node, model.ProxmoxVMID); err != nil {
+			return fmt.Errorf("start managed gateway appliance: %w", err)
+		}
+	}
 	if err := proxmox.Provision(context.Background(), proxmoxClient, proxmoxPlan, ""); err != nil {
 		return fmt.Errorf("deploy platform guests: %w", err)
 	}
