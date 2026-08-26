@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 type GuestSummary struct {
@@ -79,6 +81,43 @@ const (
 	PlatformOwnership = "boetticher platform"
 	UserOwnership     = "user-managed"
 )
+
+type BuilderAudit struct {
+	Exists bool
+	Owned  bool
+	Name   string
+	Status string
+}
+
+// InspectBuilder is a read-only check for the transient bootstrap builder.
+// A present builder is actionable state: successful bootstrap removes it, and
+// an unowned object at the reserved VMID is a collision, never a resource to
+// adopt.
+func InspectBuilder(ctx context.Context, client *Client, node string) (BuilderAudit, error) {
+	if client == nil || node == "" {
+		return BuilderAudit{}, fmt.Errorf("Proxmox client and node are required")
+	}
+	var current map[string]any
+	err := client.QEMUConfig(ctx, node, model.BuilderVMID, &current)
+	if IsNotFound(err) {
+		return BuilderAudit{}, nil
+	}
+	if err != nil {
+		return BuilderAudit{}, fmt.Errorf("inspect temporary builder: %w", err)
+	}
+	return classifyBuilder(current), nil
+}
+
+func classifyBuilder(current map[string]any) BuilderAudit {
+	name, _ := current["name"].(string)
+	status, _ := current["status"].(string)
+	return BuilderAudit{
+		Exists: true,
+		Owned:  name == "lab-builder-01" && hasOwnerTag(currentTags(current), builderOwnerTag),
+		Name:   name,
+		Status: status,
+	}
+}
 
 // ClassifyGuests is deliberately a pure ownership projection. Unknown guests
 // are informational and never become part of the desired-state plan.
