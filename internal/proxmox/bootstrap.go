@@ -19,6 +19,13 @@ type CommandRunner interface {
 	Run(ctx context.Context, address, user, command string) ([]byte, error)
 }
 
+// ArgsCommandRunner executes a fixed remote executable with separate
+// arguments. Callers use this for untrusted-but-validated read filters so the
+// transport never has to assemble a shell command.
+type ArgsCommandRunner interface {
+	RunArgs(ctx context.Context, address, user string, args []string) ([]byte, error)
+}
+
 type StdinCommandRunner interface {
 	CommandRunner
 	RunWithStdin(context.Context, string, string, string, io.Reader) ([]byte, error)
@@ -143,7 +150,14 @@ func DiscoverPhysicalNetworkViaSSH(ctx context.Context, runner CommandRunner, ad
 }
 
 func (r SSHRunner) Run(ctx context.Context, address, user, command string) ([]byte, error) {
-	return r.run(ctx, address, user, command, os.Stdin)
+	return r.runArgs(ctx, address, user, []string{command}, os.Stdin)
+}
+
+// RunArgs executes one fixed remote executable and its arguments. OpenSSH
+// receives the executable and arguments separately; no local shell fragment
+// is constructed from caller input.
+func (r SSHRunner) RunArgs(ctx context.Context, address, user string, commandArgs []string) ([]byte, error) {
+	return r.runArgs(ctx, address, user, commandArgs, os.Stdin)
 }
 
 // RunWithStdin executes one validated remote command while streaming the
@@ -153,7 +167,7 @@ func (r SSHRunner) RunWithStdin(ctx context.Context, address, user, command stri
 	if stdin == nil {
 		return nil, errors.New("SSH stdin is required")
 	}
-	return r.run(ctx, address, user, command, stdin)
+	return r.runArgs(ctx, address, user, []string{command}, stdin)
 }
 
 const managementInterfaceConfig = `auto vmbr1.99
@@ -190,12 +204,29 @@ ip -d link show dev vmbr1 | grep -Eq "vlan_filtering (1|on)"
 	return nil
 }
 
-func (r SSHRunner) run(ctx context.Context, address, user, command string, stdin io.Reader) ([]byte, error) {
+func (r SSHRunner) runArgs(ctx context.Context, address, user string, commandArgs []string, stdin io.Reader) ([]byte, error) {
+	args, err := r.commandArgs(address, user, commandArgs)
+	if err != nil {
+		return nil, err
+	}
+	process := exec.CommandContext(ctx, "ssh", args...)
+	process.Stdin = stdin
+	output, err := process.Output()
+	if err != nil {
+		return nil, fmt.Errorf("SSH bootstrap command failed: %w", err)
+	}
+	return output, nil
+}
+
+func (r SSHRunner) commandArgs(address, user string, commandArgs []string) ([]string, error) {
 	if net.ParseIP(address) == nil {
 		return nil, fmt.Errorf("Proxmox bootstrap address must be an IP address")
 	}
 	if user == "" {
 		return nil, errors.New("bootstrap SSH user is required")
+	}
+	if len(commandArgs) == 0 || commandArgs[0] == "" {
+		return nil, errors.New("SSH remote command is required")
 	}
 	args := []string{"-o", "BatchMode=no", "-o", "ForwardAgent=no", "-o", "ForwardX11=no"}
 	strictHostKey := r.StrictHostKey
@@ -222,14 +253,9 @@ func (r SSHRunner) run(ctx context.Context, address, user, command string, stdin
 		}
 		target = r.HostAlias
 	}
-	args = append(args, user+"@"+target, command)
-	process := exec.CommandContext(ctx, "ssh", args...)
-	process.Stdin = stdin
-	output, err := process.Output()
-	if err != nil {
-		return nil, fmt.Errorf("SSH bootstrap command failed: %w", err)
-	}
-	return output, nil
+	args = append(args, user+"@"+target)
+	args = append(args, commandArgs...)
+	return args, nil
 }
 
 func InstallOperatorKey(ctx context.Context, runner CommandRunner, address, initialUser, publicKey string) error {

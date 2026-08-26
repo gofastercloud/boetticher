@@ -3,6 +3,7 @@ package proxmox
 import (
 	"context"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -49,6 +50,30 @@ func TestWaitForCommandUsesAuthenticatedReadinessProbe(t *testing.T) {
 	}
 	if runner.command != "test -f /run/ready" {
 		t.Fatalf("command readiness probe = %q", runner.command)
+	}
+}
+
+func TestSSHRunnerPreservesJournalArgumentsWithoutShellInterpolation(t *testing.T) {
+	runner := SSHRunner{ConfigFile: "/tmp/boetticher.conf", StrictHostKey: "ask"}
+	args, err := runner.commandArgs("192.0.2.10", "labadmin", []string{
+		"journalctl", "--no-pager", "--lines=25", "--directory=/var/log/journal/remote",
+		"_HOSTNAME=lab-dns-01", "_SYSTEMD_UNIT=blocky.service", "--since=2026-08-27T00:00:00Z", "-p", "warning",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSuffix := []string{
+		"labadmin@192.0.2.10", "journalctl", "--no-pager", "--lines=25",
+		"--directory=/var/log/journal/remote", "_HOSTNAME=lab-dns-01",
+		"_SYSTEMD_UNIT=blocky.service", "--since=2026-08-27T00:00:00Z", "-p", "warning",
+	}
+	if len(args) < len(wantSuffix) || !reflect.DeepEqual(args[len(args)-len(wantSuffix):], wantSuffix) {
+		t.Fatalf("SSH invocation did not preserve argument boundaries: %#v", args)
+	}
+	for _, arg := range args {
+		if strings.Contains(arg, "'\\''") || strings.Contains(arg, "journalctl ") {
+			t.Fatalf("SSH invocation contains shell-assembled input: %#v", args)
+		}
 	}
 }
 

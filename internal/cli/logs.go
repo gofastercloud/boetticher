@@ -63,7 +63,7 @@ func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 	if !ok {
 		return fmt.Errorf("%q is not a known boetticher-managed endpoint", host)
 	}
-	argsForJournal := []string{"journalctl", "--no-pager", "--output=short-iso", "--lines=" + strconv.Itoa(*limit), "_HOSTNAME=" + component.Hostname}
+	argsForJournal := []string{"journalctl", "--no-pager", "--output=short-iso", "--lines=" + strconv.Itoa(*limit)}
 	collector, collectorOK := findManagedEndpoint(s, "lab-log-01")
 	if !collectorOK {
 		return fmt.Errorf("mandatory logging collector lab-log-01 is not present in the desired model")
@@ -71,6 +71,7 @@ func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 	if component.Name != collector.Name {
 		argsForJournal = append(argsForJournal, "--directory=/var/log/journal/remote")
 	}
+	argsForJournal = append(argsForJournal, "_HOSTNAME="+component.Hostname)
 	if *unit != "" {
 		argsForJournal = append(argsForJournal, "_SYSTEMD_UNIT="+*unit)
 	}
@@ -80,18 +81,13 @@ func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 	if *priority != "" {
 		argsForJournal = append(argsForJournal, "-p", *priority)
 	}
-	quoted := make([]string, len(argsForJournal))
-	for i, value := range argsForJournal {
-		quoted[i] = shellQuote(value)
-	}
-	command := strings.Join(quoted, " ")
 	if component.Name == collector.Name && fs.NArg() == 0 {
 		fmt.Fprintln(out, "Source: collector-local journal")
 	} else {
 		fmt.Fprintf(out, "Source: collected journal for %s\n", component.Hostname)
 	}
 	runner := proxmox.SSHRunner{ConfigFile: filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"), HostAlias: collector.Name, StrictHostKey: "ask"}
-	data, err := runner.Run(context.Background(), collector.Address, model.DefaultAdminSSHUser, command)
+	data, err := runner.RunArgs(context.Background(), collector.Address, model.DefaultAdminSSHUser, argsForJournal)
 	if err != nil {
 		return fmt.Errorf("read journal for %s: %w", component.Hostname, err)
 	}
@@ -122,5 +118,3 @@ func findManagedEndpoint(s model.Site, wanted string) (model.Component, bool) {
 	}
 	return model.Component{}, false
 }
-
-func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
