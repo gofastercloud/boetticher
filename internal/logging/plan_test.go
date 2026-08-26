@@ -32,6 +32,12 @@ func TestPlanProjectsMandatoryCollectorAndManagedSources(t *testing.T) {
 	if !strings.Contains(CollectorServiceOverride(plan), "--listen-https=-3") || !strings.Contains(CollectorServiceOverride(plan), RemoteJournalPath) {
 		t.Fatal("collector service override does not bind HTTPS journal transport and persistent output")
 	}
+	if !strings.Contains(CollectorServiceOverride(plan), "ExecStart=/usr/lib/systemd/systemd-journal-remote --listen-https=-3 --output="+RemoteJournalPath) {
+		t.Fatal("collector service override does not use Debian's journal-remote executable path")
+	}
+	if strings.Contains(CollectorServiceOverride(plan), "ExecStart=/lib/systemd/systemd-journal-remote") {
+		t.Fatal("collector service override uses the non-canonical journal-remote executable path")
+	}
 	if !strings.Contains(UploadConfiguration(plan, "lab-dns-01"), "https://logs.lab.home.arpa:19532") {
 		t.Fatal("upload configuration does not use the canonical collector URL")
 	}
