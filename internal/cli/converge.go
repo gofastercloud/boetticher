@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/ansible"
+	"github.com/gofastercloud/boetticher/internal/appliance"
 	"github.com/gofastercloud/boetticher/internal/backup"
 	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -62,6 +63,10 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 		fmt.Fprintln(out, "  Destructive actions: NOT RUN (dry-run)")
 		if plan, planErr := proxmox.PlanFromSite(s); planErr == nil {
+			qualified, qualifyErr := proxmox.ResolveQualifiedArtifacts(*siteDir, plan, false)
+			if qualifyErr == nil {
+				plan = qualified
+			}
 			fmt.Fprintln(out, "  Appliances:")
 			for _, guest := range plan.Guests {
 				status := "definition resolved"
@@ -84,6 +89,14 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return err
 	}
+	proxmoxPlan, err := proxmox.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
+	proxmoxPlan, err = proxmox.ResolveQualifiedArtifacts(*siteDir, proxmoxPlan, true)
+	if err != nil {
+		return err
+	}
 	proxmoxClient, _, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
 	if err != nil {
 		return fmt.Errorf("load Proxmox client for platform deployment: %w", err)
@@ -95,12 +108,8 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		if err := proxmoxClient.EnsureDirectoryStorage(context.Background(), backup.DedicatedStorageID, backup.DedicatedStoragePath); err != nil {
 			return fmt.Errorf("ensure dedicated backup storage: %w", err)
 		}
-	} else if err := proxmoxClient.EnsureDirectoryStorageContent(context.Background(), "local", "/var/lib/vz", []string{"backup", "images", "rootdir"}); err != nil {
+	} else if err := proxmoxClient.EnsureDirectoryStorageContent(context.Background(), "local", "/var/lib/vz", []string{"backup", "images", "rootdir", "vztmpl"}); err != nil {
 		return fmt.Errorf("ensure single-disk Proxmox storage: %w", err)
-	}
-	proxmoxPlan, err := proxmox.PlanFromSite(s)
-	if err != nil {
-		return err
 	}
 	if err := proxmox.Provision(context.Background(), proxmoxClient, proxmoxPlan, ""); err != nil {
 		return fmt.Errorf("deploy platform guests: %w", err)
@@ -156,6 +165,9 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	variables = append(variables, '\n')
 	if err := ansible.Run(context.Background(), "ansible/site.yml", inventoryPath, variables); err != nil {
+		return err
+	}
+	if err := installModuleRuntimeConfigs(context.Background(), s); err != nil {
 		return err
 	}
 	monitorCSR, err := os.ReadFile(filepath.Join(csrDir, "monitor.csr.pem"))
@@ -217,6 +229,45 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return err
 	}
 	fmt.Fprintf(out, "Deployment: PASS mode=%s model=%s (storage %s)\n", s.Gateway.Mode, firewallPlan.ModelRevision, storagePlan.GuestStorage)
+	return nil
+}
+
+// installModuleRuntimeConfigs is the deployment boundary for the common
+// non-secret appliance contract. Module declarations remain the source of
+// guest identity and runtime configuration; the SSH runner is only the Core
+// transport used to install the already-validated document.
+func installModuleRuntimeConfigs(ctx context.Context, s model.Site) error {
+	runner := proxmox.SSHRunner{
+		IdentityFile:  model.ExpandUserPath(s.SSHIdentityFile),
+		StrictHostKey: "ask",
+	}
+	declarations := make(map[string]model.ModuleDeclaration, len(s.Declarations))
+	for _, declaration := range s.Declarations {
+		declarations[declaration.Module] = declaration
+	}
+	for _, guest := range s.PlatformComponents() {
+		if guest.Module == "" {
+			continue
+		}
+		declaration, ok := declarations[guest.Module]
+		if !ok {
+			return fmt.Errorf("runtime configuration for %s: module declaration is missing", guest.Name)
+		}
+		config, err := appliance.RenderRuntimeConfig(s, guest, declaration)
+		if err != nil {
+			return fmt.Errorf("render runtime configuration for %s: %w", guest.Name, err)
+		}
+		user := guest.SSHUser
+		if user == "" {
+			user = model.DefaultAdminSSHUser
+		}
+		if err := appliance.InstallRuntimeConfig(ctx, runner, guest.Address, user, config); err != nil {
+			return fmt.Errorf("install runtime configuration for %s: %w", guest.Name, err)
+		}
+		if err := appliance.InstallArtifactIdentity(ctx, runner, guest.Address, user, declaration.Artifact); err != nil {
+			return fmt.Errorf("install artifact identity for %s: %w", guest.Name, err)
+		}
+	}
 	return nil
 }
 

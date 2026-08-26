@@ -29,6 +29,43 @@ func TestEvidenceUsesActualArtifactBytes(t *testing.T) {
 	}
 }
 
+func TestResolveArtifactEvidenceRejectsChangedBytes(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "logging.tar.zst")
+	if err := os.WriteFile(path, []byte("qualified bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := EvidenceForFile(path, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = path
+	evidence = completeQualificationEvidence(evidence)
+	if err := WriteEvidence(root, artifact.Name, evidence); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveArtifactEvidence(root, artifact); err != nil {
+		t.Fatalf("qualified evidence was rejected: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("changed bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveArtifactEvidence(root, artifact); err == nil {
+		t.Fatal("changed artifact bytes were accepted")
+	}
+}
+
+func completeQualificationEvidence(evidence Evidence) Evidence {
+	evidence.PackageManifestSHA = strings.Repeat("a", 64)
+	evidence.SBOMSHA256 = strings.Repeat("b", 64)
+	evidence.TrivyReportSHA256 = strings.Repeat("c", 64)
+	return evidence
+}
+
 func TestBuiltInArtifactsSharePinnedBase(t *testing.T) {
 	if err := ValidateDefinitions(); err != nil {
 		t.Fatal(err)

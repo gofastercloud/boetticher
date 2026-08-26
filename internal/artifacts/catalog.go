@@ -3,9 +3,11 @@ package artifacts
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 )
@@ -29,6 +31,7 @@ type Definition struct {
 // they never become desired-state inputs.
 type Evidence struct {
 	Artifact           model.Artifact `json:"artifact"`
+	ArtifactPath       string         `json:"artifact_path,omitempty"`
 	ContentSHA256      string         `json:"content_sha256"`
 	SizeBytes          int64          `json:"size_bytes"`
 	PackageManifestSHA string         `json:"package_manifest_sha256,omitempty"`
@@ -36,6 +39,74 @@ type Evidence struct {
 	TrivyReportSHA256  string         `json:"trivy_report_sha256,omitempty"`
 	DefinitionSHA256   string         `json:"definition_sha256"`
 	Qualified          bool           `json:"qualified"`
+}
+
+// LoadEvidence reads the controller-side qualification record for one exact
+// artifact. Evidence is generated state and is never part of the canonical
+// desired model.
+func LoadEvidence(root, name string) (Evidence, error) {
+	if root == "" || name == "" {
+		return Evidence{}, fmt.Errorf("artifact evidence requires root and name")
+	}
+	data, err := os.ReadFile(EvidencePath(root, name))
+	if err != nil {
+		return Evidence{}, fmt.Errorf("read artifact evidence %s: %w", name, err)
+	}
+	var evidence Evidence
+	if err := json.Unmarshal(data, &evidence); err != nil {
+		return Evidence{}, fmt.Errorf("decode artifact evidence %s: %w", name, err)
+	}
+	return evidence, nil
+}
+
+// ResolveArtifactEvidence proves that a qualification record describes the
+// requested definition and, when a local artifact path is recorded, that the
+// path still contains the qualified bytes.
+func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artifact, Evidence, error) {
+	evidence, err := LoadEvidence(root, requested.Name)
+	if err != nil {
+		return model.Artifact{}, Evidence{}, err
+	}
+	if !evidence.Qualified {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s is not qualified", requested.Name)
+	}
+	if evidence.DefinitionSHA256 != requested.DefinitionSHA256 || evidence.Artifact != requested {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact evidence does not match requested definition for %s", requested.Name)
+	}
+	if evidence.ContentSHA256 == "" {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s has no content checksum", requested.Name)
+	}
+	if err := validateQualificationDigests(evidence); err != nil {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s qualification evidence is incomplete: %w", requested.Name, err)
+	}
+	if evidence.ArtifactPath != "" {
+		verified, err := EvidenceForFile(evidence.ArtifactPath, requested)
+		if err != nil {
+			return model.Artifact{}, Evidence{}, err
+		}
+		if verified.ContentSHA256 != evidence.ContentSHA256 {
+			return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s content checksum does not match qualification evidence", requested.Name)
+		}
+	}
+	resolved := requested
+	resolved.ContentSHA256 = evidence.ContentSHA256
+	return resolved, evidence, nil
+}
+
+var sha256Pattern = regexp.MustCompile(`^[a-fA-F0-9]{64}$`)
+
+func validateQualificationDigests(evidence Evidence) error {
+	for name, value := range map[string]string{
+		"content_sha256":          evidence.ContentSHA256,
+		"package_manifest_sha256": evidence.PackageManifestSHA,
+		"sbom_sha256":             evidence.SBOMSHA256,
+		"trivy_report_sha256":     evidence.TrivyReportSHA256,
+	} {
+		if !sha256Pattern.MatchString(value) {
+			return fmt.Errorf("%s must be a SHA-256 digest", name)
+		}
+	}
+	return nil
 }
 
 const (
@@ -130,6 +201,16 @@ func EvidenceForFile(path string, artifact model.Artifact) (Evidence, error) {
 	}
 	content := hex.EncodeToString(hash.Sum(nil))
 	return Evidence{Artifact: artifact, ContentSHA256: content, SizeBytes: info.Size(), DefinitionSHA256: artifact.DefinitionSHA256, Qualified: true}, nil
+}
+
+// ContentSHA256ForFile recalculates the checksum immediately before an
+// artifact is handed to an infrastructure provider.
+func ContentSHA256ForFile(path string) (string, error) {
+	evidence, err := EvidenceForFile(path, model.Artifact{})
+	if err != nil {
+		return "", err
+	}
+	return evidence.ContentSHA256, nil
 }
 
 func digest(value string) string {

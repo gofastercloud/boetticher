@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 )
@@ -53,6 +54,44 @@ func TestCreateTokenUsesFormEncoding(t *testing.T) {
 	secret, err := client.CreateToken(context.Background(), "labadmin@pve", "boetticher")
 	if err != nil || secret != "token-secret" {
 		t.Fatalf("CreateToken() = %q, %v", secret, err)
+	}
+}
+
+func TestUploadStorageFileUsesMultipartArtifactContract(t *testing.T) {
+	path := t.TempDir() + "/artifact.tar.zst"
+	if err := os.WriteFile(path, []byte("artifact bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodPost || r.URL.Path != "/api2/json/nodes/lab-proxmox-01/storage/local/upload" {
+			t.Fatalf("unexpected upload request: %s %s", r.Method, r.URL.Path)
+		}
+		if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data;") {
+			t.Fatalf("upload was not multipart: %q", r.Header.Get("Content-Type"))
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatal(err)
+		}
+		if got := r.FormValue("content"); got != "vztmpl" {
+			t.Fatalf("content = %q, want vztmpl", got)
+		}
+		file, header, err := r.FormFile("filename")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		if header.Filename != "boetticher-logging-1.0.0-amd64.tar.zst" {
+			t.Fatalf("filename = %q", header.Filename)
+		}
+		data, err := io.ReadAll(file)
+		if err != nil || string(data) != "artifact bytes" {
+			t.Fatalf("uploaded bytes = %q, err=%v", data, err)
+		}
+		return response([]byte(`{"data":null}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.UploadStorageFile(context.Background(), "lab-proxmox-01", "local", "vztmpl", path, "boetticher-logging-1.0.0-amd64.tar.zst"); err != nil {
+		t.Fatal(err)
 	}
 }
 

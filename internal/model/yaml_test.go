@@ -107,3 +107,10 @@ func TestDNSProviderIsTypedAndStrict(t *testing.T) {
 		t.Fatalf("DNS disable was accepted: %v", err)
 	}
 }
+
+func TestParseSiteConfigRejectsUnknownModuleName(t *testing.T) {
+	_, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  monitroing:\n    enabled: true\n"))
+	if err == nil || !strings.Contains(err.Error(), "modules.monitroing") {
+		t.Fatalf("unknown module name was accepted: %v", err)
+	}
+}

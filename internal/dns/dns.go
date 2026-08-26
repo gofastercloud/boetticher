@@ -19,6 +19,8 @@ const (
 	TSIGSecretReference         = "secrets/boetticher.sops.yaml#ddns_tsig_secret"
 )
 
+var PublicUpstreams = []string{"https://cloudflare-dns.com/dns-query", "https://dns.google/dns-query"}
+
 var hostnameLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 
 type Plan struct {
@@ -37,6 +39,11 @@ type Plan struct {
 	DDNS                         DDNSPlan       `json:"ddns"`
 	AdGuardForwardZones          []string       `json:"adguard_forward_zones"`
 	AdGuardReverseZones          []string       `json:"adguard_reverse_zones"`
+	RecursiveProvider            string         `json:"recursive_provider"`
+	RecursiveUpstreams           []string       `json:"recursive_upstreams"`
+	AuthoritativeForwardZones    []string       `json:"authoritative_forward_zones"`
+	AuthoritativeReverseZones    []string       `json:"authoritative_reverse_zones"`
+	AuthoritativeNXDOMAINNoLeak  bool           `json:"authoritative_nxdomain_no_public_leak"`
 }
 
 type DynamicZone struct {
@@ -139,13 +146,22 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		ddns.UpdateSources = nil
 		ddns.LeaseFailurePolicy = "external DHCP may omit automatic workload registration"
 	}
+	provider := s.ModuleConfig["dns"].Provider
+	if provider == "" {
+		provider = string(model.DNSProviderBlocky)
+	}
+	authoritativeForwardZones := append([]string{s.Network.Domain}, dynamicZoneNames(dynamic)...)
+	authoritativeReverseZones := reverseZoneNames(reverse)
 	return Plan{
 		ModelRevision: revision, Implementation: AuthoritativeImplementation, ImplementationVersion: AuthoritativeVersion, PackageVersion: model.AuthoritativePackageVersion, AuthoritativePort: AuthoritativePort,
 		AuthoritativeListenAddresses: listenAddresses, AuthoritativeForwardTarget: listenAddresses[0] + ":" + AuthoritativePort,
 		StaticZone: s.Network.Domain, Nameservers: []string{"10.10.20.10", "10.10.20.11"},
 		DynamicZones: dynamic, ReverseZones: reverse, StaticRecords: static,
 		DDNS:                ddns,
-		AdGuardForwardZones: append([]string{s.Network.Domain}, dynamicZoneNames(dynamic)...), AdGuardReverseZones: reverseZoneNames(reverse),
+		AdGuardForwardZones: authoritativeForwardZones, AdGuardReverseZones: authoritativeReverseZones,
+		RecursiveProvider: provider, RecursiveUpstreams: append([]string(nil), PublicUpstreams...),
+		AuthoritativeForwardZones: authoritativeForwardZones, AuthoritativeReverseZones: authoritativeReverseZones,
+		AuthoritativeNXDOMAINNoLeak: true,
 	}, nil
 }
 

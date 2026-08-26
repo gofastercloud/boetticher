@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -21,6 +22,7 @@ type SSHRunner struct {
 	Port          int
 	KnownHosts    string
 	StrictHostKey string
+	IdentityFile  string
 }
 
 // DiscoverPhysicalNetworkViaSSH uses the existing fresh-host trust path before
@@ -58,6 +60,20 @@ func DiscoverPhysicalNetworkViaSSH(ctx context.Context, runner CommandRunner, ad
 }
 
 func (r SSHRunner) Run(ctx context.Context, address, user, command string) ([]byte, error) {
+	return r.run(ctx, address, user, command, os.Stdin)
+}
+
+// RunWithStdin executes one validated remote command while streaming the
+// caller-supplied value over SSH stdin. It is used for secrets so plaintext
+// never enters the command line or a persistent variable document.
+func (r SSHRunner) RunWithStdin(ctx context.Context, address, user, command string, stdin io.Reader) ([]byte, error) {
+	if stdin == nil {
+		return nil, errors.New("SSH stdin is required")
+	}
+	return r.run(ctx, address, user, command, stdin)
+}
+
+func (r SSHRunner) run(ctx context.Context, address, user, command string, stdin io.Reader) ([]byte, error) {
 	if net.ParseIP(address) == nil {
 		return nil, fmt.Errorf("Proxmox bootstrap address must be an IP address")
 	}
@@ -76,9 +92,12 @@ func (r SSHRunner) Run(ctx context.Context, address, user, command string) ([]by
 	if r.Port != 0 {
 		args = append(args, "-p", fmt.Sprint(r.Port))
 	}
+	if r.IdentityFile != "" {
+		args = append(args, "-i", r.IdentityFile)
+	}
 	args = append(args, user+"@"+address, command)
 	process := exec.CommandContext(ctx, "ssh", args...)
-	process.Stdin = os.Stdin
+	process.Stdin = stdin
 	output, err := process.Output()
 	if err != nil {
 		return nil, fmt.Errorf("SSH bootstrap command failed: %w", err)

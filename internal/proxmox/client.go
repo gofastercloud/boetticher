@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -262,6 +263,64 @@ func (c *Client) StorageContent(ctx context.Context, node, storage, content stri
 		return nil, fmt.Errorf("list Proxmox storage content: %w", err)
 	}
 	return result, nil
+}
+
+// UploadStorageFile imports one already-qualified appliance byte stream into
+// a named Proxmox storage content class. The caller must verify its content
+// digest before calling this method.
+func (c *Client) UploadStorageFile(ctx context.Context, node, storage, content, source, filename string) error {
+	if node == "" || storage == "" || content == "" || source == "" || filename == "" {
+		return errors.New("node, storage, content, source, and filename are required")
+	}
+	if strings.ContainsAny(filename, "/\\\r\n") {
+		return errors.New("uploaded filename must be a plain filename")
+	}
+	file, err := os.Open(source)
+	if err != nil {
+		return fmt.Errorf("open qualified artifact %s: %w", source, err)
+	}
+	defer file.Close()
+	body := &bytes.Buffer{}
+	multipartWriter := multipart.NewWriter(body)
+	if err := multipartWriter.WriteField("content", content); err != nil {
+		return err
+	}
+	part, err := multipartWriter.CreateFormFile("filename", filename)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(part, file); err != nil {
+		return fmt.Errorf("read qualified artifact %s: %w", source, err)
+	}
+	if err := multipartWriter.Close(); err != nil {
+		return err
+	}
+	base, err := url.Parse(c.BaseURL)
+	if err != nil {
+		return err
+	}
+	base.Path = path.Join(base.Path, "/nodes", node, "storage", storage, "upload")
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, base.String(), body)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+	if c.Token != "" {
+		request.Header.Set("Authorization", c.Token)
+	}
+	response, err := c.HTTP.Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	if err != nil {
+		return err
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return &APIError{StatusCode: response.StatusCode, Status: response.Status, Message: strings.TrimSpace(string(data))}
+	}
+	return nil
 }
 
 // DownloadURL asks Proxmox to download a pinned image and verify it before

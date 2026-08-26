@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/model"
 )
 
@@ -29,6 +33,41 @@ func TestFoundationPlanIsDeterministic(t *testing.T) {
 	}
 	if first.GatewayImageURL != model.QualifiedGatewayImageURL || first.GatewaySHA512 != model.QualifiedGatewayImageSHA512 {
 		t.Fatalf("gateway image pin is incomplete: %#v", first)
+	}
+}
+
+func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Guests = plan.Guests[:1]
+	guest := plan.Guests[0]
+	artifactFile := filepath.Join(t.TempDir(), "appliance.tar.zst")
+	if err := os.WriteFile(artifactFile, []byte("qualified appliance"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := artifacts.EvidenceForFile(artifactFile, guest.Artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = artifactFile
+	evidence.PackageManifestSHA = strings.Repeat("a", 64)
+	evidence.SBOMSHA256 = strings.Repeat("b", 64)
+	evidence.TrivyReportSHA256 = strings.Repeat("c", 64)
+	root := t.TempDir()
+	if err := artifacts.WriteEvidence(root, guest.Artifact.Name, evidence); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := ResolveQualifiedArtifacts(root, plan, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Guests[0].Artifact.ContentSHA256 == "" {
+		t.Fatal("qualified content checksum was not carried into the deployment plan")
+	}
+	if _, err := ResolveQualifiedArtifacts(t.TempDir(), plan, true); err == nil {
+		t.Fatal("missing qualification evidence was accepted")
 	}
 }
 
@@ -99,6 +138,31 @@ func TestUserWorkloadNeverEntersPlatformPlan(t *testing.T) {
 		}
 	}
 }
+
+func TestQEMUPersistentVolumeParamsUseCoreResolvedStorage(t *testing.T) {
+	guest := GuestPlan{Volumes: []model.PersistentVolumeDeclaration{{
+		Name: "kea-leases", Module: "firewall", Guest: "lab-fw-01", SizeGiB: 4,
+		MountPath: "/var/lib/kea", Storage: modelStorageIDForTest, Backup: true,
+	}}}
+	params, err := qemuPersistentVolumeParams(Plan{}, guest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := params["scsi1"]; got != modelStorageIDForTest+":4,backup=1" {
+		t.Fatalf("unexpected persistent QEMU disk: %q", got)
+	}
+}
+
+func TestQEMUPersistentVolumeParamsRejectUnresolvedStorage(t *testing.T) {
+	_, err := qemuPersistentVolumeParams(Plan{}, GuestPlan{Volumes: []model.PersistentVolumeDeclaration{{
+		Name: "kea-leases", SizeGiB: 4, MountPath: "/var/lib/kea",
+	}}})
+	if err == nil {
+		t.Fatal("unresolved persistent storage was accepted")
+	}
+}
+
+const modelStorageIDForTest = "boetticher-thin"
 
 func TestPlatformGuestPlanCarriesTagsForBackupAndVisibility(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))

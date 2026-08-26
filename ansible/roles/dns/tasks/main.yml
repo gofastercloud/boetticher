@@ -45,7 +45,7 @@
     name: boetticher-powerdns
     types: deb
     uris: http://repo.powerdns.com/debian
-    suites: bookworm-auth-49
+    suites: trixie-auth-49
     components:
       - main
     signed_by: /etc/apt/keyrings/auth-49-pub.asc

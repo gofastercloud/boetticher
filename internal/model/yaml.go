@@ -56,6 +56,9 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 		return SiteConfig{}, fmt.Errorf("decode site.yml: %w", err)
 	}
 	for name, module := range config.Modules {
+		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" {
+			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s is not a registered first-party module", name)
+		}
 		if name != "dns" && module.Provider != "" {
 			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s.provider is not supported", name)
 		}

@@ -23,7 +23,7 @@ const (
 	ZabbixSeries                = "7.0 LTS"
 	AuthoritativeDNS            = "PowerDNS Authoritative"
 	AuthoritativeDNSVersion     = "4.9.17"
-	AuthoritativePackageVersion = "4.9.17-1pdns.bookworm"
+	AuthoritativePackageVersion = "4.9.17-1pdns.trixie"
 	DefaultDomain               = "lab.home.arpa"
 	DefaultSiteDir              = "my-boetticher"
 	DefaultAgeIdentity          = "~/.config/boetticher/age/identity.txt"

@@ -241,6 +241,10 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err != nil {
 		return fmt.Errorf("HOLD: recompute platform plan after physical binding: %w", err)
 	}
+	plan, err = proxmox.ResolveQualifiedArtifacts(*siteDir, plan, true)
+	if err != nil {
+		return err
+	}
 	if err := writeModelProjections(*siteDir, s); err != nil {
 		return fmt.Errorf("HOLD: bootstrap network binding was persisted but projections could not be regenerated: %w", err)
 	}
