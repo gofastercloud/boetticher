@@ -388,7 +388,7 @@ func ConfigureIdentities(ctx context.Context, runner CommandRunner, address, ini
 // proxmoxLabadminSudoers is the key-only host-administration boundary used
 // after bootstrap. The list is intentionally command-scoped; it is not an
 // unrestricted root shell and it does not grant lab-jump any privilege.
-const proxmoxLabadminSudoers = `labadmin ALL=(root) NOPASSWD: /usr/sbin/pvesh *, /usr/sbin/pvesm *, /usr/sbin/ip *, /usr/sbin/ifreload -a, /usr/bin/install *, /usr/bin/mkdir *, /usr/bin/chown *, /usr/bin/chmod *, /usr/bin/systemctl reload ssh, /usr/bin/systemctl reload sshd, /usr/sbin/sshd -t, /usr/bin/visudo -cf /etc/sudoers`
+const proxmoxLabadminSudoers = `labadmin ALL=(root) NOPASSWD: /usr/bin/pvesh *, /usr/bin/pvesm *, /usr/sbin/ip *, /usr/sbin/ifreload -a, /usr/bin/install *, /usr/bin/mkdir *, /usr/bin/chown *, /usr/bin/chmod *, /usr/bin/systemctl reload ssh, /usr/bin/systemctl reload sshd, /usr/sbin/sshd -t, /usr/bin/visudo -cf /etc/sudoers`
 
 func CreateScopedCredentials(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID string) (string, error) {
 	return CreateScopedCredentialsWithRole(ctx, runner, address, initialUser, userID, tokenID, "BoetticherProvisioner")

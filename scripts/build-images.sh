@@ -25,7 +25,7 @@ fi
 # unqualified network input.
 export GOTOOLCHAIN=local
 
-for tool in mmdebstrap tar zstd sha256sum curl chroot go; do
+for tool in mmdebstrap tar zstd sha256sum curl chroot go jq; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "HOLD: required Linux image-build tool is unavailable: $tool" >&2
     exit 2
@@ -44,6 +44,35 @@ zabbix_release_url=https://repo.zabbix.com/zabbix/7.0/debian/pool/main/z/zabbix-
 zabbix_release_sha256=4a926b8815cdefddc31558fe622676730a3987610f75d5af0d4024809d21dd43
 zabbix_package_version=1:7.0.30-1+debian13
 mkdir -p "$output_root" "$work_root"
+
+provenance_path="$(dirname "$output_root")/builder-provenance.json"
+version_or_unavailable() {
+  tool=$1
+  if command -v "$tool" >/dev/null 2>&1; then
+    "$tool" --version 2>&1 | head -n 1
+  else
+    printf '%s\n' unavailable
+  fi
+}
+
+write_builder_provenance() {
+  jq -n \
+    --arg platform debian-13-amd64 \
+    --arg input_image debian-13-genericcloud-amd64-20260327-2429 \
+    --arg kernel "$(uname -r)" \
+    --arg go "$(go version)" \
+    --arg trivy "$(version_or_unavailable trivy)" \
+    --arg mmdebstrap "$(version_or_unavailable mmdebstrap)" \
+    --arg libguestfs "$(version_or_unavailable guestfish)" \
+    --arg qemu_img "$(version_or_unavailable qemu-img)" \
+    --arg architecture amd64 \
+    --arg boetticher_version 0.3.1 \
+    '{platform:$platform,input_image:$input_image,kernel:$kernel,go:$go,trivy:$trivy,mmdebstrap:$mmdebstrap,libguestfs:$libguestfs,qemu_img:$qemu_img,architecture:$architecture,boetticher_version:$boetticher_version}' \
+    > "$provenance_path"
+  chmod 0644 "$provenance_path"
+}
+
+write_builder_provenance
 
 cleanup() {
   if [ -n "${ACTIVE_ROOT:-}" ] && [ -d "$ACTIVE_ROOT" ]; then

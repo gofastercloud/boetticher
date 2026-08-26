@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -72,6 +73,63 @@ func TestExtractBuildArchiveReaderStreamsLargeArchive(t *testing.T) {
 	}
 	if tracked.maxRead > 1<<20 {
 		t.Fatalf("archive reader requested an unbounded read buffer: %d bytes", tracked.maxRead)
+	}
+}
+
+func TestBuildSourceArchiveExcludesSiteSecrets(t *testing.T) {
+	root := t.TempDir()
+	for _, relative := range PublicBuildInputs {
+		if relative == "go.sum" {
+			continue
+		}
+		base := filepath.Base(relative)
+		if strings.Contains(base, ".") {
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(root, relative)), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, relative), []byte("public build input\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Join(root, relative), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "site.yml"), []byte("fixture-secret-site-state\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "secrets"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "secrets", "runtime.sops.yaml"), []byte("fixture-secret-runtime\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archive, err := BuildSourceArchive(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gzipReader, err := gzip.NewReader(bytes.NewReader(archive))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tarReader := tar.NewReader(gzipReader)
+	entries := 0
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries++
+		if strings.Contains(header.Name, "site.yml") || strings.Contains(header.Name, "secrets") {
+			t.Fatalf("build archive included site state: %s", header.Name)
+		}
+	}
+	if entries == 0 {
+		t.Fatal("public build archive was empty")
 	}
 }
 

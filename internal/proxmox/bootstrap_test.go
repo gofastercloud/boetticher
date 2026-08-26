@@ -174,6 +174,11 @@ func TestConfigureIdentitiesLocksProxmoxLabadminAndInstallsBoundedSudo(t *testin
 	if strings.Contains(runner.command, "NOPASSWD:ALL") {
 		t.Fatal("Proxmox labadmin received unrestricted sudo")
 	}
+	for _, command := range []string{"/usr/bin/pvesh *", "/usr/bin/pvesm *"} {
+		if !strings.Contains(runner.command, command) {
+			t.Fatalf("Proxmox labadmin sudo policy is missing %s", command)
+		}
+	}
 }
 
 func TestCheckBuilderCapacityHoldsBelowMinimum(t *testing.T) {

@@ -17,3 +17,11 @@ func TestSafeSitePathRejectsEscapes(t *testing.T) {
 		t.Fatalf("safeSitePath valid path = %q, %v", path, err)
 	}
 }
+
+func TestInitialSiteGitignoreExcludesArtifactRuntime(t *testing.T) {
+	for _, entry := range []string{"generated/artifacts/", "generated/runtime/", "*.tar.zst", "*.qcow2", ".trivy/"} {
+		if !strings.Contains(initialSiteGitignore, entry) {
+			t.Fatalf("initial site gitignore does not exclude %s", entry)
+		}
+	}
+}

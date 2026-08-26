@@ -135,6 +135,7 @@ users:
 packages:
   - ca-certificates
   - curl
+  - jq
   - libguestfs-tools
   - mmdebstrap
   - openssh-server

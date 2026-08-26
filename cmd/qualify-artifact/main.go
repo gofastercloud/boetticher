@@ -26,11 +26,12 @@ func main() {
 	reportPath := flag.String("report", "", "Trivy JSON report")
 	manifestPath := flag.String("manifest", "", "package manifest")
 	sbomPath := flag.String("sbom", "", "SBOM")
+	provenancePath := flag.String("provenance", "", "builder provenance evidence")
 	evidenceRoot := flag.String("evidence-root", "generated/artifacts", "evidence output directory")
 	module := flag.String("module", "", "built-in module name")
 	provider := flag.String("provider", "", "built-in provider")
 	flag.Parse()
-	for name, value := range map[string]string{"artifact": *artifactPath, "report": *reportPath, "manifest": *manifestPath, "sbom": *sbomPath, "module": *module} {
+	for name, value := range map[string]string{"artifact": *artifactPath, "report": *reportPath, "manifest": *manifestPath, "sbom": *sbomPath, "provenance": *provenancePath, "module": *module} {
 		if value == "" {
 			fatalf("-%s is required", name)
 		}
@@ -55,6 +56,16 @@ func main() {
 	evidence.PackageManifestSHA = hashFile(*manifestPath, "package manifest")
 	evidence.SBOMSHA256 = hashFile(*sbomPath, "SBOM")
 	evidence.TrivyReportSHA256 = hashBytes(data)
+	provenanceData, err := os.ReadFile(*provenancePath)
+	if err != nil {
+		fatalf("read builder provenance: %v", err)
+	}
+	var provenance artifacts.BuilderProvenance
+	if err := json.Unmarshal(provenanceData, &provenance); err != nil {
+		fatalf("decode builder provenance: %v", err)
+	}
+	evidence.Builder = provenance
+	evidence.BuilderProvenanceSHA256 = hashBytes(provenanceData)
 	evidence, err = artifacts.QualifyEvidence(evidence, summary)
 	if err != nil {
 		fatalf("qualify artifact: %v", err)

@@ -83,6 +83,43 @@ func TestResolveArtifactEvidenceRejectsChangedBytes(t *testing.T) {
 	}
 }
 
+func TestQualifiedArtifactCacheJourneys(t *testing.T) {
+	root := t.TempDir()
+	artifactPath := filepath.Join(root, "artifact.bin")
+	if err := os.WriteFile(artifactPath, []byte("cached appliance"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveArtifactEvidence(root, artifact); err == nil {
+		t.Fatal("missing cache evidence was accepted; a builder is required")
+	}
+	evidence, err := EvidenceForFile(artifactPath, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = artifactPath
+	evidence = completeQualificationEvidence(t, evidence)
+	evidence, err = QualifyEvidence(evidence, ScanSummary{Completed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteEvidence(root, artifact.Name, evidence); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveArtifactEvidence(root, artifact); err != nil {
+		t.Fatalf("matching qualified cache was rejected: %v", err)
+	}
+	if err := os.WriteFile(artifactPath, []byte("corrupted appliance"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveArtifactEvidence(root, artifact); err == nil {
+		t.Fatal("corrupt cached artifact was accepted; a fresh builder is required")
+	}
+}
+
 func TestResolveArtifactEvidenceRejectsChangedQualificationInputs(t *testing.T) {
 	root := t.TempDir()
 	artifactPath := filepath.Join(root, "artifact.bin")
@@ -179,6 +216,27 @@ func TestQualificationRejectsIncompleteScan(t *testing.T) {
 	}
 }
 
+func TestQualificationRequiresBuilderProvenance(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "artifact.bin")
+	if err := os.WriteFile(path, []byte("qualified bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := EvidenceForFile(path, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = path
+	evidence = completeQualificationEvidence(t, evidence)
+	evidence.BuilderProvenanceSHA256 = ""
+	if _, err := QualifyEvidence(evidence, ScanSummary{Completed: true}); err == nil || !strings.Contains(err.Error(), "builder provenance") {
+		t.Fatalf("qualification accepted missing builder provenance: %v", err)
+	}
+}
+
 func TestWriteEvidenceCannotForgeEvaluatorAuthorization(t *testing.T) {
 	root := t.TempDir()
 	artifact, err := ArtifactFor("logging")
@@ -232,12 +290,19 @@ func completeQualificationEvidence(t *testing.T, evidence Evidence) Evidence {
 		evidence.PackageManifestSHA = strings.Repeat("a", 64)
 		evidence.SBOMSHA256 = strings.Repeat("b", 64)
 		evidence.TrivyReportSHA256 = strings.Repeat("c", 64)
+		evidence.BuilderProvenanceSHA256 = strings.Repeat("d", 64)
+		evidence.Builder = BuilderProvenance{
+			Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429",
+			Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3",
+			MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.1",
+		}
 		return evidence
 	}
 	inputs := map[string]string{
-		"package-manifest.txt": "package: boetticher-test\n",
-		"sbom.json":            `{"bomFormat":"CycloneDX","specVersion":"1.5"}` + "\n",
-		"trivy.json":           `{"Results":[]}` + "\n",
+		"package-manifest.txt":    "package: boetticher-test\n",
+		"sbom.json":               `{"bomFormat":"CycloneDX","specVersion":"1.5"}` + "\n",
+		"trivy.json":              `{"Results":[]}` + "\n",
+		"builder-provenance.json": `{"platform":"debian-13-amd64","input_image":"debian-13-genericcloud-amd64-20260327-2429","kernel":"6.1.0","go":"go version go1.26.5 linux/amd64","trivy":"Version: 0.69.3","mmdebstrap":"mmdebstrap 1.5.0","architecture":"amd64","boetticher_version":"0.3.1"}` + "\n",
 	}
 	for filename, content := range inputs {
 		if err := os.WriteFile(filepath.Join(filepath.Dir(evidence.ArtifactPath), filename), []byte(content), 0o600); err != nil {
@@ -247,6 +312,12 @@ func completeQualificationEvidence(t *testing.T, evidence Evidence) Evidence {
 	evidence.PackageManifestSHA, _ = QualificationInputSHA256(filepath.Join(filepath.Dir(evidence.ArtifactPath), "package-manifest.txt"), "package manifest")
 	evidence.SBOMSHA256, _ = QualificationInputSHA256(filepath.Join(filepath.Dir(evidence.ArtifactPath), "sbom.json"), "SBOM")
 	evidence.TrivyReportSHA256, _ = QualificationInputSHA256(filepath.Join(filepath.Dir(evidence.ArtifactPath), "trivy.json"), "Trivy report")
+	evidence.BuilderProvenanceSHA256, _ = QualificationInputSHA256(filepath.Join(filepath.Dir(evidence.ArtifactPath), "builder-provenance.json"), "builder provenance")
+	evidence.Builder = BuilderProvenance{
+		Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429",
+		Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3",
+		MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.1",
+	}
 	return evidence
 }
 

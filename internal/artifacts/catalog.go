@@ -36,19 +36,37 @@ type Definition struct {
 // artifact definition. Build timestamps and tool versions are evidence only;
 // they never become desired-state inputs.
 type Evidence struct {
-	Artifact                   model.Artifact `json:"artifact"`
-	ArtifactPath               string         `json:"artifact_path,omitempty"`
-	ContentSHA256              string         `json:"content_sha256"`
-	SizeBytes                  int64          `json:"size_bytes"`
-	PackageManifestSHA         string         `json:"package_manifest_sha256,omitempty"`
-	SBOMSHA256                 string         `json:"sbom_sha256,omitempty"`
-	TrivyReportSHA256          string         `json:"trivy_report_sha256,omitempty"`
-	QualificationPolicyVersion string         `json:"qualification_policy_version,omitempty"`
-	QualificationEvaluator     string         `json:"qualification_evaluator,omitempty"`
-	ScanCompleted              bool           `json:"scan_completed"`
-	DefinitionSHA256           string         `json:"definition_sha256"`
-	Qualified                  bool           `json:"qualified"`
+	Artifact                   model.Artifact    `json:"artifact"`
+	ArtifactPath               string            `json:"artifact_path,omitempty"`
+	ContentSHA256              string            `json:"content_sha256"`
+	SizeBytes                  int64             `json:"size_bytes"`
+	PackageManifestSHA         string            `json:"package_manifest_sha256,omitempty"`
+	SBOMSHA256                 string            `json:"sbom_sha256,omitempty"`
+	TrivyReportSHA256          string            `json:"trivy_report_sha256,omitempty"`
+	BuilderProvenanceSHA256    string            `json:"builder_provenance_sha256,omitempty"`
+	QualificationPolicyVersion string            `json:"qualification_policy_version,omitempty"`
+	QualificationEvaluator     string            `json:"qualification_evaluator,omitempty"`
+	ScanCompleted              bool              `json:"scan_completed"`
+	DefinitionSHA256           string            `json:"definition_sha256"`
+	Qualified                  bool              `json:"qualified"`
+	Builder                    BuilderProvenance `json:"builder,omitempty"`
 	qualifiedByEvaluator       bool
+}
+
+// BuilderProvenance records the non-deterministic environment that produced
+// qualification evidence. It is evidence only and never enters the
+// deterministic Site revision.
+type BuilderProvenance struct {
+	Platform          string `json:"platform"`
+	InputImage        string `json:"input_image"`
+	Kernel            string `json:"kernel"`
+	Go                string `json:"go"`
+	Trivy             string `json:"trivy"`
+	MMDebstrap        string `json:"mmdebstrap"`
+	Libguestfs        string `json:"libguestfs,omitempty"`
+	QEMUImg           string `json:"qemu_img,omitempty"`
+	Architecture      string `json:"architecture"`
+	BoetticherVersion string `json:"boetticher_version"`
 }
 
 type ScanSummary struct {
@@ -78,6 +96,9 @@ func QualifyEvidence(evidence Evidence, scan ScanSummary) (Evidence, error) {
 	}
 	if scan.FixableCritical > 0 {
 		return Evidence{}, fmt.Errorf("qualification failed: Trivy found %d fixable CRITICAL finding(s)", scan.FixableCritical)
+	}
+	if err := validateBuilderEvidence(evidence); err != nil {
+		return Evidence{}, fmt.Errorf("qualification evidence is incomplete: %w", err)
 	}
 	evidence.QualificationPolicyVersion = QualificationPolicyVersion
 	evidence.QualificationEvaluator = QualificationEvaluator
@@ -163,6 +184,7 @@ func verifyQualificationInputs(evidence Evidence) error {
 		{name: "package manifest", filename: "package-manifest.txt", expected: evidence.PackageManifestSHA},
 		{name: "SBOM", filename: "sbom.json", expected: evidence.SBOMSHA256},
 		{name: "Trivy report", filename: "trivy.json", expected: evidence.TrivyReportSHA256},
+		{name: "builder provenance", filename: "builder-provenance.json", expected: evidence.BuilderProvenanceSHA256},
 	}
 	for _, input := range inputs {
 		actual, err := QualificationInputSHA256(filepath.Join(directory, input.filename), input.name)
@@ -197,6 +219,35 @@ func validateQualificationDigests(evidence Evidence) error {
 	}
 	if evidence.Qualified && !evidence.ScanCompleted {
 		return fmt.Errorf("qualified evidence must include a completed Trivy scan")
+	}
+	if evidence.Qualified {
+		if !sha256Pattern.MatchString(evidence.BuilderProvenanceSHA256) {
+			return fmt.Errorf("qualified evidence must include a builder provenance digest")
+		}
+		if err := validateBuilderEvidence(evidence); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateBuilderEvidence(evidence Evidence) error {
+	if !sha256Pattern.MatchString(evidence.BuilderProvenanceSHA256) {
+		return fmt.Errorf("builder provenance must be a SHA-256 digest")
+	}
+	for name, value := range map[string]string{
+		"builder platform":           evidence.Builder.Platform,
+		"builder input image":        evidence.Builder.InputImage,
+		"builder kernel":             evidence.Builder.Kernel,
+		"builder Go version":         evidence.Builder.Go,
+		"builder Trivy version":      evidence.Builder.Trivy,
+		"builder mmdebstrap version": evidence.Builder.MMDebstrap,
+		"builder architecture":       evidence.Builder.Architecture,
+		"boetticher version":         evidence.Builder.BoetticherVersion,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("%s is required", name)
+		}
 	}
 	return nil
 }
