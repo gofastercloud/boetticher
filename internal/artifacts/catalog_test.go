@@ -199,6 +199,13 @@ func TestApplianceBootstrapInputsContainNoOperatorKeyOrSiteState(t *testing.T) {
 	if !strings.Contains(text, "/run/boetticher/bootstrap/operator.pub") || !strings.Contains(text, "/root/.ssh/authorized_keys") || strings.Contains(text, "ssh-ed25519 AAAA") {
 		t.Fatalf("first-boot contract does not use injected-only operator access: %s", text)
 	}
+	runtimeState, err := os.ReadFile(filepath.Join(root, "base", "runtime", "install-runtime-state.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(runtimeState), "module-config") || !strings.Contains(string(runtimeState), "artifact-identity") || strings.Contains(string(runtimeState), "eval ") {
+		t.Fatalf("runtime state helper is not bounded: %s", runtimeState)
+	}
 	for _, relative := range []string{"firewall/nocloud/meta-data", "firewall/nocloud/network-config", "firewall/nocloud/user-data"} {
 		data, err := os.ReadFile(filepath.Join(root, relative))
 		if err != nil {

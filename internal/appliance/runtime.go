@@ -75,7 +75,7 @@ func InstallRuntimeConfig(ctx context.Context, runner StdinRunner, address, user
 	if len(config) == 0 || bytes.Contains(config, []byte("private_key:")) || bytes.Contains(config, []byte("secret:")) {
 		return fmt.Errorf("runtime config is empty or contains a forbidden secret field")
 	}
-	command := "sudo -n sh -c 'set -eu; install -d -m 0750 /etc/boetticher; tmp=$(mktemp /etc/boetticher/.module.yaml.XXXXXX); trap \"rm -f \\\"$tmp\\\"\" EXIT; install -m 0640 /dev/stdin \\\"$tmp\\\"; chown root:root \\\"$tmp\\\"; mv -f \\\"$tmp\\\" /etc/boetticher/module.yaml'"
+	command := "sudo -n /usr/lib/boetticher/install-runtime-state module-config"
 	if _, err := runner.RunWithStdin(ctx, address, user, command, bytes.NewReader(config)); err != nil {
 		return fmt.Errorf("install runtime config: %w", err)
 	}
@@ -97,7 +97,7 @@ func InstallArtifactIdentity(ctx context.Context, runner StdinRunner, address, u
 		return fmt.Errorf("marshal artifact identity: %w", err)
 	}
 	data = append(data, '\n')
-	command := "sudo -n sh -c 'set -eu; install -d -m 0755 /usr/lib/boetticher; tmp=$(mktemp /usr/lib/boetticher/.artifact.json.XXXXXX); trap \"rm -f \\\"$tmp\\\"\" EXIT; install -m 0644 /dev/stdin \\\"$tmp\\\"; chown root:root \\\"$tmp\\\"; mv -f \\\"$tmp\\\" /usr/lib/boetticher/artifact.json'"
+	command := "sudo -n /usr/lib/boetticher/install-runtime-state artifact-identity"
 	if _, err := runner.RunWithStdin(ctx, address, user, command, bytes.NewReader(data)); err != nil {
 		return fmt.Errorf("install artifact identity: %w", err)
 	}

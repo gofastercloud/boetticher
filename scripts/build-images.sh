@@ -67,10 +67,11 @@ create_base_rootfs() {
   mkdir -p "$rootfs/etc/boetticher" "$rootfs/usr/lib/boetticher" "$rootfs/run/boetticher/bootstrap"
   install -D -m 0755 images/base/first-boot/boetticher-first-boot.sh "$rootfs/usr/lib/boetticher/boetticher-first-boot.sh"
   install -D -m 0644 images/base/first-boot/boetticher-first-boot.service "$rootfs/etc/systemd/system/boetticher-first-boot.service"
+  install -D -m 0755 images/base/runtime/install-runtime-state.sh "$rootfs/usr/lib/boetticher/install-runtime-state"
   chroot "$rootfs" useradd --create-home --shell /bin/bash labadmin
   chroot "$rootfs" usermod --append --groups sudo labadmin
   chroot "$rootfs" passwd --lock labadmin
-  printf '%s\n' 'labadmin ALL=(ALL) NOPASSWD:/usr/bin/systemctl, /usr/bin/install, /usr/bin/mkdir, /usr/bin/chown, /usr/bin/chmod, /usr/sbin/nft, /usr/sbin/kea-dhcp4, /usr/sbin/kea-dhcp-ddns' > "$rootfs/etc/sudoers.d/boetticher"
+  printf '%s\n' 'labadmin ALL=(ALL) NOPASSWD:/usr/bin/systemctl, /usr/bin/install, /usr/bin/mkdir, /usr/bin/chown, /usr/bin/chmod, /usr/lib/boetticher/install-runtime-state *, /usr/sbin/nft, /usr/sbin/kea-dhcp4, /usr/sbin/kea-dhcp-ddns' > "$rootfs/etc/sudoers.d/boetticher"
   chmod 0440 "$rootfs/etc/sudoers.d/boetticher"
   mkdir -p "$rootfs/etc/systemd/journald.conf.d"
   printf '%s\n' '[Journal]' 'SystemMaxUse=256M' 'RuntimeMaxUse=64M' > "$rootfs/etc/systemd/journald.conf.d/boetticher.conf"
@@ -278,13 +279,14 @@ build_firewall() {
     --mkdir /etc/boetticher,/usr/lib/boetticher,/var/lib/boetticher/identity/ssh \
     --upload images/base/first-boot/boetticher-first-boot.sh:/usr/lib/boetticher/boetticher-first-boot.sh \
     --upload images/base/first-boot/boetticher-first-boot.service:/etc/systemd/system/boetticher-first-boot.service \
+    --upload images/base/runtime/install-runtime-state.sh:/usr/lib/boetticher/install-runtime-state \
     --upload images/firewall/nocloud/network-config:/etc/boetticher/nocloud-network-config \
     --write /etc/systemd/journald.conf.d/boetticher.conf:'[Journal]\nSystemMaxUse=256M\nRuntimeMaxUse=64M\n' \
     --write /etc/sysctl.d/boetticher-forwarding.conf:'net.ipv4.ip_forward=0\nnet.ipv6.conf.all.forwarding=0\n' \
     --run-command 'useradd --create-home --shell /bin/bash labadmin || true' \
     --run-command 'usermod --append --groups sudo labadmin' \
     --run-command 'passwd --lock labadmin' \
-    --run-command 'printf "%s\\n" "labadmin ALL=(ALL) NOPASSWD:/usr/bin/systemctl, /usr/sbin/nft, /usr/sbin/kea-dhcp4, /usr/sbin/kea-dhcp-ddns" > /etc/sudoers.d/boetticher && chmod 0440 /etc/sudoers.d/boetticher' \
+    --run-command 'printf "%s\\n" "labadmin ALL=(ALL) NOPASSWD:/usr/bin/systemctl, /usr/lib/boetticher/install-runtime-state *, /usr/sbin/nft, /usr/sbin/kea-dhcp4, /usr/sbin/kea-dhcp-ddns" > /etc/sudoers.d/boetticher && chmod 0440 /etc/sudoers.d/boetticher' \
     --run-command 'dpkg-query -W -f="${binary:Package}\\t${Version}\\n" | sort > /var/lib/boetticher/package-manifest.txt' \
     --run-command 'systemctl enable boetticher-first-boot.service || true' \
     --run-command 'systemctl disable --now systemd-networkd-wait-online.service || true'
