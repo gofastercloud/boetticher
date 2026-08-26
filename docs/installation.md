@@ -6,7 +6,7 @@ The foundation needs at least 4 logical CPU threads, 16 GiB RAM, and 128 GiB usa
 
 ## Controller and state
 
-Supported controller platforms are macOS arm64, macOS amd64, Linux arm64, and Linux amd64. Native Windows is out of scope. WSL2 may be used only after a separate test confirms the required SSH, Age, SOPS, OpenTofu, and Ansible behavior.
+Supported controller platforms are macOS arm64, macOS amd64, Linux arm64, and Linux amd64. The controller is a separate operator machine, not the target Proxmox host; preflight refuses a confidently detected Proxmox controller. Native Windows is out of scope. WSL2 may be used only after a separate test confirms the required SSH, Age, SOPS, OpenTofu, and Ansible behavior.
 
 `boetticher init` creates a private site repository containing:
 

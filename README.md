@@ -52,7 +52,7 @@ The internal namespace is `lab.home.arpa`. The generated platform records includ
 - Fresh supported Proxmox VE x86 installation with node name `lab-proxmox-01`. The first supported Proxmox release will be recorded after a clean installation has been tried; this source tree does not imply that every PVE release works.
 - Minimum host shape for the foundation: 4 logical CPU threads, 16 GiB RAM, and 128 GiB usable storage. 4+ cores, 32 GiB RAM, and 256 GiB or more is a much friendlier size for user workloads.
 - One physical Ethernet NIC minimum. A second NIC and managed 802.1Q switch are recommended for physical VLAN breakout, but `vmbr1` may remain virtual-only.
-- Controller: macOS arm64/amd64 or Linux arm64/amd64. Native Windows is out of scope; WSL2 is only supported if separately tested.
+- Controller: macOS arm64/amd64 or Linux arm64/amd64. The controller is a separate operator machine; do not run the V1 workflow on the target Proxmox host. Native Windows is out of scope; WSL2 is only supported if separately tested.
 - Controller tools: Go matching `go.mod`, `ssh`, `ssh-keyscan`, `age-keygen`, `sops`, OpenTofu, and Ansible Core. `boetticher preflight` validates versions before mutation.
 - OPNsense 26.7.2_2 at the exact qualified patch recorded in `site.yml`; later 26.7 patches require explicit boetticher qualification.
 - Zabbix 7.0 LTS: full upstream support through June 2027 and limited support through June 2029.

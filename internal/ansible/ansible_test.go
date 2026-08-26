@@ -64,6 +64,13 @@ func TestEndpointTLSKeysAreGeneratedLocallyAndNeverSuppliedByController(t *testi
 			t.Fatalf("%s role does not return its CSR to the controller", role)
 		}
 	}
+	portal, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "portal", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(portal), "Enable and start the portal nginx service") {
+		t.Fatal("portal role does not enable and start nginx after installing its certificate")
+	}
 }
 
 func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {

@@ -151,3 +151,12 @@
   when:
     - portal_server_cert_pem is defined
     - portal_server_cert_pem | length > 0
+
+- name: Enable and start the portal nginx service
+  ansible.builtin.service:
+    name: nginx
+    enabled: true
+    state: started
+  when:
+    - portal_server_cert_pem is defined
+    - portal_server_cert_pem | length > 0
