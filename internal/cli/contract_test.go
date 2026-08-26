@@ -45,6 +45,16 @@ func TestUsageIsGeneratedFromCommandMetadata(t *testing.T) {
 	}
 }
 
+func TestRootShortHelpListsCurrentCommands(t *testing.T) {
+	var output bytes.Buffer
+	if err := Run([]string{"-h"}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "boetticher deploy") {
+		t.Fatalf("root short help omitted deploy: %s", output.String())
+	}
+}
+
 func TestPublicHelpPathsDoNotFail(t *testing.T) {
 	for _, args := range [][]string{
 		{"init", "--help"}, {"preflight", "-h"}, {"bootstrap", "--help"}, {"deploy", "--help"},

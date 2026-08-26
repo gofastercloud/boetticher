@@ -9,7 +9,7 @@ import (
 // Command implementations live in focused files; this file owns only the
 // public entry point and top-level help.
 func Run(args []string, out, errOut interface{ Write([]byte) (int, error) }) error {
-	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
+	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		usage(out)
 		return nil
 	}
