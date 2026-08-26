@@ -361,6 +361,14 @@ func PlanFromSite(s model.Site) (Plan, error) {
 			}
 			guest.Owner = "boetticher/core/portal"
 			guest.Persistent = fixturePersistent("portal", component.Name)
+			guest.Volumes = fixtureVolumes("portal", component.Name)
+			for index := range guest.Volumes {
+				for _, resolved := range storagePlan.Volumes {
+					if resolved.Module == guest.Volumes[index].Module && resolved.Name == guest.Volumes[index].Name && resolved.Guest == guest.Volumes[index].Guest {
+						guest.Volumes[index].Storage = resolved.Storage
+					}
+				}
+			}
 		}
 		switch component.Name {
 		case "lab-fw-01":
@@ -464,6 +472,11 @@ func fixturePersistent(module, guest string) []model.PersistentState {
 		result = append(result, *state)
 	}
 	return result
+}
+
+func fixtureVolumes(module, guest string) []model.PersistentVolumeDeclaration {
+	identity := model.PersistentVolumeDeclaration{Name: "ssh-identity", Module: module, Guest: guest, SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/ssh", Placement: model.StorageDefault, Backup: true}
+	return []model.PersistentVolumeDeclaration{identity}
 }
 
 func gatewayNICs(s model.Site) []GuestNIC {
@@ -1092,7 +1105,11 @@ func qemuPersistentVolumeParams(plan Plan, guest GuestPlan) (map[string]string, 
 		if volume.Backup {
 			backup = "1"
 		}
-		params[fmt.Sprintf("scsi%d", index+1)] = fmt.Sprintf("%s:%d,backup=%s", volume.Storage, volume.SizeGiB, backup)
+		serial, err := persistentVolumeSerial(volume)
+		if err != nil {
+			return nil, err
+		}
+		params[fmt.Sprintf("scsi%d", index+1)] = fmt.Sprintf("%s:%d,backup=%s,serial=%s", volume.Storage, volume.SizeGiB, backup, serial)
 	}
 	return params, nil
 }
@@ -1195,6 +1212,20 @@ func persistentVolumeParam(volume model.PersistentVolumeDeclaration) (string, er
 		backup = "1"
 	}
 	return fmt.Sprintf("%s:%d,mp=%s,backup=%s", volume.Storage, volume.SizeGiB, volume.MountPath, backup), nil
+}
+
+func persistentVolumeSerial(volume model.PersistentVolumeDeclaration) (string, error) {
+	if volume.Module == "" || volume.Guest == "" || volume.Name == "" {
+		return "", errors.New("persistent volume identity is incomplete")
+	}
+	for _, value := range []string{volume.Module, volume.Guest, volume.Name} {
+		for _, r := range value {
+			if !(r == '-' || r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+				return "", fmt.Errorf("persistent volume identity %q contains an unsafe character", value)
+			}
+		}
+	}
+	return "boetticher-" + volume.Module + "-" + volume.Guest + "-" + volume.Name, nil
 }
 
 func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) error {

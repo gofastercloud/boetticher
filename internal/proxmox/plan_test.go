@@ -92,9 +92,14 @@ func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	evidence.ArtifactPath = artifactFile
-	evidence.PackageManifestSHA = strings.Repeat("a", 64)
-	evidence.SBOMSHA256 = strings.Repeat("b", 64)
-	evidence.TrivyReportSHA256 = strings.Repeat("c", 64)
+	for filename, content := range map[string]string{"package-manifest.txt": "package: test\n", "sbom.json": "{}\n", "trivy.json": "{\"Results\":[]}\n"} {
+		if err := os.WriteFile(filepath.Join(filepath.Dir(artifactFile), filename), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	evidence.PackageManifestSHA, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactFile), "package-manifest.txt"), "package manifest")
+	evidence.SBOMSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactFile), "sbom.json"), "SBOM")
+	evidence.TrivyReportSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactFile), "trivy.json"), "Trivy report")
 	evidence, err = artifacts.QualifyEvidence(evidence, artifacts.ScanSummary{})
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +221,7 @@ func TestQEMUPersistentVolumeParamsUseCoreResolvedStorage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := params["scsi1"]; got != modelStorageIDForTest+":4,backup=1" {
+	if got := params["scsi1"]; got != modelStorageIDForTest+":4,backup=1,serial=boetticher-firewall-lab-fw-01-kea-leases" {
 		t.Fatalf("unexpected persistent QEMU disk: %q", got)
 	}
 }

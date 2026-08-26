@@ -3,6 +3,8 @@ package proxmox
 import (
 	"fmt"
 	"strings"
+
+	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 type CloudInitFiles struct {
@@ -48,12 +50,41 @@ func renderFirewallCloudInit(guest GuestPlan, operatorPublicKey string) (CloudIn
 	if operatorPublicKey != "" {
 		userData += "    ssh_authorized_keys:\n      - " + operatorPublicKey + "\n"
 	}
-	userData += "ssh_pwauth: false\ndisable_root: true\nwrite_files:\n  - path: /etc/sysctl.d/boetticher-forwarding.conf\n    permissions: '0644'\n    content: |\n      net.ipv4.ip_forward=0\n      net.ipv6.conf.all.forwarding=0\n"
+	userData += "ssh_pwauth: false\ndisable_root: true\n"
+	fsSetup := strings.Builder{}
+	mounts := strings.Builder{}
+	for _, name := range []string{"ssh-identity", "kea-leases"} {
+		volume, ok := guestVolume(guest, name)
+		if !ok {
+			continue
+		}
+		serial, err := persistentVolumeSerial(volume)
+		if err != nil {
+			return CloudInitFiles{}, fmt.Errorf("firewall %s volume: %w", name, err)
+		}
+		device := "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_" + serial
+		label := "boetticher-" + name
+		fmt.Fprintf(&fsSetup, "  - label: %s\n    filesystem: ext4\n    device: %s\n    overwrite: false\n", label, device)
+		fmt.Fprintf(&mounts, "  - [\"%s\", \"%s\", \"ext4\", \"defaults,nofail\", \"0\", \"2\"]\n", device, volume.MountPath)
+	}
+	if fsSetup.Len() > 0 {
+		userData += "fs_setup:\n" + fsSetup.String() + "mounts:\n" + mounts.String()
+	}
+	userData += "write_files:\n  - path: /etc/sysctl.d/boetticher-forwarding.conf\n    permissions: '0644'\n    content: |\n      net.ipv4.ip_forward=0\n      net.ipv6.conf.all.forwarding=0\n"
 	return CloudInitFiles{
 		MetaData:      "instance-id: boetticher-firewall-1.0.0\nlocal-hostname: lab-fw-01\n",
 		UserData:      userData,
 		NetworkConfig: network.String(),
 	}, nil
+}
+
+func guestVolume(guest GuestPlan, name string) (model.PersistentVolumeDeclaration, bool) {
+	for _, volume := range guest.Volumes {
+		if volume.Name == name {
+			return volume, true
+		}
+	}
+	return model.PersistentVolumeDeclaration{}, false
 }
 
 // RenderBuilderCloudInit prepares the temporary public-input build host. It

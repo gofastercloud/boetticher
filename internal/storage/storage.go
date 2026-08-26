@@ -74,22 +74,35 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		plan.GuestStorage = GuestStorageID
 		plan.BackupStorage = BackupStorageID
 	}
+	declarations := make([]model.PersistentVolumeDeclaration, 0)
 	for _, declaration := range s.Declarations {
-		for _, volume := range declaration.Volumes {
-			selected := plan.GuestStorage
-			switch volume.Placement {
-			case model.StoragePreferDataDisk, model.StorageRequireDataDisk:
-				if s.StorageProfile == "dedicated-data-disk" {
-					selected = GuestStorageID
-				} else if volume.Placement == model.StorageRequireDataDisk {
-					return Plan{}, fmt.Errorf("HOLD: module %s volume %s requires dedicated boetticher data storage", volume.Module, volume.Name)
-				}
-			case model.StorageDefault:
-			default:
-				return Plan{}, fmt.Errorf("unsupported volume placement %q", volume.Placement)
-			}
-			plan.Volumes = append(plan.Volumes, ResolvedVolume{Module: volume.Module, Name: volume.Name, Guest: volume.Guest, Storage: selected, Placement: volume.Placement, Backup: volume.Backup})
+		declarations = append(declarations, declaration.Volumes...)
+	}
+	// Portal is a Core-owned appliance, not a module, but its endpoint identity
+	// still follows the same independent-volume replacement contract.
+	for _, component := range s.PlatformComponents() {
+		if component.Name == "lab-portal-01" {
+			declarations = append(declarations, model.PersistentVolumeDeclaration{
+				Name: "ssh-identity", Module: "portal", Guest: component.Name,
+				SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/ssh",
+				Placement: model.StorageDefault, Backup: true,
+			})
 		}
+	}
+	for _, volume := range declarations {
+		selected := plan.GuestStorage
+		switch volume.Placement {
+		case model.StoragePreferDataDisk, model.StorageRequireDataDisk:
+			if s.StorageProfile == "dedicated-data-disk" {
+				selected = GuestStorageID
+			} else if volume.Placement == model.StorageRequireDataDisk {
+				return Plan{}, fmt.Errorf("HOLD: module %s volume %s requires dedicated boetticher data storage", volume.Module, volume.Name)
+			}
+		case model.StorageDefault:
+		default:
+			return Plan{}, fmt.Errorf("unsupported volume placement %q", volume.Placement)
+		}
+		plan.Volumes = append(plan.Volumes, ResolvedVolume{Module: volume.Module, Name: volume.Name, Guest: volume.Guest, Storage: selected, Placement: volume.Placement, Backup: volume.Backup})
 	}
 	sort.Slice(plan.Volumes, func(i, j int) bool {
 		if plan.Volumes[i].Module != plan.Volumes[j].Module {

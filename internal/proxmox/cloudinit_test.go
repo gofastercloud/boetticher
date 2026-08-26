@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gofastercloud/boetticher/internal/model"
 	"gopkg.in/yaml.v3"
 )
 
@@ -67,6 +68,47 @@ func TestFirewallCloudInitDoesNotDuplicateStaticPrefixLength(t *testing.T) {
 func TestFirewallCloudInitRejectsUnstableNICIdentity(t *testing.T) {
 	if _, err := RenderFirewallCloudInit(GuestPlan{Name: "lab-fw-01", Address: "10.10.99.1", NICs: []GuestNIC{{Name: "wan0", Method: "dhcp"}}}); err == nil {
 		t.Fatal("cloud-init accepted a NIC without a stable MAC")
+	}
+}
+
+func TestFirewallCloudInitMountsDeclaredVolumesByStableDiskIdentity(t *testing.T) {
+	guest := GuestPlan{
+		Name: "lab-fw-01", Address: "10.10.99.1",
+		NICs: []GuestNIC{{Name: "mgmt0", MAC: "02:00:00:00:01:05", Method: "static", Address: "10.10.99.1"}},
+		Volumes: []model.PersistentVolumeDeclaration{
+			{Name: "ssh-identity", Module: "firewall", Guest: "lab-fw-01", MountPath: "/var/lib/boetticher/identity/ssh"},
+			{Name: "kea-leases", Module: "firewall", Guest: "lab-fw-01", MountPath: "/var/lib/kea"},
+		},
+	}
+	files, err := RenderFirewallCloudInit(guest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(files.UserData, "fs_setup:") != 1 || strings.Count(files.UserData, "mounts:") != 1 {
+		t.Fatalf("firewall cloud-init emitted duplicate storage sections: %s", files.UserData)
+	}
+	var document struct {
+		FSSetup []struct {
+			Label    string `yaml:"label"`
+			Device   string `yaml:"device"`
+			Override bool   `yaml:"overwrite"`
+		} `yaml:"fs_setup"`
+		Mounts [][]string `yaml:"mounts"`
+	}
+	if err := yaml.Unmarshal([]byte(files.UserData), &document); err != nil {
+		t.Fatalf("firewall cloud-init is not valid YAML: %v", err)
+	}
+	if len(document.FSSetup) != 2 || len(document.Mounts) != 2 {
+		t.Fatalf("unexpected persistent volume bootstrap: %#v", document)
+	}
+	if document.FSSetup[0].Label != "boetticher-ssh-identity" || document.FSSetup[1].Label != "boetticher-kea-leases" {
+		t.Fatalf("unexpected persistent volume labels: %#v", document.FSSetup)
+	}
+	if document.FSSetup[0].Device != "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_boetticher-firewall-lab-fw-01-ssh-identity" {
+		t.Fatalf("SSH identity device is not stable: %#v", document.FSSetup[0])
+	}
+	if document.Mounts[1][1] != "/var/lib/kea" || document.Mounts[1][3] != "defaults,nofail" {
+		t.Fatalf("Kea volume mount is not explicit: %#v", document.Mounts[1])
 	}
 }
 

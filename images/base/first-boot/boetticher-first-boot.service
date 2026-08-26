@@ -1,6 +1,6 @@
 [Unit]
 Description=Install the Core-injected operator key for labadmin
-After=local-fs.target
+After=local-fs.target cloud-init.service
 Before=ssh.service
 [Service]
 Type=oneshot

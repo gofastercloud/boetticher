@@ -80,6 +80,8 @@ create_base_rootfs() {
   mkdir -p "$rootfs/etc/systemd/journald.conf.d"
   printf '%s\n' '[Journal]' 'SystemMaxUse=256M' 'RuntimeMaxUse=64M' > "$rootfs/etc/systemd/journald.conf.d/boetticher.conf"
   printf '%s\n' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' 'PermitRootLogin prohibit-password' > "$rootfs/etc/ssh/sshd_config.d/boetticher.conf"
+  install -D -m 0644 images/base/runtime/sshd-host-key.conf "$rootfs/etc/ssh/sshd_config.d/boetticher-host-key.conf"
+  rm -f "$rootfs/etc/ssh/ssh_host_*"
   rm -f "$rootfs/root/.ssh/authorized_keys" "$rootfs/home/labadmin/.ssh/authorized_keys"
   chroot "$rootfs" systemctl enable boetticher-first-boot.service
 }
@@ -303,11 +305,22 @@ build_firewall() {
     curl --fail --location --silent --show-error --output "$input" https://cloud.debian.org/images/cloud/trixie/20260327-2429/debian-13-genericcloud-amd64-20260327-2429.qcow2
   fi
   printf '%s  %s\n' 09559ec27d263997827dd8cddf76e97ea8e0f1803380aa501ea7eaa4b4968cd76ffef4ec7eb07ef1a9ccbeb0925a5020492ea9ed53eb167d62f3a2285039912c "$input" | sha512sum --check --status
+  zabbix_release="$work_root/zabbix-release_7.0-5+debian13_all.deb"
+  if [ ! -f "$zabbix_release" ]; then
+    curl --fail --location --silent --show-error --output "$zabbix_release" "$zabbix_release_url"
+  fi
+  printf '%s  %s\n' "$zabbix_release_sha256" "$zabbix_release" | sha256sum --check --status
   image="$destination/boetticher-firewall-1.0.0-amd64.qcow2"
   cp "$input" "$image"
   virt-customize -a "$image" \
     --network \
-    --install nftables,kea-dhcp4-server,kea-dhcp-ddns-server,dnsmasq,chrony,openssh-server,sudo,cloud-init,systemd-journal-remote,zabbix-agent2,curl,jq,openssl \
+    --install nftables,kea-dhcp4-server,kea-dhcp-ddns-server,dnsmasq,chrony,openssh-server,sudo,cloud-init,systemd-journal-remote,curl,jq,openssl,qemu-guest-agent \
+    --upload "$zabbix_release:/tmp/zabbix-release.deb" \
+    --run-command 'dpkg --install /tmp/zabbix-release.deb' \
+    --run-command 'apt-get update' \
+    --run-command "DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends zabbix-agent2=$zabbix_package_version" \
+    --run-command 'dpkg --purge zabbix-release >/dev/null 2>&1 || true' \
+    --run-command 'rm -f /tmp/zabbix-release.deb; apt-get clean; rm -rf /var/lib/apt/lists/*' \
     --mkdir /etc/boetticher,/usr/lib/boetticher,/var/lib/boetticher/identity/ssh,/tmp/boetticher-ansible,/etc/systemd/journald.conf.d,/etc/sysctl.d \
     --upload images/base/first-boot/boetticher-first-boot.sh:/usr/lib/boetticher/boetticher-first-boot.sh \
     --upload images/base/first-boot/boetticher-first-boot.service:/etc/systemd/system/boetticher-first-boot.service \
@@ -315,6 +328,7 @@ build_firewall() {
     --upload images/firewall/nocloud/network-config:/etc/boetticher/nocloud-network-config \
     --upload images/base/runtime/journald.conf:/etc/systemd/journald.conf.d/boetticher.conf \
     --upload images/base/runtime/journal-upload.conf:/etc/systemd/journal-upload.conf \
+    --upload images/base/runtime/sshd-host-key.conf:/etc/ssh/sshd_config.d/boetticher-host-key.conf \
     --upload images/base/runtime/boetticher.sudoers:/etc/sudoers.d/boetticher \
     --upload images/firewall/runtime/forwarding.conf:/etc/sysctl.d/boetticher-forwarding.conf \
     --run-command 'useradd --create-home --shell /bin/bash labadmin || true' \
