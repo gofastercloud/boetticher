@@ -94,6 +94,10 @@ func TestConfiguredTrunkStillPassesSafetyChecks(t *testing.T) {
 	if err != nil || result.Mode != ModePhysicalTrunk || result.Trunk == nil || result.Trunk.Name != "enp5s0" {
 		t.Fatalf("configured trunk was not recognized: %#v, %v", result, err)
 	}
+	selected, err := Analyze(evidence, "enp5s0")
+	if err != nil || selected.Mode != ModePhysicalTrunk || selected.Trunk == nil || selected.Trunk.Name != "enp5s0" {
+		t.Fatalf("idempotent configured selection failed: %#v, %v", selected, err)
+	}
 	evidence.Interfaces[1].Addresses = []string{"10.10.20.55/24"}
 	result, err = Analyze(evidence, "")
 	if err != nil || result.Mode != ModeVirtualOnly || result.Trunk != nil {

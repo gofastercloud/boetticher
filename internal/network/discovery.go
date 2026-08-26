@@ -115,6 +115,12 @@ func Analyze(evidence Evidence, explicitTrunk string) (Discovery, error) {
 		if !found {
 			return Discovery{}, fmt.Errorf("selected trunk interface %q was not discovered", explicitTrunk)
 		}
+		if configured != nil && configured.Name == explicitTrunk {
+			result.Mode = ModePhysicalTrunk
+			result.Trunk = &selected
+			result.Explanation = "explicit selection matches the persisted Lab-in-a-Box trunk binding"
+			return result, nil
+		}
 		if !containsInterface(candidates, explicitTrunk) {
 			return Discovery{}, fmt.Errorf("selected trunk interface %q is not an eligible unused physical Ethernet interface", explicitTrunk)
 		}

@@ -1090,10 +1090,63 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err := proxmox.EnsureVirtualBridge(ctx, client, plan.Node); err != nil {
 		return err
 	}
+	trunkChanged := false
 	if discovery.Trunk != nil && discovery.Trunk.Bridge != "vmbr1" {
 		if err := proxmox.AttachTrunk(ctx, client, plan.Node, discovery.Trunk.Name, s.BootstrapAddress); err != nil {
 			return err
 		}
+		trunkChanged = true
+	}
+	var postInterfaces []proxmox.NetworkInterface
+	if err := client.NodeNetwork(ctx, plan.Node, &postInterfaces); err != nil {
+		if trunkChanged {
+			return rollbackTrunkChange(ctx, client, plan.Node, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network mutation could not be re-read", err)
+		}
+		return fmt.Errorf("HOLD: bootstrap network state could not be re-read: %w", err)
+	}
+	configuredTrunk := ""
+	if discovery.Trunk != nil {
+		configuredTrunk = discovery.Trunk.Name
+	}
+	postDiscovery, err := proxmox.AnalyzePhysicalNetwork(postInterfaces, s.BootstrapAddress, configuredTrunk)
+	if err != nil {
+		if trunkChanged {
+			return rollbackTrunkChange(ctx, client, plan.Node, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network mutation failed physical validation", err)
+		}
+		return fmt.Errorf("HOLD: bootstrap network state failed physical validation: %w", err)
+	}
+	s.PhysicalNetwork.Upstream = model.PhysicalNIC{Name: postDiscovery.Upstream.Name, PermanentMAC: postDiscovery.Upstream.PermanentMAC, PCIAddress: postDiscovery.Upstream.PCIAddress}
+	if postDiscovery.Trunk == nil {
+		s.PhysicalNetwork.Mode = model.ModeVirtualOnly
+		s.PhysicalNetwork.Trunk = model.PhysicalNIC{}
+	} else {
+		s.PhysicalNetwork.Mode = model.ModePhysicalTrunk
+		s.PhysicalNetwork.Trunk = model.PhysicalNIC{Name: postDiscovery.Trunk.Name, PermanentMAC: postDiscovery.Trunk.PermanentMAC, PCIAddress: postDiscovery.Trunk.PCIAddress}
+	}
+	if _, err := proxmox.ValidatePhysicalBinding(s, postInterfaces); err != nil {
+		if trunkChanged {
+			return rollbackTrunkChange(ctx, client, plan.Node, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network binding validation failed", err)
+		}
+		return fmt.Errorf("HOLD: bootstrap network binding validation failed: %w", err)
+	}
+	if err := site.Save(*siteDir, s); err != nil {
+		if trunkChanged {
+			return rollbackTrunkChange(ctx, client, plan.Node, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network binding could not be persisted", err)
+		}
+		return fmt.Errorf("HOLD: bootstrap network binding could not be persisted: %w", err)
+	}
+	plan, err = proxmox.PlanFromSite(s)
+	if err != nil {
+		return fmt.Errorf("HOLD: recompute platform plan after physical binding: %w", err)
+	}
+	if err := writeModelProjections(*siteDir, s); err != nil {
+		return fmt.Errorf("HOLD: bootstrap network binding was persisted but projections could not be regenerated: %w", err)
+	}
+	if err := writePhysicalDiscovery(*siteDir, s, postDiscovery); err != nil {
+		return fmt.Errorf("HOLD: bootstrap network binding was persisted but physical evidence could not be written: %w", err)
+	}
+	if err := rebuildPortal(*siteDir, s); err != nil {
+		return fmt.Errorf("HOLD: bootstrap network binding was persisted but portal could not be regenerated: %w", err)
 	}
 	if err := proxmox.EnsureFirewallVM(ctx, client, plan, *opnsenseISO); err != nil {
 		return err
@@ -1104,14 +1157,6 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	hostKey, err := sshconfig.ScanHostKey(ctx, s.BootstrapAddress)
 	if err != nil {
 		return fmt.Errorf("record Proxmox SSH host identity: %w", err)
-	}
-	s.PhysicalNetwork.Upstream = model.PhysicalNIC{Name: discovery.Upstream.Name, PermanentMAC: discovery.Upstream.PermanentMAC, PCIAddress: discovery.Upstream.PCIAddress}
-	if discovery.Trunk == nil {
-		s.PhysicalNetwork.Mode = model.ModeVirtualOnly
-		s.PhysicalNetwork.Trunk = model.PhysicalNIC{}
-	} else {
-		s.PhysicalNetwork.Mode = model.ModePhysicalTrunk
-		s.PhysicalNetwork.Trunk = model.PhysicalNIC{Name: discovery.Trunk.Name, PermanentMAC: discovery.Trunk.PermanentMAC, PCIAddress: discovery.Trunk.PCIAddress}
 	}
 	if err := site.Save(*siteDir, s); err != nil {
 		return fmt.Errorf("HOLD: bootstrap completed network mutation but physical binding could not be persisted: %w", err)
@@ -1133,7 +1178,7 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err := writeModelProjections(*siteDir, s); err != nil {
 		return err
 	}
-	if err := writePhysicalDiscovery(*siteDir, s, discovery); err != nil {
+	if err := writePhysicalDiscovery(*siteDir, s, postDiscovery); err != nil {
 		return err
 	}
 	if err := rebuildPortal(*siteDir, s); err != nil {
