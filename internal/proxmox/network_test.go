@@ -9,10 +9,10 @@ import (
 
 func TestNetworkInterfacePreservesHardwareEvidence(t *testing.T) {
 	var iface NetworkInterface
-	if err := json.Unmarshal([]byte(`{"iface":"enp5s0","type":"eth","product":"Intel X710","pci-address":"0000:05:00.0","hwaddr":"00:aa:bb:cc:dd:ee"}`), &iface); err != nil {
+	if err := json.Unmarshal([]byte(`{"iface":"enp5s0","type":"eth","product":"Ethernet adapter","pci-address":"0000:05:00.0","hwaddr":"00:aa:bb:cc:dd:ee"}`), &iface); err != nil {
 		t.Fatal(err)
 	}
-	if iface.Model != "Intel X710" || iface.PCIAddress != "0000:05:00.0" {
+	if iface.Model != "Ethernet adapter" || iface.PCIAddress != "0000:05:00.0" {
 		t.Fatalf("hardware evidence was not preserved: %#v", iface)
 	}
 }

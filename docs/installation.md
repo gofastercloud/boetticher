@@ -12,11 +12,11 @@ Supported controller platforms are macOS arm64, macOS amd64, Linux arm64, and Li
 
 - `site.yml` and `.sops.yaml` with only the public Age recipient;
 - encrypted SOPS documents under `secrets/`;
-- platform/version locks and generated non-secret model, inventory, portal, and evidence artifacts.
+- platform/version locks and generated non-secret model, inventory, portal, and status artifacts.
 
 The Age private identity is created at `~/.config/boetticher/age/identity.txt` (or the explicit path supplied to `init`) with restrictive permissions. It is never written to the site repository. Before destructive bootstrap, make and verify an independent recovery copy. The CLI requires `--recovery-confirmed` for the live path.
 
-Git may contain desired state, encrypted secrets, and non-secret evidence. OpenTofu state, plans, provider caches, Ansible caches, bootstrap state, temporary credentials, and other runtime material stay outside Git and are treated as potentially sensitive.
+Git may contain desired state, encrypted secrets, and non-secret status output. OpenTofu state, plans, provider caches, Ansible caches, bootstrap state, temporary credentials, and other runtime material stay outside Git and are treated as potentially sensitive.
 
 ## Sequence
 
@@ -32,7 +32,7 @@ Git may contain desired state, encrypted secrets, and non-secret evidence. OpenT
 
 The initial bootstrap trust transition is: operator authentication to fresh Proxmox → operator SSH key → `labadmin` and forwarding-only `lab-jump` → scoped Proxmox API token → direct encrypted SOPS handoff. Interactive secrets are not accepted through command arguments, persistent environment variables, logs, or generated files.
 
-## Release-blocking OPNsense gate
+## The important OPNsense first run
 
 OPNsense bootstrap is a core capability, not an optional documentation step. The required repeatable sequence is:
 
@@ -47,7 +47,12 @@ fresh Proxmox
 → authenticate through supported APIs
 → converge Kea/firewall/network policy
 → remove temporary bootstrap privilege
-→ repeat from a wiped environment
+→ repeat from a clean installation
 ```
 
-The source build currently implements and tests the deterministic contract, Proxmox VM creation, credential handoff, VLAN/Kea/firewall API adapters, and generated state boundary. It does not claim that the unattended OPNsense installer or the management interface-address transition is live-qualified. `boetticher bootstrap` therefore stops after the Proxmox portion until this gate is exercised on exact OPNsense 26.7.2_2 without manual OPNsense surgery.
+The source build implements and tests the deterministic contract, Proxmox VM
+creation, credential handoff, VLAN/Kea/firewall API adapters, and generated
+state boundary. The unattended OPNsense installer and management
+interface/address transition still need a real first run on exact OPNsense
+26.7.2_2. Until then, `boetticher bootstrap` stops after the Proxmox portion;
+that is a deliberate reminder that the live part has not been tried yet.

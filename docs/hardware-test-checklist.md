@@ -1,11 +1,10 @@
-# T580 greenfield qualification
+# First real installation
 
-This is the remaining live-work checklist for the first real boetticher
-qualification. It assumes the T580 can be wiped and recovered. Use a fresh
-controller checkout, the exact qualified OPNsense patch in `site.yml`, and the
-README commands exactly as written.
+This is the practical checklist for the first real boetticher installation.
+Use a clean controller checkout, the exact qualified OPNsense patch in
+`site.yml`, and the README commands exactly as written.
 
-## Result language
+## When you record the run
 
 - **PASS**: the stated command or journey behaved as described and the result
   was recorded from the current host.
@@ -16,10 +15,10 @@ README commands exactly as written.
 - **NOT TESTED**: the step was not reached or the required hardware/service was
   unavailable.
 
-## Qualification sequence
+## The sequence
 
-1. **Fresh Proxmox** — wipe/reinstall the qualified Proxmox release, set the
-   node name to `lab-proxmox-01`, and connect it to the existing HOME network.
+1. **Fresh Proxmox** — install the qualified Proxmox release, set the node
+   name to `lab-proxmox-01`, and connect it to the existing HOME network.
    PASS means the initial upstream DHCP address is known and reachable.
 2. **Controller setup** — run `boetticher init`, secure an independent copy of
    the Age identity, record the address with
@@ -37,7 +36,7 @@ README commands exactly as written.
 5. **OPNsense bootstrap** — complete the unattended firewall VM installation,
    WAN/internal interface assignment, MGMT reachability, scoped identities,
    direct SOPS credential handoff, Kea, firewall, NAT, and temporary privilege
-   removal. PASS means this completes from a wiped environment without manual
+   removal. PASS means this completes from a clean installation without manual
    OPNsense surgery.
 6. **Kea, DNS/DDNS, and NTP** — obtain leases in TRUSTED, SERVERS, SANDBOX,
    and MGMT; verify zone-qualified A/PTR records, release/replacement cleanup,
@@ -54,10 +53,11 @@ README commands exactly as written.
 9. **Negative firewall paths** — from SANDBOX verify TRUSTED, SERVERS, and MGMT
    are denied while Internet, DHCP, DNS, and NTP work. Verify the intended
    TRUSTED, SERVERS, and MGMT administration paths separately.
-10. **Physical trunk** — connect the ASIX interface and managed switch, run
-    `boetticher network trunk attach IFACE --confirm`, then verify the trunk,
-    VLAN tags, physical client paths, and physical SANDBOX isolation mechanism.
-    A disconnected clean NIC is valid before the switch is attached.
+10. **Physical trunk** — connect the selected spare Ethernet interface and
+    managed switch, run `boetticher network trunk attach IFACE --confirm`,
+    then verify the trunk, VLAN tags, physical client paths, and physical
+    SANDBOX isolation mechanism. A disconnected clean NIC is valid before the
+    switch is attached.
 11. **Reboot** — reboot Proxmox and the platform guests. Repeat bastion, DNS,
     NTP, Zabbix, portal, and negative firewall journeys.
 12. **Idempotence** — run `boetticher converge` again and require no unexpected
@@ -65,8 +65,8 @@ README commands exactly as written.
 13. **Recovery** — test platform guest backup restore, SOPS/Age recovery, and
     the recorded HOME bootstrap endpoint. Same-disk backup success does not
     prove disaster recovery.
-14. **Repeat** — wipe the T580 and repeat the greenfield sequence. The V1
-    live qualification is complete only after two clean runs.
+14. **Repeat** — repeat the greenfield sequence from a clean installation.
+    The V1 qualification is complete only after two clean runs.
 
 Keep the completed checklist with the tested revisions, controller version,
 Proxmox/OPNsense versions, and relevant command output. Do not put secrets,

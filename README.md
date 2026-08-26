@@ -2,7 +2,7 @@
 
 **A small, opinionated Proxmox platform for a secure homelab.**
 
-> **Status: pre-alpha.** The architecture and offline contracts are implemented, but the greenfield deployment has not yet completed live qualification. Do not use this on a system you cannot wipe or recover.
+> **Status: pre-alpha.** The architecture and offline pieces are in place, but the first real installation still needs to be tried on a clean test host. Don’t use it on anything you can’t recover.
 
 [![CI](https://github.com/gofastercloud/boetticher/actions/workflows/ci.yml/badge.svg)](https://github.com/gofastercloud/boetticher/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -45,11 +45,11 @@ The internal namespace is `lab.home.arpa`. The generated platform records includ
 - SOPS-encrypted secrets with an Age identity kept outside Git and an explicit recovery-copy gate.
 - A forwarding-only Proxmox SSH bastion that works from the HOME side even when internal DNS or a physical trunk is unavailable.
 - Conservative physical NIC discovery: one NIC is supported, one additional unambiguous NIC can become the trunk, and ambiguous systems require operator selection.
-- A portal that documents the deployed model and evidence without becoming a second monitoring product.
+- A portal that documents the deployed model and current status without becoming a second monitoring product.
 
 ## Requirements
 
-- Fresh supported Proxmox VE x86 installation with node name `lab-proxmox-01`. Exact Proxmox release qualification is a release gate; this source tree does not imply that every PVE release is supported.
+- Fresh supported Proxmox VE x86 installation with node name `lab-proxmox-01`. The first supported Proxmox release will be recorded after a clean installation has been tried; this source tree does not imply that every PVE release works.
 - Minimum host shape for the foundation: 4 logical CPU threads, 16 GiB RAM, and 128 GiB usable storage. 4+ cores, 32 GiB RAM, and 256 GiB or more is a much friendlier size for user workloads.
 - One physical Ethernet NIC minimum. A second NIC and managed 802.1Q switch are recommended for physical VLAN breakout, but `vmbr1` may remain virtual-only.
 - Controller: macOS arm64/amd64 or Linux arm64/amd64. Native Windows is out of scope; WSL2 is only supported if separately tested.
@@ -78,7 +78,7 @@ Keep the independent recovery copy of the Age identity before destructive bootst
 
 Physical NIC discovery is conservative. With one NIC, the supported result is `virtual-only`. With exactly one additional clean Ethernet NIC, bootstrap can attach it to `vmbr1` after displaying the proposed mapping. With multiple possible trunk candidates, select one explicitly. A disconnected but otherwise clean trunk NIC is valid.
 
-The current source build has local contracts and tests for the bootstrap sequence, but live unattended OPNsense installation, exact interface-address transition, dynamic DNS replication, physical NIC mutation, and negative network journeys remain release-blocking integration gates until exercised on a wiped environment.
+The source build has local contracts and tests for the bootstrap sequence. The first real installation still needs to try unattended OPNsense setup, the interface/address transition, dynamic DNS replication, physical NIC changes, and the negative network journeys on a clean host.
 
 ## Access and ownership
 
@@ -115,10 +115,10 @@ Start with [the architecture guide](docs/architecture.md), [the security model](
 - [Workloads](docs/workloads/): adding user-owned guests and optionally onboarding their own Zabbix agent.
 - [Storage and recovery](docs/storage/): storage profiles, backup ownership, and recovery runbooks.
 - [Operations](docs/operations.md) and [commands](docs/commands.md): the day-to-day CLI surface.
-- [Troubleshooting](docs/troubleshooting.md): bounded diagnosis and HOLD conditions.
-- [T580 qualification](docs/hardware-test-checklist.md): the exact wiped-host sequence for live testing.
+- [Troubleshooting](docs/troubleshooting.md): what to check when something goes wrong.
+- [First installation](docs/hardware-test-checklist.md): a practical checklist for trying the platform on real hardware.
 
-`lab-portal-01` renders this same release documentation alongside the installation-specific model and non-secret verification evidence. It is passive static HTML; Zabbix owns live telemetry.
+`lab-portal-01` renders this same release documentation alongside the installation-specific model and non-secret status information. It is passive static HTML; Zabbix owns live telemetry.
 
 ## Development
 
