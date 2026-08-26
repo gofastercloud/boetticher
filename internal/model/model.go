@@ -24,6 +24,12 @@ const (
 	DefaultAgeIdentity  = "~/.config/labinabox/age/identity.txt"
 	DefaultSSHConfig    = "~/.ssh/config.d/labinabox.conf"
 	DefaultAdminSSHUser = "labadmin"
+	DefaultProxmoxNode  = "lab-proxmox-01"
+	ProxmoxVMID         = 100
+	DNS01VMID           = 110
+	DNS02VMID           = 111
+	MonitorVMID         = 120
+	PortalVMID          = 130
 )
 
 var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
@@ -33,6 +39,7 @@ type Site struct {
 	PlatformVersion  string         `json:"platform_version"`
 	SchemaVersion    int            `json:"schema_version"`
 	StorageProfile   string         `json:"storage_profile"`
+	ProxmoxNode      string         `json:"proxmox_node"`
 	BootstrapAddress string         `json:"bootstrap_address,omitempty"`
 	SSHIdentityFile  string         `json:"ssh_identity_file,omitempty"`
 	PhysicalTrunk    string         `json:"physical_trunk,omitempty"`
@@ -101,8 +108,9 @@ func NewDefaultSite(installationID, ageRecipient string) Site {
 		PlatformVersion: PlatformVersion,
 		SchemaVersion:   SchemaVersion,
 		StorageProfile:  "single-disk",
+		ProxmoxNode:     DefaultProxmoxNode,
 		TestedVersions: TestedVersions{
-			OPNsense: OPNsenseSeries,
+			OPNsense: QualifiedOPNsense,
 			Zabbix:   ZabbixSeries,
 		},
 		Network: Network{
@@ -148,6 +156,9 @@ func (s Site) Validate() error {
 	}
 	if s.StorageProfile != "single-disk" && s.StorageProfile != "dedicated-data-disk" {
 		return fmt.Errorf("unsupported storage_profile %q", s.StorageProfile)
+	}
+	if s.ProxmoxNode != DefaultProxmoxNode {
+		return fmt.Errorf("proxmox_node must be %q in V1", DefaultProxmoxNode)
 	}
 	if s.Network.Domain != DefaultDomain {
 		return fmt.Errorf("network.domain must be %s", DefaultDomain)
@@ -207,7 +218,7 @@ func (s Site) Validate() error {
 			return fmt.Errorf("duplicate module %q", m.Name)
 		}
 		seenModules[m.Name] = true
-		if net.ParseIP(m.Address) == nil {
+		if ip := net.ParseIP(m.Address); ip == nil || ip.To4() == nil {
 			return fmt.Errorf("module %s has invalid IPv4 address %q", m.Name, m.Address)
 		}
 		if !seenZones[m.Zone] {

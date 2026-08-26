@@ -70,9 +70,6 @@ func Init(dir, ageIdentityPath string) (model.Site, error) {
 		return model.Site{}, err
 	}
 	s := model.NewDefaultSite(installationID, recipient)
-	// The exact patch is a qualification input, not a claim that every 26.7.x
-	// patch is supported. init uses the first explicitly qualified value.
-	s.TestedVersions.OPNsense = "26.7.0"
 	authority, err := pki.GenerateAuthority(time.Now().UTC(), s.Network.Domain)
 	if err != nil {
 		return model.Site{}, fmt.Errorf("generate platform CA hierarchy: %w", err)

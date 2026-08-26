@@ -2,6 +2,7 @@ api_version: labinabox/v1
 platform_version: 0.1.0
 schema_version: 1
 storage_profile: single-disk
+proxmox_node: lab-proxmox-01
 bootstrap_address: ""
 ssh_identity_file: ""
 physical_trunk: ""
