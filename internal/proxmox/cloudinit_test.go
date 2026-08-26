@@ -83,6 +83,9 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 	if !strings.Contains(files.UserData, "boetticher-build") || !strings.Contains(files.UserData, "scripts/scan-images.sh scan-images") || !strings.Contains(files.UserData, "boetticher-builder-ready") {
 		t.Fatal("builder cloud-init does not invoke the first-party build and qualification path")
 	}
+	if !strings.Contains(string(RenderBuilderCloudInit().UserData), "qemu-guest-agent") {
+		t.Fatal("builder cloud-init does not enable the guest agent needed for address discovery")
+	}
 	if !strings.Contains(files.UserData, "qemu-guest-agent") || !strings.Contains(files.NetworkConfig, "dhcp4: true") {
 		t.Fatal("builder cloud-init lacks guest-agent or bootstrap network setup")
 	}
