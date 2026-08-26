@@ -103,6 +103,10 @@ func Variables(s model.Site) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	blockyConfig, err := dns.RenderBlockyConfig(dnsPlan)
+	if err != nil {
+		return nil, err
+	}
 	value := struct {
 		ModelRevision               string        `json:"model_revision"`
 		Domain                      string        `json:"domain"`
@@ -116,7 +120,8 @@ func Variables(s model.Site) ([]byte, error) {
 		DNSPlan                     dns.Plan      `json:"dns_plan"`
 		FirewallPlan                firewall.Plan `json:"firewall_plan"`
 		ZabbixPlan                  zabbix.Plan   `json:"zabbix_plan"`
-	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, zabbixPlan}
+		BlockyConfig                string        `json:"blocky_config"`
+	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, zabbixPlan, string(blockyConfig)}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err

@@ -211,7 +211,9 @@
     owner: root
     group: root
     mode: '0644'
-  when: inventory_hostname in groups.get('dns', [])
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'adguard'
 
 - name: Install AdGuard Home under its own service directory
   ansible.builtin.unarchive:
@@ -219,7 +221,9 @@
     dest: /opt
     remote_src: true
     creates: /opt/AdGuardHome/AdGuardHome
-  when: inventory_hostname in groups.get('dns', [])
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'adguard'
 
 - name: Configure AdGuard Home as the client-facing resolver
   ansible.builtin.template:
@@ -229,7 +233,9 @@
     group: root
     mode: '0600'
   notify: restart adguardhome
-  when: inventory_hostname in groups.get('dns', [])
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'adguard'
 
 - name: Install AdGuard Home systemd unit
   ansible.builtin.template:
@@ -241,7 +247,38 @@
   notify:
     - reload systemd
     - restart adguardhome
-  when: inventory_hostname in groups.get('dns', [])
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'adguard'
+
+- name: Assert the qualified Blocky binary is present
+  ansible.builtin.command: blocky --version
+  register: blocky_version
+  changed_when: false
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'blocky'
+
+- name: Install the canonical Blocky configuration
+  ansible.builtin.copy:
+    content: "{{ blocky_config }}"
+    dest: /etc/blocky/config.yml
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart blocky
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'blocky'
+
+- name: Enable the qualified Blocky service
+  ansible.builtin.service:
+    name: blocky
+    enabled: true
+    state: started
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'blocky'
 
 - name: Enable DNS services
   ansible.builtin.service:
@@ -250,5 +287,13 @@
     state: started
   loop:
     - pdns
-    - adguardhome
   when: inventory_hostname in groups.get('dns', [])
+
+- name: Enable AdGuard Home when selected
+  ansible.builtin.service:
+    name: adguardhome
+    enabled: true
+    state: started
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'adguard'

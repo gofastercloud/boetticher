@@ -126,6 +126,21 @@ func writeModelProjections(dir string, s model.Site) error {
 	if err := writeProjection(filepath.Join(dir, "generated", "logging", "desired-state.json"), loggingPlan); err != nil {
 		return err
 	}
+	if err := writePublic(filepath.Join(dir, "generated", "logging", "journal-remote.conf"), []byte(logging.CollectorConfiguration(loggingPlan))); err != nil {
+		return err
+	}
+	if err := writePublic(filepath.Join(dir, "generated", "logging", "journal-remote.service.d", "boetticher.conf"), []byte(logging.CollectorServiceOverride(loggingPlan))); err != nil {
+		return err
+	}
+	if dnsPlan.RecursiveProvider == string(model.DNSProviderBlocky) {
+		blockyConfig, renderErr := dns.RenderBlockyConfig(dnsPlan)
+		if renderErr != nil {
+			return renderErr
+		}
+		if err := writePublic(filepath.Join(dir, "generated", "dns", "blocky.yml"), blockyConfig); err != nil {
+			return err
+		}
+	}
 	if err := writeProjection(filepath.Join(dir, "generated", "proxmox", "desired-state.json"), proxmoxPlan); err != nil {
 		return err
 	}

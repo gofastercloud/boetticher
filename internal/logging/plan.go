@@ -67,8 +67,17 @@ func PlanFromSite(s model.Site) (Plan, error) {
 
 func CollectorConfiguration(plan Plan) string {
 	return strings.Join([]string{
-		"[Journal]", "SplitMode=" + plan.SplitMode, "MaxUse=" + plan.MaxUse, "KeepFree=" + plan.KeepFree,
-		"", "[Service]", "# journal-upload is asynchronous and never a service prerequisite",
+		"[Remote]", "Seal=true", "SplitMode=" + plan.SplitMode,
+		"ServerKeyFile=/var/lib/boetticher/identity/logging/collector.key",
+		"ServerCertificateFile=/var/lib/boetticher/identity/logging/collector.crt",
+		"TrustedCertificateFile=/var/lib/boetticher/identity/logging/ca.crt",
+		"", "[Journal]", "SystemMaxUse=" + plan.MaxUse, "SystemKeepFree=" + plan.KeepFree,
+	}, "\n") + "\n"
+}
+
+func CollectorServiceOverride(plan Plan) string {
+	return strings.Join([]string{
+		"[Service]", "ExecStart=", "ExecStart=/lib/systemd/systemd-journal-remote --listen-https=-3 --output=" + plan.RemoteJournalPath,
 	}, "\n") + "\n"
 }
 
