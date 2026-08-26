@@ -45,20 +45,21 @@ const (
 var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
 
 type Site struct {
-	APIVersion       string          `json:"api_version"`
-	PlatformVersion  string          `json:"platform_version"`
-	SchemaVersion    int             `json:"schema_version"`
-	StorageProfile   string          `json:"storage_profile"`
-	ProxmoxNode      string          `json:"proxmox_node"`
-	BootstrapAddress string          `json:"bootstrap_address,omitempty"`
-	SSHIdentityFile  string          `json:"ssh_identity_file,omitempty"`
-	PhysicalNetwork  PhysicalNetwork `json:"physical_network"`
-	TestedVersions   TestedVersions  `json:"tested_versions"`
-	Network          Network         `json:"network"`
-	PKI              PKIMetadata     `json:"pki"`
-	SecretMetadata   SecretMetadata  `json:"secret_metadata"`
-	Ownership        OwnershipPolicy `json:"ownership"`
-	Modules          []Module        `json:"modules"`
+	APIVersion       string           `json:"api_version"`
+	PlatformVersion  string           `json:"platform_version"`
+	SchemaVersion    int              `json:"schema_version"`
+	StorageProfile   string           `json:"storage_profile"`
+	ProxmoxNode      string           `json:"proxmox_node"`
+	BootstrapAddress string           `json:"bootstrap_address,omitempty"`
+	SSHIdentityFile  string           `json:"ssh_identity_file,omitempty"`
+	PhysicalNetwork  PhysicalNetwork  `json:"physical_network"`
+	TestedVersions   TestedVersions   `json:"tested_versions"`
+	Network          Network          `json:"network"`
+	PKI              PKIMetadata      `json:"pki"`
+	SecretMetadata   SecretMetadata   `json:"secret_metadata"`
+	Ownership        OwnershipPolicy  `json:"ownership"`
+	Components       []Component      `json:"components"`
+	Modules          []ModuleInstance `json:"modules,omitempty"`
 }
 
 type TestedVersions struct {
@@ -121,7 +122,9 @@ type PKIMetadata struct {
 	IssuingExpiry      string `json:"issuing_expiry"`
 }
 
-type Module struct {
+// Component is a declared boetticher platform resource. Components are the
+// only resources that the core projections may create or continuously manage.
+type Component struct {
 	Name         string   `json:"name"`
 	VMID         int      `json:"vmid,omitempty"`
 	Hostname     string   `json:"hostname"`
@@ -138,6 +141,14 @@ type Module struct {
 	SSHManaged   bool     `json:"ssh_managed"`
 	JumpAllowed  bool     `json:"jump_allowed"`
 	ProductOwned bool     `json:"product_owned"`
+}
+
+// ModuleInstance reserves a separate schema namespace for future opt-in
+// boetticher capabilities. User workloads are not represented here and are
+// never adopted by the platform model.
+type ModuleInstance struct {
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
 }
 
 func NewDefaultSite(installationID, ageRecipient string) Site {
@@ -168,7 +179,7 @@ func NewDefaultSite(installationID, ageRecipient string) Site {
 			UserGuestIDMin: UserGuestIDMin, UserGuestIDMax: UserGuestIDMax,
 			UserWorkloadsManaged: false,
 		},
-		Modules: []Module{
+		Components: []Component{
 			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: "10.10.99.5", Role: "Proxmox host", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22},
 			{Name: "lab-fw-01", VMID: ProxmoxVMID, Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "OPNsense firewall", URL: "https://opnsense." + DefaultDomain, Monitoring: true, Backup: true, MTLS: false, SSHManaged: false, JumpAllowed: false, ProductOwned: true},
 			{Name: "lab-dns-01", VMID: DNS01VMID, Hostname: "lab-dns-01", Zone: "SERVERS", Address: "10.10.20.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
@@ -182,12 +193,13 @@ func NewDefaultSite(installationID, ageRecipient string) Site {
 func (s Site) Normalize() Site {
 	copySite := s
 	copySite.Network.Zones = append([]Zone(nil), s.Network.Zones...)
-	copySite.Modules = append([]Module(nil), s.Modules...)
+	copySite.Components = append([]Component(nil), s.Components...)
+	copySite.Modules = append([]ModuleInstance(nil), s.Modules...)
 	sort.Slice(copySite.Network.Zones, func(i, j int) bool { return copySite.Network.Zones[i].VLAN < copySite.Network.Zones[j].VLAN })
-	sort.Slice(copySite.Modules, func(i, j int) bool { return copySite.Modules[i].Name < copySite.Modules[j].Name })
-	for i := range copySite.Modules {
-		copySite.Modules[i].DNSAliases = append([]string(nil), copySite.Modules[i].DNSAliases...)
-		sort.Strings(copySite.Modules[i].DNSAliases)
+	sort.Slice(copySite.Components, func(i, j int) bool { return copySite.Components[i].Name < copySite.Components[j].Name })
+	for i := range copySite.Components {
+		copySite.Components[i].DNSAliases = append([]string(nil), copySite.Components[i].DNSAliases...)
+		sort.Strings(copySite.Components[i].DNSAliases)
 	}
 	return copySite
 }
@@ -272,52 +284,52 @@ func (s Site) Validate() error {
 			return fmt.Errorf("zone %s has invalid network: %w", z.Name, err)
 		}
 	}
-	seenModules := map[string]bool{}
+	seenComponents := map[string]bool{}
 	seenVMIDs := map[int]string{}
-	for _, m := range s.Modules {
+	for _, m := range s.Components {
 		if m.Name == "" || m.Hostname == "" || m.Address == "" || m.Zone == "" {
-			return fmt.Errorf("module %q is missing name, hostname, zone, or address", m.Name)
+			return fmt.Errorf("component %q is missing name, hostname, zone, or address", m.Name)
 		}
 		for field, value := range map[string]string{"name": m.Name, "hostname": m.Hostname, "zone": m.Zone, "ssh_user": m.SSHUser} {
 			if value != "" && !modelTokenPattern.MatchString(value) {
-				return fmt.Errorf("module %s has unsafe %s", m.Name, field)
+				return fmt.Errorf("component %s has unsafe %s", m.Name, field)
 			}
 		}
 		for _, alias := range m.DNSAliases {
 			if !modelTokenPattern.MatchString(alias) {
-				return fmt.Errorf("module %s has unsafe DNS alias %q", m.Name, alias)
+				return fmt.Errorf("component %s has unsafe DNS alias %q", m.Name, alias)
 			}
 		}
 		if strings.ContainsAny(m.Role+m.URL, "\r\n") {
-			return fmt.Errorf("module %s contains a newline in generated metadata", m.Name)
+			return fmt.Errorf("component %s contains a newline in generated metadata", m.Name)
 		}
-		if seenModules[m.Name] {
-			return fmt.Errorf("duplicate module %q", m.Name)
+		if seenComponents[m.Name] {
+			return fmt.Errorf("duplicate component %q", m.Name)
 		}
-		seenModules[m.Name] = true
+		seenComponents[m.Name] = true
 		if m.VMID != 0 {
 			if previous, exists := seenVMIDs[m.VMID]; exists {
-				return fmt.Errorf("modules %s and %s share VMID %d", previous, m.Name, m.VMID)
+				return fmt.Errorf("components %s and %s share VMID %d", previous, m.Name, m.VMID)
 			}
 			seenVMIDs[m.VMID] = m.Name
 			if m.ProductOwned && (m.VMID < PlatformGuestIDMin || m.VMID > ModuleGuestIDMax) {
-				return fmt.Errorf("platform module %s uses VMID %d outside boetticher-owned ranges", m.Name, m.VMID)
+				return fmt.Errorf("platform component %s uses VMID %d outside boetticher-owned ranges", m.Name, m.VMID)
 			}
 			if !m.ProductOwned && (m.VMID < UserGuestIDMin || m.VMID > UserGuestIDMax) {
-				return fmt.Errorf("user-managed module %s uses VMID %d outside the reserved user-workload range", m.Name, m.VMID)
+				return fmt.Errorf("user-managed component %s uses VMID %d outside the reserved user-workload range", m.Name, m.VMID)
 			}
 		}
 		if ip := net.ParseIP(m.Address); ip == nil || ip.To4() == nil {
-			return fmt.Errorf("module %s has invalid IPv4 address %q", m.Name, m.Address)
+			return fmt.Errorf("component %s has invalid IPv4 address %q", m.Name, m.Address)
 		}
 		if !seenZones[m.Zone] {
-			return fmt.Errorf("module %s references unknown zone %q", m.Name, m.Zone)
+			return fmt.Errorf("component %s references unknown zone %q", m.Name, m.Zone)
 		}
 	}
 	if len(seenZones) != len(expectedZones) {
 		return fmt.Errorf("V1 requires exactly TRUSTED, SERVERS, SANDBOX, and MGMT zones")
 	}
-	requiredModules := map[string]struct {
+	requiredComponents := map[string]struct {
 		address string
 		vmid    int
 	}{
@@ -328,29 +340,39 @@ func (s Site) Validate() error {
 		"lab-monitor-01": {address: "10.10.99.20", vmid: MonitorVMID},
 		"lab-portal-01":  {address: "10.10.20.30", vmid: PortalVMID},
 	}
-	for required, expected := range requiredModules {
-		found, ok := seenModules[required]
+	for required, expected := range requiredComponents {
+		found, ok := seenComponents[required]
 		if !ok || !found {
-			return fmt.Errorf("required foundation module %q is missing", required)
+			return fmt.Errorf("required foundation component %q is missing", required)
 		}
-		for _, m := range s.Modules {
+		for _, m := range s.Components {
 			if m.Name == required && (m.Address != expected.address || m.VMID != expected.vmid || !m.ProductOwned) {
-				return fmt.Errorf("foundation module %s must use address %s, VMID %d, and platform ownership", required, expected.address, expected.vmid)
+				return fmt.Errorf("foundation component %s must use address %s, VMID %d, and platform ownership", required, expected.address, expected.vmid)
 			}
 		}
+	}
+	seenModules := map[string]bool{}
+	for _, module := range s.Modules {
+		if module.Name == "" || !modelTokenPattern.MatchString(module.Name) {
+			return fmt.Errorf("official module has unsafe name %q", module.Name)
+		}
+		if seenModules[module.Name] {
+			return fmt.Errorf("duplicate official module %q", module.Name)
+		}
+		seenModules[module.Name] = true
 	}
 	return nil
 }
 
-func (s Site) PlatformModules() []Module {
-	modules := make([]Module, 0)
-	for _, module := range s.Modules {
-		if module.ProductOwned {
-			modules = append(modules, module)
+func (s Site) PlatformComponents() []Component {
+	components := make([]Component, 0)
+	for _, component := range s.Components {
+		if component.ProductOwned {
+			components = append(components, component)
 		}
 	}
-	sort.Slice(modules, func(i, j int) bool { return modules[i].Name < modules[j].Name })
-	return modules
+	sort.Slice(components, func(i, j int) bool { return components[i].Name < components[j].Name })
+	return components
 }
 
 func safeInterfaceName(value string) bool {

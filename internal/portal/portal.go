@@ -113,7 +113,7 @@ func home(s model.Site, revision string, evidence Evidence, now time.Time) strin
 func inventory(s model.Site, revision string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Platform guests are managed by boetticher. Any user-managed entries shown here are informational only.</p><table><tr><th>Host</th><th>Ownership</th><th>Zone</th><th>Address</th><th>Role</th><th>Monitoring</th><th>Backup</th></tr>", html.EscapeString(revision))
-	for _, m := range sortedModules(s) {
+	for _, m := range sortedComponents(s) {
 		ownership := "user-managed / informational"
 		if m.ProductOwned {
 			ownership = "boetticher platform"
@@ -137,7 +137,7 @@ func network(s model.Site, revision string) string {
 func services(s model.Site, revision string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><table><tr><th>Service</th><th>URL</th><th>SSH</th><th>mTLS</th></tr>", html.EscapeString(revision))
-	for _, m := range sortedModules(s) {
+	for _, m := range sortedComponents(s) {
 		if !m.ProductOwned || (m.URL == "" && !m.SSHManaged) {
 			continue
 		}
@@ -164,7 +164,7 @@ func access(s model.Site, revision string, physical networkmodel.Discovery) stri
 		fmt.Fprintf(&b, "<p>Bootstrap endpoint: <code>%s</code> · <code>ssh proxmox</code> · <code>ssh lab-bastion</code></p>", html.EscapeString(s.BootstrapAddress))
 	}
 	b.WriteString("<table><tr><th>Canonical host</th><th>Aliases</th><th>Fixed address</th><th>User</th><th>Path</th></tr>")
-	for _, m := range sortedModules(s) {
+	for _, m := range sortedComponents(s) {
 		if !m.ProductOwned || !m.SSHManaged {
 			continue
 		}
@@ -285,10 +285,10 @@ func copyDocs(outputDir, docsDir, revision string) error {
 	return writePage(filepath.Join(destination, "index.html"), page("Runbooks", index.String()))
 }
 
-func sortedModules(s model.Site) []model.Module {
-	copyModules := append([]model.Module(nil), s.Modules...)
-	sort.Slice(copyModules, func(i, j int) bool { return copyModules[i].Name < copyModules[j].Name })
-	return copyModules
+func sortedComponents(s model.Site) []model.Component {
+	copyComponents := append([]model.Component(nil), s.Components...)
+	sort.Slice(copyComponents, func(i, j int) bool { return copyComponents[i].Name < copyComponents[j].Name })
+	return copyComponents
 }
 
 func checkMark(value bool) string {

@@ -61,7 +61,7 @@ pki:
   issuing_common_name: boetticher Issuing CA
   issuing_fingerprint: generated-by-boetticher-init
   issuing_expiry: generated-by-boetticher-init
-modules:
+components:
   - name: lab-proxmox-01
     vmid: 0
     hostname: lab-proxmox-01

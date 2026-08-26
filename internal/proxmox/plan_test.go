@@ -39,7 +39,7 @@ func TestGatewayForFoundationZones(t *testing.T) {
 
 func TestUserWorkloadNeverEntersPlatformPlan(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
-	site.Modules = append(site.Modules, model.Module{
+	site.Components = append(site.Components, model.Component{
 		Name: "user-vm-550", VMID: 550, Hostname: "user-vm-550", Zone: "SANDBOX", Address: "10.10.50.50",
 		Role: "user workload", ProductOwned: false,
 	})

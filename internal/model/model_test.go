@@ -5,13 +5,13 @@ import (
 	"testing"
 )
 
-func TestRevisionIsIndependentOfModuleOrder(t *testing.T) {
+func TestRevisionIsIndependentOfComponentOrder(t *testing.T) {
 	first := NewDefaultSite("installation", "age1example")
 	first.TestedVersions.OPNsense = QualifiedOPNsense
 	second := first
-	second.Modules = append([]Module(nil), first.Modules...)
-	for i, j := 0, len(second.Modules)-1; i < j; i, j = i+1, j-1 {
-		second.Modules[i], second.Modules[j] = second.Modules[j], second.Modules[i]
+	second.Components = append([]Component(nil), first.Components...)
+	for i, j := 0, len(second.Components)-1; i < j; i, j = i+1, j-1 {
+		second.Components[i], second.Components[j] = second.Components[j], second.Components[i]
 	}
 	a, err := first.Revision()
 	if err != nil {
@@ -22,7 +22,28 @@ func TestRevisionIsIndependentOfModuleOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	if a != b {
-		t.Fatalf("revisions differ for equivalent module sets: %s != %s", a, b)
+		t.Fatalf("revisions differ for equivalent component sets: %s != %s", a, b)
+	}
+}
+
+func TestOfficialModuleDeclarationsDoNotBecomePlatformComponents(t *testing.T) {
+	without := NewDefaultSite("installation", "age1example")
+	with := without
+	with.Modules = []ModuleInstance{{Name: "future-remote-access", Enabled: true}}
+
+	withoutRevision, err := without.Revision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	withRevision, err := with.Revision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withoutRevision == withRevision {
+		t.Fatal("module declaration was omitted from the canonical model revision")
+	}
+	if len(with.PlatformComponents()) != len(without.PlatformComponents()) {
+		t.Fatal("official module declaration changed the core component projection")
 	}
 }
 
@@ -55,7 +76,7 @@ func TestLaterOPNsensePatchIsNotSilentlySupported(t *testing.T) {
 
 func TestUserManagedVMIDMustUseReservedRange(t *testing.T) {
 	site := NewDefaultSite("installation", "age1example")
-	site.Modules = append(site.Modules, Module{Name: "user-vm", VMID: 450, Hostname: "user-vm", Zone: "SANDBOX", Address: "10.10.50.50", Role: "user workload"})
+	site.Components = append(site.Components, Component{Name: "user-vm", VMID: 450, Hostname: "user-vm", Zone: "SANDBOX", Address: "10.10.50.50", Role: "user workload"})
 	if err := site.Validate(); err == nil || !strings.Contains(err.Error(), "reserved user-workload range") {
 		t.Fatalf("invalid user VMID was accepted: %v", err)
 	}
