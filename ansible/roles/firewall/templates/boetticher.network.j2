@@ -1,0 +1,11 @@
+[Match]
+Name={{ item.name }}
+
+[Network]
+{% if item.method == 'dhcp' %}
+DHCP=ipv4
+{% else %}
+Address={{ item.address }}
+{% endif %}
+IPv6AcceptRA=no
+LinkLocalAddressing=no

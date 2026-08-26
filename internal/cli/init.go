@@ -22,10 +22,11 @@ func runInit(args []string, out interface{ Write([]byte) (int, error) }) error {
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site-dir", model.DefaultSiteDir, "private site repository directory")
 	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
+	externalFirewall := fs.Bool("external-firewall", false, "bring your own external firewall; do not create lab-fw-01")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	created, err := site.Init(*siteDir, *ageIdentity)
+	created, err := site.Init(*siteDir, *ageIdentity, *externalFirewall)
 	if err != nil {
 		return err
 	}
@@ -39,6 +40,7 @@ func runInit(args []string, out interface{ Write([]byte) (int, error) }) error {
 	fmt.Fprintf(out, "Initialized private site repository: %s\n", *siteDir)
 	fmt.Fprintf(out, "Age identity: %s (outside Git)\n", model.ExpandUserPath(*ageIdentity))
 	fmt.Fprintf(out, "Model revision: %s\n", revision)
+	fmt.Fprintf(out, "Gateway mode: %s\n", created.Gateway.Mode)
 	fmt.Fprintln(out, "Independent Age recovery copy: REQUIRED before destructive bootstrap")
 	return nil
 }

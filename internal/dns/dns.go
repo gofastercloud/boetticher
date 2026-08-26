@@ -133,7 +133,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		StaticZone: s.Network.Domain, Nameservers: []string{"10.10.20.10", "10.10.20.11"},
 		DynamicZones: dynamic, ReverseZones: reverse, StaticRecords: static,
 		DDNS: DDNSPlan{
-			Enabled: true, Source: "OPNsense Kea D2", UpdateTarget: "10.10.20.10:" + AuthoritativePort,
+			Enabled: true, Source: "Kea D2 on lab-fw-01", UpdateTarget: "10.10.20.10:" + AuthoritativePort,
 			UpdateSources: []string{"10.10.99.1"}, TSIGSecretReference: TSIGSecretReference,
 			ConflictPolicy: ConflictPolicy, LeaseFailurePolicy: "lease-continues-without-DNS-registration", Replication: "PowerDNS AXFR/IXFR lab-dns-01 primary to lab-dns-02 secondary on port " + AuthoritativePort,
 			TSIGAlgorithm: "hmac-sha256", Zones: ddnsZones,

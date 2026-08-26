@@ -13,8 +13,8 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/backup"
 	"github.com/gofastercloud/boetticher/internal/dns"
+	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
-	"github.com/gofastercloud/boetticher/internal/opnsense"
 	"github.com/gofastercloud/boetticher/internal/portal"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/site"
@@ -61,13 +61,13 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 		sshJourneyResult,
 		portal.CheckResult{Name: "DNS01/DNS02 reachable", Status: "NOT TESTED", Detail: "requires deployed network journey"},
 		portal.CheckResult{Name: "NTP01/NTP02 synchronized", Status: "NOT TESTED", Detail: "requires deployed Chrony evidence"},
-		portal.CheckResult{Name: "OPNsense API least privilege", Status: "NOT TESTED", Detail: "requires authenticated OPNsense API evidence"},
+		portal.CheckResult{Name: "managed gateway services", Status: "NOT TESTED", Detail: "requires deployed managed gateway evidence"},
 		portal.CheckResult{Name: "Proxmox API least privilege", Status: "NOT TESTED", Detail: "requires authenticated Proxmox API evidence"},
 		portal.CheckResult{Name: "internal CA available", Status: "STATIC PASS", Detail: "CA metadata is present in the initialized model"},
 		portal.CheckResult{Name: "SANDBOX cannot access TRUSTED", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
 		portal.CheckResult{Name: "SANDBOX cannot access SERVERS", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
 		portal.CheckResult{Name: "SANDBOX cannot access MGMT", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
-		portal.CheckResult{Name: "MGMT DHCP is reservation-only", Status: "NOT TESTED", Detail: "requires authenticated OPNsense API evidence"},
+		portal.CheckResult{Name: "MGMT DHCP is reservation-only", Status: "NOT TESTED", Detail: "requires deployed Kea evidence"},
 		portal.CheckResult{Name: "portal requires client certificate", Status: "NOT TESTED", Detail: "requires deployed mTLS journey"},
 		portal.CheckResult{Name: "Zabbix requires client certificate", Status: "NOT TESTED", Detail: "requires deployed mTLS journey"},
 		portal.CheckResult{Name: "latest VM/LXC backup", Status: "NOT TESTED", Detail: "requires current backup evidence"},
@@ -148,11 +148,8 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		{"inventory projection", filepath.Join(*siteDir, "generated", "inventory.json"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "inventory.json"), revision)
 		}},
-		{"OPNsense policy", filepath.Join(*siteDir, "generated", "opnsense", "desired-policy.json"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "opnsense", "desired-policy.json"), revision)
-		}},
-		{"OPNsense bootstrap", filepath.Join(*siteDir, "generated", "opnsense", "bootstrap.json"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "opnsense", "bootstrap.json"), revision)
+		{"firewall policy", filepath.Join(*siteDir, "generated", "firewall", "desired-state.json"), func() error {
+			return checkRevisionFile(filepath.Join(*siteDir, "generated", "firewall", "desired-state.json"), revision)
 		}},
 		{"DNS/DDNS policy", filepath.Join(*siteDir, "generated", "dns", "desired-state.json"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "dns", "desired-state.json"), revision)
@@ -239,7 +236,11 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 		fmt.Fprintln(out)
 	}
-	fmt.Fprintln(out, "OPNsense bootstrap    HOLD exact unattended installer/interface/API sequence requires fresh-host qualification")
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		fmt.Fprintln(out, "Managed gateway        NOT TESTED live Debian/nftables qualification requires deployment")
+	} else {
+		fmt.Fprintln(out, "External gateway       CONFIGURED appliance contract is outside boetticher management")
+	}
 	if s.BootstrapAddress == "" {
 		fmt.Fprintln(out, "Bootstrap endpoint    ABSENT (record the HOME-side Proxmox address)")
 	} else if !*live {
@@ -341,13 +342,22 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 		name  string
 		check func() error
 	}{
-		{"OPNsense policy projection", func() error {
-			plan, err := opnsense.PlanFromSite(s)
+		{"firewall policy projection", func() error {
+			plan, err := firewall.PlanFromSite(s)
 			if err != nil {
 				return err
 			}
-			if !plan.IPv4Only || len(plan.FirewallRules) == 0 {
+			if !plan.IPv4Only || len(plan.Rules) == 0 {
 				return errors.New("IPv4-only firewall policy is incomplete")
+			}
+			if s.Gateway.Mode == model.GatewayModeManaged {
+				ruleset, renderErr := firewall.RenderNFT(plan)
+				if renderErr != nil {
+					return renderErr
+				}
+				if validateErr := firewall.ValidateNFT(ruleset); validateErr != nil {
+					return validateErr
+				}
 			}
 			return nil
 		}},
@@ -376,7 +386,7 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 			if err != nil {
 				return err
 			}
-			if !plan.PlatformOnly || plan.UserWorkloadsManaged || len(plan.GuestVMIDs) != 5 {
+			if !plan.PlatformOnly || plan.UserWorkloadsManaged || len(plan.GuestVMIDs) != len(s.PlatformComponents())-1 {
 				return errors.New("backup projection is not limited to platform guests")
 			}
 			return nil

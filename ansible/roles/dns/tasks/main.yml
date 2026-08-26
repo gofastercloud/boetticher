@@ -10,6 +10,7 @@
       - ddns_tsig_secret | length > 0
     fail_msg: "DNS convergence requires the generated PowerDNS, AdGuard, and DDNS contract"
   no_log: true
+  when: inventory_hostname in groups.get('dns', [])
 
 - name: Install DNS service dependencies
   ansible.builtin.apt:

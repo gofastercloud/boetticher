@@ -1,0 +1,34 @@
+{
+  "Dhcp4": {
+    "interfaces-config": { "interfaces": ["trusted0", "servers0", "sandbox0", "mgmt0"] },
+    "control-socket": { "socket-type": "unix", "socket-name": "/run/kea/kea4-ctrl-socket" },
+    "lease-database": { "type": "memfile", "persist": true, "name": "/var/lib/kea/kea-leases4.csv" },
+    "valid-lifetime": 86400,
+    "renew-timer": 43200,
+    "rebind-timer": 75600,
+    "ddns-qualifying-suffix": "{{ firewall_plan.ddns.zones[0].forward_zone | default('lab.home.arpa.') }}",
+    "ddns-send-updates": true,
+    "ddns-override-no-update": true,
+    "ddns-override-client-update": true,
+    "ddns-update-on-renew": true,
+    "ddns-conflict-resolution-mode": "check-exists-with-dhcid",
+    "subnet4": [
+{% for subnet in firewall_plan.dhcp_subnets %}
+      {
+        "id": {{ subnet.id }},
+        "subnet": "{{ subnet.network }}",
+        "pools": [{% if subnet.pool %}{"pool": "{{ subnet.pool }}"}{% endif %}],
+        "option-data": [
+          {"name": "routers", "data": "{{ subnet.gateway }}"},
+          {"name": "domain-name-servers", "data": "{{ subnet.dns | join(',') }}"},
+          {"name": "ntp-servers", "data": "{{ subnet.ntp | join(',') }}"}
+        ],
+        "ddns-qualifying-suffix": "{{ subnet.forward_zone }}",
+        "ddns-generated-prefix": "{{ subnet.zone | lower }}-",
+        "ddns-replace-client-name": "when-not-present",
+        "reservations": []
+      }{% if not loop.last %},{% endif %}
+{% endfor %}
+    ]
+  }
+}

@@ -1,0 +1,149 @@
+---
+- name: Require the managed gateway contract
+  ansible.builtin.assert:
+    that:
+      - firewall_plan is defined
+      - firewall_plan.mode == 'managed'
+      - firewall_ruleset is defined
+      - firewall_ruleset | length > 0
+      - ddns_tsig_secret is defined
+      - ddns_tsig_secret | length > 0
+  no_log: true
+
+- name: Install managed gateway services
+  ansible.builtin.apt:
+    name:
+      - nftables
+      - kea-dhcp4-server
+      - kea-dhcp-ddns-server
+      - dnsmasq
+      - systemd-resolved
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Disable forwarding before gateway convergence
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: true
+  loop:
+    - { name: net.ipv4.ip_forward, value: '0' }
+    - { name: net.ipv6.conf.all.forwarding, value: '0' }
+    - { name: net.ipv6.conf.default.forwarding, value: '0' }
+
+- name: Configure role-oriented gateway link names
+  ansible.builtin.template:
+    src: boetticher.link.j2
+    dest: "/etc/systemd/network/10-boetticher-{{ item.name }}.link"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ firewall_plan.interfaces }}"
+  notify: restart systemd-networkd
+
+- name: Configure gateway network interfaces
+  ansible.builtin.template:
+    src: boetticher.network.j2
+    dest: "/etc/systemd/network/20-boetticher-{{ item.name }}.network"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ firewall_plan.interfaces }}"
+  notify: restart systemd-networkd
+
+- name: Enable systemd-networkd
+  ansible.builtin.service:
+    name: systemd-networkd
+    enabled: true
+    state: started
+
+- name: Install the candidate boetticher nftables ruleset
+  ansible.builtin.copy:
+    content: "{{ firewall_ruleset }}"
+    dest: /run/boetticher.nft.new
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Validate the candidate boetticher nftables ruleset
+  ansible.builtin.command:
+    argv: [nft, -c, -f, /run/boetticher.nft.new]
+  changed_when: false
+
+- name: Keep the last known-good boetticher nftables ruleset
+  ansible.builtin.copy:
+    remote_src: true
+    src: /etc/nftables.d/boetticher.nft
+    dest: /run/boetticher.nft.previous
+    owner: root
+    group: root
+    mode: '0600'
+  failed_when: false
+
+- name: Install the validated boetticher nftables ruleset atomically
+  ansible.builtin.copy:
+    remote_src: true
+    src: /run/boetticher.nft.new
+    dest: /etc/nftables.d/boetticher.nft
+    owner: root
+    group: root
+    mode: '0600'
+  notify: reload boetticher nftables
+
+- name: Configure nftables to load the boetticher ruleset
+  ansible.builtin.copy:
+    content: "include \"/etc/nftables.d/boetticher.nft\"\n"
+    dest: /etc/nftables.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload boetticher nftables
+
+- name: Configure Kea DHCPv4 and D2
+  ansible.builtin.template:
+    src: kea-dhcp4.conf.j2
+    dest: /etc/kea/kea-dhcp4.conf
+    owner: root
+    group: _kea
+    mode: '0640'
+  no_log: true
+  notify: restart Kea DHCPv4
+
+- name: Configure Kea DHCP-DDNS
+  ansible.builtin.template:
+    src: kea-dhcp-ddns.conf.j2
+    dest: /etc/kea/kea-dhcp-ddns.conf
+    owner: root
+    group: _kea
+    mode: '0640'
+  no_log: true
+  notify: restart Kea DHCP-DDNS
+
+- name: Configure SANDBOX-only DNS forwarding
+  ansible.builtin.template:
+    src: dnsmasq.conf.j2
+    dest: /etc/dnsmasq.d/boetticher-sandbox.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart dnsmasq
+
+- name: Enable gateway services
+  ansible.builtin.service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - nftables
+    - kea-dhcp4-server
+    - kea-dhcp-ddns-server
+    - dnsmasq
+
+- name: Enable IPv4 forwarding only after policy and services are ready
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    state: present
+    reload: true

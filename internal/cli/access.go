@@ -40,6 +40,14 @@ func runAccess(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	fmt.Fprintln(out, "Access path")
 	fmt.Fprintln(out, "  Internal SSH  via Proxmox bastion")
+	fmt.Fprintf(out, "Gateway\n  Mode        %s\n", s.Gateway.Mode)
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		fmt.Fprintln(out, "  Firewall    ssh firewall")
+		fmt.Fprintln(out, "  Engine      nftables")
+	} else {
+		fmt.Fprintln(out, "  Appliance   operator managed")
+		fmt.Fprintln(out, "  Trunk       physical VLAN trunk")
+	}
 	if s.PhysicalNetwork.Mode == model.ModeVirtualOnly {
 		fmt.Fprintln(out, "  Physical lab  virtual-only")
 	} else {

@@ -6,12 +6,14 @@ import (
 )
 
 func TestParseSiteYAMLSubset(t *testing.T) {
-	data := []byte(`api_version: boetticher/v1
-platform_version: 0.1.0
-schema_version: 1
+	data := []byte(`api_version: boetticher/v2
+platform_version: 0.2.0
+schema_version: 2
 storage_profile: single-disk
+gateway:
+  mode: managed
 tested_versions:
-  opnsense: 26.7.2_2
+  gateway: debian-13-genericcloud-amd64
   zabbix: "7.0 LTS"
 network:
   domain: lab.home.arpa

@@ -253,8 +253,8 @@ func ValidateNFT(ruleset string) error {
 	if !strings.Contains(ruleset, "policy drop") || !strings.Contains(ruleset, "ct state established,related accept") {
 		return errors.New("ruleset must default-drop and allow established traffic")
 	}
-	if strings.Contains(ruleset, "ethX.") || strings.Contains(ruleset, "opnsense") {
-		return errors.New("ruleset contains an obsolete or unstable interface identity")
+	if strings.Contains(ruleset, "ethX.") {
+		return errors.New("ruleset contains an unstable interface identity")
 	}
 	return nil
 }

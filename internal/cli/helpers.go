@@ -13,9 +13,9 @@ import (
 	"github.com/gofastercloud/boetticher/internal/ansible"
 	"github.com/gofastercloud/boetticher/internal/backup"
 	"github.com/gofastercloud/boetticher/internal/dns"
+	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
-	"github.com/gofastercloud/boetticher/internal/opnsense"
 	"github.com/gofastercloud/boetticher/internal/portal"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
@@ -54,11 +54,7 @@ func writeModelProjections(dir string, s model.Site) error {
 	if err != nil {
 		return err
 	}
-	opnsensePlan, err := opnsense.PlanFromSite(s)
-	if err != nil {
-		return err
-	}
-	opnsenseBootstrap, err := opnsense.BootstrapPlanFromSite(s)
+	firewallPlan, err := firewall.PlanFromSite(s)
 	if err != nil {
 		return err
 	}
@@ -68,11 +64,25 @@ func writeModelProjections(dir string, s model.Site) error {
 	}{revision, normalized.Components}); err != nil {
 		return err
 	}
-	if err := writeProjection(filepath.Join(dir, "generated", "opnsense", "desired-policy.json"), opnsensePlan); err != nil {
+	if err := writeProjection(filepath.Join(dir, "generated", "firewall", "desired-state.json"), firewallPlan); err != nil {
 		return err
 	}
-	if err := writeProjection(filepath.Join(dir, "generated", "opnsense", "bootstrap.json"), opnsenseBootstrap); err != nil {
-		return err
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		ruleset, renderErr := firewall.RenderNFT(firewallPlan)
+		if renderErr != nil {
+			return renderErr
+		}
+		if err := writePublic(filepath.Join(dir, "generated", "firewall", "boetticher.nft"), []byte(ruleset)); err != nil {
+			return err
+		}
+	} else {
+		contract, contractErr := firewall.RenderExternalContract(s, firewallPlan)
+		if contractErr != nil {
+			return contractErr
+		}
+		if err := writePublic(filepath.Join(dir, "generated", "network", "external-firewall-contract.md"), []byte(contract)); err != nil {
+			return err
+		}
 	}
 	dnsPlan, err := dns.PlanFromSite(s)
 	if err != nil {

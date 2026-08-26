@@ -64,12 +64,12 @@ func validateCommandForm(t *testing.T, fields []string) {
 		t.Fatalf("invalid command form: %q", fields)
 	}
 	known := map[string]map[string]bool{
-		"init":               {"--site-dir": true, "--age-identity": true},
+		"init":               {"--site-dir": true, "--age-identity": true, "--external-firewall": true},
 		"bootstrap-endpoint": {"--site": true},
 		"preflight":          {"--site": true, "--live": true, "--bootstrap-address": true, "--trunk-interface": true},
-		"bootstrap":          {"--site": true, "--opnsense-iso": true, "--recovery-confirmed": true, "--trunk-interface": true, "--dry-run": true},
+		"bootstrap":          {"--site": true, "--recovery-confirmed": true, "--trunk-interface": true, "--dry-run": true},
 		"provision":          {"--site": true, "--debian-template": true, "--dry-run": true},
-		"converge":           {"--site": true, "--opnsense-url": true, "--zabbix-url": true, "--dry-run": true},
+		"converge":           {"--site": true, "--zabbix-url": true, "--dry-run": true},
 		"ssh-config":         {"--site": true, "--output": true, "--force": true, "--check": true, "--install-include": true},
 		"verify":             {"--site": true},
 		"doctor":             {"--site": true},
@@ -78,7 +78,8 @@ func validateCommandForm(t *testing.T, fields []string) {
 		"portal":             {"--site": true, "--output": true, "--docs": true},
 		"network":            {"--site": true},
 		"pki":                {"--site": true},
-		"opnsense":           {"--site": true},
+		"firewall":           {"--site": true, "--live": true, "--json": true},
+		"dhcp":               {"--site": true, "--live": true, "--json": true},
 	}
 	command := fields[1]
 	if _, ok := known[command]; !ok {

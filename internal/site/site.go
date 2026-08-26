@@ -40,7 +40,7 @@ func Save(dir string, s model.Site) error {
 	return atomicWrite(filepath.Join(dir, "site.yml"), data, 0600)
 }
 
-func Init(dir, ageIdentityPath string) (model.Site, error) {
+func Init(dir, ageIdentityPath string, externalFirewall bool) (model.Site, error) {
 	for _, tool := range []string{"age-keygen", "sops", "git"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			return model.Site{}, fmt.Errorf("%s is required to initialize the site: %w", tool, err)
@@ -71,7 +71,11 @@ func Init(dir, ageIdentityPath string) (model.Site, error) {
 	if err != nil {
 		return model.Site{}, err
 	}
-	s := model.NewDefaultSite(installationID, recipient)
+	gatewayMode := model.GatewayModeManaged
+	if externalFirewall {
+		gatewayMode = model.GatewayModeExternal
+	}
+	s := model.NewSite(installationID, recipient, gatewayMode)
 	authority, err := pki.GenerateAuthority(time.Now().UTC(), s.Network.Domain)
 	if err != nil {
 		return model.Site{}, fmt.Errorf("generate platform CA hierarchy: %w", err)

@@ -1,0 +1,17 @@
+{
+  "DhcpDdns": {
+    "ip-address": "127.0.0.1",
+    "port": 53001,
+    "control-socket": { "socket-type": "unix", "socket-name": "/run/kea/kea-ddns-ctrl-socket" },
+    "dns-server-timeout": 500,
+    "ncr-protocol": "UDP",
+    "ncr-format": "JSON",
+    "tsig-keys": [
+{% for zone in firewall_plan.ddns.zones %}
+      {"name": "{{ zone.tsig_key_name }}", "secret": "{{ ddns_tsig_secret }}", "algorithm": "{{ firewall_plan.dhcp_subnets[loop.index0].tsig_algorithm }}"}{% if not loop.last %},{% endif %}
+{% endfor %}
+    ],
+    "forward-ddns": [{"name": "{{ firewall_plan.ddns.zones[0].forward_zone }}", "dns-servers": [{"ip-address": "10.10.20.10", "port": 5353}]}],
+    "reverse-ddns": [{"name": "{{ firewall_plan.ddns.zones[0].reverse_zone }}", "dns-servers": [{"ip-address": "10.10.20.10", "port": 5353}]}]
+  }
+}

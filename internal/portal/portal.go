@@ -107,7 +107,11 @@ func home(s model.Site, revision string, evidence Evidence, now time.Time) strin
 			}
 		}
 	}
-	return fmt.Sprintf("<p>Generated platform view; not a wiki or monitoring dashboard.</p><table><tr><th>Platform version</th><td>%s</td></tr><tr><th>Schema</th><td>%d</td></tr><tr><th>Model revision</th><td><code>%s</code></td></tr><tr><th>Portal generated</th><td>%s</td></tr><tr><th>Latest verification</th><td>%s</td></tr></table><h2>Quick links</h2><p><a href=\"%s\">Proxmox</a> · <a href=\"https://opnsense.%s\">OPNsense</a> · <a href=\"https://monitor.%s\">Zabbix</a> · <a href=\"https://dns.%s\">DNS</a></p>", html.EscapeString(s.PlatformVersion), s.SchemaVersion, html.EscapeString(revision), now.UTC().Format(time.RFC3339), html.EscapeString(status), html.EscapeString("https://proxmox."+s.Network.Domain+":8006"), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain))
+	gateway := "external firewall"
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		gateway = "managed Debian firewall"
+	}
+	return fmt.Sprintf("<p>Generated platform view; not a wiki or monitoring dashboard.</p><table><tr><th>Platform version</th><td>%s</td></tr><tr><th>Schema</th><td>%d</td></tr><tr><th>Gateway</th><td>%s</td></tr><tr><th>Model revision</th><td><code>%s</code></td></tr><tr><th>Portal generated</th><td>%s</td></tr><tr><th>Latest verification</th><td>%s</td></tr></table><h2>Quick links</h2><p><a href=\"%s\">Proxmox</a> · <a href=\"https://monitor.%s\">Zabbix</a> · <a href=\"https://portal.%s\">Portal</a> · <a href=\"https://dns.%s\">DNS</a></p>", html.EscapeString(s.PlatformVersion), s.SchemaVersion, html.EscapeString(gateway), html.EscapeString(revision), now.UTC().Format(time.RFC3339), html.EscapeString(status), html.EscapeString("https://proxmox."+s.Network.Domain+":8006"), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain))
 }
 
 func inventory(s model.Site, revision string) string {
@@ -126,7 +130,11 @@ func inventory(s model.Site, revision string) string {
 
 func network(s model.Site, revision string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><pre>HOME / upstream\n  |\nProxmox → OPNsense\n  |\nvmbr1 (VLAN-aware internal bridge)\n  +-- TRUSTED VLAN 10\n  +-- SERVERS VLAN 20\n  +-- SANDBOX VLAN 50\n  `-- MGMT VLAN 99</pre><table><tr><th>Zone</th><th>VLAN</th><th>Network</th><th>Gateway</th><th>DHCP mode</th></tr>", html.EscapeString(revision))
+	gateway := "external firewall contract"
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		gateway = "Debian lab-fw-01 (nftables + Kea)"
+	}
+	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Gateway: <strong>%s</strong>. Proxmox applies VLAN tags to the gateway VM's separate zone interfaces; no VLAN trunk is passed into the managed firewall.</p><pre>HOME / upstream\n  |\nProxmox\n  +-- managed gateway vNICs: WAN, TRUSTED, SERVERS, SANDBOX, MGMT\n  `-- vmbr1 (VLAN-aware internal bridge)\n      +-- TRUSTED VLAN 10\n      +-- SERVERS VLAN 20\n      +-- SANDBOX VLAN 50\n      `-- MGMT VLAN 99</pre><table><tr><th>Zone</th><th>VLAN</th><th>Network</th><th>Gateway</th><th>DHCP mode</th></tr>", html.EscapeString(revision), html.EscapeString(gateway))
 	for _, z := range s.Network.Zones {
 		fmt.Fprintf(&b, "<tr><td>%s</td><td>%d</td><td>%s</td><td>%s</td><td>%s</td></tr>", html.EscapeString(z.Name), z.VLAN, html.EscapeString(z.Network), html.EscapeString(z.Gateway), html.EscapeString(z.AddressMode))
 	}

@@ -30,8 +30,10 @@ func Run(args []string, out, errOut interface{ Write([]byte) (int, error) }) err
 		return runBootstrapEndpoint(args[1:], out)
 	case "pki":
 		return runPKI(args[1:], out)
-	case "opnsense":
-		return runOPNsense(args[1:], out)
+	case "firewall":
+		return runFirewall(args[1:], out)
+	case "dhcp":
+		return runDHCP(args[1:], out)
 	case "network":
 		return runNetwork(args[1:], out)
 	case "verify":
