@@ -1,4 +1,4 @@
-.PHONY: ci test build vet fmt fmt-check tofu-check ansible-check security-check actionlint vuln-check naming-check diff-check image-base image-dns image-monitoring image-firewall images
+.PHONY: ci test build vet fmt fmt-check tofu-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-dns-adguard image-logging image-monitoring image-firewall image-portal images scan-images scan-base scan-dns-blocky scan-dns-adguard scan-logging scan-monitoring scan-firewall scan-portal
 
 GOCACHE ?= /tmp/boetticher-gocache
 GOMODCACHE ?= /tmp/boetticher-gomodcache
@@ -31,9 +31,21 @@ ansible-check:
 diff-check:
 	git diff --check
 
-image-base image-dns image-monitoring image-firewall images:
-	@echo "$@ validates the pinned boetticher appliance definition; real artifact construction requires the supported build environment"
+schema:
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run ./cmd/schema
+
+schema-check: schema
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run ./cmd/schema -output /tmp/boetticher-site.schema.json
+	cmp -s /tmp/boetticher-site.schema.json schemas/site.schema.json
+
+image-check:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./internal/artifacts
+
+image-base image-dns-blocky image-dns-adguard image-logging image-monitoring image-firewall image-portal images:
+	./scripts/build-images.sh $@
+
+scan-base scan-dns-blocky scan-dns-adguard scan-logging scan-monitoring scan-firewall scan-portal scan-images:
+	./scripts/scan-images.sh $@
 
 naming-check:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./internal/naming
@@ -46,4 +58,4 @@ vuln-check:
 
 security-check: naming-check actionlint vuln-check
 
-ci: fmt-check test vet build tofu-check ansible-check security-check diff-check
+ci: fmt-check image-check schema-check test vet build tofu-check ansible-check security-check diff-check

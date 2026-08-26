@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -25,16 +26,26 @@ const (
 // boetticher-owned storage and deliberately has no knobs for arbitrary LVM
 // layouts or additional storage backends.
 type Plan struct {
-	ModelRevision string `json:"model_revision"`
-	Profile       string `json:"profile"`
-	Device        string `json:"device,omitempty"`
-	VolumeGroup   string `json:"volume_group,omitempty"`
-	ThinPool      string `json:"thin_pool,omitempty"`
-	BackupLV      string `json:"backup_lv,omitempty"`
-	BackupMount   string `json:"backup_mount"`
-	Filesystem    string `json:"filesystem"`
-	GuestStorage  string `json:"guest_storage"`
-	BackupStorage string `json:"backup_storage"`
+	ModelRevision string           `json:"model_revision"`
+	Profile       string           `json:"profile"`
+	Device        string           `json:"device,omitempty"`
+	VolumeGroup   string           `json:"volume_group,omitempty"`
+	ThinPool      string           `json:"thin_pool,omitempty"`
+	BackupLV      string           `json:"backup_lv,omitempty"`
+	BackupMount   string           `json:"backup_mount"`
+	Filesystem    string           `json:"filesystem"`
+	GuestStorage  string           `json:"guest_storage"`
+	BackupStorage string           `json:"backup_storage"`
+	Volumes       []ResolvedVolume `json:"volumes,omitempty"`
+}
+
+type ResolvedVolume struct {
+	Module    string                 `json:"module"`
+	Name      string                 `json:"name"`
+	Guest     string                 `json:"guest"`
+	Storage   string                 `json:"storage"`
+	Placement model.StoragePlacement `json:"placement"`
+	Backup    bool                   `json:"backup"`
 }
 
 func PlanFromSite(s model.Site) (Plan, error) {
@@ -63,6 +74,29 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		plan.GuestStorage = GuestStorageID
 		plan.BackupStorage = BackupStorageID
 	}
+	for _, declaration := range s.Declarations {
+		for _, volume := range declaration.Volumes {
+			selected := plan.GuestStorage
+			switch volume.Placement {
+			case model.StoragePreferDataDisk, model.StorageRequireDataDisk:
+				if s.StorageProfile == "dedicated-data-disk" {
+					selected = GuestStorageID
+				} else if volume.Placement == model.StorageRequireDataDisk {
+					return Plan{}, fmt.Errorf("HOLD: module %s volume %s requires dedicated boetticher data storage", volume.Module, volume.Name)
+				}
+			case model.StorageDefault:
+			default:
+				return Plan{}, fmt.Errorf("unsupported volume placement %q", volume.Placement)
+			}
+			plan.Volumes = append(plan.Volumes, ResolvedVolume{Module: volume.Module, Name: volume.Name, Guest: volume.Guest, Storage: selected, Placement: volume.Placement, Backup: volume.Backup})
+		}
+	}
+	sort.Slice(plan.Volumes, func(i, j int) bool {
+		if plan.Volumes[i].Module != plan.Volumes[j].Module {
+			return plan.Volumes[i].Module < plan.Volumes[j].Module
+		}
+		return plan.Volumes[i].Name < plan.Volumes[j].Name
+	})
 	return plan, nil
 }
 

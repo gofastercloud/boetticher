@@ -1,17 +1,15 @@
-name: boetticher-firewall
+name: boetticher-dns-adguard
 version: 1.0.0
-kind: qemu
+kind: lxc
 base: boetticher-base
 base_version: 0.3.1
-architecture: amd64
+common: ../image.yaml
+provider: adguard
 services:
-  - nftables
-  - kea-dhcp4
-  - kea-dhcp-ddns
+  - powerdns-authoritative
+  - adguard-home
   - chrony
-  - zabbix-agent2
-logging: inherited-from-base
 runtime_config: /etc/boetticher/module.yaml
 persistent:
-  - /var/lib/kea
+  - /var/lib/powerdns
   - /var/lib/boetticher/identity/ssh

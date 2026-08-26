@@ -16,16 +16,16 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(modules) != 3 || modules[0].Definition.Name != "dns" || modules[1].Definition.Name != "firewall" || modules[2].Definition.Name != "monitoring" {
+	if len(modules) != 4 || modules[0].Definition.Name != "firewall" || modules[1].Definition.Name != "dns" || modules[2].Definition.Name != "logging" || modules[3].Definition.Name != "monitoring" {
 		t.Fatalf("unexpected module resolution: %#v", modules)
 	}
-	if len(site.PlatformComponents()) != 6 {
+	if len(site.PlatformComponents()) != 7 {
 		t.Fatalf("default composition produced %d platform components", len(site.PlatformComponents()))
 	}
 	if !IsEnabled(site, "dns") || !IsEnabled(site, "monitoring") || !IsEnabled(site, "firewall") {
 		t.Fatalf("default modules were not enabled: %#v", site.Modules)
 	}
-	if len(site.Declarations) != 3 || site.Declarations[0].Artifact.SHA256 == "" {
+	if len(site.Declarations) != 4 || site.Declarations[0].Artifact.DefinitionSHA256 == "" {
 		t.Fatalf("default module declarations are incomplete: %#v", site.Declarations)
 	}
 	for _, declaration := range site.Declarations {

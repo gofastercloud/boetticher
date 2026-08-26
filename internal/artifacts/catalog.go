@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 )
@@ -14,6 +16,7 @@ import (
 // is published.
 type Definition struct {
 	Name         string
+	Provider     string
 	Version      string
 	Kind         string
 	Architecture string
@@ -21,9 +24,23 @@ type Definition struct {
 	BaseVersion  string
 }
 
+// Evidence binds concrete bytes and qualification outputs to a deterministic
+// artifact definition. Build timestamps and tool versions are evidence only;
+// they never become desired-state inputs.
+type Evidence struct {
+	Artifact           model.Artifact `json:"artifact"`
+	ContentSHA256      string         `json:"content_sha256"`
+	SizeBytes          int64          `json:"size_bytes"`
+	PackageManifestSHA string         `json:"package_manifest_sha256,omitempty"`
+	SBOMSHA256         string         `json:"sbom_sha256,omitempty"`
+	TrivyReportSHA256  string         `json:"trivy_report_sha256,omitempty"`
+	DefinitionSHA256   string         `json:"definition_sha256"`
+	Qualified          bool           `json:"qualified"`
+}
+
 const (
 	BaseName      = "boetticher-base"
-	BaseVersion   = "0.3.0"
+	BaseVersion   = "0.3.1"
 	Architecture  = "amd64"
 	DebianRelease = "13"
 	ModuleVersion = "1.0.0"
@@ -31,9 +48,12 @@ const (
 
 func Definitions() []Definition {
 	return []Definition{
-		{Name: "dns", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion},
+		{Name: "dns", Provider: "blocky", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion},
+		{Name: "dns", Provider: "adguard", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion},
+		{Name: "logging", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion},
 		{Name: "monitoring", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion},
 		{Name: "firewall", Version: ModuleVersion, Kind: "qemu", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion},
+		{Name: "portal", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion},
 	}
 }
 
@@ -46,20 +66,38 @@ func Lookup(module string) (Definition, bool) {
 	return Definition{}, false
 }
 
-func ArtifactFor(module string) (model.Artifact, error) {
-	definition, ok := Lookup(module)
-	if !ok {
-		return model.Artifact{}, fmt.Errorf("no built-in artifact definition for module %q", module)
+func ArtifactFor(module string, provider ...string) (model.Artifact, error) {
+	selectedProvider := ""
+	if len(provider) > 0 {
+		selectedProvider = provider[0]
 	}
-	identity := fmt.Sprintf("%s/%s/%s/%s/%s/%s", definition.Base, definition.BaseVersion, definition.Name, definition.Version, definition.Architecture, definition.Kind)
+	var definition Definition
+	var ok bool
+	for _, candidate := range Definitions() {
+		if candidate.Name == module && candidate.Provider == selectedProvider {
+			definition, ok = candidate, true
+			break
+		}
+	}
+	if !ok && selectedProvider == "" {
+		definition, ok = Lookup(module)
+	}
+	if !ok {
+		return model.Artifact{}, fmt.Errorf("no built-in artifact definition for module %q provider %q", module, selectedProvider)
+	}
+	identity := fmt.Sprintf("%s/%s/%s/%s/%s/%s/%s", definition.Base, definition.BaseVersion, definition.Name, definition.Provider, definition.Version, definition.Architecture, definition.Kind)
 	definitionDigest := digest(identity)
-	artifactDigest := digest("artifact/" + identity + "/" + definitionDigest)
 	return model.Artifact{
-		Name:             "boetticher-" + module,
+		Name: "boetticher-" + module + func() string {
+			if definition.Provider != "" {
+				return "-" + definition.Provider
+			}
+			return ""
+		}(),
 		Version:          definition.Version,
+		Provider:         definition.Provider,
 		Architecture:     definition.Architecture,
 		Kind:             definition.Kind,
-		SHA256:           artifactDigest,
 		DefinitionSHA256: definitionDigest,
 	}, nil
 }
@@ -74,6 +112,24 @@ func ValidateDefinitions() error {
 		}
 	}
 	return nil
+}
+
+func EvidenceForFile(path string, artifact model.Artifact) (Evidence, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return Evidence{}, fmt.Errorf("open artifact %s: %w", path, err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return Evidence{}, fmt.Errorf("stat artifact %s: %w", path, err)
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return Evidence{}, fmt.Errorf("hash artifact %s: %w", path, err)
+	}
+	content := hex.EncodeToString(hash.Sum(nil))
+	return Evidence{Artifact: artifact, ContentSHA256: content, SizeBytes: info.Size(), DefinitionSHA256: artifact.DefinitionSHA256, Qualified: true}, nil
 }
 
 func digest(value string) string {

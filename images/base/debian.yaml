@@ -1,5 +1,5 @@
 name: boetticher-base
-version: 0.3.0
+version: 0.3.1
 distribution: debian
 release: "13"
 architecture: amd64
@@ -11,5 +11,9 @@ runtime:
   - iproute2
   - nftables
   - journald
+  - systemd-journal-upload
+logging:
+  local_system_max_use: 256M
+  upload_service: systemd-journal-upload.service
 hardening: bounded-systemd
 secrets: none

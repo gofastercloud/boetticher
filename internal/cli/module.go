@@ -88,15 +88,30 @@ func runModuleShow(args []string, out interface{ Write([]byte) (int, error) }) e
 	if !ok {
 		return fmt.Errorf("module %q is not resolved", name)
 	}
+	if name == "dns" {
+		provider := s.ModuleConfig["dns"].Provider
+		if provider == "" {
+			provider = string(model.DNSProviderBlocky)
+		}
+		fmt.Fprintf(out, "  Provider     %s\n", provider)
+	}
 	fmt.Fprintf(out, "Module %s\n  Description  %s\n  Version      %s\n  Policy       %s\n  Enabled      %s\n  Reason       %s\n  State        %s\n  Depends on   %s\n  Requires     %s\n  Provides     %s\n  Guest IDs    %s\n", definition.Name, definition.Description, definition.Version, definition.Policy, yesNo(resolved.Enabled), resolved.Reason, resolved.State, strings.Join(definition.DependsOn, ", "), strings.Join(capabilityNames(definition.Requires), ", "), strings.Join(capabilityNames(definition.Provides), ", "), ints(definition.GuestIDs))
 	for _, declaration := range s.Declarations {
 		if declaration.Module != name {
 			continue
 		}
-		fmt.Fprintf(out, "  Artifact     %s %s (%s, sha256 %s)\n", declaration.Artifact.Name, declaration.Artifact.Version, declaration.Artifact.Kind, declaration.Artifact.SHA256)
-		fmt.Fprintf(out, "  Guests       %s\n  Persistent   %s\n  Secrets      %s\n", guestNames(declaration.Guests), persistentNames(declaration.Persistent), secretNames(declaration.Secrets))
+		fmt.Fprintf(out, "  Artifact     %s %s (%s, definition sha256 %s)\n", declaration.Artifact.Name, declaration.Artifact.Version, declaration.Artifact.Kind, declaration.Artifact.DefinitionSHA256)
+		fmt.Fprintf(out, "  Guests       %s\n  Persistent   %s\n  Volumes      %s\n  Secrets      %s\n", guestNames(declaration.Guests), persistentNames(declaration.Persistent), volumeNames(declaration.Volumes), secretNames(declaration.Secrets))
 	}
 	return nil
+}
+
+func volumeNames(volumes []model.PersistentVolumeDeclaration) string {
+	parts := make([]string, 0, len(volumes))
+	for _, volume := range volumes {
+		parts = append(parts, volume.Name+"@"+volume.MountPath+"/"+string(volume.Placement))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func runModulePlan(args []string, out interface{ Write([]byte) (int, error) }) error {

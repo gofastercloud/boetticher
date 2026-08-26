@@ -50,7 +50,7 @@ func TestPublicHelpPathsDoNotFail(t *testing.T) {
 		{"init", "--help"}, {"preflight", "-h"}, {"bootstrap", "--help"}, {"deploy", "--help"},
 		{"verify", "--help"}, {"doctor", "--help"}, {"network", "--help"}, {"firewall", "--help"},
 		{"dhcp", "--help"}, {"pki", "--help"}, {"access", "--help"}, {"portal", "--help"},
-		{"module", "--help"}, {"config", "--help"}, {"upgrade", "--help"},
+		{"module", "--help"}, {"config", "--help"}, {"logs", "--help"}, {"upgrade", "--help"},
 	} {
 		var output bytes.Buffer
 		if err := Run(args, &output, &output); err != nil {
@@ -95,7 +95,8 @@ func validateCommandForm(t *testing.T, fields []string) {
 		"bootstrap-endpoint": {"--site": true},
 		"preflight":          {"--site": true, "--live": true, "--bootstrap-address": true, "--trunk-interface": true},
 		"bootstrap":          {"--site": true, "--recovery-confirmed": true, "--trunk-interface": true, "--dry-run": true},
-		"deploy":             {"--site": true, "--zabbix-url": true, "--debian-template": true, "--dry-run": true},
+		"deploy":             {"--site": true, "--dry-run": true, "--confirm": true},
+		"logs":               {"--site": true, "--unit": true, "--since": true, "--priority": true, "--limit": true},
 		"ssh-config":         {"--site": true, "--output": true, "--force": true, "--check": true, "--install-include": true},
 		"verify":             {"--site": true},
 		"doctor":             {"--site": true},

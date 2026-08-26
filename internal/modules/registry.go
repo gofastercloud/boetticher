@@ -22,6 +22,7 @@ const (
 	CapabilityDNS        Capability = "dns"
 	CapabilityNTP        Capability = "ntp"
 	CapabilityMonitoring Capability = "monitoring"
+	CapabilityLogging    Capability = "logging"
 )
 
 type ModuleDefinition struct {
@@ -33,6 +34,7 @@ type ModuleDefinition struct {
 	Requires    []Capability
 	Provides    []Capability
 	GuestIDs    []int
+	Components  []model.Component
 }
 
 type Registry struct {
@@ -51,15 +53,28 @@ func FirstPartyRegistry() Registry {
 	return Registry{definitions: map[string]ModuleDefinition{
 		"dns": {
 			Name: "dns", Description: "Mandatory DNS and NTP platform capability", Version: "1.0.0", Policy: Mandatory,
-			Requires: []Capability{CapabilityGateway}, Provides: []Capability{CapabilityDNS, CapabilityNTP}, GuestIDs: []int{model.DNS01VMID, model.DNS02VMID},
+			Requires: []Capability{CapabilityGateway}, Provides: []Capability{CapabilityDNS, CapabilityNTP}, GuestIDs: []int{model.DNS01VMID, model.DNS02VMID}, Components: []model.Component{
+				{Name: "lab-dns-01", VMID: model.DNS01VMID, Hostname: "lab-dns-01", Zone: "SERVERS", Address: "10.10.20.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+				{Name: "lab-dns-02", VMID: model.DNS02VMID, Hostname: "lab-dns-02", Zone: "SERVERS", Address: "10.10.20.11", Role: "DNS/NTP", DNSAliases: []string{"dns02"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			},
 		},
 		"monitoring": {
 			Name: "monitoring", Description: "Zabbix platform monitoring capability", Version: "1.0.0", Policy: DefaultOn,
-			Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityMonitoring}, GuestIDs: []int{model.MonitorVMID},
+			Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityMonitoring}, GuestIDs: []int{model.MonitorVMID}, Components: []model.Component{
+				{Name: "lab-monitor-01", VMID: model.MonitorVMID, Hostname: "lab-monitor-01", Zone: "SERVERS", Address: "10.10.20.20", Role: "Zabbix", DNSAliases: []string{"monitor"}, URL: "https://monitor." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			},
 		},
 		"firewall": {
 			Name: "firewall", Description: "Managed Debian gateway, nftables, and Kea capability", Version: "1.0.0", Policy: DefaultOn,
-			Provides: []Capability{CapabilityGateway}, GuestIDs: []int{model.ProxmoxVMID},
+			Provides: []Capability{CapabilityGateway}, GuestIDs: []int{model.ProxmoxVMID}, Components: []model.Component{
+				{Name: "lab-fw-01", VMID: model.ProxmoxVMID, Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "Debian firewall", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			},
+		},
+		"logging": {
+			Name: "logging", Description: "Central systemd journal collection", Version: "1.0.0", Policy: Mandatory,
+			DependsOn: []string{"dns"}, Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityLogging}, GuestIDs: []int{model.LoggingVMID}, Components: []model.Component{
+				{Name: "lab-log-01", VMID: model.LoggingVMID, Hostname: "lab-log-01", Zone: "SERVERS", Address: "10.10.20.40", Role: "Central systemd journal", DNSAliases: []string{"logs"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			},
 		},
 	}}
 }
@@ -88,6 +103,14 @@ type ResolvedModule struct {
 func (r Registry) Resolve(config model.SiteConfig) ([]ResolvedModule, error) {
 	if err := validateModuleConfigNames(r, config.Modules); err != nil {
 		return nil, err
+	}
+	for name, moduleConfig := range config.Modules {
+		if moduleConfig.Provider != "" && name != "dns" {
+			return nil, fmt.Errorf("modules.%s.provider: provider selection is only supported by dns", name)
+		}
+		if name == "dns" && moduleConfig.Provider != "" && moduleConfig.Provider != string(model.DNSProviderBlocky) && moduleConfig.Provider != string(model.DNSProviderAdGuard) {
+			return nil, fmt.Errorf("modules.dns.provider: expected one of: blocky, adguard")
+		}
 	}
 	active := map[string]bool{}
 	reasons := map[string]string{}
@@ -226,7 +249,7 @@ func topologicalOrder(r Registry, active map[string]bool) ([]string, error) {
 		}
 		state[name] = 1
 		definition := r.definitions[name]
-		dependencies := append([]string(nil), definition.DependsOn...)
+		dependencies := effectiveDependencies(r, definition, active)
 		sort.Strings(dependencies)
 		for _, dependency := range dependencies {
 			if !active[dependency] {
@@ -256,4 +279,29 @@ func topologicalOrder(r Registry, active map[string]bool) ([]string, error) {
 		}
 	}
 	return result, nil
+}
+
+// effectiveDependencies includes both concrete module dependencies and the
+// active first-party provider of each required capability. External providers
+// are deliberately absent from this graph.
+func effectiveDependencies(r Registry, definition ModuleDefinition, active map[string]bool) []string {
+	seen := map[string]bool{}
+	dependencies := append([]string(nil), definition.DependsOn...)
+	for _, dependency := range dependencies {
+		seen[dependency] = true
+	}
+	for _, capability := range definition.Requires {
+		for _, candidate := range r.Definitions() {
+			if !active[candidate.Name] || candidate.Name == definition.Name {
+				continue
+			}
+			for _, provided := range candidate.Provides {
+				if provided == capability && !seen[candidate.Name] {
+					dependencies = append(dependencies, candidate.Name)
+					seen[candidate.Name] = true
+				}
+			}
+		}
+	}
+	return dependencies
 }

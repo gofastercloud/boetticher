@@ -81,3 +81,27 @@ Malformed configuration, duplicate DNS identities, fixed VMID collisions,
 conflicting network declarations, artifact checksum mismatches, missing
 gateway capability, dependency cycles, and secret values in declarations are
 rejected before infrastructure mutation.
+## v0.3.1 module and appliance boundary
+
+Core alone mutates Proxmox, storage, network policy, PKI, secrets, backups,
+DNS providers, and monitoring. Built-in modules emit bounded declarations and
+run from immutable qualified Debian 13 appliances. Artifact definition
+identity is deterministic; actual bytes are independently qualified with a
+content SHA-256, package manifest, SBOM, and Trivy evidence.
+
+Modules request durable volumes but cannot claim disks or create storage
+topology. Root filesystems are replaceable and declared volumes are retained
+across replacement. SOPS/Age remains the controller-side recovery authority;
+systemd credentials are the standard runtime delivery mechanism. PowerDNS may
+persist TSIG material in its protected supported backend as an explicit,
+recoverable third-party exception.
+
+Central logging uses bounded local journald, asynchronous HTTPS/mTLS upload,
+and a mandatory journal collector. The collector is operational evidence, not
+an availability dependency or cryptographic non-repudiation system. Proxmox
+and host root remain trusted boundaries.
+
+The DNS module is mandatory. Blocky is the default recursive/filtering
+implementation and AdGuard is a typed alternative; PowerDNS remains
+authoritative in both modes, and internal negative answers never leak to public
+upstreams.

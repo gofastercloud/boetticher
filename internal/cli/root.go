@@ -54,6 +54,8 @@ func Run(args []string, out, errOut interface{ Write([]byte) (int, error) }) err
 		return runBootstrap(args[1:], out)
 	case "deploy":
 		return runDeploy(args[1:], out)
+	case "logs":
+		return runLogs(args[1:], out)
 	case "upgrade":
 		return runIntegrationGate(args[0], args[1:], out)
 	}
@@ -89,6 +91,9 @@ func commandHelp(args []string, out interface{ Write([]byte) (int, error) }) {
 	case "config":
 		fmt.Fprintln(out, "Validate or inspect typed, non-secret SiteConfig without mutating infrastructure.")
 		fmt.Fprintln(out, "Examples: boetticher config validate; boetticher config schema")
+	case "logs":
+		fmt.Fprintln(out, "Read a bounded journal view through the normal bastion path; central logging is asynchronous and not an availability dependency.")
+		fmt.Fprintln(out, "Examples: boetticher logs lab-dns-01 --since 1h; boetticher logs lab-fw-01 --priority warning")
 	default:
 		fmt.Fprintf(out, "Run boetticher %s with --help for command options.\n", command)
 	}
