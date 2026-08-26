@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -33,6 +34,21 @@ func TestFoundationPlanIsDeterministic(t *testing.T) {
 	}
 	if first.GatewayImageURL != model.QualifiedGatewayImageURL || first.GatewaySHA512 != model.QualifiedGatewayImageSHA512 {
 		t.Fatalf("gateway image pin is incomplete: %#v", first)
+	}
+}
+
+func TestFoundationPlanUsesGatewayFirstDeploymentOrder(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	order := make([]string, 0, len(plan.Guests))
+	for _, guest := range plan.Guests {
+		order = append(order, guest.Name)
+	}
+	want := []string{"lab-fw-01", "lab-dns-01", "lab-dns-02", "lab-log-01", "lab-monitor-01", "lab-portal-01"}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("deployment order = %#v, want %#v", order, want)
 	}
 }
 

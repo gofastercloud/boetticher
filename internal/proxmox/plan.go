@@ -370,8 +370,36 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		}
 		guests = append(guests, guest)
 	}
-	sort.Slice(guests, func(i, j int) bool { return guests[i].VMID < guests[j].VMID })
+	sort.SliceStable(guests, func(i, j int) bool {
+		left, right := deploymentOrder(guests[i]), deploymentOrder(guests[j])
+		if left != right {
+			return left < right
+		}
+		return guests[i].VMID < guests[j].VMID
+	})
 	return Plan{ModelRevision: revision, ManagedBy: "boetticher", Node: s.ProxmoxNode, Storage: guestStorage, GatewayImage: model.QualifiedGatewayImage, GatewayImageURL: model.QualifiedGatewayImageURL, GatewaySHA512: model.QualifiedGatewayImageSHA512, Guests: guests, ArtifactFiles: map[string]string{}}, nil
+}
+
+// deploymentOrder is the effective first-deployment graph for built-in
+// appliances. It is intentionally local and deterministic: the gateway must
+// exist before DNS, DNS before logging and monitoring, and portal follows the
+// service dependencies it consumes.
+func deploymentOrder(guest GuestPlan) int {
+	if guest.Kind == KindQEMU && guest.Owner == "boetticher/module/firewall" {
+		return 10
+	}
+	switch guest.Owner {
+	case "boetticher/module/dns":
+		return 20
+	case "boetticher/module/logging":
+		return 30
+	case "boetticher/module/monitoring":
+		return 40
+	case "boetticher/core/portal":
+		return 50
+	default:
+		return 60
+	}
 }
 
 func artifactKey(artifact model.Artifact) string {
