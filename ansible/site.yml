@@ -1,0 +1,13 @@
+---
+# Lab-in-a-Box guest convergence entry point.
+# Runtime credentials are intentionally not represented in this playbook.
+- name: Converge managed Debian guests
+  hosts: managed
+  become: true
+  gather_facts: true
+  roles:
+    - base
+    - chrony
+    - dns
+    - monitor
+    - portal

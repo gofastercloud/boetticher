@@ -1,0 +1,18 @@
+---
+- name: Install base packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - jq
+      - chrony
+      - nginx
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Enable chrony
+  ansible.builtin.service:
+    name: chrony
+    enabled: true
+    state: started

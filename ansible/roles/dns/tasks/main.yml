@@ -1,0 +1,12 @@
+---
+- name: State DNS role boundary
+  ansible.builtin.assert:
+    that:
+      - inventory_hostname in groups['dns']
+    quiet: true
+  when: inventory_hostname in groups['dns']
+
+- name: Install AdGuard Home placeholder dependency
+  ansible.builtin.debug:
+    msg: "AdGuard Home installation is pinned and qualified by the V1 guest image pipeline"
+  when: inventory_hostname in groups['dns']

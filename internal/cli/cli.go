@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dave/labinabox/internal/ansible"
 	"github.com/dave/labinabox/internal/model"
 	"github.com/dave/labinabox/internal/opnsense"
 	"github.com/dave/labinabox/internal/pki"
@@ -119,7 +120,7 @@ func runPreflight(args []string, out interface{ Write([]byte) (int, error) }) er
 	}
 	fmt.Fprintf(out, "Controller: PASS %s/%s\n", runtime.GOOS, runtime.GOARCH)
 	allPass := true
-	for _, tool := range []string{"git", "ssh", "age-keygen", "sops", "tofu", "ansible"} {
+	for _, tool := range []string{"git", "ssh", "ssh-keyscan", "age-keygen", "sops", "tofu", "ansible", "ansible-playbook"} {
 		path, err := exec.LookPath(tool)
 		if err != nil {
 			allPass = false
@@ -805,6 +806,12 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	}{plan.ModelRevision, version, s.BootstrapAddress, hostKey, model.ProxmoxVMID, "proxmox-trust-transition-complete"}); err != nil {
 		return err
 	}
+	if err := writeModelProjections(*siteDir, s); err != nil {
+		return err
+	}
+	if err := rebuildPortal(*siteDir, s); err != nil {
+		return err
+	}
 	fmt.Fprintf(out, "Proxmox bootstrap: PASS authenticated with scoped identity on %s\n", version)
 	fmt.Fprintln(out, "Firewall VM: PASS created or already present and started")
 	fmt.Fprintln(out, "OPNsense installation/bootstrap: NOT TESTED until the qualified unattended installer path is exercised on a fresh VM")
@@ -851,6 +858,9 @@ func runProvision(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err := writeModelProjections(*siteDir, s); err != nil {
 		return err
 	}
+	if err := rebuildPortal(*siteDir, s); err != nil {
+		return err
+	}
 	fmt.Fprintf(out, "Proxmox provisioning: PASS model %s via %s\n", plan.ModelRevision, credentials.APIUser)
 	return nil
 }
@@ -863,6 +873,7 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 	opnsenseURL := fs.String("opnsense-url", "https://10.10.99.1", "OPNsense API base URL")
 	opnsenseCA := fs.String("opnsense-ca", "", "OPNsense API CA PEM file")
 	insecure := fs.Bool("insecure", false, "explicitly allow self-signed OPNsense API TLS")
+	playbook := fs.String("ansible-playbook", "ansible/site.yml", "guest convergence playbook")
 	dryRun := fs.Bool("dry-run", false, "render and validate policy without connecting")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -879,6 +890,9 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 		fmt.Fprintf(out, "OPNsense convergence plan: PASS model %s\n", plan.ModelRevision)
 		fmt.Fprintf(out, "  VLANs: %d\n  Kea subnets: %d\n  Firewall rules: %d\n", len(plan.VLANs), len(plan.Zones), len(plan.FirewallRules))
 		return nil
+	}
+	if err := writeModelProjections(*siteDir, s); err != nil {
+		return err
 	}
 	credentials, err := site.LoadOPNsenseCredentials(*siteDir, s, *ageIdentity)
 	if err != nil {
@@ -901,7 +915,18 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 	if err := client.ApplyFirewall(context.Background(), plan); err != nil {
 		return err
 	}
+	variables, err := ansible.Variables(s)
+	if err != nil {
+		return err
+	}
+	inventoryPath := filepath.Join(*siteDir, "generated", "ansible", "inventory.ini")
+	if err := ansible.Run(context.Background(), *playbook, inventoryPath, variables); err != nil {
+		return err
+	}
 	if err := writeModelProjections(*siteDir, s); err != nil {
+		return err
+	}
+	if err := rebuildPortal(*siteDir, s); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "OPNsense convergence: PASS model %s; API authenticated and policy applied\n", plan.ModelRevision)
@@ -1093,6 +1118,20 @@ func writeModelProjections(dir string, s model.Site) error {
 	}{revision, model.ZabbixSeries, normalized.Modules}); err != nil {
 		return err
 	}
+	inventory, err := ansible.Inventory(s)
+	if err != nil {
+		return err
+	}
+	if err := writePublic(filepath.Join(dir, "generated", "ansible", "inventory.ini"), []byte(inventory)); err != nil {
+		return err
+	}
+	variables, err := ansible.Variables(s)
+	if err != nil {
+		return err
+	}
+	if err := writePublic(filepath.Join(dir, "generated", "ansible", "variables.json"), variables); err != nil {
+		return err
+	}
 	sshContent, err := sshconfig.Render(s, time.Now().UTC())
 	if err != nil {
 		return err
@@ -1109,6 +1148,10 @@ func writeAccessProjection(dir string, s model.Site) error {
 		return err
 	}
 	return writePublic(filepath.Join(dir, "generated", "ssh", "lab-jump.conf"), []byte(policy))
+}
+
+func rebuildPortal(dir string, s model.Site) error {
+	return portal.Build(s, filepath.Join(dir, "generated", "portal"), "docs", loadEvidence(dir), time.Now().UTC())
 }
 
 func writeProjection(path string, value any) error {

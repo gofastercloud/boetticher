@@ -1,0 +1,13 @@
+---
+- name: Install monitoring base services
+  ansible.builtin.apt:
+    name:
+      - postgresql
+      - nginx
+    state: present
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: State Zabbix target
+  ansible.builtin.debug:
+    msg: "Zabbix 7.0 LTS is the V1 observability target"
+  when: inventory_hostname == 'lab-monitor-01'
