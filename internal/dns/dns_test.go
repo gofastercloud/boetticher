@@ -59,6 +59,16 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	}
 }
 
+func TestExternalPlanPublishesOptionalDDNSContract(t *testing.T) {
+	plan, err := PlanFromSite(model.NewSite("installation", "age1example", model.GatewayModeExternal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.DDNS.Enabled || plan.DDNS.Source != "External DHCP/DDNS contract" || len(plan.DDNS.UpdateSources) != 0 || len(plan.DDNS.Zones) != 4 {
+		t.Fatalf("external DDNS contract is not optional and complete: %#v", plan.DDNS)
+	}
+}
+
 func hasRecord(records []StaticRecord, name, address string) bool {
 	for _, record := range records {
 		if record.Name == name && record.Address == address {

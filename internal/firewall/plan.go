@@ -81,10 +81,14 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
+	engine := "nftables + Kea"
+	if s.Gateway.Mode == model.GatewayModeExternal {
+		engine = "operator-managed external firewall"
+	}
 	plan := Plan{
 		ModelRevision: revision,
 		Mode:          s.Gateway.Mode,
-		Engine:        "nftables + Kea",
+		Engine:        engine,
 		IPv4Only:      true,
 		Forwarding:    s.Gateway.Mode == model.GatewayModeManaged,
 		Rules:         policyRules(s),
