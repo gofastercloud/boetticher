@@ -2,6 +2,8 @@
 
 V1 starts from a fresh Proxmox VE x86 host on the existing HOME/upstream network. The host must use the fixed product node name `lab-proxmox-01`; arbitrary node names are not supported by the V1 model.
 
+The foundation needs at least 4 logical CPU threads, 16 GiB RAM, and 128 GiB usable storage. 4+ cores, 32 GiB RAM, and 256 GiB or more leaves useful room for user workloads. One physical Ethernet NIC is enough; a second NIC and managed 802.1Q switch are recommended for physical VLAN breakout.
+
 ## Controller and state
 
 Supported controller platforms are macOS arm64, macOS amd64, Linux arm64, and Linux amd64. Native Windows is out of scope. WSL2 may be used only after a separate test confirms the required SSH, Age, SOPS, OpenTofu, and Ansible behavior.
@@ -23,10 +25,10 @@ Git may contain desired state, encrypted secrets, and non-secret evidence. OpenT
 3. Reach fresh Proxmox on its HOME-side DHCP address and run `boetticher bootstrap-endpoint set ADDRESS --site my-boetticher`.
 4. Run `boetticher preflight --site my-boetticher --live`. This identifies the active upstream NIC and proposes exactly one safe unused trunk NIC, or reports virtual-only/multiple-candidate state.
 5. If multiple candidates remain, repeat with `--trunk-interface IFACE`; do not select by enumeration order.
-6. Generate/check the SSH file with `boetticher ssh-config --force --install-include`.
-7. Run `boetticher bootstrap --opnsense-iso VERIFIED_ISO --recovery-confirmed`, adding `--trunk-interface IFACE` only when required by discovery. Bootstrap owns the verified OPNsense ISO because it creates and starts the firewall VM.
-8. Run `boetticher provision` and `boetticher converge` after the OPNsense API is available. Provision creates the DNS, monitor, and portal guests; it does not manage arbitrary user guests.
-9. Run `boetticher verify`, `boetticher doctor`, and `boetticher portal build`.
+6. Generate/check the SSH file with `boetticher ssh-config --site my-boetticher --force --install-include`.
+7. Run `boetticher bootstrap --site my-boetticher --opnsense-iso VERIFIED_ISO --recovery-confirmed`, adding `--trunk-interface IFACE` only when required by discovery. Bootstrap owns the verified OPNsense ISO because it creates and starts the firewall VM.
+8. Run `boetticher provision --site my-boetticher` and `boetticher converge --site my-boetticher` after the OPNsense API is available. Provision creates the DNS, monitor, and portal guests; it does not manage arbitrary user guests.
+9. Run `boetticher verify --site my-boetticher`, `boetticher doctor --site my-boetticher`, and `boetticher portal build --site my-boetticher`.
 
 The initial bootstrap trust transition is: operator authentication to fresh Proxmox → operator SSH key → `labadmin` and forwarding-only `lab-jump` → scoped Proxmox API token → direct encrypted SOPS handoff. Interactive secrets are not accepted through command arguments, persistent environment variables, logs, or generated files.
 
