@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/dns"
@@ -197,7 +198,7 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	if err != nil {
 		return fmt.Errorf("ansible-playbook is required: %w", err)
 	}
-	args := []string{"-i", inventory, playbook, "--extra-vars", "@-"}
+	args := []string{"-i", inventory, playbook, "--extra-vars", "@-", "--ssh-common-args", "-F " + generatedSSHConfigPath(inventory)}
 	if limit != "" {
 		args = append(args, "--limit", limit)
 	}
@@ -208,6 +209,13 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 		return fmt.Errorf("ansible-playbook failed: %w", err)
 	}
 	return nil
+}
+
+// generatedSSHConfigPath derives the site-local SSH projection from the
+// generated inventory location. Passing it directly to Ansible keeps the
+// deploy transport independent of a user's global ~/.ssh/config includes.
+func generatedSSHConfigPath(inventory string) string {
+	return filepath.Clean(filepath.Join(filepath.Dir(inventory), "..", "ssh", "boetticher.conf"))
 }
 
 func safeInventoryIdentity(value string) bool {

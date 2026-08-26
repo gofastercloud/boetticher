@@ -52,6 +52,13 @@ func TestInventoryUsesBootstrapAddressForProxmoxTransport(t *testing.T) {
 	}
 }
 
+func TestGeneratedSSHConfigPathIsBoundToInventoryProjection(t *testing.T) {
+	got := generatedSSHConfigPath("/tmp/site/generated/ansible/inventory.ini")
+	if got != "/tmp/site/generated/ssh/boetticher.conf" {
+		t.Fatalf("generated SSH config path = %q", got)
+	}
+}
+
 func TestLimitedRunRejectsShellSyntaxInInventoryIdentity(t *testing.T) {
 	for _, value := range []string{"lab-fw-01", "lab_dns_01", "lab.fw"} {
 		if !safeInventoryIdentity(value) {
