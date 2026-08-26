@@ -32,11 +32,7 @@ type ClientCertificate struct {
 }
 
 type ServerCertificate struct {
-	Name string
-	// KeyPEM is populated only by the legacy centrally-issued helper. Endpoint
-	// CSR signing deliberately leaves it empty so managed private keys remain
-	// on their endpoints.
-	KeyPEM      string
+	Name        string
 	CertPEM     string
 	ChainPEM    string
 	Fingerprint string
@@ -190,44 +186,6 @@ func IssueClient(authority Authority, name, domain string, now time.Time) (Clien
 		KeyPEM:      marshalECKey(clientKey),
 		CertPEM:     marshalCert(der),
 		ChainPEM:    marshalCert(der) + authority.IssuingCertPEM,
-		Fingerprint: fmt.Sprintf("sha256:%x", fingerprint[:]),
-	}, nil
-}
-
-func IssueServer(authority Authority, name, domain string, aliases []string, now time.Time) (ServerCertificate, error) {
-	if err := ValidateClientName(name); err != nil {
-		return ServerCertificate{}, err
-	}
-	issuingKey, err := parseECKey(authority.IssuingKeyPEM)
-	if err != nil {
-		return ServerCertificate{}, fmt.Errorf("parse issuing key: %w", err)
-	}
-	issuingCert, err := parseCert(authority.IssuingCertPEM)
-	if err != nil {
-		return ServerCertificate{}, fmt.Errorf("parse issuing certificate: %w", err)
-	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return ServerCertificate{}, err
-	}
-	template, err := certificateTemplate(name+"."+domain, now, false)
-	if err != nil {
-		return ServerCertificate{}, err
-	}
-	template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
-	template.DNSNames = append([]string{name + "." + domain}, aliases...)
-	for _, alias := range template.DNSNames {
-		if alias == "" || strings.ContainsAny(alias, "\r\n") {
-			return ServerCertificate{}, fmt.Errorf("server certificate contains an unsafe DNS name")
-		}
-	}
-	der, err := x509.CreateCertificate(rand.Reader, template, issuingCert, &key.PublicKey, issuingKey)
-	if err != nil {
-		return ServerCertificate{}, err
-	}
-	fingerprint := sha256.Sum256(der)
-	return ServerCertificate{
-		Name: name, KeyPEM: marshalECKey(key), CertPEM: marshalCert(der), ChainPEM: marshalCert(der) + authority.IssuingCertPEM,
 		Fingerprint: fmt.Sprintf("sha256:%x", fingerprint[:]),
 	}, nil
 }
