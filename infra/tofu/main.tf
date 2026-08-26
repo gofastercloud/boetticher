@@ -1,7 +1,12 @@
 locals {
   desired = jsondecode(file(var.model_file))
+  # This is an ownership boundary, not a guest-discovery mechanism. The V1
+  # generated model contains only these platform IDs; filtering defensively
+  # ensures an accidental user workload entry can never become a resource.
+  platform_vmids = toset([100, 110, 111, 120, 130])
   guests = {
     for guest in local.desired.guests : tostring(guest.vmid) => guest
+    if contains(local.platform_vmids, guest.vmid)
   }
   containers = {
     for vmid, guest in local.guests : vmid => guest if guest.kind == "lxc"
