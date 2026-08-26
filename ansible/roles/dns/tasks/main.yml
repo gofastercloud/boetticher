@@ -149,6 +149,7 @@
   when:
     - inventory_hostname in groups.get('dns', [])
     - dns_plan.recursive_provider == 'adguard'
+    - not (boetticher_appliance_artifact | default(false) | bool)
 
 - name: Install AdGuard Home under its own service directory
   ansible.builtin.unarchive:
@@ -159,6 +160,15 @@
   when:
     - inventory_hostname in groups.get('dns', [])
     - dns_plan.recursive_provider == 'adguard'
+    - not (boetticher_appliance_artifact | default(false) | bool)
+
+- name: Require the qualified AdGuard binary in an appliance
+  ansible.builtin.command: /opt/AdGuardHome/AdGuardHome --version
+  changed_when: false
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'adguard'
+    - boetticher_appliance_artifact | default(false) | bool
 
 - name: Configure AdGuard Home as the client-facing resolver
   ansible.builtin.template:

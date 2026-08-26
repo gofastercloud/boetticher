@@ -165,6 +165,32 @@ func TestVariablesDoNotRenderBlockyForAdGuardSites(t *testing.T) {
 	}
 }
 
+func TestDNSAppliancePathCannotInstallAResolver(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, task := range []string{"Install pinned AdGuard Home archive", "Install AdGuard Home under its own service directory"} {
+		start := strings.Index(text, "- name: "+task)
+		if start < 0 {
+			t.Fatalf("DNS role task %q is missing", task)
+		}
+		end := strings.Index(text[start:], "\n- name:")
+		if end < 0 {
+			end = len(text) - start
+		}
+		block := text[start : start+end]
+		if !strings.Contains(block, "not (boetticher_appliance_artifact | default(false) | bool)") {
+			t.Fatalf("DNS appliance path can still run resolver installation task %q:\n%s", task, block)
+		}
+	}
+	if !strings.Contains(text, "Require the qualified AdGuard binary in an appliance") || !strings.Contains(text, "/opt/AdGuardHome/AdGuardHome --version") {
+		t.Fatal("AdGuard appliance path does not assert that the selected binary is image-provided")
+	}
+}
+
 func TestFirewallInterfaceBindingsCarryStableRoleMACs(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	variables, err := Variables(site)
