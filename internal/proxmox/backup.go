@@ -13,6 +13,7 @@ type BackupJob struct {
 	StorageTarget string
 	Schedule      string
 	VMIDList      string
+	Retention     string
 }
 
 // ApplyBackupJob creates or updates only the namespaced boetticher platform
@@ -21,7 +22,7 @@ func (c *Client) ApplyBackupJob(ctx context.Context, node string, plan BackupJob
 	if c == nil {
 		return fmt.Errorf("Proxmox client is required")
 	}
-	if node == "" || plan.JobName == "" || plan.StorageTarget == "" || plan.VMIDList == "" {
+	if node == "" || plan.JobName == "" || plan.StorageTarget == "" || plan.VMIDList == "" || plan.Retention == "" {
 		return fmt.Errorf("complete platform backup plan is required")
 	}
 	var jobs []struct {
@@ -35,6 +36,7 @@ func (c *Client) ApplyBackupJob(ctx context.Context, node string, plan BackupJob
 		"storage":        {plan.StorageTarget},
 		"schedule":       {plan.Schedule},
 		"vmid":           {plan.VMIDList},
+		"prune-backups":  {plan.Retention},
 		"mode":           {"snapshot"},
 		"compress":       {"zstd"},
 		"enabled":        {"1"},

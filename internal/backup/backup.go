@@ -9,7 +9,11 @@ import (
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 )
 
-const PlatformJobName = "boetticher-platform"
+const (
+	PlatformJobName      = "boetticher-platform"
+	DedicatedStorageID   = "boetticher-backups"
+	DedicatedStoragePath = "/srv/boetticher/backups"
+)
 
 type Plan struct {
 	ModelRevision        string `json:"model_revision"`
@@ -43,7 +47,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	sort.Ints(ids)
 	storage := "local"
 	if s.StorageProfile == "dedicated-data-disk" {
-		storage = "boetticher-backups"
+		storage = DedicatedStorageID
 	}
 	return Plan{
 		ModelRevision: revision, ManagedBy: "boetticher", JobName: PlatformJobName,

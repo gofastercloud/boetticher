@@ -219,6 +219,45 @@ func (c *Client) NodeNetwork(ctx context.Context, node string, out any) error {
 	return c.Get(ctx, path.Join("/nodes", node, "network"), nil, out)
 }
 
+// EnsureDirectoryStorage registers the fixed backup directory used by the
+// dedicated-data-disk profile. It refuses to accept a conflicting existing
+// definition and relies on Proxmox to reject a missing/unmounted path.
+func (c *Client) EnsureDirectoryStorage(ctx context.Context, storageID, storagePath string) error {
+	if c == nil {
+		return errors.New("Proxmox client is required")
+	}
+	if storageID == "" || storagePath == "" {
+		return errors.New("storage ID and path are required")
+	}
+	var storages []struct {
+		Storage string `json:"storage"`
+		Type    string `json:"type"`
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := c.Get(ctx, "/cluster/storage", nil, &storages); err != nil {
+		return fmt.Errorf("list Proxmox storage: %w", err)
+	}
+	for _, storage := range storages {
+		if storage.Storage != storageID {
+			continue
+		}
+		if storage.Type != "dir" || storage.Path != storagePath || !strings.Contains(storage.Content, "backup") {
+			return fmt.Errorf("Proxmox storage %q has a conflicting definition", storageID)
+		}
+		return nil
+	}
+	if err := c.Post(ctx, "/cluster/storage", url.Values{
+		"storage": {storageID},
+		"type":    {"dir"},
+		"path":    {storagePath},
+		"content": {"backup"},
+	}, nil); err != nil {
+		return fmt.Errorf("create Proxmox backup storage %q: %w", storageID, err)
+	}
+	return nil
+}
+
 func (c *Client) CreateNodeNetwork(ctx context.Context, node string, params url.Values) error {
 	return c.Post(ctx, path.Join("/nodes", node, "network"), params, nil)
 }
