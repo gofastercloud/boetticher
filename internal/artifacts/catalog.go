@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -38,9 +39,9 @@ type Evidence struct {
 	SBOMSHA256                 string         `json:"sbom_sha256,omitempty"`
 	TrivyReportSHA256          string         `json:"trivy_report_sha256,omitempty"`
 	QualificationPolicyVersion string         `json:"qualification_policy_version,omitempty"`
+	QualificationEvaluator     string         `json:"qualification_evaluator,omitempty"`
 	DefinitionSHA256           string         `json:"definition_sha256"`
 	Qualified                  bool           `json:"qualified"`
-	qualifiedByEvaluator       bool
 }
 
 type ScanSummary struct {
@@ -51,6 +52,8 @@ type ScanSummary struct {
 }
 
 const QualificationPolicyVersion = "boetticher-trivy-v1"
+
+const QualificationEvaluator = "boetticher-qualify-artifact"
 
 // QualifyEvidence is the only operation allowed to mark artifact evidence
 // qualified. Hashing a file proves its bytes, but does not prove package,
@@ -66,8 +69,8 @@ func QualifyEvidence(evidence Evidence, scan ScanSummary) (Evidence, error) {
 		return Evidence{}, fmt.Errorf("qualification failed: Trivy found %d fixable CRITICAL finding(s)", scan.FixableCritical)
 	}
 	evidence.QualificationPolicyVersion = QualificationPolicyVersion
+	evidence.QualificationEvaluator = QualificationEvaluator
 	evidence.Qualified = true
-	evidence.qualifiedByEvaluator = true
 	return evidence, nil
 }
 
@@ -100,6 +103,9 @@ func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artif
 	if !evidence.Qualified {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s is not qualified", requested.Name)
 	}
+	if evidence.QualificationEvaluator != QualificationEvaluator {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s qualification evaluator is not authorized", requested.Name)
+	}
 	if evidence.DefinitionSHA256 != requested.DefinitionSHA256 || evidence.Artifact != requested {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact evidence does not match requested definition for %s", requested.Name)
 	}
@@ -112,6 +118,9 @@ func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artif
 	if err := validateQualificationDigests(evidence); err != nil {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s qualification evidence is incomplete: %w", requested.Name, err)
 	}
+	if err := verifyQualificationInputs(evidence); err != nil {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s qualification inputs are not bound to the recorded digests: %w", requested.Name, err)
+	}
 	verified, err := EvidenceForFile(evidence.ArtifactPath, requested)
 	if err != nil {
 		return model.Artifact{}, Evidence{}, err
@@ -122,6 +131,36 @@ func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artif
 	resolved := requested
 	resolved.ContentSHA256 = evidence.ContentSHA256
 	return resolved, evidence, nil
+}
+
+// verifyQualificationInputs binds the qualified artifact to the exact
+// manifest, SBOM, and raw scanner report stored beside it. The content digest
+// alone is not sufficient to establish that the qualification evidence still
+// describes the bytes being deployed.
+func verifyQualificationInputs(evidence Evidence) error {
+	if evidence.ArtifactPath == "" {
+		return fmt.Errorf("artifact path is required")
+	}
+	directory := filepath.Dir(evidence.ArtifactPath)
+	inputs := []struct {
+		name     string
+		filename string
+		expected string
+	}{
+		{name: "package manifest", filename: "package-manifest.txt", expected: evidence.PackageManifestSHA},
+		{name: "SBOM", filename: "sbom.json", expected: evidence.SBOMSHA256},
+		{name: "Trivy report", filename: "trivy.json", expected: evidence.TrivyReportSHA256},
+	}
+	for _, input := range inputs {
+		actual, err := QualificationInputSHA256(filepath.Join(directory, input.filename), input.name)
+		if err != nil {
+			return err
+		}
+		if actual != input.expected {
+			return fmt.Errorf("%s checksum differs from qualification evidence", input.name)
+		}
+	}
+	return nil
 }
 
 var sha256Pattern = regexp.MustCompile(`^[a-fA-F0-9]{64}$`)
@@ -139,6 +178,9 @@ func validateQualificationDigests(evidence Evidence) error {
 	}
 	if evidence.QualificationPolicyVersion != "" && evidence.QualificationPolicyVersion != QualificationPolicyVersion {
 		return fmt.Errorf("unsupported qualification policy %q", evidence.QualificationPolicyVersion)
+	}
+	if evidence.Qualified && evidence.QualificationEvaluator != QualificationEvaluator {
+		return fmt.Errorf("qualified evidence must be produced by %s", QualificationEvaluator)
 	}
 	return nil
 }

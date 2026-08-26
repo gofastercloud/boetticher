@@ -61,7 +61,7 @@ func TestResolveArtifactEvidenceRejectsChangedBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	evidence.ArtifactPath = path
-	evidence = completeQualificationEvidence(evidence)
+	evidence = completeQualificationEvidence(t, evidence)
 	evidence, err = QualifyEvidence(evidence, ScanSummary{})
 	if err != nil {
 		t.Fatal(err)
@@ -80,12 +80,43 @@ func TestResolveArtifactEvidenceRejectsChangedBytes(t *testing.T) {
 	}
 }
 
+func TestResolveArtifactEvidenceRejectsChangedQualificationInputs(t *testing.T) {
+	root := t.TempDir()
+	artifactPath := filepath.Join(root, "artifact.bin")
+	if err := os.WriteFile(artifactPath, []byte("qualified bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := EvidenceForFile(artifactPath, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = artifactPath
+	evidence = completeQualificationEvidence(t, evidence)
+	evidence, err = QualifyEvidence(evidence, ScanSummary{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteEvidence(root, artifact.Name, evidence); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "sbom.json"), []byte("tampered\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveArtifactEvidence(root, artifact); err == nil {
+		t.Fatal("changed SBOM was accepted as qualified evidence")
+	}
+}
+
 func TestWriteEvidenceRequiresControllerVisibleArtifactBytes(t *testing.T) {
 	artifact, err := ArtifactFor("logging")
 	if err != nil {
 		t.Fatal(err)
 	}
-	evidence := completeQualificationEvidence(Evidence{
+	evidence := completeQualificationEvidence(t, Evidence{
 		Artifact:         artifact,
 		ContentSHA256:    strings.Repeat("c", 64),
 		DefinitionSHA256: artifact.DefinitionSHA256,
@@ -112,7 +143,7 @@ func TestQualificationRejectsMissingScanAndSecurityFindings(t *testing.T) {
 	if _, err := QualifyEvidence(evidence, ScanSummary{}); err == nil {
 		t.Fatal("missing qualification digests were accepted")
 	}
-	evidence = completeQualificationEvidence(evidence)
+	evidence = completeQualificationEvidence(t, evidence)
 	if _, err := QualifyEvidence(evidence, ScanSummary{Secrets: 1}); err == nil {
 		t.Fatal("secret finding was accepted")
 	}
@@ -140,17 +171,34 @@ func TestWriteEvidenceCannotAuthorizeUnqualifiedInputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	evidence.ArtifactPath = path
-	evidence = completeQualificationEvidence(evidence)
+	evidence = completeQualificationEvidence(t, evidence)
 	evidence.Qualified = true
 	if err := WriteEvidence(root, artifact.Name, evidence); err == nil {
 		t.Fatal("WriteEvidence accepted manually authorized evidence")
 	}
 }
 
-func completeQualificationEvidence(evidence Evidence) Evidence {
-	evidence.PackageManifestSHA = strings.Repeat("a", 64)
-	evidence.SBOMSHA256 = strings.Repeat("b", 64)
-	evidence.TrivyReportSHA256 = strings.Repeat("c", 64)
+func completeQualificationEvidence(t *testing.T, evidence Evidence) Evidence {
+	t.Helper()
+	if evidence.ArtifactPath == "" {
+		evidence.PackageManifestSHA = strings.Repeat("a", 64)
+		evidence.SBOMSHA256 = strings.Repeat("b", 64)
+		evidence.TrivyReportSHA256 = strings.Repeat("c", 64)
+		return evidence
+	}
+	inputs := map[string]string{
+		"package-manifest.txt": "package: boetticher-test\n",
+		"sbom.json":            `{"bomFormat":"CycloneDX","specVersion":"1.5"}` + "\n",
+		"trivy.json":           `{"Results":[]}` + "\n",
+	}
+	for filename, content := range inputs {
+		if err := os.WriteFile(filepath.Join(filepath.Dir(evidence.ArtifactPath), filename), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	evidence.PackageManifestSHA, _ = QualificationInputSHA256(filepath.Join(filepath.Dir(evidence.ArtifactPath), "package-manifest.txt"), "package manifest")
+	evidence.SBOMSHA256, _ = QualificationInputSHA256(filepath.Join(filepath.Dir(evidence.ArtifactPath), "sbom.json"), "SBOM")
+	evidence.TrivyReportSHA256, _ = QualificationInputSHA256(filepath.Join(filepath.Dir(evidence.ArtifactPath), "trivy.json"), "Trivy report")
 	return evidence
 }
 
@@ -378,8 +426,9 @@ func TestTransferredEvidenceIsReboundToControllerArtifactBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	evidence.ArtifactPath = artifactPath
+	evidence = completeQualificationEvidence(t, evidence)
 	evidence.ArtifactPath = "/home/labadmin/build/generated/artifacts/boetticher-logging/boetticher-logging-1.0.0-amd64.tar.zst"
-	evidence = completeQualificationEvidence(evidence)
 	qualified, err := QualifyEvidence(evidence, ScanSummary{})
 	if err != nil {
 		t.Fatal(err)
