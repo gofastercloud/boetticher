@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/site"
@@ -28,10 +29,7 @@ func runAccess(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	fmt.Fprintln(out, "Internal SSH")
 	for _, m := range sortedSSHComponents(s) {
-		alias := m.Name
-		if len(m.DNSAliases) > 0 {
-			alias = m.DNSAliases[0]
-		}
+		alias := preferredAccessAlias(m)
 		fmt.Fprintf(out, "  %-13s ssh %s\n", m.Role, alias)
 	}
 	fmt.Fprintln(out, "Web")
@@ -49,4 +47,16 @@ func runAccess(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	fmt.Fprintln(out, "  Remote access not configured")
 	return nil
+}
+
+func preferredAccessAlias(component model.Component) string {
+	for _, alias := range component.DNSAliases {
+		if strings.IndexFunc(alias, func(r rune) bool { return r >= '0' && r <= '9' }) >= 0 {
+			return alias
+		}
+	}
+	if len(component.DNSAliases) > 0 {
+		return component.DNSAliases[0]
+	}
+	return component.Name
 }
