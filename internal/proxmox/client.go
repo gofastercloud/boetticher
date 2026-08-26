@@ -159,6 +159,41 @@ func (c *Client) StartVM(ctx context.Context, node string, vmid int) error {
 	return c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "start"), nil, nil)
 }
 
+func (c *Client) CreateLXC(ctx context.Context, node string, vmid int, params url.Values) error {
+	if vmid <= 0 || node == "" {
+		return errors.New("Proxmox node and positive VMID are required")
+	}
+	if params == nil {
+		params = url.Values{}
+	}
+	params.Set("vmid", strconv.Itoa(vmid))
+	return c.Post(ctx, path.Join("/nodes", node, "lxc"), params, nil)
+}
+
+func (c *Client) SetLXCConfig(ctx context.Context, node string, vmid int, params url.Values) error {
+	if vmid <= 0 || node == "" {
+		return errors.New("Proxmox node and positive VMID are required")
+	}
+	return c.Post(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "config"), params, nil)
+}
+
+func (c *Client) StartLXC(ctx context.Context, node string, vmid int) error {
+	return c.Post(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "status", "start"), nil, nil)
+}
+
+func (c *Client) QEMUConfig(ctx context.Context, node string, vmid int, out any) error {
+	return c.Get(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "config"), nil, out)
+}
+
+func (c *Client) LXCConfig(ctx context.Context, node string, vmid int, out any) error {
+	return c.Get(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "config"), nil, out)
+}
+
+func IsNotFound(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
+}
+
 func (c *Client) request(ctx context.Context, method, endpoint string, query url.Values, form url.Values, out any) error {
 	base, err := url.Parse(c.BaseURL)
 	if err != nil {

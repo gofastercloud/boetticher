@@ -1,6 +1,7 @@
 package site
 
 import (
+	"encoding/json"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -121,23 +122,9 @@ func RuntimeDir(s model.Site) string {
 }
 
 func LoadAuthority(dir string, s model.Site, ageIdentityPath string) (pki.Authority, error) {
-	if _, err := exec.LookPath("sops"); err != nil {
-		return pki.Authority{}, fmt.Errorf("sops is required to read encrypted platform secrets: %w", err)
-	}
-	command := exec.Command("sops", "--decrypt", "--input-type", "yaml", "--output-type", "yaml", filepath.Join(dir, "secrets", "homelab.sops.yaml"))
-	command.Env = envWithout("SOPS_AGE_KEY_FILE")
-	command.Env = append(command.Env, "SOPS_AGE_KEY_FILE="+model.ExpandUserPath(ageIdentityPath))
-	plaintext, err := command.Output()
+	values, err := LoadEncryptedDocument(dir, ageIdentityPath, filepath.Join("secrets", "homelab.sops.yaml"))
 	if err != nil {
-		return pki.Authority{}, fmt.Errorf("decrypt platform secrets with SOPS: %w", err)
-	}
-	document, err := model.ParseDocument(plaintext)
-	if err != nil {
-		return pki.Authority{}, fmt.Errorf("parse decrypted platform secrets: %w", err)
-	}
-	values, ok := document.(map[string]any)
-	if !ok {
-		return pki.Authority{}, fmt.Errorf("decrypted platform secrets are not a mapping")
+		return pki.Authority{}, err
 	}
 	get := func(key string) (string, error) {
 		value, ok := values[key].(string)
@@ -163,6 +150,76 @@ func LoadAuthority(dir string, s model.Site, ageIdentityPath string) (pki.Author
 		return pki.Authority{}, err
 	}
 	return pki.Authority{RootKeyPEM: rootKey, RootCertPEM: rootCert, IssuingKeyPEM: issuingKey, IssuingCertPEM: issuingCert}, nil
+}
+
+// StoreEncryptedDocument streams a secret document to SOPS. The document is
+// never written as a plaintext intermediate. relativePath is constrained to
+// the site directory so callers cannot accidentally place encrypted state
+// outside the private repository.
+func StoreEncryptedDocument(dir, recipient, relativePath string, document any) error {
+	if recipient == "" {
+		return errors.New("Age recipient is required")
+	}
+	path, err := safeSitePath(dir, relativePath)
+	if err != nil {
+		return err
+	}
+	if _, err := exec.LookPath("sops"); err != nil {
+		return fmt.Errorf("sops is required to write encrypted secrets: %w", err)
+	}
+	plaintext, err := json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode encrypted document: %w", err)
+	}
+	plaintext = append(plaintext, '\n')
+	command := exec.Command("sops", "--encrypt", "--age", recipient, "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
+	command.Stdin = strings.NewReader(string(plaintext))
+	encrypted, err := command.Output()
+	if err != nil {
+		return fmt.Errorf("encrypt document with SOPS: %w", err)
+	}
+	return atomicWrite(path, encrypted, 0600)
+}
+
+func LoadEncryptedDocument(dir, ageIdentityPath, relativePath string) (map[string]any, error) {
+	path, err := safeSitePath(dir, relativePath)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := exec.LookPath("sops"); err != nil {
+		return nil, fmt.Errorf("sops is required to read encrypted platform secrets: %w", err)
+	}
+	identity := model.ExpandUserPath(ageIdentityPath)
+	if identity == "" {
+		return nil, errors.New("Age identity path is required")
+	}
+	command := exec.Command("sops", "--decrypt", "--input-type", "yaml", "--output-type", "yaml", path)
+	command.Env = envWithout("SOPS_AGE_KEY_FILE")
+	command.Env = append(command.Env, "SOPS_AGE_KEY_FILE="+identity)
+	plaintext, err := command.Output()
+	if err != nil {
+		return nil, fmt.Errorf("decrypt encrypted document with SOPS: %w", err)
+	}
+	document, err := model.ParseDocument(plaintext)
+	if err != nil {
+		return nil, fmt.Errorf("parse decrypted document: %w", err)
+	}
+	values, ok := document.(map[string]any)
+	if !ok {
+		return nil, errors.New("decrypted document is not a mapping")
+	}
+	return values, nil
+}
+
+func safeSitePath(dir, relativePath string) (string, error) {
+	if relativePath == "" || filepath.IsAbs(relativePath) {
+		return "", errors.New("encrypted document path must be relative to the site repository")
+	}
+	clean := filepath.Clean(relativePath)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", errors.New("encrypted document path escapes the site repository")
+	}
+	return filepath.Join(dir, clean), nil
 }
 
 func atomicWrite(path string, data []byte, mode os.FileMode) error {
@@ -227,22 +284,20 @@ func createAgeIdentity(path string) (string, error) {
 }
 
 func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) error {
-	if _, err := exec.LookPath("sops"); err != nil {
-		return fmt.Errorf("sops is required to initialize encrypted secrets: %w", err)
-	}
 	secret, err := randomID()
 	if err != nil {
 		return err
 	}
 	// Plaintext exists only in process memory and is piped directly to SOPS.
-	plaintext := []byte("installation_id: " + s.SecretMetadata.InstallationID + "\nbootstrap_secret: " + secret + "\nroot_key_pem_b64: " + pki.Encode(authority.RootKeyPEM) + "\nroot_cert_pem_b64: " + pki.Encode(authority.RootCertPEM) + "\nissuing_key_pem_b64: " + pki.Encode(authority.IssuingKeyPEM) + "\nissuing_cert_pem_b64: " + pki.Encode(authority.IssuingCertPEM) + "\n")
-	command := exec.Command("sops", "--encrypt", "--age", s.SecretMetadata.AgeRecipient, "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
-	command.Stdin = strings.NewReader(string(plaintext))
-	encrypted, err := command.Output()
-	if err != nil {
-		return fmt.Errorf("encrypt initial secrets with SOPS: %w", err)
+	document := map[string]string{
+		"installation_id":   s.SecretMetadata.InstallationID,
+		"bootstrap_secret":   secret,
+		"root_key_pem_b64":   pki.Encode(authority.RootKeyPEM),
+		"root_cert_pem_b64":  pki.Encode(authority.RootCertPEM),
+		"issuing_key_pem_b64": pki.Encode(authority.IssuingKeyPEM),
+		"issuing_cert_pem_b64": pki.Encode(authority.IssuingCertPEM),
 	}
-	return atomicWrite(filepath.Join(dir, "secrets", "homelab.sops.yaml"), encrypted, 0600)
+	return StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "homelab.sops.yaml"), document)
 }
 
 func randomID() (string, error) {
