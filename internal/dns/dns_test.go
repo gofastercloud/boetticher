@@ -14,7 +14,7 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Implementation != "PowerDNS Authoritative" || plan.PackageVersion != "4.9.17-1pdns.bookworm" || len(plan.DynamicZones) != 4 || len(plan.ReverseZones) != 4 {
+	if plan.Implementation != "PowerDNS Authoritative" || plan.PackageVersion != "4.9.17-1pdns.trixie" || len(plan.DynamicZones) != 4 || len(plan.ReverseZones) != 4 {
 		t.Fatalf("unexpected DNS plan: %#v", plan)
 	}
 	if got := plan.AuthoritativeForwardTarget; got != "127.0.0.1:5353" || len(plan.AuthoritativeListenAddresses) != 2 {

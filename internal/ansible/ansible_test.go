@@ -86,7 +86,7 @@ func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
 	for _, expected := range []string{
 		`"authoritative_dns": "PowerDNS Authoritative"`,
 		`"authoritative_dns_version": "4.9.17"`,
-		`"authoritative_package_version": "4.9.17-1pdns.bookworm"`,
+		`"authoritative_package_version": "4.9.17-1pdns.trixie"`,
 		`"authoritative_dns_port": "5353"`,
 		`"trusted.lab.home.arpa"`,
 		`"sandbox.lab.home.arpa"`,
