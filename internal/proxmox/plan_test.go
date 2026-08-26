@@ -294,3 +294,20 @@ func TestReservedModuleGuestsRequireOwnershipProofBeforeTagReconciliation(t *tes
 		}
 	}
 }
+
+func TestEveryFixedGuestIdentityRequiresCanonicalOwnershipProof(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, guest := range plan.Guests {
+		current := map[string]any{
+			"name": guest.Name, "hostname": guest.Hostname,
+			"description": artifactDescription(guest.Artifact),
+			"tags":        "boetticher;managed",
+		}
+		if err := validateExistingGuestIdentity(current, guest); err == nil || !strings.Contains(err.Error(), "canonical ownership proof") {
+			t.Fatalf("fixed guest %d was accepted without ownership proof: %v", guest.VMID, err)
+		}
+	}
+}

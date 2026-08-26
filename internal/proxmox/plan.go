@@ -1276,7 +1276,11 @@ func validateExistingGuestIdentity(current map[string]any, expected GuestPlan) e
 			return fmt.Errorf("HOLD: guest %s has artifact identity %q, expected %q; appliance replacement is required", expected.Name, observed, wanted)
 		}
 	}
-	if expected.Owner != "" && expected.Owner != "boetticher/core/portal" {
+	if expected.Owner == "boetticher/core/portal" {
+		if !hasOwnerTag(currentTags(current), model.TagCorePortal) {
+			return fmt.Errorf("HOLD: guest %s lacks canonical ownership proof %q", expected.Name, model.TagCorePortal)
+		}
+	} else if expected.Owner != "" {
 		module := strings.TrimPrefix(expected.Owner, "boetticher/module/")
 		ownerTag := moduleOwnershipTag(module)
 		if ownerTag == "" || !hasOwnerTag(currentTags(current), ownerTag) {
@@ -1291,7 +1295,11 @@ func artifactDescription(artifact model.Artifact) string {
 }
 
 func ensureExistingGuestTags(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) error {
-	if guest.Owner != "" && guest.Owner != "boetticher/core/portal" {
+	if guest.Owner == "boetticher/core/portal" {
+		if !hasOwnerTag(currentTags(current), model.TagCorePortal) {
+			return fmt.Errorf("HOLD: refusing to establish ownership for %s; canonical tag %q is absent", guest.Name, model.TagCorePortal)
+		}
+	} else if guest.Owner != "" {
 		module := strings.TrimPrefix(guest.Owner, "boetticher/module/")
 		ownerTag := moduleOwnershipTag(module)
 		if ownerTag == "" || !hasOwnerTag(currentTags(current), ownerTag) {
