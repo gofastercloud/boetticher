@@ -1227,6 +1227,7 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
 	opnsenseURL := fs.String("opnsense-url", "https://10.10.99.1", "OPNsense API base URL")
 	opnsenseCA := fs.String("opnsense-ca", "", "OPNsense API CA PEM file")
+	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
 	insecure := fs.Bool("insecure", false, "explicitly allow self-signed OPNsense API TLS")
 	playbook := fs.String("ansible-playbook", "ansible/site.yml", "guest convergence playbook")
 	dryRun := fs.Bool("dry-run", false, "render and validate policy without connecting")
@@ -1353,7 +1354,7 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 	if err != nil {
 		return err
 	}
-	proxmoxClient, _, err := loadProxmoxClient(*siteDir, s, *ageIdentity, "", *insecure)
+	proxmoxClient, _, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
 	if err != nil {
 		return fmt.Errorf("load Proxmox client for platform backup convergence: %w", err)
 	}
