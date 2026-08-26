@@ -555,15 +555,17 @@ func checkPlatformOwnership(s model.Site) error {
 	if err != nil {
 		return err
 	}
-	want := []int{model.DNS01VMID, model.DNS02VMID, model.MonitorVMID, model.PortalVMID}
-	if s.Gateway.Mode == model.GatewayModeManaged {
-		want = append([]int{model.ProxmoxVMID}, want...)
+	wantSet := make(map[int]struct{})
+	for _, component := range s.PlatformComponents() {
+		if component.VMID != 0 {
+			wantSet[component.VMID] = struct{}{}
+		}
 	}
-	if len(plan.Guests) != len(want) {
-		return fmt.Errorf("platform plan contains %d guests; expected %d", len(plan.Guests), len(want))
+	if len(plan.Guests) != len(wantSet) {
+		return fmt.Errorf("platform plan contains %d guests; expected %d", len(plan.Guests), len(wantSet))
 	}
-	for index, guest := range plan.Guests {
-		if guest.VMID != want[index] {
+	for _, guest := range plan.Guests {
+		if _, ok := wantSet[guest.VMID]; !ok {
 			return fmt.Errorf("platform plan contains unexpected VMID %d", guest.VMID)
 		}
 	}
