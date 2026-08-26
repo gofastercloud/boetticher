@@ -61,9 +61,10 @@ From a fresh controller and Proxmox HOME-side DHCP address:
 
 ```sh
 boetticher init --site-dir my-boetticher
+boetticher bootstrap-endpoint set PROXMOX_HOME_ADDRESS --site my-boetticher
 boetticher preflight --site my-boetticher
-boetticher bootstrap --site my-boetticher --recovery-confirmed
-boetticher provision --site my-boetticher --opnsense-iso VERIFIED_ISO
+boetticher bootstrap --site my-boetticher --opnsense-iso VERIFIED_ISO --recovery-confirmed
+boetticher provision --site my-boetticher
 boetticher converge --site my-boetticher
 boetticher ssh-config --site my-boetticher --install-include
 boetticher verify --site my-boetticher

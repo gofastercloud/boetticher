@@ -74,23 +74,10 @@ func Run(args []string, out, errOut interface{ Write([]byte) (int, error) }) err
 }
 
 func usage(out interface{ Write([]byte) (int, error) }) {
-	fmt.Fprintln(out, `boetticher operator CLI
-
-Usage:
-	  boetticher init [--site-dir DIR] [--age-identity PATH]
-	boetticher preflight [--site DIR] [--live] [--bootstrap-address ADDRESS] [--trunk-interface IFACE]
-	boetticher bootstrap [--site DIR] [--recovery-confirmed] [--trunk-interface IFACE] [--dry-run]
-	boetticher provision [--site DIR] [--opnsense-iso PATH] [--debian-template TEMPLATE] [--dry-run]
-	boetticher converge [--site DIR] [--opnsense-url URL] [--dry-run]
-	boetticher verify | doctor | upgrade [--site DIR]
-	boetticher ssh-config [--site DIR] [--output PATH| -] [--force] [--check] [--install-include]
-	boetticher access [--site DIR]
-	boetticher bootstrap-endpoint show|set ADDRESS [--site DIR]
-	boetticher network trunk status|attach|detach [INTERFACE] [--site DIR]
-	boetticher pki client create|export|revoke NAME [--site DIR]
-	boetticher pki trust export [--site DIR]
-	boetticher opnsense credentials import [--site DIR]
-  boetticher portal build [--site DIR] [--output DIR] [--docs DIR]`)
+	fmt.Fprintln(out, "boetticher operator CLI\n\nUsage:")
+	for _, spec := range commandSpecs {
+		fmt.Fprintln(out, "  "+spec.Usage)
+	}
 }
 
 func runInit(args []string, out interface{ Write([]byte) (int, error) }) error {
@@ -1198,7 +1185,6 @@ func runProvision(args []string, out interface{ Write([]byte) (int, error) }) er
 	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
 	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
 	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS")
-	opnsenseISO := fs.String("opnsense-iso", "", "verified OPNsense ISO path on Proxmox storage")
 	debianTemplate := fs.String("debian-template", "local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst", "Proxmox Debian LXC template")
 	dryRun := fs.Bool("dry-run", false, "render and validate the provisioning plan without connecting")
 	if err := fs.Parse(args); err != nil {
@@ -1214,17 +1200,14 @@ func runProvision(args []string, out interface{ Write([]byte) (int, error) }) er
 	}
 	if *dryRun {
 		fmt.Fprintf(out, "Proxmox provisioning plan: PASS model %s (%d guests)\n", plan.ModelRevision, len(plan.Guests))
-		fmt.Fprintf(out, "  Storage target: %s\n  OPNsense ISO: %s\n  Debian template: %s\n", plan.Storage, valueOrPlaceholder(*opnsenseISO), *debianTemplate)
+		fmt.Fprintf(out, "  Storage target: %s\n  Firewall VM: provisioned by bootstrap\n  Debian template: %s\n", plan.Storage, *debianTemplate)
 		return nil
-	}
-	if *opnsenseISO == "" {
-		return errors.New("--opnsense-iso is required for live provisioning")
 	}
 	client, credentials, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
 	if err != nil {
 		return err
 	}
-	if err := proxmox.Provision(context.Background(), client, plan, *opnsenseISO, *debianTemplate); err != nil {
+	if err := proxmox.Provision(context.Background(), client, plan, *debianTemplate); err != nil {
 		return err
 	}
 	if err := writeModelProjections(*siteDir, s); err != nil {
