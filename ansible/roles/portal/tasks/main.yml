@@ -9,9 +9,8 @@
 - name: Require controller-issued portal mTLS material
   ansible.builtin.assert:
     that:
-      - portal_server_key_pem is defined
-      - portal_server_cert_pem is defined
       - client_ca_pem is defined
+      - (pki_bootstrap_phase | default(false) | bool) or (portal_server_cert_pem is defined and portal_server_cert_pem | length > 0)
     fail_msg: "The portal requires controller-issued server and client-CA material"
   no_log: true
 
@@ -39,6 +38,52 @@
     group: root
     mode: "0750"
 
+- name: Generate the portal endpoint private key locally
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - genpkey
+      - -algorithm
+      - EC
+      - -pkeyopt
+      - ec_paramgen_curve:P-256
+      - -out
+      - /etc/boetticher/tls/portal.key.pem
+  args:
+    creates: /etc/boetticher/tls/portal.key.pem
+
+- name: Restrict the portal endpoint private key
+  ansible.builtin.file:
+    path: /etc/boetticher/tls/portal.key.pem
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Generate the portal endpoint CSR locally
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - req
+      - -new
+      - -sha256
+      - -key
+      - /etc/boetticher/tls/portal.key.pem
+      - -subj
+      - /CN=portal.lab.home.arpa
+      - -addext
+      - subjectAltName=DNS:portal.lab.home.arpa,DNS:lab-portal-01.lab.home.arpa
+      - -out
+      - /etc/boetticher/tls/portal.csr.pem
+  args:
+    creates: /etc/boetticher/tls/portal.csr.pem
+
+- name: Fetch the endpoint-generated portal CSR to the controller runtime directory
+  ansible.builtin.fetch:
+    src: /etc/boetticher/tls/portal.csr.pem
+    dest: "{{ pki_csr_output_dir }}/portal.csr.pem"
+    flat: true
+  when: pki_bootstrap_phase | default(false) | bool
+
 - name: Install portal server certificate chain
   ansible.builtin.copy:
     content: "{{ portal_server_cert_pem }}"
@@ -48,16 +93,9 @@
     mode: "0644"
   no_log: true
   notify: reload nginx
-
-- name: Install portal server private key
-  ansible.builtin.copy:
-    content: "{{ portal_server_key_pem }}"
-    dest: /etc/boetticher/tls/portal.key.pem
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-  notify: reload nginx
+  when:
+    - portal_server_cert_pem is defined
+    - portal_server_cert_pem | length > 0
 
 - name: Install the client CA for portal mTLS
   ansible.builtin.copy:
@@ -91,6 +129,9 @@
           location / { try_files $uri $uri/ =404; }
       }
   notify: reload nginx
+  when:
+    - portal_server_cert_pem is defined
+    - portal_server_cert_pem | length > 0
 
 - name: Remove the distribution nginx default site
   ansible.builtin.file:
@@ -104,3 +145,15 @@
     dest: /etc/nginx/sites-enabled/boetticher.conf
     state: link
   notify: reload nginx
+  when:
+    - portal_server_cert_pem is defined
+    - portal_server_cert_pem | length > 0
+
+- name: Enable and start the portal nginx service
+  ansible.builtin.service:
+    name: nginx
+    enabled: true
+    state: started
+  when:
+    - portal_server_cert_pem is defined
+    - portal_server_cert_pem | length > 0

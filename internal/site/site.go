@@ -329,13 +329,9 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 	if err != nil {
 		return err
 	}
-	monitorCertificate, err := pki.IssueServer(authority, "monitor", s.Network.Domain, []string{"lab-monitor-01." + s.Network.Domain}, time.Now().UTC())
+	zabbixAPIPassword, err := randomSecret()
 	if err != nil {
-		return fmt.Errorf("issue monitor server certificate: %w", err)
-	}
-	portalCertificate, err := pki.IssueServer(authority, "portal", s.Network.Domain, []string{"lab-portal-01." + s.Network.Domain}, time.Now().UTC())
-	if err != nil {
-		return fmt.Errorf("issue portal server certificate: %w", err)
+		return err
 	}
 	// Plaintext exists only in process memory and is piped directly to SOPS.
 	document := map[string]string{
@@ -347,10 +343,7 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 		"issuing_cert_pem_b64": pki.Encode(authority.IssuingCertPEM),
 		"ddns_tsig_secret":     ddnsSecret,
 		"zabbix_db_password":   zabbixDBPassword,
-		"monitor_server_key":   pki.Encode(monitorCertificate.KeyPEM),
-		"monitor_server_cert":  pki.Encode(monitorCertificate.CertPEM),
-		"portal_server_key":    pki.Encode(portalCertificate.KeyPEM),
-		"portal_server_cert":   pki.Encode(portalCertificate.CertPEM),
+		"zabbix_api_password":  zabbixAPIPassword,
 	}
 	return StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), document)
 }

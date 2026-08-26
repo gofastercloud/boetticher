@@ -12,6 +12,7 @@ type Plan struct {
 	PlatformOnly  bool              `json:"platform_only"`
 	Components    []model.Component `json:"components"`
 	Objects       []ManagedObject   `json:"objects"`
+	TemplateItems []TemplateItem    `json:"template_items"`
 }
 
 // ManagedObject is a deterministic, namespaced Zabbix object definition.
@@ -41,7 +42,30 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		PlatformOnly:  true,
 		Components:    s.PlatformComponents(),
 		Objects:       platformObjects(),
+		TemplateItems: platformTemplateItems(),
 	}, nil
+}
+
+type TemplateItem struct {
+	Template    string   `json:"template"`
+	Name        string   `json:"name"`
+	Key         string   `json:"key"`
+	ValueType   int      `json:"value_type"`
+	Delay       string   `json:"delay"`
+	Description string   `json:"description"`
+	Tags        []string `json:"tags"`
+}
+
+func platformTemplateItems() []TemplateItem {
+	tag := []string{"boetticher/platform"}
+	return []TemplateItem{
+		{Template: "boetticher Linux platform", Name: "CPU utilization", Key: "system.cpu.util[,user]", ValueType: 0, Delay: "60s", Description: "Managed Linux host CPU utilization", Tags: append([]string(nil), tag...)},
+		{Template: "boetticher Linux platform", Name: "Memory available", Key: "vm.memory.size[pavailable]", ValueType: 0, Delay: "60s", Description: "Managed Linux host available memory", Tags: append([]string(nil), tag...)},
+		{Template: "boetticher Linux platform", Name: "Root filesystem usage", Key: "vfs.fs.size[/,pused]", ValueType: 0, Delay: "60s", Description: "Managed Linux host root filesystem usage", Tags: append([]string(nil), tag...)},
+		{Template: "boetticher Linux platform", Name: "Chrony service", Key: "proc.num[chronyd]", ValueType: 3, Delay: "60s", Description: "Managed Linux host Chrony process count", Tags: append([]string(nil), tag...)},
+		{Template: "boetticher Proxmox platform", Name: "Proxmox HTTPS", Key: "net.tcp.service[https,10.10.99.5,8006]", ValueType: 3, Delay: "60s", Description: "Proxmox API listener availability", Tags: append([]string(nil), tag...)},
+		{Template: "boetticher OPNsense platform", Name: "OPNsense HTTPS", Key: "net.tcp.service[https,10.10.99.1,443]", ValueType: 3, Delay: "60s", Description: "OPNsense web/API listener availability", Tags: append([]string(nil), tag...)},
+	}
 }
 
 func platformObjects() []ManagedObject {

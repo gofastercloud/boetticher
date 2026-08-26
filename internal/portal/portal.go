@@ -112,13 +112,13 @@ func home(s model.Site, revision string, evidence Evidence, now time.Time) strin
 
 func inventory(s model.Site, revision string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Platform guests are managed by boetticher. Any user-managed entries shown here are informational only.</p><table><tr><th>Host</th><th>Ownership</th><th>Zone</th><th>Address</th><th>Role</th><th>Monitoring</th><th>Backup</th></tr>", html.EscapeString(revision))
+	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Platform guests are managed by boetticher. Any user-managed entries shown here are informational only.</p><table><tr><th>Host</th><th>Ownership</th><th>Zone</th><th>Address</th><th>Role</th><th>Tags</th><th>Monitoring</th><th>Backup</th></tr>", html.EscapeString(revision))
 	for _, m := range sortedComponents(s) {
 		ownership := "user-managed / informational"
 		if m.ProductOwned {
 			ownership = "boetticher platform"
 		}
-		fmt.Fprintf(&b, "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>", html.EscapeString(m.Hostname), html.EscapeString(ownership), html.EscapeString(m.Zone), html.EscapeString(m.Address), html.EscapeString(m.Role), checkMark(m.Monitoring), checkMark(m.Backup))
+		fmt.Fprintf(&b, "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><code>%s</code></td><td>%s</td><td>%s</td></tr>", html.EscapeString(m.Hostname), html.EscapeString(ownership), html.EscapeString(m.Zone), html.EscapeString(m.Address), html.EscapeString(m.Role), html.EscapeString(strings.Join(m.Tags, ";")), checkMark(m.Monitoring), checkMark(m.Backup))
 	}
 	b.WriteString("</table>")
 	return b.String()

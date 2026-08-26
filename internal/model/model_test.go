@@ -81,3 +81,47 @@ func TestUserManagedVMIDMustUseReservedRange(t *testing.T) {
 		t.Fatalf("invalid user VMID was accepted: %v", err)
 	}
 }
+
+func TestPlatformGuestsCarryCanonicalTags(t *testing.T) {
+	site := NewDefaultSite("installation", "age1example")
+	for _, component := range site.PlatformComponents() {
+		if !component.ProductOwned {
+			continue
+		}
+		for _, required := range []string{TagBoetticher, TagManaged} {
+			if !containsString(component.Tags, required) {
+				t.Fatalf("platform component %s is missing %q: %#v", component.Name, required, component.Tags)
+			}
+		}
+		if component.VMID != 0 && component.Backup && !containsString(component.Tags, TagBackup) {
+			t.Fatalf("backed-up platform guest %s is missing %q: %#v", component.Name, TagBackup, component.Tags)
+		}
+	}
+}
+
+func TestBackedUpPlatformGuestRequiresBackupTag(t *testing.T) {
+	site := NewDefaultSite("installation", "age1example")
+	for i := range site.Components {
+		if site.Components[i].Name == "lab-dns-01" {
+			tags := []string{}
+			for _, tag := range site.Components[i].Tags {
+				if tag != TagBackup {
+					tags = append(tags, tag)
+				}
+			}
+			site.Components[i].Tags = tags
+		}
+	}
+	if err := site.Validate(); err == nil || !strings.Contains(err.Error(), "missing required tag \"backup\"") {
+		t.Fatalf("missing backup tag was accepted: %v", err)
+	}
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}

@@ -6,7 +6,7 @@ The foundation needs at least 4 logical CPU threads, 16 GiB RAM, and 128 GiB usa
 
 ## Controller and state
 
-Supported controller platforms are macOS arm64, macOS amd64, Linux arm64, and Linux amd64. Native Windows is out of scope. WSL2 may be used only after a separate test confirms the required SSH, Age, SOPS, OpenTofu, and Ansible behavior.
+Supported controller platforms are macOS arm64, macOS amd64, Linux arm64, and Linux amd64. The controller is a separate operator machine, not the target Proxmox host; preflight refuses a confidently detected Proxmox controller. Native Windows is out of scope. WSL2 may be used only after a separate test confirms the required SSH, Age, SOPS, OpenTofu, and Ansible behavior.
 
 `boetticher init` creates a private site repository containing:
 
@@ -26,7 +26,7 @@ Git may contain desired state, encrypted secrets, and non-secret status output. 
 4. Run `boetticher preflight --site my-boetticher --live`. This identifies the active upstream NIC and proposes exactly one safe unused trunk NIC, or reports virtual-only/multiple-candidate state.
 5. If multiple candidates remain, repeat with `--trunk-interface IFACE`; do not select by enumeration order.
 6. Generate/check the SSH file with `boetticher ssh-config --site my-boetticher --force --install-include`.
-7. Run `boetticher bootstrap --site my-boetticher --opnsense-iso VERIFIED_ISO --recovery-confirmed`, adding `--trunk-interface IFACE` only when required by discovery. Bootstrap owns the verified OPNsense ISO because it creates and starts the firewall VM.
+7. Run `boetticher bootstrap --site my-boetticher --opnsense-iso VERIFIED_ISO --recovery-confirmed`, adding `--trunk-interface IFACE` only when required by discovery. For the dedicated-data-disk profile, set `storage_device` to the stable data-disk `/dev/disk/by-id/...` path and add `--storage-confirmed` after reviewing it; bootstrap creates the fixed LVM and Proxmox storage layout. Bootstrap owns the verified OPNsense ISO because it creates and starts the firewall VM.
 8. Run `boetticher provision --site my-boetticher` and `boetticher converge --site my-boetticher` after the OPNsense API is available. Provision creates the DNS, monitor, and portal guests; it does not manage arbitrary user guests.
 9. Run `boetticher verify --site my-boetticher`, `boetticher doctor --site my-boetticher`, and `boetticher portal build --site my-boetticher`.
 

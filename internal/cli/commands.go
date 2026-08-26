@@ -10,9 +10,9 @@ type commandSpec struct {
 var commandSpecs = []commandSpec{
 	{Usage: "boetticher init [--site-dir DIR] [--age-identity PATH]"},
 	{Usage: "boetticher preflight [--site DIR] [--live] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]"},
-	{Usage: "boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--opnsense-iso PATH] [--trunk-interface IFACE] [--dry-run]"},
+	{Usage: "boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--opnsense-iso PATH] [--trunk-interface IFACE] [--dry-run]"},
 	{Usage: "boetticher provision [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--debian-template TEMPLATE] [--dry-run]"},
-	{Usage: "boetticher converge [--site DIR] [--age-identity PATH] [--opnsense-url URL] [--opnsense-ca PATH] [--proxmox-ca PATH] [--insecure] [--ansible-playbook PATH] [--dry-run]"},
+	{Usage: "boetticher converge [--site DIR] [--age-identity PATH] [--opnsense-url URL] [--opnsense-ca PATH] [--proxmox-ca PATH] [--zabbix-url URL] [--insecure] [--ansible-playbook PATH] [--dry-run]"},
 	{Usage: "boetticher verify [--site DIR] [--ssh-config PATH] [--ssh-journey]"},
 	{Usage: "boetticher doctor [--site DIR] [--ssh-config PATH] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
 	{Usage: "boetticher upgrade [--site DIR] [--age-identity PATH] [--recovery-confirmed]"},

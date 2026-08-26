@@ -25,47 +25,53 @@ Use a clean controller checkout, the exact qualified OPNsense patch in
    `boetticher bootstrap-endpoint set ADDRESS`, then run `boetticher preflight`.
    PASS means required tools and versions pass and physical discovery reports
    either `virtual-only` or an unambiguous safe trunk proposal.
-3. **One-NIC path** — with only the HOME NIC connected, run the README
+3. **Storage profile** — for single-disk, confirm the platform uses the
+   existing local directory storage. For dedicated-data-disk, configure the
+   stable `/dev/disk/by-id/...` device, review the guarded confirmation, and
+   verify `vg_boetticher`, `boetticher-thin`, the mounted backup filesystem,
+   and `boetticher-backups`. PASS means the system disk and unrelated disks
+   were untouched.
+4. **One-NIC path** — with only the HOME NIC connected, run the README
    quickstart through `boetticher bootstrap` and confirm `vmbr0` retains the
    upstream path while VLAN-aware `vmbr1` has no physical member. PASS means
    the Proxmox bastion still reaches the internal guests.
-4. **Proxmox bastion** — generate/install SSH configuration and exercise
+5. **Proxmox bastion** — generate/install SSH configuration and exercise
    `ssh proxmox`, `ssh dns01`, `ssh monitor`, and `ssh portal`. PASS means the
    internal journeys use `ProxyJump lab-bastion`, fixed IPs, canonical
    `HostKeyAlias`, and normal host-key verification.
-5. **OPNsense bootstrap** — complete the unattended firewall VM installation,
+6. **OPNsense bootstrap** — complete the unattended firewall VM installation,
    WAN/internal interface assignment, MGMT reachability, scoped identities,
    direct SOPS credential handoff, Kea, firewall, NAT, and temporary privilege
    removal. PASS means this completes from a clean installation without manual
    OPNsense surgery.
-6. **Kea, DNS/DDNS, and NTP** — obtain leases in TRUSTED, SERVERS, SANDBOX,
+7. **Kea, DNS/DDNS, and NTP** — obtain leases in TRUSTED, SERVERS, SANDBOX,
    and MGMT; verify zone-qualified A/PTR records, release/replacement cleanup,
    PowerDNS secondary replication, AdGuard resolution, Chrony synchronization,
    and SANDBOX’s OPNsense DNS/NTP boundary. PASS means a DDNS failure does not
    prevent a valid DHCP lease.
-7. **Zabbix** — open the mTLS-protected frontend with a valid client
+8. **Zabbix** — open the mTLS-protected frontend with a valid client
    certificate, reject absent and invalid certificates, confirm the platform
    hosts/checks/dashboards are present, and add a synthetic user-owned Zabbix
    object. PASS means boetticher convergence leaves that object alone.
-8. **Portal mTLS** — open `https://portal.lab.home.arpa` with a valid client
+9. **Portal mTLS** — open `https://portal.lab.home.arpa` with a valid client
    certificate and confirm absent/untrusted certificates are rejected. PASS
    means the portal has no CA key, SOPS identity, or control-plane credential.
-9. **Negative firewall paths** — from SANDBOX verify TRUSTED, SERVERS, and MGMT
+10. **Negative firewall paths** — from SANDBOX verify TRUSTED, SERVERS, and MGMT
    are denied while Internet, DHCP, DNS, and NTP work. Verify the intended
    TRUSTED, SERVERS, and MGMT administration paths separately.
-10. **Physical trunk** — connect the selected spare Ethernet interface and
+11. **Physical trunk** — connect the selected spare Ethernet interface and
     managed switch, run `boetticher network trunk attach IFACE --confirm`,
     then verify the trunk, VLAN tags, physical client paths, and physical
     SANDBOX isolation mechanism. A disconnected clean NIC is valid before the
     switch is attached.
-11. **Reboot** — reboot Proxmox and the platform guests. Repeat bastion, DNS,
+12. **Reboot** — reboot Proxmox and the platform guests. Repeat bastion, DNS,
     NTP, Zabbix, portal, and negative firewall journeys.
-12. **Idempotence** — run `boetticher converge` again and require no unexpected
+13. **Idempotence** — run `boetticher converge` again and require no unexpected
     changes. Unknown user VMs must remain untouched and informational.
-13. **Recovery** — test platform guest backup restore, SOPS/Age recovery, and
+14. **Recovery** — test platform guest backup restore, SOPS/Age recovery, and
     the recorded HOME bootstrap endpoint. Same-disk backup success does not
     prove disaster recovery.
-14. **Repeat** — repeat the greenfield sequence from a clean installation.
+15. **Repeat** — repeat the greenfield sequence from a clean installation.
     The V1 qualification is complete only after two clean runs.
 
 Keep the completed checklist with the tested revisions, controller version,

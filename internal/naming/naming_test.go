@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -12,7 +13,8 @@ import (
 func TestLegacyProjectIdentifiersDoNotReappear(t *testing.T) {
 	root := repositoryRoot(t)
 	_, testFile, _, _ := runtime.Caller(0)
-	legacy := []string{"labinabox", "lab-in-a-box", "lab in a box"}
+	legacy := []string{"labinabox", "lab-in-a-box", "lab_in_a_box", "lab in a box"}
+	legacyAbbreviation := regexp.MustCompile(`(?i)(^|[^a-z0-9])liab([^a-z0-9]|$)`)
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -41,10 +43,27 @@ func TestLegacyProjectIdentifiersDoNotReappear(t *testing.T) {
 				break
 			}
 		}
+		if legacyAbbreviation.MatchString(string(data)) {
+			t.Errorf("%s contains the legacy project abbreviation", path)
+		}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLegacyAbbreviationMatcherAvoidsUnrelatedWords(t *testing.T) {
+	pattern := regexp.MustCompile(`(?i)(^|[^a-z0-9])liab([^a-z0-9]|$)`)
+	for _, value := range []string{"LIAB", "boetticher_LIAB_marker", "(liab)"} {
+		if !pattern.MatchString(value) {
+			t.Errorf("legacy abbreviation %q was not detected", value)
+		}
+	}
+	for _, value := range []string{"liability", "reliable", "library"} {
+		if pattern.MatchString(value) {
+			t.Errorf("unrelated word %q was detected as the legacy abbreviation", value)
+		}
 	}
 }
 

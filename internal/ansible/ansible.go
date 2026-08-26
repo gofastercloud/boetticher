@@ -87,17 +87,18 @@ func Variables(s model.Site) ([]byte, error) {
 		return nil, err
 	}
 	value := struct {
-		ModelRevision           string      `json:"model_revision"`
-		Domain                  string      `json:"domain"`
-		IPv4Only                bool        `json:"ipv4_only"`
-		AuthoritativeDNS        string      `json:"authoritative_dns"`
-		AuthoritativeDNSVersion string      `json:"authoritative_dns_version"`
-		AuthoritativeDNSPort    string      `json:"authoritative_dns_port"`
-		DynamicZones            []string    `json:"dynamic_zones"`
-		AdGuardForwardZones     []string    `json:"adguard_forward_zones"`
-		DNSPlan                 dns.Plan    `json:"dns_plan"`
-		ZabbixPlan              zabbix.Plan `json:"zabbix_plan"`
-	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, zabbixPlan}
+		ModelRevision               string      `json:"model_revision"`
+		Domain                      string      `json:"domain"`
+		IPv4Only                    bool        `json:"ipv4_only"`
+		AuthoritativeDNS            string      `json:"authoritative_dns"`
+		AuthoritativeDNSVersion     string      `json:"authoritative_dns_version"`
+		AuthoritativePackageVersion string      `json:"authoritative_package_version"`
+		AuthoritativeDNSPort        string      `json:"authoritative_dns_port"`
+		DynamicZones                []string    `json:"dynamic_zones"`
+		AdGuardForwardZones         []string    `json:"adguard_forward_zones"`
+		DNSPlan                     dns.Plan    `json:"dns_plan"`
+		ZabbixPlan                  zabbix.Plan `json:"zabbix_plan"`
+	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, zabbixPlan}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err

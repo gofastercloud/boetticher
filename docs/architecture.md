@@ -11,13 +11,15 @@ boetticher is a small, opinionated infrastructure distribution rather than a con
 | 50 | SANDBOX | `10.10.50.0/24` | `10.10.50.1` | untrusted/test clients |
 | 99 | MGMT | `10.10.99.0/24` | `10.10.99.1` | infrastructure administration |
 
-The fixed core addresses are `lab-fw-01` at `10.10.99.1`, Proxmox at `10.10.99.5`, DNS at `10.10.20.10` and `10.10.20.11`, monitor at `10.10.99.20`, and portal at `10.10.20.30`. IPv6 is deliberately unsupported in V1.
+The fixed core addresses are `lab-fw-01` at `10.10.99.1`, Proxmox at `10.10.99.5`, DNS at `10.10.20.10` and `10.10.20.11`, monitor at `10.10.99.20`, and portal at `10.10.20.30`. The Proxmox service URL is `https://proxmox.lab.home.arpa:8006`; all platform URLs are represented by static model-generated DNS records. IPv6 is deliberately unsupported in V1.
 
 OPNsense owns routing, NAT, inter-zone firewalling, DHCP, SANDBOX DNS/NTP, and network aliases. Proxmox does not perform inter-VLAN routing. The firewall VM has a HOME-side WAN device on `vmbr0` and an untagged internal trunk device on VLAN-aware `vmbr1`; OPNsense owns the VLAN subinterfaces on that trunk.
 
 `vmbr1` initially has no physical member. This is virtual-only bootstrap mode. A second NIC and managed switch can later carry the same tagged trunk without changing the logical model.
 
 Physical NICs are installation-specific bindings, not logical architecture. Preflight identifies the upstream device from the active bridge/address/default-route/bootstrap evidence. It auto-proposes exactly one otherwise-unused physical Ethernet interface as the trunk, accepts an explicit selection when several remain, and stops with `HOLD` when evidence is ambiguous. Stable MAC/PCI identity is persisted separately from the current Linux interface name.
+
+Storage is similarly explicit. The single-disk profile uses Proxmox's existing directory-backed local storage. The dedicated-data-disk profile requires a stable `/dev/disk/by-id/...` input and bootstrap creates only the fixed `vg_boetticher` thin-pool and backup filesystem layout; it does not inspect or adopt unrelated disks.
 
 ## Foundation guests
 

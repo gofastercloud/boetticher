@@ -35,7 +35,7 @@ HOME / existing LAN
 
 OPNsense is the routing and inter-zone security boundary. Proxmox does not route between VLANs. The fixed V1 addresses, IPv4-only model, dual DNS/NTP design, storage profiles, and platform guest IDs are part of the product contract.
 
-The internal namespace is `lab.home.arpa`. The generated platform records include `opnsense.lab.home.arpa`, `monitor.lab.home.arpa`, `portal.lab.home.arpa`, `dns01.lab.home.arpa`, and `dns02.lab.home.arpa`. The main web entry points are `https://opnsense.lab.home.arpa`, `https://monitor.lab.home.arpa`, and `https://portal.lab.home.arpa`.
+The internal namespace is `lab.home.arpa`. The generated platform records include `opnsense.lab.home.arpa`, `proxmox.lab.home.arpa`, `monitor.lab.home.arpa`, `portal.lab.home.arpa`, `dns01.lab.home.arpa`, and `dns02.lab.home.arpa`. The main web entry points are `https://proxmox.lab.home.arpa:8006`, `https://opnsense.lab.home.arpa`, `https://monitor.lab.home.arpa`, and `https://portal.lab.home.arpa`.
 
 ## What it promises
 
@@ -52,11 +52,16 @@ The internal namespace is `lab.home.arpa`. The generated platform records includ
 - Fresh supported Proxmox VE x86 installation with node name `lab-proxmox-01`. The first supported Proxmox release will be recorded after a clean installation has been tried; this source tree does not imply that every PVE release works.
 - Minimum host shape for the foundation: 4 logical CPU threads, 16 GiB RAM, and 128 GiB usable storage. 4+ cores, 32 GiB RAM, and 256 GiB or more is a much friendlier size for user workloads.
 - One physical Ethernet NIC minimum. A second NIC and managed 802.1Q switch are recommended for physical VLAN breakout, but `vmbr1` may remain virtual-only.
-- Controller: macOS arm64/amd64 or Linux arm64/amd64. Native Windows is out of scope; WSL2 is only supported if separately tested.
+- Controller: macOS arm64/amd64 or Linux arm64/amd64. The controller is a separate operator machine; do not run the V1 workflow on the target Proxmox host. Native Windows is out of scope; WSL2 is only supported if separately tested.
 - Controller tools: Go matching `go.mod`, `ssh`, `ssh-keyscan`, `age-keygen`, `sops`, OpenTofu, and Ansible Core. `boetticher preflight` validates versions before mutation.
 - OPNsense 26.7.2_2 at the exact qualified patch recorded in `site.yml`; later 26.7 patches require explicit boetticher qualification.
 - Zabbix 7.0 LTS: full upstream support through June 2027 and limited support through June 2029.
 - Either the single-disk or dedicated-data-disk storage profile.
+
+The single-disk profile needs no extra storage preparation. For
+`dedicated-data-disk`, set `storage_device` to a stable `/dev/disk/by-id/...`
+path in the private site file; bootstrap creates and registers the fixed
+`vg_boetticher` layout after the operator confirms the device.
 
 ## Quickstart
 

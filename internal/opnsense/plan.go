@@ -338,7 +338,7 @@ func (p Plan) keaPayloads(tsigSecret string) []KeaSubnetPayload {
 			payload.Subnet4.DDNSQualifyingSuffix = forwardZone
 			payload.Subnet4.DDNSDNSServer = "10.10.20.10"
 			payload.Subnet4.DDNSDNSPort = dns.AuthoritativePort
-			payload.Subnet4.DDNSDomainKeyName = strings.ToLower(zone.Name) + ".ddns." + "lab.home.arpa."
+			payload.Subnet4.DDNSDomainKeyName = dns.TSIGKeyName(zone.Name, model.DefaultDomain)
 			payload.Subnet4.DDNSDomainKeySecret = tsigSecret
 			payload.Subnet4.DDNSDomainKeyAlgorithm = "hmac-sha256"
 			payload.Subnet4.DDNSUpdateOnRenew = true

@@ -17,3 +17,10 @@ Interpretation matters:
 - `INCONSISTENT` means it is stale, malformed, or not safe to use.
 - `NOT TESTED`, `HOLD`, and `INCONCLUSIVE` are preserved until the required live evidence exists.
 - A passing local plan, formatter, or API fixture does not prove deployment, authenticated journeys, or physical client isolation.
+
+For a dedicated data disk, check the configured stable identity in `site.yml`
+and review `boetticher doctor --site my-boetticher`. Bootstrap refuses the
+system disk, populated disks, unexpected existing volume groups, and
+conflicting Proxmox storage definitions. It will not guess a replacement
+device; update the site configuration deliberately and repeat the guarded
+bootstrap step.

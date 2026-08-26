@@ -4,7 +4,7 @@
     that:
       - dns_plan is defined
       - dns_plan.authoritative_implementation == 'PowerDNS Authoritative'
-      - dns_plan.authoritative_version == '4.9.16'
+      - dns_plan.authoritative_version == '4.9.17'
       - dns_plan.authoritative_port == '5353'
       - ddns_tsig_secret is defined
       - ddns_tsig_secret | length > 0
@@ -56,8 +56,8 @@
 - name: Install the qualified PowerDNS package
   ansible.builtin.apt:
     name:
-      - pdns-server
-      - pdns-backend-sqlite3
+      - "pdns-server={{ dns_plan.authoritative_package_version }}"
+      - "pdns-backend-sqlite3={{ dns_plan.authoritative_package_version }}"
       - sqlite3
     state: present
     update_cache: "{{ powerdns_repository.changed | default(false) }}"
@@ -72,8 +72,8 @@
 
 - name: Refuse an unqualified PowerDNS version
   ansible.builtin.assert:
-    that: "'4.9.16' in powerdns_version.stdout"
-    fail_msg: "The installed PowerDNS version is not the qualified 4.9.16 release"
+    that: "'4.9.17' in powerdns_version.stdout"
+    fail_msg: "The installed PowerDNS version is not the qualified 4.9.17 release"
   when: inventory_hostname in groups.get('dns', [])
 
 - name: Stop PowerDNS before initializing its local database
@@ -117,51 +117,81 @@
   notify: restart pdns
   when: inventory_hostname in groups.get('dns', [])
 
-- name: Add the Kea DDNS TSIG key to the primary
+- name: Store the deterministic Kea DDNS TSIG keys without exposing secrets in argv
   ansible.builtin.command:
     argv:
-      - pdnsutil
-      - add-tsig-key
-      - trusted-ddns
-      - "{{ ddns_tsig_secret }}"
-      - hmac-sha256
-  register: tsig_key_result
-  changed_when: tsig_key_result.rc == 0
-  failed_when: tsig_key_result.rc != 0 and 'already exists' not in (tsig_key_result.stderr | lower)
+      - sqlite3
+      - /var/lib/powerdns/pdns.sqlite3
+    stdin: >-
+      INSERT OR REPLACE INTO tsigkeys (name, algorithm, secret) VALUES
+      ('{{ item.tsig_key_name | replace("'", "''") }}',
+       '{{ dns_plan.ddns.tsig_algorithm }}',
+       '{{ ddns_tsig_secret | replace("'", "''") }}');
+    stdin_add_newline: true
+  loop: "{{ dns_plan.ddns.zones }}"
+  changed_when: false
   no_log: true
   when: inventory_hostname == 'lab-dns-01'
 
 - name: Read current PowerDNS zones on the primary
-  ansible.builtin.command: pdnsutil list-all-zones
+  ansible.builtin.command: pdnsutil zone list-all
   register: primary_zones
   changed_when: false
   when: inventory_hostname == 'lab-dns-01'
 
 - name: Create the static and dynamic authoritative zones on the primary
   ansible.builtin.command: >-
-    pdnsutil create-zone {{ item }}
-    lab-dns-01.{{ dns_plan.static_zone }} lab-dns-02.{{ dns_plan.static_zone }}
+    pdnsutil zone create {{ item }}
   loop: "{{ [dns_plan.static_zone] + (dns_plan.dynamic_zones | map(attribute='name') | list) + (dns_plan.reverse_zones | map(attribute='name') | list) }}"
   when:
     - inventory_hostname == 'lab-dns-01'
     - item not in primary_zones.stdout
 
+- name: Initialize authoritative NS records on the primary
+  ansible.builtin.command: >-
+    pdnsutil rrset replace {{ item }} {{ item }} NS 300
+    lab-dns-01.{{ dns_plan.static_zone }}. lab-dns-02.{{ dns_plan.static_zone }}.
+  loop: "{{ [dns_plan.static_zone] + (dns_plan.dynamic_zones | map(attribute='name') | list) + (dns_plan.reverse_zones | map(attribute='name') | list) }}"
+  when: inventory_hostname == 'lab-dns-01'
+
 - name: Publish model-owned static A records to the primary
   ansible.builtin.command: >-
-    pdnsutil replace-rrset {{ dns_plan.static_zone }} {{ item.name | replace('.' + dns_plan.static_zone, '') }}
+    pdnsutil rrset replace {{ dns_plan.static_zone }} {{ item.name }}.
     {{ item.type }} 300 {{ item.address }}
   loop: "{{ dns_plan.static_records }}"
   when: inventory_hostname == 'lab-dns-01'
 
+- name: Authorize Kea DDNS updates for dynamic forward zones
+  ansible.builtin.shell: >-
+    pdnsutil metadata set {{ item.forward_zone }} ALLOW-DNSUPDATE-FROM
+    {{ dns_plan.ddns.update_sources | join(' ') }} &&
+    pdnsutil metadata set {{ item.forward_zone }} TSIG-ALLOW-DNSUPDATE {{ item.tsig_key_name }}
+  args:
+    executable: /bin/sh
+  loop: "{{ dns_plan.ddns.zones }}"
+  changed_when: false
+  when: inventory_hostname == 'lab-dns-01'
+
+- name: Authorize Kea DDNS updates for reverse zones
+  ansible.builtin.shell: >-
+    pdnsutil metadata set {{ item.reverse_zone }} ALLOW-DNSUPDATE-FROM
+    {{ dns_plan.ddns.update_sources | join(' ') }} &&
+    pdnsutil metadata set {{ item.reverse_zone }} TSIG-ALLOW-DNSUPDATE {{ item.tsig_key_name }}
+  args:
+    executable: /bin/sh
+  loop: "{{ dns_plan.ddns.zones }}"
+  changed_when: false
+  when: inventory_hostname == 'lab-dns-01'
+
 - name: Read current PowerDNS zones on the secondary
-  ansible.builtin.command: pdnsutil list-all-zones
+  ansible.builtin.command: pdnsutil zone list-all
   register: secondary_zones
   changed_when: false
   when: inventory_hostname == 'lab-dns-02'
 
 - name: Configure secondary transfer for each platform zone
   ansible.builtin.command: >-
-    pdnsutil create-secondary-zone {{ item }} 10.10.20.10:5353
+    pdnsutil zone create-secondary {{ item }} 10.10.20.10:5353
   loop: "{{ [dns_plan.static_zone] + (dns_plan.dynamic_zones | map(attribute='name') | list) + (dns_plan.reverse_zones | map(attribute='name') | list) }}"
   when:
     - inventory_hostname == 'lab-dns-02'

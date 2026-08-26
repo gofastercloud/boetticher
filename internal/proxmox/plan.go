@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
+	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
 type GuestKind string
@@ -35,6 +37,7 @@ type GuestPlan struct {
 	DiskGiB    int       `json:"disk_gib"`
 	Monitoring bool      `json:"monitoring"`
 	Backup     bool      `json:"backup"`
+	Tags       []string  `json:"tags,omitempty"`
 }
 
 type Plan struct {
@@ -273,18 +276,47 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	storage := "local"
+	guestStorage := "local"
 	if s.StorageProfile == "dedicated-data-disk" {
-		storage = "local-lvm"
+		guestStorage = storage.GuestStorageID
 	}
 	guests := []GuestPlan{
-		{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Gateway: "10.10.99.1", VLAN: 99, Kind: KindQEMU, Cores: 2, MemoryMiB: 2048, DiskGiB: 16, Monitoring: true, Backup: true},
-		{VMID: model.DNS01VMID, Name: "lab-dns-01", Hostname: "lab-dns-01", Zone: "SERVERS", Address: "10.10.20.10", Gateway: "10.10.20.1", VLAN: 20, Kind: KindLXC, Cores: 2, MemoryMiB: 1024, DiskGiB: 8, Monitoring: true, Backup: true},
-		{VMID: model.DNS02VMID, Name: "lab-dns-02", Hostname: "lab-dns-02", Zone: "SERVERS", Address: "10.10.20.11", Gateway: "10.10.20.1", VLAN: 20, Kind: KindLXC, Cores: 2, MemoryMiB: 1024, DiskGiB: 8, Monitoring: true, Backup: true},
-		{VMID: model.MonitorVMID, Name: "lab-monitor-01", Hostname: "lab-monitor-01", Zone: "MGMT", Address: "10.10.99.20", Gateway: "10.10.99.1", VLAN: 99, Kind: KindLXC, Cores: 2, MemoryMiB: 2048, DiskGiB: 16, Monitoring: true, Backup: true},
-		{VMID: model.PortalVMID, Name: "lab-portal-01", Hostname: "lab-portal-01", Zone: "SERVERS", Address: "10.10.20.30", Gateway: "10.10.20.1", VLAN: 20, Kind: KindLXC, Cores: 1, MemoryMiB: 512, DiskGiB: 4, Monitoring: true, Backup: true},
+		{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Gateway: "10.10.99.1", VLAN: 99, Kind: KindQEMU, Cores: 2, MemoryMiB: 2048, DiskGiB: 16, Monitoring: componentMonitoring(s, "lab-fw-01"), Backup: componentBackup(s, "lab-fw-01"), Tags: componentTags(s, "lab-fw-01")},
+		{VMID: model.DNS01VMID, Name: "lab-dns-01", Hostname: "lab-dns-01", Zone: "SERVERS", Address: "10.10.20.10", Gateway: "10.10.20.1", VLAN: 20, Kind: KindLXC, Cores: 2, MemoryMiB: 1024, DiskGiB: 8, Monitoring: componentMonitoring(s, "lab-dns-01"), Backup: componentBackup(s, "lab-dns-01"), Tags: componentTags(s, "lab-dns-01")},
+		{VMID: model.DNS02VMID, Name: "lab-dns-02", Hostname: "lab-dns-02", Zone: "SERVERS", Address: "10.10.20.11", Gateway: "10.10.20.1", VLAN: 20, Kind: KindLXC, Cores: 2, MemoryMiB: 1024, DiskGiB: 8, Monitoring: componentMonitoring(s, "lab-dns-02"), Backup: componentBackup(s, "lab-dns-02"), Tags: componentTags(s, "lab-dns-02")},
+		{VMID: model.MonitorVMID, Name: "lab-monitor-01", Hostname: "lab-monitor-01", Zone: "MGMT", Address: "10.10.99.20", Gateway: "10.10.99.1", VLAN: 99, Kind: KindLXC, Cores: 2, MemoryMiB: 2048, DiskGiB: 16, Monitoring: componentMonitoring(s, "lab-monitor-01"), Backup: componentBackup(s, "lab-monitor-01"), Tags: componentTags(s, "lab-monitor-01")},
+		{VMID: model.PortalVMID, Name: "lab-portal-01", Hostname: "lab-portal-01", Zone: "SERVERS", Address: "10.10.20.30", Gateway: "10.10.20.1", VLAN: 20, Kind: KindLXC, Cores: 1, MemoryMiB: 512, DiskGiB: 4, Monitoring: componentMonitoring(s, "lab-portal-01"), Backup: componentBackup(s, "lab-portal-01"), Tags: componentTags(s, "lab-portal-01")},
 	}
-	return Plan{ModelRevision: revision, ManagedBy: "boetticher", Node: s.ProxmoxNode, Storage: storage, Guests: guests}, nil
+	return Plan{ModelRevision: revision, ManagedBy: "boetticher", Node: s.ProxmoxNode, Storage: guestStorage, Guests: guests}, nil
+}
+
+func componentTags(s model.Site, name string) []string {
+	for _, component := range s.PlatformComponents() {
+		if component.Name == name {
+			tags := append([]string(nil), component.Tags...)
+			sort.Strings(tags)
+			return tags
+		}
+	}
+	return nil
+}
+
+func componentMonitoring(s model.Site, name string) bool {
+	for _, component := range s.PlatformComponents() {
+		if component.Name == name {
+			return component.Monitoring
+		}
+	}
+	return false
+}
+
+func componentBackup(s model.Site, name string) bool {
+	for _, component := range s.PlatformComponents() {
+		if component.Name == name {
+			return component.Backup
+		}
+	}
+	return false
 }
 
 // Provision creates the non-firewall foundation guests and is safe to re-run.
@@ -577,7 +609,10 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 	var current map[string]any
 	err := client.QEMUConfig(ctx, plan.Node, guest.VMID, &current)
 	if err == nil {
-		return validateExistingGuest(current, guest)
+		if err := validateExistingGuestIdentity(current, guest); err != nil {
+			return err
+		}
+		return ensureExistingGuestTags(ctx, client, plan, guest, current)
 	}
 	if !IsNotFound(err) {
 		return fmt.Errorf("inspect VM %s: %w", guest.Name, err)
@@ -595,6 +630,7 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 		"net1":    {"virtio,bridge=vmbr1,firewall=1"},
 		"ide2":    {iso + ",media=cdrom"},
 		"serial0": {"socket"},
+		"tags":    {strings.Join(guest.Tags, ";")},
 	}
 	if err := client.CreateVM(ctx, plan.Node, guest.VMID, params); err != nil {
 		return fmt.Errorf("create OPNsense VM %s: %w", guest.Name, err)
@@ -606,7 +642,10 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan, 
 	var current map[string]any
 	err := client.LXCConfig(ctx, plan.Node, guest.VMID, &current)
 	if err == nil {
-		return validateExistingGuest(current, guest)
+		if err := validateExistingGuestIdentity(current, guest); err != nil {
+			return err
+		}
+		return ensureExistingGuestTags(ctx, client, plan, guest, current)
 	}
 	if !IsNotFound(err) {
 		return fmt.Errorf("inspect container %s: %w", guest.Name, err)
@@ -620,6 +659,7 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan, 
 		"onboot":       {"1"},
 		"features":     {"nesting=0"},
 		"rootfs":       {fmt.Sprintf("%s:%d", plan.Storage, guest.DiskGiB)},
+		"tags":         {strings.Join(guest.Tags, ";")},
 		"net0":         {fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,ip=%s/24,gw=%s", guest.VLAN, guest.Address, gatewayFor(guest.Zone))},
 	}
 	if err := client.CreateLXC(ctx, plan.Node, guest.VMID, params); err != nil {
@@ -629,12 +669,54 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan, 
 }
 
 func validateExistingGuest(current map[string]any, expected GuestPlan) error {
+	if err := validateExistingGuestIdentity(current, expected); err != nil {
+		return err
+	}
+	got, _ := current["tags"].(string)
+	if canonicalTags(got) != canonicalTags(strings.Join(expected.Tags, ";")) {
+		return fmt.Errorf("guest %s has unexpected tags %q, expected %q", expected.Name, got, strings.Join(expected.Tags, ";"))
+	}
+	return nil
+}
+
+func validateExistingGuestIdentity(current map[string]any, expected GuestPlan) error {
 	for key, want := range map[string]string{"name": expected.Name, "hostname": expected.Hostname} {
 		if got, ok := current[key].(string); ok && got != "" && got != want {
 			return fmt.Errorf("guest %s has unexpected %s %q, expected %q", expected.Name, key, got, want)
 		}
 	}
 	return nil
+}
+
+func ensureExistingGuestTags(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) error {
+	want := strings.Join(guest.Tags, ";")
+	got, _ := current["tags"].(string)
+	if canonicalTags(got) == canonicalTags(want) {
+		return nil
+	}
+	params := url.Values{"tags": {want}}
+	var err error
+	if guest.Kind == KindQEMU {
+		err = client.SetVMConfig(ctx, plan.Node, guest.VMID, params)
+	} else {
+		err = client.SetLXCConfig(ctx, plan.Node, guest.VMID, params)
+	}
+	if err != nil {
+		return fmt.Errorf("apply boetticher tags to %s: %w", guest.Name, err)
+	}
+	return nil
+}
+
+func canonicalTags(value string) string {
+	parts := strings.Split(value, ";")
+	filtered := parts[:0]
+	for _, part := range parts {
+		if strings.TrimSpace(part) != "" {
+			filtered = append(filtered, strings.TrimSpace(part))
+		}
+	}
+	sort.Strings(filtered)
+	return strings.Join(filtered, ";")
 }
 
 func gatewayFor(zone string) string {

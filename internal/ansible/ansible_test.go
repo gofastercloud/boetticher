@@ -1,6 +1,8 @@
 package ansible
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -32,6 +34,45 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 	}
 }
 
+func TestAgent2IsEnabledOnEveryManagedLinuxHost(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "groups.get('portal', []) + ['lab-monitor-01']") {
+		t.Fatal("portal is not included in the managed Agent 2 service condition")
+	}
+}
+
+func TestEndpointTLSKeysAreGeneratedLocallyAndNeverSuppliedByController(t *testing.T) {
+	for _, role := range []string{"monitor", "portal"} {
+		path := filepath.Join("..", "..", "ansible", "roles", role, "tasks", "main.yml")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		if !strings.Contains(text, "openssl\n") || !strings.Contains(text, "genpkey") || !strings.Contains(text, "Restrict the "+role+" endpoint private key") {
+			t.Fatalf("%s role does not generate and restrict its endpoint key locally", role)
+		}
+		if strings.Contains(text, role+"_server_key_pem") {
+			t.Fatalf("%s role still accepts a controller-supplied endpoint private key", role)
+		}
+		if !strings.Contains(text, "ansible.builtin.fetch:") || !strings.Contains(text, role+".csr.pem") {
+			t.Fatalf("%s role does not return its CSR to the controller", role)
+		}
+	}
+	portal, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "portal", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(portal), "Enable and start the portal nginx service") {
+		t.Fatal("portal role does not enable and start nginx after installing its certificate")
+	}
+}
+
 func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	variables, err := Variables(site)
@@ -41,7 +82,8 @@ func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
 	text := string(variables)
 	for _, expected := range []string{
 		`"authoritative_dns": "PowerDNS Authoritative"`,
-		`"authoritative_dns_version": "4.9.16"`,
+		`"authoritative_dns_version": "4.9.17"`,
+		`"authoritative_package_version": "4.9.17-1pdns.bookworm"`,
 		`"authoritative_dns_port": "5353"`,
 		`"trusted.lab.home.arpa"`,
 		`"sandbox.lab.home.arpa"`,
@@ -52,5 +94,23 @@ func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
 	}
 	if strings.Contains(text, "c2VjcmV0") {
 		t.Fatal("generated Ansible variables contain secret material")
+	}
+}
+
+func TestDNSRoleDoesNotPlaceTSIGSecretsInProcessArguments(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "stdin: >-") || !strings.Contains(text, "INSERT OR REPLACE INTO tsigkeys") {
+		t.Fatal("DNS role does not provide TSIG material through protected sqlite3 stdin")
+	}
+	if strings.Contains(text, "pdnsutil\n      - tsigkey\n      - import") || strings.Contains(text, "- \"{{ ddns_tsig_secret }}\"") {
+		t.Fatal("DNS role still places the TSIG secret in a process argument")
+	}
+	if !strings.Contains(text, "no_log: true") {
+		t.Fatal("DNS role does not suppress secret-bearing task output")
 	}
 }

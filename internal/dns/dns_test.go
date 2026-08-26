@@ -1,6 +1,8 @@
 package dns
 
 import (
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -12,14 +14,41 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Implementation != "PowerDNS Authoritative" || len(plan.DynamicZones) != 4 || len(plan.ReverseZones) != 4 {
+	if plan.Implementation != "PowerDNS Authoritative" || plan.PackageVersion != "4.9.17-1pdns.bookworm" || len(plan.DynamicZones) != 4 || len(plan.ReverseZones) != 4 {
 		t.Fatalf("unexpected DNS plan: %#v", plan)
+	}
+	if got := plan.AuthoritativeForwardTarget; got != "127.0.0.1:5353" || len(plan.AuthoritativeListenAddresses) != 2 {
+		t.Fatalf("incompatible authoritative listener contract: %#v", plan)
 	}
 	if plan.DDNS.Source != "OPNsense Kea D2" || len(plan.DDNS.UpdateSources) != 1 || plan.DDNS.UpdateSources[0] != "10.10.99.1" || plan.DDNS.LeaseFailurePolicy != "lease-continues-without-DNS-registration" {
 		t.Fatalf("unexpected DDNS boundary: %#v", plan.DDNS)
 	}
-	if len(plan.AdGuardForwardZones) != 5 {
+	if len(plan.AdGuardForwardZones) != 5 || len(plan.AdGuardReverseZones) != 4 {
 		t.Fatalf("AdGuard did not receive static and dynamic forwarding zones: %#v", plan.AdGuardForwardZones)
+	}
+	if !hasRecord(plan.StaticRecords, "opnsense.lab.home.arpa", "10.10.99.1") {
+		t.Fatal("component URL hostname was not added to the static DNS projection")
+	}
+	if !hasRecord(plan.StaticRecords, "proxmox.lab.home.arpa", "10.10.99.5") {
+		t.Fatal("Proxmox component URL hostname was not added to the static DNS projection")
+	}
+	for _, component := range site.PlatformComponents() {
+		if component.URL == "" {
+			continue
+		}
+		parsed, err := url.Parse(component.URL)
+		if err != nil {
+			t.Fatalf("component URL %q is invalid: %v", component.URL, err)
+		}
+		if !hasRecord(plan.StaticRecords, parsed.Hostname(), component.Address) {
+			t.Fatalf("component URL hostname %s has no static DNS record", parsed.Hostname())
+		}
+	}
+	for _, zone := range plan.DDNS.Zones {
+		want := TSIGKeyName(zone.SourceZone, model.DefaultDomain)
+		if zone.TSIGKeyName != want {
+			t.Fatalf("TSIG key for %s = %q, want %q", zone.SourceZone, zone.TSIGKeyName, want)
+		}
 	}
 	name, err := QualifiedName(site, "SERVERS", "nas01")
 	if err != nil || name != "nas01.servers.lab.home.arpa" {
@@ -30,6 +59,50 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	}
 	if _, err := QualifiedName(site, "SERVERS", "lab-dns-01"); err == nil {
 		t.Fatal("dynamic registration claimed a platform-owned host label")
+	}
+}
+
+func hasRecord(records []StaticRecord, name, address string) bool {
+	for _, record := range records {
+		if record.Name == name && record.Address == address {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPowerDNSCommandPlanUsesQualifiedSyntaxAndNeverEmbedsARealSecret(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := PrimaryCommandPlan(plan)
+	if len(commands) == 0 {
+		t.Fatal("empty PowerDNS command plan")
+	}
+	seenTSIG := false
+	seenForward := false
+	seenReverse := false
+	for _, command := range commands {
+		if command.SecretStdin {
+			seenTSIG = true
+			if command.Args[0] != "sqlite3" || !strings.Contains(command.Stdin, DDNSSecretPlaceholder) {
+				t.Fatalf("TSIG command does not use protected stdin: %#v", command)
+			}
+			if strings.Contains(strings.Join(command.Args, " "), DDNSSecretPlaceholder) {
+				t.Fatal("TSIG placeholder entered the sqlite3 argv")
+			}
+		}
+		if len(command.Args) >= 3 && command.Args[1] == "create-zone" {
+			t.Fatalf("legacy PowerDNS zone command emitted: %#v", command.Args)
+		}
+		if len(command.Args) >= 5 && command.Args[1] == "metadata" && command.Args[4] == "ALLOW-DNSUPDATE-FROM" {
+			seenForward = true
+			seenReverse = seenReverse || command.Args[3] == "10.10.10.in-addr.arpa"
+		}
+	}
+	if !seenTSIG || !seenForward || !seenReverse {
+		t.Fatalf("incomplete PowerDNS command plan: %#v", commands)
 	}
 }
 

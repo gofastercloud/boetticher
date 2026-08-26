@@ -258,6 +258,43 @@ func (c *Client) EnsureDirectoryStorage(ctx context.Context, storageID, storageP
 	return nil
 }
 
+// EnsureLVMThinStorage registers the fixed guest-disk storage created by the
+// dedicated-data-disk initializer. It refuses a conflicting Proxmox storage
+// definition and never discovers or adopts arbitrary user storage.
+func (c *Client) EnsureLVMThinStorage(ctx context.Context, storageID, volumeGroup, thinPool string) error {
+	if c == nil {
+		return errors.New("Proxmox client is required")
+	}
+	if storageID == "" || volumeGroup == "" || thinPool == "" {
+		return errors.New("storage ID, volume group, and thin pool are required")
+	}
+	var storages []struct {
+		Storage     string `json:"storage"`
+		Type        string `json:"type"`
+		VolumeGroup string `json:"vgname"`
+		ThinPool    string `json:"thinpool"`
+		Content     string `json:"content"`
+	}
+	if err := c.Get(ctx, "/cluster/storage", nil, &storages); err != nil {
+		return fmt.Errorf("list Proxmox storage: %w", err)
+	}
+	for _, storage := range storages {
+		if storage.Storage != storageID {
+			continue
+		}
+		if storage.Type != "lvmthin" || storage.VolumeGroup != volumeGroup || storage.ThinPool != thinPool || !strings.Contains(storage.Content, "images") || !strings.Contains(storage.Content, "rootdir") {
+			return fmt.Errorf("Proxmox storage %q has a conflicting definition", storageID)
+		}
+		return nil
+	}
+	if err := c.Post(ctx, "/cluster/storage", url.Values{
+		"storage": {storageID}, "type": {"lvmthin"}, "vgname": {volumeGroup}, "thinpool": {thinPool}, "content": {"images,rootdir"},
+	}, nil); err != nil {
+		return fmt.Errorf("create Proxmox guest storage %q: %w", storageID, err)
+	}
+	return nil
+}
+
 func (c *Client) CreateNodeNetwork(ctx context.Context, node string, params url.Values) error {
 	return c.Post(ctx, path.Join("/nodes", node, "network"), params, nil)
 }

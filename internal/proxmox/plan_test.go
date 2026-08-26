@@ -1,7 +1,9 @@
 package proxmox
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -54,5 +56,52 @@ func TestUserWorkloadNeverEntersPlatformPlan(t *testing.T) {
 		if guest.VMID == 550 {
 			t.Fatal("user workload entered the boetticher platform plan")
 		}
+	}
+}
+
+func TestPlatformGuestPlanCarriesTagsForBackupAndVisibility(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, guest := range plan.Guests {
+		if !guest.Backup {
+			t.Fatalf("platform guest %s is not marked for backup", guest.Name)
+		}
+		if !hasTag(guest.Tags, model.TagBoetticher) || !hasTag(guest.Tags, model.TagManaged) || !hasTag(guest.Tags, model.TagBackup) {
+			t.Fatalf("platform guest %s has incomplete tags: %#v", guest.Name, guest.Tags)
+		}
+	}
+}
+
+func hasTag(tags []string, wanted string) bool {
+	for _, tag := range tags {
+		if tag == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func TestExistingGuestTagsAreReconciled(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodPost || r.URL.Path != "/api2/json/nodes/lab-proxmox-01/qemu/100/config" {
+			t.Errorf("unexpected tag update request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("parse tag update form: %v", err)
+		}
+		if got := canonicalTags(r.Form.Get("tags")); got != canonicalTags("backup;boetticher;firewall;infra;managed;network;platform") {
+			t.Errorf("tags = %q", got)
+		}
+		return response([]byte(`{"data":null}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := ensureExistingGuestTags(context.Background(), client, plan, plan.Guests[0], map[string]any{"tags": "boetticher"}); err != nil {
+		t.Fatal(err)
 	}
 }

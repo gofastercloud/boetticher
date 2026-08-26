@@ -1,6 +1,6 @@
 launch=gsqlite3
 gsqlite3-database=/var/lib/powerdns/pdns.sqlite3
-local-address={{ ansible_host }}
+local-address={{ dns_plan.authoritative_listen_addresses | join(',') }}
 local-port=5353
 setuid=pdns
 setgid=pdns
@@ -14,5 +14,5 @@ allow-axfr-ips={{ (inventory_hostname == 'lab-dns-01') | ternary('10.10.20.11', 
 allow-notify-from={{ (inventory_hostname == 'lab-dns-01') | ternary('10.10.20.11', '10.10.20.10') }}
 also-notify=10.10.20.11:5353
 dnsupdate=yes
-allow-dnsupdate-from=10.10.99.1
+allow-dnsupdate-from=
 default-soa-content=lab-dns-01.{{ dns_plan.static_zone }} hostmaster.{{ dns_plan.static_zone }} 0 10800 3600 604800 300

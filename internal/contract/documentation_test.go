@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
 func TestPublicDocumentationMatchesV01Model(t *testing.T) {
@@ -36,8 +37,11 @@ func TestPublicDocumentationMatchesV01Model(t *testing.T) {
 		"100–199",
 		"200–499",
 		"500–899",
+		storage.VolumeGroup,
+		storage.GuestStorageID,
+		storage.BackupStorageID,
 	} {
-		if !strings.Contains(readme, want) && !strings.Contains(architecture, want) && !strings.Contains(ownership, want) {
+		if !strings.Contains(readme, want) && !strings.Contains(architecture, want) && !strings.Contains(ownership, want) && !strings.Contains(read("docs/storage/dedicated-data-disk.md"), want) {
 			t.Errorf("public documentation is missing model contract %q", want)
 		}
 	}
@@ -50,8 +54,8 @@ func TestPublicDocumentationMatchesV01Model(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"boetticher converge [--site DIR] [--age-identity PATH] [--opnsense-url URL] [--opnsense-ca PATH] [--proxmox-ca PATH] [--insecure] [--ansible-playbook PATH] [--dry-run]",
-		"boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--opnsense-iso PATH] [--trunk-interface IFACE] [--dry-run]",
+		"boetticher converge [--site DIR] [--age-identity PATH] [--opnsense-url URL] [--opnsense-ca PATH] [--proxmox-ca PATH] [--zabbix-url URL] [--insecure] [--ansible-playbook PATH] [--dry-run]",
+		"boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--opnsense-iso PATH] [--trunk-interface IFACE] [--dry-run]",
 	} {
 		if !strings.Contains(commands, want) {
 			t.Errorf("command reference is missing %q", want)
