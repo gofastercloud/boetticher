@@ -12,6 +12,6 @@ regexTarget = "line"
 regexes = ['homelab bootstrap']
 
 [[allowlists]]
-description = "Installation prose about credential handoff and API adapters is not a credential"
-regexTarget = "line"
-regexes = ['credential handoff, VLAN/Kea/firewall API adapters, and generated']
+description = "One historical installation sentence was flagged as a credential despite containing only prose"
+commits = ['c72ccf18ad0130b1ff9994f5b7be6de7b90cac7c']
+paths = ['docs/installation.md']

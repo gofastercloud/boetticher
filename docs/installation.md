@@ -50,9 +50,9 @@ fresh Proxmox
 → repeat from a clean installation
 ```
 
-The source build implements and tests the deterministic contract, Proxmox VM
-creation, credential handoff, VLAN/Kea/firewall API adapters, and generated
-state boundary. The unattended OPNsense installer and management
-interface/address transition still need a real first run on exact OPNsense
-26.7.2_2. Until then, `boetticher bootstrap` stops after the Proxmox portion;
-that is a deliberate reminder that the live part has not been tried yet.
+The source build covers the deterministic contract, Proxmox VM creation,
+secure secret handling, network configuration, and generated state boundary.
+The unattended OPNsense installer and management interface/address transition
+still need a real first run on exact OPNsense 26.7.2_2. Until then,
+`boetticher bootstrap` stops after the Proxmox portion; that is a deliberate
+reminder that the live part has not been tried yet.
