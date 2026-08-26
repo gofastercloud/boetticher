@@ -46,6 +46,17 @@ func TestDeploymentModuleNamesFollowResolvedExternalGraph(t *testing.T) {
 	}
 }
 
+func TestArtifactQualificationStatusDistinguishesDefinitionAndContent(t *testing.T) {
+	artifact := model.Artifact{Name: "boetticher-dns-blocky"}
+	if got := artifactQualificationStatus(artifact); got != "NOT BUILT (qualified content evidence absent)" {
+		t.Fatalf("unqualified artifact status = %q", got)
+	}
+	artifact.ContentSHA256 = strings.Repeat("b", 64)
+	if got := artifactQualificationStatus(artifact); got != "QUALIFIED content="+artifact.ContentSHA256 {
+		t.Fatalf("qualified artifact status = %q", got)
+	}
+}
+
 func TestResolvedArtifactContentReachesRuntimeDeclaration(t *testing.T) {
 	declaration := model.ModuleDeclaration{Module: "dns", Artifact: model.Artifact{
 		Name: "boetticher-dns-blocky", Version: "1.0.0", Kind: "lxc", Architecture: "amd64", DefinitionSHA256: strings.Repeat("a", 64),

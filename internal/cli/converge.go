@@ -72,11 +72,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			}
 			fmt.Fprintln(out, "  Appliances:")
 			for _, guest := range plan.Guests {
-				status := "definition resolved"
-				if guest.Artifact.ContentSHA256 == "" && guest.Artifact.Name != "" {
-					status = "NOT BUILT (content evidence absent)"
-				}
-				fmt.Fprintf(out, "    %s  %s  %s\n", guest.Name, guest.Artifact.Name, status)
+				fmt.Fprintf(out, "    %s  %s  %s  definition=%s\n", guest.Name, guest.Artifact.Name, artifactQualificationStatus(guest.Artifact), guest.Artifact.DefinitionSHA256)
 				for _, volume := range guest.Volumes {
 					fmt.Fprintf(out, "    volume %s -> %s (%s, backup=%t)\n", volume.Name, volume.MountPath, volume.Placement, volume.Backup)
 				}
@@ -344,6 +340,16 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	fmt.Fprintf(out, "Deployment: PASS mode=%s model=%s (storage %s)\n", s.Gateway.Mode, firewallPlan.ModelRevision, storagePlan.GuestStorage)
 	return nil
+}
+
+func artifactQualificationStatus(artifact model.Artifact) string {
+	if artifact.Name == "" {
+		return "no appliance artifact"
+	}
+	if artifact.ContentSHA256 == "" {
+		return "NOT BUILT (qualified content evidence absent)"
+	}
+	return "QUALIFIED content=" + artifact.ContentSHA256
 }
 
 // deploymentModuleNames returns the resolved module graph order carried by
