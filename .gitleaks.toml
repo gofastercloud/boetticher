@@ -10,3 +10,8 @@ regexes = ['26\.7\.2_2']
 description = "Historical pre-rename command prose is not a credential"
 regexTarget = "line"
 regexes = ['homelab bootstrap']
+
+[[allowlists]]
+description = "Installation prose about credential handoff and API adapters is not a credential"
+regexTarget = "line"
+regexes = ['credential handoff, VLAN/Kea/firewall API adapters, and generated']
