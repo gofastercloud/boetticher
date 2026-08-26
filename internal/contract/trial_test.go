@@ -92,10 +92,15 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		evidence.ArtifactPath = artifactPath
-		evidence.PackageManifestSHA = strings.Repeat("a", 64)
-		evidence.SBOMSHA256 = strings.Repeat("b", 64)
-		evidence.TrivyReportSHA256 = strings.Repeat("c", 64)
-		evidence, err = artifacts.QualifyEvidence(evidence, artifacts.ScanSummary{})
+		for filename, content := range map[string]string{"package-manifest.txt": "package: trial\n", "sbom.json": "{}\n", "trivy.json": "{\"Results\":[]}\n"} {
+			if err := os.WriteFile(filepath.Join(filepath.Dir(artifactPath), filename), []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		evidence.PackageManifestSHA, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactPath), "package-manifest.txt"), "package manifest")
+		evidence.SBOMSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactPath), "sbom.json"), "SBOM")
+		evidence.TrivyReportSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactPath), "trivy.json"), "Trivy report")
+		evidence, err = artifacts.QualifyEvidence(evidence, artifacts.ScanSummary{Completed: true})
 		if err != nil {
 			t.Fatal(err)
 		}

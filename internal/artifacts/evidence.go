@@ -17,6 +17,9 @@ func WriteEvidence(root, name string, evidence Evidence) error {
 		return fmt.Errorf("artifact evidence requires root, name, artifact path, definition digest, and content digest")
 	}
 	if evidence.Qualified {
+		if !evidence.qualifiedByEvaluator {
+			return fmt.Errorf("qualified artifact evidence must be produced by the qualification evaluator")
+		}
 		if err := validateQualificationDigests(evidence); err != nil {
 			return fmt.Errorf("qualified artifact evidence is incomplete: %w", err)
 		}

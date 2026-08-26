@@ -62,7 +62,7 @@ func TestResolveArtifactEvidenceRejectsChangedBytes(t *testing.T) {
 	}
 	evidence.ArtifactPath = path
 	evidence = completeQualificationEvidence(t, evidence)
-	evidence, err = QualifyEvidence(evidence, ScanSummary{})
+	evidence, err = QualifyEvidence(evidence, ScanSummary{Completed: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestResolveArtifactEvidenceRejectsChangedQualificationInputs(t *testing.T) 
 	}
 	evidence.ArtifactPath = artifactPath
 	evidence = completeQualificationEvidence(t, evidence)
-	evidence, err = QualifyEvidence(evidence, ScanSummary{})
+	evidence, err = QualifyEvidence(evidence, ScanSummary{Completed: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,15 +144,60 @@ func TestQualificationRejectsMissingScanAndSecurityFindings(t *testing.T) {
 		t.Fatal("missing qualification digests were accepted")
 	}
 	evidence = completeQualificationEvidence(t, evidence)
-	if _, err := QualifyEvidence(evidence, ScanSummary{Secrets: 1}); err == nil {
+	if _, err := QualifyEvidence(evidence, ScanSummary{Completed: true, Secrets: 1}); err == nil {
 		t.Fatal("secret finding was accepted")
 	}
-	if _, err := QualifyEvidence(evidence, ScanSummary{FixableCritical: 1}); err == nil {
+	if _, err := QualifyEvidence(evidence, ScanSummary{Completed: true, FixableCritical: 1}); err == nil {
 		t.Fatal("fixable CRITICAL finding was accepted")
 	}
-	qualified, err := QualifyEvidence(evidence, ScanSummary{UnfixedCritical: 1, High: 2})
+	qualified, err := QualifyEvidence(evidence, ScanSummary{Completed: true, UnfixedCritical: 1, High: 2})
 	if err != nil || !qualified.Qualified {
 		t.Fatalf("unfixed/high findings should report but not fail qualification: %#v %v", qualified, err)
+	}
+}
+
+func TestQualificationRejectsIncompleteScan(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "artifact.bin")
+	if err := os.WriteFile(path, []byte("qualified bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := EvidenceForFile(path, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = path
+	evidence = completeQualificationEvidence(t, evidence)
+	if _, err := QualifyEvidence(evidence, ScanSummary{}); err == nil || !strings.Contains(err.Error(), "did not complete") {
+		t.Fatalf("incomplete Trivy scan was accepted: %v", err)
+	}
+}
+
+func TestWriteEvidenceCannotForgeEvaluatorAuthorization(t *testing.T) {
+	root := t.TempDir()
+	artifact, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "artifact.bin")
+	if err := os.WriteFile(path, []byte("artifact"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := EvidenceForFile(path, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = path
+	evidence = completeQualificationEvidence(t, evidence)
+	evidence.QualificationEvaluator = QualificationEvaluator
+	evidence.QualificationPolicyVersion = QualificationPolicyVersion
+	evidence.ScanCompleted = true
+	evidence.Qualified = true
+	if err := WriteEvidence(root, artifact.Name, evidence); err == nil || !strings.Contains(err.Error(), "qualification evaluator") {
+		t.Fatal("WriteEvidence accepted evidence that did not pass through the evaluator")
 	}
 }
 
@@ -465,7 +510,7 @@ func TestTransferredEvidenceIsReboundToControllerArtifactBytes(t *testing.T) {
 	evidence.ArtifactPath = artifactPath
 	evidence = completeQualificationEvidence(t, evidence)
 	evidence.ArtifactPath = "/home/labadmin/build/generated/artifacts/boetticher-logging/boetticher-logging-1.0.0-amd64.tar.zst"
-	qualified, err := QualifyEvidence(evidence, ScanSummary{})
+	qualified, err := QualifyEvidence(evidence, ScanSummary{Completed: true})
 	if err != nil {
 		t.Fatal(err)
 	}

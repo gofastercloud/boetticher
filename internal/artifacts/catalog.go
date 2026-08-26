@@ -40,11 +40,14 @@ type Evidence struct {
 	TrivyReportSHA256          string         `json:"trivy_report_sha256,omitempty"`
 	QualificationPolicyVersion string         `json:"qualification_policy_version,omitempty"`
 	QualificationEvaluator     string         `json:"qualification_evaluator,omitempty"`
+	ScanCompleted              bool           `json:"scan_completed"`
 	DefinitionSHA256           string         `json:"definition_sha256"`
 	Qualified                  bool           `json:"qualified"`
+	qualifiedByEvaluator       bool
 }
 
 type ScanSummary struct {
+	Completed       bool
 	Secrets         int
 	FixableCritical int
 	UnfixedCritical int
@@ -62,6 +65,9 @@ func QualifyEvidence(evidence Evidence, scan ScanSummary) (Evidence, error) {
 	if err := validateQualificationDigests(evidence); err != nil {
 		return Evidence{}, fmt.Errorf("qualification evidence is incomplete: %w", err)
 	}
+	if !scan.Completed {
+		return Evidence{}, fmt.Errorf("qualification failed: Trivy scan did not complete")
+	}
 	if scan.Secrets > 0 {
 		return Evidence{}, fmt.Errorf("qualification failed: Trivy found %d secret finding(s)", scan.Secrets)
 	}
@@ -70,7 +76,9 @@ func QualifyEvidence(evidence Evidence, scan ScanSummary) (Evidence, error) {
 	}
 	evidence.QualificationPolicyVersion = QualificationPolicyVersion
 	evidence.QualificationEvaluator = QualificationEvaluator
+	evidence.ScanCompleted = true
 	evidence.Qualified = true
+	evidence.qualifiedByEvaluator = true
 	return evidence, nil
 }
 
@@ -181,6 +189,9 @@ func validateQualificationDigests(evidence Evidence) error {
 	}
 	if evidence.Qualified && evidence.QualificationEvaluator != QualificationEvaluator {
 		return fmt.Errorf("qualified evidence must be produced by %s", QualificationEvaluator)
+	}
+	if evidence.Qualified && !evidence.ScanCompleted {
+		return fmt.Errorf("qualified evidence must include a completed Trivy scan")
 	}
 	return nil
 }

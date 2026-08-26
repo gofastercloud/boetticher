@@ -100,7 +100,7 @@ func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
 	evidence.PackageManifestSHA, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactFile), "package-manifest.txt"), "package manifest")
 	evidence.SBOMSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactFile), "sbom.json"), "SBOM")
 	evidence.TrivyReportSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactFile), "trivy.json"), "Trivy report")
-	evidence, err = artifacts.QualifyEvidence(evidence, artifacts.ScanSummary{})
+	evidence, err = artifacts.QualifyEvidence(evidence, artifacts.ScanSummary{Completed: true})
 	if err != nil {
 		t.Fatal(err)
 	}

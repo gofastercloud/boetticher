@@ -43,7 +43,7 @@ func main() {
 	if err := json.Unmarshal(data, &report); err != nil {
 		fatalf("decode Trivy report: %v", err)
 	}
-	summary := artifacts.ScanSummary{}
+	summary := artifacts.ScanSummary{Completed: true}
 	for _, result := range report.Results {
 		summary.Secrets += len(result.Secrets)
 		for _, vulnerability := range result.Vulnerabilities {
