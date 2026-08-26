@@ -62,7 +62,7 @@ create_base_rootfs() {
   rm -rf "$rootfs"
   mkdir -p "$rootfs"
   mmdebstrap --variant=minbase --architectures=amd64 \
-    --include=systemd,systemd-sysv,systemd-journal-remote,ca-certificates,openssh-server,sudo,iproute2,iputils-ping,nftables,chrony,curl,jq,bash,python3 \
+    --include=systemd,systemd-sysv,systemd-journal-remote,ca-certificates,openssl,openssh-server,sudo,iproute2,iputils-ping,nftables,chrony,curl,jq,bash,python3 \
     trixie "$rootfs" "$mirror"
   mkdir -p "$rootfs/etc/boetticher" "$rootfs/usr/lib/boetticher" "$rootfs/run/boetticher/bootstrap"
   install -D -m 0644 images/base/runtime/journal-upload.conf "$rootfs/etc/systemd/journal-upload.conf"
@@ -314,6 +314,7 @@ build_firewall() {
     --upload images/base/runtime/install-runtime-state.sh:/usr/lib/boetticher/install-runtime-state \
     --upload images/firewall/nocloud/network-config:/etc/boetticher/nocloud-network-config \
     --upload images/base/runtime/journald.conf:/etc/systemd/journald.conf.d/boetticher.conf \
+    --upload images/base/runtime/journal-upload.conf:/etc/systemd/journal-upload.conf \
     --upload images/base/runtime/boetticher.sudoers:/etc/sudoers.d/boetticher \
     --upload images/firewall/runtime/forwarding.conf:/etc/sysctl.d/boetticher-forwarding.conf \
     --run-command 'useradd --create-home --shell /bin/bash labadmin || true' \

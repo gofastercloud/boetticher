@@ -5,8 +5,36 @@ import (
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 )
+
+func TestDeploymentModuleNamesFollowResolvedManagedGraph(t *testing.T) {
+	resolved, _, err := modules.Compose(model.ConfigFromSite(model.NewSite("trial", "age1trial", model.GatewayModeManaged)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := deploymentModuleNames(resolved)
+	want := []string{"dns", "logging", "monitoring", "portal"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("managed deployment order = %v, want %v", got, want)
+	}
+}
+
+func TestDeploymentModuleNamesFollowResolvedExternalGraph(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("trial", "age1trial", model.GatewayModeExternal))
+	disabled := false
+	config.Modules.Firewall = &model.ToggleModuleConfig{Enabled: &disabled}
+	resolved, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := deploymentModuleNames(resolved)
+	want := []string{"dns", "logging", "monitoring", "portal"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("external deployment order = %v, want %v", got, want)
+	}
+}
 
 func TestResolvedArtifactContentReachesRuntimeDeclaration(t *testing.T) {
 	declaration := model.ModuleDeclaration{Module: "dns", Artifact: model.Artifact{

@@ -533,7 +533,8 @@ func Provision(ctx context.Context, client *Client, plan Plan, _ ...string) erro
 	for _, guest := range plan.Guests {
 		switch guest.Kind {
 		case KindQEMU:
-			// The gateway VM is created by the bootstrap image path.
+			// The gateway is handled by the staged deploy path so its
+			// reachability and policy gates run before dependent guests.
 			continue
 		case KindLXC:
 			if err := ensureLXC(ctx, client, plan, guest); err != nil {

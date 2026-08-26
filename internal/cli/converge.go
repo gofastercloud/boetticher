@@ -222,7 +222,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return fmt.Errorf("resolve DNS readiness contract: %w", err)
 	}
-	for _, module := range []string{"dns", "logging", "monitoring", "portal"} {
+	for _, module := range deploymentModuleNames(s) {
 		if !modules.IsEnabled(s, module) && module != "portal" {
 			continue
 		}
@@ -344,6 +344,22 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	fmt.Fprintf(out, "Deployment: PASS mode=%s model=%s (storage %s)\n", s.Gateway.Mode, firewallPlan.ModelRevision, storagePlan.GuestStorage)
 	return nil
+}
+
+// deploymentModuleNames returns the resolved module graph order carried by
+// Site. The managed firewall is handled immediately above because dependent
+// guests must not be created until its management leg and forwarding policy
+// are ready. The Core portal follows active modules because it consumes the
+// generated platform model but does not provide a module capability.
+func deploymentModuleNames(s model.Site) []string {
+	result := make([]string, 0, len(s.Modules)+1)
+	for _, module := range s.Modules {
+		if module.Enabled && module.Name != "firewall" {
+			result = append(result, module.Name)
+		}
+	}
+	result = append(result, "portal")
+	return result
 }
 
 func loadBootstrapOperatorKey(siteDir string) (string, error) {
