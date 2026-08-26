@@ -1,18 +1,15 @@
 ---
 - name: Deploy managed Chrony configuration
-  ansible.builtin.copy:
+  ansible.builtin.template:
+    src: chrony.conf.j2
     dest: /etc/chrony/chrony.conf
     owner: root
     group: root
     mode: '0644'
-    content: |
-      pool pool.ntp.org iburst
-      {% if inventory_hostname in groups['dns'] %}
-      allow 10.10.10.0/24
-      allow 10.10.20.0/24
-      allow 10.10.99.0/24
-      local stratum 10
-      {% endif %}
-      makestep 1.0 3
-      rtcsync
   notify: restart chrony
+
+- name: Ensure Chrony is enabled and running
+  ansible.builtin.service:
+    name: chrony
+    enabled: true
+    state: started

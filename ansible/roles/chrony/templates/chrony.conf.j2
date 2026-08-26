@@ -1,0 +1,15 @@
+pool pool.ntp.org iburst maxsources 4
+
+{% if inventory_hostname in groups.get('dns', []) %}
+# DNS guests provide NTP only to the fixed V1 internal networks.
+allow 10.10.10.0/24
+allow 10.10.20.0/24
+allow 10.10.99.0/24
+{% else %}
+server 10.10.20.10 iburst
+server 10.10.20.11 iburst
+{% endif %}
+
+makestep 1.0 3
+rtcsync
+leapsectz right/UTC

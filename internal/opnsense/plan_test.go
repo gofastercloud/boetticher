@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/model"
 )
 
@@ -120,6 +121,9 @@ func TestKeaPayloadHasPerZoneDDNSContractWithoutEmbeddingSecretsInDesiredState(t
 	}
 	if payloads[0].Subnet4.DDNSDomainKeySecret != "" {
 		t.Fatal("desired Kea payload embedded a TSIG secret")
+	}
+	if payloads[0].Subnet4.DDNSDNSPort != dns.AuthoritativePort {
+		t.Fatalf("DDNS target port = %q, want %s", payloads[0].Subnet4.DDNSDNSPort, dns.AuthoritativePort)
 	}
 	withSecret := plan.KeaPayloadsWithTSIG("c2VjcmV0")
 	if withSecret[0].Subnet4.DDNSDomainKeySecret != "c2VjcmV0" {

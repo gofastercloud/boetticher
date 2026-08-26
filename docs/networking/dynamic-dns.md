@@ -28,9 +28,9 @@ AdGuard Home on both DNS nodes
   client-facing TCP/UDP 53 and conditional forwarding
 ```
 
-PowerDNS Authoritative is the pinned V1 implementation (`4.9.16` in the model). AdGuard Home and Unbound are not RFC2136 update targets. The authoritative service owns dynamic child zones; AdGuard remains the normal client-facing filtering/upstream resolver.
+PowerDNS Authoritative is the pinned V1 implementation (`4.9.16` in the model). It listens on the internal authoritative port `5353`; AdGuard owns client-facing TCP/UDP 53 and forwards the Lab-in-a-Box zones to the local PowerDNS process. AdGuard Home and Unbound are not RFC2136 update targets. The authoritative service owns dynamic child zones; AdGuard remains the normal client-facing filtering/upstream resolver.
 
-Convergence enables OPNsense's Kea D2 agent through the global `/api/kea/ddns/set` model and then applies the per-subnet forward/reverse zone and TSIG settings. The D2 listener is local to OPNsense's managed service path; it is not a client-facing DNS update endpoint.
+Convergence enables OPNsense's Kea D2 agent through the global `/api/kea/ddns/set` model and then applies the per-subnet forward/reverse zone and TSIG settings. Kea sends authenticated updates to `10.10.20.10:5353`; the authoritative update listener is reachable only from the intended OPNsense path, not from client VLANs.
 
 The static platform zone is `lab.home.arpa`. DHCP-derived child zones are:
 

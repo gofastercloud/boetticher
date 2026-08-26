@@ -226,6 +226,7 @@ func firewallRules(s model.Site) []FirewallRule {
 	add("sandbox deny servers", networks["SANDBOX"], networks["SERVERS"], "block", "any", "")
 	add("sandbox deny management", networks["SANDBOX"], networks["MGMT"], "block", "any", "")
 	add("sandbox internet egress", networks["SANDBOX"], "internet", "pass", "any", "")
+	add("OPNsense DDNS to authoritative DNS", "10.10.99.1", "10.10.20.10", "pass", "tcp", dns.AuthoritativePort)
 
 	add("trusted DNS TCP to platform", networks["TRUSTED"], networks["SERVERS"], "pass", "tcp", "53")
 	add("trusted DNS UDP to platform", networks["TRUSTED"], networks["SERVERS"], "pass", "udp", "53")
@@ -336,7 +337,7 @@ func (p Plan) keaPayloads(tsigSecret string) []KeaSubnetPayload {
 			payload.Subnet4.DDNSReverseZone = reverseZone
 			payload.Subnet4.DDNSQualifyingSuffix = forwardZone
 			payload.Subnet4.DDNSDNSServer = "10.10.20.10"
-			payload.Subnet4.DDNSDNSPort = "53"
+			payload.Subnet4.DDNSDNSPort = dns.AuthoritativePort
 			payload.Subnet4.DDNSDomainKeyName = strings.ToLower(zone.Name) + ".ddns." + "lab.home.arpa."
 			payload.Subnet4.DDNSDomainKeySecret = tsigSecret
 			payload.Subnet4.DDNSDomainKeyAlgorithm = "hmac-sha256"
