@@ -32,9 +32,9 @@ func ParseSite(data []byte) (Site, error) {
 	return site, nil
 }
 
-// ParseSiteConfig is the strict v0.3 site.yml decoder. The small version
-// probe gives operators the useful recreate-site message before strict
-// decoding can report removed v0.2 fields such as components.
+// ParseSiteConfig is the strict v0.3 site.yml decoder. The version probe gives
+// operators a concise recreate-site message before strict decoding reports
+// fields that are not part of the v3 configuration.
 func ParseSiteConfig(data []byte) (SiteConfig, error) {
 	var probe struct {
 		APIVersion string `yaml:"api_version"`

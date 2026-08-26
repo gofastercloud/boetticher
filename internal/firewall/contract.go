@@ -16,7 +16,7 @@ func RenderExternalContract(s model.Site, plan Plan) (string, error) {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# boetticher external firewall contract\n\nModel revision: `%s`\n\n", plan.ModelRevision)
-	b.WriteString("This contract is generated from the boetticher v0.2 site model. The external gateway is operator-managed; boetticher does not configure, authenticate to, back up, or inspect its internal rule set.\n\n")
+	b.WriteString("This contract is generated from the boetticher v0.3 site model. The external gateway is operator-managed; boetticher does not configure, authenticate to, back up, or inspect its internal rule set.\n\n")
 	b.WriteString("## VLANs and gateways\n\n| VLAN | Zone | Network | Gateway |\n| ---: | --- | --- | --- |\n")
 	for _, zone := range s.Normalize().Network.Zones {
 		fmt.Fprintf(&b, "| %d | %s | `%s` | `%s` |\n", zone.VLAN, zone.Name, zone.Network, zone.Gateway)

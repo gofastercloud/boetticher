@@ -21,6 +21,6 @@ a user guest is never included merely because it happens to use a similar
 tag. Tags are useful for visibility and filtering in Proxmox, but they do not
 change the ownership boundary.
 
-The job is namespaced as boetticher-owned. Convergence must not overwrite or delete user-created backup jobs. User workloads remain user-owned; operators should create and maintain their own Proxmox backup policy if they need coverage. Doctor reports platform coverage without treating user workloads as drift.
+The job is namespaced as boetticher-owned. Deployment must not overwrite or delete user-created backup jobs. User workloads remain user-owned; operators should create and maintain their own Proxmox backup policy if they need coverage. Doctor reports platform coverage without treating user workloads as drift.
 
 Local backups on the same physical data disk are not independent disaster recovery. Offsite or independent backup is a future official module, not a V1 guarantee.

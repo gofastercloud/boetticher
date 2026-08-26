@@ -1,8 +1,8 @@
 # boetticher
 
-**Status: pre-alpha.** The v0.2 architecture and offline contracts are being
-built, but the managed Debian gateway and external-firewall paths still need
-live qualification. Do not use boetticher on a system you cannot recover.
+**Status: pre-alpha.** boetticher v0.3.0 has a typed module model and offline
+contracts, but the appliance build and live installation still need
+qualification. Do not use boetticher on a system you cannot recover.
 
 boetticher is a small, opinionated Proxmox platform for a private lab. It
 creates the platform foundation—network zones, DNS/NTP, PKI, Zabbix, a static
@@ -45,7 +45,12 @@ lab-portal-01    generated static documentation
 
 The fixed networks are VLAN 10 TRUSTED (`10.10.10.0/24`), VLAN 20 SERVERS
 (`10.10.20.0/24`), VLAN 50 SANDBOX (`10.10.50.0/24`), and VLAN 99 MGMT
-(`10.10.99.0/24`). v0.2 remains IPv4-only.
+(`10.10.99.0/24`). v0.3 remains IPv4-only.
+
+The platform resolves to Core plus the mandatory DNS/NTP module and the
+default-on monitoring and managed firewall modules. Modules are built into the
+boetticher release and emit declarations; Core owns privileged infrastructure
+changes. There is no background controller or third-party module runtime.
 
 ## Two gateway modes
 
@@ -68,7 +73,7 @@ VLANs 10, 20, 50, and 99. See
   second NIC and managed VLAN switch are needed for a physical trunk; they are
   mandatory in external-firewall mode.
 - Either the single-disk or dedicated-data-disk storage profile.
-- Zabbix 7.0 LTS and the pinned Debian 13 generic cloud image are the v0.2
+- Zabbix 7.0 LTS and the pinned Debian 13 appliance definitions are the v0.3
   qualification targets (`debian-13-genericcloud-amd64`).
 
 ## Quickstart
@@ -108,10 +113,11 @@ HOME network, then uses the forwarding-only `lab-bastion` path to reach
 managed internal hosts. Generated SSH configuration keeps host-key checking
 and canonical host identities intact.
 
-Useful commands include `boetticher firewall show`, `boetticher firewall
-status`, `boetticher firewall verify`, `boetticher dhcp status`, `boetticher
-doctor`, and `boetticher portal build`. These inspect or regenerate the
-platform model; they are not a generic firewall or guest-management interface.
+Useful commands include `boetticher module list`, `boetticher module plan
+monitoring`, `boetticher config validate`, `boetticher firewall show`,
+`boetticher dhcp status`, `boetticher doctor`, and `boetticher portal build`.
+These inspect or deploy the platform model; they are not a generic firewall,
+guest-management, or application-management interface.
 
 ## Documentation
 
@@ -122,7 +128,7 @@ documentation.
 
 ## Limitations
 
-v0.2 is a single-node, pre-alpha platform. It is not HA, does not support
+v0.3 is a single-node, pre-alpha platform. It is not HA, does not support
 IPv6, multi-node Proxmox, generic VM/LXC lifecycle management, managed VPN or
 remote-access products, arbitrary storage or network layouts, or managed
 external firewall vendors. Local backups are useful for recovery but are not

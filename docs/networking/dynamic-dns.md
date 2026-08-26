@@ -1,7 +1,7 @@
 # Dynamic DNS
 
 PowerDNS Authoritative on `lab-dns-01` is the primary update target and
-`lab-dns-02` is the secondary. The qualified v0.2 target is PowerDNS
+`lab-dns-02` is the secondary. The qualified v0.3 target is PowerDNS
 Authoritative 4.9.17. AdGuard Home forwards the static and dynamic zones to
 the local/redundant authoritative service.
 

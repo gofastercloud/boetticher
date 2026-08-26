@@ -23,7 +23,7 @@ Forwarding is disabled while the gateway is being prepared. boetticher renders
 one namespaced ruleset, validates it with `nft -c`, retains the previous known-
 good file, applies the replacement transactionally, and enables IPv4 forwarding
 only after the policy and services are ready. IPv6 forwarding is disabled in
-v0.2.
+v0.3.
 
 SANDBOX may use the gateway for DHCP, public DNS, and NTP, but cannot reach the
 TRUSTED, SERVERS, or MGMT networks. The deny rules precede Internet egress.
@@ -47,5 +47,37 @@ side; endpoint private keys are generated on managed hosts where practical.
 The Proxmox SSH bastion is the normal path to internal hosts. The portal is
 static generated documentation; live state belongs in Zabbix.
 
-The platform is IPv4-only in v0.2. Dynamic DHCP DNS registration publishes a
+The platform is IPv4-only in v0.3. Dynamic DHCP DNS registration publishes a
 lease-derived name; it never makes that workload boetticher-managed.
+
+## Core and module boundary
+
+Core is the only privileged mutation boundary. Built-in modules are trusted
+compiled-in boetticher code, but they emit bounded declarations for guests,
+network intent, DNS, certificates, monitoring, backups, and portal metadata.
+They do not call Proxmox, nftables, SOPS/Age, CA signing, Zabbix, or arbitrary
+host-shell mutation paths directly. Core resolves dependencies, capabilities,
+fixed identities, ownership, and conflicts before deployment.
+
+Official appliance artifacts derive from pinned Debian 13 definitions and are
+checksum-verified before use. The appliance root filesystem is replaceable;
+module-declared databases, lease state, and SSH host identity are persistent.
+Site configuration, policy, certificates, and runtime configuration are
+deployment-derived.
+
+Systemd credentials are the standard service-secret delivery mechanism. Kea
+receives a credential through a protected ephemeral secret file. PowerDNS may
+persist its TSIG material in its protected supported backend because its
+operating model requires that datastore. SOPS/Age remains the controller-side
+recovery authority in both cases. Proxmox/root remains a trusted host boundary.
+
+Application services run as dedicated non-root users wherever their software
+allows it. A compromised module process is not granted controller identity,
+SOPS/Age authority, CA signing keys, or another module's ownership. A root
+compromise inside a guest remains bounded by the trusted Proxmox and network
+boundaries described above.
+
+Malformed configuration, duplicate DNS identities, fixed VMID collisions,
+conflicting network declarations, artifact checksum mismatches, missing
+gateway capability, dependency cycles, and secret values in declarations are
+rejected before infrastructure mutation.

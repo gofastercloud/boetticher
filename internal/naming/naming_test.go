@@ -102,6 +102,36 @@ func TestRemovedApplianceIdentifiersStayOutsideTheExampleGuide(t *testing.T) {
 	}
 }
 
+func TestDeployIsTheOnlyPublicPlatformApplicationCommand(t *testing.T) {
+	root := repositoryRoot(t)
+	paths := []string{"README.md", "docs", "agents.md", "internal/cli", "schemas"}
+	for _, relative := range paths {
+		path := filepath.Join(root, relative)
+		err := filepath.WalkDir(path, func(file string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			if strings.HasSuffix(file, "_test.go") {
+				return nil
+			}
+			data, err := os.ReadFile(file)
+			if err != nil {
+				return err
+			}
+			if strings.Contains(string(data), "boetticher converge") {
+				t.Errorf("%s exposes the removed converge command", file)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func repositoryRoot(t *testing.T) string {
 	t.Helper()
 	_, filename, _, ok := runtime.Caller(0)

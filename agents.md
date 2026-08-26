@@ -6,11 +6,12 @@ states the engineering guardrails that keep those contracts intact.
 
 ## Design
 
-boetticher is an opinionated v0.1 Proxmox distribution, not a generic homelab
+boetticher is an opinionated v0.3 Proxmox distribution, not a generic homelab
 framework. The canonical model is deterministic for a fixed platform version,
-site, enabled official modules, and relevant secret metadata. Its model
-revision drives OpenTofu, Ansible, gateway policy, Zabbix, SSH, portal, inventory,
-and verification projections.
+site configuration, enabled official modules, and relevant secret metadata. Core
+composes first-party module declarations and its model revision drives
+OpenTofu, Ansible, gateway policy, Zabbix, SSH, portal, inventory, and
+verification projections.
 
 boetticher owns only declared platform resources: Proxmox, the managed gateway, the
 dual DNS/NTP guests, monitoring, portal, owned bridges/VLAN policy, PKI,
@@ -27,6 +28,16 @@ informational, never drift, and never targets for deletion or import.
 - Secrets are SOPS-encrypted. The Age private identity, OpenTofu state, plans, caches, and temporary credentials stay outside Git.
 - The portal is passive generated static documentation. Zabbix owns live observability.
 - Dynamic DNS is lease publication, not workload ownership.
+- DNS/NTP is mandatory; monitoring and the managed firewall are default-on.
+- Modules are compiled into the release and emit declarations only. Core owns
+  privileged mutation, fixed resource identities, appliance artifacts, runtime
+  credentials, and replacement/persistence policy.
+- Official LXC appliances use the pinned Debian 13 boetticher base. Services run
+  non-root where practical, and systemd credentials are the standard secret
+  delivery path. PowerDNS backend persistence is an explicit third-party
+  exception.
+- `boetticher deploy` is the only public platform-application command. Do not
+  add a public converge/provision alias.
 
 ## Coding standards
 

@@ -6,7 +6,7 @@ repository, Age identity, SOPS access, CA signing authority, and runtime state;
 the Proxmox host is a target, not the controller.
 
 Supported controllers are macOS arm64/amd64 and Linux arm64/amd64. Native
-Windows is outside the v0.2 contract. One physical NIC is enough for managed
+Windows is outside the v0.3 contract. One physical NIC is enough for managed
 mode; a second NIC and managed VLAN switch provide physical access to the
 internal zones. External-firewall mode requires both NICs.
 
@@ -52,6 +52,11 @@ boetticher deploy --site my-boetticher
 boetticher verify --site my-boetticher
 boetticher doctor --site my-boetticher
 ```
+
+`deploy` is the only public command that applies the complete desired
+platform. `bootstrap` prepares the host and build inputs; module configuration,
+guest identities, artifacts, services, backups, and shared policy are applied
+through `deploy`.
 
 The managed path configures Debian networking, nftables, Kea, sandbox DNS/NTP,
 DNS/NTP guests, Zabbix, the portal, PKI certificates, and platform backups.
