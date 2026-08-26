@@ -10,4 +10,5 @@
     - chrony
     - dns
     - monitor
-    - portal
+    - role: portal
+      when: inventory_hostname == 'lab-portal-01'

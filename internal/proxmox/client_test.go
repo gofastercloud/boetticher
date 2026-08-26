@@ -55,6 +55,48 @@ func TestCreateTokenUsesFormEncoding(t *testing.T) {
 	}
 }
 
+func TestEnsureDirectoryStorageCreatesBackupStorage(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/cluster/storage" {
+			return response([]byte(`{"data":[]}`))
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api2/json/cluster/storage" {
+			if err := r.ParseForm(); err != nil {
+				t.Errorf("parse storage form: %v", err)
+			}
+			if got := r.Form.Get("storage"); got != "boetticher-backups" {
+				t.Errorf("storage = %q, want boetticher-backups", got)
+			}
+			if got := r.Form.Get("path"); got != "/srv/boetticher/backups" {
+				t.Errorf("path = %q, want /srv/boetticher/backups", got)
+			}
+			if got := r.Form.Get("content"); got != "backup" {
+				t.Errorf("content = %q, want backup", got)
+			}
+			return response([]byte(`{"data":null}`))
+		}
+		t.Errorf("unexpected storage request: %s %s", r.Method, r.URL.Path)
+		return response([]byte(`{"data":null}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.EnsureDirectoryStorage(context.Background(), "boetticher-backups", "/srv/boetticher/backups"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsureDirectoryStorageRejectsConflictingDefinition(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		data, _ := json.Marshal(map[string]any{"data": []map[string]string{{
+			"storage": "boetticher-backups", "type": "dir", "path": "/wrong/path", "content": "backup",
+		}}})
+		return response(data)
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.EnsureDirectoryStorage(context.Background(), "boetticher-backups", "/srv/boetticher/backups"); err == nil {
+		t.Fatal("conflicting storage definition was accepted")
+	}
+}
+
 func response(data []byte) *http.Response {
 	return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(data)))}
 }
