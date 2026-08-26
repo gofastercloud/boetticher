@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/ansible"
@@ -167,7 +168,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err := ansible.Run(context.Background(), "ansible/site.yml", inventoryPath, variables); err != nil {
 		return err
 	}
-	if err := installModuleRuntimeConfigs(context.Background(), s); err != nil {
+	if err := installModuleRuntimeConfigs(context.Background(), s, proxmoxPlan); err != nil {
 		return err
 	}
 	monitorCSR, err := os.ReadFile(filepath.Join(csrDir, "monitor.csr.pem"))
@@ -236,7 +237,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 // non-secret appliance contract. Module declarations remain the source of
 // guest identity and runtime configuration; the SSH runner is only the Core
 // transport used to install the already-validated document.
-func installModuleRuntimeConfigs(ctx context.Context, s model.Site) error {
+func installModuleRuntimeConfigs(ctx context.Context, s model.Site, plan proxmox.Plan) error {
 	runner := proxmox.SSHRunner{
 		IdentityFile:  model.ExpandUserPath(s.SSHIdentityFile),
 		StrictHostKey: "ask",
@@ -245,6 +246,12 @@ func installModuleRuntimeConfigs(ctx context.Context, s model.Site) error {
 	for _, declaration := range s.Declarations {
 		declarations[declaration.Module] = declaration
 	}
+	resolvedGuests := make(map[string]proxmox.GuestPlan, len(plan.Guests))
+	for _, guest := range plan.Guests {
+		if guest.Owner != "" {
+			resolvedGuests[guest.Name] = guest
+		}
+	}
 	for _, guest := range s.PlatformComponents() {
 		if guest.Module == "" {
 			continue
@@ -252,6 +259,14 @@ func installModuleRuntimeConfigs(ctx context.Context, s model.Site) error {
 		declaration, ok := declarations[guest.Module]
 		if !ok {
 			return fmt.Errorf("runtime configuration for %s: module declaration is missing", guest.Name)
+		}
+		resolvedGuest, ok := resolvedGuests[guest.Name]
+		if !ok || resolvedGuest.Artifact.ContentSHA256 == "" {
+			return fmt.Errorf("runtime configuration for %s: qualified artifact content checksum is missing", guest.Name)
+		}
+		declaration, resolveErr := resolvedDeclarationForGuest(declaration, resolvedGuest)
+		if resolveErr != nil {
+			return fmt.Errorf("runtime configuration for %s: %w", guest.Name, resolveErr)
 		}
 		config, err := appliance.RenderRuntimeConfig(s, guest, declaration)
 		if err != nil {
@@ -269,6 +284,17 @@ func installModuleRuntimeConfigs(ctx context.Context, s model.Site) error {
 		}
 	}
 	return nil
+}
+
+func resolvedDeclarationForGuest(declaration model.ModuleDeclaration, guest proxmox.GuestPlan) (model.ModuleDeclaration, error) {
+	if declaration.Module == "" || declaration.Module != strings.TrimPrefix(guest.Owner, "boetticher/module/") {
+		return model.ModuleDeclaration{}, fmt.Errorf("module declaration ownership does not match guest %s", guest.Name)
+	}
+	if guest.Artifact.Name == "" || guest.Artifact.ContentSHA256 == "" || guest.Artifact.DefinitionSHA256 == "" {
+		return model.ModuleDeclaration{}, fmt.Errorf("qualified artifact identity is incomplete")
+	}
+	declaration.Artifact = guest.Artifact
+	return declaration, nil
 }
 
 func loadProxmoxClient(siteDir string, s model.Site, ageIdentity, caFile string, insecure bool) (*proxmox.Client, site.ProxmoxCredentials, error) {
