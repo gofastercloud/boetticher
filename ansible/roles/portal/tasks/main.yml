@@ -6,6 +6,15 @@
       - portal_source_dir | length > 0
     fail_msg: "portal_source_dir must point to the controller-built static portal"
 
+- name: Require controller-issued portal mTLS material
+  ansible.builtin.assert:
+    that:
+      - portal_server_key_pem is defined
+      - portal_server_cert_pem is defined
+      - client_ca_pem is defined
+    fail_msg: "The portal requires controller-issued server and client-CA material"
+  no_log: true
+
 - name: Create portal document root
   ansible.builtin.file:
     path: /var/www/boetticher
@@ -22,6 +31,44 @@
     group: root
     mode: "0644"
 
+- name: Create the portal TLS directory
+  ansible.builtin.file:
+    path: /etc/boetticher/tls
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Install portal server certificate chain
+  ansible.builtin.copy:
+    content: "{{ portal_server_cert_pem }}"
+    dest: /etc/boetticher/tls/portal.crt.pem
+    owner: root
+    group: root
+    mode: "0644"
+  no_log: true
+  notify: reload nginx
+
+- name: Install portal server private key
+  ansible.builtin.copy:
+    content: "{{ portal_server_key_pem }}"
+    dest: /etc/boetticher/tls/portal.key.pem
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: reload nginx
+
+- name: Install the client CA for portal mTLS
+  ansible.builtin.copy:
+    content: "{{ client_ca_pem }}"
+    dest: /etc/boetticher/tls/client-ca.pem
+    owner: root
+    group: root
+    mode: "0644"
+  no_log: true
+  notify: reload nginx
+
 - name: Configure nginx for the generated portal
   ansible.builtin.copy:
     dest: /etc/nginx/sites-available/boetticher.conf
@@ -30,12 +77,25 @@
     mode: "0644"
     content: |
       server {
-          listen 80 default_server;
-          server_name _;
+          listen 10.10.20.30:443 ssl;
+          server_name portal.lab.home.arpa;
           root /var/www/boetticher;
           index index.html;
+
+          ssl_certificate /etc/boetticher/tls/portal.crt.pem;
+          ssl_certificate_key /etc/boetticher/tls/portal.key.pem;
+          ssl_client_certificate /etc/boetticher/tls/client-ca.pem;
+          ssl_verify_client on;
+          ssl_protocols TLSv1.2 TLSv1.3;
+
           location / { try_files $uri $uri/ =404; }
       }
+  notify: reload nginx
+
+- name: Remove the distribution nginx default site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
   notify: reload nginx
 
 - name: Enable generated portal nginx site
