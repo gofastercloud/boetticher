@@ -321,7 +321,12 @@ build_firewall() {
     --run-command "DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends zabbix-agent2=$zabbix_package_version" \
     --run-command 'dpkg --purge zabbix-release >/dev/null 2>&1 || true' \
     --run-command 'rm -f /tmp/zabbix-release.deb; apt-get clean; rm -rf /var/lib/apt/lists/*' \
-    --mkdir /etc/boetticher,/usr/lib/boetticher,/var/lib/boetticher/identity/ssh,/tmp/boetticher-ansible,/etc/systemd/journald.conf.d,/etc/sysctl.d \
+    --mkdir /etc/boetticher \
+    --mkdir /usr/lib/boetticher \
+    --mkdir /var/lib/boetticher/identity/ssh \
+    --mkdir /tmp/boetticher-ansible \
+    --mkdir /etc/systemd/journald.conf.d \
+    --mkdir /etc/sysctl.d \
     --upload images/base/first-boot/boetticher-first-boot.sh:/usr/lib/boetticher/boetticher-first-boot.sh \
     --upload images/base/first-boot/boetticher-first-boot.service:/etc/systemd/system/boetticher-first-boot.service \
     --upload images/base/runtime/install-runtime-state.sh:/usr/lib/boetticher/install-runtime-state \

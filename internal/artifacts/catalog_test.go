@@ -296,6 +296,22 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	}
 }
 
+func TestFirewallBuildUsesIndividualVirtCustomizeDirectories(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Contains(text, "--mkdir /etc/boetticher,/usr/lib/boetticher") {
+		t.Fatal("firewall virt-customize directory inputs must remain individual paths")
+	}
+	for _, directory := range []string{"--mkdir /etc/boetticher", "--mkdir /usr/lib/boetticher", "--mkdir /var/lib/boetticher/identity/ssh", "--mkdir /tmp/boetticher-ansible"} {
+		if !strings.Contains(text, directory) {
+			t.Fatalf("firewall build is missing directory input %q", directory)
+		}
+	}
+}
+
 func TestApplianceBootstrapInputsContainNoOperatorKeyOrSiteState(t *testing.T) {
 	root := filepath.Join("..", "..", "images")
 	firstBoot, err := os.ReadFile(filepath.Join(root, "base", "first-boot", "boetticher-first-boot.sh"))
