@@ -459,7 +459,7 @@ func TestBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {
 		}
 		entries[header.Name] = true
 	}
-	for _, required := range []string{"scripts/build-images.sh", "images/base/debian.yaml", "cmd/qualify-artifact/main.go"} {
+	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "cmd/qualify-artifact/main.go"} {
 		if !entries[required] {
 			t.Fatalf("archive omitted public build input %s", required)
 		}
@@ -499,7 +499,7 @@ func TestEmbeddedBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {
 		}
 		entries[header.Name] = true
 	}
-	for _, required := range []string{"scripts/build-images.sh", "images/base/debian.yaml", "cmd/qualify-artifact/main.go"} {
+	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "cmd/qualify-artifact/main.go"} {
 		if !entries[required] {
 			t.Fatalf("embedded archive omitted public build input %s", required)
 		}

@@ -37,6 +37,7 @@ func Builder() BuilderPlan {
 // qualification helper; site repositories, generated state, and credentials
 // are intentionally outside this set.
 var PublicBuildInputs = []string{
+	"buildbundle.go",
 	"go.mod",
 	"go.sum",
 	"cmd/qualify-artifact",
