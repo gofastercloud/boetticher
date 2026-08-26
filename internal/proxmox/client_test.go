@@ -274,3 +274,7 @@ func TestImportDiskUsesThePinnedStoragePlan(t *testing.T) {
 func response(data []byte) *http.Response {
 	return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(data)))}
 }
+
+func apiResponse(status int, data string) *http.Response {
+	return &http.Response{StatusCode: status, Status: http.StatusText(status), Header: make(http.Header), Body: io.NopCloser(strings.NewReader(data))}
+}

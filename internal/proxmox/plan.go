@@ -638,9 +638,11 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 	if client == nil {
 		return errors.New("Proxmox client is required")
 	}
-	var current map[string]any
-	err := client.QEMUConfig(ctx, plan.Node, model.BuilderVMID, &current)
+	kind, current, err := client.GuestConfig(ctx, plan.Node, model.BuilderVMID)
 	if err == nil {
+		if kind != KindQEMU {
+			return fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, not the temporary builder", model.BuilderVMID, kind)
+		}
 		if name, _ := current["name"].(string); name != "lab-builder-01" {
 			return fmt.Errorf("HOLD: VMID %d is not the expected temporary builder", model.BuilderVMID)
 		}
@@ -757,13 +759,15 @@ func DestroyBuilderVM(ctx context.Context, client *Client, node string) error {
 	if client == nil || node == "" {
 		return errors.New("Proxmox client and node are required")
 	}
-	var current map[string]any
-	err := client.QEMUConfig(ctx, node, model.BuilderVMID, &current)
+	kind, current, err := client.GuestConfig(ctx, node, model.BuilderVMID)
 	if IsNotFound(err) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("inspect temporary builder before destruction: %w", err)
+	}
+	if kind != KindQEMU {
+		return fmt.Errorf("HOLD: refusing to destroy VMID %d because it is an unowned %s guest", model.BuilderVMID, kind)
 	}
 	if name, _ := current["name"].(string); name != "lab-builder-01" || !hasOwnerTag(currentTags(current), builderOwnerTag) {
 		return fmt.Errorf("HOLD: refusing to destroy unproven VMID %d builder ownership", model.BuilderVMID)
@@ -1023,9 +1027,11 @@ func safeInterfaceName(value string) bool {
 }
 
 func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
-	var current map[string]any
-	err := client.QEMUConfig(ctx, plan.Node, guest.VMID, &current)
+	kind, current, err := client.GuestConfig(ctx, plan.Node, guest.VMID)
 	if err == nil {
+		if kind != KindQEMU {
+			return fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, expected QEMU %s", guest.VMID, kind, guest.Name)
+		}
 		if err := validateExistingGuestIdentity(current, guest); err != nil {
 			return err
 		}
@@ -1184,9 +1190,11 @@ func qemuPersistentVolumeParam(plan Plan, volume model.PersistentVolumeDeclarati
 }
 
 func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
-	var current map[string]any
-	err := client.LXCConfig(ctx, plan.Node, guest.VMID, &current)
+	kind, current, err := client.GuestConfig(ctx, plan.Node, guest.VMID)
 	if err == nil {
+		if kind != KindLXC {
+			return fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, expected LXC %s", guest.VMID, kind, guest.Name)
+		}
 		if err := validateExistingGuestIdentity(current, guest); err != nil {
 			return err
 		}

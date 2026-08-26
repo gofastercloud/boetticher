@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -476,5 +477,42 @@ func TestEveryFixedGuestIdentityRequiresCanonicalOwnershipProof(t *testing.T) {
 		if err := validateExistingGuestIdentity(current, guest); err == nil || !strings.Contains(err.Error(), "canonical ownership proof") {
 			t.Fatalf("fixed guest %d was accepted without ownership proof: %v", guest.VMID, err)
 		}
+	}
+}
+
+func TestEveryFixedGuestKindCollisionHoldsBeforeCreation(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range plan.Guests {
+		expected := expected
+		t.Run(fmt.Sprintf("%s-%d", expected.Name, expected.VMID), func(t *testing.T) {
+			transport := roundTripFunc(func(r *http.Request) *http.Response {
+				qemuPath := "/api2/json/nodes/lab-proxmox-01/qemu/" + strconv.Itoa(expected.VMID) + "/config"
+				lxcPath := "/api2/json/nodes/lab-proxmox-01/lxc/" + strconv.Itoa(expected.VMID) + "/config"
+				switch {
+				case expected.Kind == KindQEMU && r.Method == http.MethodGet && r.URL.Path == qemuPath:
+					return apiResponse(http.StatusNotFound, `{"errors":"missing qemu"}`)
+				case expected.Kind == KindQEMU && r.Method == http.MethodGet && r.URL.Path == lxcPath:
+					return response([]byte(`{"data":{"name":"user-lxc"}}`))
+				case expected.Kind == KindLXC && r.Method == http.MethodGet && r.URL.Path == qemuPath:
+					return response([]byte(`{"data":{"name":"user-qemu"}}`))
+				default:
+					t.Fatalf("unexpected request after fixed-ID collision: %s %s", r.Method, r.URL.Path)
+					return nil
+				}
+			})
+			client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+			var collisionErr error
+			if expected.Kind == KindQEMU {
+				collisionErr = ensureQEMU(context.Background(), client, plan, expected)
+			} else {
+				collisionErr = ensureLXC(context.Background(), client, plan, expected)
+			}
+			if collisionErr == nil || !strings.Contains(collisionErr.Error(), "HOLD") {
+				t.Fatalf("fixed-ID kind collision was not held: %v", collisionErr)
+			}
+		})
 	}
 }

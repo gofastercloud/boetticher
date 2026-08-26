@@ -249,6 +249,27 @@ func (c *Client) QEMUConfig(ctx context.Context, node string, vmid int, out any)
 	return c.Get(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "config"), nil, out)
 }
 
+// GuestConfig inspects both Proxmox guest kinds for a VMID. A reserved
+// identity must be held when the opposite guest kind occupies it; treating a
+// kind mismatch as absence would turn an ownership collision into a create
+// attempt.
+func (c *Client) GuestConfig(ctx context.Context, node string, vmid int) (GuestKind, map[string]any, error) {
+	var qemu map[string]any
+	err := c.QEMUConfig(ctx, node, vmid, &qemu)
+	if err == nil {
+		return KindQEMU, qemu, nil
+	}
+	if !IsNotFound(err) {
+		return "", nil, err
+	}
+	var lxc map[string]any
+	err = c.LXCConfig(ctx, node, vmid, &lxc)
+	if err == nil {
+		return KindLXC, lxc, nil
+	}
+	return "", nil, err
+}
+
 // QEMUAgentNetworkInterfaces reads only guest-agent network evidence. It is
 // used to discover the temporary DHCP-backed builder address; no operator or
 // module identity is inferred from a hostname or arbitrary user address.

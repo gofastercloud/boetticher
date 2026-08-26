@@ -97,13 +97,15 @@ func InspectBuilder(ctx context.Context, client *Client, node string) (BuilderAu
 	if client == nil || node == "" {
 		return BuilderAudit{}, fmt.Errorf("Proxmox client and node are required")
 	}
-	var current map[string]any
-	err := client.QEMUConfig(ctx, node, model.BuilderVMID, &current)
+	kind, current, err := client.GuestConfig(ctx, node, model.BuilderVMID)
 	if IsNotFound(err) {
 		return BuilderAudit{}, nil
 	}
 	if err != nil {
 		return BuilderAudit{}, fmt.Errorf("inspect temporary builder: %w", err)
+	}
+	if kind != KindQEMU {
+		return BuilderAudit{Exists: true, Name: fmt.Sprintf("%s guest at VMID %d", kind, model.BuilderVMID)}, nil
 	}
 	return classifyBuilder(current), nil
 }
