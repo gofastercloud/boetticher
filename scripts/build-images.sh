@@ -15,6 +15,11 @@ if [ "$(uname -s)" != Linux ]; then
   exit 2
 fi
 
+if [ "$(id -u)" -ne 0 ]; then
+  echo "HOLD: appliance construction requires root in the supported Linux builder environment for mmdebstrap/chroot/mount operations" >&2
+  exit 2
+fi
+
 # Use the Go toolchain supplied by the pinned Debian builder image. Automatic
 # toolchain downloads would make appliance construction depend on an
 # unqualified network input.

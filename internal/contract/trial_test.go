@@ -39,6 +39,9 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	if !strings.Contains(buildText, "export GOTOOLCHAIN=local") {
 		t.Fatal("builder does not pin construction to its installed Debian Go toolchain")
 	}
+	if !strings.Contains(buildText, `if [ "$(id -u)" -ne 0 ]`) || !strings.Contains(buildText, "requires root in the supported Linux builder environment") {
+		t.Fatal("real appliance construction does not fail closed when mount/build privileges are unavailable")
+	}
 	for _, artifact := range []string{"boetticher-base", "boetticher-firewall", "boetticher-dns-blocky", "boetticher-logging", "boetticher-monitoring", "boetticher-portal"} {
 		if !strings.Contains(buildText, artifact) {
 			t.Fatalf("default trial builder does not produce %s", artifact)
