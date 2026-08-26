@@ -150,6 +150,32 @@ func TestCreateScopedCredentialsCapturesOnlyReturnedSecret(t *testing.T) {
 	}
 }
 
+func TestScopedProvisionerPrivilegesAreExplicitAndBounded(t *testing.T) {
+	want := "VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.MountPoint VM.Config.Network VM.Config.Options VM.Console VM.GuestAgent.Audit VM.PowerMgmt Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit Sys.AccessNetwork Sys.Audit"
+	if got := ScopedProvisionerPrivileges(); got != want {
+		t.Fatalf("ScopedProvisionerPrivileges() = %q, want %q", got, want)
+	}
+	if strings.Contains(strings.ToLower(ScopedProvisionerPrivileges()), "administrator") || strings.Contains(strings.ToLower(ScopedProvisionerPrivileges()), "root") {
+		t.Fatal("scoped provisioner role contains an administrator-equivalent privilege")
+	}
+}
+
+func TestConfigureIdentitiesLocksProxmoxLabadminAndInstallsBoundedSudo(t *testing.T) {
+	runner := &fakeRunner{}
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator"
+	if err := ConfigureIdentities(context.Background(), runner, "192.0.2.10", "root", key, []string{"lab-fw-01:22"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"passwd --lock labadmin", "/etc/sudoers.d/boetticher-labadmin", "visudo -cf /etc/sudoers", "Match User lab-jump"} {
+		if !strings.Contains(runner.command, required) {
+			t.Fatalf("identity bootstrap missing %q: %s", required, runner.command)
+		}
+	}
+	if strings.Contains(runner.command, "NOPASSWD:ALL") {
+		t.Fatal("Proxmox labadmin received unrestricted sudo")
+	}
+}
+
 func TestDiscoverPhysicalNetworkViaSSHUsesReadOnlyPveshEvidence(t *testing.T) {
 	runner := &fakeRunner{output: []byte(`[
   {"iface":"vmbr0","type":"bridge","address":"192.0.2.73/24","gateway":"192.0.2.1","bridge_ports":"eno1"},

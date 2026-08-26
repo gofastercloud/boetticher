@@ -21,15 +21,29 @@ import (
 // BuilderPlan describes the ephemeral Core build environment. It receives
 // public build inputs only and is never a module or a runtime secret holder.
 type BuilderPlan struct {
-	VMID      int
-	Hostname  string
-	Platform  string
-	Temporary bool
-	Network   string
+	VMID           int
+	Hostname       string
+	Platform       string
+	Temporary      bool
+	Network        string
+	Cores          int
+	MemoryMiB      int
+	DiskGiB        int
+	MinimumFreeGiB int
 }
 
 func Builder() BuilderPlan {
-	return BuilderPlan{VMID: model.BuilderVMID, Hostname: "lab-builder-01", Platform: "debian-13-amd64", Temporary: true, Network: "bootstrap-upstream-only"}
+	return BuilderPlan{
+		VMID:           model.BuilderVMID,
+		Hostname:       "lab-builder-01",
+		Platform:       "debian-13-amd64",
+		Temporary:      true,
+		Network:        "bootstrap-upstream-only",
+		Cores:          model.BuilderCores,
+		MemoryMiB:      model.BuilderMemoryMiB,
+		DiskGiB:        model.BuilderDiskGiB,
+		MinimumFreeGiB: model.BuilderMinimumFreeGiB,
+	}
 }
 
 // PublicBuildInputs is the allow-list for the temporary Linux builder. The

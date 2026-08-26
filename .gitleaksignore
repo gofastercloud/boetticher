@@ -1,6 +1,6 @@
 # Public PowerDNS repository verification metadata in the immutable pinning commit.
-c27c981845d960146559ad785f576e4e22c391a9:scripts/build-images.sh:generic-api-key:29
-c27c981845d960146559ad785f576e4e22c391a9:images/dns/image.yaml:generic-api-key:17
-c27c981845d960146559ad785f576e4e22c391a9:images/dns/image.yaml:generic-api-key:18
-c27c981845d960146559ad785f576e4e22c391a9:internal/artifacts/catalog_test.go:generic-api-key:164
-c27c981845d960146559ad785f576e4e22c391a9:internal/artifacts/catalog_test.go:generic-api-key:165
+6aeb12cfe20a5acc5ebd5c51f4a04e3b936733e6:images/dns/image.yaml:generic-api-key:17
+6aeb12cfe20a5acc5ebd5c51f4a04e3b936733e6:images/dns/image.yaml:generic-api-key:18
+6aeb12cfe20a5acc5ebd5c51f4a04e3b936733e6:internal/artifacts/catalog_test.go:generic-api-key:344
+6aeb12cfe20a5acc5ebd5c51f4a04e3b936733e6:internal/artifacts/catalog_test.go:generic-api-key:345
+6aeb12cfe20a5acc5ebd5c51f4a04e3b936733e6:scripts/build-images.sh:generic-api-key:39

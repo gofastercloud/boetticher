@@ -37,6 +37,13 @@ const (
 	PortalVMID                  = 130
 	LoggingVMID                 = 140
 	BuilderVMID                 = 190
+	BuilderCores                = 4
+	BuilderMemoryMiB            = 8192
+	BuilderDiskGiB              = 32
+	BuilderMinimumFreeGiB       = 20
+	BuilderGoVersion            = "1.26.5"
+	BuilderGoURL                = "https://go.dev/dl/go1.26.5.linux-amd64.tar.gz"
+	BuilderGoSHA256             = "5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053"
 	PlatformGuestIDMin          = 100
 	PlatformGuestIDMax          = 199
 	ModuleGuestIDMin            = 200

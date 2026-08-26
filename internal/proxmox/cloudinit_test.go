@@ -147,6 +147,19 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 	if !strings.Contains(files.UserData, "boetticher-build") || !strings.Contains(files.UserData, "scripts/scan-images.sh scan-images") || !strings.Contains(files.UserData, "boetticher-builder-ready") {
 		t.Fatal("builder cloud-init does not invoke the first-party build and qualification path")
 	}
+	for _, required := range []string{
+		"/usr/local/go/bin/go version",
+		"go1.26.5.linux-amd64.tar.gz",
+		"5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053",
+		"go version go1.26.5 linux/amd64",
+	} {
+		if !strings.Contains(files.UserData, required) {
+			t.Fatalf("builder cloud-init does not pin and verify %q", required)
+		}
+	}
+	if strings.Contains(files.UserData, "golang-go") {
+		t.Fatal("builder cloud-init relies on an unqualified distro Go package")
+	}
 	if !strings.Contains(string(RenderBuilderCloudInit().UserData), "qemu-guest-agent") {
 		t.Fatal("builder cloud-init does not enable the guest agent needed for address discovery")
 	}
