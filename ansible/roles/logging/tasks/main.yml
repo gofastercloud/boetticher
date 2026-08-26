@@ -107,3 +107,12 @@
   when:
     - inventory_hostname == logging_plan.collector
     - logging_collector_certificate | default('') | length > 0
+
+- name: Enable the socket-activated collector listener after certificate installation
+  ansible.builtin.service:
+    name: systemd-journal-remote.socket
+    enabled: true
+    state: started
+  when:
+    - inventory_hostname == logging_plan.collector
+    - logging_collector_certificate | default('') | length > 0

@@ -21,10 +21,13 @@ func TestPlanProjectsMandatoryCollectorAndManagedSources(t *testing.T) {
 	if strings.Contains(CollectorConfiguration(plan), "Requires=") {
 		t.Fatal("collector availability became an application startup dependency")
 	}
-	for _, expected := range []string{"[Remote]", "SplitMode=host", "SystemMaxUse=8G", "SystemKeepFree=1G", "TrustedCertificateFile="} {
+	for _, expected := range []string{"[Remote]", "SplitMode=host", "MaxUse=8G", "KeepFree=1G", "TrustedCertificateFile="} {
 		if !strings.Contains(CollectorConfiguration(plan), expected) {
 			t.Fatalf("collector configuration omitted %q", expected)
 		}
+	}
+	if strings.Contains(CollectorConfiguration(plan), "[Journal]") || strings.Contains(CollectorConfiguration(plan), "SystemMaxUse=") {
+		t.Fatal("collector retention was emitted using journald-only configuration keys")
 	}
 	if !strings.Contains(CollectorServiceOverride(plan), "--listen-https=-3") || !strings.Contains(CollectorServiceOverride(plan), RemoteJournalPath) {
 		t.Fatal("collector service override does not bind HTTPS journal transport and persistent output")

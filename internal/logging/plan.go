@@ -71,7 +71,7 @@ func CollectorConfiguration(plan Plan) string {
 		"ServerKeyFile=/var/lib/boetticher/identity/logging/collector.key",
 		"ServerCertificateFile=/var/lib/boetticher/identity/logging/collector.crt",
 		"TrustedCertificateFile=/var/lib/boetticher/identity/logging/ca.crt",
-		"", "[Journal]", "SystemMaxUse=" + plan.MaxUse, "SystemKeepFree=" + plan.KeepFree,
+		"MaxUse=" + plan.MaxUse, "KeepFree=" + plan.KeepFree,
 	}, "\n") + "\n"
 }
 
