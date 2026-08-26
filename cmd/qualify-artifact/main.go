@@ -39,25 +39,9 @@ func main() {
 	if err != nil {
 		fatalf("read Trivy report: %v", err)
 	}
-	var report trivyReport
-	if err := json.Unmarshal(data, &report); err != nil {
+	summary, err := summarizeTrivyReport(data)
+	if err != nil {
 		fatalf("decode Trivy report: %v", err)
-	}
-	summary := artifacts.ScanSummary{Completed: true}
-	for _, result := range report.Results {
-		summary.Secrets += len(result.Secrets)
-		for _, vulnerability := range result.Vulnerabilities {
-			switch vulnerability.Severity {
-			case "CRITICAL":
-				if vulnerability.FixedVersion == "" {
-					summary.UnfixedCritical++
-				} else {
-					summary.FixableCritical++
-				}
-			case "HIGH":
-				summary.High++
-			}
-		}
 	}
 	artifact, err := artifacts.ArtifactFor(*module, *provider)
 	if err != nil {
@@ -79,6 +63,33 @@ func main() {
 		fatalf("write qualification evidence: %v", err)
 	}
 	fmt.Printf("qualified %s content=%s policy=%s\n", artifact.Name, evidence.ContentSHA256, evidence.QualificationPolicyVersion)
+}
+
+func summarizeTrivyReport(data []byte) (artifacts.ScanSummary, error) {
+	var report trivyReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		return artifacts.ScanSummary{}, err
+	}
+	if report.Results == nil {
+		return artifacts.ScanSummary{}, fmt.Errorf("Results is missing")
+	}
+	summary := artifacts.ScanSummary{Completed: true}
+	for _, result := range report.Results {
+		summary.Secrets += len(result.Secrets)
+		for _, vulnerability := range result.Vulnerabilities {
+			switch vulnerability.Severity {
+			case "CRITICAL":
+				if vulnerability.FixedVersion == "" {
+					summary.UnfixedCritical++
+				} else {
+					summary.FixableCritical++
+				}
+			case "HIGH":
+				summary.High++
+			}
+		}
+	}
+	return summary, nil
 }
 
 func hashFile(path, name string) string {
