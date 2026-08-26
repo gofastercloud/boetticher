@@ -128,7 +128,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		if err := proxmoxClient.EnsureDirectoryStorage(context.Background(), backup.DedicatedStorageID, backup.DedicatedStoragePath); err != nil {
 			return fmt.Errorf("ensure dedicated backup storage: %w", err)
 		}
-	} else if err := proxmoxClient.EnsureDirectoryStorageContent(context.Background(), "local", "/var/lib/vz", []string{"backup", "images", "rootdir", "vztmpl"}); err != nil {
+	} else if err := proxmoxClient.EnsureDirectoryStorageContent(context.Background(), "local", "/var/lib/vz", []string{"backup", "images", "rootdir", "vztmpl", "snippets"}); err != nil {
 		return fmt.Errorf("ensure single-disk Proxmox storage: %w", err)
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {

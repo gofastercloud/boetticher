@@ -191,7 +191,7 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 		return err
 	}
 	if s.StorageProfile == "single-disk" {
-		if err := client.EnsureDirectoryStorageContent(ctx, "local", "/var/lib/vz", []string{"backup", "images", "rootdir"}); err != nil {
+		if err := client.EnsureDirectoryStorageContent(ctx, "local", "/var/lib/vz", []string{"backup", "images", "rootdir", "snippets"}); err != nil {
 			return fmt.Errorf("ensure single-disk Proxmox storage: %w", err)
 		}
 	}
