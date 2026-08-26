@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dave/labinabox/internal/model"
+	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 func Render(s model.Site, generatedAt time.Time) (string, error) {

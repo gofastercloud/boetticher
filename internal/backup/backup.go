@@ -1,8 +1,8 @@
 package backup
 
 import (
-	"github.com/dave/labinabox/internal/model"
-	"github.com/dave/labinabox/internal/proxmox"
+	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/proxmox"
 )
 
 const PlatformJobName = "labinabox-platform"

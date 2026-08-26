@@ -3,7 +3,7 @@ package dns
 import (
 	"testing"
 
-	"github.com/dave/labinabox/internal/model"
+	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {

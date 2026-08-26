@@ -3,7 +3,7 @@ package site
 import (
 	"fmt"
 
-	"github.com/dave/labinabox/internal/model"
+	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 func LoadDDNSTSIG(dir string, s model.Site, ageIdentityPath string) (string, error) {

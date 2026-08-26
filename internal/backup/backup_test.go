@@ -3,7 +3,7 @@ package backup
 import (
 	"testing"
 
-	"github.com/dave/labinabox/internal/model"
+	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 func TestPlanOwnsOnlyPlatformGuests(t *testing.T) {

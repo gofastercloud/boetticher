@@ -3,7 +3,7 @@ package proxmox
 import (
 	"testing"
 
-	"github.com/dave/labinabox/internal/model"
+	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 func TestClassifyGuestsKeepsUnknownGuestsInformational(t *testing.T) {

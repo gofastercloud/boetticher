@@ -1,6 +1,6 @@
 package zabbix
 
-import "github.com/dave/labinabox/internal/model"
+import "github.com/gofastercloud/boetticher/internal/model"
 
 const PlatformHostGroup = "Lab-in-a-Box/Platform"
 

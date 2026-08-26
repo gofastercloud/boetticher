@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dave/labinabox/internal/model"
-	networkmodel "github.com/dave/labinabox/internal/network"
+	"github.com/gofastercloud/boetticher/internal/model"
+	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 )
 
 type Evidence struct {

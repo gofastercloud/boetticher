@@ -10,7 +10,7 @@ import (
 	"os/exec"
 	"strings"
 
-	networkmodel "github.com/dave/labinabox/internal/network"
+	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 )
 
 type CommandRunner interface {

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dave/labinabox/internal/model"
-	"github.com/dave/labinabox/internal/pki"
+	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/pki"
 )
 
 func Load(dir string) (model.Site, error) {

@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Source and contract checks
+    runs-on: ubuntu-latest
+    env:
+      GOCACHE: ${{ github.workspace }}/.cache/go-build
+      ANSIBLE_LOCAL_TEMP: ${{ github.workspace }}/.cache/ansible
+      ANSIBLE_REMOTE_TEMP: ${{ github.workspace }}/.cache/ansible
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: 1.12.6
+          tofu_wrapper: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install pinned Ansible Core
+        run: python -m pip install --disable-pip-version-check ansible-core==2.19.1
+
+      - name: Run repository checks
+        run: make ci

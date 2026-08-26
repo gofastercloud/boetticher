@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/dave/labinabox/internal/model"
+	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 const (

@@ -9,8 +9,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/dave/labinabox/internal/dns"
-	"github.com/dave/labinabox/internal/model"
+	"github.com/gofastercloud/boetticher/internal/dns"
+	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 func Inventory(s model.Site) (string, error) {

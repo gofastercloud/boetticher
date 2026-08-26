@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dave/labinabox/internal/cli"
+	"github.com/gofastercloud/boetticher/internal/cli"
 )
 
 func main() {

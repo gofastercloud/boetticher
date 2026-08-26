@@ -1,3 +1,13 @@
 /bin/
 .DS_Store
 *.test
+
+# Local infrastructure runtime state. Desired state and non-secret evidence
+# may be committed; credentials, plans, caches, and provider state must not.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+.ansible/
+.runtime/
+secrets/

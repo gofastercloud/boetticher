@@ -1,6 +1,6 @@
 package opnsense
 
-import "github.com/dave/labinabox/internal/model"
+import "github.com/gofastercloud/boetticher/internal/model"
 
 // BootstrapPlan is the deterministic contract for the OPNsense transition.
 // It deliberately describes the expected installer boundary without inventing
