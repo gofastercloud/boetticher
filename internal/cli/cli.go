@@ -75,6 +75,9 @@ func runPreflight(args []string, out interface{ Write([]byte) (int, error) }) er
 	if (runtime.GOOS != "darwin" && runtime.GOOS != "linux") || (runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64") {
 		return fmt.Errorf("unsupported controller platform %s/%s; V1 supports macOS and Linux on amd64/arm64", runtime.GOOS, runtime.GOARCH)
 	}
+	if runtime.GOOS == "linux" && looksLikeProxmoxController("/") {
+		return errors.New("boetticher V1 must run from a separate controller; run it from macOS or Linux, not on the target Proxmox host")
+	}
 	fmt.Fprintf(out, "Controller: PASS %s/%s\n", runtime.GOOS, runtime.GOARCH)
 	allPass := true
 	for _, tool := range []string{"git", "ssh", "ssh-keyscan", "age-keygen", "sops", "tofu", "ansible", "ansible-playbook"} {
@@ -123,6 +126,37 @@ func runPreflight(args []string, out interface{ Write([]byte) (int, error) }) er
 	}
 	fmt.Fprintf(out, "Physical discovery: PASS %s\n", discovery.Mode)
 	return nil
+}
+
+// looksLikeProxmoxController deliberately requires several independent local
+// markers. A generic Linux controller must remain supported; only a host with
+// the Proxmox cluster filesystem, cluster state directory, and pveversion
+// executable is confidently identified as the target platform host.
+func looksLikeProxmoxController(root string) bool {
+	if !directoryExists(filepath.Join(root, "etc", "pve")) || !directoryExists(filepath.Join(root, "var", "lib", "pve-cluster")) {
+		return false
+	}
+	pveversion, err := exec.LookPath("pveversion")
+	if err != nil {
+		return false
+	}
+	return looksLikeProxmoxControllerAt(root, pveversion)
+}
+
+func looksLikeProxmoxControllerAt(root, pveversion string) bool {
+	return directoryExists(filepath.Join(root, "etc", "pve")) &&
+		directoryExists(filepath.Join(root, "var", "lib", "pve-cluster")) &&
+		fileExists(filepath.Join(root, strings.TrimPrefix(pveversion, "/")))
+}
+
+func directoryExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func runSSHConfig(args []string, out interface{ Write([]byte) (int, error) }) error {
