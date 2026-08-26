@@ -58,4 +58,7 @@ The TSIG secret is generated at initialization, encrypted in SOPS, and streamed 
 
 TRUSTED, SERVERS, and MGMT receive both AdGuard addresses. SANDBOX receives only the OPNsense interface for DNS and does not gain broad `lab.home.arpa` visibility merely because its lease names are registered. Use a reservation or static application record for a service name that must not follow a DHCP lease.
 
-The exact PowerDNS package/backend/replication fixture and OPNsense 26.7.x D2 API payloads remain live qualification gates. The deterministic model, API payload contract, secret boundary, and negative tests are implemented locally; no live DDNS success is claimed without a fresh-host test.
+The exact PowerDNS package/backend/replication fixture and OPNsense 26.7.x
+D2 API payloads still need a real installation test. The deterministic model,
+API payload contract, secret boundary, and negative tests are covered locally;
+the DDNS journey itself remains to be tried on a fresh host.

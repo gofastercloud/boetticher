@@ -31,7 +31,7 @@ type BootstrapVLAN struct {
 
 // BootstrapPlanFromSite is a projection of the fixed V1 bootstrap contract.
 // Status is intentionally HOLD until the exact OPNsense patch has been
-// exercised from a wiped Proxmox environment.
+// exercised on a clean Proxmox installation.
 func BootstrapPlanFromSite(s model.Site) (BootstrapPlan, error) {
 	if err := s.Validate(); err != nil {
 		return BootstrapPlan{}, err
@@ -56,7 +56,7 @@ func BootstrapPlanFromSite(s model.Site) (BootstrapPlan, error) {
 		ManagementNetwork:   "10.10.99.0/24",
 		IPv4Only:            true,
 		Status:              "HOLD",
-		QualificationGate:   "fresh Proxmox -> OPNsense install -> VLAN/address/API convergence -> wiped-environment repeat",
+		QualificationGate:   "fresh Proxmox -> OPNsense install -> VLAN/address/API convergence -> clean-install repeat",
 		RequiredTransitions: []string{"create firewall VM", "unattended OPNsense installation/bootstrap", "assign WAN and vtnet1", "establish MGMT reachability", "create scoped API identity", "capture API credential directly into SOPS", "authenticate through supported API", "converge Kea and firewall policy", "remove temporary bootstrap privilege"},
 		VLANs:               zones,
 	}, nil

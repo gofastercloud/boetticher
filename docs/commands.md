@@ -19,6 +19,9 @@ boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH
 boetticher opnsense credentials import [--site DIR] < credentials.json
 ```
 
-`bootstrap`, `provision`, and `converge` are core capabilities. The current build contains the source and offline contracts for each, but the OPNsense unattended-install/API/interface gate and physical network journeys remain explicit live qualification gates.
+`bootstrap`, `provision`, and `converge` are core capabilities. The current
+build contains the source and offline contracts for each. The first real run
+still needs to exercise unattended OPNsense setup, the API/interface
+transition, and the physical network journeys.
 
 Sensitive input is read from protected files or stdin where necessary. Do not place passwords, API secrets, private keys, or SOPS plaintext in arguments, persistent environment variables, logs, generated files, or Git.
