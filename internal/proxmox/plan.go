@@ -763,6 +763,9 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 		if err := validateExistingGuestIdentity(current, guest); err != nil {
 			return err
 		}
+		if err := validateExistingQEMUVolumes(current, plan, guest); err != nil {
+			return err
+		}
 		return ensureExistingGuestTags(ctx, client, plan, guest, current)
 	}
 	if !IsNotFound(err) {
@@ -780,6 +783,13 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 		"boot":        {"order=scsi0;net0"},
 		"serial0":     {"socket"},
 		"tags":        {strings.Join(guest.Tags, ";")},
+	}
+	volumeParams, err := qemuPersistentVolumeParams(plan, guest)
+	if err != nil {
+		return fmt.Errorf("validate persistent volumes for %s: %w", guest.Name, err)
+	}
+	for key, value := range volumeParams {
+		params.Set(key, value)
 	}
 	for index, nic := range guest.NICs {
 		value := fmt.Sprintf("virtio,bridge=%s,firewall=1,macaddr=%s", nic.Bridge, nic.MAC)
@@ -808,6 +818,38 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 	}
 	if err := client.SetVMConfig(ctx, plan.Node, guest.VMID, url.Values{"scsi0": {unused}, "delete": {"unused0"}}); err != nil {
 		return fmt.Errorf("attach imported gateway disk: %w", err)
+	}
+	return nil
+}
+
+// qemuPersistentVolumeParams attaches declared persistent data disks to the
+// appliance VM. The guest artifact owns the mount contract; Core owns the
+// Proxmox volume identity and backup flag. A module never selects a raw disk.
+func qemuPersistentVolumeParams(plan Plan, guest GuestPlan) (map[string]string, error) {
+	params := make(map[string]string, len(guest.Volumes))
+	for index, volume := range guest.Volumes {
+		if volume.Storage == "" || volume.SizeGiB <= 0 || volume.MountPath == "" {
+			return nil, fmt.Errorf("volume %s requires Core-resolved storage, positive size, and mount path", volume.Name)
+		}
+		backup := "0"
+		if volume.Backup {
+			backup = "1"
+		}
+		params[fmt.Sprintf("scsi%d", index+1)] = fmt.Sprintf("%s:%d,backup=%s", volume.Storage, volume.SizeGiB, backup)
+	}
+	return params, nil
+}
+
+func validateExistingQEMUVolumes(current map[string]any, plan Plan, guest GuestPlan) error {
+	wanted, err := qemuPersistentVolumeParams(plan, guest)
+	if err != nil {
+		return err
+	}
+	for key, expected := range wanted {
+		observed, _ := current[key].(string)
+		if observed == "" || !strings.HasPrefix(observed, strings.Split(expected, ",")[0]) {
+			return fmt.Errorf("HOLD: guest %s has persistent volume %s=%q, expected storage/size %q", guest.Name, key, observed, expected)
+		}
 	}
 	return nil
 }

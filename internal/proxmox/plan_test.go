@@ -135,6 +135,31 @@ func TestUserWorkloadNeverEntersPlatformPlan(t *testing.T) {
 	}
 }
 
+func TestQEMUPersistentVolumeParamsUseCoreResolvedStorage(t *testing.T) {
+	guest := GuestPlan{Volumes: []model.PersistentVolumeDeclaration{{
+		Name: "kea-leases", Module: "firewall", Guest: "lab-fw-01", SizeGiB: 4,
+		MountPath: "/var/lib/kea", Storage: modelStorageIDForTest, Backup: true,
+	}}}
+	params, err := qemuPersistentVolumeParams(Plan{}, guest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := params["scsi1"]; got != modelStorageIDForTest+":4,backup=1" {
+		t.Fatalf("unexpected persistent QEMU disk: %q", got)
+	}
+}
+
+func TestQEMUPersistentVolumeParamsRejectUnresolvedStorage(t *testing.T) {
+	_, err := qemuPersistentVolumeParams(Plan{}, GuestPlan{Volumes: []model.PersistentVolumeDeclaration{{
+		Name: "kea-leases", SizeGiB: 4, MountPath: "/var/lib/kea",
+	}}})
+	if err == nil {
+		t.Fatal("unresolved persistent storage was accepted")
+	}
+}
+
+const modelStorageIDForTest = "boetticher-thin"
+
 func TestPlatformGuestPlanCarriesTagsForBackupAndVisibility(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {
