@@ -68,8 +68,8 @@ func main() {
 		fatalf("hash artifact: %v", err)
 	}
 	evidence.ArtifactPath = *artifactPath
-	evidence.PackageManifestSHA = hashFile(*manifestPath)
-	evidence.SBOMSHA256 = hashFile(*sbomPath)
+	evidence.PackageManifestSHA = hashFile(*manifestPath, "package manifest")
+	evidence.SBOMSHA256 = hashFile(*sbomPath, "SBOM")
 	evidence.TrivyReportSHA256 = hashBytes(data)
 	evidence, err = artifacts.QualifyEvidence(evidence, summary)
 	if err != nil {
@@ -81,12 +81,12 @@ func main() {
 	fmt.Printf("qualified %s content=%s policy=%s\n", artifact.Name, evidence.ContentSHA256, evidence.QualificationPolicyVersion)
 }
 
-func hashFile(path string) string {
-	data, err := os.ReadFile(path)
+func hashFile(path, name string) string {
+	digest, err := artifacts.QualificationInputSHA256(path, name)
 	if err != nil {
-		fatalf("read qualification input %s: %v", path, err)
+		fatalf("hash qualification input %s: %v", name, err)
 	}
-	return hashBytes(data)
+	return digest
 }
 
 func hashBytes(data []byte) string {

@@ -227,12 +227,38 @@ func EvidenceForFile(path string, artifact model.Artifact) (Evidence, error) {
 	if err != nil {
 		return Evidence{}, fmt.Errorf("stat artifact %s: %w", path, err)
 	}
+	if !info.Mode().IsRegular() {
+		return Evidence{}, fmt.Errorf("artifact %s is not a regular file", path)
+	}
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
 		return Evidence{}, fmt.Errorf("hash artifact %s: %w", path, err)
 	}
 	content := hex.EncodeToString(hash.Sum(nil))
 	return Evidence{Artifact: artifact, ContentSHA256: content, SizeBytes: info.Size(), DefinitionSHA256: artifact.DefinitionSHA256}, nil
+}
+
+// QualificationInputSHA256 hashes a generated qualification input only when it
+// is a non-empty regular file. Empty or special files cannot provide evidence
+// for a package manifest, SBOM, or scanner report.
+func QualificationInputSHA256(path, name string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("stat %s qualification input: %w", name, err)
+	}
+	if !info.Mode().IsRegular() || info.Size() == 0 {
+		return "", fmt.Errorf("%s qualification input must be a non-empty regular file", name)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("open %s qualification input: %w", name, err)
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", fmt.Errorf("hash %s qualification input: %w", name, err)
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 // ContentSHA256ForFile recalculates the checksum immediately before an

@@ -14,6 +14,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/ansible"
 	"github.com/gofastercloud/boetticher/internal/appliance"
 	"github.com/gofastercloud/boetticher/internal/backup"
+	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
@@ -113,6 +114,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	runtimeVariables["portal_source_dir"] = filepath.Join(*siteDir, "generated", "portal")
 	runtimeVariables["boetticher_appliance_artifact"] = true
+	monitoringEnabled := modules.IsEnabled(s, "monitoring")
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		ddnsTSIG, loadErr := site.LoadDDNSTSIG(*siteDir, s, *ageIdentity)
 		if loadErr != nil {
@@ -127,20 +129,23 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 		runtimeVariables["firewall_ruleset"] = ruleset
 	}
-	zabbixDBPassword, err := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "zabbix_db_password")
-	if err != nil {
-		return fmt.Errorf("load encrypted Zabbix database password: %w", err)
-	}
-	zabbixAPIPassword, err := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "zabbix_api_password")
-	if err != nil {
-		return fmt.Errorf("load encrypted Zabbix API password: %w", err)
-	}
 	authority, err := site.LoadAuthority(*siteDir, s, *ageIdentity)
 	if err != nil {
 		return fmt.Errorf("load platform CA chain: %w", err)
 	}
-	runtimeVariables["zabbix_db_password"] = zabbixDBPassword
-	runtimeVariables["zabbix_api_password"] = zabbixAPIPassword
+	var zabbixAPIPassword string
+	if monitoringEnabled {
+		zabbixDBPassword, loadErr := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "zabbix_db_password")
+		if loadErr != nil {
+			return fmt.Errorf("load encrypted Zabbix database password: %w", loadErr)
+		}
+		zabbixAPIPassword, loadErr = site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "zabbix_api_password")
+		if loadErr != nil {
+			return fmt.Errorf("load encrypted Zabbix API password: %w", loadErr)
+		}
+		runtimeVariables["zabbix_db_password"] = zabbixDBPassword
+		runtimeVariables["zabbix_api_password"] = zabbixAPIPassword
+	}
 	runtimeVariables["client_ca_pem"] = authority.IssuingCertPEM
 	inventoryPath := filepath.Join(*siteDir, "generated", "ansible", "inventory.ini")
 	csrDir := filepath.Join(site.RuntimeDir(s), "pki")
@@ -202,6 +207,10 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			return fmt.Errorf("HOLD: managed gateway did not pass runtime readiness before dependent appliances: %w", err)
 		}
 	}
+	dnsPlan, err := dns.PlanFromSite(s)
+	if err != nil {
+		return fmt.Errorf("resolve DNS readiness contract: %w", err)
+	}
 	for _, module := range []string{"dns", "logging", "monitoring", "portal"} {
 		if !modules.IsEnabled(s, module) && module != "portal" {
 			continue
@@ -221,6 +230,14 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			if err := proxmox.WaitForSSH(context.Background(), guestRunner, guest.Address, model.DefaultAdminSSHUser, 30, 2*time.Second); err != nil {
 				return fmt.Errorf("HOLD: %s guest %s is not reachable after first boot: %w", module, guest.Name, err)
 			}
+			if module == "dns" {
+				if err := ansible.RunLimited(context.Background(), "ansible/site.yml", inventoryPath, variables, guest.Name); err != nil {
+					return fmt.Errorf("HOLD: configure DNS guest %s before dependent appliances: %w", guest.Name, err)
+				}
+				if err := verifyDNSReadiness(context.Background(), guestRunner, guest.Address, dnsPlan.RecursiveProvider); err != nil {
+					return fmt.Errorf("HOLD: DNS guest %s did not pass runtime readiness before dependent appliances: %w", guest.Name, err)
+				}
+			}
 		}
 	}
 	if err := ansible.Run(context.Background(), "ansible/site.yml", inventoryPath, variables); err != nil {
@@ -233,24 +250,29 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err := installModuleRuntimeConfigs(context.Background(), *siteDir, s, proxmoxPlan); err != nil {
 		return err
 	}
-	monitorCSR, err := os.ReadFile(filepath.Join(csrDir, "monitor.csr.pem"))
-	if err != nil {
-		return fmt.Errorf("read endpoint-generated monitor CSR: %w", err)
-	}
 	portalCSR, err := os.ReadFile(filepath.Join(csrDir, "portal.csr.pem"))
 	if err != nil {
 		return fmt.Errorf("read endpoint-generated portal CSR: %w", err)
 	}
-	monitorCertificate, err := pki.SignServerCSR(authority, string(monitorCSR), "monitor", s.Network.Domain, []string{"lab-monitor-01." + s.Network.Domain}, time.Now().UTC())
-	if err != nil {
-		return fmt.Errorf("sign monitor endpoint CSR: %w", err)
+	var monitorCertificate pki.ServerCertificate
+	if monitoringEnabled {
+		monitorCSR, readErr := os.ReadFile(filepath.Join(csrDir, "monitor.csr.pem"))
+		if readErr != nil {
+			return fmt.Errorf("read endpoint-generated monitor CSR: %w", readErr)
+		}
+		monitorCertificate, err = pki.SignServerCSR(authority, string(monitorCSR), "monitor", s.Network.Domain, []string{"lab-monitor-01." + s.Network.Domain}, time.Now().UTC())
+		if err != nil {
+			return fmt.Errorf("sign monitor endpoint CSR: %w", err)
+		}
 	}
 	portalCertificate, err := pki.SignServerCSR(authority, string(portalCSR), "portal", s.Network.Domain, []string{"lab-portal-01." + s.Network.Domain}, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("sign portal endpoint CSR: %w", err)
 	}
 	runtimeVariables["pki_bootstrap_phase"] = false
-	runtimeVariables["monitor_server_cert_pem"] = monitorCertificate.ChainPEM
+	if monitoringEnabled {
+		runtimeVariables["monitor_server_cert_pem"] = monitorCertificate.ChainPEM
+	}
 	runtimeVariables["portal_server_cert_pem"] = portalCertificate.ChainPEM
 	runtimeVariables["logging_client_certificates"] = loggingClientCertificates
 	runtimeVariables["logging_collector_certificate"] = loggingCollectorCertificate
@@ -262,24 +284,26 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err := ansible.Run(context.Background(), "ansible/site.yml", inventoryPath, variables); err != nil {
 		return fmt.Errorf("install endpoint-signed certificates: %w", err)
 	}
-	clientCertificate, err := pki.IssueClient(authority, "boetticher-reconciler", s.Network.Domain, time.Now().UTC())
-	if err != nil {
-		return fmt.Errorf("issue runtime Zabbix reconciliation certificate: %w", err)
-	}
-	zabbixClient, err := zabbix.NewClient(zabbix.ClientConfig{
-		BaseURL: "https://monitor." + s.Network.Domain, User: "Admin", Password: zabbixAPIPassword,
-		CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
-		ServerName: "monitor." + s.Network.Domain,
-	})
-	if err != nil {
-		return err
-	}
-	zabbixPlan, err := zabbix.PlanFromSite(s)
-	if err != nil {
-		return err
-	}
-	if err := zabbixClient.Reconcile(context.Background(), zabbixPlan); err != nil {
-		return fmt.Errorf("reconcile boetticher Zabbix objects: %w", err)
+	if monitoringEnabled {
+		clientCertificate, issueErr := pki.IssueClient(authority, "boetticher-reconciler", s.Network.Domain, time.Now().UTC())
+		if issueErr != nil {
+			return fmt.Errorf("issue runtime Zabbix reconciliation certificate: %w", issueErr)
+		}
+		zabbixClient, clientErr := zabbix.NewClient(zabbix.ClientConfig{
+			BaseURL: "https://monitor." + s.Network.Domain, User: "Admin", Password: zabbixAPIPassword,
+			CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
+			ServerName: "monitor." + s.Network.Domain,
+		})
+		if clientErr != nil {
+			return clientErr
+		}
+		zabbixPlan, planErr := zabbix.PlanFromSite(s)
+		if planErr != nil {
+			return planErr
+		}
+		if reconcileErr := zabbixClient.Reconcile(context.Background(), zabbixPlan); reconcileErr != nil {
+			return fmt.Errorf("reconcile boetticher Zabbix objects: %w", reconcileErr)
+		}
 	}
 	if err := proxmoxClient.ApplyBackupJob(context.Background(), s.ProxmoxNode, proxmox.BackupJob{
 		JobName: backupPlan.JobName, ModelRevision: backupPlan.ModelRevision, StorageTarget: backupPlan.StorageTarget,
@@ -321,6 +345,23 @@ func verifyGatewayReadiness(ctx context.Context, runner proxmox.CommandRunner, a
 	command := "set -eu; sudo -n nft -c -f /etc/nftables.conf; sudo -n systemctl is-active nftables kea-dhcp4-server kea-dhcp-ddns-server chrony; test \"$(sudo -n sysctl -n net.ipv4.ip_forward)\" = 1"
 	if _, err := runner.Run(ctx, address, model.DefaultAdminSSHUser, command); err != nil {
 		return fmt.Errorf("gateway policy, DHCP, NTP, and forwarding checks failed: %w", err)
+	}
+	return nil
+}
+
+func verifyDNSReadiness(ctx context.Context, runner proxmox.CommandRunner, address, provider string) error {
+	if runner == nil {
+		return errors.New("DNS readiness runner is required")
+	}
+	service := "blocky"
+	config := "/etc/blocky/config.yml"
+	if provider == string(model.DNSProviderAdGuard) {
+		service = "adguardhome"
+		config = "/opt/AdGuardHome/AdGuardHome.yaml"
+	}
+	command := fmt.Sprintf("set -eu; sudo -n systemctl is-active pdns chrony %s; sudo -n test -s /etc/powerdns/pdns.conf; sudo -n test -s %s", service, config)
+	if _, err := runner.Run(ctx, address, model.DefaultAdminSSHUser, command); err != nil {
+		return fmt.Errorf("authoritative, NTP, and %s resolver checks failed: %w", provider, err)
 	}
 	return nil
 }

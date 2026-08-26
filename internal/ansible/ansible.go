@@ -32,7 +32,11 @@ func Inventory(s model.Site) (string, error) {
 	b.WriteString("[proxmox]\n")
 	for _, component := range components {
 		if component.Name == "lab-proxmox-01" {
-			writeHost(&b, component, false)
+			address := component.Address
+			if s.BootstrapAddress != "" {
+				address = s.BootstrapAddress
+			}
+			writeHostAt(&b, component, address, false)
 		}
 	}
 	b.WriteString("\n[dns]\n")
@@ -71,11 +75,15 @@ func Inventory(s model.Site) (string, error) {
 }
 
 func writeHost(b *strings.Builder, component model.Component, throughBastion bool) {
+	writeHostAt(b, component, component.Address, throughBastion)
+}
+
+func writeHostAt(b *strings.Builder, component model.Component, address string, throughBastion bool) {
 	user := component.SSHUser
 	if user == "" {
 		user = model.DefaultAdminSSHUser
 	}
-	fmt.Fprintf(b, "%s ansible_host=%s ansible_user=%s", component.Name, component.Address, user)
+	fmt.Fprintf(b, "%s ansible_host=%s ansible_user=%s", component.Name, address, user)
 	if throughBastion {
 		fmt.Fprintf(b, " ansible_ssh_common_args='-o ProxyJump=lab-bastion -o HostKeyAlias=%s.%s'", component.Hostname, model.DefaultDomain)
 	} else {

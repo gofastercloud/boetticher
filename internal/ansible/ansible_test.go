@@ -35,6 +35,21 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 	}
 }
 
+func TestInventoryUsesBootstrapAddressForProxmoxTransport(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	site.BootstrapAddress = "192.0.2.5"
+	inventory, err := Inventory(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(inventory, "lab-proxmox-01 ansible_host=192.0.2.5") {
+		t.Fatalf("Proxmox inventory did not use bootstrap address:\n%s", inventory)
+	}
+	if strings.Contains(inventory, "lab-proxmox-01 ansible_host=10.10.99.5") {
+		t.Fatal("Proxmox inventory used the internal management address for controller transport")
+	}
+}
+
 func TestLimitedRunRejectsShellSyntaxInInventoryIdentity(t *testing.T) {
 	for _, value := range []string{"lab-fw-01", "lab_dns_01", "lab.fw"} {
 		if !safeInventoryIdentity(value) {
@@ -87,6 +102,16 @@ func TestEndpointTLSKeysAreGeneratedLocallyAndNeverSuppliedByController(t *testi
 	}
 	if !strings.Contains(string(portal), "Enable and start the portal nginx service") {
 		t.Fatal("portal role does not enable and start nginx after installing its certificate")
+	}
+}
+
+func TestGuestPlaybookProjectsLoggingClientsBeyondTheCollector(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "ansible", "site.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "inventory_hostname in logging_upload_configs or inventory_hostname == 'lab-log-01'") {
+		t.Fatal("managed guest playbook does not apply the logging client role to endpoint sources")
 	}
 }
 

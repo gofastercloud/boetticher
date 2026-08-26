@@ -489,7 +489,10 @@ func (c *Client) EnsureCloudImage(ctx context.Context, node, storage, filename, 
 		if observed == "" {
 			observed = content.CSum
 		}
-		if observed != "" && !strings.EqualFold(observed, checksum) {
+		if observed == "" {
+			return "", fmt.Errorf("existing gateway image %q has no checksum evidence", filename)
+		}
+		if !strings.EqualFold(observed, checksum) {
 			return "", fmt.Errorf("existing gateway image %q has a different checksum", filename)
 		}
 		return content.VolID, nil
@@ -507,6 +510,13 @@ func (c *Client) EnsureCloudImage(ctx context.Context, node, storage, filename, 
 	}
 	for _, content := range contents {
 		if path.Base(content.Filename) == filename || strings.HasSuffix(content.VolID, "/"+filename) {
+			observed := content.Checksum
+			if observed == "" {
+				observed = content.CSum
+			}
+			if observed == "" || !strings.EqualFold(observed, checksum) {
+				return "", fmt.Errorf("downloaded gateway image %q has no matching checksum evidence", filename)
+			}
 			return content.VolID, nil
 		}
 	}

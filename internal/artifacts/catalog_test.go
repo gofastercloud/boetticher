@@ -32,6 +32,20 @@ func TestEvidenceUsesActualArtifactBytes(t *testing.T) {
 	}
 }
 
+func TestQualificationInputRejectsMissingOrEmptyEvidence(t *testing.T) {
+	root := t.TempDir()
+	if _, err := QualificationInputSHA256(filepath.Join(root, "missing"), "SBOM"); err == nil {
+		t.Fatal("missing qualification input was accepted")
+	}
+	empty := filepath.Join(root, "empty")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := QualificationInputSHA256(empty, "SBOM"); err == nil {
+		t.Fatal("empty qualification input was accepted")
+	}
+}
+
 func TestResolveArtifactEvidenceRejectsChangedBytes(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "logging.tar.zst")

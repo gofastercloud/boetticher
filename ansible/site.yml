@@ -13,7 +13,7 @@
     - role: monitor
       when: inventory_hostname in groups.get('monitor', [])
     - role: logging
-      when: inventory_hostname == 'lab-log-01'
+      when: inventory_hostname in logging_upload_configs or inventory_hostname == 'lab-log-01'
     - role: firewall
       when: inventory_hostname in groups.get('firewall', [])
     - role: portal

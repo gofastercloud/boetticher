@@ -604,7 +604,7 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 		if name, _ := current["name"].(string); name != "lab-builder-01" {
 			return fmt.Errorf("HOLD: VMID %d is not the expected temporary builder", model.BuilderVMID)
 		}
-		if !strings.Contains(fmt.Sprint(current["tags"]), builderOwnerTag) {
+		if !hasOwnerTag(currentTags(current), builderOwnerTag) {
 			return fmt.Errorf("HOLD: VMID %d lacks canonical builder ownership proof %q", model.BuilderVMID, builderOwnerTag)
 		}
 		return nil
@@ -721,7 +721,7 @@ func DestroyBuilderVM(ctx context.Context, client *Client, node string) error {
 	if err != nil {
 		return fmt.Errorf("inspect temporary builder before destruction: %w", err)
 	}
-	if name, _ := current["name"].(string); name != "lab-builder-01" || !strings.Contains(fmt.Sprint(current["tags"]), builderOwnerTag) {
+	if name, _ := current["name"].(string); name != "lab-builder-01" || !hasOwnerTag(currentTags(current), builderOwnerTag) {
 		return fmt.Errorf("HOLD: refusing to destroy unproven VMID %d builder ownership", model.BuilderVMID)
 	}
 	if status, _ := current["status"].(string); status == "running" {
