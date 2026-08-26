@@ -48,7 +48,7 @@ func runFirewall(args []string, out interface{ Write([]byte) (int, error) }) err
 	case "diff":
 		return firewallDiff(*siteDir, s, plan, *live, *jsonOutput, out)
 	case "counters":
-		return firewallLiveRead(*siteDir, s, []string{"sudo", "nft", "--json", "list", "table", "inet", firewall.FilterTable}, *live, *jsonOutput, out, "Counters are live nftables state.")
+		return firewallCounters(*siteDir, s, *live, *jsonOutput, out)
 	case "logs":
 		prefix := "boetticher"
 		if *zone != "" {
@@ -207,6 +207,38 @@ func printNFTDiff(out interface{ Write([]byte) (int, error) }, diff firewall.NFT
 	for _, item := range diff.UnexpectedRules {
 		fmt.Fprintf(out, "  unexpected rule %s\n", item)
 	}
+}
+
+func firewallCounters(siteDir string, s model.Site, live, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
+	if s.Gateway.Mode == model.GatewayModeExternal {
+		fmt.Fprintln(out, "Firewall counters belong to the operator-managed external appliance.")
+		return nil
+	}
+	if !live {
+		fmt.Fprintln(out, "Firewall counters are live nftables state. Use --live to query lab-fw-01.")
+		return nil
+	}
+	data, err := gatewayCommand(siteDir, s, "sudo", "nft", "--json", "list", "ruleset")
+	if err != nil {
+		return err
+	}
+	counters, err := firewall.ParseCounters(data)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return writeCLIJSON(out, map[string]any{"model_revision": mustRevision(s), "counters": counters})
+	}
+	if len(counters) == 0 {
+		fmt.Fprintln(out, "Firewall counters: no named boetticher counters returned")
+		return nil
+	}
+	fmt.Fprintln(out, "Firewall counters")
+	fmt.Fprintf(out, "  %-46s %12s %12s\n", "Rule", "Packets", "Bytes")
+	for _, counter := range counters {
+		fmt.Fprintf(out, "  %-46s %12d %12d\n", strings.TrimPrefix(counter.Rule, "boetticher:"), counter.Packets, counter.Bytes)
+	}
+	return nil
 }
 
 func firewallVerify(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
