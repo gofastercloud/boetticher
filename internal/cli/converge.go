@@ -368,16 +368,27 @@ func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Si
 		}
 	}
 	for _, guest := range s.PlatformComponents() {
+		if guest.Module == "" && guest.Name != "lab-portal-01" {
+			continue
+		}
+		resolvedGuest, ok := resolvedGuests[guest.Name]
+		if !ok || resolvedGuest.Artifact.ContentSHA256 == "" {
+			return fmt.Errorf("runtime artifact identity for %s: qualified artifact content checksum is missing", guest.Name)
+		}
 		if guest.Module == "" {
+			user := guest.SSHUser
+			if user == "" {
+				user = model.DefaultAdminSSHUser
+			}
+			runner := applianceSSHRunner(s, siteDir, guest.Name)
+			if err := appliance.InstallArtifactIdentity(ctx, runner, guest.Address, user, resolvedGuest.Artifact); err != nil {
+				return fmt.Errorf("install artifact identity for %s: %w", guest.Name, err)
+			}
 			continue
 		}
 		declaration, ok := declarations[guest.Module]
 		if !ok {
 			return fmt.Errorf("runtime configuration for %s: module declaration is missing", guest.Name)
-		}
-		resolvedGuest, ok := resolvedGuests[guest.Name]
-		if !ok || resolvedGuest.Artifact.ContentSHA256 == "" {
-			return fmt.Errorf("runtime configuration for %s: qualified artifact content checksum is missing", guest.Name)
 		}
 		declaration, resolveErr := resolvedDeclarationForGuest(declaration, resolvedGuest)
 		if resolveErr != nil {
