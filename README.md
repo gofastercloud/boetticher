@@ -35,6 +35,8 @@ HOME / existing LAN
 
 OPNsense is the routing and inter-zone security boundary. Proxmox does not route between VLANs. The fixed V1 addresses, IPv4-only model, dual DNS/NTP design, storage profiles, and platform guest IDs are part of the product contract.
 
+The internal namespace is `lab.home.arpa`. The generated platform records include `opnsense.lab.home.arpa`, `monitor.lab.home.arpa`, `portal.lab.home.arpa`, `dns01.lab.home.arpa`, and `dns02.lab.home.arpa`. The main web entry points are `https://opnsense.lab.home.arpa`, `https://monitor.lab.home.arpa`, and `https://portal.lab.home.arpa`.
+
 ## What it promises
 
 - A deterministic platform model and revision shared by OpenTofu, Ansible, OPNsense, Zabbix, SSH configuration, the portal, and verification output.
