@@ -235,6 +235,7 @@ func (s Site) Normalize() Site {
 	copySite.Modules = append([]ModuleInstance(nil), s.Modules...)
 	sort.Slice(copySite.Network.Zones, func(i, j int) bool { return copySite.Network.Zones[i].VLAN < copySite.Network.Zones[j].VLAN })
 	sort.Slice(copySite.Components, func(i, j int) bool { return copySite.Components[i].Name < copySite.Components[j].Name })
+	sort.Slice(copySite.Modules, func(i, j int) bool { return copySite.Modules[i].Name < copySite.Modules[j].Name })
 	for i := range copySite.Components {
 		copySite.Components[i].DNSAliases = append([]string(nil), copySite.Components[i].DNSAliases...)
 		sort.Strings(copySite.Components[i].DNSAliases)

@@ -47,6 +47,24 @@ func TestOfficialModuleDeclarationsDoNotBecomePlatformComponents(t *testing.T) {
 	}
 }
 
+func TestRevisionIsIndependentOfOfficialModuleOrder(t *testing.T) {
+	first := NewDefaultSite("installation", "age1example")
+	first.Modules = []ModuleInstance{{Name: "z-module", Enabled: true}, {Name: "a-module", Enabled: false}}
+	second := first
+	second.Modules = []ModuleInstance{{Name: "a-module", Enabled: false}, {Name: "z-module", Enabled: true}}
+	a, err := first.Revision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := second.Revision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a != b {
+		t.Fatalf("revisions differ for equivalent module sets: %s != %s", a, b)
+	}
+}
+
 func TestRevisionIgnoresOperatorLocalSSHPath(t *testing.T) {
 	first := NewDefaultSite("installation", "age1example")
 	second := first
