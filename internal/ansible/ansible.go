@@ -11,6 +11,7 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/firewall"
+	"github.com/gofastercloud/boetticher/internal/logging"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/zabbix"
 )
@@ -103,25 +104,39 @@ func Variables(s model.Site) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	loggingPlan, err := logging.PlanFromSite(s)
+	if err != nil {
+		return nil, err
+	}
 	blockyConfig, err := dns.RenderBlockyConfig(dnsPlan)
 	if err != nil {
 		return nil, err
 	}
+	loggingUploads := map[string]string{}
+	for _, component := range s.PlatformComponents() {
+		if component.Logging && component.Name != logging.CollectorName {
+			loggingUploads[component.Name] = logging.UploadConfiguration(loggingPlan, component.Name)
+		}
+	}
 	value := struct {
-		ModelRevision               string        `json:"model_revision"`
-		Domain                      string        `json:"domain"`
-		IPv4Only                    bool          `json:"ipv4_only"`
-		AuthoritativeDNS            string        `json:"authoritative_dns"`
-		AuthoritativeDNSVersion     string        `json:"authoritative_dns_version"`
-		AuthoritativePackageVersion string        `json:"authoritative_package_version"`
-		AuthoritativeDNSPort        string        `json:"authoritative_dns_port"`
-		DynamicZones                []string      `json:"dynamic_zones"`
-		AdGuardForwardZones         []string      `json:"adguard_forward_zones"`
-		DNSPlan                     dns.Plan      `json:"dns_plan"`
-		FirewallPlan                firewall.Plan `json:"firewall_plan"`
-		ZabbixPlan                  zabbix.Plan   `json:"zabbix_plan"`
-		BlockyConfig                string        `json:"blocky_config"`
-	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, zabbixPlan, string(blockyConfig)}
+		ModelRevision               string            `json:"model_revision"`
+		Domain                      string            `json:"domain"`
+		IPv4Only                    bool              `json:"ipv4_only"`
+		AuthoritativeDNS            string            `json:"authoritative_dns"`
+		AuthoritativeDNSVersion     string            `json:"authoritative_dns_version"`
+		AuthoritativePackageVersion string            `json:"authoritative_package_version"`
+		AuthoritativeDNSPort        string            `json:"authoritative_dns_port"`
+		DynamicZones                []string          `json:"dynamic_zones"`
+		AdGuardForwardZones         []string          `json:"adguard_forward_zones"`
+		DNSPlan                     dns.Plan          `json:"dns_plan"`
+		FirewallPlan                firewall.Plan     `json:"firewall_plan"`
+		ZabbixPlan                  zabbix.Plan       `json:"zabbix_plan"`
+		BlockyConfig                string            `json:"blocky_config"`
+		LoggingPlan                 logging.Plan      `json:"logging_plan"`
+		LoggingCollectorConfig      string            `json:"logging_collector_config"`
+		LoggingServiceOverride      string            `json:"logging_collector_service_override"`
+		LoggingUploadConfigs        map[string]string `json:"logging_upload_configs"`
+	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, zabbixPlan, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), loggingUploads}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err

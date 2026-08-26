@@ -8,6 +8,7 @@
       - chrony
       - nginx
       - openssl
+      - systemd-journal-remote
     state: present
     update_cache: true
     cache_valid_time: 3600
@@ -17,3 +18,29 @@
     name: chrony
     enabled: true
     state: started
+
+- name: Install bounded local journald configuration
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Write bounded local journald configuration
+  ansible.builtin.copy:
+    content: "[Journal]\nSystemMaxUse={{ logging_plan.local_journal_max_use }}\nRuntimeMaxUse=64M\n"
+    dest: /etc/systemd/journald.conf.d/boetticher.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart journald
+
+- name: Install the asynchronous journal-upload configuration skeleton
+  ansible.builtin.copy:
+    content: "{{ logging_upload_configs[inventory_hostname] }}"
+    dest: /etc/systemd/journal-upload.conf
+    owner: root
+    group: root
+    mode: '0644'
+  when: inventory_hostname in logging_upload_configs

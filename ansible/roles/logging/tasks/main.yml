@@ -1,0 +1,45 @@
+---
+- name: Install the bounded collector journal directory
+  ansible.builtin.file:
+    path: "{{ logging_plan.remote_journal_path }}"
+    state: directory
+    owner: root
+    group: systemd-journal
+    mode: '2755'
+  when: inventory_hostname == logging_plan.collector
+
+- name: Install the journal-remote configuration contract
+  ansible.builtin.copy:
+    content: "{{ logging_collector_config }}"
+    dest: /etc/systemd/journal-remote.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload logging systemd
+  when: inventory_hostname == logging_plan.collector
+
+- name: Install the journal-remote service override
+  ansible.builtin.file:
+    path: /etc/systemd/system/systemd-journal-remote.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: inventory_hostname == logging_plan.collector
+
+- name: Install the journal-remote service override file
+  ansible.builtin.copy:
+    content: "{{ logging_collector_service_override }}"
+    dest: /etc/systemd/system/systemd-journal-remote.service.d/boetticher.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload logging systemd
+  when: inventory_hostname == logging_plan.collector
+
+- name: Keep the collector stopped until its server certificate is installed
+  ansible.builtin.service:
+    name: systemd-journal-remote
+    enabled: false
+    state: stopped
+  when: inventory_hostname == logging_plan.collector
