@@ -68,11 +68,15 @@ func runFirewall(args []string, out interface{ Write([]byte) (int, error) }) err
 func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
 	status := map[string]any{"mode": plan.Mode, "engine": plan.Engine, "model_revision": plan.ModelRevision, "ipv4_only": plan.IPv4Only, "forwarding_after_convergence": plan.Forwarding, "interfaces": plan.Interfaces}
 	if live && s.Gateway.Mode == model.GatewayModeManaged {
-		data, err := gatewayCommand(siteDir, s, "sudo", "systemctl", "is-active", "nftables", "kea-dhcp4-server", "kea-dhcp-ddns-server", "dnsmasq")
+		data, err := gatewayCommand(siteDir, s, "sudo", "sh", "-c", remoteShellQuote(gatewayStatusScript))
 		if err != nil {
 			return err
 		}
-		status["live"] = strings.TrimSpace(string(data))
+		liveStatus, parseErr := parseGatewayStatus(string(data))
+		if parseErr != nil {
+			return parseErr
+		}
+		status["live"] = liveStatus
 	} else if live {
 		status["live"] = "external firewall state is outside boetticher"
 	}
@@ -86,14 +90,36 @@ func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, json
 		fmt.Fprintln(out, "  Trunk       VLANs 10, 20, 50, 99")
 		return nil
 	}
-	fmt.Fprintf(out, "  Forwarding  enabled after convergence\n  Ruleset     generated\n")
+	if live {
+		liveStatus := status["live"].(gatewayLiveStatus)
+		forwarding := "disabled"
+		if liveStatus.Forwarding == "1" {
+			forwarding = "enabled"
+		}
+		fmt.Fprintf(out, "  Forwarding  %s\n  Ruleset     queried\n", forwarding)
+	} else {
+		fmt.Fprintf(out, "  Forwarding  enabled after convergence\n  Ruleset     generated\n")
+	}
 	fmt.Fprintln(out, "Interfaces")
 	for _, iface := range plan.Interfaces {
 		address := iface.Address
 		if iface.Method == "dhcp" {
 			address = "upstream DHCP"
 		}
+		if live {
+			liveStatus := status["live"].(gatewayLiveStatus)
+			if observed := liveStatus.Interfaces[iface.Name]; observed != "" {
+				address = observed
+			}
+		}
 		fmt.Fprintf(out, "  %-9s %-10s %s\n", iface.Role, iface.Name, address)
+	}
+	if live {
+		liveStatus := status["live"].(gatewayLiveStatus)
+		fmt.Fprintln(out, "Services")
+		for _, service := range []string{"nftables", "kea-dhcp4-server", "kea-dhcp-ddns-server", "dnsmasq"} {
+			fmt.Fprintf(out, "  %-18s %s\n", service, liveStatus.Services[service])
+		}
 	}
 	if live {
 		fmt.Fprintln(out, "Live state    PASS (managed gateway queried)")
@@ -101,6 +127,54 @@ func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, json
 		fmt.Fprintln(out, "Live state    NOT TESTED (use --live)")
 	}
 	return nil
+}
+
+const gatewayStatusScript = `printf 'forwarding=%s\n' "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || printf unknown)"
+for service in nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq; do
+  printf 'service.%s=' "$service"
+  systemctl is-active "$service" 2>/dev/null || true
+done
+for iface in wan0 trusted0 servers0 sandbox0 mgmt0; do
+  printf 'iface.%s=' "$iface"
+  ip -br addr show "$iface" 2>/dev/null || printf absent
+done`
+
+type gatewayLiveStatus struct {
+	Forwarding string            `json:"forwarding"`
+	Services   map[string]string `json:"services"`
+	Interfaces map[string]string `json:"interfaces"`
+}
+
+func parseGatewayStatus(output string) (gatewayLiveStatus, error) {
+	status := gatewayLiveStatus{Services: map[string]string{}, Interfaces: map[string]string{}}
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || value == "" {
+			return gatewayLiveStatus{}, fmt.Errorf("managed gateway status contains malformed line %q", line)
+		}
+		switch {
+		case key == "forwarding":
+			status.Forwarding = value
+		case strings.HasPrefix(key, "service."):
+			status.Services[strings.TrimPrefix(key, "service.")] = value
+		case strings.HasPrefix(key, "iface."):
+			status.Interfaces[strings.TrimPrefix(key, "iface.")] = value
+		default:
+			return gatewayLiveStatus{}, fmt.Errorf("managed gateway status contains unknown field %q", key)
+		}
+	}
+	if status.Forwarding == "" || len(status.Services) != 4 || len(status.Interfaces) != 5 {
+		return gatewayLiveStatus{}, errors.New("managed gateway status is incomplete")
+	}
+	return status, nil
+}
+
+func remoteShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func firewallShow(s model.Site, plan firewall.Plan, format string, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
