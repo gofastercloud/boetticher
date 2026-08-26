@@ -64,6 +64,19 @@ func writeModelProjections(dir string, s model.Site) error {
 	}{revision, normalized.Components}); err != nil {
 		return err
 	}
+	moduleRoot := filepath.Join(dir, "generated", "modules")
+	if err := os.RemoveAll(moduleRoot); err != nil {
+		return fmt.Errorf("clear generated module projections: %w", err)
+	}
+	for _, declaration := range normalized.Declarations {
+		moduleDir := filepath.Join(moduleRoot, declaration.Module)
+		if err := writeProjection(filepath.Join(moduleDir, "declaration.json"), struct {
+			ModelRevision string                  `json:"model_revision"`
+			Declaration   model.ModuleDeclaration `json:"declaration"`
+		}{revision, declaration}); err != nil {
+			return err
+		}
+	}
 	if err := writeProjection(filepath.Join(dir, "generated", "firewall", "desired-state.json"), firewallPlan); err != nil {
 		return err
 	}
