@@ -35,6 +35,32 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 			}
 		}
 	}
+	dns, ok := findDeclaration(site, "dns")
+	if !ok {
+		t.Fatal("DNS declaration is missing")
+	}
+	for _, persistent := range dns.Persistent {
+		if persistent.Replacement != "retain-across-rootfs-replacement" {
+			t.Fatalf("persistent DNS state lacks replacement policy: %#v", persistent)
+		}
+	}
+	for _, secret := range dns.Secrets {
+		if secret.Name == "ddns_tsig_secret" && secret.Delivery != "systemd-credential-to-ephemeral-secret-file" {
+			t.Fatalf("Kea secret delivery is not explicit: %#v", secret)
+		}
+		if secret.Name == "powerdns_tsig_secret" && (!secret.Persistent || secret.Delivery != "protected-powerdns-backend") {
+			t.Fatalf("PowerDNS secret exception is not explicit: %#v", secret)
+		}
+	}
+}
+
+func findDeclaration(site model.Site, name string) (model.ModuleDeclaration, bool) {
+	for _, declaration := range site.Declarations {
+		if declaration.Module == name {
+			return declaration, true
+		}
+	}
+	return model.ModuleDeclaration{}, false
 }
 
 func containsTag(tags []string, wanted string) bool {

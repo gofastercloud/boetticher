@@ -199,12 +199,13 @@ type Artifact struct {
 }
 
 type PersistentState struct {
-	Name      string `json:"name"`
-	Guest     string `json:"guest"`
-	Path      string `json:"path"`
-	Kind      string `json:"kind"`
-	Backup    bool   `json:"backup"`
-	Sensitive bool   `json:"sensitive"`
+	Name        string `json:"name"`
+	Guest       string `json:"guest"`
+	Path        string `json:"path"`
+	Kind        string `json:"kind"`
+	Backup      bool   `json:"backup"`
+	Sensitive   bool   `json:"sensitive"`
+	Replacement string `json:"replacement"`
 }
 
 type SecretDeclaration struct {
@@ -213,6 +214,8 @@ type SecretDeclaration struct {
 	Consumer   string `json:"consumer"`
 	Generation string `json:"generation"`
 	Rotation   string `json:"rotation"`
+	Delivery   string `json:"delivery"`
+	Persistent bool   `json:"persistent"`
 }
 
 type NetworkIntent struct {

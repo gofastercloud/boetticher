@@ -40,12 +40,18 @@ func declarationFor(name string, site model.Site) (model.ModuleDeclaration, erro
 	}
 	switch name {
 	case "dns":
-		declaration.Secrets = []model.SecretDeclaration{{Name: "ddns_tsig_secret", Purpose: "authenticated DHCP DNS updates", Consumer: "kea-dhcp-ddns-server", Generation: "random", Rotation: "replaceable"}}
+		declaration.Secrets = []model.SecretDeclaration{
+			{Name: "ddns_tsig_secret", Purpose: "authenticated DHCP DNS updates", Consumer: "kea-dhcp-ddns-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file"},
+			{Name: "powerdns_tsig_secret", Purpose: "PowerDNS authenticated update authorization", Consumer: "powerdns-authoritative", Generation: "random", Rotation: "replaceable", Delivery: "protected-powerdns-backend", Persistent: true},
+		}
 		declaration.DNSRecords = []model.DNSRecord{{Name: "dns01." + site.Network.Domain, Type: "A", Address: "10.10.20.10", Owner: "dns"}, {Name: "dns02." + site.Network.Domain, Type: "A", Address: "10.10.20.11", Owner: "dns"}}
 	case "monitoring":
-		declaration.Secrets = []model.SecretDeclaration{{Name: "zabbix_db_password", Purpose: "monitoring database access", Consumer: "zabbix-server", Generation: "random", Rotation: "replaceable"}, {Name: "zabbix_api_password", Purpose: "bounded monitoring API reconciliation", Consumer: "controller", Generation: "random", Rotation: "replaceable"}}
+		declaration.Secrets = []model.SecretDeclaration{
+			{Name: "zabbix_db_password", Purpose: "monitoring database access", Consumer: "zabbix-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential"},
+			{Name: "zabbix_api_password", Purpose: "bounded monitoring API reconciliation", Consumer: "controller", Generation: "random", Rotation: "replaceable", Delivery: "controller-memory"},
+		}
 	case "firewall":
-		declaration.Secrets = []model.SecretDeclaration{{Name: "ddns_tsig_secret", Purpose: "authenticated DHCP DNS updates", Consumer: "kea-dhcp-ddns-server", Generation: "random", Rotation: "replaceable"}}
+		declaration.Secrets = []model.SecretDeclaration{{Name: "ddns_tsig_secret", Purpose: "authenticated DHCP DNS updates", Consumer: "kea-dhcp-ddns-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file"}}
 	default:
 		return model.ModuleDeclaration{}, fmt.Errorf("no declaration provider for first-party module %q", name)
 	}
@@ -64,14 +70,14 @@ func moduleComponents(site model.Site, name string) []model.Component {
 }
 
 func persistentFor(module, guest string) []model.PersistentState {
-	identity := model.PersistentState{Name: "ssh-identity", Guest: guest, Path: "/var/lib/boetticher/identity/ssh", Kind: "endpoint-identity", Backup: true, Sensitive: true}
+	identity := model.PersistentState{Name: "ssh-identity", Guest: guest, Path: "/var/lib/boetticher/identity/ssh", Kind: "endpoint-identity", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}
 	switch module {
 	case "dns":
-		return []model.PersistentState{identity, {Name: "powerdns-database", Guest: guest, Path: "/var/lib/powerdns", Kind: "application-database", Backup: true, Sensitive: true}}
+		return []model.PersistentState{identity, {Name: "powerdns-database", Guest: guest, Path: "/var/lib/powerdns", Kind: "application-database", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	case "monitoring":
-		return []model.PersistentState{identity, {Name: "postgresql-data", Guest: guest, Path: "/var/lib/postgresql", Kind: "application-database", Backup: true, Sensitive: true}}
+		return []model.PersistentState{identity, {Name: "postgresql-data", Guest: guest, Path: "/var/lib/postgresql", Kind: "application-database", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	case "firewall":
-		return []model.PersistentState{identity, {Name: "kea-leases", Guest: guest, Path: "/var/lib/kea", Kind: "lease-state", Backup: true, Sensitive: false}}
+		return []model.PersistentState{identity, {Name: "kea-leases", Guest: guest, Path: "/var/lib/kea", Kind: "lease-state", Backup: true, Sensitive: false, Replacement: "retain-across-rootfs-replacement"}}
 	default:
 		return []model.PersistentState{identity}
 	}
