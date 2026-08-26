@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/modules"
 )
 
 func TestRenderUsesBastionAndCanonicalHostKey(t *testing.T) {
@@ -44,5 +45,38 @@ func TestBastionPolicyOnlyAllowsModelledHosts(t *testing.T) {
 	}
 	if !strings.Contains(content, "PermitOpen 10.10.20.10:22") || strings.Contains(content, "10.10.50.") {
 		t.Fatalf("unexpected bastion destination policy: %s", content)
+	}
+}
+
+func TestRenderComposedSiteIncludesDeclaredModuleGuests(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	site.BootstrapAddress = "192.0.2.10"
+	content, err := Render(site, time.Unix(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"Host lab-fw-01 lab-fw-01.lab.home.arpa",
+		"Host lab-dns-01 lab-dns-01.lab.home.arpa dns01 dns",
+		"Host lab-dns-02 lab-dns-02.lab.home.arpa dns02",
+		"Host lab-log-01 lab-log-01.lab.home.arpa logs",
+		"Host lab-monitor-01 lab-monitor-01.lab.home.arpa monitor",
+	} {
+		if !strings.Contains(content, expected) {
+			t.Errorf("composed SSH configuration missing %q", expected)
+		}
+	}
+	policy, err := RenderBastionPolicy(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, destination := range []string{"10.10.99.1:22", "10.10.20.10:22", "10.10.20.40:22"} {
+		if !strings.Contains(policy, destination) {
+			t.Errorf("composed bastion policy missing module destination %q", destination)
+		}
 	}
 }

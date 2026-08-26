@@ -84,7 +84,7 @@ func runSSHJourney(configPath string) error {
 
 func jumpDestinations(s model.Site) []string {
 	result := []string{}
-	for _, m := range s.Components {
+	for _, m := range s.PlatformComponents() {
 		if m.ProductOwned && m.SSHManaged && m.JumpAllowed {
 			port := m.SSHPort
 			if port == 0 {

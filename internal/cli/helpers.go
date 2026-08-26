@@ -295,7 +295,7 @@ func writeCurrentStatus(dir, revision string) error {
 
 func sortedSSHComponents(s model.Site) []model.Component {
 	components := []model.Component{}
-	for _, m := range s.Components {
+	for _, m := range s.PlatformComponents() {
 		if m.SSHManaged {
 			components = append(components, m)
 		}
