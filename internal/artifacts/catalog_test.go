@@ -471,6 +471,46 @@ func TestBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {
 	}
 }
 
+func TestEmbeddedBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {
+	first, err := BuildEmbeddedSourceArchive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := BuildEmbeddedSourceArchive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatal("embedded public build source archive is not deterministic")
+	}
+	reader, err := gzip.NewReader(strings.NewReader(string(first)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := tar.NewReader(reader)
+	entries := map[string]bool{}
+	for {
+		header, err := archive.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries[header.Name] = true
+	}
+	for _, required := range []string{"scripts/build-images.sh", "images/base/debian.yaml", "cmd/qualify-artifact/main.go"} {
+		if !entries[required] {
+			t.Fatalf("embedded archive omitted public build input %s", required)
+		}
+	}
+	for _, forbidden := range []string{"site.yml", "generated/model.json", "secrets.yaml", "identity.txt"} {
+		if entries[forbidden] {
+			t.Fatalf("embedded archive included forbidden build input %s", forbidden)
+		}
+	}
+}
+
 func TestBuildSourceArchiveContainsBlockyRendererDependencies(t *testing.T) {
 	archive, err := BuildSourceArchive(filepath.Join("..", ".."))
 	if err != nil {

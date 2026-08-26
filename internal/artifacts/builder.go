@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	buildbundle "github.com/gofastercloud/boetticher"
 	"github.com/gofastercloud/boetticher/internal/model"
 )
 
@@ -98,6 +99,44 @@ func BuildSourceArchive(root string) ([]byte, error) {
 	return archive.Bytes(), nil
 }
 
+// BuildEmbeddedSourceArchive returns the same public build input archive used
+// for a source checkout, backed by the files embedded in a release binary.
+// This keeps bootstrap usable from an installed controller binary without
+// embedding any site repository or secret material.
+func BuildEmbeddedSourceArchive() ([]byte, error) {
+	paths := append([]string(nil), PublicBuildInputs...)
+	sort.Strings(paths)
+	var archive bytes.Buffer
+	gzipWriter := gzip.NewWriter(&archive)
+	tarWriter := tar.NewWriter(gzipWriter)
+	for _, relative := range paths {
+		info, err := fs.Stat(buildbundle.FS, relative)
+		if err != nil {
+			return nil, fmt.Errorf("inspect embedded public build input %s: %w", relative, err)
+		}
+		if info.IsDir() {
+			err = fs.WalkDir(buildbundle.FS, relative, func(filePath string, entry fs.DirEntry, walkErr error) error {
+				if walkErr != nil {
+					return walkErr
+				}
+				return addEmbeddedArchiveFile(filePath, entry, tarWriter)
+			})
+		} else {
+			err = addEmbeddedArchiveFile(relative, infoToDirEntry{info}, tarWriter)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("archive embedded public build input %s: %w", relative, err)
+		}
+	}
+	if err := tarWriter.Close(); err != nil {
+		return nil, fmt.Errorf("close embedded build source archive: %w", err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		return nil, fmt.Errorf("close embedded build source compression: %w", err)
+	}
+	return archive.Bytes(), nil
+}
+
 type infoToDirEntry struct{ fs.FileInfo }
 
 func (e infoToDirEntry) Type() fs.FileMode          { return e.Mode().Type() }
@@ -131,8 +170,44 @@ func addArchiveFile(root, path string, entry fs.DirEntry, writer *tar.Writer) er
 		return err
 	}
 	header.Name = filepath.ToSlash(relative)
+	header.Uid, header.Gid, header.Uname, header.Gname = 0, 0, "", ""
 	// Source file modification times are not desired-state inputs. A fixed
 	// timestamp keeps the transferred source bundle deterministic.
+	header.ModTime = time.Unix(0, 0).UTC()
+	if info.Mode()&0o111 != 0 {
+		header.Mode = 0o755
+	} else {
+		header.Mode = 0o644
+	}
+	if err := writer.WriteHeader(header); err != nil {
+		return err
+	}
+	_, err = io.Copy(writer, file)
+	return err
+}
+
+func addEmbeddedArchiveFile(relative string, entry fs.DirEntry, writer *tar.Writer) error {
+	info, err := entry.Info()
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return nil
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("non-regular embedded build input is not allowed: %s", relative)
+	}
+	file, err := buildbundle.FS.Open(relative)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	header, err := tar.FileInfoHeader(info, "")
+	if err != nil {
+		return err
+	}
+	header.Name = path.Clean(filepath.ToSlash(relative))
+	header.Uid, header.Gid, header.Uname, header.Gname = 0, 0, "", ""
 	header.ModTime = time.Unix(0, 0).UTC()
 	if info.Mode()&0o111 != 0 {
 		header.Mode = 0o755

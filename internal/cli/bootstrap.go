@@ -343,10 +343,6 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if client == nil {
 		return errors.New("Proxmox client is required for appliance construction")
 	}
-	sourceRoot, err := applianceBuildSourceRoot()
-	if err != nil {
-		return err
-	}
 	if err := proxmox.EnsureBuilderVM(ctx, client, plan, publicKey); err != nil {
 		return err
 	}
@@ -364,9 +360,15 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if err := proxmox.WaitForCommand(ctx, builderRunner, builderAddress, model.DefaultAdminSSHUser, "test -f /run/boetticher-builder-ready", 60, 5*time.Second); err != nil {
 		return fmt.Errorf("HOLD: temporary appliance builder cloud-init is not ready: %w", err)
 	}
-	archive, err := artifacts.BuildSourceArchive(sourceRoot)
+	sourceRoot, sourceErr := applianceBuildSourceRoot()
+	var archive []byte
+	if sourceErr == nil {
+		archive, err = artifacts.BuildSourceArchive(sourceRoot)
+	} else {
+		archive, err = artifacts.BuildEmbeddedSourceArchive()
+	}
 	if err != nil {
-		return err
+		return fmt.Errorf("prepare public appliance build inputs: %w", err)
 	}
 	if _, err := builderRunner.RunWithStdin(ctx, builderAddress, model.DefaultAdminSSHUser, "set -eu; install -d -m 0755 /home/labadmin/build; tar -xzf - -C /home/labadmin/build", bytes.NewReader(archive)); err != nil {
 		return fmt.Errorf("transfer public appliance build definitions: %w", err)
