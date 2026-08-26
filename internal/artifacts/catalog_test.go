@@ -152,3 +152,24 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 		t.Fatal("Blocky release checksum is not pinned")
 	}
 }
+
+func TestApplianceBootstrapInputsContainNoOperatorKeyOrSiteState(t *testing.T) {
+	root := filepath.Join("..", "..", "images")
+	firstBoot, err := os.ReadFile(filepath.Join(root, "base", "first-boot", "boetticher-first-boot.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(firstBoot)
+	if !strings.Contains(text, "/run/boetticher/bootstrap/operator.pub") || strings.Contains(text, "ssh-ed25519 AAAA") {
+		t.Fatalf("first-boot contract does not use injected-only operator access: %s", text)
+	}
+	for _, relative := range []string{"firewall/nocloud/meta-data", "firewall/nocloud/network-config", "firewall/nocloud/user-data"} {
+		data, err := os.ReadFile(filepath.Join(root, relative))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), "ssh-ed25519 AAAA") || strings.Contains(string(data), "age1") {
+			t.Fatalf("%s contains operator or site secret material", relative)
+		}
+	}
+}
