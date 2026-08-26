@@ -2,7 +2,9 @@ package proxmox
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -229,6 +231,69 @@ func TestQEMUPersistentVolumeParamsRejectUnresolvedStorage(t *testing.T) {
 }
 
 const modelStorageIDForTest = "boetticher-thin"
+
+func TestEnsureArtifactInStorageVerifiesPostUploadChecksum(t *testing.T) {
+	artifactPath := filepath.Join(t.TempDir(), "artifact.tar.zst")
+	content := []byte("qualified appliance bytes")
+	if err := os.WriteFile(artifactPath, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	checksum := fmt.Sprintf("%x", sha256.Sum256(content))
+	filename := "boetticher-logging-1.0.0-amd64.tar.zst"
+	storageReads := 0
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+			storageReads++
+			if storageReads == 1 {
+				return response([]byte(`{"data":[]}`))
+			}
+			return response([]byte(`{"data":[{"volid":"local:vztmpl/boetticher-logging-1.0.0-amd64.tar.zst","filename":"boetticher-logging-1.0.0-amd64.tar.zst","checksum":"` + checksum + `"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected artifact storage request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := ensureArtifactInStorage(context.Background(), client, "node", "local", "vztmpl", filename, checksum, artifactPath); err != nil {
+		t.Fatalf("ensureArtifactInStorage() = %v", err)
+	}
+	if storageReads != 2 {
+		t.Fatalf("storage reads = %d, want pre-upload and post-upload verification", storageReads)
+	}
+}
+
+func TestEnsureArtifactInStorageHoldsOnPostUploadChecksumMismatch(t *testing.T) {
+	artifactPath := filepath.Join(t.TempDir(), "artifact.tar.zst")
+	content := []byte("qualified appliance bytes")
+	if err := os.WriteFile(artifactPath, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	checksum := fmt.Sprintf("%x", sha256.Sum256(content))
+	filename := "boetticher-logging-1.0.0-amd64.tar.zst"
+	storageReads := 0
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+			storageReads++
+			if storageReads == 1 {
+				return response([]byte(`{"data":[]}`))
+			}
+			return response([]byte(`{"data":[{"filename":"` + filename + `","checksum":"` + strings.Repeat("a", 64) + `"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected artifact storage request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := ensureArtifactInStorage(context.Background(), client, "node", "local", "vztmpl", filename, checksum, artifactPath); err == nil || !strings.Contains(err.Error(), "does not match qualified") {
+		t.Fatalf("post-upload checksum mismatch was not rejected: %v", err)
+	}
+}
 
 func TestPlatformGuestPlanCarriesTagsForBackupAndVisibility(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))

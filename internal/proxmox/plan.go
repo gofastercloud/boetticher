@@ -1220,20 +1220,9 @@ func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage,
 	if err != nil {
 		return fmt.Errorf("inspect %s artifact storage: %w", content, err)
 	}
-	for _, entry := range entries {
-		if entry.Filename != filename && !strings.HasSuffix(entry.VolID, "/"+filename) {
-			continue
-		}
-		observed := entry.Checksum
-		if observed == "" {
-			observed = entry.CSum
-		}
-		if observed == "" {
-			return fmt.Errorf("stored artifact %s has no checksum evidence", filename)
-		}
-		if !strings.EqualFold(observed, checksum) {
-			return fmt.Errorf("stored artifact %s checksum %s does not match qualified %s", filename, observed, checksum)
-		}
+	if found, err := verifyStoredArtifact(entries, filename, checksum); err != nil {
+		return err
+	} else if found {
 		return nil
 	}
 	if source == "" {
@@ -1249,7 +1238,42 @@ func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage,
 	if err := client.UploadStorageFile(ctx, node, storage, content, source, filename); err != nil {
 		return fmt.Errorf("upload %s: %w", filename, err)
 	}
+	entries, err = client.StorageContent(ctx, node, storage, content)
+	if err != nil {
+		return fmt.Errorf("verify uploaded %s artifact storage: %w", filename, err)
+	}
+	found, err := verifyStoredArtifact(entries, filename, checksum)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("uploaded artifact %s is not visible in Proxmox storage", filename)
+	}
 	return nil
+}
+
+// verifyStoredArtifact is the post-upload identity gate. A successful upload
+// task is not evidence that Proxmox stored the qualified bytes under the
+// expected content identity; the storage listing must expose the same
+// checksum before the artifact can be used for guest creation.
+func verifyStoredArtifact(entries []StorageContent, filename, checksum string) (bool, error) {
+	for _, entry := range entries {
+		if entry.Filename != filename && !strings.HasSuffix(entry.VolID, "/"+filename) {
+			continue
+		}
+		observed := entry.Checksum
+		if observed == "" {
+			observed = entry.CSum
+		}
+		if observed == "" {
+			return false, fmt.Errorf("stored artifact %s has no checksum evidence", filename)
+		}
+		if !strings.EqualFold(observed, checksum) {
+			return false, fmt.Errorf("stored artifact %s checksum %s does not match qualified %s", filename, observed, checksum)
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 func validateExistingGuest(current map[string]any, expected GuestPlan) error {
