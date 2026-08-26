@@ -36,22 +36,93 @@ func ConfigFromSite(s Site) SiteConfig {
 }
 
 func (c SiteConfig) BaseSite() Site {
-	s := NewSite(c.SecretMetadata.InstallationID, c.SecretMetadata.AgeRecipient, c.Gateway.Mode)
-	s.APIVersion = c.APIVersion
-	s.PlatformVersion = c.PlatformVersion
-	s.SchemaVersion = c.SchemaVersion
-	s.StorageProfile = c.StorageProfile
-	s.StorageDevice = c.StorageDevice
-	s.Gateway = c.Gateway
-	s.ProxmoxNode = c.ProxmoxNode
-	s.BootstrapAddress = c.BootstrapAddress
-	s.SSHIdentityFile = c.SSHIdentityFile
-	s.PhysicalNetwork = c.PhysicalNetwork
-	s.TestedVersions = c.TestedVersions
-	s.Network = c.Network
-	s.PKI = c.PKI
-	s.SecretMetadata = c.SecretMetadata
-	s.Ownership = c.Ownership
+	mode := c.Gateway.Mode
+	if mode == "" {
+		mode = GatewayModeManaged
+	}
+	s := NewSite(c.SecretMetadata.InstallationID, c.SecretMetadata.AgeRecipient, mode)
+	if c.APIVersion != "" {
+		s.APIVersion = c.APIVersion
+	}
+	if c.PlatformVersion != "" {
+		s.PlatformVersion = c.PlatformVersion
+	}
+	if c.SchemaVersion != 0 {
+		s.SchemaVersion = c.SchemaVersion
+	}
+	if c.StorageProfile != "" {
+		s.StorageProfile = c.StorageProfile
+	}
+	if c.StorageDevice != "" {
+		s.StorageDevice = c.StorageDevice
+	}
+	if c.ProxmoxNode != "" {
+		s.ProxmoxNode = c.ProxmoxNode
+	}
+	if c.BootstrapAddress != "" {
+		s.BootstrapAddress = c.BootstrapAddress
+	}
+	if c.SSHIdentityFile != "" {
+		s.SSHIdentityFile = c.SSHIdentityFile
+	}
+	if c.PhysicalNetwork.Mode != "" {
+		s.PhysicalNetwork = c.PhysicalNetwork
+	}
+	if c.TestedVersions.Gateway != "" {
+		s.TestedVersions.Gateway = c.TestedVersions.Gateway
+	}
+	if c.TestedVersions.Zabbix != "" {
+		s.TestedVersions.Zabbix = c.TestedVersions.Zabbix
+	}
+	if c.Network.Domain != "" {
+		s.Network.Domain = c.Network.Domain
+	}
+	if len(c.Network.Zones) > 0 {
+		s.Network.Zones = append([]Zone(nil), c.Network.Zones...)
+	}
+	if c.PKI.RootCommonName != "" {
+		s.PKI.RootCommonName = c.PKI.RootCommonName
+	}
+	if c.PKI.RootFingerprint != "" {
+		s.PKI.RootFingerprint = c.PKI.RootFingerprint
+	}
+	if c.PKI.RootExpiry != "" {
+		s.PKI.RootExpiry = c.PKI.RootExpiry
+	}
+	if c.PKI.IssuingCommonName != "" {
+		s.PKI.IssuingCommonName = c.PKI.IssuingCommonName
+	}
+	if c.PKI.IssuingFingerprint != "" {
+		s.PKI.IssuingFingerprint = c.PKI.IssuingFingerprint
+	}
+	if c.PKI.IssuingExpiry != "" {
+		s.PKI.IssuingExpiry = c.PKI.IssuingExpiry
+	}
+	if c.SecretMetadata.InstallationID != "" {
+		s.SecretMetadata.InstallationID = c.SecretMetadata.InstallationID
+	}
+	if c.SecretMetadata.AgeRecipient != "" {
+		s.SecretMetadata.AgeRecipient = c.SecretMetadata.AgeRecipient
+	}
+	if c.Ownership.PlatformGuestIDMin != 0 {
+		s.Ownership.PlatformGuestIDMin = c.Ownership.PlatformGuestIDMin
+	}
+	if c.Ownership.PlatformGuestIDMax != 0 {
+		s.Ownership.PlatformGuestIDMax = c.Ownership.PlatformGuestIDMax
+	}
+	if c.Ownership.ModuleGuestIDMin != 0 {
+		s.Ownership.ModuleGuestIDMin = c.Ownership.ModuleGuestIDMin
+	}
+	if c.Ownership.ModuleGuestIDMax != 0 {
+		s.Ownership.ModuleGuestIDMax = c.Ownership.ModuleGuestIDMax
+	}
+	if c.Ownership.UserGuestIDMin != 0 {
+		s.Ownership.UserGuestIDMin = c.Ownership.UserGuestIDMin
+	}
+	if c.Ownership.UserGuestIDMax != 0 {
+		s.Ownership.UserGuestIDMax = c.Ownership.UserGuestIDMax
+	}
+	s.Ownership.UserWorkloadsManaged = c.Ownership.UserWorkloadsManaged
 	s.ModuleConfig = cloneModuleConfig(c.Modules)
 	return s
 }

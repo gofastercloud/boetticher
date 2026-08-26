@@ -80,3 +80,17 @@ func TestParseSiteConfigRejectsUnknownModuleFields(t *testing.T) {
 		t.Fatalf("unknown module field was accepted: %v", err)
 	}
 }
+
+func TestParseSiteConfigAppliesV3Defaults(t *testing.T) {
+	config, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules: {}\nsecret_metadata:\n  installation_id: test\n  age_recipient: age1test\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	site := config.BaseSite()
+	if err := site.Validate(); err != nil {
+		t.Fatalf("defaults should produce a valid site: %v", err)
+	}
+	if site.Gateway.Mode != GatewayModeManaged || site.StorageProfile != "single-disk" || site.Network.Domain != DefaultDomain {
+		t.Fatalf("unexpected defaults: gateway=%q storage=%q domain=%q", site.Gateway.Mode, site.StorageProfile, site.Network.Domain)
+	}
+}
