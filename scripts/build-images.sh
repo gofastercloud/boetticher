@@ -166,8 +166,38 @@ build_portal() {
 }
 
 build_firewall() {
-  echo "HOLD: a pinned bootable Debian 13 cloud-image input and VM customization toolchain are required for firewall QCOW2 construction" >&2
-  return 2
+  for tool in qemu-img virt-customize virt-cat sha512sum; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      echo "HOLD: required firewall VM-image tool is unavailable: $tool" >&2
+      return 2
+    fi
+  done
+  destination="$output_root/boetticher-firewall"
+  mkdir -p "$destination"
+  input="$work_root/debian-13-genericcloud-amd64-daily.qcow2"
+  if [ ! -f "$input" ]; then
+    curl --fail --location --silent --show-error --output "$input" https://cloudfront.debian.net/cdimage/cloud/trixie/daily/latest/debian-13-genericcloud-amd64-daily.qcow2
+  fi
+  printf '%s  %s\n' 2bf12156183f3f17d8219f7714e85c05c5d0d270f365e6ce7feba5e25c078520a29dd5ee243fcb95ec5e9aac0cbcc9c9bfaa9450f509826e92a9a8280876cd08 "$input" | sha512sum --check --status
+  image="$destination/boetticher-firewall-1.0.0-amd64.qcow2"
+  cp "$input" "$image"
+  virt-customize -a "$image" \
+    --install nftables,kea-dhcp4-server,kea-dhcp-ddns-server,chrony,openssh-server,sudo,cloud-init,systemd-journal-remote,zabbix-agent2 \
+    --mkdir /etc/boetticher,/usr/lib/boetticher,/var/lib/boetticher/identity/ssh \
+    --upload images/base/first-boot/boetticher-first-boot.sh:/usr/lib/boetticher/boetticher-first-boot.sh \
+    --upload images/base/first-boot/boetticher-first-boot.service:/etc/systemd/system/boetticher-first-boot.service \
+    --upload images/firewall/nocloud/network-config:/etc/boetticher/nocloud-network-config \
+    --write /etc/systemd/journald.conf.d/boetticher.conf:'[Journal]\nSystemMaxUse=256M\nRuntimeMaxUse=64M\n' \
+    --write /etc/sysctl.d/boetticher-forwarding.conf:'net.ipv4.ip_forward=0\nnet.ipv6.conf.all.forwarding=0\n' \
+    --run-command 'useradd --create-home --shell /bin/bash labadmin || true' \
+    --run-command 'usermod --append --groups sudo labadmin' \
+    --run-command 'passwd --lock labadmin' \
+    --run-command 'printf "%s\\n" "labadmin ALL=(ALL) NOPASSWD:/usr/bin/systemctl, /usr/sbin/nft, /usr/sbin/kea-dhcp4, /usr/sbin/kea-dhcp-ddns" > /etc/sudoers.d/boetticher && chmod 0440 /etc/sudoers.d/boetticher' \
+    --run-command 'systemctl enable boetticher-first-boot.service || true' \
+    --run-command 'systemctl disable --now systemd-networkd-wait-online.service || true'
+  sha256sum "$image" > "$destination/content.sha256"
+  virt-cat -a "$image" /var/lib/dpkg/status > "$destination/package-manifest.txt"
+  ./scripts/smoke-firewall-image.sh "$image"
 }
 
 case "$target" in

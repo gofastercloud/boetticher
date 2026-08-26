@@ -22,6 +22,9 @@ esac
 root=${BOETTICHER_ARTIFACT_OUTPUT:-generated/artifacts}
 for name in $names; do
   artifact="$root/$name/$name.tar.zst"
+  if [ "$name" = boetticher-firewall ]; then
+    artifact="$root/$name/boetticher-firewall-1.0.0-amd64.qcow2"
+  fi
   report="$root/$name/trivy.json"
   manifest="$root/$name/package-manifest.txt"
   sbom="$root/$name/sbom.json"
@@ -30,7 +33,9 @@ for name in $names; do
     exit 2
   fi
   mkdir -p "$(dirname "$report")"
-  tar -tf "$artifact" > "$manifest"
+  if [ ! -s "$manifest" ]; then
+    tar -tf "$artifact" > "$manifest"
+  fi
   # Keep unfixed findings in the report. Policy evaluation is performed by the
   # qualification command after this raw, machine-readable scan completes.
   trivy fs --scanners vuln,secret --format json --output "$report" "$artifact"

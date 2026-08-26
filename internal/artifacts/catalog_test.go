@@ -151,6 +151,13 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	if !strings.Contains(string(blocky), "provider_sha256: 17b03f892346a160e9faf974ce68baae85fa4f2a94d7bf8ea52592a94be5eeb4") {
 		t.Fatal("Blocky release checksum is not pinned")
 	}
+	firewall, err := os.ReadFile(filepath.Join(root, "firewall", "image.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(firewall), "debian-13-genericcloud-amd64-daily.qcow2") || !strings.Contains(string(firewall), "sha512:") {
+		t.Fatal("firewall image does not pin its Debian 13 VM input")
+	}
 }
 
 func TestApplianceBootstrapInputsContainNoOperatorKeyOrSiteState(t *testing.T) {
