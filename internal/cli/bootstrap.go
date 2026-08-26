@@ -414,9 +414,9 @@ func applianceBuildSourceRoot() (string, error) {
 }
 
 func buildSourceRoot(root string) bool {
-	for _, relative := range []string{"scripts/build-images.sh", "scripts/scan-images.sh", "images/base/debian.yaml"} {
+	for _, relative := range artifacts.PublicBuildInputs {
 		info, err := os.Stat(filepath.Join(root, relative))
-		if err != nil || !info.Mode().IsRegular() {
+		if err != nil || (!info.IsDir() && !info.Mode().IsRegular()) {
 			return false
 		}
 	}
