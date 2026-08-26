@@ -97,7 +97,8 @@ write_files:
       labadmin ALL=(root) NOPASSWD: /usr/local/sbin/boetticher-build
 runcmd:
   - [sh, -c, "set -eu; archive=/tmp/trivy_0.69.3_Linux-64bit.tar.gz; curl --fail --location --silent --show-error --output $archive https://github.com/aquasecurity/trivy/releases/download/v0.69.3/trivy_0.69.3_Linux-64bit.tar.gz; printf '%s  %s\\n' 1816b632dfe529869c740c0913e36bd1629cb7688bd5634f4a858c1d57c88b75 $archive | sha256sum --check --status; tar -xzf $archive -C /usr/local/bin trivy; chmod 0755 /usr/local/bin/trivy; rm -f $archive"]
-  - [systemctl, enable, --now, qemu-guest-agent]
+ - [systemctl, enable, --now, qemu-guest-agent]
+  - [touch, /run/boetticher-builder-ready]
 `,
 		NetworkConfig: `version: 2
 ethernets:

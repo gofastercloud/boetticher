@@ -42,6 +42,16 @@ func TestWaitForSSHUsesConfiguredRunnerForBastionTransport(t *testing.T) {
 	}
 }
 
+func TestWaitForCommandUsesAuthenticatedReadinessProbe(t *testing.T) {
+	runner := &fakeRunner{}
+	if err := WaitForCommand(context.Background(), runner, "192.0.2.10", "labadmin", "test -f /run/ready", 1, time.Millisecond); err != nil {
+		t.Fatalf("WaitForCommand() = %v", err)
+	}
+	if runner.command != "test -f /run/ready" {
+		t.Fatalf("command readiness probe = %q", runner.command)
+	}
+}
+
 func TestConfigureManagementNetworkValidatesUnchangedHOMEAndVLANState(t *testing.T) {
 	runner := &fakeRunner{}
 	if err := ConfigureManagementNetwork(context.Background(), runner, "192.0.2.10", "labadmin"); err != nil {

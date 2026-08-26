@@ -195,7 +195,7 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 		return err
 	}
 	if s.StorageProfile == "single-disk" {
-		if err := client.EnsureDirectoryStorageContent(ctx, "local", "/var/lib/vz", []string{"backup", "images", "rootdir", "snippets"}); err != nil {
+		if err := client.EnsureDirectoryStorageContent(ctx, "local", "/var/lib/vz", []string{"backup", "images", "rootdir", "snippets", "vztmpl"}); err != nil {
 			return fmt.Errorf("ensure single-disk Proxmox storage: %w", err)
 		}
 	} else if err := client.EnsureDirectoryStorageContent(ctx, "local", "/var/lib/vz", []string{"images", "rootdir", "vztmpl", "snippets"}); err != nil {
@@ -362,6 +362,9 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	builderRunner := proxmox.SSHRunner{KnownHosts: knownHosts, StrictHostKey: "accept-new", IdentityFile: identityFile}
 	if err := proxmox.WaitForSSH(ctx, builderRunner, builderAddress, model.DefaultAdminSSHUser, 60, 5*time.Second); err != nil {
 		return fmt.Errorf("HOLD: temporary appliance builder SSH is not ready: %w", err)
+	}
+	if err := proxmox.WaitForCommand(ctx, builderRunner, builderAddress, model.DefaultAdminSSHUser, "test -f /run/boetticher-builder-ready", 60, 5*time.Second); err != nil {
+		return fmt.Errorf("HOLD: temporary appliance builder cloud-init is not ready: %w", err)
 	}
 	archive, err := artifacts.BuildSourceArchive(sourceRoot)
 	if err != nil {

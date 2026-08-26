@@ -62,6 +62,43 @@ func WaitForSSH(ctx context.Context, runner CommandRunner, address, user string,
 	return fmt.Errorf("HOLD: SSH readiness failed for %s@%s after %d attempts: %w", user, address, attempts, lastErr)
 }
 
+// WaitForCommand is a bounded post-SSH readiness gate for infrastructure
+// helpers whose files and packages are installed by first boot. It uses the
+// same authenticated transport as WaitForSSH and accepts only a fixed command
+// supplied by Core.
+func WaitForCommand(ctx context.Context, runner CommandRunner, address, user, command string, attempts int, interval time.Duration) error {
+	if runner == nil {
+		return errors.New("command readiness runner is required")
+	}
+	if net.ParseIP(address) == nil || user == "" || command == "" || attempts < 1 {
+		return errors.New("command readiness identity is invalid")
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("command readiness cancelled for %s: %w", address, err)
+		}
+		if _, err := runner.Run(ctx, address, user, command); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if attempt+1 < attempts {
+			timer := time.NewTimer(interval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return fmt.Errorf("command readiness cancelled for %s: %w", address, ctx.Err())
+			case <-timer.C:
+			}
+		}
+	}
+	return fmt.Errorf("HOLD: command readiness failed for %s@%s after %d attempts: %w", user, address, attempts, lastErr)
+}
+
 type SSHRunner struct {
 	Port          int
 	KnownHosts    string
