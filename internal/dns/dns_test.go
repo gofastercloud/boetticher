@@ -1,6 +1,7 @@
 package dns
 
 import (
+	"net/url"
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -26,6 +27,21 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	}
 	if !hasRecord(plan.StaticRecords, "opnsense.lab.home.arpa", "10.10.99.1") {
 		t.Fatal("component URL hostname was not added to the static DNS projection")
+	}
+	if !hasRecord(plan.StaticRecords, "proxmox.lab.home.arpa", "10.10.99.5") {
+		t.Fatal("Proxmox component URL hostname was not added to the static DNS projection")
+	}
+	for _, component := range site.PlatformComponents() {
+		if component.URL == "" {
+			continue
+		}
+		parsed, err := url.Parse(component.URL)
+		if err != nil {
+			t.Fatalf("component URL %q is invalid: %v", component.URL, err)
+		}
+		if !hasRecord(plan.StaticRecords, parsed.Hostname(), component.Address) {
+			t.Fatalf("component URL hostname %s has no static DNS record", parsed.Hostname())
+		}
 	}
 	for _, zone := range plan.DDNS.Zones {
 		want := TSIGKeyName(zone.SourceZone, model.DefaultDomain)

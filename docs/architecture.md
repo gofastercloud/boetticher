@@ -11,7 +11,7 @@ boetticher is a small, opinionated infrastructure distribution rather than a con
 | 50 | SANDBOX | `10.10.50.0/24` | `10.10.50.1` | untrusted/test clients |
 | 99 | MGMT | `10.10.99.0/24` | `10.10.99.1` | infrastructure administration |
 
-The fixed core addresses are `lab-fw-01` at `10.10.99.1`, Proxmox at `10.10.99.5`, DNS at `10.10.20.10` and `10.10.20.11`, monitor at `10.10.99.20`, and portal at `10.10.20.30`. IPv6 is deliberately unsupported in V1.
+The fixed core addresses are `lab-fw-01` at `10.10.99.1`, Proxmox at `10.10.99.5`, DNS at `10.10.20.10` and `10.10.20.11`, monitor at `10.10.99.20`, and portal at `10.10.20.30`. The Proxmox service URL is `https://proxmox.lab.home.arpa:8006`; all platform URLs are represented by static model-generated DNS records. IPv6 is deliberately unsupported in V1.
 
 OPNsense owns routing, NAT, inter-zone firewalling, DHCP, SANDBOX DNS/NTP, and network aliases. Proxmox does not perform inter-VLAN routing. The firewall VM has a HOME-side WAN device on `vmbr0` and an untagged internal trunk device on VLAN-aware `vmbr1`; OPNsense owns the VLAN subinterfaces on that trunk.
 
