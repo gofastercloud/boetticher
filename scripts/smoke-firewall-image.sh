@@ -22,3 +22,7 @@ if virt-ls -a "$image" /home/labadmin/.ssh/authorized_keys >/dev/null 2>&1; then
   echo "firewall image contains an embedded operator key" >&2
   exit 1
 fi
+if virt-ls -a "$image" /etc/ssh | grep -q '^ssh_host_'; then
+  echo "firewall image contains baked SSH host keys" >&2
+  exit 1
+fi

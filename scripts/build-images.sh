@@ -344,6 +344,7 @@ build_firewall() {
     --run-command 'passwd --lock labadmin' \
     --run-command 'chown labadmin:labadmin /tmp/boetticher-ansible && chmod 0700 /tmp/boetticher-ansible' \
     --run-command 'chmod 0440 /etc/sudoers.d/boetticher' \
+    --run-command 'rm -f /etc/ssh/ssh_host_* /root/.ssh/authorized_keys /home/labadmin/.ssh/authorized_keys' \
     --run-command 'visudo -cf /etc/sudoers' \
     --run-command 'dpkg-query -W -f="${binary:Package}\\t${Version}\\n" | sort > /var/lib/boetticher/package-manifest.txt' \
     --run-command 'systemctl enable boetticher-first-boot.service || true' \
