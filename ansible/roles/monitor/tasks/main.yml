@@ -52,10 +52,7 @@
 - name: Require the encrypted Zabbix database password at runtime
   ansible.builtin.assert:
     that:
-      - zabbix_db_password is defined
-      - zabbix_db_password | length >= 32
-      - zabbix_api_password is defined
-      - zabbix_api_password | length >= 32
+      - credential_dropins[inventory_hostname]['zabbix-server.service'] is defined
     fail_msg: "Zabbix convergence requires the SOPS-provided database password"
   no_log: true
   when:
@@ -215,9 +212,9 @@
       DO $do$
       BEGIN
         IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'zabbix') THEN
-          CREATE ROLE zabbix LOGIN PASSWORD '{{ zabbix_db_password }}';
+          CREATE ROLE zabbix LOGIN;
         ELSE
-          ALTER ROLE zabbix PASSWORD '{{ zabbix_db_password }}';
+          ALTER ROLE zabbix LOGIN;
         END IF;
       END
       $do$;
@@ -253,21 +250,10 @@
     mode: '0600'
   when: inventory_hostname == 'lab-monitor-01'
 
-- name: Set the dedicated Zabbix API administrator password
-  become_user: postgres
-  ansible.builtin.command: psql --dbname zabbix --set ON_ERROR_STOP=1
-  args:
-    stdin: |
-      CREATE EXTENSION IF NOT EXISTS pgcrypto;
-      UPDATE users SET passwd = crypt('{{ zabbix_api_password }}', gen_salt('bf')) WHERE username = 'Admin';
-  changed_when: false
-  no_log: true
-  when: inventory_hostname == 'lab-monitor-01'
-
 - name: Configure Zabbix server
   ansible.builtin.template:
     src: zabbix_server.conf.j2
-    dest: /etc/zabbix/zabbix_server.conf
+    dest: /etc/zabbix/zabbix_server.conf.template
     owner: root
     group: zabbix
     mode: '0640'

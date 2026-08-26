@@ -16,6 +16,7 @@ case "$name" in
     test -d "$rootfs/etc/boetticher" -a -d "$rootfs/usr/lib/boetticher"
     test -x "$rootfs/usr/lib/boetticher/install-runtime-state"
     test -f "$rootfs/etc/systemd/journald.conf.d/boetticher.conf"
+    test -f "$rootfs/etc/systemd/journal-upload.conf"
     run visudo -cf /etc/sudoers
     test ! -e "$rootfs/home/labadmin/.ssh/authorized_keys"
     test ! -e "$rootfs/root/.ssh/authorized_keys"
@@ -39,6 +40,8 @@ case "$name" in
     run zabbix_server --version
     run zabbix_agent2 --version
     chroot "$rootfs" /usr/sbin/zabbix_server --version 2>&1 | grep -q '7\.0\.30'
+    test -x "$rootfs/usr/lib/boetticher/prepare-zabbix-config"
+    test -f "$rootfs/etc/systemd/system/zabbix-server.service.d/boetticher-credentials.conf"
     ;;
   boetticher-portal)
     run nginx -v

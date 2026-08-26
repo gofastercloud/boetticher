@@ -112,15 +112,24 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err := json.Unmarshal(variables, &runtimeVariables); err != nil {
 		return fmt.Errorf("decode Ansible variables: %w", err)
 	}
+	credentialBindings, err := deploymentCredentialBindings(s)
+	if err != nil {
+		return err
+	}
+	runtimeVariables["credential_dropins"], err = credentialDropIns(credentialBindings)
+	if err != nil {
+		return err
+	}
 	runtimeVariables["portal_source_dir"] = filepath.Join(*siteDir, "generated", "portal")
 	runtimeVariables["boetticher_appliance_artifact"] = true
 	monitoringEnabled := modules.IsEnabled(s, "monitoring")
+	secretValues := map[string]string{}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		ddnsTSIG, loadErr := site.LoadDDNSTSIG(*siteDir, s, *ageIdentity)
 		if loadErr != nil {
 			return fmt.Errorf("load encrypted DDNS TSIG material: %w", loadErr)
 		}
-		runtimeVariables["ddns_tsig_secret"] = ddnsTSIG
+		secretValues["firewall-ddns-tsig"] = ddnsTSIG
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		ruleset, renderErr := firewall.RenderNFT(firewallPlan)
@@ -143,8 +152,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		if loadErr != nil {
 			return fmt.Errorf("load encrypted Zabbix API password: %w", loadErr)
 		}
-		runtimeVariables["zabbix_db_password"] = zabbixDBPassword
-		runtimeVariables["zabbix_api_password"] = zabbixAPIPassword
+		secretValues["monitoring-db-password"] = zabbixDBPassword
 	}
 	runtimeVariables["client_ca_pem"] = authority.IssuingCertPEM
 	inventoryPath := filepath.Join(*siteDir, "generated", "ansible", "inventory.ini")
@@ -200,6 +208,9 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		if err := proxmox.WaitForSSH(context.Background(), firewallRunner, "10.10.99.1", model.DefaultAdminSSHUser, 30, 2*time.Second); err != nil {
 			return fmt.Errorf("HOLD: managed gateway is not reachable before dependent appliances: %w", err)
 		}
+		if err := installCredentialsForGuest(context.Background(), firewallRunner, "lab-fw-01", credentialBindings, secretValues); err != nil {
+			return fmt.Errorf("install managed gateway credentials: %w", err)
+		}
 		if err := ansible.RunLimited(context.Background(), "ansible/site.yml", inventoryPath, variables, "lab-fw-01"); err != nil {
 			return fmt.Errorf("HOLD: configure managed gateway before dependent appliances: %w", err)
 		}
@@ -230,9 +241,17 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			if err := proxmox.WaitForSSH(context.Background(), guestRunner, guest.Address, model.DefaultAdminSSHUser, 30, 2*time.Second); err != nil {
 				return fmt.Errorf("HOLD: %s guest %s is not reachable after first boot: %w", module, guest.Name, err)
 			}
+			if err := installCredentialsForGuest(context.Background(), guestRunner, guest.Name, credentialBindings, secretValues); err != nil {
+				return fmt.Errorf("install %s credentials: %w", guest.Name, err)
+			}
 			if module == "dns" {
 				if err := ansible.RunLimited(context.Background(), "ansible/site.yml", inventoryPath, variables, guest.Name); err != nil {
 					return fmt.Errorf("HOLD: configure DNS guest %s before dependent appliances: %w", guest.Name, err)
+				}
+				if guest.Name == "lab-dns-01" && s.Gateway.Mode == model.GatewayModeManaged {
+					if err := installPowerDNSTSIG(context.Background(), guestRunner, guest.Address, dnsPlan, secretValues["firewall-ddns-tsig"]); err != nil {
+						return fmt.Errorf("install PowerDNS TSIG state on %s: %w", guest.Name, err)
+					}
 				}
 				if err := verifyDNSReadiness(context.Background(), guestRunner, guest.Address, dnsPlan.RecursiveProvider); err != nil {
 					return fmt.Errorf("HOLD: DNS guest %s did not pass runtime readiness before dependent appliances: %w", guest.Name, err)
@@ -242,6 +261,12 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	if err := ansible.Run(context.Background(), "ansible/site.yml", inventoryPath, variables); err != nil {
 		return err
+	}
+	if monitoringEnabled {
+		monitorRunner := applianceSSHRunner(s, *siteDir, "lab-monitor-01")
+		if err := installZabbixAPIPassword(context.Background(), monitorRunner, "10.10.20.20", zabbixAPIPassword); err != nil {
+			return err
+		}
 	}
 	loggingClientCertificates, loggingCollectorCertificate, err := signLoggingCertificates(authority, s, csrDir)
 	if err != nil {

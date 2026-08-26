@@ -16,6 +16,11 @@ func WriteEvidence(root, name string, evidence Evidence) error {
 	if root == "" || name == "" || evidence.ArtifactPath == "" || evidence.ContentSHA256 == "" || evidence.DefinitionSHA256 == "" {
 		return fmt.Errorf("artifact evidence requires root, name, artifact path, definition digest, and content digest")
 	}
+	if evidence.Qualified {
+		if err := validateQualificationDigests(evidence); err != nil {
+			return fmt.Errorf("qualified artifact evidence is incomplete: %w", err)
+		}
+	}
 	data, err := json.MarshalIndent(evidence, "", "  ")
 	if err != nil {
 		return err

@@ -125,6 +125,27 @@ func TestQualificationRejectsMissingScanAndSecurityFindings(t *testing.T) {
 	}
 }
 
+func TestWriteEvidenceCannotAuthorizeUnqualifiedInputs(t *testing.T) {
+	root := t.TempDir()
+	artifact, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "artifact.bin")
+	if err := os.WriteFile(path, []byte("artifact"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := EvidenceForFile(path, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = path
+	evidence.Qualified = true
+	if err := WriteEvidence(root, artifact.Name, evidence); err == nil {
+		t.Fatal("WriteEvidence accepted manually authorized evidence")
+	}
+}
+
 func completeQualificationEvidence(evidence Evidence) Evidence {
 	evidence.PackageManifestSHA = strings.Repeat("a", 64)
 	evidence.SBOMSHA256 = strings.Repeat("b", 64)

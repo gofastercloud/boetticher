@@ -6,7 +6,6 @@
       - dns_plan.authoritative_implementation == 'PowerDNS Authoritative'
       - dns_plan.authoritative_version == '4.9.17'
       - dns_plan.authoritative_port == '5353'
-      - not (dns_plan.ddns.enabled | bool) or (ddns_tsig_secret is defined and ddns_tsig_secret | length > 0)
     fail_msg: "DNS convergence requires the generated PowerDNS, AdGuard, and DDNS contract"
   no_log: true
   when: inventory_hostname in groups.get('dns', [])
@@ -70,24 +69,6 @@
     mode: '0640'
   notify: restart pdns
   when: inventory_hostname in groups.get('dns', [])
-
-- name: Store the deterministic Kea DDNS TSIG keys without exposing secrets in argv
-  ansible.builtin.command:
-    argv:
-      - sqlite3
-      - /var/lib/powerdns/pdns.sqlite3
-    stdin: >-
-      INSERT OR REPLACE INTO tsigkeys (name, algorithm, secret) VALUES
-      ('{{ item.tsig_key_name | replace("'", "''") }}',
-       '{{ dns_plan.ddns.tsig_algorithm }}',
-       '{{ ddns_tsig_secret | replace("'", "''") }}');
-    stdin_add_newline: true
-  loop: "{{ dns_plan.ddns.zones }}"
-  changed_when: false
-  no_log: true
-  when:
-    - inventory_hostname == 'lab-dns-01'
-    - dns_plan.ddns.enabled | bool
 
 - name: Read current PowerDNS zones on the primary
   ansible.builtin.command: pdnsutil zone list-all

@@ -278,6 +278,9 @@ build_logging() {
 build_monitoring() {
   rootfs=$(prepare_rootfs boetticher-monitoring)
   install_zabbix "$rootfs"
+  install -D -m 0755 images/monitoring/runtime/prepare-zabbix-config.sh "$rootfs/usr/lib/boetticher/prepare-zabbix-config"
+  mkdir -p "$rootfs/etc/systemd/system/zabbix-server.service.d"
+  printf '%s\n' '[Service]' 'LoadCredentialEncrypted=zabbix-db-password:/var/lib/boetticher/credentials/zabbix-db-password.cred' 'ExecStartPre=/usr/lib/boetticher/prepare-zabbix-config' 'ExecStart=' 'ExecStart=/usr/sbin/zabbix_server -c /run/zabbix/zabbix_server.conf' > "$rootfs/etc/systemd/system/zabbix-server.service.d/boetticher-credentials.conf"
   package_lxc boetticher-monitoring
 }
 

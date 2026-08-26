@@ -6,8 +6,6 @@
       - firewall_plan.mode == 'managed'
       - firewall_ruleset is defined
       - firewall_ruleset | length > 0
-      - ddns_tsig_secret is defined
-      - ddns_tsig_secret | length > 0
   no_log: true
 
 - name: Require qualified gateway software in the appliance
@@ -56,6 +54,9 @@
     name: systemd-networkd
     enabled: true
     state: started
+
+- name: Load credential drop-ins before starting gateway services
+  ansible.builtin.meta: flush_handlers
 
 - name: Install the candidate boetticher nftables ruleset
   ansible.builtin.copy:

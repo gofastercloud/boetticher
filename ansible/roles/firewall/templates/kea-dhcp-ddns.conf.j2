@@ -8,7 +8,7 @@
     "ncr-format": "JSON",
     "tsig-keys": [
 {% for zone in firewall_plan.ddns.zones %}
-      {"name": "{{ zone.tsig_key_name }}", "secret": "{{ ddns_tsig_secret }}", "algorithm": "{{ firewall_plan.dhcp_subnets[loop.index0].tsig_algorithm }}"}{% if not loop.last %},{% endif %}
+      {"name": "{{ zone.tsig_key_name }}", "secret-file": "/run/credentials/kea-dhcp-ddns-server.service/kea-ddns-tsig", "algorithm": "{{ firewall_plan.dhcp_subnets[loop.index0].tsig_algorithm }}"}{% if not loop.last %},{% endif %}
 {% endfor %}
     ],
     "forward-ddns": [

@@ -185,14 +185,15 @@ func TestDNSRoleDoesNotPlaceTSIGSecretsInProcessArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "stdin: >-") || !strings.Contains(text, "INSERT OR REPLACE INTO tsigkeys") {
-		t.Fatal("DNS role does not provide TSIG material through protected sqlite3 stdin")
+	if strings.Contains(text, "ddns_tsig_secret") || strings.Contains(text, "INSERT OR REPLACE INTO tsigkeys") {
+		t.Fatal("DNS role still receives or persists TSIG material through Ansible variables")
 	}
-	if strings.Contains(text, "pdnsutil\n      - tsigkey\n      - import") || strings.Contains(text, "- \"{{ ddns_tsig_secret }}\"") {
-		t.Fatal("DNS role still places the TSIG secret in a process argument")
+	kea, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "firewall", "templates", "kea-dhcp-ddns.conf.j2"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(text, "no_log: true") {
-		t.Fatal("DNS role does not suppress secret-bearing task output")
+	if !strings.Contains(string(kea), "secret-file") || strings.Contains(string(kea), "{{ ddns_tsig_secret }}") {
+		t.Fatal("Kea does not consume its TSIG through the systemd credential runtime file")
 	}
 }
 

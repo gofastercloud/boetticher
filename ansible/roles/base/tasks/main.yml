@@ -107,3 +107,26 @@
   when:
     - inventory_hostname in logging_upload_configs
     - logging_client_certificates[inventory_hostname] | default('') | length > 0
+
+- name: Create declared systemd credential drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item.key }}.d"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop: "{{ (credential_dropins[inventory_hostname] | default({})) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Install declared systemd credential drop-ins
+  ansible.builtin.copy:
+    content: "{{ item.value }}"
+    dest: "/etc/systemd/system/{{ item.key }}.d/boetticher-credentials.conf"
+    owner: root
+    group: root
+    mode: '0644'
+  loop: "{{ (credential_dropins[inventory_hostname] | default({})) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  notify: reload systemd
