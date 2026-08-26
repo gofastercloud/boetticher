@@ -287,25 +287,23 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	return Plan{ModelRevision: revision, ManagedBy: "boetticher", Node: s.ProxmoxNode, Storage: storage, Guests: guests}, nil
 }
 
-// Provision creates the fixed foundation objects and is safe to re-run. It
+// Provision creates the non-firewall foundation guests and is safe to re-run.
+// The OPNsense VM and its installer input belong to the bootstrap command. It
 // never removes an object or changes an existing guest's disk/network shape;
 // drift is returned to the caller for an explicit remediation decision.
-func Provision(ctx context.Context, client *Client, plan Plan, opnsenseISO, debianTemplate string) error {
+func Provision(ctx context.Context, client *Client, plan Plan, debianTemplate string) error {
 	if client == nil {
 		return errors.New("Proxmox client is required")
 	}
-	if opnsenseISO == "" || debianTemplate == "" {
-		return errors.New("OPNsense ISO and Debian template are required")
+	if debianTemplate == "" {
+		return errors.New("Debian template is required")
 	}
 	for _, guest := range plan.Guests {
 		switch guest.Kind {
 		case KindQEMU:
-			if err := ensureQEMU(ctx, client, plan, guest, opnsenseISO); err != nil {
-				return err
-			}
-			if err := client.StartVM(ctx, plan.Node, guest.VMID); err != nil {
-				return fmt.Errorf("start VM %s: %w", guest.Name, err)
-			}
+			// The firewall VM is created and started by bootstrap, where the
+			// verified OPNsense ISO is an explicit input.
+			continue
 		case KindLXC:
 			if err := ensureLXC(ctx, client, plan, guest, debianTemplate); err != nil {
 				return err

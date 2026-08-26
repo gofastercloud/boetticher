@@ -20,12 +20,12 @@ Git may contain desired state, encrypted secrets, and non-secret evidence. OpenT
 
 1. Run `boetticher init --site-dir my-boetticher`.
 2. Secure the independent Age recovery copy.
-3. Reach fresh Proxmox on its HOME-side DHCP address and run `boetticher bootstrap-endpoint set ADDRESS`.
+3. Reach fresh Proxmox on its HOME-side DHCP address and run `boetticher bootstrap-endpoint set ADDRESS --site my-boetticher`.
 4. Run `boetticher preflight --site my-boetticher --live`. This identifies the active upstream NIC and proposes exactly one safe unused trunk NIC, or reports virtual-only/multiple-candidate state.
 5. If multiple candidates remain, repeat with `--trunk-interface IFACE`; do not select by enumeration order.
 6. Generate/check the SSH file with `boetticher ssh-config --force --install-include`.
-7. Run `boetticher bootstrap --recovery-confirmed`, adding `--trunk-interface IFACE` only when required by discovery.
-8. Run `boetticher provision --opnsense-iso VERIFIED_ISO` and `boetticher converge` after the OPNsense API is available.
+7. Run `boetticher bootstrap --opnsense-iso VERIFIED_ISO --recovery-confirmed`, adding `--trunk-interface IFACE` only when required by discovery. Bootstrap owns the verified OPNsense ISO because it creates and starts the firewall VM.
+8. Run `boetticher provision` and `boetticher converge` after the OPNsense API is available. Provision creates the DNS, monitor, and portal guests; it does not manage arbitrary user guests.
 9. Run `boetticher verify`, `boetticher doctor`, and `boetticher portal build`.
 
 The initial bootstrap trust transition is: operator authentication to fresh Proxmox → operator SSH key → `labadmin` and forwarding-only `lab-jump` → scoped Proxmox API token → direct encrypted SOPS handoff. Interactive secrets are not accepted through command arguments, persistent environment variables, logs, or generated files.
