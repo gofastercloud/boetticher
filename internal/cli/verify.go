@@ -309,6 +309,12 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 				fmt.Fprintf(out, "Platform storage     FAIL %v\n", statusErr)
 			} else {
 				fmt.Fprintf(out, "Platform storage     PASS %s active total=%.0f used=%.0f available=%.0f\n", status.Storage, status.Total, status.Used, status.Avail)
+				if storagePlan.Profile == "dedicated-data-disk" {
+					if err := reportDedicatedStorageHost(context.Background(), s, storagePlan, out); err != nil {
+						failed = true
+						fmt.Fprintf(out, "Storage layout       FAIL %v\n", err)
+					}
+				}
 			}
 		}
 	} else {
@@ -316,6 +322,29 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	if failed {
 		return fmt.Errorf("doctor found absent or inconsistent projections")
+	}
+	return nil
+}
+
+func reportDedicatedStorageHost(ctx context.Context, s model.Site, plan storage.Plan, out interface{ Write([]byte) (int, error) }) error {
+	command, err := storage.StatusCommand(plan.Device)
+	if err != nil {
+		return err
+	}
+	data, err := (proxmox.SSHRunner{}).Run(ctx, s.BootstrapAddress, model.DefaultAdminSSHUser, command)
+	if err != nil {
+		return fmt.Errorf("read dedicated storage state: %w", err)
+	}
+	status, err := storage.ParseStatus(string(data))
+	if err != nil {
+		return err
+	}
+	if status.Device != plan.Device || status.DevicePath == "missing" || status.VolumeGroup != plan.VolumeGroup || status.ThinPool != plan.ThinPool || status.BackupLV != plan.BackupLV || status.Filesystem != plan.Filesystem || status.Mount != plan.BackupMount || status.GuestStorage != "active" || status.BackupStorage != "active" {
+		return fmt.Errorf("expected dedicated layout is not fully active: device=%s path=%s vg=%s thin=%s backup=%s filesystem=%s mount=%s guest=%s backup_storage=%s", status.Device, status.DevicePath, status.VolumeGroup, status.ThinPool, status.BackupLV, status.Filesystem, status.Mount, status.GuestStorage, status.BackupStorage)
+	}
+	fmt.Fprintf(out, "Storage layout       PASS %s mounted at %s\n", status.DevicePath, status.Mount)
+	if status.Capacity != "" {
+		fmt.Fprintf(out, "Storage capacity     INFO %s\n", status.Capacity)
 	}
 	return nil
 }
