@@ -1,8 +1,11 @@
 package artifacts
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -177,6 +180,46 @@ func TestApplianceBootstrapInputsContainNoOperatorKeyOrSiteState(t *testing.T) {
 		}
 		if strings.Contains(string(data), "ssh-ed25519 AAAA") || strings.Contains(string(data), "age1") {
 			t.Fatalf("%s contains operator or site secret material", relative)
+		}
+	}
+}
+
+func TestBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {
+	first, err := BuildSourceArchive(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := BuildSourceArchive(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(first) != string(second) {
+		t.Fatal("public build source archive is not deterministic")
+	}
+	reader, err := gzip.NewReader(strings.NewReader(string(first)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := tar.NewReader(reader)
+	entries := map[string]bool{}
+	for {
+		header, err := archive.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries[header.Name] = true
+	}
+	for _, required := range []string{"scripts/build-images.sh", "images/base/debian.yaml", "cmd/qualify-artifact/main.go"} {
+		if !entries[required] {
+			t.Fatalf("archive omitted public build input %s", required)
+		}
+	}
+	for _, forbidden := range []string{"site.yml", "generated/model.json", "secrets.yaml", "identity.txt"} {
+		if entries[forbidden] {
+			t.Fatalf("archive included forbidden build input %s", forbidden)
 		}
 	}
 }
