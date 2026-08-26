@@ -203,13 +203,28 @@ func TestExistingGuestTagsAreReconciled(t *testing.T) {
 		if err := r.ParseForm(); err != nil {
 			t.Errorf("parse tag update form: %v", err)
 		}
-		if got := canonicalTags(r.Form.Get("tags")); got != canonicalTags("backup;boetticher;managed;module;module-firewall") {
+		if got := canonicalTags(r.Form.Get("tags")); got != canonicalTags("backup;boetticher;boetticher-module-firewall;managed;module;module-firewall") {
 			t.Errorf("tags = %q", got)
 		}
 		return response([]byte(`{"data":null}`))
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	if err := ensureExistingGuestTags(context.Background(), client, plan, plan.Guests[0], map[string]any{"tags": "boetticher"}); err != nil {
+	if err := ensureExistingGuestTags(context.Background(), client, plan, plan.Guests[0], map[string]any{"tags": "boetticher-module-firewall"}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReservedModuleGuestsRequireOwnershipProofBeforeTagReconciliation(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, guest := range plan.Guests {
+		if guest.Owner == "" || !strings.HasPrefix(guest.Owner, "boetticher/module/") {
+			continue
+		}
+		if err := ensureExistingGuestTags(context.Background(), nil, plan, guest, map[string]any{"tags": "boetticher;managed"}); err == nil || !strings.Contains(err.Error(), "canonical tag") {
+			t.Fatalf("guest %d accepted without canonical ownership proof: %v", guest.VMID, err)
+		}
 	}
 }

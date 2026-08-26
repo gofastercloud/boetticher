@@ -41,8 +41,9 @@ func PurgeModule(ctx context.Context, client *Client, plan Plan, module string) 
 			}
 			return fmt.Errorf("inspect module guest %d before purge: %w", guest.VMID, err)
 		}
-		if tags, _ := current["tags"].(string); !hasOwnerTag(tags, owner) {
-			return fmt.Errorf("refusing to purge %s: namespaced owner tag is absent", guest.Name)
+		ownerTag := moduleOwnershipTag(module)
+		if ownerTag == "" || !hasOwnerTag(currentTags(current), ownerTag) {
+			return fmt.Errorf("refusing to purge %s: canonical owner tag %q is absent", guest.Name, ownerTag)
 		}
 		if err := validateExistingGuest(current, guest); err != nil {
 			return fmt.Errorf("refusing to purge %s: ownership proof failed: %w", guest.Name, err)
@@ -57,7 +58,7 @@ func PurgeModule(ctx context.Context, client *Client, plan Plan, module string) 
 
 func hasOwnerTag(tags, owner string) bool {
 	for _, tag := range strings.Split(tags, ";") {
-		if tag == owner || tag == strings.ReplaceAll(owner, "/", "-") {
+		if tag == owner {
 			return true
 		}
 	}
