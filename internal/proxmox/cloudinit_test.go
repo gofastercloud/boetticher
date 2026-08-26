@@ -3,6 +3,8 @@ package proxmox
 import (
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestFirewallCloudInitUsesStableInterfaceIdentities(t *testing.T) {
@@ -86,5 +88,12 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 	}
 	if !strings.Contains(files.UserData, "trivy_0.69.3_Linux-64bit.tar.gz") || !strings.Contains(files.UserData, "1816b632dfe529869c740c0913e36bd1629cb7688bd5634f4a858c1d57c88b75") {
 		t.Fatal("builder cloud-init does not pin the Trivy qualification input")
+	}
+	var document map[string]any
+	if err := yaml.Unmarshal([]byte(files.UserData), &document); err != nil {
+		t.Fatalf("builder cloud-init is not valid YAML: %v", err)
+	}
+	if _, ok := document["runcmd"]; !ok {
+		t.Fatal("builder cloud-init has no runnable bootstrap commands")
 	}
 }
