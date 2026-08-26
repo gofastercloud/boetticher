@@ -80,6 +80,7 @@ type Site struct {
 	Components       []Component             `json:"components"`
 	Modules          []ResolvedModule        `json:"modules,omitempty"`
 	ModuleConfig     map[string]ModuleConfig `json:"module_config,omitempty"`
+	Declarations     []ModuleDeclaration     `json:"declarations,omitempty"`
 }
 
 type TestedVersions struct {
@@ -188,6 +189,87 @@ type ResolvedModule struct {
 	Provides  []string `json:"provides,omitempty"`
 }
 
+type Artifact struct {
+	Name         string `json:"name"`
+	Version      string `json:"version"`
+	Architecture string `json:"architecture"`
+	Kind         string `json:"kind"`
+	SHA256       string `json:"sha256"`
+}
+
+type PersistentState struct {
+	Name      string `json:"name"`
+	Guest     string `json:"guest"`
+	Path      string `json:"path"`
+	Kind      string `json:"kind"`
+	Backup    bool   `json:"backup"`
+	Sensitive bool   `json:"sensitive"`
+}
+
+type SecretDeclaration struct {
+	Name       string `json:"name"`
+	Purpose    string `json:"purpose"`
+	Consumer   string `json:"consumer"`
+	Generation string `json:"generation"`
+	Rotation   string `json:"rotation"`
+}
+
+type NetworkIntent struct {
+	Source      string   `json:"source"`
+	Destination string   `json:"destination"`
+	Protocol    string   `json:"protocol"`
+	Ports       []string `json:"ports,omitempty"`
+	Direction   string   `json:"direction"`
+	Purpose     string   `json:"purpose"`
+}
+
+type DNSRecord struct {
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	Address string `json:"address"`
+	Owner   string `json:"owner"`
+}
+
+type CertificateRequest struct {
+	Identity string   `json:"identity"`
+	SANs     []string `json:"sans"`
+	Consumer string   `json:"consumer"`
+}
+
+type MonitoringDeclaration struct {
+	Name        string   `json:"name"`
+	Kind        string   `json:"kind"`
+	Target      string   `json:"target"`
+	Checks      []string `json:"checks,omitempty"`
+	Description string   `json:"description"`
+}
+
+type BackupDeclaration struct {
+	Guest  string `json:"guest"`
+	Policy string `json:"policy"`
+}
+
+type PortalEntry struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	URLs        []string `json:"urls,omitempty"`
+	Docs        []string `json:"docs,omitempty"`
+}
+
+type ModuleDeclaration struct {
+	Module         string                  `json:"module"`
+	Artifact       Artifact                `json:"artifact"`
+	Guests         []Component             `json:"guests,omitempty"`
+	Persistent     []PersistentState       `json:"persistent,omitempty"`
+	Secrets        []SecretDeclaration     `json:"secrets,omitempty"`
+	NetworkIntents []NetworkIntent         `json:"network_intents,omitempty"`
+	DNSRecords     []DNSRecord             `json:"dns_records,omitempty"`
+	Certificates   []CertificateRequest    `json:"certificates,omitempty"`
+	Monitoring     []MonitoringDeclaration `json:"monitoring,omitempty"`
+	Backups        []BackupDeclaration     `json:"backups,omitempty"`
+	Portal         []PortalEntry           `json:"portal,omitempty"`
+}
+
 func NewDefaultSite(installationID, ageRecipient string) Site {
 	return NewSite(installationID, ageRecipient, GatewayModeManaged)
 }
@@ -248,14 +330,30 @@ func (s Site) Normalize() Site {
 	copySite.Components = append([]Component(nil), s.Components...)
 	copySite.Modules = append([]ResolvedModule(nil), s.Modules...)
 	copySite.ModuleConfig = cloneModuleConfig(s.ModuleConfig)
+	copySite.Declarations = append([]ModuleDeclaration(nil), s.Declarations...)
 	sort.Slice(copySite.Network.Zones, func(i, j int) bool { return copySite.Network.Zones[i].VLAN < copySite.Network.Zones[j].VLAN })
 	sort.Slice(copySite.Components, func(i, j int) bool { return copySite.Components[i].Name < copySite.Components[j].Name })
 	sort.Slice(copySite.Modules, func(i, j int) bool { return copySite.Modules[i].Name < copySite.Modules[j].Name })
+	sort.Slice(copySite.Declarations, func(i, j int) bool { return copySite.Declarations[i].Module < copySite.Declarations[j].Module })
 	for i := range copySite.Components {
 		copySite.Components[i].DNSAliases = append([]string(nil), copySite.Components[i].DNSAliases...)
 		sort.Strings(copySite.Components[i].DNSAliases)
 		copySite.Components[i].Tags = append([]string(nil), copySite.Components[i].Tags...)
 		sort.Strings(copySite.Components[i].Tags)
+	}
+	for i := range copySite.Declarations {
+		sort.Slice(copySite.Declarations[i].Guests, func(a, b int) bool {
+			return copySite.Declarations[i].Guests[a].Name < copySite.Declarations[i].Guests[b].Name
+		})
+		sort.Slice(copySite.Declarations[i].Persistent, func(a, b int) bool {
+			return copySite.Declarations[i].Persistent[a].Name < copySite.Declarations[i].Persistent[b].Name
+		})
+		sort.Slice(copySite.Declarations[i].Secrets, func(a, b int) bool {
+			return copySite.Declarations[i].Secrets[a].Name < copySite.Declarations[i].Secrets[b].Name
+		})
+		sort.Slice(copySite.Declarations[i].DNSRecords, func(a, b int) bool {
+			return copySite.Declarations[i].DNSRecords[a].Name < copySite.Declarations[i].DNSRecords[b].Name
+		})
 	}
 	return copySite
 }

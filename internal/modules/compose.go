@@ -18,6 +18,11 @@ func Compose(config model.SiteConfig) (model.Site, []ResolvedModule, error) {
 	}
 	site := config.BaseSite()
 	site.Components = composeComponents(site.Components, resolved)
+	declarations, err := composeDeclarations(site, resolved)
+	if err != nil {
+		return model.Site{}, nil, err
+	}
+	site.Declarations = declarations
 	site.Modules = make([]model.ResolvedModule, 0, len(resolved))
 	for _, module := range resolved {
 		definition := module.Definition

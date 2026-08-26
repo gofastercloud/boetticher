@@ -25,6 +25,25 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if !IsEnabled(site, "dns") || !IsEnabled(site, "monitoring") || !IsEnabled(site, "firewall") {
 		t.Fatalf("default modules were not enabled: %#v", site.Modules)
 	}
+	if len(site.Declarations) != 3 || site.Declarations[0].Artifact.SHA256 == "" {
+		t.Fatalf("default module declarations are incomplete: %#v", site.Declarations)
+	}
+	for _, declaration := range site.Declarations {
+		for _, guest := range declaration.Guests {
+			if guest.Module != declaration.Module || !containsTag(guest.Tags, model.TagModule) || !containsTag(guest.Tags, "module-"+declaration.Module) {
+				t.Fatalf("guest ownership contract missing for %s: %#v", declaration.Module, guest)
+			}
+		}
+	}
+}
+
+func containsTag(tags []string, wanted string) bool {
+	for _, tag := range tags {
+		if tag == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func TestMonitoringCanBeDisabledWithoutRemovingOtherModules(t *testing.T) {
