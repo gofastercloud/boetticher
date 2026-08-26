@@ -6,12 +6,18 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/modules"
 )
 
 // This build helper keeps artifact qualification on the canonical Go
 // renderer rather than duplicating provider configuration in shell or YAML.
 func main() {
-	plan, err := dns.PlanFromSite(model.NewDefaultSite("artifact-qualification", "age1artifactqualification"))
+	siteConfig := model.ConfigFromSite(model.NewSite("artifact-qualification", "age1artifactqualification", model.GatewayModeManaged))
+	site, _, err := modules.Compose(siteConfig)
+	if err != nil {
+		fatal(err)
+	}
+	plan, err := dns.PlanFromSite(site)
 	if err != nil {
 		fatal(err)
 	}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/modules"
 )
 
 func TestFoundationPlanIsDeterministic(t *testing.T) {
@@ -49,6 +50,27 @@ func TestFoundationPlanUsesGatewayFirstDeploymentOrder(t *testing.T) {
 	want := []string{"lab-fw-01", "lab-dns-01", "lab-dns-02", "lab-log-01", "lab-monitor-01", "lab-portal-01"}
 	if !reflect.DeepEqual(order, want) {
 		t.Fatalf("deployment order = %#v, want %#v", order, want)
+	}
+}
+
+func TestComposedPlanUsesResolvedCapabilityOrder(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	order := make(map[string]int, len(plan.Guests))
+	for index, guest := range plan.Guests {
+		order[guest.Name] = index
+	}
+	for _, pair := range [][2]string{{"lab-fw-01", "lab-dns-01"}, {"lab-dns-01", "lab-log-01"}, {"lab-dns-01", "lab-monitor-01"}, {"lab-log-01", "lab-portal-01"}} {
+		if order[pair[0]] >= order[pair[1]] {
+			t.Fatalf("deployment order %q before %q was not respected: %#v", pair[0], pair[1], order)
+		}
 	}
 }
 

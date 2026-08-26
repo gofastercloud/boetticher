@@ -374,7 +374,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		guests = append(guests, guest)
 	}
 	sort.SliceStable(guests, func(i, j int) bool {
-		left, right := deploymentOrder(guests[i]), deploymentOrder(guests[j])
+		left, right := deploymentOrder(s, guests[i]), deploymentOrder(s, guests[j])
 		if left != right {
 			return left < right
 		}
@@ -383,11 +383,25 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	return Plan{ModelRevision: revision, ManagedBy: "boetticher", Node: s.ProxmoxNode, Storage: guestStorage, GatewayImage: model.QualifiedGatewayImage, GatewayImageURL: model.QualifiedGatewayImageURL, GatewaySHA512: model.QualifiedGatewayImageSHA512, Guests: guests, ArtifactFiles: map[string]string{}}, nil
 }
 
-// deploymentOrder is the effective first-deployment graph for built-in
-// appliances. It is intentionally local and deterministic: the gateway must
-// exist before DNS, DNS before logging and monitoring, and portal follows the
-// service dependencies it consumes.
-func deploymentOrder(guest GuestPlan) int {
+// deploymentOrder follows the resolved module graph carried by Site. This
+// keeps appliance ordering correct for capability providers and future
+// first-party modules without making VMID order an implicit dependency.
+func deploymentOrder(s model.Site, guest GuestPlan) int {
+	if guest.Owner == "boetticher/core/portal" {
+		return 1000000
+	}
+	const moduleOwnerPrefix = "boetticher/module/"
+	if strings.HasPrefix(guest.Owner, moduleOwnerPrefix) {
+		name := strings.TrimPrefix(guest.Owner, moduleOwnerPrefix)
+		for index, module := range s.Modules {
+			if module.Name == name && module.Enabled {
+				return (index + 1) * 100
+			}
+		}
+	}
+	// NewDefaultSite is an intentionally small provider-test fixture that does
+	// not carry resolved module metadata. Preserve deterministic fixture plans
+	// while production Site values always use the resolved graph above.
 	if guest.Kind == KindQEMU && guest.Owner == "boetticher/module/firewall" {
 		return 10
 	}
@@ -398,8 +412,6 @@ func deploymentOrder(guest GuestPlan) int {
 		return 30
 	case "boetticher/module/monitoring":
 		return 40
-	case "boetticher/core/portal":
-		return 50
 	default:
 		return 60
 	}

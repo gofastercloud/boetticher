@@ -65,6 +65,7 @@ create_base_rootfs() {
     --include=systemd,systemd-sysv,systemd-journal-remote,ca-certificates,openssh-server,sudo,iproute2,iputils-ping,nftables,chrony,curl,jq,bash,python3 \
     trixie "$rootfs" "$mirror"
   mkdir -p "$rootfs/etc/boetticher" "$rootfs/usr/lib/boetticher" "$rootfs/run/boetticher/bootstrap"
+  install -D -m 0644 images/base/runtime/journal-upload.conf "$rootfs/etc/systemd/journal-upload.conf"
   install -D -m 0755 images/base/first-boot/boetticher-first-boot.sh "$rootfs/usr/lib/boetticher/boetticher-first-boot.sh"
   install -D -m 0644 images/base/first-boot/boetticher-first-boot.service "$rootfs/etc/systemd/system/boetticher-first-boot.service"
   install -D -m 0755 images/base/runtime/install-runtime-state.sh "$rootfs/usr/lib/boetticher/install-runtime-state"
