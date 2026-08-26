@@ -83,6 +83,37 @@ func TestRecursiveProviderSelectionIsTypedAndProviderNeutral(t *testing.T) {
 	}
 }
 
+func TestRenderBlockyConfigPinsAuthoritativeZonesWithoutPublicFallback(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := RenderBlockyConfig(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(config)
+	for _, zone := range []string{"lab.home.arpa", "trusted.lab.home.arpa", "servers.lab.home.arpa", "10.10.10.in-addr.arpa"} {
+		if !strings.Contains(text, zone) {
+			t.Fatalf("Blocky config omitted authoritative zone %q: %s", zone, text)
+		}
+	}
+	if !strings.Contains(text, "127.0.0.1:5353") || !strings.Contains(text, "cloudflare-dns.com/dns-query") {
+		t.Fatalf("Blocky config omitted authoritative target or encrypted upstream: %s", text)
+	}
+}
+
+func TestRenderBlockyConfigRejectsOtherProvider(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.RecursiveProvider = string(model.DNSProviderAdGuard)
+	if _, err := RenderBlockyConfig(plan); err == nil {
+		t.Fatal("Blocky renderer accepted AdGuard provider")
+	}
+}
+
 func TestExternalPlanPublishesOptionalDDNSContract(t *testing.T) {
 	plan, err := PlanFromSite(model.NewSite("installation", "age1example", model.GatewayModeExternal))
 	if err != nil {
