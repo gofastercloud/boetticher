@@ -1,4 +1,4 @@
-.PHONY: ci test build vet fmt fmt-check tofu-check ansible-check diff-check
+.PHONY: ci test build vet fmt fmt-check tofu-check ansible-check security-check actionlint vuln-check naming-check diff-check
 
 GOCACHE ?= /tmp/boetticher-gocache
 GOMODCACHE ?= /tmp/boetticher-gomodcache
@@ -31,4 +31,15 @@ ansible-check:
 diff-check:
 	git diff --check
 
-ci: fmt-check test vet build tofu-check ansible-check diff-check
+naming-check:
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./internal/naming
+
+actionlint:
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+
+vuln-check:
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+
+security-check: naming-check actionlint vuln-check
+
+ci: fmt-check test vet build tofu-check ansible-check security-check diff-check
