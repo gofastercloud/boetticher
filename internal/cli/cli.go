@@ -1436,64 +1436,54 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 	if err != nil {
 		return fmt.Errorf("load encrypted Zabbix API password: %w", err)
 	}
-	monitorServerKey, err := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "monitor_server_key")
-	if err != nil {
-		return fmt.Errorf("load encrypted monitor server key: %w", err)
-	}
-	monitorServerCert, err := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "monitor_server_cert")
-	if err != nil {
-		return fmt.Errorf("load encrypted monitor server certificate: %w", err)
-	}
-	portalServerKey, err := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "portal_server_key")
-	if err != nil {
-		return fmt.Errorf("load encrypted portal server key: %w", err)
-	}
-	portalServerCert, err := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "portal_server_cert")
-	if err != nil {
-		return fmt.Errorf("load encrypted portal server certificate: %w", err)
-	}
-	decodeSecret := func(name, encoded string) (string, error) {
-		decoded, err := pki.Decode(encoded)
-		if err != nil {
-			return "", fmt.Errorf("decode %s: %w", name, err)
-		}
-		return decoded, nil
-	}
-	monitorServerKey, err = decodeSecret("monitor server key", monitorServerKey)
-	if err != nil {
-		return err
-	}
-	monitorServerCert, err = decodeSecret("monitor server certificate", monitorServerCert)
-	if err != nil {
-		return err
-	}
-	portalServerKey, err = decodeSecret("portal server key", portalServerKey)
-	if err != nil {
-		return err
-	}
-	portalServerCert, err = decodeSecret("portal server certificate", portalServerCert)
-	if err != nil {
-		return err
-	}
 	authority, err := site.LoadAuthority(*siteDir, s, *ageIdentity)
 	if err != nil {
 		return fmt.Errorf("load platform CA chain: %w", err)
 	}
 	runtimeVariables["zabbix_db_password"] = zabbixDBPassword
 	runtimeVariables["zabbix_api_password"] = zabbixAPIPassword
-	runtimeVariables["monitor_server_key_pem"] = monitorServerKey
-	runtimeVariables["monitor_server_cert_pem"] = monitorServerCert + authority.IssuingCertPEM
-	runtimeVariables["portal_server_key_pem"] = portalServerKey
-	runtimeVariables["portal_server_cert_pem"] = portalServerCert + authority.IssuingCertPEM
 	runtimeVariables["client_ca_pem"] = authority.IssuingCertPEM
+	inventoryPath := filepath.Join(*siteDir, "generated", "ansible", "inventory.ini")
+	csrDir := filepath.Join(site.RuntimeDir(s), "pki")
+	if err := os.MkdirAll(csrDir, 0700); err != nil {
+		return fmt.Errorf("create controller PKI runtime directory: %w", err)
+	}
+	runtimeVariables["pki_bootstrap_phase"] = true
+	runtimeVariables["pki_csr_output_dir"] = csrDir
 	variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
 	if err != nil {
 		return err
 	}
 	variables = append(variables, '\n')
-	inventoryPath := filepath.Join(*siteDir, "generated", "ansible", "inventory.ini")
 	if err := ansible.Run(context.Background(), *playbook, inventoryPath, variables); err != nil {
 		return err
+	}
+	monitorCSR, err := os.ReadFile(filepath.Join(csrDir, "monitor.csr.pem"))
+	if err != nil {
+		return fmt.Errorf("read endpoint-generated monitor CSR: %w", err)
+	}
+	portalCSR, err := os.ReadFile(filepath.Join(csrDir, "portal.csr.pem"))
+	if err != nil {
+		return fmt.Errorf("read endpoint-generated portal CSR: %w", err)
+	}
+	monitorCertificate, err := pki.SignServerCSR(authority, string(monitorCSR), "monitor", s.Network.Domain, []string{"lab-monitor-01." + s.Network.Domain}, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("sign monitor endpoint CSR: %w", err)
+	}
+	portalCertificate, err := pki.SignServerCSR(authority, string(portalCSR), "portal", s.Network.Domain, []string{"lab-portal-01." + s.Network.Domain}, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("sign portal endpoint CSR: %w", err)
+	}
+	runtimeVariables["pki_bootstrap_phase"] = false
+	runtimeVariables["monitor_server_cert_pem"] = monitorCertificate.ChainPEM
+	runtimeVariables["portal_server_cert_pem"] = portalCertificate.ChainPEM
+	variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
+	if err != nil {
+		return err
+	}
+	variables = append(variables, '\n')
+	if err := ansible.Run(context.Background(), *playbook, inventoryPath, variables); err != nil {
+		return fmt.Errorf("install endpoint-signed certificates: %w", err)
 	}
 	clientCertificate, err := pki.IssueClient(authority, "boetticher-reconciler", s.Network.Domain, time.Now().UTC())
 	if err != nil {

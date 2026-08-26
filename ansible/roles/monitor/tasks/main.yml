@@ -53,14 +53,13 @@
 - name: Require the controller-issued Zabbix mTLS material
   ansible.builtin.assert:
     that:
-      - monitor_server_key_pem is defined
-      - monitor_server_cert_pem is defined
       - client_ca_pem is defined
+      - (pki_bootstrap_phase | default(false) | bool) or (monitor_server_cert_pem is defined and monitor_server_cert_pem | length > 0)
     fail_msg: "Zabbix mTLS requires controller-issued server and client-CA material"
   no_log: true
   when: inventory_hostname == 'lab-monitor-01'
 
-- name: Create the Zabbix TLS directory
+- name: Create the Zabbix TLS directory before generating endpoint keys
   ansible.builtin.file:
     path: /etc/boetticher/tls
     state: directory
@@ -68,6 +67,57 @@
     group: root
     mode: '0750'
   when: inventory_hostname == 'lab-monitor-01'
+
+- name: Generate the monitor endpoint private key locally
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - genpkey
+      - -algorithm
+      - EC
+      - -pkeyopt
+      - ec_paramgen_curve:P-256
+      - -out
+      - /etc/boetticher/tls/monitor.key.pem
+  args:
+    creates: /etc/boetticher/tls/monitor.key.pem
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Restrict the monitor endpoint private key
+  ansible.builtin.file:
+    path: /etc/boetticher/tls/monitor.key.pem
+    owner: root
+    group: root
+    mode: '0600'
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Generate the monitor endpoint CSR locally
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - req
+      - -new
+      - -sha256
+      - -key
+      - /etc/boetticher/tls/monitor.key.pem
+      - -subj
+      - /CN=monitor.lab.home.arpa
+      - -addext
+      - subjectAltName=DNS:monitor.lab.home.arpa,DNS:lab-monitor-01.lab.home.arpa
+      - -out
+      - /etc/boetticher/tls/monitor.csr.pem
+  args:
+    creates: /etc/boetticher/tls/monitor.csr.pem
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Fetch the endpoint-generated monitor CSR to the controller runtime directory
+  ansible.builtin.fetch:
+    src: /etc/boetticher/tls/monitor.csr.pem
+    dest: "{{ pki_csr_output_dir }}/monitor.csr.pem"
+    flat: true
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - pki_bootstrap_phase | default(false) | bool
 
 - name: Install Zabbix server certificate
   ansible.builtin.copy:
@@ -78,18 +128,10 @@
     mode: '0644'
   notify: reload nginx
   no_log: true
-  when: inventory_hostname == 'lab-monitor-01'
-
-- name: Install Zabbix server private key
-  ansible.builtin.copy:
-    content: "{{ monitor_server_key_pem }}"
-    dest: /etc/boetticher/tls/monitor.key.pem
-    owner: root
-    group: root
-    mode: '0600'
-  notify: reload nginx
-  no_log: true
-  when: inventory_hostname == 'lab-monitor-01'
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - monitor_server_cert_pem is defined
+    - monitor_server_cert_pem | length > 0
 
 - name: Install the client CA for Zabbix mTLS
   ansible.builtin.copy:
@@ -219,7 +261,10 @@
     group: root
     mode: '0644'
   notify: reload nginx
-  when: inventory_hostname == 'lab-monitor-01'
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - monitor_server_cert_pem is defined
+    - monitor_server_cert_pem | length > 0
 
 - name: Enable the mTLS-protected Zabbix frontend
   ansible.builtin.file:
@@ -227,14 +272,20 @@
     dest: /etc/nginx/sites-enabled/zabbix.conf
     state: link
   notify: reload nginx
-  when: inventory_hostname == 'lab-monitor-01'
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - monitor_server_cert_pem is defined
+    - monitor_server_cert_pem | length > 0
 
 - name: Remove the distribution nginx default site on the monitor
   ansible.builtin.file:
     path: /etc/nginx/sites-enabled/default
     state: absent
   notify: reload nginx
-  when: inventory_hostname == 'lab-monitor-01'
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - monitor_server_cert_pem is defined
+    - monitor_server_cert_pem | length > 0
 
 - name: Publish boetticher-owned Zabbix source definitions
   ansible.builtin.copy:

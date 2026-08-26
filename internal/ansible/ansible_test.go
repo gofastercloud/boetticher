@@ -46,6 +46,26 @@ func TestAgent2IsEnabledOnEveryManagedLinuxHost(t *testing.T) {
 	}
 }
 
+func TestEndpointTLSKeysAreGeneratedLocallyAndNeverSuppliedByController(t *testing.T) {
+	for _, role := range []string{"monitor", "portal"} {
+		path := filepath.Join("..", "..", "ansible", "roles", role, "tasks", "main.yml")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		if !strings.Contains(text, "openssl\n") || !strings.Contains(text, "genpkey") || !strings.Contains(text, "Restrict the "+role+" endpoint private key") {
+			t.Fatalf("%s role does not generate and restrict its endpoint key locally", role)
+		}
+		if strings.Contains(text, role+"_server_key_pem") {
+			t.Fatalf("%s role still accepts a controller-supplied endpoint private key", role)
+		}
+		if !strings.Contains(text, "ansible.builtin.fetch:") || !strings.Contains(text, role+".csr.pem") {
+			t.Fatalf("%s role does not return its CSR to the controller", role)
+		}
+	}
+}
+
 func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	variables, err := Variables(site)
