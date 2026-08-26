@@ -6,6 +6,20 @@ description = "Historical pre-rename command prose is not a credential"
 regexTarget = "line"
 regexes = ['homelab bootstrap']
 
+[[allowlists]]
+description = "Public PowerDNS repository signing metadata is verification input, not secret material"
+regexTarget = "line"
+regexes = [
+  'powerdns_key_sha256[=:][[:space:]]*efeb5b1451c76de1dac8eefaddba5af5549e8fd93484728744ea7b4923decae8',
+  'signing_key_sha256:[[:space:]]*efeb5b1451c76de1dac8eefaddba5af5549e8fd93484728744ea7b4923decae8',
+  'signing_key_fingerprint:[[:space:]]*9FAAA5577E8FCF62093D036C1B0C6205FD380FBB',
+]
+paths = [
+  'scripts/build-images\\.sh',
+  'images/dns/image\\.yaml',
+  'internal/artifacts/catalog_test\\.go',
+]
+
 [[rules]]
 id = "generic-api-key"
 
