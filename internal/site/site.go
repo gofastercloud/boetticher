@@ -14,33 +14,48 @@ import (
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/pki"
 )
 
 func Load(dir string) (model.Site, error) {
-	data, err := os.ReadFile(filepath.Join(dir, "site.yml"))
-	if err != nil {
-		return model.Site{}, fmt.Errorf("read site.yml: %w", err)
-	}
-	s, err := model.ParseSite(data)
+	config, err := LoadConfig(dir)
 	if err != nil {
 		return model.Site{}, err
 	}
-	if err := s.Validate(); err != nil {
+	s, _, err := modules.Compose(config)
+	if err != nil {
 		return model.Site{}, err
 	}
+	retained, err := LoadRetainedModules(dir)
+	if err != nil {
+		return model.Site{}, err
+	}
+	s.RetainedModules = retained
 	return s, nil
 }
 
-func Save(dir string, s model.Site) error {
-	data, err := model.RenderSite(s)
+func LoadConfig(dir string) (model.SiteConfig, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "site.yml"))
+	if err != nil {
+		return model.SiteConfig{}, fmt.Errorf("read site.yml: %w", err)
+	}
+	return model.ParseSiteConfig(data)
+}
+
+func SaveConfig(dir string, config model.SiteConfig) error {
+	data, err := model.RenderSiteConfig(config)
 	if err != nil {
 		return err
 	}
 	return atomicWrite(filepath.Join(dir, "site.yml"), data, 0600)
 }
 
-func Init(dir, ageIdentityPath string) (model.Site, error) {
+func Save(dir string, s model.Site) error {
+	return SaveConfig(dir, model.ConfigFromSite(s))
+}
+
+func Init(dir, ageIdentityPath string, externalFirewall bool) (model.Site, error) {
 	for _, tool := range []string{"age-keygen", "sops", "git"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			return model.Site{}, fmt.Errorf("%s is required to initialize the site: %w", tool, err)
@@ -71,7 +86,15 @@ func Init(dir, ageIdentityPath string) (model.Site, error) {
 	if err != nil {
 		return model.Site{}, err
 	}
-	s := model.NewDefaultSite(installationID, recipient)
+	gatewayMode := model.GatewayModeManaged
+	if externalFirewall {
+		gatewayMode = model.GatewayModeExternal
+	}
+	s := model.NewSite(installationID, recipient, gatewayMode)
+	if externalFirewall {
+		falseValue := false
+		s.ModuleConfig = map[string]model.ModuleConfig{"firewall": {Enabled: &falseValue}}
+	}
 	authority, err := pki.GenerateAuthority(time.Now().UTC(), s.Network.Domain)
 	if err != nil {
 		return model.Site{}, fmt.Errorf("generate platform CA hierarchy: %w", err)
@@ -88,7 +111,9 @@ func Init(dir, ageIdentityPath string) (model.Site, error) {
 		IssuingFingerprint: metadata["issuing_fingerprint"],
 		IssuingExpiry:      metadata["issuing_ca_expiry"],
 	}
-	if err := s.Validate(); err != nil {
+	config := model.ConfigFromSite(s)
+	s, _, err = modules.Compose(config)
+	if err != nil {
 		return model.Site{}, err
 	}
 	if err := Save(dir, s); err != nil {

@@ -45,6 +45,33 @@ func TestUsageIsGeneratedFromCommandMetadata(t *testing.T) {
 	}
 }
 
+func TestPublicHelpPathsDoNotFail(t *testing.T) {
+	for _, args := range [][]string{
+		{"init", "--help"}, {"preflight", "-h"}, {"bootstrap", "--help"}, {"deploy", "--help"},
+		{"verify", "--help"}, {"doctor", "--help"}, {"network", "--help"}, {"firewall", "--help"},
+		{"dhcp", "--help"}, {"pki", "--help"}, {"access", "--help"}, {"portal", "--help"},
+		{"module", "--help"}, {"config", "--help"}, {"upgrade", "--help"},
+	} {
+		var output bytes.Buffer
+		if err := Run(args, &output, &output); err != nil {
+			t.Errorf("%v: %v", args, err)
+		}
+		if output.Len() == 0 {
+			t.Errorf("%v produced no help output", args)
+		}
+	}
+}
+
+func TestConvergeIsNotAnActiveCommand(t *testing.T) {
+	var output bytes.Buffer
+	if err := Run([]string{"converge"}, &output, &output); err == nil {
+		t.Fatal("removed converge command was accepted")
+	}
+	if strings.Contains(output.String(), "boetticher converge") {
+		t.Fatal("removed converge command appeared in normal CLI output")
+	}
+}
+
 func TestCommandReferenceContainsCLIUsage(t *testing.T) {
 	root := repositoryRoot(t)
 	document, err := os.ReadFile(filepath.Join(root, "docs", "commands.md"))
@@ -64,12 +91,11 @@ func validateCommandForm(t *testing.T, fields []string) {
 		t.Fatalf("invalid command form: %q", fields)
 	}
 	known := map[string]map[string]bool{
-		"init":               {"--site-dir": true, "--age-identity": true},
+		"init":               {"--site-dir": true, "--age-identity": true, "--external-firewall": true},
 		"bootstrap-endpoint": {"--site": true},
 		"preflight":          {"--site": true, "--live": true, "--bootstrap-address": true, "--trunk-interface": true},
-		"bootstrap":          {"--site": true, "--opnsense-iso": true, "--recovery-confirmed": true, "--trunk-interface": true, "--dry-run": true},
-		"provision":          {"--site": true, "--debian-template": true, "--dry-run": true},
-		"converge":           {"--site": true, "--opnsense-url": true, "--zabbix-url": true, "--dry-run": true},
+		"bootstrap":          {"--site": true, "--recovery-confirmed": true, "--trunk-interface": true, "--dry-run": true},
+		"deploy":             {"--site": true, "--zabbix-url": true, "--debian-template": true, "--dry-run": true},
 		"ssh-config":         {"--site": true, "--output": true, "--force": true, "--check": true, "--install-include": true},
 		"verify":             {"--site": true},
 		"doctor":             {"--site": true},
@@ -78,7 +104,11 @@ func validateCommandForm(t *testing.T, fields []string) {
 		"portal":             {"--site": true, "--output": true, "--docs": true},
 		"network":            {"--site": true},
 		"pki":                {"--site": true},
-		"opnsense":           {"--site": true},
+		"firewall":           {"--site": true, "--live": true, "--json": true},
+		"dhcp":               {"--site": true, "--live": true, "--json": true},
+		"storage":            {"--site": true, "--live": true, "--confirmed": true},
+		"module":             {"--site": true, "--dry-run": true, "--confirm": true, "--purge": true, "--age-identity": true, "--proxmox-ca": true, "--insecure": true},
+		"config":             {"--site": true},
 	}
 	command := fields[1]
 	if _, ok := known[command]; !ok {

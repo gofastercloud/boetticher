@@ -1,4 +1,4 @@
-.PHONY: ci test build vet fmt fmt-check tofu-check ansible-check security-check actionlint vuln-check naming-check diff-check
+.PHONY: ci test build vet fmt fmt-check tofu-check ansible-check security-check actionlint vuln-check naming-check diff-check image-base image-dns image-monitoring image-firewall images
 
 GOCACHE ?= /tmp/boetticher-gocache
 GOMODCACHE ?= /tmp/boetticher-gomodcache
@@ -30,6 +30,10 @@ ansible-check:
 
 diff-check:
 	git diff --check
+
+image-base image-dns image-monitoring image-firewall images:
+	@echo "$@ validates the pinned boetticher appliance definition; real artifact construction requires the supported build environment"
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./internal/artifacts
 
 naming-check:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./internal/naming

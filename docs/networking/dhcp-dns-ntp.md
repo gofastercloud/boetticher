@@ -1,14 +1,14 @@
 # DHCP, DNS, and NTP
 
-OPNsense Kea is the V1 DHCP authority. Its desired subnets, options, reservations, and service reconfiguration are generated from the model and applied through the supported API path.
+In managed mode, Kea DHCPv4 and Kea D2 run on `lab-fw-01`. In external mode,
+DHCP is the operator appliance's responsibility. Both modes retain the same
+fixed zones and gateway addresses.
 
-| Zone | Allocation | DNS | NTP | Gateway |
-| --- | --- | --- | --- | --- |
-| TRUSTED | dynamic plus reservations | `10.10.20.10`, `10.10.20.11` | `10.10.20.10`, `10.10.20.11` | `.1` |
-| SERVERS | dynamic plus reservations | `10.10.20.10`, `10.10.20.11` | `10.10.20.10`, `10.10.20.11` | `.1` |
-| SANDBOX | dynamic | `10.10.50.1` | `10.10.50.1` | `.1` |
-| MGMT | reservations only | `10.10.20.10`, `10.10.20.11` | `10.10.20.10`, `10.10.20.11` | `.1` |
+TRUSTED, SERVERS, and MGMT receive `10.10.20.10` and `10.10.20.11` for DNS and
+NTP. SANDBOX receives `10.10.50.1` for both, keeping it independent of the
+SERVERS guests. The DNS guests run AdGuard Home, PowerDNS Authoritative, and
+Chrony. PowerDNS receives authenticated Kea D2 RFC2136 updates; AdGuard is the
+client-facing resolver.
 
-MGMT has no pool for unknown clients. Core infrastructure uses fixed addresses owned by the model and does not depend on DHCP. Ordinary zones use the normal default gateway option; option 121 is reserved for a future classless-route experiment such as the SANDBOX `/32` spike.
-
-`lab-dns-01` and `lab-dns-02` run AdGuard Home and Chrony independently. They are not application-state primary/secondary replicas. SANDBOX uses OPNsense for public DNS/NTP and does not receive the internal resolver addresses.
+MGMT has reservations only. Core guests use fixed model addresses and do not
+depend on DHCP for their own operation.

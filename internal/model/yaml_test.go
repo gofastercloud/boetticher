@@ -2,16 +2,19 @@ package model
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
 func TestParseSiteYAMLSubset(t *testing.T) {
-	data := []byte(`api_version: boetticher/v1
-platform_version: 0.1.0
-schema_version: 1
+	data := []byte(`api_version: boetticher/v2
+platform_version: 0.2.0
+schema_version: 2
 storage_profile: single-disk
+gateway:
+  mode: managed
 tested_versions:
-  opnsense: 26.7.2_2
+  gateway: debian-13-genericcloud-amd64
   zabbix: "7.0 LTS"
 network:
   domain: lab.home.arpa
@@ -53,11 +56,41 @@ func TestExampleSiteIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	site, err := ParseSite(data)
+	config, err := ParseSiteConfig(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := site.Validate(); err != nil {
+	if err := config.Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestParseSiteConfigRejectsExpandedComponents(t *testing.T) {
+	data := []byte("api_version: boetticher/v3\nschema_version: 3\ncomponents: []\n")
+	_, err := ParseSiteConfig(data)
+	if err == nil || !strings.Contains(err.Error(), "field components not found") {
+		t.Fatalf("expanded component inventory was accepted: %v", err)
+	}
+}
+
+func TestParseSiteConfigRejectsUnknownModuleFields(t *testing.T) {
+	data := []byte("api_version: boetticher/v3\nschema_version: 3\nmodules:\n  monitoring:\n    retention_days: 7\n")
+	_, err := ParseSiteConfig(data)
+	if err == nil || !strings.Contains(err.Error(), "retention_days") {
+		t.Fatalf("unknown module field was accepted: %v", err)
+	}
+}
+
+func TestParseSiteConfigAppliesV3Defaults(t *testing.T) {
+	config, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules: {}\nsecret_metadata:\n  installation_id: test\n  age_recipient: age1test\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	site := config.BaseSite()
+	if err := site.Validate(); err != nil {
+		t.Fatalf("defaults should produce a valid site: %v", err)
+	}
+	if site.Gateway.Mode != GatewayModeManaged || site.StorageProfile != "single-disk" || site.Network.Domain != DefaultDomain {
+		t.Fatalf("unexpected defaults: gateway=%q storage=%q domain=%q", site.Gateway.Mode, site.StorageProfile, site.Network.Domain)
 	}
 }

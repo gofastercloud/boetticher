@@ -8,11 +8,10 @@ type commandSpec struct {
 }
 
 var commandSpecs = []commandSpec{
-	{Usage: "boetticher init [--site-dir DIR] [--age-identity PATH]"},
+	{Usage: "boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall]"},
 	{Usage: "boetticher preflight [--site DIR] [--live] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]"},
-	{Usage: "boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--opnsense-iso PATH] [--trunk-interface IFACE] [--dry-run]"},
-	{Usage: "boetticher provision [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--debian-template TEMPLATE] [--dry-run]"},
-	{Usage: "boetticher converge [--site DIR] [--age-identity PATH] [--opnsense-url URL] [--opnsense-ca PATH] [--proxmox-ca PATH] [--zabbix-url URL] [--insecure] [--ansible-playbook PATH] [--dry-run]"},
+	{Usage: "boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]"},
+	{Usage: "boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--zabbix-url URL] [--insecure] [--ansible-playbook PATH] [--debian-template TEMPLATE] [--dry-run]"},
 	{Usage: "boetticher verify [--site DIR] [--ssh-config PATH] [--ssh-journey]"},
 	{Usage: "boetticher doctor [--site DIR] [--ssh-config PATH] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
 	{Usage: "boetticher upgrade [--site DIR] [--age-identity PATH] [--recovery-confirmed]"},
@@ -22,6 +21,10 @@ var commandSpecs = []commandSpec{
 	{Usage: "boetticher network trunk status|attach|detach [INTERFACE] [--site DIR] [--confirm] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
 	{Usage: "boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]"},
 	{Usage: "boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]"},
-	{Usage: "boetticher opnsense credentials import [--site DIR] < credentials.json"},
+	{Usage: "boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json]"},
+	{Usage: "boetticher dhcp status|leases [--site DIR] [--live] [--json]"},
+	{Usage: "boetticher storage status|initialize [--site DIR] [--live] [--confirmed]"},
+	{Usage: "boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
+	{Usage: "boetticher config validate|show|schema [--site DIR]"},
 	{Usage: "boetticher portal build [--site DIR] [--output DIR] [--docs DIR]"},
 }

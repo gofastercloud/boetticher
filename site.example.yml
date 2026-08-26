@@ -1,17 +1,15 @@
-api_version: boetticher/v1
-platform_version: 0.1.0
-schema_version: 1
+api_version: boetticher/v3
+platform_version: 0.3.0
+schema_version: 3
 storage_profile: single-disk
-storage_device: ""
+gateway:
+  mode: managed
+modules: {}
 proxmox_node: lab-proxmox-01
-bootstrap_address: ""
-ssh_identity_file: ""
 physical_network:
-  upstream: {}
-  trunk: {}
   mode: virtual-only
 tested_versions:
-  opnsense: 26.7.2_2
+  gateway: debian-13-genericcloud-amd64
   zabbix: "7.0 LTS"
 network:
   domain: lab.home.arpa
@@ -62,95 +60,3 @@ pki:
   issuing_common_name: boetticher Issuing CA
   issuing_fingerprint: generated-by-boetticher-init
   issuing_expiry: generated-by-boetticher-init
-components:
-  - name: lab-proxmox-01
-    vmid: 0
-    hostname: lab-proxmox-01
-    zone: MGMT
-    address: 10.10.99.5
-    role: Proxmox host
-    tags: [boetticher, managed, platform, infra, network]
-    ssh_user: labadmin
-    ssh_port: 22
-    monitoring: true
-    backup: true
-    ssh_managed: true
-    jump_allowed: false
-    product_owned: true
-  - name: lab-fw-01
-    vmid: 100
-    hostname: lab-fw-01
-    zone: MGMT
-    address: 10.10.99.1
-    role: OPNsense firewall
-    tags: [boetticher, managed, platform, infra, network, firewall, backup]
-    url: https://opnsense.lab.home.arpa
-    monitoring: true
-    backup: true
-    ssh_managed: false
-    jump_allowed: false
-    product_owned: true
-  - name: lab-dns-01
-    vmid: 110
-    hostname: lab-dns-01
-    zone: SERVERS
-    address: 10.10.20.10
-    role: DNS/NTP
-    tags: [boetticher, managed, platform, infra, dns, ntp, backup]
-    dns_aliases: [dns01, dns]
-    ssh_user: labadmin
-    ssh_port: 22
-    monitoring: true
-    backup: true
-    ssh_managed: true
-    jump_allowed: true
-    product_owned: true
-  - name: lab-dns-02
-    vmid: 111
-    hostname: lab-dns-02
-    zone: SERVERS
-    address: 10.10.20.11
-    role: DNS/NTP
-    tags: [boetticher, managed, platform, infra, dns, ntp, backup]
-    dns_aliases: [dns02]
-    ssh_user: labadmin
-    ssh_port: 22
-    monitoring: true
-    backup: true
-    ssh_managed: true
-    jump_allowed: true
-    product_owned: true
-  - name: lab-monitor-01
-    vmid: 120
-    hostname: lab-monitor-01
-    zone: MGMT
-    address: 10.10.99.20
-    role: Zabbix
-    tags: [boetticher, managed, platform, infra, observability, backup]
-    url: https://monitor.lab.home.arpa
-    dns_aliases: [monitor]
-    ssh_user: labadmin
-    ssh_port: 22
-    monitoring: true
-    backup: true
-    mtls: true
-    ssh_managed: true
-    jump_allowed: true
-    product_owned: true
-  - name: lab-portal-01
-    vmid: 130
-    hostname: lab-portal-01
-    zone: SERVERS
-    address: 10.10.20.30
-    role: Generated platform portal
-    tags: [boetticher, managed, platform, infra, portal, backup]
-    url: https://portal.lab.home.arpa
-    dns_aliases: [portal]
-    ssh_user: labadmin
-    ssh_port: 22
-    monitoring: true
-    backup: true
-    mtls: true
-    ssh_managed: true
-    jump_allowed: true
-    product_owned: true

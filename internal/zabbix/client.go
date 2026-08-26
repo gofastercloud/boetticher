@@ -230,9 +230,7 @@ func (c *Client) ensureHosts(ctx context.Context, plan Plan, groupID string, tem
 		}
 		templates := templateLinks(component, templateIDs)
 		interfaces := []map[string]any{{"type": 1, "main": 1, "useip": 1, "ip": component.Address, "dns": "", "port": "10050"}}
-		if component.Role == "OPNsense firewall" {
-			interfaces = []map[string]any{{"type": 2, "main": 1, "useip": 1, "ip": component.Address, "dns": "", "port": "161"}}
-		}
+		// The managed gateway is an ordinary Linux host monitored by Agent 2.
 		payload := map[string]any{"host": component.Hostname, "name": component.Name, "groups": []map[string]string{{"groupid": groupID}}, "interfaces": interfaces, "tags": apiTags(), "templates": templates}
 		if len(hosts) == 0 {
 			var created struct {
@@ -261,7 +259,7 @@ func (c *Client) ensureHosts(ctx context.Context, plan Plan, groupID string, tem
 
 func templateLinks(component model.Component, templateIDs map[string]string) []map[string]string {
 	result := make([]map[string]string, 0, 2)
-	if component.Role != "OPNsense firewall" {
+	if component.Role != "Debian firewall" {
 		if id := templateIDs["boetticher Linux platform"]; id != "" {
 			result = append(result, map[string]string{"templateid": id})
 		}
@@ -271,8 +269,8 @@ func templateLinks(component model.Component, templateIDs map[string]string) []m
 			result = append(result, map[string]string{"templateid": id})
 		}
 	}
-	if component.Role == "OPNsense firewall" {
-		if id := templateIDs["boetticher OPNsense platform"]; id != "" {
+	if component.Role == "Debian firewall" {
+		if id := templateIDs["boetticher gateway platform"]; id != "" {
 			result = append(result, map[string]string{"templateid": id})
 		}
 	}

@@ -83,7 +83,6 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	knownHosts := fs.String("known-hosts", "", "optional SSH known-hosts file for bootstrap")
 	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
 	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS during bootstrap")
-	opnsenseISO := fs.String("opnsense-iso", "", "verified OPNsense ISO path on Proxmox storage")
 	trunkInterface := fs.String("trunk-interface", "", "explicit physical trunk interface when discovery finds multiple candidates")
 	dryRun := fs.Bool("dry-run", false, "render and validate the bootstrap plan without connecting")
 	if err := fs.Parse(args); err != nil {
@@ -127,14 +126,11 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	}
 	if *dryRun {
 		fmt.Fprintf(out, "Bootstrap plan: PASS model %s\n", plan.ModelRevision)
-		fmt.Fprintf(out, "  Proxmox endpoint: %s\n  Firewall VMID: %d\n  OPNsense ISO: %s\n", s.BootstrapAddress, model.ProxmoxVMID, valueOrPlaceholder(*opnsenseISO))
+		fmt.Fprintf(out, "  Proxmox endpoint: %s\n  Gateway mode: %s\n  Gateway image: %s\n", s.BootstrapAddress, s.Gateway.Mode, model.QualifiedGatewayImage)
 		fmt.Fprintf(out, "  Storage: %s\n", s.StorageProfile)
 		fmt.Fprintln(out, "  Trust transition: SSH key → labadmin/lab-jump → scoped API token → SOPS")
 		fmt.Fprintln(out, "  Destructive actions: NOT RUN (dry-run)")
 		return nil
-	}
-	if *opnsenseISO == "" {
-		return errors.New("--opnsense-iso is required for live bootstrap")
 	}
 	publicKey, err := readOperatorPublicKey(*operatorKey)
 	if err != nil {
@@ -179,10 +175,18 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	}
 	printPhysicalDiscovery(out, discovery)
 	if discovery.Mode == networkmodel.ModeSelectionNeeded {
-		return errors.New("HOLD: multiple eligible trunk interfaces require --trunk-interface selection before bootstrap can mutate networking")
+		return errors.New("multiple eligible trunk interfaces require --trunk-interface selection before bootstrap can mutate networking")
+	}
+	if s.Gateway.Mode == model.GatewayModeExternal && discovery.Trunk == nil {
+		return errors.New("external gateway mode requires a distinct physical vmbr1 trunk interface")
 	}
 	if err := proxmox.EnsureVirtualBridge(ctx, client, plan.Node); err != nil {
 		return err
+	}
+	if s.StorageProfile == "single-disk" {
+		if err := client.EnsureDirectoryStorageContent(ctx, "local", "/var/lib/vz", []string{"backup", "images", "rootdir"}); err != nil {
+			return fmt.Errorf("ensure single-disk Proxmox storage: %w", err)
+		}
 	}
 	trunkChanged := false
 	if discovery.Trunk != nil && discovery.Trunk.Bridge != "vmbr1" {
@@ -242,11 +246,13 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err := rebuildPortal(*siteDir, s); err != nil {
 		return fmt.Errorf("HOLD: bootstrap network binding was persisted but portal could not be regenerated: %w", err)
 	}
-	if err := proxmox.EnsureFirewallVM(ctx, client, plan, *opnsenseISO); err != nil {
-		return err
-	}
-	if err := client.StartVM(ctx, plan.Node, model.ProxmoxVMID); err != nil {
-		return fmt.Errorf("start OPNsense VM: %w", err)
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		if err := proxmox.EnsureFirewallVM(ctx, client, plan); err != nil {
+			return err
+		}
+		if err := client.StartVM(ctx, plan.Node, model.ProxmoxVMID); err != nil {
+			return fmt.Errorf("start managed gateway VM: %w", err)
+		}
 	}
 	hostKey, err := sshconfig.ScanHostKey(ctx, s.BootstrapAddress)
 	if err != nil {
@@ -264,9 +270,14 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 		ProxmoxVersion   string `json:"proxmox_version"`
 		BootstrapAddress string `json:"bootstrap_address"`
 		SSHHostKey       string `json:"ssh_host_key"`
-		FirewallVMID     int    `json:"firewall_vmid"`
+		GatewayVMID      int    `json:"gateway_vmid,omitempty"`
 		Status           string `json:"status"`
-	}{plan.ModelRevision, version, s.BootstrapAddress, hostKey, model.ProxmoxVMID, "proxmox-trust-transition-complete"}); err != nil {
+	}{plan.ModelRevision, version, s.BootstrapAddress, hostKey, func() int {
+		if s.Gateway.Mode == model.GatewayModeManaged {
+			return model.ProxmoxVMID
+		}
+		return 0
+	}(), "proxmox-trust-transition-complete"}); err != nil {
 		return err
 	}
 	if err := writeModelProjections(*siteDir, s); err != nil {
@@ -279,8 +290,11 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 		return err
 	}
 	fmt.Fprintf(out, "Proxmox bootstrap: PASS authenticated with scoped identity on %s\n", version)
-	fmt.Fprintln(out, "Firewall VM: PASS created or already present and started")
-	fmt.Fprintln(out, "OPNsense installation/bootstrap: HOLD qualified unattended installer and interface-address path not yet exercised on a fresh VM")
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		fmt.Fprintln(out, "Managed gateway VM: PASS created or already present and started")
+	} else {
+		fmt.Fprintln(out, "External gateway: PASS physical VLAN trunk recorded; appliance remains operator-managed")
+	}
 	fmt.Fprintln(out, "Initial root/bootstrap authentication: no longer required for routine boetticher access")
-	return errors.New("HOLD: OPNsense greenfield bootstrap is not yet qualified; Proxmox trust transition completed")
+	return nil
 }

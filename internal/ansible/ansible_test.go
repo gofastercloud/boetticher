@@ -44,6 +44,9 @@ func TestAgent2IsEnabledOnEveryManagedLinuxHost(t *testing.T) {
 	if !strings.Contains(text, "groups.get('portal', []) + ['lab-monitor-01']") {
 		t.Fatal("portal is not included in the managed Agent 2 service condition")
 	}
+	if !strings.Contains(text, "groups.get('firewall', []) + groups.get('portal', []) + ['lab-monitor-01']") {
+		t.Fatal("managed firewall is not included in the Agent 2 service condition")
+	}
 }
 
 func TestEndpointTLSKeysAreGeneratedLocallyAndNeverSuppliedByController(t *testing.T) {
@@ -97,6 +100,26 @@ func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
 	}
 }
 
+func TestFirewallInterfaceBindingsCarryStableRoleMACs(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	variables, err := Variables(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(variables)
+	for _, expected := range []string{
+		`"name": "wan0"`, `"mac": "02:00:00:00:01:01"`,
+		`"name": "trusted0"`, `"mac": "02:00:00:00:01:02"`,
+		`"name": "servers0"`, `"mac": "02:00:00:00:01:03"`,
+		`"name": "sandbox0"`, `"mac": "02:00:00:00:01:04"`,
+		`"name": "mgmt0"`, `"mac": "02:00:00:00:01:05"`,
+	} {
+		if !strings.Contains(text, expected) {
+			t.Errorf("firewall variables missing stable interface binding %q", expected)
+		}
+	}
+}
+
 func TestDNSRoleDoesNotPlaceTSIGSecretsInProcessArguments(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
@@ -112,5 +135,22 @@ func TestDNSRoleDoesNotPlaceTSIGSecretsInProcessArguments(t *testing.T) {
 	}
 	if !strings.Contains(text, "no_log: true") {
 		t.Fatal("DNS role does not suppress secret-bearing task output")
+	}
+}
+
+func TestPowerDNSBindsEachDNSGuestAddressAlongsideLoopback(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "dns", "templates", "pdns.conf.j2")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "local-address=127.0.0.1,{{ ansible_host }}") {
+		t.Fatal("PowerDNS does not bind loopback and the current DNS guest address")
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "local-address=") && strings.Contains(line, "10.10.20.10") {
+			t.Fatal("PowerDNS local listener hard-codes the primary address for both DNS guests")
+		}
 	}
 }

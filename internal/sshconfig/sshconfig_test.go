@@ -10,7 +10,7 @@ import (
 
 func TestRenderUsesBastionAndCanonicalHostKey(t *testing.T) {
 	s := model.NewDefaultSite("installation", "age1example")
-	s.TestedVersions.OPNsense = model.QualifiedOPNsense
+	s.TestedVersions.Gateway = model.QualifiedGatewayImage
 	s.BootstrapAddress = "192.0.2.10"
 	s.SSHIdentityFile = "~/.ssh/id_ed25519"
 	content, err := Render(s, time.Unix(0, 0))
@@ -37,7 +37,7 @@ func TestRenderUsesBastionAndCanonicalHostKey(t *testing.T) {
 
 func TestBastionPolicyOnlyAllowsModelledHosts(t *testing.T) {
 	s := model.NewDefaultSite("installation", "age1example")
-	s.TestedVersions.OPNsense = model.QualifiedOPNsense
+	s.TestedVersions.Gateway = model.QualifiedGatewayImage
 	content, err := RenderBastionPolicy(s)
 	if err != nil {
 		t.Fatal(err)

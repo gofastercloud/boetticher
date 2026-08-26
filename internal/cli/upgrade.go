@@ -34,7 +34,7 @@ func runIntegrationGate(command string, args []string, out interface{ Write([]by
 	if command == "upgrade" {
 		fmt.Fprintln(out, "HOLD: compatibility qualification and migration are required before upgrade")
 	} else {
-		fmt.Fprintf(out, "HOLD: %s requires the authenticated Proxmox/OPNsense integration path; no mutation was performed\n", command)
+		fmt.Fprintf(out, "HOLD: %s requires the authenticated Proxmox integration path; no mutation was performed\n", command)
 	}
 	_ = s
 	return fmt.Errorf("%s integration gate is not yet satisfied", command)

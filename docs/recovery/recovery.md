@@ -1,23 +1,18 @@
 # Recovery
 
-The minimum control-plane recovery set is:
+The minimum control-plane recovery set is the private site repository and an
+independent copy of the Age private identity. The repository may contain
+encrypted secrets and non-secret evidence; OpenTofu state, plans, caches, and
+temporary credentials remain outside it.
 
-```text
-private site repository
-+ independent Age private-identity copy
-```
+In managed mode, a lost gateway is rebuilt as VM 100 from the qualified Debian
+cloud image and reconverged from the model: network interfaces, nftables, Kea,
+SANDBOX DNS/NTP, SSH, and monitoring. Platform backups can shorten the path but
+are not required to recreate the desired configuration.
 
-The repository contains desired state, encrypted secrets, version locks, and non-secret evidence. It does not contain the Age private identity, OpenTofu state, plans, caches, bootstrap state, or temporary credentials.
+In external mode, boetticher regenerates the network/security contract but does
+not back up or restore the operator's appliance. Use that appliance's own
+recovery procedure.
 
-Recovery paths:
-
-- **Proxmox OS loss:** install the supported release, restore the HOME-side address, set the endpoint, and repeat the qualified bootstrap.
-- **OPNsense loss:** recreate VM 100, repeat the exact installer/interface/API gate, import the resulting API credential through stdin, then converge policy.
-- **DNS loss:** rebuild either DNS node independently; dual DNS/NTP is service redundancy, not host redundancy.
-- **Changed HOME DHCP address:** use `boetticher bootstrap-endpoint set ADDRESS`, regenerate SSH, and run `boetticher doctor --live`; never scan or guess.
-- **Physical NIC renamed or replaced:** use `boetticher preflight --live` to compare stable MAC/PCI identity, review the proposed binding, and use the explicit trunk workflow. Do not silently rewrite a renamed or ambiguous interface.
-- **Failed trunk mutation:** retain the HOME-side path, inspect `boetticher network trunk status --live`, and treat an uncertain rollback as `HOLD` until the Proxmox network state and bastion path are reverified.
-- **Lost operator device:** issue a new SSH key/client certificate and record/revoke the old certificate as appropriate.
-- **Data-disk loss:** restore Proxmox backups if available, then reconstruct platform state from the site repository and Age identity. Same-disk backups are not disaster recovery.
-
-No recovery is considered proven until the deployed model revision, authenticated access path, and negative security journeys are reverified.
+Local backups share the failure domain of their storage profile. They are useful
+for rollback and local recovery, not independent disaster recovery.

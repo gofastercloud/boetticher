@@ -2,30 +2,28 @@
 
 boetticher owns the platform. Proxmox owns the user's homelab.
 
-boetticher converges only declared platform resources: the Proxmox host, firewall, DNS/NTP nodes, monitor, portal, `vmbr0`, the owned portions of `vmbr1`, fixed VLANs, OPNsense routing/firewall/NAT/Kea, platform DNS/NTP, PKI/mTLS, SOPS secrets, SSH bastion policy, Zabbix platform objects, platform backup policy, portal content, and verification/recovery metadata.
+boetticher manages only declared platform resources: the Proxmox host, managed
+gateway when selected, DNS/NTP guests, monitor, portal, owned bridge/VLAN
+configuration, firewall policy, Kea, PKI, SOPS state, SSH bastion policy,
+Zabbix platform objects, platform backups, and generated evidence.
 
-It does not adopt arbitrary VMs, LXCs, bridges, bonds, VLANs, routes, SDN objects, Zabbix objects, or backup jobs. OpenTofu state contains only platform guests and future official module resources. The suggested ID ranges are:
+Arbitrary user VMs and LXCs remain outside the model, OpenTofu state, Ansible
+inventory, Zabbix ownership, backup guarantee, and deletion logic. They may use
+the provided network simply by attaching a NIC to `vmbr1` and selecting a VLAN:
 
 Platform guests carry canonical `boetticher` and `managed` tags. The `backup`
 tag marks a declared platform guest for the platform backup projection; it is
 metadata and does not cause user workloads to be adopted or backed up.
 
 ```text
-100–199  boetticher core platform
-200–499  official boetticher modules
-500–899  user workloads
+Create VM/LXC in Proxmox → attach to vmbr1 → choose a zone VLAN → boot
 ```
 
-There is no generic `boetticher vm create`, `boetticher lxc create`, `boetticher guest delete`, or `boetticher workload create` command. Use Proxmox Web UI, `qm`, `pct`, OpenTofu, Ansible, Pulumi, or another user-owned tool:
+The workload receives the zone's gateway, DHCP, DNS, NTP, Internet policy, and
+inter-zone isolation without a boetticher registration command. A lease-derived
+DNS name is publication, not adoption. Unknown guests may be shown as
+informational diagnostics, never as drift.
 
-```text
-Create VM/LXC in Proxmox
-→ attach NIC to vmbr1
-→ choose TRUSTED, SERVERS, SANDBOX, or justified MGMT VLAN
-→ use DHCP where appropriate
-→ boot
-```
-
-The workload receives the zone's address, gateway, DNS, NTP, permitted Internet access, and inter-zone policy without entering boetticher ownership. DHCP-driven DNS registration is discovery, not adoption. An unknown guest is informational in doctor and never causes convergence failure, deletion, import, monitoring, or backup claims.
-
-Official modules are a separate future extension point. `boetticher module enable|disable`, when introduced, will be reserved for boetticher capabilities that coordinate lifecycle, secrets, firewall, DNS, PKI, Zabbix, backup, verification, and portal concerns. It is not a generic application lifecycle API.
+Reserved IDs are 100–199 for the platform, 200–499 for future official modules,
+and 500–899 as the suggested user-workload range. There is no generic
+`boetticher vm`, `lxc`, or `workload` lifecycle command.

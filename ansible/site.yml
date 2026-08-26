@@ -10,5 +10,7 @@
     - chrony
     - dns
     - monitor
+    - role: firewall
+      when: inventory_hostname in groups.get('firewall', [])
     - role: portal
       when: inventory_hostname == 'lab-portal-01'

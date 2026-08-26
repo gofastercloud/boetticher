@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,7 +12,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
-func TestPublicDocumentationMatchesV01Model(t *testing.T) {
+func TestPublicDocumentationMatchesV03Model(t *testing.T) {
 	root := repositoryRoot(t)
 	read := func(path string) string {
 		data, err := os.ReadFile(filepath.Join(root, path))
@@ -27,7 +28,7 @@ func TestPublicDocumentationMatchesV01Model(t *testing.T) {
 	site := model.NewDefaultSite("contract-installation", "age1contract")
 
 	for _, want := range []string{
-		"OPNsense " + model.QualifiedOPNsense,
+		model.QualifiedGatewayImage,
 		"Zabbix " + model.ZabbixSeries,
 		model.DefaultDomain,
 		"VLAN 10 TRUSTED",
@@ -54,12 +55,34 @@ func TestPublicDocumentationMatchesV01Model(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"boetticher converge [--site DIR] [--age-identity PATH] [--opnsense-url URL] [--opnsense-ca PATH] [--proxmox-ca PATH] [--zabbix-url URL] [--insecure] [--ansible-playbook PATH] [--dry-run]",
-		"boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--opnsense-iso PATH] [--trunk-interface IFACE] [--dry-run]",
+		"boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--zabbix-url URL] [--insecure] [--ansible-playbook PATH] [--debian-template TEMPLATE] [--dry-run]",
+		"boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]",
 	} {
 		if !strings.Contains(commands, want) {
 			t.Errorf("command reference is missing %q", want)
 		}
+	}
+}
+
+func TestV3SchemaMatchesRuntimeVersion(t *testing.T) {
+	root := repositoryRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "schemas", "site.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var schema struct {
+		Properties map[string]struct {
+			Const any `json:"const"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(data, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if schema.Properties["api_version"].Const != model.APIVersion {
+		t.Fatalf("schema api_version does not match model: %#v", schema.Properties["api_version"].Const)
+	}
+	if schema.Properties["schema_version"].Const != float64(model.SchemaVersion) {
+		t.Fatalf("schema_version does not match model: %#v", schema.Properties["schema_version"].Const)
 	}
 }
 

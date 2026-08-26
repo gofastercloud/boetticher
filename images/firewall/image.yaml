@@ -1,0 +1,16 @@
+name: boetticher-firewall
+version: 1.0.0
+kind: qemu
+base: boetticher-base
+base_version: 0.3.0
+architecture: amd64
+services:
+  - nftables
+  - kea-dhcp4
+  - kea-dhcp-ddns
+  - chrony
+  - zabbix-agent2
+runtime_config: /etc/boetticher/module.yaml
+persistent:
+  - /var/lib/kea
+  - /var/lib/boetticher/identity/ssh

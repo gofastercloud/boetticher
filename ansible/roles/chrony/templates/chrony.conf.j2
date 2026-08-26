@@ -5,6 +5,9 @@ pool pool.ntp.org iburst maxsources 4
 allow 10.10.10.0/24
 allow 10.10.20.0/24
 allow 10.10.99.0/24
+{% elif inventory_hostname in groups.get('firewall', []) %}
+# The managed gateway provides NTP only to SANDBOX.
+allow 10.10.50.0/24
 {% else %}
 server 10.10.20.10 iburst
 server 10.10.20.11 iburst

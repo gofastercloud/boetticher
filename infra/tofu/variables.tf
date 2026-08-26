@@ -20,11 +20,6 @@ variable "model_file" {
   type        = string
 }
 
-variable "opnsense_iso_file_id" {
-  description = "Verified OPNsense ISO file ID already present in Proxmox storage"
-  type        = string
-}
-
 variable "debian_template_file_id" {
   description = "Verified Debian LXC template file ID already present in Proxmox storage"
   type        = string

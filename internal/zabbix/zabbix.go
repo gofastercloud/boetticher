@@ -64,7 +64,7 @@ func platformTemplateItems() []TemplateItem {
 		{Template: "boetticher Linux platform", Name: "Root filesystem usage", Key: "vfs.fs.size[/,pused]", ValueType: 0, Delay: "60s", Description: "Managed Linux host root filesystem usage", Tags: append([]string(nil), tag...)},
 		{Template: "boetticher Linux platform", Name: "Chrony service", Key: "proc.num[chronyd]", ValueType: 3, Delay: "60s", Description: "Managed Linux host Chrony process count", Tags: append([]string(nil), tag...)},
 		{Template: "boetticher Proxmox platform", Name: "Proxmox HTTPS", Key: "net.tcp.service[https,10.10.99.5,8006]", ValueType: 3, Delay: "60s", Description: "Proxmox API listener availability", Tags: append([]string(nil), tag...)},
-		{Template: "boetticher OPNsense platform", Name: "OPNsense HTTPS", Key: "net.tcp.service[https,10.10.99.1,443]", ValueType: 3, Delay: "60s", Description: "OPNsense web/API listener availability", Tags: append([]string(nil), tag...)},
+		{Template: "boetticher gateway platform", Name: "Gateway SSH", Key: "net.tcp.service[ssh,10.10.99.1,22]", ValueType: 3, Delay: "60s", Description: "Managed gateway SSH listener availability", Tags: append([]string(nil), tag...)},
 	}
 }
 
@@ -73,7 +73,7 @@ func platformObjects() []ManagedObject {
 	return []ManagedObject{
 		{Kind: "template", Name: "boetticher Linux platform", Key: "boetticher.linux", ManagedBy: "boetticher", Tags: append([]string(nil), tag...), Description: "CPU, memory, filesystem, service, NTP, and certificate checks for managed Linux hosts"},
 		{Kind: "template", Name: "boetticher Proxmox platform", Key: "boetticher.proxmox", ManagedBy: "boetticher", Tags: append([]string(nil), tag...), Description: "Read-only Proxmox API health, storage, guest, and backup checks"},
-		{Kind: "template", Name: "boetticher OPNsense platform", Key: "boetticher.opnsense", ManagedBy: "boetticher", Tags: append([]string(nil), tag...), Description: "Read-only OPNsense health and network-boundary checks"},
+		{Kind: "template", Name: "boetticher gateway platform", Key: "boetticher.gateway", ManagedBy: "boetticher", Tags: append([]string(nil), tag...), Description: "Managed gateway service, forwarding, and network-boundary checks"},
 		{Kind: "dashboard", Name: "boetticher Platform Overview", ManagedBy: "boetticher", Tags: append([]string(nil), tag...), Description: "Platform, firewall, DNS, NTP, storage, certificates, backups, and service health"},
 		{Kind: "dashboard", Name: "boetticher Network and Security", ManagedBy: "boetticher", Tags: append([]string(nil), tag...), Description: "Firewall policy and service reachability overview"},
 		{Kind: "dashboard", Name: "boetticher Recovery", ManagedBy: "boetticher", Tags: append([]string(nil), tag...), Description: "Backup freshness, certificate expiry, and recovery metadata"},

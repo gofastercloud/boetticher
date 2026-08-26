@@ -14,10 +14,12 @@ import (
 )
 
 const (
-	SchemaVersion               = 1
-	PlatformVersion             = "0.1.0"
-	OPNsenseSeries              = "26.7"
-	QualifiedOPNsense           = "26.7.2_2"
+	APIVersion                  = "boetticher/v3"
+	SchemaVersion               = 3
+	PlatformVersion             = "0.3.0"
+	QualifiedGatewayImage       = "debian-13-genericcloud-amd64"
+	QualifiedGatewayImageURL    = "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
+	QualifiedGatewayImageSHA512 = "77429b411b39b43f914dc9d14bf34aa315489a1a12b5429f72e5b483bdda23c65698d33443c85d3f3ad7c3a0828ae60845406d6b99646342554d17abae29c2a3"
 	ZabbixSeries                = "7.0 LTS"
 	AuthoritativeDNS            = "PowerDNS Authoritative"
 	AuthoritativeDNSVersion     = "4.9.17"
@@ -41,13 +43,17 @@ const (
 	UserGuestIDMax              = 899
 	ModeVirtualOnly             = "virtual-only"
 	ModePhysicalTrunk           = "physical-trunk"
+	GatewayModeManaged          = "managed"
+	GatewayModeExternal         = "external"
 	TagBoetticher               = "boetticher"
 	TagManaged                  = "managed"
+	TagModule                   = "module"
 	TagPlatform                 = "platform"
 	TagInfra                    = "infra"
 	TagBackup                   = "backup"
 	TagNetwork                  = "network"
 	TagFirewall                 = "firewall"
+	TagGateway                  = "gateway"
 	TagDNS                      = "dns"
 	TagNTP                      = "ntp"
 	TagObservability            = "observability"
@@ -57,32 +63,40 @@ const (
 var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
 
 type Site struct {
-	APIVersion       string           `json:"api_version"`
-	PlatformVersion  string           `json:"platform_version"`
-	SchemaVersion    int              `json:"schema_version"`
-	StorageProfile   string           `json:"storage_profile"`
-	StorageDevice    string           `json:"storage_device,omitempty"`
-	ProxmoxNode      string           `json:"proxmox_node"`
-	BootstrapAddress string           `json:"bootstrap_address,omitempty"`
-	SSHIdentityFile  string           `json:"ssh_identity_file,omitempty"`
-	PhysicalNetwork  PhysicalNetwork  `json:"physical_network"`
-	TestedVersions   TestedVersions   `json:"tested_versions"`
-	Network          Network          `json:"network"`
-	PKI              PKIMetadata      `json:"pki"`
-	SecretMetadata   SecretMetadata   `json:"secret_metadata"`
-	Ownership        OwnershipPolicy  `json:"ownership"`
-	Components       []Component      `json:"components"`
-	Modules          []ModuleInstance `json:"modules,omitempty"`
+	APIVersion       string                  `json:"api_version"`
+	PlatformVersion  string                  `json:"platform_version"`
+	SchemaVersion    int                     `json:"schema_version"`
+	StorageProfile   string                  `json:"storage_profile"`
+	StorageDevice    string                  `json:"storage_device,omitempty"`
+	Gateway          Gateway                 `json:"gateway"`
+	ProxmoxNode      string                  `json:"proxmox_node"`
+	BootstrapAddress string                  `json:"bootstrap_address,omitempty"`
+	SSHIdentityFile  string                  `json:"ssh_identity_file,omitempty"`
+	PhysicalNetwork  PhysicalNetwork         `json:"physical_network"`
+	TestedVersions   TestedVersions          `json:"tested_versions"`
+	Network          Network                 `json:"network"`
+	PKI              PKIMetadata             `json:"pki"`
+	SecretMetadata   SecretMetadata          `json:"secret_metadata"`
+	Ownership        OwnershipPolicy         `json:"ownership"`
+	Components       []Component             `json:"components"`
+	Modules          []ResolvedModule        `json:"modules,omitempty"`
+	ModuleConfig     map[string]ModuleConfig `json:"module_config,omitempty"`
+	Declarations     []ModuleDeclaration     `json:"declarations,omitempty"`
+	RetainedModules  []RetainedModule        `json:"retained_modules,omitempty"`
 }
 
 type TestedVersions struct {
-	OPNsense string `json:"opnsense"`
-	Zabbix   string `json:"zabbix"`
+	Gateway string `yaml:"gateway" json:"gateway"`
+	Zabbix  string `yaml:"zabbix" json:"zabbix"`
+}
+
+type Gateway struct {
+	Mode string `yaml:"mode" json:"mode"`
 }
 
 type Network struct {
-	Domain string `json:"domain"`
-	Zones  []Zone `json:"zones"`
+	Domain string `yaml:"domain" json:"domain"`
+	Zones  []Zone `yaml:"zones" json:"zones"`
 }
 
 // PhysicalNetwork stores installation-specific hardware bindings separately
@@ -90,49 +104,49 @@ type Network struct {
 // interface names are generated evidence; stable MAC/PCI identity is the
 // reconciliation key.
 type PhysicalNetwork struct {
-	Upstream PhysicalNIC `json:"upstream"`
-	Trunk    PhysicalNIC `json:"trunk"`
-	Mode     string      `json:"mode"`
+	Upstream PhysicalNIC `yaml:"upstream" json:"upstream"`
+	Trunk    PhysicalNIC `yaml:"trunk" json:"trunk"`
+	Mode     string      `yaml:"mode" json:"mode"`
 }
 
 type PhysicalNIC struct {
-	Name         string `json:"name,omitempty"`
-	PermanentMAC string `json:"permanent_mac,omitempty"`
-	PCIAddress   string `json:"pci_address,omitempty"`
+	Name         string `yaml:"name,omitempty" json:"name,omitempty"`
+	PermanentMAC string `yaml:"permanent_mac,omitempty" json:"permanent_mac,omitempty"`
+	PCIAddress   string `yaml:"pci_address,omitempty" json:"pci_address,omitempty"`
 }
 
 type Zone struct {
-	Name         string   `json:"name"`
-	VLAN         int      `json:"vlan"`
-	Network      string   `json:"network"`
-	Gateway      string   `json:"gateway"`
-	AddressMode  string   `json:"address_mode"`
-	DNSAddresses []string `json:"dns_addresses"`
-	NTPAddresses []string `json:"ntp_addresses"`
+	Name         string   `yaml:"name" json:"name"`
+	VLAN         int      `yaml:"vlan" json:"vlan"`
+	Network      string   `yaml:"network" json:"network"`
+	Gateway      string   `yaml:"gateway" json:"gateway"`
+	AddressMode  string   `yaml:"address_mode" json:"address_mode"`
+	DNSAddresses []string `yaml:"dns_addresses" json:"dns_addresses"`
+	NTPAddresses []string `yaml:"ntp_addresses" json:"ntp_addresses"`
 }
 
 type SecretMetadata struct {
-	InstallationID string `json:"installation_id"`
-	AgeRecipient   string `json:"age_recipient"`
+	InstallationID string `yaml:"installation_id" json:"installation_id"`
+	AgeRecipient   string `yaml:"age_recipient" json:"age_recipient"`
 }
 
 type OwnershipPolicy struct {
-	PlatformGuestIDMin   int  `json:"platform_guest_id_min"`
-	PlatformGuestIDMax   int  `json:"platform_guest_id_max"`
-	ModuleGuestIDMin     int  `json:"module_guest_id_min"`
-	ModuleGuestIDMax     int  `json:"module_guest_id_max"`
-	UserGuestIDMin       int  `json:"user_guest_id_min"`
-	UserGuestIDMax       int  `json:"user_guest_id_max"`
-	UserWorkloadsManaged bool `json:"user_workloads_managed"`
+	PlatformGuestIDMin   int  `yaml:"platform_guest_id_min" json:"platform_guest_id_min"`
+	PlatformGuestIDMax   int  `yaml:"platform_guest_id_max" json:"platform_guest_id_max"`
+	ModuleGuestIDMin     int  `yaml:"module_guest_id_min" json:"module_guest_id_min"`
+	ModuleGuestIDMax     int  `yaml:"module_guest_id_max" json:"module_guest_id_max"`
+	UserGuestIDMin       int  `yaml:"user_guest_id_min" json:"user_guest_id_min"`
+	UserGuestIDMax       int  `yaml:"user_guest_id_max" json:"user_guest_id_max"`
+	UserWorkloadsManaged bool `yaml:"user_workloads_managed" json:"user_workloads_managed"`
 }
 
 type PKIMetadata struct {
-	RootCommonName     string `json:"root_common_name"`
-	RootFingerprint    string `json:"root_fingerprint"`
-	RootExpiry         string `json:"root_expiry"`
-	IssuingCommonName  string `json:"issuing_common_name"`
-	IssuingFingerprint string `json:"issuing_fingerprint"`
-	IssuingExpiry      string `json:"issuing_expiry"`
+	RootCommonName     string `yaml:"root_common_name" json:"root_common_name"`
+	RootFingerprint    string `yaml:"root_fingerprint" json:"root_fingerprint"`
+	RootExpiry         string `yaml:"root_expiry" json:"root_expiry"`
+	IssuingCommonName  string `yaml:"issuing_common_name" json:"issuing_common_name"`
+	IssuingFingerprint string `yaml:"issuing_fingerprint" json:"issuing_fingerprint"`
+	IssuingExpiry      string `yaml:"issuing_expiry" json:"issuing_expiry"`
 }
 
 // Component is a declared boetticher platform resource. Components are the
@@ -155,26 +169,136 @@ type Component struct {
 	SSHManaged   bool     `json:"ssh_managed"`
 	JumpAllowed  bool     `json:"jump_allowed"`
 	ProductOwned bool     `json:"product_owned"`
+	Module       string   `json:"module,omitempty"`
 }
 
-// ModuleInstance reserves a separate schema namespace for future opt-in
-// boetticher capabilities. User workloads are not represented here and are
-// never adopted by the platform model.
-type ModuleInstance struct {
+type ModuleConfig struct {
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// ResolvedModule is generated state, not an operator-maintained module list.
+// It records why a first-party module is active and which contracts it
+// participates in after composition.
+type ResolvedModule struct {
+	Name      string   `json:"name"`
+	Version   string   `json:"version"`
+	Policy    string   `json:"policy"`
+	Enabled   bool     `json:"enabled"`
+	Reason    string   `json:"reason"`
+	State     string   `json:"state"`
+	DependsOn []string `json:"depends_on,omitempty"`
+	Requires  []string `json:"requires,omitempty"`
+	Provides  []string `json:"provides,omitempty"`
+}
+
+type Artifact struct {
+	Name             string `json:"name"`
+	Version          string `json:"version"`
+	Architecture     string `json:"architecture"`
+	Kind             string `json:"kind"`
+	SHA256           string `json:"sha256"`
+	DefinitionSHA256 string `json:"definition_sha256"`
+}
+
+type PersistentState struct {
+	Name        string `json:"name"`
+	Guest       string `json:"guest"`
+	Path        string `json:"path"`
+	Kind        string `json:"kind"`
+	Backup      bool   `json:"backup"`
+	Sensitive   bool   `json:"sensitive"`
+	Replacement string `json:"replacement"`
+}
+
+type SecretDeclaration struct {
+	Name       string `json:"name"`
+	Purpose    string `json:"purpose"`
+	Consumer   string `json:"consumer"`
+	Generation string `json:"generation"`
+	Rotation   string `json:"rotation"`
+	Delivery   string `json:"delivery"`
+	Persistent bool   `json:"persistent"`
+}
+
+type NetworkIntent struct {
+	Source      string   `json:"source"`
+	Destination string   `json:"destination"`
+	Protocol    string   `json:"protocol"`
+	Ports       []string `json:"ports,omitempty"`
+	Direction   string   `json:"direction"`
+	Purpose     string   `json:"purpose"`
+}
+
+type DNSRecord struct {
 	Name    string `json:"name"`
-	Enabled bool   `json:"enabled"`
+	Type    string `json:"type"`
+	Address string `json:"address"`
+	Owner   string `json:"owner"`
+}
+
+type CertificateRequest struct {
+	Identity string   `json:"identity"`
+	SANs     []string `json:"sans"`
+	Consumer string   `json:"consumer"`
+}
+
+type MonitoringDeclaration struct {
+	Name        string   `json:"name"`
+	Kind        string   `json:"kind"`
+	Target      string   `json:"target"`
+	Checks      []string `json:"checks,omitempty"`
+	Description string   `json:"description"`
+}
+
+type BackupDeclaration struct {
+	Guest  string `json:"guest"`
+	Policy string `json:"policy"`
+}
+
+type PortalEntry struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	URLs        []string `json:"urls,omitempty"`
+	Docs        []string `json:"docs,omitempty"`
+}
+
+type ModuleDeclaration struct {
+	Module         string                  `json:"module"`
+	Artifact       Artifact                `json:"artifact"`
+	Guests         []Component             `json:"guests,omitempty"`
+	Persistent     []PersistentState       `json:"persistent,omitempty"`
+	Secrets        []SecretDeclaration     `json:"secrets,omitempty"`
+	NetworkIntents []NetworkIntent         `json:"network_intents,omitempty"`
+	DNSRecords     []DNSRecord             `json:"dns_records,omitempty"`
+	Certificates   []CertificateRequest    `json:"certificates,omitempty"`
+	Monitoring     []MonitoringDeclaration `json:"monitoring,omitempty"`
+	Backups        []BackupDeclaration     `json:"backups,omitempty"`
+	Portal         []PortalEntry           `json:"portal,omitempty"`
+}
+
+type RetainedModule struct {
+	Module      string            `json:"module"`
+	Disposition string            `json:"disposition"`
+	Active      bool              `json:"active"`
+	Guests      []Component       `json:"guests,omitempty"`
+	Persistent  []PersistentState `json:"persistent,omitempty"`
 }
 
 func NewDefaultSite(installationID, ageRecipient string) Site {
-	return Site{
-		APIVersion:      "boetticher/v1",
+	return NewSite(installationID, ageRecipient, GatewayModeManaged)
+}
+
+func NewSite(installationID, ageRecipient, gatewayMode string) Site {
+	site := Site{
+		APIVersion:      APIVersion,
 		PlatformVersion: PlatformVersion,
 		SchemaVersion:   SchemaVersion,
 		StorageProfile:  "single-disk",
+		Gateway:         Gateway{Mode: gatewayMode},
 		ProxmoxNode:     DefaultProxmoxNode,
 		TestedVersions: TestedVersions{
-			OPNsense: QualifiedOPNsense,
-			Zabbix:   ZabbixSeries,
+			Gateway: QualifiedGatewayImage,
+			Zabbix:  ZabbixSeries,
 		},
 		Network: Network{
 			Domain: DefaultDomain,
@@ -195,34 +319,64 @@ func NewDefaultSite(installationID, ageRecipient string) Site {
 		},
 		Components: []Component{
 			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: "10.10.99.5", Role: "Proxmox host", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork}, URL: "https://proxmox." + DefaultDomain + ":8006", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22},
-			{Name: "lab-fw-01", VMID: ProxmoxVMID, Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "OPNsense firewall", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork, TagFirewall, TagBackup}, URL: "https://opnsense." + DefaultDomain, Monitoring: true, Backup: true, MTLS: false, SSHManaged: false, JumpAllowed: false, ProductOwned: true},
+			{Name: "lab-fw-01", VMID: ProxmoxVMID, Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "Debian firewall", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork, TagFirewall, TagGateway, TagBackup}, Monitoring: true, Backup: true, MTLS: false, SSHUser: DefaultAdminSSHUser, SSHPort: 22, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			{Name: "lab-dns-01", VMID: DNS01VMID, Hostname: "lab-dns-01", Zone: "SERVERS", Address: "10.10.20.10", Role: "DNS/NTP", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagDNS, TagNTP, TagBackup}, DNSAliases: []string{"dns01", "dns"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			{Name: "lab-dns-02", VMID: DNS02VMID, Hostname: "lab-dns-02", Zone: "SERVERS", Address: "10.10.20.11", Role: "DNS/NTP", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagDNS, TagNTP, TagBackup}, DNSAliases: []string{"dns02"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "MGMT", Address: "10.10.99.20", Role: "Zabbix", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagObservability, TagBackup}, URL: "https://monitor." + DefaultDomain, DNSAliases: []string{"monitor"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			{Name: "lab-portal-01", VMID: PortalVMID, Hostname: "lab-portal-01", Zone: "SERVERS", Address: "10.10.20.30", Role: "Generated platform portal", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagPortal, TagBackup}, URL: "https://portal." + DefaultDomain, DNSAliases: []string{"portal"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 		},
 	}
+	if gatewayMode == GatewayModeExternal {
+		filtered := make([]Component, 0, len(site.Components)-1)
+		for _, component := range site.Components {
+			if component.Name != "lab-fw-01" {
+				filtered = append(filtered, component)
+			}
+		}
+		site.Components = filtered
+	}
+	return site
 }
 
 func (s Site) Normalize() Site {
 	copySite := s
 	copySite.Network.Zones = append([]Zone(nil), s.Network.Zones...)
 	copySite.Components = append([]Component(nil), s.Components...)
-	copySite.Modules = append([]ModuleInstance(nil), s.Modules...)
+	copySite.Modules = append([]ResolvedModule(nil), s.Modules...)
+	copySite.ModuleConfig = cloneModuleConfig(s.ModuleConfig)
+	copySite.Declarations = append([]ModuleDeclaration(nil), s.Declarations...)
+	copySite.RetainedModules = append([]RetainedModule(nil), s.RetainedModules...)
 	sort.Slice(copySite.Network.Zones, func(i, j int) bool { return copySite.Network.Zones[i].VLAN < copySite.Network.Zones[j].VLAN })
 	sort.Slice(copySite.Components, func(i, j int) bool { return copySite.Components[i].Name < copySite.Components[j].Name })
+	sort.Slice(copySite.Modules, func(i, j int) bool { return copySite.Modules[i].Name < copySite.Modules[j].Name })
+	sort.Slice(copySite.Declarations, func(i, j int) bool { return copySite.Declarations[i].Module < copySite.Declarations[j].Module })
+	sort.Slice(copySite.RetainedModules, func(i, j int) bool { return copySite.RetainedModules[i].Module < copySite.RetainedModules[j].Module })
 	for i := range copySite.Components {
 		copySite.Components[i].DNSAliases = append([]string(nil), copySite.Components[i].DNSAliases...)
 		sort.Strings(copySite.Components[i].DNSAliases)
 		copySite.Components[i].Tags = append([]string(nil), copySite.Components[i].Tags...)
 		sort.Strings(copySite.Components[i].Tags)
 	}
+	for i := range copySite.Declarations {
+		sort.Slice(copySite.Declarations[i].Guests, func(a, b int) bool {
+			return copySite.Declarations[i].Guests[a].Name < copySite.Declarations[i].Guests[b].Name
+		})
+		sort.Slice(copySite.Declarations[i].Persistent, func(a, b int) bool {
+			return copySite.Declarations[i].Persistent[a].Name < copySite.Declarations[i].Persistent[b].Name
+		})
+		sort.Slice(copySite.Declarations[i].Secrets, func(a, b int) bool {
+			return copySite.Declarations[i].Secrets[a].Name < copySite.Declarations[i].Secrets[b].Name
+		})
+		sort.Slice(copySite.Declarations[i].DNSRecords, func(a, b int) bool {
+			return copySite.Declarations[i].DNSRecords[a].Name < copySite.Declarations[i].DNSRecords[b].Name
+		})
+	}
 	return copySite
 }
 
 func (s Site) Validate() error {
-	if s.APIVersion != "boetticher/v1" || s.SchemaVersion != SchemaVersion {
-		return fmt.Errorf("unsupported site schema %q/%d", s.APIVersion, s.SchemaVersion)
+	if s.APIVersion != APIVersion || s.SchemaVersion != SchemaVersion {
+		return fmt.Errorf("site schema %q/%d is not supported by boetticher v0.3; recreate the site with boetticher init", s.APIVersion, s.SchemaVersion)
 	}
 	if s.PlatformVersion == "" {
 		return errors.New("platform_version is required")
@@ -240,11 +394,14 @@ func (s Site) Validate() error {
 	if s.ProxmoxNode != DefaultProxmoxNode {
 		return fmt.Errorf("proxmox_node must be %q in V1", DefaultProxmoxNode)
 	}
+	if s.Gateway.Mode != GatewayModeManaged && s.Gateway.Mode != GatewayModeExternal {
+		return fmt.Errorf("gateway.mode must be managed or external")
+	}
 	if s.Network.Domain != DefaultDomain {
 		return fmt.Errorf("network.domain must be %s", DefaultDomain)
 	}
-	if s.TestedVersions.OPNsense != QualifiedOPNsense {
-		return fmt.Errorf("tested_versions.opnsense must equal the explicitly qualified %s patch; newer patches require qualification", QualifiedOPNsense)
+	if s.TestedVersions.Gateway != QualifiedGatewayImage {
+		return fmt.Errorf("tested_versions.gateway must equal the qualified image %q", QualifiedGatewayImage)
 	}
 	if s.TestedVersions.Zabbix != ZabbixSeries {
 		return fmt.Errorf("tested_versions.zabbix must be %q", ZabbixSeries)
@@ -377,11 +534,27 @@ func (s Site) Validate() error {
 		vmid    int
 	}{
 		"lab-proxmox-01": {address: "10.10.99.5", vmid: 0},
-		"lab-fw-01":      {address: "10.10.99.1", vmid: ProxmoxVMID},
 		"lab-dns-01":     {address: "10.10.20.10", vmid: DNS01VMID},
 		"lab-dns-02":     {address: "10.10.20.11", vmid: DNS02VMID},
-		"lab-monitor-01": {address: "10.10.99.20", vmid: MonitorVMID},
 		"lab-portal-01":  {address: "10.10.20.30", vmid: PortalVMID},
+	}
+	if resolvedModuleEnabled(s.Modules, "monitoring", true) {
+		requiredComponents["lab-monitor-01"] = struct {
+			address string
+			vmid    int
+		}{address: "10.10.99.20", vmid: MonitorVMID}
+	}
+	if s.Gateway.Mode == GatewayModeManaged && resolvedModuleEnabled(s.Modules, "firewall", true) {
+		requiredComponents["lab-fw-01"] = struct {
+			address string
+			vmid    int
+		}{address: "10.10.99.1", vmid: ProxmoxVMID}
+	} else {
+		for _, component := range s.Components {
+			if component.Name == "lab-fw-01" {
+				return errors.New("external gateway mode must not declare lab-fw-01")
+			}
+		}
 	}
 	for required, expected := range requiredComponents {
 		found, ok := seenComponents[required]
@@ -404,14 +577,75 @@ func (s Site) Validate() error {
 		}
 		seenModules[module.Name] = true
 	}
+	if err := validateDeclarations(s); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validateDeclarations(s Site) error {
+	seenVMIDs := map[int]string{}
+	seenNames := map[string]string{}
+	seenAddresses := map[string]string{}
+	for _, declaration := range s.Declarations {
+		if declaration.Module == "" {
+			return errors.New("module declaration is missing its owner")
+		}
+		if len(declaration.Artifact.SHA256) != 64 || len(declaration.Artifact.DefinitionSHA256) != 64 {
+			return fmt.Errorf("module %s has incomplete artifact digest metadata", declaration.Module)
+		}
+		for _, guest := range declaration.Guests {
+			if guest.Module != declaration.Module {
+				return fmt.Errorf("guest %s has owner %q but is declared by module %q", guest.Name, guest.Module, declaration.Module)
+			}
+			if previous, exists := seenVMIDs[guest.VMID]; exists && guest.VMID != 0 {
+				return fmt.Errorf("module guest VMID %d is declared by both %s and %s", guest.VMID, previous, declaration.Module)
+			}
+			if guest.VMID != 0 {
+				seenVMIDs[guest.VMID] = declaration.Module
+			}
+			if previous, exists := seenNames[guest.Hostname]; exists && previous != declaration.Module {
+				return fmt.Errorf("module hostname %q collides between %s and %s", guest.Hostname, previous, declaration.Module)
+			}
+			seenNames[guest.Hostname] = declaration.Module
+			if previous, exists := seenAddresses[guest.Address]; exists && guest.Address != "" && previous != declaration.Module {
+				return fmt.Errorf("module address %q collides between %s and %s", guest.Address, previous, declaration.Module)
+			}
+			if guest.Address != "" {
+				seenAddresses[guest.Address] = declaration.Module
+			}
+		}
+		for _, state := range declaration.Persistent {
+			if state.Replacement == "" {
+				return fmt.Errorf("module %s persistent state %q is missing a replacement policy", declaration.Module, state.Name)
+			}
+		}
+	}
+	return nil
+}
+
+func resolvedModuleEnabled(modules []ResolvedModule, name string, defaultValue bool) bool {
+	if len(modules) == 0 {
+		return defaultValue
+	}
+	for _, module := range modules {
+		if module.Name == name {
+			return module.Enabled
+		}
+	}
+	return defaultValue
 }
 
 func (s Site) PlatformComponents() []Component {
 	components := make([]Component, 0)
 	for _, component := range s.Components {
-		if component.ProductOwned {
+		if component.ProductOwned && (len(s.Declarations) == 0 || component.Module == "") {
 			components = append(components, component)
+		}
+	}
+	if len(s.Declarations) > 0 {
+		for _, declaration := range s.Declarations {
+			components = append(components, declaration.Guests...)
 		}
 	}
 	sort.Slice(components, func(i, j int) bool { return components[i].Name < components[j].Name })

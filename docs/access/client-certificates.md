@@ -11,4 +11,4 @@ boetticher pki client revoke operator-device --site my-boetticher
 boetticher pki trust export --site my-boetticher --output boetticher-ca.pem
 ```
 
-The export command refuses private-key output to stdout. Revoke records are generated evidence; applying revocation to every endpoint is a separate convergence responsibility and must be verified at the protected service.
+The export command refuses private-key output to stdout. Revoke records are generated evidence; applying revocation to every endpoint is a separate deployment responsibility and must be verified at the protected service.

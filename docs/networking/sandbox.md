@@ -1,7 +1,11 @@
 # SANDBOX
 
-SANDBOX uses VLAN 50 and `10.10.50.0/24` in V1. Clients use OPNsense for DNS, NTP, and gateway. The routed policy denies SANDBOX access to TRUSTED, SERVERS, and MGMT while allowing Internet egress.
+SANDBOX is VLAN 50, `10.10.50.0/24`, gateway `10.10.50.1`. It is for test,
+untrusted, or externally managed devices. Its default policy allows Internet
+egress and gateway DHCP/DNS/NTP, while denying TRUSTED, SERVERS, and MGMT.
 
-The possible `/32` client-address experiment would use DHCP option 121 to install an on-link gateway route and a default route. It must be tested independently on Windows 11, macOS, iOS, Linux/systemd-networkd, NetworkManager, and Android before being enabled. It is defense in depth only: a client can change its routes, and shared Ethernet peers can still communicate at L2 unless the Proxmox or switch enforcement mechanism blocks them.
-
-The security claim is therefore explicit: OPNsense provides inter-zone isolation; the Proxmox firewall can provide virtual SANDBOX east-west isolation; managed-switch client/port isolation is required for physical SANDBOX peers.
+Managed mode provides the gateway services on `lab-fw-01`. External mode
+requires the operator appliance to provide the same observable behavior. The
+SANDBOX resolver must not expose the broad `lab.home.arpa` namespace. Lease
+names may be published under `sandbox.lab.home.arpa` for administration; that
+does not make the clients platform-owned.

@@ -13,8 +13,8 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/backup"
 	"github.com/gofastercloud/boetticher/internal/dns"
+	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
-	"github.com/gofastercloud/boetticher/internal/opnsense"
 	"github.com/gofastercloud/boetticher/internal/portal"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/site"
@@ -36,6 +36,17 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return err
 	}
+	fmt.Fprintln(out, "Modules")
+	for _, module := range s.Modules {
+		if module.Enabled {
+			fmt.Fprintf(out, "  PASS  %-12s %s / %s (%s)\n", module.Name, module.Policy, module.State, module.Reason)
+		} else {
+			fmt.Fprintf(out, "  INFO  %-12s %s / Disabled\n", module.Name, module.Policy)
+		}
+	}
+	for _, retained := range s.RetainedModules {
+		fmt.Fprintf(out, "  INFO  %-12s retained resources remain boetticher-owned and inactive\n", retained.Module)
+	}
 	revision, err := s.Revision()
 	if err != nil {
 		return err
@@ -56,23 +67,32 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 			sshJourneyResult = portal.CheckResult{Name: "authenticated SSH journey via Proxmox bastion", Status: "PASS", Detail: "authenticated command completed through ProxyJump"}
 		}
 	}
-	evidence := portal.Evidence{GeneratedAt: time.Now().UTC().Format(time.RFC3339), Results: append(offlineVerificationResults(*siteDir, s),
+
+	results := offlineVerificationResults(*siteDir, s)
+	results = append(results,
 		sshResult,
 		sshJourneyResult,
 		portal.CheckResult{Name: "DNS01/DNS02 reachable", Status: "NOT TESTED", Detail: "requires deployed network journey"},
 		portal.CheckResult{Name: "NTP01/NTP02 synchronized", Status: "NOT TESTED", Detail: "requires deployed Chrony evidence"},
-		portal.CheckResult{Name: "OPNsense API least privilege", Status: "NOT TESTED", Detail: "requires authenticated OPNsense API evidence"},
 		portal.CheckResult{Name: "Proxmox API least privilege", Status: "NOT TESTED", Detail: "requires authenticated Proxmox API evidence"},
 		portal.CheckResult{Name: "internal CA available", Status: "STATIC PASS", Detail: "CA metadata is present in the initialized model"},
-		portal.CheckResult{Name: "SANDBOX cannot access TRUSTED", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
-		portal.CheckResult{Name: "SANDBOX cannot access SERVERS", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
-		portal.CheckResult{Name: "SANDBOX cannot access MGMT", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
-		portal.CheckResult{Name: "MGMT DHCP is reservation-only", Status: "NOT TESTED", Detail: "requires authenticated OPNsense API evidence"},
 		portal.CheckResult{Name: "portal requires client certificate", Status: "NOT TESTED", Detail: "requires deployed mTLS journey"},
 		portal.CheckResult{Name: "Zabbix requires client certificate", Status: "NOT TESTED", Detail: "requires deployed mTLS journey"},
 		portal.CheckResult{Name: "latest VM/LXC backup", Status: "NOT TESTED", Detail: "requires current backup evidence"},
 		portal.CheckResult{Name: "Age recovery fixture", Status: "NOT TESTED", Detail: "requires independent recovery copy"},
-	)}
+	)
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		results = append(results,
+			portal.CheckResult{Name: "managed gateway services", Status: "NOT TESTED", Detail: "requires deployed managed gateway evidence"},
+			portal.CheckResult{Name: "SANDBOX cannot access TRUSTED", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
+			portal.CheckResult{Name: "SANDBOX cannot access SERVERS", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
+			portal.CheckResult{Name: "SANDBOX cannot access MGMT", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
+			portal.CheckResult{Name: "MGMT DHCP is reservation-only", Status: "NOT TESTED", Detail: "requires deployed Kea evidence"},
+		)
+	} else {
+		results = append(results, portal.CheckResult{Name: "external gateway contract", Status: "STATIC PASS", Detail: "required VLAN, gateway, DHCP, DNS, NTP, and policy intent is generated"})
+	}
+	evidence := portal.Evidence{GeneratedAt: time.Now().UTC().Format(time.RFC3339), Results: results}
 	document := struct {
 		ModelRevision string          `json:"model_revision"`
 		Evidence      portal.Evidence `json:"evidence"`
@@ -148,11 +168,8 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		{"inventory projection", filepath.Join(*siteDir, "generated", "inventory.json"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "inventory.json"), revision)
 		}},
-		{"OPNsense policy", filepath.Join(*siteDir, "generated", "opnsense", "desired-policy.json"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "opnsense", "desired-policy.json"), revision)
-		}},
-		{"OPNsense bootstrap", filepath.Join(*siteDir, "generated", "opnsense", "bootstrap.json"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "opnsense", "bootstrap.json"), revision)
+		{"firewall policy", filepath.Join(*siteDir, "generated", "firewall", "desired-state.json"), func() error {
+			return checkRevisionFile(filepath.Join(*siteDir, "generated", "firewall", "desired-state.json"), revision)
 		}},
 		{"DNS/DDNS policy", filepath.Join(*siteDir, "generated", "dns", "desired-state.json"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "dns", "desired-state.json"), revision)
@@ -169,8 +186,8 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		{"Proxmox desired state", filepath.Join(*siteDir, "generated", "proxmox", "desired-state.json"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "proxmox", "desired-state.json"), revision)
 		}},
-		{"Zabbix provisioning", filepath.Join(*siteDir, "generated", "zabbix", "provisioning.json"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "zabbix", "provisioning.json"), revision)
+		{"Monitoring policy", filepath.Join(*siteDir, "generated", "monitoring", "desired-state.json"), func() error {
+			return checkRevisionFile(filepath.Join(*siteDir, "generated", "monitoring", "desired-state.json"), revision)
 		}},
 		{"Ansible inventory", filepath.Join(*siteDir, "generated", "ansible", "inventory.ini"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "ansible", "inventory.ini"), revision)
@@ -239,7 +256,11 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 		fmt.Fprintln(out)
 	}
-	fmt.Fprintln(out, "OPNsense bootstrap    HOLD exact unattended installer/interface/API sequence requires fresh-host qualification")
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		fmt.Fprintln(out, "Managed gateway        NOT TESTED live Debian/nftables qualification requires deployment")
+	} else {
+		fmt.Fprintln(out, "External gateway       CONFIGURED appliance contract is outside boetticher management")
+	}
 	if s.BootstrapAddress == "" {
 		fmt.Fprintln(out, "Bootstrap endpoint    ABSENT (record the HOME-side Proxmox address)")
 	} else if !*live {
@@ -262,8 +283,18 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 			fmt.Fprintf(out, "Platform guests       FAIL %v\n", auditErr)
 		} else {
 			userCount := 0
+			retainedIDs := map[int]string{}
+			for _, retained := range s.RetainedModules {
+				for _, guest := range retained.Guests {
+					retainedIDs[guest.VMID] = retained.Module
+				}
+			}
 			for _, audit := range audits {
 				if audit.Ownership == proxmox.UserOwnership {
+					if module, retained := retainedIDs[audit.VMID]; retained {
+						fmt.Fprintf(out, "Retained guest %-8d %-18s INFO module=%s inactive\n", audit.VMID, audit.Name, module)
+						continue
+					}
 					userCount++
 					continue
 				}
@@ -299,6 +330,12 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 				fmt.Fprintf(out, "Platform storage     FAIL %v\n", statusErr)
 			} else {
 				fmt.Fprintf(out, "Platform storage     PASS %s active total=%.0f used=%.0f available=%.0f\n", status.Storage, status.Total, status.Used, status.Avail)
+				if storagePlan.Profile == "dedicated-data-disk" {
+					if err := reportDedicatedStorageHost(context.Background(), s, storagePlan, out); err != nil {
+						failed = true
+						fmt.Fprintf(out, "Storage layout       FAIL %v\n", err)
+					}
+				}
 			}
 		}
 	} else {
@@ -306,6 +343,29 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	if failed {
 		return fmt.Errorf("doctor found absent or inconsistent projections")
+	}
+	return nil
+}
+
+func reportDedicatedStorageHost(ctx context.Context, s model.Site, plan storage.Plan, out interface{ Write([]byte) (int, error) }) error {
+	command, err := storage.StatusCommand(plan.Device)
+	if err != nil {
+		return err
+	}
+	data, err := (proxmox.SSHRunner{}).Run(ctx, s.BootstrapAddress, model.DefaultAdminSSHUser, command)
+	if err != nil {
+		return fmt.Errorf("read dedicated storage state: %w", err)
+	}
+	status, err := storage.ParseStatus(string(data))
+	if err != nil {
+		return err
+	}
+	if status.Device != plan.Device || status.DevicePath == "missing" || status.VolumeGroup != plan.VolumeGroup || status.ThinPool != plan.ThinPool || status.BackupLV != plan.BackupLV || status.Filesystem != plan.Filesystem || status.Mount != plan.BackupMount || status.GuestStorage != "active" || status.BackupStorage != "active" {
+		return fmt.Errorf("expected dedicated layout is not fully active: device=%s path=%s vg=%s thin=%s backup=%s filesystem=%s mount=%s guest=%s backup_storage=%s", status.Device, status.DevicePath, status.VolumeGroup, status.ThinPool, status.BackupLV, status.Filesystem, status.Mount, status.GuestStorage, status.BackupStorage)
+	}
+	fmt.Fprintf(out, "Storage layout       PASS %s mounted at %s\n", status.DevicePath, status.Mount)
+	if status.Capacity != "" {
+		fmt.Fprintf(out, "Storage capacity     INFO %s\n", status.Capacity)
 	}
 	return nil
 }
@@ -341,13 +401,22 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 		name  string
 		check func() error
 	}{
-		{"OPNsense policy projection", func() error {
-			plan, err := opnsense.PlanFromSite(s)
+		{"firewall policy projection", func() error {
+			plan, err := firewall.PlanFromSite(s)
 			if err != nil {
 				return err
 			}
-			if !plan.IPv4Only || len(plan.FirewallRules) == 0 {
+			if !plan.IPv4Only || len(plan.Rules) == 0 {
 				return errors.New("IPv4-only firewall policy is incomplete")
+			}
+			if s.Gateway.Mode == model.GatewayModeManaged {
+				ruleset, renderErr := firewall.RenderNFT(plan)
+				if renderErr != nil {
+					return renderErr
+				}
+				if validateErr := firewall.ValidateNFT(ruleset); validateErr != nil {
+					return validateErr
+				}
 			}
 			return nil
 		}},
@@ -356,8 +425,14 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 			if err != nil {
 				return err
 			}
-			if !plan.DDNS.Enabled || len(plan.DynamicZones) != 4 {
+			if len(plan.DynamicZones) != 4 {
 				return errors.New("dynamic DNS zone contract is incomplete")
+			}
+			if s.Gateway.Mode == model.GatewayModeManaged && !plan.DDNS.Enabled {
+				return errors.New("managed gateway dynamic DNS contract is disabled")
+			}
+			if s.Gateway.Mode == model.GatewayModeExternal && plan.DDNS.Enabled {
+				return errors.New("external gateway must not claim managed DHCP/DDNS ownership")
 			}
 			return nil
 		}},
@@ -376,7 +451,7 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 			if err != nil {
 				return err
 			}
-			if !plan.PlatformOnly || plan.UserWorkloadsManaged || len(plan.GuestVMIDs) != 5 {
+			if !plan.PlatformOnly || plan.UserWorkloadsManaged || len(plan.GuestVMIDs) != len(s.PlatformComponents())-1 {
 				return errors.New("backup projection is not limited to platform guests")
 			}
 			return nil
@@ -428,7 +503,10 @@ func checkPlatformOwnership(s model.Site) error {
 	if err != nil {
 		return err
 	}
-	want := []int{model.ProxmoxVMID, model.DNS01VMID, model.DNS02VMID, model.MonitorVMID, model.PortalVMID}
+	want := []int{model.DNS01VMID, model.DNS02VMID, model.MonitorVMID, model.PortalVMID}
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		want = append([]int{model.ProxmoxVMID}, want...)
+	}
 	if len(plan.Guests) != len(want) {
 		return fmt.Errorf("platform plan contains %d guests; expected %d", len(plan.Guests), len(want))
 	}

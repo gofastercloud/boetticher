@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/dns"
+	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/zabbix"
 )
@@ -51,7 +52,19 @@ func Inventory(s model.Site) (string, error) {
 			writeHost(&b, component, true)
 		}
 	}
-	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\n\n")
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		b.WriteString("\n[firewall]\n")
+		for _, component := range components {
+			if component.Name == "lab-fw-01" {
+				writeHost(&b, component, true)
+			}
+		}
+	}
+	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\n")
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		b.WriteString("firewall\n")
+	}
+	b.WriteString("\n")
 	b.WriteString("[managed:vars]\nansible_connection=ssh\nansible_python_interpreter=/usr/bin/python3\nansible_host_key_checking=true\n")
 	return b.String(), nil
 }
@@ -86,19 +99,24 @@ func Variables(s model.Site) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	firewallPlan, err := firewall.PlanFromSite(s)
+	if err != nil {
+		return nil, err
+	}
 	value := struct {
-		ModelRevision               string      `json:"model_revision"`
-		Domain                      string      `json:"domain"`
-		IPv4Only                    bool        `json:"ipv4_only"`
-		AuthoritativeDNS            string      `json:"authoritative_dns"`
-		AuthoritativeDNSVersion     string      `json:"authoritative_dns_version"`
-		AuthoritativePackageVersion string      `json:"authoritative_package_version"`
-		AuthoritativeDNSPort        string      `json:"authoritative_dns_port"`
-		DynamicZones                []string    `json:"dynamic_zones"`
-		AdGuardForwardZones         []string    `json:"adguard_forward_zones"`
-		DNSPlan                     dns.Plan    `json:"dns_plan"`
-		ZabbixPlan                  zabbix.Plan `json:"zabbix_plan"`
-	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, zabbixPlan}
+		ModelRevision               string        `json:"model_revision"`
+		Domain                      string        `json:"domain"`
+		IPv4Only                    bool          `json:"ipv4_only"`
+		AuthoritativeDNS            string        `json:"authoritative_dns"`
+		AuthoritativeDNSVersion     string        `json:"authoritative_dns_version"`
+		AuthoritativePackageVersion string        `json:"authoritative_package_version"`
+		AuthoritativeDNSPort        string        `json:"authoritative_dns_port"`
+		DynamicZones                []string      `json:"dynamic_zones"`
+		AdGuardForwardZones         []string      `json:"adguard_forward_zones"`
+		DNSPlan                     dns.Plan      `json:"dns_plan"`
+		FirewallPlan                firewall.Plan `json:"firewall_plan"`
+		ZabbixPlan                  zabbix.Plan   `json:"zabbix_plan"`
+	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, zabbixPlan}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err

@@ -74,3 +74,25 @@ func TestSingleDiskPlanDoesNotRequireDevice(t *testing.T) {
 		t.Fatalf("unexpected single-disk plan: %#v", plan)
 	}
 }
+
+func TestStatusCommandAndParserUseFixedReadOnlyFields(t *testing.T) {
+	command, err := StatusCommand("/dev/disk/by-id/ata-example-data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"vgs --noheadings", "lvs --noheadings", "blkid -s TYPE", "findmnt -no TARGET", "pvesm status --storage boetticher-thin", "pvesm status --storage boetticher-backups", "df -hP /srv/boetticher/backups"} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("status command does not contain %q:\n%s", want, command)
+		}
+	}
+	if strings.Contains(command, "pvcreate") || strings.Contains(command, "mkfs") || strings.Contains(command, "rm ") {
+		t.Fatal("storage status command contains a destructive operation")
+	}
+	status, err := ParseStatus("device=/dev/disk/by-id/ata-example-data\ndevice_path=/dev/sdb\nvolume_group=vg_boetticher\nthin_pool=thinpool\nbackup_lv=backup\nfilesystem=ext4\nmount=/srv/boetticher/backups\nguest_storage=active\nbackup_storage=active\ncapacity=/dev/mapper/vg_boetticher-backup 100G 1G 99G 1% /srv/boetticher/backups\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.VolumeGroup != VolumeGroup || status.Filesystem != BackupFilesystem || status.Mount != BackupMount {
+		t.Fatalf("unexpected parsed storage status: %#v", status)
+	}
+}

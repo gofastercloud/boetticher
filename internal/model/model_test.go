@@ -7,7 +7,7 @@ import (
 
 func TestRevisionIsIndependentOfComponentOrder(t *testing.T) {
 	first := NewDefaultSite("installation", "age1example")
-	first.TestedVersions.OPNsense = QualifiedOPNsense
+	first.TestedVersions.Gateway = QualifiedGatewayImage
 	second := first
 	second.Components = append([]Component(nil), first.Components...)
 	for i, j := 0, len(second.Components)-1; i < j; i, j = i+1, j-1 {
@@ -29,7 +29,7 @@ func TestRevisionIsIndependentOfComponentOrder(t *testing.T) {
 func TestOfficialModuleDeclarationsDoNotBecomePlatformComponents(t *testing.T) {
 	without := NewDefaultSite("installation", "age1example")
 	with := without
-	with.Modules = []ModuleInstance{{Name: "future-remote-access", Enabled: true}}
+	with.Modules = []ResolvedModule{{Name: "future-remote-access", Enabled: true}}
 
 	withoutRevision, err := without.Revision()
 	if err != nil {
@@ -47,11 +47,29 @@ func TestOfficialModuleDeclarationsDoNotBecomePlatformComponents(t *testing.T) {
 	}
 }
 
+func TestRevisionIsIndependentOfOfficialModuleOrder(t *testing.T) {
+	first := NewDefaultSite("installation", "age1example")
+	first.Modules = []ResolvedModule{{Name: "z-module", Enabled: true}, {Name: "a-module", Enabled: false}}
+	second := first
+	second.Modules = []ResolvedModule{{Name: "a-module", Enabled: false}, {Name: "z-module", Enabled: true}}
+	a, err := first.Revision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := second.Revision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a != b {
+		t.Fatalf("revisions differ for equivalent module sets: %s != %s", a, b)
+	}
+}
+
 func TestRevisionIgnoresOperatorLocalSSHPath(t *testing.T) {
 	first := NewDefaultSite("installation", "age1example")
 	second := first
-	first.TestedVersions.OPNsense = QualifiedOPNsense
-	second.TestedVersions.OPNsense = QualifiedOPNsense
+	first.TestedVersions.Gateway = QualifiedGatewayImage
+	second.TestedVersions.Gateway = QualifiedGatewayImage
 	second.SSHIdentityFile = "/different/operator/key"
 	a, err := first.Revision()
 	if err != nil {
@@ -66,11 +84,33 @@ func TestRevisionIgnoresOperatorLocalSSHPath(t *testing.T) {
 	}
 }
 
-func TestLaterOPNsensePatchIsNotSilentlySupported(t *testing.T) {
+func TestUnqualifiedGatewayImageIsRejected(t *testing.T) {
 	site := NewDefaultSite("installation", "age1example")
-	site.TestedVersions.OPNsense = "26.7.1"
+	site.TestedVersions.Gateway = "debian-13-genericcloud-amd64-old"
 	if err := site.Validate(); err == nil {
-		t.Fatal("later OPNsense patch was accepted without qualification")
+		t.Fatal("unqualified gateway image was accepted")
+	}
+}
+
+func TestExternalGatewayOmitsManagedFirewall(t *testing.T) {
+	site := NewSite("installation", "age1example", GatewayModeExternal)
+	if err := site.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, component := range site.Components {
+		if component.Name == "lab-fw-01" {
+			t.Fatal("external gateway site retained managed firewall component")
+		}
+	}
+}
+
+func TestOldSiteSchemaRequiresFreshV03Initialization(t *testing.T) {
+	site := NewDefaultSite("installation", "age1example")
+	site.APIVersion = "boetticher/v1"
+	site.SchemaVersion = 1
+	err := site.Validate()
+	if err == nil || !strings.Contains(err.Error(), "recreate the site with boetticher init") {
+		t.Fatalf("old schema did not produce the recreation guidance: %v", err)
 	}
 }
 

@@ -1,30 +1,86 @@
 # Architecture
 
-boetticher is a small, opinionated infrastructure distribution rather than a configurable homelab framework. It provides a reproducible Proxmox platform with OPNsense segmentation, secure DHCP/DNS/NTP, internal PKI/mTLS, Zabbix observability, a generated portal, encrypted configuration, and local recovery from a fresh x86 host.
+boetticher is a small, opinionated Proxmox distribution. The controller holds
+the private site repository, SOPS/Age identity, CA signing authority, and
+runtime state. Proxmox owns the host and user workloads; boetticher owns only
+the declared platform resources.
 
 ## Fixed network
 
 | VLAN | Zone | Network | Gateway | Purpose |
 | --- | --- | --- | --- | --- |
-| 10 | TRUSTED | `10.10.10.0/24` | `10.10.10.1` | trusted personal clients |
-| 20 | SERVERS | `10.10.20.0/24` | `10.10.20.1` | internal services |
-| 50 | SANDBOX | `10.10.50.0/24` | `10.10.50.1` | untrusted/test clients |
+| 10 | TRUSTED | `10.10.10.0/24` | `10.10.10.1` | trusted clients |
+| 20 | SERVERS | `10.10.20.0/24` | `10.10.20.1` | platform and internal services |
+| 50 | SANDBOX | `10.10.50.0/24` | `10.10.50.1` | untrusted workloads |
 | 99 | MGMT | `10.10.99.0/24` | `10.10.99.1` | infrastructure administration |
 
-The fixed core addresses are `lab-fw-01` at `10.10.99.1`, Proxmox at `10.10.99.5`, DNS at `10.10.20.10` and `10.10.20.11`, monitor at `10.10.99.20`, and portal at `10.10.20.30`. The Proxmox service URL is `https://proxmox.lab.home.arpa:8006`; all platform URLs are represented by static model-generated DNS records. IPv6 is deliberately unsupported in V1.
+The internal namespace is `lab.home.arpa`. The platform identities are:
 
-OPNsense owns routing, NAT, inter-zone firewalling, DHCP, SANDBOX DNS/NTP, and network aliases. Proxmox does not perform inter-VLAN routing. The firewall VM has a HOME-side WAN device on `vmbr0` and an untagged internal trunk device on VLAN-aware `vmbr1`; OPNsense owns the VLAN subinterfaces on that trunk.
+| Host | Address | Function |
+| --- | --- | --- |
+| `lab-proxmox-01` | `10.10.99.5` | Proxmox host |
+| `lab-fw-01` | `10.10.99.1` | managed Debian gateway |
+| `lab-dns-01` | `10.10.20.10` | PowerDNS, AdGuard Home, Chrony |
+| `lab-dns-02` | `10.10.20.11` | PowerDNS, AdGuard Home, Chrony |
+| `lab-monitor-01` | `10.10.99.20` | Zabbix and PostgreSQL |
+| `lab-portal-01` | `10.10.20.30` | generated portal |
 
-`vmbr1` initially has no physical member. This is virtual-only bootstrap mode. A second NIC and managed switch can later carry the same tagged trunk without changing the logical model.
+The main service URLs are `https://monitor.lab.home.arpa` and
+`https://portal.lab.home.arpa`. Proxmox is available at
+`https://proxmox.lab.home.arpa:8006`.
 
-Physical NICs are installation-specific bindings, not logical architecture. Preflight identifies the upstream device from the active bridge/address/default-route/bootstrap evidence. It auto-proposes exactly one otherwise-unused physical Ethernet interface as the trunk, accepts an explicit selection when several remain, and stops with `HOLD` when evidence is ambiguous. Stable MAC/PCI identity is persisted separately from the current Linux interface name.
+## Managed gateway
 
-Storage is similarly explicit. The single-disk profile uses Proxmox's existing directory-backed local storage. The dedicated-data-disk profile requires a stable `/dev/disk/by-id/...` input and bootstrap creates only the fixed `vg_boetticher` thin-pool and backup filesystem layout; it does not inspect or adopt unrelated disks.
+```text
+controller
+    |
+HOME / upstream
+    |
+Proxmox
+  | vmbr0  -> wan0 (untagged)
+  | vmbr1  -> trusted0 (tag 10)
+  |       -> servers0 (tag 20)
+  |       -> sandbox0 (tag 50)
+  |       -> mgmt0 (tag 99)
+  |
+lab-fw-01, Debian VM
+  nftables + Kea + SANDBOX DNS/NTP
+```
 
-## Foundation guests
+The gateway receives one ordinary vNIC for each role. There is no VLAN trunk
+and no VLAN subinterface inside `lab-fw-01`. Proxmox performs the VLAN
+classification on the guest attachments. The guest is a routed firewall, not
+a bridge.
 
-The base product is Proxmox plus `lab-fw-01`, `lab-dns-01`, `lab-dns-02`, `lab-monitor-01`, and `lab-portal-01`. The portal is static generated HTML served by nginx; it has no database, CMS, accounts, API credentials, SOPS identity, or Git write access. Zabbix owns live telemetry.
+The gateway is deliberately small: Debian 13, nftables, Kea DHCPv4/D2,
+minimal SANDBOX DNS/NTP services, SSH, Chrony where needed, and Zabbix Agent 2.
+The qualified cloud image is `debian-13-genericcloud-amd64`.
+IPv4 forwarding stays disabled until a validated ruleset is installed.
 
-The canonical model and its SHA-256 revision drive Proxmox desired state, OPNsense policy, Kea configuration, Ansible inventory, Zabbix provisioning, SSH aliases/bastion policy, portal pages, and verification artifacts. Timestamps and live evidence are not included in the model digest.
+## External gateway
 
-boetticher owns only declared platform resources. It never adopts arbitrary Proxmox guests, bridges, bonds, VLANs, routes, SDN objects, Zabbix objects, or backup jobs. User workloads inherit the zone policy without entering the platform model.
+External mode removes `lab-fw-01` from the platform. A second physical NIC is
+required for `vmbr1`, and the operator’s appliance receives the 802.1Q trunk
+with VLANs 10, 20, 50, and 99. The appliance provides the four `.1` gateways,
+DHCP, NAT, and the published security policy. boetticher generates the contract
+but does not inspect or manage the appliance’s configuration.
+
+## Platform services
+
+DNS and NTP remain dual-host services. Kea-driven dynamic DNS updates travel to
+the PowerDNS authoritative primary through authenticated RFC2136 and replicate
+to the secondary. AdGuard Home remains client-facing for TRUSTED, SERVERS, and
+MGMT; SANDBOX uses the gateway resolver and does not receive the broad internal
+namespace.
+
+Zabbix monitors boetticher-owned platform hosts and services. The portal is a
+static generated view of the model, documentation, and non-secret status; it
+is not a second monitoring application.
+
+## Determinism and ownership
+
+The canonical model revision is a SHA-256 digest of the normalized site model.
+It drives Proxmox, nftables, Kea, DNS, Ansible, Zabbix, SSH, portal, backup, and
+verification projections. Timestamps and live evidence are excluded from the
+digest. Unknown user guests and user-created service objects remain outside
+boetticher ownership.

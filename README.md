@@ -1,144 +1,143 @@
 # boetticher
 
-**A small, opinionated Proxmox platform for a secure homelab.**
+**Status: pre-alpha.** boetticher v0.3.0 has a typed module model and offline
+contracts, but the appliance build and live installation still need
+qualification. Do not use boetticher on a system you cannot recover.
 
-> **Status: pre-alpha.** The architecture and offline pieces are in place, but the first real installation still needs to be tried on a clean test host. Don’t use it on anything you can’t recover.
+boetticher is a small, opinionated Proxmox platform for a private lab. It
+creates the platform foundation—network zones, DNS/NTP, PKI, Zabbix, a static
+portal, backups, and recovery metadata—from one deterministic site model.
 
-[![CI](https://github.com/gofastercloud/boetticher/actions/workflows/ci.yml/badge.svg)](https://github.com/gofastercloud/boetticher/actions/workflows/ci.yml)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+It is not a generic Proxmox management tool. boetticher owns its declared
+platform resources; Proxmox remains the owner of user workloads.
 
-boetticher turns a fresh x86 Proxmox host into a reproducible platform with OPNsense segmentation, Kea DHCP, dual DNS/NTP, internal PKI and mTLS, Zabbix observability, a generated portal, encrypted configuration, and a documented recovery path.
+## Architecture
 
-It is deliberately a distribution, not a configurable homelab framework and not a second Proxmox control plane. boetticher owns the platform foundation. Proxmox remains the user’s normal interface for user workloads.
-
-## The architecture
+The default gateway is a small Debian VM running nftables and Kea. Proxmox
+does the VLAN tagging, so the gateway receives ordinary interfaces rather than
+an 802.1Q trunk.
 
 ```text
-HOME / existing LAN
-        |
-     vmbr0                 Proxmox keeps its upstream recovery path
-        |
-  lab-proxmox-01
-        |
-  lab-fw-01 / OPNsense
-        |
-     vmbr1                 VLAN-aware internal bridge
-        +-- VLAN 10 TRUSTED   10.10.10.0/24
-        +-- VLAN 20 SERVERS   10.10.20.0/24
-        +-- VLAN 50 SANDBOX   10.10.50.0/24
-        `-- VLAN 99 MGMT      10.10.99.0/24
-
-  lab-dns-01 + lab-dns-02    AdGuard Home, authoritative DNS, and NTP
-  lab-monitor-01             Zabbix server, PostgreSQL, web, and mTLS
-  lab-portal-01              generated static architecture and recovery view
+HOME / upstream
+       |
+     vmbr0
+       |
+    Proxmox
+       |
+  lab-fw-01 (Debian)
+   nftables + Kea
+       |
+     vmbr1
+       |
+ VLAN 10 / 20 / 50 / 99
+       |
+ TRUSTED / SERVERS / SANDBOX / MGMT
 ```
 
-OPNsense is the routing and inter-zone security boundary. Proxmox does not route between VLANs. The fixed V1 addresses, IPv4-only model, dual DNS/NTP design, storage profiles, and platform guest IDs are part of the product contract.
+The platform services are:
 
-The internal namespace is `lab.home.arpa`. The generated platform records include `opnsense.lab.home.arpa`, `proxmox.lab.home.arpa`, `monitor.lab.home.arpa`, `portal.lab.home.arpa`, `dns01.lab.home.arpa`, and `dns02.lab.home.arpa`. The main web entry points are `https://proxmox.lab.home.arpa:8006`, `https://opnsense.lab.home.arpa`, `https://monitor.lab.home.arpa`, and `https://portal.lab.home.arpa`.
+```text
+lab-dns-01       PowerDNS, AdGuard Home, Chrony
+lab-dns-02       PowerDNS, AdGuard Home, Chrony
+lab-monitor-01   Zabbix and PostgreSQL
+lab-portal-01    generated static documentation
+```
 
-## What it promises
+The fixed networks are VLAN 10 TRUSTED (`10.10.10.0/24`), VLAN 20 SERVERS
+(`10.10.20.0/24`), VLAN 50 SANDBOX (`10.10.50.0/24`), and VLAN 99 MGMT
+(`10.10.99.0/24`). v0.3 remains IPv4-only.
 
-- A deterministic platform model and revision shared by OpenTofu, Ansible, OPNsense, Zabbix, SSH configuration, the portal, and verification output.
-- Default-deny inter-zone policy with an Internet-only SANDBOX zone and restricted MGMT zone.
-- DHCP-driven, zone-qualified dynamic DNS without adopting the workload that received the lease.
-- SOPS-encrypted secrets with an Age identity kept outside Git and an explicit recovery-copy gate.
-- A forwarding-only Proxmox SSH bastion that works from the HOME side even when internal DNS or a physical trunk is unavailable.
-- Conservative physical NIC discovery: one NIC is supported, one additional unambiguous NIC can become the trunk, and ambiguous systems require operator selection.
-- A portal that documents the deployed model and current status without becoming a second monitoring product.
+The platform resolves to Core plus the mandatory DNS/NTP module and the
+default-on monitoring and managed firewall modules. Modules are built into the
+boetticher release and emit declarations; Core owns privileged infrastructure
+changes. There is no background controller or third-party module runtime.
+
+## Two gateway modes
+
+`managed` is the default. boetticher creates `lab-fw-01`, configures its five
+interfaces, renders the nftables policy, and runs Kea, DDNS, and the SANDBOX
+DNS/NTP services.
+
+`external` is bring-your-own firewall mode. boetticher creates no firewall VM,
+does not manage the appliance, and publishes a deterministic contract for the
+operator to configure. It requires a separate physical trunk NIC carrying
+VLANs 10, 20, 50, and 99. See
+[`docs/networking/external-firewall.md`](docs/networking/external-firewall.md).
 
 ## Requirements
 
-- Fresh supported Proxmox VE x86 installation with node name `lab-proxmox-01`. The first supported Proxmox release will be recorded after a clean installation has been tried; this source tree does not imply that every PVE release works.
-- Minimum host shape for the foundation: 4 logical CPU threads, 16 GiB RAM, and 128 GiB usable storage. 4+ cores, 32 GiB RAM, and 256 GiB or more is a much friendlier size for user workloads.
-- One physical Ethernet NIC minimum. A second NIC and managed 802.1Q switch are recommended for physical VLAN breakout, but `vmbr1` may remain virtual-only.
-- Controller: macOS arm64/amd64 or Linux arm64/amd64. The controller is a separate operator machine; do not run the V1 workflow on the target Proxmox host. Native Windows is out of scope; WSL2 is only supported if separately tested.
-- Controller tools: Go matching `go.mod`, `ssh`, `ssh-keyscan`, `age-keygen`, `sops`, OpenTofu, and Ansible Core. `boetticher preflight` validates versions before mutation.
-- OPNsense 26.7.2_2 at the exact qualified patch recorded in `site.yml`; later 26.7 patches require explicit boetticher qualification.
-- Zabbix 7.0 LTS: full upstream support through June 2027 and limited support through June 2029.
+- A fresh supported Proxmox VE installation on amd64 hardware.
+- A separate macOS or Linux controller with Go, SSH, Age, SOPS, OpenTofu, and
+  Ansible Core.
+- One physical Ethernet NIC is enough for managed virtual-only operation. A
+  second NIC and managed VLAN switch are needed for a physical trunk; they are
+  mandatory in external-firewall mode.
 - Either the single-disk or dedicated-data-disk storage profile.
-
-The single-disk profile needs no extra storage preparation. For
-`dedicated-data-disk`, set `storage_device` to a stable `/dev/disk/by-id/...`
-path in the private site file; bootstrap creates and registers the fixed
-`vg_boetticher` layout after the operator confirms the device.
+- Zabbix 7.0 LTS and the pinned Debian 13 appliance definitions are the v0.3
+  qualification targets (`debian-13-genericcloud-amd64`).
 
 ## Quickstart
 
-From a fresh controller and Proxmox HOME-side DHCP address:
+From the controller and the Proxmox HOME-side DHCP address:
 
 ```sh
-boetticher init --site-dir my-boetticher
-boetticher bootstrap-endpoint set PROXMOX_HOME_ADDRESS --site my-boetticher
-boetticher preflight --site my-boetticher
-boetticher bootstrap --site my-boetticher --opnsense-iso VERIFIED_ISO --recovery-confirmed
-boetticher provision --site my-boetticher
-boetticher converge --site my-boetticher
-boetticher ssh-config --site my-boetticher --install-include
-boetticher verify --site my-boetticher
-boetticher access --site my-boetticher
+boetticher init
+boetticher bootstrap-endpoint set 192.0.2.10
+boetticher preflight
+boetticher bootstrap --recovery-confirmed
+boetticher deploy
+boetticher ssh-config --install-include
+boetticher verify
+boetticher access
 ```
 
-Keep the independent recovery copy of the Age identity before destructive bootstrap proceeds. The private identity never belongs in Git. The initial Proxmox trust transition installs the operator key, creates the normal administrator and forwarding-only `lab-jump` identity, creates scoped API credentials, hands them directly to SOPS, and retires routine use of the initial bootstrap path.
+For an external firewall, start with:
 
-Physical NIC discovery is conservative. With one NIC, the supported result is `virtual-only`. With exactly one additional clean Ethernet NIC, bootstrap can attach it to `vmbr1` after displaying the proposed mapping. With multiple possible trunk candidates, select one explicitly. A disconnected but otherwise clean trunk NIC is valid.
-
-The source build has local contracts and tests for the bootstrap sequence. The first real installation still needs to try unattended OPNsense setup, the interface/address transition, dynamic DNS replication, physical NIC changes, and the negative network journeys on a clean host.
-
-## Access and ownership
-
-The normal path is:
-
-```text
-operator on HOME
-        |
-        +-- ssh proxmox  -> lab-proxmox-01
-                              |
-                              `-- ProxyJump lab-bastion -> internal hosts
+```sh
+boetticher init --external-firewall
 ```
 
-Useful commands after convergence include `ssh dns01`, `ssh monitor`, `ssh portal`, and `boetticher access`. Generated SSH configuration uses fixed internal IPs, canonical `HostKeyAlias` values, the modelled destination allow-list, and normal host-key verification.
+Then configure the physical trunk according to the generated external
+firewall contract before running the live workflow.
 
-boetticher manages only declared platform resources. User workloads remain user-owned:
+## Ownership and access
 
-```text
-Create VM/LXC in Proxmox
-  -> attach its NIC to vmbr1
-  -> choose VLAN 10, 20, 50, or justified VLAN 99
-  -> use DHCP where appropriate
-  -> boot
-```
+boetticher owns the platform guests, bridges and VLAN policy it declares, the
+managed gateway when selected, platform DNS/NTP, PKI, Zabbix objects, backups,
+portal output, and verification metadata. Unknown Proxmox guests remain user-
+managed and are never imported, changed, deleted, monitored, or backed up by
+boetticher.
 
-There is intentionally no generic `boetticher vm`, `boetticher lxc`, or `boetticher workload` lifecycle command. Use the Proxmox UI, `qm`, `pct`, OpenTofu, Ansible, Pulumi, or another tool for arbitrary workloads. See [docs/platform-ownership.md](docs/platform-ownership.md).
+Proxmox is the normal SSH bastion. The controller reaches Proxmox over the
+HOME network, then uses the forwarding-only `lab-bastion` path to reach
+managed internal hosts. Generated SSH configuration keeps host-key checking
+and canonical host identities intact.
+
+Useful commands include `boetticher module list`, `boetticher module plan
+monitoring`, `boetticher config validate`, `boetticher firewall show`,
+`boetticher dhcp status`, `boetticher doctor`, and `boetticher portal build`.
+These inspect or deploy the platform model; they are not a generic firewall,
+guest-management, or application-management interface.
 
 ## Documentation
 
-Start with [the architecture guide](docs/architecture.md), [the security model](docs/security-model.md), and [installation](docs/installation.md). The documentation is organised by operator task:
+Start with [`docs/installation.md`](docs/installation.md), then see the
+architecture, security, networking, storage, access, recovery, and workload
+guides under [`docs/`](docs/). The generated portal renders the same release
+documentation.
 
-- [Networking](docs/networking/): VLANs, switch trunks, physical NIC discovery, DHCP/DNS/NTP, and dynamic DNS.
-- [Access](docs/access/): the Proxmox bastion, client certificates, and documented Tailscale, Cloudflare, and WireGuard integration patterns.
-- [Workloads](docs/workloads/): adding user-owned guests and optionally onboarding their own Zabbix agent.
-- [Storage and recovery](docs/storage/): storage profiles, backup ownership, and recovery runbooks.
-- [Operations](docs/operations.md) and [commands](docs/commands.md): the day-to-day CLI surface.
-- [Troubleshooting](docs/troubleshooting.md): what to check when something goes wrong.
-- [First installation](docs/hardware-test-checklist.md): a practical checklist for trying the platform on real hardware.
+## Limitations
 
-`lab-portal-01` renders this same release documentation alongside the installation-specific model and non-secret status information. It is passive static HTML; Zabbix owns live telemetry.
-
-## Development
-
-```sh
-make ci
-```
-
-This runs Go formatting checks, tests, vet, build, OpenTofu formatting/validation, Ansible syntax validation, and whitespace checks. See [CONTRIBUTING.md](CONTRIBUTING.md) and [agents.md](agents.md) for the project conventions.
-
-## Scope and non-goals
-
-V1 is a single-Proxmox-host platform. It is not HA, IPv6-ready, an arbitrary network/address/storage framework, or a managed remote-access provider. Dual DNS is service redundancy, not host redundancy. Same-disk backups are not disaster recovery. Tailscale, Cloudflare, and WireGuard are documented integration patterns, not core V1 modules.
+v0.3 is a single-node, pre-alpha platform. It is not HA, does not support
+IPv6, multi-node Proxmox, generic VM/LXC lifecycle management, managed VPN or
+remote-access products, arbitrary storage or network layouts, or managed
+external firewall vendors. Local backups are useful for recovery but are not
+independent disaster recovery.
 
 ## License and acknowledgements
 
-boetticher is released under the [Apache License 2.0](LICENSE). The project configures and integrates other open-source systems; it does not relicense or claim ownership of them. See [NOTICE](NOTICE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), especially the acknowledgements for the Proxmox and OPNsense projects and their maintainers.
-
-boetticher is an independent project and is not affiliated with, sponsored by, or endorsed by Proxmox Server Solutions GmbH, the Proxmox project, Deciso B.V., or the OPNsense project.
+boetticher is released under the [Apache License 2.0](LICENSE). It is an
+independent project and is not affiliated with or endorsed by Proxmox Server
+Solutions GmbH or the Proxmox project. See [NOTICE](NOTICE) and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for current runtime
+attributions, including the Proxmox project and its maintainers.

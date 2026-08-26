@@ -24,28 +24,45 @@ const (
 )
 
 type GuestPlan struct {
-	VMID       int       `json:"vmid"`
-	Name       string    `json:"name"`
-	Kind       GuestKind `json:"kind"`
-	Hostname   string    `json:"hostname"`
-	Zone       string    `json:"zone"`
-	Address    string    `json:"address"`
-	Gateway    string    `json:"gateway"`
-	VLAN       int       `json:"vlan"`
-	Cores      int       `json:"cores"`
-	MemoryMiB  int       `json:"memory_mib"`
-	DiskGiB    int       `json:"disk_gib"`
-	Monitoring bool      `json:"monitoring"`
-	Backup     bool      `json:"backup"`
-	Tags       []string  `json:"tags,omitempty"`
+	VMID       int                     `json:"vmid"`
+	Name       string                  `json:"name"`
+	Kind       GuestKind               `json:"kind"`
+	Hostname   string                  `json:"hostname"`
+	Zone       string                  `json:"zone"`
+	Address    string                  `json:"address"`
+	Gateway    string                  `json:"gateway"`
+	VLAN       int                     `json:"vlan"`
+	Cores      int                     `json:"cores"`
+	MemoryMiB  int                     `json:"memory_mib"`
+	DiskGiB    int                     `json:"disk_gib"`
+	Monitoring bool                    `json:"monitoring"`
+	Backup     bool                    `json:"backup"`
+	Tags       []string                `json:"tags,omitempty"`
+	NICs       []GuestNIC              `json:"nics,omitempty"`
+	Owner      string                  `json:"owner,omitempty"`
+	Artifact   model.Artifact          `json:"artifact,omitempty"`
+	Persistent []model.PersistentState `json:"persistent,omitempty"`
+}
+
+type GuestNIC struct {
+	Name    string `json:"name"`
+	Bridge  string `json:"bridge"`
+	VLAN    int    `json:"vlan,omitempty"`
+	Address string `json:"address,omitempty"`
+	Gateway string `json:"gateway,omitempty"`
+	Method  string `json:"method"`
+	MAC     string `json:"mac"`
 }
 
 type Plan struct {
-	ModelRevision string      `json:"model_revision"`
-	ManagedBy     string      `json:"managed_by"`
-	Node          string      `json:"node"`
-	Storage       string      `json:"storage"`
-	Guests        []GuestPlan `json:"guests"`
+	ModelRevision   string      `json:"model_revision"`
+	ManagedBy       string      `json:"managed_by"`
+	Node            string      `json:"node"`
+	Storage         string      `json:"storage"`
+	GatewayImage    string      `json:"gateway_image"`
+	GatewayImageURL string      `json:"gateway_image_url"`
+	GatewaySHA512   string      `json:"gateway_sha512"`
+	Guests          []GuestPlan `json:"guests"`
 }
 
 type NetworkInterface struct {
@@ -280,14 +297,57 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	if s.StorageProfile == "dedicated-data-disk" {
 		guestStorage = storage.GuestStorageID
 	}
-	guests := []GuestPlan{
-		{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Gateway: "10.10.99.1", VLAN: 99, Kind: KindQEMU, Cores: 2, MemoryMiB: 2048, DiskGiB: 16, Monitoring: componentMonitoring(s, "lab-fw-01"), Backup: componentBackup(s, "lab-fw-01"), Tags: componentTags(s, "lab-fw-01")},
-		{VMID: model.DNS01VMID, Name: "lab-dns-01", Hostname: "lab-dns-01", Zone: "SERVERS", Address: "10.10.20.10", Gateway: "10.10.20.1", VLAN: 20, Kind: KindLXC, Cores: 2, MemoryMiB: 1024, DiskGiB: 8, Monitoring: componentMonitoring(s, "lab-dns-01"), Backup: componentBackup(s, "lab-dns-01"), Tags: componentTags(s, "lab-dns-01")},
-		{VMID: model.DNS02VMID, Name: "lab-dns-02", Hostname: "lab-dns-02", Zone: "SERVERS", Address: "10.10.20.11", Gateway: "10.10.20.1", VLAN: 20, Kind: KindLXC, Cores: 2, MemoryMiB: 1024, DiskGiB: 8, Monitoring: componentMonitoring(s, "lab-dns-02"), Backup: componentBackup(s, "lab-dns-02"), Tags: componentTags(s, "lab-dns-02")},
-		{VMID: model.MonitorVMID, Name: "lab-monitor-01", Hostname: "lab-monitor-01", Zone: "MGMT", Address: "10.10.99.20", Gateway: "10.10.99.1", VLAN: 99, Kind: KindLXC, Cores: 2, MemoryMiB: 2048, DiskGiB: 16, Monitoring: componentMonitoring(s, "lab-monitor-01"), Backup: componentBackup(s, "lab-monitor-01"), Tags: componentTags(s, "lab-monitor-01")},
-		{VMID: model.PortalVMID, Name: "lab-portal-01", Hostname: "lab-portal-01", Zone: "SERVERS", Address: "10.10.20.30", Gateway: "10.10.20.1", VLAN: 20, Kind: KindLXC, Cores: 1, MemoryMiB: 512, DiskGiB: 4, Monitoring: componentMonitoring(s, "lab-portal-01"), Backup: componentBackup(s, "lab-portal-01"), Tags: componentTags(s, "lab-portal-01")},
+	guests := make([]GuestPlan, 0, len(s.PlatformComponents()))
+	for _, component := range s.PlatformComponents() {
+		if component.VMID == 0 {
+			continue
+		}
+		guest := GuestPlan{
+			VMID: component.VMID, Name: component.Name, Hostname: component.Hostname, Zone: component.Zone,
+			Address: component.Address, Gateway: gatewayFor(component.Zone), VLAN: vlanFor(s, component.Zone),
+			Kind: KindLXC, Cores: 2, MemoryMiB: 1024, DiskGiB: 8,
+			Monitoring: component.Monitoring, Backup: component.Backup, Tags: componentTags(s, component.Name),
+		}
+		if component.Module != "" {
+			for _, declaration := range s.Declarations {
+				if declaration.Module == component.Module {
+					guest.Owner = "boetticher/module/" + component.Module
+					guest.Artifact = declaration.Artifact
+					guest.Persistent = append([]model.PersistentState(nil), declaration.Persistent...)
+					break
+				}
+			}
+		}
+		switch component.Name {
+		case "lab-fw-01":
+			guest.Kind, guest.Cores, guest.MemoryMiB, guest.DiskGiB = KindQEMU, 2, 2048, 16
+			guest.NICs = gatewayNICs(s)
+		case "lab-monitor-01":
+			guest.MemoryMiB, guest.DiskGiB = 2048, 16
+		case "lab-portal-01":
+			guest.Cores, guest.MemoryMiB, guest.DiskGiB = 1, 512, 4
+		}
+		guests = append(guests, guest)
 	}
-	return Plan{ModelRevision: revision, ManagedBy: "boetticher", Node: s.ProxmoxNode, Storage: guestStorage, Guests: guests}, nil
+	sort.Slice(guests, func(i, j int) bool { return guests[i].VMID < guests[j].VMID })
+	return Plan{ModelRevision: revision, ManagedBy: "boetticher", Node: s.ProxmoxNode, Storage: guestStorage, GatewayImage: model.QualifiedGatewayImage, GatewayImageURL: model.QualifiedGatewayImageURL, GatewaySHA512: model.QualifiedGatewayImageSHA512, Guests: guests}, nil
+}
+
+func gatewayNICs(s model.Site) []GuestNIC {
+	nics := []GuestNIC{{Name: "wan0", Bridge: "vmbr0", Method: "dhcp", MAC: "02:00:00:00:01:01"}}
+	for _, zone := range s.Normalize().Network.Zones {
+		nics = append(nics, GuestNIC{Name: strings.ToLower(zone.Name) + "0", Bridge: "vmbr1", VLAN: zone.VLAN, Address: zone.Gateway + "/24", Method: "static", MAC: fmt.Sprintf("02:00:00:00:01:%02x", len(nics)+1)})
+	}
+	return nics
+}
+
+func vlanFor(s model.Site, zoneName string) int {
+	for _, zone := range s.Network.Zones {
+		if zone.Name == zoneName {
+			return zone.VLAN
+		}
+	}
+	return 0
 }
 
 func componentTags(s model.Site, name string) []string {
@@ -319,8 +379,7 @@ func componentBackup(s model.Site, name string) bool {
 	return false
 }
 
-// Provision creates the non-firewall foundation guests and is safe to re-run.
-// The OPNsense VM and its installer input belong to the bootstrap command. It
+// Provision creates the declared foundation guests and is safe to re-run. It
 // never removes an object or changes an existing guest's disk/network shape;
 // drift is returned to the caller for an explicit remediation decision.
 func Provision(ctx context.Context, client *Client, plan Plan, debianTemplate string) error {
@@ -333,8 +392,7 @@ func Provision(ctx context.Context, client *Client, plan Plan, debianTemplate st
 	for _, guest := range plan.Guests {
 		switch guest.Kind {
 		case KindQEMU:
-			// The firewall VM is created and started by bootstrap, where the
-			// verified OPNsense ISO is an explicit input.
+			// The gateway VM is created by the bootstrap image path.
 			continue
 		case KindLXC:
 			if err := ensureLXC(ctx, client, plan, guest, debianTemplate); err != nil {
@@ -350,13 +408,17 @@ func Provision(ctx context.Context, client *Client, plan Plan, debianTemplate st
 	return nil
 }
 
-func EnsureFirewallVM(ctx context.Context, client *Client, plan Plan, opnsenseISO string) error {
+func EnsureFirewallVM(ctx context.Context, client *Client, plan Plan) error {
 	if client == nil {
 		return errors.New("Proxmox client is required")
 	}
+	imageFileID, err := client.EnsureCloudImage(ctx, plan.Node, "local", plan.GatewayImage+".qcow2", plan.GatewayImageURL, plan.GatewaySHA512)
+	if err != nil {
+		return fmt.Errorf("prepare qualified gateway image: %w", err)
+	}
 	for _, guest := range plan.Guests {
 		if guest.Kind == KindQEMU {
-			return ensureQEMU(ctx, client, plan, guest, opnsenseISO)
+			return ensureQEMU(ctx, client, plan, guest, imageFileID)
 		}
 	}
 	return errors.New("foundation plan has no firewall VM")
@@ -622,18 +684,40 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 		"memory":  {strconv.Itoa(guest.MemoryMiB)},
 		"cores":   {strconv.Itoa(guest.Cores)},
 		"scsihw":  {"virtio-scsi-single"},
-		"ostype":  {"other"},
+		"ostype":  {"l26"},
 		"onboot":  {"1"},
 		"agent":   {"1"},
-		"boot":    {"order=scsi0;ide2;net0"},
-		"net0":    {"virtio,bridge=vmbr0,firewall=1"},
-		"net1":    {"virtio,bridge=vmbr1,firewall=1"},
-		"ide2":    {iso + ",media=cdrom"},
+		"boot":    {"order=scsi0;net0"},
 		"serial0": {"socket"},
 		"tags":    {strings.Join(guest.Tags, ";")},
 	}
+	for index, nic := range guest.NICs {
+		value := fmt.Sprintf("virtio,bridge=%s,firewall=1,macaddr=%s", nic.Bridge, nic.MAC)
+		if nic.VLAN != 0 {
+			value += fmt.Sprintf(",tag=%d", nic.VLAN)
+		}
+		params.Set(fmt.Sprintf("net%d", index), value)
+	}
 	if err := client.CreateVM(ctx, plan.Node, guest.VMID, params); err != nil {
-		return fmt.Errorf("create OPNsense VM %s: %w", guest.Name, err)
+		return fmt.Errorf("create gateway VM %s: %w", guest.Name, err)
+	}
+	upid, err := client.ImportDisk(ctx, plan.Node, guest.VMID, iso, plan.Storage, "qcow2")
+	if err != nil {
+		return fmt.Errorf("import gateway image into %s: %w", plan.Storage, err)
+	}
+	if err := client.WaitTask(ctx, plan.Node, upid); err != nil {
+		return fmt.Errorf("wait for gateway image import: %w", err)
+	}
+	var imported map[string]any
+	if err := client.QEMUConfig(ctx, plan.Node, guest.VMID, &imported); err != nil {
+		return fmt.Errorf("inspect imported gateway disk: %w", err)
+	}
+	unused, ok := imported["unused0"].(string)
+	if !ok || unused == "" {
+		return errors.New("gateway disk import completed without an unused disk reference")
+	}
+	if err := client.SetVMConfig(ctx, plan.Node, guest.VMID, url.Values{"scsi0": {unused}, "delete": {"unused0"}}); err != nil {
+		return fmt.Errorf("attach imported gateway disk: %w", err)
 	}
 	return nil
 }

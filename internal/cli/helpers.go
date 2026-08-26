@@ -13,9 +13,9 @@ import (
 	"github.com/gofastercloud/boetticher/internal/ansible"
 	"github.com/gofastercloud/boetticher/internal/backup"
 	"github.com/gofastercloud/boetticher/internal/dns"
+	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
-	"github.com/gofastercloud/boetticher/internal/opnsense"
 	"github.com/gofastercloud/boetticher/internal/portal"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
@@ -54,11 +54,7 @@ func writeModelProjections(dir string, s model.Site) error {
 	if err != nil {
 		return err
 	}
-	opnsensePlan, err := opnsense.PlanFromSite(s)
-	if err != nil {
-		return err
-	}
-	opnsenseBootstrap, err := opnsense.BootstrapPlanFromSite(s)
+	firewallPlan, err := firewall.PlanFromSite(s)
 	if err != nil {
 		return err
 	}
@@ -68,11 +64,38 @@ func writeModelProjections(dir string, s model.Site) error {
 	}{revision, normalized.Components}); err != nil {
 		return err
 	}
-	if err := writeProjection(filepath.Join(dir, "generated", "opnsense", "desired-policy.json"), opnsensePlan); err != nil {
+	moduleRoot := filepath.Join(dir, "generated", "modules")
+	if err := os.RemoveAll(moduleRoot); err != nil {
+		return fmt.Errorf("clear generated module projections: %w", err)
+	}
+	for _, declaration := range normalized.Declarations {
+		moduleDir := filepath.Join(moduleRoot, declaration.Module)
+		if err := writeProjection(filepath.Join(moduleDir, "declaration.json"), struct {
+			ModelRevision string                  `json:"model_revision"`
+			Declaration   model.ModuleDeclaration `json:"declaration"`
+		}{revision, declaration}); err != nil {
+			return err
+		}
+	}
+	if err := writeProjection(filepath.Join(dir, "generated", "firewall", "desired-state.json"), firewallPlan); err != nil {
 		return err
 	}
-	if err := writeProjection(filepath.Join(dir, "generated", "opnsense", "bootstrap.json"), opnsenseBootstrap); err != nil {
-		return err
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		ruleset, renderErr := firewall.RenderNFT(firewallPlan)
+		if renderErr != nil {
+			return renderErr
+		}
+		if err := writePublic(filepath.Join(dir, "generated", "firewall", "boetticher.nft"), []byte(ruleset)); err != nil {
+			return err
+		}
+	} else {
+		contract, contractErr := firewall.RenderExternalContract(s, firewallPlan)
+		if contractErr != nil {
+			return contractErr
+		}
+		if err := writePublic(filepath.Join(dir, "generated", "network", "external-firewall-contract.md"), []byte(contract)); err != nil {
+			return err
+		}
 	}
 	dnsPlan, err := dns.PlanFromSite(s)
 	if err != nil {
@@ -102,7 +125,7 @@ func writeModelProjections(dir string, s model.Site) error {
 	if err != nil {
 		return err
 	}
-	if err := writeProjection(filepath.Join(dir, "generated", "zabbix", "provisioning.json"), zabbixPlan); err != nil {
+	if err := writeProjection(filepath.Join(dir, "generated", "monitoring", "desired-state.json"), zabbixPlan); err != nil {
 		return err
 	}
 	if err := writeCurrentStatus(dir, revision); err != nil {

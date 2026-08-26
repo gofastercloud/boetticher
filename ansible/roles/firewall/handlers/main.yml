@@ -1,0 +1,24 @@
+---
+- name: reload boetticher nftables
+  ansible.builtin.command: nft -f /etc/nftables.d/boetticher.nft
+  listen: reload boetticher nftables
+
+- name: restart systemd-networkd
+  ansible.builtin.service:
+    name: systemd-networkd
+    state: restarted
+
+- name: restart Kea DHCPv4
+  ansible.builtin.service:
+    name: kea-dhcp4-server
+    state: restarted
+
+- name: restart Kea DHCP-DDNS
+  ansible.builtin.service:
+    name: kea-dhcp-ddns-server
+    state: restarted
+
+- name: restart dnsmasq
+  ansible.builtin.service:
+    name: dnsmasq
+    state: restarted

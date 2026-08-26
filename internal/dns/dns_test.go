@@ -20,14 +20,11 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	if got := plan.AuthoritativeForwardTarget; got != "127.0.0.1:5353" || len(plan.AuthoritativeListenAddresses) != 2 {
 		t.Fatalf("incompatible authoritative listener contract: %#v", plan)
 	}
-	if plan.DDNS.Source != "OPNsense Kea D2" || len(plan.DDNS.UpdateSources) != 1 || plan.DDNS.UpdateSources[0] != "10.10.99.1" || plan.DDNS.LeaseFailurePolicy != "lease-continues-without-DNS-registration" {
+	if plan.DDNS.Source != "Kea D2 on lab-fw-01" || len(plan.DDNS.UpdateSources) != 1 || plan.DDNS.UpdateSources[0] != "10.10.99.1" || plan.DDNS.LeaseFailurePolicy != "lease-continues-without-DNS-registration" {
 		t.Fatalf("unexpected DDNS boundary: %#v", plan.DDNS)
 	}
 	if len(plan.AdGuardForwardZones) != 5 || len(plan.AdGuardReverseZones) != 4 {
 		t.Fatalf("AdGuard did not receive static and dynamic forwarding zones: %#v", plan.AdGuardForwardZones)
-	}
-	if !hasRecord(plan.StaticRecords, "opnsense.lab.home.arpa", "10.10.99.1") {
-		t.Fatal("component URL hostname was not added to the static DNS projection")
 	}
 	if !hasRecord(plan.StaticRecords, "proxmox.lab.home.arpa", "10.10.99.5") {
 		t.Fatal("Proxmox component URL hostname was not added to the static DNS projection")
@@ -59,6 +56,29 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	}
 	if _, err := QualifiedName(site, "SERVERS", "lab-dns-01"); err == nil {
 		t.Fatal("dynamic registration claimed a platform-owned host label")
+	}
+}
+
+func TestExternalPlanPublishesOptionalDDNSContract(t *testing.T) {
+	plan, err := PlanFromSite(model.NewSite("installation", "age1example", model.GatewayModeExternal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.DDNS.Enabled || plan.DDNS.Source != "External DHCP/DDNS contract" || len(plan.DDNS.UpdateSources) != 0 || len(plan.DDNS.Zones) != 4 {
+		t.Fatalf("external DDNS contract is not optional and complete: %#v", plan.DDNS)
+	}
+}
+
+func TestExternalPowerDNSPlanDoesNotRequireManagedDDNSSource(t *testing.T) {
+	plan, err := PlanFromSite(model.NewSite("installation", "age1example", model.GatewayModeExternal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := PrimaryCommandPlan(plan)
+	for _, command := range commands {
+		if command.SecretStdin || strings.Contains(command.Stdin, DDNSSecretPlaceholder) || strings.Contains(strings.Join(command.Args, " "), "ALLOW-DNSUPDATE") {
+			t.Fatalf("external DNS plan unexpectedly includes managed DDNS configuration: %#v", command)
+		}
 	}
 }
 

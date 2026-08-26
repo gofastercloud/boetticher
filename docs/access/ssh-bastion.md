@@ -1,22 +1,16 @@
 # SSH bastion
 
-The normal path is:
+The controller reaches Proxmox through the HOME/upstream network, then uses
+the forwarding-only `lab-jump` identity to reach modelled internal hosts.
+Internal hosts use fixed IP addresses and canonical `HostKeyAlias` values, so
+the path does not depend on internal DNS.
+
+The managed gateway is an ordinary permitted host:
 
 ```text
-operator on HOME/upstream
-        │
-        │ SSH to recorded DHCP address
-        ▼
-lab-proxmox-01 / lab-bastion
-        │ ProxyJump, forwarding only
-        ▼
-internal managed Linux host:22
+ssh firewall
+ssh lab-fw-01
 ```
 
-OPNsense SSH is break-glass/recovery only. Proxmox is the supported bootstrap and recovery bastion even in virtual-only mode, with no physical `vmbr1` member and no direct TRUSTED/MGMT access.
-
-`boetticher ssh-config` writes `~/.ssh/config.d/boetticher.conf` by default. It creates the parent directory, writes atomically with mode `0600`, refuses overwrite unless `--force`, supports `--output -`, and never edits `~/.ssh/config` unless `--install-include` is explicitly requested. The output contains the model revision and generation timestamp but no secrets or private keys.
-
-Internal entries use fixed IP `HostName`, canonical FQDN `HostKeyAlias`, `ProxyJump lab-bastion`, the modelled admin user, and an optional operator-selected `IdentityFile` with `IdentitiesOnly yes`. Thus `ssh dns01`, `ssh lab-dns-01`, and `ssh lab-dns-01.lab.home.arpa` share one canonical host-key identity even when internal DNS is unavailable.
-
-The bastion destination list is generated from `SSHManaged`/`JumpAllowed` components. It is not a general SOCKS proxy. Use `boetticher ssh-config --check`, `boetticher doctor`, and optionally `boetticher verify --ssh-journey` to distinguish configuration correctness from a real authenticated journey.
+The bastion has no useful shell, no TTY/X11/agent forwarding, and a generated
+TCP/22 destination allow-list. Host-key validation remains enabled.

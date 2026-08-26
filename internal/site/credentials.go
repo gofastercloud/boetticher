@@ -8,19 +8,13 @@ import (
 )
 
 const (
-	ProxmoxSecretsPath  = "secrets/proxmox.sops.yaml"
-	OPNsenseSecretsPath = "secrets/opnsense.sops.yaml"
+	ProxmoxSecretsPath = "secrets/proxmox.sops.yaml"
 )
 
 type ProxmoxCredentials struct {
 	APIUser     string `json:"api_user"`
 	TokenID     string `json:"token_id"`
 	TokenSecret string `json:"token_secret"`
-}
-
-type OPNsenseCredentials struct {
-	APIKey    string `json:"api_key"`
-	APISecret string `json:"api_secret"`
 }
 
 func StoreProxmoxCredentials(dir string, s model.Site, credentials ProxmoxCredentials) error {
@@ -40,25 +34,6 @@ func LoadProxmoxCredentials(dir string, s model.Site, ageIdentityPath string) (P
 		TokenID:     stringValue(values, "token_id"),
 		TokenSecret: stringValue(values, "token_secret"),
 	}, validateProxmoxCredentials(values)
-}
-
-func StoreOPNsenseCredentials(dir string, s model.Site, credentials OPNsenseCredentials) error {
-	if credentials.APIKey == "" || credentials.APISecret == "" {
-		return fmt.Errorf("OPNsense credentials are incomplete")
-	}
-	return StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, OPNsenseSecretsPath, credentials)
-}
-
-func LoadOPNsenseCredentials(dir string, s model.Site, ageIdentityPath string) (OPNsenseCredentials, error) {
-	values, err := LoadEncryptedDocument(dir, ageIdentityPath, OPNsenseSecretsPath)
-	if err != nil {
-		return OPNsenseCredentials{}, err
-	}
-	credentials := OPNsenseCredentials{APIKey: stringValue(values, "api_key"), APISecret: stringValue(values, "api_secret")}
-	if credentials.APIKey == "" || credentials.APISecret == "" {
-		return OPNsenseCredentials{}, fmt.Errorf("encrypted OPNsense credentials are incomplete")
-	}
-	return credentials, nil
 }
 
 func stringValue(values map[string]any, key string) string {

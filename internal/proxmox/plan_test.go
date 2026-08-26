@@ -27,6 +27,47 @@ func TestFoundationPlanIsDeterministic(t *testing.T) {
 	if len(first.Guests) != 5 || first.Guests[0].VMID != model.ProxmoxVMID {
 		t.Fatalf("unexpected foundation plan: %#v", first.Guests)
 	}
+	if first.GatewayImageURL != model.QualifiedGatewayImageURL || first.GatewaySHA512 != model.QualifiedGatewayImageSHA512 {
+		t.Fatalf("gateway image pin is incomplete: %#v", first)
+	}
+}
+
+func TestManagedFirewallUsesTaggedPerZoneVNICs(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Guests) != 5 || plan.Guests[0].Kind != KindQEMU {
+		t.Fatalf("unexpected managed guest plan: %#v", plan.Guests)
+	}
+	want := []struct {
+		name   string
+		bridge string
+		vlan   int
+	}{
+		{"wan0", "vmbr0", 0}, {"trusted0", "vmbr1", 10}, {"servers0", "vmbr1", 20}, {"sandbox0", "vmbr1", 50}, {"mgmt0", "vmbr1", 99},
+	}
+	for index, expected := range want {
+		nic := plan.Guests[0].NICs[index]
+		if nic.Name != expected.name || nic.Bridge != expected.bridge || nic.VLAN != expected.vlan || nic.MAC == "" {
+			t.Fatalf("gateway NIC %d = %#v, want %#v", index, nic, expected)
+		}
+	}
+}
+
+func TestExternalGatewayOmitsFirewallGuest(t *testing.T) {
+	plan, err := PlanFromSite(model.NewSite("installation", "age1example", model.GatewayModeExternal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Guests) != 4 {
+		t.Fatalf("external gateway plan has %d guests, want 4", len(plan.Guests))
+	}
+	for _, guest := range plan.Guests {
+		if guest.VMID == model.ProxmoxVMID {
+			t.Fatal("external gateway plan retained VMID 100")
+		}
+	}
 }
 
 func TestGatewayForFoundationZones(t *testing.T) {
@@ -71,6 +112,9 @@ func TestPlatformGuestPlanCarriesTagsForBackupAndVisibility(t *testing.T) {
 		if !hasTag(guest.Tags, model.TagBoetticher) || !hasTag(guest.Tags, model.TagManaged) || !hasTag(guest.Tags, model.TagBackup) {
 			t.Fatalf("platform guest %s has incomplete tags: %#v", guest.Name, guest.Tags)
 		}
+		if guest.Owner != "" && (guest.Artifact.SHA256 == "" || len(guest.Persistent) == 0) {
+			t.Fatalf("module guest lacks artifact or persistent-state contract: %#v", guest)
+		}
 	}
 }
 
@@ -95,7 +139,7 @@ func TestExistingGuestTagsAreReconciled(t *testing.T) {
 		if err := r.ParseForm(); err != nil {
 			t.Errorf("parse tag update form: %v", err)
 		}
-		if got := canonicalTags(r.Form.Get("tags")); got != canonicalTags("backup;boetticher;firewall;infra;managed;network;platform") {
+		if got := canonicalTags(r.Form.Get("tags")); got != canonicalTags("backup;boetticher;firewall;gateway;infra;managed;network;platform") {
 			t.Errorf("tags = %q", got)
 		}
 		return response([]byte(`{"data":null}`))
