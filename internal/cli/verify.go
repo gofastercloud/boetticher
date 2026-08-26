@@ -183,8 +183,8 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		{"Proxmox desired state", filepath.Join(*siteDir, "generated", "proxmox", "desired-state.json"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "proxmox", "desired-state.json"), revision)
 		}},
-		{"Zabbix provisioning", filepath.Join(*siteDir, "generated", "zabbix", "provisioning.json"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "zabbix", "provisioning.json"), revision)
+		{"Monitoring policy", filepath.Join(*siteDir, "generated", "monitoring", "desired-state.json"), func() error {
+			return checkRevisionFile(filepath.Join(*siteDir, "generated", "monitoring", "desired-state.json"), revision)
 		}},
 		{"Ansible inventory", filepath.Join(*siteDir, "generated", "ansible", "inventory.ini"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "ansible", "inventory.ini"), revision)

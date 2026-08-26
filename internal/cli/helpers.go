@@ -125,7 +125,7 @@ func writeModelProjections(dir string, s model.Site) error {
 	if err != nil {
 		return err
 	}
-	if err := writeProjection(filepath.Join(dir, "generated", "zabbix", "provisioning.json"), zabbixPlan); err != nil {
+	if err := writeProjection(filepath.Join(dir, "generated", "monitoring", "desired-state.json"), zabbixPlan); err != nil {
 		return err
 	}
 	if err := writeCurrentStatus(dir, revision); err != nil {
