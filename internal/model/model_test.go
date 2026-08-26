@@ -86,6 +86,16 @@ func TestExternalGatewayOmitsManagedFirewall(t *testing.T) {
 	}
 }
 
+func TestOldSiteSchemaRequiresFreshV02Initialization(t *testing.T) {
+	site := NewDefaultSite("installation", "age1example")
+	site.APIVersion = "boetticher/v1"
+	site.SchemaVersion = 1
+	err := site.Validate()
+	if err == nil || !strings.Contains(err.Error(), "recreate the site with boetticher init") {
+		t.Fatalf("old schema did not produce the recreation guidance: %v", err)
+	}
+}
+
 func TestUserManagedVMIDMustUseReservedRange(t *testing.T) {
 	site := NewDefaultSite("installation", "age1example")
 	site.Components = append(site.Components, Component{Name: "user-vm", VMID: 450, Hostname: "user-vm", Zone: "SANDBOX", Address: "10.10.50.50", Role: "user workload"})

@@ -246,7 +246,7 @@ func (s Site) Normalize() Site {
 
 func (s Site) Validate() error {
 	if s.APIVersion != "boetticher/v2" || s.SchemaVersion != SchemaVersion {
-		return fmt.Errorf("unsupported site schema %q/%d", s.APIVersion, s.SchemaVersion)
+		return fmt.Errorf("site schema %q/%d is not supported by boetticher v0.2; recreate the site with boetticher init", s.APIVersion, s.SchemaVersion)
 	}
 	if s.PlatformVersion == "" {
 		return errors.New("platform_version is required")
