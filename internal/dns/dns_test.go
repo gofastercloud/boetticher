@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"gopkg.in/yaml.v3"
 )
 
 func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
@@ -92,14 +93,23 @@ func TestRenderBlockyConfigPinsAuthoritativeZonesWithoutPublicFallback(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(config)
-	for _, zone := range []string{"lab.home.arpa", "trusted.lab.home.arpa", "servers.lab.home.arpa", "10.10.10.in-addr.arpa"} {
-		if !strings.Contains(text, zone) {
-			t.Fatalf("Blocky config omitted authoritative zone %q: %s", zone, text)
+	var decoded BlockyConfig
+	if err := yaml.Unmarshal(config, &decoded); err != nil {
+		t.Fatalf("Blocky config is not valid YAML: %v", err)
+	}
+	if len(decoded.Upstreams.Groups["default"]) != 2 || decoded.Upstreams.Groups["default"][0] != "https://cloudflare-dns.com/dns-query" {
+		t.Fatalf("unexpected Blocky upstream group: %#v", decoded.Upstreams)
+	}
+	if decoded.Conditional.FallbackUpstream {
+		t.Fatal("Blocky authoritative mappings allow public fallback")
+	}
+	for _, zone := range []string{"lab.home.arpa", "trusted.lab.home.arpa", "servers.lab.home.arpa", "sandbox.lab.home.arpa", "mgmt.lab.home.arpa", "10.10.10.in-addr.arpa"} {
+		if got := decoded.Conditional.Mapping[zone]; len(got) != 1 || got[0] != "127.0.0.1:5353" {
+			t.Fatalf("unexpected PowerDNS mapping for %q: %#v", zone, got)
 		}
 	}
-	if !strings.Contains(text, "127.0.0.1:5353") || !strings.Contains(text, "cloudflare-dns.com/dns-query") {
-		t.Fatalf("Blocky config omitted authoritative target or encrypted upstream: %s", text)
+	if decoded.Ports.DNS != 53 || decoded.Caching.MinTime != "5m" {
+		t.Fatalf("unexpected Blocky ports/cache config: %#v", decoded)
 	}
 }
 

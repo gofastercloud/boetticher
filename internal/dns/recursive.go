@@ -12,20 +12,20 @@ import (
 // zones are mapped explicitly so a negative answer cannot fall through to a
 // public upstream.
 type BlockyConfig struct {
-	Upstream    BlockyUpstream    `yaml:"upstream"`
+	Upstreams   BlockyUpstreams   `yaml:"upstreams"`
 	Conditional BlockyConditional `yaml:"conditional"`
 	Blocking    BlockyBlocking    `yaml:"blocking"`
 	Ports       BlockyPorts       `yaml:"ports"`
 	Caching     BlockyCaching     `yaml:"caching"`
-	ConnectIP   string            `yaml:"connectIP,omitempty"`
 }
 
-type BlockyUpstream struct {
-	Defaults []string `yaml:"default"`
+type BlockyUpstreams struct {
+	Groups map[string][]string `yaml:"groups"`
 }
 
 type BlockyConditional struct {
-	Mapping map[string][]string `yaml:"mapping"`
+	FallbackUpstream bool                `yaml:"fallbackUpstream"`
+	Mapping          map[string][]string `yaml:"mapping"`
 }
 
 type BlockyBlocking struct {
@@ -63,8 +63,8 @@ func RenderBlockyConfig(plan Plan) ([]byte, error) {
 		mapping[zone] = []string{plan.AuthoritativeForwardTarget}
 	}
 	config, err := yaml.Marshal(BlockyConfig{
-		Upstream:    BlockyUpstream{Defaults: append([]string(nil), plan.RecursiveUpstreams...)},
-		Conditional: BlockyConditional{Mapping: mapping},
+		Upstreams:   BlockyUpstreams{Groups: map[string][]string{"default": append([]string(nil), plan.RecursiveUpstreams...)}},
+		Conditional: BlockyConditional{FallbackUpstream: false, Mapping: mapping},
 		Ports:       BlockyPorts{DNS: 53},
 		Caching:     BlockyCaching{MinTime: "5m"},
 	})
