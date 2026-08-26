@@ -30,15 +30,16 @@ type Definition struct {
 // artifact definition. Build timestamps and tool versions are evidence only;
 // they never become desired-state inputs.
 type Evidence struct {
-	Artifact           model.Artifact `json:"artifact"`
-	ArtifactPath       string         `json:"artifact_path,omitempty"`
-	ContentSHA256      string         `json:"content_sha256"`
-	SizeBytes          int64          `json:"size_bytes"`
-	PackageManifestSHA string         `json:"package_manifest_sha256,omitempty"`
-	SBOMSHA256         string         `json:"sbom_sha256,omitempty"`
-	TrivyReportSHA256  string         `json:"trivy_report_sha256,omitempty"`
-	DefinitionSHA256   string         `json:"definition_sha256"`
-	Qualified          bool           `json:"qualified"`
+	Artifact                   model.Artifact `json:"artifact"`
+	ArtifactPath               string         `json:"artifact_path,omitempty"`
+	ContentSHA256              string         `json:"content_sha256"`
+	SizeBytes                  int64          `json:"size_bytes"`
+	PackageManifestSHA         string         `json:"package_manifest_sha256,omitempty"`
+	SBOMSHA256                 string         `json:"sbom_sha256,omitempty"`
+	TrivyReportSHA256          string         `json:"trivy_report_sha256,omitempty"`
+	QualificationPolicyVersion string         `json:"qualification_policy_version,omitempty"`
+	DefinitionSHA256           string         `json:"definition_sha256"`
+	Qualified                  bool           `json:"qualified"`
 }
 
 type ScanSummary struct {
@@ -47,6 +48,8 @@ type ScanSummary struct {
 	UnfixedCritical int
 	High            int
 }
+
+const QualificationPolicyVersion = "boetticher-trivy-v1"
 
 // QualifyEvidence is the only operation allowed to mark artifact evidence
 // qualified. Hashing a file proves its bytes, but does not prove package,
@@ -61,6 +64,7 @@ func QualifyEvidence(evidence Evidence, scan ScanSummary) (Evidence, error) {
 	if scan.FixableCritical > 0 {
 		return Evidence{}, fmt.Errorf("qualification failed: Trivy found %d fixable CRITICAL finding(s)", scan.FixableCritical)
 	}
+	evidence.QualificationPolicyVersion = QualificationPolicyVersion
 	evidence.Qualified = true
 	return evidence, nil
 }
@@ -130,6 +134,9 @@ func validateQualificationDigests(evidence Evidence) error {
 			return fmt.Errorf("%s must be a SHA-256 digest", name)
 		}
 	}
+	if evidence.QualificationPolicyVersion != "" && evidence.QualificationPolicyVersion != QualificationPolicyVersion {
+		return fmt.Errorf("unsupported qualification policy %q", evidence.QualificationPolicyVersion)
+	}
 	return nil
 }
 
@@ -143,6 +150,7 @@ const (
 
 func Definitions() []Definition {
 	return []Definition{
+		{Name: "base", Version: BaseVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion},
 		{Name: "dns", Provider: "blocky", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion},
 		{Name: "dns", Provider: "adguard", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion},
 		{Name: "logging", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion},
