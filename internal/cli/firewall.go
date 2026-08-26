@@ -66,7 +66,7 @@ func runFirewall(args []string, out interface{ Write([]byte) (int, error) }) err
 }
 
 func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
-	status := map[string]any{"mode": plan.Mode, "engine": plan.Engine, "model_revision": plan.ModelRevision, "ipv4_only": plan.IPv4Only, "forwarding_after_convergence": plan.Forwarding, "interfaces": plan.Interfaces}
+	status := map[string]any{"mode": plan.Mode, "engine": plan.Engine, "model_revision": plan.ModelRevision, "ipv4_only": plan.IPv4Only, "forwarding_after_policy": plan.Forwarding, "interfaces": plan.Interfaces}
 	if live && s.Gateway.Mode == model.GatewayModeManaged {
 		data, err := gatewayCommand(siteDir, s, "sudo", "sh", "-c", remoteShellQuote(gatewayStatusScript))
 		if err != nil {
@@ -98,7 +98,7 @@ func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, json
 		}
 		fmt.Fprintf(out, "  Forwarding  %s\n  Ruleset     queried\n", forwarding)
 	} else {
-		fmt.Fprintf(out, "  Forwarding  enabled after convergence\n  Ruleset     generated\n")
+		fmt.Fprintf(out, "  Forwarding  enabled after policy deployment\n  Ruleset     generated\n")
 	}
 	fmt.Fprintln(out, "Interfaces")
 	for _, iface := range plan.Interfaces {

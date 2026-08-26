@@ -44,10 +44,8 @@ func Run(args []string, out, errOut interface{ Write([]byte) (int, error) }) err
 		return runDoctor(args[1:], out)
 	case "bootstrap":
 		return runBootstrap(args[1:], out)
-	case "provision":
-		return runProvision(args[1:], out)
-	case "converge":
-		return runConverge(args[1:], out)
+	case "deploy":
+		return runDeploy(args[1:], out)
 	case "upgrade":
 		return runIntegrationGate(args[0], args[1:], out)
 	}

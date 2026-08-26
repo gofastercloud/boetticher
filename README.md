@@ -80,8 +80,7 @@ boetticher init
 boetticher bootstrap-endpoint set 192.0.2.10
 boetticher preflight
 boetticher bootstrap --recovery-confirmed
-boetticher provision
-boetticher converge
+boetticher deploy
 boetticher ssh-config --install-include
 boetticher verify
 boetticher access

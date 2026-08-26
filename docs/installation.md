@@ -45,11 +45,10 @@ External mode does not create VM 100. It requires a distinct physical vmbr1
 trunk and publishes `generated/network/external-firewall-contract.md`. The
 external appliance, DHCP, and its own recovery remain operator-owned.
 
-## Provision and converge
+## Deploy the platform
 
 ```text
-boetticher provision --site my-boetticher
-boetticher converge --site my-boetticher
+boetticher deploy --site my-boetticher
 boetticher verify --site my-boetticher
 boetticher doctor --site my-boetticher
 ```

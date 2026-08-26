@@ -11,7 +11,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
-func TestPublicDocumentationMatchesV02Model(t *testing.T) {
+func TestPublicDocumentationMatchesV03Model(t *testing.T) {
 	root := repositoryRoot(t)
 	read := func(path string) string {
 		data, err := os.ReadFile(filepath.Join(root, path))
@@ -54,7 +54,7 @@ func TestPublicDocumentationMatchesV02Model(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"boetticher converge [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--zabbix-url URL] [--insecure] [--ansible-playbook PATH] [--dry-run]",
+		"boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--zabbix-url URL] [--insecure] [--ansible-playbook PATH] [--debian-template TEMPLATE] [--dry-run]",
 		"boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]",
 	} {
 		if !strings.Contains(commands, want) {

@@ -21,15 +21,16 @@ import (
 	"github.com/gofastercloud/boetticher/internal/zabbix"
 )
 
-func runConverge(args []string, out interface{ Write([]byte) (int, error) }) error {
-	fs := flag.NewFlagSet("converge", flag.ContinueOnError)
+func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error {
+	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
 	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
 	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
 	zabbixURL := fs.String("zabbix-url", "https://monitor.lab.home.arpa", "Zabbix API base URL")
 	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS")
-	playbook := fs.String("ansible-playbook", "ansible/site.yml", "guest convergence playbook")
+	playbook := fs.String("ansible-playbook", "ansible/site.yml", "guest deployment playbook")
+	debianTemplate := fs.String("debian-template", "local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst", "Proxmox Debian LXC template")
 	dryRun := fs.Bool("dry-run", false, "render and validate policy without connecting")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -46,7 +47,7 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 		return err
 	}
 	if *dryRun {
-		fmt.Fprintf(out, "Gateway convergence plan: PASS model %s\n", firewallPlan.ModelRevision)
+		fmt.Fprintf(out, "Deployment plan: PASS model %s\n", firewallPlan.ModelRevision)
 		fmt.Fprintf(out, "  Mode: %s\n  Engine: %s\n  DHCP subnets: %d\n  Policy rules: %d\n", firewallPlan.Mode, firewallPlan.Engine, len(firewallPlan.DHCP), len(firewallPlan.Rules))
 		if s.Gateway.Mode == model.GatewayModeManaged {
 			ruleset, renderErr := firewall.RenderNFT(firewallPlan)
@@ -73,7 +74,7 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 	}
 	proxmoxClient, _, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
 	if err != nil {
-		return fmt.Errorf("load Proxmox client for platform convergence: %w", err)
+		return fmt.Errorf("load Proxmox client for platform deployment: %w", err)
 	}
 	if backupPlan.StorageTarget == backup.DedicatedStorageID {
 		if err := proxmoxClient.EnsureLVMThinStorage(context.Background(), storage.GuestStorageID, storage.VolumeGroup, storage.ThinPool); err != nil {
@@ -84,6 +85,13 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 		}
 	} else if err := proxmoxClient.EnsureDirectoryStorageContent(context.Background(), "local", "/var/lib/vz", []string{"backup", "images", "rootdir"}); err != nil {
 		return fmt.Errorf("ensure single-disk Proxmox storage: %w", err)
+	}
+	proxmoxPlan, err := proxmox.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
+	if err := proxmox.Provision(context.Background(), proxmoxClient, proxmoxPlan, *debianTemplate); err != nil {
+		return fmt.Errorf("deploy platform guests: %w", err)
 	}
 	variables, err := ansible.Variables(s)
 	if err != nil {
@@ -196,7 +204,7 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 	if err := rebuildPortal(*siteDir, s); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Gateway convergence: PASS mode=%s model=%s (storage %s)\n", s.Gateway.Mode, firewallPlan.ModelRevision, storagePlan.GuestStorage)
+	fmt.Fprintf(out, "Deployment: PASS mode=%s model=%s (storage %s)\n", s.Gateway.Mode, firewallPlan.ModelRevision, storagePlan.GuestStorage)
 	return nil
 }
 

@@ -66,7 +66,7 @@ func RenderBastionPolicy(s model.Site) (string, error) {
 	}
 	sort.Strings(destinations)
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Managed by boetticher.\n# boetticher-model-revision: %s\n# Install through the authenticated Proxmox convergence path.\n\n", revision)
+	fmt.Fprintf(&b, "# Managed by boetticher.\n# boetticher-model-revision: %s\n# Install through the authenticated Proxmox deployment path.\n\n", revision)
 	b.WriteString("Match User lab-jump\n")
 	b.WriteString("    PermitTTY no\n")
 	b.WriteString("    X11Forwarding no\n")

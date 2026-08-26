@@ -63,7 +63,7 @@ type Plan struct {
 	Mode          string       `json:"mode"`
 	Engine        string       `json:"engine"`
 	IPv4Only      bool         `json:"ipv4_only"`
-	Forwarding    bool         `json:"forwarding_after_convergence"`
+	Forwarding    bool         `json:"forwarding_after_policy"`
 	Interfaces    []Interface  `json:"interfaces"`
 	Rules         []PolicyRule `json:"rules"`
 	DHCP          []DHCPSubnet `json:"dhcp_subnets"`
