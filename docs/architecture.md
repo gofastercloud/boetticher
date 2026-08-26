@@ -55,7 +55,9 @@ a bridge.
 
 The gateway is deliberately small: Debian 13, nftables, Kea DHCPv4/D2,
 minimal SANDBOX DNS/NTP services, SSH, Chrony where needed, and Zabbix Agent 2.
-The qualified cloud image is `debian-13-genericcloud-amd64`.
+The qualified cloud image is the pinned Debian 13 GenericCloud amd64 input
+`debian-13-genericcloud-amd64-daily`; its SHA-512 is recorded in the model and
+verified before firewall image customization.
 IPv4 forwarding stays disabled until a validated ruleset is installed.
 
 ## External gateway

@@ -586,6 +586,94 @@ func EnsureFirewallVM(ctx context.Context, client *Client, plan Plan) error {
 	return errors.New("foundation plan has no firewall VM")
 }
 
+const builderOwnerTag = "boetticher-builder"
+
+// EnsureBuilderVM creates the transient Linux build environment from the
+// pinned Debian input. It is Core bootstrap infrastructure, not a module or a
+// user workload, and an existing object must prove that ownership before it is
+// touched.
+func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey string) error {
+	if client == nil {
+		return errors.New("Proxmox client is required")
+	}
+	var current map[string]any
+	err := client.QEMUConfig(ctx, plan.Node, model.BuilderVMID, &current)
+	if err == nil {
+		if name, _ := current["name"].(string); name != "lab-builder-01" {
+			return fmt.Errorf("HOLD: VMID %d is not the expected temporary builder", model.BuilderVMID)
+		}
+		if !strings.Contains(fmt.Sprint(current["tags"]), builderOwnerTag) {
+			return fmt.Errorf("HOLD: VMID %d lacks canonical builder ownership proof %q", model.BuilderVMID, builderOwnerTag)
+		}
+		return nil
+	}
+	if !IsNotFound(err) {
+		return fmt.Errorf("inspect temporary builder: %w", err)
+	}
+	image, err := client.EnsureCloudImage(ctx, plan.Node, "local", plan.GatewayImage+".qcow2", plan.GatewayImageURL, plan.GatewaySHA512)
+	if err != nil {
+		return fmt.Errorf("prepare pinned builder input: %w", err)
+	}
+	params := url.Values{
+		"name":      {"lab-builder-01"},
+		"memory":    {"4096"},
+		"cores":     {"4"},
+		"ostype":    {"l26"},
+		"onboot":    {"0"},
+		"agent":     {"1"},
+		"tags":      {strings.Join([]string{model.TagBoetticher, model.TagManaged, model.TagPlatform, builderOwnerTag}, ";")},
+		"net0":      {"virtio,bridge=vmbr0,firewall=1"},
+		"ipconfig0": {"ip=dhcp"},
+		"ciuser":    {model.DefaultAdminSSHUser},
+	}
+	if publicKey != "" {
+		params.Set("sshkeys", publicKey)
+	}
+	if err := client.CreateVM(ctx, plan.Node, model.BuilderVMID, params); err != nil {
+		return fmt.Errorf("create temporary builder: %w", err)
+	}
+	upid, err := client.ImportDisk(ctx, plan.Node, model.BuilderVMID, image, plan.Storage, "qcow2")
+	if err != nil {
+		return fmt.Errorf("import builder input: %w", err)
+	}
+	if err := client.WaitTask(ctx, plan.Node, upid); err != nil {
+		return fmt.Errorf("wait for builder input: %w", err)
+	}
+	var imported map[string]any
+	if err := client.QEMUConfig(ctx, plan.Node, model.BuilderVMID, &imported); err != nil {
+		return fmt.Errorf("inspect builder disk: %w", err)
+	}
+	unused, ok := imported["unused0"].(string)
+	if !ok || unused == "" {
+		return errors.New("builder disk import completed without an unused disk reference")
+	}
+	if err := client.SetVMConfig(ctx, plan.Node, model.BuilderVMID, url.Values{"scsi0": {unused}, "delete": {"unused0"}}); err != nil {
+		return fmt.Errorf("attach builder disk: %w", err)
+	}
+	return nil
+}
+
+func DestroyBuilderVM(ctx context.Context, client *Client, node string) error {
+	if client == nil || node == "" {
+		return errors.New("Proxmox client and node are required")
+	}
+	var current map[string]any
+	err := client.QEMUConfig(ctx, node, model.BuilderVMID, &current)
+	if IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect temporary builder before destruction: %w", err)
+	}
+	if name, _ := current["name"].(string); name != "lab-builder-01" || !strings.Contains(fmt.Sprint(current["tags"]), builderOwnerTag) {
+		return fmt.Errorf("HOLD: refusing to destroy unproven VMID %d builder ownership", model.BuilderVMID)
+	}
+	if err := client.Delete(ctx, fmt.Sprintf("/nodes/%s/qemu/%d", node, model.BuilderVMID)); err != nil {
+		return fmt.Errorf("destroy temporary builder: %w", err)
+	}
+	return nil
+}
+
 func EnsureVirtualBridge(ctx context.Context, client *Client, node string) error {
 	if client == nil {
 		return errors.New("Proxmox client is required")

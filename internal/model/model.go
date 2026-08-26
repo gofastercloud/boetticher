@@ -17,9 +17,9 @@ const (
 	APIVersion                  = "boetticher/v3"
 	SchemaVersion               = 3
 	PlatformVersion             = "0.3.1"
-	QualifiedGatewayImage       = "debian-13-genericcloud-amd64"
-	QualifiedGatewayImageURL    = "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
-	QualifiedGatewayImageSHA512 = "77429b411b39b43f914dc9d14bf34aa315489a1a12b5429f72e5b483bdda23c65698d33443c85d3f3ad7c3a0828ae60845406d6b99646342554d17abae29c2a3"
+	QualifiedGatewayImage       = "debian-13-genericcloud-amd64-daily"
+	QualifiedGatewayImageURL    = "https://cloudfront.debian.net/cdimage/cloud/trixie/daily/latest/debian-13-genericcloud-amd64-daily.qcow2"
+	QualifiedGatewayImageSHA512 = "2bf12156183f3f17d8219f7714e85c05c5d0d270f365e6ce7feba5e25c078520a29dd5ee243fcb95ec5e9aac0cbcc9c9bfaa9450f509826e92a9a8280876cd08"
 	ZabbixSeries                = "7.0 LTS"
 	AuthoritativeDNS            = "PowerDNS Authoritative"
 	AuthoritativeDNSVersion     = "4.9.17"
