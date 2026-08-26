@@ -11,6 +11,7 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/zabbix"
 )
 
 func Inventory(s model.Site) (string, error) {
@@ -81,17 +82,22 @@ func Variables(s model.Site) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	zabbixPlan, err := zabbix.PlanFromSite(s)
+	if err != nil {
+		return nil, err
+	}
 	value := struct {
-		ModelRevision           string   `json:"model_revision"`
-		Domain                  string   `json:"domain"`
-		IPv4Only                bool     `json:"ipv4_only"`
-		AuthoritativeDNS        string   `json:"authoritative_dns"`
-		AuthoritativeDNSVersion string   `json:"authoritative_dns_version"`
-		AuthoritativeDNSPort    string   `json:"authoritative_dns_port"`
-		DynamicZones            []string `json:"dynamic_zones"`
-		AdGuardForwardZones     []string `json:"adguard_forward_zones"`
-		DNSPlan                 dns.Plan `json:"dns_plan"`
-	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan}
+		ModelRevision           string      `json:"model_revision"`
+		Domain                  string      `json:"domain"`
+		IPv4Only                bool        `json:"ipv4_only"`
+		AuthoritativeDNS        string      `json:"authoritative_dns"`
+		AuthoritativeDNSVersion string      `json:"authoritative_dns_version"`
+		AuthoritativeDNSPort    string      `json:"authoritative_dns_port"`
+		DynamicZones            []string    `json:"dynamic_zones"`
+		AdGuardForwardZones     []string    `json:"adguard_forward_zones"`
+		DNSPlan                 dns.Plan    `json:"dns_plan"`
+		ZabbixPlan              zabbix.Plan `json:"zabbix_plan"`
+	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, zabbixPlan}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err
