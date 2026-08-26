@@ -34,9 +34,9 @@ func Render(s model.Site, generatedAt time.Time) (string, error) {
 	writeHost(&b, []string{"lab-proxmox-01", "proxmox"}, endpoint, "labadmin", "lab-proxmox-01", identity, false, false)
 	writeHost(&b, []string{"lab-bastion"}, endpoint, "lab-jump", "lab-proxmox-01", identity, false, true)
 
-	modules := append([]model.Module(nil), s.Modules...)
-	sort.Slice(modules, func(i, j int) bool { return modules[i].Name < modules[j].Name })
-	for _, m := range modules {
+	components := append([]model.Component(nil), s.Components...)
+	sort.Slice(components, func(i, j int) bool { return components[i].Name < components[j].Name })
+	for _, m := range components {
 		if !m.ProductOwned || !m.SSHManaged || m.Name == "lab-proxmox-01" {
 			continue
 		}
@@ -55,7 +55,7 @@ func RenderBastionPolicy(s model.Site) (string, error) {
 		return "", err
 	}
 	destinations := make([]string, 0)
-	for _, m := range s.Modules {
+	for _, m := range s.Components {
 		if m.ProductOwned && m.SSHManaged && m.JumpAllowed {
 			port := m.SSHPort
 			if port == 0 {

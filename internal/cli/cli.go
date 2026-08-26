@@ -251,7 +251,7 @@ func runAccess(args []string, out interface{ Write([]byte) (int, error) }) error
 		fmt.Fprintf(out, "  Proxmox       ssh proxmox\n                https://%s:8006\n", s.BootstrapAddress)
 	}
 	fmt.Fprintln(out, "Internal SSH")
-	for _, m := range sortedSSHModules(s) {
+	for _, m := range sortedSSHComponents(s) {
 		alias := m.Name
 		if len(m.DNSAliases) > 0 {
 			alias = m.DNSAliases[0]
@@ -259,7 +259,7 @@ func runAccess(args []string, out interface{ Write([]byte) (int, error) }) error
 		fmt.Fprintf(out, "  %-13s ssh %s\n", m.Role, alias)
 	}
 	fmt.Fprintln(out, "Web")
-	for _, m := range s.Modules {
+	for _, m := range s.Components {
 		if m.URL != "" {
 			fmt.Fprintf(out, "  %-13s %s\n", m.Role, m.URL)
 		}
@@ -1361,7 +1361,7 @@ func runSSHJourney(configPath string) error {
 
 func jumpDestinations(s model.Site) []string {
 	result := []string{}
-	for _, m := range s.Modules {
+	for _, m := range s.Components {
 		if m.ProductOwned && m.SSHManaged && m.JumpAllowed {
 			port := m.SSHPort
 			if port == 0 {
@@ -1477,9 +1477,9 @@ func writeModelProjections(dir string, s model.Site) error {
 		return err
 	}
 	if err := writeProjection(filepath.Join(dir, "generated", "inventory.json"), struct {
-		ModelRevision string         `json:"model_revision"`
-		Modules       []model.Module `json:"modules"`
-	}{revision, normalized.Modules}); err != nil {
+		ModelRevision string            `json:"model_revision"`
+		Components    []model.Component `json:"components"`
+	}{revision, normalized.Components}); err != nil {
 		return err
 	}
 	if err := writeProjection(filepath.Join(dir, "generated", "opnsense", "desired-policy.json"), opnsensePlan); err != nil {
@@ -1654,15 +1654,15 @@ func writeCurrentStatus(dir, revision string) error {
 	}{revision, status, time.Now().UTC().Format(time.RFC3339)})
 }
 
-func sortedSSHModules(s model.Site) []model.Module {
-	modules := []model.Module{}
-	for _, m := range s.Modules {
+func sortedSSHComponents(s model.Site) []model.Component {
+	components := []model.Component{}
+	for _, m := range s.Components {
 		if m.SSHManaged {
-			modules = append(modules, m)
+			components = append(components, m)
 		}
 	}
-	sort.Slice(modules, func(i, j int) bool { return modules[i].Name < modules[j].Name })
-	return modules
+	sort.Slice(components, func(i, j int) bool { return components[i].Name < components[j].Name })
+	return components
 }
 
 func toolVersion(tool string) string {

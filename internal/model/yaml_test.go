@@ -11,7 +11,7 @@ platform_version: 0.1.0
 schema_version: 1
 storage_profile: single-disk
 tested_versions:
-  opnsense: 26.7.0
+  opnsense: 26.7.2_2
   zabbix: "7.0 LTS"
 network:
   domain: lab.home.arpa
@@ -27,7 +27,7 @@ secret_metadata:
   installation_id: installation
   age_recipient: age1example
 pki: {}
-modules:
+components:
   - name: host
     hostname: host
     zone: MGMT
@@ -43,7 +43,7 @@ modules:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if site.Network.Zones[0].VLAN != 99 || site.Modules[0].Name != "host" {
+	if site.Network.Zones[0].VLAN != 99 || site.Components[0].Name != "host" {
 		t.Fatalf("unexpected parsed site: %+v", site)
 	}
 }

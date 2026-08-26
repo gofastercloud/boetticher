@@ -122,7 +122,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 func staticRecords(s model.Site) ([]StaticRecord, error) {
 	seen := map[string]bool{}
 	result := make([]StaticRecord, 0)
-	for _, module := range s.PlatformModules() {
+	for _, module := range s.PlatformComponents() {
 		name := strings.ToLower(module.Hostname + "." + s.Network.Domain)
 		if seen[name] {
 			return nil, fmt.Errorf("duplicate static DNS name %s", name)

@@ -5,12 +5,12 @@ import "github.com/gofastercloud/boetticher/internal/model"
 const PlatformHostGroup = "boetticher/platform"
 
 type Plan struct {
-	ModelRevision string         `json:"model_revision"`
-	Target        string         `json:"target"`
-	ManagedBy     string         `json:"managed_by"`
-	HostGroup     string         `json:"host_group"`
-	PlatformOnly  bool           `json:"platform_only"`
-	Modules       []model.Module `json:"modules"`
+	ModelRevision string            `json:"model_revision"`
+	Target        string            `json:"target"`
+	ManagedBy     string            `json:"managed_by"`
+	HostGroup     string            `json:"host_group"`
+	PlatformOnly  bool              `json:"platform_only"`
+	Components    []model.Component `json:"components"`
 }
 
 func PlanFromSite(s model.Site) (Plan, error) {
@@ -27,6 +27,6 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		ManagedBy:     "boetticher",
 		HostGroup:     PlatformHostGroup,
 		PlatformOnly:  true,
-		Modules:       s.PlatformModules(),
+		Components:    s.PlatformComponents(),
 	}, nil
 }
