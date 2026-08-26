@@ -68,8 +68,7 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 
 func TestRecursiveProviderSelectionIsTypedAndProviderNeutral(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
-	site.ModuleConfig = map[string]model.ModuleConfig{}
-	site.ModuleConfig["dns"] = model.ModuleConfig{Provider: string(model.DNSProviderAdGuard)}
+	site.ModuleConfig = map[string]model.ModuleConfig{"dns": {Provider: string(model.DNSProviderAdGuard)}}
 	plan, err := PlanFromSite(site)
 	if err != nil {
 		t.Fatal(err)

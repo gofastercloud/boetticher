@@ -211,11 +211,10 @@ func runModuleChange(args []string, out interface{ Write([]byte) (int, error) },
 	if *purge && (!*confirm || enable) {
 		return errors.New("--purge requires --confirm and is valid only when disabling a module")
 	}
-	if config.Modules == nil {
-		config.Modules = map[string]model.ModuleConfig{}
-	}
 	value := enable
-	config.Modules[name] = model.ModuleConfig{Enabled: &value}
+	if err := config.Modules.Set(name, model.ModuleConfig{Enabled: &value}); err != nil {
+		return err
+	}
 	resolved, _, err := modules.Compose(config)
 	if err != nil {
 		return err

@@ -97,7 +97,7 @@ func TestParseSiteConfigAppliesV3Defaults(t *testing.T) {
 
 func TestDNSProviderIsTypedAndStrict(t *testing.T) {
 	config, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  dns:\n    provider: adguard\n"))
-	if err != nil || config.Modules["dns"].Provider != "adguard" {
+	if err != nil || config.Modules.DNS == nil || config.Modules.DNS.Provider != DNSProviderAdGuard {
 		t.Fatalf("adguard provider was not accepted: %#v %v", config, err)
 	}
 	if _, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  monitoring:\n    provider: blocky\n")); err == nil || !strings.Contains(err.Error(), "modules.monitoring.provider") {

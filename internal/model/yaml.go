@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -49,13 +50,16 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 	if probe.APIVersion != APIVersion {
 		return SiteConfig{}, fmt.Errorf("site schema %q is not supported by boetticher v0.3; recreate the site with boetticher init", probe.APIVersion)
 	}
+	if err := validateModuleConfigShape(data); err != nil {
+		return SiteConfig{}, err
+	}
 	var config SiteConfig
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&config); err != nil {
 		return SiteConfig{}, fmt.Errorf("decode site.yml: %w", err)
 	}
-	for name, module := range config.Modules {
+	for name, module := range config.Modules.Map() {
 		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" {
 			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s is not a registered first-party module", name)
 		}
@@ -70,6 +74,63 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 		}
 	}
 	return config, nil
+}
+
+func validateModuleConfigShape(data []byte) error {
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil {
+		return fmt.Errorf("decode site.yml: %w", err)
+	}
+	if len(document.Content) == 0 {
+		return nil
+	}
+	root := document.Content[0]
+	modules := mappingValue(root, "modules")
+	if modules == nil {
+		return nil
+	}
+	if modules.Kind != yaml.MappingNode {
+		return errors.New("site.yml: modules expected a mapping")
+	}
+	for index := 0; index+1 < len(modules.Content); index += 2 {
+		name := modules.Content[index].Value
+		value := modules.Content[index+1]
+		allowed := map[string]bool{"enabled": true}
+		if name == "dns" {
+			allowed["provider"] = true
+		} else if name != "monitoring" && name != "firewall" && name != "logging" {
+			return fmt.Errorf("site.yml: modules.%s: unknown first-party module", name)
+		}
+		if value.Kind != yaml.MappingNode {
+			return fmt.Errorf("site.yml: modules.%s expected a mapping", name)
+		}
+		for fieldIndex := 0; fieldIndex+1 < len(value.Content); fieldIndex += 2 {
+			field := value.Content[fieldIndex].Value
+			fieldValue := value.Content[fieldIndex+1]
+			if !allowed[field] {
+				return fmt.Errorf("site.yml: modules.%s.%s: unknown field", name, field)
+			}
+			if field == "enabled" && fieldValue.Tag != "!!bool" && fieldValue.Tag != "!!null" {
+				return fmt.Errorf("site.yml: modules.%s.enabled: expected a boolean", name)
+			}
+			if field == "provider" && fieldValue.Tag != "!!str" && fieldValue.Tag != "!!null" {
+				return fmt.Errorf("site.yml: modules.dns.provider: expected one of: blocky, adguard")
+			}
+		}
+	}
+	return nil
+}
+
+func mappingValue(node *yaml.Node, key string) *yaml.Node {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
+	}
+	for index := 0; index+1 < len(node.Content); index += 2 {
+		if node.Content[index].Value == key {
+			return node.Content[index+1]
+		}
+	}
+	return nil
 }
 
 func RenderSiteConfig(config SiteConfig) ([]byte, error) {

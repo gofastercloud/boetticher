@@ -93,7 +93,7 @@ type TestedVersions struct {
 }
 
 type Gateway struct {
-	Mode string `yaml:"mode" json:"mode"`
+	Mode string `yaml:"mode" json:"mode" jsonschema:"enum=managed,enum=external"`
 }
 
 type Network struct {
@@ -108,7 +108,7 @@ type Network struct {
 type PhysicalNetwork struct {
 	Upstream PhysicalNIC `yaml:"upstream" json:"upstream"`
 	Trunk    PhysicalNIC `yaml:"trunk" json:"trunk"`
-	Mode     string      `yaml:"mode" json:"mode"`
+	Mode     string      `yaml:"mode" json:"mode" jsonschema:"enum=virtual-only,enum=physical-trunk"`
 }
 
 type PhysicalNIC struct {

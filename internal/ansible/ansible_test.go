@@ -145,8 +145,7 @@ func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
 
 func TestVariablesDoNotRenderBlockyForAdGuardSites(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
-	site.ModuleConfig = map[string]model.ModuleConfig{}
-	site.ModuleConfig["dns"] = model.ModuleConfig{Provider: string(model.DNSProviderAdGuard)}
+	site.ModuleConfig = map[string]model.ModuleConfig{"dns": {Provider: string(model.DNSProviderAdGuard)}}
 	variables, err := Variables(site)
 	if err != nil {
 		t.Fatal(err)
