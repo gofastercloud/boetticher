@@ -12,6 +12,8 @@ replacement:
 - DNS01 and DNS02: PowerDNS database and stable SSH host identity;
 - monitoring: PostgreSQL data and stable SSH host identity;
 - firewall: Kea lease state and stable SSH host identity.
+- logging: bounded remote journal volume with `backup: false`, plus stable SSH
+  host identity.
 
 `DEPLOYMENT-DERIVED` state is regenerated from the desired model: runtime
 configuration, DNS records, monitoring declarations, firewall policy,

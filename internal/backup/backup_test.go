@@ -12,7 +12,7 @@ func TestPlanOwnsOnlyPlatformGuests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.JobName != PlatformJobName || !plan.PlatformOnly || plan.UserWorkloadsManaged || plan.SelectionTag != model.TagBackup || len(plan.GuestVMIDs) != 5 || plan.VMIDList() != "100,110,111,120,130" {
+	if plan.JobName != PlatformJobName || !plan.PlatformOnly || plan.UserWorkloadsManaged || plan.SelectionTag != model.TagBackup || len(plan.GuestVMIDs) != 6 || plan.VMIDList() != "100,110,111,120,130,140" {
 		t.Fatalf("unexpected backup ownership plan: %#v", plan)
 	}
 	if plan.StorageTarget != "local" || plan.Schedule != "daily" || plan.Retention != "keep-last=7" {
@@ -31,7 +31,7 @@ func TestPlanFollowsComponentBackupIntent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.VMIDList() != "100,110,111,120" {
+	if plan.VMIDList() != "100,110,111,120,140" {
 		t.Fatalf("backup plan ignored component backup intent: %#v", plan)
 	}
 }
@@ -46,7 +46,7 @@ func TestUserGuestTagDoesNotEnterBackupPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.VMIDList() != "100,110,111,120,130" {
+	if plan.VMIDList() != "100,110,111,120,130,140" {
 		t.Fatalf("user guest tag changed platform backup selection: %#v", plan)
 	}
 }

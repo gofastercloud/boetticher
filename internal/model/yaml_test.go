@@ -94,3 +94,16 @@ func TestParseSiteConfigAppliesV3Defaults(t *testing.T) {
 		t.Fatalf("unexpected defaults: gateway=%q storage=%q domain=%q", site.Gateway.Mode, site.StorageProfile, site.Network.Domain)
 	}
 }
+
+func TestDNSProviderIsTypedAndStrict(t *testing.T) {
+	config, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  dns:\n    provider: adguard\n"))
+	if err != nil || config.Modules["dns"].Provider != "adguard" {
+		t.Fatalf("adguard provider was not accepted: %#v %v", config, err)
+	}
+	if _, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  monitoring:\n    provider: blocky\n")); err == nil || !strings.Contains(err.Error(), "modules.monitoring.provider") {
+		t.Fatalf("irrelevant provider was accepted: %v", err)
+	}
+	if _, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  dns:\n    enabled: false\n")); err == nil || !strings.Contains(err.Error(), "mandatory module") {
+		t.Fatalf("DNS disable was accepted: %v", err)
+	}
+}

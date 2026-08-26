@@ -24,7 +24,7 @@ func TestFoundationPlanIsDeterministic(t *testing.T) {
 	if string(left) != string(right) {
 		t.Fatal("identical sites generated different Proxmox plans")
 	}
-	if len(first.Guests) != 5 || first.Guests[0].VMID != model.ProxmoxVMID {
+	if len(first.Guests) != 6 || first.Guests[0].VMID != model.ProxmoxVMID {
 		t.Fatalf("unexpected foundation plan: %#v", first.Guests)
 	}
 	if first.GatewayImageURL != model.QualifiedGatewayImageURL || first.GatewaySHA512 != model.QualifiedGatewayImageSHA512 {
@@ -37,7 +37,7 @@ func TestManagedFirewallUsesTaggedPerZoneVNICs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Guests) != 5 || plan.Guests[0].Kind != KindQEMU {
+	if len(plan.Guests) != 6 || plan.Guests[0].Kind != KindQEMU {
 		t.Fatalf("unexpected managed guest plan: %#v", plan.Guests)
 	}
 	want := []struct {
@@ -60,8 +60,8 @@ func TestExternalGatewayOmitsFirewallGuest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Guests) != 4 {
-		t.Fatalf("external gateway plan has %d guests, want 4", len(plan.Guests))
+	if len(plan.Guests) != 1 {
+		t.Fatalf("uncomposed external gateway plan has %d guests, want 1", len(plan.Guests))
 	}
 	for _, guest := range plan.Guests {
 		if guest.VMID == model.ProxmoxVMID {
@@ -90,7 +90,7 @@ func TestUserWorkloadNeverEntersPlatformPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Guests) != 5 {
+	if len(plan.Guests) != 6 {
 		t.Fatalf("user workload changed platform guest count: %#v", plan.Guests)
 	}
 	for _, guest := range plan.Guests {
@@ -112,7 +112,7 @@ func TestPlatformGuestPlanCarriesTagsForBackupAndVisibility(t *testing.T) {
 		if !hasTag(guest.Tags, model.TagBoetticher) || !hasTag(guest.Tags, model.TagManaged) || !hasTag(guest.Tags, model.TagBackup) {
 			t.Fatalf("platform guest %s has incomplete tags: %#v", guest.Name, guest.Tags)
 		}
-		if guest.Owner != "" && (guest.Artifact.SHA256 == "" || len(guest.Persistent) == 0) {
+		if guest.Owner != "" && (guest.Artifact.DefinitionSHA256 == "" || len(guest.Persistent) == 0) {
 			t.Fatalf("module guest lacks artifact or persistent-state contract: %#v", guest)
 		}
 	}
@@ -139,7 +139,7 @@ func TestExistingGuestTagsAreReconciled(t *testing.T) {
 		if err := r.ParseForm(); err != nil {
 			t.Errorf("parse tag update form: %v", err)
 		}
-		if got := canonicalTags(r.Form.Get("tags")); got != canonicalTags("backup;boetticher;firewall;gateway;infra;managed;network;platform") {
+		if got := canonicalTags(r.Form.Get("tags")); got != canonicalTags("backup;boetticher;managed;module;module-firewall") {
 			t.Errorf("tags = %q", got)
 		}
 		return response([]byte(`{"data":null}`))

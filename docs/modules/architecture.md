@@ -8,12 +8,18 @@ The built-in modules are:
 
 | Module | Policy | Capability |
 | --- | --- | --- |
+| `logging` | mandatory | central systemd journal |
 | `dns` | mandatory | DNS and NTP |
 | `monitoring` | default-on | Zabbix monitoring |
 | `firewall` | default-on | managed gateway |
 
 External-firewall mode supplies the gateway capability outside the registry
 and explicitly disables the managed firewall module.
+
+DNS is one module with `blocky` as the default client-facing resolver/filter
+and `adguard` as a supported typed alternative. PowerDNS Authoritative and
+Chrony are common to both. Monitoring is a standard SERVERS workload at
+`10.10.20.20`; ordinary platform applications do not use MGMT placement.
 
 Modules are compiled into boetticher. They are not downloaded, loaded as
 plugins, or executed as arbitrary hooks. A module emits bounded declarations;

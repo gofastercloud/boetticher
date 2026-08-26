@@ -47,39 +47,23 @@ func Compose(config model.SiteConfig) (model.Site, []ResolvedModule, error) {
 }
 
 func composeComponents(base []model.Component, resolved []ResolvedModule) []model.Component {
-	active := map[string]bool{}
+	components := append([]model.Component(nil), base...)
 	for _, module := range resolved {
-		active[module.Definition.Name] = module.Enabled
-	}
-	components := make([]model.Component, 0, len(base))
-	for _, component := range base {
-		moduleName := componentModule(component.Name)
-		if moduleName != "" && !active[moduleName] {
+		if !module.Enabled {
 			continue
 		}
-		if moduleName != "" {
-			component.Module = moduleName
-			component.Tags = append(component.Tags, model.TagModule, "module-"+moduleName)
-
+		for _, component := range module.Definition.Components {
+			component.Module = module.Definition.Name
+			component.Tags = append(component.Tags, model.TagBoetticher, model.TagManaged, model.TagModule, "module-"+module.Definition.Name, model.TagBackup)
+			component.SSHUser = model.DefaultAdminSSHUser
+			component.SSHPort = 22
+			component.Logging = module.Definition.Name != "logging"
 			sort.Strings(component.Tags)
+			components = append(components, component)
 		}
-		components = append(components, component)
 	}
 	sort.Slice(components, func(i, j int) bool { return components[i].Name < components[j].Name })
 	return components
-}
-
-func componentModule(name string) string {
-	switch name {
-	case "lab-dns-01", "lab-dns-02":
-		return "dns"
-	case "lab-monitor-01":
-		return "monitoring"
-	case "lab-fw-01":
-		return "firewall"
-	default:
-		return ""
-	}
 }
 
 func IsEnabled(site model.Site, name string) bool {

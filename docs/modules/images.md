@@ -1,25 +1,13 @@
 # Appliance images
 
-Official appliance definitions use a pinned minimal Debian 13 boetticher base.
-DNS and monitoring are LXC appliances; the managed firewall is a QEMU/KVM VM
-because it is the network-security boundary.
+Official appliances derive from the pinned Debian 13 boetticher base. On
+macOS, bootstrap uses the transient Core builder `lab-builder-01` (VMID 190)
+with bootstrap-only networking; it receives public build inputs and no Age,
+CA, or runtime credentials. The builder is destroyed after artifact retrieval
+and independent checksum verification.
 
-The image definitions live under `images/`. They identify the base, release,
-architecture, services, runtime configuration path, and persistent paths.
-The module model records artifact name, module version, architecture, kind,
-definition digest, and expected SHA-256. Deployment must verify the expected
-artifact before use.
-
-The ordinary Make targets validate the checked-in definitions:
-
-```text
-make image-base
-make image-dns
-make image-monitoring
-make image-firewall
-make images
-```
-
-Real image construction requires the supported build environment and remains
-a qualification step. Build toolchains and caches do not belong in final
-appliances. Release metadata should include a package manifest and SBOM.
+Definition SHA-256 identifies the deterministic recipe. Content SHA-256 is
+calculated from the actual built bytes and stored with package manifest, SBOM,
+and Trivy evidence. An artifact without qualification evidence is `NOT BUILT`
+and cannot be imported for deployment. Root filesystems are immutable and
+replaceable; declared persistent volumes are attached independently.

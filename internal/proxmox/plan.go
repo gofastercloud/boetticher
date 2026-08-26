@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/model"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 	"github.com/gofastercloud/boetticher/internal/storage"
@@ -24,24 +25,25 @@ const (
 )
 
 type GuestPlan struct {
-	VMID       int                     `json:"vmid"`
-	Name       string                  `json:"name"`
-	Kind       GuestKind               `json:"kind"`
-	Hostname   string                  `json:"hostname"`
-	Zone       string                  `json:"zone"`
-	Address    string                  `json:"address"`
-	Gateway    string                  `json:"gateway"`
-	VLAN       int                     `json:"vlan"`
-	Cores      int                     `json:"cores"`
-	MemoryMiB  int                     `json:"memory_mib"`
-	DiskGiB    int                     `json:"disk_gib"`
-	Monitoring bool                    `json:"monitoring"`
-	Backup     bool                    `json:"backup"`
-	Tags       []string                `json:"tags,omitempty"`
-	NICs       []GuestNIC              `json:"nics,omitempty"`
-	Owner      string                  `json:"owner,omitempty"`
-	Artifact   model.Artifact          `json:"artifact,omitempty"`
-	Persistent []model.PersistentState `json:"persistent,omitempty"`
+	VMID       int                                 `json:"vmid"`
+	Name       string                              `json:"name"`
+	Kind       GuestKind                           `json:"kind"`
+	Hostname   string                              `json:"hostname"`
+	Zone       string                              `json:"zone"`
+	Address    string                              `json:"address"`
+	Gateway    string                              `json:"gateway"`
+	VLAN       int                                 `json:"vlan"`
+	Cores      int                                 `json:"cores"`
+	MemoryMiB  int                                 `json:"memory_mib"`
+	DiskGiB    int                                 `json:"disk_gib"`
+	Monitoring bool                                `json:"monitoring"`
+	Backup     bool                                `json:"backup"`
+	Tags       []string                            `json:"tags,omitempty"`
+	NICs       []GuestNIC                          `json:"nics,omitempty"`
+	Owner      string                              `json:"owner,omitempty"`
+	Artifact   model.Artifact                      `json:"artifact,omitempty"`
+	Persistent []model.PersistentState             `json:"persistent,omitempty"`
+	Volumes    []model.PersistentVolumeDeclaration `json:"volumes,omitempty"`
 }
 
 type GuestNIC struct {
@@ -314,9 +316,33 @@ func PlanFromSite(s model.Site) (Plan, error) {
 					guest.Owner = "boetticher/module/" + component.Module
 					guest.Artifact = declaration.Artifact
 					guest.Persistent = append([]model.PersistentState(nil), declaration.Persistent...)
+					guest.Volumes = append([]model.PersistentVolumeDeclaration(nil), declaration.Volumes...)
 					break
 				}
 			}
+			if guest.Artifact.Name == "" {
+				provider := ""
+				if component.Module == "dns" {
+					provider = s.ModuleConfig["dns"].Provider
+					if provider == "" {
+						provider = string(model.DNSProviderBlocky)
+					}
+				}
+				if artifact, artifactErr := artifacts.ArtifactFor(component.Module, provider); artifactErr == nil {
+					guest.Artifact = artifact
+				}
+			}
+			guest.Owner = "boetticher/module/" + component.Module
+			if len(guest.Persistent) == 0 {
+				guest.Persistent = fixturePersistent(component.Module, component.Name)
+			}
+		}
+		if component.Name == "lab-portal-01" {
+			if artifact, artifactErr := artifacts.ArtifactFor("portal"); artifactErr == nil {
+				guest.Artifact = artifact
+			}
+			guest.Owner = "boetticher/core/portal"
+			guest.Persistent = fixturePersistent("portal", component.Name)
 		}
 		switch component.Name {
 		case "lab-fw-01":
@@ -331,6 +357,24 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	}
 	sort.Slice(guests, func(i, j int) bool { return guests[i].VMID < guests[j].VMID })
 	return Plan{ModelRevision: revision, ManagedBy: "boetticher", Node: s.ProxmoxNode, Storage: guestStorage, GatewayImage: model.QualifiedGatewayImage, GatewayImageURL: model.QualifiedGatewayImageURL, GatewaySHA512: model.QualifiedGatewayImageSHA512, Guests: guests}, nil
+}
+
+func fixturePersistent(module, guest string) []model.PersistentState {
+	identity := model.PersistentState{Name: "ssh-identity", Guest: guest, Path: "/var/lib/boetticher/identity/ssh", Kind: "endpoint-identity", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}
+	var state *model.PersistentState
+	switch module {
+	case "dns":
+		state = &model.PersistentState{Name: "powerdns-database", Guest: guest, Path: "/var/lib/powerdns", Kind: "application-database", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}
+	case "monitoring":
+		state = &model.PersistentState{Name: "postgresql-data", Guest: guest, Path: "/var/lib/postgresql", Kind: "application-database", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}
+	case "firewall":
+		state = &model.PersistentState{Name: "kea-leases", Guest: guest, Path: "/var/lib/kea", Kind: "lease-state", Backup: true, Replacement: "retain-across-rootfs-replacement"}
+	}
+	result := []model.PersistentState{identity}
+	if state != nil {
+		result = append(result, *state)
+	}
+	return result
 }
 
 func gatewayNICs(s model.Site) []GuestNIC {
@@ -382,12 +426,9 @@ func componentBackup(s model.Site, name string) bool {
 // Provision creates the declared foundation guests and is safe to re-run. It
 // never removes an object or changes an existing guest's disk/network shape;
 // drift is returned to the caller for an explicit remediation decision.
-func Provision(ctx context.Context, client *Client, plan Plan, debianTemplate string) error {
+func Provision(ctx context.Context, client *Client, plan Plan, _ ...string) error {
 	if client == nil {
 		return errors.New("Proxmox client is required")
-	}
-	if debianTemplate == "" {
-		return errors.New("Debian template is required")
 	}
 	for _, guest := range plan.Guests {
 		switch guest.Kind {
@@ -395,7 +436,7 @@ func Provision(ctx context.Context, client *Client, plan Plan, debianTemplate st
 			// The gateway VM is created by the bootstrap image path.
 			continue
 		case KindLXC:
-			if err := ensureLXC(ctx, client, plan, guest, debianTemplate); err != nil {
+			if err := ensureLXC(ctx, client, plan, guest); err != nil {
 				return err
 			}
 			if err := client.StartLXC(ctx, plan.Node, guest.VMID); err != nil {
@@ -722,7 +763,7 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 	return nil
 }
 
-func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan, template string) error {
+func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
 	var current map[string]any
 	err := client.LXCConfig(ctx, plan.Node, guest.VMID, &current)
 	if err == nil {
@@ -734,6 +775,13 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan, 
 	if !IsNotFound(err) {
 		return fmt.Errorf("inspect container %s: %w", guest.Name, err)
 	}
+	if guest.Artifact.Name == "" || guest.Artifact.DefinitionSHA256 == "" {
+		return fmt.Errorf("HOLD: guest %s has no resolved appliance artifact", guest.Name)
+	}
+	if guest.Artifact.ContentSHA256 == "" {
+		return fmt.Errorf("NOT BUILT: guest %s artifact %s has no qualified content checksum", guest.Name, guest.Artifact.Name)
+	}
+	template := "local:vztmpl/" + guest.Artifact.Name + "-" + guest.Artifact.Version + "-" + guest.Artifact.Architecture + ".tar.zst"
 	params := url.Values{
 		"hostname":     {guest.Hostname},
 		"ostemplate":   {template},

@@ -142,7 +142,7 @@ func cloneModuleConfig(input map[string]ModuleConfig) map[string]ModuleConfig {
 			value := *config.Enabled
 			enabled = &value
 		}
-		output[name] = ModuleConfig{Enabled: enabled}
+		output[name] = ModuleConfig{Enabled: enabled, Provider: config.Provider}
 	}
 	return output
 }

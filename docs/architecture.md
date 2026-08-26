@@ -22,7 +22,8 @@ The internal namespace is `lab.home.arpa`. The platform identities are:
 | `lab-fw-01` | `10.10.99.1` | managed Debian gateway |
 | `lab-dns-01` | `10.10.20.10` | PowerDNS, AdGuard Home, Chrony |
 | `lab-dns-02` | `10.10.20.11` | PowerDNS, AdGuard Home, Chrony |
-| `lab-monitor-01` | `10.10.99.20` | Zabbix and PostgreSQL |
+| `lab-monitor-01` | `10.10.20.20` | Zabbix and PostgreSQL |
+| `lab-log-01` | `10.10.20.40` | Central systemd journal collector |
 | `lab-portal-01` | `10.10.20.30` | generated portal |
 
 The main service URLs are `https://monitor.lab.home.arpa` and

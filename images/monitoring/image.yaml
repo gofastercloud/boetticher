@@ -2,13 +2,14 @@ name: boetticher-monitoring
 version: 1.0.0
 kind: lxc
 base: boetticher-base
-base_version: 0.3.0
+base_version: 0.3.1
 architecture: amd64
 services:
   - zabbix-server
   - postgresql
   - nginx
   - zabbix-agent2
+logging: inherited-from-base
 runtime_config: /etc/boetticher/module.yaml
 persistent:
   - /var/lib/postgresql

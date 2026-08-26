@@ -16,7 +16,7 @@ import (
 const (
 	APIVersion                  = "boetticher/v3"
 	SchemaVersion               = 3
-	PlatformVersion             = "0.3.0"
+	PlatformVersion             = "0.3.1"
 	QualifiedGatewayImage       = "debian-13-genericcloud-amd64"
 	QualifiedGatewayImageURL    = "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
 	QualifiedGatewayImageSHA512 = "77429b411b39b43f914dc9d14bf34aa315489a1a12b5429f72e5b483bdda23c65698d33443c85d3f3ad7c3a0828ae60845406d6b99646342554d17abae29c2a3"
@@ -35,6 +35,8 @@ const (
 	DNS02VMID                   = 111
 	MonitorVMID                 = 120
 	PortalVMID                  = 130
+	LoggingVMID                 = 140
+	BuilderVMID                 = 190
 	PlatformGuestIDMin          = 100
 	PlatformGuestIDMax          = 199
 	ModuleGuestIDMin            = 200
@@ -170,11 +172,20 @@ type Component struct {
 	JumpAllowed  bool     `json:"jump_allowed"`
 	ProductOwned bool     `json:"product_owned"`
 	Module       string   `json:"module,omitempty"`
+	Logging      bool     `json:"logging"`
 }
 
 type ModuleConfig struct {
-	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Enabled  *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
 }
+
+type DNSProvider string
+
+const (
+	DNSProviderBlocky  DNSProvider = "blocky"
+	DNSProviderAdGuard DNSProvider = "adguard"
+)
 
 // ResolvedModule is generated state, not an operator-maintained module list.
 // It records why a first-party module is active and which contracts it
@@ -194,10 +205,30 @@ type ResolvedModule struct {
 type Artifact struct {
 	Name             string `json:"name"`
 	Version          string `json:"version"`
+	Provider         string `json:"provider,omitempty"`
 	Architecture     string `json:"architecture"`
 	Kind             string `json:"kind"`
-	SHA256           string `json:"sha256"`
 	DefinitionSHA256 string `json:"definition_sha256"`
+	ContentSHA256    string `json:"content_sha256,omitempty"`
+}
+
+type StoragePlacement string
+
+const (
+	StorageDefault         StoragePlacement = "default"
+	StoragePreferDataDisk  StoragePlacement = "prefer-data-disk"
+	StorageRequireDataDisk StoragePlacement = "require-data-disk"
+)
+
+type PersistentVolumeDeclaration struct {
+	Name      string           `json:"name"`
+	Module    string           `json:"module"`
+	Guest     string           `json:"guest"`
+	SizeGiB   int              `json:"size_gib"`
+	MountPath string           `json:"mount_path"`
+	Placement StoragePlacement `json:"placement"`
+	Backup    bool             `json:"backup"`
+	Storage   string           `json:"storage,omitempty"`
 }
 
 type PersistentState struct {
@@ -263,17 +294,18 @@ type PortalEntry struct {
 }
 
 type ModuleDeclaration struct {
-	Module         string                  `json:"module"`
-	Artifact       Artifact                `json:"artifact"`
-	Guests         []Component             `json:"guests,omitempty"`
-	Persistent     []PersistentState       `json:"persistent,omitempty"`
-	Secrets        []SecretDeclaration     `json:"secrets,omitempty"`
-	NetworkIntents []NetworkIntent         `json:"network_intents,omitempty"`
-	DNSRecords     []DNSRecord             `json:"dns_records,omitempty"`
-	Certificates   []CertificateRequest    `json:"certificates,omitempty"`
-	Monitoring     []MonitoringDeclaration `json:"monitoring,omitempty"`
-	Backups        []BackupDeclaration     `json:"backups,omitempty"`
-	Portal         []PortalEntry           `json:"portal,omitempty"`
+	Module         string                        `json:"module"`
+	Artifact       Artifact                      `json:"artifact"`
+	Guests         []Component                   `json:"guests,omitempty"`
+	Persistent     []PersistentState             `json:"persistent,omitempty"`
+	Volumes        []PersistentVolumeDeclaration `json:"volumes,omitempty"`
+	Secrets        []SecretDeclaration           `json:"secrets,omitempty"`
+	NetworkIntents []NetworkIntent               `json:"network_intents,omitempty"`
+	DNSRecords     []DNSRecord                   `json:"dns_records,omitempty"`
+	Certificates   []CertificateRequest          `json:"certificates,omitempty"`
+	Monitoring     []MonitoringDeclaration       `json:"monitoring,omitempty"`
+	Backups        []BackupDeclaration           `json:"backups,omitempty"`
+	Portal         []PortalEntry                 `json:"portal,omitempty"`
 }
 
 type RetainedModule struct {
@@ -285,7 +317,24 @@ type RetainedModule struct {
 }
 
 func NewDefaultSite(installationID, ageRecipient string) Site {
-	return NewSite(installationID, ageRecipient, GatewayModeManaged)
+	site := NewSite(installationID, ageRecipient, GatewayModeManaged)
+	// NewDefaultSite is also the in-memory fixture constructor used by core
+	// provider tests. The persisted SiteConfig path is composed by modules;
+	// this fixture keeps the provider tests useful without making those
+	// components part of NewSite's Core-owned canonical seed.
+	for _, component := range []Component{
+		{Name: "lab-fw-01", VMID: ProxmoxVMID, Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "Debian firewall", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "firewall"},
+		{Name: "lab-dns-01", VMID: DNS01VMID, Hostname: "lab-dns-01", Zone: "SERVERS", Address: "10.10.20.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "dns"},
+		{Name: "lab-dns-02", VMID: DNS02VMID, Hostname: "lab-dns-02", Zone: "SERVERS", Address: "10.10.20.11", Role: "DNS/NTP", DNSAliases: []string{"dns02"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "dns"},
+		{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "SERVERS", Address: "10.10.20.20", Role: "Zabbix", DNSAliases: []string{"monitor"}, URL: "https://monitor." + DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "monitoring"},
+		{Name: "lab-log-01", VMID: LoggingVMID, Hostname: "lab-log-01", Zone: "SERVERS", Address: "10.10.20.40", Role: "Central systemd journal", DNSAliases: []string{"logs"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "logging"},
+	} {
+		component.Tags = []string{TagBoetticher, TagManaged, TagModule, "module-" + component.Module, TagBackup}
+		component.SSHUser, component.SSHPort = DefaultAdminSSHUser, 22
+		component.Logging = component.Module != "logging"
+		site.Components = append(site.Components, component)
+	}
+	return site
 }
 
 func NewSite(installationID, ageRecipient, gatewayMode string) Site {
@@ -318,22 +367,9 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 			UserWorkloadsManaged: false,
 		},
 		Components: []Component{
-			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: "10.10.99.5", Role: "Proxmox host", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork}, URL: "https://proxmox." + DefaultDomain + ":8006", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22},
-			{Name: "lab-fw-01", VMID: ProxmoxVMID, Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "Debian firewall", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork, TagFirewall, TagGateway, TagBackup}, Monitoring: true, Backup: true, MTLS: false, SSHUser: DefaultAdminSSHUser, SSHPort: 22, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-			{Name: "lab-dns-01", VMID: DNS01VMID, Hostname: "lab-dns-01", Zone: "SERVERS", Address: "10.10.20.10", Role: "DNS/NTP", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagDNS, TagNTP, TagBackup}, DNSAliases: []string{"dns01", "dns"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-			{Name: "lab-dns-02", VMID: DNS02VMID, Hostname: "lab-dns-02", Zone: "SERVERS", Address: "10.10.20.11", Role: "DNS/NTP", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagDNS, TagNTP, TagBackup}, DNSAliases: []string{"dns02"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-			{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "MGMT", Address: "10.10.99.20", Role: "Zabbix", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagObservability, TagBackup}, URL: "https://monitor." + DefaultDomain, DNSAliases: []string{"monitor"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-			{Name: "lab-portal-01", VMID: PortalVMID, Hostname: "lab-portal-01", Zone: "SERVERS", Address: "10.10.20.30", Role: "Generated platform portal", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagPortal, TagBackup}, URL: "https://portal." + DefaultDomain, DNSAliases: []string{"portal"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: "10.10.99.5", Role: "Proxmox host", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork}, URL: "https://proxmox." + DefaultDomain + ":8006", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Logging: true},
+			{Name: "lab-portal-01", VMID: PortalVMID, Hostname: "lab-portal-01", Zone: "SERVERS", Address: "10.10.20.30", Role: "Generated platform portal", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagPortal, TagBackup}, URL: "https://portal." + DefaultDomain, DNSAliases: []string{"portal"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Logging: true},
 		},
-	}
-	if gatewayMode == GatewayModeExternal {
-		filtered := make([]Component, 0, len(site.Components)-1)
-		for _, component := range site.Components {
-			if component.Name != "lab-fw-01" {
-				filtered = append(filtered, component)
-			}
-		}
-		site.Components = filtered
 	}
 	return site
 }
@@ -363,6 +399,9 @@ func (s Site) Normalize() Site {
 		})
 		sort.Slice(copySite.Declarations[i].Persistent, func(a, b int) bool {
 			return copySite.Declarations[i].Persistent[a].Name < copySite.Declarations[i].Persistent[b].Name
+		})
+		sort.Slice(copySite.Declarations[i].Volumes, func(a, b int) bool {
+			return copySite.Declarations[i].Volumes[a].Name < copySite.Declarations[i].Volumes[b].Name
 		})
 		sort.Slice(copySite.Declarations[i].Secrets, func(a, b int) bool {
 			return copySite.Declarations[i].Secrets[a].Name < copySite.Declarations[i].Secrets[b].Name
@@ -534,22 +573,42 @@ func (s Site) Validate() error {
 		vmid    int
 	}{
 		"lab-proxmox-01": {address: "10.10.99.5", vmid: 0},
-		"lab-dns-01":     {address: "10.10.20.10", vmid: DNS01VMID},
-		"lab-dns-02":     {address: "10.10.20.11", vmid: DNS02VMID},
 		"lab-portal-01":  {address: "10.10.20.30", vmid: PortalVMID},
 	}
-	if resolvedModuleEnabled(s.Modules, "monitoring", true) {
+	composed := len(s.Declarations) > 0
+	for _, component := range s.Components {
+		if component.Module != "" {
+			composed = true
+		}
+	}
+	if composed {
+		requiredComponents["lab-dns-01"] = struct {
+			address string
+			vmid    int
+		}{address: "10.10.20.10", vmid: DNS01VMID}
+		requiredComponents["lab-dns-02"] = struct {
+			address string
+			vmid    int
+		}{address: "10.10.20.11", vmid: DNS02VMID}
+	}
+	if composed && resolvedModuleEnabled(s.Modules, "monitoring", true) {
 		requiredComponents["lab-monitor-01"] = struct {
 			address string
 			vmid    int
-		}{address: "10.10.99.20", vmid: MonitorVMID}
+		}{address: "10.10.20.20", vmid: MonitorVMID}
 	}
-	if s.Gateway.Mode == GatewayModeManaged && resolvedModuleEnabled(s.Modules, "firewall", true) {
+	if composed && resolvedModuleEnabled(s.Modules, "logging", true) {
+		requiredComponents["lab-log-01"] = struct {
+			address string
+			vmid    int
+		}{address: "10.10.20.40", vmid: LoggingVMID}
+	}
+	if composed && s.Gateway.Mode == GatewayModeManaged && resolvedModuleEnabled(s.Modules, "firewall", true) {
 		requiredComponents["lab-fw-01"] = struct {
 			address string
 			vmid    int
 		}{address: "10.10.99.1", vmid: ProxmoxVMID}
-	} else {
+	} else if composed {
 		for _, component := range s.Components {
 			if component.Name == "lab-fw-01" {
 				return errors.New("external gateway mode must not declare lab-fw-01")
@@ -591,8 +650,8 @@ func validateDeclarations(s Site) error {
 		if declaration.Module == "" {
 			return errors.New("module declaration is missing its owner")
 		}
-		if len(declaration.Artifact.SHA256) != 64 || len(declaration.Artifact.DefinitionSHA256) != 64 {
-			return fmt.Errorf("module %s has incomplete artifact digest metadata", declaration.Module)
+		if len(declaration.Artifact.DefinitionSHA256) != 64 {
+			return fmt.Errorf("module %s has incomplete artifact definition digest metadata", declaration.Module)
 		}
 		for _, guest := range declaration.Guests {
 			if guest.Module != declaration.Module {
@@ -618,6 +677,16 @@ func validateDeclarations(s Site) error {
 		for _, state := range declaration.Persistent {
 			if state.Replacement == "" {
 				return fmt.Errorf("module %s persistent state %q is missing a replacement policy", declaration.Module, state.Name)
+			}
+		}
+		for _, volume := range declaration.Volumes {
+			if volume.Module != declaration.Module || volume.Guest == "" || volume.Name == "" || volume.SizeGiB <= 0 || volume.MountPath == "" {
+				return fmt.Errorf("module %s has invalid persistent volume %q", declaration.Module, volume.Name)
+			}
+			switch volume.Placement {
+			case StorageDefault, StoragePreferDataDisk, StorageRequireDataDisk:
+			default:
+				return fmt.Errorf("module %s volume %s has unsupported storage placement %q", declaration.Module, volume.Name, volume.Placement)
 			}
 		}
 	}

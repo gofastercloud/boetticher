@@ -8,7 +8,9 @@ read-oriented unless they explicitly request confirmation.
 boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall]
 boetticher preflight [--site DIR] [--live] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]
 boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]
-boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--zabbix-url URL] [--insecure] [--ansible-playbook PATH] [--debian-template TEMPLATE] [--dry-run]
+boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]
+
+boetticher logs [HOST] [--unit UNIT] [--since DURATION] [--priority LEVEL] [--limit N]
 boetticher verify [--site DIR] [--ssh-config PATH] [--ssh-journey]
 boetticher doctor [--site DIR] [--ssh-config PATH] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher upgrade [--site DIR] [--age-identity PATH] [--recovery-confirmed]

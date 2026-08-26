@@ -55,6 +55,17 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 	if err := decoder.Decode(&config); err != nil {
 		return SiteConfig{}, fmt.Errorf("decode site.yml: %w", err)
 	}
+	for name, module := range config.Modules {
+		if name != "dns" && module.Provider != "" {
+			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s.provider is not supported", name)
+		}
+		if (name == "dns" || name == "logging") && module.Enabled != nil {
+			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s.enabled: mandatory module cannot be disabled", name)
+		}
+		if name == "dns" && module.Provider != "" && module.Provider != string(DNSProviderBlocky) && module.Provider != string(DNSProviderAdGuard) {
+			return SiteConfig{}, fmt.Errorf("site.yml: modules.dns.provider expected one of: blocky, adguard")
+		}
+	}
 	return config, nil
 }
 
