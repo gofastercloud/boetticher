@@ -69,6 +69,19 @@ func TestExternalPlanPublishesOptionalDDNSContract(t *testing.T) {
 	}
 }
 
+func TestExternalPowerDNSPlanDoesNotRequireManagedDDNSSource(t *testing.T) {
+	plan, err := PlanFromSite(model.NewSite("installation", "age1example", model.GatewayModeExternal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := PrimaryCommandPlan(plan)
+	for _, command := range commands {
+		if command.SecretStdin || strings.Contains(command.Stdin, DDNSSecretPlaceholder) || strings.Contains(strings.Join(command.Args, " "), "ALLOW-DNSUPDATE") {
+			t.Fatalf("external DNS plan unexpectedly includes managed DDNS configuration: %#v", command)
+		}
+	}
+}
+
 func hasRecord(records []StaticRecord, name, address string) bool {
 	for _, record := range records {
 		if record.Name == name && record.Address == address {

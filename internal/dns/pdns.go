@@ -25,14 +25,19 @@ func PrimaryCommandPlan(plan Plan) []PowerDNSCommand {
 			PowerDNSCommand{Args: []string{"pdnsutil", "rrset", "replace", zone, zone, "NS", "300", "lab-dns-01." + plan.StaticZone + ".", "lab-dns-02." + plan.StaticZone + "."}},
 		)
 	}
-	for _, zone := range plan.DDNS.Zones {
-		commands = append(commands,
-			PowerDNSCommand{Args: []string{"sqlite3", "/var/lib/powerdns/pdns.sqlite3"}, Stdin: "INSERT OR REPLACE INTO tsigkeys (name, algorithm, secret) VALUES ('" + zone.TSIGKeyName + "', '" + plan.DDNS.TSIGAlgorithm + "', '" + DDNSSecretPlaceholder + "');", SecretStdin: true},
-			PowerDNSCommand{Args: []string{"pdnsutil", "metadata", "set", zone.ForwardZone, "ALLOW-DNSUPDATE-FROM", plan.DDNS.UpdateSources[0]}},
-			PowerDNSCommand{Args: []string{"pdnsutil", "metadata", "set", zone.ForwardZone, "TSIG-ALLOW-DNSUPDATE", zone.TSIGKeyName}},
-			PowerDNSCommand{Args: []string{"pdnsutil", "metadata", "set", zone.ReverseZone, "ALLOW-DNSUPDATE-FROM", plan.DDNS.UpdateSources[0]}},
-			PowerDNSCommand{Args: []string{"pdnsutil", "metadata", "set", zone.ReverseZone, "TSIG-ALLOW-DNSUPDATE", zone.TSIGKeyName}},
-		)
+	if plan.DDNS.Enabled {
+		for _, zone := range plan.DDNS.Zones {
+			if len(plan.DDNS.UpdateSources) == 0 {
+				break
+			}
+			commands = append(commands,
+				PowerDNSCommand{Args: []string{"sqlite3", "/var/lib/powerdns/pdns.sqlite3"}, Stdin: "INSERT OR REPLACE INTO tsigkeys (name, algorithm, secret) VALUES ('" + zone.TSIGKeyName + "', '" + plan.DDNS.TSIGAlgorithm + "', '" + DDNSSecretPlaceholder + "');", SecretStdin: true},
+				PowerDNSCommand{Args: []string{"pdnsutil", "metadata", "set", zone.ForwardZone, "ALLOW-DNSUPDATE-FROM", plan.DDNS.UpdateSources[0]}},
+				PowerDNSCommand{Args: []string{"pdnsutil", "metadata", "set", zone.ForwardZone, "TSIG-ALLOW-DNSUPDATE", zone.TSIGKeyName}},
+				PowerDNSCommand{Args: []string{"pdnsutil", "metadata", "set", zone.ReverseZone, "ALLOW-DNSUPDATE-FROM", plan.DDNS.UpdateSources[0]}},
+				PowerDNSCommand{Args: []string{"pdnsutil", "metadata", "set", zone.ReverseZone, "TSIG-ALLOW-DNSUPDATE", zone.TSIGKeyName}},
+			)
+		}
 	}
 	for _, record := range plan.StaticRecords {
 		commands = append(commands, PowerDNSCommand{Args: []string{"pdnsutil", "rrset", "replace", plan.StaticZone, record.Name + ".", record.Type, "300", record.Address}})

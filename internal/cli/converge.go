@@ -85,10 +85,6 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 	} else if err := proxmoxClient.EnsureDirectoryStorageContent(context.Background(), "local", "/var/lib/vz", []string{"backup", "images", "rootdir"}); err != nil {
 		return fmt.Errorf("ensure single-disk Proxmox storage: %w", err)
 	}
-	ddnsTSIG, err := site.LoadDDNSTSIG(*siteDir, s, *ageIdentity)
-	if err != nil {
-		return fmt.Errorf("load encrypted DDNS TSIG material: %w", err)
-	}
 	variables, err := ansible.Variables(s)
 	if err != nil {
 		return err
@@ -98,7 +94,13 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 		return fmt.Errorf("decode Ansible variables: %w", err)
 	}
 	runtimeVariables["portal_source_dir"] = filepath.Join(*siteDir, "generated", "portal")
-	runtimeVariables["ddns_tsig_secret"] = ddnsTSIG
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		ddnsTSIG, loadErr := site.LoadDDNSTSIG(*siteDir, s, *ageIdentity)
+		if loadErr != nil {
+			return fmt.Errorf("load encrypted DDNS TSIG material: %w", loadErr)
+		}
+		runtimeVariables["ddns_tsig_secret"] = ddnsTSIG
+	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		ruleset, renderErr := firewall.RenderNFT(firewallPlan)
 		if renderErr != nil {
