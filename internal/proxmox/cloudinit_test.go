@@ -32,13 +32,35 @@ func TestFirewallCloudInitUsesStableInterfaceIdentities(t *testing.T) {
 
 func TestFirewallCloudInitInjectsOperatorKeyOnlyAtDeployment(t *testing.T) {
 	guest := GuestPlan{Name: "lab-fw-01", Address: "10.10.99.1", NICs: []GuestNIC{{Name: "mgmt0", MAC: "02:00:00:00:01:05", Method: "static", Address: "10.10.99.1"}}}
-	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator"
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator #1"
 	files, err := RenderFirewallCloudInitWithKey(guest, key)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(files.UserData, "ssh_authorized_keys:") || !strings.Contains(files.UserData, key) {
 		t.Fatalf("firewall bootstrap key was not injected into deployment-only NoCloud data: %s", files.UserData)
+	}
+	var document struct {
+		Users []any `yaml:"users"`
+	}
+	if err := yaml.Unmarshal([]byte(files.UserData), &document); err != nil {
+		t.Fatalf("firewall cloud-init is not valid YAML: %v", err)
+	}
+	found := false
+	for _, rawUser := range document.Users {
+		user, ok := rawUser.(map[string]any)
+		if !ok || user["name"] != "labadmin" {
+			continue
+		}
+		keys, ok := user["ssh_authorized_keys"].([]any)
+		if !ok || len(keys) != 1 || keys[0] != key {
+			t.Fatalf("firewall bootstrap key was not preserved as one YAML scalar: %#v", user["ssh_authorized_keys"])
+		}
+		found = true
+		break
+	}
+	if !found {
+		t.Fatal("firewall cloud-init does not configure labadmin")
 	}
 	if strings.Contains(files.MetaData+files.NetworkConfig, key) {
 		t.Fatal("operator key leaked into unrelated NoCloud documents")
