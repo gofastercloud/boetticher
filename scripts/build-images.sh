@@ -46,7 +46,12 @@ rootfs_for() {
 }
 
 artifact_for() {
-  printf '%s/%s/%s.tar.zst' "$output_root" "$1" "$1"
+	name=$1
+	version=1.0.0
+	if [ "$name" = boetticher-base ]; then
+		version=0.3.1
+	fi
+	printf '%s/%s/%s-%s-amd64.tar.zst' "$output_root" "$name" "$name" "$version"
 }
 
 create_base_rootfs() {
@@ -142,8 +147,8 @@ package_lxc() {
   destination="$output_root/$name"
   mkdir -p "$destination"
   ./scripts/smoke-appliance.sh "$name" "$rootfs"
+  chroot "$rootfs" dpkg-query -W -f='${binary:Package}\t${Version}\n' | sort > "$destination/package-manifest.txt"
   tar --numeric-owner --xattrs --acls -C "$rootfs" -cf - . | zstd -T0 -19 -o "$(artifact_for "$name")"
-  tar -tf "$(artifact_for "$name")" > "$destination/package-manifest.txt"
   sha256sum "$(artifact_for "$name")" > "$destination/content.sha256"
 }
 

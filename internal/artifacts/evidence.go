@@ -71,7 +71,7 @@ func RebindEvidencePaths(root string) error {
 		if evidence.Artifact.Name == "" {
 			return fmt.Errorf("transferred evidence %s has no artifact identity", entry.Name())
 		}
-		filename := evidence.Artifact.Name + ".tar.zst"
+		filename := fmt.Sprintf("%s-%s-%s.tar.zst", evidence.Artifact.Name, evidence.Artifact.Version, evidence.Artifact.Architecture)
 		if evidence.Artifact.Kind == "qemu" {
 			filename = fmt.Sprintf("%s-%s-%s.qcow2", evidence.Artifact.Name, evidence.Artifact.Version, evidence.Artifact.Architecture)
 		}

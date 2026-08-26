@@ -272,7 +272,7 @@ func TestTransferredEvidenceIsReboundToControllerArtifactBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	artifactPath := filepath.Join(root, "generated", "artifacts", artifact.Name, artifact.Name+".tar.zst")
+	artifactPath := filepath.Join(root, "generated", "artifacts", artifact.Name, artifact.Name+"-"+artifact.Version+"-"+artifact.Architecture+".tar.zst")
 	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestTransferredEvidenceIsReboundToControllerArtifactBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	evidence.ArtifactPath = "/home/labadmin/build/generated/artifacts/boetticher-logging/boetticher-logging.tar.zst"
+	evidence.ArtifactPath = "/home/labadmin/build/generated/artifacts/boetticher-logging/boetticher-logging-1.0.0-amd64.tar.zst"
 	evidence = completeQualificationEvidence(evidence)
 	qualified, err := QualifyEvidence(evidence, ScanSummary{})
 	if err != nil {

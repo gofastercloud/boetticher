@@ -21,8 +21,16 @@ esac
 
 root=${BOETTICHER_ARTIFACT_OUTPUT:-generated/artifacts}
 evidence_root=${BOETTICHER_EVIDENCE_ROOT:-.}
+artifact_filename() {
+  name=$1
+  version=1.0.0
+  if [ "$name" = boetticher-base ]; then
+    version=0.3.1
+  fi
+  printf '%s-%s-amd64.tar.zst' "$name" "$version"
+}
 for name in $names; do
-  artifact="$root/$name/$name.tar.zst"
+  artifact="$root/$name/$(artifact_filename "$name")"
   if [ "$name" = boetticher-firewall ]; then
     artifact="$root/$name/boetticher-firewall-1.0.0-amd64.qcow2"
   fi
