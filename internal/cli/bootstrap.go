@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/artifacts"
@@ -342,12 +343,9 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if client == nil {
 		return errors.New("Proxmox client is required for appliance construction")
 	}
-	sourceRoot, err := os.Getwd()
+	sourceRoot, err := applianceBuildSourceRoot()
 	if err != nil {
-		return fmt.Errorf("locate public build definitions: %w", err)
-	}
-	if _, err := os.Stat(filepath.Join(sourceRoot, "scripts", "build-images.sh")); err != nil {
-		return fmt.Errorf("HOLD: public appliance build definitions are not available from %s: %w", sourceRoot, err)
+		return err
 	}
 	if err := proxmox.EnsureBuilderVM(ctx, client, plan, publicKey); err != nil {
 		return err
@@ -390,4 +388,35 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 		return err
 	}
 	return nil
+}
+
+func applianceBuildSourceRoot() (string, error) {
+	candidates := make([]string, 0, 3)
+	if workingDirectory, err := os.Getwd(); err == nil {
+		candidates = append(candidates, workingDirectory)
+	}
+	if executable, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Dir(executable))
+	}
+	if _, file, _, ok := runtime.Caller(0); ok {
+		candidates = append(candidates, filepath.Dir(file))
+	}
+	for _, candidate := range candidates {
+		for current := filepath.Clean(candidate); current != filepath.Dir(current); current = filepath.Dir(current) {
+			if buildSourceRoot(current) {
+				return current, nil
+			}
+		}
+	}
+	return "", errors.New("HOLD: public appliance build definitions are unavailable; run the release CLI from its build bundle or a boetticher source checkout")
+}
+
+func buildSourceRoot(root string) bool {
+	for _, relative := range []string{"scripts/build-images.sh", "scripts/scan-images.sh", "images/base/debian.yaml"} {
+		info, err := os.Stat(filepath.Join(root, relative))
+		if err != nil || !info.Mode().IsRegular() {
+			return false
+		}
+	}
+	return true
 }

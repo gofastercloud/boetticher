@@ -1,11 +1,25 @@
 package cli
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 )
+
+func TestApplianceBuildSourceRootIsIndependentOfCallerDirectory(t *testing.T) {
+	root, err := applianceBuildSourceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, relative := range []string{"scripts/build-images.sh", "scripts/scan-images.sh", "images/base/debian.yaml"} {
+		if _, err := os.Stat(filepath.Join(root, relative)); err != nil {
+			t.Fatalf("build source root %q is missing %s: %v", root, relative, err)
+		}
+	}
+}
 
 func TestHonorRequestedPhysicalModeKeepsFreshVirtualOnlySiteUnclaimed(t *testing.T) {
 	discovery := networkmodel.Discovery{
