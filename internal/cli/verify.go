@@ -239,6 +239,14 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 			path  string
 			check func() error
 		}{"platform ownership plan", filepath.Join(*siteDir, "generated", "proxmox", "desired-state.json"), func() error { return checkPlatformOwnership(s) }},
+		struct {
+			name  string
+			path  string
+			check func() error
+		}{"qualified appliance evidence", filepath.Join(*siteDir, "generated", "artifacts"), func() error {
+			_, err := qualifiedProxmoxPlan(*siteDir, s)
+			return err
+		}},
 	)
 	failed := false
 	for _, check := range checks {
@@ -284,7 +292,7 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		fmt.Fprintf(out, "Bootstrap endpoint    PASS %s and SSH host key\n", s.BootstrapAddress)
 	}
 	if *live {
-		plan, planErr := proxmox.PlanFromSite(s)
+		plan, planErr := qualifiedProxmoxPlan(*siteDir, s)
 		if planErr != nil {
 			failed = true
 			fmt.Fprintf(out, "Platform guests       FAIL invalid platform plan: %v\n", planErr)
@@ -478,6 +486,10 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 			}
 			return nil
 		}},
+		{"qualified appliance evidence", func() error {
+			_, err := qualifiedProxmoxPlan(siteDir, s)
+			return err
+		}},
 		{"SSH bastion allow-list", func() error {
 			policy, err := sshconfig.RenderBastionPolicy(s)
 			if err != nil {
@@ -500,6 +512,14 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 		}
 	}
 	return results
+}
+
+func qualifiedProxmoxPlan(siteDir string, s model.Site) (proxmox.Plan, error) {
+	plan, err := proxmox.PlanFromSite(s)
+	if err != nil {
+		return proxmox.Plan{}, err
+	}
+	return proxmox.ResolveQualifiedArtifacts(siteDir, plan, true)
 }
 
 func mustRevision(s model.Site) string {
