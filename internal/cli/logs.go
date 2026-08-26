@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -28,6 +29,9 @@ func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 	limit := fs.Int("limit", 100, "maximum number of journal entries (1-500)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if fs.NArg() > 1 {
+		return errors.New("logs accepts at most one managed HOST")
 	}
 	if *limit < 1 || *limit > 500 {
 		return fmt.Errorf("--limit must be between 1 and 500")

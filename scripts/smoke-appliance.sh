@@ -11,13 +11,20 @@ case "$name" in
   boetticher-base)
     run id labadmin
     test -x "$rootfs/usr/sbin/sshd"
+    run systemd-journal-upload --version
+    run journalctl --version
     test -d "$rootfs/etc/boetticher" -a -d "$rootfs/usr/lib/boetticher"
+    test -x "$rootfs/usr/lib/boetticher/install-runtime-state"
+    test -f "$rootfs/etc/systemd/journald.conf.d/boetticher.conf"
+    test ! -e "$rootfs/home/labadmin/.ssh/authorized_keys"
     test ! -e "$rootfs/root/.ssh/authorized_keys"
     ;;
   boetticher-dns-blocky)
     run blocky --version
     run pdns_server --version
     run chronyd --version
+    test -x "$rootfs/usr/local/bin/blocky"
+    test -f "$rootfs/etc/systemd/system/blocky.service"
     test ! -e "$rootfs/opt/AdGuardHome/AdGuardHome"
     ;;
   boetticher-logging)
@@ -28,6 +35,7 @@ case "$name" in
     run psql --version
     run nginx -v
     run zabbix_server --version
+    run zabbix_agent2 --version
     chroot "$rootfs" /usr/sbin/zabbix_server --version 2>&1 | grep -q '7\.0\.30'
     ;;
   boetticher-portal)
