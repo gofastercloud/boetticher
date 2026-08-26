@@ -15,7 +15,10 @@ dns:
     - https://dns.quad9.net/dns-query
     - tls://dns.quad9.net
 {% for zone in dns_plan.adguard_forward_zones %}
-    - '[/{{ zone }}/]127.0.0.1:5353'
+    - '[/{{ zone }}/]{{ dns_plan.authoritative_forward_target }}'
+{% endfor %}
+{% for zone in dns_plan.adguard_reverse_zones %}
+    - '[/{{ zone }}/]{{ dns_plan.authoritative_forward_target }}'
 {% endfor %}
   fallback_dns:
     - 9.9.9.9
