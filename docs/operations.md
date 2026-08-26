@@ -3,7 +3,7 @@
 The CLI owns the product lifecycle:
 
 ```text
-init → preflight → bootstrap → provision → converge → verify → doctor
+init → preflight → bootstrap → deploy → verify → doctor
                                       ↘ portal build
 ```
 

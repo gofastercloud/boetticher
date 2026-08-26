@@ -28,6 +28,7 @@ case "$name" in
     run psql --version
     run nginx -v
     run zabbix_server --version
+    chroot "$rootfs" /usr/sbin/zabbix_server --version 2>&1 | grep -q '7\.0\.30'
     ;;
   boetticher-portal)
     run nginx -v

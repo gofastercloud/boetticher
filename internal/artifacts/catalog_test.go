@@ -168,6 +168,18 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 			t.Fatalf("DNS image definition is missing PowerDNS qualification input %q", required)
 		}
 	}
+	monitoring, err := os.ReadFile(filepath.Join(root, "monitoring", "image.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"package_version: 1:7.0.30-1+debian13",
+		"release_package_sha256: 4a926b8815cdefddc31558fe622676730a3987610f75d5af0d4024809d21dd43",
+	} {
+		if !strings.Contains(string(monitoring), required) {
+			t.Fatalf("monitoring image definition is missing Zabbix qualification input %q", required)
+		}
+	}
 	firewall, err := os.ReadFile(filepath.Join(root, "firewall", "image.yaml"))
 	if err != nil {
 		t.Fatal(err)

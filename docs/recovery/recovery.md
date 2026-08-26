@@ -6,7 +6,7 @@ encrypted secrets and non-secret evidence; OpenTofu state, plans, caches, and
 temporary credentials remain outside it.
 
 In managed mode, a lost gateway is rebuilt as VM 100 from the qualified Debian
-cloud image and reconverged from the model: network interfaces, nftables, Kea,
+cloud image and deployed from the model: network interfaces, nftables, Kea,
 SANDBOX DNS/NTP, SSH, and monitoring. Platform backups can shorten the path but
 are not required to recreate the desired configuration.
 

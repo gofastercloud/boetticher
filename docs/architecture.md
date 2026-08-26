@@ -20,8 +20,8 @@ The internal namespace is `lab.home.arpa`. The platform identities are:
 | --- | --- | --- |
 | `lab-proxmox-01` | `10.10.99.5` | Proxmox host |
 | `lab-fw-01` | `10.10.99.1` | managed Debian gateway |
-| `lab-dns-01` | `10.10.20.10` | PowerDNS, AdGuard Home, Chrony |
-| `lab-dns-02` | `10.10.20.11` | PowerDNS, AdGuard Home, Chrony |
+| `lab-dns-01` | `10.10.20.10` | PowerDNS, Blocky by default, Chrony |
+| `lab-dns-02` | `10.10.20.11` | PowerDNS, Blocky by default, Chrony |
 | `lab-monitor-01` | `10.10.20.20` | Zabbix and PostgreSQL |
 | `lab-log-01` | `10.10.20.40` | Central systemd journal collector |
 | `lab-portal-01` | `10.10.20.30` | generated portal |
@@ -70,11 +70,12 @@ but does not inspect or manage the appliance’s configuration.
 
 ## Platform services
 
-DNS and NTP remain dual-host services. Kea-driven dynamic DNS updates travel to
-the PowerDNS authoritative primary through authenticated RFC2136 and replicate
-to the secondary. AdGuard Home remains client-facing for TRUSTED, SERVERS, and
-MGMT; SANDBOX uses the gateway resolver and does not receive the broad internal
-namespace.
+DNS and NTP remain dual-host services. Blocky is the default client-facing
+recursive/filtering provider and AdGuard Home is a supported typed alternative.
+Kea-driven dynamic DNS updates travel to the PowerDNS authoritative primary
+through authenticated RFC2136 and replicate to the secondary. The selected
+provider serves TRUSTED, SERVERS, and MGMT; SANDBOX uses the gateway resolver
+and does not receive the broad internal namespace.
 
 Zabbix monitors boetticher-owned platform hosts and services. The portal is a
 static generated view of the model, documentation, and non-secret status; it

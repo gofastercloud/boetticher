@@ -19,7 +19,7 @@ these journeys.
 8. Exercise the positive and negative firewall journeys, especially SANDBOX.
 9. Attach a clean second NIC with `boetticher network trunk attach IFACE` and
    prove physical VLAN access through a managed switch.
-10. Reboot, rerun critical journeys, rerun converge, and require no unexpected
+10. Reboot, rerun critical journeys, rerun deploy, and require no unexpected
     changes.
 
 ## External mode

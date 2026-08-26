@@ -9,6 +9,11 @@ services:
   - postgresql
   - nginx
   - zabbix-agent2
+zabbix:
+  repository: https://repo.zabbix.com/zabbix/7.0/debian
+  release_package: zabbix-release_7.0-5+debian13_all.deb
+  release_package_sha256: 4a926b8815cdefddc31558fe622676730a3987610f75d5af0d4024809d21dd43
+  package_version: 1:7.0.30-1+debian13
 logging: inherited-from-base
 runtime_config: /etc/boetticher/module.yaml
 persistent:

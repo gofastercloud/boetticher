@@ -30,6 +30,9 @@ powerdns_key_sha256=efeb5b1451c76de1dac8eefaddba5af5549e8fd93484728744ea7b4923de
 powerdns_repo=https://repo.powerdns.com/debian
 powerdns_suite=trixie-auth-49
 powerdns_package_version=4.9.17-1pdns.trixie
+zabbix_release_url=https://repo.zabbix.com/zabbix/7.0/debian/pool/main/z/zabbix-release/zabbix-release_7.0-5+debian13_all.deb
+zabbix_release_sha256=4a926b8815cdefddc31558fe622676730a3987610f75d5af0d4024809d21dd43
+zabbix_package_version=1:7.0.30-1+debian13
 mkdir -p "$output_root" "$work_root"
 
 cleanup() {
@@ -141,6 +144,40 @@ install_powerdns() {
     "$rootfs/etc/apt/keyrings/auth-49-pub.asc"
 }
 
+install_zabbix() {
+  rootfs=$1
+  release="$work_root/zabbix-release_7.0-5+debian13_all.deb"
+  if [ ! -f "$release" ]; then
+    curl --fail --location --silent --show-error --output "$release" "$zabbix_release_url"
+  fi
+  printf '%s  %s\n' "$zabbix_release_sha256" "$release" | sha256sum --check --status
+  install -D -m 0644 "$release" "$rootfs/tmp/zabbix-release.deb"
+  mount --bind /dev "$rootfs/dev"
+  mount -t proc proc "$rootfs/proc"
+  mount --rbind /sys "$rootfs/sys"
+  chroot "$rootfs" dpkg --install /tmp/zabbix-release.deb
+  umount -R "$rootfs/dev" || true
+  umount -R "$rootfs/proc" || true
+  umount -R "$rootfs/sys" || true
+  install_packages "$rootfs" \
+    "zabbix-server-pgsql=$zabbix_package_version" \
+    "zabbix-frontend-php=$zabbix_package_version" \
+    "zabbix-nginx-conf=$zabbix_package_version" \
+    "zabbix-agent2=$zabbix_package_version" \
+    postgresql nginx
+  installed_version=$(chroot "$rootfs" dpkg-query -W -f='${Version}' zabbix-server-pgsql)
+  if [ "$installed_version" != "$zabbix_package_version" ]; then
+    echo "HOLD: unexpected Zabbix server package version: $installed_version" >&2
+    return 2
+  fi
+  if ! chroot "$rootfs" /usr/sbin/zabbix_server --version 2>&1 | grep -q '7\.0\.30'; then
+    echo "HOLD: Zabbix executable is not the qualified 7.0.30 release" >&2
+    return 2
+  fi
+  chroot "$rootfs" dpkg --purge zabbix-release >/dev/null 2>&1 || true
+  rm -f "$rootfs/tmp/zabbix-release.deb"
+}
+
 package_lxc() {
   name=$1
   rootfs=$(rootfs_for "$name")
@@ -210,7 +247,7 @@ build_logging() {
 
 build_monitoring() {
   rootfs=$(prepare_rootfs boetticher-monitoring)
-  install_packages "$rootfs" postgresql nginx zabbix-server-pgsql zabbix-frontend-php zabbix-nginx-conf zabbix-agent2
+  install_zabbix "$rootfs"
   package_lxc boetticher-monitoring
 }
 
