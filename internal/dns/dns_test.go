@@ -17,6 +17,12 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	if plan.Implementation != "PowerDNS Authoritative" || plan.PackageVersion != "4.9.17-1pdns.trixie" || len(plan.DynamicZones) != 4 || len(plan.ReverseZones) != 4 {
 		t.Fatalf("unexpected DNS plan: %#v", plan)
 	}
+	if plan.RecursiveProvider != "blocky" || !plan.AuthoritativeNXDOMAINNoLeak || len(plan.RecursiveUpstreams) < 2 {
+		t.Fatalf("default recursive DNS contract is incomplete: %#v", plan)
+	}
+	if len(plan.AuthoritativeForwardZones) != len(plan.AdGuardForwardZones) || len(plan.AuthoritativeReverseZones) != len(plan.AdGuardReverseZones) {
+		t.Fatalf("provider-neutral authoritative zones diverged: %#v", plan)
+	}
 	if got := plan.AuthoritativeForwardTarget; got != "127.0.0.1:5353" || len(plan.AuthoritativeListenAddresses) != 2 {
 		t.Fatalf("incompatible authoritative listener contract: %#v", plan)
 	}
@@ -56,6 +62,24 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	}
 	if _, err := QualifiedName(site, "SERVERS", "lab-dns-01"); err == nil {
 		t.Fatal("dynamic registration claimed a platform-owned host label")
+	}
+}
+
+func TestRecursiveProviderSelectionIsTypedAndProviderNeutral(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	site.ModuleConfig = map[string]model.ModuleConfig{}
+	site.ModuleConfig["dns"] = model.ModuleConfig{Provider: string(model.DNSProviderAdGuard)}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.RecursiveProvider != "adguard" || !plan.AuthoritativeNXDOMAINNoLeak {
+		t.Fatalf("explicit provider did not preserve common DNS contract: %#v", plan)
+	}
+	for _, upstream := range plan.RecursiveUpstreams {
+		if strings.Contains(upstream, "lab.home.arpa") {
+			t.Fatalf("authoritative namespace leaked into public upstreams: %q", upstream)
+		}
 	}
 }
 
