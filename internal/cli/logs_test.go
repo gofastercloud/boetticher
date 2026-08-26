@@ -12,3 +12,20 @@ func TestLogsRejectsMultipleHostsBeforeLoadingSite(t *testing.T) {
 		t.Fatalf("multiple log hosts were not rejected: %v", err)
 	}
 }
+
+func TestNormalizeJournalUnitAcceptsBoundedServiceShorthand(t *testing.T) {
+	if got, err := normalizeJournalUnit("blocky"); err != nil || got != "blocky.service" {
+		t.Fatalf("bare service unit normalized to %q, %v", got, err)
+	}
+	if got, err := normalizeJournalUnit("blocky.service"); err != nil || got != "blocky.service" {
+		t.Fatalf("qualified service unit changed to %q, %v", got, err)
+	}
+}
+
+func TestNormalizeJournalUnitRejectsShellAndPathSyntax(t *testing.T) {
+	for _, value := range []string{"blocky;id", "../../shadow", "", ".service", "foo..service"} {
+		if _, err := normalizeJournalUnit(value); err == nil {
+			t.Fatalf("unsafe unit %q was accepted", value)
+		}
+	}
+}

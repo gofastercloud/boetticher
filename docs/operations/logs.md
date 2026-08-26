@@ -4,7 +4,7 @@ Use the bounded CLI command:
 
 ```text
 boetticher logs HOST --since 1h --limit 100
-boetticher logs HOST --unit blocky.service --priority warning
+boetticher logs HOST --unit blocky --priority warning
 ```
 
 Hosts are resolved against the managed platform model. Unit names, durations,

@@ -17,7 +17,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
-var safeUnit = regexp.MustCompile(`^[A-Za-z0-9_.@:-]+\.service$`)
+var safeUnit = regexp.MustCompile(`^[A-Za-z0-9_.@:%+-]+$`)
 
 func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
@@ -36,8 +36,12 @@ func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 	if *limit < 1 || *limit > 500 {
 		return fmt.Errorf("--limit must be between 1 and 500")
 	}
-	if *unit != "" && !safeUnit.MatchString(*unit) {
-		return fmt.Errorf("--unit is not a safe systemd service unit")
+	if *unit != "" {
+		normalized, err := normalizeJournalUnit(*unit)
+		if err != nil {
+			return err
+		}
+		*unit = normalized
 	}
 	validPriorities := map[string]bool{"emerg": true, "alert": true, "crit": true, "err": true, "warning": true, "notice": true, "info": true, "debug": true}
 	if *priority != "" && !validPriorities[*priority] {
@@ -117,4 +121,14 @@ func findManagedEndpoint(s model.Site, wanted string) (model.Component, bool) {
 		}
 	}
 	return model.Component{}, false
+}
+
+func normalizeJournalUnit(value string) (string, error) {
+	if value == "" || !safeUnit.MatchString(value) || strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") || strings.Contains(value, "..") {
+		return "", fmt.Errorf("--unit is not a safe systemd unit")
+	}
+	if !strings.Contains(value, ".") {
+		return value + ".service", nil
+	}
+	return value, nil
 }
