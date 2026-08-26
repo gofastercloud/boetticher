@@ -173,7 +173,14 @@ func (c *Client) CreateVM(ctx context.Context, node string, vmid int, params url
 		params = url.Values{}
 	}
 	params.Set("vmid", strconv.Itoa(vmid))
-	return c.Post(ctx, path.Join("/nodes", node, "qemu"), params, nil)
+	var upid string
+	if err := c.Post(ctx, path.Join("/nodes", node, "qemu"), params, &upid); err != nil {
+		return err
+	}
+	if upid != "" {
+		return c.WaitTask(ctx, node, upid)
+	}
+	return nil
 }
 
 func (c *Client) ImportDisk(ctx context.Context, node string, vmid int, source, storage, format string) (string, error) {
@@ -217,7 +224,14 @@ func (c *Client) CreateLXC(ctx context.Context, node string, vmid int, params ur
 		params = url.Values{}
 	}
 	params.Set("vmid", strconv.Itoa(vmid))
-	return c.Post(ctx, path.Join("/nodes", node, "lxc"), params, nil)
+	var upid string
+	if err := c.Post(ctx, path.Join("/nodes", node, "lxc"), params, &upid); err != nil {
+		return err
+	}
+	if upid != "" {
+		return c.WaitTask(ctx, node, upid)
+	}
+	return nil
 }
 
 func (c *Client) SetLXCConfig(ctx context.Context, node string, vmid int, params url.Values) error {

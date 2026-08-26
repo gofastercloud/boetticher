@@ -71,6 +71,42 @@ func TestCreateTokenUsesFormEncoding(t *testing.T) {
 	}
 }
 
+func TestCreateVMWaitsForProxmoxTaskBeforeReturning(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu":
+			return response([]byte(`{"data":"UPID:pve:create-vm"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:create-vm/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		default:
+			t.Fatalf("unexpected VM creation request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.CreateVM(context.Background(), "node", 190, url.Values{"name": {"lab-builder-01"}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCreateLXCWaitsForProxmoxTaskBeforeReturning(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc":
+			return response([]byte(`{"data":"UPID:pve:create-lxc"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:create-lxc/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		default:
+			t.Fatalf("unexpected LXC creation request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.CreateLXC(context.Background(), "node", 110, url.Values{"hostname": {"lab-dns-01"}}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUploadStorageFileUsesMultipartArtifactContract(t *testing.T) {
 	path := t.TempDir() + "/artifact.tar.zst"
 	if err := os.WriteFile(path, []byte("artifact bytes"), 0o600); err != nil {
