@@ -73,30 +73,26 @@ func helpRequested(args []string) bool {
 }
 
 func commandHelp(args []string, out interface{ Write([]byte) (int, error) }) {
-	command := args[0]
-	for _, spec := range commandSpecs {
-		if strings.HasPrefix(spec.Usage, "boetticher "+command+" ") {
-			fmt.Fprintf(out, "Usage:\n  %s\n\n", spec.Usage)
+	pathParts := make([]string, 0, len(args))
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
 			break
 		}
+		pathParts = append(pathParts, arg)
 	}
-	switch command {
-	case "deploy":
-		fmt.Fprintln(out, "Deploy the resolved boetticher platform model through the single deployment engine.")
-		fmt.Fprintln(out, "Safety: without --dry-run this can create or replace boetticher-owned resources.")
-		fmt.Fprintln(out, "Example: boetticher deploy --site ./my-boetticher --dry-run")
-	case "module":
-		fmt.Fprintln(out, "Inspect and change first-party module enablement; modules emit declarations and core performs mutation.")
-		fmt.Fprintln(out, "Examples: boetticher module list; boetticher module plan monitoring")
-	case "config":
-		fmt.Fprintln(out, "Validate or inspect typed, non-secret SiteConfig without mutating infrastructure.")
-		fmt.Fprintln(out, "Examples: boetticher config validate; boetticher config schema")
-	case "logs":
-		fmt.Fprintln(out, "Read a bounded journal view through the normal bastion path; central logging is asynchronous and not an availability dependency.")
-		fmt.Fprintln(out, "Examples: boetticher logs lab-dns-01 --since 1h; boetticher logs lab-fw-01 --priority warning")
-	default:
-		fmt.Fprintf(out, "Run boetticher %s with --help for command options.\n", command)
+	path := strings.Join(pathParts, " ")
+	spec, ok := nestedHelpSpecs[path]
+	if !ok {
+		spec, ok = helpSpecs[path]
 	}
+	if !ok && len(pathParts) > 0 {
+		spec, ok = helpSpecs[pathParts[0]]
+	}
+	if !ok {
+		usage(out)
+		return
+	}
+	fmt.Fprintf(out, "Purpose:\n  %s\n\nUsage:\n  %s\n\nArguments:\n  %s\n\nOptions:\n  %s\n\nSafety:\n  %s\n\nExamples:\n  %s\n\nRelated commands:\n  %s\n", spec.Purpose, spec.Usage, spec.Arguments, spec.Options, spec.Safety, spec.Examples, spec.Related)
 }
 
 func usage(out interface{ Write([]byte) (int, error) }) {

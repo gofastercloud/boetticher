@@ -62,6 +62,31 @@ func TestPublicHelpPathsDoNotFail(t *testing.T) {
 	}
 }
 
+func TestNestedHelpPathsArePathAwareAndSubstantive(t *testing.T) {
+	paths := []string{
+		"firewall diff", "dhcp leases", "network trunk status", "pki trust export",
+		"module disable", "config schema", "portal build",
+	}
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			var output bytes.Buffer
+			args := append(strings.Fields(path), "--help")
+			if err := Run(args, &output, &output); err != nil {
+				t.Fatal(err)
+			}
+			text := output.String()
+			for _, section := range []string{"Purpose:", "Usage:", "Arguments:", "Options:", "Safety:", "Examples:", "Related commands:"} {
+				if !strings.Contains(text, section) {
+					t.Errorf("nested help %q is missing %s: %s", path, section, text)
+				}
+			}
+			if strings.Contains(text, "Run boetticher "+strings.Fields(path)[0]+" with --help") {
+				t.Errorf("nested help %q contains recursive hint: %s", path, text)
+			}
+		})
+	}
+}
+
 func TestConvergeIsNotAnActiveCommand(t *testing.T) {
 	var output bytes.Buffer
 	if err := Run([]string{"converge"}, &output, &output); err == nil {
