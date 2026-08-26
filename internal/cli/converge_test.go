@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -8,6 +9,15 @@ import (
 	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 )
+
+type dnsReadinessRunner struct {
+	commands []string
+}
+
+func (r *dnsReadinessRunner) Run(_ context.Context, _ string, _ string, command string) ([]byte, error) {
+	r.commands = append(r.commands, command)
+	return nil, nil
+}
 
 func TestDeploymentModuleNamesFollowResolvedManagedGraph(t *testing.T) {
 	resolved, _, err := modules.Compose(model.ConfigFromSite(model.NewSite("trial", "age1trial", model.GatewayModeManaged)))
@@ -56,5 +66,26 @@ func TestRuntimeDeclarationRejectsUnqualifiedGuestArtifact(t *testing.T) {
 	_, err := resolvedDeclarationForGuest(model.ModuleDeclaration{Module: "dns"}, proxmox.GuestPlan{Owner: "boetticher/module/dns"})
 	if err == nil || !strings.Contains(err.Error(), "qualified artifact") {
 		t.Fatalf("unqualified guest artifact was accepted: %v", err)
+	}
+}
+
+func TestVerifyDNSReadinessChecksTheQualifiedBlockyRuntime(t *testing.T) {
+	runner := &dnsReadinessRunner{}
+	if err := verifyDNSReadiness(context.Background(), runner, "10.10.20.10", string(model.DNSProviderBlocky)); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 1 {
+		t.Fatalf("readiness commands = %d, want 1", len(runner.commands))
+	}
+	command := runner.commands[0]
+	for _, required := range []string{
+		"systemctl is-active pdns chrony blocky",
+		"test ! -e /opt/AdGuardHome/AdGuardHome",
+		"blocky --version | grep -Fq '0.34.0'",
+		"blocky validate --config /etc/blocky/config.yml",
+	} {
+		if !strings.Contains(command, required) {
+			t.Fatalf("Blocky readiness command omitted %q: %s", required, command)
+		}
 	}
 }

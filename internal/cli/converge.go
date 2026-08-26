@@ -396,11 +396,14 @@ func verifyDNSReadiness(ctx context.Context, runner proxmox.CommandRunner, addre
 	}
 	service := "blocky"
 	config := "/etc/blocky/config.yml"
+	checks := ""
 	if provider == string(model.DNSProviderAdGuard) {
 		service = "adguardhome"
 		config = "/opt/AdGuardHome/AdGuardHome.yaml"
+	} else if provider == string(model.DNSProviderBlocky) {
+		checks = "; test ! -e /opt/AdGuardHome/AdGuardHome; blocky --version | grep -Fq '0.34.0'; blocky validate --config /etc/blocky/config.yml"
 	}
-	command := fmt.Sprintf("set -eu; sudo -n systemctl is-active pdns chrony %s; sudo -n test -s /etc/powerdns/pdns.conf; sudo -n test -s %s", service, config)
+	command := fmt.Sprintf("set -eu; sudo -n systemctl is-active pdns chrony %s; sudo -n test -s /etc/powerdns/pdns.conf; sudo -n test -s %s%s", service, config, checks)
 	if _, err := runner.Run(ctx, address, model.DefaultAdminSSHUser, command); err != nil {
 		return fmt.Errorf("authoritative, NTP, and %s resolver checks failed: %w", provider, err)
 	}
