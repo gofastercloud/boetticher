@@ -42,10 +42,11 @@ case "$name" in
   boetticher-monitoring)
     run psql --version
     run nginx -v
-    run zabbix_server --version
-    run zabbix_agent2 --version
-    chroot "$rootfs" /usr/sbin/zabbix_server --version 2>&1 | grep -q '7\.0\.30'
-    test -x "$rootfs/usr/lib/boetticher/prepare-zabbix-config"
+  run zabbix_server --version
+  run zabbix_agent2 --version
+  chroot "$rootfs" /usr/sbin/zabbix_server --version 2>&1 | grep -q '7\.0\.30'
+  test -f "$rootfs/usr/share/zabbix-sql-scripts/postgresql/server.sql.gz"
+  test -x "$rootfs/usr/lib/boetticher/prepare-zabbix-config"
     test -f "$rootfs/etc/systemd/system/zabbix-server.service.d/boetticher-credentials.conf"
     ;;
   boetticher-portal)

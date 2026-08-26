@@ -332,6 +332,15 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 			t.Fatalf("monitoring image definition is missing Zabbix qualification input %q", required)
 		}
 	}
+	buildScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"zabbix-sql-scripts=$zabbix_package_version", "php-pgsql"} {
+		if !strings.Contains(string(buildScript), required) {
+			t.Fatalf("monitoring build is missing runtime package %q", required)
+		}
+	}
 	firewall, err := os.ReadFile(filepath.Join(root, "firewall", "image.yaml"))
 	if err != nil {
 		t.Fatal(err)
