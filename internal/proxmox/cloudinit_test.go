@@ -27,6 +27,19 @@ func TestFirewallCloudInitUsesStableInterfaceIdentities(t *testing.T) {
 	}
 }
 
+func TestFirewallCloudInitDoesNotDuplicateStaticPrefixLength(t *testing.T) {
+	guest := GuestPlan{Name: "lab-fw-01", Address: "10.10.99.1", NICs: []GuestNIC{
+		{Name: "trusted0", MAC: "02:00:00:00:01:02", Method: "static", Address: "10.10.10.1"},
+	}}
+	files, err := RenderFirewallCloudInit(guest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(files.NetworkConfig, "addresses: [10.10.10.1/24]") || strings.Contains(files.NetworkConfig, "/24/24") {
+		t.Fatalf("invalid static address rendered: %s", files.NetworkConfig)
+	}
+}
+
 func TestFirewallCloudInitRejectsUnstableNICIdentity(t *testing.T) {
 	if _, err := RenderFirewallCloudInit(GuestPlan{Name: "lab-fw-01", Address: "10.10.99.1", NICs: []GuestNIC{{Name: "wan0", Method: "dhcp"}}}); err == nil {
 		t.Fatal("cloud-init accepted a NIC without a stable MAC")

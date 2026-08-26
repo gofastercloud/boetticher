@@ -457,7 +457,7 @@ func fixturePersistent(module, guest string) []model.PersistentState {
 func gatewayNICs(s model.Site) []GuestNIC {
 	nics := []GuestNIC{{Name: "wan0", Bridge: "vmbr0", Method: "dhcp", MAC: "02:00:00:00:01:01"}}
 	for _, zone := range s.Normalize().Network.Zones {
-		nics = append(nics, GuestNIC{Name: strings.ToLower(zone.Name) + "0", Bridge: "vmbr1", VLAN: zone.VLAN, Address: zone.Gateway + "/24", Method: "static", MAC: fmt.Sprintf("02:00:00:00:01:%02x", len(nics)+1)})
+		nics = append(nics, GuestNIC{Name: strings.ToLower(zone.Name) + "0", Bridge: "vmbr1", VLAN: zone.VLAN, Address: zone.Gateway, Method: "static", MAC: fmt.Sprintf("02:00:00:00:01:%02x", len(nics)+1)})
 	}
 	return nics
 }
