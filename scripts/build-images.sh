@@ -203,6 +203,7 @@ build_dns_blocky() {
   rootfs=$(prepare_rootfs boetticher-dns-blocky)
   install_powerdns "$rootfs"
   install_packages "$rootfs" chrony
+  install -D -m 0644 images/dns/common/filtering-policy.hosts "$rootfs/etc/boetticher/dns/filtering/boetticher.hosts"
   mkdir -p "$rootfs/usr/local/bin"
   archive="$work_root/blocky_v0.34.0_Linux_x86_64.tar.gz"
   curl --fail --location --silent --show-error --output "$archive" https://github.com/0xERR0R/blocky/releases/download/v0.34.0/blocky_v0.34.0_Linux_x86_64.tar.gz

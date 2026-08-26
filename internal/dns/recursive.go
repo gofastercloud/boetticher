@@ -29,8 +29,8 @@ type BlockyConditional struct {
 }
 
 type BlockyBlocking struct {
-	Denylists    map[string][]string `yaml:"denylists,omitempty"`
-	ClientGroups map[string][]string `yaml:"clientGroups,omitempty"`
+	Denylists         map[string][]string `yaml:"denylists,omitempty"`
+	ClientGroupsBlock map[string][]string `yaml:"clientGroupsBlock,omitempty"`
 }
 
 type BlockyPorts struct {
@@ -40,6 +40,12 @@ type BlockyPorts struct {
 type BlockyCaching struct {
 	MinTime string `yaml:"minTime,omitempty"`
 }
+
+const (
+	FilteringPolicyRevision = "boetticher-filter-v1"
+	FilteringPolicyGroup    = "boetticher-default"
+	FilteringPolicyFile     = "/etc/boetticher/dns/filtering/boetticher.hosts"
+)
 
 // RenderBlockyConfig renders only provider configuration. It contains no
 // credentials or mutable site secrets and is regenerated from the canonical
@@ -65,8 +71,12 @@ func RenderBlockyConfig(plan Plan) ([]byte, error) {
 	config, err := yaml.Marshal(BlockyConfig{
 		Upstreams:   BlockyUpstreams{Groups: map[string][]string{"default": append([]string(nil), plan.RecursiveUpstreams...)}},
 		Conditional: BlockyConditional{FallbackUpstream: false, Mapping: mapping},
-		Ports:       BlockyPorts{DNS: 53},
-		Caching:     BlockyCaching{MinTime: "5m"},
+		Blocking: BlockyBlocking{
+			Denylists:         map[string][]string{FilteringPolicyGroup: []string{FilteringPolicyFile}},
+			ClientGroupsBlock: map[string][]string{"default": []string{FilteringPolicyGroup}},
+		},
+		Ports:   BlockyPorts{DNS: 53},
+		Caching: BlockyCaching{MinTime: "5m"},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal Blocky configuration: %w", err)

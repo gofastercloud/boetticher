@@ -103,6 +103,12 @@ func TestRenderBlockyConfigPinsAuthoritativeZonesWithoutPublicFallback(t *testin
 	if decoded.Conditional.FallbackUpstream {
 		t.Fatal("Blocky authoritative mappings allow public fallback")
 	}
+	if got := decoded.Blocking.Denylists[FilteringPolicyGroup]; len(got) != 1 || got[0] != FilteringPolicyFile {
+		t.Fatalf("unexpected Blocky denylist: %#v", decoded.Blocking.Denylists)
+	}
+	if got := decoded.Blocking.ClientGroupsBlock["default"]; len(got) != 1 || got[0] != FilteringPolicyGroup {
+		t.Fatalf("unexpected Blocky client group: %#v", decoded.Blocking.ClientGroupsBlock)
+	}
 	for _, zone := range []string{"lab.home.arpa", "trusted.lab.home.arpa", "servers.lab.home.arpa", "sandbox.lab.home.arpa", "mgmt.lab.home.arpa", "10.10.10.in-addr.arpa"} {
 		if got := decoded.Conditional.Mapping[zone]; len(got) != 1 || got[0] != "127.0.0.1:5353" {
 			t.Fatalf("unexpected PowerDNS mapping for %q: %#v", zone, got)

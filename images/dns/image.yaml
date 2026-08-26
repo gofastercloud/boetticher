@@ -20,3 +20,5 @@ runtime_config: /etc/boetticher/module.yaml
 persistent:
   - /var/lib/powerdns
   - /var/lib/boetticher/identity/ssh
+filtering_policy_revision: boetticher-filter-v1
+filtering_policy_snapshot: common/filtering-policy.hosts

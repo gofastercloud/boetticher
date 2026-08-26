@@ -1,0 +1,4 @@
+# boetticher-filter-v1
+# This deterministic qualification snapshot is intentionally small. Release
+# policy expansion must produce a new revision and artifact identity.
+0.0.0.0 ads.boetticher.invalid

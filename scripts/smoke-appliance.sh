@@ -24,6 +24,7 @@ case "$name" in
     run pdns_server --version
     run chronyd --version
     test -x "$rootfs/usr/local/bin/blocky"
+    test -f "$rootfs/etc/boetticher/dns/filtering/boetticher.hosts"
     test -f "$rootfs/etc/systemd/system/blocky.service"
     test ! -e "$rootfs/opt/AdGuardHome/AdGuardHome"
     ;;

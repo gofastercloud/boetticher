@@ -168,6 +168,13 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 			t.Fatalf("DNS image definition is missing PowerDNS qualification input %q", required)
 		}
 	}
+	filteringPolicy, err := os.ReadFile(filepath.Join(root, "dns", "common", "filtering-policy.hosts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(filteringPolicy), "# boetticher-filter-v1") {
+		t.Fatal("DNS filtering policy snapshot is not revisioned")
+	}
 	monitoring, err := os.ReadFile(filepath.Join(root, "monitoring", "image.yaml"))
 	if err != nil {
 		t.Fatal(err)
