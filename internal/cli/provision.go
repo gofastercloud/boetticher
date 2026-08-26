@@ -33,7 +33,11 @@ func runProvision(args []string, out interface{ Write([]byte) (int, error) }) er
 	}
 	if *dryRun {
 		fmt.Fprintf(out, "Proxmox provisioning plan: PASS model %s (%d guests)\n", plan.ModelRevision, len(plan.Guests))
-		fmt.Fprintf(out, "  Storage target: %s\n  Firewall VM: provisioned by bootstrap\n  Debian template: %s\n", plan.Storage, *debianTemplate)
+		firewallAction := "not created (external gateway mode)"
+		if s.Gateway.Mode == model.GatewayModeManaged {
+			firewallAction = "provisioned by bootstrap"
+		}
+		fmt.Fprintf(out, "  Storage target: %s\n  Firewall VM: %s\n  Debian template: %s\n", plan.Storage, firewallAction, *debianTemplate)
 		return nil
 	}
 	client, credentials, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
