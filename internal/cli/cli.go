@@ -30,56 +30,6 @@ import (
 	"github.com/gofastercloud/boetticher/internal/zabbix"
 )
 
-func Run(args []string, out, errOut interface{ Write([]byte) (int, error) }) error {
-	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
-		usage(out)
-		return nil
-	}
-	switch args[0] {
-	case "init":
-		return runInit(args[1:], out)
-	case "preflight":
-		return runPreflight(args[1:], out)
-	case "ssh-config":
-		return runSSHConfig(args[1:], out)
-	case "access":
-		return runAccess(args[1:], out)
-	case "portal":
-		if len(args) > 1 && args[1] == "build" {
-			return runPortalBuild(args[2:], out)
-		}
-	case "bootstrap-endpoint":
-		return runBootstrapEndpoint(args[1:], out)
-	case "pki":
-		return runPKI(args[1:], out)
-	case "opnsense":
-		return runOPNsense(args[1:], out)
-	case "network":
-		return runNetwork(args[1:], out)
-	case "verify":
-		return runVerify(args[1:], out)
-	case "doctor":
-		return runDoctor(args[1:], out)
-	case "bootstrap":
-		return runBootstrap(args[1:], out)
-	case "provision":
-		return runProvision(args[1:], out)
-	case "converge":
-		return runConverge(args[1:], out)
-	case "upgrade":
-		return runIntegrationGate(args[0], args[1:], out)
-	}
-	fmt.Fprintf(errOut, "usage: boetticher <command>\n")
-	return fmt.Errorf("unknown or incomplete command %q", strings.Join(args, " "))
-}
-
-func usage(out interface{ Write([]byte) (int, error) }) {
-	fmt.Fprintln(out, "boetticher operator CLI\n\nUsage:")
-	for _, spec := range commandSpecs {
-		fmt.Fprintln(out, "  "+spec.Usage)
-	}
-}
-
 func runInit(args []string, out interface{ Write([]byte) (int, error) }) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -767,24 +717,23 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 			sshJourneyResult = portal.CheckResult{Name: "authenticated SSH journey via Proxmox bastion", Status: "PASS", Detail: "authenticated command completed through ProxyJump"}
 		}
 	}
-	evidence := portal.Evidence{GeneratedAt: time.Now().UTC().Format(time.RFC3339), Results: []portal.CheckResult{
-		{Name: "canonical platform model validates", Status: "PASS", Detail: "fixed V1 topology and address contract validated locally"},
+	evidence := portal.Evidence{GeneratedAt: time.Now().UTC().Format(time.RFC3339), Results: append(offlineVerificationResults(*siteDir, s),
 		sshResult,
 		sshJourneyResult,
-		{Name: "DNS01/DNS02 reachable", Status: "NOT TESTED", Detail: "requires deployed network journey"},
-		{Name: "NTP01/NTP02 synchronized", Status: "NOT TESTED", Detail: "requires deployed Chrony evidence"},
-		{Name: "OPNsense API least privilege", Status: "NOT TESTED", Detail: "requires authenticated OPNsense API evidence"},
-		{Name: "Proxmox API least privilege", Status: "NOT TESTED", Detail: "requires authenticated Proxmox API evidence"},
-		{Name: "internal CA available", Status: "PASS", Detail: "CA metadata is present in the initialized model"},
-		{Name: "SANDBOX cannot access TRUSTED", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
-		{Name: "SANDBOX cannot access SERVERS", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
-		{Name: "SANDBOX cannot access MGMT", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
-		{Name: "MGMT DHCP is reservation-only", Status: "NOT TESTED", Detail: "requires authenticated OPNsense API evidence"},
-		{Name: "portal requires client certificate", Status: "NOT TESTED", Detail: "requires deployed mTLS journey"},
-		{Name: "Zabbix requires client certificate", Status: "NOT TESTED", Detail: "requires deployed mTLS journey"},
-		{Name: "latest VM/LXC backup", Status: "NOT TESTED", Detail: "requires current backup evidence"},
-		{Name: "Age recovery fixture", Status: "NOT TESTED", Detail: "requires independent recovery copy"},
-	}}
+		portal.CheckResult{Name: "DNS01/DNS02 reachable", Status: "NOT TESTED", Detail: "requires deployed network journey"},
+		portal.CheckResult{Name: "NTP01/NTP02 synchronized", Status: "NOT TESTED", Detail: "requires deployed Chrony evidence"},
+		portal.CheckResult{Name: "OPNsense API least privilege", Status: "NOT TESTED", Detail: "requires authenticated OPNsense API evidence"},
+		portal.CheckResult{Name: "Proxmox API least privilege", Status: "NOT TESTED", Detail: "requires authenticated Proxmox API evidence"},
+		portal.CheckResult{Name: "internal CA available", Status: "STATIC PASS", Detail: "CA metadata is present in the initialized model"},
+		portal.CheckResult{Name: "SANDBOX cannot access TRUSTED", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
+		portal.CheckResult{Name: "SANDBOX cannot access SERVERS", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
+		portal.CheckResult{Name: "SANDBOX cannot access MGMT", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
+		portal.CheckResult{Name: "MGMT DHCP is reservation-only", Status: "NOT TESTED", Detail: "requires authenticated OPNsense API evidence"},
+		portal.CheckResult{Name: "portal requires client certificate", Status: "NOT TESTED", Detail: "requires deployed mTLS journey"},
+		portal.CheckResult{Name: "Zabbix requires client certificate", Status: "NOT TESTED", Detail: "requires deployed mTLS journey"},
+		portal.CheckResult{Name: "latest VM/LXC backup", Status: "NOT TESTED", Detail: "requires current backup evidence"},
+		portal.CheckResult{Name: "Age recovery fixture", Status: "NOT TESTED", Detail: "requires independent recovery copy"},
+	)}
 	document := struct {
 		ModelRevision string          `json:"model_revision"`
 		Evidence      portal.Evidence `json:"evidence"`
@@ -898,6 +847,28 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		}},
 		{"SSH configuration", *sshPath, func() error { return sshconfig.Check(*sshPath, s) }},
 	}
+	checks = append(checks,
+		struct {
+			name  string
+			path  string
+			check func() error
+		}{"Age identity", model.ExpandUserPath(*ageIdentity), func() error { return checkAgeIdentity(*ageIdentity) }},
+		struct {
+			name  string
+			path  string
+			check func() error
+		}{"SOPS boundary", filepath.Join(*siteDir, "secrets"), func() error { return checkSOPSBoundary(*siteDir, s) }},
+		struct {
+			name  string
+			path  string
+			check func() error
+		}{"runtime boundary", site.RuntimeDir(s), func() error { return checkRuntimeBoundary(*siteDir, s) }},
+		struct {
+			name  string
+			path  string
+			check func() error
+		}{"platform ownership plan", filepath.Join(*siteDir, "generated", "proxmox", "desired-state.json"), func() error { return checkPlatformOwnership(s) }},
+	)
 	failed := false
 	for _, check := range checks {
 		if err := check.check(); err != nil {
@@ -970,6 +941,161 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	if failed {
 		return fmt.Errorf("doctor found absent or inconsistent projections")
+	}
+	return nil
+}
+
+func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResult {
+	results := []portal.CheckResult{{Name: "canonical platform model validates", Status: "PASS", Detail: "fixed V1 topology and address contract validated locally"}}
+	checks := []struct {
+		name  string
+		check func() error
+	}{
+		{"OPNsense policy projection", func() error {
+			plan, err := opnsense.PlanFromSite(s)
+			if err != nil {
+				return err
+			}
+			if !plan.IPv4Only || len(plan.FirewallRules) == 0 {
+				return errors.New("IPv4-only firewall policy is incomplete")
+			}
+			return nil
+		}},
+		{"DNS/DDNS projection", func() error {
+			plan, err := dns.PlanFromSite(s)
+			if err != nil {
+				return err
+			}
+			if !plan.DDNS.Enabled || len(plan.DynamicZones) != 4 {
+				return errors.New("dynamic DNS zone contract is incomplete")
+			}
+			return nil
+		}},
+		{"Zabbix platform projection", func() error {
+			plan, err := zabbix.PlanFromSite(s)
+			if err != nil {
+				return err
+			}
+			if !plan.PlatformOnly || len(plan.Components) != len(s.PlatformComponents()) {
+				return errors.New("Zabbix projection is not platform-only")
+			}
+			return nil
+		}},
+		{"platform backup projection", func() error {
+			plan, err := backup.PlanFromSite(s)
+			if err != nil {
+				return err
+			}
+			if !plan.PlatformOnly || plan.UserWorkloadsManaged || len(plan.GuestVMIDs) != 5 {
+				return errors.New("backup projection is not limited to platform guests")
+			}
+			return nil
+		}},
+		{"SSH bastion allow-list", func() error {
+			policy, err := sshconfig.RenderBastionPolicy(s)
+			if err != nil {
+				return err
+			}
+			if !strings.Contains(policy, "PermitOpen") || strings.Contains(policy, "0.0.0.0") || strings.Contains(policy, "*") {
+				return errors.New("bastion policy is not destination constrained")
+			}
+			return nil
+		}},
+		{"portal artifact", func() error {
+			return checkRevisionFile(filepath.Join(siteDir, "generated", "portal", "index.html"), mustRevision(s))
+		}},
+	}
+	for _, check := range checks {
+		if err := check.check(); err != nil {
+			results = append(results, portal.CheckResult{Name: check.name, Status: "FAIL", Detail: err.Error()})
+		} else {
+			results = append(results, portal.CheckResult{Name: check.name, Status: "STATIC PASS", Detail: "deterministic local projection is valid"})
+		}
+	}
+	return results
+}
+
+func mustRevision(s model.Site) string {
+	revision, err := s.Revision()
+	if err != nil {
+		return "invalid"
+	}
+	return revision
+}
+
+func checkPlatformOwnership(s model.Site) error {
+	plan, err := proxmox.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
+	want := []int{model.ProxmoxVMID, model.DNS01VMID, model.DNS02VMID, model.MonitorVMID, model.PortalVMID}
+	if len(plan.Guests) != len(want) {
+		return fmt.Errorf("platform plan contains %d guests; expected %d", len(plan.Guests), len(want))
+	}
+	for index, guest := range plan.Guests {
+		if guest.VMID != want[index] {
+			return fmt.Errorf("platform plan contains unexpected VMID %d", guest.VMID)
+		}
+	}
+	return nil
+}
+
+func checkAgeIdentity(path string) error {
+	path = model.ExpandUserPath(path)
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return errors.New("Age identity must be a regular file, not a symlink or special file")
+	}
+	if info.Mode().Perm()&0077 != 0 {
+		return fmt.Errorf("Age identity permissions are %04o; group/other access must be absent", info.Mode().Perm())
+	}
+	return nil
+}
+
+func checkSOPSBoundary(siteDir string, s model.Site) error {
+	config, err := os.ReadFile(filepath.Join(siteDir, ".sops.yaml"))
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(config), s.SecretMetadata.AgeRecipient) || strings.Contains(string(config), "AGE-SECRET-KEY") {
+		return errors.New(".sops.yaml must contain only the public Age recipient")
+	}
+	secretDir := filepath.Join(siteDir, "secrets")
+	entries, err := os.ReadDir(secretDir)
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sops.yaml") {
+			continue
+		}
+		found = true
+		data, err := os.ReadFile(filepath.Join(secretDir, entry.Name()))
+		if err != nil {
+			return err
+		}
+		text := string(data)
+		if !strings.Contains(text, "sops:") || !strings.Contains(text, "ENC[") || strings.Contains(text, "AGE-SECRET-KEY") || strings.Contains(text, "-----BEGIN") {
+			return fmt.Errorf("%s is not an encrypted SOPS document", entry.Name())
+		}
+	}
+	if !found {
+		return errors.New("no encrypted SOPS secret document exists")
+	}
+	return nil
+}
+
+func checkRuntimeBoundary(siteDir string, s model.Site) error {
+	relative, err := filepath.Rel(filepath.Clean(siteDir), filepath.Clean(site.RuntimeDir(s)))
+	if err != nil {
+		return err
+	}
+	if relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))) {
+		return errors.New("runtime state is inside the site repository")
 	}
 	return nil
 }
