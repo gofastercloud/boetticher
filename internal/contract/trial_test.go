@@ -15,6 +15,7 @@ import (
 )
 
 func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
 	base := model.NewDefaultSite("trial", "age1trial")
 	if base.PhysicalNetwork.Mode != model.ModeVirtualOnly {
 		t.Fatalf("default trial is not virtual-only: %q", base.PhysicalNetwork.Mode)
@@ -26,6 +27,46 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	buildCloudInit := proxmox.RenderBuilderCloudInit()
 	if !strings.Contains(buildCloudInit.UserData, "./scripts/build-images.sh images") || !strings.Contains(buildCloudInit.UserData, "./scripts/scan-images.sh scan-images") || strings.Contains(strings.ToLower(buildCloudInit.UserData), "age identity") {
 		t.Fatal("temporary builder does not run the first-party build/qualification path with public inputs only")
+	}
+	buildScript, err := os.ReadFile(filepath.Join(repoRoot, "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildText := string(buildScript)
+	if strings.Contains(buildText, "BOETTICHER_IMAGE_BUILD_COMMAND") {
+		t.Fatal("default trial still uses the arbitrary image-build hook")
+	}
+	for _, artifact := range []string{"boetticher-base", "boetticher-firewall", "boetticher-dns-blocky", "boetticher-logging", "boetticher-monitoring", "boetticher-portal"} {
+		if !strings.Contains(buildText, artifact) {
+			t.Fatalf("default trial builder does not produce %s", artifact)
+		}
+	}
+	bootstrapSource, err := os.ReadFile(filepath.Join(repoRoot, "internal", "cli", "bootstrap.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrapText := string(bootstrapSource)
+	for _, required := range []string{"EnsureBuilderVM", "RebindEvidencePaths", "DestroyBuilderVM"} {
+		if !strings.Contains(bootstrapText, required) {
+			t.Fatalf("bootstrap does not complete the builder qualification lifecycle: %s", required)
+		}
+	}
+	deploySource, err := os.ReadFile(filepath.Join(repoRoot, "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployText := string(deploySource)
+	firewallReady := strings.Index(deployText, "HOLD: managed gateway is not reachable before dependent appliances")
+	dependentCreation := strings.Index(deployText, "deploy %s appliances")
+	if firewallReady < 0 || dependentCreation < 0 || firewallReady > dependentCreation {
+		t.Fatal("deploy does not gate dependent appliances on firewall SSH readiness")
+	}
+	dnsTasks, err := os.ReadFile(filepath.Join(repoRoot, "ansible", "roles", "dns", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(dnsTasks), "blocky validate --config /etc/blocky/config.yml") || !strings.Contains(string(dnsTasks), "dns_plan.recursive_provider == 'blocky'") {
+		t.Fatal("default DNS path does not validate and configure the qualified Blocky appliance")
 	}
 	site, _, err := modules.Compose(model.ConfigFromSite(base))
 	if err != nil {
