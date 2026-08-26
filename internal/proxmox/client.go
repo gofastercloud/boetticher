@@ -363,42 +363,62 @@ func (c *Client) UploadStorageFile(ctx context.Context, node, storage, content, 
 		return fmt.Errorf("open qualified artifact %s: %w", source, err)
 	}
 	defer file.Close()
-	body := &bytes.Buffer{}
-	multipartWriter := multipart.NewWriter(body)
-	if err := multipartWriter.WriteField("content", content); err != nil {
-		return err
-	}
-	part, err := multipartWriter.CreateFormFile("filename", filename)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(part, file); err != nil {
-		return fmt.Errorf("read qualified artifact %s: %w", source, err)
-	}
-	if err := multipartWriter.Close(); err != nil {
-		return err
-	}
 	base, err := url.Parse(c.BaseURL)
 	if err != nil {
 		return err
 	}
 	base.Path = path.Join(base.Path, "/nodes", node, "storage", storage, "upload")
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, base.String(), body)
+	pipeReader, pipeWriter := io.Pipe()
+	multipartWriter := multipart.NewWriter(pipeWriter)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, base.String(), pipeReader)
 	if err != nil {
+		_ = pipeReader.Close()
 		return err
 	}
 	request.Header.Set("Content-Type", multipartWriter.FormDataContentType())
 	if c.Token != "" {
 		request.Header.Set("Authorization", c.Token)
 	}
+	streamErr := make(chan error, 1)
+	go func() {
+		if err := multipartWriter.WriteField("content", content); err != nil {
+			_ = pipeWriter.CloseWithError(err)
+			streamErr <- err
+			return
+		}
+		part, err := multipartWriter.CreateFormFile("filename", filename)
+		if err != nil {
+			_ = pipeWriter.CloseWithError(err)
+			streamErr <- err
+			return
+		}
+		if _, err := io.Copy(part, file); err != nil {
+			_ = pipeWriter.CloseWithError(fmt.Errorf("read qualified artifact %s: %w", source, err))
+			streamErr <- err
+			return
+		}
+		if err := multipartWriter.Close(); err != nil {
+			_ = pipeWriter.CloseWithError(err)
+			streamErr <- err
+			return
+		}
+		streamErr <- pipeWriter.Close()
+	}()
 	response, err := c.HTTP.Do(request)
 	if err != nil {
+		_ = pipeReader.CloseWithError(err)
+		_ = <-streamErr
 		return err
 	}
 	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
 	if err != nil {
+		_ = pipeReader.CloseWithError(err)
+		_ = <-streamErr
 		return err
+	}
+	if err := <-streamErr; err != nil {
+		return fmt.Errorf("stream qualified artifact %s: %w", source, err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return &APIError{StatusCode: response.StatusCode, Status: response.Status, Message: strings.TrimSpace(string(data))}

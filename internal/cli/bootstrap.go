@@ -409,11 +409,24 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if _, err := builderRunner.Run(ctx, builderAddress, model.DefaultAdminSSHUser, "sudo -n /usr/local/sbin/boetticher-build"); err != nil {
 		return fmt.Errorf("qualify default appliance artifacts on temporary builder: %w", err)
 	}
-	result, err := builderRunner.Run(ctx, builderAddress, model.DefaultAdminSSHUser, "tar -czf - -C /home/labadmin/build generated/artifacts")
+	archiveFile, err := os.CreateTemp("", "boetticher-builder-artifacts-*.tar.gz")
 	if err != nil {
+		return fmt.Errorf("create temporary artifact archive: %w", err)
+	}
+	archivePath := archiveFile.Name()
+	defer os.Remove(archivePath)
+	if err := archiveFile.Chmod(0o600); err != nil {
+		_ = archiveFile.Close()
+		return fmt.Errorf("protect temporary artifact archive: %w", err)
+	}
+	if err := builderRunner.RunStream(ctx, builderAddress, model.DefaultAdminSSHUser, "tar -czf - -C /home/labadmin/build generated/artifacts", archiveFile); err != nil {
+		_ = archiveFile.Close()
 		return fmt.Errorf("retrieve qualified appliance evidence: %w", err)
 	}
-	if err := artifacts.ExtractBuildArchive(result, siteDir); err != nil {
+	if err := archiveFile.Close(); err != nil {
+		return fmt.Errorf("close qualified appliance evidence: %w", err)
+	}
+	if err := artifacts.ExtractBuildArchiveFile(archivePath, siteDir); err != nil {
 		return fmt.Errorf("extract qualified appliance evidence: %w", err)
 	}
 	if err := artifacts.RebindEvidencePaths(siteDir); err != nil {

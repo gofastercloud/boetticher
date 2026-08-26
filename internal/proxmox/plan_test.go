@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -307,6 +308,7 @@ func TestEnsureArtifactInStorageVerifiesPostUploadChecksum(t *testing.T) {
 			}
 			return response([]byte(`{"data":[{"volid":"local:vztmpl/boetticher-logging-1.0.0-amd64.tar.zst","filename":"boetticher-logging-1.0.0-amd64.tar.zst","checksum":"` + checksum + `"}]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
+			_, _ = io.Copy(io.Discard, r.Body)
 			return response([]byte(`{"data":null}`))
 		default:
 			t.Fatalf("unexpected artifact storage request: %s %s", r.Method, r.URL.Path)
@@ -340,6 +342,7 @@ func TestEnsureArtifactInStorageHoldsOnPostUploadChecksumMismatch(t *testing.T) 
 			}
 			return response([]byte(`{"data":[{"filename":"` + filename + `","checksum":"` + strings.Repeat("a", 64) + `"}]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
+			_, _ = io.Copy(io.Discard, r.Body)
 			return response([]byte(`{"data":null}`))
 		default:
 			t.Fatalf("unexpected artifact storage request: %s %s", r.Method, r.URL.Path)

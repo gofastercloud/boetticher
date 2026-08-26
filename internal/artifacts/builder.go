@@ -243,12 +243,49 @@ func ExtractBuildArchive(data []byte, root string) error {
 	if len(data) == 0 || root == "" {
 		return fmt.Errorf("builder artifact archive and destination root are required")
 	}
-	gzipReader, err := gzip.NewReader(bytes.NewReader(data))
+	return ExtractBuildArchiveReader(bytes.NewReader(data), root)
+}
+
+// ExtractBuildArchiveFile streams a builder archive from a controller-side
+// temporary file. The complete archive is never held in memory.
+func ExtractBuildArchiveFile(archivePath, root string) error {
+	if archivePath == "" || root == "" {
+		return fmt.Errorf("builder artifact archive and destination root are required")
+	}
+	file, err := os.Open(archivePath)
+	if err != nil {
+		return fmt.Errorf("open builder artifact archive: %w", err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("stat builder artifact archive: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() == 0 {
+		return fmt.Errorf("builder artifact archive must be a non-empty regular file")
+	}
+	return ExtractBuildArchiveReader(file, root)
+}
+
+// ExtractBuildArchiveReader accepts a streamed generated artifact tree. It
+// retains path, link, entry-count, and total-output protections while writing
+// each regular file atomically beneath the generated artifact directory.
+func ExtractBuildArchiveReader(reader io.Reader, root string) error {
+	if reader == nil || root == "" {
+		return fmt.Errorf("builder artifact archive and destination root are required")
+	}
+	const (
+		maxEntries = 8192
+		maxBytes   = int64(64 << 30)
+	)
+	gzipReader, err := gzip.NewReader(reader)
 	if err != nil {
 		return fmt.Errorf("open builder artifact archive: %w", err)
 	}
 	defer gzipReader.Close()
 	tarReader := tar.NewReader(gzipReader)
+	var entries int
+	var totalBytes int64
 	for {
 		header, err := tarReader.Next()
 		if err == io.EOF {
@@ -257,6 +294,14 @@ func ExtractBuildArchive(data []byte, root string) error {
 		if err != nil {
 			return fmt.Errorf("read builder artifact archive: %w", err)
 		}
+		entries++
+		if entries > maxEntries {
+			return fmt.Errorf("builder artifact archive contains too many entries")
+		}
+		if header.Size < 0 || header.Size > maxBytes-totalBytes {
+			return fmt.Errorf("builder artifact archive exceeds bounded output size")
+		}
+		totalBytes += header.Size
 		clean := path.Clean(header.Name)
 		if clean != "generated/artifacts" && !strings.HasPrefix(clean, "generated/artifacts/") {
 			return fmt.Errorf("builder artifact archive contains unexpected path %q", header.Name)
@@ -281,7 +326,7 @@ func ExtractBuildArchive(data []byte, root string) error {
 				_ = os.Remove(temporaryName)
 				return err
 			}
-			_, copyErr := io.Copy(temporary, tarReader)
+			written, copyErr := io.Copy(temporary, tarReader)
 			closeErr := temporary.Close()
 			if copyErr != nil || closeErr != nil {
 				_ = os.Remove(temporaryName)
@@ -289,6 +334,10 @@ func ExtractBuildArchive(data []byte, root string) error {
 					return copyErr
 				}
 				return closeErr
+			}
+			if written != header.Size {
+				_ = os.Remove(temporaryName)
+				return fmt.Errorf("builder artifact archive entry %q ended early", header.Name)
 			}
 			if err := os.Rename(temporaryName, target); err != nil {
 				_ = os.Remove(temporaryName)

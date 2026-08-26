@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -173,6 +174,34 @@ func TestUploadStorageFileUsesMultipartArtifactContract(t *testing.T) {
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
 	if err := client.UploadStorageFile(context.Background(), "lab-proxmox-01", "local", "vztmpl", path, "boetticher-logging-1.0.0-amd64.tar.zst"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUploadStorageFileStreamsLargeArtifactBody(t *testing.T) {
+	artifactPath := filepath.Join(t.TempDir(), "large-artifact.tar.zst")
+	artifact, err := os.Create(artifactPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := artifact.Truncate(32 << 20); err != nil {
+		_ = artifact.Close()
+		t.Fatal(err)
+	}
+	if err := artifact.Close(); err != nil {
+		t.Fatal(err)
+	}
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.GetBody != nil {
+			t.Fatal("streamed multipart request unexpectedly exposes a replayable buffered body")
+		}
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Fatal(err)
+		}
+		return response([]byte(`{"data":null}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.UploadStorageFile(context.Background(), "node", "local", "vztmpl", artifactPath, "large-artifact.tar.zst"); err != nil {
 		t.Fatal(err)
 	}
 }

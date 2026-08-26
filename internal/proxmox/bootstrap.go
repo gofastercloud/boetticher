@@ -1,6 +1,7 @@
 package proxmox
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,13 @@ import (
 
 type CommandRunner interface {
 	Run(ctx context.Context, address, user, command string) ([]byte, error)
+}
+
+// StreamCommandRunner exposes remote stdout without materialising it in a
+// byte slice. It is used for artifact-sized builder output.
+type StreamCommandRunner interface {
+	RunStream(ctx context.Context, address, user, command string, stdout io.Writer) error
+	RunArgsStream(ctx context.Context, address, user string, commandArgs []string, stdout io.Writer) error
 }
 
 // CheckBuilderCapacity verifies the disposable builder has enough free space
@@ -206,6 +214,24 @@ func (r SSHRunner) RunWithStdin(ctx context.Context, address, user, command stri
 	return r.runArgs(ctx, address, user, []string{command}, stdin)
 }
 
+// RunStream executes a fixed remote command and writes stdout directly to the
+// supplied destination. SSH stderr is bounded so a failed remote process
+// cannot create an unbounded controller-side diagnostic buffer.
+func (r SSHRunner) RunStream(ctx context.Context, address, user, command string, stdout io.Writer) error {
+	if stdout == nil {
+		return errors.New("SSH stdout destination is required")
+	}
+	return r.runArgsStream(ctx, address, user, []string{command}, os.Stdin, stdout)
+}
+
+// RunArgsStream is the argument-preserving streaming form of RunArgs.
+func (r SSHRunner) RunArgsStream(ctx context.Context, address, user string, commandArgs []string, stdout io.Writer) error {
+	if stdout == nil {
+		return errors.New("SSH stdout destination is required")
+	}
+	return r.runArgsStream(ctx, address, user, commandArgs, os.Stdin, stdout)
+}
+
 const managementInterfaceConfig = `auto vmbr1.99
 iface vmbr1.99 inet static
     address 10.10.99.5/24
@@ -241,17 +267,53 @@ ip -d link show dev vmbr1 | grep -Eq "vlan_filtering (1|on)"
 }
 
 func (r SSHRunner) runArgs(ctx context.Context, address, user string, commandArgs []string, stdin io.Reader) ([]byte, error) {
+	var output bytes.Buffer
+	if err := r.runArgsStream(ctx, address, user, commandArgs, stdin, &output); err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
+}
+
+func (r SSHRunner) runArgsStream(ctx context.Context, address, user string, commandArgs []string, stdin io.Reader, stdout io.Writer) error {
 	args, err := r.commandArgs(address, user, commandArgs)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	process := exec.CommandContext(ctx, "ssh", args...)
 	process.Stdin = stdin
-	output, err := process.Output()
+	process.Stdout = stdout
+	stderr := &boundedOutput{limit: 64 << 10}
+	process.Stderr = stderr
+	err = process.Run()
 	if err != nil {
-		return nil, fmt.Errorf("SSH bootstrap command failed: %w", err)
+		message := strings.TrimSpace(stderr.String())
+		if message != "" {
+			return fmt.Errorf("SSH bootstrap command failed: %w: %s", err, message)
+		}
+		return fmt.Errorf("SSH bootstrap command failed: %w", err)
 	}
-	return output, nil
+	return nil
+}
+
+type boundedOutput struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (b *boundedOutput) Write(data []byte) (int, error) {
+	remaining := b.limit - b.buf.Len()
+	if remaining > 0 {
+		if len(data) > remaining {
+			_, _ = b.buf.Write(data[:remaining])
+		} else {
+			_, _ = b.buf.Write(data)
+		}
+	}
+	return len(data), nil
+}
+
+func (b *boundedOutput) String() string {
+	return b.buf.String()
 }
 
 func (r SSHRunner) commandArgs(address, user string, commandArgs []string) ([]string, error) {
