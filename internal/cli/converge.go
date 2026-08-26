@@ -16,6 +16,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/backup"
 	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/pki"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/site"
@@ -125,8 +126,35 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			return fmt.Errorf("start managed gateway appliance: %w", err)
 		}
 	}
-	if err := proxmox.Provision(context.Background(), proxmoxClient, proxmoxPlan, ""); err != nil {
-		return fmt.Errorf("deploy platform guests: %w", err)
+	readinessRunner := proxmox.SSHRunner{
+		IdentityFile:  model.ExpandUserPath(s.SSHIdentityFile),
+		ConfigFile:    filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"),
+		StrictHostKey: "ask",
+	}
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		if err := proxmox.WaitForSSH(context.Background(), readinessRunner, "10.10.99.1", model.DefaultAdminSSHUser, 30, 2*time.Second); err != nil {
+			return fmt.Errorf("HOLD: managed gateway is not reachable before dependent appliances: %w", err)
+		}
+	}
+	for _, module := range []string{"dns", "logging", "monitoring", "portal"} {
+		if !modules.IsEnabled(s, module) && module != "portal" {
+			continue
+		}
+		if err := proxmox.ProvisionModule(context.Background(), proxmoxClient, proxmoxPlan, module); err != nil {
+			return fmt.Errorf("deploy %s appliances: %w", module, err)
+		}
+		for _, guest := range proxmoxPlan.Guests {
+			matches := guest.Owner == "boetticher/module/"+module
+			if module == "portal" {
+				matches = guest.Name == "lab-portal-01"
+			}
+			if !matches || guest.Kind != proxmox.KindLXC {
+				continue
+			}
+			if err := proxmox.WaitForSSH(context.Background(), readinessRunner, guest.Address, model.DefaultAdminSSHUser, 30, 2*time.Second); err != nil {
+				return fmt.Errorf("HOLD: %s guest %s is not reachable after first boot: %w", module, guest.Name, err)
+			}
+		}
 	}
 	variables, err := ansible.Variables(s)
 	if err != nil {

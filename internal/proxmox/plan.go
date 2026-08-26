@@ -535,6 +535,39 @@ func Provision(ctx context.Context, client *Client, plan Plan, _ ...string) erro
 	return nil
 }
 
+// ProvisionModule creates and starts only one declared module's guests. Core
+// uses this bounded operation to place readiness gates between dependency
+// stages; it does not create an alternate deployment path.
+func ProvisionModule(ctx context.Context, client *Client, plan Plan, module string) error {
+	if client == nil {
+		return errors.New("Proxmox client is required")
+	}
+	if module == "" {
+		return errors.New("module name is required")
+	}
+	found := false
+	for _, guest := range plan.Guests {
+		matches := guest.Owner == "boetticher/module/"+module
+		if module == "portal" {
+			matches = guest.Name == "lab-portal-01"
+		}
+		if !matches || guest.Kind != KindLXC {
+			continue
+		}
+		found = true
+		if err := ensureLXC(ctx, client, plan, guest); err != nil {
+			return err
+		}
+		if err := client.StartLXC(ctx, plan.Node, guest.VMID); err != nil {
+			return fmt.Errorf("start %s: %w", guest.Name, err)
+		}
+	}
+	if !found {
+		return fmt.Errorf("module %s has no LXC guest in the resolved plan", module)
+	}
+	return nil
+}
+
 func EnsureFirewallVM(ctx context.Context, client *Client, plan Plan) error {
 	if client == nil {
 		return errors.New("Proxmox client is required")

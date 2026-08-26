@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 )
@@ -21,6 +22,46 @@ type CommandRunner interface {
 type StdinCommandRunner interface {
 	CommandRunner
 	RunWithStdin(context.Context, string, string, string, io.Reader) ([]byte, error)
+}
+
+// WaitForSSH is a bounded readiness gate used after an appliance is started.
+// Guest creation is not treated as reachability proof: both TCP/22 and a
+// command through the configured SSH path must succeed before deployment
+// continues.
+func WaitForSSH(ctx context.Context, runner CommandRunner, address, user string, attempts int, interval time.Duration) error {
+	if runner == nil {
+		return errors.New("SSH readiness runner is required")
+	}
+	if net.ParseIP(address) == nil || user == "" || attempts < 1 {
+		return errors.New("SSH readiness identity is invalid")
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("SSH readiness cancelled for %s: %w", address, err)
+		}
+		connection, err := net.DialTimeout("tcp", net.JoinHostPort(address, "22"), interval)
+		if err == nil {
+			_ = connection.Close()
+			if _, err = runner.Run(ctx, address, user, "true"); err == nil {
+				return nil
+			}
+		}
+		lastErr = err
+		if attempt+1 < attempts {
+			timer := time.NewTimer(interval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return fmt.Errorf("SSH readiness cancelled for %s: %w", address, ctx.Err())
+			case <-timer.C:
+			}
+		}
+	}
+	return fmt.Errorf("HOLD: SSH readiness failed for %s@%s after %d attempts: %w", user, address, attempts, lastErr)
 }
 
 type SSHRunner struct {

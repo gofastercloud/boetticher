@@ -24,6 +24,12 @@ func TestManagementNetworkConfigIsFixedAndPreservesHOME(t *testing.T) {
 	}
 }
 
+func TestWaitForSSHRejectsInvalidIdentityBeforeNetworkAccess(t *testing.T) {
+	if err := WaitForSSH(context.Background(), &fakeRunner{}, "not-an-ip", "labadmin", 1, 0); err == nil || !strings.Contains(err.Error(), "identity is invalid") {
+		t.Fatalf("invalid SSH identity was not rejected: %v", err)
+	}
+}
+
 func (f *fakeRunner) Run(_ context.Context, address, user, command string) ([]byte, error) {
 	f.address, f.user, f.command = address, user, command
 	f.commands = append(f.commands, command)
