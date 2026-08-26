@@ -1079,7 +1079,7 @@ func checkSOPSBoundary(siteDir string, s model.Site) error {
 			return err
 		}
 		text := string(data)
-		if !strings.Contains(text, "sops:") || !strings.Contains(text, "ENC[") || strings.Contains(text, "AGE-SECRET-KEY") || strings.Contains(text, "-----BEGIN") {
+		if !strings.Contains(text, "sops:") || !strings.Contains(text, "ENC[") || strings.Contains(text, "AGE-SECRET-KEY") || strings.Contains(text, "-----BEGIN PRIVATE KEY-----") {
 			return fmt.Errorf("%s is not an encrypted SOPS document", entry.Name())
 		}
 	}
@@ -1865,6 +1865,11 @@ func toolVersion(tool string) string {
 		args = []string{"-V"}
 	}
 	command := exec.Command(tool, args...)
+	if tool == "ansible" || tool == "ansible-playbook" {
+		preflightTemp := filepath.Join(os.TempDir(), "boetticher-ansible-preflight")
+		_ = os.MkdirAll(preflightTemp, 0700)
+		command.Env = append(os.Environ(), "ANSIBLE_LOCAL_TEMP="+preflightTemp, "ANSIBLE_REMOTE_TEMP="+preflightTemp)
+	}
 	data, err := command.CombinedOutput()
 	if err != nil {
 		if len(data) == 0 {
