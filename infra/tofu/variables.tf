@@ -31,7 +31,7 @@ variable "debian_template_file_id" {
 }
 
 variable "guest_datastore_id" {
-  description = "Generated storage target: local for single-disk or local-lvm for dedicated-data-disk"
+  description = "Generated storage target: local for single-disk or boetticher-thin for dedicated-data-disk"
   type        = string
 }
 
