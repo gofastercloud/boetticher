@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -131,10 +132,12 @@ func inventory(s model.Site, revision string) string {
 func network(s model.Site, revision string) string {
 	var b strings.Builder
 	gateway := "external firewall contract"
+	diagram := "HOME / upstream\n  |\nProxmox\n  `-- vmbr1 (VLAN-aware physical trunk)\n      +-- TRUSTED VLAN 10\n      +-- SERVERS VLAN 20\n      +-- SANDBOX VLAN 50\n      `-- MGMT VLAN 99"
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		gateway = "Debian lab-fw-01 (nftables + Kea)"
+		diagram = "HOME / upstream\n  |\nProxmox\n  +-- managed gateway vNICs: WAN, TRUSTED, SERVERS, SANDBOX, MGMT\n  `-- vmbr1 (VLAN-aware internal bridge)\n      +-- TRUSTED VLAN 10\n      +-- SERVERS VLAN 20\n      +-- SANDBOX VLAN 50\n      `-- MGMT VLAN 99"
 	}
-	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Gateway: <strong>%s</strong>. Proxmox applies VLAN tags to the gateway VM's separate zone interfaces; no VLAN trunk is passed into the managed firewall.</p><pre>HOME / upstream\n  |\nProxmox\n  +-- managed gateway vNICs: WAN, TRUSTED, SERVERS, SANDBOX, MGMT\n  `-- vmbr1 (VLAN-aware internal bridge)\n      +-- TRUSTED VLAN 10\n      +-- SERVERS VLAN 20\n      +-- SANDBOX VLAN 50\n      `-- MGMT VLAN 99</pre><table><tr><th>Zone</th><th>VLAN</th><th>Network</th><th>Gateway</th><th>DHCP mode</th></tr>", html.EscapeString(revision), html.EscapeString(gateway))
+	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Gateway: <strong>%s</strong>.</p><pre>%s</pre><table><tr><th>Zone</th><th>VLAN</th><th>Network</th><th>Gateway</th><th>DHCP mode</th></tr>", html.EscapeString(revision), html.EscapeString(gateway), html.EscapeString(diagram))
 	for _, z := range s.Network.Zones {
 		fmt.Fprintf(&b, "<tr><td>%s</td><td>%d</td><td>%s</td><td>%s</td><td>%s</td></tr>", html.EscapeString(z.Name), z.VLAN, html.EscapeString(z.Network), html.EscapeString(z.Gateway), html.EscapeString(z.AddressMode))
 	}
@@ -253,7 +256,14 @@ func pki(s model.Site, revision string) string {
 }
 
 func recovery(s model.Site, revision string, evidence Evidence) string {
-	return fmt.Sprintf("<p>Model revision: <code>%s</code></p><h2>Preserve</h2><ul><li>Private site repository containing desired state and encrypted secrets.</li><li>Independent recovery copy of the Age private identity.</li></ul><h2>Profiles</h2><p>Storage profile: <code>%s</code>. Same-disk backups are not disaster recovery.</p><p>Platform backup job: <code>boetticher-platform</code> for VM/LXC IDs 100, 110, 111, 120, and 130. User workloads remain outside the platform guarantee.</p><p>Age recovery and backup freshness are reported only when current evidence exists.</p>", html.EscapeString(revision), html.EscapeString(s.StorageProfile))
+	ids := make([]string, 0)
+	for _, component := range s.PlatformComponents() {
+		if component.VMID != 0 && component.Backup {
+			ids = append(ids, strconv.Itoa(component.VMID))
+		}
+	}
+	sort.Strings(ids)
+	return fmt.Sprintf("<p>Model revision: <code>%s</code></p><h2>Preserve</h2><ul><li>Private site repository containing desired state and encrypted secrets.</li><li>Independent recovery copy of the Age private identity.</li></ul><h2>Profiles</h2><p>Storage profile: <code>%s</code>. Same-disk backups are not disaster recovery.</p><p>Platform backup job: <code>boetticher-platform</code> for managed guest IDs %s. User workloads remain outside the platform guarantee.</p><p>Age recovery and backup freshness are reported only when current evidence exists.</p>", html.EscapeString(revision), html.EscapeString(s.StorageProfile), html.EscapeString(strings.Join(ids, ", ")))
 }
 
 func copyDocs(outputDir, docsDir, revision string) error {
