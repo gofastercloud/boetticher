@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	SchemaVersion               = 2
-	PlatformVersion             = "0.2.0"
+	SchemaVersion               = 3
+	PlatformVersion             = "0.3.0"
 	QualifiedGatewayImage       = "debian-13-genericcloud-amd64"
 	QualifiedGatewayImageURL    = "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
 	QualifiedGatewayImageSHA512 = "77429b411b39b43f914dc9d14bf34aa315489a1a12b5429f72e5b483bdda23c65698d33443c85d3f3ad7c3a0828ae60845406d6b99646342554d17abae29c2a3"
@@ -46,6 +46,7 @@ const (
 	GatewayModeExternal         = "external"
 	TagBoetticher               = "boetticher"
 	TagManaged                  = "managed"
+	TagModule                   = "module"
 	TagPlatform                 = "platform"
 	TagInfra                    = "infra"
 	TagBackup                   = "backup"
@@ -61,37 +62,38 @@ const (
 var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
 
 type Site struct {
-	APIVersion       string           `json:"api_version"`
-	PlatformVersion  string           `json:"platform_version"`
-	SchemaVersion    int              `json:"schema_version"`
-	StorageProfile   string           `json:"storage_profile"`
-	StorageDevice    string           `json:"storage_device,omitempty"`
-	Gateway          Gateway          `json:"gateway"`
-	ProxmoxNode      string           `json:"proxmox_node"`
-	BootstrapAddress string           `json:"bootstrap_address,omitempty"`
-	SSHIdentityFile  string           `json:"ssh_identity_file,omitempty"`
-	PhysicalNetwork  PhysicalNetwork  `json:"physical_network"`
-	TestedVersions   TestedVersions   `json:"tested_versions"`
-	Network          Network          `json:"network"`
-	PKI              PKIMetadata      `json:"pki"`
-	SecretMetadata   SecretMetadata   `json:"secret_metadata"`
-	Ownership        OwnershipPolicy  `json:"ownership"`
-	Components       []Component      `json:"components"`
-	Modules          []ModuleInstance `json:"modules,omitempty"`
+	APIVersion       string                  `json:"api_version"`
+	PlatformVersion  string                  `json:"platform_version"`
+	SchemaVersion    int                     `json:"schema_version"`
+	StorageProfile   string                  `json:"storage_profile"`
+	StorageDevice    string                  `json:"storage_device,omitempty"`
+	Gateway          Gateway                 `json:"gateway"`
+	ProxmoxNode      string                  `json:"proxmox_node"`
+	BootstrapAddress string                  `json:"bootstrap_address,omitempty"`
+	SSHIdentityFile  string                  `json:"ssh_identity_file,omitempty"`
+	PhysicalNetwork  PhysicalNetwork         `json:"physical_network"`
+	TestedVersions   TestedVersions          `json:"tested_versions"`
+	Network          Network                 `json:"network"`
+	PKI              PKIMetadata             `json:"pki"`
+	SecretMetadata   SecretMetadata          `json:"secret_metadata"`
+	Ownership        OwnershipPolicy         `json:"ownership"`
+	Components       []Component             `json:"components"`
+	Modules          []ResolvedModule        `json:"modules,omitempty"`
+	ModuleConfig     map[string]ModuleConfig `json:"module_config,omitempty"`
 }
 
 type TestedVersions struct {
-	Gateway string `json:"gateway"`
-	Zabbix  string `json:"zabbix"`
+	Gateway string `yaml:"gateway" json:"gateway"`
+	Zabbix  string `yaml:"zabbix" json:"zabbix"`
 }
 
 type Gateway struct {
-	Mode string `json:"mode"`
+	Mode string `yaml:"mode" json:"mode"`
 }
 
 type Network struct {
-	Domain string `json:"domain"`
-	Zones  []Zone `json:"zones"`
+	Domain string `yaml:"domain" json:"domain"`
+	Zones  []Zone `yaml:"zones" json:"zones"`
 }
 
 // PhysicalNetwork stores installation-specific hardware bindings separately
@@ -99,49 +101,49 @@ type Network struct {
 // interface names are generated evidence; stable MAC/PCI identity is the
 // reconciliation key.
 type PhysicalNetwork struct {
-	Upstream PhysicalNIC `json:"upstream"`
-	Trunk    PhysicalNIC `json:"trunk"`
-	Mode     string      `json:"mode"`
+	Upstream PhysicalNIC `yaml:"upstream" json:"upstream"`
+	Trunk    PhysicalNIC `yaml:"trunk" json:"trunk"`
+	Mode     string      `yaml:"mode" json:"mode"`
 }
 
 type PhysicalNIC struct {
-	Name         string `json:"name,omitempty"`
-	PermanentMAC string `json:"permanent_mac,omitempty"`
-	PCIAddress   string `json:"pci_address,omitempty"`
+	Name         string `yaml:"name,omitempty" json:"name,omitempty"`
+	PermanentMAC string `yaml:"permanent_mac,omitempty" json:"permanent_mac,omitempty"`
+	PCIAddress   string `yaml:"pci_address,omitempty" json:"pci_address,omitempty"`
 }
 
 type Zone struct {
-	Name         string   `json:"name"`
-	VLAN         int      `json:"vlan"`
-	Network      string   `json:"network"`
-	Gateway      string   `json:"gateway"`
-	AddressMode  string   `json:"address_mode"`
-	DNSAddresses []string `json:"dns_addresses"`
-	NTPAddresses []string `json:"ntp_addresses"`
+	Name         string   `yaml:"name" json:"name"`
+	VLAN         int      `yaml:"vlan" json:"vlan"`
+	Network      string   `yaml:"network" json:"network"`
+	Gateway      string   `yaml:"gateway" json:"gateway"`
+	AddressMode  string   `yaml:"address_mode" json:"address_mode"`
+	DNSAddresses []string `yaml:"dns_addresses" json:"dns_addresses"`
+	NTPAddresses []string `yaml:"ntp_addresses" json:"ntp_addresses"`
 }
 
 type SecretMetadata struct {
-	InstallationID string `json:"installation_id"`
-	AgeRecipient   string `json:"age_recipient"`
+	InstallationID string `yaml:"installation_id" json:"installation_id"`
+	AgeRecipient   string `yaml:"age_recipient" json:"age_recipient"`
 }
 
 type OwnershipPolicy struct {
-	PlatformGuestIDMin   int  `json:"platform_guest_id_min"`
-	PlatformGuestIDMax   int  `json:"platform_guest_id_max"`
-	ModuleGuestIDMin     int  `json:"module_guest_id_min"`
-	ModuleGuestIDMax     int  `json:"module_guest_id_max"`
-	UserGuestIDMin       int  `json:"user_guest_id_min"`
-	UserGuestIDMax       int  `json:"user_guest_id_max"`
-	UserWorkloadsManaged bool `json:"user_workloads_managed"`
+	PlatformGuestIDMin   int  `yaml:"platform_guest_id_min" json:"platform_guest_id_min"`
+	PlatformGuestIDMax   int  `yaml:"platform_guest_id_max" json:"platform_guest_id_max"`
+	ModuleGuestIDMin     int  `yaml:"module_guest_id_min" json:"module_guest_id_min"`
+	ModuleGuestIDMax     int  `yaml:"module_guest_id_max" json:"module_guest_id_max"`
+	UserGuestIDMin       int  `yaml:"user_guest_id_min" json:"user_guest_id_min"`
+	UserGuestIDMax       int  `yaml:"user_guest_id_max" json:"user_guest_id_max"`
+	UserWorkloadsManaged bool `yaml:"user_workloads_managed" json:"user_workloads_managed"`
 }
 
 type PKIMetadata struct {
-	RootCommonName     string `json:"root_common_name"`
-	RootFingerprint    string `json:"root_fingerprint"`
-	RootExpiry         string `json:"root_expiry"`
-	IssuingCommonName  string `json:"issuing_common_name"`
-	IssuingFingerprint string `json:"issuing_fingerprint"`
-	IssuingExpiry      string `json:"issuing_expiry"`
+	RootCommonName     string `yaml:"root_common_name" json:"root_common_name"`
+	RootFingerprint    string `yaml:"root_fingerprint" json:"root_fingerprint"`
+	RootExpiry         string `yaml:"root_expiry" json:"root_expiry"`
+	IssuingCommonName  string `yaml:"issuing_common_name" json:"issuing_common_name"`
+	IssuingFingerprint string `yaml:"issuing_fingerprint" json:"issuing_fingerprint"`
+	IssuingExpiry      string `yaml:"issuing_expiry" json:"issuing_expiry"`
 }
 
 // Component is a declared boetticher platform resource. Components are the
@@ -164,14 +166,26 @@ type Component struct {
 	SSHManaged   bool     `json:"ssh_managed"`
 	JumpAllowed  bool     `json:"jump_allowed"`
 	ProductOwned bool     `json:"product_owned"`
+	Module       string   `json:"module,omitempty"`
 }
 
-// ModuleInstance reserves a separate schema namespace for future opt-in
-// boetticher capabilities. User workloads are not represented here and are
-// never adopted by the platform model.
-type ModuleInstance struct {
-	Name    string `json:"name"`
-	Enabled bool   `json:"enabled"`
+type ModuleConfig struct {
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// ResolvedModule is generated state, not an operator-maintained module list.
+// It records why a first-party module is active and which contracts it
+// participates in after composition.
+type ResolvedModule struct {
+	Name      string   `json:"name"`
+	Version   string   `json:"version"`
+	Policy    string   `json:"policy"`
+	Enabled   bool     `json:"enabled"`
+	Reason    string   `json:"reason"`
+	State     string   `json:"state"`
+	DependsOn []string `json:"depends_on,omitempty"`
+	Requires  []string `json:"requires,omitempty"`
+	Provides  []string `json:"provides,omitempty"`
 }
 
 func NewDefaultSite(installationID, ageRecipient string) Site {
@@ -180,7 +194,7 @@ func NewDefaultSite(installationID, ageRecipient string) Site {
 
 func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 	site := Site{
-		APIVersion:      "boetticher/v2",
+		APIVersion:      "boetticher/v3",
 		PlatformVersion: PlatformVersion,
 		SchemaVersion:   SchemaVersion,
 		StorageProfile:  "single-disk",
@@ -232,7 +246,8 @@ func (s Site) Normalize() Site {
 	copySite := s
 	copySite.Network.Zones = append([]Zone(nil), s.Network.Zones...)
 	copySite.Components = append([]Component(nil), s.Components...)
-	copySite.Modules = append([]ModuleInstance(nil), s.Modules...)
+	copySite.Modules = append([]ResolvedModule(nil), s.Modules...)
+	copySite.ModuleConfig = cloneModuleConfig(s.ModuleConfig)
 	sort.Slice(copySite.Network.Zones, func(i, j int) bool { return copySite.Network.Zones[i].VLAN < copySite.Network.Zones[j].VLAN })
 	sort.Slice(copySite.Components, func(i, j int) bool { return copySite.Components[i].Name < copySite.Components[j].Name })
 	sort.Slice(copySite.Modules, func(i, j int) bool { return copySite.Modules[i].Name < copySite.Modules[j].Name })
@@ -246,8 +261,8 @@ func (s Site) Normalize() Site {
 }
 
 func (s Site) Validate() error {
-	if s.APIVersion != "boetticher/v2" || s.SchemaVersion != SchemaVersion {
-		return fmt.Errorf("site schema %q/%d is not supported by boetticher v0.2; recreate the site with boetticher init", s.APIVersion, s.SchemaVersion)
+	if s.APIVersion != "boetticher/v3" || s.SchemaVersion != SchemaVersion {
+		return fmt.Errorf("site schema %q/%d is not supported by boetticher v0.3; recreate the site with boetticher init", s.APIVersion, s.SchemaVersion)
 	}
 	if s.PlatformVersion == "" {
 		return errors.New("platform_version is required")
@@ -407,10 +422,15 @@ func (s Site) Validate() error {
 		"lab-proxmox-01": {address: "10.10.99.5", vmid: 0},
 		"lab-dns-01":     {address: "10.10.20.10", vmid: DNS01VMID},
 		"lab-dns-02":     {address: "10.10.20.11", vmid: DNS02VMID},
-		"lab-monitor-01": {address: "10.10.99.20", vmid: MonitorVMID},
 		"lab-portal-01":  {address: "10.10.20.30", vmid: PortalVMID},
 	}
-	if s.Gateway.Mode == GatewayModeManaged {
+	if resolvedModuleEnabled(s.Modules, "monitoring", true) {
+		requiredComponents["lab-monitor-01"] = struct {
+			address string
+			vmid    int
+		}{address: "10.10.99.20", vmid: MonitorVMID}
+	}
+	if s.Gateway.Mode == GatewayModeManaged && resolvedModuleEnabled(s.Modules, "firewall", true) {
 		requiredComponents["lab-fw-01"] = struct {
 			address string
 			vmid    int
@@ -444,6 +464,18 @@ func (s Site) Validate() error {
 		seenModules[module.Name] = true
 	}
 	return nil
+}
+
+func resolvedModuleEnabled(modules []ResolvedModule, name string, defaultValue bool) bool {
+	if len(modules) == 0 {
+		return defaultValue
+	}
+	for _, module := range modules {
+		if module.Name == name {
+			return module.Enabled
+		}
+	}
+	return defaultValue
 }
 
 func (s Site) PlatformComponents() []Component {

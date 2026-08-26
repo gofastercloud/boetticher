@@ -29,7 +29,7 @@ func TestRevisionIsIndependentOfComponentOrder(t *testing.T) {
 func TestOfficialModuleDeclarationsDoNotBecomePlatformComponents(t *testing.T) {
 	without := NewDefaultSite("installation", "age1example")
 	with := without
-	with.Modules = []ModuleInstance{{Name: "future-remote-access", Enabled: true}}
+	with.Modules = []ResolvedModule{{Name: "future-remote-access", Enabled: true}}
 
 	withoutRevision, err := without.Revision()
 	if err != nil {
@@ -49,9 +49,9 @@ func TestOfficialModuleDeclarationsDoNotBecomePlatformComponents(t *testing.T) {
 
 func TestRevisionIsIndependentOfOfficialModuleOrder(t *testing.T) {
 	first := NewDefaultSite("installation", "age1example")
-	first.Modules = []ModuleInstance{{Name: "z-module", Enabled: true}, {Name: "a-module", Enabled: false}}
+	first.Modules = []ResolvedModule{{Name: "z-module", Enabled: true}, {Name: "a-module", Enabled: false}}
 	second := first
-	second.Modules = []ModuleInstance{{Name: "a-module", Enabled: false}, {Name: "z-module", Enabled: true}}
+	second.Modules = []ResolvedModule{{Name: "a-module", Enabled: false}, {Name: "z-module", Enabled: true}}
 	a, err := first.Revision()
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +104,7 @@ func TestExternalGatewayOmitsManagedFirewall(t *testing.T) {
 	}
 }
 
-func TestOldSiteSchemaRequiresFreshV02Initialization(t *testing.T) {
+func TestOldSiteSchemaRequiresFreshV03Initialization(t *testing.T) {
 	site := NewDefaultSite("installation", "age1example")
 	site.APIVersion = "boetticher/v1"
 	site.SchemaVersion = 1

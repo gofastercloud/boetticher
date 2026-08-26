@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // The site contract intentionally uses a small, deterministic YAML subset.
@@ -28,6 +30,37 @@ func ParseSite(data []byte) (Site, error) {
 		return Site{}, fmt.Errorf("decode site.yml: %w", err)
 	}
 	return site, nil
+}
+
+// ParseSiteConfig is the strict v0.3 site.yml decoder. The small version
+// probe gives operators the useful recreate-site message before strict
+// decoding can report removed v0.2 fields such as components.
+func ParseSiteConfig(data []byte) (SiteConfig, error) {
+	var probe struct {
+		APIVersion string `yaml:"api_version"`
+	}
+	probeDecoder := yaml.NewDecoder(bytes.NewReader(data))
+	if err := probeDecoder.Decode(&probe); err != nil {
+		return SiteConfig{}, fmt.Errorf("decode site.yml: %w", err)
+	}
+	if probe.APIVersion != "" && probe.APIVersion != "boetticher/v3" {
+		return SiteConfig{}, fmt.Errorf("site schema %q is not supported by boetticher v0.3; recreate the site with boetticher init", probe.APIVersion)
+	}
+	var config SiteConfig
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&config); err != nil {
+		return SiteConfig{}, fmt.Errorf("decode site.yml: %w", err)
+	}
+	return config, nil
+}
+
+func RenderSiteConfig(config SiteConfig) ([]byte, error) {
+	data, err := yaml.Marshal(config)
+	if err != nil {
+		return nil, fmt.Errorf("encode site.yml: %w", err)
+	}
+	return data, nil
 }
 
 // ParseDocument exposes the same constrained YAML reader used by site.yml for

@@ -2,6 +2,7 @@ package model
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -55,11 +56,27 @@ func TestExampleSiteIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	site, err := ParseSite(data)
+	config, err := ParseSiteConfig(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := site.Validate(); err != nil {
+	if err := config.Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestParseSiteConfigRejectsExpandedComponents(t *testing.T) {
+	data := []byte("api_version: boetticher/v3\nschema_version: 3\ncomponents: []\n")
+	_, err := ParseSiteConfig(data)
+	if err == nil || !strings.Contains(err.Error(), "field components not found") {
+		t.Fatalf("expanded component inventory was accepted: %v", err)
+	}
+}
+
+func TestParseSiteConfigRejectsUnknownModuleFields(t *testing.T) {
+	data := []byte("api_version: boetticher/v3\nschema_version: 3\nmodules:\n  monitoring:\n    retention_days: 7\n")
+	_, err := ParseSiteConfig(data)
+	if err == nil || !strings.Contains(err.Error(), "retention_days") {
+		t.Fatalf("unknown module field was accepted: %v", err)
 	}
 }
