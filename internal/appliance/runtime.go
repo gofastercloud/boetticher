@@ -3,6 +3,7 @@ package appliance
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -13,6 +14,8 @@ import (
 )
 
 const RuntimeConfigPath = "/etc/boetticher/module.yaml"
+
+const ArtifactIdentityPath = "/usr/lib/boetticher/artifact.json"
 
 // RuntimeConfig is the non-secret site-specific contract injected into an
 // appliance after its immutable rootfs is created.
@@ -75,6 +78,28 @@ func InstallRuntimeConfig(ctx context.Context, runner StdinRunner, address, user
 	command := "sudo -n sh -c 'set -eu; install -d -m 0750 /etc/boetticher; tmp=$(mktemp /etc/boetticher/.module.yaml.XXXXXX); trap \"rm -f \\\"$tmp\\\"\" EXIT; install -m 0640 /dev/stdin \\\"$tmp\\\"; chown root:root \\\"$tmp\\\"; mv -f \\\"$tmp\\\" /etc/boetticher/module.yaml'"
 	if _, err := runner.RunWithStdin(ctx, address, user, command, bytes.NewReader(config)); err != nil {
 		return fmt.Errorf("install runtime config: %w", err)
+	}
+	return nil
+}
+
+// InstallArtifactIdentity records only qualified, non-secret artifact
+// metadata inside the appliance. It is used for drift diagnosis and contains
+// no controller credentials or site-specific secret material.
+func InstallArtifactIdentity(ctx context.Context, runner StdinRunner, address, user string, artifact model.Artifact) error {
+	if runner == nil {
+		return fmt.Errorf("artifact identity runner is required")
+	}
+	if net.ParseIP(address) == nil || user == "" || artifact.Name == "" || artifact.DefinitionSHA256 == "" || artifact.ContentSHA256 == "" {
+		return fmt.Errorf("artifact identity is incomplete")
+	}
+	data, err := json.MarshalIndent(artifact, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal artifact identity: %w", err)
+	}
+	data = append(data, '\n')
+	command := "sudo -n sh -c 'set -eu; install -d -m 0755 /usr/lib/boetticher; tmp=$(mktemp /usr/lib/boetticher/.artifact.json.XXXXXX); trap \"rm -f \\\"$tmp\\\"\" EXIT; install -m 0644 /dev/stdin \\\"$tmp\\\"; chown root:root \\\"$tmp\\\"; mv -f \\\"$tmp\\\" /usr/lib/boetticher/artifact.json'"
+	if _, err := runner.RunWithStdin(ctx, address, user, command, bytes.NewReader(data)); err != nil {
+		return fmt.Errorf("install artifact identity: %w", err)
 	}
 	return nil
 }

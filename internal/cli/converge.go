@@ -264,6 +264,9 @@ func installModuleRuntimeConfigs(ctx context.Context, s model.Site) error {
 		if err := appliance.InstallRuntimeConfig(ctx, runner, guest.Address, user, config); err != nil {
 			return fmt.Errorf("install runtime configuration for %s: %w", guest.Name, err)
 		}
+		if err := appliance.InstallArtifactIdentity(ctx, runner, guest.Address, user, declaration.Artifact); err != nil {
+			return fmt.Errorf("install artifact identity for %s: %w", guest.Name, err)
+		}
 	}
 	return nil
 }
