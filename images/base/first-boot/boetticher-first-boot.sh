@@ -25,4 +25,3 @@ install -m 0600 -o labadmin -g labadmin "$bootstrap_key" /home/labadmin/.ssh/aut
 rm -f /root/.ssh/authorized_keys
 rm -f "$key"
 systemctl disable boetticher-first-boot.service
-systemctl stop boetticher-first-boot.service

@@ -454,6 +454,9 @@ func TestApplianceBootstrapInputsContainNoOperatorKeyOrSiteState(t *testing.T) {
 	if !strings.Contains(text, "/run/boetticher/bootstrap/operator.pub") || !strings.Contains(text, "/root/.ssh/authorized_keys") || strings.Contains(text, "ssh-ed25519 AAAA") {
 		t.Fatalf("first-boot contract does not use injected-only operator access: %s", text)
 	}
+	if !strings.Contains(text, "systemctl disable boetticher-first-boot.service") || strings.Contains(text, "systemctl stop boetticher-first-boot.service") {
+		t.Fatalf("first-boot service must disable itself and finish its oneshot without self-stopping: %s", text)
+	}
 	runtimeState, err := os.ReadFile(filepath.Join(root, "base", "runtime", "install-runtime-state.sh"))
 	if err != nil {
 		t.Fatal(err)
