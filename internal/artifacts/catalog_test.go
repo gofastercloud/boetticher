@@ -6,10 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	buildbundle "github.com/gofastercloud/boetticher"
 )
 
 func TestEvidenceUsesActualArtifactBytes(t *testing.T) {
@@ -273,6 +276,38 @@ func TestArtifactIdentityIsDeterministic(t *testing.T) {
 	}
 	if first != second {
 		t.Fatalf("artifact identity changed: %#v != %#v", first, second)
+	}
+}
+
+func TestArtifactDefinitionDigestBindsBuildInputs(t *testing.T) {
+	definition, ok := func() (Definition, bool) {
+		for _, candidate := range Definitions() {
+			if candidate.Name == "dns" && candidate.Provider == "blocky" {
+				return candidate, true
+			}
+		}
+		return Definition{}, false
+	}()
+	if !ok || len(definition.Inputs) == 0 {
+		t.Fatalf("Blocky definition has no build inputs: %#v", definition)
+	}
+	original, err := definitionSHA256(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := definition
+	changed.Version = "1.0.1"
+	updated, err := definitionSHA256(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if original == updated {
+		t.Fatal("artifact definition digest did not change when the recipe identity changed")
+	}
+	for _, input := range definition.Inputs {
+		if _, err := fs.Stat(buildbundle.FS, input); err != nil {
+			t.Fatalf("definition input %q is not embedded: %v", input, err)
+		}
 	}
 }
 
