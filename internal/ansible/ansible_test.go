@@ -28,6 +28,8 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 		"HostKeyAlias=lab-dns-01.lab.home.arpa",
 		"ansible_remote_tmp=/tmp/boetticher-ansible",
 		"[managed:children]",
+		"[logging]",
+		"lab-log-01 ansible_host=10.10.20.40",
 	} {
 		if !strings.Contains(first, expected) {
 			t.Errorf("inventory missing %q", expected)

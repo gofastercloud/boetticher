@@ -281,7 +281,7 @@ build_firewall() {
   cp "$input" "$image"
   virt-customize -a "$image" \
     --install nftables,kea-dhcp4-server,kea-dhcp-ddns-server,dnsmasq,chrony,openssh-server,sudo,cloud-init,systemd-journal-remote,zabbix-agent2,curl,jq,openssl \
-    --mkdir /etc/boetticher,/usr/lib/boetticher,/var/lib/boetticher/identity/ssh,/tmp/boetticher-ansible \
+    --mkdir /etc/boetticher,/usr/lib/boetticher,/var/lib/boetticher/identity/ssh,/tmp/boetticher-ansible,/etc/systemd/journald.conf.d,/etc/sysctl.d \
     --upload images/base/first-boot/boetticher-first-boot.sh:/usr/lib/boetticher/boetticher-first-boot.sh \
     --upload images/base/first-boot/boetticher-first-boot.service:/etc/systemd/system/boetticher-first-boot.service \
     --upload images/base/runtime/install-runtime-state.sh:/usr/lib/boetticher/install-runtime-state \

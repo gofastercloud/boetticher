@@ -625,6 +625,7 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 		"agent":     {"1"},
 		"tags":      {strings.Join([]string{model.TagBoetticher, model.TagManaged, model.TagPlatform, builderOwnerTag}, ";")},
 		"net0":      {"virtio,bridge=vmbr0,firewall=1"},
+		"ide2":      {"local:cloudinit"},
 		"ipconfig0": {"ip=dhcp"},
 		"ciuser":    {model.DefaultAdminSSHUser},
 	}
@@ -1017,6 +1018,7 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 			}
 		}
 		params.Set("cicustom", cloudInitCICustom(guest.VMID))
+		params.Set("ide2", "local:cloudinit")
 		params.Set("ciuser", model.DefaultAdminSSHUser)
 		params.Set("ipconfig0", "ip=dhcp")
 	}
