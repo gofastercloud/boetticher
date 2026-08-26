@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -367,10 +368,17 @@ func isHex(value string) bool {
 // dedicated-data-disk profile. It refuses to accept a conflicting existing
 // definition and relies on Proxmox to reject a missing/unmounted path.
 func (c *Client) EnsureDirectoryStorage(ctx context.Context, storageID, storagePath string) error {
+	return c.EnsureDirectoryStorageContent(ctx, storageID, storagePath, []string{"backup"})
+}
+
+// EnsureDirectoryStorageContent validates a named directory storage and adds
+// only the requested content types. It never changes the path or adopts a
+// different storage with the same name.
+func (c *Client) EnsureDirectoryStorageContent(ctx context.Context, storageID, storagePath string, requiredContent []string) error {
 	if c == nil {
 		return errors.New("Proxmox client is required")
 	}
-	if storageID == "" || storagePath == "" {
+	if storageID == "" || storagePath == "" || len(requiredContent) == 0 {
 		return errors.New("storage ID and path are required")
 	}
 	var storages []struct {
@@ -386,8 +394,26 @@ func (c *Client) EnsureDirectoryStorage(ctx context.Context, storageID, storageP
 		if storage.Storage != storageID {
 			continue
 		}
-		if storage.Type != "dir" || storage.Path != storagePath || !strings.Contains(storage.Content, "backup") {
+		if storage.Type != "dir" || storage.Path != storagePath {
 			return fmt.Errorf("Proxmox storage %q has a conflicting definition", storageID)
+		}
+		content := splitContent(storage.Content)
+		missing := false
+		for _, wanted := range requiredContent {
+			if !content[wanted] {
+				content[wanted] = true
+				missing = true
+			}
+		}
+		if missing {
+			values := make([]string, 0, len(content))
+			for value := range content {
+				values = append(values, value)
+			}
+			sort.Strings(values)
+			if err := c.Put(ctx, path.Join("/cluster/storage", storageID), url.Values{"content": {strings.Join(values, ",")}}, nil); err != nil {
+				return fmt.Errorf("extend Proxmox storage %q content: %w", storageID, err)
+			}
 		}
 		return nil
 	}
@@ -395,11 +421,21 @@ func (c *Client) EnsureDirectoryStorage(ctx context.Context, storageID, storageP
 		"storage": {storageID},
 		"type":    {"dir"},
 		"path":    {storagePath},
-		"content": {"backup"},
+		"content": {strings.Join(requiredContent, ",")},
 	}, nil); err != nil {
-		return fmt.Errorf("create Proxmox backup storage %q: %w", storageID, err)
+		return fmt.Errorf("create Proxmox directory storage %q: %w", storageID, err)
 	}
 	return nil
+}
+
+func splitContent(value string) map[string]bool {
+	result := make(map[string]bool)
+	for _, item := range strings.Split(value, ",") {
+		if item != "" {
+			result[item] = true
+		}
+	}
+	return result
 }
 
 // EnsureLVMThinStorage registers the fixed guest-disk storage created by the

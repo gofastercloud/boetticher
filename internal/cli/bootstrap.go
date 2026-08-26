@@ -183,6 +183,11 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err := proxmox.EnsureVirtualBridge(ctx, client, plan.Node); err != nil {
 		return err
 	}
+	if s.StorageProfile == "single-disk" {
+		if err := client.EnsureDirectoryStorageContent(ctx, "local", "/var/lib/vz", []string{"backup", "images", "rootdir"}); err != nil {
+			return fmt.Errorf("ensure single-disk Proxmox storage: %w", err)
+		}
+	}
 	trunkChanged := false
 	if discovery.Trunk != nil && discovery.Trunk.Bridge != "vmbr1" {
 		if err := proxmox.AttachTrunk(ctx, client, plan.Node, discovery.Trunk.Name, s.BootstrapAddress); err != nil {

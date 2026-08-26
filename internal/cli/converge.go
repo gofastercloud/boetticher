@@ -82,6 +82,8 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 		if err := proxmoxClient.EnsureDirectoryStorage(context.Background(), backup.DedicatedStorageID, backup.DedicatedStoragePath); err != nil {
 			return fmt.Errorf("ensure dedicated backup storage: %w", err)
 		}
+	} else if err := proxmoxClient.EnsureDirectoryStorageContent(context.Background(), "local", "/var/lib/vz", []string{"backup", "images", "rootdir"}); err != nil {
+		return fmt.Errorf("ensure single-disk Proxmox storage: %w", err)
 	}
 	ddnsTSIG, err := site.LoadDDNSTSIG(*siteDir, s, *ageIdentity)
 	if err != nil {

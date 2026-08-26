@@ -98,6 +98,29 @@ func TestEnsureDirectoryStorageRejectsConflictingDefinition(t *testing.T) {
 	}
 }
 
+func TestEnsureDirectoryStorageContentAddsOnlyRequiredTypes(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/cluster/storage" {
+			return response([]byte(`{"data":[{"storage":"local","type":"dir","path":"/var/lib/vz","content":"backup,iso,vztmpl"}]}`))
+		}
+		if r.Method == http.MethodPut && r.URL.Path == "/api2/json/cluster/storage/local" {
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if got := r.Form.Get("content"); got != "backup,images,iso,rootdir,vztmpl" {
+				t.Fatalf("content = %q", got)
+			}
+			return response([]byte(`{"data":null}`))
+		}
+		t.Fatalf("unexpected storage request: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.EnsureDirectoryStorageContent(context.Background(), "local", "/var/lib/vz", []string{"backup", "images", "rootdir"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDownloadURLUsesPinnedChecksumWithoutShellArguments(t *testing.T) {
 	checksum := strings.Repeat("a", 128)
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
