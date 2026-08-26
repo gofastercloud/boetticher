@@ -80,6 +80,7 @@ func validateCommandForm(t *testing.T, fields []string) {
 		"pki":                {"--site": true},
 		"firewall":           {"--site": true, "--live": true, "--json": true},
 		"dhcp":               {"--site": true, "--live": true, "--json": true},
+		"storage":            {"--site": true, "--confirmed": true},
 	}
 	command := fields[1]
 	if _, ok := known[command]; !ok {

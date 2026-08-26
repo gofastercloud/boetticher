@@ -41,6 +41,9 @@ func runInit(args []string, out interface{ Write([]byte) (int, error) }) error {
 	fmt.Fprintf(out, "Age identity: %s (outside Git)\n", model.ExpandUserPath(*ageIdentity))
 	fmt.Fprintf(out, "Model revision: %s\n", revision)
 	fmt.Fprintf(out, "Gateway mode: %s\n", created.Gateway.Mode)
+	if created.Gateway.Mode == model.GatewayModeExternal {
+		fmt.Fprintln(out, "External mode: a distinct physical vmbr1 trunk is required before bootstrap")
+	}
 	fmt.Fprintln(out, "Independent Age recovery copy: REQUIRED before destructive bootstrap")
 	return nil
 }
@@ -112,6 +115,9 @@ func runPreflight(args []string, out interface{ Write([]byte) (int, error) }) er
 	}
 	if discovery.Mode == networkmodel.ModeSelectionNeeded {
 		return errors.New("HOLD: multiple eligible trunk interfaces require explicit selection")
+	}
+	if s.Gateway.Mode == model.GatewayModeExternal && discovery.Mode != networkmodel.ModePhysicalTrunk {
+		return errors.New("external gateway mode requires a distinct physical vmbr1 trunk")
 	}
 	fmt.Fprintf(out, "Physical discovery: PASS %s\n", discovery.Mode)
 	return nil

@@ -11,7 +11,15 @@
       {"name": "{{ zone.tsig_key_name }}", "secret": "{{ ddns_tsig_secret }}", "algorithm": "{{ firewall_plan.dhcp_subnets[loop.index0].tsig_algorithm }}"}{% if not loop.last %},{% endif %}
 {% endfor %}
     ],
-    "forward-ddns": [{"name": "{{ firewall_plan.ddns.zones[0].forward_zone }}", "dns-servers": [{"ip-address": "10.10.20.10", "port": 5353}]}],
-    "reverse-ddns": [{"name": "{{ firewall_plan.ddns.zones[0].reverse_zone }}", "dns-servers": [{"ip-address": "10.10.20.10", "port": 5353}]}]
+    "forward-ddns": [
+{% for zone in firewall_plan.ddns.zones %}
+      {"name": "{{ zone.forward_zone }}", "dns-servers": [{"ip-address": "10.10.20.10", "port": 5353}]}{% if not loop.last %},{% endif %}
+{% endfor %}
+    ],
+    "reverse-ddns": [
+{% for zone in firewall_plan.ddns.zones %}
+      {"name": "{{ zone.reverse_zone }}", "dns-servers": [{"ip-address": "10.10.20.10", "port": 5353}]}{% if not loop.last %},{% endif %}
+{% endfor %}
+    ]
   }
 }

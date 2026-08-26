@@ -67,6 +67,41 @@ func TestLegacyAbbreviationMatcherAvoidsUnrelatedWords(t *testing.T) {
 	}
 }
 
+func TestRemovedApplianceIdentifiersStayOutsideTheExampleGuide(t *testing.T) {
+	root := repositoryRoot(t)
+	_, testFile, _, _ := runtime.Caller(0)
+	removed := strings.ToLower("OPN" + "sense")
+	allowed := filepath.Join(root, "docs", "networking", "external-firewall.md")
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if path != root && isIgnoredDirectory(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if path == testFile || path == allowed {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if bytes.IndexByte(data, 0) >= 0 {
+			return nil
+		}
+		if strings.Contains(strings.ToLower(string(data)), removed) {
+			t.Errorf("%s contains removed appliance identifier", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func repositoryRoot(t *testing.T) string {
 	t.Helper()
 	_, filename, _, ok := runtime.Caller(0)
