@@ -24,8 +24,8 @@ type BlockyUpstreams struct {
 }
 
 type BlockyConditional struct {
-	FallbackUpstream bool                `yaml:"fallbackUpstream"`
-	Mapping          map[string][]string `yaml:"mapping"`
+	FallbackUpstream bool              `yaml:"fallbackUpstream"`
+	Mapping          map[string]string `yaml:"mapping"`
 }
 
 type BlockyBlocking struct {
@@ -60,13 +60,13 @@ func RenderBlockyConfig(plan Plan) ([]byte, error) {
 	if len(plan.RecursiveUpstreams) == 0 || len(plan.AuthoritativeForwardZones) == 0 {
 		return nil, fmt.Errorf("Blocky renderer requires public upstreams and authoritative zones")
 	}
-	mapping := make(map[string][]string, len(plan.AuthoritativeForwardZones)+len(plan.AuthoritativeReverseZones))
+	mapping := make(map[string]string, len(plan.AuthoritativeForwardZones)+len(plan.AuthoritativeReverseZones))
 	for _, zone := range append(append([]string(nil), plan.AuthoritativeForwardZones...), plan.AuthoritativeReverseZones...) {
 		zone = strings.TrimSuffix(strings.ToLower(zone), ".")
 		if zone == "" {
 			return nil, fmt.Errorf("Blocky authoritative zone cannot be empty")
 		}
-		mapping[zone] = []string{plan.AuthoritativeForwardTarget}
+		mapping[zone] = plan.AuthoritativeForwardTarget
 	}
 	config, err := yaml.Marshal(BlockyConfig{
 		Upstreams:   BlockyUpstreams{Groups: map[string][]string{"default": append([]string(nil), plan.RecursiveUpstreams...)}},
