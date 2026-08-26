@@ -19,6 +19,8 @@ OPNsense owns routing, NAT, inter-zone firewalling, DHCP, SANDBOX DNS/NTP, and n
 
 Physical NICs are installation-specific bindings, not logical architecture. Preflight identifies the upstream device from the active bridge/address/default-route/bootstrap evidence. It auto-proposes exactly one otherwise-unused physical Ethernet interface as the trunk, accepts an explicit selection when several remain, and stops with `HOLD` when evidence is ambiguous. Stable MAC/PCI identity is persisted separately from the current Linux interface name.
 
+Storage is similarly explicit. The single-disk profile uses Proxmox's existing directory-backed local storage. The dedicated-data-disk profile requires a stable `/dev/disk/by-id/...` input and bootstrap creates only the fixed `vg_boetticher` thin-pool and backup filesystem layout; it does not inspect or adopt unrelated disks.
+
 ## Foundation guests
 
 The base product is Proxmox plus `lab-fw-01`, `lab-dns-01`, `lab-dns-02`, `lab-monitor-01`, and `lab-portal-01`. The portal is static generated HTML served by nginx; it has no database, CMS, accounts, API credentials, SOPS identity, or Git write access. Zabbix owns live telemetry.

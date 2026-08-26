@@ -58,6 +58,11 @@ The internal namespace is `lab.home.arpa`. The generated platform records includ
 - Zabbix 7.0 LTS: full upstream support through June 2027 and limited support through June 2029.
 - Either the single-disk or dedicated-data-disk storage profile.
 
+The single-disk profile needs no extra storage preparation. For
+`dedicated-data-disk`, set `storage_device` to a stable `/dev/disk/by-id/...`
+path in the private site file; bootstrap creates and registers the fixed
+`vg_boetticher` layout after the operator confirms the device.
+
 ## Quickstart
 
 From a fresh controller and Proxmox HOME-side DHCP address:

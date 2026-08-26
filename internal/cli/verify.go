@@ -287,6 +287,19 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 			} else {
 				fmt.Fprintf(out, "Physical binding     PASS %s\n", detail)
 			}
+			storagePlan, storageErr := storage.PlanFromSite(s)
+			if storageErr != nil {
+				failed = true
+				fmt.Fprintf(out, "Platform storage     FAIL %v\n", storageErr)
+			} else if statuses, listErr := client.NodeStorage(context.Background(), s.ProxmoxNode); listErr != nil {
+				failed = true
+				fmt.Fprintf(out, "Platform storage     FAIL %v\n", listErr)
+			} else if status, statusErr := expectedStorageStatus(statuses, storagePlan); statusErr != nil {
+				failed = true
+				fmt.Fprintf(out, "Platform storage     FAIL %v\n", statusErr)
+			} else {
+				fmt.Fprintf(out, "Platform storage     PASS %s active total=%.0f used=%.0f available=%.0f\n", status.Storage, status.Total, status.Used, status.Avail)
+			}
 		}
 	} else {
 		fmt.Fprintln(out, "Platform guests       NOT TESTED (use --live)")
@@ -295,6 +308,31 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		return fmt.Errorf("doctor found absent or inconsistent projections")
 	}
 	return nil
+}
+
+func expectedStorageStatus(statuses []proxmox.StorageStatus, plan storage.Plan) (proxmox.StorageStatus, error) {
+	wanted := []string{plan.GuestStorage}
+	if plan.BackupStorage != plan.GuestStorage {
+		wanted = append(wanted, plan.BackupStorage)
+	}
+	found := map[string]proxmox.StorageStatus{}
+	for _, status := range statuses {
+		found[status.Storage] = status
+	}
+	for _, id := range wanted {
+		status, ok := found[id]
+		if !ok {
+			return proxmox.StorageStatus{}, fmt.Errorf("expected Proxmox storage %q is not registered", id)
+		}
+		if status.Active != 1 {
+			return proxmox.StorageStatus{}, fmt.Errorf("expected Proxmox storage %q is not active", id)
+		}
+		if id == plan.GuestStorage {
+			continue
+		}
+		return status, nil
+	}
+	return found[plan.GuestStorage], nil
 }
 
 func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResult {

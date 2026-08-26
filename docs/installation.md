@@ -26,7 +26,7 @@ Git may contain desired state, encrypted secrets, and non-secret status output. 
 4. Run `boetticher preflight --site my-boetticher --live`. This identifies the active upstream NIC and proposes exactly one safe unused trunk NIC, or reports virtual-only/multiple-candidate state.
 5. If multiple candidates remain, repeat with `--trunk-interface IFACE`; do not select by enumeration order.
 6. Generate/check the SSH file with `boetticher ssh-config --site my-boetticher --force --install-include`.
-7. Run `boetticher bootstrap --site my-boetticher --opnsense-iso VERIFIED_ISO --recovery-confirmed`, adding `--trunk-interface IFACE` only when required by discovery. Bootstrap owns the verified OPNsense ISO because it creates and starts the firewall VM.
+7. Run `boetticher bootstrap --site my-boetticher --opnsense-iso VERIFIED_ISO --recovery-confirmed`, adding `--trunk-interface IFACE` only when required by discovery. For the dedicated-data-disk profile, set `storage_device` to the stable data-disk `/dev/disk/by-id/...` path and add `--storage-confirmed` after reviewing it; bootstrap creates the fixed LVM and Proxmox storage layout. Bootstrap owns the verified OPNsense ISO because it creates and starts the firewall VM.
 8. Run `boetticher provision --site my-boetticher` and `boetticher converge --site my-boetticher` after the OPNsense API is available. Provision creates the DNS, monitor, and portal guests; it does not manage arbitrary user guests.
 9. Run `boetticher verify --site my-boetticher`, `boetticher doctor --site my-boetticher`, and `boetticher portal build --site my-boetticher`.
 
