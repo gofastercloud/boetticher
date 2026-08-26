@@ -37,6 +37,54 @@ func RenderFirewallCloudInit(guest GuestPlan) (CloudInitFiles, error) {
 	}, nil
 }
 
+// RenderBuilderCloudInit prepares the temporary public-input build host. It
+// deliberately contains no operator key or site state; Proxmox supplies the
+// short-lived SSH key through its ordinary cloud-init sshkeys parameter.
+func RenderBuilderCloudInit() CloudInitFiles {
+	return CloudInitFiles{
+		MetaData: "instance-id: boetticher-builder-0.3.1\nlocal-hostname: lab-builder-01\n",
+		UserData: `#cloud-config
+hostname: lab-builder-01
+manage_etc_hosts: true
+package_update: true
+packages:
+  - ca-certificates
+  - curl
+  - golang-go
+  - libguestfs-tools
+  - mmdebstrap
+  - qemu-guest-agent
+  - qemu-utils
+  - tar
+  - zstd
+write_files:
+  - path: /usr/local/sbin/boetticher-build
+    permissions: '0755'
+    content: |
+      #!/bin/sh
+      set -eu
+      cd /home/labadmin/build
+      export BOETTICHER_ARTIFACT_OUTPUT=/home/labadmin/build/generated/artifacts
+      export BOETTICHER_EVIDENCE_ROOT=/home/labadmin/build
+      export BOETTICHER_IMAGE_WORK=/var/lib/boetticher/image-work
+      ./scripts/build-images.sh images
+      ./scripts/scan-images.sh scan-images
+      touch /home/labadmin/build/.qualification-complete
+  - path: /etc/sudoers.d/boetticher-builder
+    permissions: '0440'
+    content: |
+      labadmin ALL=(root) NOPASSWD: /usr/local/sbin/boetticher-build
+runcmd:
+  - [systemctl, enable, --now, qemu-guest-agent]
+`,
+		NetworkConfig: `version: 2
+ethernets:
+  eth0:
+    dhcp4: true
+`,
+	}
+}
+
 func cloudInitSnippetNames(vmid int) map[string]string {
 	prefix := fmt.Sprintf("boetticher-%d", vmid)
 	return map[string]string{"meta": prefix + "-meta.yaml", "user": prefix + "-user.yaml", "network": prefix + "-network.yaml"}

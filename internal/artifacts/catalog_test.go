@@ -223,3 +223,41 @@ func TestBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {
 		}
 	}
 }
+
+func TestTransferredEvidenceIsReboundToControllerArtifactBytes(t *testing.T) {
+	root := t.TempDir()
+	artifact, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactPath := filepath.Join(root, "generated", "artifacts", artifact.Name, artifact.Name+".tar.zst")
+	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifactPath, []byte("builder bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := EvidenceForFile(artifactPath, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = "/home/labadmin/build/generated/artifacts/boetticher-logging/boetticher-logging.tar.zst"
+	evidence = completeQualificationEvidence(evidence)
+	qualified, err := QualifyEvidence(evidence, ScanSummary{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteEvidence(root, artifact.Name, qualified); err != nil {
+		t.Fatal(err)
+	}
+	if err := RebindEvidencePaths(root); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _, err := ResolveArtifactEvidence(root, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.ContentSHA256 != evidence.ContentSHA256 {
+		t.Fatalf("rebound content checksum = %q, want %q", resolved.ContentSHA256, evidence.ContentSHA256)
+	}
+}

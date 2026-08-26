@@ -39,6 +39,20 @@ func TestClientUsesTokenAndDecodesEnvelope(t *testing.T) {
 	}
 }
 
+func TestQEMUAgentNetworkInterfacesUsesGuestAgentEndpoint(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/lab-proxmox-01/qemu/190/agent/network-get-interfaces" {
+			t.Fatalf("unexpected guest-agent request: %s %s", r.Method, r.URL.Path)
+		}
+		return response([]byte(`{"data":[{"name":"eth0","hardware-address":"02:00:00:00:00:01","ip-addresses":[{"ip-address":"127.0.0.1","ip-address-type":"ipv4"},{"ip-address":"192.0.2.15","ip-address-type":"ipv4"}]}]}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	interfaces, err := client.QEMUAgentNetworkInterfaces(context.Background(), "lab-proxmox-01", 190)
+	if err != nil || len(interfaces) != 1 || interfaces[0].IPAddresses[1].IPAddress != "192.0.2.15" {
+		t.Fatalf("QEMUAgentNetworkInterfaces() = %#v, %v", interfaces, err)
+	}
+}
+
 func TestCreateTokenUsesFormEncoding(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method != http.MethodPost || r.Header.Get("Content-Type") != "application/x-www-form-urlencoded" {

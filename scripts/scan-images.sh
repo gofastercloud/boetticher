@@ -20,6 +20,7 @@ case "$target" in
 esac
 
 root=${BOETTICHER_ARTIFACT_OUTPUT:-generated/artifacts}
+evidence_root=${BOETTICHER_EVIDENCE_ROOT:-.}
 for name in $names; do
   artifact="$root/$name/$name.tar.zst"
   if [ "$name" = boetticher-firewall ]; then
@@ -54,10 +55,10 @@ for name in $names; do
   if [ -n "$provider" ]; then
     GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact \
       -artifact "$artifact" -report "$report" -manifest "$manifest" -sbom "$sbom" \
-      -evidence-root "$root" -module "$module" -provider "$provider"
+      -evidence-root "$evidence_root" -module "$module" -provider "$provider"
   else
     GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact \
       -artifact "$artifact" -report "$report" -manifest "$manifest" -sbom "$sbom" \
-      -evidence-root "$root" -module "$module"
+      -evidence-root "$evidence_root" -module "$module"
   fi
 done

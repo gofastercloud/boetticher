@@ -125,6 +125,17 @@ type Node struct {
 	Type   string `json:"type"`
 }
 
+type GuestAgentAddress struct {
+	IPAddress string `json:"ip-address"`
+	IPType    string `json:"ip-address-type"`
+}
+
+type GuestAgentInterface struct {
+	Name            string              `json:"name"`
+	HardwareAddress string              `json:"hardware-address"`
+	IPAddresses     []GuestAgentAddress `json:"ip-addresses"`
+}
+
 type StorageContent struct {
 	VolID    string `json:"volid"`
 	Filename string `json:"filename"`
@@ -218,6 +229,20 @@ func (c *Client) StartLXC(ctx context.Context, node string, vmid int) error {
 
 func (c *Client) QEMUConfig(ctx context.Context, node string, vmid int, out any) error {
 	return c.Get(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "config"), nil, out)
+}
+
+// QEMUAgentNetworkInterfaces reads only guest-agent network evidence. It is
+// used to discover the temporary DHCP-backed builder address; no operator or
+// module identity is inferred from a hostname or arbitrary user address.
+func (c *Client) QEMUAgentNetworkInterfaces(ctx context.Context, node string, vmid int) ([]GuestAgentInterface, error) {
+	if node == "" || vmid <= 0 {
+		return nil, errors.New("node and positive VMID are required")
+	}
+	var interfaces []GuestAgentInterface
+	if err := c.Get(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "agent", "network-get-interfaces"), nil, &interfaces); err != nil {
+		return nil, fmt.Errorf("read QEMU guest-agent network interfaces: %w", err)
+	}
+	return interfaces, nil
 }
 
 func (c *Client) LXCConfig(ctx context.Context, node string, vmid int, out any) error {

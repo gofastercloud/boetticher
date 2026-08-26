@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -630,6 +631,18 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 	if publicKey != "" {
 		params.Set("sshkeys", publicKey)
 	}
+	cloudInit := RenderBuilderCloudInit()
+	for key, value := range map[string]string{"meta": cloudInit.MetaData, "user": cloudInit.UserData, "network": cloudInit.NetworkConfig} {
+		if value == "" {
+			return errors.New("builder cloud-init input is incomplete")
+		}
+		names := cloudInitSnippetNames(model.BuilderVMID)
+		if err := client.UploadStorageText(ctx, plan.Node, "local", "snippets", names[key], value); err != nil {
+			return fmt.Errorf("upload builder cloud-init %s: %w", key, err)
+		}
+	}
+	params.Set("cicustom", cloudInitCICustom(model.BuilderVMID))
+	params.Set("ipconfig0", "ip=dhcp")
 	if err := client.CreateVM(ctx, plan.Node, model.BuilderVMID, params); err != nil {
 		return fmt.Errorf("create temporary builder: %w", err)
 	}
@@ -652,6 +665,48 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 		return fmt.Errorf("attach builder disk: %w", err)
 	}
 	return nil
+}
+
+// WaitForQEMUIPv4 waits for the guest agent to report a routable IPv4 address
+// for a temporary DHCP-backed appliance. Hostnames and guessed addresses are
+// not accepted as reachability evidence.
+func WaitForQEMUIPv4(ctx context.Context, client *Client, node string, vmid, attempts int, interval time.Duration) (string, error) {
+	if client == nil || node == "" || vmid <= 0 || attempts < 1 {
+		return "", errors.New("QEMU address readiness identity is invalid")
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		interfaces, err := client.QEMUAgentNetworkInterfaces(ctx, node, vmid)
+		if err == nil {
+			for _, iface := range interfaces {
+				for _, address := range iface.IPAddresses {
+					ip := net.ParseIP(address.IPAddress).To4()
+					if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+						continue
+					}
+					return ip.String(), nil
+				}
+			}
+		} else {
+			lastErr = err
+		}
+		if attempt+1 < attempts {
+			timer := time.NewTimer(interval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return "", fmt.Errorf("QEMU address readiness cancelled: %w", ctx.Err())
+			case <-timer.C:
+			}
+		}
+	}
+	if lastErr == nil {
+		lastErr = errors.New("guest agent reported no routable IPv4 address")
+	}
+	return "", fmt.Errorf("HOLD: QEMU guest %d did not report a routable IPv4 address after %d attempts: %w", vmid, attempts, lastErr)
 }
 
 func DestroyBuilderVM(ctx context.Context, client *Client, node string) error {

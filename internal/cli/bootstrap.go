@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -8,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -194,6 +196,8 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 		if err := client.EnsureDirectoryStorageContent(ctx, "local", "/var/lib/vz", []string{"backup", "images", "rootdir", "snippets"}); err != nil {
 			return fmt.Errorf("ensure single-disk Proxmox storage: %w", err)
 		}
+	} else if err := client.EnsureDirectoryStorageContent(ctx, "local", "/var/lib/vz", []string{"images", "rootdir", "vztmpl", "snippets"}); err != nil {
+		return fmt.Errorf("ensure local Proxmox artifact storage: %w", err)
 	}
 	trunkChanged := false
 	if discovery.Trunk != nil && discovery.Trunk.Bridge != "vmbr1" {
@@ -243,6 +247,9 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	plan, err = proxmox.PlanFromSite(s)
 	if err != nil {
 		return fmt.Errorf("HOLD: recompute platform plan after physical binding: %w", err)
+	}
+	if err := buildDefaultArtifacts(ctx, client, plan, *siteDir, publicKey, *knownHosts, model.ExpandUserPath(s.SSHIdentityFile)); err != nil {
+		return err
 	}
 	plan, err = proxmox.ResolveQualifiedArtifacts(*siteDir, plan, true)
 	if err != nil {
@@ -300,5 +307,65 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 		fmt.Fprintln(out, "External gateway: PASS physical VLAN trunk recorded; appliance remains operator-managed")
 	}
 	fmt.Fprintln(out, "Initial root/bootstrap authentication: no longer required for routine boetticher access")
+	return nil
+}
+
+func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan proxmox.Plan, siteDir, publicKey, knownHosts, identityFile string) error {
+	base, err := artifacts.ArtifactFor("base")
+	if err != nil {
+		return err
+	}
+	if _, _, err := artifacts.ResolveArtifactEvidence(siteDir, base); err == nil {
+		if _, err := proxmox.ResolveQualifiedArtifacts(siteDir, plan, true); err == nil {
+			return nil
+		}
+	}
+	if client == nil {
+		return errors.New("Proxmox client is required for appliance construction")
+	}
+	sourceRoot, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("locate public build definitions: %w", err)
+	}
+	if _, err := os.Stat(filepath.Join(sourceRoot, "scripts", "build-images.sh")); err != nil {
+		return fmt.Errorf("HOLD: public appliance build definitions are not available from %s: %w", sourceRoot, err)
+	}
+	if err := proxmox.EnsureBuilderVM(ctx, client, plan, publicKey); err != nil {
+		return err
+	}
+	if err := client.StartVM(ctx, plan.Node, model.BuilderVMID); err != nil {
+		return fmt.Errorf("start temporary appliance builder: %w", err)
+	}
+	builderAddress, err := proxmox.WaitForQEMUIPv4(ctx, client, plan.Node, model.BuilderVMID, 60, 5*time.Second)
+	if err != nil {
+		return err
+	}
+	builderRunner := proxmox.SSHRunner{KnownHosts: knownHosts, StrictHostKey: "accept-new", IdentityFile: identityFile}
+	if err := proxmox.WaitForSSH(ctx, builderRunner, builderAddress, model.DefaultAdminSSHUser, 60, 5*time.Second); err != nil {
+		return fmt.Errorf("HOLD: temporary appliance builder SSH is not ready: %w", err)
+	}
+	archive, err := artifacts.BuildSourceArchive(sourceRoot)
+	if err != nil {
+		return err
+	}
+	if _, err := builderRunner.RunWithStdin(ctx, builderAddress, model.DefaultAdminSSHUser, "set -eu; install -d -m 0755 /home/labadmin/build; tar -xzf - -C /home/labadmin/build", bytes.NewReader(archive)); err != nil {
+		return fmt.Errorf("transfer public appliance build definitions: %w", err)
+	}
+	if _, err := builderRunner.Run(ctx, builderAddress, model.DefaultAdminSSHUser, "sudo -n /usr/local/sbin/boetticher-build"); err != nil {
+		return fmt.Errorf("qualify default appliance artifacts on temporary builder: %w", err)
+	}
+	result, err := builderRunner.Run(ctx, builderAddress, model.DefaultAdminSSHUser, "tar -czf - -C /home/labadmin/build generated/artifacts")
+	if err != nil {
+		return fmt.Errorf("retrieve qualified appliance evidence: %w", err)
+	}
+	if err := artifacts.ExtractBuildArchive(result, siteDir); err != nil {
+		return fmt.Errorf("extract qualified appliance evidence: %w", err)
+	}
+	if err := artifacts.RebindEvidencePaths(siteDir); err != nil {
+		return fmt.Errorf("bind qualified evidence to controller artifact bytes: %w", err)
+	}
+	if err := proxmox.DestroyBuilderVM(ctx, client, plan.Node); err != nil {
+		return err
+	}
 	return nil
 }

@@ -32,3 +32,21 @@ func TestFirewallCloudInitRejectsUnstableNICIdentity(t *testing.T) {
 		t.Fatal("cloud-init accepted a NIC without a stable MAC")
 	}
 }
+
+func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
+	files := RenderBuilderCloudInit()
+	for name, content := range map[string]string{"meta": files.MetaData, "user": files.UserData, "network": files.NetworkConfig} {
+		if content == "" {
+			t.Fatalf("builder %s cloud-init is empty", name)
+		}
+		if strings.Contains(content, "age1") || strings.Contains(content, "BEGIN PRIVATE KEY") || strings.Contains(content, "SOPS") {
+			t.Fatalf("builder %s cloud-init contains secret authority material", name)
+		}
+	}
+	if !strings.Contains(files.UserData, "boetticher-build") || !strings.Contains(files.UserData, "scripts/scan-images.sh scan-images") {
+		t.Fatal("builder cloud-init does not invoke the first-party build and qualification path")
+	}
+	if !strings.Contains(files.UserData, "qemu-guest-agent") || !strings.Contains(files.NetworkConfig, "dhcp4: true") {
+		t.Fatal("builder cloud-init lacks guest-agent or bootstrap network setup")
+	}
+}

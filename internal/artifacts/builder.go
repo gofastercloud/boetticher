@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -140,4 +141,69 @@ func addArchiveFile(root, path string, entry fs.DirEntry, writer *tar.Writer) er
 	}
 	_, err = io.Copy(writer, file)
 	return err
+}
+
+// ExtractBuildArchive accepts only the generated artifact tree returned by a
+// successful builder run. Extraction rejects links and traversal so a remote
+// builder cannot write outside the controller's generated evidence directory.
+func ExtractBuildArchive(data []byte, root string) error {
+	if len(data) == 0 || root == "" {
+		return fmt.Errorf("builder artifact archive and destination root are required")
+	}
+	gzipReader, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("open builder artifact archive: %w", err)
+	}
+	defer gzipReader.Close()
+	tarReader := tar.NewReader(gzipReader)
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("read builder artifact archive: %w", err)
+		}
+		clean := path.Clean(header.Name)
+		if clean != "generated/artifacts" && !strings.HasPrefix(clean, "generated/artifacts/") {
+			return fmt.Errorf("builder artifact archive contains unexpected path %q", header.Name)
+		}
+		target := filepath.Join(root, filepath.FromSlash(clean))
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0o700); err != nil {
+				return err
+			}
+		case tar.TypeReg, tar.TypeRegA:
+			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+				return err
+			}
+			temporary, err := os.CreateTemp(filepath.Dir(target), ".builder-artifact-")
+			if err != nil {
+				return err
+			}
+			temporaryName := temporary.Name()
+			if err := temporary.Chmod(0o600); err != nil {
+				_ = temporary.Close()
+				_ = os.Remove(temporaryName)
+				return err
+			}
+			_, copyErr := io.Copy(temporary, tarReader)
+			closeErr := temporary.Close()
+			if copyErr != nil || closeErr != nil {
+				_ = os.Remove(temporaryName)
+				if copyErr != nil {
+					return copyErr
+				}
+				return closeErr
+			}
+			if err := os.Rename(temporaryName, target); err != nil {
+				_ = os.Remove(temporaryName)
+				return err
+			}
+		default:
+			return fmt.Errorf("builder artifact archive contains unsupported entry %q", header.Name)
+		}
+	}
+	return nil
 }
