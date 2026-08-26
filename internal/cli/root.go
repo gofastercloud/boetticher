@@ -36,6 +36,10 @@ func Run(args []string, out, errOut interface{ Write([]byte) (int, error) }) err
 		return runDHCP(args[1:], out)
 	case "storage":
 		return runStorage(args[1:], out)
+	case "module":
+		return runModule(args[1:], out)
+	case "config":
+		return runConfig(args[1:], out)
 	case "network":
 		return runNetwork(args[1:], out)
 	case "verify":

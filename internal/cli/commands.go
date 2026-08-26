@@ -24,5 +24,7 @@ var commandSpecs = []commandSpec{
 	{Usage: "boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json]"},
 	{Usage: "boetticher dhcp status|leases [--site DIR] [--live] [--json]"},
 	{Usage: "boetticher storage status|initialize [--site DIR] [--live] [--confirmed]"},
+	{Usage: "boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge]"},
+	{Usage: "boetticher config validate|show|schema [--site DIR]"},
 	{Usage: "boetticher portal build [--site DIR] [--output DIR] [--docs DIR]"},
 }

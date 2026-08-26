@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://boetticher.dev/schemas/site.schema.json",
+  "title": "boetticher v3 SiteConfig",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["api_version"],
+  "properties": {
+    "api_version": {"const": "boetticher/v3"},
+    "platform_version": {"const": "0.3.0"},
+    "schema_version": {"const": 3},
+    "storage_profile": {"enum": ["single-disk", "dedicated-data-disk"]},
+    "storage_device": {"type": "string"},
+    "gateway": {"type": "object", "additionalProperties": false, "properties": {"mode": {"enum": ["managed", "external"]}}},
+    "proxmox_node": {"type": "string"},
+    "bootstrap_address": {"type": "string"},
+    "ssh_identity_file": {"type": "string"},
+    "physical_network": {"type": "object"},
+    "tested_versions": {"type": "object"},
+    "network": {"type": "object"},
+    "pki": {"type": "object"},
+    "secret_metadata": {"type": "object"},
+    "ownership": {"type": "object"},
+    "modules": {
+      "type": "object",
+      "additionalProperties": {"type": "object", "additionalProperties": false, "properties": {"enabled": {"type": "boolean"}}}
+    }
+  }
+}

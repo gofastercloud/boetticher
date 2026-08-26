@@ -19,11 +19,7 @@ import (
 )
 
 func Load(dir string) (model.Site, error) {
-	data, err := os.ReadFile(filepath.Join(dir, "site.yml"))
-	if err != nil {
-		return model.Site{}, fmt.Errorf("read site.yml: %w", err)
-	}
-	config, err := model.ParseSiteConfig(data)
+	config, err := LoadConfig(dir)
 	if err != nil {
 		return model.Site{}, err
 	}
@@ -34,12 +30,24 @@ func Load(dir string) (model.Site, error) {
 	return s, nil
 }
 
-func Save(dir string, s model.Site) error {
-	data, err := model.RenderSiteConfig(model.ConfigFromSite(s))
+func LoadConfig(dir string) (model.SiteConfig, error) {
+	data, err := os.ReadFile(filepath.Join(dir, "site.yml"))
+	if err != nil {
+		return model.SiteConfig{}, fmt.Errorf("read site.yml: %w", err)
+	}
+	return model.ParseSiteConfig(data)
+}
+
+func SaveConfig(dir string, config model.SiteConfig) error {
+	data, err := model.RenderSiteConfig(config)
 	if err != nil {
 		return err
 	}
 	return atomicWrite(filepath.Join(dir, "site.yml"), data, 0600)
+}
+
+func Save(dir string, s model.Site) error {
+	return SaveConfig(dir, model.ConfigFromSite(s))
 }
 
 func Init(dir, ageIdentityPath string, externalFirewall bool) (model.Site, error) {

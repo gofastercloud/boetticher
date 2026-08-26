@@ -1,8 +1,8 @@
 # Command reference
 
-All commands accept `--site DIR` where shown. The v0.2 CLI is deliberately
-small: generated state is changed through the platform model and `converge`,
-while inspection commands are read-oriented.
+All commands accept `--site DIR` where shown. `deploy` is the only public
+platform-application command; inspection and module planning commands are
+read-oriented unless they explicitly request confirmation.
 
 ```text
 boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall]
@@ -17,6 +17,8 @@ boetticher access [--site DIR]
 boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json]
 boetticher dhcp status|leases [--site DIR] [--live] [--json]
 boetticher storage status|initialize [--site DIR] [--live] [--confirmed]
+boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge]
+boetticher config validate|show|schema [--site DIR]
 boetticher bootstrap-endpoint show|set ADDRESS [--site DIR]
 boetticher network trunk status|attach|detach [INTERFACE] [--site DIR] [--confirm] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]
