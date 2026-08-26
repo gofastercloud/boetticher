@@ -112,6 +112,9 @@ func TestPlatformGuestPlanCarriesTagsForBackupAndVisibility(t *testing.T) {
 		if !hasTag(guest.Tags, model.TagBoetticher) || !hasTag(guest.Tags, model.TagManaged) || !hasTag(guest.Tags, model.TagBackup) {
 			t.Fatalf("platform guest %s has incomplete tags: %#v", guest.Name, guest.Tags)
 		}
+		if guest.Owner != "" && (guest.Artifact.SHA256 == "" || len(guest.Persistent) == 0) {
+			t.Fatalf("module guest lacks artifact or persistent-state contract: %#v", guest)
+		}
 	}
 }
 

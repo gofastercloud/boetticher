@@ -24,21 +24,24 @@ const (
 )
 
 type GuestPlan struct {
-	VMID       int        `json:"vmid"`
-	Name       string     `json:"name"`
-	Kind       GuestKind  `json:"kind"`
-	Hostname   string     `json:"hostname"`
-	Zone       string     `json:"zone"`
-	Address    string     `json:"address"`
-	Gateway    string     `json:"gateway"`
-	VLAN       int        `json:"vlan"`
-	Cores      int        `json:"cores"`
-	MemoryMiB  int        `json:"memory_mib"`
-	DiskGiB    int        `json:"disk_gib"`
-	Monitoring bool       `json:"monitoring"`
-	Backup     bool       `json:"backup"`
-	Tags       []string   `json:"tags,omitempty"`
-	NICs       []GuestNIC `json:"nics,omitempty"`
+	VMID       int                     `json:"vmid"`
+	Name       string                  `json:"name"`
+	Kind       GuestKind               `json:"kind"`
+	Hostname   string                  `json:"hostname"`
+	Zone       string                  `json:"zone"`
+	Address    string                  `json:"address"`
+	Gateway    string                  `json:"gateway"`
+	VLAN       int                     `json:"vlan"`
+	Cores      int                     `json:"cores"`
+	MemoryMiB  int                     `json:"memory_mib"`
+	DiskGiB    int                     `json:"disk_gib"`
+	Monitoring bool                    `json:"monitoring"`
+	Backup     bool                    `json:"backup"`
+	Tags       []string                `json:"tags,omitempty"`
+	NICs       []GuestNIC              `json:"nics,omitempty"`
+	Owner      string                  `json:"owner,omitempty"`
+	Artifact   model.Artifact          `json:"artifact,omitempty"`
+	Persistent []model.PersistentState `json:"persistent,omitempty"`
 }
 
 type GuestNIC struct {
@@ -304,6 +307,16 @@ func PlanFromSite(s model.Site) (Plan, error) {
 			Address: component.Address, Gateway: gatewayFor(component.Zone), VLAN: vlanFor(s, component.Zone),
 			Kind: KindLXC, Cores: 2, MemoryMiB: 1024, DiskGiB: 8,
 			Monitoring: component.Monitoring, Backup: component.Backup, Tags: componentTags(s, component.Name),
+		}
+		if component.Module != "" {
+			for _, declaration := range s.Declarations {
+				if declaration.Module == component.Module {
+					guest.Owner = "boetticher/module/" + component.Module
+					guest.Artifact = declaration.Artifact
+					guest.Persistent = append([]model.PersistentState(nil), declaration.Persistent...)
+					break
+				}
+			}
 		}
 		switch component.Name {
 		case "lab-fw-01":
