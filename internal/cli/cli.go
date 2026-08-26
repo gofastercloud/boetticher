@@ -1349,6 +1349,20 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 	if err := ansible.Run(context.Background(), *playbook, inventoryPath, variables); err != nil {
 		return err
 	}
+	backupPlan, err := backup.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
+	proxmoxClient, _, err := loadProxmoxClient(*siteDir, s, *ageIdentity, "", *insecure)
+	if err != nil {
+		return fmt.Errorf("load Proxmox client for platform backup convergence: %w", err)
+	}
+	if err := proxmoxClient.ApplyBackupJob(context.Background(), s.ProxmoxNode, proxmox.BackupJob{
+		JobName: backupPlan.JobName, ModelRevision: backupPlan.ModelRevision, StorageTarget: backupPlan.StorageTarget,
+		Schedule: backupPlan.Schedule, VMIDList: backupPlan.VMIDList(),
+	}); err != nil {
+		return err
+	}
 	if err := writeModelProjections(*siteDir, s); err != nil {
 		return err
 	}
