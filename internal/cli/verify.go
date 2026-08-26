@@ -56,23 +56,32 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 			sshJourneyResult = portal.CheckResult{Name: "authenticated SSH journey via Proxmox bastion", Status: "PASS", Detail: "authenticated command completed through ProxyJump"}
 		}
 	}
-	evidence := portal.Evidence{GeneratedAt: time.Now().UTC().Format(time.RFC3339), Results: append(offlineVerificationResults(*siteDir, s),
+
+	results := offlineVerificationResults(*siteDir, s)
+	results = append(results,
 		sshResult,
 		sshJourneyResult,
 		portal.CheckResult{Name: "DNS01/DNS02 reachable", Status: "NOT TESTED", Detail: "requires deployed network journey"},
 		portal.CheckResult{Name: "NTP01/NTP02 synchronized", Status: "NOT TESTED", Detail: "requires deployed Chrony evidence"},
-		portal.CheckResult{Name: "managed gateway services", Status: "NOT TESTED", Detail: "requires deployed managed gateway evidence"},
 		portal.CheckResult{Name: "Proxmox API least privilege", Status: "NOT TESTED", Detail: "requires authenticated Proxmox API evidence"},
 		portal.CheckResult{Name: "internal CA available", Status: "STATIC PASS", Detail: "CA metadata is present in the initialized model"},
-		portal.CheckResult{Name: "SANDBOX cannot access TRUSTED", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
-		portal.CheckResult{Name: "SANDBOX cannot access SERVERS", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
-		portal.CheckResult{Name: "SANDBOX cannot access MGMT", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
-		portal.CheckResult{Name: "MGMT DHCP is reservation-only", Status: "NOT TESTED", Detail: "requires deployed Kea evidence"},
 		portal.CheckResult{Name: "portal requires client certificate", Status: "NOT TESTED", Detail: "requires deployed mTLS journey"},
 		portal.CheckResult{Name: "Zabbix requires client certificate", Status: "NOT TESTED", Detail: "requires deployed mTLS journey"},
 		portal.CheckResult{Name: "latest VM/LXC backup", Status: "NOT TESTED", Detail: "requires current backup evidence"},
 		portal.CheckResult{Name: "Age recovery fixture", Status: "NOT TESTED", Detail: "requires independent recovery copy"},
-	)}
+	)
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		results = append(results,
+			portal.CheckResult{Name: "managed gateway services", Status: "NOT TESTED", Detail: "requires deployed managed gateway evidence"},
+			portal.CheckResult{Name: "SANDBOX cannot access TRUSTED", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
+			portal.CheckResult{Name: "SANDBOX cannot access SERVERS", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
+			portal.CheckResult{Name: "SANDBOX cannot access MGMT", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
+			portal.CheckResult{Name: "MGMT DHCP is reservation-only", Status: "NOT TESTED", Detail: "requires deployed Kea evidence"},
+		)
+	} else {
+		results = append(results, portal.CheckResult{Name: "external gateway contract", Status: "STATIC PASS", Detail: "required VLAN, gateway, DHCP, DNS, NTP, and policy intent is generated"})
+	}
+	evidence := portal.Evidence{GeneratedAt: time.Now().UTC().Format(time.RFC3339), Results: results}
 	document := struct {
 		ModelRevision string          `json:"model_revision"`
 		Evidence      portal.Evidence `json:"evidence"`
@@ -366,8 +375,14 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 			if err != nil {
 				return err
 			}
-			if !plan.DDNS.Enabled || len(plan.DynamicZones) != 4 {
+			if len(plan.DynamicZones) != 4 {
 				return errors.New("dynamic DNS zone contract is incomplete")
+			}
+			if s.Gateway.Mode == model.GatewayModeManaged && !plan.DDNS.Enabled {
+				return errors.New("managed gateway dynamic DNS contract is disabled")
+			}
+			if s.Gateway.Mode == model.GatewayModeExternal && plan.DDNS.Enabled {
+				return errors.New("external gateway must not claim managed DHCP/DDNS ownership")
 			}
 			return nil
 		}},
@@ -438,7 +453,10 @@ func checkPlatformOwnership(s model.Site) error {
 	if err != nil {
 		return err
 	}
-	want := []int{model.ProxmoxVMID, model.DNS01VMID, model.DNS02VMID, model.MonitorVMID, model.PortalVMID}
+	want := []int{model.DNS01VMID, model.DNS02VMID, model.MonitorVMID, model.PortalVMID}
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		want = append([]int{model.ProxmoxVMID}, want...)
+	}
 	if len(plan.Guests) != len(want) {
 		return fmt.Errorf("platform plan contains %d guests; expected %d", len(plan.Guests), len(want))
 	}
