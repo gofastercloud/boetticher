@@ -15,7 +15,7 @@ if [ "$(uname -s)" != Linux ]; then
   exit 2
 fi
 
-for tool in mmdebstrap tar zstd sha256sum curl chroot; do
+for tool in mmdebstrap tar zstd sha256sum curl chroot go; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "HOLD: required Linux image-build tool is unavailable: $tool" >&2
     exit 2
@@ -163,6 +163,14 @@ build_dns_blocky() {
   printf '%s  %s\n' 17b03f892346a160e9faf974ce68baae85fa4f2a94d7bf8ea52592a94be5eeb4 "$archive" | sha256sum --check --status
   tar -xOf "$archive" blocky > "$rootfs/usr/local/bin/blocky"
   chmod 0755 "$rootfs/usr/local/bin/blocky"
+  blocky_config="$work_root/blocky-config.yml"
+  go run ./cmd/render-blocky-config > "$blocky_config"
+  install -D -m 0644 "$blocky_config" "$rootfs/tmp/blocky-config.yml"
+  if ! chroot "$rootfs" /usr/local/bin/blocky validate --config /tmp/blocky-config.yml; then
+    echo "HOLD: pinned Blocky rejected the canonical generated configuration" >&2
+    return 2
+  fi
+  rm -f "$rootfs/tmp/blocky-config.yml"
   chroot "$rootfs" useradd --system --home-dir /var/lib/blocky --create-home --shell /usr/sbin/nologin blocky
   cat > "$rootfs/etc/systemd/system/blocky.service" <<'EOF'
 [Unit]
