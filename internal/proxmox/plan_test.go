@@ -351,6 +351,52 @@ func TestEnsureArtifactInStorageHoldsOnPostUploadChecksumMismatch(t *testing.T) 
 	}
 }
 
+func TestEnsureFirewallHoldsUnownedFixedIDBeforeArtifactUpload(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var firewall GuestPlan
+	for _, guest := range plan.Guests {
+		if guest.Kind == KindQEMU {
+			firewall = guest
+			break
+		}
+	}
+	if firewall.VMID == 0 {
+		t.Fatal("test fixture has no firewall guest")
+	}
+	config, err := json.Marshal(map[string]any{
+		"name":        firewall.Name,
+		"hostname":    firewall.Hostname,
+		"description": artifactDescription(firewall.Artifact),
+		"tags":        "boetticher;managed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploadAttempted := false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/qemu/100/config") {
+			return response(append([]byte(`{"data":`), append(config, '}')...))
+		}
+		if strings.Contains(r.URL.Path, "/storage/local/") || strings.HasSuffix(r.URL.Path, "/upload") {
+			uploadAttempted = true
+			return response([]byte(`{"data":[]}`))
+		}
+		t.Fatalf("unexpected request while checking fixed-ID ownership: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err = EnsureFirewallVM(context.Background(), client, plan)
+	if err == nil || !strings.Contains(err.Error(), "canonical ownership proof") {
+		t.Fatalf("unowned firewall VM was not held: %v", err)
+	}
+	if uploadAttempted {
+		t.Fatal("artifact storage was touched before fixed-ID ownership was proven")
+	}
+}
+
 func TestPlatformGuestPlanCarriesTagsForBackupAndVisibility(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {

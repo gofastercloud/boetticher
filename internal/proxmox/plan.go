@@ -622,13 +622,7 @@ func EnsureFirewallVM(ctx context.Context, client *Client, plan Plan) error {
 	}
 	for _, guest := range plan.Guests {
 		if guest.Kind == KindQEMU {
-			filename := fmt.Sprintf("%s-%s-%s.qcow2", guest.Artifact.Name, guest.Artifact.Version, guest.Artifact.Architecture)
-			source := plan.ArtifactFiles[artifactKey(guest.Artifact)]
-			if err := ensureArtifactInStorage(ctx, client, plan.Node, "local", "images", filename, guest.Artifact.ContentSHA256, source); err != nil {
-				return fmt.Errorf("prepare qualified firewall artifact: %w", err)
-			}
-			imageFileID := "local:images/" + filename
-			return ensureQEMU(ctx, client, plan, guest, imageFileID)
+			return ensureQEMU(ctx, client, plan, guest)
 		}
 	}
 	return errors.New("foundation plan has no firewall VM")
@@ -1028,7 +1022,7 @@ func safeInterfaceName(value string) bool {
 	return true
 }
 
-func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan, iso string) error {
+func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
 	var current map[string]any
 	err := client.QEMUConfig(ctx, plan.Node, guest.VMID, &current)
 	if err == nil {
@@ -1043,6 +1037,12 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 	if !IsNotFound(err) {
 		return fmt.Errorf("inspect VM %s: %w", guest.Name, err)
 	}
+	filename := fmt.Sprintf("%s-%s-%s.qcow2", guest.Artifact.Name, guest.Artifact.Version, guest.Artifact.Architecture)
+	source := plan.ArtifactFiles[artifactKey(guest.Artifact)]
+	if err := ensureArtifactInStorage(ctx, client, plan.Node, "local", "images", filename, guest.Artifact.ContentSHA256, source); err != nil {
+		return fmt.Errorf("prepare qualified %s artifact: %w", guest.Name, err)
+	}
+	imageFileID := "local:images/" + filename
 	params := url.Values{
 		"name":        {guest.Name},
 		"description": {artifactDescription(guest.Artifact)},
@@ -1094,7 +1094,7 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 	if err := client.CreateVM(ctx, plan.Node, guest.VMID, params); err != nil {
 		return fmt.Errorf("create gateway VM %s: %w", guest.Name, err)
 	}
-	upid, err := client.ImportDisk(ctx, plan.Node, guest.VMID, iso, plan.Storage, "qcow2")
+	upid, err := client.ImportDisk(ctx, plan.Node, guest.VMID, imageFileID, plan.Storage, "qcow2")
 	if err != nil {
 		return fmt.Errorf("import gateway image into %s: %w", plan.Storage, err)
 	}
