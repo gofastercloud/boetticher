@@ -136,7 +136,9 @@ func Variables(s model.Site) ([]byte, error) {
 		LoggingCollectorConfig      string            `json:"logging_collector_config"`
 		LoggingServiceOverride      string            `json:"logging_collector_service_override"`
 		LoggingUploadConfigs        map[string]string `json:"logging_upload_configs"`
-	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, zabbixPlan, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), loggingUploads}
+		LoggingClientCertificates   map[string]string `json:"logging_client_certificates"`
+		LoggingCollectorCertificate string            `json:"logging_collector_certificate"`
+	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, zabbixPlan, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), loggingUploads, map[string]string{}, ""}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err

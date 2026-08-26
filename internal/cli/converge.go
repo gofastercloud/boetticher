@@ -229,6 +229,10 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err := ansible.Run(context.Background(), "ansible/site.yml", inventoryPath, variables); err != nil {
 		return err
 	}
+	loggingClientCertificates, loggingCollectorCertificate, err := signLoggingCertificates(authority, s, csrDir)
+	if err != nil {
+		return fmt.Errorf("sign logging transport certificates: %w", err)
+	}
 	if err := installModuleRuntimeConfigs(context.Background(), s, proxmoxPlan); err != nil {
 		return err
 	}
@@ -251,6 +255,8 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	runtimeVariables["pki_bootstrap_phase"] = false
 	runtimeVariables["monitor_server_cert_pem"] = monitorCertificate.ChainPEM
 	runtimeVariables["portal_server_cert_pem"] = portalCertificate.ChainPEM
+	runtimeVariables["logging_client_certificates"] = loggingClientCertificates
+	runtimeVariables["logging_collector_certificate"] = loggingCollectorCertificate
 	variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
 	if err != nil {
 		return err
@@ -320,6 +326,33 @@ func verifyGatewayReadiness(ctx context.Context, runner proxmox.CommandRunner, a
 		return fmt.Errorf("gateway policy, DHCP, NTP, and forwarding checks failed: %w", err)
 	}
 	return nil
+}
+
+func signLoggingCertificates(authority pki.Authority, s model.Site, csrDir string) (map[string]string, string, error) {
+	clients := map[string]string{}
+	for _, component := range s.PlatformComponents() {
+		if !component.Logging || component.Name == "lab-log-01" {
+			continue
+		}
+		csr, err := os.ReadFile(filepath.Join(csrDir, "logging-"+component.Name+".csr.pem"))
+		if err != nil {
+			return nil, "", fmt.Errorf("read %s logging CSR: %w", component.Name, err)
+		}
+		certificate, err := pki.SignClientCSR(authority, string(csr), component.Name, s.Network.Domain, time.Now().UTC())
+		if err != nil {
+			return nil, "", fmt.Errorf("sign %s logging CSR: %w", component.Name, err)
+		}
+		clients[component.Name] = certificate.ChainPEM
+	}
+	collectorCSR, err := os.ReadFile(filepath.Join(csrDir, "logging-collector.csr.pem"))
+	if err != nil {
+		return nil, "", fmt.Errorf("read logging collector CSR: %w", err)
+	}
+	collector, err := pki.SignServerCSR(authority, string(collectorCSR), "logs", s.Network.Domain, []string{"lab-log-01." + s.Network.Domain}, time.Now().UTC())
+	if err != nil {
+		return nil, "", fmt.Errorf("sign logging collector CSR: %w", err)
+	}
+	return clients, collector.ChainPEM, nil
 }
 
 // installModuleRuntimeConfigs is the deployment boundary for the common

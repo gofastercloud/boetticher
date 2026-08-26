@@ -8,6 +8,59 @@
     mode: '2755'
   when: inventory_hostname == logging_plan.collector
 
+- name: Create collector logging identity directory
+  ansible.builtin.file:
+    path: /var/lib/boetticher/identity/logging
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  when: inventory_hostname == logging_plan.collector
+
+- name: Generate collector-local server private key
+  ansible.builtin.command:
+    argv: [openssl, genpkey, -algorithm, EC, -pkeyopt, ec_paramgen_curve:P-256, -out, /var/lib/boetticher/identity/logging/collector.key]
+  args:
+    creates: /var/lib/boetticher/identity/logging/collector.key
+  when: inventory_hostname == logging_plan.collector
+
+- name: Generate collector server CSR
+  ansible.builtin.command:
+    argv: [openssl, req, -new, -sha256, -key, /var/lib/boetticher/identity/logging/collector.key, -subj, "/CN=logs.{{ domain }}", -addext, "subjectAltName=DNS:logs.{{ domain }},DNS:{{ logging_plan.collector }}.{{ domain }}", -out, /var/lib/boetticher/identity/logging/collector.csr]
+  args:
+    creates: /var/lib/boetticher/identity/logging/collector.csr
+  when: inventory_hostname == logging_plan.collector
+
+- name: Fetch collector CSR for controller signing
+  ansible.builtin.fetch:
+    src: /var/lib/boetticher/identity/logging/collector.csr
+    dest: "{{ pki_csr_output_dir }}/logging-collector.csr.pem"
+    flat: true
+  when:
+    - inventory_hostname == logging_plan.collector
+    - pki_bootstrap_phase | default(false) | bool
+
+- name: Install the platform CA for the collector
+  ansible.builtin.copy:
+    content: "{{ client_ca_pem }}"
+    dest: /var/lib/boetticher/identity/logging/ca.crt
+    owner: root
+    group: root
+    mode: '0644'
+  when: inventory_hostname == logging_plan.collector
+
+- name: Install the controller-signed collector certificate
+  ansible.builtin.copy:
+    content: "{{ logging_collector_certificate }}"
+    dest: /var/lib/boetticher/identity/logging/collector.crt
+    owner: root
+    group: root
+    mode: '0644'
+  no_log: true
+  when:
+    - inventory_hostname == logging_plan.collector
+    - logging_collector_certificate | default('') | length > 0
+
 - name: Install the journal-remote configuration contract
   ansible.builtin.copy:
     content: "{{ logging_collector_config }}"
@@ -42,4 +95,15 @@
     name: systemd-journal-remote
     enabled: false
     state: stopped
-  when: inventory_hostname == logging_plan.collector
+  when:
+    - inventory_hostname == logging_plan.collector
+    - logging_collector_certificate | default('') | length == 0
+
+- name: Enable the collector after its server certificate is installed
+  ansible.builtin.service:
+    name: systemd-journal-remote
+    enabled: true
+    state: started
+  when:
+    - inventory_hostname == logging_plan.collector
+    - logging_collector_certificate | default('') | length > 0
