@@ -11,7 +11,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
-func TestPublicDocumentationMatchesV01Model(t *testing.T) {
+func TestPublicDocumentationMatchesV02Model(t *testing.T) {
 	root := repositoryRoot(t)
 	read := func(path string) string {
 		data, err := os.ReadFile(filepath.Join(root, path))
@@ -27,7 +27,7 @@ func TestPublicDocumentationMatchesV01Model(t *testing.T) {
 	site := model.NewDefaultSite("contract-installation", "age1contract")
 
 	for _, want := range []string{
-		"OPNsense " + model.QualifiedOPNsense,
+		model.QualifiedGatewayImage,
 		"Zabbix " + model.ZabbixSeries,
 		model.DefaultDomain,
 		"VLAN 10 TRUSTED",
@@ -54,8 +54,8 @@ func TestPublicDocumentationMatchesV01Model(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"boetticher converge [--site DIR] [--age-identity PATH] [--opnsense-url URL] [--opnsense-ca PATH] [--proxmox-ca PATH] [--zabbix-url URL] [--insecure] [--ansible-playbook PATH] [--dry-run]",
-		"boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--opnsense-iso PATH] [--trunk-interface IFACE] [--dry-run]",
+		"boetticher converge [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--zabbix-url URL] [--insecure] [--ansible-playbook PATH] [--dry-run]",
+		"boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]",
 	} {
 		if !strings.Contains(commands, want) {
 			t.Errorf("command reference is missing %q", want)

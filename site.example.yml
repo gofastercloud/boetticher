@@ -1,8 +1,10 @@
-api_version: boetticher/v1
-platform_version: 0.1.0
-schema_version: 1
+api_version: boetticher/v2
+platform_version: 0.2.0
+schema_version: 2
 storage_profile: single-disk
 storage_device: ""
+gateway:
+  mode: managed
 proxmox_node: lab-proxmox-01
 bootstrap_address: ""
 ssh_identity_file: ""
@@ -11,7 +13,7 @@ physical_network:
   trunk: {}
   mode: virtual-only
 tested_versions:
-  opnsense: 26.7.2_2
+  gateway: debian-13-genericcloud-amd64
   zabbix: "7.0 LTS"
 network:
   domain: lab.home.arpa
@@ -82,9 +84,10 @@ components:
     hostname: lab-fw-01
     zone: MGMT
     address: 10.10.99.1
-    role: OPNsense firewall
-    tags: [boetticher, managed, platform, infra, network, firewall, backup]
-    url: https://opnsense.lab.home.arpa
+    role: Debian firewall
+    tags: [boetticher, managed, platform, infra, network, firewall, gateway, backup]
+    ssh_user: labadmin
+    ssh_port: 22
     monitoring: true
     backup: true
     ssh_managed: false

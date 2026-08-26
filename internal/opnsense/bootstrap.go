@@ -46,7 +46,7 @@ func BootstrapPlanFromSite(s model.Site) (BootstrapPlan, error) {
 	}
 	return BootstrapPlan{
 		ModelRevision:       revision,
-		TestedVersion:       s.TestedVersions.OPNsense,
+		TestedVersion:       s.TestedVersions.Gateway,
 		FirewallVMID:        model.ProxmoxVMID,
 		WANBridge:           "vmbr0",
 		WANInterface:        "vtnet0",

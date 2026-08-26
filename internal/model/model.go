@@ -14,10 +14,10 @@ import (
 )
 
 const (
-	SchemaVersion               = 1
-	PlatformVersion             = "0.1.0"
-	OPNsenseSeries              = "26.7"
-	QualifiedOPNsense           = "26.7.2_2"
+	SchemaVersion               = 2
+	PlatformVersion             = "0.2.0"
+	QualifiedGatewayImage       = "debian-13-genericcloud-amd64"
+	QualifiedGatewayImageSHA512 = "77429b411b39b43f914dc9d14bf34aa315489a1a12b5429f72e5b483bdda23c65698d33443c85d3f3ad7c3a0828ae60845406d6b99646342554d17abae29c2a3"
 	ZabbixSeries                = "7.0 LTS"
 	AuthoritativeDNS            = "PowerDNS Authoritative"
 	AuthoritativeDNSVersion     = "4.9.17"
@@ -41,6 +41,8 @@ const (
 	UserGuestIDMax              = 899
 	ModeVirtualOnly             = "virtual-only"
 	ModePhysicalTrunk           = "physical-trunk"
+	GatewayModeManaged          = "managed"
+	GatewayModeExternal         = "external"
 	TagBoetticher               = "boetticher"
 	TagManaged                  = "managed"
 	TagPlatform                 = "platform"
@@ -48,6 +50,7 @@ const (
 	TagBackup                   = "backup"
 	TagNetwork                  = "network"
 	TagFirewall                 = "firewall"
+	TagGateway                  = "gateway"
 	TagDNS                      = "dns"
 	TagNTP                      = "ntp"
 	TagObservability            = "observability"
@@ -62,6 +65,7 @@ type Site struct {
 	SchemaVersion    int              `json:"schema_version"`
 	StorageProfile   string           `json:"storage_profile"`
 	StorageDevice    string           `json:"storage_device,omitempty"`
+	Gateway          Gateway          `json:"gateway"`
 	ProxmoxNode      string           `json:"proxmox_node"`
 	BootstrapAddress string           `json:"bootstrap_address,omitempty"`
 	SSHIdentityFile  string           `json:"ssh_identity_file,omitempty"`
@@ -76,8 +80,12 @@ type Site struct {
 }
 
 type TestedVersions struct {
-	OPNsense string `json:"opnsense"`
-	Zabbix   string `json:"zabbix"`
+	Gateway string `json:"gateway"`
+	Zabbix  string `json:"zabbix"`
+}
+
+type Gateway struct {
+	Mode string `json:"mode"`
 }
 
 type Network struct {
@@ -166,15 +174,20 @@ type ModuleInstance struct {
 }
 
 func NewDefaultSite(installationID, ageRecipient string) Site {
-	return Site{
-		APIVersion:      "boetticher/v1",
+	return NewSite(installationID, ageRecipient, GatewayModeManaged)
+}
+
+func NewSite(installationID, ageRecipient, gatewayMode string) Site {
+	site := Site{
+		APIVersion:      "boetticher/v2",
 		PlatformVersion: PlatformVersion,
 		SchemaVersion:   SchemaVersion,
 		StorageProfile:  "single-disk",
+		Gateway:         Gateway{Mode: gatewayMode},
 		ProxmoxNode:     DefaultProxmoxNode,
 		TestedVersions: TestedVersions{
-			OPNsense: QualifiedOPNsense,
-			Zabbix:   ZabbixSeries,
+			Gateway: QualifiedGatewayImage,
+			Zabbix:  ZabbixSeries,
 		},
 		Network: Network{
 			Domain: DefaultDomain,
@@ -195,13 +208,23 @@ func NewDefaultSite(installationID, ageRecipient string) Site {
 		},
 		Components: []Component{
 			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: "10.10.99.5", Role: "Proxmox host", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork}, URL: "https://proxmox." + DefaultDomain + ":8006", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22},
-			{Name: "lab-fw-01", VMID: ProxmoxVMID, Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "OPNsense firewall", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork, TagFirewall, TagBackup}, URL: "https://opnsense." + DefaultDomain, Monitoring: true, Backup: true, MTLS: false, SSHManaged: false, JumpAllowed: false, ProductOwned: true},
+			{Name: "lab-fw-01", VMID: ProxmoxVMID, Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "Debian firewall", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork, TagFirewall, TagGateway, TagBackup}, Monitoring: true, Backup: true, MTLS: false, SSHUser: DefaultAdminSSHUser, SSHPort: 22, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			{Name: "lab-dns-01", VMID: DNS01VMID, Hostname: "lab-dns-01", Zone: "SERVERS", Address: "10.10.20.10", Role: "DNS/NTP", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagDNS, TagNTP, TagBackup}, DNSAliases: []string{"dns01", "dns"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			{Name: "lab-dns-02", VMID: DNS02VMID, Hostname: "lab-dns-02", Zone: "SERVERS", Address: "10.10.20.11", Role: "DNS/NTP", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagDNS, TagNTP, TagBackup}, DNSAliases: []string{"dns02"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "MGMT", Address: "10.10.99.20", Role: "Zabbix", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagObservability, TagBackup}, URL: "https://monitor." + DefaultDomain, DNSAliases: []string{"monitor"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			{Name: "lab-portal-01", VMID: PortalVMID, Hostname: "lab-portal-01", Zone: "SERVERS", Address: "10.10.20.30", Role: "Generated platform portal", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagPortal, TagBackup}, URL: "https://portal." + DefaultDomain, DNSAliases: []string{"portal"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 		},
 	}
+	if gatewayMode == GatewayModeExternal {
+		filtered := make([]Component, 0, len(site.Components)-1)
+		for _, component := range site.Components {
+			if component.Name != "lab-fw-01" {
+				filtered = append(filtered, component)
+			}
+		}
+		site.Components = filtered
+	}
+	return site
 }
 
 func (s Site) Normalize() Site {
@@ -221,7 +244,7 @@ func (s Site) Normalize() Site {
 }
 
 func (s Site) Validate() error {
-	if s.APIVersion != "boetticher/v1" || s.SchemaVersion != SchemaVersion {
+	if s.APIVersion != "boetticher/v2" || s.SchemaVersion != SchemaVersion {
 		return fmt.Errorf("unsupported site schema %q/%d", s.APIVersion, s.SchemaVersion)
 	}
 	if s.PlatformVersion == "" {
@@ -240,11 +263,14 @@ func (s Site) Validate() error {
 	if s.ProxmoxNode != DefaultProxmoxNode {
 		return fmt.Errorf("proxmox_node must be %q in V1", DefaultProxmoxNode)
 	}
+	if s.Gateway.Mode != GatewayModeManaged && s.Gateway.Mode != GatewayModeExternal {
+		return fmt.Errorf("gateway.mode must be managed or external")
+	}
 	if s.Network.Domain != DefaultDomain {
 		return fmt.Errorf("network.domain must be %s", DefaultDomain)
 	}
-	if s.TestedVersions.OPNsense != QualifiedOPNsense {
-		return fmt.Errorf("tested_versions.opnsense must equal the explicitly qualified %s patch; newer patches require qualification", QualifiedOPNsense)
+	if s.TestedVersions.Gateway != QualifiedGatewayImage {
+		return fmt.Errorf("tested_versions.gateway must equal the qualified image %q", QualifiedGatewayImage)
 	}
 	if s.TestedVersions.Zabbix != ZabbixSeries {
 		return fmt.Errorf("tested_versions.zabbix must be %q", ZabbixSeries)
@@ -377,11 +403,22 @@ func (s Site) Validate() error {
 		vmid    int
 	}{
 		"lab-proxmox-01": {address: "10.10.99.5", vmid: 0},
-		"lab-fw-01":      {address: "10.10.99.1", vmid: ProxmoxVMID},
 		"lab-dns-01":     {address: "10.10.20.10", vmid: DNS01VMID},
 		"lab-dns-02":     {address: "10.10.20.11", vmid: DNS02VMID},
 		"lab-monitor-01": {address: "10.10.99.20", vmid: MonitorVMID},
 		"lab-portal-01":  {address: "10.10.20.30", vmid: PortalVMID},
+	}
+	if s.Gateway.Mode == GatewayModeManaged {
+		requiredComponents["lab-fw-01"] = struct {
+			address string
+			vmid    int
+		}{address: "10.10.99.1", vmid: ProxmoxVMID}
+	} else {
+		for _, component := range s.Components {
+			if component.Name == "lab-fw-01" {
+				return errors.New("external gateway mode must not declare lab-fw-01")
+			}
+		}
 	}
 	for required, expected := range requiredComponents {
 		found, ok := seenComponents[required]
