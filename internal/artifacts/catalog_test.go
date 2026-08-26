@@ -278,12 +278,16 @@ func TestApplianceBootstrapInputsContainNoOperatorKeyOrSiteState(t *testing.T) {
 		t.Fatal(err)
 	}
 	buildText := string(buildScript)
-	for _, required := range []string{"/tmp/boetticher-ansible", "/usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*"} {
-		if !strings.Contains(buildText, required) {
-			t.Fatalf("appliance build does not constrain Ansible become transport with %q", required)
+	sudoers, err := os.ReadFile(filepath.Join(root, "base", "runtime", "boetticher.sudoers"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"/tmp/boetticher-ansible", "/usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*", "/usr/bin/systemd-creds *", "/usr/bin/sqlite3 *", "/usr/bin/psql *"} {
+		if !strings.Contains(string(sudoers), required) {
+			t.Fatalf("appliance sudo policy does not constrain runtime command %q", required)
 		}
 	}
-	if strings.Contains(buildText, "NOPASSWD:ALL") {
+	if strings.Contains(buildText+string(sudoers), "NOPASSWD:ALL") {
 		t.Fatal("appliance sudo policy grants an unrestricted root command")
 	}
 }
