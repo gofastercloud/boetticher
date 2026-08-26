@@ -389,7 +389,7 @@ func verifyGatewayReadiness(ctx context.Context, runner proxmox.CommandRunner, a
 	if runner == nil {
 		return errors.New("gateway readiness runner is required")
 	}
-	command := "set -eu; sudo -n nft -c -f /etc/nftables.conf; sudo -n systemctl is-active nftables kea-dhcp4-server kea-dhcp-ddns-server chrony; test \"$(sudo -n sysctl -n net.ipv4.ip_forward)\" = 1"
+	command := "set -eu; sudo -n nft -c -f /etc/nftables.conf; sudo -n systemctl is-active nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony; test \"$(sudo -n sysctl -n net.ipv4.ip_forward)\" = 1"
 	if _, err := runner.Run(ctx, address, model.DefaultAdminSSHUser, command); err != nil {
 		return fmt.Errorf("gateway policy, DHCP, NTP, and forwarding checks failed: %w", err)
 	}

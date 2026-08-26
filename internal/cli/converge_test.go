@@ -100,3 +100,23 @@ func TestVerifyDNSReadinessChecksTheQualifiedBlockyRuntime(t *testing.T) {
 		}
 	}
 }
+
+func TestVerifyGatewayReadinessChecksAllGatewayServices(t *testing.T) {
+	runner := &dnsReadinessRunner{}
+	if err := verifyGatewayReadiness(context.Background(), runner, "10.10.99.1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 1 {
+		t.Fatalf("readiness commands = %d, want 1", len(runner.commands))
+	}
+	command := runner.commands[0]
+	for _, required := range []string{
+		"nft -c -f /etc/nftables.conf",
+		"systemctl is-active nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony",
+		"sysctl -n net.ipv4.ip_forward",
+	} {
+		if !strings.Contains(command, required) {
+			t.Fatalf("gateway readiness command omitted %q: %s", required, command)
+		}
+	}
+}
