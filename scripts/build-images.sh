@@ -79,7 +79,7 @@ create_base_rootfs() {
   chroot "$rootfs" visudo -cf /etc/sudoers
   mkdir -p "$rootfs/etc/systemd/journald.conf.d"
   printf '%s\n' '[Journal]' 'SystemMaxUse=256M' 'RuntimeMaxUse=64M' > "$rootfs/etc/systemd/journald.conf.d/boetticher.conf"
-  printf '%s\n' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' 'PermitRootLogin prohibit-password' > "$rootfs/etc/ssh/sshd_config.d/boetticher.conf"
+  install -D -m 0644 images/base/runtime/sshd.conf "$rootfs/etc/ssh/sshd_config.d/boetticher.conf"
   install -D -m 0644 images/base/runtime/sshd-host-key.conf "$rootfs/etc/ssh/sshd_config.d/boetticher-host-key.conf"
   rm -f "$rootfs/etc/ssh/ssh_host_*"
   rm -f "$rootfs/root/.ssh/authorized_keys" "$rootfs/home/labadmin/.ssh/authorized_keys"
@@ -325,6 +325,7 @@ build_firewall() {
     --mkdir /usr/lib/boetticher \
     --mkdir /var/lib/boetticher/identity/ssh \
     --mkdir /tmp/boetticher-ansible \
+    --mkdir /etc/ssh/sshd_config.d \
     --mkdir /etc/systemd/journald.conf.d \
     --mkdir /etc/sysctl.d \
     --upload images/base/first-boot/boetticher-first-boot.sh:/usr/lib/boetticher/boetticher-first-boot.sh \
@@ -333,6 +334,7 @@ build_firewall() {
     --upload images/firewall/nocloud/network-config:/etc/boetticher/nocloud-network-config \
     --upload images/base/runtime/journald.conf:/etc/systemd/journald.conf.d/boetticher.conf \
     --upload images/base/runtime/journal-upload.conf:/etc/systemd/journal-upload.conf \
+    --upload images/base/runtime/sshd.conf:/etc/ssh/sshd_config.d/boetticher.conf \
     --upload images/base/runtime/sshd-host-key.conf:/etc/ssh/sshd_config.d/boetticher-host-key.conf \
     --upload images/base/runtime/boetticher.sudoers:/etc/sudoers.d/boetticher \
     --upload images/firewall/runtime/forwarding.conf:/etc/sysctl.d/boetticher-forwarding.conf \

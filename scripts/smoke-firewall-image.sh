@@ -14,6 +14,9 @@ printf '%s\n' "$(virt-cat -a "$image" /etc/passwd)" | grep -q '^labadmin:' || { 
 virt-ls -a "$image" /etc/sysctl.d | grep -qx 'boetticher-forwarding.conf'
 virt-ls -a "$image" /usr/lib/boetticher | grep -qx 'boetticher-first-boot.sh'
 virt-cat -a "$image" /etc/ssh/sshd_config.d/boetticher-host-key.conf | grep -qx 'HostKey /var/lib/boetticher/identity/ssh/ssh_host_ed25519_key'
+for setting in 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' 'PermitRootLogin prohibit-password'; do
+  virt-cat -a "$image" /etc/ssh/sshd_config.d/boetticher.conf | grep -Fxq "$setting" || { echo "firewall image is missing SSH hardening setting: $setting" >&2; exit 1; }
+done
 printf '%s\n' "$packages" | awk 'BEGIN { found=0 } /^Package: zabbix-agent2$/ { found=1; next } found && /^Version: 1:7.0.30-1\+debian13$/ { ok=1; exit } found && /^Package:/ { exit } END { exit(ok ? 0 : 1) }' || { echo "firewall image does not contain qualified Zabbix Agent 2" >&2; exit 1; }
 if virt-ls -a "$image" /home/labadmin/.ssh/authorized_keys >/dev/null 2>&1; then
   echo "firewall image contains an embedded operator key" >&2

@@ -312,6 +312,26 @@ func TestFirewallBuildUsesIndividualVirtCustomizeDirectories(t *testing.T) {
 	}
 }
 
+func TestFirewallBuildUsesCommonSSHHardeningContract(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "--upload images/base/runtime/sshd.conf:/etc/ssh/sshd_config.d/boetticher.conf") {
+		t.Fatal("firewall build does not consume the common SSH hardening contract")
+	}
+	sshConfig, err := os.ReadFile(filepath.Join("..", "..", "images", "base", "runtime", "sshd.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"PasswordAuthentication no", "KbdInteractiveAuthentication no", "PermitRootLogin prohibit-password"} {
+		if !strings.Contains(string(sshConfig), required) {
+			t.Fatalf("common SSH hardening is missing %q", required)
+		}
+	}
+}
+
 func TestApplianceBootstrapInputsContainNoOperatorKeyOrSiteState(t *testing.T) {
 	root := filepath.Join("..", "..", "images")
 	firstBoot, err := os.ReadFile(filepath.Join(root, "base", "first-boot", "boetticher-first-boot.sh"))
