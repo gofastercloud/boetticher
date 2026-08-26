@@ -36,6 +36,14 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return err
 	}
+	fmt.Fprintln(out, "Modules")
+	for _, module := range s.Modules {
+		if module.Enabled {
+			fmt.Fprintf(out, "  PASS  %-12s %s / %s (%s)\n", module.Name, module.Policy, module.State, module.Reason)
+		} else {
+			fmt.Fprintf(out, "  INFO  %-12s %s / Disabled\n", module.Name, module.Policy)
+		}
+	}
 	revision, err := s.Revision()
 	if err != nil {
 		return err

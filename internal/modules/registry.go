@@ -185,7 +185,7 @@ func (r Registry) Resolve(config model.SiteConfig) ([]ResolvedModule, error) {
 	result := make([]ResolvedModule, 0, len(ordered))
 	for _, name := range ordered {
 		definition := r.definitions[name]
-		result = append(result, ResolvedModule{Definition: definition, Enabled: true, Reason: reasons[name], State: "Enabled"})
+		result = append(result, ResolvedModule{Definition: definition, Enabled: true, Reason: reasons[name], State: "Ready"})
 	}
 	for _, definition := range r.Definitions() {
 		if active[definition.Name] {
