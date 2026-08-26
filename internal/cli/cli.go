@@ -459,6 +459,10 @@ func runNetwork(args []string, out interface{ Write([]byte) (int, error) }) erro
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
 	confirm := fs.Bool("confirm", false, "confirm a live network change")
+	live := fs.Bool("live", false, "inspect the Proxmox node instead of only the site model")
+	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
+	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
+	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS")
 	if err := fs.Parse(rest); err != nil {
 		return err
 	}
@@ -473,7 +477,24 @@ func runNetwork(args []string, out interface{ Write([]byte) (int, error) }) erro
 		} else {
 			fmt.Fprintf(out, "Physical trunk: %s attached\n", s.PhysicalTrunk)
 		}
-		return nil
+		if !*live {
+			return nil
+		}
+		client, _, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
+		if err != nil {
+			return err
+		}
+		var interfaces []proxmox.NetworkInterface
+		if err := client.NodeNetwork(context.Background(), s.ProxmoxNode, &interfaces); err != nil {
+			return err
+		}
+		for _, iface := range interfaces {
+			if iface.Iface == "vmbr1" {
+				fmt.Fprintf(out, "vmbr1: PASS bridge ports=%s vlan-aware=%t\n", iface.BridgePorts, iface.BridgeVLANAware)
+				return nil
+			}
+		}
+		return errors.New("vmbr1 is absent on Proxmox")
 	case "attach", "detach":
 		if interfaceName == "" {
 			return fmt.Errorf("network trunk %s requires an interface name", command)
@@ -484,24 +505,33 @@ func runNetwork(args []string, out interface{ Write([]byte) (int, error) }) erro
 		if !*confirm {
 			return fmt.Errorf("network trunk %s is a potentially locking live change; repeat with --confirm", command)
 		}
-		iface, err := net.InterfaceByName(interfaceName)
+		client, _, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
 		if err != nil {
-			return fmt.Errorf("inspect interface %s: %w", interfaceName, err)
+			return err
 		}
-		if iface.Flags&net.FlagUp == 0 {
-			return fmt.Errorf("interface %s is not up", interfaceName)
-		}
-		addresses, err := iface.Addrs()
-		if err != nil {
-			return fmt.Errorf("inspect addresses on %s: %w", interfaceName, err)
-		}
-		for _, address := range addresses {
-			if strings.HasPrefix(address.String(), s.BootstrapAddress+"/") {
-				return fmt.Errorf("refusing to use %s: it carries the recorded HOME/bootstrap address", interfaceName)
+		ctx := context.Background()
+		if command == "attach" {
+			if err := proxmox.AttachTrunk(ctx, client, s.ProxmoxNode, interfaceName, s.BootstrapAddress); err != nil {
+				return err
 			}
+			s.PhysicalTrunk = interfaceName
+		} else {
+			if s.PhysicalTrunk != interfaceName {
+				return fmt.Errorf("site records physical trunk %q, not %q", s.PhysicalTrunk, interfaceName)
+			}
+			if err := proxmox.DetachTrunk(ctx, client, s.ProxmoxNode, interfaceName); err != nil {
+				return err
+			}
+			s.PhysicalTrunk = ""
 		}
-		fmt.Fprintf(out, "Interface %s inspected: carrier/address safety checks passed\n", interfaceName)
-		return fmt.Errorf("HOLD: live Proxmox network mutation is not available until the authenticated bootstrap integration is configured; no local model change was made")
+		if err := site.Save(*siteDir, s); err != nil {
+			return err
+		}
+		if err := writeModelProjections(*siteDir, s); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "Physical trunk: PASS %s %s vmbr1\n", command, interfaceName)
+		return nil
 	default:
 		return fmt.Errorf("unknown trunk command %q", command)
 	}
@@ -511,6 +541,8 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
+	sshPath := fs.String("ssh-config", sshconfig.DefaultPath(), "generated SSH configuration to inspect")
+	sshJourney := fs.Bool("ssh-journey", false, "run an authenticated internal SSH journey through the bastion")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -522,8 +554,26 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return err
 	}
+	sshResult := portal.CheckResult{Name: "generated SSH configuration", Status: "NOT TESTED", Detail: "run homelab ssh-config first"}
+	if err := sshconfig.Check(*sshPath, s); err == nil {
+		sshResult = portal.CheckResult{Name: "generated SSH configuration", Status: "PASS", Detail: "configuration is current and preserves host-key verification"}
+	} else if !errors.Is(err, os.ErrNotExist) && !strings.Contains(err.Error(), "no such file") {
+		sshResult = portal.CheckResult{Name: "generated SSH configuration", Status: "FAIL", Detail: err.Error()}
+	}
+	sshJourneyResult := portal.CheckResult{Name: "authenticated SSH journey via Proxmox bastion", Status: "NOT TESTED", Detail: "use --ssh-journey to exercise an internal host"}
+	if *sshJourney {
+		if sshResult.Status != "PASS" {
+			sshJourneyResult.Detail = "generated SSH configuration is not current"
+		} else if err := runSSHJourney(*sshPath); err != nil {
+			sshJourneyResult = portal.CheckResult{Name: "authenticated SSH journey via Proxmox bastion", Status: "FAIL", Detail: err.Error()}
+		} else {
+			sshJourneyResult = portal.CheckResult{Name: "authenticated SSH journey via Proxmox bastion", Status: "PASS", Detail: "authenticated command completed through ProxyJump"}
+		}
+	}
 	evidence := portal.Evidence{GeneratedAt: time.Now().UTC().Format(time.RFC3339), Results: []portal.CheckResult{
 		{Name: "canonical platform model validates", Status: "PASS", Detail: "fixed V1 topology and address contract validated locally"},
+		sshResult,
+		sshJourneyResult,
 		{Name: "DNS01/DNS02 reachable", Status: "NOT TESTED", Detail: "requires deployed network journey"},
 		{Name: "NTP01/NTP02 synchronized", Status: "NOT TESTED", Detail: "requires deployed Chrony evidence"},
 		{Name: "OPNsense API least privilege", Status: "NOT TESTED", Detail: "requires authenticated OPNsense API evidence"},
@@ -553,6 +603,11 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 		fmt.Fprintf(out, "%-48s %s\n", result.Name, result.Status)
 	}
 	fmt.Fprintf(out, "Model revision: %s\n", revision)
+	for _, result := range evidence.Results {
+		if result.Status == "FAIL" {
+			return errors.New("verification found a failed local check")
+		}
+	}
 	return nil
 }
 
@@ -727,6 +782,9 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err != nil {
 		return fmt.Errorf("authenticate to Proxmox with scoped identity: %w", err)
 	}
+	if err := proxmox.EnsureVirtualBridge(ctx, client, plan.Node); err != nil {
+		return err
+	}
 	if err := proxmox.EnsureFirewallVM(ctx, client, plan, *opnsenseISO); err != nil {
 		return err
 	}
@@ -891,6 +949,14 @@ func checkBootstrapEndpoint(siteDir string, s model.Site) error {
 	}
 	if hostKey != evidence.SSHHostKey {
 		return errors.New("returned SSH host key does not match recorded Proxmox identity; address may be stale or host replaced")
+	}
+	return nil
+}
+
+func runSSHJourney(configPath string) error {
+	command := exec.Command("ssh", "-F", model.ExpandUserPath(configPath), "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no", "dns01", "true")
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("authenticated SSH journey failed: %w", err)
 	}
 	return nil
 }

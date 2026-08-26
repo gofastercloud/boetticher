@@ -87,6 +87,10 @@ func (c *Client) Post(ctx context.Context, endpoint string, form url.Values, out
 	return c.request(ctx, http.MethodPost, endpoint, nil, form, out)
 }
 
+func (c *Client) Put(ctx context.Context, endpoint string, form url.Values, out any) error {
+	return c.request(ctx, http.MethodPut, endpoint, nil, form, out)
+}
+
 func (c *Client) Version(ctx context.Context) (string, error) {
 	var result struct {
 		Version string `json:"version"`
@@ -187,6 +191,18 @@ func (c *Client) QEMUConfig(ctx context.Context, node string, vmid int, out any)
 
 func (c *Client) LXCConfig(ctx context.Context, node string, vmid int, out any) error {
 	return c.Get(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "config"), nil, out)
+}
+
+func (c *Client) NodeNetwork(ctx context.Context, node string, out any) error {
+	return c.Get(ctx, path.Join("/nodes", node, "network"), url.Values{"type": {"any_bridge"}}, out)
+}
+
+func (c *Client) CreateNodeNetwork(ctx context.Context, node string, params url.Values) error {
+	return c.Post(ctx, path.Join("/nodes", node, "network"), params, nil)
+}
+
+func (c *Client) UpdateNodeNetwork(ctx context.Context, node, iface string, params url.Values) error {
+	return c.Put(ctx, path.Join("/nodes", node, "network", iface), params, nil)
 }
 
 func IsNotFound(err error) bool {

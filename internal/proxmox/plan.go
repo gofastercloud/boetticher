@@ -40,6 +40,16 @@ type Plan struct {
 	Guests        []GuestPlan `json:"guests"`
 }
 
+type NetworkInterface struct {
+	Iface           string `json:"iface"`
+	Type            string `json:"type"`
+	Method          string `json:"method"`
+	Address         string `json:"address"`
+	Gateway         string `json:"gateway"`
+	BridgePorts     string `json:"bridge_ports"`
+	BridgeVLANAware bool   `json:"bridge_vlan_aware"`
+}
+
 func PlanFromSite(s model.Site) (Plan, error) {
 	if err := s.Validate(); err != nil {
 		return Plan{}, err
@@ -78,9 +88,15 @@ func Provision(ctx context.Context, client *Client, plan Plan, opnsenseISO, debi
 			if err := ensureQEMU(ctx, client, plan, guest, opnsenseISO); err != nil {
 				return err
 			}
+			if err := client.StartVM(ctx, plan.Node, guest.VMID); err != nil {
+				return fmt.Errorf("start VM %s: %w", guest.Name, err)
+			}
 		case KindLXC:
 			if err := ensureLXC(ctx, client, plan, guest, debianTemplate); err != nil {
 				return err
+			}
+			if err := client.StartLXC(ctx, plan.Node, guest.VMID); err != nil {
+				return fmt.Errorf("start container %s: %w", guest.Name, err)
 			}
 		default:
 			return fmt.Errorf("unsupported guest kind %q", guest.Kind)
@@ -99,6 +115,86 @@ func EnsureFirewallVM(ctx context.Context, client *Client, plan Plan, opnsenseIS
 		}
 	}
 	return errors.New("foundation plan has no firewall VM")
+}
+
+func EnsureVirtualBridge(ctx context.Context, client *Client, node string) error {
+	var interfaces []NetworkInterface
+	if err := client.NodeNetwork(ctx, node, &interfaces); err != nil {
+		return fmt.Errorf("inspect Proxmox node network: %w", err)
+	}
+	for _, iface := range interfaces {
+		if iface.Iface != "vmbr1" {
+			continue
+		}
+		if iface.Type != "bridge" {
+			return fmt.Errorf("vmbr1 exists but is not a Linux bridge")
+		}
+		return nil
+	}
+	if err := client.CreateNodeNetwork(ctx, node, url.Values{
+		"iface": {"vmbr1"}, "type": {"bridge"}, "bridge-ports": {"none"}, "bridge-vlan-aware": {"1"}, "autostart": {"1"},
+	}); err != nil {
+		return fmt.Errorf("create virtual-only vmbr1: %w", err)
+	}
+	return nil
+}
+
+func AttachTrunk(ctx context.Context, client *Client, node, physicalInterface, bootstrapAddress string) error {
+	if client == nil {
+		return errors.New("Proxmox client is required")
+	}
+	if !safeInterfaceName(physicalInterface) {
+		return fmt.Errorf("invalid physical interface %q", physicalInterface)
+	}
+	var interfaces []NetworkInterface
+	if err := client.NodeNetwork(ctx, node, &interfaces); err != nil {
+		return err
+	}
+	var bridge *NetworkInterface
+	for i := range interfaces {
+		iface := &interfaces[i]
+		if iface.Address == bootstrapAddress || strings.Contains(iface.BridgePorts, physicalInterface) && iface.Iface != "vmbr1" {
+			return fmt.Errorf("refusing to attach %s: it is part of the recorded HOME/bootstrap path", physicalInterface)
+		}
+		if iface.Iface == "vmbr1" {
+			bridge = iface
+		}
+	}
+	if bridge == nil {
+		return errors.New("vmbr1 does not exist; run bootstrap first")
+	}
+	if bridge.BridgePorts != "" && bridge.BridgePorts != "none" && bridge.BridgePorts != physicalInterface {
+		return fmt.Errorf("vmbr1 already has bridge ports %q", bridge.BridgePorts)
+	}
+	if err := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge-ports": {physicalInterface}, "bridge-vlan-aware": {"1"}}); err != nil {
+		return fmt.Errorf("attach %s to vmbr1: %w", physicalInterface, err)
+	}
+	return nil
+}
+
+func DetachTrunk(ctx context.Context, client *Client, node, physicalInterface string) error {
+	if client == nil {
+		return errors.New("Proxmox client is required")
+	}
+	if !safeInterfaceName(physicalInterface) {
+		return fmt.Errorf("invalid physical interface %q", physicalInterface)
+	}
+	if err := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge-ports": {"none"}, "bridge-vlan-aware": {"1"}}); err != nil {
+		return fmt.Errorf("detach %s from vmbr1: %w", physicalInterface, err)
+	}
+	return nil
+}
+
+func safeInterfaceName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if !(r == '.' || r == '-' || r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan, iso string) error {
