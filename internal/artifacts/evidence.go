@@ -17,10 +17,17 @@ func WriteEvidence(root, name string, evidence Evidence) error {
 		return fmt.Errorf("artifact evidence requires root, name, artifact path, definition digest, and content digest")
 	}
 	if evidence.Qualified {
+		if !evidence.qualifiedByEvaluator {
+			return fmt.Errorf("qualified evidence must be produced by the qualification evaluator")
+		}
 		if err := validateQualificationDigests(evidence); err != nil {
 			return fmt.Errorf("qualified artifact evidence is incomplete: %w", err)
 		}
 	}
+	return writeEvidence(root, name, evidence)
+}
+
+func writeEvidence(root, name string, evidence Evidence) error {
 	data, err := json.MarshalIndent(evidence, "", "  ")
 	if err != nil {
 		return err
@@ -89,7 +96,13 @@ func RebindEvidencePaths(root string) error {
 			return fmt.Errorf("transferred artifact %s content checksum differs from evidence", evidence.Artifact.Name)
 		}
 		evidence.ArtifactPath = artifactPath
-		if err := WriteEvidence(root, evidence.Artifact.Name, evidence); err != nil {
+		if !evidence.Qualified {
+			return fmt.Errorf("transferred evidence %s is not qualified", evidence.Artifact.Name)
+		}
+		if err := validateQualificationDigests(evidence); err != nil {
+			return fmt.Errorf("transferred evidence %s is incomplete: %w", evidence.Artifact.Name, err)
+		}
+		if err := writeEvidence(root, evidence.Artifact.Name, evidence); err != nil {
 			return err
 		}
 	}

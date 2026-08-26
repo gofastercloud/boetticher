@@ -140,6 +140,7 @@ func TestWriteEvidenceCannotAuthorizeUnqualifiedInputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	evidence.ArtifactPath = path
+	evidence = completeQualificationEvidence(evidence)
 	evidence.Qualified = true
 	if err := WriteEvidence(root, artifact.Name, evidence); err == nil {
 		t.Fatal("WriteEvidence accepted manually authorized evidence")

@@ -40,6 +40,7 @@ type Evidence struct {
 	QualificationPolicyVersion string         `json:"qualification_policy_version,omitempty"`
 	DefinitionSHA256           string         `json:"definition_sha256"`
 	Qualified                  bool           `json:"qualified"`
+	qualifiedByEvaluator       bool
 }
 
 type ScanSummary struct {
@@ -66,6 +67,7 @@ func QualifyEvidence(evidence Evidence, scan ScanSummary) (Evidence, error) {
 	}
 	evidence.QualificationPolicyVersion = QualificationPolicyVersion
 	evidence.Qualified = true
+	evidence.qualifiedByEvaluator = true
 	return evidence, nil
 }
 
