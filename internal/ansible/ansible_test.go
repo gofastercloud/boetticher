@@ -137,3 +137,20 @@ func TestDNSRoleDoesNotPlaceTSIGSecretsInProcessArguments(t *testing.T) {
 		t.Fatal("DNS role does not suppress secret-bearing task output")
 	}
 }
+
+func TestPowerDNSBindsEachDNSGuestAddressAlongsideLoopback(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "dns", "templates", "pdns.conf.j2")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "local-address=127.0.0.1,{{ ansible_host }}") {
+		t.Fatal("PowerDNS does not bind loopback and the current DNS guest address")
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "local-address=") && strings.Contains(line, "10.10.20.10") {
+			t.Fatal("PowerDNS local listener hard-codes the primary address for both DNS guests")
+		}
+	}
+}
