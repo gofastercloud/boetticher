@@ -1,9 +1,9 @@
 package site
 
 import (
-	"encoding/json"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -104,10 +104,42 @@ func Init(dir, ageIdentityPath string) (model.Site, error) {
 	if err := atomicWrite(filepath.Join(dir, ".gitignore"), []byte("# Runtime state never belongs in Git\n.runtime/\n*.tfstate\n*.tfstate.*\nplans/\ncaches/\nbootstrap/\ntmp/\n"), 0600); err != nil {
 		return model.Site{}, err
 	}
+	if err := writeInitialGenerated(dir, s); err != nil {
+		return model.Site{}, err
+	}
 	if err := writeEncryptedSecrets(dir, s, authority); err != nil {
 		return model.Site{}, err
 	}
 	return s, nil
+}
+
+func writeInitialGenerated(dir string, s model.Site) error {
+	revision, err := s.Revision()
+	if err != nil {
+		return err
+	}
+	modelForProjection := s.Normalize()
+	modelForProjection.SSHIdentityFile = ""
+	modelDocument := struct {
+		ModelRevision string     `json:"model_revision"`
+		Model         model.Site `json:"model"`
+	}{revision, modelForProjection}
+	modelData, err := json.MarshalIndent(modelDocument, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := atomicWrite(filepath.Join(dir, "generated", "model.json"), append(modelData, '\n'), 0644); err != nil {
+		return err
+	}
+	statusData, err := json.MarshalIndent(struct {
+		ModelRevision string `json:"model_revision"`
+		Status        string `json:"status"`
+		GeneratedAt   string `json:"generated_at"`
+	}{revision, "NOT TESTED", time.Now().UTC().Format(time.RFC3339)}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWrite(filepath.Join(dir, "generated", "status.json"), append(statusData, '\n'), 0644)
 }
 
 func RuntimeDir(s model.Site) string {
@@ -290,11 +322,11 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 	}
 	// Plaintext exists only in process memory and is piped directly to SOPS.
 	document := map[string]string{
-		"installation_id":   s.SecretMetadata.InstallationID,
-		"bootstrap_secret":   secret,
-		"root_key_pem_b64":   pki.Encode(authority.RootKeyPEM),
-		"root_cert_pem_b64":  pki.Encode(authority.RootCertPEM),
-		"issuing_key_pem_b64": pki.Encode(authority.IssuingKeyPEM),
+		"installation_id":      s.SecretMetadata.InstallationID,
+		"bootstrap_secret":     secret,
+		"root_key_pem_b64":     pki.Encode(authority.RootKeyPEM),
+		"root_cert_pem_b64":    pki.Encode(authority.RootCertPEM),
+		"issuing_key_pem_b64":  pki.Encode(authority.IssuingKeyPEM),
 		"issuing_cert_pem_b64": pki.Encode(authority.IssuingCertPEM),
 	}
 	return StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "homelab.sops.yaml"), document)

@@ -635,6 +635,7 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		check func() error
 	}{
 		{"model projection", filepath.Join(*siteDir, "generated", "model.json"), func() error { return checkRevisionFile(filepath.Join(*siteDir, "generated", "model.json"), revision) }},
+		{"status artifact", filepath.Join(*siteDir, "generated", "status.json"), func() error { return checkRevisionFile(filepath.Join(*siteDir, "generated", "status.json"), revision) }},
 		{"inventory projection", filepath.Join(*siteDir, "generated", "inventory.json"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "inventory.json"), revision)
 		}},
@@ -647,8 +648,14 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		{"Zabbix provisioning", filepath.Join(*siteDir, "generated", "zabbix", "provisioning.json"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "zabbix", "provisioning.json"), revision)
 		}},
+		{"Ansible inventory", filepath.Join(*siteDir, "generated", "ansible", "inventory.ini"), func() error {
+			return checkRevisionFile(filepath.Join(*siteDir, "generated", "ansible", "inventory.ini"), revision)
+		}},
 		{"bastion policy", filepath.Join(*siteDir, "generated", "ssh", "lab-jump.conf"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "ssh", "lab-jump.conf"), revision)
+		}},
+		{"SSH projection", filepath.Join(*siteDir, "generated", "ssh", "labinabox.conf"), func() error {
+			return checkRevisionFile(filepath.Join(*siteDir, "generated", "ssh", "labinabox.conf"), revision)
 		}},
 		{"verification evidence", filepath.Join(*siteDir, "generated", "verification.json"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "verification.json"), revision)
