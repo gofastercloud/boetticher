@@ -191,7 +191,11 @@ func (r Registry) Resolve(config model.SiteConfig) ([]ResolvedModule, error) {
 		if active[definition.Name] {
 			continue
 		}
-		result = append(result, ResolvedModule{Definition: definition, Enabled: false, Reason: "disabled", State: "Disabled"})
+		reason := "default"
+		if requested, exists := config.Modules[definition.Name]; exists && requested.Enabled != nil {
+			reason = "explicit"
+		}
+		result = append(result, ResolvedModule{Definition: definition, Enabled: false, Reason: reason, State: "Disabled"})
 	}
 	return result, nil
 }
