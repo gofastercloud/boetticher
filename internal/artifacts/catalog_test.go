@@ -24,7 +24,7 @@ func TestEvidenceUsesActualArtifactBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash := sha256.Sum256(content)
-	if evidence.ContentSHA256 != hex.EncodeToString(hash[:]) || evidence.ContentSHA256 == artifact.DefinitionSHA256 || !evidence.Qualified {
+	if evidence.ContentSHA256 != hex.EncodeToString(hash[:]) || evidence.ContentSHA256 == artifact.DefinitionSHA256 || evidence.Qualified {
 		t.Fatalf("evidence does not bind actual bytes: %#v", evidence)
 	}
 }
@@ -45,6 +45,10 @@ func TestResolveArtifactEvidenceRejectsChangedBytes(t *testing.T) {
 	}
 	evidence.ArtifactPath = path
 	evidence = completeQualificationEvidence(evidence)
+	evidence, err = QualifyEvidence(evidence, ScanSummary{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := WriteEvidence(root, artifact.Name, evidence); err != nil {
 		t.Fatal(err)
 	}
@@ -56,6 +60,35 @@ func TestResolveArtifactEvidenceRejectsChangedBytes(t *testing.T) {
 	}
 	if _, _, err := ResolveArtifactEvidence(root, artifact); err == nil {
 		t.Fatal("changed artifact bytes were accepted")
+	}
+}
+
+func TestQualificationRejectsMissingScanAndSecurityFindings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "artifact.bin")
+	if err := os.WriteFile(path, []byte("qualified bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := EvidenceForFile(path, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := QualifyEvidence(evidence, ScanSummary{}); err == nil {
+		t.Fatal("missing qualification digests were accepted")
+	}
+	evidence = completeQualificationEvidence(evidence)
+	if _, err := QualifyEvidence(evidence, ScanSummary{Secrets: 1}); err == nil {
+		t.Fatal("secret finding was accepted")
+	}
+	if _, err := QualifyEvidence(evidence, ScanSummary{FixableCritical: 1}); err == nil {
+		t.Fatal("fixable CRITICAL finding was accepted")
+	}
+	qualified, err := QualifyEvidence(evidence, ScanSummary{UnfixedCritical: 1, High: 2})
+	if err != nil || !qualified.Qualified {
+		t.Fatalf("unfixed/high findings should report but not fail qualification: %#v %v", qualified, err)
 	}
 }
 

@@ -41,6 +41,30 @@ type Evidence struct {
 	Qualified          bool           `json:"qualified"`
 }
 
+type ScanSummary struct {
+	Secrets         int
+	FixableCritical int
+	UnfixedCritical int
+	High            int
+}
+
+// QualifyEvidence is the only operation allowed to mark artifact evidence
+// qualified. Hashing a file proves its bytes, but does not prove package,
+// SBOM, or Trivy qualification policy.
+func QualifyEvidence(evidence Evidence, scan ScanSummary) (Evidence, error) {
+	if err := validateQualificationDigests(evidence); err != nil {
+		return Evidence{}, fmt.Errorf("qualification evidence is incomplete: %w", err)
+	}
+	if scan.Secrets > 0 {
+		return Evidence{}, fmt.Errorf("qualification failed: Trivy found %d secret finding(s)", scan.Secrets)
+	}
+	if scan.FixableCritical > 0 {
+		return Evidence{}, fmt.Errorf("qualification failed: Trivy found %d fixable CRITICAL finding(s)", scan.FixableCritical)
+	}
+	evidence.Qualified = true
+	return evidence, nil
+}
+
 // LoadEvidence reads the controller-side qualification record for one exact
 // artifact. Evidence is generated state and is never part of the canonical
 // desired model.
@@ -200,7 +224,7 @@ func EvidenceForFile(path string, artifact model.Artifact) (Evidence, error) {
 		return Evidence{}, fmt.Errorf("hash artifact %s: %w", path, err)
 	}
 	content := hex.EncodeToString(hash.Sum(nil))
-	return Evidence{Artifact: artifact, ContentSHA256: content, SizeBytes: info.Size(), DefinitionSHA256: artifact.DefinitionSHA256, Qualified: true}, nil
+	return Evidence{Artifact: artifact, ContentSHA256: content, SizeBytes: info.Size(), DefinitionSHA256: artifact.DefinitionSHA256}, nil
 }
 
 // ContentSHA256ForFile recalculates the checksum immediately before an

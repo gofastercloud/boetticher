@@ -55,6 +55,10 @@ func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
 	evidence.PackageManifestSHA = strings.Repeat("a", 64)
 	evidence.SBOMSHA256 = strings.Repeat("b", 64)
 	evidence.TrivyReportSHA256 = strings.Repeat("c", 64)
+	evidence, err = artifacts.QualifyEvidence(evidence, artifacts.ScanSummary{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	root := t.TempDir()
 	if err := artifacts.WriteEvidence(root, guest.Artifact.Name, evidence); err != nil {
 		t.Fatal(err)
