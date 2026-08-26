@@ -139,6 +139,17 @@ func TestPlatformGuestsCarryCanonicalTags(t *testing.T) {
 	}
 }
 
+func TestModuleOwnershipTagIsCanonicalAndFailClosed(t *testing.T) {
+	if got := ModuleOwnershipTag("dns"); got != "boetticher-module-dns" {
+		t.Fatalf("module ownership tag = %q, want canonical tag", got)
+	}
+	for _, invalid := range []string{"", "dns/other", "dns other", "dns\nother"} {
+		if got := ModuleOwnershipTag(invalid); got != "" {
+			t.Fatalf("invalid module name %q produced ownership tag %q", invalid, got)
+		}
+	}
+}
+
 func TestBackedUpPlatformGuestRequiresBackupTag(t *testing.T) {
 	site := NewDefaultSite("installation", "age1example")
 	for i := range site.Components {

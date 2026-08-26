@@ -527,17 +527,6 @@ func componentTags(s model.Site, name string) []string {
 	return nil
 }
 
-// moduleOwnershipTag is the single Proxmox-safe ownership proof for a
-// first-party module guest. It is deliberately stable and contains no slash
-// characters so the same representation is usable by reconciliation, audit,
-// and purge.
-func moduleOwnershipTag(module string) string {
-	if module == "" || strings.ContainsAny(module, "\r\n/\\ ") {
-		return ""
-	}
-	return "boetticher-module-" + module
-}
-
 func componentMonitoring(s model.Site, name string) bool {
 	for _, component := range s.PlatformComponents() {
 		if component.Name == name {
@@ -1400,7 +1389,7 @@ func validateExistingGuestIdentity(current map[string]any, expected GuestPlan) e
 		}
 	} else if expected.Owner != "" {
 		module := strings.TrimPrefix(expected.Owner, "boetticher/module/")
-		ownerTag := moduleOwnershipTag(module)
+		ownerTag := model.ModuleOwnershipTag(module)
 		if ownerTag == "" || !hasOwnerTag(currentTags(current), ownerTag) {
 			return fmt.Errorf("HOLD: guest %s lacks canonical ownership proof %q", expected.Name, ownerTag)
 		}
@@ -1419,7 +1408,7 @@ func ensureExistingGuestTags(ctx context.Context, client *Client, plan Plan, gue
 		}
 	} else if guest.Owner != "" {
 		module := strings.TrimPrefix(guest.Owner, "boetticher/module/")
-		ownerTag := moduleOwnershipTag(module)
+		ownerTag := model.ModuleOwnershipTag(module)
 		if ownerTag == "" || !hasOwnerTag(currentTags(current), ownerTag) {
 			return fmt.Errorf("HOLD: refusing to establish ownership for %s; canonical tag %q is absent", guest.Name, ownerTag)
 		}

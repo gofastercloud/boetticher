@@ -43,7 +43,7 @@ func PurgeModule(ctx context.Context, client *Client, plan Plan, module string) 
 			}
 			return fmt.Errorf("inspect module guest %d before purge: %w", guest.VMID, err)
 		}
-		ownerTag := moduleOwnershipTag(module)
+		ownerTag := model.ModuleOwnershipTag(module)
 		if ownerTag == "" || !hasOwnerTag(currentTags(current), ownerTag) {
 			return fmt.Errorf("refusing to purge %s: canonical owner tag %q is absent", guest.Name, ownerTag)
 		}

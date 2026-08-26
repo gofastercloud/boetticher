@@ -128,7 +128,7 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 		t.Fatalf("logging vertical slice is not present: %#v %v", loggingPlan, err)
 	}
 	for _, component := range site.PlatformComponents() {
-		if component.Module != "" && !contains(component.Tags, "boetticher-module-"+component.Module) {
+		if component.Module != "" && !contains(component.Tags, model.ModuleOwnershipTag(component.Module)) {
 			t.Fatalf("module guest %s lacks canonical ownership tag", component.Name)
 		}
 	}

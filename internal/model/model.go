@@ -65,6 +65,16 @@ const (
 
 var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
 
+// ModuleOwnershipTag returns the single Proxmox-safe ownership proof used for
+// every first-party module guest. Invalid names return an empty tag so callers
+// fail closed instead of creating an ambiguous ownership representation.
+func ModuleOwnershipTag(module string) string {
+	if !modelTokenPattern.MatchString(module) {
+		return ""
+	}
+	return "boetticher-module-" + module
+}
+
 type Site struct {
 	APIVersion       string                  `json:"api_version"`
 	PlatformVersion  string                  `json:"platform_version"`
@@ -330,7 +340,7 @@ func NewDefaultSite(installationID, ageRecipient string) Site {
 		{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "SERVERS", Address: "10.10.20.20", Role: "Zabbix", DNSAliases: []string{"monitor"}, URL: "https://monitor." + DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "monitoring"},
 		{Name: "lab-log-01", VMID: LoggingVMID, Hostname: "lab-log-01", Zone: "SERVERS", Address: "10.10.20.40", Role: "Central systemd journal", DNSAliases: []string{"logs"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "logging"},
 	} {
-		component.Tags = []string{TagBoetticher, TagManaged, TagModule, "module-" + component.Module, "boetticher-module-" + component.Module, TagBackup}
+		component.Tags = []string{TagBoetticher, TagManaged, TagModule, "module-" + component.Module, ModuleOwnershipTag(component.Module), TagBackup}
 		component.SSHUser, component.SSHPort = DefaultAdminSSHUser, 22
 		component.Logging = component.Module != "logging"
 		site.Components = append(site.Components, component)
