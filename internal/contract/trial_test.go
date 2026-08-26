@@ -16,6 +16,17 @@ import (
 
 func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	base := model.NewDefaultSite("trial", "age1trial")
+	if base.PhysicalNetwork.Mode != model.ModeVirtualOnly {
+		t.Fatalf("default trial is not virtual-only: %q", base.PhysicalNetwork.Mode)
+	}
+	builder := artifacts.Builder()
+	if builder.VMID != model.BuilderVMID || builder.Hostname != "lab-builder-01" || !builder.Temporary || builder.Network != "bootstrap-upstream-only" {
+		t.Fatalf("default trial builder contract is incomplete: %#v", builder)
+	}
+	buildCloudInit := proxmox.RenderBuilderCloudInit()
+	if !strings.Contains(buildCloudInit.UserData, "./scripts/build-images.sh images") || !strings.Contains(buildCloudInit.UserData, "./scripts/scan-images.sh scan-images") || strings.Contains(strings.ToLower(buildCloudInit.UserData), "age identity") {
+		t.Fatal("temporary builder does not run the first-party build/qualification path with public inputs only")
+	}
 	site, _, err := modules.Compose(model.ConfigFromSite(base))
 	if err != nil {
 		t.Fatal(err)
@@ -87,6 +98,19 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	runtimeConfig, err := appliance.RenderRuntimeConfig(site, dnsGuest, dnsDeclaration)
 	if err != nil || !strings.Contains(string(runtimeConfig), "boetticher-dns-blocky") {
 		t.Fatalf("default Blocky runtime contract missing: %v", err)
+	}
+	loggingConfig, err := logging.PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logging.CollectorConfiguration(loggingConfig), "SystemMaxUse=8G") || !strings.Contains(logging.CollectorServiceOverride(loggingConfig), "/var/log/journal/remote") {
+		t.Fatal("logging collector does not have the executable bounded journal contract")
+	}
+	if _, err := proxmox.RenderFirewallCloudInitWithKey(plan.Guests[0], "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator"); err != nil {
+		t.Fatalf("firewall first-boot SSH contract is not renderable: %v", err)
+	}
+	if dnsDeclaration.Artifact.Provider != string(model.DNSProviderBlocky) {
+		t.Fatalf("default DNS provider is not Blocky: %#v", dnsDeclaration.Artifact)
 	}
 	externalConfig := model.ConfigFromSite(model.NewSite("trial-external", "age1trial", model.GatewayModeExternal))
 	disabled := false
