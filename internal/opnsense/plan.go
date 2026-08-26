@@ -60,11 +60,12 @@ type ClasslessRoute struct {
 }
 
 type FirewallRule struct {
-	Description string `json:"description"`
-	Source      string `json:"source"`
-	Destination string `json:"destination"`
-	Action      string `json:"action"`
-	Protocol    string `json:"protocol"`
+	Description     string `json:"description"`
+	Source          string `json:"source"`
+	Destination     string `json:"destination"`
+	Action          string `json:"action"`
+	Protocol        string `json:"protocol"`
+	DestinationPort string `json:"destination_port,omitempty"`
 }
 
 // PlanFromSite is the canonical, deterministic OPNsense projection. The
@@ -179,10 +180,12 @@ func firewallRules(s model.Site) []FirewallRule {
 		{Description: "labinabox sandbox deny trusted", Source: networks["SANDBOX"], Destination: networks["TRUSTED"], Action: "block", Protocol: "any"},
 		{Description: "labinabox sandbox deny servers", Source: networks["SANDBOX"], Destination: networks["SERVERS"], Action: "block", Protocol: "any"},
 		{Description: "labinabox sandbox deny management", Source: networks["SANDBOX"], Destination: networks["MGMT"], Action: "block", Protocol: "any"},
-		{Description: "labinabox trusted to services", Source: networks["TRUSTED"], Destination: networks["SERVERS"], Action: "pass", Protocol: "tcp"},
-		{Description: "labinabox trusted to management services", Source: networks["TRUSTED"], Destination: networks["MGMT"], Action: "pass", Protocol: "tcp"},
-		{Description: "labinabox services to monitor", Source: networks["SERVERS"], Destination: networks["MGMT"], Action: "pass", Protocol: "tcp"},
-		{Description: "labinabox management to services", Source: networks["MGMT"], Destination: networks["SERVERS"], Action: "pass", Protocol: "tcp"},
+		{Description: "labinabox trusted to server DNS HTTPS", Source: networks["TRUSTED"], Destination: networks["SERVERS"], Action: "pass", Protocol: "tcp", DestinationPort: "53,443"},
+		{Description: "labinabox trusted to server DNS NTP", Source: networks["TRUSTED"], Destination: networks["SERVERS"], Action: "pass", Protocol: "udp", DestinationPort: "53,123"},
+		{Description: "labinabox trusted to management HTTPS", Source: networks["TRUSTED"], Destination: networks["MGMT"], Action: "pass", Protocol: "tcp", DestinationPort: "443,8006"},
+		{Description: "labinabox services to monitor", Source: networks["SERVERS"], Destination: networks["MGMT"], Action: "pass", Protocol: "tcp", DestinationPort: "10051"},
+		{Description: "labinabox management to services", Source: networks["MGMT"], Destination: networks["SERVERS"], Action: "pass", Protocol: "tcp", DestinationPort: "22,53,443"},
+		{Description: "labinabox management to server DNS NTP", Source: networks["MGMT"], Destination: networks["SERVERS"], Action: "pass", Protocol: "udp", DestinationPort: "53,123"},
 	}
 }
 
@@ -275,13 +278,17 @@ func urlPathEscape(value string) string {
 func (p Plan) FirewallPayloads() []map[string]any {
 	result := make([]map[string]any, 0, len(p.FirewallRules))
 	for _, rule := range p.FirewallRules {
-		result = append(result, map[string]any{"rule": map[string]any{
+		value := map[string]any{
 			"description":     rule.Description,
 			"source_net":      rule.Source,
 			"destination_net": rule.Destination,
 			"action":          rule.Action,
 			"protocol":        rule.Protocol,
-		}})
+		}
+		if rule.DestinationPort != "" {
+			value["destination_port"] = rule.DestinationPort
+		}
+		result = append(result, map[string]any{"rule": value})
 	}
 	return result
 }
@@ -299,13 +306,17 @@ func (c *Client) ApplyFirewall(ctx context.Context, plan Plan) error {
 		}, &search); err != nil {
 			return fmt.Errorf("search firewall rule %s: %w", desired.Description, err)
 		}
-		payload := map[string]any{"rule": map[string]any{
+		value := map[string]any{
 			"description":     desired.Description,
 			"source_net":      desired.Source,
 			"destination_net": desired.Destination,
 			"action":          desired.Action,
 			"protocol":        desired.Protocol,
-		}}
+		}
+		if desired.DestinationPort != "" {
+			value["destination_port"] = desired.DestinationPort
+		}
+		payload := map[string]any{"rule": value}
 		if len(search.Rows) == 0 {
 			if err := c.Post(ctx, FirewallAdd, payload, nil); err != nil {
 				return fmt.Errorf("add firewall rule %s: %w", desired.Description, err)

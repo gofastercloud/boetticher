@@ -101,7 +101,7 @@ func Init(dir, ageIdentityPath string) (model.Site, error) {
 			return model.Site{}, err
 		}
 	}
-	if err := atomicWrite(filepath.Join(dir, ".gitignore"), []byte("# Runtime state never belongs in Git\n.runtime/\n*.tfstate\n*.tfstate.*\nplans/\ncaches/\nbootstrap/\ntmp/\n"), 0600); err != nil {
+	if err := atomicWrite(filepath.Join(dir, ".gitignore"), []byte("# Runtime state never belongs in Git\n.runtime/\n.terraform/\n*.tfstate\n*.tfstate.*\nplans/\ncaches/\nbootstrap/\ntmp/\n.env\n"), 0600); err != nil {
 		return model.Site{}, err
 	}
 	if err := writeInitialGenerated(dir, s); err != nil {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -47,6 +48,8 @@ func Run(args []string, out, errOut interface{ Write([]byte) (int, error) }) err
 		return runBootstrapEndpoint(args[1:], out)
 	case "pki":
 		return runPKI(args[1:], out)
+	case "opnsense":
+		return runOPNsense(args[1:], out)
 	case "network":
 		return runNetwork(args[1:], out)
 	case "verify":
@@ -80,8 +83,9 @@ Usage:
 	homelab access [--site DIR]
 	homelab bootstrap-endpoint show|set ADDRESS [--site DIR]
 	homelab network trunk status|attach|detach [INTERFACE] [--site DIR]
-  homelab pki client create|export|revoke NAME [--site DIR]
-  homelab pki trust export [--site DIR]
+	homelab pki client create|export|revoke NAME [--site DIR]
+	homelab pki trust export [--site DIR]
+	homelab opnsense credentials import [--site DIR]
   homelab portal build [--site DIR] [--output DIR] [--docs DIR]`)
 }
 
@@ -370,6 +374,11 @@ func runPKI(args []string, out interface{ Write([]byte) (int, error) }) error {
 		if err := writePublic(filepath.Join(*siteDir, "generated", "pki", name+".yaml"), []byte(metadata)); err != nil {
 			return err
 		}
+		if s.BootstrapAddress != "" {
+			if err := rebuildPortal(*siteDir, s); err != nil {
+				return err
+			}
+		}
 		fmt.Fprintf(out, "Created client certificate %s\nPrivate key: %s\nCertificate: %s\n", name, filepath.Join(runtimeDir, "client.key.pem"), filepath.Join(runtimeDir, "client.crt.pem"))
 		return nil
 	case "export":
@@ -412,6 +421,11 @@ func revokeClient(siteDir, name string, out interface{ Write([]byte) (int, error
 	if err := writePublic(path, []byte(revocation)); err != nil {
 		return err
 	}
+	if s, err := site.Load(siteDir); err == nil && s.BootstrapAddress != "" {
+		if err := rebuildPortal(siteDir, s); err != nil {
+			return err
+		}
+	}
 	fmt.Fprintf(out, "Recorded client revocation: %s\n", name)
 	return nil
 }
@@ -442,6 +456,40 @@ func runPKITrust(args []string, out interface{ Write([]byte) (int, error) }) err
 		return err
 	}
 	fmt.Fprintf(out, "Exported trust chain: %s\n", *output)
+	return nil
+}
+
+func runOPNsense(args []string, out interface{ Write([]byte) (int, error) }) error {
+	if len(args) < 2 || args[0] != "credentials" || args[1] != "import" {
+		return errors.New("usage: homelab opnsense credentials import [--site DIR] < credentials.json")
+	}
+	fs := flag.NewFlagSet("opnsense credentials import", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	siteDir := fs.String("site", ".", "private site repository directory")
+	if err := fs.Parse(args[2:]); err != nil {
+		return err
+	}
+	s, err := site.Load(*siteDir)
+	if err != nil {
+		return err
+	}
+	data, err := io.ReadAll(io.LimitReader(os.Stdin, 64<<10))
+	if err != nil {
+		return fmt.Errorf("read OPNsense credential input: %w", err)
+	}
+	var credentials site.OPNsenseCredentials
+	if err := json.Unmarshal(data, &credentials); err != nil {
+		return errors.New("OPNsense credential input must be a JSON object with api_key and api_secret")
+	}
+	if err := site.StoreOPNsenseCredentials(*siteDir, s, credentials); err != nil {
+		return err
+	}
+	if s.BootstrapAddress != "" {
+		if err := rebuildPortal(*siteDir, s); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintln(out, "Stored OPNsense API credentials in encrypted SOPS state")
 	return nil
 }
 
@@ -599,6 +647,28 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	if err := writePublic(filepath.Join(*siteDir, "generated", "verification.json"), append(data, '\n')); err != nil {
 		return err
+	}
+	overall := "HEALTHY"
+	for _, result := range evidence.Results {
+		if result.Status == "FAIL" {
+			overall = "FAIL"
+			break
+		}
+		if result.Status == "NOT TESTED" || result.Status == "HOLD" || result.Status == "INCONCLUSIVE" {
+			overall = "PARTIAL"
+		}
+	}
+	if err := writeProjection(filepath.Join(*siteDir, "generated", "status.json"), struct {
+		ModelRevision string `json:"model_revision"`
+		Status        string `json:"status"`
+		GeneratedAt   string `json:"generated_at"`
+	}{revision, overall, evidence.GeneratedAt}); err != nil {
+		return err
+	}
+	if s.BootstrapAddress != "" {
+		if err := rebuildPortal(*siteDir, s); err != nil {
+			return err
+		}
 	}
 	for _, result := range evidence.Results {
 		fmt.Fprintf(out, "%-48s %s\n", result.Name, result.Status)
