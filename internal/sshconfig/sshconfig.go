@@ -1,10 +1,12 @@
 package sshconfig
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -22,18 +24,15 @@ func Render(s model.Site, generatedAt time.Time) (string, error) {
 		return "", err
 	}
 	identity := model.ExpandUserPath(s.SSHIdentityFile)
-	if identity == "" {
-		identity = ""
-	}
 	endpoint := s.BootstrapAddress
 	if endpoint == "" {
-		endpoint = "10.10.99.5"
+		return "", errors.New("bootstrap endpoint is not configured; record the upstream Proxmox address before generating SSH configuration")
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Managed by Lab-in-a-Box. Do not edit.\n# labinabox-model-revision: %s\n# generated-at: %s\n# Configure ~/.ssh/config with: Include ~/.ssh/config.d/*\n\n", revision, generatedAt.UTC().Format(time.RFC3339))
 
-	writeHost(&b, []string{"lab-proxmox-01", "proxmox"}, endpoint, "labadmin", "", identity, false, false)
-	writeHost(&b, []string{"lab-bastion"}, endpoint, "lab-jump", "", identity, false, true)
+	writeHost(&b, []string{"lab-proxmox-01", "proxmox"}, endpoint, "labadmin", "lab-proxmox-01", identity, false, false)
+	writeHost(&b, []string{"lab-bastion"}, endpoint, "lab-jump", "lab-proxmox-01", identity, false, true)
 
 	modules := append([]model.Module(nil), s.Modules...)
 	sort.Slice(modules, func(i, j int) bool { return modules[i].Name < modules[j].Name })
@@ -153,6 +152,32 @@ func ValidateBootstrapAddress(address string) error {
 		return fmt.Errorf("bootstrap endpoint must be an IPv4 address")
 	}
 	return nil
+}
+
+// ScanHostKey obtains the public host-key lines for an address without using
+// credentials. It is used only to compare a recorded bootstrap identity; it
+// is not a trust mechanism and never replaces StrictHostKeyChecking.
+func ScanHostKey(ctx context.Context, address string) (string, error) {
+	if err := ValidateBootstrapAddress(address); err != nil {
+		return "", err
+	}
+	command := exec.CommandContext(ctx, "ssh-keyscan", "-4", "-T", "5", address)
+	data, err := command.Output()
+	if err != nil {
+		return "", fmt.Errorf("scan Proxmox SSH host key: %w", err)
+	}
+	lines := []string{}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) == 0 {
+		return "", errors.New("ssh-keyscan returned no host key")
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "\n"), nil
 }
 
 func writeHost(b *strings.Builder, aliases []string, hostName, user, hostKeyAlias, identity string, throughBastion, bastion bool) {

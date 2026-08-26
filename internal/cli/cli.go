@@ -561,6 +561,7 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
 	sshPath := fs.String("ssh-config", sshconfig.DefaultPath(), "generated SSH configuration to check")
+	live := fs.Bool("live", false, "perform bounded endpoint and SSH host-key checks")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -583,6 +584,9 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		}},
 		{"OPNsense policy", filepath.Join(*siteDir, "generated", "opnsense", "desired-policy.json"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "opnsense", "desired-policy.json"), revision)
+		}},
+		{"Proxmox desired state", filepath.Join(*siteDir, "generated", "proxmox", "desired-state.json"), func() error {
+			return checkRevisionFile(filepath.Join(*siteDir, "generated", "proxmox", "desired-state.json"), revision)
 		}},
 		{"Zabbix provisioning", filepath.Join(*siteDir, "generated", "zabbix", "provisioning.json"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "zabbix", "provisioning.json"), revision)
@@ -615,6 +619,16 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		fmt.Fprintln(out, "Physical trunk        NOTICE virtual-only")
 	} else {
 		fmt.Fprintf(out, "Physical trunk        PASS %s attached\n", s.PhysicalTrunk)
+	}
+	if s.BootstrapAddress == "" {
+		fmt.Fprintln(out, "Bootstrap endpoint    ABSENT (record the HOME-side Proxmox address)")
+	} else if !*live {
+		fmt.Fprintf(out, "Bootstrap endpoint    NOT TESTED %s (use --live)\n", s.BootstrapAddress)
+	} else if err := checkBootstrapEndpoint(*siteDir, s); err != nil {
+		failed = true
+		fmt.Fprintf(out, "Bootstrap endpoint    FAIL %v\n", err)
+	} else {
+		fmt.Fprintf(out, "Bootstrap endpoint    PASS %s and SSH host key\n", s.BootstrapAddress)
 	}
 	if failed {
 		return fmt.Errorf("doctor found absent or inconsistent projections")
@@ -719,13 +733,18 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err := client.StartVM(ctx, plan.Node, model.ProxmoxVMID); err != nil {
 		return fmt.Errorf("start OPNsense VM: %w", err)
 	}
+	hostKey, err := sshconfig.ScanHostKey(ctx, s.BootstrapAddress)
+	if err != nil {
+		return fmt.Errorf("record Proxmox SSH host identity: %w", err)
+	}
 	if err := writeProjection(filepath.Join(*siteDir, "generated", "bootstrap.json"), struct {
 		ModelRevision    string `json:"model_revision"`
 		ProxmoxVersion   string `json:"proxmox_version"`
 		BootstrapAddress string `json:"bootstrap_address"`
+		SSHHostKey       string `json:"ssh_host_key"`
 		FirewallVMID     int    `json:"firewall_vmid"`
 		Status           string `json:"status"`
-	}{plan.ModelRevision, version, s.BootstrapAddress, model.ProxmoxVMID, "proxmox-trust-transition-complete"}); err != nil {
+	}{plan.ModelRevision, version, s.BootstrapAddress, hostKey, model.ProxmoxVMID, "proxmox-trust-transition-complete"}); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "Proxmox bootstrap: PASS authenticated with scoped identity on %s\n", version)
@@ -846,6 +865,36 @@ func loadProxmoxClient(siteDir string, s model.Site, ageIdentity, caFile string,
 	return client, credentials, nil
 }
 
+func checkBootstrapEndpoint(siteDir string, s model.Site) error {
+	data, err := os.ReadFile(filepath.Join(siteDir, "generated", "bootstrap.json"))
+	if err != nil {
+		return fmt.Errorf("bootstrap evidence is absent; run bootstrap first: %w", err)
+	}
+	var evidence struct {
+		BootstrapAddress string `json:"bootstrap_address"`
+		SSHHostKey       string `json:"ssh_host_key"`
+	}
+	if err := json.Unmarshal(data, &evidence); err != nil {
+		return fmt.Errorf("decode bootstrap evidence: %w", err)
+	}
+	if evidence.BootstrapAddress != s.BootstrapAddress {
+		return fmt.Errorf("recorded address %s is stale; use homelab bootstrap-endpoint set ADDRESS then regenerate SSH configuration", evidence.BootstrapAddress)
+	}
+	connection, err := net.DialTimeout("tcp", net.JoinHostPort(s.BootstrapAddress, "22"), 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("bootstrap address %s is not reachable on SSH: %w", s.BootstrapAddress, err)
+	}
+	_ = connection.Close()
+	hostKey, err := sshconfig.ScanHostKey(context.Background(), s.BootstrapAddress)
+	if err != nil {
+		return err
+	}
+	if hostKey != evidence.SSHHostKey {
+		return errors.New("returned SSH host key does not match recorded Proxmox identity; address may be stale or host replaced")
+	}
+	return nil
+}
+
 func jumpDestinations(s model.Site) []string {
 	result := []string{}
 	for _, m := range s.Modules {
@@ -929,10 +978,12 @@ func writeModelProjection(dir string, s model.Site) error {
 	if err != nil {
 		return err
 	}
+	modelForProjection := s.Normalize()
+	modelForProjection.SSHIdentityFile = ""
 	document := struct {
 		ModelRevision string     `json:"model_revision"`
 		Model         model.Site `json:"model"`
-	}{ModelRevision: revision, Model: s.Normalize()}
+	}{ModelRevision: revision, Model: modelForProjection}
 	data, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {
 		return err
