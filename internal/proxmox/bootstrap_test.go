@@ -2,8 +2,10 @@ package proxmox
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeRunner struct {
@@ -30,12 +32,43 @@ func TestWaitForSSHRejectsInvalidIdentityBeforeNetworkAccess(t *testing.T) {
 	}
 }
 
+func TestWaitForSSHUsesConfiguredRunnerForBastionTransport(t *testing.T) {
+	runner := &fakeRunner{}
+	if err := WaitForSSH(context.Background(), runner, "192.0.2.10", "labadmin", 1, time.Millisecond); err != nil {
+		t.Fatalf("WaitForSSH() = %v", err)
+	}
+	if runner.command != "true" {
+		t.Fatalf("readiness did not execute the authenticated probe: %q", runner.command)
+	}
+}
+
+func TestConfigureManagementNetworkValidatesUnchangedHOMEAndVLANState(t *testing.T) {
+	runner := &fakeRunner{}
+	if err := ConfigureManagementNetwork(context.Background(), runner, "192.0.2.10", "labadmin"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(runner.command, "before_vmbr0_addr") || !strings.Contains(runner.command, "before_default_route") {
+		t.Fatalf("management verification does not preserve HOME state: %s", runner.command)
+	}
+	for _, required := range []string{"10.10.99.5/24", "10.10.0.0/16 via 10.10.99.1 dev vmbr1.99", "vlan_filtering"} {
+		if !strings.Contains(runner.command, required) {
+			t.Fatalf("management verification missing %q: %s", required, runner.command)
+		}
+	}
+}
+
 func (f *fakeRunner) Run(_ context.Context, address, user, command string) ([]byte, error) {
 	f.address, f.user, f.command = address, user, command
 	f.commands = append(f.commands, command)
 	if command == "ip -j route show default" && f.routeOutput != nil {
 		return f.routeOutput, nil
 	}
+	return f.output, nil
+}
+
+func (f *fakeRunner) RunWithStdin(_ context.Context, address, user, command string, _ io.Reader) ([]byte, error) {
+	f.address, f.user, f.command = address, user, command
+	f.commands = append(f.commands, command)
 	return f.output, nil
 }
 

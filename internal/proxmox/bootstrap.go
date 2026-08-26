@@ -25,9 +25,10 @@ type StdinCommandRunner interface {
 }
 
 // WaitForSSH is a bounded readiness gate used after an appliance is started.
-// Guest creation is not treated as reachability proof: both TCP/22 and a
+// Guest creation is not treated as reachability proof: an authenticated
 // command through the configured SSH path must succeed before deployment
-// continues.
+// continues. The runner owns the transport, including ProxyJump, so this
+// works for internal guests that are reachable only through the bastion.
 func WaitForSSH(ctx context.Context, runner CommandRunner, address, user string, attempts int, interval time.Duration) error {
 	if runner == nil {
 		return errors.New("SSH readiness runner is required")
@@ -43,12 +44,9 @@ func WaitForSSH(ctx context.Context, runner CommandRunner, address, user string,
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("SSH readiness cancelled for %s: %w", address, err)
 		}
-		connection, err := net.DialTimeout("tcp", net.JoinHostPort(address, "22"), interval)
+		_, err := runner.Run(ctx, address, user, "true")
 		if err == nil {
-			_ = connection.Close()
-			if _, err = runner.Run(ctx, address, user, "true"); err == nil {
-				return nil
-			}
+			return nil
 		}
 		lastErr = err
 		if attempt+1 < attempts {
@@ -139,7 +137,17 @@ func ConfigureManagementNetwork(ctx context.Context, runner StdinCommandRunner, 
 	if _, err := runner.RunWithStdin(ctx, address, user, install, strings.NewReader(managementInterfaceConfig)); err != nil {
 		return fmt.Errorf("install Proxmox management interface configuration: %w", err)
 	}
-	if _, err := runner.Run(ctx, address, user, "sudo -n ifreload -a && ip -4 addr show dev vmbr1.99 && ip -4 route show 10.10.0.0/16"); err != nil {
+	verify := `sudo -n sh -c 'set -eu
+before_vmbr0_addr=$(ip -4 -j addr show dev vmbr0)
+before_default_route=$(ip -4 -j route show default)
+ifreload -a
+test "$(ip -4 -j addr show dev vmbr0)" = "$before_vmbr0_addr"
+test "$(ip -4 -j route show default)" = "$before_default_route"
+ip -4 addr show dev vmbr1.99 | grep -Fq "inet 10.10.99.5/24"
+ip -4 route show 10.10.0.0/16 | grep -Fq "10.10.0.0/16 via 10.10.99.1 dev vmbr1.99"
+ip -d link show dev vmbr1 | grep -Eq "vlan_filtering (1|on)"
+'`
+	if _, err := runner.Run(ctx, address, user, verify); err != nil {
 		return fmt.Errorf("apply and verify Proxmox management interface configuration: %w", err)
 	}
 	return nil

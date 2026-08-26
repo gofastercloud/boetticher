@@ -205,6 +205,10 @@ func (c *Client) StartVM(ctx context.Context, node string, vmid int) error {
 	return c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "start"), nil, nil)
 }
 
+func (c *Client) StopVM(ctx context.Context, node string, vmid int) error {
+	return c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "stop"), nil, nil)
+}
+
 func (c *Client) CreateLXC(ctx context.Context, node string, vmid int, params url.Values) error {
 	if vmid <= 0 || node == "" {
 		return errors.New("Proxmox node and positive VMID are required")

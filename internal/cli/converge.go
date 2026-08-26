@@ -190,19 +190,15 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			return fmt.Errorf("start managed gateway appliance: %w", err)
 		}
 	}
-	readinessRunner := proxmox.SSHRunner{
-		IdentityFile:  model.ExpandUserPath(s.SSHIdentityFile),
-		ConfigFile:    filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"),
-		StrictHostKey: "ask",
-	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		if err := proxmox.WaitForSSH(context.Background(), readinessRunner, "10.10.99.1", model.DefaultAdminSSHUser, 30, 2*time.Second); err != nil {
+		firewallRunner := applianceSSHRunner(s, *siteDir, "lab-fw-01")
+		if err := proxmox.WaitForSSH(context.Background(), firewallRunner, "10.10.99.1", model.DefaultAdminSSHUser, 30, 2*time.Second); err != nil {
 			return fmt.Errorf("HOLD: managed gateway is not reachable before dependent appliances: %w", err)
 		}
 		if err := ansible.RunLimited(context.Background(), "ansible/site.yml", inventoryPath, variables, "lab-fw-01"); err != nil {
 			return fmt.Errorf("HOLD: configure managed gateway before dependent appliances: %w", err)
 		}
-		if err := verifyGatewayReadiness(context.Background(), readinessRunner, "10.10.99.1"); err != nil {
+		if err := verifyGatewayReadiness(context.Background(), firewallRunner, "10.10.99.1"); err != nil {
 			return fmt.Errorf("HOLD: managed gateway did not pass runtime readiness before dependent appliances: %w", err)
 		}
 	}
@@ -221,7 +217,8 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			if !matches || guest.Kind != proxmox.KindLXC {
 				continue
 			}
-			if err := proxmox.WaitForSSH(context.Background(), readinessRunner, guest.Address, model.DefaultAdminSSHUser, 30, 2*time.Second); err != nil {
+			guestRunner := applianceSSHRunner(s, *siteDir, guest.Name)
+			if err := proxmox.WaitForSSH(context.Background(), guestRunner, guest.Address, model.DefaultAdminSSHUser, 30, 2*time.Second); err != nil {
 				return fmt.Errorf("HOLD: %s guest %s is not reachable after first boot: %w", module, guest.Name, err)
 			}
 		}
@@ -233,7 +230,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return fmt.Errorf("sign logging transport certificates: %w", err)
 	}
-	if err := installModuleRuntimeConfigs(context.Background(), s, proxmoxPlan); err != nil {
+	if err := installModuleRuntimeConfigs(context.Background(), *siteDir, s, proxmoxPlan); err != nil {
 		return err
 	}
 	monitorCSR, err := os.ReadFile(filepath.Join(csrDir, "monitor.csr.pem"))
@@ -359,11 +356,7 @@ func signLoggingCertificates(authority pki.Authority, s model.Site, csrDir strin
 // non-secret appliance contract. Module declarations remain the source of
 // guest identity and runtime configuration; the SSH runner is only the Core
 // transport used to install the already-validated document.
-func installModuleRuntimeConfigs(ctx context.Context, s model.Site, plan proxmox.Plan) error {
-	runner := proxmox.SSHRunner{
-		IdentityFile:  model.ExpandUserPath(s.SSHIdentityFile),
-		StrictHostKey: "ask",
-	}
+func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Site, plan proxmox.Plan) error {
 	declarations := make(map[string]model.ModuleDeclaration, len(s.Declarations))
 	for _, declaration := range s.Declarations {
 		declarations[declaration.Module] = declaration
@@ -398,6 +391,7 @@ func installModuleRuntimeConfigs(ctx context.Context, s model.Site, plan proxmox
 		if user == "" {
 			user = model.DefaultAdminSSHUser
 		}
+		runner := applianceSSHRunner(s, siteDir, guest.Name)
 		if err := appliance.InstallRuntimeConfig(ctx, runner, guest.Address, user, config); err != nil {
 			return fmt.Errorf("install runtime configuration for %s: %w", guest.Name, err)
 		}
@@ -406,6 +400,19 @@ func installModuleRuntimeConfigs(ctx context.Context, s model.Site, plan proxmox
 		}
 	}
 	return nil
+}
+
+// applianceSSHRunner selects the generated host alias so internal appliance
+// connections use the same bastion/host-key policy as Ansible and operator
+// SSH. Passing the guest address as the SSH target would bypass ProxyJump
+// because the generated configuration is keyed by stable appliance identity.
+func applianceSSHRunner(s model.Site, siteDir, hostAlias string) proxmox.SSHRunner {
+	return proxmox.SSHRunner{
+		IdentityFile:  model.ExpandUserPath(s.SSHIdentityFile),
+		ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),
+		StrictHostKey: "ask",
+		HostAlias:     hostAlias,
+	}
 }
 
 func resolvedDeclarationForGuest(declaration model.ModuleDeclaration, guest proxmox.GuestPlan) (model.ModuleDeclaration, error) {
