@@ -1115,17 +1115,49 @@ func qemuPersistentVolumeParams(plan Plan, guest GuestPlan) (map[string]string, 
 }
 
 func validateExistingQEMUVolumes(current map[string]any, plan Plan, guest GuestPlan) error {
-	wanted, err := qemuPersistentVolumeParams(plan, guest)
-	if err != nil {
-		return err
-	}
-	for key, expected := range wanted {
+	for index, volume := range guest.Volumes {
+		expected, err := qemuPersistentVolumeParam(plan, volume)
+		if err != nil {
+			return err
+		}
+		key := fmt.Sprintf("scsi%d", index+1)
 		observed, _ := current[key].(string)
-		if observed == "" || !strings.HasPrefix(observed, strings.Split(expected, ",")[0]) {
+		if observed == "" {
+			return fmt.Errorf("HOLD: guest %s has no persistent volume identity for %s, expected %q", guest.Name, key, expected)
+		}
+		observedParts := strings.Split(observed, ",")
+		if observedParts[0] != strings.Split(expected, ",")[0] {
 			return fmt.Errorf("HOLD: guest %s has persistent volume %s=%q, expected storage/size %q", guest.Name, key, observed, expected)
+		}
+		observedOptions := make(map[string]string, len(observedParts)-1)
+		for _, option := range observedParts[1:] {
+			name, value, ok := strings.Cut(option, "=")
+			if ok {
+				observedOptions[name] = value
+			}
+		}
+		expectedOptions := make(map[string]string)
+		for _, option := range strings.Split(expected, ",")[1:] {
+			name, value, ok := strings.Cut(option, "=")
+			if ok {
+				expectedOptions[name] = value
+			}
+		}
+		for _, name := range []string{"backup", "serial"} {
+			if observedOptions[name] != expectedOptions[name] {
+				return fmt.Errorf("HOLD: guest %s has persistent volume %s option %s=%q, expected %q", guest.Name, key, name, observedOptions[name], expectedOptions[name])
+			}
 		}
 	}
 	return nil
+}
+
+func qemuPersistentVolumeParam(plan Plan, volume model.PersistentVolumeDeclaration) (string, error) {
+	params, err := qemuPersistentVolumeParams(plan, GuestPlan{Volumes: []model.PersistentVolumeDeclaration{volume}})
+	if err != nil {
+		return "", err
+	}
+	return params["scsi1"], nil
 }
 
 func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {

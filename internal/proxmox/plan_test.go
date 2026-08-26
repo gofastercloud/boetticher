@@ -235,6 +235,27 @@ func TestQEMUPersistentVolumeParamsRejectUnresolvedStorage(t *testing.T) {
 	}
 }
 
+func TestExistingQEMUPersistentVolumesRequireStableIdentity(t *testing.T) {
+	guest := GuestPlan{Volumes: []model.PersistentVolumeDeclaration{{
+		Name: "kea-leases", Module: "firewall", Guest: "lab-fw-01", SizeGiB: 4,
+		MountPath: "/var/lib/kea", Storage: modelStorageIDForTest, Backup: true,
+	}}}
+	plan := Plan{}
+	if err := validateExistingQEMUVolumes(map[string]any{
+		"scsi1": modelStorageIDForTest + ":4,backup=1,serial=boetticher-firewall-lab-fw-01-kea-leases",
+	}, plan, guest); err != nil {
+		t.Fatalf("stable QEMU volume identity was rejected: %v", err)
+	}
+	for _, observed := range []string{
+		modelStorageIDForTest + ":4,backup=1",
+		modelStorageIDForTest + ":4,backup=1,serial=boetticher-firewall-lab-fw-01-other",
+	} {
+		if err := validateExistingQEMUVolumes(map[string]any{"scsi1": observed}, plan, guest); err == nil || !strings.Contains(err.Error(), "HOLD") {
+			t.Fatalf("QEMU volume without the expected stable identity was accepted: %q / %v", observed, err)
+		}
+	}
+}
+
 const modelStorageIDForTest = "boetticher-thin"
 
 func TestEnsureArtifactInStorageVerifiesPostUploadChecksum(t *testing.T) {
