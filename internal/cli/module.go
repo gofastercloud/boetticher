@@ -213,10 +213,16 @@ func runModuleChange(args []string, out interface{ Write([]byte) (int, error) },
 	if !*confirm {
 		return errors.New("module changes require --confirm; use --dry-run to inspect the plan")
 	}
+	if *purge {
+		return errors.New("purge planning is available, but destructive guest removal requires the live ownership provider")
+	}
 	if err := site.SaveConfig(*siteDir, model.ConfigFromSite(resolved)); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "  Configuration: saved (model %s)\n", mustRevision(resolved))
+	if err := runDeploy([]string{"--site", *siteDir}, out); err != nil {
+		return fmt.Errorf("deploy module change: %w", err)
+	}
 	return nil
 }
 
