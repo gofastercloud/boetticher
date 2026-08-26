@@ -28,6 +28,8 @@ type SSHRunner struct {
 	KnownHosts    string
 	StrictHostKey string
 	IdentityFile  string
+	ConfigFile    string
+	HostAlias     string
 }
 
 // DiscoverPhysicalNetworkViaSSH uses the existing fresh-host trust path before
@@ -118,13 +120,23 @@ func (r SSHRunner) run(ctx context.Context, address, user, command string, stdin
 	if r.KnownHosts != "" {
 		args = append(args, "-o", "UserKnownHostsFile="+r.KnownHosts)
 	}
+	if r.ConfigFile != "" {
+		args = append(args, "-F", r.ConfigFile)
+	}
 	if r.Port != 0 {
 		args = append(args, "-p", fmt.Sprint(r.Port))
 	}
 	if r.IdentityFile != "" {
 		args = append(args, "-i", r.IdentityFile)
 	}
-	args = append(args, user+"@"+address, command)
+	target := address
+	if r.HostAlias != "" {
+		if !safeID(r.HostAlias) {
+			return nil, errors.New("SSH host alias is not a safe identifier")
+		}
+		target = r.HostAlias
+	}
+	args = append(args, user+"@"+target, command)
 	process := exec.CommandContext(ctx, "ssh", args...)
 	process.Stdin = stdin
 	output, err := process.Output()

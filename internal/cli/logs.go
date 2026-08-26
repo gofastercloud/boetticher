@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -59,6 +60,13 @@ func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 		return fmt.Errorf("%q is not a known boetticher-managed endpoint", host)
 	}
 	argsForJournal := []string{"journalctl", "--no-pager", "--output=short-iso", "--lines=" + strconv.Itoa(*limit), "_HOSTNAME=" + component.Hostname}
+	collector, collectorOK := findManagedEndpoint(s, "lab-log-01")
+	if !collectorOK {
+		return fmt.Errorf("mandatory logging collector lab-log-01 is not present in the desired model")
+	}
+	if component.Name != collector.Name {
+		argsForJournal = append(argsForJournal, "--directory=/var/log/journal/remote")
+	}
 	if *unit != "" {
 		argsForJournal = append(argsForJournal, "_SYSTEMD_UNIT="+*unit)
 	}
@@ -73,12 +81,13 @@ func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 		quoted[i] = shellQuote(value)
 	}
 	command := strings.Join(quoted, " ")
-	if component.Name == "lab-log-01" && fs.NArg() == 0 {
+	if component.Name == collector.Name && fs.NArg() == 0 {
 		fmt.Fprintln(out, "Source: collector-local journal")
 	} else {
 		fmt.Fprintf(out, "Source: collected journal for %s\n", component.Hostname)
 	}
-	data, err := (proxmox.SSHRunner{}).Run(context.Background(), component.Address, model.DefaultAdminSSHUser, command)
+	runner := proxmox.SSHRunner{ConfigFile: filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"), HostAlias: collector.Name, StrictHostKey: "ask"}
+	data, err := runner.Run(context.Background(), collector.Address, model.DefaultAdminSSHUser, command)
 	if err != nil {
 		return fmt.Errorf("read journal for %s: %w", component.Hostname, err)
 	}
