@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"encoding/csv"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/firewall"
@@ -64,7 +67,18 @@ func runDHCP(args []string, out interface{ Write([]byte) (int, error) }) error {
 		return nil
 	}
 	if *live {
-		fmt.Fprintln(out, "Lease inspection is prepared for the managed gateway but requires a live Kea control socket.")
+		data, err := gatewayCommand(*siteDir, s, "sudo", "cat", "/var/lib/kea/kea-leases4.csv")
+		if err != nil {
+			return err
+		}
+		leases, err := parseKeaLeaseCSV(data, plan)
+		if err != nil {
+			return err
+		}
+		if *jsonOutput {
+			return writeCLIJSON(out, map[string]any{"mode": plan.Mode, "leases": leases, "status": "PASS"})
+		}
+		printDHCPLeases(out, leases)
 		return nil
 	}
 	if *jsonOutput {
@@ -79,4 +93,93 @@ func runDHCP(args []string, out interface{ Write([]byte) (int, error) }) error {
 		return names
 	}(), ", "))
 	return nil
+}
+
+type dhcpLease struct {
+	Zone     string `json:"zone"`
+	IP       string `json:"ip_address"`
+	Hostname string `json:"hostname,omitempty"`
+	FQDN     string `json:"fqdn,omitempty"`
+}
+
+// parseKeaLeaseCSV reads the Debian Kea memfile database without asking the
+// gateway to execute a mutating control command. Kea owns this CSV; the CLI
+// only presents active leases and never writes it.
+func parseKeaLeaseCSV(data []byte, plan firewall.Plan) ([]dhcpLease, error) {
+	reader := csv.NewReader(strings.NewReader(string(data)))
+	header, err := reader.Read()
+	if err != nil {
+		return nil, fmt.Errorf("read Kea lease header: %w", err)
+	}
+	columns := make(map[string]int, len(header))
+	for index, name := range header {
+		columns[strings.TrimSpace(name)] = index
+	}
+	for _, required := range []string{"address", "subnet_id", "hostname", "state"} {
+		if _, ok := columns[required]; !ok {
+			return nil, fmt.Errorf("Kea lease database is missing %q column", required)
+		}
+	}
+	zones := make(map[int]string, len(plan.DHCP))
+	for _, subnet := range plan.DHCP {
+		zones[subnet.ID] = subnet.Zone
+	}
+	leases := make([]dhcpLease, 0)
+	for {
+		row, err := reader.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read Kea lease row: %w", err)
+		}
+		if len(row) < len(header) {
+			return nil, errors.New("Kea lease database contains a short row")
+		}
+		state, err := strconv.Atoi(row[columns["state"]])
+		if err != nil {
+			return nil, fmt.Errorf("decode Kea lease state: %w", err)
+		}
+		if state != 0 {
+			continue
+		}
+		subnetID, err := strconv.Atoi(row[columns["subnet_id"]])
+		if err != nil {
+			return nil, fmt.Errorf("decode Kea subnet ID: %w", err)
+		}
+		zone, ok := zones[subnetID]
+		if !ok {
+			continue
+		}
+		hostname := strings.TrimSpace(row[columns["hostname"]])
+		lease := dhcpLease{Zone: zone, IP: strings.TrimSpace(row[columns["address"]]), Hostname: hostname}
+		if hostname != "" {
+			if strings.Contains(hostname, ".") {
+				lease.FQDN = strings.TrimSuffix(hostname, ".")
+			} else {
+				lease.FQDN = strings.ToLower(hostname) + "." + strings.ToLower(zone) + ".lab.home.arpa"
+			}
+		}
+		leases = append(leases, lease)
+	}
+	return leases, nil
+}
+
+func printDHCPLeases(out interface{ Write([]byte) (int, error) }, leases []dhcpLease) {
+	if len(leases) == 0 {
+		fmt.Fprintln(out, "DHCP leases: none active")
+		return
+	}
+	fmt.Fprintln(out, "DHCP leases")
+	for _, lease := range leases {
+		name := lease.Hostname
+		if name == "" {
+			name = "(unnamed)"
+		}
+		if lease.FQDN != "" {
+			fmt.Fprintf(out, "  %-9s %-18s %-24s %s\n", lease.Zone, name, lease.IP, lease.FQDN)
+		} else {
+			fmt.Fprintf(out, "  %-9s %-18s %s\n", lease.Zone, name, lease.IP)
+		}
+	}
 }
