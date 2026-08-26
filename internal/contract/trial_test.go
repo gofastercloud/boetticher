@@ -36,6 +36,9 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	if strings.Contains(buildText, "BOETTICHER_IMAGE_BUILD_COMMAND") {
 		t.Fatal("default trial still uses the arbitrary image-build hook")
 	}
+	if !strings.Contains(buildText, "export GOTOOLCHAIN=local") {
+		t.Fatal("builder does not pin construction to its installed Debian Go toolchain")
+	}
 	for _, artifact := range []string{"boetticher-base", "boetticher-firewall", "boetticher-dns-blocky", "boetticher-logging", "boetticher-monitoring", "boetticher-portal"} {
 		if !strings.Contains(buildText, artifact) {
 			t.Fatalf("default trial builder does not produce %s", artifact)

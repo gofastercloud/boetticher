@@ -15,6 +15,11 @@ if [ "$(uname -s)" != Linux ]; then
   exit 2
 fi
 
+# Use the Go toolchain supplied by the pinned Debian builder image. Automatic
+# toolchain downloads would make appliance construction depend on an
+# unqualified network input.
+export GOTOOLCHAIN=local
+
 for tool in mmdebstrap tar zstd sha256sum curl chroot go; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "HOLD: required Linux image-build tool is unavailable: $tool" >&2
