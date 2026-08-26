@@ -385,6 +385,29 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	}
 }
 
+func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "images", "base", "debian.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		"mirror: https://snapshot.debian.org/archive/debian/20260327T000000Z/",
+		"snapshot: 20260327T000000Z",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("base definition is missing pinned Debian source %q", required)
+		}
+	}
+	buildScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(buildScript), "mirror=https://snapshot.debian.org/archive/debian/20260327T000000Z/") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Check-Valid-Until=false") {
+		t.Fatal("base builder does not use the pinned Debian snapshot")
+	}
+}
+
 func TestFirewallBuildUsesIndividualVirtCustomizeDirectories(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
 	if err != nil {

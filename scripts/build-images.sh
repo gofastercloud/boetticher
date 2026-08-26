@@ -24,7 +24,7 @@ done
 
 output_root=${BOETTICHER_ARTIFACT_OUTPUT:-generated/artifacts}
 work_root=${BOETTICHER_IMAGE_WORK:-/tmp/boetticher-image-build}
-mirror=${BOETTICHER_DEBIAN_MIRROR:-https://deb.debian.org/debian}
+mirror=https://snapshot.debian.org/archive/debian/20260327T000000Z/
 powerdns_key_url=https://repo.powerdns.com/FD380FBB-pub.asc
 powerdns_key_sha256=efeb5b1451c76de1dac8eefaddba5af5549e8fd93484728744ea7b4923decae8
 powerdns_repo=https://repo.powerdns.com/debian
@@ -62,6 +62,8 @@ create_base_rootfs() {
   rm -rf "$rootfs"
   mkdir -p "$rootfs"
   mmdebstrap --variant=minbase --architectures=amd64 \
+    --aptopt=Acquire::Check-Valid-Until=false \
+    --aptopt=Acquire::Languages=none \
     --include=systemd,systemd-sysv,systemd-journal-remote,ca-certificates,openssl,openssh-server,sudo,iproute2,iputils-ping,nftables,chrony,curl,jq,bash,python3 \
     trixie "$rootfs" "$mirror"
   mkdir -p "$rootfs/etc/boetticher" "$rootfs/usr/lib/boetticher" "$rootfs/run/boetticher/bootstrap"
