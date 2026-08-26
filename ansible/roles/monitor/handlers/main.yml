@@ -1,0 +1,15 @@
+---
+- name: restart zabbix-server
+  ansible.builtin.service:
+    name: zabbix-server
+    state: restarted
+
+- name: restart zabbix-agent2
+  ansible.builtin.service:
+    name: zabbix-agent2
+    state: restarted
+
+- name: reload nginx
+  ansible.builtin.service:
+    name: nginx
+    state: reloaded

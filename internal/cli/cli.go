@@ -1287,6 +1287,59 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 	}
 	runtimeVariables["portal_source_dir"] = filepath.Join(*siteDir, "generated", "portal")
 	runtimeVariables["ddns_tsig_secret"] = ddnsTSIG
+	zabbixDBPassword, err := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "zabbix_db_password")
+	if err != nil {
+		return fmt.Errorf("load encrypted Zabbix database password: %w", err)
+	}
+	monitorServerKey, err := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "monitor_server_key")
+	if err != nil {
+		return fmt.Errorf("load encrypted monitor server key: %w", err)
+	}
+	monitorServerCert, err := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "monitor_server_cert")
+	if err != nil {
+		return fmt.Errorf("load encrypted monitor server certificate: %w", err)
+	}
+	portalServerKey, err := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "portal_server_key")
+	if err != nil {
+		return fmt.Errorf("load encrypted portal server key: %w", err)
+	}
+	portalServerCert, err := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "portal_server_cert")
+	if err != nil {
+		return fmt.Errorf("load encrypted portal server certificate: %w", err)
+	}
+	decodeSecret := func(name, encoded string) (string, error) {
+		decoded, err := pki.Decode(encoded)
+		if err != nil {
+			return "", fmt.Errorf("decode %s: %w", name, err)
+		}
+		return decoded, nil
+	}
+	monitorServerKey, err = decodeSecret("monitor server key", monitorServerKey)
+	if err != nil {
+		return err
+	}
+	monitorServerCert, err = decodeSecret("monitor server certificate", monitorServerCert)
+	if err != nil {
+		return err
+	}
+	portalServerKey, err = decodeSecret("portal server key", portalServerKey)
+	if err != nil {
+		return err
+	}
+	portalServerCert, err = decodeSecret("portal server certificate", portalServerCert)
+	if err != nil {
+		return err
+	}
+	authority, err := site.LoadAuthority(*siteDir, s, *ageIdentity)
+	if err != nil {
+		return fmt.Errorf("load platform CA chain: %w", err)
+	}
+	runtimeVariables["zabbix_db_password"] = zabbixDBPassword
+	runtimeVariables["monitor_server_key_pem"] = monitorServerKey
+	runtimeVariables["monitor_server_cert_pem"] = monitorServerCert + authority.IssuingCertPEM
+	runtimeVariables["portal_server_key_pem"] = portalServerKey
+	runtimeVariables["portal_server_cert_pem"] = portalServerCert + authority.IssuingCertPEM
+	runtimeVariables["client_ca_pem"] = authority.IssuingCertPEM
 	variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
 	if err != nil {
 		return err

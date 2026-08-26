@@ -1,13 +1,245 @@
 ---
-- name: Install monitoring base services
+- name: Install the pinned Zabbix repository package for managed agents
+  ansible.builtin.get_url:
+    url: https://repo.zabbix.com/zabbix/7.0/debian/pool/main/z/zabbix-release/zabbix-release_7.0-5+debian12_all.deb
+    checksum: sha256:950bd75b2a0f813208f8d01fc114ff2907296425664b0366927b6269024212ed
+    dest: /var/cache/zabbix-release_7.0-5+debian12_all.deb
+    owner: root
+    group: root
+    mode: '0644'
+  when: inventory_hostname in (groups.get('proxmox', []) + groups.get('dns', []) + groups.get('portal', []) + ['lab-monitor-01'])
+
+- name: Register the pinned Zabbix repository for managed agents
+  ansible.builtin.apt:
+    deb: /var/cache/zabbix-release_7.0-5+debian12_all.deb
+  when: inventory_hostname in (groups.get('proxmox', []) + groups.get('dns', []) + groups.get('portal', []) + ['lab-monitor-01'])
+
+- name: Install Zabbix Agent 2 on managed platform hosts
+  ansible.builtin.apt:
+    name: zabbix-agent2
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: inventory_hostname in (groups.get('proxmox', []) + groups.get('dns', []) + groups.get('portal', []) + ['lab-monitor-01'])
+
+- name: Configure Zabbix Agent 2 on managed platform hosts
+  ansible.builtin.template:
+    src: zabbix_agent2.conf.j2
+    dest: /etc/zabbix/zabbix_agent2.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart zabbix-agent2
+  when: inventory_hostname in (groups.get('proxmox', []) + groups.get('dns', []) + groups.get('portal', []) + ['lab-monitor-01'])
+
+- name: Enable Zabbix Agent 2 on managed platform hosts
+  ansible.builtin.service:
+    name: zabbix-agent2
+    enabled: true
+    state: started
+  when: inventory_hostname in (groups.get('proxmox', []) + groups.get('dns', []) + ['lab-monitor-01'])
+
+- name: Require the encrypted Zabbix database password at runtime
+  ansible.builtin.assert:
+    that:
+      - zabbix_db_password is defined
+      - zabbix_db_password | length >= 32
+    fail_msg: "Zabbix convergence requires the SOPS-provided database password"
+  no_log: true
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Require the controller-issued Zabbix mTLS material
+  ansible.builtin.assert:
+    that:
+      - monitor_server_key_pem is defined
+      - monitor_server_cert_pem is defined
+      - client_ca_pem is defined
+    fail_msg: "Zabbix mTLS requires controller-issued server and client-CA material"
+  no_log: true
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Create the Zabbix TLS directory
+  ansible.builtin.file:
+    path: /etc/boetticher/tls
+    state: directory
+    owner: root
+    group: root
+    mode: '0750'
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Install Zabbix server certificate
+  ansible.builtin.copy:
+    content: "{{ monitor_server_cert_pem }}"
+    dest: /etc/boetticher/tls/monitor.crt.pem
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload nginx
+  no_log: true
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Install Zabbix server private key
+  ansible.builtin.copy:
+    content: "{{ monitor_server_key_pem }}"
+    dest: /etc/boetticher/tls/monitor.key.pem
+    owner: root
+    group: root
+    mode: '0600'
+  notify: reload nginx
+  no_log: true
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Install the client CA for Zabbix mTLS
+  ansible.builtin.copy:
+    content: "{{ client_ca_pem }}"
+    dest: /etc/boetticher/tls/client-ca.pem
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload nginx
+  no_log: true
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Install the pinned Zabbix 7.0 repository package
+  ansible.builtin.get_url:
+    url: https://repo.zabbix.com/zabbix/7.0/debian/pool/main/z/zabbix-release/zabbix-release_7.0-5+debian12_all.deb
+    checksum: sha256:950bd75b2a0f813208f8d01fc114ff2907296425664b0366927b6269024212ed
+    dest: /var/cache/zabbix-release_7.0-5+debian12_all.deb
+    owner: root
+    group: root
+    mode: '0644'
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Register the pinned Zabbix repository package
+  ansible.builtin.apt:
+    deb: /var/cache/zabbix-release_7.0-5+debian12_all.deb
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Install Zabbix server, frontend, agent, and database packages
   ansible.builtin.apt:
     name:
       - postgresql
       - nginx
+      - php8.2-pgsql
+      - zabbix-server-pgsql
+      - zabbix-frontend-php
+      - zabbix-nginx-conf
+      - zabbix-sql-scripts
+      - zabbix-agent2
     state: present
+    update_cache: true
+    cache_valid_time: 3600
   when: inventory_hostname == 'lab-monitor-01'
 
-- name: State Zabbix target
-  ansible.builtin.debug:
-    msg: "Zabbix 7.0 LTS is the V1 observability target"
+- name: Create the dedicated Zabbix database role and database
+  become_user: postgres
+  ansible.builtin.command: psql --dbname postgres --set ON_ERROR_STOP=1
+  args:
+    stdin: |
+      DO $do$
+      BEGIN
+        IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'zabbix') THEN
+          CREATE ROLE zabbix LOGIN PASSWORD '{{ zabbix_db_password }}';
+        ELSE
+          ALTER ROLE zabbix PASSWORD '{{ zabbix_db_password }}';
+        END IF;
+      END
+      $do$;
+      SELECT 'CREATE DATABASE zabbix OWNER zabbix'
+      WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'zabbix')\gexec
+  changed_when: false
+  no_log: true
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Check whether the Zabbix schema marker exists
+  ansible.builtin.stat:
+    path: /var/lib/zabbix/.boetticher-schema-loaded
+  register: zabbix_schema_marker
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Load the packaged Zabbix PostgreSQL schema
+  become_user: zabbix
+  ansible.builtin.shell: >-
+    zcat /usr/share/zabbix-sql-scripts/postgresql/server.sql.gz
+    | psql --dbname zabbix --username zabbix
+  args:
+    creates: /var/lib/zabbix/.boetticher-schema-loaded
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - not zabbix_schema_marker.stat.exists
+
+- name: Record the loaded Zabbix schema
+  ansible.builtin.file:
+    path: /var/lib/zabbix/.boetticher-schema-loaded
+    state: touch
+    owner: zabbix
+    group: zabbix
+    mode: '0600'
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Configure Zabbix server
+  ansible.builtin.template:
+    src: zabbix_server.conf.j2
+    dest: /etc/zabbix/zabbix_server.conf
+    owner: root
+    group: zabbix
+    mode: '0640'
+  notify: restart zabbix-server
+  no_log: true
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Configure Zabbix Agent 2 on the monitoring host
+  ansible.builtin.template:
+    src: zabbix_agent2.conf.j2
+    dest: /etc/zabbix/zabbix_agent2.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart zabbix-agent2
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Configure the Zabbix frontend with server TLS and client certificate authentication
+  ansible.builtin.template:
+    src: zabbix-loopback.conf.j2
+    dest: /etc/nginx/sites-available/zabbix.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload nginx
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Enable the mTLS-protected Zabbix frontend
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/zabbix.conf
+    dest: /etc/nginx/sites-enabled/zabbix.conf
+    state: link
+  notify: reload nginx
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Remove the distribution nginx default site on the monitor
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: reload nginx
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Publish boetticher-owned Zabbix source definitions
+  ansible.builtin.copy:
+    src: zabbix-platform/
+    dest: /etc/zabbix/boetticher-platform/
+    owner: root
+    group: root
+    mode: '0644'
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Enable monitoring services
+  ansible.builtin.service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - postgresql
+    - zabbix-server
+    - zabbix-agent2
+    - nginx
   when: inventory_hostname == 'lab-monitor-01'

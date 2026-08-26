@@ -1,0 +1,21 @@
+server {
+    listen 10.10.99.20:443 ssl;
+    server_name monitor.lab.home.arpa;
+    root /usr/share/zabbix;
+    index index.php;
+
+    ssl_certificate /etc/boetticher/tls/monitor.crt.pem;
+    ssl_certificate_key /etc/boetticher/tls/monitor.key.pem;
+    ssl_client_certificate /etc/boetticher/tls/client-ca.pem;
+    ssl_verify_client on;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+    }
+}
