@@ -1,5 +1,5 @@
 ---
-# Lab-in-a-Box guest convergence entry point.
+# boetticher guest convergence entry point.
 # Runtime credentials are intentionally not represented in this playbook.
 - name: Converge managed Debian guests
   hosts: managed

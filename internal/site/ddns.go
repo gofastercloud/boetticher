@@ -7,7 +7,7 @@ import (
 )
 
 func LoadDDNSTSIG(dir string, s model.Site, ageIdentityPath string) (string, error) {
-	values, err := LoadEncryptedDocument(dir, ageIdentityPath, "secrets/homelab.sops.yaml")
+	values, err := LoadEncryptedDocument(dir, ageIdentityPath, "secrets/boetticher.sops.yaml")
 	if err != nil {
 		return "", err
 	}

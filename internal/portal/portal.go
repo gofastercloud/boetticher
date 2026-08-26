@@ -36,12 +36,12 @@ func Build(s model.Site, outputDir, docsDir string, evidence Evidence, physical 
 	if err := os.MkdirAll(parent, 0755); err != nil {
 		return err
 	}
-	stage, err := os.MkdirTemp(parent, ".labinabox-portal-stage-")
+	stage, err := os.MkdirTemp(parent, ".boetticher-portal-stage-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(stage)
-	if err := writePage(filepath.Join(stage, "index.html"), page("Lab in a Box", home(s, revision, evidence, now))); err != nil {
+	if err := writePage(filepath.Join(stage, "index.html"), page("boetticher", home(s, revision, evidence, now))); err != nil {
 		return err
 	}
 	if err := writePage(filepath.Join(stage, "inventory.html"), page("Inventory", inventory(s, revision))); err != nil {
@@ -93,7 +93,7 @@ func publish(outputDir, stage string) error {
 }
 
 func page(title, body string) string {
-	return "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>" + html.EscapeString(title) + " · Lab in a Box</title><style>body{font:16px system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#17202a}nav{display:flex;gap:1rem;flex-wrap:wrap}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccd;padding:.5rem;text-align:left}code{background:#eef;padding:.1rem .3rem}pre{white-space:pre-wrap;background:#f5f7f9;padding:1rem}.pass{color:#087f23}.fail{color:#b00020}.notice{color:#8a5b00}</style></head><body><nav><a href=\"/index.html\">Home</a><a href=\"/inventory.html\">Inventory</a><a href=\"/network.html\">Network</a><a href=\"/services.html\">Services</a><a href=\"/access.html\">Access</a><a href=\"/pki.html\">PKI</a><a href=\"/security.html\">Security</a><a href=\"/recovery.html\">Recovery</a><a href=\"/docs/index.html\">Runbooks</a></nav><main><h1>" + html.EscapeString(title) + "</h1>" + body + "</main></body></html>\n"
+	return "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>" + html.EscapeString(title) + " · boetticher</title><style>body{font:16px system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#17202a}nav{display:flex;gap:1rem;flex-wrap:wrap}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccd;padding:.5rem;text-align:left}code{background:#eef;padding:.1rem .3rem}pre{white-space:pre-wrap;background:#f5f7f9;padding:1rem}.pass{color:#087f23}.fail{color:#b00020}.notice{color:#8a5b00}</style></head><body><nav><a href=\"/index.html\">Home</a><a href=\"/inventory.html\">Inventory</a><a href=\"/network.html\">Network</a><a href=\"/services.html\">Services</a><a href=\"/access.html\">Access</a><a href=\"/pki.html\">PKI</a><a href=\"/security.html\">Security</a><a href=\"/recovery.html\">Recovery</a><a href=\"/docs/index.html\">Runbooks</a></nav><main><h1>" + html.EscapeString(title) + "</h1>" + body + "</main></body></html>\n"
 }
 
 func home(s model.Site, revision string, evidence Evidence, now time.Time) string {
@@ -112,11 +112,11 @@ func home(s model.Site, revision string, evidence Evidence, now time.Time) strin
 
 func inventory(s model.Site, revision string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Platform guests are managed by Lab-in-a-Box. Any user-managed entries shown here are informational only.</p><table><tr><th>Host</th><th>Ownership</th><th>Zone</th><th>Address</th><th>Role</th><th>Monitoring</th><th>Backup</th></tr>", html.EscapeString(revision))
+	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Platform guests are managed by boetticher. Any user-managed entries shown here are informational only.</p><table><tr><th>Host</th><th>Ownership</th><th>Zone</th><th>Address</th><th>Role</th><th>Monitoring</th><th>Backup</th></tr>", html.EscapeString(revision))
 	for _, m := range sortedModules(s) {
 		ownership := "user-managed / informational"
 		if m.ProductOwned {
-			ownership = "Lab-in-a-Box platform"
+			ownership = "boetticher platform"
 		}
 		fmt.Fprintf(&b, "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>", html.EscapeString(m.Hostname), html.EscapeString(ownership), html.EscapeString(m.Zone), html.EscapeString(m.Address), html.EscapeString(m.Role), checkMark(m.Monitoring), checkMark(m.Backup))
 	}
@@ -245,7 +245,7 @@ func pki(s model.Site, revision string) string {
 }
 
 func recovery(s model.Site, revision string, evidence Evidence) string {
-	return fmt.Sprintf("<p>Model revision: <code>%s</code></p><h2>Preserve</h2><ul><li>Private site repository containing desired state and encrypted secrets.</li><li>Independent recovery copy of the Age private identity.</li></ul><h2>Profiles</h2><p>Storage profile: <code>%s</code>. Same-disk backups are not disaster recovery.</p><p>Platform backup job: <code>labinabox-platform</code> for VM/LXC IDs 100, 110, 111, 120, and 130. User workloads remain outside the platform guarantee.</p><p>Age recovery and backup freshness are reported only when current evidence exists.</p>", html.EscapeString(revision), html.EscapeString(s.StorageProfile))
+	return fmt.Sprintf("<p>Model revision: <code>%s</code></p><h2>Preserve</h2><ul><li>Private site repository containing desired state and encrypted secrets.</li><li>Independent recovery copy of the Age private identity.</li></ul><h2>Profiles</h2><p>Storage profile: <code>%s</code>. Same-disk backups are not disaster recovery.</p><p>Platform backup job: <code>boetticher-platform</code> for VM/LXC IDs 100, 110, 111, 120, and 130. User workloads remain outside the platform guarantee.</p><p>Age recovery and backup freshness are reported only when current evidence exists.</p>", html.EscapeString(revision), html.EscapeString(s.StorageProfile))
 }
 
 func copyDocs(outputDir, docsDir, revision string) error {
@@ -302,7 +302,7 @@ func writePage(path, content string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".labinabox-portal-*")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".boetticher-portal-*")
 	if err != nil {
 		return err
 	}

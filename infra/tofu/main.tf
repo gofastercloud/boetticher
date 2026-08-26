@@ -17,7 +17,7 @@ resource "proxmox_virtual_environment_vm" "firewall" {
   node_name       = local.desired.node
   vm_id           = each.value.vmid
   name            = each.value.name
-  description     = "Lab-in-a-Box OPNsense firewall"
+  description     = "boetticher OPNsense firewall"
   on_boot         = true
   started         = true
   bios            = "seabios"
@@ -73,7 +73,7 @@ resource "proxmox_virtual_environment_container" "managed" {
 
   node_name     = local.desired.node
   vm_id         = each.value.vmid
-  description   = "Lab-in-a-Box ${each.value.role}"
+  description   = "boetticher ${each.value.role}"
   start_on_boot = true
   started       = true
   unprivileged  = true

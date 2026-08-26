@@ -3,12 +3,12 @@
 Start with:
 
 ```sh
-homelab access --site my-homelab
-homelab doctor --site my-homelab
-homelab verify --site my-homelab
+boetticher access --site my-boetticher
+boetticher doctor --site my-boetticher
+boetticher verify --site my-boetticher
 ```
 
-If the HOME-side address may have changed, use only the known address with `homelab bootstrap-endpoint set ADDRESS`; do not scan. Use `homelab ssh-config --check` to check an operator file without rewriting it. Use `homelab verify --ssh-journey` only when you want a real authenticated command through the bastion.
+If the HOME-side address may have changed, use only the known address with `boetticher bootstrap-endpoint set ADDRESS`; do not scan. Use `boetticher ssh-config --check` to check an operator file without rewriting it. Use `boetticher verify --ssh-journey` only when you want a real authenticated command through the bastion.
 
 Interpretation matters:
 

@@ -6,7 +6,7 @@ import (
 )
 
 func TestParseSiteYAMLSubset(t *testing.T) {
-	data := []byte(`api_version: labinabox/v1
+	data := []byte(`api_version: boetticher/v1
 platform_version: 0.1.0
 schema_version: 1
 storage_profile: single-disk

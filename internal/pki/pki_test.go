@@ -13,7 +13,7 @@ func TestAuthorityAndClientCertificate(t *testing.T) {
 		t.Fatal(err)
 	}
 	metadata, err := PublicMetadata(authority)
-	if err != nil || metadata["root_ca_cn"] != "Homelab Root CA" {
+	if err != nil || metadata["root_ca_cn"] != "boetticher Root CA" {
 		t.Fatalf("unexpected CA metadata: %#v, %v", metadata, err)
 	}
 	client, err := IssueClient(authority, "laptop", "lab.home.arpa", time.Unix(0, 0))

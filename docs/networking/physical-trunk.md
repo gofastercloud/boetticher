@@ -4,7 +4,7 @@ The logical architecture is fixed: `vmbr0` is the HOME/upstream bridge and `vmbr
 
 ## Discovery and identity
 
-`homelab preflight --live` reads the fresh Proxmox host through the recorded HOME-side bootstrap path. It identifies the upstream device from corroborating evidence: the current bootstrap address on `vmbr0`, the `vmbr0` physical member, the default-route path, and the active SSH path. If those signals disagree, preflight stops with:
+`boetticher preflight --live` reads the fresh Proxmox host through the recorded HOME-side bootstrap path. It identifies the upstream device from corroborating evidence: the current bootstrap address on `vmbr0`, the `vmbr0` physical member, the default-route path, and the active SSH path. If those signals disagree, preflight stops with:
 
 ```text
 HOLD: upstream interface identity is ambiguous
@@ -36,17 +36,17 @@ The candidate must have no configured IPv4 address, no non-link-local IPv6 addre
 
 ## Multiple NICs
 
-If two or more eligible unused NICs remain, Lab-in-a-Box does not choose one. Review the preflight output and select explicitly:
+If two or more eligible unused NICs remain, boetticher does not choose one. Review the preflight output and select explicitly:
 
 ```sh
-homelab preflight --site my-homelab --live --trunk-interface enp5s0
-homelab bootstrap --site my-homelab --trunk-interface enp5s0 --opnsense-iso VERIFIED_ISO --recovery-confirmed
+boetticher preflight --site my-boetticher --live --trunk-interface enp5s0
+boetticher bootstrap --site my-boetticher --trunk-interface enp5s0 --recovery-confirmed
 ```
 
 The selected interface still passes every safety check. The later equivalent is:
 
 ```sh
-homelab network trunk attach enp5s0 --site my-homelab
+boetticher network trunk attach enp5s0 --site my-boetticher
 ```
 
 The command prints the proposed mapping first; `--confirm` is required before mutation.
@@ -56,9 +56,9 @@ The command prints the proposed mapping first; `--confirm` is required before mu
 The bootstrap and later attach paths use the same planner, upstream protection, VLAN-aware bridge mutation, post-change validation, and rollback attempt. Detach also refuses to touch the current `vmbr0` member or the interface carrying the recorded bootstrap address.
 
 ```sh
-homelab network trunk status --site my-homelab --live
-homelab network trunk attach enp5s0 --site my-homelab --confirm
-homelab network trunk detach enp5s0 --site my-homelab --confirm
+boetticher network trunk status --site my-boetticher --live
+boetticher network trunk attach enp5s0 --site my-boetticher --confirm
+boetticher network trunk detach enp5s0 --site my-boetticher --confirm
 ```
 
 After a change, the implementation verifies `vmbr0`, the upstream address/default-route path, VLAN-aware `vmbr1`, expected membership, and the platform bastion path where live endpoints exist. A failed mutation or uncertain rollback is reported as `HOLD`, never success.

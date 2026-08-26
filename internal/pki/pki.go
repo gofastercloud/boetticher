@@ -44,7 +44,7 @@ func GenerateAuthority(now time.Time, domain string) (Authority, error) {
 	if err != nil {
 		return Authority{}, err
 	}
-	rootTemplate, err := certificateTemplate("Homelab Root CA", now, true)
+	rootTemplate, err := certificateTemplate("boetticher Root CA", now, true)
 	if err != nil {
 		return Authority{}, err
 	}
@@ -58,7 +58,7 @@ func GenerateAuthority(now time.Time, domain string) (Authority, error) {
 	if err != nil {
 		return Authority{}, err
 	}
-	issuingTemplate, err := certificateTemplate("Homelab Issuing CA", now, true)
+	issuingTemplate, err := certificateTemplate("boetticher Issuing CA", now, true)
 	if err != nil {
 		return Authority{}, err
 	}
@@ -150,7 +150,7 @@ func certificateTemplate(commonName string, now time.Time, isCA bool) (*x509.Cer
 	}
 	return &x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: commonName, Organization: []string{"Lab-in-a-Box"}},
+		Subject:               pkix.Name{CommonName: commonName, Organization: []string{"boetticher"}},
 		NotBefore:             now.Add(-5 * time.Minute),
 		NotAfter:              now.AddDate(10, 0, 0),
 		KeyUsage:              keyUsage,

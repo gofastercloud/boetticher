@@ -6,13 +6,13 @@ states the engineering guardrails that keep those contracts intact.
 
 ## Design
 
-boetticher is an opinionated V1 Proxmox distribution, not a generic homelab
+boetticher is an opinionated V0.1 Proxmox distribution, not a generic homelab
 framework. The canonical model is deterministic for a fixed platform version,
 site, enabled official modules, and relevant secret metadata. Its model
 revision drives OpenTofu, Ansible, OPNsense, Zabbix, SSH, portal, inventory,
 and verification projections.
 
-Lab-in-a-Box owns only declared platform resources: Proxmox, OPNsense, the
+boetticher owns only declared platform resources: Proxmox, OPNsense, the
 dual DNS/NTP guests, monitoring, portal, owned bridges/VLAN policy, PKI,
 backups, and evidence. Proxmox owns user workloads. Unknown guests are
 informational, never drift, and never targets for deletion or import.

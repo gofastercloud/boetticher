@@ -15,7 +15,7 @@ func TestPlanDoesNotAdoptUserWorkloads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !plan.PlatformOnly || plan.HostGroup != PlatformHostGroup || plan.ManagedBy != "Lab-in-a-Box" {
+	if !plan.PlatformOnly || plan.HostGroup != PlatformHostGroup || plan.ManagedBy != "boetticher" {
 		t.Fatalf("unexpected Zabbix ownership contract: %#v", plan)
 	}
 	for _, module := range plan.Modules {

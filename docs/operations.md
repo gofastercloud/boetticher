@@ -11,7 +11,7 @@ Use `bootstrap-endpoint` to record the known HOME-side Proxmox address, `preflig
 
 ## Evidence semantics
 
-`homelab verify` separates generated SSH configuration, network reachability, and authenticated SSH journey evidence. Local deterministic checks may be `PASS`; undeployed security and service journeys remain `NOT TESTED`, `HOLD`, or `INCONCLUSIVE`. `homelab doctor` reports each projection as `ABSENT`, `CURRENT`, or `INCONSISTENT` against the current model revision, separately reports physical binding and unmanaged Proxmox guests, and preserves the OPNsense bootstrap gate.
+`boetticher verify` separates generated SSH configuration, network reachability, and authenticated SSH journey evidence. Offline checks can pass before hardware is available; service journeys remain not yet tested. `boetticher doctor` reports each projection as `ABSENT`, `CURRENT`, or `INCONSISTENT` against the current model revision, separately reports physical binding and unmanaged Proxmox guests, and preserves the OPNsense bootstrap gate.
 
 Generated artifacts may be committed to the private site repository. Runtime state, OpenTofu state/plans/caches, bootstrap state, and temporary credentials remain outside Git.
 

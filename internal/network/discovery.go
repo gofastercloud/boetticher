@@ -11,7 +11,7 @@ import (
 const (
 	ClassUpstream       = "upstream/bootstrap"
 	ClassCandidate      = "eligible trunk candidate"
-	ClassConfigured     = "configured Lab-in-a-Box trunk"
+	ClassConfigured     = "configured boetticher trunk"
 	ClassIneligible     = "ineligible/in-use"
 	ClassAmbiguous      = "ambiguous"
 	ModeVirtualOnly     = "virtual-only"
@@ -118,7 +118,7 @@ func Analyze(evidence Evidence, explicitTrunk string) (Discovery, error) {
 		if configured != nil && configured.Name == explicitTrunk {
 			result.Mode = ModePhysicalTrunk
 			result.Trunk = &selected
-			result.Explanation = "explicit selection matches the persisted Lab-in-a-Box trunk binding"
+			result.Explanation = "explicit selection matches the persisted boetticher trunk binding"
 			return result, nil
 		}
 		if !containsInterface(candidates, explicitTrunk) {
@@ -131,7 +131,7 @@ func Analyze(evidence Evidence, explicitTrunk string) (Discovery, error) {
 	case configured != nil:
 		result.Mode = ModePhysicalTrunk
 		result.Trunk = configured
-		result.Explanation = "persisted Lab-in-a-Box trunk binding is present"
+		result.Explanation = "persisted boetticher trunk binding is present"
 		return result, nil
 	case len(candidates) == 0:
 		result.Mode = ModeVirtualOnly
@@ -176,7 +176,7 @@ func classify(iface Interface, upstream string, vmbr0Members []string, configure
 		return ClassAmbiguous, "no stable hardware identity is available"
 	}
 	if iface.Name == configuredTrunk && iface.Bridge == "vmbr1" {
-		return ClassConfigured, "persisted Lab-in-a-Box trunk binding"
+		return ClassConfigured, "persisted boetticher trunk binding"
 	}
 	return ClassCandidate, "unused physical Ethernet interface with stable hardware identity"
 }

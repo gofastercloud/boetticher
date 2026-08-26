@@ -284,7 +284,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		{VMID: model.MonitorVMID, Name: "lab-monitor-01", Hostname: "lab-monitor-01", Zone: "MGMT", Address: "10.10.99.20", Gateway: "10.10.99.1", VLAN: 99, Kind: KindLXC, Cores: 2, MemoryMiB: 2048, DiskGiB: 16, Monitoring: true, Backup: true},
 		{VMID: model.PortalVMID, Name: "lab-portal-01", Hostname: "lab-portal-01", Zone: "SERVERS", Address: "10.10.20.30", Gateway: "10.10.20.1", VLAN: 20, Kind: KindLXC, Cores: 1, MemoryMiB: 512, DiskGiB: 4, Monitoring: true, Backup: true},
 	}
-	return Plan{ModelRevision: revision, ManagedBy: "Lab-in-a-Box", Node: s.ProxmoxNode, Storage: storage, Guests: guests}, nil
+	return Plan{ModelRevision: revision, ManagedBy: "boetticher", Node: s.ProxmoxNode, Storage: storage, Guests: guests}, nil
 }
 
 // Provision creates the fixed foundation objects and is safe to re-run. It
@@ -478,7 +478,7 @@ func bridgeHasPort(interfaces []NetworkInterface, bridgeName, port string) bool 
 	return false
 }
 
-// ValidatePhysicalBinding checks only the Lab-in-a-Box-owned vmbr0/vmbr1
+// ValidatePhysicalBinding checks only the boetticher-owned vmbr0/vmbr1
 // boundary. Unrelated host bridges, bonds, VLANs, and SDN objects are not
 // adopted or reconciled.
 func ValidatePhysicalBinding(s model.Site, interfaces []NetworkInterface) (string, error) {

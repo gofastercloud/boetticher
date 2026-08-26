@@ -144,18 +144,18 @@ func writeInitialGenerated(dir string, s model.Site) error {
 }
 
 func RuntimeDir(s model.Site) string {
-	if configured := os.Getenv("LABINABOX_RUNTIME_DIR"); configured != "" {
+	if configured := os.Getenv("BOETTICHER_RUNTIME_DIR"); configured != "" {
 		return filepath.Join(configured, s.SecretMetadata.InstallationID)
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return filepath.Join(".runtime", s.SecretMetadata.InstallationID)
 	}
-	return filepath.Join(home, ".config", "labinabox", "runtime", s.SecretMetadata.InstallationID)
+	return filepath.Join(home, ".config", "boetticher", "runtime", s.SecretMetadata.InstallationID)
 }
 
 func LoadAuthority(dir string, s model.Site, ageIdentityPath string) (pki.Authority, error) {
-	values, err := LoadEncryptedDocument(dir, ageIdentityPath, filepath.Join("secrets", "homelab.sops.yaml"))
+	values, err := LoadEncryptedDocument(dir, ageIdentityPath, filepath.Join("secrets", "boetticher.sops.yaml"))
 	if err != nil {
 		return pki.Authority{}, err
 	}
@@ -259,7 +259,7 @@ func atomicWrite(path string, data []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".labinabox-*")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".boetticher-*")
 	if err != nil {
 		return err
 	}
@@ -335,7 +335,7 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 		"issuing_cert_pem_b64": pki.Encode(authority.IssuingCertPEM),
 		"ddns_tsig_secret":     ddnsSecret,
 	}
-	return StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "homelab.sops.yaml"), document)
+	return StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), document)
 }
 
 func randomID() (string, error) {

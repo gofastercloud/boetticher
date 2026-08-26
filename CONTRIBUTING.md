@@ -1,12 +1,12 @@
 # Contributing to boetticher
 
-Thanks for helping make a small homelab platform safer and easier to recover.
+Thanks for helping make boetticher safer and easier to recover.
 
 ## Before you start
 
 Read [agents.md](agents.md), [the architecture guide](docs/architecture.md),
 [the security model](docs/security-model.md), and [the ownership boundary](docs/platform-ownership.md).
-The most important invariant is that Lab-in-a-Box owns the declared platform,
+The most important invariant is that boetticher owns the declared platform,
 while Proxmox and the operator own arbitrary user workloads.
 
 For changes that affect bootstrap, credentials, routing, firewall policy,
