@@ -126,6 +126,9 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 		enabled := defaultEnabled(definition.Policy)
 		reason := "default"
 		if definition.Policy == Mandatory {
+			if exists && requested.Enabled != nil && !*requested.Enabled {
+				return nil, fmt.Errorf("modules.%s.enabled: %s is mandatory and cannot be disabled", definition.Name, definition.Name)
+			}
 			enabled, reason = true, "mandatory"
 		} else if exists && requested.Enabled != nil {
 			enabled = *requested.Enabled
@@ -135,9 +138,6 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 			active[definition.Name] = true
 			reasons[definition.Name] = reason
 		}
-	}
-	if dnsConfig, exists := configs["dns"]; exists && dnsConfig.Enabled != nil && !*dnsConfig.Enabled {
-		return nil, fmt.Errorf("modules.dns.enabled: dns is mandatory and cannot be disabled")
 	}
 	if config.Gateway.Mode == model.GatewayModeExternal {
 		if _, hasFirewall := r.definitions["firewall"]; hasFirewall {

@@ -103,6 +103,16 @@ func TestDNSCannotBeDisabled(t *testing.T) {
 	}
 }
 
+func TestLoggingCannotBeDisabled(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	disabled := false
+	config.Modules.Logging = &model.ToggleModuleConfig{Enabled: &disabled}
+	_, _, err := Compose(config)
+	if err == nil || !strings.Contains(err.Error(), "modules.logging.enabled") {
+		t.Fatalf("unexpected logging disable result: %v", err)
+	}
+}
+
 func TestExternalGatewayRequiresExplicitManagedFirewallDisable(t *testing.T) {
 	config := testConfig(model.GatewayModeExternal)
 	if _, _, err := Compose(config); err == nil || !strings.Contains(err.Error(), "modules.firewall.enabled") {

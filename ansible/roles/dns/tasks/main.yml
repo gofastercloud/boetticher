@@ -6,7 +6,7 @@
       - dns_plan.authoritative_implementation == 'PowerDNS Authoritative'
       - dns_plan.authoritative_version == '4.9.17'
       - dns_plan.authoritative_port == '5353'
-    fail_msg: "DNS convergence requires the generated PowerDNS, AdGuard, and DDNS contract"
+    fail_msg: "DNS deployment requires the generated PowerDNS, recursive-provider, and DDNS contract"
   no_log: true
   when: inventory_hostname in groups.get('dns', [])
 
@@ -194,6 +194,14 @@
     - inventory_hostname in groups.get('dns', [])
     - dns_plan.recursive_provider == 'blocky'
 
+- name: Refuse an unsupported Blocky release
+  ansible.builtin.assert:
+    that: "'0.34.0' in blocky_version.stdout"
+    fail_msg: "The installed Blocky resolver is not the qualified 0.34.0 release"
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'blocky'
+
 - name: Install the canonical Blocky configuration
   ansible.builtin.copy:
     content: "{{ blocky_config }}"
@@ -202,6 +210,30 @@
     group: root
     mode: '0644'
   notify: restart blocky
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'blocky'
+
+- name: Validate the canonical Blocky configuration with the installed binary
+  ansible.builtin.command: blocky validate --config /etc/blocky/config.yml
+  changed_when: false
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'blocky'
+
+- name: Check for an active AdGuard service on a Blocky appliance
+  ansible.builtin.command: systemctl is-active --quiet adguardhome
+  register: adguard_service_state
+  changed_when: false
+  failed_when: false
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'blocky'
+
+- name: Refuse an active unselected AdGuard resolver
+  ansible.builtin.assert:
+    that: adguard_service_state.rc != 0
+    fail_msg: "AdGuard Home is active while Blocky is the selected DNS provider"
   when:
     - inventory_hostname in groups.get('dns', [])
     - dns_plan.recursive_provider == 'blocky'
