@@ -22,6 +22,7 @@ type SSHRunner struct {
 	Port          int
 	KnownHosts    string
 	StrictHostKey string
+	IdentityFile  string
 }
 
 // DiscoverPhysicalNetworkViaSSH uses the existing fresh-host trust path before
@@ -90,6 +91,9 @@ func (r SSHRunner) run(ctx context.Context, address, user, command string, stdin
 	}
 	if r.Port != 0 {
 		args = append(args, "-p", fmt.Sprint(r.Port))
+	}
+	if r.IdentityFile != "" {
+		args = append(args, "-i", r.IdentityFile)
 	}
 	args = append(args, user+"@"+address, command)
 	process := exec.CommandContext(ctx, "ssh", args...)

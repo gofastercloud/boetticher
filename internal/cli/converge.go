@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/ansible"
+	"github.com/gofastercloud/boetticher/internal/appliance"
 	"github.com/gofastercloud/boetticher/internal/backup"
 	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -166,6 +167,9 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err := ansible.Run(context.Background(), "ansible/site.yml", inventoryPath, variables); err != nil {
 		return err
 	}
+	if err := installModuleRuntimeConfigs(context.Background(), s); err != nil {
+		return err
+	}
 	monitorCSR, err := os.ReadFile(filepath.Join(csrDir, "monitor.csr.pem"))
 	if err != nil {
 		return fmt.Errorf("read endpoint-generated monitor CSR: %w", err)
@@ -225,6 +229,42 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return err
 	}
 	fmt.Fprintf(out, "Deployment: PASS mode=%s model=%s (storage %s)\n", s.Gateway.Mode, firewallPlan.ModelRevision, storagePlan.GuestStorage)
+	return nil
+}
+
+// installModuleRuntimeConfigs is the deployment boundary for the common
+// non-secret appliance contract. Module declarations remain the source of
+// guest identity and runtime configuration; the SSH runner is only the Core
+// transport used to install the already-validated document.
+func installModuleRuntimeConfigs(ctx context.Context, s model.Site) error {
+	runner := proxmox.SSHRunner{
+		IdentityFile:  model.ExpandUserPath(s.SSHIdentityFile),
+		StrictHostKey: "ask",
+	}
+	declarations := make(map[string]model.ModuleDeclaration, len(s.Declarations))
+	for _, declaration := range s.Declarations {
+		declarations[declaration.Module] = declaration
+	}
+	for _, guest := range s.PlatformComponents() {
+		if guest.Module == "" {
+			continue
+		}
+		declaration, ok := declarations[guest.Module]
+		if !ok {
+			return fmt.Errorf("runtime configuration for %s: module declaration is missing", guest.Name)
+		}
+		config, err := appliance.RenderRuntimeConfig(s, guest, declaration)
+		if err != nil {
+			return fmt.Errorf("render runtime configuration for %s: %w", guest.Name, err)
+		}
+		user := guest.SSHUser
+		if user == "" {
+			user = model.DefaultAdminSSHUser
+		}
+		if err := appliance.InstallRuntimeConfig(ctx, runner, guest.Address, user, config); err != nil {
+			return fmt.Errorf("install runtime configuration for %s: %w", guest.Name, err)
+		}
+	}
 	return nil
 }
 
