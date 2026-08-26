@@ -50,6 +50,7 @@ The internal namespace is `lab.home.arpa`. The generated platform records includ
 ## Requirements
 
 - Fresh supported Proxmox VE x86 installation with node name `lab-proxmox-01`. Exact Proxmox release qualification is a release gate; this source tree does not imply that every PVE release is supported.
+- Minimum host shape for the foundation: 4 logical CPU threads, 16 GiB RAM, and 128 GiB usable storage. 4+ cores, 32 GiB RAM, and 256 GiB or more is a much friendlier size for user workloads.
 - One physical Ethernet NIC minimum. A second NIC and managed 802.1Q switch are recommended for physical VLAN breakout, but `vmbr1` may remain virtual-only.
 - Controller: macOS arm64/amd64 or Linux arm64/amd64. Native Windows is out of scope; WSL2 is only supported if separately tested.
 - Controller tools: Go matching `go.mod`, `ssh`, `ssh-keyscan`, `age-keygen`, `sops`, OpenTofu, and Ansible Core. `boetticher preflight` validates versions before mutation.

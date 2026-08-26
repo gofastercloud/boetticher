@@ -6,7 +6,7 @@ states the engineering guardrails that keep those contracts intact.
 
 ## Design
 
-boetticher is an opinionated V0.1 Proxmox distribution, not a generic homelab
+boetticher is an opinionated v0.1 Proxmox distribution, not a generic homelab
 framework. The canonical model is deterministic for a fixed platform version,
 site, enabled official modules, and relevant secret metadata. Its model
 revision drives OpenTofu, Ansible, OPNsense, Zabbix, SSH, portal, inventory,
