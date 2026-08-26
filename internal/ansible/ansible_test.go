@@ -44,6 +44,9 @@ func TestAgent2IsEnabledOnEveryManagedLinuxHost(t *testing.T) {
 	if !strings.Contains(text, "groups.get('portal', []) + ['lab-monitor-01']") {
 		t.Fatal("portal is not included in the managed Agent 2 service condition")
 	}
+	if !strings.Contains(text, "groups.get('firewall', []) + groups.get('portal', []) + ['lab-monitor-01']") {
+		t.Fatal("managed firewall is not included in the Agent 2 service condition")
+	}
 }
 
 func TestEndpointTLSKeysAreGeneratedLocallyAndNeverSuppliedByController(t *testing.T) {
