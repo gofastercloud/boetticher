@@ -92,6 +92,15 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 	if !strings.Contains(files.UserData, "trivy_0.69.3_Linux-64bit.tar.gz") || !strings.Contains(files.UserData, "1816b632dfe529869c740c0913e36bd1629cb7688bd5634f4a858c1d57c88b75") {
 		t.Fatal("builder cloud-init does not pin the Trivy qualification input")
 	}
+	for _, handoff := range []string{
+		"chown -R labadmin:labadmin /home/labadmin/build/generated/artifacts",
+		"find /home/labadmin/build/generated/artifacts -type d -exec chmod 0755 {} +",
+		"find /home/labadmin/build/generated/artifacts -type f -exec chmod 0644 {} +",
+	} {
+		if !strings.Contains(files.UserData, handoff) {
+			t.Fatalf("builder cloud-init does not make public qualification evidence retrievable: %q", handoff)
+		}
+	}
 	var document map[string]any
 	if err := yaml.Unmarshal([]byte(files.UserData), &document); err != nil {
 		t.Fatalf("builder cloud-init is not valid YAML: %v", err)

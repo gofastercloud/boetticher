@@ -90,6 +90,9 @@ write_files:
       export BOETTICHER_IMAGE_WORK=/var/lib/boetticher/image-work
       ./scripts/build-images.sh images
       ./scripts/scan-images.sh scan-images
+      chown -R labadmin:labadmin /home/labadmin/build/generated/artifacts
+      find /home/labadmin/build/generated/artifacts -type d -exec chmod 0755 {} +
+      find /home/labadmin/build/generated/artifacts -type f -exec chmod 0644 {} +
       touch /home/labadmin/build/.qualification-complete
   - path: /etc/sudoers.d/boetticher-builder
     permissions: '0440'
