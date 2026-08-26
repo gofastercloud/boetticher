@@ -76,6 +76,7 @@ create_base_rootfs() {
   chmod 0700 "$rootfs/tmp/boetticher-ansible"
   printf '%s\n' 'labadmin ALL=(ALL) NOPASSWD:/usr/bin/systemctl, /usr/bin/install, /usr/bin/mkdir, /usr/bin/chown, /usr/bin/chmod, /usr/lib/boetticher/install-runtime-state *, /usr/sbin/nft, /usr/sbin/kea-dhcp4, /usr/sbin/kea-dhcp-ddns, /bin/sh -c * /usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*' > "$rootfs/etc/sudoers.d/boetticher"
   chmod 0440 "$rootfs/etc/sudoers.d/boetticher"
+  chroot "$rootfs" visudo -cf /etc/sudoers
   mkdir -p "$rootfs/etc/systemd/journald.conf.d"
   printf '%s\n' '[Journal]' 'SystemMaxUse=256M' 'RuntimeMaxUse=64M' > "$rootfs/etc/systemd/journald.conf.d/boetticher.conf"
   printf '%s\n' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' 'PermitRootLogin prohibit-password' > "$rootfs/etc/ssh/sshd_config.d/boetticher.conf"
@@ -292,6 +293,7 @@ build_firewall() {
     --run-command 'passwd --lock labadmin' \
     --run-command 'chown labadmin:labadmin /tmp/boetticher-ansible && chmod 0700 /tmp/boetticher-ansible' \
     --run-command 'printf "%s\\n" "labadmin ALL=(ALL) NOPASSWD:/usr/bin/systemctl, /usr/lib/boetticher/install-runtime-state *, /usr/sbin/nft, /usr/sbin/kea-dhcp4, /usr/sbin/kea-dhcp-ddns, /bin/sh -c * /usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*" > /etc/sudoers.d/boetticher && chmod 0440 /etc/sudoers.d/boetticher' \
+    --run-command 'visudo -cf /etc/sudoers' \
     --run-command 'dpkg-query -W -f="${binary:Package}\\t${Version}\\n" | sort > /var/lib/boetticher/package-manifest.txt' \
     --run-command 'systemctl enable boetticher-first-boot.service || true' \
     --run-command 'systemctl disable --now systemd-networkd-wait-online.service || true'

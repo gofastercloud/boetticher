@@ -16,6 +16,7 @@ case "$name" in
     test -d "$rootfs/etc/boetticher" -a -d "$rootfs/usr/lib/boetticher"
     test -x "$rootfs/usr/lib/boetticher/install-runtime-state"
     test -f "$rootfs/etc/systemd/journald.conf.d/boetticher.conf"
+    run visudo -cf /etc/sudoers
     test ! -e "$rootfs/home/labadmin/.ssh/authorized_keys"
     test ! -e "$rootfs/root/.ssh/authorized_keys"
     ;;
