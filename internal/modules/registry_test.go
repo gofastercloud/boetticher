@@ -45,10 +45,10 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 		}
 	}
 	for _, secret := range dns.Secrets {
-		if secret.Name == "ddns_tsig_secret" && secret.Delivery != "systemd-credential-to-ephemeral-secret-file" {
+		if secret.Consumer == "kea-dhcp-ddns-server" && secret.Delivery != "systemd-credential-to-ephemeral-secret-file" {
 			t.Fatalf("Kea secret delivery is not explicit: %#v", secret)
 		}
-		if secret.Name == "powerdns_tsig_secret" && (!secret.Persistent || secret.Delivery != "protected-powerdns-backend") {
+		if secret.Consumer == "powerdns-authoritative" && (!secret.Persistent || secret.Delivery != "protected-powerdns-backend") {
 			t.Fatalf("PowerDNS secret exception is not explicit: %#v", secret)
 		}
 	}
