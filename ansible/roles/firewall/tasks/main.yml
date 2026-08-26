@@ -150,6 +150,9 @@
     - kea-dhcp-ddns-server
     - dnsmasq
 
+- name: Flush gateway handlers before enabling forwarding
+  ansible.builtin.meta: flush_handlers
+
 - name: Enable IPv4 forwarding only after policy and services are ready
   ansible.builtin.command:
     argv: [sysctl, -w, net.ipv4.ip_forward=1]
