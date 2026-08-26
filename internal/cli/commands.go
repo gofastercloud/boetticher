@@ -24,6 +24,6 @@ var commandSpecs = []commandSpec{
 	{Usage: "boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]"},
 	{Usage: "boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json]"},
 	{Usage: "boetticher dhcp status|leases [--site DIR] [--live] [--json]"},
-	{Usage: "boetticher storage status|initialize [--site DIR] [--confirmed]"},
+	{Usage: "boetticher storage status|initialize [--site DIR] [--live] [--confirmed]"},
 	{Usage: "boetticher portal build [--site DIR] [--output DIR] [--docs DIR]"},
 }

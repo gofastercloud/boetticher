@@ -20,6 +20,12 @@ This release is intentionally incompatible with older pre-alpha site state.
 ### Changed
 
 - The site schema and platform release are now `boetticher/v2` and `0.2.0`.
+- Platform backup convergence refuses to overwrite a conflicting Proxmox job
+  with the reserved name unless its boetticher ownership marker is present.
+- `firewall status --live` reports observed forwarding, role-oriented
+  interfaces, and required managed-gateway services.
+- Dedicated storage status and `doctor --live` inspect the expected disk,
+  fixed LVM layout, backup mount, Proxmox registrations, and capacity.
 - Gateway DHCP, DNS forwarding, NTP, firewall, monitoring, access, recovery,
   and portal documentation describe the current Debian architecture.
 
