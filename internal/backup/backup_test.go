@@ -12,7 +12,10 @@ func TestPlanOwnsOnlyPlatformGuests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.JobName != PlatformJobName || !plan.PlatformOnly || plan.UserWorkloadsManaged || len(plan.GuestVMIDs) != 5 {
+	if plan.JobName != PlatformJobName || !plan.PlatformOnly || plan.UserWorkloadsManaged || len(plan.GuestVMIDs) != 5 || plan.VMIDList() != "100,110,111,120,130" {
 		t.Fatalf("unexpected backup ownership plan: %#v", plan)
+	}
+	if plan.StorageTarget != "local" || plan.Schedule != "daily" || plan.Retention != "keep-last=7" {
+		t.Fatalf("unexpected backup job policy: %#v", plan)
 	}
 }

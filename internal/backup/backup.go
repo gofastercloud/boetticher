@@ -1,6 +1,10 @@
 package backup
 
 import (
+	"sort"
+	"strconv"
+	"strings"
+
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 )
@@ -15,6 +19,9 @@ type Plan struct {
 	UserWorkloadsManaged bool   `json:"user_workloads_managed"`
 	DisasterRecovery     string `json:"disaster_recovery"`
 	GuestVMIDs           []int  `json:"guest_vmids"`
+	StorageTarget        string `json:"storage_target"`
+	Schedule             string `json:"schedule"`
+	Retention            string `json:"retention"`
 }
 
 func PlanFromSite(s model.Site) (Plan, error) {
@@ -33,10 +40,23 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	for _, guest := range proxmoxPlan.Guests {
 		ids = append(ids, guest.VMID)
 	}
+	sort.Ints(ids)
+	storage := "local"
+	if s.StorageProfile == "dedicated-data-disk" {
+		storage = "boetticher-backups"
+	}
 	return Plan{
 		ModelRevision: revision, ManagedBy: "boetticher", JobName: PlatformJobName,
 		PlatformOnly: true, UserWorkloadsManaged: false,
 		DisasterRecovery: "local backup is not independent disaster recovery; user workloads remain user-owned",
-		GuestVMIDs:       ids,
+		GuestVMIDs:       ids, StorageTarget: storage, Schedule: "daily", Retention: "keep-last=7",
 	}, nil
+}
+
+func (p Plan) VMIDList() string {
+	values := make([]string, 0, len(p.GuestVMIDs))
+	for _, id := range p.GuestVMIDs {
+		values = append(values, strconv.Itoa(id))
+	}
+	return strings.Join(values, ",")
 }
