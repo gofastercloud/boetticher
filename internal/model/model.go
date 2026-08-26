@@ -583,8 +583,13 @@ func resolvedModuleEnabled(modules []ResolvedModule, name string, defaultValue b
 func (s Site) PlatformComponents() []Component {
 	components := make([]Component, 0)
 	for _, component := range s.Components {
-		if component.ProductOwned {
+		if component.ProductOwned && (len(s.Declarations) == 0 || component.Module == "") {
 			components = append(components, component)
+		}
+	}
+	if len(s.Declarations) > 0 {
+		for _, declaration := range s.Declarations {
+			components = append(components, declaration.Guests...)
 		}
 	}
 	sort.Slice(components, func(i, j int) bool { return components[i].Name < components[j].Name })
