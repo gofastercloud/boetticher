@@ -1,0 +1,126 @@
+package proxmox
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"os"
+	"os/exec"
+	"strings"
+)
+
+type CommandRunner interface {
+	Run(ctx context.Context, address, user, command string) ([]byte, error)
+}
+
+type SSHRunner struct {
+	Port          int
+	KnownHosts    string
+	StrictHostKey string
+}
+
+func (r SSHRunner) Run(ctx context.Context, address, user, command string) ([]byte, error) {
+	if net.ParseIP(address) == nil {
+		return nil, fmt.Errorf("Proxmox bootstrap address must be an IP address")
+	}
+	if user == "" {
+		return nil, errors.New("bootstrap SSH user is required")
+	}
+	args := []string{"-o", "BatchMode=no", "-o", "ForwardAgent=no", "-o", "ForwardX11=no"}
+	strictHostKey := r.StrictHostKey
+	if strictHostKey == "" {
+		strictHostKey = "ask"
+	}
+	args = append(args, "-o", "StrictHostKeyChecking="+strictHostKey)
+	if r.KnownHosts != "" {
+		args = append(args, "-o", "UserKnownHostsFile="+r.KnownHosts)
+	}
+	if r.Port != 0 {
+		args = append(args, "-p", fmt.Sprint(r.Port))
+	}
+	args = append(args, user+"@"+address, command)
+	process := exec.CommandContext(ctx, "ssh", args...)
+	process.Stdin = os.Stdin
+	output, err := process.Output()
+	if err != nil {
+		return nil, fmt.Errorf("SSH bootstrap command failed: %w", err)
+	}
+	return output, nil
+}
+
+func InstallOperatorKey(ctx context.Context, runner CommandRunner, address, initialUser, publicKey string) error {
+	if err := validatePublicKey(publicKey); err != nil {
+		return err
+	}
+	command := "umask 077; install -d -m 700 ~/.ssh; touch ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys; grep -qxF " + shellQuote(publicKey) + " ~/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(publicKey) + " >> ~/.ssh/authorized_keys"
+	_, err := runner.Run(ctx, address, initialUser, command)
+	return err
+}
+
+func ConfigureIdentities(ctx context.Context, runner CommandRunner, address, initialUser, adminPublicKey string, allowedDestinations []string) error {
+	if err := validatePublicKey(adminPublicKey); err != nil {
+		return err
+	}
+	if len(allowedDestinations) == 0 {
+		return errors.New("at least one bastion destination is required")
+	}
+	for _, destination := range allowedDestinations {
+		if !strings.Contains(destination, ":22") || strings.ContainsAny(destination, "'\n\r") {
+			return fmt.Errorf("invalid bastion destination %q", destination)
+		}
+	}
+	// Public keys and destination addresses are the only values interpolated;
+	// credentials are never placed in this command.
+	jumpKey := "restrict,port-forwarding,permitopen=\"" + strings.Join(allowedDestinations, "\",permitopen=\"") + "\" " + publicKeyLine(adminPublicKey)
+	command := "set -eu; id -u labadmin >/dev/null 2>&1 || useradd --create-home --shell /bin/bash labadmin; id -u lab-jump >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin lab-jump; install -d -m 700 /home/labadmin/.ssh /etc/ssh/sshd_config.d; install -m 600 /dev/null /home/labadmin/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /home/labadmin/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /home/labadmin/.ssh/authorized_keys; install -m 600 /dev/null /home/lab-jump.authorized_keys; printf '%s\\n' " + shellQuote(jumpKey) + " > /home/lab-jump.authorized_keys; chown -R labadmin:labadmin /home/labadmin/.ssh; cat > /etc/ssh/sshd_config.d/90-labinabox-jump.conf <<'EOF'\nMatch User lab-jump\n    AuthorizedKeysFile /home/lab-jump.authorized_keys\n    PermitTTY no\n    X11Forwarding no\n    AllowAgentForwarding no\n    AllowTcpForwarding local\n    PermitOpen " + strings.Join(allowedDestinations, " ") + "\nEOF\nsshd -t\nsystemctl reload ssh || systemctl reload sshd"
+	_, err := runner.Run(ctx, address, initialUser, command)
+	return err
+}
+
+func CreateScopedCredentials(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID string) (string, error) {
+	if !safeID(userID) || !safeID(tokenID) {
+		return "", errors.New("Proxmox identity and token IDs must be simple identifiers")
+	}
+	command := "set -eu; pvesh get /access/users --output-format json >/dev/null; pvesh create /access/users --userid " + shellQuote(userID) + " --comment 'Lab-in-a-Box administrative identity' >/dev/null 2>&1 || true; pvesh create /access/acl --path / --users " + shellQuote(userID) + " --roles PVEAdmin --propagate 1 >/dev/null; pvesh create /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID) + " --privsep 1 --output-format json"
+	output, err := runner.Run(ctx, address, initialUser, command)
+	if err != nil {
+		return "", err
+	}
+	var response struct {
+		Value string `json:"value"`
+	}
+	if err := json.Unmarshal(output, &response); err != nil {
+		return "", fmt.Errorf("decode Proxmox token response: %w", err)
+	}
+	if response.Value == "" {
+		return "", errors.New("Proxmox token response did not contain a secret")
+	}
+	return response.Value, nil
+}
+
+func validatePublicKey(publicKey string) error {
+	if strings.TrimSpace(publicKey) == "" || strings.ContainsAny(publicKey, "\r\n'") || !strings.Contains(publicKey, " ") {
+		return errors.New("operator SSH public key must be a single OpenSSH public-key line")
+	}
+	return nil
+}
+
+func publicKeyLine(publicKey string) string { return publicKey }
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func safeID(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if !(r == '@' || r == '!' || r == '.' || r == '_' || r == '-' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
