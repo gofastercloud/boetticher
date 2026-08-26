@@ -27,6 +27,11 @@ func Load(dir string) (model.Site, error) {
 	if err != nil {
 		return model.Site{}, err
 	}
+	retained, err := LoadRetainedModules(dir)
+	if err != nil {
+		return model.Site{}, err
+	}
+	s.RetainedModules = retained
 	return s, nil
 }
 

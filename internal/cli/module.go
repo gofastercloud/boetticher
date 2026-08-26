@@ -235,7 +235,24 @@ func runModuleChange(args []string, out interface{ Write([]byte) (int, error) },
 			return err
 		}
 	}
+	retained := append([]model.RetainedModule(nil), oldSite.RetainedModules...)
+	if enable {
+		filtered := retained[:0]
+		for _, item := range retained {
+			if item.Module != name {
+				filtered = append(filtered, item)
+			}
+		}
+		retained = filtered
+	} else if !*purge {
+		if declaration, ok := findDeclaration(oldSite, name); ok {
+			retained = append(retained, model.RetainedModule{Module: name, Disposition: "retained", Guests: declaration.Guests, Persistent: declaration.Persistent})
+		}
+	}
 	if err := site.SaveConfig(*siteDir, model.ConfigFromSite(resolved)); err != nil {
+		return err
+	}
+	if err := site.SaveRetainedModules(*siteDir, retained); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "  Configuration: saved (model %s)\n", mustRevision(resolved))

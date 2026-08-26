@@ -44,6 +44,9 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 			fmt.Fprintf(out, "  INFO  %-12s %s / Disabled\n", module.Name, module.Policy)
 		}
 	}
+	for _, retained := range s.RetainedModules {
+		fmt.Fprintf(out, "  INFO  %-12s retained resources remain boetticher-owned and inactive\n", retained.Module)
+	}
 	revision, err := s.Revision()
 	if err != nil {
 		return err
@@ -280,8 +283,18 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 			fmt.Fprintf(out, "Platform guests       FAIL %v\n", auditErr)
 		} else {
 			userCount := 0
+			retainedIDs := map[int]string{}
+			for _, retained := range s.RetainedModules {
+				for _, guest := range retained.Guests {
+					retainedIDs[guest.VMID] = retained.Module
+				}
+			}
 			for _, audit := range audits {
 				if audit.Ownership == proxmox.UserOwnership {
+					if module, retained := retainedIDs[audit.VMID]; retained {
+						fmt.Fprintf(out, "Retained guest %-8d %-18s INFO module=%s inactive\n", audit.VMID, audit.Name, module)
+						continue
+					}
 					userCount++
 					continue
 				}

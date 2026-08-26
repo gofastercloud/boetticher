@@ -82,6 +82,7 @@ type Site struct {
 	Modules          []ResolvedModule        `json:"modules,omitempty"`
 	ModuleConfig     map[string]ModuleConfig `json:"module_config,omitempty"`
 	Declarations     []ModuleDeclaration     `json:"declarations,omitempty"`
+	RetainedModules  []RetainedModule        `json:"retained_modules,omitempty"`
 }
 
 type TestedVersions struct {
@@ -275,6 +276,14 @@ type ModuleDeclaration struct {
 	Portal         []PortalEntry           `json:"portal,omitempty"`
 }
 
+type RetainedModule struct {
+	Module      string            `json:"module"`
+	Disposition string            `json:"disposition"`
+	Active      bool              `json:"active"`
+	Guests      []Component       `json:"guests,omitempty"`
+	Persistent  []PersistentState `json:"persistent,omitempty"`
+}
+
 func NewDefaultSite(installationID, ageRecipient string) Site {
 	return NewSite(installationID, ageRecipient, GatewayModeManaged)
 }
@@ -336,10 +345,12 @@ func (s Site) Normalize() Site {
 	copySite.Modules = append([]ResolvedModule(nil), s.Modules...)
 	copySite.ModuleConfig = cloneModuleConfig(s.ModuleConfig)
 	copySite.Declarations = append([]ModuleDeclaration(nil), s.Declarations...)
+	copySite.RetainedModules = append([]RetainedModule(nil), s.RetainedModules...)
 	sort.Slice(copySite.Network.Zones, func(i, j int) bool { return copySite.Network.Zones[i].VLAN < copySite.Network.Zones[j].VLAN })
 	sort.Slice(copySite.Components, func(i, j int) bool { return copySite.Components[i].Name < copySite.Components[j].Name })
 	sort.Slice(copySite.Modules, func(i, j int) bool { return copySite.Modules[i].Name < copySite.Modules[j].Name })
 	sort.Slice(copySite.Declarations, func(i, j int) bool { return copySite.Declarations[i].Module < copySite.Declarations[j].Module })
+	sort.Slice(copySite.RetainedModules, func(i, j int) bool { return copySite.RetainedModules[i].Module < copySite.RetainedModules[j].Module })
 	for i := range copySite.Components {
 		copySite.Components[i].DNSAliases = append([]string(nil), copySite.Components[i].DNSAliases...)
 		sort.Strings(copySite.Components[i].DNSAliases)
