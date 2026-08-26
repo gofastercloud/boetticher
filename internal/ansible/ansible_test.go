@@ -31,3 +31,26 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 		}
 	}
 }
+
+func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	variables, err := Variables(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(variables)
+	for _, expected := range []string{
+		`"authoritative_dns": "PowerDNS Authoritative"`,
+		`"authoritative_dns_version": "4.9.16"`,
+		`"authoritative_dns_port": "5353"`,
+		`"trusted.lab.home.arpa"`,
+		`"sandbox.lab.home.arpa"`,
+	} {
+		if !strings.Contains(text, expected) {
+			t.Errorf("Ansible variables missing %q", expected)
+		}
+	}
+	if strings.Contains(text, "c2VjcmV0") {
+		t.Fatal("generated Ansible variables contain secret material")
+	}
+}

@@ -87,9 +87,11 @@ func Variables(s model.Site) ([]byte, error) {
 		IPv4Only                bool     `json:"ipv4_only"`
 		AuthoritativeDNS        string   `json:"authoritative_dns"`
 		AuthoritativeDNSVersion string   `json:"authoritative_dns_version"`
+		AuthoritativeDNSPort    string   `json:"authoritative_dns_port"`
 		DynamicZones            []string `json:"dynamic_zones"`
 		AdGuardForwardZones     []string `json:"adguard_forward_zones"`
-	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones}
+		DNSPlan                 dns.Plan `json:"dns_plan"`
+	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err

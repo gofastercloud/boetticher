@@ -13,6 +13,7 @@ import (
 const (
 	AuthoritativeImplementation = model.AuthoritativeDNS
 	AuthoritativeVersion        = model.AuthoritativeDNSVersion
+	AuthoritativePort           = "5353"
 	ConflictPolicy              = "reject-new-active-lease"
 	TSIGSecretReference         = "secrets/boetticher.sops.yaml#ddns_tsig_secret"
 )
@@ -23,6 +24,7 @@ type Plan struct {
 	ModelRevision         string         `json:"model_revision"`
 	Implementation        string         `json:"authoritative_implementation"`
 	ImplementationVersion string         `json:"authoritative_version"`
+	AuthoritativePort     string         `json:"authoritative_port"`
 	StaticZone            string         `json:"static_zone"`
 	Nameservers           []string       `json:"nameservers"`
 	DynamicZones          []DynamicZone  `json:"dynamic_zones"`
@@ -107,13 +109,13 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		return Plan{}, err
 	}
 	return Plan{
-		ModelRevision: revision, Implementation: AuthoritativeImplementation, ImplementationVersion: AuthoritativeVersion,
+		ModelRevision: revision, Implementation: AuthoritativeImplementation, ImplementationVersion: AuthoritativeVersion, AuthoritativePort: AuthoritativePort,
 		StaticZone: s.Network.Domain, Nameservers: []string{"10.10.20.10", "10.10.20.11"},
 		DynamicZones: dynamic, ReverseZones: reverse, StaticRecords: static,
 		DDNS: DDNSPlan{
-			Enabled: true, Source: "OPNsense Kea D2", UpdateTarget: "PowerDNS Authoritative on lab-dns-01",
+			Enabled: true, Source: "OPNsense Kea D2", UpdateTarget: "10.10.20.10:" + AuthoritativePort,
 			UpdateSources: []string{"10.10.99.1"}, TSIGSecretReference: TSIGSecretReference,
-			ConflictPolicy: ConflictPolicy, LeaseFailurePolicy: "lease-continues-without-DNS-registration", Replication: "PowerDNS AXFR/IXFR lab-dns-01 primary to lab-dns-02 secondary",
+			ConflictPolicy: ConflictPolicy, LeaseFailurePolicy: "lease-continues-without-DNS-registration", Replication: "PowerDNS AXFR/IXFR lab-dns-01 primary to lab-dns-02 secondary on port " + AuthoritativePort,
 		},
 		AdGuardForwardZones: append([]string{s.Network.Domain}, dynamicZoneNames(dynamic)...),
 	}, nil

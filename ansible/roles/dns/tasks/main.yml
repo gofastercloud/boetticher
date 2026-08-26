@@ -1,33 +1,218 @@
 ---
-- name: State DNS role boundary
+- name: Require the generated DNS platform contract
   ansible.builtin.assert:
     that:
-      - inventory_hostname in groups['dns']
-    quiet: true
-  when: inventory_hostname in groups['dns']
-
-- name: Require the generated authoritative DNS contract
-  ansible.builtin.assert:
-    that:
-      - authoritative_dns is defined
-      - authoritative_dns == 'PowerDNS Authoritative'
-      - authoritative_dns_version is defined
-      - authoritative_dns_version == '4.9.16'
-      - dynamic_zones is defined
-      - adguard_forward_zones is defined
-    fail_msg: "DNS convergence requires the generated PowerDNS/AdGuard model contract"
-  when: inventory_hostname in groups['dns']
-
-- name: Require the runtime DDNS TSIG only in controller memory
-  ansible.builtin.assert:
-    that:
+      - dns_plan is defined
+      - dns_plan.authoritative_implementation == 'PowerDNS Authoritative'
+      - dns_plan.authoritative_version == '4.9.16'
+      - dns_plan.authoritative_port == '5353'
       - ddns_tsig_secret is defined
       - ddns_tsig_secret | length > 0
-    fail_msg: "DDNS convergence requires a SOPS-provided TSIG secret"
+    fail_msg: "DNS convergence requires the generated PowerDNS, AdGuard, and DDNS contract"
   no_log: true
-  when: inventory_hostname in groups['dns']
 
-- name: State the DNS ownership boundary
-  ansible.builtin.debug:
-    msg: "AdGuard is client-facing; PowerDNS Authoritative owns RFC2136 zones; Kea D2 remains the lease event source"
-  when: inventory_hostname in groups['dns']
+- name: Install DNS service dependencies
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - gpg
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: inventory_hostname in groups.get('dns', [])
+
+- name: Create the APT keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: inventory_hostname in groups.get('dns', [])
+
+- name: Install the qualified PowerDNS repository key
+  ansible.builtin.get_url:
+    url: https://repo.powerdns.com/FD380FBB-pub.asc
+    dest: /etc/apt/keyrings/auth-49-pub.asc
+    owner: root
+    group: root
+    mode: '0644'
+  when: inventory_hostname in groups.get('dns', [])
+
+- name: Configure the qualified PowerDNS repository
+  ansible.builtin.deb822_repository:
+    name: boetticher-powerdns
+    types: deb
+    uris: http://repo.powerdns.com/debian
+    suites: bookworm-auth-49
+    components:
+      - main
+    signed_by: /etc/apt/keyrings/auth-49-pub.asc
+    state: present
+  register: powerdns_repository
+  when: inventory_hostname in groups.get('dns', [])
+
+- name: Install the qualified PowerDNS package
+  ansible.builtin.apt:
+    name:
+      - pdns-server
+      - pdns-backend-sqlite3
+      - sqlite3
+    state: present
+    update_cache: "{{ powerdns_repository.changed | default(false) }}"
+  when: inventory_hostname in groups.get('dns', [])
+
+- name: Check the installed PowerDNS version
+  ansible.builtin.command: pdns_server --version
+  register: powerdns_version
+  changed_when: false
+  check_mode: false
+  when: inventory_hostname in groups.get('dns', [])
+
+- name: Refuse an unqualified PowerDNS version
+  ansible.builtin.assert:
+    that: "'4.9.16' in powerdns_version.stdout"
+    fail_msg: "The installed PowerDNS version is not the qualified 4.9.16 release"
+  when: inventory_hostname in groups.get('dns', [])
+
+- name: Stop PowerDNS before initializing its local database
+  ansible.builtin.service:
+    name: pdns
+    state: stopped
+  when: inventory_hostname in groups.get('dns', [])
+
+- name: Create the PowerDNS data directory
+  ansible.builtin.file:
+    path: /var/lib/powerdns
+    state: directory
+    owner: pdns
+    group: pdns
+    mode: '0750'
+  when: inventory_hostname in groups.get('dns', [])
+
+- name: Initialize the PowerDNS SQLite schema once
+  ansible.builtin.shell: >-
+    sqlite3 /var/lib/powerdns/pdns.sqlite3
+    < /usr/share/doc/pdns-backend-sqlite3/schema.sqlite3.sql
+  args:
+    creates: /var/lib/powerdns/pdns.sqlite3
+  when: inventory_hostname in groups.get('dns', [])
+
+- name: Set PowerDNS database ownership
+  ansible.builtin.file:
+    path: /var/lib/powerdns/pdns.sqlite3
+    owner: pdns
+    group: pdns
+    mode: '0640'
+  when: inventory_hostname in groups.get('dns', [])
+
+- name: Configure PowerDNS authoritative service
+  ansible.builtin.template:
+    src: pdns.conf.j2
+    dest: /etc/powerdns/pdns.conf
+    owner: root
+    group: root
+    mode: '0640'
+  notify: restart pdns
+  when: inventory_hostname in groups.get('dns', [])
+
+- name: Add the Kea DDNS TSIG key to the primary
+  ansible.builtin.command:
+    argv:
+      - pdnsutil
+      - add-tsig-key
+      - trusted-ddns
+      - "{{ ddns_tsig_secret }}"
+      - hmac-sha256
+  register: tsig_key_result
+  changed_when: tsig_key_result.rc == 0
+  failed_when: tsig_key_result.rc != 0 and 'already exists' not in (tsig_key_result.stderr | lower)
+  no_log: true
+  when: inventory_hostname == 'lab-dns-01'
+
+- name: Read current PowerDNS zones on the primary
+  ansible.builtin.command: pdnsutil list-all-zones
+  register: primary_zones
+  changed_when: false
+  when: inventory_hostname == 'lab-dns-01'
+
+- name: Create the static and dynamic authoritative zones on the primary
+  ansible.builtin.command: >-
+    pdnsutil create-zone {{ item }}
+    lab-dns-01.{{ dns_plan.static_zone }} lab-dns-02.{{ dns_plan.static_zone }}
+  loop: "{{ [dns_plan.static_zone] + (dns_plan.dynamic_zones | map(attribute='name') | list) + (dns_plan.reverse_zones | map(attribute='name') | list) }}"
+  when:
+    - inventory_hostname == 'lab-dns-01'
+    - item not in primary_zones.stdout
+
+- name: Publish model-owned static A records to the primary
+  ansible.builtin.command: >-
+    pdnsutil replace-rrset {{ dns_plan.static_zone }} {{ item.name | replace('.' + dns_plan.static_zone, '') }}
+    {{ item.type }} 300 {{ item.address }}
+  loop: "{{ dns_plan.static_records }}"
+  when: inventory_hostname == 'lab-dns-01'
+
+- name: Read current PowerDNS zones on the secondary
+  ansible.builtin.command: pdnsutil list-all-zones
+  register: secondary_zones
+  changed_when: false
+  when: inventory_hostname == 'lab-dns-02'
+
+- name: Configure secondary transfer for each platform zone
+  ansible.builtin.command: >-
+    pdnsutil create-secondary-zone {{ item }} 10.10.20.10:5353
+  loop: "{{ [dns_plan.static_zone] + (dns_plan.dynamic_zones | map(attribute='name') | list) + (dns_plan.reverse_zones | map(attribute='name') | list) }}"
+  when:
+    - inventory_hostname == 'lab-dns-02'
+    - item not in secondary_zones.stdout
+
+- name: Install pinned AdGuard Home archive
+  ansible.builtin.get_url:
+    url: https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.76/AdGuardHome_linux_amd64.tar.gz
+    checksum: sha256:23f364f13a452cf2d4f7c5b1465508a83fda803e56bd38297fa62ab31734e222
+    dest: /var/cache/AdGuardHome_linux_amd64.tar.gz
+    owner: root
+    group: root
+    mode: '0644'
+  when: inventory_hostname in groups.get('dns', [])
+
+- name: Install AdGuard Home under its own service directory
+  ansible.builtin.unarchive:
+    src: /var/cache/AdGuardHome_linux_amd64.tar.gz
+    dest: /opt
+    remote_src: true
+    creates: /opt/AdGuardHome/AdGuardHome
+  when: inventory_hostname in groups.get('dns', [])
+
+- name: Configure AdGuard Home as the client-facing resolver
+  ansible.builtin.template:
+    src: AdGuardHome.yaml.j2
+    dest: /opt/AdGuardHome/AdGuardHome.yaml
+    owner: root
+    group: root
+    mode: '0600'
+  notify: restart adguardhome
+  when: inventory_hostname in groups.get('dns', [])
+
+- name: Install AdGuard Home systemd unit
+  ansible.builtin.template:
+    src: adguardhome.service.j2
+    dest: /etc/systemd/system/adguardhome.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - reload systemd
+    - restart adguardhome
+  when: inventory_hostname in groups.get('dns', [])
+
+- name: Enable DNS services
+  ansible.builtin.service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - pdns
+    - adguardhome
+  when: inventory_hostname in groups.get('dns', [])
