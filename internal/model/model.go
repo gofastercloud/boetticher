@@ -565,6 +565,50 @@ func (s Site) Validate() error {
 		}
 		seenModules[module.Name] = true
 	}
+	if err := validateDeclarations(s); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateDeclarations(s Site) error {
+	seenVMIDs := map[int]string{}
+	seenNames := map[string]string{}
+	seenAddresses := map[string]string{}
+	for _, declaration := range s.Declarations {
+		if declaration.Module == "" {
+			return errors.New("module declaration is missing its owner")
+		}
+		if len(declaration.Artifact.SHA256) != 64 || len(declaration.Artifact.DefinitionSHA256) != 64 {
+			return fmt.Errorf("module %s has incomplete artifact digest metadata", declaration.Module)
+		}
+		for _, guest := range declaration.Guests {
+			if guest.Module != declaration.Module {
+				return fmt.Errorf("guest %s has owner %q but is declared by module %q", guest.Name, guest.Module, declaration.Module)
+			}
+			if previous, exists := seenVMIDs[guest.VMID]; exists && guest.VMID != 0 {
+				return fmt.Errorf("module guest VMID %d is declared by both %s and %s", guest.VMID, previous, declaration.Module)
+			}
+			if guest.VMID != 0 {
+				seenVMIDs[guest.VMID] = declaration.Module
+			}
+			if previous, exists := seenNames[guest.Hostname]; exists && previous != declaration.Module {
+				return fmt.Errorf("module hostname %q collides between %s and %s", guest.Hostname, previous, declaration.Module)
+			}
+			seenNames[guest.Hostname] = declaration.Module
+			if previous, exists := seenAddresses[guest.Address]; exists && guest.Address != "" && previous != declaration.Module {
+				return fmt.Errorf("module address %q collides between %s and %s", guest.Address, previous, declaration.Module)
+			}
+			if guest.Address != "" {
+				seenAddresses[guest.Address] = declaration.Module
+			}
+		}
+		for _, state := range declaration.Persistent {
+			if state.Replacement == "" {
+				return fmt.Errorf("module %s persistent state %q is missing a replacement policy", declaration.Module, state.Name)
+			}
+		}
+	}
 	return nil
 }
 
