@@ -41,6 +41,7 @@ var PublicBuildInputs = []string{
 	"cmd/qualify-artifact",
 	"cmd/render-blocky-config",
 	"internal/artifacts",
+	"internal/dns",
 	"internal/model",
 	"images",
 	"scripts/build-images.sh",

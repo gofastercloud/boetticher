@@ -238,6 +238,34 @@ func TestBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {
 	}
 }
 
+func TestBuildSourceArchiveContainsBlockyRendererDependencies(t *testing.T) {
+	archive, err := BuildSourceArchive(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := gzip.NewReader(strings.NewReader(string(archive)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tarReader := tar.NewReader(reader)
+	entries := map[string]bool{}
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries[header.Name] = true
+	}
+	for _, relative := range []string{"cmd/render-blocky-config/main.go", "internal/dns/recursive.go", "internal/dns/dns.go"} {
+		if !entries[relative] {
+			t.Fatalf("transferred builder source is missing %s", relative)
+		}
+	}
+}
+
 func TestTransferredEvidenceIsReboundToControllerArtifactBytes(t *testing.T) {
 	root := t.TempDir()
 	artifact, err := ArtifactFor("logging")
