@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -15,8 +16,10 @@ import (
 	"time"
 
 	"github.com/dave/labinabox/internal/model"
+	"github.com/dave/labinabox/internal/opnsense"
 	"github.com/dave/labinabox/internal/pki"
 	"github.com/dave/labinabox/internal/portal"
+	"github.com/dave/labinabox/internal/proxmox"
 	"github.com/dave/labinabox/internal/site"
 	"github.com/dave/labinabox/internal/sshconfig"
 )
@@ -49,7 +52,13 @@ func Run(args []string, out, errOut interface{ Write([]byte) (int, error) }) err
 		return runVerify(args[1:], out)
 	case "doctor":
 		return runDoctor(args[1:], out)
-	case "bootstrap", "provision", "converge", "upgrade":
+	case "bootstrap":
+		return runBootstrap(args[1:], out)
+	case "provision":
+		return runProvision(args[1:], out)
+	case "converge":
+		return runConverge(args[1:], out)
+	case "upgrade":
 		return runIntegrationGate(args[0], args[1:], out)
 	}
 	fmt.Fprintf(errOut, "usage: homelab <command>\n")
@@ -62,7 +71,10 @@ func usage(out interface{ Write([]byte) (int, error) }) {
 Usage:
   homelab init [--site-dir DIR] [--age-identity PATH]
   homelab preflight [--site DIR]
-	homelab bootstrap | provision | converge | verify | doctor | upgrade [--site DIR]
+	homelab bootstrap [--site DIR] [--recovery-confirmed] [--dry-run]
+	homelab provision [--site DIR] [--opnsense-iso PATH] [--debian-template TEMPLATE] [--dry-run]
+	homelab converge [--site DIR] [--opnsense-url URL] [--dry-run]
+	homelab verify | doctor | upgrade [--site DIR]
 	homelab ssh-config [--site DIR] [--output PATH| -] [--force] [--check] [--install-include]
 	homelab access [--site DIR]
 	homelab bootstrap-endpoint show|set ADDRESS [--site DIR]
@@ -610,6 +622,277 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 	return nil
 }
 
+func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) error {
+	fs := flag.NewFlagSet("bootstrap", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	siteDir := fs.String("site", ".", "private site repository directory")
+	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
+	recoveryConfirmed := fs.Bool("recovery-confirmed", false, "confirm an independent Age recovery copy exists")
+	operatorKey := fs.String("operator-key", "", "operator SSH public key path")
+	initialUser := fs.String("initial-user", "root", "initial SSH user on the fresh Proxmox host")
+	knownHosts := fs.String("known-hosts", "", "optional SSH known-hosts file for bootstrap")
+	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
+	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS during bootstrap")
+	opnsenseISO := fs.String("opnsense-iso", "", "verified OPNsense ISO path on Proxmox storage")
+	dryRun := fs.Bool("dry-run", false, "render and validate the bootstrap plan without connecting")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	s, err := site.Load(*siteDir)
+	if err != nil {
+		return err
+	}
+	plan, err := proxmox.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
+	if s.BootstrapAddress == "" {
+		return errors.New("bootstrap endpoint is not configured; use homelab bootstrap-endpoint set ADDRESS first")
+	}
+	if !*dryRun {
+		if _, err := os.Stat(model.ExpandUserPath(*ageIdentity)); err != nil {
+			return fmt.Errorf("Age identity is not available at %s: %w", model.ExpandUserPath(*ageIdentity), err)
+		}
+		if !*recoveryConfirmed {
+			return errors.New("destructive bootstrap requires --recovery-confirmed after an independent Age recovery copy is secured")
+		}
+	}
+	if *operatorKey == "" {
+		*operatorKey = defaultOperatorPublicKey()
+	}
+	if *operatorKey != "" {
+		publicKey, err := readOperatorPublicKey(*operatorKey)
+		if err != nil && !*dryRun {
+			return err
+		}
+		if err == nil {
+			if err := proxmox.ValidatePublicKey(publicKey); err != nil {
+				return err
+			}
+		}
+	}
+	if *dryRun {
+		fmt.Fprintf(out, "Bootstrap plan: PASS model %s\n", plan.ModelRevision)
+		fmt.Fprintf(out, "  Proxmox endpoint: %s\n  Firewall VMID: %d\n  OPNsense ISO: %s\n", s.BootstrapAddress, model.ProxmoxVMID, valueOrPlaceholder(*opnsenseISO))
+		fmt.Fprintln(out, "  Trust transition: SSH key → labadmin/lab-jump → scoped API token → SOPS")
+		fmt.Fprintln(out, "  Destructive actions: NOT RUN (dry-run)")
+		return nil
+	}
+	if *opnsenseISO == "" {
+		return errors.New("--opnsense-iso is required for live bootstrap")
+	}
+	publicKey, err := readOperatorPublicKey(*operatorKey)
+	if err != nil {
+		return err
+	}
+	runner := proxmox.SSHRunner{KnownHosts: *knownHosts}
+	ctx := context.Background()
+	if err := proxmox.InstallOperatorKey(ctx, runner, s.BootstrapAddress, *initialUser, publicKey); err != nil {
+		return fmt.Errorf("install operator SSH key: %w", err)
+	}
+	allowedDestinations := jumpDestinations(s)
+	if err := proxmox.ConfigureIdentities(ctx, runner, s.BootstrapAddress, *initialUser, publicKey, allowedDestinations); err != nil {
+		return fmt.Errorf("configure Proxmox administrative and bastion identities: %w", err)
+	}
+	tokenSecret, err := proxmox.CreateScopedCredentialsWithRole(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "labinabox", "LabInABoxProvisioner")
+	if err != nil {
+		return fmt.Errorf("create scoped Proxmox API credentials: %w", err)
+	}
+	credentials := site.ProxmoxCredentials{APIUser: "labadmin@pve", TokenID: "labinabox", TokenSecret: tokenSecret}
+	if err := site.StoreProxmoxCredentials(*siteDir, s, credentials); err != nil {
+		return fmt.Errorf("store Proxmox credentials in SOPS: %w", err)
+	}
+	client, err := proxmox.NewClient(proxmox.Config{
+		BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", User: credentials.APIUser,
+		TokenID: credentials.TokenID, TokenSecret: credentials.TokenSecret, CAFile: *proxmoxCA, Insecure: *insecure,
+	})
+	if err != nil {
+		return err
+	}
+	version, err := client.Version(ctx)
+	if err != nil {
+		return fmt.Errorf("authenticate to Proxmox with scoped identity: %w", err)
+	}
+	if err := proxmox.EnsureFirewallVM(ctx, client, plan, *opnsenseISO); err != nil {
+		return err
+	}
+	if err := client.StartVM(ctx, plan.Node, model.ProxmoxVMID); err != nil {
+		return fmt.Errorf("start OPNsense VM: %w", err)
+	}
+	if err := writeProjection(filepath.Join(*siteDir, "generated", "bootstrap.json"), struct {
+		ModelRevision    string `json:"model_revision"`
+		ProxmoxVersion   string `json:"proxmox_version"`
+		BootstrapAddress string `json:"bootstrap_address"`
+		FirewallVMID     int    `json:"firewall_vmid"`
+		Status           string `json:"status"`
+	}{plan.ModelRevision, version, s.BootstrapAddress, model.ProxmoxVMID, "proxmox-trust-transition-complete"}); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Proxmox bootstrap: PASS authenticated with scoped identity on %s\n", version)
+	fmt.Fprintln(out, "Firewall VM: PASS created or already present and started")
+	fmt.Fprintln(out, "OPNsense installation/bootstrap: NOT TESTED until the qualified unattended installer path is exercised on a fresh VM")
+	fmt.Fprintln(out, "Initial root/bootstrap authentication: no longer required for routine Lab-in-a-Box access")
+	return nil
+}
+
+func runProvision(args []string, out interface{ Write([]byte) (int, error) }) error {
+	fs := flag.NewFlagSet("provision", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	siteDir := fs.String("site", ".", "private site repository directory")
+	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
+	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
+	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS")
+	opnsenseISO := fs.String("opnsense-iso", "", "verified OPNsense ISO path on Proxmox storage")
+	debianTemplate := fs.String("debian-template", "local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst", "Proxmox Debian LXC template")
+	dryRun := fs.Bool("dry-run", false, "render and validate the provisioning plan without connecting")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	s, err := site.Load(*siteDir)
+	if err != nil {
+		return err
+	}
+	plan, err := proxmox.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
+	if *dryRun {
+		fmt.Fprintf(out, "Proxmox provisioning plan: PASS model %s (%d guests)\n", plan.ModelRevision, len(plan.Guests))
+		fmt.Fprintf(out, "  Storage target: %s\n  OPNsense ISO: %s\n  Debian template: %s\n", plan.Storage, valueOrPlaceholder(*opnsenseISO), *debianTemplate)
+		return nil
+	}
+	if *opnsenseISO == "" {
+		return errors.New("--opnsense-iso is required for live provisioning")
+	}
+	client, credentials, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
+	if err != nil {
+		return err
+	}
+	if err := proxmox.Provision(context.Background(), client, plan, *opnsenseISO, *debianTemplate); err != nil {
+		return err
+	}
+	if err := writeModelProjections(*siteDir, s); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Proxmox provisioning: PASS model %s via %s\n", plan.ModelRevision, credentials.APIUser)
+	return nil
+}
+
+func runConverge(args []string, out interface{ Write([]byte) (int, error) }) error {
+	fs := flag.NewFlagSet("converge", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	siteDir := fs.String("site", ".", "private site repository directory")
+	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
+	opnsenseURL := fs.String("opnsense-url", "https://10.10.99.1", "OPNsense API base URL")
+	opnsenseCA := fs.String("opnsense-ca", "", "OPNsense API CA PEM file")
+	insecure := fs.Bool("insecure", false, "explicitly allow self-signed OPNsense API TLS")
+	dryRun := fs.Bool("dry-run", false, "render and validate policy without connecting")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	s, err := site.Load(*siteDir)
+	if err != nil {
+		return err
+	}
+	plan, err := opnsense.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
+	if *dryRun {
+		fmt.Fprintf(out, "OPNsense convergence plan: PASS model %s\n", plan.ModelRevision)
+		fmt.Fprintf(out, "  VLANs: %d\n  Kea subnets: %d\n  Firewall rules: %d\n", len(plan.VLANs), len(plan.Zones), len(plan.FirewallRules))
+		return nil
+	}
+	credentials, err := site.LoadOPNsenseCredentials(*siteDir, s, *ageIdentity)
+	if err != nil {
+		return fmt.Errorf("load encrypted OPNsense API credentials: %w", err)
+	}
+	client, err := opnsense.NewClient(opnsense.Config{BaseURL: *opnsenseURL, User: credentials.APIKey, Secret: credentials.APISecret, CAFile: *opnsenseCA, Insecure: *insecure})
+	if err != nil {
+		return err
+	}
+	var firmware map[string]any
+	if err := client.FirmwareStatus(context.Background(), &firmware); err != nil {
+		return fmt.Errorf("authenticate to OPNsense API: %w", err)
+	}
+	if err := client.ApplyVLANs(context.Background(), plan); err != nil {
+		return err
+	}
+	if err := client.ApplyKea(context.Background(), plan); err != nil {
+		return err
+	}
+	if err := client.ApplyFirewall(context.Background(), plan); err != nil {
+		return err
+	}
+	if err := writeModelProjections(*siteDir, s); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "OPNsense convergence: PASS model %s; API authenticated and policy applied\n", plan.ModelRevision)
+	return nil
+}
+
+func loadProxmoxClient(siteDir string, s model.Site, ageIdentity, caFile string, insecure bool) (*proxmox.Client, site.ProxmoxCredentials, error) {
+	if s.BootstrapAddress == "" {
+		return nil, site.ProxmoxCredentials{}, errors.New("bootstrap endpoint is not configured")
+	}
+	credentials, err := site.LoadProxmoxCredentials(siteDir, s, ageIdentity)
+	if err != nil {
+		return nil, site.ProxmoxCredentials{}, fmt.Errorf("load encrypted Proxmox API credentials: %w", err)
+	}
+	client, err := proxmox.NewClient(proxmox.Config{BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", User: credentials.APIUser, TokenID: credentials.TokenID, TokenSecret: credentials.TokenSecret, CAFile: caFile, Insecure: insecure})
+	if err != nil {
+		return nil, site.ProxmoxCredentials{}, err
+	}
+	return client, credentials, nil
+}
+
+func jumpDestinations(s model.Site) []string {
+	result := []string{}
+	for _, m := range s.Modules {
+		if m.SSHManaged && m.JumpAllowed {
+			port := m.SSHPort
+			if port == 0 {
+				port = 22
+			}
+			result = append(result, fmt.Sprintf("%s:%d", m.Address, port))
+		}
+	}
+	sort.Strings(result)
+	return result
+}
+
+func defaultOperatorPublicKey() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	for _, name := range []string{"id_ed25519.pub", "id_ecdsa.pub", "id_rsa.pub"} {
+		path := filepath.Join(home, ".ssh", name)
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return ""
+}
+
+func readOperatorPublicKey(path string) (string, error) {
+	if path == "" {
+		return "", errors.New("operator SSH public key is required; use --operator-key PATH")
+	}
+	data, err := os.ReadFile(model.ExpandUserPath(path))
+	if err != nil {
+		return "", fmt.Errorf("read operator SSH public key: %w", err)
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+func valueOrPlaceholder(value string) string {
+	if value == "" {
+		return "<required for live run>"
+	}
+	return value
+}
+
 func runIntegrationGate(command string, args []string, out interface{ Write([]byte) (int, error) }) error {
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -666,18 +949,24 @@ func writeModelProjections(dir string, s model.Site) error {
 		return err
 	}
 	normalized := s.Normalize()
+	proxmoxPlan, err := proxmox.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
+	opnsensePlan, err := opnsense.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
 	if err := writeProjection(filepath.Join(dir, "generated", "inventory.json"), struct {
 		ModelRevision string         `json:"model_revision"`
 		Modules       []model.Module `json:"modules"`
 	}{revision, normalized.Modules}); err != nil {
 		return err
 	}
-	if err := writeProjection(filepath.Join(dir, "generated", "opnsense", "desired-policy.json"), struct {
-		ModelRevision string       `json:"model_revision"`
-		Boundary      string       `json:"boundary"`
-		Default       string       `json:"default"`
-		Zones         []model.Zone `json:"zones"`
-	}{revision, "opnsense", "deny", normalized.Network.Zones}); err != nil {
+	if err := writeProjection(filepath.Join(dir, "generated", "opnsense", "desired-policy.json"), opnsensePlan); err != nil {
+		return err
+	}
+	if err := writeProjection(filepath.Join(dir, "generated", "proxmox", "desired-state.json"), proxmoxPlan); err != nil {
 		return err
 	}
 	if err := writeProjection(filepath.Join(dir, "generated", "zabbix", "provisioning.json"), struct {
@@ -685,6 +974,13 @@ func writeModelProjections(dir string, s model.Site) error {
 		Target        string         `json:"target"`
 		Modules       []model.Module `json:"modules"`
 	}{revision, model.ZabbixSeries, normalized.Modules}); err != nil {
+		return err
+	}
+	sshContent, err := sshconfig.Render(s, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if err := writePublic(filepath.Join(dir, "generated", "ssh", "labinabox.conf"), []byte(sshContent)); err != nil {
 		return err
 	}
 	return writeAccessProjection(dir, s)

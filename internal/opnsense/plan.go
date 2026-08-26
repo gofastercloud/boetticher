@@ -12,22 +12,34 @@ import (
 )
 
 const (
-	DHCPv4SubnetSearch = "/api/kea/dhcpv4/search_subnet"
-	DHCPv4SubnetAdd    = "/api/kea/dhcpv4/add_subnet"
-	DHCPv4SubnetSet    = "/api/kea/dhcpv4/set_subnet"
+	DHCPv4SubnetSearch = "/api/kea/dhcpv4/searchSubnet"
+	DHCPv4SubnetAdd    = "/api/kea/dhcpv4/addSubnet"
+	DHCPv4SubnetSet    = "/api/kea/dhcpv4/setSubnet"
 	DHCPv4Reconfigure  = "/api/kea/service/reconfigure"
-	FirewallSearch     = "/api/firewall/filter/search_rule"
-	FirewallAdd        = "/api/firewall/filter/add_rule"
-	FirewallSet        = "/api/firewall/filter/set_rule"
+	VLANSearch         = "/api/interfaces/vlan_settings/searchItem"
+	VLANAdd            = "/api/interfaces/vlan_settings/addItem"
+	VLANReconfigure    = "/api/interfaces/vlan_settings/reconfigure"
+	FirewallSearch     = "/api/firewall/filter/searchRule"
+	FirewallAdd        = "/api/firewall/filter/addRule"
+	FirewallSet        = "/api/firewall/filter/setRule"
 	FirewallApply      = "/api/firewall/filter_base/apply"
 )
 
 type Plan struct {
-	ModelRevision string         `json:"model_revision"`
-	Boundary      string         `json:"boundary"`
-	IPv4Only      bool           `json:"ipv4_only"`
-	Zones         []ZonePlan     `json:"zones"`
-	FirewallRules []FirewallRule `json:"firewall_rules"`
+	ModelRevision  string         `json:"model_revision"`
+	Boundary       string         `json:"boundary"`
+	IPv4Only       bool           `json:"ipv4_only"`
+	InternalParent string         `json:"internal_parent"`
+	VLANs          []VLANPlan     `json:"vlans"`
+	Zones          []ZonePlan     `json:"zones"`
+	FirewallRules  []FirewallRule `json:"firewall_rules"`
+}
+
+type VLANPlan struct {
+	Name        string `json:"name"`
+	VLAN        int    `json:"vlan"`
+	Parent      string `json:"parent"`
+	Description string `json:"description"`
 }
 
 type ZonePlan struct {
@@ -84,12 +96,64 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		zones = append(zones, plan)
 	}
 	return Plan{
-		ModelRevision: revision,
-		Boundary:      "opnsense",
-		IPv4Only:      true,
-		Zones:         zones,
-		FirewallRules: firewallRules(s),
+		ModelRevision:  revision,
+		Boundary:       "opnsense",
+		IPv4Only:       true,
+		InternalParent: "vtnet1",
+		VLANs:          vlanPlans(s),
+		Zones:          zones,
+		FirewallRules:  firewallRules(s),
 	}, nil
+}
+
+func vlanPlans(s model.Site) []VLANPlan {
+	zones := append([]model.Zone(nil), s.Network.Zones...)
+	sort.Slice(zones, func(i, j int) bool { return zones[i].VLAN < zones[j].VLAN })
+	result := make([]VLANPlan, 0, len(zones))
+	for _, zone := range zones {
+		result = append(result, VLANPlan{Name: zone.Name, VLAN: zone.VLAN, Parent: "vtnet1", Description: "Lab-in-a-Box " + zone.Name})
+	}
+	return result
+}
+
+// ApplyVLANs uses the documented OPNsense VLAN model API. Interface address
+// assignment remains a separately qualified transition because changing it
+// can interrupt the only management path during bootstrap.
+func (c *Client) ApplyVLANs(ctx context.Context, plan Plan) error {
+	for _, desired := range plan.VLANs {
+		var search struct {
+			Rows []struct {
+				UUID string `json:"uuid"`
+				If   string `json:"if"`
+				Tag  string `json:"tag"`
+			} `json:"rows"`
+		}
+		if err := c.Post(ctx, VLANSearch, map[string]any{
+			"current": 1, "rowCount": 100, "sort": map[string]any{}, "searchPhrase": desired.Description,
+		}, &search); err != nil {
+			return fmt.Errorf("search OPNsense VLAN %s: %w", desired.Name, err)
+		}
+		payload := map[string]any{"vlan": map[string]any{
+			"if": desired.Parent, "tag": desired.VLAN, "descr": desired.Description,
+		}}
+		if len(search.Rows) == 0 {
+			if err := c.Post(ctx, VLANAdd, payload, nil); err != nil {
+				return fmt.Errorf("add OPNsense VLAN %s: %w", desired.Name, err)
+			}
+			continue
+		}
+		row := search.Rows[0]
+		if row.UUID == "" {
+			return fmt.Errorf("OPNsense returned a VLAN without a UUID for %s", desired.Name)
+		}
+		if row.If != "" && row.If != desired.Parent {
+			return fmt.Errorf("OPNsense VLAN %s has parent %q, expected %q", desired.Name, row.If, desired.Parent)
+		}
+		if row.Tag != "" && row.Tag != strconv.Itoa(desired.VLAN) {
+			return fmt.Errorf("OPNsense VLAN %s has tag %q, expected %d", desired.Name, row.Tag, desired.VLAN)
+		}
+	}
+	return c.Post(ctx, VLANReconfigure, map[string]any{}, nil)
 }
 
 func poolForNetwork(network string) string {
@@ -105,16 +169,20 @@ func poolForNetwork(network string) string {
 }
 
 func firewallRules(s model.Site) []FirewallRule {
+	networks := make(map[string]string, len(s.Network.Zones))
+	for _, zone := range s.Network.Zones {
+		networks[zone.Name] = zone.Network
+	}
 	// Rules are named and ordered so the convergence layer can identify its
 	// own records without deleting rules owned by the operator or OPNsense.
 	return []FirewallRule{
-		{Description: "labinabox sandbox deny trusted", Source: "SANDBOX", Destination: "TRUSTED", Action: "block", Protocol: "any"},
-		{Description: "labinabox sandbox deny servers", Source: "SANDBOX", Destination: "SERVERS", Action: "block", Protocol: "any"},
-		{Description: "labinabox sandbox deny management", Source: "SANDBOX", Destination: "MGMT", Action: "block", Protocol: "any"},
-		{Description: "labinabox trusted to services", Source: "TRUSTED", Destination: "SERVERS", Action: "pass", Protocol: "tcp"},
-		{Description: "labinabox trusted to management services", Source: "TRUSTED", Destination: "MGMT", Action: "pass", Protocol: "tcp"},
-		{Description: "labinabox services to monitor", Source: "SERVERS", Destination: "MGMT", Action: "pass", Protocol: "tcp"},
-		{Description: "labinabox management to services", Source: "MGMT", Destination: "SERVERS", Action: "pass", Protocol: "tcp"},
+		{Description: "labinabox sandbox deny trusted", Source: networks["SANDBOX"], Destination: networks["TRUSTED"], Action: "block", Protocol: "any"},
+		{Description: "labinabox sandbox deny servers", Source: networks["SANDBOX"], Destination: networks["SERVERS"], Action: "block", Protocol: "any"},
+		{Description: "labinabox sandbox deny management", Source: networks["SANDBOX"], Destination: networks["MGMT"], Action: "block", Protocol: "any"},
+		{Description: "labinabox trusted to services", Source: networks["TRUSTED"], Destination: networks["SERVERS"], Action: "pass", Protocol: "tcp"},
+		{Description: "labinabox trusted to management services", Source: networks["TRUSTED"], Destination: networks["MGMT"], Action: "pass", Protocol: "tcp"},
+		{Description: "labinabox services to monitor", Source: networks["SERVERS"], Destination: networks["MGMT"], Action: "pass", Protocol: "tcp"},
+		{Description: "labinabox management to services", Source: networks["MGMT"], Destination: networks["SERVERS"], Action: "pass", Protocol: "tcp"},
 	}
 }
 
@@ -218,12 +286,43 @@ func (p Plan) FirewallPayloads() []map[string]any {
 	return result
 }
 
-// Firewall rules are surfaced as a model projection. Applying them requires
-// resolving OPNsense interface/alias UUIDs and qualifying the rule schema on
-// the exact supported patch, so ApplyFirewall currently refuses to mutate.
-// This is a deliberate safety gate rather than an assertion of success.
-func (c *Client) ApplyFirewall(_ context.Context, _ Plan) error {
-	return fmt.Errorf("OPNsense firewall convergence requires qualified interface/alias UUID mapping; no mutation performed")
+func (c *Client) ApplyFirewall(ctx context.Context, plan Plan) error {
+	for _, desired := range plan.FirewallRules {
+		var search struct {
+			Rows []struct {
+				UUID        string `json:"uuid"`
+				Description string `json:"description"`
+			} `json:"rows"`
+		}
+		if err := c.Post(ctx, FirewallSearch, map[string]any{
+			"current": 1, "rowCount": 100, "sort": map[string]any{}, "searchPhrase": desired.Description,
+		}, &search); err != nil {
+			return fmt.Errorf("search firewall rule %s: %w", desired.Description, err)
+		}
+		payload := map[string]any{"rule": map[string]any{
+			"description":     desired.Description,
+			"source_net":      desired.Source,
+			"destination_net": desired.Destination,
+			"action":          desired.Action,
+			"protocol":        desired.Protocol,
+		}}
+		if len(search.Rows) == 0 {
+			if err := c.Post(ctx, FirewallAdd, payload, nil); err != nil {
+				return fmt.Errorf("add firewall rule %s: %w", desired.Description, err)
+			}
+			continue
+		}
+		if search.Rows[0].UUID == "" {
+			return fmt.Errorf("OPNsense returned a firewall rule without a UUID for %s", desired.Description)
+		}
+		if err := c.Post(ctx, FirewallSet+"/"+urlPathEscape(search.Rows[0].UUID), payload, nil); err != nil {
+			return fmt.Errorf("update firewall rule %s: %w", desired.Description, err)
+		}
+	}
+	if err := c.Post(ctx, FirewallApply, map[string]any{}, nil); err != nil {
+		return fmt.Errorf("apply firewall rules: %w", err)
+	}
+	return nil
 }
 
 func StableRuleDescriptions(plan Plan) []string {

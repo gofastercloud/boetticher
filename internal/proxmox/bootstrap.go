@@ -80,10 +80,15 @@ func ConfigureIdentities(ctx context.Context, runner CommandRunner, address, ini
 }
 
 func CreateScopedCredentials(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID string) (string, error) {
-	if !safeID(userID) || !safeID(tokenID) {
+	return CreateScopedCredentialsWithRole(ctx, runner, address, initialUser, userID, tokenID, "LabInABoxProvisioner")
+}
+
+func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID, role string) (string, error) {
+	if !safeID(userID) || !safeID(tokenID) || !safeID(role) {
 		return "", errors.New("Proxmox identity and token IDs must be simple identifiers")
 	}
-	command := "set -eu; pvesh get /access/users --output-format json >/dev/null; pvesh create /access/users --userid " + shellQuote(userID) + " --comment 'Lab-in-a-Box administrative identity' >/dev/null 2>&1 || true; pvesh create /access/acl --path / --users " + shellQuote(userID) + " --roles PVEAdmin --propagate 1 >/dev/null; pvesh create /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID) + " --privsep 1 --output-format json"
+	privileges := "VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options VM.Console VM.PowerMgmt Datastore.AllocateSpace Datastore.Audit Sys.Audit"
+	command := "set -eu; pvesh create /access/roles/" + shellQuote(role) + " --privs " + shellQuote(privileges) + " >/dev/null 2>&1 || true; pvesh create /access/users --userid " + shellQuote(userID) + " --comment 'Lab-in-a-Box automation identity' >/dev/null 2>&1 || true; pvesh create /access/acl --path / --users " + shellQuote(userID) + " --roles " + shellQuote(role) + " --propagate 1 >/dev/null; pvesh create /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID) + " --privsep 1 --output-format json"
 	output, err := runner.Run(ctx, address, initialUser, command)
 	if err != nil {
 		return "", err
@@ -100,12 +105,14 @@ func CreateScopedCredentials(ctx context.Context, runner CommandRunner, address,
 	return response.Value, nil
 }
 
-func validatePublicKey(publicKey string) error {
+func ValidatePublicKey(publicKey string) error {
 	if strings.TrimSpace(publicKey) == "" || strings.ContainsAny(publicKey, "\r\n'") || !strings.Contains(publicKey, " ") {
 		return errors.New("operator SSH public key must be a single OpenSSH public-key line")
 	}
 	return nil
 }
+
+func validatePublicKey(publicKey string) error { return ValidatePublicKey(publicKey) }
 
 func publicKeyLine(publicKey string) string { return publicKey }
 

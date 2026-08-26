@@ -89,6 +89,18 @@ func Provision(ctx context.Context, client *Client, plan Plan, opnsenseISO, debi
 	return nil
 }
 
+func EnsureFirewallVM(ctx context.Context, client *Client, plan Plan, opnsenseISO string) error {
+	if client == nil {
+		return errors.New("Proxmox client is required")
+	}
+	for _, guest := range plan.Guests {
+		if guest.Kind == KindQEMU {
+			return ensureQEMU(ctx, client, plan, guest, opnsenseISO)
+		}
+	}
+	return errors.New("foundation plan has no firewall VM")
+}
+
 func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan, iso string) error {
 	var current map[string]any
 	err := client.QEMUConfig(ctx, plan.Node, guest.VMID, &current)
