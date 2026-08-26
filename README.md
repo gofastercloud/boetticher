@@ -1,13 +1,15 @@
 # boetticher
 
-**Lab-in-a-Box: a small, opinionated Proxmox platform for a secure homelab.**
+**A small, opinionated Proxmox platform for a secure homelab.**
+
+> **Status: pre-alpha.** The architecture and offline contracts are implemented, but the greenfield deployment has not yet completed live qualification. Do not use this on a system you cannot wipe or recover.
 
 [![CI](https://github.com/gofastercloud/boetticher/actions/workflows/ci.yml/badge.svg)](https://github.com/gofastercloud/boetticher/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 boetticher turns a fresh x86 Proxmox host into a reproducible platform with OPNsense segmentation, Kea DHCP, dual DNS/NTP, internal PKI and mTLS, Zabbix observability, a generated portal, encrypted configuration, and a documented recovery path.
 
-It is deliberately a distribution, not a configurable homelab framework and not a second Proxmox control plane. Lab-in-a-Box owns the platform foundation. Proxmox remains the user’s normal interface for user workloads.
+It is deliberately a distribution, not a configurable homelab framework and not a second Proxmox control plane. boetticher owns the platform foundation. Proxmox remains the user’s normal interface for user workloads.
 
 ## The architecture
 
@@ -48,8 +50,8 @@ OPNsense is the routing and inter-zone security boundary. Proxmox does not route
 - Fresh supported Proxmox VE x86 installation with node name `lab-proxmox-01`. Exact Proxmox release qualification is a release gate; this source tree does not imply that every PVE release is supported.
 - One physical Ethernet NIC minimum. A second NIC and managed 802.1Q switch are recommended for physical VLAN breakout, but `vmbr1` may remain virtual-only.
 - Controller: macOS arm64/amd64 or Linux arm64/amd64. Native Windows is out of scope; WSL2 is only supported if separately tested.
-- Controller tools: Go matching `go.mod`, `ssh`, `ssh-keyscan`, `age-keygen`, `sops`, OpenTofu, and Ansible Core. `homelab preflight` validates versions before mutation.
-- OPNsense 26.7 at the exact qualified patch recorded in `site.yml`; later 26.7 patches require explicit Lab-in-a-Box qualification.
+- Controller tools: Go matching `go.mod`, `ssh`, `ssh-keyscan`, `age-keygen`, `sops`, OpenTofu, and Ansible Core. `boetticher preflight` validates versions before mutation.
+- OPNsense 26.7.2_2 at the exact qualified patch recorded in `site.yml`; later 26.7 patches require explicit boetticher qualification.
 - Zabbix 7.0 LTS: full upstream support through June 2027 and limited support through June 2029.
 - Either the single-disk or dedicated-data-disk storage profile.
 
@@ -58,14 +60,14 @@ OPNsense is the routing and inter-zone security boundary. Proxmox does not route
 From a fresh controller and Proxmox HOME-side DHCP address:
 
 ```sh
-homelab init --site-dir my-homelab
-homelab preflight --site my-homelab
-homelab bootstrap --site my-homelab --opnsense-iso VERIFIED_ISO --recovery-confirmed
-homelab provision --site my-homelab
-homelab converge --site my-homelab
-homelab ssh-config --site my-homelab --install-include
-homelab verify --site my-homelab
-homelab access --site my-homelab
+boetticher init --site-dir my-boetticher
+boetticher preflight --site my-boetticher
+boetticher bootstrap --site my-boetticher --recovery-confirmed
+boetticher provision --site my-boetticher --opnsense-iso VERIFIED_ISO
+boetticher converge --site my-boetticher
+boetticher ssh-config --site my-boetticher --install-include
+boetticher verify --site my-boetticher
+boetticher access --site my-boetticher
 ```
 
 Keep the independent recovery copy of the Age identity before destructive bootstrap proceeds. The private identity never belongs in Git. The initial Proxmox trust transition installs the operator key, creates the normal administrator and forwarding-only `lab-jump` identity, creates scoped API credentials, hands them directly to SOPS, and retires routine use of the initial bootstrap path.
@@ -86,9 +88,9 @@ operator on HOME
                               `-- ProxyJump lab-bastion -> internal hosts
 ```
 
-Useful commands after convergence include `ssh dns01`, `ssh monitor`, `ssh portal`, and `homelab access`. Generated SSH configuration uses fixed internal IPs, canonical `HostKeyAlias` values, the modelled destination allow-list, and normal host-key verification.
+Useful commands after convergence include `ssh dns01`, `ssh monitor`, `ssh portal`, and `boetticher access`. Generated SSH configuration uses fixed internal IPs, canonical `HostKeyAlias` values, the modelled destination allow-list, and normal host-key verification.
 
-Lab-in-a-Box manages only declared platform resources. User workloads remain user-owned:
+boetticher manages only declared platform resources. User workloads remain user-owned:
 
 ```text
 Create VM/LXC in Proxmox
@@ -98,7 +100,7 @@ Create VM/LXC in Proxmox
   -> boot
 ```
 
-There is intentionally no generic `homelab vm`, `homelab lxc`, or `homelab workload` lifecycle command. Use the Proxmox UI, `qm`, `pct`, OpenTofu, Ansible, Pulumi, or another tool for arbitrary workloads. See [docs/platform-ownership.md](docs/platform-ownership.md).
+There is intentionally no generic `boetticher vm`, `boetticher lxc`, or `boetticher workload` lifecycle command. Use the Proxmox UI, `qm`, `pct`, OpenTofu, Ansible, Pulumi, or another tool for arbitrary workloads. See [docs/platform-ownership.md](docs/platform-ownership.md).
 
 ## Documentation
 

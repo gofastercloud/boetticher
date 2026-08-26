@@ -14,7 +14,7 @@ const (
 	AuthoritativeImplementation = model.AuthoritativeDNS
 	AuthoritativeVersion        = model.AuthoritativeDNSVersion
 	ConflictPolicy              = "reject-new-active-lease"
-	TSIGSecretReference         = "secrets/homelab.sops.yaml#ddns_tsig_secret"
+	TSIGSecretReference         = "secrets/boetticher.sops.yaml#ddns_tsig_secret"
 )
 
 var hostnameLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)

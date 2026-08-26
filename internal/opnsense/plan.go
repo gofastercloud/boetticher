@@ -122,7 +122,7 @@ func vlanPlans(s model.Site) []VLANPlan {
 	sort.Slice(zones, func(i, j int) bool { return zones[i].VLAN < zones[j].VLAN })
 	result := make([]VLANPlan, 0, len(zones))
 	for _, zone := range zones {
-		result = append(result, VLANPlan{Name: zone.Name, VLAN: zone.VLAN, Parent: "vtnet1", Description: "Lab-in-a-Box " + zone.Name})
+		result = append(result, VLANPlan{Name: zone.Name, VLAN: zone.VLAN, Parent: "vtnet1", Description: "boetticher " + zone.Name})
 	}
 	return result
 }
@@ -187,15 +187,15 @@ func firewallRules(s model.Site) []FirewallRule {
 	// Rules are named and ordered so the convergence layer can identify its
 	// own records without deleting rules owned by the operator or OPNsense.
 	return []FirewallRule{
-		{Description: "labinabox sandbox deny trusted", Source: networks["SANDBOX"], Destination: networks["TRUSTED"], Action: "block", Protocol: "any"},
-		{Description: "labinabox sandbox deny servers", Source: networks["SANDBOX"], Destination: networks["SERVERS"], Action: "block", Protocol: "any"},
-		{Description: "labinabox sandbox deny management", Source: networks["SANDBOX"], Destination: networks["MGMT"], Action: "block", Protocol: "any"},
-		{Description: "labinabox trusted to server DNS HTTPS", Source: networks["TRUSTED"], Destination: networks["SERVERS"], Action: "pass", Protocol: "tcp", DestinationPort: "53,443"},
-		{Description: "labinabox trusted to server DNS NTP", Source: networks["TRUSTED"], Destination: networks["SERVERS"], Action: "pass", Protocol: "udp", DestinationPort: "53,123"},
-		{Description: "labinabox trusted to management HTTPS", Source: networks["TRUSTED"], Destination: networks["MGMT"], Action: "pass", Protocol: "tcp", DestinationPort: "443,8006"},
-		{Description: "labinabox services to monitor", Source: networks["SERVERS"], Destination: networks["MGMT"], Action: "pass", Protocol: "tcp", DestinationPort: "10051"},
-		{Description: "labinabox management to services", Source: networks["MGMT"], Destination: networks["SERVERS"], Action: "pass", Protocol: "tcp", DestinationPort: "22,53,443"},
-		{Description: "labinabox management to server DNS NTP", Source: networks["MGMT"], Destination: networks["SERVERS"], Action: "pass", Protocol: "udp", DestinationPort: "53,123"},
+		{Description: "boetticher sandbox deny trusted", Source: networks["SANDBOX"], Destination: networks["TRUSTED"], Action: "block", Protocol: "any"},
+		{Description: "boetticher sandbox deny servers", Source: networks["SANDBOX"], Destination: networks["SERVERS"], Action: "block", Protocol: "any"},
+		{Description: "boetticher sandbox deny management", Source: networks["SANDBOX"], Destination: networks["MGMT"], Action: "block", Protocol: "any"},
+		{Description: "boetticher trusted to server DNS HTTPS", Source: networks["TRUSTED"], Destination: networks["SERVERS"], Action: "pass", Protocol: "tcp", DestinationPort: "53,443"},
+		{Description: "boetticher trusted to server DNS NTP", Source: networks["TRUSTED"], Destination: networks["SERVERS"], Action: "pass", Protocol: "udp", DestinationPort: "53,123"},
+		{Description: "boetticher trusted to management HTTPS", Source: networks["TRUSTED"], Destination: networks["MGMT"], Action: "pass", Protocol: "tcp", DestinationPort: "443,8006"},
+		{Description: "boetticher services to monitor", Source: networks["SERVERS"], Destination: networks["MGMT"], Action: "pass", Protocol: "tcp", DestinationPort: "10051"},
+		{Description: "boetticher management to services", Source: networks["MGMT"], Destination: networks["SERVERS"], Action: "pass", Protocol: "tcp", DestinationPort: "22,53,443"},
+		{Description: "boetticher management to server DNS NTP", Source: networks["MGMT"], Destination: networks["SERVERS"], Action: "pass", Protocol: "udp", DestinationPort: "53,123"},
 	}
 }
 
@@ -263,7 +263,7 @@ func (p Plan) keaPayloads(tsigSecret string) []KeaSubnetPayload {
 		payload := KeaSubnetPayload{Subnet4: KeaSubnet{
 			SubnetID:    index + 1,
 			Subnet:      zone.Network,
-			Description: "Lab-in-a-Box " + zone.Name,
+			Description: "boetticher " + zone.Name,
 			OptionData: KeaOptionData{
 				DomainNameServers: strings.Join(zone.DNSAddresses, ","),
 				Routers:           zone.Gateway,

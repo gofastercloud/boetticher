@@ -17,14 +17,14 @@ const (
 	SchemaVersion           = 1
 	PlatformVersion         = "0.1.0"
 	OPNsenseSeries          = "26.7"
-	QualifiedOPNsense       = "26.7.0"
+	QualifiedOPNsense       = "26.7.2_2"
 	ZabbixSeries            = "7.0 LTS"
 	AuthoritativeDNS        = "PowerDNS Authoritative"
 	AuthoritativeDNSVersion = "4.9.16"
 	DefaultDomain           = "lab.home.arpa"
-	DefaultSiteDir          = "my-homelab"
-	DefaultAgeIdentity      = "~/.config/labinabox/age/identity.txt"
-	DefaultSSHConfig        = "~/.ssh/config.d/labinabox.conf"
+	DefaultSiteDir          = "my-boetticher"
+	DefaultAgeIdentity      = "~/.config/boetticher/age/identity.txt"
+	DefaultSSHConfig        = "~/.ssh/config.d/boetticher.conf"
 	DefaultAdminSSHUser     = "labadmin"
 	DefaultProxmoxNode      = "lab-proxmox-01"
 	ProxmoxVMID             = 100
@@ -142,7 +142,7 @@ type Module struct {
 
 func NewDefaultSite(installationID, ageRecipient string) Site {
 	return Site{
-		APIVersion:      "labinabox/v1",
+		APIVersion:      "boetticher/v1",
 		PlatformVersion: PlatformVersion,
 		SchemaVersion:   SchemaVersion,
 		StorageProfile:  "single-disk",
@@ -193,7 +193,7 @@ func (s Site) Normalize() Site {
 }
 
 func (s Site) Validate() error {
-	if s.APIVersion != "labinabox/v1" || s.SchemaVersion != SchemaVersion {
+	if s.APIVersion != "boetticher/v1" || s.SchemaVersion != SchemaVersion {
 		return fmt.Errorf("unsupported site schema %q/%d", s.APIVersion, s.SchemaVersion)
 	}
 	if s.PlatformVersion == "" {
@@ -301,7 +301,7 @@ func (s Site) Validate() error {
 			}
 			seenVMIDs[m.VMID] = m.Name
 			if m.ProductOwned && (m.VMID < PlatformGuestIDMin || m.VMID > ModuleGuestIDMax) {
-				return fmt.Errorf("platform module %s uses VMID %d outside Lab-in-a-Box-owned ranges", m.Name, m.VMID)
+				return fmt.Errorf("platform module %s uses VMID %d outside boetticher-owned ranges", m.Name, m.VMID)
 			}
 			if !m.ProductOwned && (m.VMID < UserGuestIDMin || m.VMID > UserGuestIDMax) {
 				return fmt.Errorf("user-managed module %s uses VMID %d outside the reserved user-workload range", m.Name, m.VMID)

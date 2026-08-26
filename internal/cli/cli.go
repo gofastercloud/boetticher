@@ -69,28 +69,28 @@ func Run(args []string, out, errOut interface{ Write([]byte) (int, error) }) err
 	case "upgrade":
 		return runIntegrationGate(args[0], args[1:], out)
 	}
-	fmt.Fprintf(errOut, "usage: homelab <command>\n")
+	fmt.Fprintf(errOut, "usage: boetticher <command>\n")
 	return fmt.Errorf("unknown or incomplete command %q", strings.Join(args, " "))
 }
 
 func usage(out interface{ Write([]byte) (int, error) }) {
-	fmt.Fprintln(out, `Lab-in-a-Box operator CLI
+	fmt.Fprintln(out, `boetticher operator CLI
 
 Usage:
-  homelab init [--site-dir DIR] [--age-identity PATH]
-	homelab preflight [--site DIR] [--live] [--bootstrap-address ADDRESS] [--trunk-interface IFACE]
-	homelab bootstrap [--site DIR] [--recovery-confirmed] [--trunk-interface IFACE] [--dry-run]
-	homelab provision [--site DIR] [--opnsense-iso PATH] [--debian-template TEMPLATE] [--dry-run]
-	homelab converge [--site DIR] [--opnsense-url URL] [--dry-run]
-	homelab verify | doctor | upgrade [--site DIR]
-	homelab ssh-config [--site DIR] [--output PATH| -] [--force] [--check] [--install-include]
-	homelab access [--site DIR]
-	homelab bootstrap-endpoint show|set ADDRESS [--site DIR]
-	homelab network trunk status|attach|detach [INTERFACE] [--site DIR]
-	homelab pki client create|export|revoke NAME [--site DIR]
-	homelab pki trust export [--site DIR]
-	homelab opnsense credentials import [--site DIR]
-  homelab portal build [--site DIR] [--output DIR] [--docs DIR]`)
+	  boetticher init [--site-dir DIR] [--age-identity PATH]
+	boetticher preflight [--site DIR] [--live] [--bootstrap-address ADDRESS] [--trunk-interface IFACE]
+	boetticher bootstrap [--site DIR] [--recovery-confirmed] [--trunk-interface IFACE] [--dry-run]
+	boetticher provision [--site DIR] [--opnsense-iso PATH] [--debian-template TEMPLATE] [--dry-run]
+	boetticher converge [--site DIR] [--opnsense-url URL] [--dry-run]
+	boetticher verify | doctor | upgrade [--site DIR]
+	boetticher ssh-config [--site DIR] [--output PATH| -] [--force] [--check] [--install-include]
+	boetticher access [--site DIR]
+	boetticher bootstrap-endpoint show|set ADDRESS [--site DIR]
+	boetticher network trunk status|attach|detach [INTERFACE] [--site DIR]
+	boetticher pki client create|export|revoke NAME [--site DIR]
+	boetticher pki trust export [--site DIR]
+	boetticher opnsense credentials import [--site DIR]
+  boetticher portal build [--site DIR] [--output DIR] [--docs DIR]`)
 }
 
 func runInit(args []string, out interface{ Write([]byte) (int, error) }) error {
@@ -321,7 +321,7 @@ func runPortalBuild(args []string, out interface{ Write([]byte) (int, error) }) 
 
 func runBootstrapEndpoint(args []string, out interface{ Write([]byte) (int, error) }) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: homelab bootstrap-endpoint show|set ADDRESS [--site DIR]")
+		return fmt.Errorf("usage: boetticher bootstrap-endpoint show|set ADDRESS [--site DIR]")
 	}
 	command := args[0]
 	fs := flag.NewFlagSet("bootstrap-endpoint", flag.ContinueOnError)
@@ -375,7 +375,7 @@ func runBootstrapEndpoint(args []string, out interface{ Write([]byte) (int, erro
 
 func runPKI(args []string, out interface{ Write([]byte) (int, error) }) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: homelab pki client create|export|revoke NAME; homelab pki trust export")
+		return fmt.Errorf("usage: boetticher pki client create|export|revoke NAME; boetticher pki trust export")
 	}
 	subcommand := args[0]
 	if subcommand == "trust" && args[1] == "export" {
@@ -514,7 +514,7 @@ func runPKITrust(args []string, out interface{ Write([]byte) (int, error) }) err
 
 func runOPNsense(args []string, out interface{ Write([]byte) (int, error) }) error {
 	if len(args) < 2 || args[0] != "credentials" || args[1] != "import" {
-		return errors.New("usage: homelab opnsense credentials import [--site DIR] < credentials.json")
+		return errors.New("usage: boetticher opnsense credentials import [--site DIR] < credentials.json")
 	}
 	fs := flag.NewFlagSet("opnsense credentials import", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -548,7 +548,7 @@ func runOPNsense(args []string, out interface{ Write([]byte) (int, error) }) err
 
 func runNetwork(args []string, out interface{ Write([]byte) (int, error) }) error {
 	if len(args) < 2 || args[0] != "trunk" {
-		return fmt.Errorf("usage: homelab network trunk status|attach|detach [--site DIR]")
+		return fmt.Errorf("usage: boetticher network trunk status|attach|detach [--site DIR]")
 	}
 	command := args[1]
 	rest := args[2:]
@@ -764,7 +764,7 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return err
 	}
-	sshResult := portal.CheckResult{Name: "generated SSH configuration", Status: "NOT TESTED", Detail: "run homelab ssh-config first"}
+	sshResult := portal.CheckResult{Name: "generated SSH configuration", Status: "NOT TESTED", Detail: "run boetticher ssh-config first"}
 	if err := sshconfig.Check(*sshPath, s); err == nil {
 		sshResult = portal.CheckResult{Name: "generated SSH configuration", Status: "PASS", Detail: "configuration is current and preserves host-key verification"}
 	} else if !errors.Is(err, os.ErrNotExist) && !strings.Contains(err.Error(), "no such file") {
@@ -900,8 +900,8 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		{"bastion policy", filepath.Join(*siteDir, "generated", "ssh", "lab-jump.conf"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "ssh", "lab-jump.conf"), revision)
 		}},
-		{"SSH projection", filepath.Join(*siteDir, "generated", "ssh", "labinabox.conf"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "ssh", "labinabox.conf"), revision)
+		{"SSH projection", filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"), func() error {
+			return checkRevisionFile(filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"), revision)
 		}},
 		{"verification evidence", filepath.Join(*siteDir, "generated", "verification.json"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "verification.json"), revision)
@@ -963,7 +963,7 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 				}
 			}
 			if userCount > 0 {
-				fmt.Fprintf(out, "User-managed guests  INFO %d additional Proxmox guests detected; outside Lab-in-a-Box ownership\n", userCount)
+				fmt.Fprintf(out, "User-managed guests  INFO %d additional Proxmox guests detected; outside boetticher ownership\n", userCount)
 			} else {
 				fmt.Fprintln(out, "User-managed guests  INFO none detected")
 			}
@@ -1013,7 +1013,7 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 		return err
 	}
 	if s.BootstrapAddress == "" {
-		return errors.New("bootstrap endpoint is not configured; use homelab bootstrap-endpoint set ADDRESS first")
+		return errors.New("bootstrap endpoint is not configured; use boetticher bootstrap-endpoint set ADDRESS first")
 	}
 	if !*dryRun {
 		if _, err := os.Stat(model.ExpandUserPath(*ageIdentity)); err != nil {
@@ -1060,11 +1060,11 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err := proxmox.ConfigureIdentities(ctx, runner, s.BootstrapAddress, *initialUser, publicKey, allowedDestinations); err != nil {
 		return fmt.Errorf("configure Proxmox administrative and bastion identities: %w", err)
 	}
-	tokenSecret, err := proxmox.CreateScopedCredentialsWithRole(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "labinabox", "LabInABoxProvisioner")
+	tokenSecret, err := proxmox.CreateScopedCredentialsWithRole(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner")
 	if err != nil {
 		return fmt.Errorf("create scoped Proxmox API credentials: %w", err)
 	}
-	credentials := site.ProxmoxCredentials{APIUser: "labadmin@pve", TokenID: "labinabox", TokenSecret: tokenSecret}
+	credentials := site.ProxmoxCredentials{APIUser: "labadmin@pve", TokenID: "boetticher", TokenSecret: tokenSecret}
 	if err := site.StoreProxmoxCredentials(*siteDir, s, credentials); err != nil {
 		return fmt.Errorf("store Proxmox credentials in SOPS: %w", err)
 	}
@@ -1187,7 +1187,7 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	fmt.Fprintf(out, "Proxmox bootstrap: PASS authenticated with scoped identity on %s\n", version)
 	fmt.Fprintln(out, "Firewall VM: PASS created or already present and started")
 	fmt.Fprintln(out, "OPNsense installation/bootstrap: HOLD qualified unattended installer and interface-address path not yet exercised on a fresh VM")
-	fmt.Fprintln(out, "Initial root/bootstrap authentication: no longer required for routine Lab-in-a-Box access")
+	fmt.Fprintln(out, "Initial root/bootstrap authentication: no longer required for routine boetticher access")
 	return errors.New("HOLD: OPNsense greenfield bootstrap is not yet qualified; Proxmox trust transition completed")
 }
 
@@ -1351,7 +1351,7 @@ func checkBootstrapEndpoint(siteDir string, s model.Site) error {
 		return fmt.Errorf("decode bootstrap evidence: %w", err)
 	}
 	if evidence.BootstrapAddress != s.BootstrapAddress {
-		return fmt.Errorf("recorded address %s is stale; use homelab bootstrap-endpoint set ADDRESS then regenerate SSH configuration", evidence.BootstrapAddress)
+		return fmt.Errorf("recorded address %s is stale; use boetticher bootstrap-endpoint set ADDRESS then regenerate SSH configuration", evidence.BootstrapAddress)
 	}
 	connection, err := net.DialTimeout("tcp", net.JoinHostPort(s.BootstrapAddress, "22"), 5*time.Second)
 	if err != nil {
@@ -1546,14 +1546,14 @@ func writeModelProjections(dir string, s model.Site) error {
 	if err := writePublic(filepath.Join(dir, "generated", "ansible", "variables.json"), variables); err != nil {
 		return err
 	}
-	sshContent := "# Managed by Lab-in-a-Box. Do not edit.\n# labinabox-model-revision: " + revision + "\n# Bootstrap endpoint is not configured; run homelab bootstrap-endpoint set ADDRESS.\n"
+	sshContent := "# Managed by boetticher. Do not edit.\n# boetticher-model-revision: " + revision + "\n# Bootstrap endpoint is not configured; run boetticher bootstrap-endpoint set ADDRESS.\n"
 	if s.BootstrapAddress != "" {
 		sshContent, err = sshconfig.Render(s, time.Now().UTC())
 		if err != nil {
 			return err
 		}
 	}
-	if err := writePublic(filepath.Join(dir, "generated", "ssh", "labinabox.conf"), []byte(sshContent)); err != nil {
+	if err := writePublic(filepath.Join(dir, "generated", "ssh", "boetticher.conf"), []byte(sshContent)); err != nil {
 		return err
 	}
 	if err := writeAccessProjection(dir, s); err != nil {
@@ -1759,7 +1759,7 @@ func writeFile(path string, data []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".labinabox-output-*")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".boetticher-output-*")
 	if err != nil {
 		return err
 	}

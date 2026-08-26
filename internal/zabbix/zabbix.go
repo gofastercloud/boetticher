@@ -2,7 +2,7 @@ package zabbix
 
 import "github.com/gofastercloud/boetticher/internal/model"
 
-const PlatformHostGroup = "Lab-in-a-Box/Platform"
+const PlatformHostGroup = "boetticher/platform"
 
 type Plan struct {
 	ModelRevision string         `json:"model_revision"`
@@ -24,7 +24,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	return Plan{
 		ModelRevision: revision,
 		Target:        model.ZabbixSeries,
-		ManagedBy:     "Lab-in-a-Box",
+		ManagedBy:     "boetticher",
 		HostGroup:     PlatformHostGroup,
 		PlatformOnly:  true,
 		Modules:       s.PlatformModules(),

@@ -29,7 +29,7 @@ func Render(s model.Site, generatedAt time.Time) (string, error) {
 		return "", errors.New("bootstrap endpoint is not configured; record the upstream Proxmox address before generating SSH configuration")
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Managed by Lab-in-a-Box. Do not edit.\n# labinabox-model-revision: %s\n# generated-at: %s\n# Configure ~/.ssh/config with: Include ~/.ssh/config.d/*\n\n", revision, generatedAt.UTC().Format(time.RFC3339))
+	fmt.Fprintf(&b, "# Managed by boetticher. Do not edit.\n# boetticher-model-revision: %s\n# generated-at: %s\n# Configure ~/.ssh/config with: Include ~/.ssh/config.d/*\n\n", revision, generatedAt.UTC().Format(time.RFC3339))
 
 	writeHost(&b, []string{"lab-proxmox-01", "proxmox"}, endpoint, "labadmin", "lab-proxmox-01", identity, false, false)
 	writeHost(&b, []string{"lab-bastion"}, endpoint, "lab-jump", "lab-proxmox-01", identity, false, true)
@@ -66,7 +66,7 @@ func RenderBastionPolicy(s model.Site) (string, error) {
 	}
 	sort.Strings(destinations)
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Managed by Lab-in-a-Box.\n# labinabox-model-revision: %s\n# Install through the authenticated Proxmox convergence path.\n\n", revision)
+	fmt.Fprintf(&b, "# Managed by boetticher.\n# boetticher-model-revision: %s\n# Install through the authenticated Proxmox convergence path.\n\n", revision)
 	b.WriteString("Match User lab-jump\n")
 	b.WriteString("    PermitTTY no\n")
 	b.WriteString("    X11Forwarding no\n")
@@ -95,7 +95,7 @@ func Write(path string, content []byte, force bool) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".labinabox-ssh-*")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".boetticher-ssh-*")
 	if err != nil {
 		return err
 	}
@@ -129,7 +129,7 @@ func Check(path string, s model.Site) error {
 		return err
 	}
 	text := string(content)
-	if !strings.Contains(text, "# labinabox-model-revision: "+revision) {
+	if !strings.Contains(text, "# boetticher-model-revision: "+revision) {
 		return fmt.Errorf("SSH configuration is stale or from a different model revision")
 	}
 	for _, required := range []string{"Host lab-bastion", "ProxyJump lab-bastion", "HostKeyAlias", "IdentitiesOnly yes"} {

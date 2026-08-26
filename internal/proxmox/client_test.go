@@ -17,7 +17,7 @@ func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) 
 
 func TestClientUsesTokenAndDecodesEnvelope(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
-		if r.Header.Get("Authorization") != "PVEAPIToken=labadmin@pve!labinabox=secret" {
+		if r.Header.Get("Authorization") != "PVEAPIToken=labadmin@pve!boetticher=secret" {
 			t.Errorf("unexpected authorization header: %q", r.Header.Get("Authorization"))
 		}
 		if r.URL.Path != "/api2/json/version" {
@@ -26,11 +26,11 @@ func TestClientUsesTokenAndDecodesEnvelope(t *testing.T) {
 		data, _ := json.Marshal(map[string]any{"data": map[string]string{"version": "8.4"}})
 		return response(data)
 	})
-	client, err := NewClient(Config{BaseURL: "http://127.0.0.1:8006", User: "labadmin@pve", TokenID: "labinabox", TokenSecret: "secret"})
+	client, err := NewClient(Config{BaseURL: "http://127.0.0.1:8006", User: "labadmin@pve", TokenID: "boetticher", TokenSecret: "secret"})
 	if err == nil {
 		t.Fatal("insecure HTTP base URL was accepted")
 	}
-	client = &Client{BaseURL: "https://127.0.0.1:8006/api2/json", Token: "PVEAPIToken=labadmin@pve!labinabox=secret", HTTP: &http.Client{Transport: transport}}
+	client = &Client{BaseURL: "https://127.0.0.1:8006/api2/json", Token: "PVEAPIToken=labadmin@pve!boetticher=secret", HTTP: &http.Client{Transport: transport}}
 	version, err := client.Version(context.Background())
 	if err != nil || version != "8.4" {
 		t.Fatalf("Version() = %q, %v", version, err)
@@ -49,7 +49,7 @@ func TestCreateTokenUsesFormEncoding(t *testing.T) {
 		return response(data)
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	secret, err := client.CreateToken(context.Background(), "labadmin@pve", "labinabox")
+	secret, err := client.CreateToken(context.Background(), "labadmin@pve", "boetticher")
 	if err != nil || secret != "token-secret" {
 		t.Fatalf("CreateToken() = %q, %v", secret, err)
 	}

@@ -40,7 +40,7 @@ func TestInstallOperatorKeyUsesSafeConstantRemoteCommand(t *testing.T) {
 
 func TestCreateScopedCredentialsCapturesOnlyReturnedSecret(t *testing.T) {
 	runner := &fakeRunner{output: []byte(`{"value":"opaque-token-secret"}`)}
-	secret, err := CreateScopedCredentials(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "labinabox")
+	secret, err := CreateScopedCredentials(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher")
 	if err != nil || secret != "opaque-token-secret" {
 		t.Fatalf("CreateScopedCredentials() = %q, %v", secret, err)
 	}

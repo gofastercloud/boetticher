@@ -1,6 +1,6 @@
 # Architecture
 
-Lab-in-a-Box is a small, opinionated infrastructure distribution rather than a configurable homelab framework. It provides a reproducible Proxmox platform with OPNsense segmentation, secure DHCP/DNS/NTP, internal PKI/mTLS, Zabbix observability, a generated portal, encrypted configuration, and local recovery from a fresh x86 host.
+boetticher is a small, opinionated infrastructure distribution rather than a configurable homelab framework. It provides a reproducible Proxmox platform with OPNsense segmentation, secure DHCP/DNS/NTP, internal PKI/mTLS, Zabbix observability, a generated portal, encrypted configuration, and local recovery from a fresh x86 host.
 
 ## Fixed network
 
@@ -25,4 +25,4 @@ The base product is Proxmox plus `lab-fw-01`, `lab-dns-01`, `lab-dns-02`, `lab-m
 
 The canonical model and its SHA-256 revision drive Proxmox desired state, OPNsense policy, Kea configuration, Ansible inventory, Zabbix provisioning, SSH aliases/bastion policy, portal pages, and verification artifacts. Timestamps and live evidence are not included in the model digest.
 
-Lab-in-a-Box owns only declared platform resources. It never adopts arbitrary Proxmox guests, bridges, bonds, VLANs, routes, SDN objects, Zabbix objects, or backup jobs. User workloads inherit the zone policy without entering the platform model.
+boetticher owns only declared platform resources. It never adopts arbitrary Proxmox guests, bridges, bonds, VLANs, routes, SDN objects, Zabbix objects, or backup jobs. User workloads inherit the zone policy without entering the platform model.

@@ -5,7 +5,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 )
 
-const PlatformJobName = "labinabox-platform"
+const PlatformJobName = "boetticher-platform"
 
 type Plan struct {
 	ModelRevision        string `json:"model_revision"`
@@ -34,7 +34,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		ids = append(ids, guest.VMID)
 	}
 	return Plan{
-		ModelRevision: revision, ManagedBy: "Lab-in-a-Box", JobName: PlatformJobName,
+		ModelRevision: revision, ManagedBy: "boetticher", JobName: PlatformJobName,
 		PlatformOnly: true, UserWorkloadsManaged: false,
 		DisasterRecovery: "local backup is not independent disaster recovery; user workloads remain user-owned",
 		GuestVMIDs:       ids,

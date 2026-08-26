@@ -9,7 +9,7 @@ License details must be checked against the exact release artifacts installed
 by an operator. The links below are the upstream project or licensing pages
 used by this repository’s V1 design.
 
-| Project | Maintainer / copyright holder | License | Role in Lab-in-a-Box |
+| Project | Maintainer / copyright holder | License | Role in boetticher |
 | --- | --- | --- | --- |
 | [Proxmox VE](https://www.proxmox.com/en/proxmox-virtual-environment) | [Proxmox project](https://git.proxmox.com/) and Proxmox Server Solutions GmbH | Majority AGPLv3 or similar FLOSS license; see the [Proxmox developer/licensing page](https://proxmox.com/en/about/open-source/developers) | Hypervisor, host networking, guest lifecycle, API, and native backups |
 | [OPNsense](https://opnsense.org/) | [OPNsense project](https://github.com/opnsense); founded and supported by [Deciso B.V.](https://docs.opnsense.org/relations/deciso.html) | [BSD 2-Clause](https://docs.opnsense.org/legal.html) for the OPNsense project, with component-specific notices | Routing, NAT, firewall, Kea DHCP, and the security boundary |

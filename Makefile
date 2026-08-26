@@ -18,7 +18,7 @@ vet:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go vet ./...
 
 build:
-	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go build -o bin/homelab ./cmd/homelab
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go build -o bin/boetticher ./cmd/boetticher
 
 tofu-check:
 	tofu fmt -check infra/tofu

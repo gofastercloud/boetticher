@@ -52,7 +52,7 @@ func TestUserWorkloadNeverEntersPlatformPlan(t *testing.T) {
 	}
 	for _, guest := range plan.Guests {
 		if guest.VMID == 550 {
-			t.Fatal("user workload entered the Lab-in-a-Box platform plan")
+			t.Fatal("user workload entered the boetticher platform plan")
 		}
 	}
 }

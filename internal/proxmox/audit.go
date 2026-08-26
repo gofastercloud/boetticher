@@ -24,7 +24,7 @@ type GuestAudit struct {
 }
 
 const (
-	PlatformOwnership = "Lab-in-a-Box platform"
+	PlatformOwnership = "boetticher platform"
 	UserOwnership     = "user-managed"
 )
 
@@ -74,7 +74,7 @@ func ClassifyGuests(plan Plan, discovered []GuestSummary) []GuestAudit {
 		}
 		result = append(result, GuestAudit{
 			VMID: actual.VMID, Name: actual.Name, Kind: actual.Kind, Status: actual.Status,
-			Ownership: UserOwnership, Result: "INFO", Detail: "outside Lab-in-a-Box ownership; no convergence action",
+			Ownership: UserOwnership, Result: "INFO", Detail: "outside boetticher ownership; no convergence action",
 		})
 	}
 	sort.Slice(result, func(i, j int) bool {

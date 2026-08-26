@@ -8,7 +8,7 @@
 
 - name: Create portal document root
   ansible.builtin.file:
-    path: /var/www/labinabox
+    path: /var/www/boetticher
     state: directory
     owner: root
     group: root
@@ -17,14 +17,14 @@
 - name: Publish generated portal
   ansible.builtin.copy:
     src: "{{ portal_source_dir }}/"
-    dest: /var/www/labinabox/
+    dest: /var/www/boetticher/
     owner: root
     group: root
     mode: "0644"
 
 - name: Configure nginx for the generated portal
   ansible.builtin.copy:
-    dest: /etc/nginx/sites-available/labinabox.conf
+    dest: /etc/nginx/sites-available/boetticher.conf
     owner: root
     group: root
     mode: "0644"
@@ -32,7 +32,7 @@
       server {
           listen 80 default_server;
           server_name _;
-          root /var/www/labinabox;
+          root /var/www/boetticher;
           index index.html;
           location / { try_files $uri $uri/ =404; }
       }
@@ -40,7 +40,7 @@
 
 - name: Enable generated portal nginx site
   ansible.builtin.file:
-    src: /etc/nginx/sites-available/labinabox.conf
-    dest: /etc/nginx/sites-enabled/labinabox.conf
+    src: /etc/nginx/sites-available/boetticher.conf
+    dest: /etc/nginx/sites-enabled/boetticher.conf
     state: link
   notify: reload nginx
