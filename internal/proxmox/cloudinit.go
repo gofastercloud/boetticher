@@ -2,6 +2,7 @@ package proxmox
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -87,16 +88,48 @@ func guestVolume(guest GuestPlan, name string) (model.PersistentVolumeDeclaratio
 	return model.PersistentVolumeDeclaration{}, false
 }
 
-// RenderBuilderCloudInit prepares the temporary public-input build host. It
-// deliberately contains no operator key or site state; Proxmox supplies the
-// short-lived SSH key through its ordinary cloud-init sshkeys parameter.
+// RenderBuilderCloudInit prepares the temporary public-input build host
+// without operator-specific state. It is useful for inspecting the public
+// build contract; deployment uses RenderBuilderCloudInitWithKey so the
+// builder's management identity is present in the custom user-data document.
 func RenderBuilderCloudInit() CloudInitFiles {
-	return CloudInitFiles{
-		MetaData: "instance-id: boetticher-builder-0.3.1\nlocal-hostname: lab-builder-01\n",
-		UserData: `#cloud-config
+	files, _ := renderBuilderCloudInit("")
+	return files
+}
+
+// RenderBuilderCloudInitWithKey adds the short-lived operator key to the
+// builder's explicit cloud-init user definition. This is required because a
+// custom user-data document must not rely on Proxmox's generated sshkeys
+// fragment to configure the pre-existing labadmin account.
+func RenderBuilderCloudInitWithKey(operatorPublicKey string) (CloudInitFiles, error) {
+	if err := ValidatePublicKey(operatorPublicKey); err != nil {
+		return CloudInitFiles{}, err
+	}
+	return renderBuilderCloudInit(operatorPublicKey)
+}
+
+func renderBuilderCloudInit(operatorPublicKey string) (CloudInitFiles, error) {
+	if operatorPublicKey != "" {
+		if err := ValidatePublicKey(operatorPublicKey); err != nil {
+			return CloudInitFiles{}, err
+		}
+	}
+	userData := `#cloud-config
 hostname: lab-builder-01
 manage_etc_hosts: true
-package_update: true
+users:
+  - default
+  - name: labadmin
+    shell: /bin/bash
+    groups: [sudo]
+    sudo: ["ALL=(root) NOPASSWD: /usr/local/sbin/boetticher-build"]
+`
+	if operatorPublicKey != "" {
+		// JSON strings are valid YAML scalars and preserve an OpenSSH comment
+		// without allowing it to alter the cloud-init document structure.
+		userData += "    ssh_authorized_keys:\n      - " + strconv.Quote(operatorPublicKey) + "\n"
+	}
+	userData += `package_update: true
 packages:
   - ca-certificates
   - curl
@@ -133,13 +166,16 @@ runcmd:
   - [sh, -c, "set -eu; archive=/tmp/trivy_0.69.3_Linux-64bit.tar.gz; curl --fail --location --silent --show-error --output $archive https://github.com/aquasecurity/trivy/releases/download/v0.69.3/trivy_0.69.3_Linux-64bit.tar.gz; printf '%s  %s\\n' 1816b632dfe529869c740c0913e36bd1629cb7688bd5634f4a858c1d57c88b75 $archive | sha256sum --check --status; tar -xzf $archive -C /usr/local/bin trivy; chmod 0755 /usr/local/bin/trivy; rm -f $archive"]
   - [systemctl, enable, --now, qemu-guest-agent]
   - [touch, /run/boetticher-builder-ready]
-`,
+`
+	return CloudInitFiles{
+		MetaData: "instance-id: boetticher-builder-0.3.1\nlocal-hostname: lab-builder-01\n",
+		UserData: userData,
 		NetworkConfig: `version: 2
 ethernets:
   eth0:
     dhcp4: true
 `,
-	}
+	}, nil
 }
 
 func cloudInitSnippetNames(vmid int) map[string]string {

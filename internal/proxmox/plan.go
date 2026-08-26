@@ -678,7 +678,10 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 	if publicKey != "" {
 		params.Set("sshkeys", publicKey)
 	}
-	cloudInit := RenderBuilderCloudInit()
+	cloudInit, err := RenderBuilderCloudInitWithKey(publicKey)
+	if err != nil {
+		return fmt.Errorf("render builder cloud-init: %w", err)
+	}
 	for key, value := range map[string]string{"meta": cloudInit.MetaData, "user": cloudInit.UserData, "network": cloudInit.NetworkConfig} {
 		if value == "" {
 			return errors.New("builder cloud-init input is incomplete")

@@ -151,3 +151,41 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 		t.Fatal("builder cloud-init has no runnable bootstrap commands")
 	}
 }
+
+func TestRenderBuilderCloudInitWithKeyBootstrapsLabadmin(t *testing.T) {
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator #1"
+	files, err := RenderBuilderCloudInitWithKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document struct {
+		Users []any `yaml:"users"`
+	}
+	if err := yaml.Unmarshal([]byte(files.UserData), &document); err != nil {
+		t.Fatalf("builder cloud-init is not valid YAML: %v", err)
+	}
+	var found bool
+	for _, rawUser := range document.Users {
+		user, ok := rawUser.(map[string]any)
+		if !ok || user["name"] != "labadmin" {
+			continue
+		}
+		found = true
+		keys, ok := user["ssh_authorized_keys"].([]any)
+		if !ok || len(keys) != 1 || keys[0] != key {
+			t.Fatalf("labadmin bootstrap keys = %#v, want %q", user["ssh_authorized_keys"], key)
+		}
+	}
+	if !found {
+		t.Fatal("builder cloud-init does not explicitly configure labadmin")
+	}
+	if strings.Contains(files.MetaData+files.NetworkConfig, key) {
+		t.Fatal("builder operator key leaked into unrelated cloud-init documents")
+	}
+}
+
+func TestRenderBuilderCloudInitWithKeyRejectsInvalidKey(t *testing.T) {
+	if _, err := RenderBuilderCloudInitWithKey("not-a-key"); err == nil {
+		t.Fatal("invalid builder operator key was accepted")
+	}
+}
