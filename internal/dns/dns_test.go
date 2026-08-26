@@ -2,6 +2,7 @@ package dns
 
 import (
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -83,10 +84,13 @@ func TestPowerDNSCommandPlanUsesQualifiedSyntaxAndNeverEmbedsARealSecret(t *test
 	seenForward := false
 	seenReverse := false
 	for _, command := range commands {
-		if command.SecretIndex > 0 {
+		if command.SecretStdin {
 			seenTSIG = true
-			if command.Args[command.SecretIndex-1] != DDNSSecretPlaceholder {
-				t.Fatalf("TSIG command does not use a secret placeholder: %#v", command.Args)
+			if command.Args[0] != "sqlite3" || !strings.Contains(command.Stdin, DDNSSecretPlaceholder) {
+				t.Fatalf("TSIG command does not use protected stdin: %#v", command)
+			}
+			if strings.Contains(strings.Join(command.Args, " "), DDNSSecretPlaceholder) {
+				t.Fatal("TSIG placeholder entered the sqlite3 argv")
 			}
 		}
 		if len(command.Args) >= 3 && command.Args[1] == "create-zone" {

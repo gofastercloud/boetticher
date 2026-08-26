@@ -1,19 +1,22 @@
 package dns
 
 // PowerDNSCommand is the reviewable, deterministic command contract used by
-// the DNS role. Secret arguments are represented by a placeholder so this
-// plan can safely be included in generated variables and tests.
+// the DNS role. TSIG material is supplied to sqlite3 through protected stdin,
+// never as a process argument.
 type PowerDNSCommand struct {
 	Args        []string `json:"args"`
-	SecretIndex int      `json:"secret_index,omitempty"`
+	Stdin       string   `json:"stdin,omitempty"`
+	SecretStdin bool     `json:"secret_stdin,omitempty"`
 }
 
 const DDNSSecretPlaceholder = "<ddns-tsig-secret>"
 
 // PrimaryCommandPlan returns the PowerDNS 4.9 command forms used to create
 // the platform zones, static records, and authenticated DDNS metadata. The
-// Ansible role supplies the same values with the secret inserted only in the
-// no_log TSIG import task.
+// The Ansible role supplies the TSIG value only through command stdin while
+// the PowerDNS daemon is stopped. The database schema is the supported
+// PowerDNS 4.9 gsqlite3 TSIG store; the following metadata commands remain
+// reviewable pdnsutil invocations.
 func PrimaryCommandPlan(plan Plan) []PowerDNSCommand {
 	commands := make([]PowerDNSCommand, 0)
 	for _, zone := range allZones(plan) {
@@ -24,7 +27,7 @@ func PrimaryCommandPlan(plan Plan) []PowerDNSCommand {
 	}
 	for _, zone := range plan.DDNS.Zones {
 		commands = append(commands,
-			PowerDNSCommand{Args: []string{"pdnsutil", "tsigkey", "import", zone.TSIGKeyName, plan.DDNS.TSIGAlgorithm, DDNSSecretPlaceholder}, SecretIndex: 6},
+			PowerDNSCommand{Args: []string{"sqlite3", "/var/lib/powerdns/pdns.sqlite3"}, Stdin: "INSERT OR REPLACE INTO tsigkeys (name, algorithm, secret) VALUES ('" + zone.TSIGKeyName + "', '" + plan.DDNS.TSIGAlgorithm + "', '" + DDNSSecretPlaceholder + "');", SecretStdin: true},
 			PowerDNSCommand{Args: []string{"pdnsutil", "metadata", "set", zone.ForwardZone, "ALLOW-DNSUPDATE-FROM", plan.DDNS.UpdateSources[0]}},
 			PowerDNSCommand{Args: []string{"pdnsutil", "metadata", "set", zone.ForwardZone, "TSIG-ALLOW-DNSUPDATE", zone.TSIGKeyName}},
 			PowerDNSCommand{Args: []string{"pdnsutil", "metadata", "set", zone.ReverseZone, "ALLOW-DNSUPDATE-FROM", plan.DDNS.UpdateSources[0]}},

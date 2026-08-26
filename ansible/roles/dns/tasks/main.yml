@@ -117,19 +117,19 @@
   notify: restart pdns
   when: inventory_hostname in groups.get('dns', [])
 
-- name: Import the deterministic Kea DDNS TSIG keys to the primary
+- name: Store the deterministic Kea DDNS TSIG keys without exposing secrets in argv
   ansible.builtin.command:
     argv:
-      - pdnsutil
-      - tsigkey
-      - import
-      - "{{ item.tsig_key_name }}"
-      - "{{ dns_plan.ddns.tsig_algorithm }}"
-      - "{{ ddns_tsig_secret }}"
-    loop: "{{ dns_plan.ddns.zones }}"
-  register: tsig_key_result
-  changed_when: tsig_key_result.rc == 0
-  failed_when: tsig_key_result.rc != 0 and 'already exists' not in (tsig_key_result.stderr | lower)
+      - sqlite3
+      - /var/lib/powerdns/pdns.sqlite3
+    stdin: >-
+      INSERT OR REPLACE INTO tsigkeys (name, algorithm, secret) VALUES
+      ('{{ item.tsig_key_name | replace("'", "''") }}',
+       '{{ dns_plan.ddns.tsig_algorithm }}',
+       '{{ ddns_tsig_secret | replace("'", "''") }}');
+    stdin_add_newline: true
+  loop: "{{ dns_plan.ddns.zones }}"
+  changed_when: false
   no_log: true
   when: inventory_hostname == 'lab-dns-01'
 

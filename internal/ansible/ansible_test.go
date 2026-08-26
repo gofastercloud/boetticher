@@ -96,3 +96,21 @@ func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
 		t.Fatal("generated Ansible variables contain secret material")
 	}
 }
+
+func TestDNSRoleDoesNotPlaceTSIGSecretsInProcessArguments(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "stdin: >-") || !strings.Contains(text, "INSERT OR REPLACE INTO tsigkeys") {
+		t.Fatal("DNS role does not provide TSIG material through protected sqlite3 stdin")
+	}
+	if strings.Contains(text, "pdnsutil\n      - tsigkey\n      - import") || strings.Contains(text, "- \"{{ ddns_tsig_secret }}\"") {
+		t.Fatal("DNS role still places the TSIG secret in a process argument")
+	}
+	if !strings.Contains(text, "no_log: true") {
+		t.Fatal("DNS role does not suppress secret-bearing task output")
+	}
+}
