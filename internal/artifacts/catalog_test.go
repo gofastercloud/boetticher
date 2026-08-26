@@ -154,6 +154,20 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	if !strings.Contains(string(blocky), "provider_sha256: 17b03f892346a160e9faf974ce68baae85fa4f2a94d7bf8ea52592a94be5eeb4") {
 		t.Fatal("Blocky release checksum is not pinned")
 	}
+	dnsCommon, err := os.ReadFile(filepath.Join(root, "dns", "image.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"repository: trixie-auth-49",
+		"package_version: 4.9.17-1pdns.trixie",
+		"signing_key_sha256: efeb5b1451c76de1dac8eefaddba5af5549e8fd93484728744ea7b4923decae8",
+		"signing_key_fingerprint: 9FAAA5577E8FCF62093D036C1B0C6205FD380FBB",
+	} {
+		if !strings.Contains(string(dnsCommon), required) {
+			t.Fatalf("DNS image definition is missing PowerDNS qualification input %q", required)
+		}
+	}
 	firewall, err := os.ReadFile(filepath.Join(root, "firewall", "image.yaml"))
 	if err != nil {
 		t.Fatal(err)

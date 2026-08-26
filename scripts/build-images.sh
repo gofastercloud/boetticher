@@ -25,6 +25,11 @@ done
 output_root=${BOETTICHER_ARTIFACT_OUTPUT:-generated/artifacts}
 work_root=${BOETTICHER_IMAGE_WORK:-/tmp/boetticher-image-build}
 mirror=${BOETTICHER_DEBIAN_MIRROR:-https://deb.debian.org/debian}
+powerdns_key_url=https://repo.powerdns.com/FD380FBB-pub.asc
+powerdns_key_sha256=efeb5b1451c76de1dac8eefaddba5af5549e8fd93484728744ea7b4923decae8
+powerdns_repo=https://repo.powerdns.com/debian
+powerdns_suite=trixie-auth-49
+powerdns_package_version=4.9.17-1pdns.trixie
 mkdir -p "$output_root" "$work_root"
 
 cleanup() {
@@ -95,6 +100,42 @@ install_packages() {
   umount -R "$rootfs/sys" || true
 }
 
+install_powerdns() {
+  rootfs=$1
+  key="$work_root/powerdns-auth-49-pub.asc"
+  if [ ! -f "$key" ]; then
+    curl --fail --location --silent --show-error --output "$key" "$powerdns_key_url"
+  fi
+  printf '%s  %s\n' "$powerdns_key_sha256" "$key" | sha256sum --check --status
+  install -D -m 0644 "$key" "$rootfs/etc/apt/keyrings/auth-49-pub.asc"
+  printf '%s\n' "deb [signed-by=/etc/apt/keyrings/auth-49-pub.asc] $powerdns_repo $powerdns_suite main" > "$rootfs/etc/apt/sources.list.d/pdns.list"
+  printf '%s\n' 'Package: pdns-*' 'Pin: origin repo.powerdns.com' 'Pin-Priority: 600' > "$rootfs/etc/apt/preferences.d/auth-49"
+
+  install_packages "$rootfs" \
+    "pdns-server=$powerdns_package_version" \
+    "pdns-backend-sqlite3=$powerdns_package_version" \
+    sqlite3
+
+  installed_version=$(chroot "$rootfs" dpkg-query -W -f='${Version}' pdns-server)
+  if [ "$installed_version" != "$powerdns_package_version" ]; then
+    echo "HOLD: unexpected PowerDNS package version: $installed_version" >&2
+    return 2
+  fi
+  backend_version=$(chroot "$rootfs" dpkg-query -W -f='${Version}' pdns-backend-sqlite3)
+  if [ "$backend_version" != "$powerdns_package_version" ]; then
+    echo "HOLD: unexpected PowerDNS SQLite backend version: $backend_version" >&2
+    return 2
+  fi
+  if ! chroot "$rootfs" /usr/sbin/pdns_server --version 2>&1 | grep -q '4\.9\.17'; then
+    echo "HOLD: PowerDNS executable is not the qualified 4.9.17 release" >&2
+    return 2
+  fi
+
+  rm -f "$rootfs/etc/apt/sources.list.d/pdns.list" \
+    "$rootfs/etc/apt/preferences.d/auth-49" \
+    "$rootfs/etc/apt/keyrings/auth-49-pub.asc"
+}
+
 package_lxc() {
   name=$1
   rootfs=$(rootfs_for "$name")
@@ -114,7 +155,8 @@ build_base() {
 
 build_dns_blocky() {
   rootfs=$(prepare_rootfs boetticher-dns-blocky)
-  install_packages "$rootfs" pdns-server pdns-backend-sqlite3 sqlite3 chrony
+  install_powerdns "$rootfs"
+  install_packages "$rootfs" chrony
   mkdir -p "$rootfs/usr/local/bin"
   archive="$work_root/blocky_v0.34.0_Linux_x86_64.tar.gz"
   curl --fail --location --silent --show-error --output "$archive" https://github.com/0xERR0R/blocky/releases/download/v0.34.0/blocky_v0.34.0_Linux_x86_64.tar.gz

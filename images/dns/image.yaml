@@ -9,8 +9,13 @@ services:
   - chrony
 powerdns:
   repository: trixie-auth-49
+  repository_url: https://repo.powerdns.com/debian
   version: 4.9.17
+  package_version: 4.9.17-1pdns.trixie
   package_source: official-powerdns-trixie
+  signing_key_url: https://repo.powerdns.com/FD380FBB-pub.asc
+  signing_key_sha256: efeb5b1451c76de1dac8eefaddba5af5549e8fd93484728744ea7b4923decae8
+  signing_key_fingerprint: 9FAAA5577E8FCF62093D036C1B0C6205FD380FBB
 runtime_config: /etc/boetticher/module.yaml
 persistent:
   - /var/lib/powerdns
