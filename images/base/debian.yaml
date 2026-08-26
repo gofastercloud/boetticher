@@ -1,0 +1,15 @@
+name: boetticher-base
+version: 0.3.0
+distribution: debian
+release: "13"
+architecture: amd64
+init: systemd
+runtime:
+  - ca-certificates
+  - systemd
+  - openssh-client
+  - iproute2
+  - nftables
+  - journald
+hardening: bounded-systemd
+secrets: none

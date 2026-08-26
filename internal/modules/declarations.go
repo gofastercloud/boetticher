@@ -1,14 +1,12 @@
 package modules
 
 import (
-	"crypto/sha256"
 	"fmt"
 	"sort"
 
+	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/model"
 )
-
-const moduleArchitecture = "amd64"
 
 func composeDeclarations(site model.Site, resolved []ResolvedModule) ([]model.ModuleDeclaration, error) {
 	declarations := make([]model.ModuleDeclaration, 0, len(resolved))
@@ -28,7 +26,11 @@ func composeDeclarations(site model.Site, resolved []ResolvedModule) ([]model.Mo
 
 func declarationFor(name string, site model.Site) (model.ModuleDeclaration, error) {
 	components := moduleComponents(site, name)
-	declaration := model.ModuleDeclaration{Module: name, Artifact: artifactFor(name)}
+	artifact, err := artifacts.ArtifactFor(name)
+	if err != nil {
+		return model.ModuleDeclaration{}, err
+	}
+	declaration := model.ModuleDeclaration{Module: name, Artifact: artifact}
 	for _, component := range components {
 		declaration.Guests = append(declaration.Guests, component)
 		declaration.Backups = append(declaration.Backups, model.BackupDeclaration{Guest: component.Name, Policy: "platform-default"})
@@ -73,14 +75,4 @@ func persistentFor(module, guest string) []model.PersistentState {
 	default:
 		return []model.PersistentState{identity}
 	}
-}
-
-func artifactFor(module string) model.Artifact {
-	kind := "lxc"
-	if module == "firewall" {
-		kind = "qemu"
-	}
-	identity := "boetticher/" + module + "/1.0.0/" + moduleArchitecture + "/" + kind
-	digest := sha256.Sum256([]byte(identity))
-	return model.Artifact{Name: "boetticher-" + module, Version: "1.0.0", Architecture: moduleArchitecture, Kind: kind, SHA256: fmt.Sprintf("%x", digest[:])}
 }

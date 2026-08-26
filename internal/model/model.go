@@ -190,11 +190,12 @@ type ResolvedModule struct {
 }
 
 type Artifact struct {
-	Name         string `json:"name"`
-	Version      string `json:"version"`
-	Architecture string `json:"architecture"`
-	Kind         string `json:"kind"`
-	SHA256       string `json:"sha256"`
+	Name             string `json:"name"`
+	Version          string `json:"version"`
+	Architecture     string `json:"architecture"`
+	Kind             string `json:"kind"`
+	SHA256           string `json:"sha256"`
+	DefinitionSHA256 string `json:"definition_sha256"`
 }
 
 type PersistentState struct {
