@@ -32,7 +32,11 @@ type ClientCertificate struct {
 }
 
 type ServerCertificate struct {
-	Name        string
+	Name string
+	// KeyPEM is populated only by the legacy centrally-issued helper. Endpoint
+	// CSR signing deliberately leaves it empty so managed private keys remain
+	// on their endpoints.
+	KeyPEM      string
 	CertPEM     string
 	ChainPEM    string
 	Fingerprint string

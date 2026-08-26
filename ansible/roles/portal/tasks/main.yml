@@ -138,15 +138,6 @@
     path: /etc/nginx/sites-enabled/default
     state: absent
   notify: reload nginx
-  when:
-    - portal_server_cert_pem is defined
-    - portal_server_cert_pem | length > 0
-
-- name: Remove the distribution nginx default site
-  ansible.builtin.file:
-    path: /etc/nginx/sites-enabled/default
-    state: absent
-  notify: reload nginx
 
 - name: Enable generated portal nginx site
   ansible.builtin.file:

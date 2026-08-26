@@ -57,11 +57,6 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	if s.StorageProfile == "dedicated-data-disk" {
 		storage = DedicatedStorageID
 	}
-	sort.Ints(ids)
-	storage := "local"
-	if s.StorageProfile == "dedicated-data-disk" {
-		storage = DedicatedStorageID
-	}
 	return Plan{
 		ModelRevision: revision, ManagedBy: "boetticher", JobName: PlatformJobName,
 		PlatformOnly: true, UserWorkloadsManaged: false,
