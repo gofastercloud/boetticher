@@ -217,27 +217,30 @@ func RenderNFT(plan Plan) (string, error) {
 	for _, zone := range []string{"TRUSTED", "SERVERS", "SANDBOX", "MGMT"} {
 		fmt.Fprintf(&b, "  set %s_net { type ipv4_addr; flags interval; elements = { %s } }\n", strings.ToLower(zone), networkFor(plan, zone))
 	}
-	b.WriteString("  chain input {\n    type filter hook input priority filter; policy drop;\n    iifname \"lo\" accept\n    ct state established,related accept\n    iifname \"wan0\" udp sport 67 udp dport 68 accept\n    iifname { \"trusted0\", \"servers0\", \"sandbox0\", \"mgmt0\" } udp dport 67 counter accept\n    iifname \"sandbox0\" udp dport 53 counter accept\n    iifname \"sandbox0\" tcp dport 53 counter accept\n    iifname \"sandbox0\" udp dport 123 counter accept\n    iifname \"mgmt0\" tcp dport 22 counter accept\n  }\n")
-	b.WriteString("  chain forward {\n    type filter hook forward priority filter; policy drop;\n    ct state established,related accept\n")
+	b.WriteString("  chain input {\n    type filter hook input priority filter; policy drop;\n    iifname \"lo\" accept comment \"boetticher:input-loopback\"\n    ct state established,related accept comment \"boetticher:input-established\"\n    iifname \"wan0\" udp sport 67 udp dport 68 accept comment \"boetticher:input-wan-dhcp\"\n    iifname { \"trusted0\", \"servers0\", \"sandbox0\", \"mgmt0\" } udp dport 67 counter accept comment \"boetticher:input-zone-dhcp\"\n    iifname \"sandbox0\" udp dport 53 counter accept comment \"boetticher:input-sandbox-dns-udp\"\n    iifname \"sandbox0\" tcp dport 53 counter accept comment \"boetticher:input-sandbox-dns-tcp\"\n    iifname \"sandbox0\" udp dport 123 counter accept comment \"boetticher:input-sandbox-ntp\"\n    iifname \"mgmt0\" tcp dport 22 counter accept comment \"boetticher:input-mgmt-ssh\"\n  }\n")
+	b.WriteString("  chain forward {\n    type filter hook forward priority filter; policy drop;\n    ct state established,related accept comment \"boetticher:forward-established\"\n")
 	for _, deny := range []struct{ zone, set, label string }{{"sandbox0", "trusted_net", "SANDBOX-TRUSTED-DROP"}, {"sandbox0", "servers_net", "SANDBOX-SERVERS-DROP"}, {"sandbox0", "mgmt_net", "SANDBOX-MGMT-DROP"}} {
-		fmt.Fprintf(&b, "    iifname \"%s\" ip daddr @%s counter log prefix \"boetticher %s \" drop\n", deny.zone, deny.set, deny.label)
+		fmt.Fprintf(&b, "    iifname \"%s\" ip daddr @%s counter log prefix \"boetticher %s \" drop comment \"boetticher:forward-%s\"\n", deny.zone, deny.set, deny.label, strings.ToLower(strings.ReplaceAll(deny.label, "-", "-")))
 	}
-	b.WriteString("    iifname \"trusted0\" ip daddr @servers_net tcp dport { 53, 443 } counter accept\n")
-	b.WriteString("    iifname \"trusted0\" ip daddr @servers_net udp dport { 53, 123 } counter accept\n")
-	b.WriteString("    iifname \"trusted0\" ip daddr @mgmt_net tcp dport { 22, 443, 8006 } counter accept\n")
-	b.WriteString("    iifname \"servers0\" ip daddr @servers_net tcp dport 53 counter accept\n")
-	b.WriteString("    iifname \"servers0\" ip daddr @servers_net udp dport { 53, 123 } counter accept\n")
-	b.WriteString("    iifname \"servers0\" ip daddr @mgmt_net tcp dport 10051 counter accept\n")
-	b.WriteString("    iifname \"mgmt0\" ip daddr @servers_net tcp dport { 22, 53, 80, 443 } counter accept\n")
-	b.WriteString("    iifname \"mgmt0\" ip daddr @servers_net udp dport { 53, 123 } counter accept\n")
-	b.WriteString("    iifname \"mgmt0\" ip daddr @trusted_net ip protocol icmp counter accept\n")
-	b.WriteString("    iifname \"sandbox0\" oifname \"wan0\" ip saddr @sandbox_net counter accept\n")
-	b.WriteString("    iifname \"trusted0\" oifname \"wan0\" ip saddr @trusted_net counter accept\n")
-	b.WriteString("    iifname \"servers0\" oifname \"wan0\" ip saddr @servers_net tcp dport { 53, 80, 443, 853 } counter accept\n")
-	b.WriteString("    iifname \"servers0\" oifname \"wan0\" ip saddr @servers_net udp dport { 53, 853 } counter accept\n")
-	b.WriteString("    iifname \"mgmt0\" oifname \"wan0\" ip saddr @mgmt_net tcp dport 443 counter accept\n")
+	// The state rule above is deliberately the first forward rule after the
+	// chain declaration. It keeps return traffic working without weakening the
+	// ordered SANDBOX deny rules below.
+	b.WriteString("    iifname \"trusted0\" ip daddr @servers_net tcp dport { 53, 443 } counter accept comment \"boetticher:forward-trusted-servers-tcp\"\n")
+	b.WriteString("    iifname \"trusted0\" ip daddr @servers_net udp dport { 53, 123 } counter accept comment \"boetticher:forward-trusted-servers-udp\"\n")
+	b.WriteString("    iifname \"trusted0\" ip daddr @mgmt_net tcp dport { 22, 443, 8006 } counter accept comment \"boetticher:forward-trusted-mgmt\"\n")
+	b.WriteString("    iifname \"servers0\" ip daddr @servers_net tcp dport 53 counter accept comment \"boetticher:forward-servers-dns-tcp\"\n")
+	b.WriteString("    iifname \"servers0\" ip daddr @servers_net udp dport { 53, 123 } counter accept comment \"boetticher:forward-servers-dns-udp\"\n")
+	b.WriteString("    iifname \"servers0\" ip daddr @mgmt_net tcp dport 10051 counter accept comment \"boetticher:forward-servers-monitoring\"\n")
+	b.WriteString("    iifname \"mgmt0\" ip daddr @servers_net tcp dport { 22, 53, 80, 443 } counter accept comment \"boetticher:forward-mgmt-servers-tcp\"\n")
+	b.WriteString("    iifname \"mgmt0\" ip daddr @servers_net udp dport { 53, 123 } counter accept comment \"boetticher:forward-mgmt-servers-udp\"\n")
+	b.WriteString("    iifname \"mgmt0\" ip daddr @trusted_net ip protocol icmp counter accept comment \"boetticher:forward-mgmt-trusted-icmp\"\n")
+	b.WriteString("    iifname \"sandbox0\" oifname \"wan0\" ip saddr @sandbox_net counter accept comment \"boetticher:forward-sandbox-internet\"\n")
+	b.WriteString("    iifname \"trusted0\" oifname \"wan0\" ip saddr @trusted_net counter accept comment \"boetticher:forward-trusted-internet\"\n")
+	b.WriteString("    iifname \"servers0\" oifname \"wan0\" ip saddr @servers_net tcp dport { 53, 80, 443, 853 } counter accept comment \"boetticher:forward-servers-internet-tcp\"\n")
+	b.WriteString("    iifname \"servers0\" oifname \"wan0\" ip saddr @servers_net udp dport { 53, 853 } counter accept comment \"boetticher:forward-servers-internet-udp\"\n")
+	b.WriteString("    iifname \"mgmt0\" oifname \"wan0\" ip saddr @mgmt_net tcp dport 443 counter accept comment \"boetticher:forward-mgmt-internet\"\n")
 	b.WriteString("  }\n  chain output { type filter hook output priority filter; policy accept; }\n}\n\n")
-	b.WriteString("table ip " + NATTable + " {\n  chain postrouting {\n    type nat hook postrouting priority srcnat; policy accept;\n    oifname \"wan0\" ip saddr " + networkFor(plan, "TRUSTED") + " masquerade\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SERVERS") + " masquerade\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SANDBOX") + " masquerade\n    oifname \"wan0\" ip saddr " + networkFor(plan, "MGMT") + " masquerade\n  }\n}\n")
+	b.WriteString("table ip " + NATTable + " {\n  chain postrouting {\n    type nat hook postrouting priority srcnat; policy accept;\n    oifname \"wan0\" ip saddr " + networkFor(plan, "TRUSTED") + " masquerade comment \"boetticher:nat-trusted\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SERVERS") + " masquerade comment \"boetticher:nat-servers\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SANDBOX") + " masquerade comment \"boetticher:nat-sandbox\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "MGMT") + " masquerade comment \"boetticher:nat-mgmt\"\n  }\n}\n")
 	return b.String(), nil
 }
 

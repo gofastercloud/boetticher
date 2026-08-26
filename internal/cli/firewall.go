@@ -155,25 +155,58 @@ func firewallDiff(siteDir string, s model.Site, plan firewall.Plan, live, jsonOu
 	if err != nil {
 		return err
 	}
-	result := map[string]any{"model_revision": plan.ModelRevision, "desired": true, "live_checked": live, "status": "desired ruleset is current"}
+	if err := firewall.ValidateNFT(ruleset); err != nil {
+		return err
+	}
+	result := map[string]any{"model_revision": plan.ModelRevision, "desired": true, "live_checked": live, "status": "NOT TESTED", "detail": "live boetticher-owned nftables state was not queried"}
 	if live {
 		data, commandErr := gatewayCommand(siteDir, s, "sudo", "nft", "--json", "list", "ruleset")
 		if commandErr != nil {
 			return commandErr
 		}
-		result["status"] = "ruleset table present"
-		result["live_contains_table"] = strings.Contains(string(data), firewall.FilterTable)
+		diff, compareErr := firewall.CompareNFT(plan, data)
+		if compareErr != nil {
+			return compareErr
+		}
+		result["diff"] = diff
+		if diff.Current() {
+			result["status"] = "PASS"
+			result["detail"] = "boetticher-owned tables, chains, and tagged rules match the current model"
+		} else {
+			result["status"] = "DRIFT"
+			result["detail"] = "boetticher-owned nftables state differs from the current model"
+		}
 	}
 	if jsonOutput {
 		return writeCLIJSON(out, result)
 	}
 	if live {
-		fmt.Fprintf(out, "Firewall ruleset was queried on lab-fw-01 (model %s).\n", plan.ModelRevision)
+		if result["status"] == "PASS" {
+			fmt.Fprintf(out, "Firewall rules match the current boetticher model (model %s).\n", plan.ModelRevision)
+		} else {
+			fmt.Fprintf(out, "Firewall rules differ from the current boetticher model (model %s).\n", plan.ModelRevision)
+			printNFTDiff(out, result["diff"].(firewall.NFTDiff))
+		}
 	} else {
-		fmt.Fprintf(out, "Firewall rules match the current boetticher model projection (model %s).\n", plan.ModelRevision)
+		fmt.Fprintf(out, "Firewall rules are configured in the current model projection (model %s).\n", plan.ModelRevision)
+		fmt.Fprintln(out, "Live state NOT TESTED; use --live to compare boetticher-owned nftables tables and rules.")
 	}
-	_ = ruleset
 	return nil
+}
+
+func printNFTDiff(out interface{ Write([]byte) (int, error) }, diff firewall.NFTDiff) {
+	for _, item := range diff.MissingTables {
+		fmt.Fprintf(out, "  missing table  %s\n", item)
+	}
+	for _, item := range diff.MissingChains {
+		fmt.Fprintf(out, "  missing chain  %s\n", item)
+	}
+	for _, item := range diff.MissingRules {
+		fmt.Fprintf(out, "  missing rule   %s\n", item)
+	}
+	for _, item := range diff.UnexpectedRules {
+		fmt.Fprintf(out, "  unexpected rule %s\n", item)
+	}
 }
 
 func firewallVerify(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
@@ -199,7 +232,7 @@ func firewallVerify(siteDir string, s model.Site, plan firewall.Plan, live, json
 		}
 	} else {
 		results["contract"] = "PASS"
-		results["appliance_policy"] = "outside boetticher management"
+		results["external_policy"] = "outside boetticher management"
 		results["observable_paths"] = "NOT TESTED"
 	}
 	if jsonOutput {
