@@ -232,6 +232,15 @@
     mode: '0644'
   when: inventory_hostname == 'lab-monitor-01'
 
+- name: Publish the deterministic boetticher Zabbix desired-object manifest
+  ansible.builtin.template:
+    src: zabbix-platform.json.j2
+    dest: /etc/zabbix/boetticher-platform/desired-objects.json
+    owner: root
+    group: root
+    mode: '0644'
+  when: inventory_hostname == 'lab-monitor-01'
+
 - name: Enable monitoring services
   ansible.builtin.service:
     name: "{{ item }}"
