@@ -492,6 +492,26 @@ func TestApplianceBootstrapInputsContainNoOperatorKeyOrSiteState(t *testing.T) {
 	}
 }
 
+func TestBaseBuildRemovesBakedSSHHostKeys(t *testing.T) {
+	buildScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	smokeScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "smoke-appliance.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(buildScript), `rm -f "$rootfs"/etc/ssh/ssh_host_*`) {
+		t.Fatal("base build does not remove generated SSH host keys before packaging")
+	}
+	if strings.Contains(string(buildScript), `rm -f "$rootfs/etc/ssh/ssh_host_*"`) {
+		t.Fatal("base build quotes the SSH host-key glob and leaves baked keys behind")
+	}
+	if !strings.Contains(string(smokeScript), "artifact contains baked SSH host identity") {
+		t.Fatal("appliance smoke test does not reject baked SSH host keys")
+	}
+}
+
 func TestBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {
 	first, err := BuildSourceArchive(filepath.Join("..", ".."))
 	if err != nil {

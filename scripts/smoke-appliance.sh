@@ -11,6 +11,10 @@ test ! -e "$rootfs/etc/boetticher/module.yaml"
 test ! -e "$rootfs/usr/lib/boetticher/artifact.json"
 test ! -e "$rootfs/home/labadmin/.ssh/authorized_keys"
 test ! -e "$rootfs/root/.ssh/authorized_keys"
+if find "$rootfs/etc/ssh" -maxdepth 1 -name 'ssh_host_*' -print -quit | grep -q .; then
+  echo "artifact contains baked SSH host identity" >&2
+  exit 1
+fi
 
 case "$name" in
   boetticher-base)

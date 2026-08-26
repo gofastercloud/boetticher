@@ -93,7 +93,8 @@ create_base_rootfs() {
   printf '%s\n' '[Journal]' 'SystemMaxUse=256M' 'RuntimeMaxUse=64M' > "$rootfs/etc/systemd/journald.conf.d/boetticher.conf"
   install -D -m 0644 images/base/runtime/sshd.conf "$rootfs/etc/ssh/sshd_config.d/boetticher.conf"
   install -D -m 0644 images/base/runtime/sshd-host-key.conf "$rootfs/etc/ssh/sshd_config.d/boetticher-host-key.conf"
-  rm -f "$rootfs/etc/ssh/ssh_host_*"
+  # Host keys are endpoint identity and must be generated after deployment.
+  rm -f "$rootfs"/etc/ssh/ssh_host_*
   rm -f "$rootfs/root/.ssh/authorized_keys" "$rootfs/home/labadmin/.ssh/authorized_keys"
   chroot "$rootfs" systemctl enable boetticher-first-boot.service
 }
