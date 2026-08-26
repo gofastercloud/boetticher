@@ -76,6 +76,36 @@ func TestComposedPlanUsesResolvedCapabilityOrder(t *testing.T) {
 	}
 }
 
+func TestComposedDNSGuestsReceiveOnlyTheirOwnPersistentVolumes(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, guest := range plan.Guests {
+		if guest.Name != "lab-dns-01" && guest.Name != "lab-dns-02" {
+			continue
+		}
+		if len(guest.Persistent) != 2 || len(guest.Volumes) != 2 {
+			t.Fatalf("DNS guest %s received shared declaration state: persistent=%#v volumes=%#v", guest.Name, guest.Persistent, guest.Volumes)
+		}
+		for _, state := range guest.Persistent {
+			if state.Guest != guest.Name {
+				t.Fatalf("DNS guest %s received persistent state for %s", guest.Name, state.Guest)
+			}
+		}
+		for _, volume := range guest.Volumes {
+			if volume.Guest != guest.Name {
+				t.Fatalf("DNS guest %s received volume for %s", guest.Name, volume.Guest)
+			}
+		}
+	}
+}
+
 func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {

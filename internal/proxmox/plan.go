@@ -326,8 +326,8 @@ func PlanFromSite(s model.Site) (Plan, error) {
 				if declaration.Module == component.Module {
 					guest.Owner = "boetticher/module/" + component.Module
 					guest.Artifact = declaration.Artifact
-					guest.Persistent = append([]model.PersistentState(nil), declaration.Persistent...)
-					guest.Volumes = append([]model.PersistentVolumeDeclaration(nil), declaration.Volumes...)
+					guest.Persistent = persistentForGuest(declaration.Persistent, component.Name)
+					guest.Volumes = volumesForGuest(declaration.Volumes, component.Name)
 					for index := range guest.Volumes {
 						for _, resolved := range storagePlan.Volumes {
 							if resolved.Module == guest.Volumes[index].Module && resolved.Name == guest.Volumes[index].Name && resolved.Guest == guest.Volumes[index].Guest {
@@ -472,6 +472,26 @@ func fixturePersistent(module, guest string) []model.PersistentState {
 		result = append(result, *state)
 	}
 	return result
+}
+
+func persistentForGuest(states []model.PersistentState, guest string) []model.PersistentState {
+	filtered := make([]model.PersistentState, 0, len(states))
+	for _, state := range states {
+		if state.Guest == guest {
+			filtered = append(filtered, state)
+		}
+	}
+	return filtered
+}
+
+func volumesForGuest(volumes []model.PersistentVolumeDeclaration, guest string) []model.PersistentVolumeDeclaration {
+	filtered := make([]model.PersistentVolumeDeclaration, 0, len(volumes))
+	for _, volume := range volumes {
+		if volume.Guest == guest {
+			filtered = append(filtered, volume)
+		}
+	}
+	return filtered
 }
 
 func fixtureVolumes(module, guest string) []model.PersistentVolumeDeclaration {
