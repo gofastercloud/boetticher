@@ -40,6 +40,17 @@ const (
 	UserGuestIDMax          = 899
 	ModeVirtualOnly         = "virtual-only"
 	ModePhysicalTrunk       = "physical-trunk"
+	TagBoetticher           = "boetticher"
+	TagManaged              = "managed"
+	TagPlatform             = "platform"
+	TagInfra                = "infra"
+	TagBackup               = "backup"
+	TagNetwork              = "network"
+	TagFirewall             = "firewall"
+	TagDNS                  = "dns"
+	TagNTP                  = "ntp"
+	TagObservability        = "observability"
+	TagPortal               = "portal"
 )
 
 var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
@@ -137,6 +148,7 @@ type Component struct {
 	SSHPort      int      `json:"ssh_port,omitempty"`
 	Monitoring   bool     `json:"monitoring"`
 	Backup       bool     `json:"backup"`
+	Tags         []string `json:"tags,omitempty"`
 	MTLS         bool     `json:"mtls"`
 	SSHManaged   bool     `json:"ssh_managed"`
 	JumpAllowed  bool     `json:"jump_allowed"`
@@ -180,12 +192,12 @@ func NewDefaultSite(installationID, ageRecipient string) Site {
 			UserWorkloadsManaged: false,
 		},
 		Components: []Component{
-			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: "10.10.99.5", Role: "Proxmox host", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22},
-			{Name: "lab-fw-01", VMID: ProxmoxVMID, Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "OPNsense firewall", URL: "https://opnsense." + DefaultDomain, Monitoring: true, Backup: true, MTLS: false, SSHManaged: false, JumpAllowed: false, ProductOwned: true},
-			{Name: "lab-dns-01", VMID: DNS01VMID, Hostname: "lab-dns-01", Zone: "SERVERS", Address: "10.10.20.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-			{Name: "lab-dns-02", VMID: DNS02VMID, Hostname: "lab-dns-02", Zone: "SERVERS", Address: "10.10.20.11", Role: "DNS/NTP", DNSAliases: []string{"dns02"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-			{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "MGMT", Address: "10.10.99.20", Role: "Zabbix", URL: "https://monitor." + DefaultDomain, DNSAliases: []string{"monitor"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-			{Name: "lab-portal-01", VMID: PortalVMID, Hostname: "lab-portal-01", Zone: "SERVERS", Address: "10.10.20.30", Role: "Generated platform portal", URL: "https://portal." + DefaultDomain, DNSAliases: []string{"portal"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: "10.10.99.5", Role: "Proxmox host", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22},
+			{Name: "lab-fw-01", VMID: ProxmoxVMID, Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "OPNsense firewall", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork, TagFirewall, TagBackup}, URL: "https://opnsense." + DefaultDomain, Monitoring: true, Backup: true, MTLS: false, SSHManaged: false, JumpAllowed: false, ProductOwned: true},
+			{Name: "lab-dns-01", VMID: DNS01VMID, Hostname: "lab-dns-01", Zone: "SERVERS", Address: "10.10.20.10", Role: "DNS/NTP", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagDNS, TagNTP, TagBackup}, DNSAliases: []string{"dns01", "dns"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			{Name: "lab-dns-02", VMID: DNS02VMID, Hostname: "lab-dns-02", Zone: "SERVERS", Address: "10.10.20.11", Role: "DNS/NTP", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagDNS, TagNTP, TagBackup}, DNSAliases: []string{"dns02"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "MGMT", Address: "10.10.99.20", Role: "Zabbix", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagObservability, TagBackup}, URL: "https://monitor." + DefaultDomain, DNSAliases: []string{"monitor"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			{Name: "lab-portal-01", VMID: PortalVMID, Hostname: "lab-portal-01", Zone: "SERVERS", Address: "10.10.20.30", Role: "Generated platform portal", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagPortal, TagBackup}, URL: "https://portal." + DefaultDomain, DNSAliases: []string{"portal"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 		},
 	}
 }
@@ -200,6 +212,8 @@ func (s Site) Normalize() Site {
 	for i := range copySite.Components {
 		copySite.Components[i].DNSAliases = append([]string(nil), copySite.Components[i].DNSAliases...)
 		sort.Strings(copySite.Components[i].DNSAliases)
+		copySite.Components[i].Tags = append([]string(nil), copySite.Components[i].Tags...)
+		sort.Strings(copySite.Components[i].Tags)
 	}
 	return copySite
 }
@@ -298,6 +312,26 @@ func (s Site) Validate() error {
 		for _, alias := range m.DNSAliases {
 			if !modelTokenPattern.MatchString(alias) {
 				return fmt.Errorf("component %s has unsafe DNS alias %q", m.Name, alias)
+			}
+		}
+		seenTags := map[string]bool{}
+		for _, tag := range m.Tags {
+			if !modelTokenPattern.MatchString(tag) || tag != strings.ToLower(tag) {
+				return fmt.Errorf("component %s has unsafe tag %q", m.Name, tag)
+			}
+			if seenTags[tag] {
+				return fmt.Errorf("component %s has duplicate tag %q", m.Name, tag)
+			}
+			seenTags[tag] = true
+		}
+		if m.ProductOwned {
+			for _, requiredTag := range []string{TagBoetticher, TagManaged} {
+				if !seenTags[requiredTag] {
+					return fmt.Errorf("platform component %s is missing required tag %q", m.Name, requiredTag)
+				}
+			}
+			if m.VMID != 0 && m.Backup && !seenTags[TagBackup] {
+				return fmt.Errorf("platform guest %s is marked for backup but is missing required tag %q", m.Name, TagBackup)
 			}
 		}
 		if strings.ContainsAny(m.Role+m.URL, "\r\n") {

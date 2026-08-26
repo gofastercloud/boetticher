@@ -6,6 +6,10 @@ boetticher converges only declared platform resources: the Proxmox host, firewal
 
 It does not adopt arbitrary VMs, LXCs, bridges, bonds, VLANs, routes, SDN objects, Zabbix objects, or backup jobs. OpenTofu state contains only platform guests and future official module resources. The suggested ID ranges are:
 
+Platform guests carry canonical `boetticher` and `managed` tags. The `backup`
+tag marks a declared platform guest for the platform backup projection; it is
+metadata and does not cause user workloads to be adopted or backed up.
+
 ```text
 100–199  boetticher core platform
 200–499  official boetticher modules

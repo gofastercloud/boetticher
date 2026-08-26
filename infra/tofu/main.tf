@@ -23,6 +23,7 @@ resource "proxmox_virtual_environment_vm" "firewall" {
   vm_id           = each.value.vmid
   name            = each.value.name
   description     = "boetticher OPNsense firewall"
+  tags            = each.value.tags
   on_boot         = true
   started         = true
   bios            = "seabios"
@@ -79,6 +80,7 @@ resource "proxmox_virtual_environment_container" "managed" {
   node_name     = local.desired.node
   vm_id         = each.value.vmid
   description   = "boetticher ${each.value.role}"
+  tags          = each.value.tags
   start_on_boot = true
   started       = true
   unprivileged  = true
