@@ -45,6 +45,33 @@ func TestUsageIsGeneratedFromCommandMetadata(t *testing.T) {
 	}
 }
 
+func TestPublicHelpPathsDoNotFail(t *testing.T) {
+	for _, args := range [][]string{
+		{"init", "--help"}, {"preflight", "-h"}, {"bootstrap", "--help"}, {"deploy", "--help"},
+		{"verify", "--help"}, {"doctor", "--help"}, {"network", "--help"}, {"firewall", "--help"},
+		{"dhcp", "--help"}, {"pki", "--help"}, {"access", "--help"}, {"portal", "--help"},
+		{"module", "--help"}, {"config", "--help"}, {"upgrade", "--help"},
+	} {
+		var output bytes.Buffer
+		if err := Run(args, &output, &output); err != nil {
+			t.Errorf("%v: %v", args, err)
+		}
+		if output.Len() == 0 {
+			t.Errorf("%v produced no help output", args)
+		}
+	}
+}
+
+func TestConvergeIsNotAnActiveCommand(t *testing.T) {
+	var output bytes.Buffer
+	if err := Run([]string{"converge"}, &output, &output); err == nil {
+		t.Fatal("removed converge command was accepted")
+	}
+	if strings.Contains(output.String(), "boetticher converge") {
+		t.Fatal("removed converge command appeared in normal CLI output")
+	}
+}
+
 func TestCommandReferenceContainsCLIUsage(t *testing.T) {
 	root := repositoryRoot(t)
 	document, err := os.ReadFile(filepath.Join(root, "docs", "commands.md"))
