@@ -43,6 +43,7 @@ var PublicBuildInputs = []string{
 	"internal/artifacts",
 	"internal/dns",
 	"internal/model",
+	"internal/modules",
 	"images",
 	"scripts/build-images.sh",
 	"scripts/scan-images.sh",
