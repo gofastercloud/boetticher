@@ -27,6 +27,9 @@ func TestFoundationPlanIsDeterministic(t *testing.T) {
 	if len(first.Guests) != 5 || first.Guests[0].VMID != model.ProxmoxVMID {
 		t.Fatalf("unexpected foundation plan: %#v", first.Guests)
 	}
+	if first.GatewayImageURL != model.QualifiedGatewayImageURL || first.GatewaySHA512 != model.QualifiedGatewayImageSHA512 {
+		t.Fatalf("gateway image pin is incomplete: %#v", first)
+	}
 }
 
 func TestManagedFirewallUsesTaggedPerZoneVNICs(t *testing.T) {

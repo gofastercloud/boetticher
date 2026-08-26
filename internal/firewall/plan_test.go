@@ -60,7 +60,7 @@ func TestManagedRulesetIsDeterministicAndFailClosed(t *testing.T) {
 		"SANDBOX-SERVERS-DROP",
 		"SANDBOX-MGMT-DROP",
 		"table ip boetticher_nat",
-		"oifname \"wan0\" ip saddr @sandbox_net masquerade",
+		"oifname \"wan0\" ip saddr 10.10.50.0/24 masquerade",
 	} {
 		if !strings.Contains(a, expected) {
 			t.Errorf("ruleset missing %q", expected)

@@ -242,7 +242,7 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 		return fmt.Errorf("HOLD: bootstrap network binding was persisted but portal could not be regenerated: %w", err)
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		if err := proxmox.EnsureFirewallVM(ctx, client, plan, model.QualifiedGatewayImage); err != nil {
+		if err := proxmox.EnsureFirewallVM(ctx, client, plan); err != nil {
 			return err
 		}
 		if err := client.StartVM(ctx, plan.Node, model.ProxmoxVMID); err != nil {

@@ -52,13 +52,14 @@ type GuestNIC struct {
 }
 
 type Plan struct {
-	ModelRevision string      `json:"model_revision"`
-	ManagedBy     string      `json:"managed_by"`
-	Node          string      `json:"node"`
-	Storage       string      `json:"storage"`
-	GatewayImage  string      `json:"gateway_image"`
-	GatewaySHA512 string      `json:"gateway_sha512"`
-	Guests        []GuestPlan `json:"guests"`
+	ModelRevision   string      `json:"model_revision"`
+	ManagedBy       string      `json:"managed_by"`
+	Node            string      `json:"node"`
+	Storage         string      `json:"storage"`
+	GatewayImage    string      `json:"gateway_image"`
+	GatewayImageURL string      `json:"gateway_image_url"`
+	GatewaySHA512   string      `json:"gateway_sha512"`
+	Guests          []GuestPlan `json:"guests"`
 }
 
 type NetworkInterface struct {
@@ -316,7 +317,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		guests = append(guests, guest)
 	}
 	sort.Slice(guests, func(i, j int) bool { return guests[i].VMID < guests[j].VMID })
-	return Plan{ModelRevision: revision, ManagedBy: "boetticher", Node: s.ProxmoxNode, Storage: guestStorage, GatewayImage: model.QualifiedGatewayImage, GatewaySHA512: model.QualifiedGatewayImageSHA512, Guests: guests}, nil
+	return Plan{ModelRevision: revision, ManagedBy: "boetticher", Node: s.ProxmoxNode, Storage: guestStorage, GatewayImage: model.QualifiedGatewayImage, GatewayImageURL: model.QualifiedGatewayImageURL, GatewaySHA512: model.QualifiedGatewayImageSHA512, Guests: guests}, nil
 }
 
 func gatewayNICs(s model.Site) []GuestNIC {
@@ -394,13 +395,17 @@ func Provision(ctx context.Context, client *Client, plan Plan, debianTemplate st
 	return nil
 }
 
-func EnsureFirewallVM(ctx context.Context, client *Client, plan Plan, gatewayImageFileID string) error {
+func EnsureFirewallVM(ctx context.Context, client *Client, plan Plan) error {
 	if client == nil {
 		return errors.New("Proxmox client is required")
 	}
+	imageFileID, err := client.EnsureCloudImage(ctx, plan.Node, "local", plan.GatewayImage+".qcow2", plan.GatewayImageURL, plan.GatewaySHA512)
+	if err != nil {
+		return fmt.Errorf("prepare qualified gateway image: %w", err)
+	}
 	for _, guest := range plan.Guests {
 		if guest.Kind == KindQEMU {
-			return ensureQEMU(ctx, client, plan, guest, gatewayImageFileID)
+			return ensureQEMU(ctx, client, plan, guest, imageFileID)
 		}
 	}
 	return errors.New("foundation plan has no firewall VM")
@@ -673,10 +678,6 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 		"serial0": {"socket"},
 		"tags":    {strings.Join(guest.Tags, ";")},
 	}
-	if iso == "" {
-		return errors.New("gateway image disk reference is required")
-	}
-	params.Set("scsi0", iso)
 	for index, nic := range guest.NICs {
 		value := fmt.Sprintf("virtio,bridge=%s,firewall=1,macaddr=%s", nic.Bridge, nic.MAC)
 		if nic.VLAN != 0 {
@@ -686,6 +687,24 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 	}
 	if err := client.CreateVM(ctx, plan.Node, guest.VMID, params); err != nil {
 		return fmt.Errorf("create gateway VM %s: %w", guest.Name, err)
+	}
+	upid, err := client.ImportDisk(ctx, plan.Node, guest.VMID, iso, plan.Storage, "qcow2")
+	if err != nil {
+		return fmt.Errorf("import gateway image into %s: %w", plan.Storage, err)
+	}
+	if err := client.WaitTask(ctx, plan.Node, upid); err != nil {
+		return fmt.Errorf("wait for gateway image import: %w", err)
+	}
+	var imported map[string]any
+	if err := client.QEMUConfig(ctx, plan.Node, guest.VMID, &imported); err != nil {
+		return fmt.Errorf("inspect imported gateway disk: %w", err)
+	}
+	unused, ok := imported["unused0"].(string)
+	if !ok || unused == "" {
+		return errors.New("gateway disk import completed without an unused disk reference")
+	}
+	if err := client.SetVMConfig(ctx, plan.Node, guest.VMID, url.Values{"scsi0": {unused}, "delete": {"unused0"}}); err != nil {
+		return fmt.Errorf("attach imported gateway disk: %w", err)
 	}
 	return nil
 }

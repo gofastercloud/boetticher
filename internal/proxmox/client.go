@@ -119,6 +119,13 @@ type Node struct {
 	Type   string `json:"type"`
 }
 
+type StorageContent struct {
+	VolID    string `json:"volid"`
+	Filename string `json:"filename"`
+	Checksum string `json:"checksum"`
+	CSum     string `json:"csum"`
+}
+
 func (c *Client) CreateUser(ctx context.Context, userID, comment string) error {
 	return c.Post(ctx, "/access/users", url.Values{"userid": {userID}, "comment": {comment}}, nil)
 }
@@ -150,6 +157,24 @@ func (c *Client) CreateVM(ctx context.Context, node string, vmid int, params url
 	}
 	params.Set("vmid", strconv.Itoa(vmid))
 	return c.Post(ctx, path.Join("/nodes", node, "qemu"), params, nil)
+}
+
+func (c *Client) ImportDisk(ctx context.Context, node string, vmid int, source, storage, format string) (string, error) {
+	if node == "" || vmid <= 0 || source == "" || storage == "" {
+		return "", errors.New("node, positive VMID, source, and storage are required")
+	}
+	var upid string
+	form := url.Values{"source": {source}, "storage": {storage}}
+	if format != "" {
+		form.Set("format", format)
+	}
+	if err := c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "importdisk"), form, &upid); err != nil {
+		return "", fmt.Errorf("import gateway disk: %w", err)
+	}
+	if upid == "" {
+		return "", errors.New("Proxmox did not return a disk import task")
+	}
+	return upid, nil
 }
 
 func (c *Client) SetVMConfig(ctx context.Context, node string, vmid int, params url.Values) error {
@@ -217,6 +242,125 @@ func (c *Client) ListLXCs(ctx context.Context, node string) ([]GuestSummary, err
 
 func (c *Client) NodeNetwork(ctx context.Context, node string, out any) error {
 	return c.Get(ctx, path.Join("/nodes", node, "network"), nil, out)
+}
+
+func (c *Client) StorageContent(ctx context.Context, node, storage, content string) ([]StorageContent, error) {
+	if node == "" || storage == "" {
+		return nil, errors.New("Proxmox node and storage are required")
+	}
+	var result []StorageContent
+	query := url.Values{}
+	if content != "" {
+		query.Set("content", content)
+	}
+	if err := c.Get(ctx, path.Join("/nodes", node, "storage", storage, "content"), query, &result); err != nil {
+		return nil, fmt.Errorf("list Proxmox storage content: %w", err)
+	}
+	return result, nil
+}
+
+// DownloadURL asks Proxmox to download a pinned image and verify it before
+// making it available in storage. The checksum is sent as an API form field,
+// never placed in a shell command or a generated public artifact.
+func (c *Client) DownloadURL(ctx context.Context, node, storage, filename, imageURL, checksum string) (string, error) {
+	if node == "" || storage == "" || filename == "" || imageURL == "" || checksum == "" {
+		return "", errors.New("node, storage, filename, image URL, and checksum are required")
+	}
+	parsed, err := url.Parse(imageURL)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
+		return "", errors.New("gateway image URL must be an HTTP(S) URL")
+	}
+	if strings.ContainsAny(filename, "/\\\r\n") || len(checksum) != 128 || !isHex(checksum) {
+		return "", errors.New("gateway image filename or SHA-512 checksum is invalid")
+	}
+	var upid string
+	if err := c.Post(ctx, path.Join("/nodes", node, "storage", storage, "download-url"), url.Values{
+		"content":            {"iso"},
+		"filename":           {filename},
+		"url":                {imageURL},
+		"checksum":           {checksum},
+		"checksum-algorithm": {"sha512"},
+	}, &upid); err != nil {
+		return "", fmt.Errorf("download gateway image: %w", err)
+	}
+	if upid == "" {
+		return "", errors.New("Proxmox did not return a gateway image download task")
+	}
+	return upid, nil
+}
+
+func (c *Client) WaitTask(ctx context.Context, node, upid string) error {
+	if node == "" || upid == "" {
+		return errors.New("Proxmox task node and UPID are required")
+	}
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		var status struct {
+			Status     string `json:"status"`
+			ExitStatus string `json:"exitstatus"`
+		}
+		if err := c.Get(ctx, path.Join("/nodes", node, "tasks", upid, "status"), nil, &status); err != nil {
+			return fmt.Errorf("inspect Proxmox task: %w", err)
+		}
+		if status.Status == "stopped" {
+			if status.ExitStatus != "OK" && status.ExitStatus != "" {
+				return fmt.Errorf("Proxmox task failed: %s", status.ExitStatus)
+			}
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func (c *Client) EnsureCloudImage(ctx context.Context, node, storage, filename, imageURL, checksum string) (string, error) {
+	contents, err := c.StorageContent(ctx, node, storage, "iso")
+	if err != nil {
+		return "", err
+	}
+	for _, content := range contents {
+		if path.Base(content.Filename) != filename && !strings.HasSuffix(content.VolID, "/"+filename) {
+			continue
+		}
+		observed := content.Checksum
+		if observed == "" {
+			observed = content.CSum
+		}
+		if observed != "" && !strings.EqualFold(observed, checksum) {
+			return "", fmt.Errorf("existing gateway image %q has a different checksum", filename)
+		}
+		return content.VolID, nil
+	}
+	upid, err := c.DownloadURL(ctx, node, storage, filename, imageURL, checksum)
+	if err != nil {
+		return "", err
+	}
+	if err := c.WaitTask(ctx, node, upid); err != nil {
+		return "", err
+	}
+	contents, err = c.StorageContent(ctx, node, storage, "iso")
+	if err != nil {
+		return "", err
+	}
+	for _, content := range contents {
+		if path.Base(content.Filename) == filename || strings.HasSuffix(content.VolID, "/"+filename) {
+			return content.VolID, nil
+		}
+	}
+	return "", fmt.Errorf("downloaded gateway image %q was not found in Proxmox storage", filename)
+}
+
+func isHex(value string) bool {
+	for _, r := range value {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 // EnsureDirectoryStorage registers the fixed backup directory used by the

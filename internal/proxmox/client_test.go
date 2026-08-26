@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -94,6 +95,67 @@ func TestEnsureDirectoryStorageRejectsConflictingDefinition(t *testing.T) {
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
 	if err := client.EnsureDirectoryStorage(context.Background(), "boetticher-backups", "/srv/boetticher/backups"); err == nil {
 		t.Fatal("conflicting storage definition was accepted")
+	}
+}
+
+func TestDownloadURLUsesPinnedChecksumWithoutShellArguments(t *testing.T) {
+	checksum := strings.Repeat("a", 128)
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodPost || r.URL.Path != "/api2/json/nodes/lab-proxmox-01/storage/local/download-url" {
+			t.Fatalf("unexpected image download request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		for key, want := range map[string]string{
+			"content": "iso", "filename": "debian-13.qcow2", "url": "https://images.example/debian-13.qcow2", "checksum": checksum, "checksum-algorithm": "sha512",
+		} {
+			if got := r.Form.Get(key); got != want {
+				t.Errorf("%s = %q, want %q", key, got, want)
+			}
+		}
+		return response([]byte(`{"data":"UPID:pve:download"}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	upid, err := client.DownloadURL(context.Background(), "lab-proxmox-01", "local", "debian-13.qcow2", "https://images.example/debian-13.qcow2", checksum)
+	if err != nil || upid != "UPID:pve:download" {
+		t.Fatalf("DownloadURL() = %q, %v", upid, err)
+	}
+}
+
+func TestDownloadURLRejectsUnpinnedOrUnsafeInputs(t *testing.T) {
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: roundTripFunc(func(r *http.Request) *http.Response { return response([]byte(`{"data":"unexpected"}`)) })}}
+	if _, err := client.DownloadURL(context.Background(), "node", "local", "../image.qcow2", "https://images.example/image.qcow2", strings.Repeat("a", 128)); err == nil {
+		t.Fatal("unsafe image filename was accepted")
+	}
+	if _, err := client.DownloadURL(context.Background(), "node", "local", "image.qcow2", "https://images.example/image.qcow2", "not-a-sha512"); err == nil {
+		t.Fatal("unverified image checksum was accepted")
+	}
+}
+
+func TestImportDiskUsesThePinnedStoragePlan(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodPost || r.URL.Path != "/api2/json/nodes/node/qemu/100/importdisk" {
+			t.Fatalf("unexpected import request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if got := url.Values(r.Form).Get("source"); got != "local:iso/debian-13.qcow2" {
+			t.Errorf("source = %q", got)
+		}
+		if got := r.Form.Get("storage"); got != "boetticher-thin" {
+			t.Errorf("storage = %q", got)
+		}
+		if got := r.Form.Get("format"); got != "qcow2" {
+			t.Errorf("format = %q", got)
+		}
+		return response([]byte(`{"data":"UPID:pve:import"}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	upid, err := client.ImportDisk(context.Background(), "node", 100, "local:iso/debian-13.qcow2", "boetticher-thin", "qcow2")
+	if err != nil || upid != "UPID:pve:import" {
+		t.Fatalf("ImportDisk() = %q, %v", upid, err)
 	}
 }
 

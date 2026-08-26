@@ -17,6 +17,7 @@ const (
 	SchemaVersion               = 2
 	PlatformVersion             = "0.2.0"
 	QualifiedGatewayImage       = "debian-13-genericcloud-amd64"
+	QualifiedGatewayImageURL    = "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
 	QualifiedGatewayImageSHA512 = "77429b411b39b43f914dc9d14bf34aa315489a1a12b5429f72e5b483bdda23c65698d33443c85d3f3ad7c3a0828ae60845406d6b99646342554d17abae29c2a3"
 	ZabbixSeries                = "7.0 LTS"
 	AuthoritativeDNS            = "PowerDNS Authoritative"
