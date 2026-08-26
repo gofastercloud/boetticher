@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -46,4 +48,50 @@ func TestHonorRequestedPhysicalModeAllowsExplicitTrunkSelection(t *testing.T) {
 	if got.Mode != networkmodel.ModePhysicalTrunk || got.Trunk == nil || got.Trunk.Name != "enp5s0" {
 		t.Fatalf("explicit trunk selection was discarded: %#v", got)
 	}
+}
+
+func TestCreateBuilderKnownHostsUsesPrivateEphemeralFile(t *testing.T) {
+	name, err := createBuilderKnownHosts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(name)
+	info, err := os.Stat(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("builder known_hosts mode = %o, want 600", info.Mode().Perm())
+	}
+	if strings.Contains(name, "boetticher") == false {
+		t.Fatalf("builder known_hosts does not use the bounded temporary name: %s", name)
+	}
+}
+
+func TestPersistBuilderDiagnosticsIsBoundedAndPrivate(t *testing.T) {
+	runner := &diagnosticRunner{output: []byte(strings.Repeat("diagnostic ", maxBuilderDiagnosticOutput))}
+	directory := t.TempDir()
+	if err := persistBuilderDiagnostics(context.Background(), runner, "192.0.2.10", "labadmin", directory); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "generated", "runtime", "builder-failure.txt")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) > maxBuilderDiagnosticOutput*9+4096 {
+		t.Fatalf("builder diagnostics were not bounded: %d bytes", len(data))
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("builder diagnostic permissions = %v %o", err, info.Mode().Perm())
+	}
+}
+
+type diagnosticRunner struct {
+	output []byte
+}
+
+func (r *diagnosticRunner) Run(context.Context, string, string, string) ([]byte, error) {
+	return r.output, nil
 }

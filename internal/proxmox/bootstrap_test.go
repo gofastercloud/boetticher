@@ -176,6 +176,17 @@ func TestConfigureIdentitiesLocksProxmoxLabadminAndInstallsBoundedSudo(t *testin
 	}
 }
 
+func TestCheckBuilderCapacityHoldsBelowMinimum(t *testing.T) {
+	runner := &fakeRunner{output: []byte("Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/vda1 33554432 12582912 20971520 38% /\n")}
+	if err := CheckBuilderCapacity(context.Background(), runner, "192.0.2.10", "labadmin", 20); err != nil {
+		t.Fatalf("expected exact minimum builder capacity to pass: %v", err)
+	}
+	runner.output = []byte("Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/vda1 33554432 12582912 10485760 69% /\n")
+	if err := CheckBuilderCapacity(context.Background(), runner, "192.0.2.10", "labadmin", 20); err == nil || !strings.Contains(err.Error(), "HOLD") {
+		t.Fatalf("insufficient builder capacity was not held: %v", err)
+	}
+}
+
 func TestDiscoverPhysicalNetworkViaSSHUsesReadOnlyPveshEvidence(t *testing.T) {
 	runner := &fakeRunner{output: []byte(`[
   {"iface":"vmbr0","type":"bridge","address":"192.0.2.73/24","gateway":"192.0.2.1","bridge_ports":"eno1"},

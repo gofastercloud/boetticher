@@ -623,34 +623,37 @@ const builderOwnerTag = "boetticher-builder"
 // pinned Debian input. It is Core bootstrap infrastructure, not a module or a
 // user workload, and an existing object must prove that ownership before it is
 // touched.
-func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey string) error {
+func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey string) (created bool, err error) {
 	if client == nil {
-		return errors.New("Proxmox client is required")
+		return false, errors.New("Proxmox client is required")
 	}
 	kind, current, err := client.GuestConfig(ctx, plan.Node, model.BuilderVMID)
 	if err == nil {
 		if kind != KindQEMU {
-			return fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, not the temporary builder", model.BuilderVMID, kind)
+			return false, fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, not the temporary builder", model.BuilderVMID, kind)
 		}
 		if name, _ := current["name"].(string); name != "lab-builder-01" {
-			return fmt.Errorf("HOLD: VMID %d is not the expected temporary builder", model.BuilderVMID)
+			return false, fmt.Errorf("HOLD: VMID %d is not the expected temporary builder", model.BuilderVMID)
 		}
 		if !hasOwnerTag(currentTags(current), builderOwnerTag) {
-			return fmt.Errorf("HOLD: VMID %d lacks canonical builder ownership proof %q", model.BuilderVMID, builderOwnerTag)
+			return false, fmt.Errorf("HOLD: VMID %d lacks canonical builder ownership proof %q", model.BuilderVMID, builderOwnerTag)
 		}
-		return nil
-	}
-	if !IsNotFound(err) {
-		return fmt.Errorf("inspect temporary builder: %w", err)
+		if err := DestroyBuilderVM(ctx, client, plan.Node); err != nil {
+			return false, fmt.Errorf("remove existing temporary builder before a fresh build: %w", err)
+		}
+	} else if !IsNotFound(err) {
+		return false, fmt.Errorf("inspect temporary builder: %w", err)
 	}
 	image, err := client.EnsureCloudImage(ctx, plan.Node, "local", plan.GatewayImage+".qcow2", plan.GatewayImageURL, plan.GatewaySHA512)
 	if err != nil {
-		return fmt.Errorf("prepare pinned builder input: %w", err)
+		return false, fmt.Errorf("prepare pinned builder input: %w", err)
 	}
+	builder := artifacts.Builder()
 	params := url.Values{
 		"name":      {"lab-builder-01"},
-		"memory":    {"4096"},
-		"cores":     {"4"},
+		"memory":    {strconv.Itoa(builder.MemoryMiB)},
+		"cores":     {strconv.Itoa(builder.Cores)},
+		"cpu":       {"host"},
 		"ostype":    {"l26"},
 		"onboot":    {"0"},
 		"agent":     {"1"},
@@ -665,41 +668,54 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 	}
 	cloudInit, err := RenderBuilderCloudInitWithKey(publicKey)
 	if err != nil {
-		return fmt.Errorf("render builder cloud-init: %w", err)
+		return false, fmt.Errorf("render builder cloud-init: %w", err)
 	}
 	for key, value := range map[string]string{"meta": cloudInit.MetaData, "user": cloudInit.UserData, "network": cloudInit.NetworkConfig} {
 		if value == "" {
-			return errors.New("builder cloud-init input is incomplete")
+			return false, errors.New("builder cloud-init input is incomplete")
 		}
 		names := cloudInitSnippetNames(model.BuilderVMID)
 		if err := client.UploadStorageText(ctx, plan.Node, "local", "snippets", names[key], value); err != nil {
-			return fmt.Errorf("upload builder cloud-init %s: %w", key, err)
+			return false, fmt.Errorf("upload builder cloud-init %s: %w", key, err)
 		}
 	}
+	snippetsUploaded := true
+	defer func() {
+		if err != nil && snippetsUploaded {
+			if cleanupErr := cleanupBuilderSnippets(ctx, client, plan.Node); cleanupErr != nil {
+				err = errors.Join(err, cleanupErr)
+			}
+		}
+	}()
 	params.Set("cicustom", cloudInitCICustom(model.BuilderVMID))
 	params.Set("ipconfig0", "ip=dhcp")
 	if err := client.CreateVM(ctx, plan.Node, model.BuilderVMID, params); err != nil {
-		return fmt.Errorf("create temporary builder: %w", err)
+		return false, fmt.Errorf("create temporary builder: %w", err)
 	}
+	created = true
+	snippetsUploaded = false
 	upid, err := client.ImportDisk(ctx, plan.Node, model.BuilderVMID, image, plan.Storage, "qcow2")
 	if err != nil {
-		return fmt.Errorf("import builder input: %w", err)
+		return created, fmt.Errorf("import builder input: %w", err)
 	}
 	if err := client.WaitTask(ctx, plan.Node, upid); err != nil {
-		return fmt.Errorf("wait for builder input: %w", err)
+		return created, fmt.Errorf("wait for builder input: %w", err)
 	}
 	var imported map[string]any
 	if err := client.QEMUConfig(ctx, plan.Node, model.BuilderVMID, &imported); err != nil {
-		return fmt.Errorf("inspect builder disk: %w", err)
+		return created, fmt.Errorf("inspect builder disk: %w", err)
 	}
 	unused, ok := imported["unused0"].(string)
 	if !ok || unused == "" {
-		return errors.New("builder disk import completed without an unused disk reference")
+		return created, errors.New("builder disk import completed without an unused disk reference")
 	}
 	if err := client.SetVMConfig(ctx, plan.Node, model.BuilderVMID, url.Values{"scsi0": {unused}, "delete": {"unused0"}}); err != nil {
-		return fmt.Errorf("attach builder disk: %w", err)
+		return created, fmt.Errorf("attach builder disk: %w", err)
 	}
-	return nil
+	if err := client.ResizeQEMUDisk(ctx, plan.Node, model.BuilderVMID, "scsi0", builder.DiskGiB); err != nil {
+		return created, fmt.Errorf("size builder disk: %w", err)
+	}
+	return created, nil
 }
 
 // WaitForQEMUIPv4 waits for the guest agent to report a routable IPv4 address
@@ -750,7 +766,7 @@ func DestroyBuilderVM(ctx context.Context, client *Client, node string) error {
 	}
 	kind, current, err := client.GuestConfig(ctx, node, model.BuilderVMID)
 	if IsNotFound(err) {
-		return nil
+		return cleanupBuilderSnippets(ctx, client, node)
 	}
 	if err != nil {
 		return fmt.Errorf("inspect temporary builder before destruction: %w", err)
@@ -768,6 +784,50 @@ func DestroyBuilderVM(ctx context.Context, client *Client, node string) error {
 	}
 	if err := client.Delete(ctx, fmt.Sprintf("/nodes/%s/qemu/%d", node, model.BuilderVMID)); err != nil {
 		return fmt.Errorf("destroy temporary builder: %w", err)
+	}
+	if err := WaitForGuestAbsent(ctx, client, node, model.BuilderVMID, 30, time.Second); err != nil {
+		return err
+	}
+	return cleanupBuilderSnippets(ctx, client, node)
+}
+
+// WaitForGuestAbsent verifies that Proxmox has finished removing a guest.
+// Cleanup never treats an accepted delete request as proof that the reserved
+// identity is available for a fresh builder.
+func WaitForGuestAbsent(ctx context.Context, client *Client, node string, vmid, attempts int, interval time.Duration) error {
+	if client == nil || node == "" || vmid <= 0 || attempts < 1 {
+		return errors.New("guest absence readiness identity is invalid")
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
+		_, _, err := client.GuestConfig(ctx, node, vmid)
+		if IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inspect guest %d while waiting for removal: %w", vmid, err)
+		}
+		if attempt+1 < attempts {
+			timer := time.NewTimer(interval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+	}
+	return fmt.Errorf("HOLD: guest %d remains present after deletion", vmid)
+}
+
+func cleanupBuilderSnippets(ctx context.Context, client *Client, node string) error {
+	names := cloudInitSnippetNames(model.BuilderVMID)
+	for _, name := range []string{names["meta"], names["user"], names["network"]} {
+		if err := client.DeleteStorageSnippet(ctx, node, "local", name); err != nil && !IsNotFound(err) {
+			return fmt.Errorf("remove builder cloud-init snippet %s: %w", name, err)
+		}
 	}
 	return nil
 }

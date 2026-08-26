@@ -107,6 +107,38 @@ func TestCreateLXCWaitsForProxmoxTaskBeforeReturning(t *testing.T) {
 	}
 }
 
+func TestResizeQEMUDiskUsesExplicitBoundedGrowth(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodPut || r.URL.Path != "/api2/json/nodes/node/qemu/190/resize" {
+			t.Fatalf("unexpected resize request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil || r.Form.Get("disk") != "scsi0" || r.Form.Get("size") != "+32G" {
+			t.Fatalf("unexpected resize form: %v", r.Form)
+		}
+		return response([]byte(`{"data":""}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.ResizeQEMUDisk(context.Background(), "node", 190, "scsi0", 32); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeleteStorageSnippetRejectsPathsAndUsesExactEndpoint(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api2/json/nodes/node/storage/local/content/snippets/boetticher-190-meta.yaml" {
+			t.Fatalf("unexpected snippet deletion request: %s %s", r.Method, r.URL.Path)
+		}
+		return response([]byte(`{"data":null}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.DeleteStorageSnippet(context.Background(), "node", "local", "boetticher-190-meta.yaml"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DeleteStorageSnippet(context.Background(), "node", "local", "../other"); err == nil {
+		t.Fatal("snippet deletion accepted a path")
+	}
+}
+
 func TestUploadStorageFileUsesMultipartArtifactContract(t *testing.T) {
 	path := t.TempDir() + "/artifact.tar.zst"
 	if err := os.WriteFile(path, []byte("artifact bytes"), 0o600); err != nil {

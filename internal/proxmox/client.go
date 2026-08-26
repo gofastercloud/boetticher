@@ -208,6 +208,25 @@ func (c *Client) SetVMConfig(ctx context.Context, node string, vmid int, params 
 	return c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "config"), params, nil)
 }
 
+// ResizeQEMUDisk grows one QEMU disk by the requested number of GiB. The
+// builder starts from a pinned cloud image and receives an additional bounded
+// growth operation; this never selects or formats a physical device.
+func (c *Client) ResizeQEMUDisk(ctx context.Context, node string, vmid int, disk string, sizeGiB int) error {
+	if node == "" || vmid <= 0 || disk == "" || sizeGiB <= 0 || strings.ContainsAny(disk, "/\\\r\n") {
+		return errors.New("node, positive VMID, disk, and positive size are required")
+	}
+	var upid string
+	if err := c.Put(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "resize"), url.Values{
+		"disk": {disk}, "size": {fmt.Sprintf("+%dG", sizeGiB)},
+	}, &upid); err != nil {
+		return fmt.Errorf("resize QEMU disk: %w", err)
+	}
+	if upid != "" {
+		return c.WaitTask(ctx, node, upid)
+	}
+	return nil
+}
+
 func (c *Client) StartVM(ctx context.Context, node string, vmid int) error {
 	return c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "start"), nil, nil)
 }
@@ -437,6 +456,16 @@ func (c *Client) UploadStorageText(ctx context.Context, node, storage, content, 
 		return &APIError{StatusCode: response.StatusCode, Status: response.Status, Message: strings.TrimSpace(string(data))}
 	}
 	return nil
+}
+
+// DeleteStorageSnippet deletes only a plain, generated snippet filename. It
+// deliberately does not expose arbitrary storage-content deletion to module
+// code or callers handling untrusted paths.
+func (c *Client) DeleteStorageSnippet(ctx context.Context, node, storage, filename string) error {
+	if node == "" || storage == "" || filename == "" || strings.ContainsAny(filename, "/\\\r\n") {
+		return errors.New("node, storage, and plain snippet filename are required")
+	}
+	return c.Delete(ctx, path.Join("/nodes", node, "storage", storage, "content", "snippets", filename))
 }
 
 // DownloadURL asks Proxmox to download a pinned image and verify it before

@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +18,41 @@ import (
 
 type CommandRunner interface {
 	Run(ctx context.Context, address, user, command string) ([]byte, error)
+}
+
+// CheckBuilderCapacity verifies the disposable builder has enough free space
+// for the full appliance construction before any build work starts.
+func CheckBuilderCapacity(ctx context.Context, runner CommandRunner, address, user string, minimumFreeGiB int) error {
+	if runner == nil || minimumFreeGiB <= 0 {
+		return errors.New("builder capacity check requires a runner and positive minimum")
+	}
+	output, err := runner.Run(ctx, address, user, "df -Pk /")
+	if err != nil {
+		return fmt.Errorf("inspect temporary builder capacity: %w", err)
+	}
+	availableKiB, err := parseAvailableKiB(output)
+	if err != nil {
+		return fmt.Errorf("inspect temporary builder capacity: %w", err)
+	}
+	wantedKiB := int64(minimumFreeGiB) * 1024 * 1024
+	if availableKiB < wantedKiB {
+		return fmt.Errorf("HOLD: temporary builder has %d GiB free, need at least %d GiB", availableKiB/(1024*1024), minimumFreeGiB)
+	}
+	return nil
+}
+
+func parseAvailableKiB(output []byte) (int64, error) {
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 || fields[0] == "Filesystem" {
+			continue
+		}
+		available, err := strconv.ParseInt(fields[3], 10, 64)
+		if err == nil && available >= 0 {
+			return available, nil
+		}
+	}
+	return 0, errors.New("df output did not contain a valid available-space value")
 }
 
 // ArgsCommandRunner executes a fixed remote executable with separate
