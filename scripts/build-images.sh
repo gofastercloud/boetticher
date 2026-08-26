@@ -101,16 +101,39 @@ prepare_rootfs() {
 install_packages() {
   rootfs=$1
   shift
+  resolver_target=""
+  resolver_backup="$work_root/$(basename "$rootfs").resolv.conf"
+  if [ -L "$rootfs/etc/resolv.conf" ]; then
+    resolver_target=$(readlink "$rootfs/etc/resolv.conf")
+    rm -f "$rootfs/etc/resolv.conf"
+  elif [ -e "$rootfs/etc/resolv.conf" ]; then
+    cp -p "$rootfs/etc/resolv.conf" "$resolver_backup"
+  fi
+  cp -L /etc/resolv.conf "$rootfs/etc/resolv.conf"
+  restore_resolver() {
+    rm -f "$rootfs/etc/resolv.conf"
+    if [ -n "$resolver_target" ]; then
+      ln -s "$resolver_target" "$rootfs/etc/resolv.conf"
+    elif [ -f "$resolver_backup" ]; then
+      mv "$resolver_backup" "$rootfs/etc/resolv.conf"
+    fi
+  }
   mount --bind /dev "$rootfs/dev"
   mount -t proc proc "$rootfs/proc"
   mount --rbind /sys "$rootfs/sys"
-  chroot "$rootfs" apt-get update
-  chroot "$rootfs" env DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends "$@"
+  if ! chroot "$rootfs" apt-get update || ! chroot "$rootfs" env DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends "$@"; then
+    umount -R "$rootfs/dev" || true
+    umount -R "$rootfs/proc" || true
+    umount -R "$rootfs/sys" || true
+    restore_resolver
+    return 1
+  fi
   chroot "$rootfs" apt-get clean
   rm -rf "$rootfs/var/lib/apt/lists/"*
   umount -R "$rootfs/dev" || true
   umount -R "$rootfs/proc" || true
   umount -R "$rootfs/sys" || true
+  restore_resolver
 }
 
 install_powerdns() {
@@ -280,14 +303,15 @@ build_firewall() {
   image="$destination/boetticher-firewall-1.0.0-amd64.qcow2"
   cp "$input" "$image"
   virt-customize -a "$image" \
+    --network \
     --install nftables,kea-dhcp4-server,kea-dhcp-ddns-server,dnsmasq,chrony,openssh-server,sudo,cloud-init,systemd-journal-remote,zabbix-agent2,curl,jq,openssl \
     --mkdir /etc/boetticher,/usr/lib/boetticher,/var/lib/boetticher/identity/ssh,/tmp/boetticher-ansible,/etc/systemd/journald.conf.d,/etc/sysctl.d \
     --upload images/base/first-boot/boetticher-first-boot.sh:/usr/lib/boetticher/boetticher-first-boot.sh \
     --upload images/base/first-boot/boetticher-first-boot.service:/etc/systemd/system/boetticher-first-boot.service \
     --upload images/base/runtime/install-runtime-state.sh:/usr/lib/boetticher/install-runtime-state \
     --upload images/firewall/nocloud/network-config:/etc/boetticher/nocloud-network-config \
-    --write /etc/systemd/journald.conf.d/boetticher.conf:'[Journal]\nSystemMaxUse=256M\nRuntimeMaxUse=64M\n' \
-    --write /etc/sysctl.d/boetticher-forwarding.conf:'net.ipv4.ip_forward=0\nnet.ipv6.conf.all.forwarding=0\n' \
+    --upload images/base/runtime/journald.conf:/etc/systemd/journald.conf.d/boetticher.conf \
+    --upload images/firewall/runtime/forwarding.conf:/etc/sysctl.d/boetticher-forwarding.conf \
     --run-command 'useradd --create-home --shell /bin/bash labadmin || true' \
     --run-command 'usermod --append --groups sudo labadmin' \
     --run-command 'passwd --lock labadmin' \
