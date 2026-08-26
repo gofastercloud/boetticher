@@ -1354,6 +1354,7 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 	opnsenseURL := fs.String("opnsense-url", "https://10.10.99.1", "OPNsense API base URL")
 	opnsenseCA := fs.String("opnsense-ca", "", "OPNsense API CA PEM file")
 	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
+	zabbixURL := fs.String("zabbix-url", "https://monitor.lab.home.arpa", "Zabbix API base URL")
 	insecure := fs.Bool("insecure", false, "explicitly allow self-signed OPNsense API TLS")
 	playbook := fs.String("ansible-playbook", "ansible/site.yml", "guest convergence playbook")
 	dryRun := fs.Bool("dry-run", false, "render and validate policy without connecting")
@@ -1431,6 +1432,10 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 	if err != nil {
 		return fmt.Errorf("load encrypted Zabbix database password: %w", err)
 	}
+	zabbixAPIPassword, err := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "zabbix_api_password")
+	if err != nil {
+		return fmt.Errorf("load encrypted Zabbix API password: %w", err)
+	}
 	monitorServerKey, err := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "monitor_server_key")
 	if err != nil {
 		return fmt.Errorf("load encrypted monitor server key: %w", err)
@@ -1475,6 +1480,7 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 		return fmt.Errorf("load platform CA chain: %w", err)
 	}
 	runtimeVariables["zabbix_db_password"] = zabbixDBPassword
+	runtimeVariables["zabbix_api_password"] = zabbixAPIPassword
 	runtimeVariables["monitor_server_key_pem"] = monitorServerKey
 	runtimeVariables["monitor_server_cert_pem"] = monitorServerCert + authority.IssuingCertPEM
 	runtimeVariables["portal_server_key_pem"] = portalServerKey
@@ -1488,6 +1494,25 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 	inventoryPath := filepath.Join(*siteDir, "generated", "ansible", "inventory.ini")
 	if err := ansible.Run(context.Background(), *playbook, inventoryPath, variables); err != nil {
 		return err
+	}
+	clientCertificate, err := pki.IssueClient(authority, "boetticher-reconciler", s.Network.Domain, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("issue runtime Zabbix reconciliation certificate: %w", err)
+	}
+	zabbixClient, err := zabbix.NewClient(zabbix.ClientConfig{
+		BaseURL: *zabbixURL, User: "Admin", Password: zabbixAPIPassword,
+		CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
+		ServerName: "monitor." + s.Network.Domain,
+	})
+	if err != nil {
+		return err
+	}
+	zabbixPlan, err := zabbix.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
+	if err := zabbixClient.Reconcile(context.Background(), zabbixPlan); err != nil {
+		return fmt.Errorf("reconcile boetticher Zabbix objects: %w", err)
 	}
 	if err := proxmoxClient.ApplyBackupJob(context.Background(), s.ProxmoxNode, proxmox.BackupJob{
 		JobName: backupPlan.JobName, ModelRevision: backupPlan.ModelRevision, StorageTarget: backupPlan.StorageTarget,

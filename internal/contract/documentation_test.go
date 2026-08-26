@@ -50,7 +50,7 @@ func TestPublicDocumentationMatchesV01Model(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"boetticher converge [--site DIR] [--age-identity PATH] [--opnsense-url URL] [--opnsense-ca PATH] [--proxmox-ca PATH] [--insecure] [--ansible-playbook PATH] [--dry-run]",
+		"boetticher converge [--site DIR] [--age-identity PATH] [--opnsense-url URL] [--opnsense-ca PATH] [--proxmox-ca PATH] [--zabbix-url URL] [--insecure] [--ansible-playbook PATH] [--dry-run]",
 		"boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--opnsense-iso PATH] [--trunk-interface IFACE] [--dry-run]",
 	} {
 		if !strings.Contains(commands, want) {

@@ -1,6 +1,8 @@
 package ansible
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -29,6 +31,18 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 		if !strings.Contains(first, expected) {
 			t.Errorf("inventory missing %q", expected)
 		}
+	}
+}
+
+func TestAgent2IsEnabledOnEveryManagedLinuxHost(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "groups.get('portal', []) + ['lab-monitor-01']") {
+		t.Fatal("portal is not included in the managed Agent 2 service condition")
 	}
 }
 

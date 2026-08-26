@@ -329,6 +329,10 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 	if err != nil {
 		return err
 	}
+	zabbixAPIPassword, err := randomSecret()
+	if err != nil {
+		return err
+	}
 	monitorCertificate, err := pki.IssueServer(authority, "monitor", s.Network.Domain, []string{"lab-monitor-01." + s.Network.Domain}, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("issue monitor server certificate: %w", err)
@@ -347,6 +351,7 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 		"issuing_cert_pem_b64": pki.Encode(authority.IssuingCertPEM),
 		"ddns_tsig_secret":     ddnsSecret,
 		"zabbix_db_password":   zabbixDBPassword,
+		"zabbix_api_password":  zabbixAPIPassword,
 		"monitor_server_key":   pki.Encode(monitorCertificate.KeyPEM),
 		"monitor_server_cert":  pki.Encode(monitorCertificate.CertPEM),
 		"portal_server_key":    pki.Encode(portalCertificate.KeyPEM),

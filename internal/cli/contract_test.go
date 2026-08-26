@@ -69,7 +69,7 @@ func validateCommandForm(t *testing.T, fields []string) {
 		"preflight":          {"--site": true, "--live": true, "--bootstrap-address": true, "--trunk-interface": true},
 		"bootstrap":          {"--site": true, "--opnsense-iso": true, "--recovery-confirmed": true, "--trunk-interface": true, "--dry-run": true},
 		"provision":          {"--site": true, "--debian-template": true, "--dry-run": true},
-		"converge":           {"--site": true, "--opnsense-url": true, "--dry-run": true},
+		"converge":           {"--site": true, "--opnsense-url": true, "--zabbix-url": true, "--dry-run": true},
 		"ssh-config":         {"--site": true, "--output": true, "--force": true, "--check": true, "--install-include": true},
 		"verify":             {"--site": true},
 		"doctor":             {"--site": true},
