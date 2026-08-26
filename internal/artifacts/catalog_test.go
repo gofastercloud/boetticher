@@ -80,6 +80,21 @@ func TestResolveArtifactEvidenceRejectsChangedBytes(t *testing.T) {
 	}
 }
 
+func TestWriteEvidenceRequiresControllerVisibleArtifactBytes(t *testing.T) {
+	artifact, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := completeQualificationEvidence(Evidence{
+		Artifact:         artifact,
+		ContentSHA256:    strings.Repeat("c", 64),
+		DefinitionSHA256: artifact.DefinitionSHA256,
+	})
+	if err := WriteEvidence(t.TempDir(), artifact.Name, evidence); err == nil || !strings.Contains(err.Error(), "artifact path") {
+		t.Fatalf("evidence without a verifiable artifact path was accepted: %v", err)
+	}
+}
+
 func TestQualificationRejectsMissingScanAndSecurityFindings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "artifact.bin")
 	if err := os.WriteFile(path, []byte("qualified bytes"), 0o600); err != nil {
@@ -93,6 +108,7 @@ func TestQualificationRejectsMissingScanAndSecurityFindings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	evidence.ArtifactPath = path
 	if _, err := QualifyEvidence(evidence, ScanSummary{}); err == nil {
 		t.Fatal("missing qualification digests were accepted")
 	}

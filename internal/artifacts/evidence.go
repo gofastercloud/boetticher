@@ -13,8 +13,8 @@ func EvidencePath(root, name string) string {
 }
 
 func WriteEvidence(root, name string, evidence Evidence) error {
-	if root == "" || name == "" || evidence.ContentSHA256 == "" || evidence.DefinitionSHA256 == "" {
-		return fmt.Errorf("artifact evidence requires root, name, definition digest, and content digest")
+	if root == "" || name == "" || evidence.ArtifactPath == "" || evidence.ContentSHA256 == "" || evidence.DefinitionSHA256 == "" {
+		return fmt.Errorf("artifact evidence requires root, name, artifact path, definition digest, and content digest")
 	}
 	data, err := json.MarshalIndent(evidence, "", "  ")
 	if err != nil {

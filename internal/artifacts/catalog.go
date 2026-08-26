@@ -104,17 +104,18 @@ func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artif
 	if evidence.ContentSHA256 == "" {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s has no content checksum", requested.Name)
 	}
+	if evidence.ArtifactPath == "" {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s qualification evidence has no artifact path", requested.Name)
+	}
 	if err := validateQualificationDigests(evidence); err != nil {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s qualification evidence is incomplete: %w", requested.Name, err)
 	}
-	if evidence.ArtifactPath != "" {
-		verified, err := EvidenceForFile(evidence.ArtifactPath, requested)
-		if err != nil {
-			return model.Artifact{}, Evidence{}, err
-		}
-		if verified.ContentSHA256 != evidence.ContentSHA256 {
-			return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s content checksum does not match qualification evidence", requested.Name)
-		}
+	verified, err := EvidenceForFile(evidence.ArtifactPath, requested)
+	if err != nil {
+		return model.Artifact{}, Evidence{}, err
+	}
+	if verified.ContentSHA256 != evidence.ContentSHA256 {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s content checksum does not match qualification evidence", requested.Name)
 	}
 	resolved := requested
 	resolved.ContentSHA256 = evidence.ContentSHA256
