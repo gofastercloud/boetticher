@@ -66,7 +66,7 @@ func Inventory(s model.Site) (string, error) {
 		b.WriteString("firewall\n")
 	}
 	b.WriteString("\n")
-	b.WriteString("[managed:vars]\nansible_connection=ssh\nansible_python_interpreter=/usr/bin/python3\nansible_host_key_checking=true\n")
+	b.WriteString("[managed:vars]\nansible_connection=ssh\nansible_python_interpreter=/usr/bin/python3\nansible_remote_tmp=/tmp/boetticher-ansible\nansible_host_key_checking=true\n")
 	return b.String(), nil
 }
 

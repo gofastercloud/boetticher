@@ -71,7 +71,10 @@ create_base_rootfs() {
   chroot "$rootfs" useradd --create-home --shell /bin/bash labadmin
   chroot "$rootfs" usermod --append --groups sudo labadmin
   chroot "$rootfs" passwd --lock labadmin
-  printf '%s\n' 'labadmin ALL=(ALL) NOPASSWD:/usr/bin/systemctl, /usr/bin/install, /usr/bin/mkdir, /usr/bin/chown, /usr/bin/chmod, /usr/lib/boetticher/install-runtime-state *, /usr/sbin/nft, /usr/sbin/kea-dhcp4, /usr/sbin/kea-dhcp-ddns' > "$rootfs/etc/sudoers.d/boetticher"
+  mkdir -p "$rootfs/tmp/boetticher-ansible"
+  chroot "$rootfs" chown labadmin:labadmin /tmp/boetticher-ansible
+  chmod 0700 "$rootfs/tmp/boetticher-ansible"
+  printf '%s\n' 'labadmin ALL=(ALL) NOPASSWD:/usr/bin/systemctl, /usr/bin/install, /usr/bin/mkdir, /usr/bin/chown, /usr/bin/chmod, /usr/lib/boetticher/install-runtime-state *, /usr/sbin/nft, /usr/sbin/kea-dhcp4, /usr/sbin/kea-dhcp-ddns, /bin/sh -c * /usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*' > "$rootfs/etc/sudoers.d/boetticher"
   chmod 0440 "$rootfs/etc/sudoers.d/boetticher"
   mkdir -p "$rootfs/etc/systemd/journald.conf.d"
   printf '%s\n' '[Journal]' 'SystemMaxUse=256M' 'RuntimeMaxUse=64M' > "$rootfs/etc/systemd/journald.conf.d/boetticher.conf"
@@ -276,7 +279,7 @@ build_firewall() {
   cp "$input" "$image"
   virt-customize -a "$image" \
     --install nftables,kea-dhcp4-server,kea-dhcp-ddns-server,dnsmasq,chrony,openssh-server,sudo,cloud-init,systemd-journal-remote,zabbix-agent2,curl,jq,openssl \
-    --mkdir /etc/boetticher,/usr/lib/boetticher,/var/lib/boetticher/identity/ssh \
+    --mkdir /etc/boetticher,/usr/lib/boetticher,/var/lib/boetticher/identity/ssh,/tmp/boetticher-ansible \
     --upload images/base/first-boot/boetticher-first-boot.sh:/usr/lib/boetticher/boetticher-first-boot.sh \
     --upload images/base/first-boot/boetticher-first-boot.service:/etc/systemd/system/boetticher-first-boot.service \
     --upload images/base/runtime/install-runtime-state.sh:/usr/lib/boetticher/install-runtime-state \
@@ -286,7 +289,8 @@ build_firewall() {
     --run-command 'useradd --create-home --shell /bin/bash labadmin || true' \
     --run-command 'usermod --append --groups sudo labadmin' \
     --run-command 'passwd --lock labadmin' \
-    --run-command 'printf "%s\\n" "labadmin ALL=(ALL) NOPASSWD:/usr/bin/systemctl, /usr/lib/boetticher/install-runtime-state *, /usr/sbin/nft, /usr/sbin/kea-dhcp4, /usr/sbin/kea-dhcp-ddns" > /etc/sudoers.d/boetticher && chmod 0440 /etc/sudoers.d/boetticher' \
+    --run-command 'chown labadmin:labadmin /tmp/boetticher-ansible && chmod 0700 /tmp/boetticher-ansible' \
+    --run-command 'printf "%s\\n" "labadmin ALL=(ALL) NOPASSWD:/usr/bin/systemctl, /usr/lib/boetticher/install-runtime-state *, /usr/sbin/nft, /usr/sbin/kea-dhcp4, /usr/sbin/kea-dhcp-ddns, /bin/sh -c * /usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*" > /etc/sudoers.d/boetticher && chmod 0440 /etc/sudoers.d/boetticher' \
     --run-command 'dpkg-query -W -f="${binary:Package}\\t${Version}\\n" | sort > /var/lib/boetticher/package-manifest.txt' \
     --run-command 'systemctl enable boetticher-first-boot.service || true' \
     --run-command 'systemctl disable --now systemd-networkd-wait-online.service || true'

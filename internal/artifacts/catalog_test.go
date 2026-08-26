@@ -215,6 +215,19 @@ func TestApplianceBootstrapInputsContainNoOperatorKeyOrSiteState(t *testing.T) {
 			t.Fatalf("%s contains operator or site secret material", relative)
 		}
 	}
+	buildScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildText := string(buildScript)
+	for _, required := range []string{"/tmp/boetticher-ansible", "/usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*"} {
+		if !strings.Contains(buildText, required) {
+			t.Fatalf("appliance build does not constrain Ansible become transport with %q", required)
+		}
+	}
+	if strings.Contains(buildText, "NOPASSWD:ALL") {
+		t.Fatal("appliance sudo policy grants an unrestricted root command")
+	}
 }
 
 func TestBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {

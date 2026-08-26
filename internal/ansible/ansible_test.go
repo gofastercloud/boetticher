@@ -26,6 +26,7 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 		"lab-dns-01 ansible_host=10.10.20.10",
 		"ProxyJump=lab-bastion",
 		"HostKeyAlias=lab-dns-01.lab.home.arpa",
+		"ansible_remote_tmp=/tmp/boetticher-ansible",
 		"[managed:children]",
 	} {
 		if !strings.Contains(first, expected) {
