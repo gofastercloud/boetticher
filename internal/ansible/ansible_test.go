@@ -100,6 +100,26 @@ func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
 	}
 }
 
+func TestFirewallInterfaceBindingsCarryStableRoleMACs(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	variables, err := Variables(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(variables)
+	for _, expected := range []string{
+		`"name": "wan0"`, `"mac": "02:00:00:00:01:01"`,
+		`"name": "trusted0"`, `"mac": "02:00:00:00:01:02"`,
+		`"name": "servers0"`, `"mac": "02:00:00:00:01:03"`,
+		`"name": "sandbox0"`, `"mac": "02:00:00:00:01:04"`,
+		`"name": "mgmt0"`, `"mac": "02:00:00:00:01:05"`,
+	} {
+		if !strings.Contains(text, expected) {
+			t.Errorf("firewall variables missing stable interface binding %q", expected)
+		}
+	}
+}
+
 func TestDNSRoleDoesNotPlaceTSIGSecretsInProcessArguments(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
 	data, err := os.ReadFile(path)

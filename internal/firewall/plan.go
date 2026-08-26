@@ -20,6 +20,7 @@ const (
 type Interface struct {
 	Role    string `json:"role"`
 	Name    string `json:"name"`
+	MAC     string `json:"mac"`
 	Bridge  string `json:"bridge"`
 	VLAN    int    `json:"vlan,omitempty"`
 	Address string `json:"address"`
@@ -102,10 +103,10 @@ func PlanFromSite(s model.Site) (Plan, error) {
 }
 
 func gatewayInterfaces(s model.Site) []Interface {
-	interfaces := []Interface{{Role: "WAN", Name: "wan0", Bridge: "vmbr0", Address: "dhcp", Method: "dhcp"}}
+	interfaces := []Interface{{Role: "WAN", Name: "wan0", MAC: "02:00:00:00:01:01", Bridge: "vmbr0", Address: "dhcp", Method: "dhcp"}}
 	for _, zone := range s.Normalize().Network.Zones {
 		interfaces = append(interfaces, Interface{
-			Role: zone.Name, Name: strings.ToLower(zone.Name) + "0", Bridge: "vmbr1", VLAN: zone.VLAN,
+			Role: zone.Name, Name: strings.ToLower(zone.Name) + "0", MAC: fmt.Sprintf("02:00:00:00:01:%02x", len(interfaces)+1), Bridge: "vmbr1", VLAN: zone.VLAN,
 			Address: zone.Gateway + "/24", Method: "static",
 		})
 	}
