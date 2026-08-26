@@ -37,6 +37,7 @@ for name in $names; do
     artifact="$root/$name/boetticher-firewall-1.0.0-amd64.qcow2"
   fi
   report="$root/$name/trivy.json"
+  summary="$root/$name/trivy.txt"
   manifest="$root/$name/package-manifest.txt"
   sbom="$root/$name/sbom.json"
   if [ ! -f "$artifact" ]; then
@@ -67,6 +68,17 @@ for name in $names; do
   if ! trivy fs --scanners vuln,secret --format json --output "$report" "$scan_root"; then
     if [ "$mounted" -eq 1 ]; then guestunmount "$scan_root" || true; fi
     rm -rf "$scan_root"
+    exit 2
+  fi
+  if ! trivy fs --scanners vuln,secret --format table --output "$summary" "$scan_root"; then
+    if [ "$mounted" -eq 1 ]; then guestunmount "$scan_root" || true; fi
+    rm -rf "$scan_root"
+    exit 2
+  fi
+  if [ ! -s "$summary" ]; then
+    if [ "$mounted" -eq 1 ]; then guestunmount "$scan_root" || true; fi
+    rm -rf "$scan_root"
+    echo "HOLD: Trivy human-readable summary is empty for $name" >&2
     exit 2
   fi
   if ! trivy fs --scanners vuln,secret --format cyclonedx --output "$sbom" "$scan_root"; then

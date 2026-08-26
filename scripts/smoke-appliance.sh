@@ -7,6 +7,11 @@ run() {
   chroot "$rootfs" "$@" >/dev/null 2>&1
 }
 
+test ! -e "$rootfs/etc/boetticher/module.yaml"
+test ! -e "$rootfs/usr/lib/boetticher/artifact.json"
+test ! -e "$rootfs/home/labadmin/.ssh/authorized_keys"
+test ! -e "$rootfs/root/.ssh/authorized_keys"
+
 case "$name" in
   boetticher-base)
     run id labadmin
