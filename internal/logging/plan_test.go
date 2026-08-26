@@ -38,8 +38,12 @@ func TestPlanProjectsMandatoryCollectorAndManagedSources(t *testing.T) {
 	if strings.Contains(CollectorServiceOverride(plan), "ExecStart=/lib/systemd/systemd-journal-remote") {
 		t.Fatal("collector service override uses the non-canonical journal-remote executable path")
 	}
-	if !strings.Contains(UploadConfiguration(plan, "lab-dns-01"), "https://logs.lab.home.arpa:19532") {
+	upload := UploadConfiguration(plan, "lab-dns-01")
+	if !strings.Contains(upload, "https://logs.lab.home.arpa:19532") {
 		t.Fatal("upload configuration does not use the canonical collector URL")
+	}
+	if strings.Contains(upload, "[Service]") {
+		t.Fatal("journal-upload configuration contains a systemd unit section")
 	}
 }
 

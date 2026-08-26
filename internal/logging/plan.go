@@ -85,7 +85,6 @@ func UploadConfiguration(plan Plan, endpoint string) string {
 	return strings.Join([]string{
 		"[Upload]", "URL=" + plan.CollectorURL, "ServerKeyFile=/var/lib/boetticher/identity/logging/" + endpoint + ".key",
 		"ServerCertificateFile=/var/lib/boetticher/identity/logging/" + endpoint + ".crt",
-		"TrustedCertificateFile=/var/lib/boetticher/identity/logging/ca.crt", "", "[Service]",
-		"# Failure is retried asynchronously; application units do not require this service.",
+		"TrustedCertificateFile=/var/lib/boetticher/identity/logging/ca.crt",
 	}, "\n") + "\n"
 }
