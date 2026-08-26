@@ -19,6 +19,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
+	"github.com/gofastercloud/boetticher/internal/storage"
 	"github.com/gofastercloud/boetticher/internal/zabbix"
 )
 
@@ -162,6 +163,9 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		{"backup policy", filepath.Join(*siteDir, "generated", "backup", "desired-policy.json"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "backup", "desired-policy.json"), revision)
 		}},
+		{"storage policy", filepath.Join(*siteDir, "generated", "storage", "desired-state.json"), func() error {
+			return checkRevisionFile(filepath.Join(*siteDir, "generated", "storage", "desired-state.json"), revision)
+		}},
 		{"Proxmox desired state", filepath.Join(*siteDir, "generated", "proxmox", "desired-state.json"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "proxmox", "desired-state.json"), revision)
 		}},
@@ -224,6 +228,16 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		fmt.Fprintln(out, "Physical trunk        NOTICE virtual-only")
 	} else {
 		fmt.Fprintf(out, "Physical trunk        PASS %s attached\n", s.PhysicalNetwork.Trunk.Name)
+	}
+	if storagePlan, storageErr := storage.PlanFromSite(s); storageErr != nil {
+		failed = true
+		fmt.Fprintf(out, "Storage                INCONSISTENT (%v)\n", storageErr)
+	} else {
+		fmt.Fprintf(out, "Storage                CURRENT %s", storagePlan.Profile)
+		if storagePlan.Device != "" {
+			fmt.Fprintf(out, " device=%s", storagePlan.Device)
+		}
+		fmt.Fprintln(out)
 	}
 	fmt.Fprintln(out, "OPNsense bootstrap    HOLD exact unattended installer/interface/API sequence requires fresh-host qualification")
 	if s.BootstrapAddress == "" {
@@ -326,6 +340,16 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 			}
 			if !plan.PlatformOnly || plan.UserWorkloadsManaged || len(plan.GuestVMIDs) != 5 {
 				return errors.New("backup projection is not limited to platform guests")
+			}
+			return nil
+		}},
+		{"storage projection", func() error {
+			plan, err := storage.PlanFromSite(s)
+			if err != nil {
+				return err
+			}
+			if plan.Profile == "dedicated-data-disk" && (plan.Device == "" || plan.GuestStorage != storage.GuestStorageID || plan.BackupStorage != storage.BackupStorageID) {
+				return errors.New("dedicated storage projection is incomplete")
 			}
 			return nil
 		}},

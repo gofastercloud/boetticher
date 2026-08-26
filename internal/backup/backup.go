@@ -8,12 +8,13 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
+	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
 const (
 	PlatformJobName      = "boetticher-platform"
-	DedicatedStorageID   = "boetticher-backups"
-	DedicatedStoragePath = "/srv/boetticher/backups"
+	DedicatedStorageID   = storage.BackupStorageID
+	DedicatedStoragePath = storage.BackupMount
 )
 
 type Plan struct {

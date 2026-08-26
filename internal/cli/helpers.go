@@ -19,6 +19,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/portal"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
+	"github.com/gofastercloud/boetticher/internal/storage"
 	"github.com/gofastercloud/boetticher/internal/zabbix"
 )
 
@@ -85,6 +86,13 @@ func writeModelProjections(dir string, s model.Site) error {
 		return err
 	}
 	if err := writeProjection(filepath.Join(dir, "generated", "backup", "desired-policy.json"), backupPlan); err != nil {
+		return err
+	}
+	storagePlan, err := storage.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
+	if err := writeProjection(filepath.Join(dir, "generated", "storage", "desired-state.json"), storagePlan); err != nil {
 		return err
 	}
 	if err := writeProjection(filepath.Join(dir, "generated", "proxmox", "desired-state.json"), proxmoxPlan); err != nil {

@@ -14,6 +14,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
+	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
 func runBootstrapEndpoint(args []string, out interface{ Write([]byte) (int, error) }) error {
@@ -76,6 +77,7 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	siteDir := fs.String("site", ".", "private site repository directory")
 	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
 	recoveryConfirmed := fs.Bool("recovery-confirmed", false, "confirm an independent Age recovery copy exists")
+	storageConfirmed := fs.Bool("storage-confirmed", false, "confirm initialization of the configured dedicated data disk")
 	operatorKey := fs.String("operator-key", "", "operator SSH public key path")
 	initialUser := fs.String("initial-user", "root", "initial SSH user on the fresh Proxmox host")
 	knownHosts := fs.String("known-hosts", "", "optional SSH known-hosts file for bootstrap")
@@ -105,6 +107,9 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 		if !*recoveryConfirmed {
 			return errors.New("destructive bootstrap requires --recovery-confirmed after an independent Age recovery copy is secured")
 		}
+		if s.StorageProfile == "dedicated-data-disk" && !*storageConfirmed {
+			return errors.New("dedicated-data-disk bootstrap requires --storage-confirmed after reviewing the configured stable device")
+		}
 	}
 	if *operatorKey == "" {
 		*operatorKey = defaultOperatorPublicKey()
@@ -123,6 +128,7 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if *dryRun {
 		fmt.Fprintf(out, "Bootstrap plan: PASS model %s\n", plan.ModelRevision)
 		fmt.Fprintf(out, "  Proxmox endpoint: %s\n  Firewall VMID: %d\n  OPNsense ISO: %s\n", s.BootstrapAddress, model.ProxmoxVMID, valueOrPlaceholder(*opnsenseISO))
+		fmt.Fprintf(out, "  Storage: %s\n", s.StorageProfile)
 		fmt.Fprintln(out, "  Trust transition: SSH key → labadmin/lab-jump → scoped API token → SOPS")
 		fmt.Fprintln(out, "  Destructive actions: NOT RUN (dry-run)")
 		return nil
@@ -138,6 +144,11 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	ctx := context.Background()
 	if err := proxmox.InstallOperatorKey(ctx, runner, s.BootstrapAddress, *initialUser, publicKey); err != nil {
 		return fmt.Errorf("install operator SSH key: %w", err)
+	}
+	if s.StorageProfile == "dedicated-data-disk" {
+		if err := storage.Initialize(ctx, runner, s.BootstrapAddress, *initialUser, s.StorageDevice, *storageConfirmed); err != nil {
+			return err
+		}
 	}
 	allowedDestinations := jumpDestinations(s)
 	if err := proxmox.ConfigureIdentities(ctx, runner, s.BootstrapAddress, *initialUser, publicKey, allowedDestinations); err != nil {

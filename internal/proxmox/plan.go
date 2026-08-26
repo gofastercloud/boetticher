@@ -13,6 +13,7 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/model"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
+	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
 type GuestKind string
@@ -275,9 +276,9 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	storage := "local"
+	guestStorage := "local"
 	if s.StorageProfile == "dedicated-data-disk" {
-		storage = "local-lvm"
+		guestStorage = storage.GuestStorageID
 	}
 	guests := []GuestPlan{
 		{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Gateway: "10.10.99.1", VLAN: 99, Kind: KindQEMU, Cores: 2, MemoryMiB: 2048, DiskGiB: 16, Monitoring: componentMonitoring(s, "lab-fw-01"), Backup: componentBackup(s, "lab-fw-01"), Tags: componentTags(s, "lab-fw-01")},
@@ -286,7 +287,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		{VMID: model.MonitorVMID, Name: "lab-monitor-01", Hostname: "lab-monitor-01", Zone: "MGMT", Address: "10.10.99.20", Gateway: "10.10.99.1", VLAN: 99, Kind: KindLXC, Cores: 2, MemoryMiB: 2048, DiskGiB: 16, Monitoring: componentMonitoring(s, "lab-monitor-01"), Backup: componentBackup(s, "lab-monitor-01"), Tags: componentTags(s, "lab-monitor-01")},
 		{VMID: model.PortalVMID, Name: "lab-portal-01", Hostname: "lab-portal-01", Zone: "SERVERS", Address: "10.10.20.30", Gateway: "10.10.20.1", VLAN: 20, Kind: KindLXC, Cores: 1, MemoryMiB: 512, DiskGiB: 4, Monitoring: componentMonitoring(s, "lab-portal-01"), Backup: componentBackup(s, "lab-portal-01"), Tags: componentTags(s, "lab-portal-01")},
 	}
-	return Plan{ModelRevision: revision, ManagedBy: "boetticher", Node: s.ProxmoxNode, Storage: storage, Guests: guests}, nil
+	return Plan{ModelRevision: revision, ManagedBy: "boetticher", Node: s.ProxmoxNode, Storage: guestStorage, Guests: guests}, nil
 }
 
 func componentTags(s model.Site, name string) []string {

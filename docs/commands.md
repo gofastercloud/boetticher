@@ -4,7 +4,7 @@
 boetticher init [--site-dir DIR] [--age-identity PATH]
 boetticher preflight [--site DIR] [--live] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]
 boetticher bootstrap-endpoint show|set ADDRESS [--site DIR]
-boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--opnsense-iso PATH] [--trunk-interface IFACE] [--dry-run]
+boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--opnsense-iso PATH] [--trunk-interface IFACE] [--dry-run]
 boetticher provision [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--debian-template TEMPLATE] [--dry-run]
 boetticher converge [--site DIR] [--age-identity PATH] [--opnsense-url URL] [--opnsense-ca PATH] [--proxmox-ca PATH] [--zabbix-url URL] [--insecure] [--ansible-playbook PATH] [--dry-run]
 boetticher verify [--site DIR] [--ssh-config PATH] [--ssh-journey]

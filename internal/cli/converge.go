@@ -19,6 +19,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
+	"github.com/gofastercloud/boetticher/internal/storage"
 	"github.com/gofastercloud/boetticher/internal/zabbix"
 )
 
@@ -57,11 +58,18 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 	if err != nil {
 		return err
 	}
+	storagePlan, err := storage.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
 	proxmoxClient, _, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
 	if err != nil {
 		return fmt.Errorf("load Proxmox client for platform convergence: %w", err)
 	}
 	if backupPlan.StorageTarget == backup.DedicatedStorageID {
+		if err := proxmoxClient.EnsureLVMThinStorage(context.Background(), storage.GuestStorageID, storage.VolumeGroup, storage.ThinPool); err != nil {
+			return fmt.Errorf("ensure dedicated guest storage: %w", err)
+		}
 		if err := proxmoxClient.EnsureDirectoryStorage(context.Background(), backup.DedicatedStorageID, backup.DedicatedStoragePath); err != nil {
 			return fmt.Errorf("ensure dedicated backup storage: %w", err)
 		}
@@ -192,7 +200,7 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 	if err := rebuildPortal(*siteDir, s); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "OPNsense convergence: PASS model %s; API authenticated and policy applied\n", plan.ModelRevision)
+	fmt.Fprintf(out, "OPNsense convergence: PASS model %s; API authenticated and policy applied (storage %s)\n", plan.ModelRevision, storagePlan.GuestStorage)
 	return nil
 }
 

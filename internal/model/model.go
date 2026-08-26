@@ -61,6 +61,7 @@ type Site struct {
 	PlatformVersion  string           `json:"platform_version"`
 	SchemaVersion    int              `json:"schema_version"`
 	StorageProfile   string           `json:"storage_profile"`
+	StorageDevice    string           `json:"storage_device,omitempty"`
 	ProxmoxNode      string           `json:"proxmox_node"`
 	BootstrapAddress string           `json:"bootstrap_address,omitempty"`
 	SSHIdentityFile  string           `json:"ssh_identity_file,omitempty"`
@@ -228,6 +229,13 @@ func (s Site) Validate() error {
 	}
 	if s.StorageProfile != "single-disk" && s.StorageProfile != "dedicated-data-disk" {
 		return fmt.Errorf("unsupported storage_profile %q", s.StorageProfile)
+	}
+	if s.StorageProfile == "dedicated-data-disk" {
+		if !strings.HasPrefix(s.StorageDevice, "/dev/disk/by-id/") || strings.ContainsAny(s.StorageDevice, "\r\n'\" \t") {
+			return errors.New("dedicated-data-disk requires a stable /dev/disk/by-id device identity")
+		}
+	} else if s.StorageDevice != "" {
+		return errors.New("storage_device is only valid for dedicated-data-disk")
 	}
 	if s.ProxmoxNode != DefaultProxmoxNode {
 		return fmt.Errorf("proxmox_node must be %q in V1", DefaultProxmoxNode)
