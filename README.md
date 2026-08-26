@@ -115,6 +115,7 @@ Start with [the architecture guide](docs/architecture.md), [the security model](
 - [Storage and recovery](docs/storage/): storage profiles, backup ownership, and recovery runbooks.
 - [Operations](docs/operations.md) and [commands](docs/commands.md): the day-to-day CLI surface.
 - [Troubleshooting](docs/troubleshooting.md): bounded diagnosis and HOLD conditions.
+- [T580 qualification](docs/hardware-test-checklist.md): the exact wiped-host sequence for live testing.
 
 `lab-portal-01` renders this same release documentation alongside the installation-specific model and non-secret verification evidence. It is passive static HTML; Zabbix owns live telemetry.
 
