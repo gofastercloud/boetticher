@@ -157,6 +157,20 @@ func dynamicZoneNames(zones []dns.DynamicZone) []string {
 // file. The playbook itself must obtain any future secret material through an
 // approved runtime mechanism.
 func Run(ctx context.Context, playbook, inventory string, variables []byte) error {
+	return run(ctx, playbook, inventory, variables, "")
+}
+
+// RunLimited executes the same generated playbook against one known inventory
+// identity. The limit is validated before it becomes an Ansible argument so a
+// readiness stage cannot turn into an arbitrary command or host selector.
+func RunLimited(ctx context.Context, playbook, inventory string, variables []byte, limit string) error {
+	if !safeInventoryIdentity(limit) {
+		return errors.New("Ansible limit must be one safe inventory identity")
+	}
+	return run(ctx, playbook, inventory, variables, limit)
+}
+
+func run(ctx context.Context, playbook, inventory string, variables []byte, limit string) error {
 	if playbook == "" || inventory == "" {
 		return errors.New("Ansible playbook and inventory are required")
 	}
@@ -164,11 +178,27 @@ func Run(ctx context.Context, playbook, inventory string, variables []byte) erro
 	if err != nil {
 		return fmt.Errorf("ansible-playbook is required: %w", err)
 	}
-	command := exec.CommandContext(ctx, executable, "-i", inventory, playbook, "--extra-vars", "@-")
+	args := []string{"-i", inventory, playbook, "--extra-vars", "@-"}
+	if limit != "" {
+		args = append(args, "--limit", limit)
+	}
+	command := exec.CommandContext(ctx, executable, args...)
 	command.Stdin = strings.NewReader(string(variables))
 	command.Env = append(os.Environ(), "ANSIBLE_HOST_KEY_CHECKING=True")
 	if _, err := command.CombinedOutput(); err != nil {
 		return fmt.Errorf("ansible-playbook failed: %w", err)
 	}
 	return nil
+}
+
+func safeInventoryIdentity(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, character := range value {
+		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '-' || character == '_' || character == '.') {
+			return false
+		}
+	}
+	return true
 }

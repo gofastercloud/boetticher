@@ -12,6 +12,7 @@
     state: present
     update_cache: true
     cache_valid_time: 3600
+  when: inventory_hostname in groups.get('proxmox', [])
 
 - name: Enable chrony
   ansible.builtin.service:

@@ -182,7 +182,7 @@ build_firewall() {
   image="$destination/boetticher-firewall-1.0.0-amd64.qcow2"
   cp "$input" "$image"
   virt-customize -a "$image" \
-    --install nftables,kea-dhcp4-server,kea-dhcp-ddns-server,chrony,openssh-server,sudo,cloud-init,systemd-journal-remote,zabbix-agent2 \
+    --install nftables,kea-dhcp4-server,kea-dhcp-ddns-server,dnsmasq,chrony,openssh-server,sudo,cloud-init,systemd-journal-remote,zabbix-agent2,curl,jq,openssl \
     --mkdir /etc/boetticher,/usr/lib/boetticher,/var/lib/boetticher/identity/ssh \
     --upload images/base/first-boot/boetticher-first-boot.sh:/usr/lib/boetticher/boetticher-first-boot.sh \
     --upload images/base/first-boot/boetticher-first-boot.service:/etc/systemd/system/boetticher-first-boot.service \

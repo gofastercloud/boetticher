@@ -8,8 +8,10 @@
   roles:
     - base
     - chrony
-    - dns
-    - monitor
+    - role: dns
+      when: inventory_hostname in groups.get('dns', [])
+    - role: monitor
+      when: inventory_hostname in groups.get('monitor', [])
     - role: logging
       when: inventory_hostname == 'lab-log-01'
     - role: firewall

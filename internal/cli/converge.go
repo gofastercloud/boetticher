@@ -103,6 +103,57 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return err
 	}
+	variables, err := ansible.Variables(s)
+	if err != nil {
+		return err
+	}
+	var runtimeVariables map[string]any
+	if err := json.Unmarshal(variables, &runtimeVariables); err != nil {
+		return fmt.Errorf("decode Ansible variables: %w", err)
+	}
+	runtimeVariables["portal_source_dir"] = filepath.Join(*siteDir, "generated", "portal")
+	runtimeVariables["boetticher_appliance_artifact"] = true
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		ddnsTSIG, loadErr := site.LoadDDNSTSIG(*siteDir, s, *ageIdentity)
+		if loadErr != nil {
+			return fmt.Errorf("load encrypted DDNS TSIG material: %w", loadErr)
+		}
+		runtimeVariables["ddns_tsig_secret"] = ddnsTSIG
+	}
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		ruleset, renderErr := firewall.RenderNFT(firewallPlan)
+		if renderErr != nil {
+			return renderErr
+		}
+		runtimeVariables["firewall_ruleset"] = ruleset
+	}
+	zabbixDBPassword, err := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "zabbix_db_password")
+	if err != nil {
+		return fmt.Errorf("load encrypted Zabbix database password: %w", err)
+	}
+	zabbixAPIPassword, err := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "zabbix_api_password")
+	if err != nil {
+		return fmt.Errorf("load encrypted Zabbix API password: %w", err)
+	}
+	authority, err := site.LoadAuthority(*siteDir, s, *ageIdentity)
+	if err != nil {
+		return fmt.Errorf("load platform CA chain: %w", err)
+	}
+	runtimeVariables["zabbix_db_password"] = zabbixDBPassword
+	runtimeVariables["zabbix_api_password"] = zabbixAPIPassword
+	runtimeVariables["client_ca_pem"] = authority.IssuingCertPEM
+	inventoryPath := filepath.Join(*siteDir, "generated", "ansible", "inventory.ini")
+	csrDir := filepath.Join(site.RuntimeDir(s), "pki")
+	if err := os.MkdirAll(csrDir, 0700); err != nil {
+		return fmt.Errorf("create controller PKI runtime directory: %w", err)
+	}
+	runtimeVariables["pki_bootstrap_phase"] = true
+	runtimeVariables["pki_csr_output_dir"] = csrDir
+	variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
+	if err != nil {
+		return err
+	}
+	variables = append(variables, '\n')
 	proxmoxPlan.OperatorPublicKey = operatorPublicKey
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		for _, guest := range proxmoxPlan.Guests {
@@ -148,6 +199,12 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		if err := proxmox.WaitForSSH(context.Background(), readinessRunner, "10.10.99.1", model.DefaultAdminSSHUser, 30, 2*time.Second); err != nil {
 			return fmt.Errorf("HOLD: managed gateway is not reachable before dependent appliances: %w", err)
 		}
+		if err := ansible.RunLimited(context.Background(), "ansible/site.yml", inventoryPath, variables, "lab-fw-01"); err != nil {
+			return fmt.Errorf("HOLD: configure managed gateway before dependent appliances: %w", err)
+		}
+		if err := verifyGatewayReadiness(context.Background(), readinessRunner, "10.10.99.1"); err != nil {
+			return fmt.Errorf("HOLD: managed gateway did not pass runtime readiness before dependent appliances: %w", err)
+		}
 	}
 	for _, module := range []string{"dns", "logging", "monitoring", "portal"} {
 		if !modules.IsEnabled(s, module) && module != "portal" {
@@ -169,56 +226,6 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			}
 		}
 	}
-	variables, err := ansible.Variables(s)
-	if err != nil {
-		return err
-	}
-	var runtimeVariables map[string]any
-	if err := json.Unmarshal(variables, &runtimeVariables); err != nil {
-		return fmt.Errorf("decode Ansible variables: %w", err)
-	}
-	runtimeVariables["portal_source_dir"] = filepath.Join(*siteDir, "generated", "portal")
-	if s.Gateway.Mode == model.GatewayModeManaged {
-		ddnsTSIG, loadErr := site.LoadDDNSTSIG(*siteDir, s, *ageIdentity)
-		if loadErr != nil {
-			return fmt.Errorf("load encrypted DDNS TSIG material: %w", loadErr)
-		}
-		runtimeVariables["ddns_tsig_secret"] = ddnsTSIG
-	}
-	if s.Gateway.Mode == model.GatewayModeManaged {
-		ruleset, renderErr := firewall.RenderNFT(firewallPlan)
-		if renderErr != nil {
-			return renderErr
-		}
-		runtimeVariables["firewall_ruleset"] = ruleset
-	}
-	zabbixDBPassword, err := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "zabbix_db_password")
-	if err != nil {
-		return fmt.Errorf("load encrypted Zabbix database password: %w", err)
-	}
-	zabbixAPIPassword, err := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "zabbix_api_password")
-	if err != nil {
-		return fmt.Errorf("load encrypted Zabbix API password: %w", err)
-	}
-	authority, err := site.LoadAuthority(*siteDir, s, *ageIdentity)
-	if err != nil {
-		return fmt.Errorf("load platform CA chain: %w", err)
-	}
-	runtimeVariables["zabbix_db_password"] = zabbixDBPassword
-	runtimeVariables["zabbix_api_password"] = zabbixAPIPassword
-	runtimeVariables["client_ca_pem"] = authority.IssuingCertPEM
-	inventoryPath := filepath.Join(*siteDir, "generated", "ansible", "inventory.ini")
-	csrDir := filepath.Join(site.RuntimeDir(s), "pki")
-	if err := os.MkdirAll(csrDir, 0700); err != nil {
-		return fmt.Errorf("create controller PKI runtime directory: %w", err)
-	}
-	runtimeVariables["pki_bootstrap_phase"] = true
-	runtimeVariables["pki_csr_output_dir"] = csrDir
-	variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
-	if err != nil {
-		return err
-	}
-	variables = append(variables, '\n')
 	if err := ansible.Run(context.Background(), "ansible/site.yml", inventoryPath, variables); err != nil {
 		return err
 	}
@@ -302,6 +309,17 @@ func loadBootstrapOperatorKey(siteDir string) (string, error) {
 		return "", errors.New("HOLD: bootstrap operator public key evidence is absent; rerun bootstrap")
 	}
 	return evidence.OperatorPublicKey, nil
+}
+
+func verifyGatewayReadiness(ctx context.Context, runner proxmox.CommandRunner, address string) error {
+	if runner == nil {
+		return errors.New("gateway readiness runner is required")
+	}
+	command := "set -eu; sudo -n nft -c -f /etc/nftables.conf; sudo -n systemctl is-active nftables kea-dhcp4-server kea-dhcp-ddns-server chrony; test \"$(sudo -n sysctl -n net.ipv4.ip_forward)\" = 1"
+	if _, err := runner.Run(ctx, address, model.DefaultAdminSSHUser, command); err != nil {
+		return fmt.Errorf("gateway policy, DHCP, NTP, and forwarding checks failed: %w", err)
+	}
+	return nil
 }
 
 // installModuleRuntimeConfigs is the deployment boundary for the common

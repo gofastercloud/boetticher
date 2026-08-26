@@ -11,56 +11,10 @@
   no_log: true
   when: inventory_hostname in groups.get('dns', [])
 
-- name: Install DNS service dependencies
-  ansible.builtin.apt:
-    name:
-      - ca-certificates
-      - curl
-      - gpg
-    state: present
-    update_cache: true
-    cache_valid_time: 3600
-  when: inventory_hostname in groups.get('dns', [])
-
-- name: Create the APT keyring directory
-  ansible.builtin.file:
-    path: /etc/apt/keyrings
-    state: directory
-    owner: root
-    group: root
-    mode: '0755'
-  when: inventory_hostname in groups.get('dns', [])
-
-- name: Install the qualified PowerDNS repository key
-  ansible.builtin.get_url:
-    url: https://repo.powerdns.com/FD380FBB-pub.asc
-    dest: /etc/apt/keyrings/auth-49-pub.asc
-    owner: root
-    group: root
-    mode: '0644'
-  when: inventory_hostname in groups.get('dns', [])
-
-- name: Configure the qualified PowerDNS repository
-  ansible.builtin.deb822_repository:
-    name: boetticher-powerdns
-    types: deb
-    uris: http://repo.powerdns.com/debian
-    suites: trixie-auth-49
-    components:
-      - main
-    signed_by: /etc/apt/keyrings/auth-49-pub.asc
-    state: present
-  register: powerdns_repository
-  when: inventory_hostname in groups.get('dns', [])
-
-- name: Install the qualified PowerDNS package
-  ansible.builtin.apt:
-    name:
-      - "pdns-server={{ dns_plan.authoritative_package_version }}"
-      - "pdns-backend-sqlite3={{ dns_plan.authoritative_package_version }}"
-      - sqlite3
-    state: present
-    update_cache: "{{ powerdns_repository.changed | default(false) }}"
+- name: Require qualified PowerDNS software in the appliance
+  ansible.builtin.command:
+    argv: [sh, -c, "command -v pdns_server && command -v pdnsutil && command -v sqlite3"]
+  changed_when: false
   when: inventory_hostname in groups.get('dns', [])
 
 - name: Check the installed PowerDNS version

@@ -34,6 +34,19 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 	}
 }
 
+func TestLimitedRunRejectsShellSyntaxInInventoryIdentity(t *testing.T) {
+	for _, value := range []string{"lab-fw-01", "lab_dns_01", "lab.fw"} {
+		if !safeInventoryIdentity(value) {
+			t.Fatalf("safe inventory identity %q was rejected", value)
+		}
+	}
+	for _, value := range []string{"lab-fw-01;rm", "lab-fw-01 --limit all", ""} {
+		if safeInventoryIdentity(value) {
+			t.Fatalf("unsafe inventory identity %q was accepted", value)
+		}
+	}
+}
+
 func TestAgent2IsEnabledOnEveryManagedLinuxHost(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
