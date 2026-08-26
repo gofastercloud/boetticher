@@ -15,6 +15,15 @@ type fakeRunner struct {
 	routeOutput []byte
 }
 
+func TestManagementNetworkConfigIsFixedAndPreservesHOME(t *testing.T) {
+	if !strings.Contains(managementInterfaceConfig, "vmbr1.99") || !strings.Contains(managementInterfaceConfig, "10.10.99.5/24") || !strings.Contains(managementInterfaceConfig, "10.10.0.0/16 via 10.10.99.1") {
+		t.Fatal("management interface configuration is incomplete")
+	}
+	if strings.Contains(managementInterfaceConfig, "gateway") || strings.Contains(managementInterfaceConfig, "vmbr0") {
+		t.Fatal("management interface configuration changes the HOME/default route")
+	}
+}
+
 func (f *fakeRunner) Run(_ context.Context, address, user, command string) ([]byte, error) {
 	f.address, f.user, f.command = address, user, command
 	f.commands = append(f.commands, command)

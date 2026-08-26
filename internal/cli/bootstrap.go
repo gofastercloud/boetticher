@@ -187,6 +187,9 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err := proxmox.EnsureVirtualBridge(ctx, client, plan.Node); err != nil {
 		return err
 	}
+	if err := proxmox.ConfigureManagementNetwork(ctx, runner, s.BootstrapAddress, *initialUser); err != nil {
+		return err
+	}
 	if s.StorageProfile == "single-disk" {
 		if err := client.EnsureDirectoryStorageContent(ctx, "local", "/var/lib/vz", []string{"backup", "images", "rootdir"}); err != nil {
 			return fmt.Errorf("ensure single-disk Proxmox storage: %w", err)

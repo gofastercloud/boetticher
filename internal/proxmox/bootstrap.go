@@ -18,6 +18,11 @@ type CommandRunner interface {
 	Run(ctx context.Context, address, user, command string) ([]byte, error)
 }
 
+type StdinCommandRunner interface {
+	CommandRunner
+	RunWithStdin(context.Context, string, string, string, io.Reader) ([]byte, error)
+}
+
 type SSHRunner struct {
 	Port          int
 	KnownHosts    string
@@ -71,6 +76,30 @@ func (r SSHRunner) RunWithStdin(ctx context.Context, address, user, command stri
 		return nil, errors.New("SSH stdin is required")
 	}
 	return r.run(ctx, address, user, command, stdin)
+}
+
+const managementInterfaceConfig = `auto vmbr1.99
+iface vmbr1.99 inet static
+    address 10.10.99.5/24
+    vlan-raw-device vmbr1
+    up ip route replace 10.10.0.0/16 via 10.10.99.1 dev vmbr1.99
+    down ip route del 10.10.0.0/16 via 10.10.99.1 dev vmbr1.99 || true
+`
+
+// ConfigureManagementNetwork establishes the fixed virtual-only Proxmox
+// management leg. It never changes vmbr0, its member, or the default route.
+func ConfigureManagementNetwork(ctx context.Context, runner StdinCommandRunner, address, user string) error {
+	if runner == nil {
+		return errors.New("management network runner is required")
+	}
+	install := "sudo -n install -D -m 0644 /dev/stdin /etc/network/interfaces.d/boetticher-management"
+	if _, err := runner.RunWithStdin(ctx, address, user, install, strings.NewReader(managementInterfaceConfig)); err != nil {
+		return fmt.Errorf("install Proxmox management interface configuration: %w", err)
+	}
+	if _, err := runner.Run(ctx, address, user, "sudo -n ifreload -a && ip -4 addr show dev vmbr1.99 && ip -4 route show 10.10.0.0/16"); err != nil {
+		return fmt.Errorf("apply and verify Proxmox management interface configuration: %w", err)
+	}
+	return nil
 }
 
 func (r SSHRunner) run(ctx context.Context, address, user, command string, stdin io.Reader) ([]byte, error) {
