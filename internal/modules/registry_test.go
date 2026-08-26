@@ -93,23 +93,19 @@ func TestMonitoringCanBeDisabledWithoutRemovingOtherModules(t *testing.T) {
 	}
 }
 
-func TestDNSCannotBeDisabled(t *testing.T) {
-	config := testConfig(model.GatewayModeManaged)
+func TestDNSConfigurationHasNoLifecycleToggle(t *testing.T) {
+	var config model.ModulesConfig
 	disabled := false
-	config.Modules.DNS = &model.DNSModuleConfig{Enabled: &disabled}
-	_, _, err := Compose(config)
-	if err == nil || !strings.Contains(err.Error(), "modules.dns.enabled") {
-		t.Fatalf("unexpected DNS disable result: %v", err)
+	if err := config.Set("dns", model.ModuleConfig{Enabled: &disabled}); err == nil || !strings.Contains(err.Error(), "modules.dns.enabled") {
+		t.Fatalf("DNS lifecycle toggle was accepted: %v", err)
 	}
 }
 
-func TestLoggingCannotBeDisabled(t *testing.T) {
-	config := testConfig(model.GatewayModeManaged)
+func TestLoggingConfigurationHasNoLifecycleToggle(t *testing.T) {
+	var config model.ModulesConfig
 	disabled := false
-	config.Modules.Logging = &model.ToggleModuleConfig{Enabled: &disabled}
-	_, _, err := Compose(config)
-	if err == nil || !strings.Contains(err.Error(), "modules.logging.enabled") {
-		t.Fatalf("unexpected logging disable result: %v", err)
+	if err := config.Set("logging", model.ModuleConfig{Enabled: &disabled}); err == nil || !strings.Contains(err.Error(), "modules.logging.enabled") {
+		t.Fatalf("logging lifecycle toggle was accepted: %v", err)
 	}
 }
 

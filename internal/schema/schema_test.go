@@ -46,9 +46,33 @@ func TestEmbeddedSchemaProjectsTypedModuleConstraints(t *testing.T) {
 	if !ok {
 		t.Fatal("DNS module definition is absent from schema")
 	}
-	for _, field := range []string{"provider", "enabled"} {
-		if _, ok := dns.Properties[field]; !ok {
-			t.Fatalf("DNS module schema omitted %s", field)
+	if _, ok := dns.Properties["provider"]; !ok {
+		t.Fatal("DNS module schema omitted provider")
+	}
+	if _, ok := dns.Properties["enabled"]; ok {
+		t.Fatal("DNS module schema exposes forbidden enabled field")
+	}
+	for _, name := range []string{"DNSModuleConfig", "MandatoryModuleConfig"} {
+		definition, ok := document.Definitions[name]
+		if !ok {
+			t.Fatalf("schema definition %s is missing", name)
 		}
+		if _, ok := definition.Properties["enabled"]; ok {
+			t.Fatalf("schema definition %s exposes forbidden enabled field", name)
+		}
+	}
+
+	logging, ok := modules.Properties["logging"]
+	if !ok {
+		t.Fatal("logging module schema property is absent")
+	}
+	var loggingRef struct {
+		Ref string `json:"$ref"`
+	}
+	if err := json.Unmarshal(logging, &loggingRef); err != nil {
+		t.Fatal(err)
+	}
+	if loggingRef.Ref != "#/$defs/MandatoryModuleConfig" {
+		t.Fatalf("logging module schema ref = %q", loggingRef.Ref)
 	}
 }

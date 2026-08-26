@@ -3,9 +3,6 @@
     "DNSModuleConfig": {
       "additionalProperties": false,
       "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
         "provider": {
           "default": "blocky",
           "enum": [
@@ -33,6 +30,11 @@
       ],
       "type": "object"
     },
+    "MandatoryModuleConfig": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
     "ModulesConfig": {
       "additionalProperties": false,
       "properties": {
@@ -43,7 +45,7 @@
           "$ref": "#/$defs/ToggleModuleConfig"
         },
         "logging": {
-          "$ref": "#/$defs/ToggleModuleConfig"
+          "$ref": "#/$defs/MandatoryModuleConfig"
         },
         "monitoring": {
           "$ref": "#/$defs/ToggleModuleConfig"

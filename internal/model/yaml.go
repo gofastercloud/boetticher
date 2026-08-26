@@ -66,9 +66,6 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 		if name != "dns" && module.Provider != "" {
 			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s.provider is not supported", name)
 		}
-		if (name == "dns" || name == "logging") && module.Enabled != nil {
-			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s.enabled: mandatory module cannot be disabled", name)
-		}
 		if name == "dns" && module.Provider != "" && module.Provider != string(DNSProviderBlocky) && module.Provider != string(DNSProviderAdGuard) {
 			return SiteConfig{}, fmt.Errorf("site.yml: modules.dns.provider expected one of: blocky, adguard")
 		}
@@ -95,10 +92,15 @@ func validateModuleConfigShape(data []byte) error {
 	for index := 0; index+1 < len(modules.Content); index += 2 {
 		name := modules.Content[index].Value
 		value := modules.Content[index+1]
-		allowed := map[string]bool{"enabled": true}
-		if name == "dns" {
+		allowed := map[string]bool{}
+		switch name {
+		case "dns":
 			allowed["provider"] = true
-		} else if name != "monitoring" && name != "firewall" && name != "logging" {
+		case "monitoring", "firewall":
+			allowed["enabled"] = true
+		case "logging":
+			// Logging is mandatory and has no persisted lifecycle fields.
+		default:
 			return fmt.Errorf("site.yml: modules.%s: unknown first-party module", name)
 		}
 		if value.Kind != yaml.MappingNode {
@@ -108,6 +110,9 @@ func validateModuleConfigShape(data []byte) error {
 			field := value.Content[fieldIndex].Value
 			fieldValue := value.Content[fieldIndex+1]
 			if !allowed[field] {
+				if (name == "dns" || name == "logging") && field == "enabled" {
+					return fmt.Errorf("site.yml: modules.%s.enabled: mandatory module cannot be disabled", name)
+				}
 				return fmt.Errorf("site.yml: modules.%s.%s: unknown field", name, field)
 			}
 			if field == "enabled" && fieldValue.Tag != "!!bool" && fieldValue.Tag != "!!null" {
