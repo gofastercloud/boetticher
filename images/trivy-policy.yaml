@@ -1,0 +1,6 @@
+version: 1
+secret_findings: fail
+fixable_critical: fail
+unfixed_critical: warn
+high: warn
+suppressions: []

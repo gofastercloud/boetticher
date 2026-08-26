@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/model"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
@@ -129,6 +130,9 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 		fmt.Fprintf(out, "  Proxmox endpoint: %s\n  Gateway mode: %s\n  Gateway image: %s\n", s.BootstrapAddress, s.Gateway.Mode, model.QualifiedGatewayImage)
 		fmt.Fprintf(out, "  Storage: %s\n", s.StorageProfile)
 		fmt.Fprintln(out, "  Trust transition: SSH key → labadmin/lab-jump → scoped API token → SOPS")
+		builder := artifacts.Builder()
+		fmt.Fprintf(out, "  Artifact builder: temporary VMID %d (%s, %s)\n", builder.VMID, builder.Hostname, builder.Network)
+		fmt.Fprintln(out, "  Artifact qualification: base, selected appliances, SBOM, Trivy, independent content SHA-256")
 		fmt.Fprintln(out, "  Destructive actions: NOT RUN (dry-run)")
 		return nil
 	}

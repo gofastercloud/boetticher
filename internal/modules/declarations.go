@@ -26,7 +26,14 @@ func composeDeclarations(site model.Site, resolved []ResolvedModule) ([]model.Mo
 
 func declarationFor(name string, site model.Site) (model.ModuleDeclaration, error) {
 	components := moduleComponents(site, name)
-	artifact, err := artifacts.ArtifactFor(name)
+	provider := ""
+	if name == "dns" {
+		provider = site.ModuleConfig["dns"].Provider
+		if provider == "" {
+			provider = string(model.DNSProviderBlocky)
+		}
+	}
+	artifact, err := artifacts.ArtifactFor(name, provider)
 	if err != nil {
 		return model.ModuleDeclaration{}, err
 	}
@@ -37,6 +44,7 @@ func declarationFor(name string, site model.Site) (model.ModuleDeclaration, erro
 		declaration.Monitoring = append(declaration.Monitoring, model.MonitoringDeclaration{Name: component.Name, Kind: "host", Target: component.Hostname, Checks: []string{"cpu", "memory", "filesystem", "service"}, Description: name + " module appliance health"})
 		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: component.Hostname, SANs: []string{component.Hostname + "." + site.Network.Domain}, Consumer: component.Name})
 		declaration.Persistent = append(declaration.Persistent, persistentFor(name, component.Name)...)
+		declaration.Volumes = append(declaration.Volumes, volumesFor(name, component.Name)...)
 	}
 	switch name {
 	case "dns":
@@ -52,6 +60,10 @@ func declarationFor(name string, site model.Site) (model.ModuleDeclaration, erro
 		}
 	case "firewall":
 		declaration.Secrets = []model.SecretDeclaration{{Name: "ddns_tsig_secret", Purpose: "authenticated DHCP DNS updates", Consumer: "kea-dhcp-ddns-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file"}}
+	case "logging":
+		declaration.NetworkIntents = []model.NetworkIntent{{Source: "boetticher-managed-endpoints", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"}}
+		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "logs." + site.Network.Domain, SANs: []string{"logs." + site.Network.Domain}, Consumer: "systemd-journal-remote"})
+		declaration.Portal = []model.PortalEntry{{Name: "logging", Description: "Central systemd journal collection", Docs: []string{"docs/operations/logs.md"}}}
 	default:
 		return model.ModuleDeclaration{}, fmt.Errorf("no declaration provider for first-party module %q", name)
 	}
@@ -80,5 +92,25 @@ func persistentFor(module, guest string) []model.PersistentState {
 		return []model.PersistentState{identity, {Name: "kea-leases", Guest: guest, Path: "/var/lib/kea", Kind: "lease-state", Backup: true, Sensitive: false, Replacement: "retain-across-rootfs-replacement"}}
 	default:
 		return []model.PersistentState{identity}
+	}
+}
+
+func volumesFor(module, guest string) []model.PersistentVolumeDeclaration {
+	volume := func(name, mount string, size int, backup bool) model.PersistentVolumeDeclaration {
+		return model.PersistentVolumeDeclaration{Name: name, Module: module, Guest: guest, SizeGiB: size, MountPath: mount, Placement: model.StorageDefault, Backup: backup}
+	}
+	switch module {
+	case "dns":
+		return []model.PersistentVolumeDeclaration{volume("powerdns-database", "/var/lib/powerdns", 8, true)}
+	case "monitoring":
+		return []model.PersistentVolumeDeclaration{volume("postgresql-data", "/var/lib/postgresql", 16, true)}
+	case "firewall":
+		return []model.PersistentVolumeDeclaration{volume("kea-leases", "/var/lib/kea", 4, true)}
+	case "logging":
+		v := volume("journal", "/var/log/journal/remote", 10, false)
+		v.Placement = model.StoragePreferDataDisk
+		return []model.PersistentVolumeDeclaration{v}
+	default:
+		return nil
 	}
 }

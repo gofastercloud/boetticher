@@ -1,6 +1,6 @@
 # boetticher
 
-**Status: pre-alpha.** boetticher v0.3.0 has a typed module model and offline
+**Status: pre-alpha.** boetticher v0.3.1 has a typed module model and offline
 contracts, but the appliance build and live installation still need
 qualification. Do not use boetticher on a system you cannot recover.
 
@@ -37,9 +37,10 @@ HOME / upstream
 The platform services are:
 
 ```text
-lab-dns-01       PowerDNS, AdGuard Home, Chrony
-lab-dns-02       PowerDNS, AdGuard Home, Chrony
+lab-dns-01       PowerDNS, Blocky (AdGuard alternative), Chrony
+lab-dns-02       PowerDNS, Blocky (AdGuard alternative), Chrony
 lab-monitor-01   Zabbix and PostgreSQL
+lab-log-01       Central systemd journal collector
 lab-portal-01    generated static documentation
 ```
 
@@ -51,6 +52,9 @@ The platform resolves to Core plus the mandatory DNS/NTP module and the
 default-on monitoring and managed firewall modules. Modules are built into the
 boetticher release and emit declarations; Core owns privileged infrastructure
 changes. There is no background controller or third-party module runtime.
+Central logging is mandatory and uses bounded journald plus asynchronous mTLS
+upload to `lab-log-01`. The default DNS provider is Blocky; set
+`modules.dns.provider: adguard` to select the supported alternative.
 
 ## Two gateway modes
 

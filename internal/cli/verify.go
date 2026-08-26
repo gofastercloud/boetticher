@@ -15,6 +15,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/portal"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/site"
@@ -91,6 +92,17 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 		)
 	} else {
 		results = append(results, portal.CheckResult{Name: "external gateway contract", Status: "STATIC PASS", Detail: "required VLAN, gateway, DHCP, DNS, NTP, and policy intent is generated"})
+	}
+	fmt.Fprintln(out, "Modules")
+	for _, module := range s.Modules {
+		if module.Enabled {
+			fmt.Fprintf(out, "  %-12s %s / %s\n", module.Name, module.Policy, module.State)
+		} else {
+			fmt.Fprintf(out, "  %-12s disabled / intentional\n", module.Name)
+		}
+	}
+	if modules.IsEnabled(s, "logging") {
+		fmt.Fprintln(out, "Logging                EXPECTED mandatory collector and asynchronous upload")
 	}
 	evidence := portal.Evidence{GeneratedAt: time.Now().UTC().Format(time.RFC3339), Results: results}
 	document := struct {

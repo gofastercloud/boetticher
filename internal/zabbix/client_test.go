@@ -192,7 +192,7 @@ func TestPlatformItemsAndHostsRemainDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Components) != 6 || len(plan.TemplateItems) < 6 {
+	if len(plan.Components) != 7 || len(plan.TemplateItems) < 6 {
 		t.Fatalf("incomplete platform monitoring plan: %#v", plan)
 	}
 	for _, item := range plan.TemplateItems {

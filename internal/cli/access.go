@@ -38,6 +38,7 @@ func runAccess(args []string, out interface{ Write([]byte) (int, error) }) error
 			fmt.Fprintf(out, "  %-13s %s\n", m.Role, m.URL)
 		}
 	}
+	fmt.Fprintln(out, "Logging\n  boetticher logs")
 	fmt.Fprintln(out, "Access path")
 	fmt.Fprintln(out, "  Internal SSH  via Proxmox bastion")
 	fmt.Fprintf(out, "Gateway\n  Mode        %s\n", s.Gateway.Mode)

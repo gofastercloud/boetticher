@@ -8,14 +8,17 @@ api_version: boetticher/v3
 gateway:
   mode: managed
 modules:
+  dns:
+    provider: blocky
   monitoring:
     enabled: false
 ```
 
 An omitted module map uses the defaults: DNS is mandatory, monitoring is
-enabled, and the managed firewall is enabled. DNS has no disable switch.
+enabled, the managed firewall is enabled, and logging is mandatory. DNS has no
+disable switch and accepts only `blocky` or `adguard` as its provider.
 
 Use `boetticher config validate` before deployment, `boetticher config show`
 to inspect normalized non-secret configuration, and `boetticher config schema`
-to locate `schemas/site.schema.json`. Unknown fields and unknown module names
+to print the shipped generated JSON Schema. Unknown fields and unknown module names
 are errors with a configuration path.

@@ -1,0 +1,11 @@
+name: boetticher-logging
+version: 1.0.0
+kind: lxc
+base: boetticher-base
+base_version: 0.3.1
+architecture: amd64
+services:
+  - systemd-journal-remote
+runtime_config: /etc/boetticher/module.yaml
+persistent:
+  - /var/log/journal/remote

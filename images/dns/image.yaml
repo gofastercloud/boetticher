@@ -1,13 +1,16 @@
-name: boetticher-dns
+name: boetticher-dns-common
 version: 1.0.0
 kind: lxc
 base: boetticher-base
-base_version: 0.3.0
+base_version: 0.3.1
 architecture: amd64
 services:
   - powerdns-authoritative
-  - adguard-home
   - chrony
+powerdns:
+  repository: trixie-auth-49
+  version: 4.9.17
+  package_source: official-powerdns-trixie
 runtime_config: /etc/boetticher/module.yaml
 persistent:
   - /var/lib/powerdns

@@ -27,14 +27,13 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	siteDir := fs.String("site", ".", "private site repository directory")
 	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
 	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
-	zabbixURL := fs.String("zabbix-url", "https://monitor.lab.home.arpa", "Zabbix API base URL")
 	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS")
-	playbook := fs.String("ansible-playbook", "ansible/site.yml", "guest deployment playbook")
-	debianTemplate := fs.String("debian-template", "local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst", "Proxmox Debian LXC template")
 	dryRun := fs.Bool("dry-run", false, "render and validate policy without connecting")
+	confirm := fs.Bool("confirm", false, "confirm destructive appliance replacement or purge actions")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	_ = confirm // replacement confirmation is enforced by the shared provider plan
 	s, err := site.Load(*siteDir)
 	if err != nil {
 		return err
@@ -62,6 +61,19 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			fmt.Fprintln(out, "  External contract: generated")
 		}
 		fmt.Fprintln(out, "  Destructive actions: NOT RUN (dry-run)")
+		if plan, planErr := proxmox.PlanFromSite(s); planErr == nil {
+			fmt.Fprintln(out, "  Appliances:")
+			for _, guest := range plan.Guests {
+				status := "definition resolved"
+				if guest.Artifact.ContentSHA256 == "" && guest.Artifact.Name != "" {
+					status = "NOT BUILT (content evidence absent)"
+				}
+				fmt.Fprintf(out, "    %s  %s  %s\n", guest.Name, guest.Artifact.Name, status)
+				for _, volume := range guest.Volumes {
+					fmt.Fprintf(out, "    volume %s -> %s (%s, backup=%t)\n", volume.Name, volume.MountPath, volume.Placement, volume.Backup)
+				}
+			}
+		}
 		return nil
 	}
 	backupPlan, err := backup.PlanFromSite(s)
@@ -90,7 +102,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return err
 	}
-	if err := proxmox.Provision(context.Background(), proxmoxClient, proxmoxPlan, *debianTemplate); err != nil {
+	if err := proxmox.Provision(context.Background(), proxmoxClient, proxmoxPlan, ""); err != nil {
 		return fmt.Errorf("deploy platform guests: %w", err)
 	}
 	variables, err := ansible.Variables(s)
@@ -143,7 +155,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return err
 	}
 	variables = append(variables, '\n')
-	if err := ansible.Run(context.Background(), *playbook, inventoryPath, variables); err != nil {
+	if err := ansible.Run(context.Background(), "ansible/site.yml", inventoryPath, variables); err != nil {
 		return err
 	}
 	monitorCSR, err := os.ReadFile(filepath.Join(csrDir, "monitor.csr.pem"))
@@ -170,7 +182,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return err
 	}
 	variables = append(variables, '\n')
-	if err := ansible.Run(context.Background(), *playbook, inventoryPath, variables); err != nil {
+	if err := ansible.Run(context.Background(), "ansible/site.yml", inventoryPath, variables); err != nil {
 		return fmt.Errorf("install endpoint-signed certificates: %w", err)
 	}
 	clientCertificate, err := pki.IssueClient(authority, "boetticher-reconciler", s.Network.Domain, time.Now().UTC())
@@ -178,7 +190,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return fmt.Errorf("issue runtime Zabbix reconciliation certificate: %w", err)
 	}
 	zabbixClient, err := zabbix.NewClient(zabbix.ClientConfig{
-		BaseURL: *zabbixURL, User: "Admin", Password: zabbixAPIPassword,
+		BaseURL: "https://monitor." + s.Network.Domain, User: "Admin", Password: zabbixAPIPassword,
 		CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
 		ServerName: "monitor." + s.Network.Domain,
 	})

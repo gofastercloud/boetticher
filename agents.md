@@ -38,6 +38,20 @@ informational, never drift, and never targets for deletion or import.
   exception.
 - `boetticher deploy` is the only public platform-application command. Do not
   add a public converge/provision alias.
+- Logging is mandatory platform evidence. Managed Linux endpoints inherit
+  bounded journald and asynchronous mTLS journal upload from the common base;
+  modules do not invent transports.
+- DNS is one mandatory module with typed `blocky`/`adguard` provider selection.
+  Both providers share PowerDNS/Chrony and the common DNS conformance contract.
+- Monitoring is a normal SERVERS workload at `10.10.20.20`; MGMT is not a
+  generic application placement zone.
+- Appliance artifacts require real qualification evidence. Definition digests
+  describe desired recipes; content SHA-256, SBOM, package, and Trivy evidence
+  bind actual bytes. Metadata-only artifacts are not deployable.
+- Modules declare persistent volumes and placement preferences. Core alone owns
+  physical disks, PVs, VGs, filesystems, and destructive storage lifecycle.
+- Module application installation does not use generic Debian templates or
+  module-specific Ansible roles; `deploy` selects immutable artifacts.
 
 ## Coding standards
 
@@ -47,6 +61,9 @@ informational, never drift, and never targets for deletion or import.
 - Keep ownership and trust transitions visible in names, output, and tests.
 - Use atomic writes for generated files and restrictive permissions for sensitive material.
 - Never log, print, accept in arguments, or persist plaintext credentials.
+- Systemd credentials are the standard runtime secret delivery path; endpoint
+  PKI keys remain endpoint-local and PowerDNS protected-backend persistence is
+  an explicit, recoverable exception.
 - Do not add a generic Proxmox management abstraction or an incomplete remote-access provider.
 
 ## Testing
