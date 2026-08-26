@@ -40,6 +40,8 @@ schema-check: schema
 
 image-check:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./internal/artifacts
+	sh -n scripts/build-images.sh scripts/scan-images.sh scripts/smoke-appliance.sh scripts/smoke-firewall-image.sh
+	@test -z "$$(rg -n 'BOETTICHER_IMAGE_BUILD_COMMAND|exec sh -c' scripts || true)"
 
 image-base image-dns-blocky image-dns-adguard image-logging image-monitoring image-firewall image-portal images:
 	./scripts/build-images.sh $@

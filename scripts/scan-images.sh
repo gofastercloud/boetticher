@@ -15,7 +15,7 @@ case "$target" in
   scan-monitoring) names="boetticher-monitoring" ;;
   scan-firewall) names="boetticher-firewall" ;;
   scan-portal) names="boetticher-portal" ;;
-  scan-images) names="boetticher-base boetticher-dns-blocky boetticher-dns-adguard boetticher-logging boetticher-monitoring boetticher-firewall boetticher-portal" ;;
+  scan-images) names="boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-firewall boetticher-portal" ;;
   *) echo "unknown scan target: $target" >&2; exit 2 ;;
 esac
 
