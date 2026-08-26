@@ -14,40 +14,51 @@ import (
 )
 
 const (
-	SchemaVersion       = 1
-	PlatformVersion     = "0.1.0"
-	OPNsenseSeries      = "26.7"
-	QualifiedOPNsense   = "26.7.0"
-	ZabbixSeries        = "7.0 LTS"
-	DefaultDomain       = "lab.home.arpa"
-	DefaultSiteDir      = "my-homelab"
-	DefaultAgeIdentity  = "~/.config/labinabox/age/identity.txt"
-	DefaultSSHConfig    = "~/.ssh/config.d/labinabox.conf"
-	DefaultAdminSSHUser = "labadmin"
-	DefaultProxmoxNode  = "lab-proxmox-01"
-	ProxmoxVMID         = 100
-	DNS01VMID           = 110
-	DNS02VMID           = 111
-	MonitorVMID         = 120
-	PortalVMID          = 130
+	SchemaVersion           = 1
+	PlatformVersion         = "0.1.0"
+	OPNsenseSeries          = "26.7"
+	QualifiedOPNsense       = "26.7.0"
+	ZabbixSeries            = "7.0 LTS"
+	AuthoritativeDNS        = "PowerDNS Authoritative"
+	AuthoritativeDNSVersion = "4.9.16"
+	DefaultDomain           = "lab.home.arpa"
+	DefaultSiteDir          = "my-homelab"
+	DefaultAgeIdentity      = "~/.config/labinabox/age/identity.txt"
+	DefaultSSHConfig        = "~/.ssh/config.d/labinabox.conf"
+	DefaultAdminSSHUser     = "labadmin"
+	DefaultProxmoxNode      = "lab-proxmox-01"
+	ProxmoxVMID             = 100
+	DNS01VMID               = 110
+	DNS02VMID               = 111
+	MonitorVMID             = 120
+	PortalVMID              = 130
+	PlatformGuestIDMin      = 100
+	PlatformGuestIDMax      = 199
+	ModuleGuestIDMin        = 200
+	ModuleGuestIDMax        = 499
+	UserGuestIDMin          = 500
+	UserGuestIDMax          = 899
+	ModeVirtualOnly         = "virtual-only"
+	ModePhysicalTrunk       = "physical-trunk"
 )
 
 var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
 
 type Site struct {
-	APIVersion       string         `json:"api_version"`
-	PlatformVersion  string         `json:"platform_version"`
-	SchemaVersion    int            `json:"schema_version"`
-	StorageProfile   string         `json:"storage_profile"`
-	ProxmoxNode      string         `json:"proxmox_node"`
-	BootstrapAddress string         `json:"bootstrap_address,omitempty"`
-	SSHIdentityFile  string         `json:"ssh_identity_file,omitempty"`
-	PhysicalTrunk    string         `json:"physical_trunk,omitempty"`
-	TestedVersions   TestedVersions `json:"tested_versions"`
-	Network          Network        `json:"network"`
-	PKI              PKIMetadata    `json:"pki"`
-	SecretMetadata   SecretMetadata `json:"secret_metadata"`
-	Modules          []Module       `json:"modules"`
+	APIVersion       string          `json:"api_version"`
+	PlatformVersion  string          `json:"platform_version"`
+	SchemaVersion    int             `json:"schema_version"`
+	StorageProfile   string          `json:"storage_profile"`
+	ProxmoxNode      string          `json:"proxmox_node"`
+	BootstrapAddress string          `json:"bootstrap_address,omitempty"`
+	SSHIdentityFile  string          `json:"ssh_identity_file,omitempty"`
+	PhysicalNetwork  PhysicalNetwork `json:"physical_network"`
+	TestedVersions   TestedVersions  `json:"tested_versions"`
+	Network          Network         `json:"network"`
+	PKI              PKIMetadata     `json:"pki"`
+	SecretMetadata   SecretMetadata  `json:"secret_metadata"`
+	Ownership        OwnershipPolicy `json:"ownership"`
+	Modules          []Module        `json:"modules"`
 }
 
 type TestedVersions struct {
@@ -58,6 +69,22 @@ type TestedVersions struct {
 type Network struct {
 	Domain string `json:"domain"`
 	Zones  []Zone `json:"zones"`
+}
+
+// PhysicalNetwork stores installation-specific hardware bindings separately
+// from the fixed logical architecture. Observed speed, carrier, and current
+// interface names are generated evidence; stable MAC/PCI identity is the
+// reconciliation key.
+type PhysicalNetwork struct {
+	Upstream PhysicalNIC `json:"upstream"`
+	Trunk    PhysicalNIC `json:"trunk"`
+	Mode     string      `json:"mode"`
+}
+
+type PhysicalNIC struct {
+	Name         string `json:"name,omitempty"`
+	PermanentMAC string `json:"permanent_mac,omitempty"`
+	PCIAddress   string `json:"pci_address,omitempty"`
 }
 
 type Zone struct {
@@ -75,6 +102,16 @@ type SecretMetadata struct {
 	AgeRecipient   string `json:"age_recipient"`
 }
 
+type OwnershipPolicy struct {
+	PlatformGuestIDMin   int  `json:"platform_guest_id_min"`
+	PlatformGuestIDMax   int  `json:"platform_guest_id_max"`
+	ModuleGuestIDMin     int  `json:"module_guest_id_min"`
+	ModuleGuestIDMax     int  `json:"module_guest_id_max"`
+	UserGuestIDMin       int  `json:"user_guest_id_min"`
+	UserGuestIDMax       int  `json:"user_guest_id_max"`
+	UserWorkloadsManaged bool `json:"user_workloads_managed"`
+}
+
 type PKIMetadata struct {
 	RootCommonName     string `json:"root_common_name"`
 	RootFingerprint    string `json:"root_fingerprint"`
@@ -86,6 +123,7 @@ type PKIMetadata struct {
 
 type Module struct {
 	Name         string   `json:"name"`
+	VMID         int      `json:"vmid,omitempty"`
 	Hostname     string   `json:"hostname"`
 	Zone         string   `json:"zone"`
 	Address      string   `json:"address"`
@@ -122,14 +160,21 @@ func NewDefaultSite(installationID, ageRecipient string) Site {
 				{Name: "MGMT", VLAN: 99, Network: "10.10.99.0/24", Gateway: "10.10.99.1", AddressMode: "reservations-only", DNSAddresses: []string{"10.10.20.10", "10.10.20.11"}, NTPAddresses: []string{"10.10.20.10", "10.10.20.11"}},
 			},
 		},
-		SecretMetadata: SecretMetadata{InstallationID: installationID, AgeRecipient: ageRecipient},
+		PhysicalNetwork: PhysicalNetwork{Mode: ModeVirtualOnly},
+		SecretMetadata:  SecretMetadata{InstallationID: installationID, AgeRecipient: ageRecipient},
+		Ownership: OwnershipPolicy{
+			PlatformGuestIDMin: PlatformGuestIDMin, PlatformGuestIDMax: PlatformGuestIDMax,
+			ModuleGuestIDMin: ModuleGuestIDMin, ModuleGuestIDMax: ModuleGuestIDMax,
+			UserGuestIDMin: UserGuestIDMin, UserGuestIDMax: UserGuestIDMax,
+			UserWorkloadsManaged: false,
+		},
 		Modules: []Module{
 			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: "10.10.99.5", Role: "Proxmox host", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22},
-			{Name: "lab-fw-01", Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "OPNsense firewall", URL: "https://opnsense." + DefaultDomain, Monitoring: true, Backup: true, MTLS: false, SSHManaged: false, JumpAllowed: false, ProductOwned: true},
-			{Name: "lab-dns-01", Hostname: "lab-dns-01", Zone: "SERVERS", Address: "10.10.20.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-			{Name: "lab-dns-02", Hostname: "lab-dns-02", Zone: "SERVERS", Address: "10.10.20.11", Role: "DNS/NTP", DNSAliases: []string{"dns02"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-			{Name: "lab-monitor-01", Hostname: "lab-monitor-01", Zone: "MGMT", Address: "10.10.99.20", Role: "Zabbix", URL: "https://monitor." + DefaultDomain, DNSAliases: []string{"monitor"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-			{Name: "lab-portal-01", Hostname: "lab-portal-01", Zone: "SERVERS", Address: "10.10.20.30", Role: "Generated platform portal", URL: "https://portal." + DefaultDomain, DNSAliases: []string{"portal"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			{Name: "lab-fw-01", VMID: ProxmoxVMID, Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "OPNsense firewall", URL: "https://opnsense." + DefaultDomain, Monitoring: true, Backup: true, MTLS: false, SSHManaged: false, JumpAllowed: false, ProductOwned: true},
+			{Name: "lab-dns-01", VMID: DNS01VMID, Hostname: "lab-dns-01", Zone: "SERVERS", Address: "10.10.20.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			{Name: "lab-dns-02", VMID: DNS02VMID, Hostname: "lab-dns-02", Zone: "SERVERS", Address: "10.10.20.11", Role: "DNS/NTP", DNSAliases: []string{"dns02"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "MGMT", Address: "10.10.99.20", Role: "Zabbix", URL: "https://monitor." + DefaultDomain, DNSAliases: []string{"monitor"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			{Name: "lab-portal-01", VMID: PortalVMID, Hostname: "lab-portal-01", Zone: "SERVERS", Address: "10.10.20.30", Role: "Generated platform portal", URL: "https://portal." + DefaultDomain, DNSAliases: []string{"portal"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 		},
 	}
 }
@@ -169,6 +214,37 @@ func (s Site) Validate() error {
 	if s.TestedVersions.Zabbix != ZabbixSeries {
 		return fmt.Errorf("tested_versions.zabbix must be %q", ZabbixSeries)
 	}
+	if s.PhysicalNetwork.Mode != ModeVirtualOnly && s.PhysicalNetwork.Mode != ModePhysicalTrunk {
+		return fmt.Errorf("physical_network.mode must be virtual-only or physical-trunk")
+	}
+	if s.PhysicalNetwork.Mode == ModeVirtualOnly && s.PhysicalNetwork.Trunk.Name != "" {
+		return errors.New("virtual-only physical network mode cannot retain a trunk binding")
+	}
+	if s.PhysicalNetwork.Mode == ModePhysicalTrunk && s.PhysicalNetwork.Upstream.Name == "" {
+		return errors.New("physical-trunk mode requires an upstream interface identity")
+	}
+	for label, nic := range map[string]PhysicalNIC{"upstream": s.PhysicalNetwork.Upstream, "trunk": s.PhysicalNetwork.Trunk} {
+		if nic.Name != "" && !safeInterfaceName(nic.Name) {
+			return fmt.Errorf("physical_network.%s.name is not a safe interface name", label)
+		}
+		if nic.PermanentMAC != "" {
+			if parsed, err := net.ParseMAC(nic.PermanentMAC); err != nil || len(parsed) != 6 {
+				return fmt.Errorf("physical_network.%s.permanent_mac is not an Ethernet MAC", label)
+			}
+		}
+		if strings.ContainsAny(nic.PCIAddress, "\r\n") {
+			return fmt.Errorf("physical_network.%s.pci_address contains a newline", label)
+		}
+		if nic.Name != "" && nic.PermanentMAC == "" && nic.PCIAddress == "" {
+			return fmt.Errorf("physical_network.%s requires a stable MAC or PCI identity", label)
+		}
+	}
+	if s.PhysicalNetwork.Mode == ModePhysicalTrunk && s.PhysicalNetwork.Trunk.Name == "" {
+		return errors.New("physical-trunk mode requires a persisted trunk interface identity")
+	}
+	if s.Ownership != (OwnershipPolicy{PlatformGuestIDMin: PlatformGuestIDMin, PlatformGuestIDMax: PlatformGuestIDMax, ModuleGuestIDMin: ModuleGuestIDMin, ModuleGuestIDMax: ModuleGuestIDMax, UserGuestIDMin: UserGuestIDMin, UserGuestIDMax: UserGuestIDMax, UserWorkloadsManaged: false}) {
+		return errors.New("ownership policy must reserve 100-199 for platform, 200-499 for official modules, and 500-899 for user workloads; user workloads are not managed")
+	}
 	if s.SecretMetadata.InstallationID == "" || s.SecretMetadata.AgeRecipient == "" {
 		return fmt.Errorf("secret_metadata must contain installation_id and public age_recipient")
 	}
@@ -197,6 +273,7 @@ func (s Site) Validate() error {
 		}
 	}
 	seenModules := map[string]bool{}
+	seenVMIDs := map[int]string{}
 	for _, m := range s.Modules {
 		if m.Name == "" || m.Hostname == "" || m.Address == "" || m.Zone == "" {
 			return fmt.Errorf("module %q is missing name, hostname, zone, or address", m.Name)
@@ -218,6 +295,18 @@ func (s Site) Validate() error {
 			return fmt.Errorf("duplicate module %q", m.Name)
 		}
 		seenModules[m.Name] = true
+		if m.VMID != 0 {
+			if previous, exists := seenVMIDs[m.VMID]; exists {
+				return fmt.Errorf("modules %s and %s share VMID %d", previous, m.Name, m.VMID)
+			}
+			seenVMIDs[m.VMID] = m.Name
+			if m.ProductOwned && (m.VMID < PlatformGuestIDMin || m.VMID > ModuleGuestIDMax) {
+				return fmt.Errorf("platform module %s uses VMID %d outside Lab-in-a-Box-owned ranges", m.Name, m.VMID)
+			}
+			if !m.ProductOwned && (m.VMID < UserGuestIDMin || m.VMID > UserGuestIDMax) {
+				return fmt.Errorf("user-managed module %s uses VMID %d outside the reserved user-workload range", m.Name, m.VMID)
+			}
+		}
 		if ip := net.ParseIP(m.Address); ip == nil || ip.To4() == nil {
 			return fmt.Errorf("module %s has invalid IPv4 address %q", m.Name, m.Address)
 		}
@@ -228,26 +317,52 @@ func (s Site) Validate() error {
 	if len(seenZones) != len(expectedZones) {
 		return fmt.Errorf("V1 requires exactly TRUSTED, SERVERS, SANDBOX, and MGMT zones")
 	}
-	requiredModules := map[string]string{
-		"lab-proxmox-01": "10.10.99.5",
-		"lab-fw-01":      "10.10.99.1",
-		"lab-dns-01":     "10.10.20.10",
-		"lab-dns-02":     "10.10.20.11",
-		"lab-monitor-01": "10.10.99.20",
-		"lab-portal-01":  "10.10.20.30",
+	requiredModules := map[string]struct {
+		address string
+		vmid    int
+	}{
+		"lab-proxmox-01": {address: "10.10.99.5", vmid: 0},
+		"lab-fw-01":      {address: "10.10.99.1", vmid: ProxmoxVMID},
+		"lab-dns-01":     {address: "10.10.20.10", vmid: DNS01VMID},
+		"lab-dns-02":     {address: "10.10.20.11", vmid: DNS02VMID},
+		"lab-monitor-01": {address: "10.10.99.20", vmid: MonitorVMID},
+		"lab-portal-01":  {address: "10.10.20.30", vmid: PortalVMID},
 	}
-	for required, address := range requiredModules {
+	for required, expected := range requiredModules {
 		found, ok := seenModules[required]
 		if !ok || !found {
 			return fmt.Errorf("required foundation module %q is missing", required)
 		}
 		for _, m := range s.Modules {
-			if m.Name == required && m.Address != address {
-				return fmt.Errorf("foundation module %s must use %s", required, address)
+			if m.Name == required && (m.Address != expected.address || m.VMID != expected.vmid || !m.ProductOwned) {
+				return fmt.Errorf("foundation module %s must use address %s, VMID %d, and platform ownership", required, expected.address, expected.vmid)
 			}
 		}
 	}
 	return nil
+}
+
+func (s Site) PlatformModules() []Module {
+	modules := make([]Module, 0)
+	for _, module := range s.Modules {
+		if module.ProductOwned {
+			modules = append(modules, module)
+		}
+	}
+	sort.Slice(modules, func(i, j int) bool { return modules[i].Name < modules[j].Name })
+	return modules
+}
+
+func safeInterfaceName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if !(r == '.' || r == '-' || r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
 }
 
 func (s Site) CanonicalJSON() ([]byte, error) {

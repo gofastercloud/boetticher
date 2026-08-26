@@ -2,6 +2,7 @@ package site
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -320,6 +321,10 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 	if err != nil {
 		return err
 	}
+	ddnsSecret, err := randomSecret()
+	if err != nil {
+		return err
+	}
 	// Plaintext exists only in process memory and is piped directly to SOPS.
 	document := map[string]string{
 		"installation_id":      s.SecretMetadata.InstallationID,
@@ -328,6 +333,7 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 		"root_cert_pem_b64":    pki.Encode(authority.RootCertPEM),
 		"issuing_key_pem_b64":  pki.Encode(authority.IssuingKeyPEM),
 		"issuing_cert_pem_b64": pki.Encode(authority.IssuingCertPEM),
+		"ddns_tsig_secret":     ddnsSecret,
 	}
 	return StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "homelab.sops.yaml"), document)
 }
@@ -338,6 +344,14 @@ func randomID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(data[:]), nil
+}
+
+func randomSecret() (string, error) {
+	var data [32]byte
+	if _, err := rand.Read(data[:]); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(data[:]), nil
 }
 
 func envWithout(name string) []string {

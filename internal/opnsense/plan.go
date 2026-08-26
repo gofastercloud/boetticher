@@ -2,12 +2,14 @@ package opnsense
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/dave/labinabox/internal/dns"
 	"github.com/dave/labinabox/internal/model"
 )
 
@@ -16,6 +18,8 @@ const (
 	DHCPv4SubnetAdd    = "/api/kea/dhcpv4/addSubnet"
 	DHCPv4SubnetSet    = "/api/kea/dhcpv4/setSubnet"
 	DHCPv4Reconfigure  = "/api/kea/service/reconfigure"
+	DDNSGet            = "/api/kea/ddns/get"
+	DDNSSet            = "/api/kea/ddns/set"
 	VLANSearch         = "/api/interfaces/vlan_settings/searchItem"
 	VLANAdd            = "/api/interfaces/vlan_settings/addItem"
 	VLANReconfigure    = "/api/interfaces/vlan_settings/reconfigure"
@@ -33,6 +37,7 @@ type Plan struct {
 	VLANs          []VLANPlan     `json:"vlans"`
 	Zones          []ZonePlan     `json:"zones"`
 	FirewallRules  []FirewallRule `json:"firewall_rules"`
+	DDNS           dns.DDNSPlan   `json:"ddns"`
 }
 
 type VLANPlan struct {
@@ -80,6 +85,10 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
+	dnsPlan, err := dns.PlanFromSite(s)
+	if err != nil {
+		return Plan{}, err
+	}
 	zones := make([]ZonePlan, 0, len(s.Network.Zones))
 	for _, zone := range s.Normalize().Network.Zones {
 		plan := ZonePlan{
@@ -104,6 +113,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		VLANs:          vlanPlans(s),
 		Zones:          zones,
 		FirewallRules:  firewallRules(s),
+		DDNS:           dnsPlan.DDNS,
 	}, nil
 }
 
@@ -196,11 +206,23 @@ type KeaSubnetPayload struct {
 }
 
 type KeaSubnet struct {
-	SubnetID    int           `json:"subnet_id"`
-	Subnet      string        `json:"subnet"`
-	Description string        `json:"description"`
-	Pools       []KeaPool     `json:"pools,omitempty"`
-	OptionData  KeaOptionData `json:"option_data"`
+	SubnetID                   int           `json:"subnet_id"`
+	Subnet                     string        `json:"subnet"`
+	Description                string        `json:"description"`
+	Pools                      []KeaPool     `json:"pools,omitempty"`
+	OptionData                 KeaOptionData `json:"option_data"`
+	DDNSForwardZone            string        `json:"ddns_forward_zone,omitempty"`
+	DDNSReverseZone            string        `json:"ddns_reverse_zone,omitempty"`
+	DDNSQualifyingSuffix       string        `json:"ddns_qualifying_suffix,omitempty"`
+	DDNSDNSServer              string        `json:"ddns_dns_server,omitempty"`
+	DDNSDNSPort                string        `json:"ddns_dns_port,omitempty"`
+	DDNSDomainKeyName          string        `json:"ddns_domain_key_name,omitempty"`
+	DDNSDomainKeySecret        string        `json:"ddns_domain_key_secret,omitempty"`
+	DDNSDomainKeyAlgorithm     string        `json:"ddns_domain_key_algorithm,omitempty"`
+	DDNSOverrideNoUpdate       bool          `json:"ddns_override_no_update,omitempty"`
+	DDNSOverrideClientUpdate   bool          `json:"ddns_override_client_update,omitempty"`
+	DDNSUpdateOnRenew          bool          `json:"ddns_update_on_renew,omitempty"`
+	DDNSConflictResolutionMode string        `json:"ddns_conflict_resolution_mode,omitempty"`
 }
 
 type KeaPool struct {
@@ -214,6 +236,28 @@ type KeaOptionData struct {
 }
 
 func (p Plan) KeaPayloads() []KeaSubnetPayload {
+	return p.keaPayloads("")
+}
+
+func (p Plan) KeaPayloadsWithTSIG(secret string) []KeaSubnetPayload {
+	return p.keaPayloads(secret)
+}
+
+// DDNSPayload is the global Kea D2 configuration. The per-subnet forward,
+// reverse, and TSIG settings are carried separately in KeaPayloads; D2 must
+// still be enabled globally before those subnet settings can take effect.
+func (p Plan) DDNSPayload() map[string]any {
+	return map[string]any{"ddns": map[string]any{
+		"general": map[string]any{
+			"enabled":       "1",
+			"manual_config": "0",
+			"server_ip":     "127.0.0.1",
+			"server_port":   "53001",
+		},
+	}}
+}
+
+func (p Plan) keaPayloads(tsigSecret string) []KeaSubnetPayload {
 	result := make([]KeaSubnetPayload, 0, len(p.Zones))
 	for index, zone := range p.Zones {
 		payload := KeaSubnetPayload{Subnet4: KeaSubnet{
@@ -226,6 +270,20 @@ func (p Plan) KeaPayloads() []KeaSubnetPayload {
 				NTPServers:        strings.Join(zone.NTPAddresses, ","),
 			},
 		}}
+		if p.DDNS.Enabled {
+			forwardZone := strings.ToLower(zone.Name) + "." + "lab.home.arpa."
+			reverseZone := reverseZoneForNetwork(zone.Network)
+			payload.Subnet4.DDNSForwardZone = forwardZone
+			payload.Subnet4.DDNSReverseZone = reverseZone
+			payload.Subnet4.DDNSQualifyingSuffix = forwardZone
+			payload.Subnet4.DDNSDNSServer = "10.10.20.10"
+			payload.Subnet4.DDNSDNSPort = "53"
+			payload.Subnet4.DDNSDomainKeyName = strings.ToLower(zone.Name) + ".ddns." + "lab.home.arpa."
+			payload.Subnet4.DDNSDomainKeySecret = tsigSecret
+			payload.Subnet4.DDNSDomainKeyAlgorithm = "hmac-sha256"
+			payload.Subnet4.DDNSUpdateOnRenew = true
+			payload.Subnet4.DDNSConflictResolutionMode = "check-exists-with-dhcid"
+		}
 		if zone.Pool != "" {
 			payload.Subnet4.Pools = []KeaPool{{Pool: zone.Pool}}
 		}
@@ -234,12 +292,49 @@ func (p Plan) KeaPayloads() []KeaSubnetPayload {
 	return result
 }
 
+func reverseZoneForNetwork(network string) string {
+	base, parsed, err := net.ParseCIDR(network)
+	if err != nil {
+		return ""
+	}
+	ones, bits := parsed.Mask.Size()
+	if bits != 32 || ones != 24 {
+		return ""
+	}
+	octets := strings.Split(base.To4().String(), ".")
+	return strings.Join([]string{octets[2], octets[1], octets[0], "in-addr.arpa."}, ".")
+}
+
 // ApplyKea performs the documented OPNsense Kea CRUD sequence. Existing
 // UUID discovery is intentionally delegated to the API response; no delete
 // or broad replacement is performed. A live fixture must qualify the exact
 // search-row and nested model shape before release qualification.
 func (c *Client) ApplyKea(ctx context.Context, plan Plan) error {
-	for _, payload := range plan.KeaPayloads() {
+	return c.applyKea(ctx, plan, "")
+}
+
+func (c *Client) ApplyKeaWithTSIG(ctx context.Context, plan Plan, tsigSecret string) error {
+	return c.applyKea(ctx, plan, tsigSecret)
+}
+
+// ApplyDDNS enables the OPNsense-managed Kea D2 agent. It intentionally does
+// not accept a secret: TSIG material belongs only in the per-subnet runtime
+// payload and is never part of the global generated configuration.
+func (c *Client) ApplyDDNS(ctx context.Context, plan Plan) error {
+	if !plan.DDNS.Enabled {
+		return nil
+	}
+	if err := c.Post(ctx, DDNSSet, plan.DDNSPayload(), nil); err != nil {
+		return fmt.Errorf("configure Kea DDNS agent: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) applyKea(ctx context.Context, plan Plan, tsigSecret string) error {
+	if plan.DDNS.Enabled && tsigSecret == "" {
+		return errors.New("DDNS TSIG secret is required for Kea convergence")
+	}
+	for _, payload := range plan.keaPayloads(tsigSecret) {
 		var search struct {
 			Rows []struct {
 				UUID   string `json:"uuid"`

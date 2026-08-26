@@ -20,12 +20,13 @@ Git may contain desired state, encrypted secrets, and non-secret evidence. OpenT
 
 1. Run `homelab init --site-dir my-homelab`.
 2. Secure the independent Age recovery copy.
-3. Run `homelab preflight --site my-homelab`.
-4. Reach fresh Proxmox on its HOME-side DHCP address and run `homelab bootstrap-endpoint set ADDRESS`.
-5. Generate/check the SSH file with `homelab ssh-config --force --install-include`.
-6. Run `homelab bootstrap --opnsense-iso VERIFIED_ISO --recovery-confirmed`.
-7. Run `homelab provision` and `homelab converge` after the OPNsense API is available.
-8. Run `homelab verify`, `homelab doctor`, and `homelab portal build`.
+3. Reach fresh Proxmox on its HOME-side DHCP address and run `homelab bootstrap-endpoint set ADDRESS`.
+4. Run `homelab preflight --site my-homelab --live`. This identifies the active upstream NIC and proposes exactly one safe unused trunk NIC, or reports virtual-only/multiple-candidate state.
+5. If multiple candidates remain, repeat with `--trunk-interface IFACE`; do not select by enumeration order.
+6. Generate/check the SSH file with `homelab ssh-config --force --install-include`.
+7. Run `homelab bootstrap --opnsense-iso VERIFIED_ISO --recovery-confirmed`, adding `--trunk-interface IFACE` only when required by discovery.
+8. Run `homelab provision` and `homelab converge` after the OPNsense API is available.
+9. Run `homelab verify`, `homelab doctor`, and `homelab portal build`.
 
 The initial bootstrap trust transition is: operator authentication to fresh Proxmox → operator SSH key → `labadmin` and forwarding-only `lab-jump` → scoped Proxmox API token → direct encrypted SOPS handoff. Interactive secrets are not accepted through command arguments, persistent environment variables, logs, or generated files.
 

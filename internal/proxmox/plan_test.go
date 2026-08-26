@@ -36,3 +36,23 @@ func TestGatewayForFoundationZones(t *testing.T) {
 		}
 	}
 }
+
+func TestUserWorkloadNeverEntersPlatformPlan(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	site.Modules = append(site.Modules, model.Module{
+		Name: "user-vm-550", VMID: 550, Hostname: "user-vm-550", Zone: "SANDBOX", Address: "10.10.50.50",
+		Role: "user workload", ProductOwned: false,
+	})
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Guests) != 5 {
+		t.Fatalf("user workload changed platform guest count: %#v", plan.Guests)
+	}
+	for _, guest := range plan.Guests {
+		if guest.VMID == 550 {
+			t.Fatal("user workload entered the Lab-in-a-Box platform plan")
+		}
+	}
+}

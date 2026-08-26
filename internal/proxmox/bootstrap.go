@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	networkmodel "github.com/dave/labinabox/internal/network"
 )
 
 type CommandRunner interface {
@@ -19,6 +21,40 @@ type SSHRunner struct {
 	Port          int
 	KnownHosts    string
 	StrictHostKey string
+}
+
+// DiscoverPhysicalNetworkViaSSH uses the existing fresh-host trust path before
+// a Proxmox API token exists. It executes only fixed read-only pvesh and ip
+// operations; no interface name is interpolated into a shell command.
+func DiscoverPhysicalNetworkViaSSH(ctx context.Context, runner CommandRunner, address, initialUser, node, bootstrapAddress, configuredTrunk, selectedTrunk string) (networkmodel.Discovery, error) {
+	if runner == nil {
+		return networkmodel.Discovery{}, errors.New("network discovery runner is required")
+	}
+	if !safeID(node) {
+		return networkmodel.Discovery{}, errors.New("Proxmox node is not a safe identifier")
+	}
+	output, err := runner.Run(ctx, address, initialUser, "pvesh get /nodes/"+node+"/network --output-format json")
+	if err != nil {
+		return networkmodel.Discovery{}, fmt.Errorf("discover Proxmox physical network: %w", err)
+	}
+	var interfaces []NetworkInterface
+	if err := json.Unmarshal(output, &interfaces); err != nil {
+		return networkmodel.Discovery{}, fmt.Errorf("decode Proxmox physical network evidence: %w", err)
+	}
+	routeOutput, err := runner.Run(ctx, address, initialUser, "ip -j route show default")
+	if err != nil {
+		return networkmodel.Discovery{}, fmt.Errorf("discover Proxmox default route: %w", err)
+	}
+	var routes []struct {
+		Dev string `json:"dev"`
+	}
+	if err := json.Unmarshal(routeOutput, &routes); err != nil {
+		return networkmodel.Discovery{}, fmt.Errorf("decode Proxmox default-route evidence: %w", err)
+	}
+	if len(routes) != 1 || routes[0].Dev == "" {
+		return networkmodel.Discovery{}, errors.New("HOLD: upstream interface identity is ambiguous (default route is absent or has multiple entries)")
+	}
+	return AnalyzePhysicalNetworkWithDefaultRoute(interfaces, bootstrapAddress, configuredTrunk, selectedTrunk, routes[0].Dev)
 }
 
 func (r SSHRunner) Run(ctx context.Context, address, user, command string) ([]byte, error) {

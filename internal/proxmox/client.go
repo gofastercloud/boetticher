@@ -193,8 +193,30 @@ func (c *Client) LXCConfig(ctx context.Context, node string, vmid int, out any) 
 	return c.Get(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "config"), nil, out)
 }
 
+func (c *Client) ListVMs(ctx context.Context, node string) ([]GuestSummary, error) {
+	var guests []GuestSummary
+	if err := c.Get(ctx, path.Join("/nodes", node, "qemu"), nil, &guests); err != nil {
+		return nil, err
+	}
+	for i := range guests {
+		guests[i].Kind = KindQEMU
+	}
+	return guests, nil
+}
+
+func (c *Client) ListLXCs(ctx context.Context, node string) ([]GuestSummary, error) {
+	var guests []GuestSummary
+	if err := c.Get(ctx, path.Join("/nodes", node, "lxc"), nil, &guests); err != nil {
+		return nil, err
+	}
+	for i := range guests {
+		guests[i].Kind = KindLXC
+	}
+	return guests, nil
+}
+
 func (c *Client) NodeNetwork(ctx context.Context, node string, out any) error {
-	return c.Get(ctx, path.Join("/nodes", node, "network"), url.Values{"type": {"any_bridge"}}, out)
+	return c.Get(ctx, path.Join("/nodes", node, "network"), nil, out)
 }
 
 func (c *Client) CreateNodeNetwork(ctx context.Context, node string, params url.Values) error {

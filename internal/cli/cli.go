@@ -17,13 +17,17 @@ import (
 	"time"
 
 	"github.com/dave/labinabox/internal/ansible"
+	"github.com/dave/labinabox/internal/backup"
+	"github.com/dave/labinabox/internal/dns"
 	"github.com/dave/labinabox/internal/model"
+	networkmodel "github.com/dave/labinabox/internal/network"
 	"github.com/dave/labinabox/internal/opnsense"
 	"github.com/dave/labinabox/internal/pki"
 	"github.com/dave/labinabox/internal/portal"
 	"github.com/dave/labinabox/internal/proxmox"
 	"github.com/dave/labinabox/internal/site"
 	"github.com/dave/labinabox/internal/sshconfig"
+	"github.com/dave/labinabox/internal/zabbix"
 )
 
 func Run(args []string, out, errOut interface{ Write([]byte) (int, error) }) error {
@@ -74,8 +78,8 @@ func usage(out interface{ Write([]byte) (int, error) }) {
 
 Usage:
   homelab init [--site-dir DIR] [--age-identity PATH]
-  homelab preflight [--site DIR]
-	homelab bootstrap [--site DIR] [--recovery-confirmed] [--dry-run]
+	homelab preflight [--site DIR] [--live] [--bootstrap-address ADDRESS] [--trunk-interface IFACE]
+	homelab bootstrap [--site DIR] [--recovery-confirmed] [--trunk-interface IFACE] [--dry-run]
 	homelab provision [--site DIR] [--opnsense-iso PATH] [--debian-template TEMPLATE] [--dry-run]
 	homelab converge [--site DIR] [--opnsense-url URL] [--dry-run]
 	homelab verify | doctor | upgrade [--site DIR]
@@ -119,10 +123,16 @@ func runPreflight(args []string, out interface{ Write([]byte) (int, error) }) er
 	fs := flag.NewFlagSet("preflight", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
+	live := fs.Bool("live", false, "inspect the fresh Proxmox host over the recorded bootstrap path")
+	bootstrapAddress := fs.String("bootstrap-address", "", "fresh Proxmox HOME-side address when it is not yet recorded")
+	initialUser := fs.String("initial-user", "root", "initial SSH user on the fresh Proxmox host")
+	knownHosts := fs.String("known-hosts", "", "optional SSH known-hosts file for discovery")
+	trunkInterface := fs.String("trunk-interface", "", "explicit trunk selection when multiple eligible NICs exist")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if _, err := site.Load(*siteDir); err != nil {
+	s, err := site.Load(*siteDir)
+	if err != nil {
 		return err
 	}
 	if (runtime.GOOS != "darwin" && runtime.GOOS != "linux") || (runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64") {
@@ -148,6 +158,33 @@ func runPreflight(args []string, out interface{ Write([]byte) (int, error) }) er
 	if !allPass {
 		return fmt.Errorf("preflight failed: required tooling is missing")
 	}
+	if !*live {
+		fmt.Fprintln(out, "Physical discovery: NOT TESTED (use --live after recording the HOME-side Proxmox address)")
+		return nil
+	}
+	address := *bootstrapAddress
+	if address == "" {
+		address = s.BootstrapAddress
+	}
+	if address == "" {
+		return errors.New("HOLD: upstream interface identity is ambiguous; set bootstrap-endpoint or pass --bootstrap-address")
+	}
+	runner := proxmox.SSHRunner{KnownHosts: *knownHosts}
+	discovery, err := proxmox.DiscoverPhysicalNetworkViaSSH(context.Background(), runner, address, *initialUser, s.ProxmoxNode, address, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
+	if err != nil {
+		return err
+	}
+	printPhysicalDiscovery(out, discovery)
+	if err := writePhysicalDiscovery(*siteDir, s, discovery); err != nil {
+		return err
+	}
+	if err := rebuildPortal(*siteDir, s); err != nil {
+		return err
+	}
+	if discovery.Mode == networkmodel.ModeSelectionNeeded {
+		return errors.New("HOLD: multiple eligible trunk interfaces require explicit selection")
+	}
+	fmt.Fprintf(out, "Physical discovery: PASS %s\n", discovery.Mode)
 	return nil
 }
 
@@ -242,10 +279,10 @@ func runAccess(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	fmt.Fprintln(out, "Access path")
 	fmt.Fprintln(out, "  Internal SSH  via Proxmox bastion")
-	if s.PhysicalTrunk == "" {
+	if s.PhysicalNetwork.Mode == model.ModeVirtualOnly {
 		fmt.Fprintln(out, "  Physical lab  virtual-only")
 	} else {
-		fmt.Fprintf(out, "  Physical lab  %s attached\n", s.PhysicalTrunk)
+		fmt.Fprintf(out, "  Physical lab  %s attached\n", s.PhysicalNetwork.Trunk.Name)
 	}
 	fmt.Fprintln(out, "  Remote access not configured")
 	return nil
@@ -272,7 +309,7 @@ func runPortalBuild(args []string, out interface{ Write([]byte) (int, error) }) 
 		return err
 	}
 	evidence := loadEvidence(*siteDir, revision)
-	if err := portal.Build(s, *output, *docsDir, evidence, time.Now()); err != nil {
+	if err := portal.Build(s, *output, *docsDir, evidence, loadPhysicalDiscovery(*siteDir, s), time.Now()); err != nil {
 		return err
 	}
 	if err := writeModelProjections(*siteDir, s); err != nil {
@@ -537,10 +574,10 @@ func runNetwork(args []string, out interface{ Write([]byte) (int, error) }) erro
 	}
 	switch command {
 	case "status":
-		if s.PhysicalTrunk == "" {
+		if s.PhysicalNetwork.Mode == model.ModeVirtualOnly {
 			fmt.Fprintln(out, "Physical trunk: virtual-only")
 		} else {
-			fmt.Fprintf(out, "Physical trunk: %s attached\n", s.PhysicalTrunk)
+			fmt.Fprintf(out, "Physical trunk: %s attached\n", s.PhysicalNetwork.Trunk.Name)
 		}
 		if !*live {
 			return nil
@@ -553,6 +590,11 @@ func runNetwork(args []string, out interface{ Write([]byte) (int, error) }) erro
 		if err := client.NodeNetwork(context.Background(), s.ProxmoxNode, &interfaces); err != nil {
 			return err
 		}
+		discovery, err := proxmox.DiscoverPhysicalNetwork(context.Background(), client, s.ProxmoxNode, s.BootstrapAddress, s.PhysicalNetwork.Trunk.Name)
+		if err != nil {
+			return err
+		}
+		printPhysicalDiscovery(out, discovery)
 		for _, iface := range interfaces {
 			if iface.Iface == "vmbr1" {
 				fmt.Fprintf(out, "vmbr1: PASS bridge ports=%s vlan-aware=%t\n", iface.BridgePorts, iface.BridgeVLANAware)
@@ -567,39 +609,142 @@ func runNetwork(args []string, out interface{ Write([]byte) (int, error) }) erro
 		if s.BootstrapAddress == "" {
 			return fmt.Errorf("cannot prove the interface is not the HOME/bootstrap path until bootstrap-endpoint is set")
 		}
-		if !*confirm {
-			return fmt.Errorf("network trunk %s is a potentially locking live change; repeat with --confirm", command)
-		}
 		client, _, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
 		if err != nil {
 			return err
 		}
 		ctx := context.Background()
+		var observedDiscovery *networkmodel.Discovery
 		if command == "attach" {
+			discovery, discoveryErr := proxmox.DiscoverPhysicalNetworkWithSelection(ctx, client, s.ProxmoxNode, s.BootstrapAddress, s.PhysicalNetwork.Trunk.Name, interfaceName)
+			if discoveryErr != nil {
+				return discoveryErr
+			}
+			observedDiscovery = &discovery
+			printPhysicalDiscovery(out, discovery)
+			if !*confirm {
+				return fmt.Errorf("network trunk attach is a potentially locking live change; review the proposal and repeat with --confirm")
+			}
 			if err := proxmox.AttachTrunk(ctx, client, s.ProxmoxNode, interfaceName, s.BootstrapAddress); err != nil {
 				return err
 			}
-			s.PhysicalTrunk = interfaceName
-		} else {
-			if s.PhysicalTrunk != interfaceName {
-				return fmt.Errorf("site records physical trunk %q, not %q", s.PhysicalTrunk, interfaceName)
+			s.PhysicalNetwork.Mode = model.ModePhysicalTrunk
+			s.PhysicalNetwork.Trunk.Name = interfaceName
+			if discovery.Trunk != nil {
+				s.PhysicalNetwork.Trunk.PermanentMAC = discovery.Trunk.PermanentMAC
+				s.PhysicalNetwork.Trunk.PCIAddress = discovery.Trunk.PCIAddress
 			}
-			if err := proxmox.DetachTrunk(ctx, client, s.ProxmoxNode, interfaceName); err != nil {
+			if discovery.Upstream.Name != "" {
+				s.PhysicalNetwork.Upstream = model.PhysicalNIC{Name: discovery.Upstream.Name, PermanentMAC: discovery.Upstream.PermanentMAC, PCIAddress: discovery.Upstream.PCIAddress}
+			}
+			var after []proxmox.NetworkInterface
+			if err := client.NodeNetwork(ctx, s.ProxmoxNode, &after); err != nil {
+				return rollbackTrunkChange(ctx, client, s.ProxmoxNode, interfaceName, s.BootstrapAddress, "HOLD: trunk attach could not be re-read", err)
+			}
+			if _, err := proxmox.ValidatePhysicalBinding(s, after); err != nil {
+				return rollbackTrunkChange(ctx, client, s.ProxmoxNode, interfaceName, s.BootstrapAddress, "HOLD: trunk attach failed post-change validation", err)
+			}
+			postDiscovery, err := proxmox.AnalyzePhysicalNetwork(after, s.BootstrapAddress, interfaceName)
+			if err != nil {
+				return rollbackTrunkChange(ctx, client, s.ProxmoxNode, interfaceName, s.BootstrapAddress, "HOLD: trunk attach produced ambiguous physical evidence", err)
+			}
+			observedDiscovery = &postDiscovery
+		} else {
+			if s.PhysicalNetwork.Trunk.Name != interfaceName {
+				return fmt.Errorf("site records physical trunk %q, not %q", s.PhysicalNetwork.Trunk.Name, interfaceName)
+			}
+			if !*confirm {
+				return fmt.Errorf("network trunk detach is a potentially locking live change; repeat with --confirm")
+			}
+			if err := proxmox.DetachTrunk(ctx, client, s.ProxmoxNode, interfaceName, s.BootstrapAddress); err != nil {
 				return err
 			}
-			s.PhysicalTrunk = ""
+			s.PhysicalNetwork.Mode = model.ModeVirtualOnly
+			s.PhysicalNetwork.Trunk = model.PhysicalNIC{}
+			var after []proxmox.NetworkInterface
+			if err := client.NodeNetwork(ctx, s.ProxmoxNode, &after); err != nil {
+				return rollbackDetachedTrunkChange(ctx, client, s.ProxmoxNode, interfaceName, s.BootstrapAddress, "HOLD: trunk detach could not be re-read", err)
+			}
+			if _, err := proxmox.ValidatePhysicalBinding(s, after); err != nil {
+				return rollbackDetachedTrunkChange(ctx, client, s.ProxmoxNode, interfaceName, s.BootstrapAddress, "HOLD: trunk detach failed post-change validation", err)
+			}
+			postDiscovery, err := proxmox.AnalyzePhysicalNetwork(after, s.BootstrapAddress, "")
+			if err != nil {
+				return rollbackDetachedTrunkChange(ctx, client, s.ProxmoxNode, interfaceName, s.BootstrapAddress, "HOLD: trunk detach produced ambiguous physical evidence", err)
+			}
+			observedDiscovery = &postDiscovery
 		}
 		if err := site.Save(*siteDir, s); err != nil {
-			return err
+			return fmt.Errorf("HOLD: trunk changed but physical binding could not be persisted: %w", err)
 		}
 		if err := writeModelProjections(*siteDir, s); err != nil {
-			return err
+			return fmt.Errorf("HOLD: trunk changed but projections could not be regenerated: %w", err)
+		}
+		if observedDiscovery != nil {
+			if err := writePhysicalDiscovery(*siteDir, s, *observedDiscovery); err != nil {
+				return fmt.Errorf("HOLD: trunk changed but physical evidence could not be written: %w", err)
+			}
+		}
+		if err := rebuildPortal(*siteDir, s); err != nil {
+			return fmt.Errorf("HOLD: trunk changed but portal could not be regenerated: %w", err)
 		}
 		fmt.Fprintf(out, "Physical trunk: PASS %s %s vmbr1\n", command, interfaceName)
 		return nil
 	default:
 		return fmt.Errorf("unknown trunk command %q", command)
 	}
+}
+
+func rollbackTrunkChange(ctx context.Context, client *proxmox.Client, node, interfaceName, bootstrapAddress, message string, cause error) error {
+	if rollbackErr := proxmox.DetachTrunk(ctx, client, node, interfaceName, bootstrapAddress); rollbackErr != nil {
+		return fmt.Errorf("%s and rollback failed: %v; cause: %w", message, rollbackErr, cause)
+	}
+	return fmt.Errorf("%s; rollback completed: %w", message, cause)
+}
+
+func rollbackDetachedTrunkChange(ctx context.Context, client *proxmox.Client, node, interfaceName, bootstrapAddress, message string, cause error) error {
+	if rollbackErr := proxmox.AttachTrunk(ctx, client, node, interfaceName, bootstrapAddress); rollbackErr != nil {
+		return fmt.Errorf("%s and rollback failed: %v; cause: %w", message, rollbackErr, cause)
+	}
+	return fmt.Errorf("%s; rollback completed: %w", message, cause)
+}
+
+func printPhysicalDiscovery(out interface{ Write([]byte) (int, error) }, discovery networkmodel.Discovery) {
+	fmt.Fprintf(out, "Detected network topology\nUpstream/bootstrap\n  %s\n  address: %s\n  model: %s\n  permanent MAC: %s\n  PCI: %s\n  driver: %s\n  speed: %s\n  carrier: %t\n", discovery.Upstream.Name, valueOrUnknown(discovery.BootstrapAddress), valueOrUnknown(discovery.Upstream.Model), valueOrUnknown(discovery.Upstream.PermanentMAC), valueOrUnknown(discovery.Upstream.PCIAddress), valueOrUnknown(discovery.Upstream.Driver), speedText(discovery.Upstream.SpeedMbps), discovery.Upstream.Carrier)
+	if discovery.Mode == networkmodel.ModeSelectionNeeded {
+		fmt.Fprintln(out, "Eligible internal trunk interfaces")
+		for index, candidate := range discovery.Candidates {
+			fmt.Fprintf(out, "  [%d] %s - %s - MAC %s - %s - carrier %t\n", index+1, candidate.Name, valueOrUnknown(candidate.Model), valueOrUnknown(candidate.PermanentMAC), speedText(candidate.SpeedMbps), candidate.Carrier)
+		}
+		fmt.Fprintln(out, "Select the internal trunk interface with --trunk-interface or the command-specific interface argument.")
+	} else if discovery.Trunk != nil {
+		fmt.Fprintf(out, "Internal trunk candidate\n  %s\n  model: %s\n  permanent MAC: %s\n  PCI: %s\n  driver: %s\n  speed: %s\n  carrier: %t\n", discovery.Trunk.Name, valueOrUnknown(discovery.Trunk.Model), valueOrUnknown(discovery.Trunk.PermanentMAC), valueOrUnknown(discovery.Trunk.PCIAddress), valueOrUnknown(discovery.Trunk.Driver), speedText(discovery.Trunk.SpeedMbps), discovery.Trunk.Carrier)
+	}
+	fmt.Fprintf(out, "Proposed platform mapping\n  vmbr0 -> %s\n  vmbr1 -> %s\n  mode: %s\n", discovery.Upstream.Name, trunkName(discovery), discovery.Mode)
+}
+
+func trunkName(discovery networkmodel.Discovery) string {
+	if discovery.Trunk == nil {
+		return "none"
+	}
+	return discovery.Trunk.Name
+}
+
+func valueOrUnknown(value string) string {
+	if value == "" {
+		return "unknown"
+	}
+	return value
+}
+
+func speedText(speedMbps int) string {
+	if speedMbps <= 0 {
+		return "unknown"
+	}
+	if speedMbps >= 1000 && speedMbps%1000 == 0 {
+		return fmt.Sprintf("%d Gb/s", speedMbps/1000)
+	}
+	return fmt.Sprintf("%d Mb/s", speedMbps)
 }
 
 func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error {
@@ -704,6 +849,9 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 	siteDir := fs.String("site", ".", "private site repository directory")
 	sshPath := fs.String("ssh-config", sshconfig.DefaultPath(), "generated SSH configuration to check")
 	live := fs.Bool("live", false, "perform bounded endpoint and SSH host-key checks")
+	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
+	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
+	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -730,6 +878,15 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		}},
 		{"OPNsense bootstrap", filepath.Join(*siteDir, "generated", "opnsense", "bootstrap.json"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "opnsense", "bootstrap.json"), revision)
+		}},
+		{"DNS/DDNS policy", filepath.Join(*siteDir, "generated", "dns", "desired-state.json"), func() error {
+			return checkRevisionFile(filepath.Join(*siteDir, "generated", "dns", "desired-state.json"), revision)
+		}},
+		{"physical discovery", filepath.Join(*siteDir, "generated", "network", "physical.json"), func() error {
+			return checkRevisionFile(filepath.Join(*siteDir, "generated", "network", "physical.json"), revision)
+		}},
+		{"backup policy", filepath.Join(*siteDir, "generated", "backup", "desired-policy.json"), func() error {
+			return checkRevisionFile(filepath.Join(*siteDir, "generated", "backup", "desired-policy.json"), revision)
 		}},
 		{"Proxmox desired state", filepath.Join(*siteDir, "generated", "proxmox", "desired-state.json"), func() error {
 			return checkRevisionFile(filepath.Join(*siteDir, "generated", "proxmox", "desired-state.json"), revision)
@@ -767,10 +924,10 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 			fmt.Fprintf(out, "%-22s CURRENT\n", check.name)
 		}
 	}
-	if s.PhysicalTrunk == "" {
+	if s.PhysicalNetwork.Mode == model.ModeVirtualOnly {
 		fmt.Fprintln(out, "Physical trunk        NOTICE virtual-only")
 	} else {
-		fmt.Fprintf(out, "Physical trunk        PASS %s attached\n", s.PhysicalTrunk)
+		fmt.Fprintf(out, "Physical trunk        PASS %s attached\n", s.PhysicalNetwork.Trunk.Name)
 	}
 	fmt.Fprintln(out, "OPNsense bootstrap    HOLD exact unattended installer/interface/API sequence requires fresh-host qualification")
 	if s.BootstrapAddress == "" {
@@ -782,6 +939,47 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		fmt.Fprintf(out, "Bootstrap endpoint    FAIL %v\n", err)
 	} else {
 		fmt.Fprintf(out, "Bootstrap endpoint    PASS %s and SSH host key\n", s.BootstrapAddress)
+	}
+	if *live {
+		plan, planErr := proxmox.PlanFromSite(s)
+		if planErr != nil {
+			failed = true
+			fmt.Fprintf(out, "Platform guests       FAIL invalid platform plan: %v\n", planErr)
+		} else if client, _, clientErr := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure); clientErr != nil {
+			fmt.Fprintf(out, "Platform guests       NOT TESTED (%v)\n", clientErr)
+		} else if audits, auditErr := proxmox.AuditGuests(context.Background(), client, plan); auditErr != nil {
+			failed = true
+			fmt.Fprintf(out, "Platform guests       FAIL %v\n", auditErr)
+		} else {
+			userCount := 0
+			for _, audit := range audits {
+				if audit.Ownership == proxmox.UserOwnership {
+					userCount++
+					continue
+				}
+				fmt.Fprintf(out, "Platform guest %-8d %-18s %s\n", audit.VMID, audit.Name, audit.Result)
+				if audit.Result == "DRIFT" || audit.Result == "MISSING" {
+					failed = true
+				}
+			}
+			if userCount > 0 {
+				fmt.Fprintf(out, "User-managed guests  INFO %d additional Proxmox guests detected; outside Lab-in-a-Box ownership\n", userCount)
+			} else {
+				fmt.Fprintln(out, "User-managed guests  INFO none detected")
+			}
+			var interfaces []proxmox.NetworkInterface
+			if networkErr := client.NodeNetwork(context.Background(), s.ProxmoxNode, &interfaces); networkErr != nil {
+				failed = true
+				fmt.Fprintf(out, "Physical binding     FAIL %v\n", networkErr)
+			} else if detail, bindingErr := proxmox.ValidatePhysicalBinding(s, interfaces); bindingErr != nil {
+				failed = true
+				fmt.Fprintf(out, "Physical binding     FAIL %v\n", bindingErr)
+			} else {
+				fmt.Fprintf(out, "Physical binding     PASS %s\n", detail)
+			}
+		}
+	} else {
+		fmt.Fprintln(out, "Platform guests       NOT TESTED (use --live)")
 	}
 	if failed {
 		return fmt.Errorf("doctor found absent or inconsistent projections")
@@ -801,6 +999,7 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
 	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS during bootstrap")
 	opnsenseISO := fs.String("opnsense-iso", "", "verified OPNsense ISO path on Proxmox storage")
+	trunkInterface := fs.String("trunk-interface", "", "explicit physical trunk interface when discovery finds multiple candidates")
 	dryRun := fs.Bool("dry-run", false, "render and validate the bootstrap plan without connecting")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -880,8 +1079,21 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err != nil {
 		return fmt.Errorf("authenticate to Proxmox with scoped identity: %w", err)
 	}
+	discovery, err := proxmox.DiscoverPhysicalNetworkWithSelection(ctx, client, plan.Node, s.BootstrapAddress, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
+	if err != nil {
+		return err
+	}
+	printPhysicalDiscovery(out, discovery)
+	if discovery.Mode == networkmodel.ModeSelectionNeeded {
+		return errors.New("HOLD: multiple eligible trunk interfaces require --trunk-interface selection before bootstrap can mutate networking")
+	}
 	if err := proxmox.EnsureVirtualBridge(ctx, client, plan.Node); err != nil {
 		return err
+	}
+	if discovery.Trunk != nil && discovery.Trunk.Bridge != "vmbr1" {
+		if err := proxmox.AttachTrunk(ctx, client, plan.Node, discovery.Trunk.Name, s.BootstrapAddress); err != nil {
+			return err
+		}
 	}
 	if err := proxmox.EnsureFirewallVM(ctx, client, plan, *opnsenseISO); err != nil {
 		return err
@@ -892,6 +1104,21 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	hostKey, err := sshconfig.ScanHostKey(ctx, s.BootstrapAddress)
 	if err != nil {
 		return fmt.Errorf("record Proxmox SSH host identity: %w", err)
+	}
+	s.PhysicalNetwork.Upstream = model.PhysicalNIC{Name: discovery.Upstream.Name, PermanentMAC: discovery.Upstream.PermanentMAC, PCIAddress: discovery.Upstream.PCIAddress}
+	if discovery.Trunk == nil {
+		s.PhysicalNetwork.Mode = model.ModeVirtualOnly
+		s.PhysicalNetwork.Trunk = model.PhysicalNIC{}
+	} else {
+		s.PhysicalNetwork.Mode = model.ModePhysicalTrunk
+		s.PhysicalNetwork.Trunk = model.PhysicalNIC{Name: discovery.Trunk.Name, PermanentMAC: discovery.Trunk.PermanentMAC, PCIAddress: discovery.Trunk.PCIAddress}
+	}
+	if err := site.Save(*siteDir, s); err != nil {
+		return fmt.Errorf("HOLD: bootstrap completed network mutation but physical binding could not be persisted: %w", err)
+	}
+	plan, err = proxmox.PlanFromSite(s)
+	if err != nil {
+		return err
 	}
 	if err := writeProjection(filepath.Join(*siteDir, "generated", "bootstrap.json"), struct {
 		ModelRevision    string `json:"model_revision"`
@@ -904,6 +1131,9 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 		return err
 	}
 	if err := writeModelProjections(*siteDir, s); err != nil {
+		return err
+	}
+	if err := writePhysicalDiscovery(*siteDir, s, discovery); err != nil {
 		return err
 	}
 	if err := rebuildPortal(*siteDir, s); err != nil {
@@ -995,6 +1225,10 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 	if err != nil {
 		return fmt.Errorf("load encrypted OPNsense API credentials: %w", err)
 	}
+	ddnsTSIG, err := site.LoadDDNSTSIG(*siteDir, s, *ageIdentity)
+	if err != nil {
+		return fmt.Errorf("load encrypted DDNS TSIG material: %w", err)
+	}
 	client, err := opnsense.NewClient(opnsense.Config{BaseURL: *opnsenseURL, User: credentials.APIKey, Secret: credentials.APISecret, CAFile: *opnsenseCA, Insecure: *insecure})
 	if err != nil {
 		return err
@@ -1006,7 +1240,10 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 	if err := client.ApplyVLANs(context.Background(), plan); err != nil {
 		return err
 	}
-	if err := client.ApplyKea(context.Background(), plan); err != nil {
+	if err := client.ApplyDDNS(context.Background(), plan); err != nil {
+		return err
+	}
+	if err := client.ApplyKeaWithTSIG(context.Background(), plan, ddnsTSIG); err != nil {
 		return err
 	}
 	if err := client.ApplyFirewall(context.Background(), plan); err != nil {
@@ -1021,6 +1258,7 @@ func runConverge(args []string, out interface{ Write([]byte) (int, error) }) err
 		return fmt.Errorf("decode Ansible variables: %w", err)
 	}
 	runtimeVariables["portal_source_dir"] = filepath.Join(*siteDir, "generated", "portal")
+	runtimeVariables["ddns_tsig_secret"] = ddnsTSIG
 	variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
 	if err != nil {
 		return err
@@ -1096,7 +1334,7 @@ func runSSHJourney(configPath string) error {
 func jumpDestinations(s model.Site) []string {
 	result := []string{}
 	for _, m := range s.Modules {
-		if m.SSHManaged && m.JumpAllowed {
+		if m.ProductOwned && m.SSHManaged && m.JumpAllowed {
 			port := m.SSHPort
 			if port == 0 {
 				port = 22
@@ -1222,14 +1460,28 @@ func writeModelProjections(dir string, s model.Site) error {
 	if err := writeProjection(filepath.Join(dir, "generated", "opnsense", "bootstrap.json"), opnsenseBootstrap); err != nil {
 		return err
 	}
+	dnsPlan, err := dns.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
+	if err := writeProjection(filepath.Join(dir, "generated", "dns", "desired-state.json"), dnsPlan); err != nil {
+		return err
+	}
+	backupPlan, err := backup.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
+	if err := writeProjection(filepath.Join(dir, "generated", "backup", "desired-policy.json"), backupPlan); err != nil {
+		return err
+	}
 	if err := writeProjection(filepath.Join(dir, "generated", "proxmox", "desired-state.json"), proxmoxPlan); err != nil {
 		return err
 	}
-	if err := writeProjection(filepath.Join(dir, "generated", "zabbix", "provisioning.json"), struct {
-		ModelRevision string         `json:"model_revision"`
-		Target        string         `json:"target"`
-		Modules       []model.Module `json:"modules"`
-	}{revision, model.ZabbixSeries, normalized.Modules}); err != nil {
+	zabbixPlan, err := zabbix.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
+	if err := writeProjection(filepath.Join(dir, "generated", "zabbix", "provisioning.json"), zabbixPlan); err != nil {
 		return err
 	}
 	if err := writeCurrentStatus(dir, revision); err != nil {
@@ -1259,7 +1511,32 @@ func writeModelProjections(dir string, s model.Site) error {
 	if err := writePublic(filepath.Join(dir, "generated", "ssh", "labinabox.conf"), []byte(sshContent)); err != nil {
 		return err
 	}
-	return writeAccessProjection(dir, s)
+	if err := writeAccessProjection(dir, s); err != nil {
+		return err
+	}
+	return writePhysicalDiscovery(dir, s, loadPhysicalDiscovery(dir, s))
+}
+
+func physicalDiscoveryFromSite(s model.Site) networkmodel.Discovery {
+	upstream := networkmodel.Interface{Name: s.PhysicalNetwork.Upstream.Name, PermanentMAC: s.PhysicalNetwork.Upstream.PermanentMAC, PCIAddress: s.PhysicalNetwork.Upstream.PCIAddress, PhysicalEthernet: s.PhysicalNetwork.Upstream.Name != ""}
+	var trunk *networkmodel.Interface
+	if s.PhysicalNetwork.Trunk.Name != "" {
+		value := networkmodel.Interface{Name: s.PhysicalNetwork.Trunk.Name, PermanentMAC: s.PhysicalNetwork.Trunk.PermanentMAC, PCIAddress: s.PhysicalNetwork.Trunk.PCIAddress, PhysicalEthernet: true}
+		trunk = &value
+	}
+	return networkmodel.Discovery{Mode: s.PhysicalNetwork.Mode, BootstrapAddress: s.BootstrapAddress, Upstream: upstream, Trunk: trunk, Status: "MODEL", Explanation: "persisted installation binding; live hardware evidence requires preflight or doctor --live"}
+}
+
+func writePhysicalDiscovery(dir string, s model.Site, discovery networkmodel.Discovery) error {
+	revision, err := s.Revision()
+	if err != nil {
+		return err
+	}
+	return writeProjection(filepath.Join(dir, "generated", "network", "physical.json"), struct {
+		ModelRevision string                 `json:"model_revision"`
+		GeneratedAt   string                 `json:"generated_at"`
+		Discovery     networkmodel.Discovery `json:"discovery"`
+	}{revision, time.Now().UTC().Format(time.RFC3339), discovery})
 }
 
 func writeAccessProjection(dir string, s model.Site) error {
@@ -1275,7 +1552,23 @@ func rebuildPortal(dir string, s model.Site) error {
 	if err != nil {
 		return err
 	}
-	return portal.Build(s, filepath.Join(dir, "generated", "portal"), "docs", loadEvidence(dir, revision), time.Now().UTC())
+	return portal.Build(s, filepath.Join(dir, "generated", "portal"), "docs", loadEvidence(dir, revision), loadPhysicalDiscovery(dir, s), time.Now().UTC())
+}
+
+func loadPhysicalDiscovery(dir string, s model.Site) networkmodel.Discovery {
+	data, err := os.ReadFile(filepath.Join(dir, "generated", "network", "physical.json"))
+	if err == nil {
+		var document struct {
+			ModelRevision string                 `json:"model_revision"`
+			Discovery     networkmodel.Discovery `json:"discovery"`
+		}
+		if json.Unmarshal(data, &document) == nil {
+			if revision, revisionErr := s.Revision(); revisionErr == nil && document.ModelRevision == revision {
+				return document.Discovery
+			}
+		}
+	}
+	return physicalDiscoveryFromSite(s)
 }
 
 func writeProjection(path string, value any) error {

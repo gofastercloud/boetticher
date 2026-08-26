@@ -34,8 +34,8 @@ Native Windows is out of scope for V1; WSL2 is only supported if separately test
 
 ```sh
 homelab init --site-dir my-homelab
-homelab preflight --site my-homelab
 homelab bootstrap-endpoint set HOME_SIDE_PROXMOX_IP --site my-homelab
+homelab preflight --site my-homelab --live
 homelab ssh-config --site my-homelab --output ~/.ssh/config.d/labinabox.conf
 homelab bootstrap --site my-homelab --opnsense-iso VERIFIED_ISO --recovery-confirmed
 homelab provision --site my-homelab
@@ -54,11 +54,15 @@ Then use `ssh dns01`, `ssh monitor`, `homelab access`, and the generated portal 
 
 The initial Proxmox connection is made through its HOME-side DHCP address. Proxmox then acts as the forwarding-only SSH bastion for internal hosts. Keep an independent recovery copy of the Age identity before bootstrap; the private identity never belongs in Git.
 
+One physical NIC is sufficient. Preflight identifies the physical interface carrying the current upstream/bootstrap path. With exactly one additional eligible unused Ethernet interface, bootstrap proposes and can attach it to `vmbr1`; with multiple candidates, select one explicitly with `--trunk-interface`. A disconnected but otherwise clean candidate is valid. Interface names are observations, not identity: stable MAC/PCI evidence is persisted for later reconciliation.
+
 ## Operations
 
 Use `verify` to prove expected journeys and security properties, `doctor` to diagnose model/projection drift, `upgrade` for controlled compatibility changes, `ssh-config` to regenerate operator access, `access` to discover endpoints, and `portal build` to rebuild the passive platform view. `network trunk`, `bootstrap-endpoint`, and `pki` own state-changing platform operations.
 
 Core platform changes are owned by the CLI: `network trunk`, `bootstrap-endpoint`, and `pki client`/`pki trust`. Remote access is not a V1 core module. See the extension guides for Tailscale, Cloudflare private access, and WireGuard.
+
+Lab-in-a-Box owns the platform, while Proxmox owns user workloads. There is no generic `homelab vm`, `homelab lxc`, or `homelab workload` lifecycle command. Create arbitrary workloads with Proxmox tooling, attach them to `vmbr1`, and choose the appropriate fixed security-zone VLAN. See [docs/platform-ownership.md](docs/platform-ownership.md).
 
 ## Recovery
 

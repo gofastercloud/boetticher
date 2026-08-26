@@ -4,6 +4,8 @@ The platform has one canonical model: the normalized `site.yml` plus the enabled
 
 The model revision is a SHA-256 digest rendered as `sha256:<hex>`. It is included in generated model, inventory, OPNsense, Proxmox, Zabbix, Ansible, SSH, portal, and verification artifacts. Timestamps and live verification evidence are intentionally excluded from the digest.
 
+Installation-specific physical bindings are part of desired state only as stable upstream/trunk identities (permanent MAC and PCI identity, with the current interface name as observed context). Driver, model, speed, carrier, and live bridge/address evidence are generated status data and do not affect the model digest.
+
 ## Repository state
 
 The private site repository may contain:

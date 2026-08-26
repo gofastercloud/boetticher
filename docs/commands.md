@@ -2,7 +2,7 @@
 
 ```text
 init
-preflight
+preflight [--live] [--bootstrap-address ADDRESS] [--trunk-interface IFACE]
 bootstrap-endpoint show|set ADDRESS
 bootstrap
 provision
@@ -12,7 +12,7 @@ doctor [--live]
 ssh-config [--check] [--install-include]
 access
 portal build
-network trunk status|attach|detach
+network trunk status|attach|detach [INTERFACE]
 pki client create|export|revoke
 pki trust export
 opnsense credentials import < credentials.json

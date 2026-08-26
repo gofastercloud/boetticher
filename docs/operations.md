@@ -7,11 +7,11 @@ init → preflight → bootstrap → provision → converge → verify → docto
                                       ↘ portal build
 ```
 
-Use `bootstrap-endpoint` to record the known HOME-side Proxmox address, `ssh-config` to render operator access, `network trunk` for the guarded physical-trunk transition, and `pki` for client certificates and trust export. `upgrade` remains an explicit compatibility gate until schema and live migration qualification exists.
+Use `bootstrap-endpoint` to record the known HOME-side Proxmox address, `preflight --live` to discover and classify physical NICs, `ssh-config` to render operator access, `network trunk` for the guarded physical-trunk transition, and `pki` for client certificates and trust export. `upgrade` remains an explicit compatibility gate until schema and live migration qualification exists.
 
 ## Evidence semantics
 
-`homelab verify` separates generated SSH configuration, network reachability, and authenticated SSH journey evidence. Local deterministic checks may be `PASS`; undeployed security and service journeys remain `NOT TESTED`, `HOLD`, or `INCONCLUSIVE`. `homelab doctor` reports each projection as `ABSENT`, `CURRENT`, or `INCONSISTENT` against the current model revision and separately reports the OPNsense bootstrap gate.
+`homelab verify` separates generated SSH configuration, network reachability, and authenticated SSH journey evidence. Local deterministic checks may be `PASS`; undeployed security and service journeys remain `NOT TESTED`, `HOLD`, or `INCONCLUSIVE`. `homelab doctor` reports each projection as `ABSENT`, `CURRENT`, or `INCONSISTENT` against the current model revision, separately reports physical binding and unmanaged Proxmox guests, and preserves the OPNsense bootstrap gate.
 
 Generated artifacts may be committed to the private site repository. Runtime state, OpenTofu state/plans/caches, bootstrap state, and temporary credentials remain outside Git.
 

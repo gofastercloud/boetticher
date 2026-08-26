@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dave/labinabox/internal/model"
+	networkmodel "github.com/dave/labinabox/internal/network"
 )
 
 type Evidence struct {
@@ -23,7 +24,7 @@ type CheckResult struct {
 	Detail string `json:"detail,omitempty"`
 }
 
-func Build(s model.Site, outputDir, docsDir string, evidence Evidence, now time.Time) error {
+func Build(s model.Site, outputDir, docsDir string, evidence Evidence, physical networkmodel.Discovery, now time.Time) error {
 	if err := s.Validate(); err != nil {
 		return err
 	}
@@ -50,6 +51,9 @@ func Build(s model.Site, outputDir, docsDir string, evidence Evidence, now time.
 		return err
 	}
 	if err := writePage(filepath.Join(stage, "services.html"), page("Services", services(s, revision))); err != nil {
+		return err
+	}
+	if err := writePage(filepath.Join(stage, "access.html"), page("Access", access(s, revision, physical))); err != nil {
 		return err
 	}
 	if err := writePage(filepath.Join(stage, "security.html"), page("Security", security(revision, evidence))); err != nil {
@@ -89,7 +93,7 @@ func publish(outputDir, stage string) error {
 }
 
 func page(title, body string) string {
-	return "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>" + html.EscapeString(title) + " · Lab in a Box</title><style>body{font:16px system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#17202a}nav{display:flex;gap:1rem;flex-wrap:wrap}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccd;padding:.5rem;text-align:left}code{background:#eef;padding:.1rem .3rem}pre{white-space:pre-wrap;background:#f5f7f9;padding:1rem}.pass{color:#087f23}.fail{color:#b00020}.notice{color:#8a5b00}</style></head><body><nav><a href=\"/index.html\">Home</a><a href=\"/inventory.html\">Inventory</a><a href=\"/network.html\">Network</a><a href=\"/services.html\">Services</a><a href=\"/pki.html\">PKI</a><a href=\"/security.html\">Security</a><a href=\"/recovery.html\">Recovery</a><a href=\"/docs/index.html\">Runbooks</a></nav><main><h1>" + html.EscapeString(title) + "</h1>" + body + "</main></body></html>\n"
+	return "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>" + html.EscapeString(title) + " · Lab in a Box</title><style>body{font:16px system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#17202a}nav{display:flex;gap:1rem;flex-wrap:wrap}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccd;padding:.5rem;text-align:left}code{background:#eef;padding:.1rem .3rem}pre{white-space:pre-wrap;background:#f5f7f9;padding:1rem}.pass{color:#087f23}.fail{color:#b00020}.notice{color:#8a5b00}</style></head><body><nav><a href=\"/index.html\">Home</a><a href=\"/inventory.html\">Inventory</a><a href=\"/network.html\">Network</a><a href=\"/services.html\">Services</a><a href=\"/access.html\">Access</a><a href=\"/pki.html\">PKI</a><a href=\"/security.html\">Security</a><a href=\"/recovery.html\">Recovery</a><a href=\"/docs/index.html\">Runbooks</a></nav><main><h1>" + html.EscapeString(title) + "</h1>" + body + "</main></body></html>\n"
 }
 
 func home(s model.Site, revision string, evidence Evidence, now time.Time) string {
@@ -108,9 +112,13 @@ func home(s model.Site, revision string, evidence Evidence, now time.Time) strin
 
 func inventory(s model.Site, revision string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><table><tr><th>Host</th><th>Zone</th><th>Address</th><th>Role</th><th>Monitoring</th><th>Backup</th></tr>", html.EscapeString(revision))
+	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Platform guests are managed by Lab-in-a-Box. Any user-managed entries shown here are informational only.</p><table><tr><th>Host</th><th>Ownership</th><th>Zone</th><th>Address</th><th>Role</th><th>Monitoring</th><th>Backup</th></tr>", html.EscapeString(revision))
 	for _, m := range sortedModules(s) {
-		fmt.Fprintf(&b, "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>", html.EscapeString(m.Hostname), html.EscapeString(m.Zone), html.EscapeString(m.Address), html.EscapeString(m.Role), checkMark(m.Monitoring), checkMark(m.Backup))
+		ownership := "user-managed / informational"
+		if m.ProductOwned {
+			ownership = "Lab-in-a-Box platform"
+		}
+		fmt.Fprintf(&b, "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>", html.EscapeString(m.Hostname), html.EscapeString(ownership), html.EscapeString(m.Zone), html.EscapeString(m.Address), html.EscapeString(m.Role), checkMark(m.Monitoring), checkMark(m.Backup))
 	}
 	b.WriteString("</table>")
 	return b.String()
@@ -130,7 +138,7 @@ func services(s model.Site, revision string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><table><tr><th>Service</th><th>URL</th><th>SSH</th><th>mTLS</th></tr>", html.EscapeString(revision))
 	for _, m := range sortedModules(s) {
-		if m.URL == "" && !m.SSHManaged {
+		if !m.ProductOwned || (m.URL == "" && !m.SSHManaged) {
 			continue
 		}
 		url := m.URL
@@ -145,6 +153,77 @@ func services(s model.Site, revision string) string {
 	}
 	b.WriteString("</table>")
 	return b.String()
+}
+
+func access(s model.Site, revision string, physical networkmodel.Discovery) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Internal SSH uses fixed IPs and the Proxmox forwarding-only bastion. Internal DNS is not required for the SSH journey.</p>", html.EscapeString(revision))
+	if s.BootstrapAddress == "" {
+		b.WriteString("<p class=\"notice\">Bootstrap endpoint: not configured.</p>")
+	} else {
+		fmt.Fprintf(&b, "<p>Bootstrap endpoint: <code>%s</code> · <code>ssh proxmox</code> · <code>ssh lab-bastion</code></p>", html.EscapeString(s.BootstrapAddress))
+	}
+	b.WriteString("<table><tr><th>Canonical host</th><th>Aliases</th><th>Fixed address</th><th>User</th><th>Path</th></tr>")
+	for _, m := range sortedModules(s) {
+		if !m.ProductOwned || !m.SSHManaged {
+			continue
+		}
+		aliases := append([]string{m.Name, m.Hostname + "." + s.Network.Domain}, m.DNSAliases...)
+		user := m.SSHUser
+		if user == "" {
+			user = model.DefaultAdminSSHUser
+		}
+		path := "direct"
+		if m.JumpAllowed {
+			path = "ProxyJump lab-bastion"
+		}
+		fmt.Fprintf(&b, "<tr><td><code>%s</code></td><td><code>%s</code></td><td>%s</td><td>%s</td><td>%s</td></tr>", html.EscapeString(m.Hostname+"."+s.Network.Domain), html.EscapeString(strings.Join(unique(aliases), ", ")), html.EscapeString(m.Address), html.EscapeString(user), html.EscapeString(path))
+	}
+	b.WriteString("</table>")
+	physicalMode := s.PhysicalNetwork.Mode
+	if physical.Status != "MODEL" && physical.Mode != "" {
+		physicalMode = physical.Mode
+	}
+	if physicalMode == "virtual-only" {
+		b.WriteString("<p class=\"notice\">Physical network: virtual-only bootstrap mode; no vmbr1 physical member is recorded.</p>")
+	} else if physicalMode == "selection-required" {
+		b.WriteString("<p class=\"notice\">Physical network: multiple eligible trunk interfaces require explicit operator selection.</p>")
+	} else {
+		trunkName := s.PhysicalNetwork.Trunk.Name
+		if physical.Trunk != nil {
+			trunkName = physical.Trunk.Name
+		}
+		fmt.Fprintf(&b, "<p>Physical network: <code>%s</code> attached to vmbr1.</p>", html.EscapeString(trunkName))
+	}
+	fmt.Fprintf(&b, "<h2>Physical network evidence</h2><p>Upstream address: <code>%s</code></p><table><tr><th>Role</th><th>Interface</th><th>Permanent MAC</th><th>PCI</th><th>Driver</th><th>Model</th><th>Speed</th><th>Carrier</th><th>Bridge</th><th>Addresses</th></tr>", html.EscapeString(physical.BootstrapAddress))
+	writePhysicalRow(&b, "upstream/bootstrap", physical.Upstream)
+	if physical.Trunk != nil {
+		writePhysicalRow(&b, "internal trunk", *physical.Trunk)
+	} else {
+		b.WriteString("<tr><td>internal trunk</td><td colspan=\"9\">virtual-only / no physical member</td></tr>")
+	}
+	b.WriteString("</table>")
+	return b.String()
+}
+
+func writePhysicalRow(b *strings.Builder, role string, iface networkmodel.Interface) {
+	speed := "unknown"
+	if iface.SpeedMbps > 0 {
+		speed = fmt.Sprintf("%d Mb/s", iface.SpeedMbps)
+	}
+	fmt.Fprintf(b, "<tr><td>%s</td><td><code>%s</code></td><td><code>%s</code></td><td><code>%s</code></td><td>%s</td><td>%s</td><td>%s</td><td>%t</td><td>%s</td><td>%s</td></tr>", html.EscapeString(role), html.EscapeString(iface.Name), html.EscapeString(iface.PermanentMAC), html.EscapeString(iface.PCIAddress), html.EscapeString(iface.Driver), html.EscapeString(iface.Model), html.EscapeString(speed), iface.Carrier, html.EscapeString(iface.Bridge), html.EscapeString(strings.Join(iface.Addresses, ", ")))
+}
+
+func unique(values []string) []string {
+	seen := map[string]bool{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value != "" && !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func security(revision string, evidence Evidence) string {
@@ -166,7 +245,7 @@ func pki(s model.Site, revision string) string {
 }
 
 func recovery(s model.Site, revision string, evidence Evidence) string {
-	return fmt.Sprintf("<p>Model revision: <code>%s</code></p><h2>Preserve</h2><ul><li>Private site repository containing desired state and encrypted secrets.</li><li>Independent recovery copy of the Age private identity.</li></ul><h2>Profiles</h2><p>Storage profile: <code>%s</code>. Same-disk backups are not disaster recovery.</p><p>Age recovery and backup freshness are reported only when current evidence exists.</p>", html.EscapeString(revision), html.EscapeString(s.StorageProfile))
+	return fmt.Sprintf("<p>Model revision: <code>%s</code></p><h2>Preserve</h2><ul><li>Private site repository containing desired state and encrypted secrets.</li><li>Independent recovery copy of the Age private identity.</li></ul><h2>Profiles</h2><p>Storage profile: <code>%s</code>. Same-disk backups are not disaster recovery.</p><p>Platform backup job: <code>labinabox-platform</code> for VM/LXC IDs 100, 110, 111, 120, and 130. User workloads remain outside the platform guarantee.</p><p>Age recovery and backup freshness are reported only when current evidence exists.</p>", html.EscapeString(revision), html.EscapeString(s.StorageProfile))
 }
 
 func copyDocs(outputDir, docsDir, revision string) error {

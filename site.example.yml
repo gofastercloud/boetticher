@@ -5,7 +5,10 @@ storage_profile: single-disk
 proxmox_node: lab-proxmox-01
 bootstrap_address: ""
 ssh_identity_file: ""
-physical_trunk: ""
+physical_network:
+  upstream: {}
+  trunk: {}
+  mode: virtual-only
 tested_versions:
   opnsense: 26.7.0
   zabbix: "7.0 LTS"
@@ -43,6 +46,14 @@ network:
 secret_metadata:
   installation_id: generated-by-homelab-init
   age_recipient: generated-by-homelab-init
+ownership:
+  platform_guest_id_min: 100
+  platform_guest_id_max: 199
+  module_guest_id_min: 200
+  module_guest_id_max: 499
+  user_guest_id_min: 500
+  user_guest_id_max: 899
+  user_workloads_managed: false
 pki:
   root_common_name: Homelab Root CA
   root_fingerprint: generated-by-homelab-init
@@ -52,6 +63,7 @@ pki:
   issuing_expiry: generated-by-homelab-init
 modules:
   - name: lab-proxmox-01
+    vmid: 0
     hostname: lab-proxmox-01
     zone: MGMT
     address: 10.10.99.5
@@ -64,6 +76,7 @@ modules:
     jump_allowed: false
     product_owned: true
   - name: lab-fw-01
+    vmid: 100
     hostname: lab-fw-01
     zone: MGMT
     address: 10.10.99.1
@@ -75,6 +88,7 @@ modules:
     jump_allowed: false
     product_owned: true
   - name: lab-dns-01
+    vmid: 110
     hostname: lab-dns-01
     zone: SERVERS
     address: 10.10.20.10
@@ -88,6 +102,7 @@ modules:
     jump_allowed: true
     product_owned: true
   - name: lab-dns-02
+    vmid: 111
     hostname: lab-dns-02
     zone: SERVERS
     address: 10.10.20.11
@@ -101,6 +116,7 @@ modules:
     jump_allowed: true
     product_owned: true
   - name: lab-monitor-01
+    vmid: 120
     hostname: lab-monitor-01
     zone: MGMT
     address: 10.10.99.20
@@ -116,6 +132,7 @@ modules:
     jump_allowed: true
     product_owned: true
   - name: lab-portal-01
+    vmid: 130
     hostname: lab-portal-01
     zone: SERVERS
     address: 10.10.20.30

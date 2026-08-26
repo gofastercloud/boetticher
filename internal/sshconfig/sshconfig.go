@@ -37,7 +37,7 @@ func Render(s model.Site, generatedAt time.Time) (string, error) {
 	modules := append([]model.Module(nil), s.Modules...)
 	sort.Slice(modules, func(i, j int) bool { return modules[i].Name < modules[j].Name })
 	for _, m := range modules {
-		if !m.SSHManaged || m.Name == "lab-proxmox-01" {
+		if !m.ProductOwned || !m.SSHManaged || m.Name == "lab-proxmox-01" {
 			continue
 		}
 		aliases := append([]string{m.Name, m.Hostname + "." + s.Network.Domain}, m.DNSAliases...)
@@ -56,7 +56,7 @@ func RenderBastionPolicy(s model.Site) (string, error) {
 	}
 	destinations := make([]string, 0)
 	for _, m := range s.Modules {
-		if m.SSHManaged && m.JumpAllowed {
+		if m.ProductOwned && m.SSHManaged && m.JumpAllowed {
 			port := m.SSHPort
 			if port == 0 {
 				port = 22

@@ -6,7 +6,28 @@
     quiet: true
   when: inventory_hostname in groups['dns']
 
-- name: Install AdGuard Home placeholder dependency
+- name: Require the generated authoritative DNS contract
+  ansible.builtin.assert:
+    that:
+      - authoritative_dns is defined
+      - authoritative_dns == 'PowerDNS Authoritative'
+      - authoritative_dns_version is defined
+      - authoritative_dns_version == '4.9.16'
+      - dynamic_zones is defined
+      - adguard_forward_zones is defined
+    fail_msg: "DNS convergence requires the generated PowerDNS/AdGuard model contract"
+  when: inventory_hostname in groups['dns']
+
+- name: Require the runtime DDNS TSIG only in controller memory
+  ansible.builtin.assert:
+    that:
+      - ddns_tsig_secret is defined
+      - ddns_tsig_secret | length > 0
+    fail_msg: "DDNS convergence requires a SOPS-provided TSIG secret"
+  no_log: true
+  when: inventory_hostname in groups['dns']
+
+- name: State the DNS ownership boundary
   ansible.builtin.debug:
-    msg: "AdGuard Home installation is pinned and qualified by the V1 guest image pipeline"
+    msg: "AdGuard is client-facing; PowerDNS Authoritative owns RFC2136 zones; Kea D2 remains the lease event source"
   when: inventory_hostname in groups['dns']

@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestRevisionIsIndependentOfModuleOrder(t *testing.T) {
 	first := NewDefaultSite("installation", "age1example")
@@ -47,5 +50,13 @@ func TestLaterOPNsensePatchIsNotSilentlySupported(t *testing.T) {
 	site.TestedVersions.OPNsense = "26.7.1"
 	if err := site.Validate(); err == nil {
 		t.Fatal("later OPNsense patch was accepted without qualification")
+	}
+}
+
+func TestUserManagedVMIDMustUseReservedRange(t *testing.T) {
+	site := NewDefaultSite("installation", "age1example")
+	site.Modules = append(site.Modules, Module{Name: "user-vm", VMID: 450, Hostname: "user-vm", Zone: "SANDBOX", Address: "10.10.50.50", Role: "user workload"})
+	if err := site.Validate(); err == nil || !strings.Contains(err.Error(), "reserved user-workload range") {
+		t.Fatalf("invalid user VMID was accepted: %v", err)
 	}
 }

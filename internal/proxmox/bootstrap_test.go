@@ -7,14 +7,20 @@ import (
 )
 
 type fakeRunner struct {
-	address string
-	user    string
-	command string
-	output  []byte
+	address     string
+	user        string
+	command     string
+	commands    []string
+	output      []byte
+	routeOutput []byte
 }
 
 func (f *fakeRunner) Run(_ context.Context, address, user, command string) ([]byte, error) {
 	f.address, f.user, f.command = address, user, command
+	f.commands = append(f.commands, command)
+	if command == "ip -j route show default" && f.routeOutput != nil {
+		return f.routeOutput, nil
+	}
 	return f.output, nil
 }
 
@@ -43,5 +49,21 @@ func TestCreateScopedCredentialsCapturesOnlyReturnedSecret(t *testing.T) {
 	}
 	if strings.Contains(runner.command, "|| true") {
 		t.Fatal("credential bootstrap must not mask identity or privilege errors")
+	}
+}
+
+func TestDiscoverPhysicalNetworkViaSSHUsesReadOnlyPveshEvidence(t *testing.T) {
+	runner := &fakeRunner{output: []byte(`[
+  {"iface":"vmbr0","type":"bridge","address":"192.0.2.73/24","gateway":"192.0.2.1","bridge_ports":"eno1"},
+  {"iface":"vmbr1","type":"bridge","bridge_ports":"none","bridge_vlan_aware":true},
+  {"iface":"eno1","type":"eth","hwaddr":"00:11:22:33:44:55","active":true},
+  {"iface":"enp5s0","type":"eth","hwaddr":"00:aa:bb:cc:dd:ee","active":false}
+	]`), routeOutput: []byte(`[{"dev":"vmbr0"}]`)}
+	discovery, err := DiscoverPhysicalNetworkViaSSH(context.Background(), runner, "192.0.2.73", "root", "lab-proxmox-01", "192.0.2.73", "", "")
+	if err != nil || discovery.Mode != "physical-trunk" || discovery.Trunk == nil || discovery.Trunk.Name != "enp5s0" {
+		t.Fatalf("unexpected SSH discovery: %#v, %v", discovery, err)
+	}
+	if len(runner.commands) != 2 || runner.commands[0] != "pvesh get /nodes/lab-proxmox-01/network --output-format json" || runner.commands[1] != "ip -j route show default" {
+		t.Fatalf("unexpected discovery commands: %#v", runner.commands)
 	}
 }
