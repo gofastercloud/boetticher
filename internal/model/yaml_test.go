@@ -14,7 +14,7 @@ storage_profile: single-disk
 gateway:
   mode: managed
 tested_versions:
-  gateway: debian-13-genericcloud-amd64-daily
+  gateway: debian-13-genericcloud-amd64-20260327-2429
   zabbix: "7.0 LTS"
 network:
   domain: lab.home.arpa

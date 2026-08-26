@@ -78,7 +78,7 @@ VLANs 10, 20, 50, and 99. See
   mandatory in external-firewall mode.
 - Either the single-disk or dedicated-data-disk storage profile.
 - Zabbix 7.0 LTS and the pinned Debian 13 appliance definitions are the v0.3
-  qualification targets (`debian-13-genericcloud-amd64-daily`).
+  qualification targets (`debian-13-genericcloud-amd64-20260327-2429`).
 
 ## Quickstart
 

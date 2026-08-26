@@ -184,7 +184,7 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(firewall), "debian-13-genericcloud-amd64-daily.qcow2") || !strings.Contains(string(firewall), "sha512:") {
+	if !strings.Contains(string(firewall), "debian-13-genericcloud-amd64-20260327-2429.qcow2") || !strings.Contains(string(firewall), "sha512:") || strings.Contains(string(firewall), "/daily/latest/") {
 		t.Fatal("firewall image does not pin its Debian 13 VM input")
 	}
 }

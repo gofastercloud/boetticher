@@ -266,11 +266,11 @@ build_firewall() {
   done
   destination="$output_root/boetticher-firewall"
   mkdir -p "$destination"
-  input="$work_root/debian-13-genericcloud-amd64-daily.qcow2"
+  input="$work_root/debian-13-genericcloud-amd64-20260327-2429.qcow2"
   if [ ! -f "$input" ]; then
-    curl --fail --location --silent --show-error --output "$input" https://cloudfront.debian.net/cdimage/cloud/trixie/daily/latest/debian-13-genericcloud-amd64-daily.qcow2
+    curl --fail --location --silent --show-error --output "$input" https://cloud.debian.org/images/cloud/trixie/20260327-2429/debian-13-genericcloud-amd64-20260327-2429.qcow2
   fi
-  printf '%s  %s\n' 2bf12156183f3f17d8219f7714e85c05c5d0d270f365e6ce7feba5e25c078520a29dd5ee243fcb95ec5e9aac0cbcc9c9bfaa9450f509826e92a9a8280876cd08 "$input" | sha512sum --check --status
+  printf '%s  %s\n' 09559ec27d263997827dd8cddf76e97ea8e0f1803380aa501ea7eaa4b4968cd76ffef4ec7eb07ef1a9ccbeb0925a5020492ea9ed53eb167d62f3a2285039912c "$input" | sha512sum --check --status
   image="$destination/boetticher-firewall-1.0.0-amd64.qcow2"
   cp "$input" "$image"
   virt-customize -a "$image" \
