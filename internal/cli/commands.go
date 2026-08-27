@@ -1,5 +1,10 @@
 package cli
 
+import (
+	"sort"
+	"strings"
+)
+
 // commandSpec is the single source for the public top-level command reference
 // printed by the CLI and checked against docs/commands.md.
 type commandSpec struct {
@@ -132,4 +137,57 @@ var nestedHelpSpecs = map[string]helpSpec{
 	"config validate":         helpSpecs["config"],
 	"config show":             helpSpecs["config"],
 	"config schema":           helpSpecs["config"],
+}
+
+// CommandReferenceMarkdown renders the public command reference from the same
+// metadata used by CLI help. Keeping the generated document here prevents
+// option descriptions and safety notes from drifting between the operator
+// interface and the runbook.
+func CommandReferenceMarkdown() string {
+	var document strings.Builder
+	document.WriteString("# Command reference\n\n")
+	document.WriteString("This reference is generated from the CLI command metadata. `deploy` is the only public platform-application command; inspection and planning commands are read-oriented unless they explicitly request confirmation.\n\n")
+	document.WriteString("## Usage\n\n```text\n")
+	for _, spec := range commandSpecs {
+		document.WriteString(spec.Usage + "\n")
+	}
+	document.WriteString("```\n\n")
+
+	document.WriteString("## Command details\n\n")
+	for _, spec := range commandSpecs {
+		path := commandPath(spec.Usage)
+		if detail, ok := helpSpecs[path]; ok {
+			writeHelpMarkdown(&document, path, detail)
+		}
+	}
+
+	paths := make([]string, 0, len(nestedHelpSpecs))
+	for path := range nestedHelpSpecs {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	document.WriteString("## Nested command details\n\n")
+	for _, path := range paths {
+		writeHelpMarkdown(&document, path, nestedHelpSpecs[path])
+	}
+	return strings.TrimRight(document.String(), "\n") + "\n"
+}
+
+func commandPath(usage string) string {
+	fields := strings.Fields(usage)
+	if len(fields) < 2 {
+		return ""
+	}
+	return fields[1]
+}
+
+func writeHelpMarkdown(document *strings.Builder, path string, detail helpSpec) {
+	document.WriteString("### " + path + "\n\n")
+	document.WriteString("Purpose: " + detail.Purpose + "\n\n")
+	document.WriteString("Usage: `" + detail.Usage + "`\n\n")
+	document.WriteString("Arguments: " + detail.Arguments + "\n\n")
+	document.WriteString("Options: " + detail.Options + "\n\n")
+	document.WriteString("Safety: " + detail.Safety + "\n\n")
+	document.WriteString("Examples: `" + strings.ReplaceAll(detail.Examples, "; ", "`; `") + "`\n\n")
+	document.WriteString("Related commands: " + detail.Related + "\n\n")
 }

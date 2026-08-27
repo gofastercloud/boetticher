@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gofastercloud/boetticher/internal/cli"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/storage"
 )
@@ -61,6 +62,17 @@ func TestPublicDocumentationMatchesV03Model(t *testing.T) {
 		if !strings.Contains(commands, want) {
 			t.Errorf("command reference is missing %q", want)
 		}
+	}
+}
+
+func TestCommandReferenceIsGeneratedFromCLIContract(t *testing.T) {
+	root := repositoryRoot(t)
+	data, err := os.ReadFile(filepath.Join(root, "docs", "commands.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cli.CommandReferenceMarkdown(); string(data) != got {
+		t.Fatal("docs/commands.md is stale; run make command-docs")
 	}
 }
 
