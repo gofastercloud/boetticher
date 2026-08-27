@@ -170,6 +170,15 @@ func TestQualifiedArtifactCacheJourneys(t *testing.T) {
 	if _, _, err := ResolveArtifactEvidence(root, artifact); err != nil {
 		t.Fatalf("matching qualified cache was rejected: %v", err)
 	}
+	if err := os.Remove(artifactPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveArtifactEvidence(root, artifact); err == nil || !strings.Contains(err.Error(), "stat artifact") {
+		t.Fatalf("missing cached artifact was accepted: %v", err)
+	}
+	if err := os.WriteFile(artifactPath, []byte("cached appliance"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(artifactPath, []byte("corrupted appliance"), 0o600); err != nil {
 		t.Fatal(err)
 	}
