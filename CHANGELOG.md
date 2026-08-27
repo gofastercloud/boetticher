@@ -41,6 +41,9 @@ project, so releases can make clean breaks while the design is settling.
   is rejected by offline systemd customization.
 - Accept compact JSON whitespace in the firewall image definition-identity
   smoke check as well as the LXC appliance check.
+- Report package, CVE, and fixed-version details when Trivy rejects an
+  artifact for fixable CRITICAL findings, preserving the next investigation
+  step in hosted-builder diagnostics.
 
 ## [0.3.32] - 2026-08-27
 
