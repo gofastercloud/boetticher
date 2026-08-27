@@ -138,6 +138,7 @@ create_base_rootfs() {
   # Host keys are endpoint identity and must be generated after deployment.
   rm -f "$rootfs"/etc/ssh/ssh_host_*
   rm -f "$rootfs/root/.ssh/authorized_keys" "$rootfs/home/labadmin/.ssh/authorized_keys"
+  rm -f "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
   chroot "$rootfs" systemctl enable boetticher-first-boot.service
 }
 
@@ -435,6 +436,7 @@ build_firewall() {
     --run-command 'chown labadmin:labadmin /tmp/boetticher-ansible && chmod 0700 /tmp/boetticher-ansible' \
     --run-command 'chmod 0440 /etc/sudoers.d/boetticher' \
     --run-command 'rm -f /etc/ssh/ssh_host_* /root/.ssh/authorized_keys /home/labadmin/.ssh/authorized_keys' \
+    --run-command 'rm -f /etc/ssl/private/ssl-cert-snakeoil.key' \
     --run-command 'visudo -cf /etc/sudoers' \
     --run-command "dpkg-query -W -f='\${binary:Package}\\t\${Version}\\n' | sort > /var/lib/boetticher/package-manifest.txt" \
     --run-command 'systemctl enable boetticher-first-boot.service' \

@@ -52,6 +52,8 @@ project, so releases can make clean breaks while the design is settling.
 - Include the matching pinned Debian security snapshot in appliance and
   hosted-builder package sources so security-only fixes are available without
   making package resolution unpinned.
+- Remove Debian's generated snakeoil private key from appliance images before
+  Trivy qualification; endpoint keys remain deployment-time identity material.
 
 ## [0.3.32] - 2026-08-27
 
