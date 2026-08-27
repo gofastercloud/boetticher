@@ -1438,8 +1438,7 @@ func migrateLegacyQEMUPersistentVolumeSerials(ctx context.Context, client *Clien
 		if err != nil {
 			return err
 		}
-		legacy := strings.Replace(expected, ",serial="+serial, ",serial="+legacySerial, 1)
-		if observed, _ := current[fmt.Sprintf("scsi%d", index+1)].(string); observed == legacy {
+		if observed, _ := current[fmt.Sprintf("scsi%d", index+1)].(string); qemuVolumeMatchesSerial(observed, expected, legacySerial) {
 			params.Set(fmt.Sprintf("scsi%d", index+1), expected)
 		}
 	}
@@ -1453,6 +1452,29 @@ func migrateLegacyQEMUPersistentVolumeSerials(ctx context.Context, client *Clien
 		current[key] = value[0]
 	}
 	return nil
+}
+
+func qemuVolumeMatchesSerial(observed, expected, serial string) bool {
+	observedParts := strings.Split(observed, ",")
+	expectedParts := strings.Split(expected, ",")
+	if len(observedParts) == 0 || len(expectedParts) == 0 || observedParts[0] != expectedParts[0] {
+		return false
+	}
+	options := make(map[string]string, len(observedParts)-1)
+	for _, option := range observedParts[1:] {
+		name, value, ok := strings.Cut(option, "=")
+		if ok {
+			options[name] = value
+		}
+	}
+	expectedOptions := make(map[string]string, len(expectedParts)-1)
+	for _, option := range expectedParts[1:] {
+		name, value, ok := strings.Cut(option, "=")
+		if ok {
+			expectedOptions[name] = value
+		}
+	}
+	return options["backup"] == expectedOptions["backup"] && options["serial"] == serial
 }
 
 func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) error {

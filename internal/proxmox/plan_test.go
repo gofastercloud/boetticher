@@ -459,7 +459,7 @@ func TestEnsureQEMUMigratesLegacyPersistentVolumeSerial(t *testing.T) {
 		Name: "kea-leases", Module: "firewall", Guest: "lab-fw-01", SizeGiB: 4,
 		MountPath: "/var/lib/kea", Storage: modelStorageIDForTest, Backup: true,
 	}}}
-	legacy := modelStorageIDForTest + ":4,backup=1,serial=boetticher-firewall-lab-fw-01-kea-leases"
+	legacy := modelStorageIDForTest + ":4,backup=1,serial=boetticher-firewall-lab-fw-01-kea-leases,size=4G"
 	updated := ""
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		switch {
