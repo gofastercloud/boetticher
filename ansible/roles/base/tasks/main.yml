@@ -23,6 +23,29 @@
     mode: '0644'
   when: inventory_hostname not in groups.get('proxmox', [])
 
+- name: Allow Chrony startup without kernel clock control
+  ansible.builtin.file:
+    path: /etc/systemd/system/chrony.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: inventory_hostname not in groups.get('proxmox', [])
+
+- name: Install Chrony startup override
+  ansible.builtin.copy:
+    content: "[Unit]\nConditionCapability=\n"
+    dest: /etc/systemd/system/chrony.service.d/boetticher.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd
+  when: inventory_hostname not in groups.get('proxmox', [])
+
+- name: Flush systemd after installing the Chrony override
+  ansible.builtin.meta: flush_handlers
+  when: inventory_hostname not in groups.get('proxmox', [])
+
 - name: Enable chrony
   ansible.builtin.service:
     name: chrony

@@ -236,6 +236,13 @@ func TestBaseRoleRunsChronyWithoutKernelClockControlInAppliances(t *testing.T) {
 		"content: \"DAEMON_OPTS=\\\"-x\\\"\\n\"",
 		"dest: /etc/default/chrony",
 		"when: inventory_hostname not in groups.get('proxmox', [])",
+		"- name: Allow Chrony startup without kernel clock control",
+		"path: /etc/systemd/system/chrony.service.d",
+		"state: directory",
+		"- name: Install Chrony startup override",
+		"content: \"[Unit]\\nConditionCapability=\\n\"",
+		"dest: /etc/systemd/system/chrony.service.d/boetticher.conf",
+		"notify: reload systemd",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("base role missing %q", expected)
