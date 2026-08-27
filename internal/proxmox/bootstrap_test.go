@@ -182,7 +182,7 @@ func TestCreateScopedCredentialsCapturesOnlyReturnedSecret(t *testing.T) {
 }
 
 func TestScopedProvisionerPrivilegesAreExplicitAndBounded(t *testing.T) {
-	want := "VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.MountPoint VM.Config.Network VM.Config.Options VM.Console VM.GuestAgent.Audit VM.PowerMgmt Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit Sys.AccessNetwork Sys.Audit"
+	want := "VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.MountPoint VM.Config.Network VM.Config.Options VM.GuestAgent.Audit VM.PowerMgmt Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit Sys.AccessNetwork Sys.Audit"
 	if got := ScopedProvisionerPrivileges(); got != want {
 		t.Fatalf("ScopedProvisionerPrivileges() = %q, want %q", got, want)
 	}
@@ -193,7 +193,7 @@ func TestScopedProvisionerPrivilegesAreExplicitAndBounded(t *testing.T) {
 
 func TestValidateScopedRoleJSONRequiresExactPrivileges(t *testing.T) {
 	wanted := ScopedProvisionerPrivileges()
-	roleJSON := `{"data":[{"roleid":"BoetticherProvisioner","privs":"Sys.Audit VM.PowerMgmt VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.MountPoint VM.Config.Network VM.Config.Options VM.Console VM.GuestAgent.Audit Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit Sys.AccessNetwork","special":0}]}`
+	roleJSON := `{"data":[{"roleid":"BoetticherProvisioner","privs":"Sys.Audit VM.PowerMgmt VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.MountPoint VM.Config.Network VM.Config.Options VM.GuestAgent.Audit Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit Sys.AccessNetwork","special":0}]}`
 	exists, err := validateScopedRoleJSON([]byte(roleJSON), "BoetticherProvisioner", wanted)
 	if err != nil || !exists {
 		t.Fatalf("equivalent privilege set was rejected: exists=%t err=%v", exists, err)
