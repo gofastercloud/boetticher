@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -432,7 +433,21 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 		return "", errors.New("Proxmox identity and token IDs must be simple identifiers")
 	}
 	privileges := ScopedProvisionerPrivileges()
-	command := "set -eu; pvesh get /access/roles/" + shellQuote(role) + " >/dev/null 2>&1 || pvesh create /access/roles/" + shellQuote(role) + " --privs " + shellQuote(privileges) + " >/dev/null; pvesh get /access/users/" + shellQuote(userID) + " >/dev/null 2>&1 || pvesh create /access/users --userid " + shellQuote(userID) + " --comment 'boetticher automation identity' >/dev/null; if pvesh get /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID) + " >/dev/null 2>&1; then echo 'the requested Proxmox token already exists; use a new token ID or existing encrypted credentials' >&2; exit 23; fi; pvesh create /access/acl --path / --users " + shellQuote(userID) + " --roles " + shellQuote(role) + " --propagate 1 >/dev/null; pvesh create /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID) + " --privsep 1 --output-format json"
+	roleOutput, err := runner.Run(ctx, address, initialUser, "pvesh get /access/roles --output-format json")
+	if err != nil {
+		return "", fmt.Errorf("HOLD: inspect Proxmox role %q: %w", role, err)
+	}
+	exists, err := validateScopedRoleJSON(roleOutput, role, privileges)
+	if err != nil {
+		return "", fmt.Errorf("HOLD: Proxmox role %q is not the expected bounded role: %w", role, err)
+	}
+	if !exists {
+		createRole := "pvesh create /access/roles/" + shellQuote(role) + " --privs " + shellQuote(privileges)
+		if _, err := runner.Run(ctx, address, initialUser, createRole); err != nil {
+			return "", fmt.Errorf("create bounded Proxmox role %q: %w", role, err)
+		}
+	}
+	command := "set -eu; pvesh get /access/users/" + shellQuote(userID) + " >/dev/null 2>&1 || pvesh create /access/users --userid " + shellQuote(userID) + " --comment 'boetticher automation identity' >/dev/null; if pvesh get /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID) + " >/dev/null 2>&1; then echo 'the requested Proxmox token already exists; use a new token ID or existing encrypted credentials' >&2; exit 23; fi; pvesh create /access/acl --path / --users " + shellQuote(userID) + " --roles " + shellQuote(role) + " --propagate 1 >/dev/null; pvesh create /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID) + " --privsep 1 --output-format json"
 	output, err := runner.Run(ctx, address, initialUser, command)
 	if err != nil {
 		return "", err
@@ -447,6 +462,105 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 		return "", errors.New("Proxmox token response did not contain a secret")
 	}
 	return response.Value, nil
+}
+
+// validateScopedRoleJSON validates the exact privilege boundary returned by
+// the Proxmox role listing endpoint. Role lookup is deliberately performed
+// separately from role creation so an API/permission failure cannot be
+// mistaken for an absent role and silently trigger a mutation.
+func validateScopedRoleJSON(output []byte, wantedRole, wantedPrivileges string) (bool, error) {
+	var document any
+	if err := json.Unmarshal(output, &document); err != nil {
+		return false, fmt.Errorf("decode role listing: %w", err)
+	}
+	entries, err := roleEntries(document)
+	if err != nil {
+		return false, err
+	}
+	wanted := canonicalPrivileges(wantedPrivileges)
+	for _, entry := range entries {
+		if entry.RoleID != wantedRole {
+			continue
+		}
+		if roleHasSpecialPrivileges(entry.Special) {
+			return true, errors.New("role has special privileges")
+		}
+		if canonicalPrivileges(entry.Privileges) != wanted {
+			return true, fmt.Errorf("privileges %q do not match required set %q", entry.Privileges, wantedPrivileges)
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+type proxmoxRoleEntry struct {
+	RoleID     string
+	Privileges string
+	Special    any
+}
+
+func roleEntries(document any) ([]proxmoxRoleEntry, error) {
+	if object, ok := document.(map[string]any); ok {
+		if data, exists := object["data"]; exists {
+			return roleEntries(data)
+		}
+		if _, hasRoleID := object["roleid"]; hasRoleID {
+			return []proxmoxRoleEntry{roleEntryFromObject(object, "")}, nil
+		}
+		if _, hasPrivileges := object["privs"]; hasPrivileges {
+			return []proxmoxRoleEntry{roleEntryFromObject(object, "")}, nil
+		}
+		entries := make([]proxmoxRoleEntry, 0, len(object))
+		for roleID, value := range object {
+			roleObject, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			entries = append(entries, roleEntryFromObject(roleObject, roleID))
+		}
+		sort.Slice(entries, func(i, j int) bool { return entries[i].RoleID < entries[j].RoleID })
+		return entries, nil
+	}
+	if array, ok := document.([]any); ok {
+		entries := make([]proxmoxRoleEntry, 0, len(array))
+		for _, value := range array {
+			object, ok := value.(map[string]any)
+			if !ok {
+				return nil, errors.New("role listing contains a non-object entry")
+			}
+			entries = append(entries, roleEntryFromObject(object, ""))
+		}
+		return entries, nil
+	}
+	return nil, errors.New("role listing must be a JSON object or array")
+}
+
+func roleEntryFromObject(object map[string]any, fallbackRoleID string) proxmoxRoleEntry {
+	roleID, _ := object["roleid"].(string)
+	if roleID == "" {
+		roleID = fallbackRoleID
+	}
+	privileges, _ := object["privs"].(string)
+	return proxmoxRoleEntry{RoleID: roleID, Privileges: privileges, Special: object["special"]}
+}
+
+func roleHasSpecialPrivileges(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case float64:
+		return typed != 0
+	case string:
+		return typed != "" && typed != "0" && !strings.EqualFold(typed, "false")
+	default:
+		return value != nil
+	}
+}
+
+func canonicalPrivileges(value string) string {
+	fields := strings.Fields(value)
+	sort.Strings(fields)
+	return strings.Join(fields, " ")
 }
 
 // ScopedProvisionerPrivileges is the complete privilege set required by the

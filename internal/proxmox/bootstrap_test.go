@@ -163,7 +163,12 @@ func TestInstallOperatorKeyUsesSafeConstantRemoteCommand(t *testing.T) {
 }
 
 func TestCreateScopedCredentialsCapturesOnlyReturnedSecret(t *testing.T) {
-	runner := &fakeRunner{output: []byte(`{"value":"opaque-token-secret"}`)}
+	runner := &fakeRunner{
+		output: []byte(`{"value":"opaque-token-secret"}`),
+		responses: map[string][]byte{
+			"pvesh get /access/roles --output-format json": []byte(`[]`),
+		},
+	}
 	secret, err := CreateScopedCredentials(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher")
 	if err != nil || secret != "opaque-token-secret" {
 		t.Fatalf("CreateScopedCredentials() = %q, %v", secret, err)
@@ -183,6 +188,29 @@ func TestScopedProvisionerPrivilegesAreExplicitAndBounded(t *testing.T) {
 	}
 	if strings.Contains(strings.ToLower(ScopedProvisionerPrivileges()), "administrator") || strings.Contains(strings.ToLower(ScopedProvisionerPrivileges()), "root") {
 		t.Fatal("scoped provisioner role contains an administrator-equivalent privilege")
+	}
+}
+
+func TestValidateScopedRoleJSONRequiresExactPrivileges(t *testing.T) {
+	wanted := ScopedProvisionerPrivileges()
+	roleJSON := `{"data":[{"roleid":"BoetticherProvisioner","privs":"Sys.Audit VM.PowerMgmt VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.MountPoint VM.Config.Network VM.Config.Options VM.Console VM.GuestAgent.Audit Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit Sys.AccessNetwork","special":0}]}`
+	exists, err := validateScopedRoleJSON([]byte(roleJSON), "BoetticherProvisioner", wanted)
+	if err != nil || !exists {
+		t.Fatalf("equivalent privilege set was rejected: exists=%t err=%v", exists, err)
+	}
+
+	missing, err := validateScopedRoleJSON([]byte(`[]`), "BoetticherProvisioner", wanted)
+	if err != nil || missing {
+		t.Fatalf("absent role was not distinguishable: exists=%t err=%v", missing, err)
+	}
+
+	_, err = validateScopedRoleJSON([]byte(`[{"roleid":"BoetticherProvisioner","privs":"VM.Audit","special":0}]`), "BoetticherProvisioner", wanted)
+	if err == nil || !strings.Contains(err.Error(), "do not match required set") {
+		t.Fatalf("incomplete privilege set was accepted: %v", err)
+	}
+	_, err = validateScopedRoleJSON([]byte(`[{"roleid":"BoetticherProvisioner","privs":"VM.Audit","special":1}]`), "BoetticherProvisioner", wanted)
+	if err == nil || !strings.Contains(err.Error(), "special privileges") {
+		t.Fatalf("special role privileges were accepted: %v", err)
 	}
 }
 
