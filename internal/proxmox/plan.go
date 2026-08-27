@@ -113,6 +113,7 @@ func (n *NetworkInterface) UnmarshalJSON(data []byte) error {
 		Bond                string          `json:"bond"`
 		SpeedMbps           int             `json:"speed"`
 		Active              json.RawMessage `json:"active"`
+		AltNames            []string        `json:"altnames"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -141,10 +142,46 @@ func (n *NetworkInterface) UnmarshalJSON(data []byte) error {
 	if pciAddress == "" {
 		pciAddress = raw.PCI
 	}
-	n.BridgePorts, n.HWAddr, n.Driver, n.Model, n.PCIAddress, n.Bond, n.SpeedMbps = bridgePorts, raw.HWAddr, raw.Driver, model, pciAddress, raw.Bond, raw.SpeedMbps
+	hwAddr := raw.HWAddr
+	if hwAddr == "" {
+		hwAddr = predictableMAC(raw.Iface, raw.AltNames)
+	}
+	n.BridgePorts, n.HWAddr, n.Driver, n.Model, n.PCIAddress, n.Bond, n.SpeedMbps = bridgePorts, hwAddr, raw.Driver, model, pciAddress, raw.Bond, raw.SpeedMbps
 	n.BridgeVLANAware = jsonBool(aware)
 	n.Active = jsonBool(raw.Active)
 	return nil
+}
+
+// predictableMAC recovers hardware identity from Linux's stable enx<mac>
+// interface naming when a Proxmox network response omits hwaddr. Only the
+// exact 12-hex-digit form is accepted; arbitrary interface names remain
+// ambiguous and continue to fail closed.
+func predictableMAC(iface string, altNames []string) string {
+	names := append([]string{iface}, altNames...)
+	for _, name := range names {
+		if len(name) != len("enx")+12 || !strings.HasPrefix(name, "enx") {
+			continue
+		}
+		var result strings.Builder
+		for i, value := range name[3:] {
+			if !isHexRune(value) {
+				result.Reset()
+				break
+			}
+			if i > 0 && i%2 == 0 {
+				result.WriteByte(':')
+			}
+			result.WriteRune(value)
+		}
+		if result.Len() == 17 {
+			return strings.ToLower(result.String())
+		}
+	}
+	return ""
+}
+
+func isHexRune(value rune) bool {
+	return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f') || (value >= 'A' && value <= 'F')
 }
 
 func jsonBool(data json.RawMessage) bool {

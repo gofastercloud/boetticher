@@ -10,7 +10,7 @@ import (
 // and are deliberately not accepted from site.yml.
 type SiteConfig struct {
 	APIVersion       string          `yaml:"api_version" json:"api_version" jsonschema:"const=boetticher/v3"`
-	PlatformVersion  string          `yaml:"platform_version" json:"platform_version,omitempty" jsonschema:"const=0.3.1"`
+	PlatformVersion  string          `yaml:"platform_version" json:"platform_version,omitempty" jsonschema:"const=0.3.2"`
 	SchemaVersion    int             `yaml:"schema_version" json:"schema_version,omitempty" jsonschema:"const=3"`
 	StorageProfile   string          `yaml:"storage_profile" json:"storage_profile,omitempty" jsonschema:"enum=single-disk,enum=dedicated-data-disk"`
 	StorageDevice    string          `yaml:"storage_device,omitempty" json:"storage_device,omitempty"`

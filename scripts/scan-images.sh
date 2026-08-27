@@ -39,7 +39,7 @@ artifact_filename() {
   name=$1
   version=1.0.0
   if [ "$name" = boetticher-base ]; then
-    version=0.3.1
+    version=0.3.2
   fi
   printf '%s-%s-amd64.tar.zst' "$name" "$version"
 }

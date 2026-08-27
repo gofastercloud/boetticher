@@ -3,6 +3,14 @@
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 
+## [0.3.2] - 2026-08-27
+
+### Fixed
+
+- Proxmox network discovery now preserves hardware identity from an exact
+  Linux `enx<mac>` interface name when the Proxmox response omits `hwaddr`.
+  Arbitrary interface names remain ambiguous and fail closed.
+
 ## [0.3.0] - Unreleased
 
 This release is an intentional schema break. Sites use `boetticher/v3` and
