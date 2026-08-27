@@ -77,6 +77,31 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 	}
 }
 
+func TestCoreModuleGuestsRetainBaselinePolicyWithoutSourceIntents(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.ModuleSources) != 0 {
+		t.Fatalf("Core-only module guests unexpectedly isolated from baseline policy: %v", plan.ModuleSources)
+	}
+	ruleset, err := RenderNFT(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ruleset, "module_guest_sources") {
+		t.Fatal("Core-only composition unexpectedly emitted a module source isolation set")
+	}
+	if !strings.Contains(ruleset, `iifname "servers0" oifname "wan0" ip saddr @servers_net tcp dport { 53, 80, 443, 853 } counter accept`) {
+		t.Fatal("existing SERVERS baseline Internet policy was removed")
+	}
+}
+
 func TestExternalComposedContractCarriesModuleRouteAndOperatorBoundary(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeExternal))
 	firewallDisabled, tailnetEnabled, litellmEnabled := false, true, true
