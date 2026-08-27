@@ -3,6 +3,13 @@
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 
+## [0.3.29] - 2026-08-27
+
+### Fixed
+
+- Boot the temporary builder from its imported `scsi0` disk before the
+  cloud-init drive and network PXE path.
+
 ## [0.3.28] - 2026-08-27
 
 ### Fixed

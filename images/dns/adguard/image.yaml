@@ -2,7 +2,7 @@ name: boetticher-dns-adguard
 version: 1.0.0
 kind: lxc
 base: boetticher-base
-base_version: 0.3.28
+base_version: 0.3.29
 common: ../image.yaml
 provider: adguard
 services:

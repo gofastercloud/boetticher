@@ -719,6 +719,7 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 		"ostype":    {"l26"},
 		"onboot":    {"0"},
 		"agent":     {"1"},
+		"boot":      {"order=scsi0;ide2;net0"},
 		"tags":      {strings.Join([]string{model.TagBoetticher, model.TagManaged, model.TagPlatform, builderOwnerTag}, ";")},
 		"net0":      {"virtio,bridge=vmbr0,firewall=1,macaddr=" + model.BuilderMAC},
 		"ide2":      {"local:cloudinit"},

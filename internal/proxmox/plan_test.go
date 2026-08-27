@@ -184,7 +184,7 @@ func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	evidence.ArtifactPath = artifactFile
-	for filename, content := range map[string]string{"package-manifest.txt": "package: test\n", "sbom.json": "{}\n", "trivy.json": "{\"Results\":[]}\n", "builder-provenance.json": "{\"platform\":\"debian-13-amd64\",\"input_image\":\"debian-13-genericcloud-amd64-20260327-2429\",\"kernel\":\"6.1.0\",\"go\":\"go version go1.26.5 linux/amd64\",\"trivy\":\"Version: 0.69.3\",\"mmdebstrap\":\"mmdebstrap 1.5.0\",\"architecture\":\"amd64\",\"boetticher_version\":\"0.3.28\"}\n"} {
+	for filename, content := range map[string]string{"package-manifest.txt": "package: test\n", "sbom.json": "{}\n", "trivy.json": "{\"Results\":[]}\n", "builder-provenance.json": "{\"platform\":\"debian-13-amd64\",\"input_image\":\"debian-13-genericcloud-amd64-20260327-2429\",\"kernel\":\"6.1.0\",\"go\":\"go version go1.26.5 linux/amd64\",\"trivy\":\"Version: 0.69.3\",\"mmdebstrap\":\"mmdebstrap 1.5.0\",\"architecture\":\"amd64\",\"boetticher_version\":\"0.3.29\"}\n"} {
 		if err := os.WriteFile(filepath.Join(filepath.Dir(artifactFile), filename), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -193,7 +193,7 @@ func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
 	evidence.SBOMSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactFile), "sbom.json"), "SBOM")
 	evidence.TrivyReportSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactFile), "trivy.json"), "Trivy report")
 	evidence.BuilderProvenanceSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactFile), "builder-provenance.json"), "builder provenance")
-	evidence.Builder = artifacts.BuilderProvenance{Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429", Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3", MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.28"}
+	evidence.Builder = artifacts.BuilderProvenance{Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429", Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3", MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.29"}
 	evidence, err = artifacts.QualifyEvidence(evidence, artifacts.ScanSummary{Completed: true})
 	if err != nil {
 		t.Fatal(err)
@@ -248,6 +248,7 @@ func TestEnsureBuilderArmsCleanupWhenCreateTaskFails(t *testing.T) {
 	}
 	snippetsDeleted := 0
 	createSSHKeys := ""
+	bootOrder := ""
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/190/config":
@@ -264,6 +265,7 @@ func TestEnsureBuilderArmsCleanupWhenCreateTaskFails(t *testing.T) {
 				t.Fatal(err)
 			}
 			createSSHKeys = r.Form.Get("sshkeys")
+			bootOrder = r.Form.Get("boot")
 			return response([]byte(`{"data":"UPID:pve:create-builder"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:create-builder/status":
 			return response([]byte(`{"data":{"status":"stopped","exitstatus":"create failed"}}`))
@@ -288,6 +290,9 @@ func TestEnsureBuilderArmsCleanupWhenCreateTaskFails(t *testing.T) {
 	}
 	if createSSHKeys != "" {
 		t.Fatalf("builder create unexpectedly sent sshkeys outside custom user-data: %q", createSSHKeys)
+	}
+	if bootOrder != "order=scsi0;ide2;net0" {
+		t.Fatalf("builder boot order = %q, want scsi0 before cloud-init and network", bootOrder)
 	}
 }
 
