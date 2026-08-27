@@ -216,6 +216,31 @@ func TestCreateScopedCredentialsCapturesOnlyReturnedSecret(t *testing.T) {
 	}
 }
 
+func TestCreateScopedCredentialsCreatesRoleAtCollectionEndpoint(t *testing.T) {
+	runner := &fakeRunner{
+		output: []byte(`{"value":"opaque-token-secret"}`),
+		responses: map[string][]byte{
+			"pvesh get /access/roles --output-format json":                      []byte(`[]`),
+			"pvesh get /access/users --output-format json":                      []byte(`[]`),
+			"pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[]`),
+		},
+	}
+	if _, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "pvesh create /access/roles") {
+			if !strings.Contains(command, "pvesh create /access/roles --roleid 'BoetticherProvisioner'") {
+				t.Fatalf("role creation used the wrong Proxmox API shape: %s", command)
+			}
+		}
+		if strings.Contains(command, "pvesh set /access/acl") && strings.Contains(command, "--tokens 'labadmin@pve!boetticher'") && !strings.Contains(command, "--users") {
+			return
+		}
+	}
+	t.Fatal("credential bootstrap did not update ACL through the Proxmox set endpoint")
+}
+
 func TestCreateScopedCredentialsStopsOnUserLookupFailure(t *testing.T) {
 	runner := &credentialLookupRunner{responses: map[string]error{
 		"pvesh get /access/users --output-format json": errors.New("permission denied"),
@@ -248,7 +273,7 @@ func (r *credentialLookupRunner) Run(_ context.Context, _ string, _ string, comm
 }
 
 func TestScopedProvisionerPrivilegesAreExplicitAndBounded(t *testing.T) {
-	want := "VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.MountPoint VM.Config.Network VM.Config.Options VM.GuestAgent.Audit VM.PowerMgmt Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit Sys.AccessNetwork Sys.Audit"
+	want := "VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options VM.GuestAgent.Audit VM.PowerMgmt Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit SDN.Audit SDN.Use Sys.AccessNetwork Sys.Audit Sys.Modify"
 	if got := ScopedProvisionerPrivileges(); got != want {
 		t.Fatalf("ScopedProvisionerPrivileges() = %q, want %q", got, want)
 	}
@@ -259,7 +284,7 @@ func TestScopedProvisionerPrivilegesAreExplicitAndBounded(t *testing.T) {
 
 func TestValidateScopedRoleJSONRequiresExactPrivileges(t *testing.T) {
 	wanted := ScopedProvisionerPrivileges()
-	roleJSON := `{"data":[{"roleid":"BoetticherProvisioner","privs":"Sys.Audit VM.PowerMgmt VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.MountPoint VM.Config.Network VM.Config.Options VM.GuestAgent.Audit Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit Sys.AccessNetwork","special":0}]}`
+	roleJSON := `{"data":[{"roleid":"BoetticherProvisioner","privs":"Sys.Audit,VM.PowerMgmt,VM.Allocate,VM.Audit,VM.Config.CDROM,VM.Config.CPU,VM.Config.Cloudinit,VM.Config.Disk,VM.Config.HWType,VM.Config.Memory,VM.Config.Network,VM.Config.Options,VM.GuestAgent.Audit,Datastore.Allocate,Datastore.AllocateSpace,Datastore.AllocateTemplate,Datastore.Audit,SDN.Audit,SDN.Use,Sys.AccessNetwork,Sys.Modify","special":0}]}`
 	exists, err := validateScopedRoleJSON([]byte(roleJSON), "BoetticherProvisioner", wanted)
 	if err != nil || !exists {
 		t.Fatalf("equivalent privilege set was rejected: exists=%t err=%v", exists, err)

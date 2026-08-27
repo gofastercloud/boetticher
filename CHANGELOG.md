@@ -3,6 +3,109 @@
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 
+## [0.3.18] - 2026-08-27
+
+### Fixed
+
+- Absent reserved QEMU/LXC guest configurations returned as HTTP 500 by PVE
+  9.2 are now treated as not found during ownership inspection.
+
+## [0.3.17] - 2026-08-27
+
+### Fixed
+
+- Proxmox storage reconciliation now uses the `/storage` API present in PVE
+  9.2.
+
+## [0.3.16] - 2026-08-27
+
+### Fixed
+
+- Include the PVE SDN audit/use permissions required to observe local Linux
+  bridges through the scoped API.
+
+## [0.3.15] - 2026-08-27
+
+### Fixed
+
+- Apply PVE pending network configuration through the supported reload API
+  before configuring the management VLAN.
+
+## [0.3.14] - 2026-08-27
+
+### Fixed
+
+- Proxmox network API requests now use the PVE 9.2 underscore field names.
+
+## [0.3.13] - 2026-08-27
+
+### Fixed
+
+- Virtual-only bridge creation no longer sends the invalid `bridge-ports none`
+  value rejected by PVE 9.2.
+
+## [0.3.12] - 2026-08-27
+
+### Fixed
+
+- Privilege-separated Proxmox tokens now receive the bounded role through a
+  token ACL rather than a user ACL.
+
+## [0.3.11] - 2026-08-27
+
+### Fixed
+
+- Bootstrap reuses an existing encrypted Proxmox credential record after a
+  later-stage failure instead of creating a replacement token.
+
+## [0.3.10] - 2026-08-27
+
+### Fixed
+
+- Include the observed `Sys.Modify` permission required to create the
+  declared Proxmox virtual bridge.
+
+## [0.3.9] - 2026-08-27
+
+### Fixed
+
+- Document the Proxmox CA trust option across the live installation workflow.
+
+## [0.3.8] - 2026-08-27
+
+### Fixed
+
+- Bootstrap verifies Proxmox API TLS before creating credentials and documents
+  the required CA file for self-signed PVE hosts.
+
+## [0.3.7] - 2026-08-27
+
+### Fixed
+
+- Existing Proxmox role validation now accepts the comma-separated privilege
+  representation returned by PVE 9.2.
+
+## [0.3.6] - 2026-08-27
+
+### Fixed
+
+- Scoped Proxmox ACL assignment now uses the update endpoint required by PVE
+  9.2.
+
+## [0.3.5] - 2026-08-27
+
+### Fixed
+
+- Scoped Proxmox role privileges now use only privilege names supported by PVE
+  9.2.
+
+## [0.3.4] - 2026-08-27
+
+### Fixed
+
+- Scoped Proxmox role creation now uses the collection endpoint required by
+  PVE 9.2.
+
 ## [0.3.3] - 2026-08-27
 
 ### Fixed

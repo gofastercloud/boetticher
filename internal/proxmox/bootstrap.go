@@ -494,7 +494,7 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 		return "", fmt.Errorf("HOLD: Proxmox role %q is not the expected bounded role: %w", role, err)
 	}
 	if !exists {
-		createRole := "pvesh create /access/roles/" + shellQuote(role) + " --privs " + shellQuote(privileges)
+		createRole := "pvesh create /access/roles --roleid " + shellQuote(role) + " --privs " + shellQuote(privileges)
 		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, createRole)); err != nil {
 			return "", fmt.Errorf("create bounded Proxmox role %q: %w", role, err)
 		}
@@ -524,8 +524,8 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 	if tokens[tokenID] {
 		return "", errors.New("the requested Proxmox token already exists; use a new token ID or existing encrypted credentials")
 	}
-	command := "set -eu; pvesh create /access/acl --path / --users " + shellQuote(userID) + " --roles " + shellQuote(role) + " --propagate 1 >/dev/null; pvesh create /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID) + " --privsep 1 --output-format json"
-	output, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, command))
+	createToken := "pvesh create /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID) + " --privsep 1 --output-format json"
+	output, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, createToken))
 	if err != nil {
 		return "", err
 	}
@@ -537,6 +537,10 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 	}
 	if response.Value == "" {
 		return "", errors.New("Proxmox token response did not contain a secret")
+	}
+	setTokenACL := "pvesh set /access/acl --path / --tokens " + shellQuote(userID+"!"+tokenID) + " --roles " + shellQuote(role) + " --propagate 1"
+	if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, setTokenACL)); err != nil {
+		return "", fmt.Errorf("assign bounded Proxmox role to token: %w", err)
 	}
 	return response.Value, nil
 }
@@ -688,7 +692,7 @@ func roleHasSpecialPrivileges(value any) bool {
 }
 
 func canonicalPrivileges(value string) string {
-	fields := strings.Fields(value)
+	fields := strings.Fields(strings.ReplaceAll(value, ",", " "))
 	sort.Strings(fields)
 	return strings.Join(fields, " ")
 }
@@ -698,7 +702,7 @@ func canonicalPrivileges(value string) string {
 // image-download paths. Keep this explicit so a new API operation requires a
 // deliberate privilege review rather than silently broadening the role.
 func ScopedProvisionerPrivileges() string {
-	return "VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.MountPoint VM.Config.Network VM.Config.Options VM.GuestAgent.Audit VM.PowerMgmt Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit Sys.AccessNetwork Sys.Audit"
+	return "VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options VM.GuestAgent.Audit VM.PowerMgmt Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit SDN.Audit SDN.Use Sys.AccessNetwork Sys.Audit Sys.Modify"
 }
 
 func ValidatePublicKey(publicKey string) error {

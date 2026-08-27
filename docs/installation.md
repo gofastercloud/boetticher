@@ -36,7 +36,12 @@ running a destructive bootstrap.
    mode requires an explicitly selected physical trunk, even when only one
    eligible NIC is discovered; use `--trunk-interface` for that selection.
 4. Run `boetticher ssh-config --site my-boetticher --force --install-include`.
-5. Run `boetticher bootstrap --site my-boetticher --recovery-confirmed`.
+5. Supply the Proxmox cluster CA PEM (for example, a securely copied
+   `/etc/pve/pve-root-ca.pem` from the target) and run
+   `boetticher bootstrap --site my-boetticher --recovery-confirmed
+   --proxmox-ca /path/to/pve-root-ca.pem`. The CA is verified before
+   bootstrap creates the API token. `--insecure` is not part of the supported
+   qualification path.
    Dedicated storage also requires `--storage-confirmed` after reviewing the
    stable `/dev/disk/by-id/...` device.
 
@@ -53,9 +58,9 @@ external appliance, DHCP, and its own recovery remain operator-owned.
 ## Deploy the platform
 
 ```text
-boetticher deploy --site my-boetticher
-boetticher verify --site my-boetticher
-boetticher doctor --site my-boetticher
+boetticher deploy --site my-boetticher --proxmox-ca /path/to/pve-root-ca.pem
+boetticher verify --site my-boetticher --proxmox-ca /path/to/pve-root-ca.pem
+boetticher doctor --site my-boetticher --proxmox-ca /path/to/pve-root-ca.pem
 ```
 
 `deploy` is the only public command that applies the complete desired

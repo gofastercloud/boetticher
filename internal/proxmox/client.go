@@ -127,6 +127,30 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	return result.Version, nil
 }
 
+// CheckTLS verifies the configured HTTPS transport before bootstrap creates
+// credentials. The API may require authentication for the probe, so any HTTP
+// response proves the TLS handshake completed; transport and certificate
+// failures remain errors.
+func (c *Client) CheckTLS(ctx context.Context) error {
+	if c == nil || c.HTTP == nil {
+		return errors.New("Proxmox client is required")
+	}
+	base, err := url.Parse(c.BaseURL)
+	if err != nil {
+		return err
+	}
+	base.Path = path.Join(base.Path, "/version")
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
+	if err != nil {
+		return err
+	}
+	response, err := c.HTTP.Do(request)
+	if err != nil {
+		return err
+	}
+	return response.Body.Close()
+}
+
 func (c *Client) Nodes(ctx context.Context) ([]Node, error) {
 	var nodes []Node
 	if err := c.Get(ctx, "/nodes", nil, &nodes); err != nil {
@@ -739,7 +763,7 @@ func (c *Client) EnsureDirectoryStorageContent(ctx context.Context, storageID, s
 		Path    string `json:"path"`
 		Content string `json:"content"`
 	}
-	if err := c.Get(ctx, "/cluster/storage", nil, &storages); err != nil {
+	if err := c.Get(ctx, "/storage", nil, &storages); err != nil {
 		return fmt.Errorf("list Proxmox storage: %w", err)
 	}
 	for _, storage := range storages {
@@ -763,13 +787,13 @@ func (c *Client) EnsureDirectoryStorageContent(ctx context.Context, storageID, s
 				values = append(values, value)
 			}
 			sort.Strings(values)
-			if err := c.Put(ctx, path.Join("/cluster/storage", storageID), url.Values{"content": {strings.Join(values, ",")}}, nil); err != nil {
+			if err := c.Put(ctx, path.Join("/storage", storageID), url.Values{"content": {strings.Join(values, ",")}}, nil); err != nil {
 				return fmt.Errorf("extend Proxmox storage %q content: %w", storageID, err)
 			}
 		}
 		return nil
 	}
-	if err := c.Post(ctx, "/cluster/storage", url.Values{
+	if err := c.Post(ctx, "/storage", url.Values{
 		"storage": {storageID},
 		"type":    {"dir"},
 		"path":    {storagePath},
@@ -807,7 +831,7 @@ func (c *Client) EnsureLVMThinStorage(ctx context.Context, storageID, volumeGrou
 		ThinPool    string `json:"thinpool"`
 		Content     string `json:"content"`
 	}
-	if err := c.Get(ctx, "/cluster/storage", nil, &storages); err != nil {
+	if err := c.Get(ctx, "/storage", nil, &storages); err != nil {
 		return fmt.Errorf("list Proxmox storage: %w", err)
 	}
 	for _, storage := range storages {
@@ -819,7 +843,7 @@ func (c *Client) EnsureLVMThinStorage(ctx context.Context, storageID, volumeGrou
 		}
 		return nil
 	}
-	if err := c.Post(ctx, "/cluster/storage", url.Values{
+	if err := c.Post(ctx, "/storage", url.Values{
 		"storage": {storageID}, "type": {"lvmthin"}, "vgname": {volumeGroup}, "thinpool": {thinPool}, "content": {"images,rootdir"},
 	}, nil); err != nil {
 		return fmt.Errorf("create Proxmox guest storage %q: %w", storageID, err)
@@ -835,9 +859,37 @@ func (c *Client) UpdateNodeNetwork(ctx context.Context, node, iface string, para
 	return c.Put(ctx, path.Join("/nodes", node, "network", iface), params, nil)
 }
 
+// ReloadNodeNetwork promotes and applies the pending Proxmox network
+// configuration. Network create/update calls write interfaces.new on PVE 9;
+// the reload endpoint is required before host-side fragments can reference a
+// newly-created interface.
+func (c *Client) ReloadNodeNetwork(ctx context.Context, node string) error {
+	var upid string
+	if err := c.Put(ctx, path.Join("/nodes", node, "network"), nil, &upid); err != nil {
+		return fmt.Errorf("reload Proxmox node network: %w", err)
+	}
+	if upid != "" {
+		if err := c.WaitTask(ctx, node, upid); err != nil {
+			return fmt.Errorf("wait for Proxmox network reload: %w", err)
+		}
+	}
+	return nil
+}
+
 func IsNotFound(err error) bool {
 	var apiErr *APIError
-	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	if apiErr.StatusCode == http.StatusNotFound {
+		return true
+	}
+	// Proxmox 9.2 reports an absent QEMU/LXC config as HTTP 500 rather than
+	// HTTP 404. Keep this narrowly scoped to its exact guest-config message;
+	// unrelated server errors must remain fatal.
+	return apiErr.StatusCode == http.StatusInternalServerError && strings.HasPrefix(apiErr.Message, "Configuration file 'nodes/") &&
+		(strings.Contains(apiErr.Message, "/qemu-server/") || strings.Contains(apiErr.Message, "/lxc/")) &&
+		strings.HasSuffix(apiErr.Message, ".conf' does not exist")
 }
 
 func (c *Client) request(ctx context.Context, method, endpoint string, query url.Values, form url.Values, out any) error {

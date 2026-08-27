@@ -162,13 +162,37 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err := proxmox.ConfigureIdentities(ctx, runner, s.BootstrapAddress, *initialUser, publicKey, allowedDestinations); err != nil {
 		return fmt.Errorf("configure Proxmox administrative and bastion identities: %w", err)
 	}
-	tokenSecret, err := proxmox.CreateScopedCredentialsWithRole(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner")
+	trustClient, err := proxmox.NewClient(proxmox.Config{
+		BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", CAFile: *proxmoxCA, Insecure: *insecure,
+	})
 	if err != nil {
-		return fmt.Errorf("create scoped Proxmox API credentials: %w", err)
+		return fmt.Errorf("prepare Proxmox API trust before credential creation: %w", err)
 	}
-	credentials := site.ProxmoxCredentials{APIUser: "labadmin@pve", TokenID: "boetticher", TokenSecret: tokenSecret}
-	if err := site.StoreProxmoxCredentials(*siteDir, s, credentials); err != nil {
-		return fmt.Errorf("store Proxmox credentials in SOPS: %w", err)
+	if err := trustClient.CheckTLS(ctx); err != nil {
+		return fmt.Errorf("verify Proxmox API TLS before credential creation: %w", err)
+	}
+	var credentials site.ProxmoxCredentials
+	credentialsPath := filepath.Join(*siteDir, site.ProxmoxSecretsPath)
+	if _, statErr := os.Stat(credentialsPath); statErr == nil {
+		credentials, err = site.LoadProxmoxCredentials(*siteDir, s, *ageIdentity)
+		if err != nil {
+			return fmt.Errorf("load existing Proxmox API credentials: %w", err)
+		}
+		if credentials.APIUser != "labadmin@pve" || credentials.TokenID != "boetticher" {
+			return fmt.Errorf("HOLD: encrypted Proxmox credentials identify %s!%s, expected labadmin@pve!boetticher", credentials.APIUser, credentials.TokenID)
+		}
+		fmt.Fprintln(out, "Existing encrypted Proxmox API credentials: PASS (reuse)")
+	} else if errors.Is(statErr, os.ErrNotExist) {
+		tokenSecret, createErr := proxmox.CreateScopedCredentialsWithRole(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner")
+		if createErr != nil {
+			return fmt.Errorf("create scoped Proxmox API credentials: %w", createErr)
+		}
+		credentials = site.ProxmoxCredentials{APIUser: "labadmin@pve", TokenID: "boetticher", TokenSecret: tokenSecret}
+		if err := site.StoreProxmoxCredentials(*siteDir, s, credentials); err != nil {
+			return fmt.Errorf("store Proxmox credentials in SOPS: %w", err)
+		}
+	} else {
+		return fmt.Errorf("inspect existing Proxmox API credentials: %w", statErr)
 	}
 	client, err := proxmox.NewClient(proxmox.Config{
 		BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", User: credentials.APIUser,
@@ -200,6 +224,9 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 		return errors.New("external gateway mode requires a distinct physical vmbr1 trunk interface")
 	}
 	if err := proxmox.EnsureVirtualBridge(ctx, client, apiNode); err != nil {
+		return err
+	}
+	if err := client.ReloadNodeNetwork(ctx, apiNode); err != nil {
 		return err
 	}
 	if err := proxmox.ConfigureManagementNetwork(ctx, runner, s.BootstrapAddress, *initialUser); err != nil {

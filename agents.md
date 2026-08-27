@@ -115,6 +115,12 @@ If the third answer is yes and the first two answers are no, defer the work.
 
 Additional rules:
 
+- During an explicitly authorized live qualification, minor permission or ACL
+  mutations are allowed only when they are the minimum required for the
+  observed product path, preserve the security boundary, target an exact
+  boetticher-owned object, and are documented with the failure and resulting
+  state. This does not authorize credential disclosure, unrelated resources,
+  or broad privilege grants.
 - Prefer the smallest implementation that enables the next real test.
 - Do not make diagnostic, provenance, audit, or reporting metadata a deployment
   prerequisite unless it directly enforces a current safety property.

@@ -1,6 +1,6 @@
 # boetticher
 
-**Status: pre-alpha.** boetticher v0.3.3 has a typed module model and offline
+**Status: pre-alpha.** boetticher v0.3.18 has a typed module model and offline
 contracts, but the appliance build and live installation still need
 qualification. Do not use boetticher on a system you cannot recover.
 
@@ -89,12 +89,12 @@ From the controller and the Proxmox HOME-side DHCP address:
 boetticher init
 boetticher bootstrap-endpoint set 192.0.2.10
 boetticher preflight --live
-boetticher bootstrap --recovery-confirmed
-boetticher deploy --dry-run
-boetticher deploy
+boetticher bootstrap --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem
+boetticher deploy --dry-run --proxmox-ca /path/to/pve-root-ca.pem
+boetticher deploy --proxmox-ca /path/to/pve-root-ca.pem
 boetticher ssh-config --install-include
-boetticher verify
-boetticher doctor --live
+boetticher verify --proxmox-ca /path/to/pve-root-ca.pem
+boetticher doctor --live --proxmox-ca /path/to/pve-root-ca.pem
 ```
 
 Supply `--confirm` only when the deployment plan identifies a supported

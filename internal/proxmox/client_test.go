@@ -42,6 +42,18 @@ func TestClientUsesTokenAndDecodesEnvelope(t *testing.T) {
 	}
 }
 
+func TestCheckTLSAcceptsUnauthenticatedAPIResponse(t *testing.T) {
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/version" {
+			t.Fatalf("unexpected TLS probe request: %s %s", r.Method, r.URL.Path)
+		}
+		return &http.Response{StatusCode: http.StatusUnauthorized, Status: "401 Unauthorized", Body: io.NopCloser(strings.NewReader("unauthorized")), Header: make(http.Header)}
+	})}}
+	if err := client.CheckTLS(context.Background()); err != nil {
+		t.Fatalf("CheckTLS() = %v", err)
+	}
+}
+
 func TestNodesUsesAuthoritativeNodesEndpoint(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes" {
@@ -53,6 +65,23 @@ func TestNodesUsesAuthoritativeNodesEndpoint(t *testing.T) {
 	nodes, err := client.Nodes(context.Background())
 	if err != nil || len(nodes) != 1 || nodes[0].Node != "proxmox" {
 		t.Fatalf("Nodes() = %#v, %v", nodes, err)
+	}
+}
+
+func TestReloadNodeNetworkWaitsForPendingNetworkTask(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodPut && r.URL.Path == "/api2/json/nodes/proxmox/network" {
+			return response([]byte(`{"data":"UPID:pve:reload-network"}`))
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/proxmox/tasks/UPID:pve:reload-network/status" {
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		}
+		t.Fatalf("unexpected network reload request: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.ReloadNodeNetwork(context.Background(), "proxmox"); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -329,10 +358,10 @@ func TestUploadStorageFileStreamsLargeArtifactBody(t *testing.T) {
 
 func TestEnsureDirectoryStorageCreatesBackupStorage(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
-		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/cluster/storage" {
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/storage" {
 			return response([]byte(`{"data":[]}`))
 		}
-		if r.Method == http.MethodPost && r.URL.Path == "/api2/json/cluster/storage" {
+		if r.Method == http.MethodPost && r.URL.Path == "/api2/json/storage" {
 			if err := r.ParseForm(); err != nil {
 				t.Errorf("parse storage form: %v", err)
 			}
@@ -371,10 +400,10 @@ func TestEnsureDirectoryStorageRejectsConflictingDefinition(t *testing.T) {
 
 func TestEnsureDirectoryStorageContentAddsOnlyRequiredTypes(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
-		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/cluster/storage" {
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/storage" {
 			return response([]byte(`{"data":[{"storage":"local","type":"dir","path":"/var/lib/vz","content":"backup,iso,vztmpl"}]}`))
 		}
-		if r.Method == http.MethodPut && r.URL.Path == "/api2/json/cluster/storage/local" {
+		if r.Method == http.MethodPut && r.URL.Path == "/api2/json/storage/local" {
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
 			}
@@ -455,6 +484,19 @@ func TestImportDiskUsesThePinnedStoragePlan(t *testing.T) {
 
 func response(data []byte) *http.Response {
 	return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(data)))}
+}
+
+func TestIsNotFoundAcceptsProxmoxMissingGuestConfigResponse(t *testing.T) {
+	err := &APIError{
+		StatusCode: http.StatusInternalServerError,
+		Message:    "Configuration file 'nodes/proxmox/qemu-server/190.conf' does not exist",
+	}
+	if !IsNotFound(err) {
+		t.Fatal("Proxmox missing guest configuration was not classified as not found")
+	}
+	if IsNotFound(&APIError{StatusCode: http.StatusInternalServerError, Message: "storage backend failed"}) {
+		t.Fatal("unrelated Proxmox HTTP 500 was classified as not found")
+	}
 }
 
 func apiResponse(status int, data string) *http.Response {
