@@ -102,15 +102,15 @@ does not automatically renumber live hosts or guests.
 From the controller and the Proxmox HOME-side DHCP address:
 
 ```sh
-boetticher init
-boetticher bootstrap-endpoint set 192.0.2.10
-boetticher preflight --live
-boetticher bootstrap --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem
-boetticher deploy --dry-run --proxmox-ca /path/to/pve-root-ca.pem
-boetticher deploy --proxmox-ca /path/to/pve-root-ca.pem
-boetticher ssh-config --install-include
-boetticher verify --proxmox-ca /path/to/pve-root-ca.pem
-boetticher doctor --live --proxmox-ca /path/to/pve-root-ca.pem
+boetticher init --site-dir my-boetticher
+boetticher bootstrap-endpoint set 192.0.2.10 --site my-boetticher
+boetticher preflight --site my-boetticher --live
+boetticher bootstrap --site my-boetticher --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem
+boetticher deploy --site my-boetticher --dry-run --proxmox-ca /path/to/pve-root-ca.pem
+boetticher deploy --site my-boetticher --proxmox-ca /path/to/pve-root-ca.pem
+boetticher ssh-config --site my-boetticher --install-include
+boetticher verify --site my-boetticher --proxmox-ca /path/to/pve-root-ca.pem
+boetticher doctor --site my-boetticher --live --proxmox-ca /path/to/pve-root-ca.pem
 ```
 
 Supply `--confirm` only when the deployment plan identifies a supported
