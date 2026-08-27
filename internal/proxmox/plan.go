@@ -725,9 +725,6 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 		"ipconfig0": {"ip=dhcp"},
 		"ciuser":    {model.DefaultAdminSSHUser},
 	}
-	if publicKey != "" {
-		params.Set("sshkeys", publicKey)
-	}
 	cloudInit, err := RenderBuilderCloudInitWithKey(publicKey)
 	if err != nil {
 		return false, fmt.Errorf("render builder cloud-init: %w", err)

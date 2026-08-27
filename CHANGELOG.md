@@ -3,6 +3,13 @@
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 
+## [0.3.25] - 2026-08-27
+
+### Fixed
+
+- Avoid the PVE 9.2-invalid `sshkeys` create parameter when the builder's
+  custom user-data already carries the operator key.
+
 ## [0.3.24] - 2026-08-27
 
 ### Fixed
