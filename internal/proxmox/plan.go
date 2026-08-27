@@ -1170,6 +1170,10 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 				return err
 			}
 			current["description"] = artifactDescription(guest.Artifact)
+		} else if guest.Name == "lab-fw-01" && plan.CloudInitFiles.UserData != "" {
+			if err := uploadFirewallCloudInit(ctx, client, plan, guest.VMID); err != nil {
+				return err
+			}
 		}
 		if err := migrateLegacyQEMUPersistentVolumeSerials(ctx, client, plan, guest, current); err != nil {
 			return err
