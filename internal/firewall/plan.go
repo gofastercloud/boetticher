@@ -46,20 +46,27 @@ type PolicyRule struct {
 }
 
 type DHCPSubnet struct {
-	ID                   int      `json:"id"`
-	Zone                 string   `json:"zone"`
-	Network              string   `json:"network"`
-	Pool                 string   `json:"pool,omitempty"`
-	Gateway              string   `json:"gateway"`
-	DNS                  []string `json:"dns"`
-	NTP                  []string `json:"ntp"`
-	ForwardZone          string   `json:"forward_zone"`
-	ReverseZone          string   `json:"reverse_zone"`
-	TSIGKeyName          string   `json:"tsig_key_name"`
-	TSIGAlgorithm        string   `json:"tsig_algorithm"`
-	UpdateOnRenew        bool     `json:"update_on_renew"`
-	ConflictResolution   string   `json:"conflict_resolution"`
-	RegistrationOptional bool     `json:"registration_optional"`
+	ID                   int               `json:"id"`
+	Zone                 string            `json:"zone"`
+	Network              string            `json:"network"`
+	Pool                 string            `json:"pool,omitempty"`
+	Gateway              string            `json:"gateway"`
+	DNS                  []string          `json:"dns"`
+	NTP                  []string          `json:"ntp"`
+	ForwardZone          string            `json:"forward_zone"`
+	ReverseZone          string            `json:"reverse_zone"`
+	TSIGKeyName          string            `json:"tsig_key_name"`
+	TSIGAlgorithm        string            `json:"tsig_algorithm"`
+	UpdateOnRenew        bool              `json:"update_on_renew"`
+	ConflictResolution   string            `json:"conflict_resolution"`
+	RegistrationOptional bool              `json:"registration_optional"`
+	Reservations         []DHCPReservation `json:"reservations,omitempty"`
+}
+
+type DHCPReservation struct {
+	Hostname string `json:"hostname"`
+	Address  string `json:"address"`
+	MAC      string `json:"mac"`
 }
 
 type Plan struct {
@@ -149,15 +156,22 @@ func dhcpSubnets(s model.Site) []DHCPSubnet {
 	sort.Slice(zones, func(i, j int) bool { return zones[i].VLAN < zones[j].VLAN })
 	result := make([]DHCPSubnet, 0, len(zones))
 	for _, zone := range zones {
-		if zone.Type != model.ZoneTypeTrusted && zone.Type != model.ZoneTypeSandbox {
+		if zone.Type != model.ZoneTypeTrusted && zone.Type != model.ZoneTypeSandbox && zone.Type != model.ZoneTypeServers {
 			continue
+		}
+		reservations := []DHCPReservation(nil)
+		if zone.Type == model.ZoneTypeServers {
+			reservations = make([]DHCPReservation, 0, len(s.DHCPReservations))
+			for _, reservation := range s.Normalize().DHCPReservations {
+				reservations = append(reservations, DHCPReservation{Hostname: reservation.Hostname, Address: reservation.Address, MAC: reservation.MAC})
+			}
 		}
 		forward := strings.ToLower(zone.Name) + "." + s.Network.Domain + "."
 		result = append(result, DHCPSubnet{
 			ID: len(result) + 1, Zone: zone.Name, Network: zone.Network, Pool: poolForNetwork(zone.Network, zone.AddressMode),
 			Gateway: zone.Gateway, DNS: append([]string(nil), zone.DNSAddresses...), NTP: append([]string(nil), zone.NTPAddresses...),
 			ForwardZone: forward, ReverseZone: reverseZoneForNetwork(zone.Network), TSIGKeyName: dns.TSIGKeyName(zone.Name, s.Network.Domain),
-			TSIGAlgorithm: "hmac-sha256", UpdateOnRenew: true, ConflictResolution: "check-exists-with-dhcid", RegistrationOptional: true,
+			TSIGAlgorithm: "hmac-sha256", UpdateOnRenew: true, ConflictResolution: "check-exists-with-dhcid", RegistrationOptional: true, Reservations: reservations,
 		})
 	}
 	return result
@@ -175,7 +189,7 @@ func poolForNetwork(network, addressMode string) string {
 	if bits != 32 || ones != 24 {
 		return ""
 	}
-	prefix := strings.TrimSuffix(base.String(), ".0/24")
+	prefix := strings.TrimSuffix(base.String(), ".0")
 	return prefix + ".100-" + prefix + ".199"
 }
 
@@ -207,7 +221,7 @@ func policyRules(s model.Site) []PolicyRule {
 	}
 	// These are gateway-local services. Forwarding rules below deliberately
 	// place internal denies before any Internet egress rule.
-	for _, zone := range []string{"TRUSTED", "SANDBOX"} {
+	for _, zone := range []string{"TRUSTED", "SERVERS", "SANDBOX"} {
 		add(strings.ToLower(zone)+" DHCP to gateway", zone, "gateway", "allow", "udp", []string{"67"}, false, false)
 	}
 	add("SANDBOX DNS to gateway", "SANDBOX", "gateway", "allow", "tcp/udp", []string{"53"}, false, false)
@@ -325,7 +339,7 @@ func RenderNFT(plan Plan) (string, error) {
 	if sources := moduleGuestSources(plan); len(sources) > 0 {
 		fmt.Fprintf(&b, "  set module_guest_sources { type ipv4_addr; elements = { %s } }\n", strings.Join(sources, ", "))
 	}
-	b.WriteString("  chain input {\n    type filter hook input priority filter; policy drop;\n    iifname \"lo\" accept comment \"boetticher:input-loopback\"\n    ct state established,related accept comment \"boetticher:input-established\"\n    iifname \"wan0\" udp sport 67 udp dport 68 accept comment \"boetticher:input-wan-dhcp\"\n    iifname { \"trusted0\", \"sandbox0\" } udp dport 67 counter accept comment \"boetticher:input-zone-dhcp\"\n    iifname \"sandbox0\" udp dport 53 counter accept comment \"boetticher:input-sandbox-dns-udp\"\n    iifname \"sandbox0\" tcp dport 53 counter accept comment \"boetticher:input-sandbox-dns-tcp\"\n    iifname \"sandbox0\" udp dport 123 counter accept comment \"boetticher:input-sandbox-ntp\"\n    iifname \"mgmt0\" tcp dport 22 counter accept comment \"boetticher:input-mgmt-ssh\"\n  }\n")
+	b.WriteString("  chain input {\n    type filter hook input priority filter; policy drop;\n    iifname \"lo\" accept comment \"boetticher:input-loopback\"\n    ct state established,related accept comment \"boetticher:input-established\"\n    iifname \"wan0\" udp sport 67 udp dport 68 accept comment \"boetticher:input-wan-dhcp\"\n    iifname { \"trusted0\", \"servers0\", \"sandbox0\" } udp dport 67 counter accept comment \"boetticher:input-zone-dhcp\"\n    iifname \"sandbox0\" udp dport 53 counter accept comment \"boetticher:input-sandbox-dns-udp\"\n    iifname \"sandbox0\" tcp dport 53 counter accept comment \"boetticher:input-sandbox-dns-tcp\"\n    iifname \"sandbox0\" udp dport 123 counter accept comment \"boetticher:input-sandbox-ntp\"\n    iifname \"mgmt0\" tcp dport 22 counter accept comment \"boetticher:input-mgmt-ssh\"\n  }\n")
 	b.WriteString("  chain forward {\n    type filter hook forward priority filter; policy drop;\n    ct state established,related accept comment \"boetticher:forward-established\"\n")
 	for _, rule := range plan.Rules {
 		if rule.Action != "allow" || rule.SourceCIDR == "" || (rule.DestinationCIDR == "" && rule.DestinationHost == "") || rule.From == "" || rule.To == "" {

@@ -17,7 +17,10 @@ import (
 
 func runDHCP(args []string, out interface{ Write([]byte) (int, error) }) error {
 	if len(args) == 0 {
-		return errors.New("usage: boetticher dhcp status|leases")
+		return errors.New("usage: boetticher dhcp status|leases|reservation add|list|remove")
+	}
+	if args[0] == "reservation" {
+		return runDHCPReservation(args[1:], out)
 	}
 	command := args[0]
 	fs := flag.NewFlagSet("dhcp "+command, flag.ContinueOnError)

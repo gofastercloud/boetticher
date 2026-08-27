@@ -1,5 +1,32 @@
 {
   "$defs": {
+    "DHCPReservation": {
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "mac": {
+          "type": "string"
+        },
+        "vmid": {
+          "type": "integer"
+        },
+        "zone": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "zone",
+        "hostname",
+        "address",
+        "mac"
+      ],
+      "type": "object"
+    },
     "DNSModuleConfig": {
       "additionalProperties": false,
       "properties": {
@@ -287,6 +314,26 @@
       },
       "type": "object"
     },
+    "UserDNSRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "value"
+      ],
+      "type": "object"
+    },
     "Zone": {
       "additionalProperties": false,
       "properties": {
@@ -352,6 +399,18 @@
     },
     "bootstrap_address": {
       "type": "string"
+    },
+    "dhcp_reservations": {
+      "items": {
+        "$ref": "#/$defs/DHCPReservation"
+      },
+      "type": "array"
+    },
+    "dns_records": {
+      "items": {
+        "$ref": "#/$defs/UserDNSRecord"
+      },
+      "type": "array"
     },
     "gateway": {
       "$ref": "#/$defs/Gateway"

@@ -104,6 +104,43 @@ func TestParseSiteConfigAppliesV3Defaults(t *testing.T) {
 	}
 }
 
+func TestParseSiteConfigRetainsReservationsAndUserDNSValues(t *testing.T) {
+	config, err := ParseSiteConfig([]byte(`api_version: boetticher/v3
+secret_metadata:
+  installation_id: test
+  age_recipient: age1test
+dhcp_reservations:
+  - zone: SERVERS
+    hostname: app-01
+    address: 10.10.20.61
+    mac: 02:00:00:00:02:61
+dns_records:
+  - name: app.lab.home.arpa
+    type: CNAME
+    value: app-01.servers.lab.home.arpa
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.DHCPReservations) != 1 || len(config.DNSRecords) != 1 || config.DNSRecords[0].Value != "app-01.servers.lab.home.arpa" {
+		t.Fatalf("operator records were not retained: %#v %#v", config.DHCPReservations, config.DNSRecords)
+	}
+	rendered, err := RenderSiteConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTrip, err := ParseSiteConfig(rendered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.DNSRecords[0].Value != "app-01.servers.lab.home.arpa" {
+		t.Fatalf("rendered user CNAME did not retain value: %s", rendered)
+	}
+}
+
 func TestDNSProviderIsTypedAndStrict(t *testing.T) {
 	config, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  dns:\n    provider: adguard\n"))
 	if err != nil || config.Modules.DNS == nil || config.Modules.DNS.Provider != DNSProviderAdGuard {
