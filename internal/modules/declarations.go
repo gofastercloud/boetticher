@@ -15,7 +15,7 @@ func composeDeclarations(site model.Site, resolved []ResolvedModule) ([]model.Mo
 		if !module.Enabled {
 			continue
 		}
-		declaration, err := declarationFor(module.Definition.Name, site)
+		declaration, err := declarationFor(module.Definition, site)
 		if err != nil {
 			return nil, err
 		}
@@ -25,8 +25,9 @@ func composeDeclarations(site model.Site, resolved []ResolvedModule) ([]model.Mo
 	return declarations, nil
 }
 
-func declarationFor(name string, site model.Site) (model.ModuleDeclaration, error) {
-	components := moduleComponents(site, name)
+func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleDeclaration, error) {
+	name := definition.Name
+	components := moduleGuestProjections(definition)
 	provider := ""
 	if name == "dns" {
 		provider = site.ModuleConfig["dns"].Provider
@@ -69,17 +70,6 @@ func declarationFor(name string, site model.Site) (model.ModuleDeclaration, erro
 		return model.ModuleDeclaration{}, fmt.Errorf("no declaration provider for first-party module %q", name)
 	}
 	return declaration, nil
-}
-
-func moduleComponents(site model.Site, name string) []model.Component {
-	components := make([]model.Component, 0)
-	for _, component := range site.PlatformComponents() {
-		if component.Module == name {
-			components = append(components, component)
-		}
-	}
-	sort.Slice(components, func(i, j int) bool { return components[i].Name < components[j].Name })
-	return components
 }
 
 func persistentFor(module, guest string) []model.PersistentState {

@@ -52,17 +52,27 @@ func composeComponents(base []model.Component, resolved []ResolvedModule) []mode
 		if !module.Enabled {
 			continue
 		}
-		for _, component := range module.Definition.Components {
-			component.Module = module.Definition.Name
-			component.Tags = append(component.Tags, model.TagBoetticher, model.TagManaged, model.TagModule, "module-"+module.Definition.Name, model.ModuleOwnershipTag(module.Definition.Name), model.TagBackup)
-			component.SSHUser = model.DefaultAdminSSHUser
-			component.SSHPort = 22
-			component.Logging = module.Definition.Name != "logging"
-			sort.Strings(component.Tags)
-			components = append(components, component)
-		}
+		components = append(components, moduleGuestProjections(module.Definition)...)
 	}
 	sort.Slice(components, func(i, j int) bool { return components[i].Name < components[j].Name })
+	return components
+}
+
+// moduleGuestProjections is the single projection boundary for first-party
+// guest definitions. The same generated guest data feeds Site.Components and
+// ModuleDeclaration.Guests so downstream providers cannot invent ownership or
+// resource identities from names.
+func moduleGuestProjections(definition ModuleDefinition) []model.Component {
+	components := make([]model.Component, 0, len(definition.Guests))
+	for _, component := range definition.Guests {
+		component.Module = definition.Name
+		component.Tags = append(component.Tags, model.TagBoetticher, model.TagManaged, model.TagModule, "module-"+definition.Name, model.ModuleOwnershipTag(definition.Name), model.TagBackup)
+		component.SSHUser = model.DefaultAdminSSHUser
+		component.SSHPort = 22
+		component.Logging = definition.Name != "logging"
+		sort.Strings(component.Tags)
+		components = append(components, component)
+	}
 	return components
 }
 
