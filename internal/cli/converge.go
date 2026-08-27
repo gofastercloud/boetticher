@@ -80,6 +80,11 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 		return nil
 	}
+	ansibleRoot, err := applianceBuildSourceRoot()
+	if err != nil {
+		return fmt.Errorf("resolve Ansible playbook source: %w", err)
+	}
+	ansiblePlaybook := filepath.Join(ansibleRoot, "ansible", "site.yml")
 	if err := writeModelProjections(*siteDir, s); err != nil {
 		return err
 	}
@@ -219,7 +224,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		if err := installCredentialsForGuest(context.Background(), firewallRunner, "lab-fw-01", credentialBindings, secretValues); err != nil {
 			return fmt.Errorf("install managed gateway credentials: %w", err)
 		}
-		if err := ansible.RunLimited(context.Background(), "ansible/site.yml", inventoryPath, variables, "lab-fw-01"); err != nil {
+		if err := ansible.RunLimited(context.Background(), ansiblePlaybook, inventoryPath, variables, "lab-fw-01"); err != nil {
 			return fmt.Errorf("HOLD: configure managed gateway before dependent appliances: %w", err)
 		}
 		if err := verifyGatewayReadiness(context.Background(), firewallRunner, "10.10.99.1"); err != nil {
@@ -253,7 +258,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 				return fmt.Errorf("install %s credentials: %w", guest.Name, err)
 			}
 			if module == "dns" {
-				if err := ansible.RunLimited(context.Background(), "ansible/site.yml", inventoryPath, variables, guest.Name); err != nil {
+				if err := ansible.RunLimited(context.Background(), ansiblePlaybook, inventoryPath, variables, guest.Name); err != nil {
 					return fmt.Errorf("HOLD: configure DNS guest %s before dependent appliances: %w", guest.Name, err)
 				}
 				if guest.Name == "lab-dns-01" && s.Gateway.Mode == model.GatewayModeManaged {
@@ -267,7 +272,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			}
 		}
 	}
-	if err := ansible.Run(context.Background(), "ansible/site.yml", inventoryPath, variables); err != nil {
+	if err := ansible.Run(context.Background(), ansiblePlaybook, inventoryPath, variables); err != nil {
 		return err
 	}
 	if monitoringEnabled {
@@ -314,7 +319,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return err
 	}
 	variables = append(variables, '\n')
-	if err := ansible.Run(context.Background(), "ansible/site.yml", inventoryPath, variables); err != nil {
+	if err := ansible.Run(context.Background(), ansiblePlaybook, inventoryPath, variables); err != nil {
 		return fmt.Errorf("install endpoint-signed certificates: %w", err)
 	}
 	if monitoringEnabled {

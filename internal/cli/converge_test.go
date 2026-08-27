@@ -34,6 +34,16 @@ func TestDeploymentModuleNamesFollowResolvedManagedGraph(t *testing.T) {
 	}
 }
 
+func TestAnsiblePlaybookIsAvailableFromControllerSource(t *testing.T) {
+	root, err := applianceBuildSourceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "ansible", "site.yml")); err != nil {
+		t.Fatalf("controller source does not contain the Ansible playbook: %v", err)
+	}
+}
+
 func TestDeploymentModuleNamesFollowResolvedExternalGraph(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("trial", "age1trial", model.GatewayModeExternal))
 	disabled := false
