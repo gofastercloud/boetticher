@@ -883,10 +883,28 @@ func TestTransferredEvidenceIsReboundToControllerArtifactBytes(t *testing.T) {
 	if err := WriteEvidence(root, artifact.Name, qualified); err != nil {
 		t.Fatal(err)
 	}
-	if err := RebindEvidencePaths(relativeRoot); err != nil {
+	qualified.ArtifactPath = filepath.Join("generated", "artifacts", artifact.Name, filepath.Base(artifactPath))
+	if err := WriteEvidence(root, artifact.Name, qualified); err != nil {
 		t.Fatal(err)
 	}
 	resolved, rebound, err := ResolveArtifactEvidence(relativeRoot, artifact)
+	if err != nil {
+		t.Fatalf("relative cached evidence was rejected: %v", err)
+	}
+	if !filepath.IsAbs(rebound.ArtifactPath) {
+		t.Fatalf("resolved artifact path = %q, want absolute path", rebound.ArtifactPath)
+	}
+	if resolved.ContentSHA256 != evidence.ContentSHA256 {
+		t.Fatalf("resolved content checksum = %q, want %q", resolved.ContentSHA256, evidence.ContentSHA256)
+	}
+	qualified.ArtifactPath = "/home/labadmin/build/generated/artifacts/boetticher-logging/boetticher-logging-1.0.0-amd64.tar.zst"
+	if err := WriteEvidence(root, artifact.Name, qualified); err != nil {
+		t.Fatal(err)
+	}
+	if err := RebindEvidencePaths(relativeRoot); err != nil {
+		t.Fatal(err)
+	}
+	resolved, rebound, err = ResolveArtifactEvidence(relativeRoot, artifact)
 	if err != nil {
 		t.Fatal(err)
 	}
