@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -490,6 +491,70 @@ func TestEnsureQEMUMigratesLegacyPersistentVolumeSerial(t *testing.T) {
 	}
 }
 
+func TestEnsureQEMURequiresConfirmationToReplaceOwnedArtifact(t *testing.T) {
+	guest := GuestPlan{VMID: 100, Name: "test-fw", Artifact: model.Artifact{
+		Name: "boetticher-firewall", Version: "1.0.0", Architecture: "amd64", ContentSHA256: "new-content",
+	}}
+	currentDescription := artifactDescription(model.Artifact{Name: "boetticher-firewall", Version: "1.0.0", Architecture: "amd64", ContentSHA256: "old-content"})
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/config" {
+			return response([]byte(`{"data":{"name":"test-fw","description":"` + currentDescription + `"}}`))
+		}
+		t.Fatalf("unexpected request before replacement confirmation: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err := ensureQEMU(context.Background(), client, Plan{Node: "node"}, guest)
+	if err == nil || !strings.Contains(err.Error(), "requires --confirm") {
+		t.Fatalf("artifact replacement without confirmation = %v", err)
+	}
+}
+
+func TestExistingLXCArtifactAcceptsProxmoxEncodedDescriptionNewline(t *testing.T) {
+	guest := GuestPlan{VMID: 110, Name: "test-dns", Hostname: "test-dns", Artifact: model.Artifact{
+		Name: "boetticher-dns-blocky", Version: "1.0.0", ContentSHA256: "content",
+	}}
+	current := map[string]any{
+		"name": guest.Name, "hostname": guest.Name,
+		"description": artifactDescription(guest.Artifact) + "%0A",
+		"tags":        "boetticher;managed;boetticher-module-dns",
+	}
+	if err := validateExistingGuestIdentity(current, guest); err != nil {
+		t.Fatalf("encoded Proxmox description was rejected: %v", err)
+	}
+}
+
+func TestUploadFirewallCloudInitRefreshesAllReplacementSnippets(t *testing.T) {
+	var uploaded []string
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodPost || r.URL.Path != "/api2/json/nodes/node/storage/local/upload" {
+			t.Fatalf("unexpected cloud-init upload request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseMultipartForm(1024 * 1024); err != nil {
+			t.Fatal(err)
+		}
+		files := r.MultipartForm.File["filename"]
+		if len(files) != 1 {
+			t.Fatalf("uploaded filename parts = %#v", files)
+		}
+		uploaded = append(uploaded, files[0].Filename)
+		return response([]byte(`{"data":null}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	plan := Plan{
+		Node:           "node",
+		CloudInitFiles: CloudInitFiles{MetaData: "meta", UserData: "user", NetworkConfig: "network"},
+	}
+	if err := uploadFirewallCloudInit(context.Background(), client, plan, 100); err != nil {
+		t.Fatalf("uploadFirewallCloudInit() = %v", err)
+	}
+	sort.Strings(uploaded)
+	want := []string{"boetticher-100-meta.yaml", "boetticher-100-network.yaml", "boetticher-100-user.yaml"}
+	if !reflect.DeepEqual(uploaded, want) {
+		t.Fatalf("replacement cloud-init snippets = %#v, want %#v", uploaded, want)
+	}
+}
+
 func TestQEMUPersistentVolumeParamsRejectUnresolvedStorage(t *testing.T) {
 	_, err := qemuPersistentVolumeParams(Plan{}, GuestPlan{Volumes: []model.PersistentVolumeDeclaration{{
 		Name: "kea-leases", SizeGiB: 4, MountPath: "/var/lib/kea",
@@ -528,11 +593,25 @@ func TestExistingLXCPersistentVolumesRejectUndeclaredMountpoints(t *testing.T) {
 		Volumes: []model.PersistentVolumeDeclaration{{Storage: modelStorageIDForTest, SizeGiB: 4, MountPath: "/var/lib/tailscale", Placement: model.StorageDefault, Backup: true}},
 	}
 	current := map[string]any{
-		"mp0": "boetticher-thin:4,mp=/var/lib/tailscale,backup=1",
-		"mp1": "boetticher-thin:1,mp=/unexpected,backup=1",
+		"mp0": "boetticher-thin:4,mp=/var/lib/tailscale,backup=1,size=4G",
+		"mp1": "boetticher-thin:1,mp=/unexpected,backup=1,size=1G",
 	}
 	if err := validateExistingGuestVolumes(current, guest); err == nil || !strings.Contains(err.Error(), "undeclared persistent volume") {
 		t.Fatalf("undeclared LXC mountpoint was accepted: %v", err)
+	}
+}
+
+func TestExistingLXCPersistentVolumesAcceptProxmoxCanonicalVolumeID(t *testing.T) {
+	guest := GuestPlan{Name: "test-dns", Volumes: []model.PersistentVolumeDeclaration{{
+		Storage: modelStorageIDForTest, SizeGiB: 8, MountPath: "/var/lib/powerdns", Backup: true,
+	}}}
+	current := map[string]any{"mp0": "boetticher-thin:110/vm-110-disk-1.raw,mp=/var/lib/powerdns,backup=1,size=8G"}
+	if err := validateExistingGuestVolumes(current, guest); err != nil {
+		t.Fatalf("canonical Proxmox LXC volume was rejected: %v", err)
+	}
+	current["mp0"] = "boetticher-thin:110/vm-110-disk-1.raw,mp=/var/lib/powerdns,backup=1,size=9G"
+	if err := validateExistingGuestVolumes(current, guest); err == nil {
+		t.Fatal("LXC volume with the wrong size was accepted")
 	}
 }
 
@@ -600,6 +679,37 @@ func TestEnsureArtifactInStorageHoldsOnPostUploadChecksumMismatch(t *testing.T) 
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
 	if err := ensureArtifactInStorage(context.Background(), client, "node", "local", "vztmpl", filename, checksum, artifactPath); err == nil || !strings.Contains(err.Error(), "does not match qualified") {
 		t.Fatalf("post-upload checksum mismatch was not rejected: %v", err)
+	}
+}
+
+func TestEnsureArtifactInStorageAcceptsChecksumlessVZTemplateAfterVerifiedUpload(t *testing.T) {
+	artifactPath := filepath.Join(t.TempDir(), "artifact.tar.zst")
+	content := []byte("qualified appliance bytes")
+	if err := os.WriteFile(artifactPath, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	checksum := fmt.Sprintf("%x", sha256.Sum256(content))
+	filename := "boetticher-logging-1.0.0-amd64.tar.zst"
+	storageReads := 0
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+			storageReads++
+			return response([]byte(`{"data":[{"filename":"` + filename + `"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
+			_, _ = io.Copy(io.Discard, r.Body)
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected artifact storage request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := ensureArtifactInStorage(context.Background(), client, "node", "local", "vztmpl", filename, checksum, artifactPath); err != nil {
+		t.Fatalf("ensureArtifactInStorage() = %v", err)
+	}
+	if storageReads != 2 {
+		t.Fatalf("storage reads = %d, want pre-upload and post-upload verification", storageReads)
 	}
 }
 

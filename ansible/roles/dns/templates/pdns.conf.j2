@@ -6,8 +6,6 @@ setuid=pdns
 setgid=pdns
 daemon=yes
 guardian=yes
-master={{ (inventory_hostname == 'lab-dns-01') | ternary('yes', 'no') }}
-slave={{ (inventory_hostname == 'lab-dns-02') | ternary('yes', 'no') }}
 secondary={{ (inventory_hostname == 'lab-dns-02') | ternary('yes', 'no') }}
 primary={{ (inventory_hostname == 'lab-dns-01') | ternary('yes', 'no') }}
 allow-axfr-ips={{ (inventory_hostname == 'lab-dns-01') | ternary('10.10.10.11', '10.10.10.10') }}

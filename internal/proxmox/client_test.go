@@ -186,6 +186,19 @@ func TestCreateLXCWaitsForProxmoxTaskBeforeReturning(t *testing.T) {
 	}
 }
 
+func TestWaitTaskAcceptsProxmoxWarningCompletion(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/node/tasks/UPID:pve:create-lxc/status" {
+			t.Fatalf("unexpected task status request: %s %s", r.Method, r.URL.Path)
+		}
+		return response([]byte(`{"data":{"status":"stopped","exitstatus":"WARNINGS: 1"}}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.WaitTask(context.Background(), "node", "UPID:pve:create-lxc"); err != nil {
+		t.Fatalf("WaitTask() rejected successful task warnings: %v", err)
+	}
+}
+
 func TestResizeQEMUDiskUsesExplicitBoundedGrowth(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method != http.MethodPut || r.URL.Path != "/api2/json/nodes/node/qemu/190/resize" {
@@ -279,6 +292,19 @@ func TestEnsureVMRunningDoesNotRestartRunningVM(t *testing.T) {
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
 	if err := client.EnsureVMRunning(context.Background(), "node", 100); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsureLXCRunningDoesNotRestartRunningContainer(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/node/lxc/110/status/current" {
+			t.Fatalf("unexpected request while checking running LXC: %s %s", r.Method, r.URL.Path)
+		}
+		return response([]byte(`{"data":{"status":"running"}}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.EnsureLXCRunning(context.Background(), "node", 110); err != nil {
 		t.Fatal(err)
 	}
 }

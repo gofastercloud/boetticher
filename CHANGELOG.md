@@ -32,6 +32,46 @@ project, so releases can make clean breaks while the design is settling.
   sshd can read it on the Proxmox host.
 - Reset appliance sudoers ownership during image construction so sudo can run
   its no-password bootstrap checks after deployment.
+- Require explicit confirmation for an owned appliance rootfs replacement and
+  resume it while retaining declared persistent volumes.
+- Refresh firewall cloud-init snippets and persist the artifact identity when
+  an owned rootfs replacement is resumed, so bounded persistent-disk serials
+  are mounted on the replacement boot.
+- Address firewall persistent volumes through Debian's stable PVE SCSI-slot
+  links; the QEMU serial remains the Proxmox ownership identity but does not
+  produce a guest `/dev/disk/by-id` link on the qualified image.
+- Refresh the managed gateway cloud-init snippets when an existing owned guest
+  is resumed, keeping its next supported first-boot/recovery path current.
+- Run the managed gateway's read-only bootstrap interface checks without sudo;
+  the constrained appliance sudo policy does not grant unnecessary `ip`
+  elevation.
+- Stream Ansible variables through `/dev/stdin`, which is the supported stdin
+  filename form in the qualified Ansible release.
+- Resolve the Ansible playbook from the controller source checkout instead of
+  the caller's site-directory working directory.
+- Create the firewall nftables configuration directory before installing the
+  validated gateway policy.
+- Render an optional DHCP pool through a defaulted mapping lookup for the
+  qualified Ansible/Jinja runtime.
+- Accept checksumless Proxmox `vztmpl` listings only after re-uploading and
+  verifying the qualified local artifact bytes.
+- Treat Proxmox task completion with a `WARNINGS: N` status as successful while
+  retaining failures for other non-OK statuses.
+- Normalize Proxmox's URL-encoded trailing newline when comparing an owned LXC
+  artifact description.
+- Compare owned LXC persistent volumes by Proxmox's canonical volume ID and
+  declared mount, backup, and size fields.
+- Include ifupdown in the base LXC image so Proxmox's generated
+  `/etc/network/interfaces` is brought up on first boot.
+- Run Chrony in unprivileged appliances without attempting forbidden guest
+  kernel-clock control.
+- Treat an already-running owned LXC as ready during deployment retry.
+- Check the PowerDNS qualification banner on either command output stream.
+- Use the PowerDNS 4.9 `pdnsutil` command names supported by the qualified
+  appliance.
+- Use Blocky's supported `version` subcommand during DNS qualification.
+- Use PowerDNS 4.9's `primary` and `secondary` settings without obsolete
+  `master` and `slave` options.
 - Resume an owned running gateway without issuing a duplicate Proxmox start
   request after a prior deployment attempt.
 - Discover the hosted builder address through the QEMU guest agent after

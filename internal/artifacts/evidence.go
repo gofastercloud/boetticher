@@ -87,6 +87,11 @@ func RebindEvidencePaths(root string) error {
 	if root == "" {
 		return fmt.Errorf("artifact evidence root is required")
 	}
+	absoluteRoot, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve artifact evidence root: %w", err)
+	}
+	root = absoluteRoot
 	entries, err := os.ReadDir(filepath.Join(root, "generated", "artifacts"))
 	if err != nil {
 		return fmt.Errorf("read transferred artifact evidence: %w", err)

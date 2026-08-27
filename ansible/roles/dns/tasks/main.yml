@@ -31,7 +31,7 @@
 
 - name: Refuse an unqualified PowerDNS version
   ansible.builtin.assert:
-    that: "'4.9.17' in powerdns_version.stdout"
+    that: "'4.9.17' in powerdns_version.stdout or '4.9.17' in powerdns_version.stderr"
     fail_msg: "The installed PowerDNS version is not the qualified 4.9.17 release"
   when: inventory_hostname in groups.get('dns', [])
 
@@ -77,14 +77,14 @@
   when: inventory_hostname in groups.get('dns', [])
 
 - name: Read current PowerDNS zones on the primary
-  ansible.builtin.command: pdnsutil zone list-all
+  ansible.builtin.command: pdnsutil list-all-zones
   register: primary_zones
   changed_when: false
   when: inventory_hostname == 'lab-dns-01'
 
 - name: Create the static and dynamic authoritative zones on the primary
   ansible.builtin.command: >-
-    pdnsutil zone create {{ item }}
+    pdnsutil create-zone {{ item }}
   loop: "{{ [dns_plan.static_zone] + (dns_plan.dynamic_zones | map(attribute='name') | list) + (dns_plan.reverse_zones | map(attribute='name') | list) }}"
   when:
     - inventory_hostname == 'lab-dns-01'
@@ -92,23 +92,23 @@
 
 - name: Initialize authoritative NS records on the primary
   ansible.builtin.command: >-
-    pdnsutil rrset replace {{ item }} {{ item }} NS 300
+    pdnsutil replace-rrset {{ item }} {{ item }} NS 300
     lab-dns-01.{{ dns_plan.static_zone }}. lab-dns-02.{{ dns_plan.static_zone }}.
   loop: "{{ [dns_plan.static_zone] + (dns_plan.dynamic_zones | map(attribute='name') | list) + (dns_plan.reverse_zones | map(attribute='name') | list) }}"
   when: inventory_hostname == 'lab-dns-01'
 
 - name: Publish model-owned static A records to the primary
   ansible.builtin.command: >-
-    pdnsutil rrset replace {{ dns_plan.static_zone }} {{ item.name }}.
+    pdnsutil replace-rrset {{ dns_plan.static_zone }} {{ item.name }}.
     {{ item.type }} 300 {{ item.address }}
   loop: "{{ dns_plan.static_records }}"
   when: inventory_hostname == 'lab-dns-01'
 
 - name: Authorize Kea DDNS updates for dynamic forward zones
   ansible.builtin.shell: >-
-    pdnsutil metadata set {{ item.forward_zone }} ALLOW-DNSUPDATE-FROM
+    pdnsutil set-meta {{ item.forward_zone }} ALLOW-DNSUPDATE-FROM
     {{ dns_plan.ddns.update_sources | join(' ') }} &&
-    pdnsutil metadata set {{ item.forward_zone }} TSIG-ALLOW-DNSUPDATE {{ item.tsig_key_name }}
+    pdnsutil set-meta {{ item.forward_zone }} TSIG-ALLOW-DNSUPDATE {{ item.tsig_key_name }}
   args:
     executable: /bin/sh
   loop: "{{ dns_plan.ddns.zones }}"
@@ -119,9 +119,9 @@
 
 - name: Authorize Kea DDNS updates for reverse zones
   ansible.builtin.shell: >-
-    pdnsutil metadata set {{ item.reverse_zone }} ALLOW-DNSUPDATE-FROM
+    pdnsutil set-meta {{ item.reverse_zone }} ALLOW-DNSUPDATE-FROM
     {{ dns_plan.ddns.update_sources | join(' ') }} &&
-    pdnsutil metadata set {{ item.reverse_zone }} TSIG-ALLOW-DNSUPDATE {{ item.tsig_key_name }}
+    pdnsutil set-meta {{ item.reverse_zone }} TSIG-ALLOW-DNSUPDATE {{ item.tsig_key_name }}
   args:
     executable: /bin/sh
   loop: "{{ dns_plan.ddns.zones }}"
@@ -131,14 +131,14 @@
     - dns_plan.ddns.enabled | bool
 
 - name: Read current PowerDNS zones on the secondary
-  ansible.builtin.command: pdnsutil zone list-all
+  ansible.builtin.command: pdnsutil list-all-zones
   register: secondary_zones
   changed_when: false
   when: inventory_hostname == 'lab-dns-02'
 
 - name: Configure secondary transfer for each platform zone
   ansible.builtin.command: >-
-    pdnsutil zone create-secondary {{ item }} 10.10.10.10:5353
+    pdnsutil create-secondary-zone {{ item }} 10.10.10.10:5353
   loop: "{{ [dns_plan.static_zone] + (dns_plan.dynamic_zones | map(attribute='name') | list) + (dns_plan.reverse_zones | map(attribute='name') | list) }}"
   when:
     - inventory_hostname == 'lab-dns-02'
@@ -179,7 +179,7 @@
     - dns_plan.recursive_provider == 'adguard'
 
 - name: Assert the qualified Blocky binary is present
-  ansible.builtin.command: blocky --version
+  ansible.builtin.command: blocky version
   register: blocky_version
   changed_when: false
   when:

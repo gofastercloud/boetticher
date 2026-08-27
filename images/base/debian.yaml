@@ -17,6 +17,7 @@ build:
     - openssh-server
     - sudo
     - iproute2
+    - ifupdown
     - iputils-ping
     - nftables
     - chrony

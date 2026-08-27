@@ -57,15 +57,17 @@ func renderFirewallCloudInit(guest GuestPlan, operatorPublicKey string) (CloudIn
 	fsSetup := strings.Builder{}
 	mounts := strings.Builder{}
 	for _, name := range []string{"ssh-identity", "kea-leases"} {
-		volume, ok := guestVolume(guest, name)
+		volume, index, ok := guestVolume(guest, name)
 		if !ok {
 			continue
 		}
-		serial, err := persistentVolumeSerial(volume)
-		if err != nil {
+		if _, err := persistentVolumeSerial(volume); err != nil {
 			return CloudInitFiles{}, fmt.Errorf("firewall %s volume: %w", name, err)
 		}
-		device := "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_" + serial
+		// Debian exposes PVE's virtio-scsi disks by their stable assigned
+		// controller slot. The QEMU serial is retained for Proxmox-side
+		// ownership checks, but does not produce a usable guest by-id link.
+		device := fmt.Sprintf("/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi%d", index+1)
 		label := "boetticher-" + name
 		fmt.Fprintf(&fsSetup, "  - label: %s\n    filesystem: ext4\n    device: %s\n    overwrite: false\n", label, device)
 		fmt.Fprintf(&mounts, "  - [\"%s\", \"%s\", \"ext4\", \"defaults,nofail\", \"0\", \"2\"]\n", device, volume.MountPath)
@@ -81,13 +83,13 @@ func renderFirewallCloudInit(guest GuestPlan, operatorPublicKey string) (CloudIn
 	}, nil
 }
 
-func guestVolume(guest GuestPlan, name string) (model.PersistentVolumeDeclaration, bool) {
-	for _, volume := range guest.Volumes {
+func guestVolume(guest GuestPlan, name string) (model.PersistentVolumeDeclaration, int, bool) {
+	for index, volume := range guest.Volumes {
 		if volume.Name == name {
-			return volume, true
+			return volume, index, true
 		}
 	}
-	return model.PersistentVolumeDeclaration{}, false
+	return model.PersistentVolumeDeclaration{}, 0, false
 }
 
 // RenderBuilderCloudInit prepares the temporary public-input build host

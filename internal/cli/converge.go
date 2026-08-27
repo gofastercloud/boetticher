@@ -80,6 +80,11 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 		return nil
 	}
+	ansibleRoot, err := applianceBuildSourceRoot()
+	if err != nil {
+		return fmt.Errorf("resolve Ansible playbook source: %w", err)
+	}
+	ansiblePlaybook := filepath.Join(ansibleRoot, "ansible", "site.yml")
 	if err := writeModelProjections(*siteDir, s); err != nil {
 		return err
 	}
@@ -209,6 +214,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return fmt.Errorf("resolve live Proxmox node: %w", err)
 	}
 	proxmoxPlan.Node = node
+	proxmoxPlan.DestructiveConfirmed = *confirm
 	if backupPlan.StorageTarget == backup.DedicatedStorageID {
 		if err := proxmoxClient.EnsureLVMThinStorage(context.Background(), storage.GuestStorageID, storage.VolumeGroup, storage.ThinPool); err != nil {
 			return fmt.Errorf("ensure dedicated guest storage: %w", err)
@@ -238,7 +244,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		if err := installCredentialsForGuest(context.Background(), firewallRunner, "lab-fw-01", credentialBindings, secretValues); err != nil {
 			return fmt.Errorf("install managed gateway credentials: %w", err)
 		}
-		if err := ansible.RunLimited(context.Background(), "ansible/site.yml", inventoryPath, variables, "lab-fw-01"); err != nil {
+		if err := ansible.RunLimited(context.Background(), ansiblePlaybook, inventoryPath, variables, "lab-fw-01"); err != nil {
 			return fmt.Errorf("HOLD: configure managed gateway before dependent appliances: %w", err)
 		}
 		if err := verifyGatewayReadiness(context.Background(), firewallRunner, "10.10.99.1"); err != nil {
@@ -272,7 +278,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 				return fmt.Errorf("install %s credentials: %w", guest.Name, err)
 			}
 			if module == "dns" {
-				if err := ansible.RunLimited(context.Background(), "ansible/site.yml", inventoryPath, variables, guest.Name); err != nil {
+				if err := ansible.RunLimited(context.Background(), ansiblePlaybook, inventoryPath, variables, guest.Name); err != nil {
 					return fmt.Errorf("HOLD: configure DNS guest %s before dependent appliances: %w", guest.Name, err)
 				}
 				if guest.Name == "lab-dns-01" && s.Gateway.Mode == model.GatewayModeManaged {
@@ -286,7 +292,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			}
 		}
 	}
-	if err := ansible.Run(context.Background(), "ansible/site.yml", inventoryPath, variables); err != nil {
+	if err := ansible.Run(context.Background(), ansiblePlaybook, inventoryPath, variables); err != nil {
 		return err
 	}
 	if monitoringEnabled {
@@ -347,7 +353,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return err
 	}
 	variables = append(variables, '\n')
-	if err := ansible.Run(context.Background(), "ansible/site.yml", inventoryPath, variables); err != nil {
+	if err := ansible.Run(context.Background(), ansiblePlaybook, inventoryPath, variables); err != nil {
 		return fmt.Errorf("install endpoint-signed certificates: %w", err)
 	}
 	if monitoringEnabled {
@@ -445,7 +451,7 @@ func verifyFirewallBootstrapNetwork(ctx context.Context, runner proxmox.CommandR
 	if runner == nil {
 		return errors.New("firewall bootstrap network runner is required")
 	}
-	command := "set -eu; for interface in wan0 trusted0 servers0 sandbox0 mgmt0 transit0 infra0; do sudo -n ip link show dev \"$interface\" >/dev/null; done; sudo -n ip -4 -o addr show dev trusted0 | grep -Fq '10.10.30.1/24'; sudo -n ip -4 -o addr show dev servers0 | grep -Fq '10.10.20.1/24'; sudo -n ip -4 -o addr show dev sandbox0 | grep -Fq '10.10.40.1/24'; sudo -n ip -4 -o addr show dev mgmt0 | grep -Fq '10.10.99.1/24'; sudo -n ip -4 -o addr show dev transit0 | grep -Fq '10.10.5.1/24'; sudo -n ip -4 -o addr show dev infra0 | grep -Fq '10.10.10.1/24'"
+	command := "set -eu; for interface in wan0 trusted0 servers0 sandbox0 mgmt0 transit0 infra0; do ip link show dev \"$interface\" >/dev/null; done; ip -4 -o addr show dev trusted0 | grep -Fq '10.10.30.1/24'; ip -4 -o addr show dev servers0 | grep -Fq '10.10.20.1/24'; ip -4 -o addr show dev sandbox0 | grep -Fq '10.10.40.1/24'; ip -4 -o addr show dev mgmt0 | grep -Fq '10.10.99.1/24'; ip -4 -o addr show dev transit0 | grep -Fq '10.10.5.1/24'; ip -4 -o addr show dev infra0 | grep -Fq '10.10.10.1/24'"
 	if _, err := runner.Run(ctx, "10.10.99.1", model.DefaultAdminSSHUser, command); err != nil {
 		return fmt.Errorf("role-named interfaces or static addresses are not ready: %w", err)
 	}

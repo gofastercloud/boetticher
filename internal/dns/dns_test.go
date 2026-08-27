@@ -183,6 +183,8 @@ func TestPowerDNSCommandPlanUsesQualifiedSyntaxAndNeverEmbedsARealSecret(t *test
 	seenTSIG := false
 	seenForward := false
 	seenReverse := false
+	seenZone := false
+	seenRecord := false
 	for _, command := range commands {
 		if command.SecretStdin {
 			seenTSIG = true
@@ -193,15 +195,21 @@ func TestPowerDNSCommandPlanUsesQualifiedSyntaxAndNeverEmbedsARealSecret(t *test
 				t.Fatal("TSIG placeholder entered the sqlite3 argv")
 			}
 		}
-		if len(command.Args) >= 3 && command.Args[1] == "create-zone" {
+		if len(command.Args) >= 3 && command.Args[1] == "zone" {
 			t.Fatalf("legacy PowerDNS zone command emitted: %#v", command.Args)
 		}
-		if len(command.Args) >= 5 && command.Args[1] == "metadata" && command.Args[4] == "ALLOW-DNSUPDATE-FROM" {
+		if len(command.Args) >= 3 && command.Args[1] == "create-zone" {
+			seenZone = true
+		}
+		if len(command.Args) >= 5 && command.Args[1] == "set-meta" && command.Args[3] == "ALLOW-DNSUPDATE-FROM" {
 			seenForward = true
-			seenReverse = seenReverse || command.Args[3] == "30.10.10.in-addr.arpa"
+			seenReverse = seenReverse || strings.Contains(command.Args[2], "in-addr.arpa")
+		}
+		if len(command.Args) >= 2 && command.Args[1] == "replace-rrset" {
+			seenRecord = true
 		}
 	}
-	if !seenTSIG || !seenForward || !seenReverse {
+	if !seenTSIG || !seenForward || !seenReverse || !seenZone || !seenRecord {
 		t.Fatalf("incomplete PowerDNS command plan: %#v", commands)
 	}
 }

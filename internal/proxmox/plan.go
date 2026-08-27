@@ -72,9 +72,10 @@ type Plan struct {
 	// ArtifactFiles is controller-local evidence and is intentionally excluded
 	// from canonical model output. It maps qualified definitions to the exact
 	// bytes that may be imported into Proxmox.
-	ArtifactFiles     map[string]string `json:"-"`
-	OperatorPublicKey string            `json:"-"`
-	CloudInitFiles    CloudInitFiles    `json:"-"`
+	ArtifactFiles        map[string]string `json:"-"`
+	OperatorPublicKey    string            `json:"-"`
+	CloudInitFiles       CloudInitFiles    `json:"-"`
+	DestructiveConfirmed bool              `json:"-"`
 }
 
 type NetworkInterface struct {
@@ -632,7 +633,7 @@ func Provision(ctx context.Context, client *Client, plan Plan, _ ...string) erro
 			if err := ensureLXC(ctx, client, plan, guest); err != nil {
 				return err
 			}
-			if err := client.StartLXC(ctx, plan.Node, guest.VMID); err != nil {
+			if err := client.EnsureLXCRunning(ctx, plan.Node, guest.VMID); err != nil {
 				return fmt.Errorf("start container %s: %w", guest.Name, err)
 			}
 		default:
@@ -665,7 +666,7 @@ func ProvisionModule(ctx context.Context, client *Client, plan Plan, module stri
 		if err := ensureLXC(ctx, client, plan, guest); err != nil {
 			return err
 		}
-		if err := client.StartLXC(ctx, plan.Node, guest.VMID); err != nil {
+		if err := client.EnsureLXCRunning(ctx, plan.Node, guest.VMID); err != nil {
 			return fmt.Errorf("start %s: %w", guest.Name, err)
 		}
 	}
@@ -1164,8 +1165,21 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 		if kind != KindQEMU {
 			return fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, expected QEMU %s", guest.VMID, kind, guest.Name)
 		}
-		if err := validateExistingGuestIdentity(current, guest); err != nil {
+		if err := validateExistingGuestIdentityFields(current, guest); err != nil {
 			return err
+		}
+		if guestArtifactNeedsReplacement(current, guest) {
+			if !plan.DestructiveConfirmed {
+				return fmt.Errorf("HOLD: guest %s has artifact identity mismatch; appliance replacement requires --confirm", guest.Name)
+			}
+			if err := replaceQEMURootDisk(ctx, client, plan, guest); err != nil {
+				return err
+			}
+			current["description"] = artifactDescription(guest.Artifact)
+		} else if guest.Name == "lab-fw-01" && plan.CloudInitFiles.UserData != "" {
+			if err := uploadFirewallCloudInit(ctx, client, plan, guest.VMID); err != nil {
+				return err
+			}
 		}
 		if err := migrateLegacyQEMUPersistentVolumeSerials(ctx, client, plan, guest, current); err != nil {
 			return err
@@ -1198,14 +1212,8 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 		"tags":        {strings.Join(guest.Tags, ";")},
 	}
 	if guest.Name == "lab-fw-01" && plan.CloudInitFiles.UserData != "" {
-		names := cloudInitSnippetNames(guest.VMID)
-		for key, value := range map[string]string{"meta": plan.CloudInitFiles.MetaData, "user": plan.CloudInitFiles.UserData, "network": plan.CloudInitFiles.NetworkConfig} {
-			if value == "" {
-				return errors.New("firewall cloud-init input is incomplete")
-			}
-			if err := client.UploadStorageText(ctx, plan.Node, "local", "snippets", names[key], value); err != nil {
-				return fmt.Errorf("upload firewall cloud-init %s: %w", key, err)
-			}
+		if err := uploadFirewallCloudInit(ctx, client, plan, guest.VMID); err != nil {
+			return err
 		}
 		params.Set("cicustom", cloudInitCICustom(guest.VMID))
 		params.Set("ide2", "local:cloudinit")
@@ -1552,7 +1560,7 @@ func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) er
 		}
 		key := fmt.Sprintf("mp%d", index)
 		observed, _ := current[key].(string)
-		if observed != wanted {
+		if !lxcPersistentVolumeMatches(observed, wanted) {
 			return fmt.Errorf("HOLD: guest %s has persistent volume %s=%q, expected %q", expected.Name, key, observed, wanted)
 		}
 	}
@@ -1568,6 +1576,36 @@ func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) er
 	return nil
 }
 
+func lxcPersistentVolumeMatches(observed, wanted string) bool {
+	observedParts := strings.Split(observed, ",")
+	wantedParts := strings.Split(wanted, ",")
+	if len(observedParts) == 0 || len(wantedParts) == 0 {
+		return false
+	}
+	observedStorage, _, observedOK := strings.Cut(observedParts[0], ":")
+	wantedStorage, wantedSize, wantedOK := strings.Cut(wantedParts[0], ":")
+	if !observedOK || !wantedOK || observedStorage != wantedStorage || wantedSize == "" {
+		return false
+	}
+	observedOptions := make(map[string]string, len(observedParts)-1)
+	for _, option := range observedParts[1:] {
+		name, value, ok := strings.Cut(option, "=")
+		if ok {
+			observedOptions[name] = value
+		}
+	}
+	wantedOptions := make(map[string]string, len(wantedParts)-1)
+	for _, option := range wantedParts[1:] {
+		name, value, ok := strings.Cut(option, "=")
+		if ok {
+			wantedOptions[name] = value
+		}
+	}
+	return observedOptions["mp"] == wantedOptions["mp"] &&
+		observedOptions["backup"] == wantedOptions["backup"] &&
+		observedOptions["size"] == wantedSize+"G"
+}
+
 func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage, content, filename, checksum, source string) error {
 	if checksum == "" {
 		return errors.New("artifact content checksum is required")
@@ -1577,11 +1615,11 @@ func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage,
 		return fmt.Errorf("inspect %s artifact storage: %w", content, err)
 	}
 	if found, err := verifyStoredArtifact(entries, filename, checksum, false); err != nil {
-		if content != "import" || !strings.HasSuffix(err.Error(), "has no checksum evidence") {
+		if (content != "import" && content != "vztmpl") || !strings.HasSuffix(err.Error(), "has no checksum evidence") {
 			return err
 		}
-		// Import listings omit checksums. Re-upload the qualified local bytes so
-		// the upload task can re-establish checksum evidence before use.
+		// Some Proxmox content listings omit checksums. Re-upload the qualified
+		// local bytes so the upload task can verify the exact content before use.
 	} else if found {
 		return nil
 	}
@@ -1602,7 +1640,7 @@ func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage,
 	if err != nil {
 		return fmt.Errorf("verify uploaded %s artifact storage: %w", filename, err)
 	}
-	found, err := verifyStoredArtifact(entries, filename, checksum, content == "import")
+	found, err := verifyStoredArtifact(entries, filename, checksum, content == "import" || content == "vztmpl")
 	if err != nil {
 		return err
 	}
@@ -1654,16 +1692,20 @@ func validateExistingGuest(current map[string]any, expected GuestPlan) error {
 }
 
 func validateExistingGuestIdentity(current map[string]any, expected GuestPlan) error {
+	if err := validateExistingGuestIdentityFields(current, expected); err != nil {
+		return err
+	}
+	if guestArtifactNeedsReplacement(current, expected) {
+		observed, _ := current["description"].(string)
+		return fmt.Errorf("HOLD: guest %s has artifact identity %q, expected %q; appliance replacement is required", expected.Name, observed, artifactDescription(expected.Artifact))
+	}
+	return nil
+}
+
+func validateExistingGuestIdentityFields(current map[string]any, expected GuestPlan) error {
 	for key, want := range map[string]string{"name": expected.Name, "hostname": expected.Hostname} {
 		if got, ok := current[key].(string); ok && got != "" && got != want {
 			return fmt.Errorf("guest %s has unexpected %s %q, expected %q", expected.Name, key, got, want)
-		}
-	}
-	if expected.Artifact.Name != "" {
-		observed, _ := current["description"].(string)
-		wanted := artifactDescription(expected.Artifact)
-		if observed != wanted {
-			return fmt.Errorf("HOLD: guest %s has artifact identity %q, expected %q; appliance replacement is required", expected.Name, observed, wanted)
 		}
 	}
 	if expected.Security.Unprivileged {
@@ -1715,6 +1757,66 @@ func observedTruthy(value any) bool {
 	}
 }
 
+func guestArtifactNeedsReplacement(current map[string]any, expected GuestPlan) bool {
+	if expected.Artifact.Name == "" {
+		return false
+	}
+	observed, _ := current["description"].(string)
+	return normalizeArtifactDescription(observed) != artifactDescription(expected.Artifact)
+}
+
+func normalizeArtifactDescription(value string) string {
+	if decoded, err := url.PathUnescape(value); err == nil {
+		value = decoded
+	}
+	return strings.TrimSuffix(value, "\n")
+}
+
+func replaceQEMURootDisk(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
+	status, err := client.QEMUStatus(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("inspect gateway status before appliance replacement: %w", err)
+	}
+	if status == "running" {
+		if err := client.StopVM(ctx, plan.Node, guest.VMID); err != nil {
+			return fmt.Errorf("stop gateway before appliance replacement: %w", err)
+		}
+	}
+	if guest.Name == "lab-fw-01" {
+		if err := uploadFirewallCloudInit(ctx, client, plan, guest.VMID); err != nil {
+			return err
+		}
+	}
+	filename := fmt.Sprintf("%s-%s-%s.qcow2", guest.Artifact.Name, guest.Artifact.Version, guest.Artifact.Architecture)
+	source := plan.ArtifactFiles[artifactKey(guest.Artifact)]
+	if err := ensureArtifactInStorage(ctx, client, plan.Node, "local", "import", filename, guest.Artifact.ContentSHA256, source); err != nil {
+		return fmt.Errorf("prepare replacement %s artifact: %w", guest.Name, err)
+	}
+	upid, err := client.ImportDisk(ctx, plan.Node, guest.VMID, "local:import/"+filename, plan.Storage, "qcow2")
+	if err != nil {
+		return fmt.Errorf("import replacement gateway disk: %w", err)
+	}
+	if err := client.WaitTask(ctx, plan.Node, upid); err != nil {
+		return fmt.Errorf("wait for replacement gateway disk: %w", err)
+	}
+	if err := client.SetVMConfig(ctx, plan.Node, guest.VMID, url.Values{"description": {artifactDescription(guest.Artifact)}}); err != nil {
+		return fmt.Errorf("record replacement gateway artifact identity: %w", err)
+	}
+	return nil
+}
+
+func uploadFirewallCloudInit(ctx context.Context, client *Client, plan Plan, vmid int) error {
+	if plan.CloudInitFiles.MetaData == "" || plan.CloudInitFiles.UserData == "" || plan.CloudInitFiles.NetworkConfig == "" {
+		return errors.New("firewall cloud-init input is incomplete")
+	}
+	names := cloudInitSnippetNames(vmid)
+	for key, value := range map[string]string{"meta": plan.CloudInitFiles.MetaData, "user": plan.CloudInitFiles.UserData, "network": plan.CloudInitFiles.NetworkConfig} {
+		if err := client.UploadStorageText(ctx, plan.Node, "local", "snippets", names[key], value); err != nil {
+			return fmt.Errorf("upload firewall cloud-init %s: %w", key, err)
+		}
+	}
+	return nil
+}
 func artifactDescription(artifact model.Artifact) string {
 	return fmt.Sprintf("boetticher-artifact=%s@%s definition=%s content=%s", artifact.Name, artifact.Version, artifact.DefinitionSHA256, artifact.ContentSHA256)
 }
