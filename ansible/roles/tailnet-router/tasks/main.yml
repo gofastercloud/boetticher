@@ -1,0 +1,59 @@
+---
+- name: Require an immutable tailnet-router appliance artifact
+  ansible.builtin.assert:
+    that: boetticher_appliance_artifact | default(false) | bool
+    fail_msg: "tailnet-router requires a qualified immutable appliance artifact"
+
+- name: Require the pinned Tailscale runtime
+  ansible.builtin.command: tailscale version
+  register: tailscale_version
+  changed_when: false
+
+- name: Refuse an unqualified Tailscale runtime
+  ansible.builtin.assert:
+    that: "'1.76.6' in tailscale_version.stdout"
+    fail_msg: "tailnet-router requires the pinned Tailscale 1.76.6 runtime"
+
+- name: Keep retained Tailscale identity state private
+  ansible.builtin.file:
+    path: /var/lib/tailscale
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Install the idempotent Tailscale registration helper
+  ansible.builtin.copy:
+    dest: /usr/lib/boetticher/tailscale-router-bootstrap
+    owner: root
+    group: root
+    mode: '0750'
+    content: |
+      #!/bin/sh
+      set -eu
+      if tailscale status >/dev/null 2>&1; then
+          exit 0
+      fi
+      if [ -s /var/lib/tailscale/tailscaled.state ] && tailscale up --accept-dns=false --advertise-routes=10.10.0.0/16 --snat-subnet-routes=true >/dev/null 2>&1; then
+          exit 0
+      fi
+      credential="${CREDENTIALS_DIRECTORY:-}/tailscale-auth-key"
+      test -s "$credential"
+      tailscale up --auth-key="file:$credential" --accept-dns=false --advertise-routes=10.10.0.0/16 --snat-subnet-routes=true >/dev/null 2>&1
+
+- name: Add the bounded TUN credential and bootstrap hook to tailscaled
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/tailscaled.service.d/boetticher.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Service]
+      ExecStartPost=/usr/lib/boetticher/tailscale-router-bootstrap
+  notify: reload systemd
+
+- name: Enable and start tailscaled with retained state
+  ansible.builtin.service:
+    name: tailscaled
+    enabled: true
+    state: started

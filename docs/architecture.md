@@ -64,7 +64,7 @@ IPv4 forwarding stays disabled until a validated ruleset is installed.
 
 External mode removes `lab-fw-01` from the platform. A second physical NIC is
 required for `vmbr1`, and the operator’s appliance receives the 802.1Q trunk
-with VLANs 10, 20, 50, and 99. The appliance provides the four `.1` gateways,
+with VLANs 5, 10, 20, 50, and 99. The appliance provides the five `.1` gateways,
 DHCP, NAT, and the published security policy. boetticher generates the contract
 but does not inspect or manage the appliance’s configuration.
 

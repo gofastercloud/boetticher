@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -28,17 +29,20 @@ type Interface struct {
 }
 
 type PolicyRule struct {
-	Sequence    int      `json:"sequence"`
-	Name        string   `json:"name"`
-	From        string   `json:"from"`
-	To          string   `json:"to"`
-	Action      string   `json:"action"`
-	Protocol    string   `json:"protocol"`
-	Ports       []string `json:"ports,omitempty"`
-	Counter     string   `json:"counter"`
-	LogPrefix   string   `json:"log_prefix,omitempty"`
-	NAT         bool     `json:"nat,omitempty"`
-	Description string   `json:"description"`
+	Sequence        int      `json:"sequence"`
+	Name            string   `json:"name"`
+	From            string   `json:"from"`
+	To              string   `json:"to"`
+	Action          string   `json:"action"`
+	Protocol        string   `json:"protocol"`
+	Ports           []string `json:"ports,omitempty"`
+	Counter         string   `json:"counter"`
+	LogPrefix       string   `json:"log_prefix,omitempty"`
+	NAT             bool     `json:"nat,omitempty"`
+	Description     string   `json:"description"`
+	SourceCIDR      string   `json:"source_cidr,omitempty"`
+	DestinationCIDR string   `json:"destination_cidr,omitempty"`
+	DestinationHost string   `json:"destination_host,omitempty"`
 }
 
 type DHCPSubnet struct {
@@ -66,6 +70,7 @@ type Plan struct {
 	Forwarding    bool         `json:"forwarding_after_policy"`
 	Interfaces    []Interface  `json:"interfaces"`
 	Rules         []PolicyRule `json:"rules"`
+	ModuleSources []string     `json:"module_source_cidrs,omitempty"`
 	DHCP          []DHCPSubnet `json:"dhcp_subnets"`
 	DDNS          dns.DDNSPlan `json:"ddns"`
 }
@@ -93,6 +98,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		IPv4Only:      true,
 		Forwarding:    s.Gateway.Mode == model.GatewayModeManaged,
 		Rules:         policyRules(s),
+		ModuleSources: moduleSourceCIDRs(s),
 		DHCP:          dhcpSubnets(s),
 		DDNS:          dnsPlan.DDNS,
 	}
@@ -100,6 +106,24 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		plan.Interfaces = gatewayInterfaces(s)
 	}
 	return plan, nil
+}
+
+func moduleSourceCIDRs(s model.Site) []string {
+	seen := map[string]bool{}
+	for _, component := range s.PlatformComponents() {
+		if component.Module == "" {
+			continue
+		}
+		if address := net.ParseIP(component.Address).To4(); address != nil {
+			seen[address.String()+"/32"] = true
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for cidr := range seen {
+		result = append(result, cidr)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func gatewayInterfaces(s model.Site) []Interface {
@@ -169,10 +193,6 @@ func reverseZoneForNetwork(network string) string {
 }
 
 func policyRules(s model.Site) []PolicyRule {
-	networks := map[string]string{}
-	for _, zone := range s.Network.Zones {
-		networks[zone.Name] = zone.Network
-	}
 	rules := make([]PolicyRule, 0, 40)
 	add := func(name, from, to, action, protocol string, ports []string, log bool, nat bool) {
 		prefix := ""
@@ -214,7 +234,72 @@ func policyRules(s model.Site) []PolicyRule {
 		add("TRANSIT to "+destination+" deny", "TRANSIT", destination, "deny", "any", nil, true, false)
 	}
 	add("any to TRANSIT deny", "any", "TRANSIT", "deny", "any", nil, true, false)
+	for _, declaration := range s.Declarations {
+		for _, intent := range declaration.NetworkIntents {
+			rule := policyRuleForIntent(s, declaration.Module, intent)
+			if rule.Name != "" {
+				rule.Sequence = len(rules) + 1
+				rules = append(rules, rule)
+			}
+		}
+	}
 	return rules
+}
+
+func policyRuleForIntent(s model.Site, module string, intent model.NetworkIntent) PolicyRule {
+	source, sourceOK := componentReference(s, intent.Source)
+	if !sourceOK || (intent.Endpoint == "" && intent.Destination == "") {
+		return PolicyRule{}
+	}
+	rule := PolicyRule{
+		Name: "module " + module + " " + intent.Purpose,
+		From: source.Zone, To: "WAN", Action: "allow", Protocol: intent.Protocol,
+		Ports: append([]string(nil), intent.Ports...), Counter: "boetticher_module_" + safeRuleToken(module),
+		Description: "module " + module + ": " + intent.Purpose,
+		SourceCIDR:  source.Address + "/32",
+	}
+	if destination, ok := componentReference(s, intent.Destination); ok {
+		rule.To = destination.Zone
+		rule.DestinationCIDR = destination.Address + "/32"
+	} else if intent.Endpoint != "" {
+		parsed, err := url.Parse(intent.Endpoint)
+		if err != nil || parsed.Hostname() == "" {
+			return PolicyRule{}
+		}
+		rule.DestinationHost = parsed.Hostname()
+	} else {
+		return PolicyRule{}
+	}
+	if rule.To == "" || rule.From == "" {
+		return PolicyRule{}
+	}
+	return rule
+}
+
+func componentReference(s model.Site, reference string) (model.Component, bool) {
+	for _, component := range s.PlatformComponents() {
+		if component.Name == reference || component.Hostname == reference {
+			return component, true
+		}
+		for _, alias := range component.DNSAliases {
+			if alias == reference {
+				return component, true
+			}
+		}
+	}
+	return model.Component{}, false
+}
+
+func safeRuleToken(value string) string {
+	value = strings.ToLower(value)
+	return strings.NewReplacer("-", "_", ".", "_", " ", "_").Replace(value)
+}
+
+func nftPortSet(ports []string) string {
+	if len(ports) == 1 {
+		return ports[0]
+	}
+	return "{ " + strings.Join(ports, ", ") + " }"
 }
 
 func RenderNFT(plan Plan) (string, error) {
@@ -232,8 +317,51 @@ func RenderNFT(plan Plan) (string, error) {
 	for _, zone := range []string{"TRUSTED", "SERVERS", "SANDBOX", "MGMT", "TRANSIT"} {
 		fmt.Fprintf(&b, "  set %s_net { type ipv4_addr; flags interval; elements = { %s } }\n", strings.ToLower(zone), networkFor(plan, zone))
 	}
+	if sources := moduleGuestSources(plan); len(sources) > 0 {
+		fmt.Fprintf(&b, "  set module_guest_sources { type ipv4_addr; elements = { %s } }\n", strings.Join(sources, ", "))
+	}
 	b.WriteString("  chain input {\n    type filter hook input priority filter; policy drop;\n    iifname \"lo\" accept comment \"boetticher:input-loopback\"\n    ct state established,related accept comment \"boetticher:input-established\"\n    iifname \"wan0\" udp sport 67 udp dport 68 accept comment \"boetticher:input-wan-dhcp\"\n    iifname { \"trusted0\", \"servers0\", \"sandbox0\", \"mgmt0\" } udp dport 67 counter accept comment \"boetticher:input-zone-dhcp\"\n    iifname \"sandbox0\" udp dport 53 counter accept comment \"boetticher:input-sandbox-dns-udp\"\n    iifname \"sandbox0\" tcp dport 53 counter accept comment \"boetticher:input-sandbox-dns-tcp\"\n    iifname \"sandbox0\" udp dport 123 counter accept comment \"boetticher:input-sandbox-ntp\"\n    iifname \"mgmt0\" tcp dport 22 counter accept comment \"boetticher:input-mgmt-ssh\"\n  }\n")
 	b.WriteString("  chain forward {\n    type filter hook forward priority filter; policy drop;\n    ct state established,related accept comment \"boetticher:forward-established\"\n")
+	for _, rule := range plan.Rules {
+		if rule.Action != "allow" || rule.SourceCIDR == "" || (rule.DestinationCIDR == "" && rule.DestinationHost == "") || rule.From == "" || rule.To == "" {
+			continue
+		}
+		sourceIface := strings.ToLower(rule.From) + "0"
+		destinationIface := strings.ToLower(rule.To) + "0"
+		if rule.To == "WAN" {
+			destinationIface = "wan0"
+		}
+		if sourceIface == "any0" || destinationIface == "gateway0" {
+			continue
+		}
+		destination := rule.DestinationCIDR
+		if destination == "" {
+			destination = rule.DestinationHost
+		}
+		ports := ""
+		if len(rule.Ports) > 0 {
+			ports = " dport " + nftPortSet(rule.Ports)
+		}
+		protocols := []string{rule.Protocol}
+		if rule.Protocol == "tcp/udp" {
+			protocols = []string{"tcp", "udp"}
+		}
+		for _, protocol := range protocols {
+			protocolText := ""
+			switch protocol {
+			case "tcp", "udp":
+				protocolText = " " + protocol + ports
+			case "icmp":
+				protocolText = " ip protocol icmp"
+			}
+			fmt.Fprintf(&b, "    iifname \"%s\" oifname \"%s\" ip saddr %s ip daddr %s%s counter accept comment \"boetticher:module-%s\"\n", sourceIface, destinationIface, rule.SourceCIDR, destination, protocolText, safeRuleToken(rule.Name))
+		}
+	}
+	for _, rule := range plan.Rules {
+		if rule.Action == "allow" && rule.To == "WAN" && rule.SourceCIDR != "" {
+			fmt.Fprintf(&b, "    iifname \"%s\" oifname \"wan0\" ip saddr %s counter drop comment \"boetticher:module-%s-arbitrary-egress-drop\"\n", strings.ToLower(rule.From)+"0", rule.SourceCIDR, safeRuleToken(rule.Name))
+		}
+	}
 	for _, deny := range []struct{ zone, set, label string }{{"sandbox0", "trusted_net", "SANDBOX-TRUSTED-DROP"}, {"sandbox0", "servers_net", "SANDBOX-SERVERS-DROP"}, {"sandbox0", "mgmt_net", "SANDBOX-MGMT-DROP"}} {
 		fmt.Fprintf(&b, "    iifname \"%s\" ip daddr @%s counter log prefix \"boetticher %s \" drop comment \"boetticher:forward-%s\"\n", deny.zone, deny.set, deny.label, strings.ToLower(strings.ReplaceAll(deny.label, "-", "-")))
 	}
@@ -246,23 +374,56 @@ func RenderNFT(plan Plan) (string, error) {
 	// The state rule above is deliberately the first forward rule after the
 	// chain declaration. It keeps return traffic working without weakening the
 	// ordered SANDBOX deny rules below.
-	b.WriteString("    iifname \"trusted0\" ip daddr @servers_net tcp dport { 53, 443 } counter accept comment \"boetticher:forward-trusted-servers-tcp\"\n")
-	b.WriteString("    iifname \"trusted0\" ip daddr @servers_net udp dport { 53, 123 } counter accept comment \"boetticher:forward-trusted-servers-udp\"\n")
-	b.WriteString("    iifname \"trusted0\" ip daddr @mgmt_net tcp dport { 22, 443, 8006 } counter accept comment \"boetticher:forward-trusted-mgmt\"\n")
-	b.WriteString("    iifname \"servers0\" ip daddr @servers_net tcp dport 53 counter accept comment \"boetticher:forward-servers-dns-tcp\"\n")
-	b.WriteString("    iifname \"servers0\" ip daddr @servers_net udp dport { 53, 123 } counter accept comment \"boetticher:forward-servers-dns-udp\"\n")
-	b.WriteString("    iifname \"servers0\" ip daddr @mgmt_net tcp dport 10051 counter accept comment \"boetticher:forward-servers-monitoring\"\n")
-	b.WriteString("    iifname \"mgmt0\" ip daddr @servers_net tcp dport { 22, 53, 80, 443 } counter accept comment \"boetticher:forward-mgmt-servers-tcp\"\n")
-	b.WriteString("    iifname \"mgmt0\" ip daddr @servers_net udp dport { 53, 123 } counter accept comment \"boetticher:forward-mgmt-servers-udp\"\n")
-	b.WriteString("    iifname \"mgmt0\" ip daddr @trusted_net ip protocol icmp counter accept comment \"boetticher:forward-mgmt-trusted-icmp\"\n")
-	b.WriteString("    iifname \"sandbox0\" oifname \"wan0\" ip saddr @sandbox_net counter accept comment \"boetticher:forward-sandbox-internet\"\n")
-	b.WriteString("    iifname \"trusted0\" oifname \"wan0\" ip saddr @trusted_net counter accept comment \"boetticher:forward-trusted-internet\"\n")
-	b.WriteString("    iifname \"servers0\" oifname \"wan0\" ip saddr @servers_net tcp dport { 53, 80, 443, 853 } counter accept comment \"boetticher:forward-servers-internet-tcp\"\n")
-	b.WriteString("    iifname \"servers0\" oifname \"wan0\" ip saddr @servers_net udp dport { 53, 853 } counter accept comment \"boetticher:forward-servers-internet-udp\"\n")
-	b.WriteString("    iifname \"mgmt0\" oifname \"wan0\" ip saddr @mgmt_net tcp dport 443 counter accept comment \"boetticher:forward-mgmt-internet\"\n")
+	moduleSourceCondition := moduleSourceCondition(plan)
+	b.WriteString("    iifname \"trusted0\" " + moduleSourceCondition + "ip daddr @servers_net tcp dport { 53, 443 } counter accept comment \"boetticher:forward-trusted-servers-tcp\"\n")
+	b.WriteString("    iifname \"trusted0\" " + moduleSourceCondition + "ip daddr @servers_net udp dport { 53, 123 } counter accept comment \"boetticher:forward-trusted-servers-udp\"\n")
+	b.WriteString("    iifname \"trusted0\" " + moduleSourceCondition + "ip daddr @mgmt_net tcp dport { 22, 443, 8006 } counter accept comment \"boetticher:forward-trusted-mgmt\"\n")
+	b.WriteString("    iifname \"servers0\" " + moduleSourceCondition + "ip daddr @servers_net tcp dport 53 counter accept comment \"boetticher:forward-servers-dns-tcp\"\n")
+	b.WriteString("    iifname \"servers0\" " + moduleSourceCondition + "ip daddr @servers_net udp dport { 53, 123 } counter accept comment \"boetticher:forward-servers-dns-udp\"\n")
+	b.WriteString("    iifname \"servers0\" " + moduleSourceCondition + "ip daddr @mgmt_net tcp dport 10051 counter accept comment \"boetticher:forward-servers-monitoring\"\n")
+	b.WriteString("    iifname \"mgmt0\" " + moduleSourceCondition + "ip daddr @servers_net tcp dport { 22, 53, 80, 443 } counter accept comment \"boetticher:forward-mgmt-servers-tcp\"\n")
+	b.WriteString("    iifname \"mgmt0\" " + moduleSourceCondition + "ip daddr @servers_net udp dport { 53, 123 } counter accept comment \"boetticher:forward-mgmt-servers-udp\"\n")
+	b.WriteString("    iifname \"mgmt0\" " + moduleSourceCondition + "ip daddr @trusted_net ip protocol icmp counter accept comment \"boetticher:forward-mgmt-trusted-icmp\"\n")
+	b.WriteString("    iifname \"sandbox0\" " + moduleSourceCondition + "oifname \"wan0\" ip saddr @sandbox_net counter accept comment \"boetticher:forward-sandbox-internet\"\n")
+	b.WriteString("    iifname \"trusted0\" " + moduleSourceCondition + "oifname \"wan0\" ip saddr @trusted_net counter accept comment \"boetticher:forward-trusted-internet\"\n")
+	b.WriteString("    iifname \"servers0\" " + moduleSourceCondition + "oifname \"wan0\" ip saddr @servers_net tcp dport { 53, 80, 443, 853 } counter accept comment \"boetticher:forward-servers-internet-tcp\"\n")
+	b.WriteString("    iifname \"servers0\" " + moduleSourceCondition + "oifname \"wan0\" ip saddr @servers_net udp dport { 53, 853 } counter accept comment \"boetticher:forward-servers-internet-udp\"\n")
+	b.WriteString("    iifname \"mgmt0\" " + moduleSourceCondition + "oifname \"wan0\" ip saddr @mgmt_net tcp dport 443 counter accept comment \"boetticher:forward-mgmt-internet\"\n")
 	b.WriteString("  }\n  chain output { type filter hook output priority filter; policy accept; }\n}\n\n")
 	b.WriteString("table ip " + NATTable + " {\n  chain postrouting {\n    type nat hook postrouting priority srcnat; policy accept;\n    oifname \"wan0\" ip saddr " + networkFor(plan, "TRUSTED") + " masquerade comment \"boetticher:nat-trusted\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SERVERS") + " masquerade comment \"boetticher:nat-servers\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SANDBOX") + " masquerade comment \"boetticher:nat-sandbox\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "MGMT") + " masquerade comment \"boetticher:nat-mgmt\"\n  }\n}\n")
 	return b.String(), nil
+}
+
+func moduleGuestSources(plan Plan) []string {
+	seen := map[string]bool{}
+	for _, cidr := range plan.ModuleSources {
+		address := strings.TrimSuffix(cidr, "/32")
+		if net.ParseIP(address) != nil {
+			seen[address] = true
+		}
+	}
+	for _, rule := range plan.Rules {
+		if !strings.HasPrefix(rule.Name, "module ") || rule.SourceCIDR == "" {
+			continue
+		}
+		address := strings.TrimSuffix(rule.SourceCIDR, "/32")
+		if net.ParseIP(address) != nil {
+			seen[address] = true
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for address := range seen {
+		result = append(result, address)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func moduleSourceCondition(plan Plan) string {
+	if len(moduleGuestSources(plan)) == 0 {
+		return ""
+	}
+	return "ip saddr != @module_guest_sources "
 }
 
 func networkFor(plan Plan, zone string) string {

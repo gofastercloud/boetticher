@@ -115,10 +115,6 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return err
 	}
-	runtimeVariables["credential_dropins"], err = credentialDropIns(credentialBindings)
-	if err != nil {
-		return err
-	}
 	runtimeVariables["portal_source_dir"] = filepath.Join(*siteDir, "generated", "portal")
 	runtimeVariables["boetticher_appliance_artifact"] = true
 	monitoringEnabled := modules.IsEnabled(s, "monitoring")
@@ -152,6 +148,30 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			return fmt.Errorf("load encrypted Zabbix API password: %w", loadErr)
 		}
 		secretValues["monitoring-db-password"] = zabbixDBPassword
+	}
+	activeCredentialBindings := make([]deploymentCredential, 0, len(credentialBindings))
+	for _, binding := range credentialBindings {
+		if _, alreadyLoaded := secretValues[binding.SecretKey]; alreadyLoaded || binding.SecretKey == "firewall-ddns-tsig" || binding.SecretKey == "monitoring-db-password" {
+			activeCredentialBindings = append(activeCredentialBindings, binding)
+			continue
+		}
+		value, loadErr := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, binding.SecretKey)
+		if loadErr != nil {
+			if binding.SecretKey == "tailscale_auth_key" && errors.Is(loadErr, site.ErrPlatformSecretMissing) {
+				// A retained, valid Tailscale state file is the durable node
+				// identity. The runtime helper will use it without a fresh key;
+				// a missing/invalid state fails closed at service start.
+				continue
+			}
+			return fmt.Errorf("load encrypted %s credential: %w", binding.SecretKey, loadErr)
+		}
+		activeCredentialBindings = append(activeCredentialBindings, binding)
+		secretValues[binding.SecretKey] = value
+	}
+	credentialBindings = activeCredentialBindings
+	runtimeVariables["credential_dropins"], err = credentialDropIns(credentialBindings)
+	if err != nil {
+		return err
 	}
 	runtimeVariables["client_ca_pem"] = authority.IssuingCertPEM
 	inventoryPath := filepath.Join(*siteDir, "generated", "ansible", "inventory.ini")
@@ -287,6 +307,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return fmt.Errorf("read endpoint-generated portal CSR: %w", err)
 	}
 	var monitorCertificate pki.ServerCertificate
+	var litellmCertificate pki.ServerCertificate
 	if monitoringEnabled {
 		monitorCSR, readErr := os.ReadFile(filepath.Join(csrDir, "monitor.csr.pem"))
 		if readErr != nil {
@@ -297,6 +318,16 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			return fmt.Errorf("sign monitor endpoint CSR: %w", err)
 		}
 	}
+	if modules.IsEnabled(s, "litellm") {
+		litellmCSR, readErr := os.ReadFile(filepath.Join(csrDir, "litellm.csr.pem"))
+		if readErr != nil {
+			return fmt.Errorf("read endpoint-generated LiteLLM CSR: %w", readErr)
+		}
+		litellmCertificate, err = pki.SignServerCSR(authority, string(litellmCSR), "litellm", s.Network.Domain, []string{"ai." + s.Network.Domain, "lab-litellm-01." + s.Network.Domain}, time.Now().UTC())
+		if err != nil {
+			return fmt.Errorf("sign LiteLLM endpoint CSR: %w", err)
+		}
+	}
 	portalCertificate, err := pki.SignServerCSR(authority, string(portalCSR), "portal", s.Network.Domain, []string{"lab-portal-01." + s.Network.Domain}, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("sign portal endpoint CSR: %w", err)
@@ -304,6 +335,9 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	runtimeVariables["pki_bootstrap_phase"] = false
 	if monitoringEnabled {
 		runtimeVariables["monitor_server_cert_pem"] = monitorCertificate.ChainPEM
+	}
+	if modules.IsEnabled(s, "litellm") {
+		runtimeVariables["litellm_server_cert_pem"] = litellmCertificate.ChainPEM
 	}
 	runtimeVariables["portal_server_cert_pem"] = portalCertificate.ChainPEM
 	runtimeVariables["logging_client_certificates"] = loggingClientCertificates

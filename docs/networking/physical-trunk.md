@@ -21,7 +21,8 @@ The operator may explicitly select and attach a physical trunk later. A
 disconnected but otherwise clean NIC is eligible; carrier is not required.
 External mode always requires a distinct physical trunk and an explicit
 selection, even when exactly one eligible NIC remains, because the operator
-appliance must receive VLANs 10, 20, 50, and 99.
+appliance must receive VLANs 5, 10, 20, 50, and 99. VLAN 5 is the Core-owned
+TRANSIT routing/security-edge network.
 
 For later changes use:
 

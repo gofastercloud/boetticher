@@ -45,6 +45,7 @@ type GuestPlan struct {
 	Artifact   model.Artifact                      `json:"artifact,omitempty"`
 	Persistent []model.PersistentState             `json:"persistent,omitempty"`
 	Volumes    []model.PersistentVolumeDeclaration `json:"volumes,omitempty"`
+	Security   model.GuestSecurityDeclaration      `json:"security,omitempty"`
 }
 
 type GuestNIC struct {
@@ -371,6 +372,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 					guest.Artifact = declaration.Artifact
 					guest.Persistent = persistentForGuest(declaration.Persistent, component.Name)
 					guest.Volumes = volumesForGuest(declaration.Volumes, component.Name)
+					guest.Security = declaration.Security
 					for index := range guest.Volumes {
 						for _, resolved := range storagePlan.Volumes {
 							if resolved.Module == guest.Volumes[index].Module && resolved.Name == guest.Volumes[index].Name && resolved.Guest == guest.Volumes[index].Guest {
@@ -1307,6 +1309,9 @@ func qemuPersistentVolumeParam(plan Plan, volume model.PersistentVolumeDeclarati
 }
 
 func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
+	if err := validateLXCDeviceContract(guest); err != nil {
+		return err
+	}
 	kind, current, err := client.GuestConfig(ctx, plan.Node, guest.VMID)
 	if err == nil {
 		if kind != KindLXC {
@@ -1347,6 +1352,12 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		"tags":         {strings.Join(guest.Tags, ";")},
 		"net0":         {fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,ip=%s/24,gw=%s", guest.VLAN, guest.Address, gatewayFor(guest.Zone))},
 	}
+	if guest.Security.Unprivileged {
+		params.Set("unprivileged", "1")
+	}
+	for index, device := range guest.Security.Devices {
+		params.Set(fmt.Sprintf("dev%d", index), lxcDeviceParam(device))
+	}
 	bootstrapParams, err := lxcBootstrapKeyParams(plan.OperatorPublicKey)
 	if err != nil {
 		return fmt.Errorf("validate appliance bootstrap key for %s: %w", guest.Name, err)
@@ -1366,7 +1377,47 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 	if err := client.CreateLXC(ctx, plan.Node, guest.VMID, params); err != nil {
 		return fmt.Errorf("create container %s: %w", guest.Name, err)
 	}
+	// Creation is not sufficient evidence that Proxmox applied the security
+	// contract. Inspect the resulting object before ProvisionModule/Provision
+	// can issue a start request. A missing or altered device allowance is a
+	// HOLD; the newly created guest is never started or configured further.
+	kind, current, err = client.GuestConfig(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("HOLD: verify created container %s security contract: %w", guest.Name, err)
+	}
+	if kind != KindLXC {
+		return fmt.Errorf("HOLD: created guest %s was reported as %s, expected LXC", guest.Name, kind)
+	}
+	if err := validateExistingGuestIdentity(current, guest); err != nil {
+		return fmt.Errorf("HOLD: verify created container %s identity/security contract: %w", guest.Name, err)
+	}
+	if err := validateExistingGuestVolumes(current, guest); err != nil {
+		return fmt.Errorf("HOLD: verify created container %s persistent volumes: %w", guest.Name, err)
+	}
 	return nil
+}
+
+func validateLXCDeviceContract(guest GuestPlan) error {
+	if len(guest.Security.Capabilities) != 0 {
+		return fmt.Errorf("HOLD: guest %s requests unrelated Linux capabilities", guest.Name)
+	}
+	if !guest.Security.Unprivileged && len(guest.Security.Devices) != 0 {
+		return fmt.Errorf("HOLD: guest %s declares devices without an unprivileged contract", guest.Name)
+	}
+	for _, device := range guest.Security.Devices {
+		if device.Path != "/dev/net/tun" || device.Type != "c" || device.Major != 10 || device.Minor != 200 || device.Access != "rwm" {
+			return fmt.Errorf("HOLD: guest %s has unsupported device contract for %s", guest.Name, device.Path)
+		}
+	}
+	return nil
+}
+
+// lxcDeviceParam is the only Core-owned translation of the bounded TUN
+// contract into a Proxmox LXC device setting. Proxmox applies the matching
+// host character device and cgroup rule atomically with container creation;
+// no broad device wildcard or Linux capability is requested.
+func lxcDeviceParam(device model.DeviceRequirement) string {
+	return fmt.Sprintf("path=%s,mode=0666", device.Path)
 }
 
 // lxcBootstrapKeyParams is the only operator-key input accepted by appliance
@@ -1418,6 +1469,15 @@ func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) er
 		observed, _ := current[key].(string)
 		if observed != wanted {
 			return fmt.Errorf("HOLD: guest %s has persistent volume %s=%q, expected %q", expected.Name, key, observed, wanted)
+		}
+	}
+	for key := range current {
+		if !strings.HasPrefix(key, "mp") || len(key) <= len("mp") || key[2] < '0' || key[2] > '9' {
+			continue
+		}
+		index := int(key[2] - '0')
+		if index >= len(expected.Volumes) {
+			return fmt.Errorf("HOLD: guest %s has an undeclared persistent volume %s", expected.Name, key)
 		}
 	}
 	return nil
@@ -1511,6 +1571,26 @@ func validateExistingGuestIdentity(current map[string]any, expected GuestPlan) e
 			return fmt.Errorf("HOLD: guest %s has artifact identity %q, expected %q; appliance replacement is required", expected.Name, observed, wanted)
 		}
 	}
+	if expected.Security.Unprivileged {
+		if !observedTruthy(current["unprivileged"]) {
+			return fmt.Errorf("HOLD: guest %s is not unprivileged", expected.Name)
+		}
+		for index, device := range expected.Security.Devices {
+			key := fmt.Sprintf("dev%d", index)
+			observed, _ := current[key].(string)
+			if observed != lxcDeviceParam(device) {
+				return fmt.Errorf("HOLD: guest %s has %s=%q, expected exact TUN contract %q", expected.Name, key, observed, lxcDeviceParam(device))
+			}
+		}
+		for key := range current {
+			if strings.HasPrefix(key, "dev") && len(key) > len("dev") && key[3] >= '0' && key[3] <= '9' {
+				index := int(key[3] - '0')
+				if index >= len(expected.Security.Devices) {
+					return fmt.Errorf("HOLD: guest %s has an undeclared device allowance %s", expected.Name, key)
+				}
+			}
+		}
+	}
 	if expected.Owner == "boetticher/core/portal" {
 		if !hasOwnerTag(currentTags(current), model.TagCorePortal) {
 			return fmt.Errorf("HOLD: guest %s lacks canonical ownership proof %q", expected.Name, model.TagCorePortal)
@@ -1523,6 +1603,21 @@ func validateExistingGuestIdentity(current map[string]any, expected GuestPlan) e
 		}
 	}
 	return nil
+}
+
+func observedTruthy(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case float64:
+		return typed == 1
+	case int:
+		return typed == 1
+	case string:
+		return typed == "1" || strings.EqualFold(typed, "true")
+	default:
+		return false
+	}
 }
 
 func artifactDescription(artifact model.Artifact) string {

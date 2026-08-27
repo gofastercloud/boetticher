@@ -6,7 +6,7 @@ set -eu
 # image tooling is attempted.
 target=${1:-images}
 case "$target" in
-  image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|images) ;;
+  image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|images) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
@@ -55,6 +55,15 @@ powerdns_package_version=4.9.17-1pdns.trixie
 zabbix_release_url=https://repo.zabbix.com/zabbix/7.0/debian/pool/main/z/zabbix-release/zabbix-release_7.0-5+debian13_all.deb
 zabbix_release_sha256=4a926b8815cdefddc31558fe622676730a3987610f75d5af0d4024809d21dd43
 zabbix_package_version=1:7.0.30-1+debian13
+tailscale_package_version=1.76.6
+tailscale_key_url=https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg
+tailscale_key_sha256=3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39
+tailscale_keyring=/usr/share/keyrings/tailscale-archive-keyring.gpg
+litellm_version=1.74.9
+litellm_python_package_version=3.13.5-1
+litellm_python_venv_package_version=3.13.5-1
+litellm_pip_package_version=25.1.1+dfsg-1
+litellm_nginx_package_version=1.26.3-3+deb13u7
 mkdir -p "$output_root" "$work_root"
 
 provenance_path="$(dirname "$output_root")/builder-provenance.json"
@@ -376,6 +385,65 @@ build_portal() {
   package_lxc boetticher-portal
 }
 
+build_tailnet_router() {
+  printf '%s\n' 'boetticher build stage: tailnet-router'
+  rootfs=$(prepare_rootfs boetticher-tailnet-router)
+  key="$work_root/tailscale-trixie.noarmor.gpg"
+  if [ ! -f "$key" ]; then
+    curl --fail --location --silent --show-error --output "$key" "$tailscale_key_url"
+  fi
+  printf '%s  %s\n' "$tailscale_key_sha256" "$key" | sha256sum --check --status
+  install -D -m 0644 "$key" "$rootfs$tailscale_keyring"
+  printf '%s\n' "deb [signed-by=$tailscale_keyring] https://pkgs.tailscale.com/stable/debian trixie main" > "$rootfs/etc/apt/sources.list.d/tailscale.list"
+  install_packages "$rootfs" "tailscale=$tailscale_package_version"
+  installed_version=$(chroot "$rootfs" dpkg-query -W -f='${Version}' tailscale)
+  if [ "$installed_version" != "$tailscale_package_version" ]; then
+    echo "HOLD: unexpected Tailscale package version: $installed_version" >&2
+    return 2
+  fi
+  rm -f "$rootfs/etc/apt/sources.list.d/tailscale.list" "$rootfs$tailscale_keyring"
+  write_artifact_identity "$rootfs" tailnet-router
+  package_lxc boetticher-tailnet-router
+}
+
+build_litellm() {
+  printf '%s\n' 'boetticher build stage: litellm'
+  rootfs=$(prepare_rootfs boetticher-litellm)
+  install_packages "$rootfs" \
+    "nginx=$litellm_nginx_package_version" \
+    "python3=$litellm_python_package_version" \
+    "python3-venv=$litellm_python_venv_package_version" \
+    "python3-pip=$litellm_pip_package_version"
+  for package in nginx python3 python3-venv python3-pip; do
+    expected_version=$litellm_nginx_package_version
+    if [ "$package" = python3 ] || [ "$package" = python3-venv ]; then
+      expected_version=$litellm_python_package_version
+    elif [ "$package" = python3-pip ]; then
+      expected_version=$litellm_pip_package_version
+    fi
+    installed_version=$(chroot "$rootfs" dpkg-query -W -f='${Version}' "$package")
+    if [ "$installed_version" != "$expected_version" ]; then
+      echo "HOLD: unexpected $package version: $installed_version" >&2
+      return 2
+    fi
+  done
+  chroot "$rootfs" python3 -m venv /opt/litellm
+  chroot "$rootfs" useradd --system --home-dir /var/lib/litellm --create-home --shell /usr/sbin/nologin litellm
+  chroot "$rootfs" chown -R litellm:litellm /var/lib/litellm
+  rm -f "$rootfs/etc/nginx/sites-enabled/default" "$rootfs/etc/nginx/sites-available/default" "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
+  install -D -m 0644 images/litellm/runtime/requirements.lock "$rootfs/tmp/litellm-requirements.lock"
+  install -D -m 0644 images/litellm/runtime/litellm.service "$rootfs/etc/systemd/system/litellm.service"
+  chroot "$rootfs" /opt/litellm/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/litellm-requirements.lock
+  installed_version=$(chroot "$rootfs" /opt/litellm/bin/python -c 'import litellm; print(litellm.__version__)')
+  if [ "$installed_version" != "$litellm_version" ]; then
+    echo "HOLD: unexpected LiteLLM version: $installed_version" >&2
+    return 2
+  fi
+  rm -f "$rootfs/tmp/litellm-requirements.lock"
+  write_artifact_identity "$rootfs" litellm
+  package_lxc boetticher-litellm
+}
+
 build_firewall() {
   printf '%s\n' 'boetticher build stage: firewall'
   for tool in qemu-img virt-customize virt-cat sha512sum; do
@@ -452,6 +520,8 @@ case "$target" in
   image-logging) [ -f "$(artifact_for boetticher-base)" ] || build_base; build_logging ;;
   image-monitoring) [ -f "$(artifact_for boetticher-base)" ] || build_base; build_monitoring ;;
   image-portal) [ -f "$(artifact_for boetticher-base)" ] || build_base; build_portal ;;
+  image-tailnet-router) [ -f "$(artifact_for boetticher-base)" ] || build_base; build_tailnet_router ;;
+  image-litellm) [ -f "$(artifact_for boetticher-base)" ] || build_base; build_litellm ;;
   image-dns-adguard) echo "HOLD: AdGuard provider qualification is outside the default Blocky readiness tranche" >&2; exit 2 ;;
   image-firewall) build_firewall ;;
   images)
@@ -460,6 +530,8 @@ case "$target" in
     build_logging
     build_monitoring
     build_portal
+    build_tailnet_router
+    build_litellm
     build_firewall
     ;;
 esac

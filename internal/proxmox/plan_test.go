@@ -3,6 +3,7 @@ package proxmox
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -483,6 +484,20 @@ func TestExistingQEMUPersistentVolumesRequireStableIdentity(t *testing.T) {
 	}
 }
 
+func TestExistingLXCPersistentVolumesRejectUndeclaredMountpoints(t *testing.T) {
+	guest := GuestPlan{
+		Name:    "lab-tailnet-01",
+		Volumes: []model.PersistentVolumeDeclaration{{Storage: modelStorageIDForTest, SizeGiB: 4, MountPath: "/var/lib/tailscale", Placement: model.StorageDefault, Backup: true}},
+	}
+	current := map[string]any{
+		"mp0": "boetticher-thin:4,mp=/var/lib/tailscale,backup=1",
+		"mp1": "boetticher-thin:1,mp=/unexpected,backup=1",
+	}
+	if err := validateExistingGuestVolumes(current, guest); err == nil || !strings.Contains(err.Error(), "undeclared persistent volume") {
+		t.Fatalf("undeclared LXC mountpoint was accepted: %v", err)
+	}
+}
+
 const modelStorageIDForTest = "boetticher-thin"
 
 func TestEnsureArtifactInStorageVerifiesPostUploadChecksum(t *testing.T) {
@@ -611,6 +626,124 @@ func TestPlatformGuestPlanCarriesTagsForBackupAndVisibility(t *testing.T) {
 		if guest.Owner != "" && (guest.Artifact.DefinitionSHA256 == "" || len(guest.Persistent) == 0) {
 			t.Fatalf("module guest lacks artifact or persistent-state contract: %#v", guest)
 		}
+	}
+}
+
+func TestTailnetRouterPlanCarriesUnprivilegedExactTUNContract(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	enabled := true
+	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &enabled}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, guest := range plan.Guests {
+		if guest.Name != "lab-tailnet-01" {
+			continue
+		}
+		if guest.VMID != 200 || guest.Address != "10.10.5.10" || guest.VLAN != model.TransitVLAN || !guest.Security.Unprivileged || len(guest.Security.Devices) != 1 {
+			t.Fatalf("tailnet guest identity/security = %#v", guest)
+		}
+		device := guest.Security.Devices[0]
+		if device.Path != "/dev/net/tun" || device.Type != "c" || device.Major != 10 || device.Minor != 200 || device.Access != "rwm" {
+			t.Fatalf("tailnet TUN contract = %#v", device)
+		}
+		if got := lxcDeviceParam(device); got != "path=/dev/net/tun,mode=0666" {
+			t.Fatalf("Proxmox TUN parameter = %q", got)
+		}
+		return
+	}
+	t.Fatal("tailnet guest is missing")
+}
+
+func TestUnsupportedTUNContractHoldsBeforeAnyProxmoxMutation(t *testing.T) {
+	guest := GuestPlan{Name: "lab-tailnet-01", Security: model.GuestSecurityDeclaration{Unprivileged: true, Devices: []model.DeviceRequirement{{Path: "/dev/net/tun", Type: "c", Major: 10, Minor: 201, Access: "rwm"}}}}
+	if err := ensureLXC(context.Background(), nil, Plan{}, guest); err == nil || !strings.Contains(err.Error(), "HOLD") {
+		t.Fatalf("unsupported TUN contract was not held before provider access: %v", err)
+	}
+}
+
+func TestCreatedLXCIsNotStartedWhenProxmoxDropsTUNContract(t *testing.T) {
+	artifactBytes := []byte("qualified tailnet-router artifact")
+	artifactPath := filepath.Join(t.TempDir(), "tailnet-router.tar.zst")
+	if err := os.WriteFile(artifactPath, artifactBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	contentSum := sha256.Sum256(artifactBytes)
+	artifact := model.Artifact{
+		Name:             "boetticher-tailnet-router",
+		Version:          "1.0.0",
+		Architecture:     "amd64",
+		Kind:             "lxc",
+		DefinitionSHA256: strings.Repeat("a", 64),
+		ContentSHA256:    hex.EncodeToString(contentSum[:]),
+	}
+	guest := GuestPlan{
+		VMID:     200,
+		Name:     "lab-tailnet-01",
+		Hostname: "lab-tailnet-01",
+		Kind:     KindLXC,
+		Owner:    "boetticher/module/tailnet-router",
+		Tags:     []string{"boetticher", "managed", "module", "module-tailnet-router", "boetticher-module-tailnet-router", "backup"},
+		Artifact: artifact,
+		Security: model.GuestSecurityDeclaration{Unprivileged: true, Devices: []model.DeviceRequirement{{Path: "/dev/net/tun", Type: "c", Major: 10, Minor: 200, Access: "rwm"}}},
+	}
+	plan := Plan{Node: "node", Storage: "local", Guests: []GuestPlan{guest}, ArtifactFiles: map[string]string{artifactKey(artifact): artifactPath}}
+	var storageLookups, configLookups int
+	started := false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/200/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/200/config":
+			configLookups++
+			if configLookups == 1 {
+				return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+			}
+			return response([]byte(`{"data":{"name":"lab-tailnet-01","hostname":"lab-tailnet-01","description":"` + artifactDescription(artifact) + `","unprivileged":1,"tags":"boetticher;managed;module;module-tailnet-router;boetticher-module-tailnet-router;backup"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+			storageLookups++
+			if storageLookups == 1 {
+				return response([]byte(`{"data":[]}`))
+			}
+			return response([]byte(`{"data":[{"volid":"local:vztmpl/boetticher-tailnet-router-1.0.0-amd64.tar.zst","filename":"boetticher-tailnet-router-1.0.0-amd64.tar.zst","checksum":"` + artifact.ContentSHA256 + `"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
+			_, _ = io.Copy(io.Discard, r.Body)
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc":
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/200/status/start":
+			started = true
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected LXC security verification request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err := ProvisionModule(context.Background(), client, plan, "tailnet-router")
+	if err == nil || !strings.Contains(err.Error(), "HOLD") {
+		t.Fatalf("created LXC without exact TUN contract was accepted: %v", err)
+	}
+	if started {
+		t.Fatal("LXC start was requested after TUN contract verification failed")
+	}
+}
+
+func TestExistingTailnetGuestMustProveUnprivilegedTUNConfiguration(t *testing.T) {
+	guest := GuestPlan{Name: "lab-tailnet-01", Hostname: "lab-tailnet-01", Owner: "boetticher/module/tailnet-router", Security: model.GuestSecurityDeclaration{Unprivileged: true, Devices: []model.DeviceRequirement{{Path: "/dev/net/tun", Type: "c", Major: 10, Minor: 200, Access: "rwm"}}}}
+	if err := validateExistingGuestIdentity(map[string]any{"name": guest.Name, "hostname": guest.Name, "unprivileged": float64(1), "dev0": "path=/dev/net/tun,mode=0666", "tags": "boetticher;managed"}, guest); err == nil || !strings.Contains(err.Error(), "canonical ownership proof") {
+		t.Fatalf("existing guest without full ownership proof was accepted: %v", err)
+	}
+	if err := validateExistingGuestIdentity(map[string]any{"name": guest.Name, "hostname": guest.Name, "unprivileged": float64(0), "dev0": "path=/dev/net/tun,mode=0666", "tags": "boetticher-module-tailnet-router"}, guest); err == nil || !strings.Contains(err.Error(), "not unprivileged") {
+		t.Fatalf("privileged existing guest was not held: %v", err)
+	}
+	if err := validateExistingGuestIdentity(map[string]any{"name": guest.Name, "hostname": guest.Name, "unprivileged": float64(1), "dev0": "path=/dev/net/tun,mode=0666", "dev1": "path=/dev/kvm,mode=0666", "tags": "boetticher;managed;boetticher-module-tailnet-router"}, guest); err == nil || !strings.Contains(err.Error(), "undeclared device") {
+		t.Fatalf("existing guest with an extra device allowance was accepted: %v", err)
 	}
 }
 

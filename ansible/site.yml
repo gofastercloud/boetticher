@@ -18,3 +18,7 @@
       when: inventory_hostname in groups.get('firewall', [])
     - role: portal
       when: inventory_hostname == 'lab-portal-01'
+    - role: tailnet-router
+      when: inventory_hostname in groups.get('tailnet-router', [])
+    - role: litellm
+      when: inventory_hostname in groups.get('litellm', [])

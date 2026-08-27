@@ -23,6 +23,7 @@ boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] 
 boetticher dhcp status|leases [--site DIR] [--live] [--json]
 boetticher storage status|initialize [--site DIR] [--live] [--confirmed]
 boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
+boetticher modules list|MODULE show|plan|enable|disable|status|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher config validate|show|schema [--site DIR]
 boetticher portal build [--site DIR] [--output DIR] [--docs DIR]
 ```
@@ -314,6 +315,22 @@ Options: --dry-run shows the resolved effect; --confirm authorizes configuration
 Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive.
 
 Examples: `boetticher module list --site ./my-boetticher`; `boetticher module disable monitoring --confirm --site ./my-boetticher`
+
+Related commands: config validate, deploy, doctor
+
+### modules
+
+Purpose: Inspect or change first-party module intent through the shared registry and deploy engine.
+
+Usage: `boetticher modules list|MODULE show|plan|enable|disable|status|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+
+Arguments: MODULE is a registered first-party module. list retains the generic module inventory; lifecycle commands are resolved by the same generic implementation.
+
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; purge requires --confirm and removes retained module resources only after exact ownership proof.
+
+Safety: Both tailnet-router and litellm are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership.
+
+Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules tailnet-router plan --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
@@ -652,6 +669,22 @@ Options: --dry-run shows the resolved effect; --confirm authorizes configuration
 Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive.
 
 Examples: `boetticher module list --site ./my-boetticher`; `boetticher module disable monitoring --confirm --site ./my-boetticher`
+
+Related commands: config validate, deploy, doctor
+
+### modules list
+
+Purpose: Inspect or change first-party module intent through the shared registry and deploy engine.
+
+Usage: `boetticher modules list|MODULE show|plan|enable|disable|status|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+
+Arguments: MODULE is a registered first-party module. list retains the generic module inventory; lifecycle commands are resolved by the same generic implementation.
+
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; purge requires --confirm and removes retained module resources only after exact ownership proof.
+
+Safety: Both tailnet-router and litellm are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership.
+
+Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules tailnet-router plan --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
