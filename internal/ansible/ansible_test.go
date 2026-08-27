@@ -259,6 +259,26 @@ func TestDNSRoleMakesPowerDNSConfigReadableByServiceUser(t *testing.T) {
 	}
 }
 
+func TestMonitoringRoleUsesRunuserForDatabaseServiceUsers(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Contains(text, "become_user: postgres") || strings.Contains(text, "become_user: zabbix") {
+		t.Fatal("monitoring role uses Ansible's unprivileged secondary-become path")
+	}
+	for _, expected := range []string{
+		"runuser -u postgres -- psql --dbname postgres",
+		"runuser -u zabbix -- sh -c",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("monitoring role missing explicit service-user execution %q", expected)
+		}
+	}
+}
+
 func TestFirewallRoleCreatesNftablesConfigurationDirectory(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
 	data, err := os.ReadFile(path)

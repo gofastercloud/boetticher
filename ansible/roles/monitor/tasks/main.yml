@@ -124,8 +124,7 @@
   when: inventory_hostname == 'lab-monitor-01'
 
 - name: Create the dedicated Zabbix database role and database
-  become_user: postgres
-  ansible.builtin.command: psql --dbname postgres --set ON_ERROR_STOP=1
+  ansible.builtin.command: runuser -u postgres -- psql --dbname postgres --set ON_ERROR_STOP=1
   args:
     stdin: |
       DO $do$
@@ -150,10 +149,10 @@
   when: inventory_hostname == 'lab-monitor-01'
 
 - name: Load the packaged Zabbix PostgreSQL schema
-  become_user: zabbix
   ansible.builtin.shell: >-
-    zcat /usr/share/zabbix-sql-scripts/postgresql/server.sql.gz
-    | psql --dbname zabbix --username zabbix
+    runuser -u zabbix -- sh -c
+    'zcat /usr/share/zabbix-sql-scripts/postgresql/server.sql.gz
+    | psql --dbname zabbix --username zabbix'
   args:
     creates: /var/lib/zabbix/.boetticher-schema-loaded
   when:
