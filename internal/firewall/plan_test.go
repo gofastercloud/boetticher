@@ -58,8 +58,8 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"10.10.5.10/32 ip daddr 10.10.20.60/32 tcp dport 443",
-		"10.10.5.10/32 ip daddr 10.10.20.30/32 tcp dport 443",
-		"10.10.5.10/32 ip daddr 10.10.20.20/32 tcp dport 443",
+		"10.10.5.10/32 ip daddr 10.10.10.30/32 tcp dport 443",
+		"10.10.5.10/32 ip daddr 10.10.10.20/32 tcp dport 443",
 		"10.10.20.60/32 ip daddr openrouter.ai tcp dport 443",
 		"set module_guest_sources { type ipv4_addr; elements = {",
 		"10.10.20.60, 10.10.5.10",

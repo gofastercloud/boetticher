@@ -184,7 +184,7 @@ func (r Registry) Validate() error {
 
 func supportedPlacementZoneType(value model.ZoneType) bool {
 	switch value {
-	case model.ZoneTypeTrusted, model.ZoneTypeServers, model.ZoneTypeSandbox, model.ZoneTypeManagement, model.ZoneTypeTransit:
+	case model.ZoneTypeInfrastructure, model.ZoneTypeTrusted, model.ZoneTypeServers, model.ZoneTypeSandbox, model.ZoneTypeManagement, model.ZoneTypeTransit:
 		return true
 	default:
 		return false
