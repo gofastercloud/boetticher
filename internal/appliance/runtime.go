@@ -75,7 +75,7 @@ func InstallRuntimeConfig(ctx context.Context, runner StdinRunner, address, user
 	if len(config) == 0 || bytes.Contains(config, []byte("private_key:")) || bytes.Contains(config, []byte("secret:")) {
 		return fmt.Errorf("runtime config is empty or contains a forbidden secret field")
 	}
-	command := "sudo -n /usr/lib/boetticher/install-runtime-state module-config"
+	command := "/usr/lib/boetticher/install-runtime-state module-config"
 	if _, err := runner.RunWithStdin(ctx, address, user, command, bytes.NewReader(config)); err != nil {
 		return fmt.Errorf("install runtime config: %w", err)
 	}
@@ -97,7 +97,7 @@ func InstallArtifactIdentity(ctx context.Context, runner StdinRunner, address, u
 		return fmt.Errorf("marshal artifact identity: %w", err)
 	}
 	data = append(data, '\n')
-	command := "sudo -n /usr/lib/boetticher/install-runtime-state artifact-identity"
+	command := "/usr/lib/boetticher/install-runtime-state artifact-identity"
 	if _, err := runner.RunWithStdin(ctx, address, user, command, bytes.NewReader(data)); err != nil {
 		return fmt.Errorf("install artifact identity: %w", err)
 	}

@@ -23,9 +23,12 @@ import (
 )
 
 type Client struct {
-	BaseURL string
-	Token   string
-	HTTP    *http.Client
+	BaseURL       string
+	Token         string
+	HTTP          *http.Client
+	snippetRunner StdinCommandRunner
+	snippetAddr   string
+	snippetUser   string
 }
 
 type Config struct {
@@ -36,6 +39,11 @@ type Config struct {
 	CAFile      string
 	Insecure    bool
 	Timeout     time.Duration
+	// SnippetRunner is the authenticated Proxmox host path used because PVE
+	// 9.2's storage upload API does not accept snippets content.
+	SnippetRunner  StdinCommandRunner
+	SnippetAddress string
+	SnippetUser    string
 }
 
 type APIError struct {
@@ -80,7 +88,11 @@ func NewClient(config Config) (*Client, error) {
 	if config.User != "" && config.TokenID != "" {
 		token = "PVEAPIToken=" + config.User + "!" + config.TokenID + "=" + config.TokenSecret
 	}
-	return &Client{BaseURL: strings.TrimRight(config.BaseURL, "/"), Token: token, HTTP: &http.Client{Transport: transport, Timeout: timeout}}, nil
+	return &Client{
+		BaseURL: strings.TrimRight(config.BaseURL, "/"), Token: token,
+		HTTP:          &http.Client{Transport: transport, Timeout: timeout},
+		snippetRunner: config.SnippetRunner, snippetAddr: config.SnippetAddress, snippetUser: config.SnippetUser,
+	}, nil
 }
 
 func (c *Client) Get(ctx context.Context, endpoint string, query url.Values, out any) error {
@@ -113,6 +125,19 @@ func (c *Client) DestroyQEMU(ctx context.Context, node string, vmid int) error {
 	}, nil, nil)
 }
 
+// DestroyLXC removes an LXC guest and asks Proxmox to purge its configuration
+// and attached unreferenced volumes. Callers must prove the exact guest and
+// volume ownership before invoking this destructive operation.
+func (c *Client) DestroyLXC(ctx context.Context, node string, vmid int) error {
+	if node == "" || vmid <= 0 {
+		return errors.New("Proxmox node and positive VMID are required")
+	}
+	return c.request(ctx, http.MethodDelete, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid)), url.Values{
+		"purge":                      {"1"},
+		"destroy-unreferenced-disks": {"1"},
+	}, nil, nil)
+}
+
 func (c *Client) Version(ctx context.Context) (string, error) {
 	var result struct {
 		Version string `json:"version"`
@@ -125,6 +150,30 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 		return result.Release, nil
 	}
 	return result.Version, nil
+}
+
+// CheckTLS verifies the configured HTTPS transport before bootstrap creates
+// credentials. The API may require authentication for the probe, so any HTTP
+// response proves the TLS handshake completed; transport and certificate
+// failures remain errors.
+func (c *Client) CheckTLS(ctx context.Context) error {
+	if c == nil || c.HTTP == nil {
+		return errors.New("Proxmox client is required")
+	}
+	base, err := url.Parse(c.BaseURL)
+	if err != nil {
+		return err
+	}
+	base.Path = path.Join(base.Path, "/version")
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, base.String(), nil)
+	if err != nil {
+		return err
+	}
+	response, err := c.HTTP.Do(request)
+	if err != nil {
+		return err
+	}
+	return response.Body.Close()
 }
 
 func (c *Client) Nodes(ctx context.Context) ([]Node, error) {
@@ -252,11 +301,13 @@ func (c *Client) ImportDisk(ctx context.Context, node string, vmid int, source, 
 		return "", errors.New("node, positive VMID, source, and storage are required")
 	}
 	var upid string
-	form := url.Values{"source": {source}, "storage": {storage}}
+	// PVE 9.2 exposes disk import through the QEMU config endpoint. The
+	// legacy /importdisk route is a CLI-only operation on that release.
+	form := url.Values{"scsi0": {fmt.Sprintf("%s:0,import-from=%s", storage, source)}}
 	if format != "" {
-		form.Set("format", format)
+		form.Set("scsi0", fmt.Sprintf("%s:0,import-from=%s,format=%s", storage, source, format))
 	}
-	if err := c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "importdisk"), form, &upid); err != nil {
+	if err := c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "config"), form, &upid); err != nil {
 		return "", fmt.Errorf("import gateway disk: %w", err)
 	}
 	if upid == "" {
@@ -302,6 +353,17 @@ func (c *Client) StartVM(ctx context.Context, node string, vmid int) error {
 	return nil
 }
 
+func (c *Client) EnsureVMRunning(ctx context.Context, node string, vmid int) error {
+	status, err := c.QEMUStatus(ctx, node, vmid)
+	if err != nil {
+		return err
+	}
+	if status == "running" {
+		return nil
+	}
+	return c.StartVM(ctx, node, vmid)
+}
+
 func (c *Client) StopVM(ctx context.Context, node string, vmid int) error {
 	var upid string
 	if err := c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "stop"), nil, &upid); err != nil {
@@ -335,11 +397,74 @@ func (c *Client) SetLXCConfig(ctx context.Context, node string, vmid int, params
 	if vmid <= 0 || node == "" {
 		return errors.New("Proxmox node and positive VMID are required")
 	}
-	return c.Post(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "config"), params, nil)
+	return c.Put(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "config"), params, nil)
+}
+
+func (c *Client) LXCStatus(ctx context.Context, node string, vmid int) (string, error) {
+	if c == nil || node == "" || vmid <= 0 {
+		return "", errors.New("Proxmox client, node, and positive VMID are required")
+	}
+	var status struct {
+		Status string `json:"status"`
+	}
+	if err := c.Get(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "status", "current"), nil, &status); err != nil {
+		return "", err
+	}
+	if status.Status == "" {
+		return "", errors.New("Proxmox LXC status response did not contain a status")
+	}
+	return status.Status, nil
+}
+
+func (c *Client) StopLXC(ctx context.Context, node string, vmid int) error {
+	if c == nil || node == "" || vmid <= 0 {
+		return errors.New("Proxmox client, node, and positive VMID are required")
+	}
+	var upid string
+	if err := c.Post(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "status", "stop"), nil, &upid); err != nil {
+		return err
+	}
+	if upid != "" {
+		return c.WaitTask(ctx, node, upid)
+	}
+	return nil
+}
+
+// destroyLXCForReplacement removes only the exact owned container configuration and rootfs.
+// Detached mount-point volumes remain available for the replacement create.
+func (c *Client) destroyLXCForReplacement(ctx context.Context, node string, vmid int) error {
+	if c == nil || node == "" || vmid <= 0 {
+		return errors.New("Proxmox client, node, and positive VMID are required")
+	}
+	var upid string
+	if err := c.request(ctx, http.MethodDelete, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid)), url.Values{
+		"purge":                      {"0"},
+		"destroy-unreferenced-disks": {"0"},
+	}, nil, &upid); err != nil {
+		return err
+	}
+	if upid != "" {
+		return c.WaitTask(ctx, node, upid)
+	}
+	return nil
 }
 
 func (c *Client) StartLXC(ctx context.Context, node string, vmid int) error {
 	return c.Post(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "status", "start"), nil, nil)
+}
+
+func (c *Client) EnsureLXCRunning(ctx context.Context, node string, vmid int) error {
+	if c == nil || node == "" || vmid <= 0 {
+		return errors.New("Proxmox client, node, and positive VMID are required")
+	}
+	status, err := c.LXCStatus(ctx, node, vmid)
+	if err != nil {
+		return fmt.Errorf("read LXC guest status: %w", err)
+	}
+	if status == "running" {
+		return nil
+	}
+	return c.StartLXC(ctx, node, vmid)
 }
 
 func (c *Client) QEMUConfig(ctx context.Context, node string, vmid int, out any) error {
@@ -394,11 +519,13 @@ func (c *Client) QEMUAgentNetworkInterfaces(ctx context.Context, node string, vm
 	if node == "" || vmid <= 0 {
 		return nil, errors.New("node and positive VMID are required")
 	}
-	var interfaces []GuestAgentInterface
-	if err := c.Get(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "agent", "network-get-interfaces"), nil, &interfaces); err != nil {
+	var response struct {
+		Result []GuestAgentInterface `json:"result"`
+	}
+	if err := c.Get(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "agent", "network-get-interfaces"), nil, &response); err != nil {
 		return nil, fmt.Errorf("read QEMU guest-agent network interfaces: %w", err)
 	}
-	return interfaces, nil
+	return response.Result, nil
 }
 
 func (c *Client) LXCConfig(ctx context.Context, node string, vmid int, out any) error {
@@ -467,51 +594,43 @@ func (c *Client) UploadStorageFile(ctx context.Context, node, storage, content, 
 		return fmt.Errorf("open qualified artifact %s: %w", source, err)
 	}
 	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect qualified artifact %s: %w", source, err)
+	}
+	prefix, suffix, contentType, err := artifactMultipartParts(content, checksum, filename)
+	if err != nil {
+		return err
+	}
 	base, err := url.Parse(c.BaseURL)
 	if err != nil {
 		return err
 	}
 	base.Path = path.Join(base.Path, "/nodes", node, "storage", storage, "upload")
 	pipeReader, pipeWriter := io.Pipe()
-	multipartWriter := multipart.NewWriter(pipeWriter)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, base.String(), pipeReader)
 	if err != nil {
 		_ = pipeReader.Close()
 		return err
 	}
-	request.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+	request.Header.Set("Content-Type", contentType)
+	request.ContentLength = int64(len(prefix)) + info.Size() + int64(len(suffix))
 	if c.Token != "" {
 		request.Header.Set("Authorization", c.Token)
 	}
 	streamErr := make(chan error, 1)
 	go func() {
-		if err := multipartWriter.WriteField("content", content); err != nil {
+		if _, err := pipeWriter.Write(prefix); err != nil {
 			_ = pipeWriter.CloseWithError(err)
 			streamErr <- err
 			return
 		}
-		if err := multipartWriter.WriteField("checksum", checksum); err != nil {
-			_ = pipeWriter.CloseWithError(err)
-			streamErr <- err
-			return
-		}
-		if err := multipartWriter.WriteField("checksum-algorithm", "sha256"); err != nil {
-			_ = pipeWriter.CloseWithError(err)
-			streamErr <- err
-			return
-		}
-		part, err := multipartWriter.CreateFormFile("filename", filename)
-		if err != nil {
-			_ = pipeWriter.CloseWithError(err)
-			streamErr <- err
-			return
-		}
-		if _, err := io.Copy(part, file); err != nil {
+		if _, err := io.Copy(pipeWriter, file); err != nil {
 			_ = pipeWriter.CloseWithError(fmt.Errorf("read qualified artifact %s: %w", source, err))
 			streamErr <- err
 			return
 		}
-		if err := multipartWriter.Close(); err != nil {
+		if _, err := pipeWriter.Write(suffix); err != nil {
 			_ = pipeWriter.CloseWithError(err)
 			streamErr <- err
 			return
@@ -537,7 +656,46 @@ func (c *Client) UploadStorageFile(ctx context.Context, node, storage, content, 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return &APIError{StatusCode: response.StatusCode, Status: response.Status, Message: strings.TrimSpace(string(data))}
 	}
+	var result struct {
+		UPID string `json:"data"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return fmt.Errorf("decode Proxmox upload response: %w", err)
+	}
+	if result.UPID != "" {
+		if err := c.WaitTask(ctx, node, result.UPID); err != nil {
+			return fmt.Errorf("wait for Proxmox artifact upload: %w", err)
+		}
+	}
 	return nil
+}
+
+// artifactMultipartParts builds the fixed multipart framing separately from
+// the artifact bytes. This keeps uploads streamed while allowing the request
+// to send Content-Length, which pveproxy requires for file uploads.
+func artifactMultipartParts(content, checksum, filename string) ([]byte, []byte, string, error) {
+	var body bytes.Buffer
+	multipartWriter := multipart.NewWriter(&body)
+	if err := multipartWriter.WriteField("content", content); err != nil {
+		return nil, nil, "", err
+	}
+	if err := multipartWriter.WriteField("checksum-algorithm", "sha256"); err != nil {
+		return nil, nil, "", err
+	}
+	if err := multipartWriter.WriteField("checksum", checksum); err != nil {
+		return nil, nil, "", err
+	}
+	if _, err := multipartWriter.CreateFormFile("filename", filename); err != nil {
+		return nil, nil, "", err
+	}
+	prefixLength := body.Len()
+	if err := multipartWriter.Close(); err != nil {
+		return nil, nil, "", err
+	}
+	full := body.Bytes()
+	prefix := append([]byte(nil), full[:prefixLength]...)
+	suffix := append([]byte(nil), full[prefixLength:]...)
+	return prefix, suffix, multipartWriter.FormDataContentType(), nil
 }
 
 // UploadStorageText uploads deterministic non-secret cloud-init content to a
@@ -548,6 +706,12 @@ func (c *Client) UploadStorageText(ctx context.Context, node, storage, content, 
 	}
 	if strings.ContainsAny(filename, "/\\\r\n") {
 		return errors.New("uploaded filename must be a plain filename")
+	}
+	if content == "snippets" && c.snippetRunner != nil {
+		if storage != "local" || c.snippetAddr == "" || c.snippetUser == "" {
+			return errors.New("SSH snippet upload requires the local storage and bootstrap host identity")
+		}
+		return uploadSnippetViaSSH(ctx, c.snippetRunner, c.snippetAddr, c.snippetUser, filename, value)
 	}
 	body := &bytes.Buffer{}
 	multipartWriter := multipart.NewWriter(body)
@@ -592,6 +756,17 @@ func (c *Client) UploadStorageText(ctx context.Context, node, storage, content, 
 	return nil
 }
 
+func uploadSnippetViaSSH(ctx context.Context, runner StdinCommandRunner, address, user, filename, value string) error {
+	if runner == nil || address == "" || user == "" || filename == "" {
+		return errors.New("SSH snippet upload identity is incomplete")
+	}
+	command := privilegedCommand(user, "install -D -m 0644 /dev/stdin "+shellQuote("/var/lib/vz/snippets/"+filename))
+	if _, err := runner.RunWithStdin(ctx, address, user, command, strings.NewReader(value)); err != nil {
+		return fmt.Errorf("upload Proxmox snippet over SSH: %w", err)
+	}
+	return nil
+}
+
 // DeleteStorageSnippet deletes only a plain, generated snippet filename. It
 // deliberately does not expose arbitrary storage-content deletion to module
 // code or callers handling untrusted paths.
@@ -618,7 +793,7 @@ func (c *Client) DownloadURL(ctx context.Context, node, storage, filename, image
 	}
 	var upid string
 	if err := c.Post(ctx, path.Join("/nodes", node, "storage", storage, "download-url"), url.Values{
-		"content":            {"iso"},
+		"content":            {"import"},
 		"filename":           {filename},
 		"url":                {imageURL},
 		"checksum":           {checksum},
@@ -647,7 +822,7 @@ func (c *Client) WaitTask(ctx context.Context, node, upid string) error {
 			return fmt.Errorf("inspect Proxmox task: %w", err)
 		}
 		if status.Status == "stopped" {
-			if status.ExitStatus != "OK" && status.ExitStatus != "" {
+			if status.ExitStatus != "OK" && status.ExitStatus != "" && !strings.HasPrefix(status.ExitStatus, "WARNINGS:") {
 				return fmt.Errorf("Proxmox task failed: %s", status.ExitStatus)
 			}
 			return nil
@@ -661,7 +836,7 @@ func (c *Client) WaitTask(ctx context.Context, node, upid string) error {
 }
 
 func (c *Client) EnsureCloudImage(ctx context.Context, node, storage, filename, imageURL, checksum string) (string, error) {
-	contents, err := c.StorageContent(ctx, node, storage, "iso")
+	contents, err := c.StorageContent(ctx, node, storage, "import")
 	if err != nil {
 		return "", err
 	}
@@ -674,7 +849,10 @@ func (c *Client) EnsureCloudImage(ctx context.Context, node, storage, filename, 
 			observed = content.CSum
 		}
 		if observed == "" {
-			return "", fmt.Errorf("existing gateway image %q has no checksum evidence", filename)
+			// PVE import listings omit checksums. Re-download the exact pinned
+			// input so its task-level checksum verification establishes the
+			// bytes again after a partial bootstrap attempt.
+			break
 		}
 		if !strings.EqualFold(observed, checksum) {
 			return "", fmt.Errorf("existing gateway image %q has a different checksum", filename)
@@ -688,7 +866,7 @@ func (c *Client) EnsureCloudImage(ctx context.Context, node, storage, filename, 
 	if err := c.WaitTask(ctx, node, upid); err != nil {
 		return "", err
 	}
-	contents, err = c.StorageContent(ctx, node, storage, "iso")
+	contents, err = c.StorageContent(ctx, node, storage, "import")
 	if err != nil {
 		return "", err
 	}
@@ -698,7 +876,15 @@ func (c *Client) EnsureCloudImage(ctx context.Context, node, storage, filename, 
 			if observed == "" {
 				observed = content.CSum
 			}
-			if observed == "" || !strings.EqualFold(observed, checksum) {
+			// PVE validates the requested checksum inside the completed
+			// download task but does not expose it for import content in the
+			// storage listing. A newly downloaded matching entry is therefore
+			// qualified by the successful task; pre-existing entries still
+			// require listing checksum evidence above.
+			if observed == "" {
+				return content.VolID, nil
+			}
+			if !strings.EqualFold(observed, checksum) {
 				return "", fmt.Errorf("downloaded gateway image %q has no matching checksum evidence", filename)
 			}
 			return content.VolID, nil
@@ -739,7 +925,7 @@ func (c *Client) EnsureDirectoryStorageContent(ctx context.Context, storageID, s
 		Path    string `json:"path"`
 		Content string `json:"content"`
 	}
-	if err := c.Get(ctx, "/cluster/storage", nil, &storages); err != nil {
+	if err := c.Get(ctx, "/storage", nil, &storages); err != nil {
 		return fmt.Errorf("list Proxmox storage: %w", err)
 	}
 	for _, storage := range storages {
@@ -763,13 +949,13 @@ func (c *Client) EnsureDirectoryStorageContent(ctx context.Context, storageID, s
 				values = append(values, value)
 			}
 			sort.Strings(values)
-			if err := c.Put(ctx, path.Join("/cluster/storage", storageID), url.Values{"content": {strings.Join(values, ",")}}, nil); err != nil {
+			if err := c.Put(ctx, path.Join("/storage", storageID), url.Values{"content": {strings.Join(values, ",")}}, nil); err != nil {
 				return fmt.Errorf("extend Proxmox storage %q content: %w", storageID, err)
 			}
 		}
 		return nil
 	}
-	if err := c.Post(ctx, "/cluster/storage", url.Values{
+	if err := c.Post(ctx, "/storage", url.Values{
 		"storage": {storageID},
 		"type":    {"dir"},
 		"path":    {storagePath},
@@ -807,7 +993,7 @@ func (c *Client) EnsureLVMThinStorage(ctx context.Context, storageID, volumeGrou
 		ThinPool    string `json:"thinpool"`
 		Content     string `json:"content"`
 	}
-	if err := c.Get(ctx, "/cluster/storage", nil, &storages); err != nil {
+	if err := c.Get(ctx, "/storage", nil, &storages); err != nil {
 		return fmt.Errorf("list Proxmox storage: %w", err)
 	}
 	for _, storage := range storages {
@@ -819,7 +1005,7 @@ func (c *Client) EnsureLVMThinStorage(ctx context.Context, storageID, volumeGrou
 		}
 		return nil
 	}
-	if err := c.Post(ctx, "/cluster/storage", url.Values{
+	if err := c.Post(ctx, "/storage", url.Values{
 		"storage": {storageID}, "type": {"lvmthin"}, "vgname": {volumeGroup}, "thinpool": {thinPool}, "content": {"images,rootdir"},
 	}, nil); err != nil {
 		return fmt.Errorf("create Proxmox guest storage %q: %w", storageID, err)
@@ -835,9 +1021,38 @@ func (c *Client) UpdateNodeNetwork(ctx context.Context, node, iface string, para
 	return c.Put(ctx, path.Join("/nodes", node, "network", iface), params, nil)
 }
 
+// ReloadNodeNetwork promotes and applies the pending Proxmox network
+// configuration. Network create/update calls write interfaces.new on PVE 9;
+// the reload endpoint is required before host-side fragments can reference a
+// newly-created interface.
+func (c *Client) ReloadNodeNetwork(ctx context.Context, node string) error {
+	var upid string
+	if err := c.Put(ctx, path.Join("/nodes", node, "network"), nil, &upid); err != nil {
+		return fmt.Errorf("reload Proxmox node network: %w", err)
+	}
+	if upid != "" {
+		if err := c.WaitTask(ctx, node, upid); err != nil {
+			return fmt.Errorf("wait for Proxmox network reload: %w", err)
+		}
+	}
+	return nil
+}
+
 func IsNotFound(err error) bool {
 	var apiErr *APIError
-	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	if apiErr.StatusCode == http.StatusNotFound {
+		return true
+	}
+	// Proxmox 9.2 reports an absent QEMU/LXC config as HTTP 500 rather than
+	// HTTP 404. Keep this narrowly scoped to its exact guest-config message;
+	// unrelated server errors must remain fatal.
+	message := strings.TrimSpace(apiErr.Message)
+	return apiErr.StatusCode == http.StatusInternalServerError && strings.HasPrefix(message, "Configuration file 'nodes/") &&
+		(strings.Contains(message, "/qemu-server/") || strings.Contains(message, "/lxc/")) &&
+		strings.HasSuffix(message, ".conf' does not exist")
 }
 
 func (c *Client) request(ctx context.Context, method, endpoint string, query url.Values, form url.Values, out any) error {
@@ -882,6 +1097,16 @@ func (c *Client) request(ctx context.Context, method, endpoint string, query url
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		message := envelope.Message
+		if len(envelope.Errors) > 0 {
+			errorsJSON, marshalErr := json.Marshal(envelope.Errors)
+			if marshalErr == nil {
+				if message == "" {
+					message = string(errorsJSON)
+				} else {
+					message += ": " + string(errorsJSON)
+				}
+			}
+		}
 		if message == "" {
 			message = strings.TrimSpace(string(data))
 		}

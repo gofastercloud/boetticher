@@ -37,6 +37,40 @@ func runModule(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 }
 
+// runModules is the registry-driven plural namespace for first-party module
+// operations. The lifecycle implementation remains the established generic
+// module path so module-specific commands cannot acquire a second deploy
+// engine or different ownership semantics.
+func runModules(args []string, out interface{ Write([]byte) (int, error) }) error {
+	if len(args) == 0 {
+		return errors.New("usage: boetticher modules list|MODULE show|plan|enable|disable|status|purge")
+	}
+	if args[0] == "list" {
+		return runModuleList(args[1:], out)
+	}
+	if len(args) < 2 {
+		return errors.New("usage: boetticher modules MODULE show|plan|enable|disable|status|purge")
+	}
+	name, command := args[0], args[1]
+	forward := append([]string{name}, args[2:]...)
+	switch command {
+	case "show":
+		return runModuleShow(forward, out)
+	case "plan":
+		return runModulePlan(forward, out)
+	case "enable":
+		return runModuleChange(forward, out, true)
+	case "disable":
+		return runModuleChange(forward, out, false)
+	case "status":
+		return runModuleStatus(forward, out)
+	case "purge":
+		return runModuleChange(append(forward, "--purge"), out, false)
+	default:
+		return fmt.Errorf("unknown module command %q", command)
+	}
+}
+
 func moduleSite(args []string, name string) (string, *flag.FlagSet, *bool, *bool, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -237,13 +271,28 @@ func runModuleChange(args []string, out interface{ Write([]byte) (int, error) },
 		return err
 	}
 	if *purge {
+		purgeSite, err := modulePurgeSite(oldSite, name)
+		if err != nil {
+			return err
+		}
+		declaration, ok := findDeclaration(purgeSite, name)
+		if !ok {
+			return fmt.Errorf("module %s purge declaration is missing", name)
+		}
+		if err := site.ValidateModuleSecretOwnership(purgeSite, name, declaration); err != nil {
+			return err
+		}
 		client, _, err := loadProxmoxClient(*siteDir, oldSite, *ageIdentity, *proxmoxCA, *insecure)
 		if err != nil {
 			return fmt.Errorf("load Proxmox client for module purge: %w", err)
 		}
-		oldPlan, err := proxmox.PlanFromSite(oldSite)
+		oldPlan, err := proxmox.PlanFromSite(purgeSite)
 		if err != nil {
 			return err
+		}
+		oldPlan, err = proxmox.ResolveQualifiedArtifacts(*siteDir, oldPlan, true)
+		if err != nil {
+			return fmt.Errorf("resolve qualified artifacts for module purge: %w", err)
 		}
 		node, err := client.SingleNode(context.Background())
 		if err != nil {
@@ -253,9 +302,12 @@ func runModuleChange(args []string, out interface{ Write([]byte) (int, error) },
 		if err := proxmox.PurgeModule(context.Background(), client, oldPlan, name); err != nil {
 			return err
 		}
+		if err := site.PurgeModuleSecrets(*siteDir, purgeSite, *ageIdentity, name, declaration); err != nil {
+			return err
+		}
 	}
 	retained := append([]model.RetainedModule(nil), oldSite.RetainedModules...)
-	if enable {
+	if enable || *purge {
 		filtered := retained[:0]
 		for _, item := range retained {
 			if item.Module != name {
@@ -289,6 +341,23 @@ func runModuleChange(args []string, out interface{ Write([]byte) (int, error) },
 		return fmt.Errorf("deploy module change: %w", err)
 	}
 	return nil
+}
+
+// modulePurgeSite reconstructs the disabled module's declaration in memory so
+// the generic Proxmox purge path can prove its exact guest, volume, and
+// security identity. It never changes the persisted site configuration; the
+// caller saves the already-disabled resolved configuration separately.
+func modulePurgeSite(s model.Site, name string) (model.Site, error) {
+	config := model.ConfigFromSite(s)
+	enabled := true
+	if err := config.Modules.Set(name, model.ModuleConfig{Enabled: &enabled}); err != nil {
+		return model.Site{}, err
+	}
+	purgeSite, _, err := modules.Compose(config)
+	if err != nil {
+		return model.Site{}, fmt.Errorf("reconstruct module %s for purge: %w", name, err)
+	}
+	return purgeSite, nil
 }
 
 func findResolvedModule(s model.Site, name string) (model.ResolvedModule, bool) {

@@ -1,2 +1,2 @@
-labadmin ALL=(root) NOPASSWD: /usr/bin/systemctl *, /usr/bin/install *, /usr/bin/mkdir *, /usr/bin/chown *, /usr/bin/chmod *, /usr/lib/boetticher/install-runtime-state *, /usr/sbin/nft *, /usr/sbin/kea-dhcp4 *, /usr/sbin/kea-dhcp-ddns *, /usr/sbin/sysctl *, /usr/bin/test *, /usr/bin/sqlite3 *, /usr/bin/systemd-creds *, /bin/sh -c * /usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*
-labadmin ALL=(postgres) NOPASSWD: /usr/bin/psql *
+# Durable labadmin has no sudo authority. Deployment uses temporary root SSH
+# access installed by bootstrap and removed after successful convergence.

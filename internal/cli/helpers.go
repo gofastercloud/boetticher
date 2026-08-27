@@ -19,9 +19,9 @@ import (
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 	"github.com/gofastercloud/boetticher/internal/portal"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
+	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
 	"github.com/gofastercloud/boetticher/internal/storage"
-	"github.com/gofastercloud/boetticher/internal/zabbix"
 )
 
 func writeModelProjection(dir string, s model.Site) error {
@@ -144,11 +144,11 @@ func writeModelProjections(dir string, s model.Site) error {
 	if err := writeProjection(filepath.Join(dir, "generated", "proxmox", "desired-state.json"), proxmoxPlan); err != nil {
 		return err
 	}
-	zabbixPlan, err := zabbix.PlanFromSite(s)
+	monitoringPlan, err := pulse.PlanFromSite(s)
 	if err != nil {
 		return err
 	}
-	if err := writeProjection(filepath.Join(dir, "generated", "monitoring", "desired-state.json"), zabbixPlan); err != nil {
+	if err := writeProjection(filepath.Join(dir, "generated", "monitoring", "desired-state.json"), monitoringPlan); err != nil {
 		return err
 	}
 	if err := writeCurrentStatus(dir, revision); err != nil {

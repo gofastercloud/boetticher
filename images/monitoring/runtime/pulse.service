@@ -1,0 +1,26 @@
+[Unit]
+Description=Boetticher Pulse monitoring server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pulse
+Group=pulse
+WorkingDirectory=/opt/pulse
+ExecStart=/usr/lib/boetticher/run-pulse
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/pulse
+Environment=PULSE_DATA_DIR=/var/lib/pulse
+Environment=BIND_ADDRESS=127.0.0.1
+Environment=PULSE_DEPLOYMENT_METHOD=systemd
+Environment=PULSE_TELEMETRY=false
+Environment=PULSE_AGENT_INGEST_PORT=0
+
+[Install]
+WantedBy=multi-user.target

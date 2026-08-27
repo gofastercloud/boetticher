@@ -1,0 +1,10 @@
+---
+- name: restart litellm
+  ansible.builtin.service:
+    name: litellm
+    state: restarted
+
+- name: reload nginx
+  ansible.builtin.service:
+    name: nginx
+    state: reloaded

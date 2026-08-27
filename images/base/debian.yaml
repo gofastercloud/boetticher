@@ -1,12 +1,12 @@
 name: boetticher-base
-version: 0.3.1
+version: 0.3.33
 distribution: debian
-release: "13"
+release: trixie
 architecture: amd64
 init: systemd
 source:
-  mirror: https://snapshot.debian.org/archive/debian/20260327T000000Z/
-  snapshot: 20260327T000000Z
+  mirror: https://snapshot.debian.org/archive/debian/20260825T000000Z/
+  snapshot: 20260825T000000Z
 build:
   packages:
     - systemd
@@ -17,6 +17,7 @@ build:
     - openssh-server
     - sudo
     - iproute2
+    - ifupdown
     - iputils-ping
     - nftables
     - chrony

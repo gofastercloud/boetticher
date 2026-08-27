@@ -60,7 +60,7 @@ func TestInstallRuntimeConfigUsesFixedCommandAndStdin(t *testing.T) {
 	if string(runner.data) != string(config) {
 		t.Fatalf("runtime config stdin = %q", runner.data)
 	}
-	if !strings.Contains(runner.command, "install-runtime-state module-config") || strings.Contains(runner.command, "sh -c") || strings.Contains(runner.command, string(config)) {
+	if runner.command != "/usr/lib/boetticher/install-runtime-state module-config" || strings.Contains(runner.command, "sudo") || strings.Contains(runner.command, "sh -c") || strings.Contains(runner.command, string(config)) {
 		t.Fatalf("unsafe runtime config command: %q", runner.command)
 	}
 }
@@ -68,10 +68,10 @@ func TestInstallRuntimeConfigUsesFixedCommandAndStdin(t *testing.T) {
 func TestInstallArtifactIdentityContainsQualifiedMetadataOnly(t *testing.T) {
 	runner := &runtimeRunner{}
 	artifact := model.Artifact{Name: "boetticher-dns-blocky", Version: "1.0.0", Provider: "blocky", Architecture: "amd64", Kind: "lxc", DefinitionSHA256: "definition", ContentSHA256: "content"}
-	if err := InstallArtifactIdentity(context.Background(), runner, "10.10.20.10", "labadmin", artifact); err != nil {
+	if err := InstallArtifactIdentity(context.Background(), runner, "10.10.10.10", "labadmin", artifact); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(runner.command, string(runner.data)) || !strings.Contains(runner.command, "install-runtime-state artifact-identity") || !strings.Contains(string(runner.data), `"content_sha256": "content"`) {
+	if runner.command != "/usr/lib/boetticher/install-runtime-state artifact-identity" || strings.Contains(runner.command, "sudo") || strings.Contains(runner.command, string(runner.data)) || !strings.Contains(string(runner.data), `"content_sha256": "content"`) {
 		t.Fatalf("artifact identity was not sent as expected: command=%q stdin=%q", runner.command, runner.data)
 	}
 	if strings.Contains(string(runner.data), "secret") {

@@ -153,6 +153,18 @@ func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artif
 	if evidence.ArtifactPath == "" {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s qualification evidence has no artifact path", requested.Name)
 	}
+	if !filepath.IsAbs(evidence.ArtifactPath) {
+		root, err := filepath.Abs(root)
+		if err != nil {
+			return model.Artifact{}, Evidence{}, fmt.Errorf("resolve artifact evidence root: %w", err)
+		}
+		path := filepath.Join(root, evidence.ArtifactPath)
+		relative, err := filepath.Rel(root, path)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s path escapes evidence root", requested.Name)
+		}
+		evidence.ArtifactPath = path
+	}
 	if err := validateQualificationDigests(evidence); err != nil {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s qualification evidence is incomplete: %w", requested.Name, err)
 	}
@@ -241,7 +253,7 @@ func validateQualificationDigests(evidence Evidence) error {
 
 const (
 	BaseName      = "boetticher-base"
-	BaseVersion   = "0.3.1"
+	BaseVersion   = "0.3.33"
 	Architecture  = "amd64"
 	DebianRelease = "13"
 	ModuleVersion = "1.0.0"
@@ -263,6 +275,8 @@ func Definitions() []Definition {
 		{Name: "monitoring", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/monitoring")},
 		{Name: "firewall", Version: ModuleVersion, Kind: "qemu", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/firewall", "scripts/smoke-firewall-image.sh")},
 		{Name: "portal", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/portal")},
+		{Name: "tailnet-router", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/tailnet-router", "internal/model", "internal/modules")},
+		{Name: "litellm", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/litellm", "internal/model", "internal/modules")},
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gofastercloud/boetticher/internal/ansible"
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
@@ -23,7 +24,7 @@ type deploymentCredential struct {
 }
 
 func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, error) {
-	bindings := make([]deploymentCredential, 0, 2)
+	bindings := make([]deploymentCredential, 0, 4)
 	if site.Gateway.Mode == model.GatewayModeManaged {
 		bindings = append(bindings, deploymentCredential{
 			Guest:     "lab-fw-01",
@@ -40,15 +41,29 @@ func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, erro
 	if modules.IsEnabled(site, "monitoring") {
 		bindings = append(bindings, deploymentCredential{
 			Guest:     "lab-monitor-01",
-			Address:   "10.10.20.20",
-			SecretKey: "monitoring-db-password",
+			Address:   "10.10.10.20",
+			SecretKey: "pulse_admin_password",
 			Spec: secrets.CredentialSpec{
-				Name:       "zabbix-db-password",
-				Unit:       "zabbix-server.service",
-				StorePath:  "/var/lib/boetticher/credentials/zabbix-db-password.cred",
-				RuntimeRef: "/run/credentials/zabbix-server.service/zabbix-db-password",
+				Name:       "pulse-admin-password",
+				Unit:       "pulse.service",
+				StorePath:  "/var/lib/boetticher/credentials/pulse-admin-password.cred",
+				RuntimeRef: "/run/credentials/pulse.service/pulse-admin-password",
 			},
 		})
+	}
+	if modules.IsEnabled(site, "tailnet-router") {
+		bindings = append(bindings, deploymentCredential{
+			Guest: "lab-tailnet-01", Address: "10.10.5.10", SecretKey: "tailscale_auth_key",
+			Spec: secrets.CredentialSpec{Name: "tailscale-auth-key", Unit: "tailscaled.service", StorePath: "/var/lib/boetticher/credentials/tailscale-auth-key.cred", RuntimeRef: "/run/credentials/tailscaled.service/tailscale-auth-key"},
+		})
+	}
+	if modules.IsEnabled(site, "litellm") {
+		for _, upstream := range site.ModuleConfig["litellm"].Upstreams {
+			bindings = append(bindings, deploymentCredential{
+				Guest: "lab-litellm-01", Address: "10.10.20.60", SecretKey: upstream.APIKeySecret,
+				Spec: secrets.CredentialSpec{Name: credentialName(upstream.APIKeySecret), Unit: "litellm.service", StorePath: "/var/lib/boetticher/credentials/" + credentialName(upstream.APIKeySecret) + ".cred", RuntimeRef: "/run/credentials/litellm.service/" + credentialName(upstream.APIKeySecret)},
+			})
+		}
 	}
 	items := make([]secrets.CredentialSpec, 0, len(bindings))
 	for _, binding := range bindings {
@@ -58,6 +73,64 @@ func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, erro
 		return nil, fmt.Errorf("validate appliance credential declarations: %w", err)
 	}
 	return bindings, nil
+}
+
+// monitoringAgentCredentialBindings creates one systemd credential projection
+// for each model component carrying the generic monitoring-agent tag. The
+// token is created only after Pulse is configured, so these bindings are
+// deliberately installed in the post-bootstrap pass rather than mixed into
+// the initial credential load.
+func monitoringAgentCredentialBindings(site model.Site) ([]deploymentCredential, error) {
+	if !modules.IsEnabled(site, "monitoring") {
+		return nil, nil
+	}
+	components := make(map[string]model.Component)
+	for _, component := range site.PlatformComponents() {
+		components[component.Name] = component
+	}
+	bindings := make([]deploymentCredential, 0)
+	for _, target := range ansible.MonitoringAgentTargets(site) {
+		component, ok := components[target]
+		if !ok || !component.SSHManaged {
+			return nil, fmt.Errorf("monitoring-agent target %q is not a managed platform component", target)
+		}
+		address := component.Address
+		if target == model.LogicalProxmoxIdentity && site.BootstrapAddress != "" {
+			address = site.BootstrapAddress
+		}
+		if address == "" {
+			return nil, fmt.Errorf("monitoring-agent target %q has no deployment address", target)
+		}
+		bindings = append(bindings, deploymentCredential{
+			Guest: target, Address: address, SecretKey: "pulse_agent_token",
+			Spec: secrets.CredentialSpec{
+				Name:       "pulse-agent-token",
+				Unit:       "pulse-agent.service",
+				StorePath:  "/var/lib/boetticher/credentials/pulse-agent-token.cred",
+				RuntimeRef: "/run/credentials/pulse-agent.service/pulse-agent-token",
+			},
+		})
+	}
+	items := make([]secrets.CredentialSpec, 0, len(bindings))
+	for _, binding := range bindings {
+		items = append(items, binding.Spec)
+	}
+	if err := secrets.Validate(items); err != nil {
+		return nil, fmt.Errorf("validate monitoring-agent credential declarations: %w", err)
+	}
+	return bindings, nil
+}
+
+func credentialName(reference string) string {
+	var b strings.Builder
+	for _, character := range strings.ToLower(reference) {
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
+			b.WriteRune(character)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	return b.String()
 }
 
 // credentialDropIns returns non-secret systemd projections grouped by
@@ -92,7 +165,7 @@ func installCredentialsForGuest(ctx context.Context, runner proxmox.CommandRunne
 	if runner == nil {
 		return fmt.Errorf("credential runner is required for %s", guest)
 	}
-	if _, err := runner.Run(ctx, selected[0].Address, model.DefaultAdminSSHUser, "sudo -n install -d -m 0700 -o root -g root /var/lib/boetticher/credentials"); err != nil {
+	if _, err := runner.Run(ctx, selected[0].Address, "root", "install -d -m 0700 -o root -g root /var/lib/boetticher/credentials"); err != nil {
 		return fmt.Errorf("prepare encrypted credential store on %s: %w", guest, err)
 	}
 	stdinRunner, ok := runner.(secrets.StdinRunner)
@@ -104,11 +177,11 @@ func installCredentialsForGuest(ctx context.Context, runner proxmox.CommandRunne
 		if value == "" {
 			return fmt.Errorf("secret value for %s is unavailable", binding.Spec.Name)
 		}
-		if err := secrets.InstallCredential(ctx, stdinRunner, binding.Address, model.DefaultAdminSSHUser, binding.Spec, []byte(value)); err != nil {
+		if err := secrets.InstallCredential(ctx, stdinRunner, binding.Address, "root", binding.Spec, []byte(value)); err != nil {
 			return fmt.Errorf("install %s credential on %s: %w", binding.Spec.Name, guest, err)
 		}
 	}
-	if _, err := runner.Run(ctx, selected[0].Address, model.DefaultAdminSSHUser, "sudo -n systemctl daemon-reload"); err != nil {
+	if _, err := runner.Run(ctx, selected[0].Address, "root", "systemctl daemon-reload"); err != nil {
 		return fmt.Errorf("reload systemd after credential installation on %s: %w", guest, err)
 	}
 	return nil
@@ -127,22 +200,8 @@ func installPowerDNSTSIG(ctx context.Context, runner proxmox.StdinCommandRunner,
 		fmt.Fprintf(&sql, "INSERT OR REPLACE INTO tsigkeys (name, algorithm, secret) VALUES (%s, %s, %s);\n", sqlQuote(zone.TSIGKeyName), sqlQuote(plan.DDNS.TSIGAlgorithm), sqlQuote(secret))
 	}
 	sql.WriteString("COMMIT;\n")
-	if _, err := runner.RunWithStdin(ctx, address, model.DefaultAdminSSHUser, "sudo -n sqlite3 /var/lib/powerdns/pdns.sqlite3", strings.NewReader(sql.String())); err != nil {
+	if _, err := runner.RunWithStdin(ctx, address, "root", "sqlite3 /var/lib/powerdns/pdns.sqlite3", strings.NewReader(sql.String())); err != nil {
 		return fmt.Errorf("install PowerDNS protected TSIG backend state: %w", err)
-	}
-	return nil
-}
-
-// installZabbixAPIPassword updates the controller login after the database
-// exists. It is a Core provider operation and does not pass the value through
-// Ansible variables or command arguments.
-func installZabbixAPIPassword(ctx context.Context, runner proxmox.StdinCommandRunner, address, secret string) error {
-	if runner == nil || secret == "" {
-		return fmt.Errorf("Zabbix API password installation requires a runner and secret")
-	}
-	sql := "CREATE EXTENSION IF NOT EXISTS pgcrypto;\nUPDATE users SET passwd = crypt(" + sqlQuote(secret) + ", gen_salt('bf')) WHERE username = 'Admin';\n"
-	if _, err := runner.RunWithStdin(ctx, address, model.DefaultAdminSSHUser, "sudo -n -u postgres psql --dbname zabbix --set ON_ERROR_STOP=1", strings.NewReader(sql)); err != nil {
-		return fmt.Errorf("install Zabbix API password: %w", err)
 	}
 	return nil
 }

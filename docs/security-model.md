@@ -13,8 +13,9 @@ paths are allowed explicitly. Internal traffic is not NATed. Intended internal
 networks are masqueraded only when leaving `wan0`.
 
 Proxmox performs VLAN classification by attaching separate firewall vNICs to
-`vmbr1` with tags 10, 20, 50, and 99. The firewall sees ordinary interfaces
-named `wan0`, `trusted0`, `servers0`, `sandbox0`, and `mgmt0`; it does not see a
+`vmbr1` with tags 5, 10, 20, 30, 40, and 99. The firewall sees ordinary interfaces
+named `wan0`, `transit0`, `infra0`, `servers0`, `trusted0`, `sandbox0`, and
+`mgmt0`; it does not see a
 trunk and does not create VLAN subinterfaces. Proxmox is already trusted to
 attach guests to the right bridge and VLAN. A compromised hypervisor can bypass
 guest firewall guarantees.
@@ -26,7 +27,9 @@ only after the policy and services are ready. IPv6 forwarding is disabled in
 v0.3.
 
 SANDBOX may use the gateway for DHCP, public DNS, and NTP, but cannot reach the
-TRUSTED, SERVERS, or MGMT networks. The deny rules precede Internet egress.
+TRUSTED, SERVERS, INFRA, or MGMT networks. The deny rules precede Internet
+egress. TRUSTED and SANDBOX use dynamic DHCP plus DDNS; SERVERS uses
+reservation-only DHCP plus DDNS. TRANSIT, INFRA, and MGMT are static-only.
 MGMT is intentionally small and administrative; it is not a general
 "important servers" VLAN.
 
@@ -45,7 +48,7 @@ The controller is separate from Proxmox. SOPS encrypts platform secrets and
 the Age private identity stays outside Git. CA private keys remain controller-
 side; endpoint private keys are generated on managed hosts where practical.
 The Proxmox SSH bastion is the normal path to internal hosts. The portal is
-static generated documentation; live state belongs in Zabbix.
+static generated documentation; live monitoring state belongs in Pulse.
 
 The platform is IPv4-only in v0.3. Dynamic DHCP DNS registration publishes a
 lease-derived name; it never makes that workload boetticher-managed.
@@ -57,7 +60,7 @@ compiled-in boetticher code that emits bounded declarations for guests,
 network intent, DNS, certificates, monitoring, backups, and portal metadata.
 Core resolves dependencies, capabilities, fixed identities, ownership, and
 conflicts before deployment. Modules do not call Proxmox, nftables, SOPS/Age,
-CA signing, Zabbix, or arbitrary host-shell mutation paths directly.
+CA signing, Pulse, or arbitrary host-shell mutation paths directly.
 
 Appliance definitions are deterministic and derive from pinned Debian 13
 inputs. Concrete artifact bytes are independently SHA-256 verified before
@@ -81,9 +84,42 @@ allows it. A compromised module process is not granted controller identity,
 SOPS/Age authority, CA signing keys, or another module's ownership. Proxmox
 and host root remain trusted boundaries.
 
+## Privilege lifecycle
+
+Bootstrap uses the supplied initial administrator path to establish platform
+identities, host configuration, and the scoped Proxmox API token. It installs
+the operator key for a temporary root SSH deployment window on the Proxmox
+host and managed guests. Ansible connects through that root transport with
+`become: false`; it does not use a durable sudo rule for `labadmin`.
+
+The durable `labadmin` identity has an unprivileged shell on Proxmox and
+appliances and no general sudo authority. The managed firewall retains only
+fixed, read-only inspection helpers for status, nftables observation, leases,
+and bounded kernel logs. Proxmox lifecycle operations use the scoped
+`BoetticherProvisioner` API token. Runtime configuration and credential
+installation are fixed Core operations over the temporary root transport.
+
+After successful convergence, Core removes the temporary root authorized key
+from every managed guest and the Proxmox host, removes the host's temporary
+root SSH allowance, and locks the root password. If deployment stops before cleanup,
+the temporary root window remains available for a safe retry. Cleanup failure
+is a deployment hold; recovery uses the authenticated root/bootstrap path to
+complete cleanup. Operator break-glass root access is separate recovery
+authority and is not represented as durable `labadmin` privilege. The
+ephemeral builder uses the temporary root deployment key and is destroyed by
+bootstrap cleanup.
+
 Central logging uses bounded local journald and asynchronous HTTPS/mTLS upload
 to a mandatory journal collector. The collector is a secondary operational log
 copy, not an availability dependency or cryptographic non-repudiation system.
+
+Pulse uses a dedicated read/audit-oriented Proxmox API identity for inventory,
+guest, storage, and backup state. A separate `agent:report` token is delivered
+to the Pulse host agent through an encrypted systemd credential. The generic
+`monitoring-agent` tag selects agent targets; `lab-proxmox-01` is the default
+target, and VM/LXC guests do not receive an agent. The monitor UI retains the
+HTTPS/mTLS boundary, while the supported token-authenticated agent routes carry
+host reports without a client certificate.
 
 The DNS module is mandatory. Blocky is the default recursive/filtering
 implementation and AdGuard is a typed alternative; PowerDNS remains

@@ -82,7 +82,7 @@ func TestSSHRunnerPreservesJournalArgumentsWithoutShellInterpolation(t *testing.
 
 func TestSSHRunnerUsesBoundedTOFUForFreshApplianceHostKeys(t *testing.T) {
 	runner := SSHRunner{StrictHostKey: "accept-new", HostAlias: "lab-dns-01"}
-	args, err := runner.commandArgs("10.10.20.10", "labadmin", []string{"true"})
+	args, err := runner.commandArgs("10.10.10.10", "labadmin", []string{"true"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestSSHRunnerSeparatesHostKeyAliasFromNetworkTarget(t *testing.T) {
 
 func TestSSHRunnerHostAliasStillSelectsApplianceConfigHost(t *testing.T) {
 	runner := SSHRunner{HostAlias: "lab-dns-01", HostKeyAlias: "lab-proxmox-01"}
-	args, err := runner.commandArgs("10.10.20.10", "labadmin", []string{"true"})
+	args, err := runner.commandArgs("10.10.10.10", "labadmin", []string{"true"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,6 +164,25 @@ func (f *fakeRunner) Run(_ context.Context, address, user, command string) ([]by
 		return f.routeOutput, nil
 	}
 	return f.output, nil
+}
+
+func TestWaitForQEMUIPv4ViaNeighborMatchesOnlyBuilderMAC(t *testing.T) {
+	runner := &fakeRunner{responses: map[string][]byte{
+		"/usr/sbin/ip -4 neigh show dev vmbr0": []byte("192.168.4.50 lladdr aa:bb:cc:dd:ee:ff STALE\n192.168.4.51 lladdr 02:00:00:00:01:90 REACHABLE\n"),
+	}}
+	address, err := WaitForQEMUIPv4ViaNeighbor(context.Background(), runner, "192.168.4.5", "root", "02:00:00:00:01:90", 1, time.Millisecond)
+	if err != nil || address != "192.168.4.51" {
+		t.Fatalf("WaitForQEMUIPv4ViaNeighbor() = %q, %v", address, err)
+	}
+}
+
+func TestWaitForQEMUIPv4ViaNeighborRejectsMissingBuilderMAC(t *testing.T) {
+	runner := &fakeRunner{responses: map[string][]byte{
+		"/usr/sbin/ip -4 neigh show dev vmbr0": []byte("192.168.4.50 lladdr aa:bb:cc:dd:ee:ff STALE\n"),
+	}}
+	if address, err := WaitForQEMUIPv4ViaNeighbor(context.Background(), runner, "192.168.4.5", "root", "02:00:00:00:01:90", 1, time.Millisecond); err == nil || address != "" || !strings.Contains(err.Error(), "HOLD") {
+		t.Fatalf("WaitForQEMUIPv4ViaNeighbor() = %q, %v", address, err)
+	}
 }
 
 func containsString(values []string, wanted string) bool {
@@ -216,6 +235,78 @@ func TestCreateScopedCredentialsCapturesOnlyReturnedSecret(t *testing.T) {
 	}
 }
 
+func TestCreateScopedCredentialsCreatesRoleAtCollectionEndpoint(t *testing.T) {
+	runner := &fakeRunner{
+		output: []byte(`{"value":"opaque-token-secret"}`),
+		responses: map[string][]byte{
+			"pvesh get /access/roles --output-format json":                      []byte(`[]`),
+			"pvesh get /access/users --output-format json":                      []byte(`[]`),
+			"pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[]`),
+		},
+	}
+	if _, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
+		t.Fatal(err)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "pvesh create /access/roles") {
+			if !strings.Contains(command, "pvesh create /access/roles --roleid 'BoetticherProvisioner'") {
+				t.Fatalf("role creation used the wrong Proxmox API shape: %s", command)
+			}
+		}
+		if strings.Contains(command, "pvesh set /access/acl") && strings.Contains(command, "--tokens 'labadmin@pve!boetticher'") && !strings.Contains(command, "--users") {
+			return
+		}
+	}
+	t.Fatal("credential bootstrap did not update ACL through the Proxmox set endpoint")
+}
+
+func TestCreatePulseMonitoringCredentialsUsesBoundedAPIOnlyIdentity(t *testing.T) {
+	runner := &fakeRunner{
+		responses: map[string][]byte{
+			"pvesh get /access/roles --output-format json":                                                                  []byte(`[{"roleid":"PVEAuditor","privs":"Sys.Audit","special":0}]`),
+			"pvesh get /access/users --output-format json":                                                                  []byte(`[]`),
+			"pvesh get /access/users/'pulse-monitor@pve'/token --output-format json":                                        []byte(`[]`),
+			"pvesh create /access/users/'pulse-monitor@pve'/token/'boetticher-monitoring' --privsep 1 --output-format json": []byte(`{"value":"opaque-monitoring-secret"}`),
+		},
+		output: []byte(`{"value":"opaque-monitoring-secret"}`),
+	}
+	secret, err := CreatePulseMonitoringCredentials(context.Background(), runner, "192.0.2.10", "root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secret != "opaque-monitoring-secret" {
+		t.Fatalf("CreatePulseMonitoringCredentials() returned %q", secret)
+	}
+	joined := strings.Join(runner.commands, "\n")
+	for _, required := range []string{
+		"pvesh create /access/users --userid 'pulse-monitor@pve'",
+		"pvesh create /access/users/'pulse-monitor@pve'/token/'boetticher-monitoring' --privsep 1 --output-format json",
+		"pvesh set /access/acl --path '/' --users 'pulse-monitor@pve' --roles 'PVEAuditor' --propagate 1",
+		"pvesh set /access/acl --path '/' --tokens 'pulse-monitor@pve!boetticher-monitoring' --roles 'PVEAuditor' --propagate 1",
+	} {
+		if !strings.Contains(joined, required) {
+			t.Fatalf("Pulse monitoring bootstrap is missing %q:\n%s", required, joined)
+		}
+	}
+	for _, forbidden := range []string{"root@pam", "BoetticherProvisioner", "VM.Monitor", "VM.GuestAgent", "PVEDatastoreAdmin", "/storage", "ssh", "opaque-monitoring-secret"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("Pulse monitoring bootstrap contains forbidden %q:\n%s", forbidden, joined)
+		}
+	}
+}
+
+func TestCreatePulseMonitoringCredentialsFailsClosedWhenAuditorRoleIsMissing(t *testing.T) {
+	runner := &fakeRunner{responses: map[string][]byte{
+		"pvesh get /access/roles --output-format json": []byte(`[]`),
+	}}
+	if _, err := CreatePulseMonitoringCredentials(context.Background(), runner, "192.0.2.10", "root"); err == nil || !strings.Contains(err.Error(), "PVEAuditor") {
+		t.Fatalf("missing auditor role was not rejected: %v", err)
+	}
+	if len(runner.commands) != 1 {
+		t.Fatalf("role failure continued into mutation: %#v", runner.commands)
+	}
+}
+
 func TestCreateScopedCredentialsStopsOnUserLookupFailure(t *testing.T) {
 	runner := &credentialLookupRunner{responses: map[string]error{
 		"pvesh get /access/users --output-format json": errors.New("permission denied"),
@@ -248,7 +339,7 @@ func (r *credentialLookupRunner) Run(_ context.Context, _ string, _ string, comm
 }
 
 func TestScopedProvisionerPrivilegesAreExplicitAndBounded(t *testing.T) {
-	want := "VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.MountPoint VM.Config.Network VM.Config.Options VM.GuestAgent.Audit VM.PowerMgmt Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit Sys.AccessNetwork Sys.Audit"
+	want := "VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options VM.GuestAgent.Audit VM.PowerMgmt Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit SDN.Audit SDN.Use Sys.AccessNetwork Sys.Audit Sys.Modify"
 	if got := ScopedProvisionerPrivileges(); got != want {
 		t.Fatalf("ScopedProvisionerPrivileges() = %q, want %q", got, want)
 	}
@@ -259,7 +350,7 @@ func TestScopedProvisionerPrivilegesAreExplicitAndBounded(t *testing.T) {
 
 func TestValidateScopedRoleJSONRequiresExactPrivileges(t *testing.T) {
 	wanted := ScopedProvisionerPrivileges()
-	roleJSON := `{"data":[{"roleid":"BoetticherProvisioner","privs":"Sys.Audit VM.PowerMgmt VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.MountPoint VM.Config.Network VM.Config.Options VM.GuestAgent.Audit Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit Sys.AccessNetwork","special":0}]}`
+	roleJSON := `{"data":[{"roleid":"BoetticherProvisioner","privs":"Sys.Audit,VM.PowerMgmt,VM.Allocate,VM.Audit,VM.Config.CDROM,VM.Config.CPU,VM.Config.Cloudinit,VM.Config.Disk,VM.Config.HWType,VM.Config.Memory,VM.Config.Network,VM.Config.Options,VM.GuestAgent.Audit,Datastore.Allocate,Datastore.AllocateSpace,Datastore.AllocateTemplate,Datastore.Audit,SDN.Audit,SDN.Use,Sys.AccessNetwork,Sys.Modify","special":0}]}`
 	exists, err := validateScopedRoleJSON([]byte(roleJSON), "BoetticherProvisioner", wanted)
 	if err != nil || !exists {
 		t.Fatalf("equivalent privilege set was rejected: exists=%t err=%v", exists, err)
@@ -280,24 +371,47 @@ func TestValidateScopedRoleJSONRequiresExactPrivileges(t *testing.T) {
 	}
 }
 
-func TestConfigureIdentitiesLocksProxmoxLabadminAndInstallsBoundedSudo(t *testing.T) {
+func TestConfigureIdentitiesInstallsTemporaryRootAccessWithoutLabadminSudo(t *testing.T) {
 	runner := &fakeRunner{}
 	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator"
 	if err := ConfigureIdentities(context.Background(), runner, "192.0.2.10", "root", key, []string{"lab-fw-01:22"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"passwd --lock labadmin", "/etc/sudoers.d/boetticher-labadmin", "visudo -cf /etc/sudoers", "/bin/sh -c * /usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*", "Match User lab-jump"} {
+	for _, required := range []string{"passwd --lock labadmin", "/root/.ssh/authorized_keys", "rm -f /etc/sudoers.d/boetticher-labadmin", "visudo -cf /etc/sudoers", "chown lab-jump:lab-jump /home/lab-jump.authorized_keys", "AllowUsers root labadmin lab-jump", "Match User lab-jump"} {
 		if !strings.Contains(runner.command, required) {
 			t.Fatalf("identity bootstrap missing %q: %s", required, runner.command)
 		}
 	}
-	if strings.Contains(runner.command, "NOPASSWD:ALL") {
-		t.Fatal("Proxmox labadmin received unrestricted sudo")
-	}
-	for _, command := range []string{"/usr/bin/pvesh *", "/usr/bin/pvesm *"} {
-		if !strings.Contains(runner.command, command) {
-			t.Fatalf("Proxmox labadmin sudo policy is missing %s", command)
+	for _, forbidden := range []string{"NOPASSWD", "/usr/bin/pvesh *", "/usr/bin/pvesm *", "/bin/sh -c *", "/usr/bin/install *", "/usr/bin/chown *", "/usr/bin/chmod *"} {
+		if strings.Contains(runner.command, forbidden) {
+			t.Fatalf("identity bootstrap retained durable wildcard privilege %q: %s", forbidden, runner.command)
 		}
+	}
+}
+
+func TestRevokeTemporaryRootAccessIsFixedAndIdempotent(t *testing.T) {
+	for _, host := range []bool{false, true} {
+		runner := &fakeRunner{}
+		if err := RevokeTemporaryRootAccess(context.Background(), runner, "192.0.2.10", "root", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator", host); err != nil {
+			t.Fatal(err)
+		}
+		if runner.user != "root" {
+			t.Fatalf("temporary cleanup used %q instead of root", runner.user)
+		}
+		if strings.Contains(runner.command, "sudo") || strings.Contains(runner.command, "pvesh") || strings.Contains(runner.command, "pvesm") || strings.Contains(runner.command, "sh -c") {
+			t.Fatalf("temporary cleanup exposed an unrelated privilege path: %s", runner.command)
+		}
+		if host && !strings.Contains(runner.command, "AllowUsers root labadmin lab-jump") {
+			t.Fatalf("host cleanup does not verify the temporary AllowUsers state: %s", runner.command)
+		}
+		for _, required := range []string{"grep -Fvx --", "authorized_keys.boetticher-cleanup", "passwd --lock root"} {
+			if !strings.Contains(runner.command, required) {
+				t.Fatalf("temporary cleanup does not remove only the injected key: missing %q in %s", required, runner.command)
+			}
+		}
+	}
+	if err := RevokeTemporaryRootAccess(context.Background(), &fakeRunner{}, "192.0.2.10", "labadmin", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator", false); err == nil {
+		t.Fatal("temporary cleanup accepted a non-root transport")
 	}
 }
 

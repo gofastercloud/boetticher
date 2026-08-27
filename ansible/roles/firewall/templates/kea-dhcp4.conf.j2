@@ -17,7 +17,7 @@
       {
         "id": {{ subnet.id }},
         "subnet": "{{ subnet.network }}",
-        "pools": [{% if subnet.pool %}{"pool": "{{ subnet.pool }}"}{% endif %}],
+        "pools": [{% if subnet.get('pool', '') %}{"pool": "{{ subnet.get('pool') }}"}{% endif %}],
         "option-data": [
           {"name": "routers", "data": "{{ subnet.gateway }}"},
           {"name": "domain-name-servers", "data": "{{ subnet.dns | join(',') }}"},
@@ -26,7 +26,11 @@
         "ddns-qualifying-suffix": "{{ subnet.forward_zone }}",
         "ddns-generated-prefix": "{{ subnet.zone | lower }}-",
         "ddns-replace-client-name": "when-not-present",
-        "reservations": []
+        "reservations": [
+{% for reservation in subnet.get('reservations', []) %}
+          {"hw-address": "{{ reservation.mac }}", "ip-address": "{{ reservation.address }}", "hostname": "{{ reservation.hostname }}"}{% if not loop.last %},{% endif %}
+{% endfor %}
+        ]
       }{% if not loop.last %},{% endif %}
 {% endfor %}
     ]

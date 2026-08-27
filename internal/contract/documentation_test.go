@@ -30,11 +30,13 @@ func TestPublicDocumentationMatchesV03Model(t *testing.T) {
 
 	for _, want := range []string{
 		model.QualifiedGatewayImage,
-		"Zabbix " + model.ZabbixSeries,
+		"Pulse Community " + model.PulseVersion,
 		model.DefaultDomain,
-		"VLAN 10 TRUSTED",
+		"VLAN 5 TRANSIT",
+		"VLAN 10 INFRA",
 		"VLAN 20 SERVERS",
-		"VLAN 50 SANDBOX",
+		"VLAN 30 TRUSTED",
+		"VLAN 40 SANDBOX",
 		"VLAN 99 MGMT",
 		"100–199",
 		"200–499",

@@ -1,0 +1,14 @@
+[Unit]
+Description=boetticher IPv4 forwarding readiness gate
+Requires=nftables.service kea-dhcp4-server.service kea-dhcp-ddns-server.service dnsmasq.service
+After=network-online.target nftables.service kea-dhcp4-server.service kea-dhcp-ddns-server.service dnsmasq.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/sysctl -w net.ipv4.ip_forward=1
+ExecStop=/usr/sbin/sysctl -w net.ipv4.ip_forward=0
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

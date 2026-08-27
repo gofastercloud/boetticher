@@ -38,8 +38,11 @@ var commandSpecs = []commandSpec{
 	{Usage: "boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]"},
 	{Usage: "boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]"},
 	{Usage: "boetticher dhcp status|leases [--site DIR] [--live] [--json]"},
+	{Usage: "boetticher dhcp reservation add|list|remove [--site DIR] [--hostname NAME] [--address ADDRESS] [--mac MAC] [--vmid VMID] [--json]"},
+	{Usage: "boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME] [--value VALUE] [--json]"},
 	{Usage: "boetticher storage status|initialize [--site DIR] [--live] [--confirmed]"},
 	{Usage: "boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
+	{Usage: "boetticher modules list|MODULE show|plan|enable|disable|status|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
 	{Usage: "boetticher config validate|show|schema [--site DIR]"},
 	{Usage: "boetticher portal build [--site DIR] [--output DIR] [--docs DIR]"},
 }
@@ -58,7 +61,7 @@ var helpSpecs = map[string]helpSpec{
 		Usage: "boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]", Purpose: "Prepare Proxmox trust, bridges, storage, the temporary Linux builder, and qualified appliance artifacts.", Arguments: "No positional arguments.", Options: "--dry-run renders only; --recovery-confirmed confirms the independent Age recovery copy; --storage-confirmed confirms explicit dedicated-storage initialization.", Safety: "May change Proxmox bootstrap infrastructure and creates a temporary builder. Review the plan and recovery prerequisites before applying.", Examples: "boetticher bootstrap --site ./my-boetticher --recovery-confirmed", Related: "preflight, deploy, verify",
 	},
 	"deploy": {
-		Usage: "boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]", Purpose: "Make boetticher-owned platform resources match the complete resolved desired model.", Arguments: "No positional arguments.", Options: "--dry-run plans without mutation; --confirm authorizes destructive operations supported by the active providers; an artifact qualification mismatch remains HOLD; connection options select the Proxmox trust path.", Safety: "This is the sole public platform-application operation. Review the plan before applying it; unsupported rootfs replacement remains HOLD rather than being bypassed by --confirm.", Examples: "boetticher deploy --site ./my-boetticher --dry-run; boetticher deploy --site ./my-boetticher --confirm", Related: "preflight, verify, doctor",
+		Usage: "boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]", Purpose: "Make boetticher-owned platform resources match the complete resolved desired model.", Arguments: "No positional arguments.", Options: "--dry-run plans without mutation; --confirm authorizes destructive operations supported by the active providers, including replacement of an owned appliance rootfs when its declared persistent volumes can be retained; connection options select the Proxmox trust path.", Safety: "This is the sole public platform-application operation. It requires the temporary root SSH access established by bootstrap, uses the scoped Proxmox API token for lifecycle operations, and removes temporary root access after successful convergence. Review the plan before applying it; unowned occupants, invalid persistent-volume identities, and unsupported replacement conditions remain HOLD.", Examples: "boetticher deploy --site ./my-boetticher --dry-run; boetticher deploy --site ./my-boetticher --confirm", Related: "preflight, verify, doctor",
 	},
 	"logs": {
 		Usage: "boetticher logs [HOST] [--site DIR] [--unit UNIT] [--since DURATION] [--priority LEVEL] [--limit N]", Purpose: "Read a bounded journal view through the central collector using the normal Proxmox bastion path.", Arguments: "HOST is a known boetticher-managed or retained endpoint; omitted HOST reads the collector-local journal.", Options: "--site selects the private site repository; --unit accepts a bounded systemd unit name such as blocky or blocky.service; --since accepts a positive duration up to 168h; --priority accepts a fixed journal priority; --limit is 1-500 and defaults to 100.", Safety: "Read-only. Output is bounded; there is no follow mode, TUI, arbitrary journal path, or query language. Central logging is asynchronous and not an availability dependency.", Examples: "boetticher logs lab-dns-01 --site ./my-boetticher --unit blocky --since 1h; boetticher logs lab-fw-01 --priority warning --limit 100", Related: "doctor, verify",
@@ -91,13 +94,19 @@ var helpSpecs = map[string]helpSpec{
 		Usage: "boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]", Purpose: "Inspect the generated or live managed gateway policy and bounded evidence.", Arguments: "Subcommands select the read-only view; firewall logs may accept a zone and limit.", Options: "--live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.", Safety: "Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.", Examples: "boetticher firewall diff --site ./my-boetticher --live", Related: "dhcp, network, logs, verify",
 	},
 	"dhcp": {
-		Usage: "boetticher dhcp status|leases [--site DIR] [--live] [--json]", Purpose: "Inspect generated DHCP/DDNS intent or read bounded managed-gateway lease evidence.", Arguments: "status and leases select the view.", Options: "--live queries the managed gateway; --json emits machine-readable output.", Safety: "Read-only. External-gateway DHCP remains outside boetticher management.", Examples: "boetticher dhcp leases --site ./my-boetticher --live", Related: "firewall, verify, logs",
+		Usage: "boetticher dhcp status|leases|reservation add|list|remove [--site DIR] [--live] [--json]", Purpose: "Inspect DHCP/DDNS intent, read bounded leases, or manage explicit user-workload reservations.", Arguments: "status and leases select inspection; reservation add, list, and remove manage SERVERS reservations.", Options: "--live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output.", Safety: "Reservation changes edit site.yml only and never adopt or mutate user guests; VMID lookup is read-only; deployment remains boetticher deploy. External-gateway DHCP remains outside boetticher management.", Examples: "boetticher dhcp reservation add --hostname app-01 --address 10.10.20.61 --mac 02:00:00:00:02:61 --site ./my-boetticher; boetticher dhcp leases --site ./my-boetticher --live", Related: "firewall, dns, verify",
+	},
+	"dns": {
+		Usage: "boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME] [--value VALUE] [--json]", Purpose: "Manage bounded user-owned A and CNAME records in the private lab namespace.", Arguments: "add requires --name, --type, and --value; remove requires --name and --type; list has no required arguments.", Options: "--value is an IPv4 address for A or a private FQDN for CNAME; --json emits machine-readable output; --site selects local desired state.", Safety: "Changes are local site.yml intent only and apply through boetticher deploy. Core, module, and DHCP/DDNS-owned names cannot be replaced; arbitrary PowerDNS administration is not exposed.", Examples: "boetticher dns record add --name app.lab.home.arpa --type CNAME --value app-01.servers.lab.home.arpa --site ./my-boetticher", Related: "dhcp, config validate, deploy",
 	},
 	"storage": {
 		Usage: "boetticher storage status|initialize [--site DIR] [--live] [--confirmed]", Purpose: "Inspect the Core-owned storage substrate or perform its explicitly confirmed initialization.", Arguments: "status inspects; initialize prepares the configured dedicated data profile.", Options: "--live reads the Proxmox host; --confirmed authorizes fixed-device initialization.", Safety: "initialize can format the explicitly configured device. Modules cannot select disks or create VGs.", Examples: "boetticher storage status --site ./my-boetticher", Related: "bootstrap, deploy, doctor",
 	},
 	"module": {
 		Usage: "boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]", Purpose: "Inspect or change first-party module intent through the shared deploy engine.", Arguments: "NAME is required for show, plan, enable, disable, and optional for status.", Options: "--dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; --purge requires --confirm and explicitly removes retained module resources.", Safety: "DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive.", Examples: "boetticher module list --site ./my-boetticher; boetticher module disable monitoring --confirm --site ./my-boetticher", Related: "config validate, deploy, doctor",
+	},
+	"modules": {
+		Usage: "boetticher modules list|MODULE show|plan|enable|disable|status|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]", Purpose: "Inspect or change first-party module intent through the shared registry and deploy engine.", Arguments: "MODULE is a registered first-party module. list retains the generic module inventory; lifecycle commands are resolved by the same generic implementation.", Options: "--dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; purge requires --confirm and removes retained module resources only after exact ownership proof.", Safety: "Both tailnet-router and litellm are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership.", Examples: "boetticher modules list --site ./my-boetticher; boetticher modules tailnet-router plan --site ./my-boetticher", Related: "config validate, deploy, doctor",
 	},
 	"config": {
 		Usage: "boetticher config validate|show|schema [--site DIR]", Purpose: "Validate, display, or locate the typed non-secret SiteConfig schema and resolved model.", Arguments: "validate, show, and schema select the read-only operation.", Options: "--site selects the private site repository; schema does not require a site directory.", Safety: "Read-only. Unknown fields, invalid providers, and mandatory-module disable attempts fail before infrastructure mutation.", Examples: "boetticher config validate --site ./my-boetticher; boetticher config schema", Related: "preflight, module list, deploy --dry-run",
@@ -126,6 +135,13 @@ var nestedHelpSpecs = map[string]helpSpec{
 	"firewall verify":         helpSpecs["firewall"],
 	"dhcp status":             helpSpecs["dhcp"],
 	"dhcp leases":             helpSpecs["dhcp"],
+	"dhcp reservation add":    helpSpecs["dhcp"],
+	"dhcp reservation list":   helpSpecs["dhcp"],
+	"dhcp reservation remove": helpSpecs["dhcp"],
+	"dns":                     helpSpecs["dns"],
+	"dns record add":          helpSpecs["dns"],
+	"dns record list":         helpSpecs["dns"],
+	"dns record remove":       helpSpecs["dns"],
 	"storage status":          helpSpecs["storage"],
 	"storage initialize":      helpSpecs["storage"],
 	"module list":             helpSpecs["module"],
@@ -134,6 +150,7 @@ var nestedHelpSpecs = map[string]helpSpec{
 	"module enable":           helpSpecs["module"],
 	"module disable":          helpSpecs["module"],
 	"module status":           helpSpecs["module"],
+	"modules list":            helpSpecs["modules"],
 	"config validate":         helpSpecs["config"],
 	"config show":             helpSpecs["config"],
 	"config schema":           helpSpecs["config"],
@@ -154,10 +171,15 @@ func CommandReferenceMarkdown() string {
 	document.WriteString("```\n\n")
 
 	document.WriteString("## Command details\n\n")
+	writtenDetails := map[string]struct{}{}
 	for _, spec := range commandSpecs {
 		path := commandPath(spec.Usage)
+		if _, written := writtenDetails[path]; written {
+			continue
+		}
 		if detail, ok := helpSpecs[path]; ok {
 			writeHelpMarkdown(&document, path, detail)
+			writtenDetails[path] = struct{}{}
 		}
 	}
 

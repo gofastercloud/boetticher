@@ -92,7 +92,7 @@ resource "proxmox_virtual_environment_container" "managed" {
 
     dns {
       domain  = "lab.home.arpa"
-      servers = ["10.10.20.10", "10.10.20.11"]
+      servers = ["10.10.10.10", "10.10.10.11"]
     }
 
     ip_config {

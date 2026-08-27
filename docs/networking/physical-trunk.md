@@ -21,7 +21,8 @@ The operator may explicitly select and attach a physical trunk later. A
 disconnected but otherwise clean NIC is eligible; carrier is not required.
 External mode always requires a distinct physical trunk and an explicit
 selection, even when exactly one eligible NIC remains, because the operator
-appliance must receive VLANs 10, 20, 50, and 99.
+appliance must receive VLANs 5, 10, 20, 30, 40, and 99. HOME/WAN remains on
+`vmbr0` and is excluded from the internal trunk.
 
 For later changes use:
 
@@ -35,3 +36,6 @@ The same planner protects the upstream address, default route, and bastion
 path during bootstrap and later changes. An ambiguous binding is a stop, not a
 guess. See [switch configuration](switch-configuration.md) for the downstream
 requirements.
+
+The fixed VLAN identities apply to the next clean deployment or rebuild.
+Existing installations are not automatically renumbered or live migrated.

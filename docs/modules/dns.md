@@ -1,7 +1,7 @@
 # DNS/NTP module
 
 `dns` is mandatory and provides authoritative DNS plus NTP. Its two fixed
-SERVERS guests run PowerDNS Authoritative and Chrony, and persist their
+INFRA guests run PowerDNS Authoritative and Chrony, and persist their
 PowerDNS state and stable endpoint identity across appliance replacement.
 
 The client-facing recursive/filtering provider is selected in `site.yml`:

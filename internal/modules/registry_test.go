@@ -16,7 +16,7 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(modules) != 4 || modules[0].Definition.Name != "firewall" || modules[1].Definition.Name != "dns" || modules[2].Definition.Name != "logging" || modules[3].Definition.Name != "monitoring" {
+	if len(modules) != 6 || modules[0].Definition.Name != "firewall" || modules[1].Definition.Name != "dns" || modules[2].Definition.Name != "logging" || modules[3].Definition.Name != "monitoring" || modules[4].Definition.Name != "litellm" || modules[5].Definition.Name != "tailnet-router" {
 		t.Fatalf("unexpected module resolution: %#v", modules)
 	}
 	if len(site.PlatformComponents()) != 7 {
@@ -26,12 +26,29 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 		t.Fatalf("default modules were not enabled: %#v", site.Modules)
 	}
 	for _, module := range modules {
+		if !module.Enabled {
+			continue
+		}
 		if module.State != "Enabled" {
 			t.Fatalf("active module %s reported unexpected desired state %q", module.Definition.Name, module.State)
 		}
 	}
 	if len(site.Declarations) != 4 || site.Declarations[0].Artifact.DefinitionSHA256 == "" {
 		t.Fatalf("default module declarations are incomplete: %#v", site.Declarations)
+	}
+	monitoring, ok := findDeclaration(site, "monitoring")
+	if !ok {
+		t.Fatal("monitoring declaration is missing")
+	}
+	var agentToken model.SecretDeclaration
+	for _, secret := range monitoring.Secrets {
+		if secret.Name == "pulse_agent_token" {
+			agentToken = secret
+			break
+		}
+	}
+	if agentToken.Consumer != "pulse-agent" || agentToken.Delivery != "systemd-credential" || agentToken.Generation != "ephemeral" {
+		t.Fatalf("Pulse agent credential contract is incomplete: %#v", agentToken)
 	}
 	for _, declaration := range site.Declarations {
 		for _, guest := range declaration.Guests {
@@ -56,6 +73,56 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 		if secret.Consumer == "powerdns-authoritative" && (!secret.Persistent || secret.Delivery != "protected-powerdns-backend") {
 			t.Fatalf("PowerDNS secret exception is not explicit: %#v", secret)
 		}
+	}
+}
+
+func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *testing.T) {
+	registry := FirstPartyRegistry()
+	if err := registry.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"tailnet-router", "litellm"} {
+		definition, ok := registry.Definition(name)
+		if !ok || definition.Policy != DefaultOff {
+			t.Fatalf("%s is not a default-off first-party module: %#v", name, definition)
+		}
+	}
+	tailnet, _ := registry.Definition("tailnet-router")
+	if tailnet.ReservedVMIDStart != 200 || tailnet.ReservedVMIDEnd != 209 || tailnet.Guests[0].VMID != 200 || tailnet.Placement.ZoneType != model.ZoneTypeTransit {
+		t.Fatalf("tailnet-router identity contract is incomplete: %#v", tailnet)
+	}
+	litellm, _ := registry.Definition("litellm")
+	if litellm.ReservedVMIDStart != 210 || litellm.ReservedVMIDEnd != 219 || litellm.Guests[0].VMID != 210 || litellm.Placement.ZoneType != model.ZoneTypeServers {
+		t.Fatalf("litellm identity contract is incomplete: %#v", litellm)
+	}
+}
+
+func TestTailnetAndLiteLLMComposeTypedDeclarations(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	tailnetEnabled, litellmEnabled := true, true
+	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
+	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+		Enabled:   &litellmEnabled,
+		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
+		Models:    []model.LiteLLMModelConfig{{Alias: "selected-alias", Upstream: "openrouter", Model: "selected/openrouter-model"}},
+	}
+	site, _, err := Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tailnet, ok := findDeclaration(site, "tailnet-router")
+	if !ok {
+		t.Fatal("tailnet-router declaration is missing")
+	}
+	if tailnet.Guests[0].Zone != "TRANSIT" || tailnet.Guests[0].Address != "10.10.5.10" || !tailnet.Security.Unprivileged || tailnet.Security.Devices[0].Path != "/dev/net/tun" || tailnet.AdvertisedRoutes[0] != "10.10.0.0/16" {
+		t.Fatalf("tailnet-router declaration is incomplete: %#v", tailnet)
+	}
+	litellm, ok := findDeclaration(site, "litellm")
+	if !ok {
+		t.Fatal("litellm declaration is missing")
+	}
+	if litellm.Guests[0].Address != "10.10.20.60" || !litellm.Guests[0].MTLS || len(litellm.Secrets) != 1 || litellm.Secrets[0].Name != "openrouter_api_key" {
+		t.Fatalf("litellm declaration is incomplete: %#v", litellm)
 	}
 }
 

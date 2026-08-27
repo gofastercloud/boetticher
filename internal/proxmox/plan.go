@@ -2,6 +2,8 @@ package proxmox
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,6 +47,7 @@ type GuestPlan struct {
 	Artifact   model.Artifact                      `json:"artifact,omitempty"`
 	Persistent []model.PersistentState             `json:"persistent,omitempty"`
 	Volumes    []model.PersistentVolumeDeclaration `json:"volumes,omitempty"`
+	Security   model.GuestSecurityDeclaration      `json:"security,omitempty"`
 }
 
 type GuestNIC struct {
@@ -69,9 +72,10 @@ type Plan struct {
 	// ArtifactFiles is controller-local evidence and is intentionally excluded
 	// from canonical model output. It maps qualified definitions to the exact
 	// bytes that may be imported into Proxmox.
-	ArtifactFiles     map[string]string `json:"-"`
-	OperatorPublicKey string            `json:"-"`
-	CloudInitFiles    CloudInitFiles    `json:"-"`
+	ArtifactFiles        map[string]string `json:"-"`
+	OperatorPublicKey    string            `json:"-"`
+	CloudInitFiles       CloudInitFiles    `json:"-"`
+	DestructiveConfirmed bool              `json:"-"`
 }
 
 type NetworkInterface struct {
@@ -113,6 +117,7 @@ func (n *NetworkInterface) UnmarshalJSON(data []byte) error {
 		Bond                string          `json:"bond"`
 		SpeedMbps           int             `json:"speed"`
 		Active              json.RawMessage `json:"active"`
+		AltNames            []string        `json:"altnames"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -141,10 +146,46 @@ func (n *NetworkInterface) UnmarshalJSON(data []byte) error {
 	if pciAddress == "" {
 		pciAddress = raw.PCI
 	}
-	n.BridgePorts, n.HWAddr, n.Driver, n.Model, n.PCIAddress, n.Bond, n.SpeedMbps = bridgePorts, raw.HWAddr, raw.Driver, model, pciAddress, raw.Bond, raw.SpeedMbps
+	hwAddr := raw.HWAddr
+	if hwAddr == "" {
+		hwAddr = predictableMAC(raw.Iface, raw.AltNames)
+	}
+	n.BridgePorts, n.HWAddr, n.Driver, n.Model, n.PCIAddress, n.Bond, n.SpeedMbps = bridgePorts, hwAddr, raw.Driver, model, pciAddress, raw.Bond, raw.SpeedMbps
 	n.BridgeVLANAware = jsonBool(aware)
 	n.Active = jsonBool(raw.Active)
 	return nil
+}
+
+// predictableMAC recovers hardware identity from Linux's stable enx<mac>
+// interface naming when a Proxmox network response omits hwaddr. Only the
+// exact 12-hex-digit form is accepted; arbitrary interface names remain
+// ambiguous and continue to fail closed.
+func predictableMAC(iface string, altNames []string) string {
+	names := append([]string{iface}, altNames...)
+	for _, name := range names {
+		if len(name) != len("enx")+12 || !strings.HasPrefix(name, "enx") {
+			continue
+		}
+		var result strings.Builder
+		for i, value := range name[3:] {
+			if !isHexRune(value) {
+				result.Reset()
+				break
+			}
+			if i > 0 && i%2 == 0 {
+				result.WriteByte(':')
+			}
+			result.WriteRune(value)
+		}
+		if result.Len() == 17 {
+			return strings.ToLower(result.String())
+		}
+	}
+	return ""
+}
+
+func isHexRune(value rune) bool {
+	return (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f') || (value >= 'A' && value <= 'F')
 }
 
 func jsonBool(data json.RawMessage) bool {
@@ -334,6 +375,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 					guest.Artifact = declaration.Artifact
 					guest.Persistent = persistentForGuest(declaration.Persistent, component.Name)
 					guest.Volumes = volumesForGuest(declaration.Volumes, component.Name)
+					guest.Security = declaration.Security
 					for index := range guest.Volumes {
 						for _, resolved := range storagePlan.Volumes {
 							if resolved.Module == guest.Volumes[index].Module && resolved.Name == guest.Volumes[index].Name && resolved.Guest == guest.Volumes[index].Guest {
@@ -488,7 +530,7 @@ func fixturePersistent(module, guest string) []model.PersistentState {
 	case "dns":
 		state = &model.PersistentState{Name: "powerdns-database", Guest: guest, Path: "/var/lib/powerdns", Kind: "application-database", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}
 	case "monitoring":
-		state = &model.PersistentState{Name: "postgresql-data", Guest: guest, Path: "/var/lib/postgresql", Kind: "application-database", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}
+		state = &model.PersistentState{Name: "pulse-state", Guest: guest, Path: "/var/lib/pulse", Kind: "monitoring-state", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}
 	case "firewall":
 		state = &model.PersistentState{Name: "kea-leases", Guest: guest, Path: "/var/lib/kea", Kind: "lease-state", Backup: true, Replacement: "retain-across-rootfs-replacement"}
 	}
@@ -526,7 +568,11 @@ func fixtureVolumes(module, guest string) []model.PersistentVolumeDeclaration {
 
 func gatewayNICs(s model.Site) []GuestNIC {
 	nics := []GuestNIC{{Name: "wan0", Bridge: "vmbr0", Method: "dhcp", MAC: "02:00:00:00:01:01"}}
-	for _, zone := range s.Normalize().Network.Zones {
+	for _, zoneType := range []model.ZoneType{model.ZoneTypeTrusted, model.ZoneTypeServers, model.ZoneTypeSandbox, model.ZoneTypeManagement, model.ZoneTypeTransit, model.ZoneTypeInfrastructure} {
+		zone, err := s.ZoneForType(zoneType)
+		if err != nil {
+			continue
+		}
 		nics = append(nics, GuestNIC{Name: strings.ToLower(zone.Name) + "0", Bridge: "vmbr1", VLAN: zone.VLAN, Address: zone.Gateway, Method: "static", MAC: fmt.Sprintf("02:00:00:00:01:%02x", len(nics)+1)})
 	}
 	return nics
@@ -587,7 +633,7 @@ func Provision(ctx context.Context, client *Client, plan Plan, _ ...string) erro
 			if err := ensureLXC(ctx, client, plan, guest); err != nil {
 				return err
 			}
-			if err := client.StartLXC(ctx, plan.Node, guest.VMID); err != nil {
+			if err := client.EnsureLXCRunning(ctx, plan.Node, guest.VMID); err != nil {
 				return fmt.Errorf("start container %s: %w", guest.Name, err)
 			}
 		default:
@@ -620,7 +666,7 @@ func ProvisionModule(ctx context.Context, client *Client, plan Plan, module stri
 		if err := ensureLXC(ctx, client, plan, guest); err != nil {
 			return err
 		}
-		if err := client.StartLXC(ctx, plan.Node, guest.VMID); err != nil {
+		if err := client.EnsureLXCRunning(ctx, plan.Node, guest.VMID); err != nil {
 			return fmt.Errorf("start %s: %w", guest.Name, err)
 		}
 	}
@@ -679,17 +725,16 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 		"memory":    {strconv.Itoa(builder.MemoryMiB)},
 		"cores":     {strconv.Itoa(builder.Cores)},
 		"cpu":       {"host"},
+		"scsihw":    {"virtio-scsi-single"},
 		"ostype":    {"l26"},
 		"onboot":    {"0"},
 		"agent":     {"1"},
+		"boot":      {"order=scsi0;ide2;net0"},
 		"tags":      {strings.Join([]string{model.TagBoetticher, model.TagManaged, model.TagPlatform, builderOwnerTag}, ";")},
-		"net0":      {"virtio,bridge=vmbr0,firewall=1,macaddr=" + model.BuilderMAC},
+		"net0":      {"virtio,bridge=vmbr0,macaddr=" + model.BuilderMAC},
 		"ide2":      {"local:cloudinit"},
 		"ipconfig0": {"ip=dhcp"},
 		"ciuser":    {model.DefaultAdminSSHUser},
-	}
-	if publicKey != "" {
-		params.Set("sshkeys", publicKey)
 	}
 	cloudInit, err := RenderBuilderCloudInitWithKey(publicKey)
 	if err != nil {
@@ -738,17 +783,6 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 	}
 	if err := client.WaitTask(ctx, plan.Node, upid); err != nil {
 		return created, fmt.Errorf("wait for builder input: %w", err)
-	}
-	var imported map[string]any
-	if err := client.QEMUConfig(ctx, plan.Node, model.BuilderVMID, &imported); err != nil {
-		return created, fmt.Errorf("inspect builder disk: %w", err)
-	}
-	unused, ok := imported["unused0"].(string)
-	if !ok || unused == "" {
-		return created, errors.New("builder disk import completed without an unused disk reference")
-	}
-	if err := client.SetVMConfig(ctx, plan.Node, model.BuilderVMID, url.Values{"scsi0": {unused}, "delete": {"unused0"}}); err != nil {
-		return created, fmt.Errorf("attach builder disk: %w", err)
 	}
 	if err := client.ResizeQEMUDisk(ctx, plan.Node, model.BuilderVMID, "scsi0", builder.DiskGiB); err != nil {
 		return created, fmt.Errorf("size builder disk: %w", err)
@@ -903,7 +937,7 @@ func EnsureVirtualBridge(ctx context.Context, client *Client, node string) error
 		return nil
 	}
 	if err := client.CreateNodeNetwork(ctx, node, url.Values{
-		"iface": {"vmbr1"}, "type": {"bridge"}, "bridge-ports": {"none"}, "bridge-vlan-aware": {"1"}, "autostart": {"1"},
+		"iface": {"vmbr1"}, "type": {"bridge"}, "bridge_vlan_aware": {"1"}, "autostart": {"1"},
 	}); err != nil {
 		return fmt.Errorf("create virtual-only vmbr1: %w", err)
 	}
@@ -954,18 +988,18 @@ func AttachTrunk(ctx context.Context, client *Client, node, physicalInterface, b
 	if bridge.BridgePorts != "" && bridge.BridgePorts != "none" && bridge.BridgePorts != physicalInterface {
 		return fmt.Errorf("vmbr1 already has bridge ports %q", bridge.BridgePorts)
 	}
-	if err := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge-ports": {physicalInterface}, "bridge-vlan-aware": {"1"}}); err != nil {
+	if err := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge_ports": {physicalInterface}, "bridge_vlan_aware": {"1"}}); err != nil {
 		return fmt.Errorf("attach %s to vmbr1: %w", physicalInterface, err)
 	}
 	var after []NetworkInterface
 	if err := client.NodeNetwork(ctx, node, &after); err != nil {
-		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge-ports": {"none"}, "bridge-vlan-aware": {"1"}}); rollbackErr != nil {
+		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge_ports": {"none"}, "bridge_vlan_aware": {"1"}}); rollbackErr != nil {
 			return fmt.Errorf("HOLD: trunk attach verification failed and rollback failed: %v; verification: %w", rollbackErr, err)
 		}
 		return fmt.Errorf("trunk attach verification failed; rollback completed: %w", err)
 	}
 	if !bridgeHasPort(after, "vmbr1", physicalInterface) {
-		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge-ports": {"none"}, "bridge-vlan-aware": {"1"}}); rollbackErr != nil {
+		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge_ports": {"none"}, "bridge_vlan_aware": {"1"}}); rollbackErr != nil {
 			return fmt.Errorf("HOLD: trunk attach was not observed and rollback failed: %v", rollbackErr)
 		}
 		return fmt.Errorf("trunk attach was not observed after mutation; rollback completed")
@@ -1000,18 +1034,18 @@ func DetachTrunk(ctx context.Context, client *Client, node, physicalInterface, b
 	if bridge == nil || bridge.Type != "bridge" || !bridge.BridgeVLANAware || !containsBridgePort(bridge.BridgePorts, physicalInterface) {
 		return fmt.Errorf("refusing to detach %s: it is not the current vmbr1 physical member", physicalInterface)
 	}
-	if err := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge-ports": {"none"}, "bridge-vlan-aware": {"1"}}); err != nil {
+	if err := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge_ports": {"none"}, "bridge_vlan_aware": {"1"}}); err != nil {
 		return fmt.Errorf("detach %s from vmbr1: %w", physicalInterface, err)
 	}
 	var after []NetworkInterface
 	if err := client.NodeNetwork(ctx, node, &after); err != nil {
-		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge-ports": {physicalInterface}, "bridge-vlan-aware": {"1"}}); rollbackErr != nil {
+		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge_ports": {physicalInterface}, "bridge_vlan_aware": {"1"}}); rollbackErr != nil {
 			return fmt.Errorf("HOLD: trunk detach verification failed and rollback failed: %v; verification: %w", rollbackErr, err)
 		}
 		return fmt.Errorf("trunk detach verification failed; rollback completed: %w", err)
 	}
 	if bridgeHasPort(after, "vmbr1", physicalInterface) {
-		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge-ports": {physicalInterface}, "bridge-vlan-aware": {"1"}}); rollbackErr != nil {
+		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge_ports": {physicalInterface}, "bridge_vlan_aware": {"1"}}); rollbackErr != nil {
 			return fmt.Errorf("HOLD: trunk detach was not observed and rollback failed: %v", rollbackErr)
 		}
 		return fmt.Errorf("trunk detach was not observed after mutation; rollback completed")
@@ -1131,7 +1165,23 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 		if kind != KindQEMU {
 			return fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, expected QEMU %s", guest.VMID, kind, guest.Name)
 		}
-		if err := validateExistingGuestIdentity(current, guest); err != nil {
+		if err := validateExistingGuestIdentityFields(current, guest); err != nil {
+			return err
+		}
+		if guestArtifactNeedsReplacement(current, guest) {
+			if !plan.DestructiveConfirmed {
+				return fmt.Errorf("HOLD: guest %s has artifact identity mismatch; appliance replacement requires --confirm", guest.Name)
+			}
+			if err := replaceQEMURootDisk(ctx, client, plan, guest); err != nil {
+				return err
+			}
+			current["description"] = artifactDescription(guest.Artifact)
+		} else if guest.Name == "lab-fw-01" && plan.CloudInitFiles.UserData != "" {
+			if err := uploadFirewallCloudInit(ctx, client, plan, guest.VMID); err != nil {
+				return err
+			}
+		}
+		if err := migrateLegacyQEMUPersistentVolumeSerials(ctx, client, plan, guest, current); err != nil {
 			return err
 		}
 		if err := validateExistingQEMUVolumes(current, plan, guest); err != nil {
@@ -1144,10 +1194,10 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 	}
 	filename := fmt.Sprintf("%s-%s-%s.qcow2", guest.Artifact.Name, guest.Artifact.Version, guest.Artifact.Architecture)
 	source := plan.ArtifactFiles[artifactKey(guest.Artifact)]
-	if err := ensureArtifactInStorage(ctx, client, plan.Node, "local", "images", filename, guest.Artifact.ContentSHA256, source); err != nil {
+	if err := ensureArtifactInStorage(ctx, client, plan.Node, "local", "import", filename, guest.Artifact.ContentSHA256, source); err != nil {
 		return fmt.Errorf("prepare qualified %s artifact: %w", guest.Name, err)
 	}
-	imageFileID := "local:images/" + filename
+	imageFileID := "local:import/" + filename
 	params := url.Values{
 		"name":        {guest.Name},
 		"description": {artifactDescription(guest.Artifact)},
@@ -1162,14 +1212,8 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 		"tags":        {strings.Join(guest.Tags, ";")},
 	}
 	if guest.Name == "lab-fw-01" && plan.CloudInitFiles.UserData != "" {
-		names := cloudInitSnippetNames(guest.VMID)
-		for key, value := range map[string]string{"meta": plan.CloudInitFiles.MetaData, "user": plan.CloudInitFiles.UserData, "network": plan.CloudInitFiles.NetworkConfig} {
-			if value == "" {
-				return errors.New("firewall cloud-init input is incomplete")
-			}
-			if err := client.UploadStorageText(ctx, plan.Node, "local", "snippets", names[key], value); err != nil {
-				return fmt.Errorf("upload firewall cloud-init %s: %w", key, err)
-			}
+		if err := uploadFirewallCloudInit(ctx, client, plan, guest.VMID); err != nil {
+			return err
 		}
 		params.Set("cicustom", cloudInitCICustom(guest.VMID))
 		params.Set("ide2", "local:cloudinit")
@@ -1180,7 +1224,9 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 		if err := ValidatePublicKey(plan.OperatorPublicKey); err != nil {
 			return err
 		}
-		params.Set("sshkeys", plan.OperatorPublicKey)
+		// Proxmox declares this field as urlencoded and decodes it once more
+		// after the application/x-www-form-urlencoded request is parsed.
+		params.Set("sshkeys", url.PathEscape(plan.OperatorPublicKey))
 	}
 	volumeParams, err := qemuPersistentVolumeParams(plan, guest)
 	if err != nil {
@@ -1205,17 +1251,6 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 	}
 	if err := client.WaitTask(ctx, plan.Node, upid); err != nil {
 		return fmt.Errorf("wait for gateway image import: %w", err)
-	}
-	var imported map[string]any
-	if err := client.QEMUConfig(ctx, plan.Node, guest.VMID, &imported); err != nil {
-		return fmt.Errorf("inspect imported gateway disk: %w", err)
-	}
-	unused, ok := imported["unused0"].(string)
-	if !ok || unused == "" {
-		return errors.New("gateway disk import completed without an unused disk reference")
-	}
-	if err := client.SetVMConfig(ctx, plan.Node, guest.VMID, url.Values{"scsi0": {unused}, "delete": {"unused0"}}); err != nil {
-		return fmt.Errorf("attach imported gateway disk: %w", err)
 	}
 	return nil
 }
@@ -1254,7 +1289,10 @@ func validateExistingQEMUVolumes(current map[string]any, plan Plan, guest GuestP
 			return fmt.Errorf("HOLD: guest %s has no persistent volume identity for %s, expected %q", guest.Name, key, expected)
 		}
 		observedParts := strings.Split(observed, ",")
-		if observedParts[0] != strings.Split(expected, ",")[0] {
+		expectedParts := strings.Split(expected, ",")
+		expectedStorage, expectedSize, expectedOK := strings.Cut(expectedParts[0], ":")
+		observedStorage, _, observedOK := strings.Cut(observedParts[0], ":")
+		if !expectedOK || !observedOK || observedStorage != expectedStorage {
 			return fmt.Errorf("HOLD: guest %s has persistent volume %s=%q, expected storage/size %q", guest.Name, key, observed, expected)
 		}
 		observedOptions := make(map[string]string, len(observedParts)-1)
@@ -1265,11 +1303,14 @@ func validateExistingQEMUVolumes(current map[string]any, plan Plan, guest GuestP
 			}
 		}
 		expectedOptions := make(map[string]string)
-		for _, option := range strings.Split(expected, ",")[1:] {
+		for _, option := range expectedParts[1:] {
 			name, value, ok := strings.Cut(option, "=")
 			if ok {
 				expectedOptions[name] = value
 			}
+		}
+		if size := observedOptions["size"]; size != "" && size != expectedSize+"G" {
+			return fmt.Errorf("HOLD: guest %s has persistent volume %s=%q, expected storage/size %q", guest.Name, key, observed, expected)
 		}
 		for _, name := range []string{"backup", "serial"} {
 			if observedOptions[name] != expectedOptions[name] {
@@ -1289,15 +1330,27 @@ func qemuPersistentVolumeParam(plan Plan, volume model.PersistentVolumeDeclarati
 }
 
 func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
+	if err := validateLXCDeviceContract(guest); err != nil {
+		return err
+	}
 	kind, current, err := client.GuestConfig(ctx, plan.Node, guest.VMID)
 	if err == nil {
 		if kind != KindLXC {
 			return fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, expected LXC %s", guest.VMID, kind, guest.Name)
 		}
-		if err := validateExistingGuestIdentity(current, guest); err != nil {
+		if err := validateExistingGuestVolumes(current, guest); err != nil {
 			return err
 		}
-		if err := validateExistingGuestVolumes(current, guest); err != nil {
+		if guestArtifactNeedsReplacement(current, guest) {
+			if !plan.DestructiveConfirmed {
+				return fmt.Errorf("HOLD: guest %s has artifact identity mismatch; appliance replacement requires --confirm", guest.Name)
+			}
+			if err := replaceLXC(ctx, client, plan, guest); err != nil {
+				return err
+			}
+			return ensureLXC(ctx, client, plan, guest)
+		}
+		if err := validateExistingGuestIdentity(current, guest); err != nil {
 			return err
 		}
 		return ensureExistingGuestTags(ctx, client, plan, guest, current)
@@ -1329,6 +1382,12 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		"tags":         {strings.Join(guest.Tags, ";")},
 		"net0":         {fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,ip=%s/24,gw=%s", guest.VLAN, guest.Address, gatewayFor(guest.Zone))},
 	}
+	if guest.Security.Unprivileged {
+		params.Set("unprivileged", "1")
+	}
+	for index, device := range guest.Security.Devices {
+		params.Set(fmt.Sprintf("dev%d", index), lxcDeviceParam(device))
+	}
 	bootstrapParams, err := lxcBootstrapKeyParams(plan.OperatorPublicKey)
 	if err != nil {
 		return fmt.Errorf("validate appliance bootstrap key for %s: %w", guest.Name, err)
@@ -1348,13 +1407,78 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 	if err := client.CreateLXC(ctx, plan.Node, guest.VMID, params); err != nil {
 		return fmt.Errorf("create container %s: %w", guest.Name, err)
 	}
+	// Creation is not sufficient evidence that Proxmox applied the security
+	// contract. Inspect the resulting object before ProvisionModule/Provision
+	// can issue a start request. A missing or altered device allowance is a
+	// HOLD; the newly created guest is never started or configured further.
+	kind, current, err = client.GuestConfig(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("HOLD: verify created container %s security contract: %w", guest.Name, err)
+	}
+	if kind != KindLXC {
+		return fmt.Errorf("HOLD: created guest %s was reported as %s, expected LXC", guest.Name, kind)
+	}
+	if err := validateExistingGuestIdentity(current, guest); err != nil {
+		return fmt.Errorf("HOLD: verify created container %s identity/security contract: %w", guest.Name, err)
+	}
+	if err := validateExistingGuestVolumes(current, guest); err != nil {
+		return fmt.Errorf("HOLD: verify created container %s persistent volumes: %w", guest.Name, err)
+	}
+	return nil
+}
+
+func validateLXCDeviceContract(guest GuestPlan) error {
+	if len(guest.Security.Capabilities) != 0 {
+		return fmt.Errorf("HOLD: guest %s requests unrelated Linux capabilities", guest.Name)
+	}
+	if !guest.Security.Unprivileged && len(guest.Security.Devices) != 0 {
+		return fmt.Errorf("HOLD: guest %s declares devices without an unprivileged contract", guest.Name)
+	}
+	for _, device := range guest.Security.Devices {
+		if device.Path != "/dev/net/tun" || device.Type != "c" || device.Major != 10 || device.Minor != 200 || device.Access != "rwm" {
+			return fmt.Errorf("HOLD: guest %s has unsupported device contract for %s", guest.Name, device.Path)
+		}
+	}
+	return nil
+}
+
+// lxcDeviceParam is the only Core-owned translation of the bounded TUN
+// contract into a Proxmox LXC device setting. Proxmox applies the matching
+// host character device and cgroup rule atomically with container creation;
+// no broad device wildcard or Linux capability is requested.
+func lxcDeviceParam(device model.DeviceRequirement) string {
+	return fmt.Sprintf("path=%s,mode=0666", device.Path)
+}
+
+func replaceLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
+	status, err := client.LXCStatus(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("inspect %s status before appliance replacement: %w", guest.Name, err)
+	}
+	if status == "running" {
+		if err := client.StopLXC(ctx, plan.Node, guest.VMID); err != nil {
+			return fmt.Errorf("stop %s before appliance replacement: %w", guest.Name, err)
+		}
+	}
+	detach := url.Values{}
+	for index := range guest.Volumes {
+		detach.Add("delete", fmt.Sprintf("mp%d", index))
+	}
+	if len(detach) > 0 {
+		if err := client.SetLXCConfig(ctx, plan.Node, guest.VMID, detach); err != nil {
+			return fmt.Errorf("detach persistent volumes from %s before appliance replacement: %w", guest.Name, err)
+		}
+	}
+	if err := client.destroyLXCForReplacement(ctx, plan.Node, guest.VMID); err != nil {
+		return fmt.Errorf("destroy %s rootfs for appliance replacement: %w", guest.Name, err)
+	}
 	return nil
 }
 
 // lxcBootstrapKeyParams is the only operator-key input accepted by appliance
 // creation. Proxmox writes this key into the container's root bootstrap
-// identity; the image first-boot service copies it to labadmin and removes the
-// bootstrap copy before normal deployment configuration begins.
+// identity; the image first-boot service copies it to labadmin and Core removes
+// the root bootstrap copy after successful convergence.
 func lxcBootstrapKeyParams(publicKey string) (url.Values, error) {
 	if publicKey == "" {
 		return url.Values{}, nil
@@ -1377,6 +1501,18 @@ func persistentVolumeParam(volume model.PersistentVolumeDeclaration) (string, er
 }
 
 func persistentVolumeSerial(volume model.PersistentVolumeDeclaration) (string, error) {
+	identity, err := persistentVolumeIdentity(volume)
+	if err != nil {
+		return "", err
+	}
+	if len(identity) <= 36 {
+		return identity, nil
+	}
+	digest := sha256.Sum256([]byte(identity))
+	return "boetticher-" + hex.EncodeToString(digest[:])[:25], nil
+}
+
+func persistentVolumeIdentity(volume model.PersistentVolumeDeclaration) (string, error) {
 	if volume.Module == "" || volume.Guest == "" || volume.Name == "" {
 		return "", errors.New("persistent volume identity is incomplete")
 	}
@@ -1390,6 +1526,66 @@ func persistentVolumeSerial(volume model.PersistentVolumeDeclaration) (string, e
 	return "boetticher-" + volume.Module + "-" + volume.Guest + "-" + volume.Name, nil
 }
 
+func migrateLegacyQEMUPersistentVolumeSerials(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) error {
+	params := url.Values{}
+	for index, volume := range guest.Volumes {
+		serial, err := persistentVolumeSerial(volume)
+		if err != nil {
+			return err
+		}
+		legacySerial, err := persistentVolumeIdentity(volume)
+		if err != nil || serial == legacySerial {
+			continue
+		}
+		expected, err := qemuPersistentVolumeParam(plan, volume)
+		if err != nil {
+			return err
+		}
+		if observed, _ := current[fmt.Sprintf("scsi%d", index+1)].(string); qemuVolumeMatchesSerial(observed, expected, legacySerial) {
+			params.Set(fmt.Sprintf("scsi%d", index+1), expected)
+		}
+	}
+	if len(params) == 0 {
+		return nil
+	}
+	if err := client.SetVMConfig(ctx, plan.Node, guest.VMID, params); err != nil {
+		return fmt.Errorf("migrate legacy persistent volume serials for %s: %w", guest.Name, err)
+	}
+	for key, value := range params {
+		current[key] = value[0]
+	}
+	return nil
+}
+
+func qemuVolumeMatchesSerial(observed, expected, serial string) bool {
+	observedParts := strings.Split(observed, ",")
+	expectedParts := strings.Split(expected, ",")
+	if len(observedParts) == 0 || len(expectedParts) == 0 {
+		return false
+	}
+	expectedStorage, expectedSize, expectedOK := strings.Cut(expectedParts[0], ":")
+	observedStorage, _, observedOK := strings.Cut(observedParts[0], ":")
+	if !expectedOK || !observedOK || observedStorage != expectedStorage {
+		return false
+	}
+	options := make(map[string]string, len(observedParts)-1)
+	for _, option := range observedParts[1:] {
+		name, value, ok := strings.Cut(option, "=")
+		if ok {
+			options[name] = value
+		}
+	}
+	expectedOptions := make(map[string]string, len(expectedParts)-1)
+	for _, option := range expectedParts[1:] {
+		name, value, ok := strings.Cut(option, "=")
+		if ok {
+			expectedOptions[name] = value
+		}
+	}
+	return options["backup"] == expectedOptions["backup"] && options["serial"] == serial &&
+		(options["size"] == "" || options["size"] == expectedSize+"G")
+}
+
 func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) error {
 	for index, volume := range expected.Volumes {
 		wanted, err := persistentVolumeParam(volume)
@@ -1398,11 +1594,50 @@ func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) er
 		}
 		key := fmt.Sprintf("mp%d", index)
 		observed, _ := current[key].(string)
-		if observed != wanted {
+		if !lxcPersistentVolumeMatches(observed, wanted) {
 			return fmt.Errorf("HOLD: guest %s has persistent volume %s=%q, expected %q", expected.Name, key, observed, wanted)
 		}
 	}
+	for key := range current {
+		if !strings.HasPrefix(key, "mp") || len(key) <= len("mp") || key[2] < '0' || key[2] > '9' {
+			continue
+		}
+		index := int(key[2] - '0')
+		if index >= len(expected.Volumes) {
+			return fmt.Errorf("HOLD: guest %s has an undeclared persistent volume %s", expected.Name, key)
+		}
+	}
 	return nil
+}
+
+func lxcPersistentVolumeMatches(observed, wanted string) bool {
+	observedParts := strings.Split(observed, ",")
+	wantedParts := strings.Split(wanted, ",")
+	if len(observedParts) == 0 || len(wantedParts) == 0 {
+		return false
+	}
+	observedStorage, _, observedOK := strings.Cut(observedParts[0], ":")
+	wantedStorage, wantedSize, wantedOK := strings.Cut(wantedParts[0], ":")
+	if !observedOK || !wantedOK || observedStorage != wantedStorage || wantedSize == "" {
+		return false
+	}
+	observedOptions := make(map[string]string, len(observedParts)-1)
+	for _, option := range observedParts[1:] {
+		name, value, ok := strings.Cut(option, "=")
+		if ok {
+			observedOptions[name] = value
+		}
+	}
+	wantedOptions := make(map[string]string, len(wantedParts)-1)
+	for _, option := range wantedParts[1:] {
+		name, value, ok := strings.Cut(option, "=")
+		if ok {
+			wantedOptions[name] = value
+		}
+	}
+	return observedOptions["mp"] == wantedOptions["mp"] &&
+		observedOptions["backup"] == wantedOptions["backup"] &&
+		observedOptions["size"] == wantedSize+"G"
 }
 
 func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage, content, filename, checksum, source string) error {
@@ -1413,8 +1648,12 @@ func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage,
 	if err != nil {
 		return fmt.Errorf("inspect %s artifact storage: %w", content, err)
 	}
-	if found, err := verifyStoredArtifact(entries, filename, checksum); err != nil {
-		return err
+	if found, err := verifyStoredArtifact(entries, filename, checksum, false); err != nil {
+		if (content != "import" && content != "vztmpl") || !strings.HasSuffix(err.Error(), "has no checksum evidence") {
+			return err
+		}
+		// Some Proxmox content listings omit checksums. Re-upload the qualified
+		// local bytes so the upload task can verify the exact content before use.
 	} else if found {
 		return nil
 	}
@@ -1435,7 +1674,7 @@ func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage,
 	if err != nil {
 		return fmt.Errorf("verify uploaded %s artifact storage: %w", filename, err)
 	}
-	found, err := verifyStoredArtifact(entries, filename, checksum)
+	found, err := verifyStoredArtifact(entries, filename, checksum, content == "import" || content == "vztmpl")
 	if err != nil {
 		return err
 	}
@@ -1449,7 +1688,7 @@ func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage,
 // task is not evidence that Proxmox stored the qualified bytes under the
 // expected content identity; the storage listing must expose the same
 // checksum before the artifact can be used for guest creation.
-func verifyStoredArtifact(entries []StorageContent, filename, checksum string) (bool, error) {
+func verifyStoredArtifact(entries []StorageContent, filename, checksum string, allowMissingChecksum bool) (bool, error) {
 	for _, entry := range entries {
 		if entry.Filename != filename && !strings.HasSuffix(entry.VolID, "/"+filename) {
 			continue
@@ -1459,6 +1698,12 @@ func verifyStoredArtifact(entries []StorageContent, filename, checksum string) (
 			observed = entry.CSum
 		}
 		if observed == "" {
+			if allowMissingChecksum {
+				// Import content listings omit checksums. A just-completed upload
+				// task already verified the requested checksum, so its presence is
+				// sufficient evidence for this post-upload check.
+				return true, nil
+			}
 			return false, fmt.Errorf("stored artifact %s has no checksum evidence", filename)
 		}
 		if !strings.EqualFold(observed, checksum) {
@@ -1481,16 +1726,40 @@ func validateExistingGuest(current map[string]any, expected GuestPlan) error {
 }
 
 func validateExistingGuestIdentity(current map[string]any, expected GuestPlan) error {
+	if err := validateExistingGuestIdentityFields(current, expected); err != nil {
+		return err
+	}
+	if guestArtifactNeedsReplacement(current, expected) {
+		observed, _ := current["description"].(string)
+		return fmt.Errorf("HOLD: guest %s has artifact identity %q, expected %q; appliance replacement is required", expected.Name, observed, artifactDescription(expected.Artifact))
+	}
+	return nil
+}
+
+func validateExistingGuestIdentityFields(current map[string]any, expected GuestPlan) error {
 	for key, want := range map[string]string{"name": expected.Name, "hostname": expected.Hostname} {
 		if got, ok := current[key].(string); ok && got != "" && got != want {
 			return fmt.Errorf("guest %s has unexpected %s %q, expected %q", expected.Name, key, got, want)
 		}
 	}
-	if expected.Artifact.Name != "" {
-		observed, _ := current["description"].(string)
-		wanted := artifactDescription(expected.Artifact)
-		if observed != wanted {
-			return fmt.Errorf("HOLD: guest %s has artifact identity %q, expected %q; appliance replacement is required", expected.Name, observed, wanted)
+	if expected.Security.Unprivileged {
+		if !observedTruthy(current["unprivileged"]) {
+			return fmt.Errorf("HOLD: guest %s is not unprivileged", expected.Name)
+		}
+		for index, device := range expected.Security.Devices {
+			key := fmt.Sprintf("dev%d", index)
+			observed, _ := current[key].(string)
+			if observed != lxcDeviceParam(device) {
+				return fmt.Errorf("HOLD: guest %s has %s=%q, expected exact TUN contract %q", expected.Name, key, observed, lxcDeviceParam(device))
+			}
+		}
+		for key := range current {
+			if strings.HasPrefix(key, "dev") && len(key) > len("dev") && key[3] >= '0' && key[3] <= '9' {
+				index := int(key[3] - '0')
+				if index >= len(expected.Security.Devices) {
+					return fmt.Errorf("HOLD: guest %s has an undeclared device allowance %s", expected.Name, key)
+				}
+			}
 		}
 	}
 	if expected.Owner == "boetticher/core/portal" {
@@ -1502,6 +1771,82 @@ func validateExistingGuestIdentity(current map[string]any, expected GuestPlan) e
 		ownerTag := model.ModuleOwnershipTag(module)
 		if ownerTag == "" || !hasOwnerTag(currentTags(current), ownerTag) {
 			return fmt.Errorf("HOLD: guest %s lacks canonical ownership proof %q", expected.Name, ownerTag)
+		}
+	}
+	return nil
+}
+
+func observedTruthy(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case float64:
+		return typed == 1
+	case int:
+		return typed == 1
+	case string:
+		return typed == "1" || strings.EqualFold(typed, "true")
+	default:
+		return false
+	}
+}
+
+func guestArtifactNeedsReplacement(current map[string]any, expected GuestPlan) bool {
+	if expected.Artifact.Name == "" {
+		return false
+	}
+	observed, _ := current["description"].(string)
+	return normalizeArtifactDescription(observed) != artifactDescription(expected.Artifact)
+}
+
+func normalizeArtifactDescription(value string) string {
+	if decoded, err := url.PathUnescape(value); err == nil {
+		value = decoded
+	}
+	return strings.TrimSuffix(value, "\n")
+}
+
+func replaceQEMURootDisk(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
+	status, err := client.QEMUStatus(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("inspect gateway status before appliance replacement: %w", err)
+	}
+	if status == "running" {
+		if err := client.StopVM(ctx, plan.Node, guest.VMID); err != nil {
+			return fmt.Errorf("stop gateway before appliance replacement: %w", err)
+		}
+	}
+	if guest.Name == "lab-fw-01" {
+		if err := uploadFirewallCloudInit(ctx, client, plan, guest.VMID); err != nil {
+			return err
+		}
+	}
+	filename := fmt.Sprintf("%s-%s-%s.qcow2", guest.Artifact.Name, guest.Artifact.Version, guest.Artifact.Architecture)
+	source := plan.ArtifactFiles[artifactKey(guest.Artifact)]
+	if err := ensureArtifactInStorage(ctx, client, plan.Node, "local", "import", filename, guest.Artifact.ContentSHA256, source); err != nil {
+		return fmt.Errorf("prepare replacement %s artifact: %w", guest.Name, err)
+	}
+	upid, err := client.ImportDisk(ctx, plan.Node, guest.VMID, "local:import/"+filename, plan.Storage, "qcow2")
+	if err != nil {
+		return fmt.Errorf("import replacement gateway disk: %w", err)
+	}
+	if err := client.WaitTask(ctx, plan.Node, upid); err != nil {
+		return fmt.Errorf("wait for replacement gateway disk: %w", err)
+	}
+	if err := client.SetVMConfig(ctx, plan.Node, guest.VMID, url.Values{"description": {artifactDescription(guest.Artifact)}}); err != nil {
+		return fmt.Errorf("record replacement gateway artifact identity: %w", err)
+	}
+	return nil
+}
+
+func uploadFirewallCloudInit(ctx context.Context, client *Client, plan Plan, vmid int) error {
+	if plan.CloudInitFiles.MetaData == "" || plan.CloudInitFiles.UserData == "" || plan.CloudInitFiles.NetworkConfig == "" {
+		return errors.New("firewall cloud-init input is incomplete")
+	}
+	names := cloudInitSnippetNames(vmid)
+	for key, value := range map[string]string{"meta": plan.CloudInitFiles.MetaData, "user": plan.CloudInitFiles.UserData, "network": plan.CloudInitFiles.NetworkConfig} {
+		if err := client.UploadStorageText(ctx, plan.Node, "local", "snippets", names[key], value); err != nil {
+			return fmt.Errorf("upload firewall cloud-init %s: %w", key, err)
 		}
 	}
 	return nil
@@ -1559,10 +1904,9 @@ func canonicalTags(value string) string {
 }
 
 func gatewayFor(zone string) string {
-	for _, prefix := range []string{"10.10.10", "10.10.20", "10.10.50", "10.10.99"} {
-		if strings.HasSuffix(prefix, "."+map[string]string{"TRUSTED": "10", "SERVERS": "20", "SANDBOX": "50", "MGMT": "99"}[zone]) {
-			return prefix + ".1"
-		}
-	}
-	return ""
+	return map[string]string{
+		"INFRA": "10.10.10.1", "SERVERS": "10.10.20.1",
+		"TRUSTED": "10.10.30.1", "SANDBOX": "10.10.40.1", "MGMT": "10.10.99.1",
+		"TRANSIT": model.TransitGateway,
+	}[zone]
 }

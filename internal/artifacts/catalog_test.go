@@ -410,7 +410,7 @@ func completeQualificationEvidence(t *testing.T, evidence Evidence) Evidence {
 		evidence.Builder = BuilderProvenance{
 			Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429",
 			Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3",
-			MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.1",
+			MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.33",
 		}
 		return evidence
 	}
@@ -418,7 +418,7 @@ func completeQualificationEvidence(t *testing.T, evidence Evidence) Evidence {
 		"package-manifest.txt":    "package: boetticher-test\n",
 		"sbom.json":               `{"bomFormat":"CycloneDX","specVersion":"1.5"}` + "\n",
 		"trivy.json":              `{"Results":[]}` + "\n",
-		"builder-provenance.json": `{"platform":"debian-13-amd64","input_image":"debian-13-genericcloud-amd64-20260327-2429","kernel":"6.1.0","go":"go version go1.26.5 linux/amd64","trivy":"Version: 0.69.3","mmdebstrap":"mmdebstrap 1.5.0","architecture":"amd64","boetticher_version":"0.3.1"}` + "\n",
+		"builder-provenance.json": `{"platform":"debian-13-amd64","input_image":"debian-13-genericcloud-amd64-20260327-2429","kernel":"6.1.0","go":"go version go1.26.5 linux/amd64","trivy":"Version: 0.69.3","mmdebstrap":"mmdebstrap 1.5.0","architecture":"amd64","boetticher_version":"0.3.33"}` + "\n",
 	}
 	for filename, content := range inputs {
 		if err := os.WriteFile(filepath.Join(filepath.Dir(evidence.ArtifactPath), filename), []byte(content), 0o600); err != nil {
@@ -432,7 +432,7 @@ func completeQualificationEvidence(t *testing.T, evidence Evidence) Evidence {
 	evidence.Builder = BuilderProvenance{
 		Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429",
 		Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3",
-		MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.1",
+		MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.33",
 	}
 	return evidence
 }
@@ -500,7 +500,7 @@ func TestArtifactDefinitionDigestBindsBuildInputs(t *testing.T) {
 
 func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	root := filepath.Join("..", "..", "images")
-	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "dns/adguard/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "portal/image.yaml"}
+	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "dns/adguard/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "portal/image.yaml", "tailnet-router/image.yaml", "litellm/image.yaml"}
 	for _, relative := range paths {
 		data, err := os.ReadFile(filepath.Join(root, relative))
 		if err != nil {
@@ -547,21 +547,37 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, required := range []string{
-		"package_version: 1:7.0.30-1+debian13",
-		"release_package_sha256: 4a926b8815cdefddc31558fe622676730a3987610f75d5af0d4024809d21dd43",
+		"version: 6.1.2",
+		"release_url: https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-v6.1.2-linux-amd64.tar.gz",
+		"release_sha256: 844cd054bcfce528cbcf434d782e571791cc7b02ef2fe298cf138b1cab1087ea",
+		"release_url: https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-agent-linux-amd64",
+		"release_sha256: 1f3cfda2b112e82f311f05673f750bc6e5cb05bd0f942f9b84d7612d56f1ba75",
 	} {
 		if !strings.Contains(string(monitoring), required) {
-			t.Fatalf("monitoring image definition is missing Zabbix qualification input %q", required)
+			t.Fatalf("monitoring image definition is missing Pulse qualification input %q", required)
 		}
 	}
 	buildScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"zabbix-sql-scripts=$zabbix_package_version", "php-pgsql"} {
+	pulseService, err := os.ReadFile(filepath.Join(root, "monitoring", "runtime", "pulse.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"pulse_release_sha256", "/opt/pulse/bin/pulse", "pulse.service", "run-pulse.sh"} {
 		if !strings.Contains(string(buildScript), required) {
-			t.Fatalf("monitoring build is missing runtime package %q", required)
+			t.Fatalf("monitoring build is missing Pulse runtime contract %q", required)
 		}
+	}
+	if !strings.Contains(string(pulseService), "Environment=BIND_ADDRESS=127.0.0.1") {
+		t.Fatal("Pulse service is not bound to loopback behind the TLS frontend")
+	}
+	if strings.Contains(string(pulseService), "CAP_NET_RAW") || strings.Contains(string(pulseService), "AmbientCapabilities") || strings.Contains(string(pulseService), "CapabilityBoundingSet") {
+		t.Fatal("Pulse service grants an unnecessary raw-socket capability")
+	}
+	if strings.Contains(string(monitoring), "latest") || strings.Contains(string(buildScript), "zabbix") || strings.Contains(string(buildScript), "postgresql") {
+		t.Fatal("monitoring build retains a floating input or obsolete monitoring dependency")
 	}
 	firewall, err := os.ReadFile(filepath.Join(root, "firewall", "image.yaml"))
 	if err != nil {
@@ -569,6 +585,52 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	}
 	if !strings.Contains(string(firewall), "debian-13-genericcloud-amd64-20260327-2429.qcow2") || !strings.Contains(string(firewall), "sha512:") || strings.Contains(string(firewall), "/daily/latest/") {
 		t.Fatal("firewall image does not pin its Debian 13 VM input")
+	}
+	tailnet, err := os.ReadFile(filepath.Join(root, "tailnet-router", "image.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"name: boetticher-tailnet-router",
+		"version: 1.0.0",
+		"version: 1.76.6",
+		"signing_key_sha256: 3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39",
+		"advertise_routes: 10.10.0.0/16",
+		"advertise_exit_node: false",
+	} {
+		if !strings.Contains(string(tailnet), required) {
+			t.Fatalf("tailnet-router image definition is missing %q", required)
+		}
+	}
+	litellm, err := os.ReadFile(filepath.Join(root, "litellm", "image.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"name: boetticher-litellm",
+		"version: 1.0.0",
+		"python: 3.13.5-1",
+		"python_venv: 3.13.5-1",
+		"pip: 25.1.1+dfsg-1",
+		"litellm: 1.74.9",
+		"nginx: 1.26.3-3+deb13u7",
+		"dependency_lock: requirements.lock",
+		"backend_bind: 127.0.0.1:4000",
+		"mtls_required: true",
+	} {
+		if !strings.Contains(string(litellm), required) {
+			t.Fatalf("LiteLLM image definition is missing %q", required)
+		}
+	}
+	lock, err := os.ReadFile(filepath.Join(root, "litellm", "runtime", "requirements.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(lock), "litellm==1.74.9") || !strings.Contains(string(lock), "--hash=sha256:") {
+		t.Fatal("LiteLLM dependency lock is not transitive and hash pinned")
+	}
+	if !strings.Contains(string(buildScript), "build_tailnet_router") || !strings.Contains(string(buildScript), "build_litellm") || !strings.Contains(string(buildScript), "--require-hashes") || !strings.Contains(string(buildScript), "rm -f \"$rootfs/etc/nginx/sites-enabled/default\"") {
+		t.Fatal("first-party appliance build paths are incomplete or do not enforce the dependency lock")
 	}
 }
 
@@ -579,9 +641,11 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	}
 	text := string(data)
 	for _, required := range []string{
-		"mirror: https://snapshot.debian.org/archive/debian/20260327T000000Z/",
-		"snapshot: 20260327T000000Z",
+		"release: trixie",
+		"mirror: https://snapshot.debian.org/archive/debian/20260825T000000Z/",
+		"snapshot: 20260825T000000Z",
 		"build:\n  packages:",
+		"    - ifupdown",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("base definition is missing pinned Debian source %q", required)
@@ -591,8 +655,21 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(buildScript), "base_packages=$(awk") || !strings.Contains(string(buildScript), "--include=\"$base_packages\"") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Check-Valid-Until=false") {
+	if !strings.Contains(string(buildScript), "base_packages=$(awk") || !strings.Contains(string(buildScript), "--include=\"$base_packages\"") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Check-Valid-Until=false") || !strings.Contains(string(buildScript), "debian-security-snapshot.sources") || !strings.Contains(string(buildScript), "apt-get upgrade --yes --no-install-recommends") {
 		t.Fatal("base builder does not use the pinned Debian snapshot")
+	}
+	if !strings.Contains(string(buildScript), `dpkg-query -W -f='\${binary:Package}\\t\${Version}\\n'`) {
+		t.Fatal("firewall package-manifest command does not protect dpkg-query format variables from the guest shell")
+	}
+	if strings.Contains(string(buildScript), "systemctl disable --now systemd-networkd-wait-online.service") {
+		t.Fatal("firewall image customization tries to start or stop systemd in an offline image")
+	}
+	smokeFirewall, err := os.ReadFile(filepath.Join("..", "..", "scripts", "smoke-firewall-image.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(smokeFirewall), `"definition_sha256"[[:space:]]*:[[:space:]]*"[a-fA-F0-9]{64}"`) {
+		t.Fatal("firewall smoke check does not accept compact JSON artifact identity")
 	}
 }
 
@@ -608,6 +685,7 @@ func TestApplianceBuildEmbedsDefinitionIdentityWithoutContentEvidence(t *testing
 		"write_artifact_identity \"$rootfs\" logging",
 		"write_artifact_identity \"$rootfs\" monitoring",
 		"write_artifact_identity \"$rootfs\" portal",
+		"ConditionPathExists=/etc/blocky/config.yml",
 		"-upload \"$artifact_identity:/usr/lib/boetticher/artifact.json\"",
 	} {
 		if !strings.Contains(text, required) {
@@ -686,17 +764,63 @@ func TestApplianceBootstrapInputsContainNoOperatorKeyOrSiteState(t *testing.T) {
 		t.Fatal(err)
 	}
 	buildText := string(buildScript)
+	for _, required := range []string{`chroot "$rootfs" chown root:root /etc/sudoers.d/boetticher`, `--run-command 'chown root:root /etc/sudoers.d/boetticher-firewall; chmod 0440 /etc/sudoers.d/boetticher-firewall'`} {
+		if !strings.Contains(buildText, required) {
+			t.Fatalf("image build does not reset sudoers ownership: missing %q", required)
+		}
+	}
 	sudoers, err := os.ReadFile(filepath.Join(root, "base", "runtime", "boetticher.sudoers"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"/tmp/boetticher-ansible", "/usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*", "/usr/bin/systemd-creds *", "/usr/bin/sqlite3 *", "/usr/bin/psql *"} {
-		if !strings.Contains(string(sudoers), required) {
-			t.Fatalf("appliance sudo policy does not constrain runtime command %q", required)
+	for _, line := range strings.Split(string(sudoers), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			t.Fatalf("base appliance sudo policy retains a durable command rule: %q", line)
 		}
 	}
 	if strings.Contains(buildText+string(sudoers), "NOPASSWD:ALL") {
 		t.Fatal("appliance sudo policy grants an unrestricted root command")
+	}
+}
+
+func TestDurableApplianceLabadminCannotUseRootCommandContracts(t *testing.T) {
+	sudoers, err := os.ReadFile(filepath.Join("..", "..", "images", "base", "runtime", "boetticher.sudoers"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(sudoers), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			t.Fatalf("base sudoers contains an active durable privilege rule: %q", line)
+		}
+	}
+}
+
+func TestFirewallInspectionContractIsRootOwnedAndFailClosed(t *testing.T) {
+	sudoers, err := os.ReadFile(filepath.Join("..", "..", "images", "firewall", "runtime", "boetticher.sudoers"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper, err := os.ReadFile(filepath.Join("..", "..", "images", "firewall", "runtime", "inspect-firewall.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	policyText, helperText := string(sudoers), string(helper)
+	for _, operation := range []string{"status", "ruleset", "table", "leases", "kernel-logs"} {
+		if !strings.Contains(policyText, "inspect-firewall "+operation) || !strings.Contains(helperText, operation) {
+			t.Fatalf("firewall inspection operation %q is not present in both contracts", operation)
+		}
+	}
+	for _, required := range []string{"[ \"$#\" -eq 1 ]", "[ \"$#\" -eq 3 ]", "-le 1000", "boetticher_filter", "case \"$3\""} {
+		if !strings.Contains(helperText, required) {
+			t.Fatalf("firewall inspection helper is missing fail-closed guard %q", required)
+		}
+	}
+	for _, forbidden := range []string{"sh -c", "eval ", "install ", "mkdir ", "chown ", "chmod ", "systemctl start", "systemctl stop", "sysctl -w", "pvesh", "pvesm", "sqlite3", "systemd-creds"} {
+		if strings.Contains(policyText+helperText, forbidden) {
+			t.Fatalf("firewall inspection contract contains forbidden operation %q", forbidden)
+		}
 	}
 }
 
@@ -709,8 +833,8 @@ func TestBaseBuildRemovesBakedSSHHostKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(buildScript), `rm -f "$rootfs"/etc/ssh/ssh_host_*`) {
-		t.Fatal("base build does not remove generated SSH host keys before packaging")
+	if !strings.Contains(string(buildScript), `rm -f "$rootfs"/etc/ssh/ssh_host_*`) || !strings.Contains(string(buildScript), `rm -f "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"`) || !strings.Contains(string(buildScript), `package_lxc()`) {
+		t.Fatal("image build does not remove generated private identity material before packaging")
 	}
 	if strings.Contains(string(buildScript), `rm -f "$rootfs/etc/ssh/ssh_host_*"`) {
 		t.Fatal("base build quotes the SSH host-key glob and leaves baked keys behind")
@@ -748,7 +872,7 @@ func TestBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {
 		}
 		entries[header.Name] = true
 	}
-	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "cmd/qualify-artifact/main.go"} {
+	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "images/tailnet-router/image.yaml", "images/litellm/runtime/requirements.lock", "cmd/qualify-artifact/main.go"} {
 		if !entries[required] {
 			t.Fatalf("archive omitted public build input %s", required)
 		}
@@ -788,7 +912,7 @@ func TestEmbeddedBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {
 		}
 		entries[header.Name] = true
 	}
-	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "cmd/qualify-artifact/main.go"} {
+	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "cmd/qualify-artifact/main.go", "internal/logging/plan.go"} {
 		if !entries[required] {
 			t.Fatalf("embedded archive omitted public build input %s", required)
 		}
@@ -829,7 +953,15 @@ func TestBuildSourceArchiveContainsBlockyRendererDependencies(t *testing.T) {
 }
 
 func TestTransferredEvidenceIsReboundToControllerArtifactBytes(t *testing.T) {
-	root := t.TempDir()
+	root, err := os.MkdirTemp(".", ".artifact-relative-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	relativeRoot, err := filepath.Rel(".", root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	artifact, err := ArtifactFor("logging")
 	if err != nil {
 		t.Fatal(err)
@@ -855,12 +987,33 @@ func TestTransferredEvidenceIsReboundToControllerArtifactBytes(t *testing.T) {
 	if err := WriteEvidence(root, artifact.Name, qualified); err != nil {
 		t.Fatal(err)
 	}
-	if err := RebindEvidencePaths(root); err != nil {
+	qualified.ArtifactPath = filepath.Join("generated", "artifacts", artifact.Name, filepath.Base(artifactPath))
+	if err := WriteEvidence(root, artifact.Name, qualified); err != nil {
 		t.Fatal(err)
 	}
-	resolved, _, err := ResolveArtifactEvidence(root, artifact)
+	resolved, rebound, err := ResolveArtifactEvidence(relativeRoot, artifact)
+	if err != nil {
+		t.Fatalf("relative cached evidence was rejected: %v", err)
+	}
+	if !filepath.IsAbs(rebound.ArtifactPath) {
+		t.Fatalf("resolved artifact path = %q, want absolute path", rebound.ArtifactPath)
+	}
+	if resolved.ContentSHA256 != evidence.ContentSHA256 {
+		t.Fatalf("resolved content checksum = %q, want %q", resolved.ContentSHA256, evidence.ContentSHA256)
+	}
+	qualified.ArtifactPath = "/home/labadmin/build/generated/artifacts/boetticher-logging/boetticher-logging-1.0.0-amd64.tar.zst"
+	if err := WriteEvidence(root, artifact.Name, qualified); err != nil {
+		t.Fatal(err)
+	}
+	if err := RebindEvidencePaths(relativeRoot); err != nil {
+		t.Fatal(err)
+	}
+	resolved, rebound, err = ResolveArtifactEvidence(relativeRoot, artifact)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !filepath.IsAbs(rebound.ArtifactPath) {
+		t.Fatalf("rebound artifact path = %q, want absolute path", rebound.ArtifactPath)
 	}
 	if resolved.ContentSHA256 != evidence.ContentSHA256 {
 		t.Fatalf("rebound content checksum = %q, want %q", resolved.ContentSHA256, evidence.ContentSHA256)

@@ -22,6 +22,7 @@ fi
 
 install -d -m 0700 -o labadmin -g labadmin /home/labadmin/.ssh
 install -m 0600 -o labadmin -g labadmin "$bootstrap_key" /home/labadmin/.ssh/authorized_keys
-rm -f /root/.ssh/authorized_keys
+# The injected key remains on root for the temporary deployment window. Core
+# removes it only after all appliance convergence and verification succeeds.
 rm -f "$key"
 systemctl disable boetticher-first-boot.service

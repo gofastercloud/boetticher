@@ -10,7 +10,7 @@ import (
 
 const (
 	CollectorName      = "lab-log-01"
-	CollectorAddress   = "10.10.20.40"
+	CollectorAddress   = "10.10.10.40"
 	CollectorPort      = 19532
 	RemoteJournalPath  = "/var/log/journal/remote"
 	CollectorVolumeGiB = 10
@@ -78,7 +78,7 @@ func CollectorConfiguration(plan Plan) string {
 
 func CollectorServiceOverride(plan Plan) string {
 	return strings.Join([]string{
-		"[Service]", "ExecStart=", "ExecStart=/usr/lib/systemd/systemd-journal-remote --listen-https=-3 --output=" + plan.RemoteJournalPath,
+		"[Service]", "LogsDirectory=", "ReadWritePaths=" + plan.RemoteJournalPath, "ExecStart=", "ExecStart=/usr/lib/systemd/systemd-journal-remote --listen-https=-3 --output=" + plan.RemoteJournalPath,
 	}, "\n") + "\n"
 }
 

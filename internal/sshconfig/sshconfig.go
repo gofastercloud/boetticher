@@ -41,6 +41,9 @@ func Render(s model.Site, generatedAt time.Time) (string, error) {
 			continue
 		}
 		aliases := append([]string{m.Name, m.Hostname + "." + s.Network.Domain}, m.DNSAliases...)
+		if m.Name == "lab-fw-01" {
+			aliases = append(aliases, "firewall")
+		}
 		writeHost(&b, uniqueStrings(aliases), m.Address, m.SSHUser, m.Hostname+"."+s.Network.Domain, identity, true, false)
 	}
 	return b.String(), nil
@@ -181,6 +184,7 @@ func ScanHostKey(ctx context.Context, address string) (string, error) {
 }
 
 func writeHost(b *strings.Builder, aliases []string, hostName, user, hostKeyAlias, identity string, throughBastion, bastion bool) {
+	aliases = uniqueStrings(append(append([]string{}, aliases...), hostName))
 	fmt.Fprintf(b, "Host %s\n", strings.Join(aliases, " "))
 	fmt.Fprintf(b, "    HostName %s\n", hostName)
 	if user != "" {

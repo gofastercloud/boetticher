@@ -20,9 +20,9 @@ import (
 	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/pki"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
+	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/storage"
-	"github.com/gofastercloud/boetticher/internal/zabbix"
 )
 
 func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error {
@@ -80,6 +80,11 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 		return nil
 	}
+	ansibleRoot, err := applianceBuildSourceRoot()
+	if err != nil {
+		return fmt.Errorf("resolve Ansible playbook source: %w", err)
+	}
+	ansiblePlaybook := filepath.Join(ansibleRoot, "ansible", "site.yml")
 	if err := writeModelProjections(*siteDir, s); err != nil {
 		return err
 	}
@@ -115,12 +120,15 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return err
 	}
-	runtimeVariables["credential_dropins"], err = credentialDropIns(credentialBindings)
+	portalSourceDir, err := absolutePortalSourceDir(*siteDir)
 	if err != nil {
 		return err
 	}
-	runtimeVariables["portal_source_dir"] = filepath.Join(*siteDir, "generated", "portal")
+	runtimeVariables["portal_source_dir"] = portalSourceDir
 	runtimeVariables["boetticher_appliance_artifact"] = true
+	// Agent installation is enabled only in the post-Pulse bootstrap pass,
+	// after the scoped report token and encrypted credential projection exist.
+	runtimeVariables["pulse_agent_install_enabled"] = false
 	monitoringEnabled := modules.IsEnabled(s, "monitoring")
 	secretValues := map[string]string{}
 	if s.Gateway.Mode == model.GatewayModeManaged {
@@ -141,19 +149,48 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return fmt.Errorf("load platform CA chain: %w", err)
 	}
-	var zabbixAPIPassword string
+	var pulseAdminPassword string
 	if monitoringEnabled {
-		zabbixDBPassword, loadErr := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "zabbix_db_password")
+		var loadErr error
+		pulseAdminPassword, loadErr = site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_admin_password")
 		if loadErr != nil {
-			return fmt.Errorf("load encrypted Zabbix database password: %w", loadErr)
+			return fmt.Errorf("load encrypted Pulse administrative password: %w", loadErr)
 		}
-		zabbixAPIPassword, loadErr = site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "zabbix_api_password")
-		if loadErr != nil {
-			return fmt.Errorf("load encrypted Zabbix API password: %w", loadErr)
-		}
-		secretValues["monitoring-db-password"] = zabbixDBPassword
+		secretValues["pulse_admin_password"] = pulseAdminPassword
 	}
-	runtimeVariables["client_ca_pem"] = authority.IssuingCertPEM
+	activeCredentialBindings := make([]deploymentCredential, 0, len(credentialBindings))
+	for _, binding := range credentialBindings {
+		if _, alreadyLoaded := secretValues[binding.SecretKey]; alreadyLoaded {
+			activeCredentialBindings = append(activeCredentialBindings, binding)
+			continue
+		}
+		value, loadErr := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, binding.SecretKey)
+		if loadErr != nil {
+			if binding.SecretKey == "tailscale_auth_key" && errors.Is(loadErr, site.ErrPlatformSecretMissing) {
+				// A retained, valid Tailscale state file is the durable node
+				// identity. The runtime helper will use it without a fresh key;
+				// a missing/invalid state fails closed at service start.
+				continue
+			}
+			return fmt.Errorf("load encrypted %s credential: %w", binding.SecretKey, loadErr)
+		}
+		activeCredentialBindings = append(activeCredentialBindings, binding)
+		secretValues[binding.SecretKey] = value
+	}
+	credentialBindings = activeCredentialBindings
+	runtimeVariables["credential_dropins"], err = credentialDropIns(credentialBindings)
+	if err != nil {
+		return err
+	}
+	runtimeVariables["client_ca_pem"] = authority.RootCertPEM + authority.IssuingCertPEM
+	runtimeVariables["pulse_server_ca_pem"] = authority.RootCertPEM + authority.IssuingCertPEM
+	if *proxmoxCA != "" {
+		proxmoxCAPEM, readErr := os.ReadFile(*proxmoxCA)
+		if readErr != nil {
+			return fmt.Errorf("read Proxmox API CA file: %w", readErr)
+		}
+		runtimeVariables["proxmox_ca_pem"] = string(proxmoxCAPEM)
+	}
 	inventoryPath := filepath.Join(*siteDir, "generated", "ansible", "inventory.ini")
 	csrDir := filepath.Join(site.RuntimeDir(s), "pki")
 	if err := os.MkdirAll(csrDir, 0700); err != nil {
@@ -180,7 +217,11 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			break
 		}
 	}
-	proxmoxClient, _, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
+	rootRunner := proxmoxRootSSHRunner(s, *siteDir)
+	if err := proxmox.WaitForSSH(context.Background(), rootRunner, s.BootstrapAddress, "root", 1, 0); err != nil {
+		return fmt.Errorf("HOLD: temporary root deployment authority is unavailable; rerun bootstrap or recovery: %w", err)
+	}
+	proxmoxClient, _, err := loadProxmoxClientWithSnippetUser(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure, "root")
 	if err != nil {
 		return fmt.Errorf("load Proxmox client for platform deployment: %w", err)
 	}
@@ -189,6 +230,27 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return fmt.Errorf("resolve live Proxmox node: %w", err)
 	}
 	proxmoxPlan.Node = node
+	var pulseProxmoxToken string
+	if monitoringEnabled {
+		pulseProxmoxToken, err = site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_proxmox_token")
+		if errors.Is(err, site.ErrPlatformSecretMissing) {
+			proxmoxRunner := proxmox.SSHRunner{
+				IdentityFile:  operatorIdentityFile(s),
+				ConfigFile:    filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"),
+				StrictHostKey: "accept-new", HostKeyAlias: model.LogicalProxmoxIdentity,
+			}
+			pulseProxmoxToken, err = proxmox.CreatePulseMonitoringCredentials(context.Background(), proxmoxRunner, s.BootstrapAddress, model.DefaultAdminSSHUser)
+			if err != nil {
+				return err
+			}
+			if err := site.StorePlatformSecret(*siteDir, s, *ageIdentity, "pulse_proxmox_token", pulseProxmoxToken); err != nil {
+				return fmt.Errorf("store encrypted Pulse Proxmox token: %w", err)
+			}
+		} else if err != nil {
+			return fmt.Errorf("load encrypted Pulse Proxmox token: %w", err)
+		}
+	}
+	proxmoxPlan.DestructiveConfirmed = *confirm
 	if backupPlan.StorageTarget == backup.DedicatedStorageID {
 		if err := proxmoxClient.EnsureLVMThinStorage(context.Background(), storage.GuestStorageID, storage.VolumeGroup, storage.ThinPool); err != nil {
 			return fmt.Errorf("ensure dedicated guest storage: %w", err)
@@ -203,13 +265,13 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		if err := proxmox.EnsureFirewallVM(context.Background(), proxmoxClient, proxmoxPlan); err != nil {
 			return fmt.Errorf("create managed gateway appliance: %w", err)
 		}
-		if err := proxmoxClient.StartVM(context.Background(), proxmoxPlan.Node, model.ProxmoxVMID); err != nil {
+		if err := proxmoxClient.EnsureVMRunning(context.Background(), proxmoxPlan.Node, model.ProxmoxVMID); err != nil {
 			return fmt.Errorf("start managed gateway appliance: %w", err)
 		}
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		firewallRunner := applianceSSHRunner(s, *siteDir, "lab-fw-01")
-		if err := proxmox.WaitForSSH(context.Background(), firewallRunner, "10.10.99.1", model.DefaultAdminSSHUser, 30, 2*time.Second); err != nil {
+		if err := proxmox.WaitForSSH(context.Background(), firewallRunner, "10.10.99.1", "root", 30, 2*time.Second); err != nil {
 			return fmt.Errorf("HOLD: managed gateway is not reachable before dependent appliances: %w", err)
 		}
 		if err := verifyFirewallBootstrapNetwork(context.Background(), firewallRunner); err != nil {
@@ -218,7 +280,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		if err := installCredentialsForGuest(context.Background(), firewallRunner, "lab-fw-01", credentialBindings, secretValues); err != nil {
 			return fmt.Errorf("install managed gateway credentials: %w", err)
 		}
-		if err := ansible.RunLimited(context.Background(), "ansible/site.yml", inventoryPath, variables, "lab-fw-01"); err != nil {
+		if err := ansible.RunLimited(context.Background(), ansiblePlaybook, inventoryPath, variables, "lab-fw-01"); err != nil {
 			return fmt.Errorf("HOLD: configure managed gateway before dependent appliances: %w", err)
 		}
 		if err := verifyGatewayReadiness(context.Background(), firewallRunner, "10.10.99.1"); err != nil {
@@ -245,14 +307,14 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 				continue
 			}
 			guestRunner := applianceSSHRunner(s, *siteDir, guest.Name)
-			if err := proxmox.WaitForSSH(context.Background(), guestRunner, guest.Address, model.DefaultAdminSSHUser, 30, 2*time.Second); err != nil {
+			if err := proxmox.WaitForSSH(context.Background(), guestRunner, guest.Address, "root", 30, 2*time.Second); err != nil {
 				return fmt.Errorf("HOLD: %s guest %s is not reachable after first boot: %w", module, guest.Name, err)
 			}
 			if err := installCredentialsForGuest(context.Background(), guestRunner, guest.Name, credentialBindings, secretValues); err != nil {
 				return fmt.Errorf("install %s credentials: %w", guest.Name, err)
 			}
 			if module == "dns" {
-				if err := ansible.RunLimited(context.Background(), "ansible/site.yml", inventoryPath, variables, guest.Name); err != nil {
+				if err := ansible.RunLimited(context.Background(), ansiblePlaybook, inventoryPath, variables, guest.Name); err != nil {
 					return fmt.Errorf("HOLD: configure DNS guest %s before dependent appliances: %w", guest.Name, err)
 				}
 				if guest.Name == "lab-dns-01" && s.Gateway.Mode == model.GatewayModeManaged {
@@ -266,14 +328,8 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			}
 		}
 	}
-	if err := ansible.Run(context.Background(), "ansible/site.yml", inventoryPath, variables); err != nil {
+	if err := ansible.Run(context.Background(), ansiblePlaybook, inventoryPath, variables); err != nil {
 		return err
-	}
-	if monitoringEnabled {
-		monitorRunner := applianceSSHRunner(s, *siteDir, "lab-monitor-01")
-		if err := installZabbixAPIPassword(context.Background(), monitorRunner, "10.10.20.20", zabbixAPIPassword); err != nil {
-			return err
-		}
 	}
 	loggingClientCertificates, loggingCollectorCertificate, err := signLoggingCertificates(authority, s, csrDir)
 	if err != nil {
@@ -287,6 +343,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return fmt.Errorf("read endpoint-generated portal CSR: %w", err)
 	}
 	var monitorCertificate pki.ServerCertificate
+	var litellmCertificate pki.ServerCertificate
 	if monitoringEnabled {
 		monitorCSR, readErr := os.ReadFile(filepath.Join(csrDir, "monitor.csr.pem"))
 		if readErr != nil {
@@ -297,6 +354,16 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			return fmt.Errorf("sign monitor endpoint CSR: %w", err)
 		}
 	}
+	if modules.IsEnabled(s, "litellm") {
+		litellmCSR, readErr := os.ReadFile(filepath.Join(csrDir, "litellm.csr.pem"))
+		if readErr != nil {
+			return fmt.Errorf("read endpoint-generated LiteLLM CSR: %w", readErr)
+		}
+		litellmCertificate, err = pki.SignServerCSR(authority, string(litellmCSR), "litellm", s.Network.Domain, []string{"ai." + s.Network.Domain, "lab-litellm-01." + s.Network.Domain}, time.Now().UTC())
+		if err != nil {
+			return fmt.Errorf("sign LiteLLM endpoint CSR: %w", err)
+		}
+	}
 	portalCertificate, err := pki.SignServerCSR(authority, string(portalCSR), "portal", s.Network.Domain, []string{"lab-portal-01." + s.Network.Domain}, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("sign portal endpoint CSR: %w", err)
@@ -304,6 +371,9 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	runtimeVariables["pki_bootstrap_phase"] = false
 	if monitoringEnabled {
 		runtimeVariables["monitor_server_cert_pem"] = monitorCertificate.ChainPEM
+	}
+	if modules.IsEnabled(s, "litellm") {
+		runtimeVariables["litellm_server_cert_pem"] = litellmCertificate.ChainPEM
 	}
 	runtimeVariables["portal_server_cert_pem"] = portalCertificate.ChainPEM
 	runtimeVariables["logging_client_certificates"] = loggingClientCertificates
@@ -313,28 +383,125 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return err
 	}
 	variables = append(variables, '\n')
-	if err := ansible.Run(context.Background(), "ansible/site.yml", inventoryPath, variables); err != nil {
+	if err := ansible.Run(context.Background(), ansiblePlaybook, inventoryPath, variables); err != nil {
 		return fmt.Errorf("install endpoint-signed certificates: %w", err)
 	}
 	if monitoringEnabled {
 		clientCertificate, issueErr := pki.IssueClient(authority, "boetticher-reconciler", s.Network.Domain, time.Now().UTC())
 		if issueErr != nil {
-			return fmt.Errorf("issue runtime Zabbix reconciliation certificate: %w", issueErr)
+			return fmt.Errorf("issue runtime Pulse reconciliation certificate: %w", issueErr)
 		}
-		zabbixClient, clientErr := zabbix.NewClient(zabbix.ClientConfig{
-			BaseURL: "https://monitor." + s.Network.Domain, User: "Admin", Password: zabbixAPIPassword,
+		pulseAdmin, clientErr := pulse.NewAdminClient(pulse.ClientConfig{
+			BaseURL: "https://monitor." + s.Network.Domain, AdminUser: "admin", AdminPassword: pulseAdminPassword,
 			CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
 			ServerName: "monitor." + s.Network.Domain,
 		})
 		if clientErr != nil {
 			return clientErr
 		}
-		zabbixPlan, planErr := zabbix.PlanFromSite(s)
-		if planErr != nil {
-			return planErr
+		if err := pulseAdmin.ConfigureProxmox(context.Background(), pulse.PVEConfig{
+			Name: model.LogicalProxmoxIdentity, Host: "https://proxmox." + s.Network.Domain + ":8006",
+			TokenID: proxmox.PulseMonitoringUser + "!" + proxmox.PulseMonitoringToken, TokenSecret: pulseProxmoxToken,
+			VerifySSL: true, MonitorVMs: true, MonitorContainers: true, MonitorStorage: true, MonitorBackups: true,
+			MonitorPhysicalDisks: false, MonitorTemperatures: false,
+		}); err != nil {
+			return err
 		}
-		if reconcileErr := zabbixClient.Reconcile(context.Background(), zabbixPlan); reconcileErr != nil {
-			return fmt.Errorf("reconcile boetticher Zabbix objects: %w", reconcileErr)
+		readToken, tokenErr := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_api_token")
+		if errors.Is(tokenErr, site.ErrPlatformSecretMissing) {
+			readToken, tokenErr = pulseAdmin.CreateReadToken(context.Background(), "boetticher monitoring read")
+			if tokenErr != nil {
+				return tokenErr
+			}
+			if err := site.StorePlatformSecret(*siteDir, s, *ageIdentity, "pulse_api_token", readToken); err != nil {
+				return fmt.Errorf("store encrypted Pulse read token: %w", err)
+			}
+		} else if tokenErr != nil {
+			return fmt.Errorf("load encrypted Pulse read token: %w", tokenErr)
+		}
+		pulseRead, clientErr := pulse.NewReadClient(pulse.ClientConfig{
+			BaseURL: "https://monitor." + s.Network.Domain, APIToken: readToken,
+			CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
+			ServerName: "monitor." + s.Network.Domain,
+		})
+		if clientErr != nil {
+			return clientErr
+		}
+		health, err := pulseRead.Health(context.Background())
+		if err != nil || !strings.EqualFold(health.Status, "healthy") {
+			if err != nil {
+				return fmt.Errorf("verify Pulse health: %w", err)
+			}
+			return fmt.Errorf("verify Pulse health: unexpected status %q", health.Status)
+		}
+		if _, err := pulseRead.StateSummary(context.Background()); err != nil {
+			return fmt.Errorf("verify Pulse state summary: %w", err)
+		}
+		if _, err := pulseRead.Resources(context.Background()); err != nil {
+			return fmt.Errorf("verify Pulse resources: %w", err)
+		}
+
+		agentBindings, bindingErr := monitoringAgentCredentialBindings(s)
+		if bindingErr != nil {
+			return bindingErr
+		}
+		if len(agentBindings) > 0 {
+			agentToken, agentTokenErr := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_agent_token")
+			if errors.Is(agentTokenErr, site.ErrPlatformSecretMissing) {
+				agentToken, agentTokenErr = pulseAdmin.CreateAgentReportToken(context.Background(), "boetticher monitoring agent")
+				if agentTokenErr != nil {
+					return agentTokenErr
+				}
+				if err := site.StorePlatformSecret(*siteDir, s, *ageIdentity, "pulse_agent_token", agentToken); err != nil {
+					return fmt.Errorf("store encrypted Pulse agent token: %w", err)
+				}
+			} else if agentTokenErr != nil {
+				return fmt.Errorf("load encrypted Pulse agent token: %w", agentTokenErr)
+			}
+
+			for _, target := range ansible.MonitoringAgentTargets(s) {
+				var agentRunner proxmox.CommandRunner
+				if target == model.LogicalProxmoxIdentity {
+					agentRunner = proxmox.SSHRunner{
+						IdentityFile:  operatorIdentityFile(s),
+						ConfigFile:    filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"),
+						StrictHostKey: "accept-new", HostKeyAlias: model.LogicalProxmoxIdentity,
+					}
+				} else {
+					agentRunner = applianceSSHRunner(s, *siteDir, target)
+				}
+				if err := installCredentialsForGuest(context.Background(), agentRunner, target, agentBindings, map[string]string{"pulse_agent_token": agentToken}); err != nil {
+					return fmt.Errorf("install Pulse agent credential on %s: %w", target, err)
+				}
+			}
+			agentDropIns, dropInErr := credentialDropIns(agentBindings)
+			if dropInErr != nil {
+				return dropInErr
+			}
+			existingDropIns, ok := runtimeVariables["credential_dropins"].(map[string]map[string]string)
+			if !ok {
+				existingDropIns = map[string]map[string]string{}
+			}
+			for guest, dropIns := range agentDropIns {
+				if existingDropIns[guest] == nil {
+					existingDropIns[guest] = map[string]string{}
+				}
+				for unit, content := range dropIns {
+					existingDropIns[guest][unit] = content
+				}
+			}
+			runtimeVariables["credential_dropins"] = existingDropIns
+			runtimeVariables["pulse_agent_install_enabled"] = true
+			agentVariables, marshalErr := json.MarshalIndent(runtimeVariables, "", "  ")
+			if marshalErr != nil {
+				return marshalErr
+			}
+			agentVariables = append(agentVariables, '\n')
+			for _, target := range ansible.MonitoringAgentTargets(s) {
+				if err := ansible.RunLimited(context.Background(), ansiblePlaybook, inventoryPath, agentVariables, target); err != nil {
+					return fmt.Errorf("install Pulse agent on %s: %w", target, err)
+				}
+			}
 		}
 	}
 	if err := proxmoxClient.ApplyBackupJob(context.Background(), node, proxmox.BackupJob{
@@ -342,6 +509,15 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		Schedule: backupPlan.Schedule, VMIDList: backupPlan.VMIDList(), Retention: backupPlan.Retention,
 	}); err != nil {
 		return err
+	}
+	if err := revokeTemporaryRootAccess(context.Background(), s, *siteDir, proxmoxPlan, operatorPublicKey); err != nil {
+		return fmt.Errorf("HOLD: deployment converged but temporary root access cleanup failed: %w", err)
+	}
+	if len(s.PendingDNSDeletions) > 0 {
+		if err := site.SavePendingDNSDeletions(*siteDir, s, nil); err != nil {
+			return fmt.Errorf("clear reconciled DNS deletion state: %w", err)
+		}
+		s.PendingDNSDeletions = nil
 	}
 	if err := writeModelProjections(*siteDir, s); err != nil {
 		return err
@@ -351,6 +527,14 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	fmt.Fprintf(out, "Deployment: PASS mode=%s model=%s (storage %s)\n", s.Gateway.Mode, firewallPlan.ModelRevision, storagePlan.GuestStorage)
 	return nil
+}
+
+func absolutePortalSourceDir(siteDir string) (string, error) {
+	absoluteSiteDir, err := filepath.Abs(siteDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve portal source directory: %w", err)
+	}
+	return filepath.Join(absoluteSiteDir, "generated", "portal"), nil
 }
 
 func artifactQualificationStatus(artifact model.Artifact) string {
@@ -400,8 +584,8 @@ func verifyGatewayReadiness(ctx context.Context, runner proxmox.CommandRunner, a
 	if runner == nil {
 		return errors.New("gateway readiness runner is required")
 	}
-	command := "set -eu; sudo -n nft -c -f /etc/nftables.conf; sudo -n systemctl is-active nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony; test \"$(sudo -n sysctl -n net.ipv4.ip_forward)\" = 1"
-	if _, err := runner.Run(ctx, address, model.DefaultAdminSSHUser, command); err != nil {
+	command := "set -eu; nft -c -f /etc/nftables.conf; systemctl is-active nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony; test \"$(sysctl -n net.ipv4.ip_forward)\" = 1"
+	if _, err := runner.Run(ctx, address, "root", command); err != nil {
 		return fmt.Errorf("gateway policy, DHCP, NTP, and forwarding checks failed: %w", err)
 	}
 	return nil
@@ -411,8 +595,8 @@ func verifyFirewallBootstrapNetwork(ctx context.Context, runner proxmox.CommandR
 	if runner == nil {
 		return errors.New("firewall bootstrap network runner is required")
 	}
-	command := "set -eu; for interface in wan0 trusted0 servers0 sandbox0 mgmt0; do sudo -n ip link show dev \"$interface\" >/dev/null; done; sudo -n ip -4 -o addr show dev trusted0 | grep -Fq '10.10.10.1/24'; sudo -n ip -4 -o addr show dev servers0 | grep -Fq '10.10.20.1/24'; sudo -n ip -4 -o addr show dev sandbox0 | grep -Fq '10.10.50.1/24'; sudo -n ip -4 -o addr show dev mgmt0 | grep -Fq '10.10.99.1/24'"
-	if _, err := runner.Run(ctx, "10.10.99.1", model.DefaultAdminSSHUser, command); err != nil {
+	command := "set -eu; for interface in wan0 trusted0 servers0 sandbox0 mgmt0 transit0 infra0; do ip link show dev \"$interface\" >/dev/null; done; ip -4 -o addr show dev trusted0 | grep -Fq '10.10.30.1/24'; ip -4 -o addr show dev servers0 | grep -Fq '10.10.20.1/24'; ip -4 -o addr show dev sandbox0 | grep -Fq '10.10.40.1/24'; ip -4 -o addr show dev mgmt0 | grep -Fq '10.10.99.1/24'; ip -4 -o addr show dev transit0 | grep -Fq '10.10.5.1/24'; ip -4 -o addr show dev infra0 | grep -Fq '10.10.10.1/24'"
+	if _, err := runner.Run(ctx, "10.10.99.1", "root", command); err != nil {
 		return fmt.Errorf("role-named interfaces or static addresses are not ready: %w", err)
 	}
 	return nil
@@ -429,10 +613,10 @@ func verifyDNSReadiness(ctx context.Context, runner proxmox.CommandRunner, addre
 		service = "adguardhome"
 		config = "/opt/AdGuardHome/AdGuardHome.yaml"
 	} else if provider == string(model.DNSProviderBlocky) {
-		checks = "; test ! -e /opt/AdGuardHome/AdGuardHome; blocky --version | grep -Fq '0.34.0'; blocky validate --config /etc/blocky/config.yml"
+		checks = "; test ! -e /opt/AdGuardHome/AdGuardHome; blocky version | grep -Fq '0.34.0'; blocky validate --config /etc/blocky/config.yml"
 	}
-	command := fmt.Sprintf("set -eu; sudo -n systemctl is-active pdns chrony %s; sudo -n test -s /etc/powerdns/pdns.conf; sudo -n test -s %s%s", service, config, checks)
-	if _, err := runner.Run(ctx, address, model.DefaultAdminSSHUser, command); err != nil {
+	command := fmt.Sprintf("set -eu; systemctl is-active pdns chrony %s; test -s /etc/powerdns/pdns.conf; test -s %s%s", service, config, checks)
+	if _, err := runner.Run(ctx, address, "root", command); err != nil {
 		return fmt.Errorf("authoritative, NTP, and %s resolver checks failed: %w", provider, err)
 	}
 	return nil
@@ -489,12 +673,8 @@ func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Si
 			return fmt.Errorf("runtime artifact identity for %s: qualified artifact content checksum is missing", guest.Name)
 		}
 		if guest.Module == "" {
-			user := guest.SSHUser
-			if user == "" {
-				user = model.DefaultAdminSSHUser
-			}
 			runner := applianceSSHRunner(s, siteDir, guest.Name)
-			if err := appliance.InstallArtifactIdentity(ctx, runner, guest.Address, user, resolvedGuest.Artifact); err != nil {
+			if err := appliance.InstallArtifactIdentity(ctx, runner, guest.Address, "root", resolvedGuest.Artifact); err != nil {
 				return fmt.Errorf("install artifact identity for %s: %w", guest.Name, err)
 			}
 			continue
@@ -511,15 +691,11 @@ func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Si
 		if err != nil {
 			return fmt.Errorf("render runtime configuration for %s: %w", guest.Name, err)
 		}
-		user := guest.SSHUser
-		if user == "" {
-			user = model.DefaultAdminSSHUser
-		}
 		runner := applianceSSHRunner(s, siteDir, guest.Name)
-		if err := appliance.InstallRuntimeConfig(ctx, runner, guest.Address, user, config); err != nil {
+		if err := appliance.InstallRuntimeConfig(ctx, runner, guest.Address, "root", config); err != nil {
 			return fmt.Errorf("install runtime configuration for %s: %w", guest.Name, err)
 		}
-		if err := appliance.InstallArtifactIdentity(ctx, runner, guest.Address, user, resolvedDeclaration.Artifact); err != nil {
+		if err := appliance.InstallArtifactIdentity(ctx, runner, guest.Address, "root", resolvedDeclaration.Artifact); err != nil {
 			return fmt.Errorf("install artifact identity for %s: %w", guest.Name, err)
 		}
 	}
@@ -532,11 +708,28 @@ func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Si
 // because the generated configuration is keyed by stable appliance identity.
 func applianceSSHRunner(s model.Site, siteDir, hostAlias string) proxmox.SSHRunner {
 	return proxmox.SSHRunner{
-		IdentityFile:  model.ExpandUserPath(s.SSHIdentityFile),
+		IdentityFile:  operatorIdentityFile(s),
 		ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),
 		StrictHostKey: "accept-new",
 		HostAlias:     hostAlias,
 	}
+}
+
+func revokeTemporaryRootAccess(ctx context.Context, s model.Site, siteDir string, plan proxmox.Plan, operatorPublicKey string) error {
+	for _, guest := range plan.Guests {
+		if guest.Owner == "" || guest.Address == "" {
+			continue
+		}
+		runner := applianceSSHRunner(s, siteDir, guest.Name)
+		if err := proxmox.RevokeTemporaryRootAccess(ctx, runner, guest.Address, "root", operatorPublicKey, false); err != nil {
+			return fmt.Errorf("revoke root access on %s: %w", guest.Name, err)
+		}
+	}
+	hostRunner := proxmoxRootSSHRunner(s, siteDir)
+	if err := proxmox.RevokeTemporaryRootAccess(ctx, hostRunner, s.BootstrapAddress, "root", operatorPublicKey, true); err != nil {
+		return fmt.Errorf("revoke root access on %s: %w", model.LogicalProxmoxIdentity, err)
+	}
+	return nil
 }
 
 func resolvedDeclarationForGuest(declaration model.ModuleDeclaration, guest proxmox.GuestPlan) (model.ModuleDeclaration, error) {
@@ -551,6 +744,10 @@ func resolvedDeclarationForGuest(declaration model.ModuleDeclaration, guest prox
 }
 
 func loadProxmoxClient(siteDir string, s model.Site, ageIdentity, caFile string, insecure bool) (*proxmox.Client, site.ProxmoxCredentials, error) {
+	return loadProxmoxClientWithSnippetUser(siteDir, s, ageIdentity, caFile, insecure, model.DefaultAdminSSHUser)
+}
+
+func loadProxmoxClientWithSnippetUser(siteDir string, s model.Site, ageIdentity, caFile string, insecure bool, snippetUser string) (*proxmox.Client, site.ProxmoxCredentials, error) {
 	if s.BootstrapAddress == "" {
 		return nil, site.ProxmoxCredentials{}, errors.New("bootstrap endpoint is not configured")
 	}
@@ -558,11 +755,44 @@ func loadProxmoxClient(siteDir string, s model.Site, ageIdentity, caFile string,
 	if err != nil {
 		return nil, site.ProxmoxCredentials{}, fmt.Errorf("load encrypted Proxmox API credentials: %w", err)
 	}
-	client, err := proxmox.NewClient(proxmox.Config{BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", User: credentials.APIUser, TokenID: credentials.TokenID, TokenSecret: credentials.TokenSecret, CAFile: caFile, Insecure: insecure})
+	client, err := proxmox.NewClient(proxmox.Config{
+		BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", User: credentials.APIUser,
+		TokenID: credentials.TokenID, TokenSecret: credentials.TokenSecret, CAFile: caFile, Insecure: insecure,
+		SnippetRunner: proxmox.SSHRunner{
+			IdentityFile:  operatorIdentityFile(s),
+			ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),
+			StrictHostKey: "accept-new", HostKeyAlias: model.LogicalProxmoxIdentity,
+		},
+		SnippetAddress: s.BootstrapAddress, SnippetUser: snippetUser,
+	})
 	if err != nil {
 		return nil, site.ProxmoxCredentials{}, err
 	}
 	return client, credentials, nil
+}
+
+func proxmoxRootSSHRunner(s model.Site, siteDir string) proxmox.SSHRunner {
+	return proxmox.SSHRunner{
+		IdentityFile:  operatorIdentityFile(s),
+		ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),
+		StrictHostKey: "accept-new",
+		HostAlias:     model.LogicalProxmoxIdentity,
+	}
+}
+
+func operatorIdentityFile(s model.Site) string {
+	if identity := model.ExpandUserPath(s.SSHIdentityFile); identity != "" {
+		return identity
+	}
+	publicKey := defaultOperatorPublicKey()
+	if !strings.HasSuffix(publicKey, ".pub") {
+		return ""
+	}
+	identity := strings.TrimSuffix(publicKey, ".pub")
+	if _, err := os.Stat(identity); err != nil {
+		return ""
+	}
+	return identity
 }
 
 func checkBootstrapEndpoint(siteDir string, s model.Site) error {

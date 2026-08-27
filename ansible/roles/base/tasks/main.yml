@@ -14,11 +14,66 @@
     cache_valid_time: 3600
   when: inventory_hostname in groups.get('proxmox', [])
 
+- name: Remove labadmin from the sudo group
+  ansible.builtin.command: gpasswd --delete labadmin sudo
+  register: remove_labadmin_sudo_group
+  changed_when: remove_labadmin_sudo_group.rc == 0
+  failed_when: remove_labadmin_sudo_group.rc not in [0, 3]
+
+- name: Remove legacy labadmin sudo policy
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/sudoers.d/boetticher
+    - /etc/sudoers.d/boetticher-labadmin
+
+- name: Configure Chrony for unprivileged appliances
+  ansible.builtin.copy:
+    content: "DAEMON_OPTS=\"-x\"\n"
+    dest: /etc/default/chrony
+    owner: root
+    group: root
+    mode: '0644'
+  when: inventory_hostname not in groups.get('proxmox', [])
+
+- name: Allow Chrony startup without kernel clock control
+  ansible.builtin.file:
+    path: /etc/systemd/system/chrony.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: inventory_hostname not in groups.get('proxmox', [])
+
+- name: Install Chrony startup override
+  ansible.builtin.copy:
+    content: "[Unit]\nConditionCapability=\n"
+    dest: /etc/systemd/system/chrony.service.d/boetticher.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd
+  when: inventory_hostname not in groups.get('proxmox', [])
+
+- name: Flush systemd after installing the Chrony override
+  ansible.builtin.meta: flush_handlers
+  when: inventory_hostname not in groups.get('proxmox', [])
+
 - name: Enable chrony
   ansible.builtin.service:
     name: chrony
     enabled: true
     state: started
+
+- name: Configure appliances to use the platform DNS pair
+  ansible.builtin.copy:
+    content: "{% for nameserver in dns_plan.nameservers %}nameserver {{ nameserver }}\n{% endfor %}"
+    dest: /etc/resolv.conf
+    owner: root
+    group: root
+    mode: '0644'
+  when: inventory_hostname not in groups.get('proxmox', [])
 
 - name: Install bounded local journald configuration
   ansible.builtin.file:
@@ -42,8 +97,8 @@
     path: /var/lib/boetticher/identity/logging
     state: directory
     owner: root
-    group: root
-    mode: '0700'
+    group: systemd-journal
+    mode: '0750'
   when: inventory_hostname in logging_upload_configs
 
 - name: Generate endpoint-local logging private key
@@ -51,6 +106,14 @@
     argv: [openssl, genpkey, -algorithm, EC, -pkeyopt, ec_paramgen_curve:P-256, -out, "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key"]
   args:
     creates: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key"
+  when: inventory_hostname in logging_upload_configs
+
+- name: Allow the upload service to read its private key
+  ansible.builtin.file:
+    path: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key"
+    owner: root
+    group: systemd-journal
+    mode: '0640'
   when: inventory_hostname in logging_upload_configs
 
 - name: Generate endpoint-local logging CSR
@@ -99,6 +162,29 @@
     mode: '0644'
   when: inventory_hostname in logging_upload_configs
 
+- name: Install bounded journal-upload retry policy
+  block:
+    - name: Create journal-upload service drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/systemd-journal-upload.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Write journal-upload retry policy
+      ansible.builtin.copy:
+        content: "[Service]\nRestartSec=15s\n"
+        dest: /etc/systemd/system/systemd-journal-upload.service.d/boetticher.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Reload systemd after installing journal-upload policy
+      ansible.builtin.systemd:
+        daemon_reload: true
+  when: inventory_hostname in logging_upload_configs
+
 - name: Enable asynchronous journal upload after endpoint certificate installation
   ansible.builtin.service:
     name: systemd-journal-upload
@@ -130,3 +216,107 @@
   loop_control:
     label: "{{ item.key }}"
   notify: reload systemd
+
+- name: Install Pulse host-agent hardware collection dependencies
+  ansible.builtin.apt:
+    name:
+      - lm-sensors
+      - smartmontools
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+
+- name: Require the encrypted Pulse host-agent credential projection
+  ansible.builtin.assert:
+    that:
+      - credential_dropins[inventory_hostname]['pulse-agent.service'] is defined
+    fail_msg: "Pulse host-agent setup requires the encrypted report-token credential"
+  no_log: true
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+
+- name: Create Pulse host-agent state directory
+  ansible.builtin.file:
+    path: /var/lib/boetticher/pulse-agent
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+
+- name: Install the Boetticher CA for Pulse host-agent HTTPS
+  ansible.builtin.copy:
+    content: "{{ pulse_server_ca_pem }}"
+    dest: /usr/local/share/ca-certificates/boetticher-pulse.crt
+    owner: root
+    group: root
+    mode: '0644'
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+
+- name: Refresh system CA trust for the Pulse host agent
+  ansible.builtin.command: update-ca-certificates
+  register: pulse_agent_ca_update
+  changed_when: "'0 added, 0 removed' not in pulse_agent_ca_update.stdout"
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+
+- name: Install the exact pinned Pulse host-agent binary
+  ansible.builtin.get_url:
+    url: "{{ pulse_agent_release_url }}"
+    dest: /usr/local/bin/pulse-agent
+    checksum: "sha256:{{ pulse_agent_release_sha256 }}"
+    owner: root
+    group: root
+    mode: '0755'
+  notify: restart pulse-agent
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+
+- name: Verify the pinned Pulse host-agent version
+  ansible.builtin.command: /usr/local/bin/pulse-agent --version
+  register: pulse_agent_version_result
+  changed_when: false
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+
+- name: Prove the expected Pulse host-agent version is installed
+  ansible.builtin.assert:
+    that:
+      - pulse_agent_version in pulse_agent_version_result.stdout
+    fail_msg: "Installed Pulse host-agent did not report the pinned version"
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+
+- name: Install the Pulse host-agent systemd service
+  ansible.builtin.template:
+    src: pulse-agent.service.j2
+    dest: /etc/systemd/system/pulse-agent.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart pulse-agent
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+
+- name: Enable the Pulse host-agent service
+  ansible.builtin.systemd_service:
+    name: pulse-agent
+    enabled: true
+    state: started
+    daemon_reload: true
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))

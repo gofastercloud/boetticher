@@ -34,6 +34,43 @@ func TestDeploymentModuleNamesFollowResolvedManagedGraph(t *testing.T) {
 	}
 }
 
+func TestAnsiblePlaybookIsAvailableFromControllerSource(t *testing.T) {
+	root, err := applianceBuildSourceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "ansible", "site.yml")); err != nil {
+		t.Fatalf("controller source does not contain the Ansible playbook: %v", err)
+	}
+}
+
+func TestPortalSourceDirectoryIsAbsoluteForAnsible(t *testing.T) {
+	got, err := absolutePortalSourceDir("relative-site")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(got) || !strings.HasSuffix(got, filepath.Join("relative-site", "generated", "portal")) {
+		t.Fatalf("portal source directory = %q, want absolute generated portal path", got)
+	}
+}
+
+func TestEndpointClientTrustProjectionIncludesRootAndIssuingCAs(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "runtimeVariables[\"client_ca_pem\"] = authority.RootCertPEM + authority.IssuingCertPEM") {
+		t.Fatal("endpoint mTLS trust projection does not include the complete platform CA chain")
+	}
+}
+
+func TestRuntimeBoundaryAcceptsRelativeSiteDirectory(t *testing.T) {
+	site := model.NewDefaultSite("trial", "age1trial")
+	if err := checkRuntimeBoundary("relative-site", site); err != nil {
+		t.Fatalf("relative site directory rejected: %v", err)
+	}
+}
+
 func TestDeploymentModuleNamesFollowResolvedExternalGraph(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("trial", "age1trial", model.GatewayModeExternal))
 	disabled := false
@@ -107,7 +144,7 @@ func TestRuntimeDeclarationRejectsUnqualifiedGuestArtifact(t *testing.T) {
 
 func TestVerifyDNSReadinessChecksTheQualifiedBlockyRuntime(t *testing.T) {
 	runner := &dnsReadinessRunner{}
-	if err := verifyDNSReadiness(context.Background(), runner, "10.10.20.10", string(model.DNSProviderBlocky)); err != nil {
+	if err := verifyDNSReadiness(context.Background(), runner, "10.10.10.10", string(model.DNSProviderBlocky)); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.commands) != 1 {
@@ -117,7 +154,7 @@ func TestVerifyDNSReadinessChecksTheQualifiedBlockyRuntime(t *testing.T) {
 	for _, required := range []string{
 		"systemctl is-active pdns chrony blocky",
 		"test ! -e /opt/AdGuardHome/AdGuardHome",
-		"blocky --version | grep -Fq '0.34.0'",
+		"blocky version | grep -Fq '0.34.0'",
 		"blocky validate --config /etc/blocky/config.yml",
 	} {
 		if !strings.Contains(command, required) {
@@ -158,16 +195,23 @@ func TestVerifyFirewallBootstrapNetworkChecksStableRolesAndAddresses(t *testing.
 	for _, required := range []string{
 		"ip link show dev \"$interface\"",
 		"trusted0",
-		"10.10.10.1/24",
+		"10.10.30.1/24",
 		"servers0",
 		"10.10.20.1/24",
 		"sandbox0",
-		"10.10.50.1/24",
+		"10.10.40.1/24",
 		"mgmt0",
 		"10.10.99.1/24",
+		"transit0",
+		"10.10.5.1/24",
+		"infra0",
+		"10.10.10.1/24",
 	} {
 		if !strings.Contains(command, required) {
 			t.Fatalf("firewall bootstrap network check omitted %q: %s", required, command)
 		}
+	}
+	if strings.Contains(command, "sudo -n ip") {
+		t.Fatalf("read-only bootstrap network probes unnecessarily require sudo: %s", command)
 	}
 }

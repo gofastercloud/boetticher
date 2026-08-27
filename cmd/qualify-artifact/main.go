@@ -13,11 +13,21 @@ import (
 
 type trivyReport struct {
 	Results []struct {
+		Target          string `json:"Target"`
 		Vulnerabilities []struct {
-			Severity     string `json:"Severity"`
-			FixedVersion string `json:"FixedVersion"`
+			VulnerabilityID  string `json:"VulnerabilityID"`
+			PkgName          string `json:"PkgName"`
+			InstalledVersion string `json:"InstalledVersion"`
+			Severity         string `json:"Severity"`
+			FixedVersion     string `json:"FixedVersion"`
 		} `json:"Vulnerabilities"`
-		Secrets []struct{} `json:"Secrets"`
+		Secrets []struct {
+			RuleID    string `json:"RuleID"`
+			Category  string `json:"Category"`
+			Title     string `json:"Title"`
+			StartLine int    `json:"StartLine"`
+			EndLine   int    `json:"EndLine"`
+		} `json:"Secrets"`
 	} `json:"Results"`
 }
 
@@ -74,12 +84,64 @@ func main() {
 	}
 	evidence, err = artifacts.QualifyEvidence(evidence, summary)
 	if err != nil {
-		fatalf("qualify artifact: %v", err)
+		fmt.Fprintf(os.Stderr, "qualify artifact: %v\n", err)
+		for _, finding := range fixableCriticalFindings(data) {
+			fmt.Fprintf(os.Stderr, "Trivy fixable CRITICAL: %s package=%s installed=%s fixed=%s\n", finding.id, finding.packageName, finding.installed, finding.fixed)
+		}
+		for _, finding := range secretFindings(data) {
+			fmt.Fprintf(os.Stderr, "Trivy secret: target=%s rule=%s category=%s title=%s lines=%d-%d\n", finding.target, finding.ruleID, finding.category, finding.title, finding.startLine, finding.endLine)
+		}
+		os.Exit(1)
 	}
 	if err := artifacts.WriteEvidence(*evidenceRoot, artifact.Name, evidence); err != nil {
 		fatalf("write qualification evidence: %v", err)
 	}
 	fmt.Printf("qualified %s content=%s policy=%s\n", artifact.Name, evidence.ContentSHA256, evidence.QualificationPolicyVersion)
+}
+
+type fixableCriticalFinding struct {
+	id, packageName, installed, fixed string
+}
+
+type secretFinding struct {
+	target, ruleID, category, title string
+	startLine, endLine              int
+}
+
+func fixableCriticalFindings(data []byte) []fixableCriticalFinding {
+	var report trivyReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		return nil
+	}
+	findings := make([]fixableCriticalFinding, 0)
+	for _, result := range report.Results {
+		for _, vulnerability := range result.Vulnerabilities {
+			if vulnerability.Severity == "CRITICAL" && vulnerability.FixedVersion != "" {
+				findings = append(findings, fixableCriticalFinding{
+					id: vulnerability.VulnerabilityID, packageName: vulnerability.PkgName,
+					installed: vulnerability.InstalledVersion, fixed: vulnerability.FixedVersion,
+				})
+			}
+		}
+	}
+	return findings
+}
+
+func secretFindings(data []byte) []secretFinding {
+	var report trivyReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		return nil
+	}
+	findings := make([]secretFinding, 0)
+	for _, result := range report.Results {
+		for _, secret := range result.Secrets {
+			findings = append(findings, secretFinding{
+				target: result.Target, ruleID: secret.RuleID, category: secret.Category,
+				title: secret.Title, startLine: secret.StartLine, endLine: secret.EndLine,
+			})
+		}
+	}
+	return findings
 }
 
 func summarizeTrivyReport(data []byte) (artifacts.ScanSummary, error) {

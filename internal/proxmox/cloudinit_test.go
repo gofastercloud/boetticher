@@ -11,22 +11,27 @@ import (
 func TestFirewallCloudInitUsesStableInterfaceIdentities(t *testing.T) {
 	guest := GuestPlan{Name: "lab-fw-01", Address: "10.10.99.1", NICs: []GuestNIC{
 		{Name: "wan0", MAC: "02:00:00:00:01:01", Method: "dhcp"},
-		{Name: "trusted0", MAC: "02:00:00:00:01:02", Method: "static", Address: "10.10.10.1"},
+		{Name: "trusted0", MAC: "02:00:00:00:01:02", Method: "static", Address: "10.10.30.1"},
 		{Name: "servers0", MAC: "02:00:00:00:01:03", Method: "static", Address: "10.10.20.1"},
-		{Name: "sandbox0", MAC: "02:00:00:00:01:04", Method: "static", Address: "10.10.50.1"},
+		{Name: "sandbox0", MAC: "02:00:00:00:01:04", Method: "static", Address: "10.10.40.1"},
 		{Name: "mgmt0", MAC: "02:00:00:00:01:05", Method: "static", Address: "10.10.99.1"},
+		{Name: "transit0", MAC: "02:00:00:00:01:06", Method: "static", Address: "10.10.5.1"},
+		{Name: "infra0", MAC: "02:00:00:00:01:07", Method: "static", Address: "10.10.10.1"},
 	}}
 	files, err := RenderFirewallCloudInit(guest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, value := range []string{"set-name: wan0", "set-name: trusted0", "set-name: servers0", "set-name: sandbox0", "set-name: mgmt0", "net.ipv4.ip_forward=0", "net.ipv6.conf.all.forwarding=0"} {
+	for _, value := range []string{"set-name: wan0", "set-name: trusted0", "set-name: servers0", "set-name: sandbox0", "set-name: mgmt0", "set-name: transit0", "set-name: infra0", "net.ipv4.ip_forward=0", "net.ipv6.conf.all.forwarding=0"} {
 		if !strings.Contains(files.NetworkConfig+files.UserData, value) {
 			t.Fatalf("cloud-init omitted %q", value)
 		}
 	}
 	if strings.Contains(files.UserData, "ssh-ed25519") || strings.Contains(files.UserData, "password:") {
 		t.Fatal("firewall cloud-init embedded operator or password material")
+	}
+	if strings.Contains(files.UserData, "sudo:") || strings.Contains(files.UserData, "groups: [sudo]") || !strings.Contains(files.UserData, "disable_root: true") {
+		t.Fatalf("firewall cloud-init grants durable labadmin privilege: %s", files.UserData)
 	}
 }
 
@@ -41,7 +46,8 @@ func TestFirewallCloudInitInjectsOperatorKeyOnlyAtDeployment(t *testing.T) {
 		t.Fatalf("firewall bootstrap key was not injected into deployment-only NoCloud data: %s", files.UserData)
 	}
 	var document struct {
-		Users []any `yaml:"users"`
+		Users       []any `yaml:"users"`
+		DisableRoot bool  `yaml:"disable_root"`
 	}
 	if err := yaml.Unmarshal([]byte(files.UserData), &document); err != nil {
 		t.Fatalf("firewall cloud-init is not valid YAML: %v", err)
@@ -62,6 +68,24 @@ func TestFirewallCloudInitInjectsOperatorKeyOnlyAtDeployment(t *testing.T) {
 	if !found {
 		t.Fatal("firewall cloud-init does not configure labadmin")
 	}
+	if document.DisableRoot {
+		t.Fatal("deployment cloud-init disables the temporary root transport")
+	}
+	rootFound := false
+	for _, rawUser := range document.Users {
+		user, ok := rawUser.(map[string]any)
+		if !ok || user["name"] != "root" {
+			continue
+		}
+		keys, ok := user["ssh_authorized_keys"].([]any)
+		if !ok || len(keys) != 1 || keys[0] != key {
+			t.Fatalf("temporary root key was not preserved as one YAML scalar: %#v", user["ssh_authorized_keys"])
+		}
+		rootFound = true
+	}
+	if !rootFound {
+		t.Fatal("deployment cloud-init does not configure temporary root access")
+	}
 	if strings.Contains(files.MetaData+files.NetworkConfig, key) {
 		t.Fatal("operator key leaked into unrelated NoCloud documents")
 	}
@@ -76,13 +100,13 @@ func TestFirewallCloudInitRejectsInvalidOperatorKey(t *testing.T) {
 
 func TestFirewallCloudInitDoesNotDuplicateStaticPrefixLength(t *testing.T) {
 	guest := GuestPlan{Name: "lab-fw-01", Address: "10.10.99.1", NICs: []GuestNIC{
-		{Name: "trusted0", MAC: "02:00:00:00:01:02", Method: "static", Address: "10.10.10.1"},
+		{Name: "trusted0", MAC: "02:00:00:00:01:02", Method: "static", Address: "10.10.30.1"},
 	}}
 	files, err := RenderFirewallCloudInit(guest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(files.NetworkConfig, "addresses: [10.10.10.1/24]") || strings.Contains(files.NetworkConfig, "/24/24") {
+	if !strings.Contains(files.NetworkConfig, "addresses: [10.10.30.1/24]") || strings.Contains(files.NetworkConfig, "/24/24") {
 		t.Fatalf("invalid static address rendered: %s", files.NetworkConfig)
 	}
 }
@@ -126,7 +150,7 @@ func TestFirewallCloudInitMountsDeclaredVolumesByStableDiskIdentity(t *testing.T
 	if document.FSSetup[0].Label != "boetticher-ssh-identity" || document.FSSetup[1].Label != "boetticher-kea-leases" {
 		t.Fatalf("unexpected persistent volume labels: %#v", document.FSSetup)
 	}
-	if document.FSSetup[0].Device != "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_boetticher-firewall-lab-fw-01-ssh-identity" {
+	if document.FSSetup[0].Device != "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1" {
 		t.Fatalf("SSH identity device is not stable: %#v", document.FSSetup[0])
 	}
 	if document.Mounts[1][1] != "/var/lib/kea" || document.Mounts[1][3] != "defaults,nofail" {
@@ -160,8 +184,12 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 	if strings.Contains(files.UserData, "package_update: true") || strings.Contains(files.UserData, "packages:") {
 		t.Fatal("builder cloud-init uses unpinned cloud-init package installation")
 	}
+	if strings.Contains(files.UserData, "groups: [sudo]") || strings.Contains(files.UserData, "/etc/sudoers.d/boetticher-builder") {
+		t.Fatal("builder cloud-init grants labadmin a root-capable sudo path")
+	}
 	for _, required := range []string{
-		"https://snapshot.debian.org/archive/debian/20260327T000000Z/",
+		"https://snapshot.debian.org/archive/debian/20260825T000000Z/",
+		"https://snapshot.debian.org/archive/debian-security/20260825T000000Z/",
 		"apt-get -o Acquire::Check-Valid-Until=false update",
 		"apt-get install --yes --no-install-recommends ca-certificates curl jq libguestfs-tools mmdebstrap",
 	} {
@@ -175,8 +203,13 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 	if !strings.Contains(string(RenderBuilderCloudInit().UserData), "qemu-guest-agent") {
 		t.Fatal("builder cloud-init does not enable the guest agent needed for address discovery")
 	}
-	if !strings.Contains(files.UserData, "qemu-guest-agent") || !strings.Contains(files.NetworkConfig, "dhcp4: true") || !strings.Contains(files.NetworkConfig, "macaddress: "+model.BuilderMAC) || !strings.Contains(files.NetworkConfig, "set-name: eth0") {
+	if !strings.Contains(files.UserData, "qemu-guest-agent") || !strings.Contains(files.NetworkConfig, "dhcp4: true") || !strings.Contains(files.NetworkConfig, "macaddress: "+model.BuilderMAC) || !strings.Contains(files.NetworkConfig, "  ens18:") {
 		t.Fatal("builder cloud-init lacks guest-agent or bootstrap network setup")
+	}
+	guestAgent := strings.Index(files.UserData, "- [systemctl, enable, --now, qemu-guest-agent]")
+	goDownload := strings.Index(files.UserData, "archive=/tmp/go1.26.5.linux-amd64.tar.gz")
+	if guestAgent < 0 || goDownload < 0 || guestAgent > goDownload {
+		t.Fatal("builder cloud-init starts the guest agent after toolchain setup")
 	}
 	if !strings.Contains(files.UserData, "exec >/var/log/boetticher-build.log 2>&1") {
 		t.Fatal("builder command does not retain bounded build diagnostics")
@@ -202,14 +235,15 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 	}
 }
 
-func TestRenderBuilderCloudInitWithKeyBootstrapsLabadmin(t *testing.T) {
+func TestRenderBuilderCloudInitWithKeyBootstrapsTemporaryRoot(t *testing.T) {
 	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator #1"
 	files, err := RenderBuilderCloudInitWithKey(key)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var document struct {
-		Users []any `yaml:"users"`
+		Users       []any `yaml:"users"`
+		DisableRoot bool  `yaml:"disable_root"`
 	}
 	if err := yaml.Unmarshal([]byte(files.UserData), &document); err != nil {
 		t.Fatalf("builder cloud-init is not valid YAML: %v", err)
@@ -228,6 +262,24 @@ func TestRenderBuilderCloudInitWithKeyBootstrapsLabadmin(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("builder cloud-init does not explicitly configure labadmin")
+	}
+	if document.DisableRoot {
+		t.Fatal("builder cloud-init disables the temporary root transport")
+	}
+	rootFound := false
+	for _, rawUser := range document.Users {
+		user, ok := rawUser.(map[string]any)
+		if !ok || user["name"] != "root" {
+			continue
+		}
+		keys, ok := user["ssh_authorized_keys"].([]any)
+		if !ok || len(keys) != 1 || keys[0] != key {
+			t.Fatalf("builder temporary root key = %#v, want %q", user["ssh_authorized_keys"], key)
+		}
+		rootFound = true
+	}
+	if !rootFound {
+		t.Fatal("builder cloud-init does not explicitly configure temporary root access")
 	}
 	if strings.Contains(files.MetaData+files.NetworkConfig, key) {
 		t.Fatal("builder operator key leaked into unrelated cloud-init documents")

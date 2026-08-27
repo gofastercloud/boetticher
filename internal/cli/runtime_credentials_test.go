@@ -13,16 +13,19 @@ import (
 
 type credentialDeploymentRunner struct {
 	commands []string
+	users    []string
 	values   []string
 }
 
-func (r *credentialDeploymentRunner) Run(_ context.Context, _ string, _ string, command string) ([]byte, error) {
+func (r *credentialDeploymentRunner) Run(_ context.Context, _ string, user string, command string) ([]byte, error) {
 	r.commands = append(r.commands, command)
+	r.users = append(r.users, user)
 	return nil, nil
 }
 
-func (r *credentialDeploymentRunner) RunWithStdin(_ context.Context, _ string, _ string, command string, stdin io.Reader) ([]byte, error) {
+func (r *credentialDeploymentRunner) RunWithStdin(_ context.Context, _ string, user string, command string, stdin io.Reader) ([]byte, error) {
 	r.commands = append(r.commands, command)
+	r.users = append(r.users, user)
 	data, err := io.ReadAll(stdin)
 	if err == nil {
 		r.values = append(r.values, string(data))
@@ -47,8 +50,63 @@ func TestDeploymentCredentialProjectionContainsOnlyEncryptedPaths(t *testing.T) 
 	if !strings.Contains(dropIns["lab-fw-01"]["kea-dhcp-ddns-server.service"], "LoadCredentialEncrypted=kea-ddns-tsig:/var/lib/boetticher/credentials/kea-ddns-tsig.cred") {
 		t.Fatalf("firewall credential projection is incomplete: %#v", dropIns)
 	}
-	if strings.Contains(strings.Join([]string{dropIns["lab-fw-01"]["kea-dhcp-ddns-server.service"], dropIns["lab-monitor-01"]["zabbix-server.service"]}, "\n"), "synthetic-secret") {
+	if strings.Contains(strings.Join([]string{dropIns["lab-fw-01"]["kea-dhcp-ddns-server.service"], dropIns["lab-monitor-01"]["pulse.service"]}, "\n"), "synthetic-secret") {
 		t.Fatal("credential projection contains a secret value")
+	}
+	if !strings.Contains(dropIns["lab-monitor-01"]["pulse.service"], "LoadCredentialEncrypted=pulse-admin-password:/var/lib/boetticher/credentials/pulse-admin-password.cred") {
+		t.Fatalf("Pulse administrative credential projection is incomplete: %#v", dropIns)
+	}
+	agentBindings, err := monitoringAgentCredentialBindings(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agentBindings) != 1 || agentBindings[0].Guest != model.LogicalProxmoxIdentity {
+		t.Fatalf("default Pulse agent bindings = %#v, want only the Proxmox host", agentBindings)
+	}
+	agentDropIns, err := credentialDropIns(agentBindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(agentDropIns[model.LogicalProxmoxIdentity]["pulse-agent.service"], "LoadCredentialEncrypted=pulse-agent-token:/var/lib/boetticher/credentials/pulse-agent-token.cred") {
+		t.Fatalf("Pulse agent credential projection is incomplete: %#v", agentDropIns)
+	}
+}
+
+func TestFirstPartyModuleCredentialsUseEphemeralSystemdPaths(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	tailnetEnabled, litellmEnabled := true, true
+	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
+	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+		Enabled:   &litellmEnabled,
+		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
+		Models:    []model.LiteLLMModelConfig{{Alias: "selected-alias", Upstream: "openrouter", Model: "selected/openrouter-model"}},
+	}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := deploymentCredentialBindings(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dropIns, err := credentialDropIns(bindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(dropIns["lab-tailnet-01"]["tailscaled.service"], "LoadCredentialEncrypted=tailscale-auth-key:/var/lib/boetticher/credentials/tailscale-auth-key.cred") {
+		t.Fatalf("Tailscale credential projection is incomplete: %#v", dropIns)
+	}
+	if !strings.Contains(dropIns["lab-litellm-01"]["litellm.service"], "openrouter-api-key:/var/lib/boetticher/credentials/openrouter-api-key.cred") {
+		t.Fatalf("LiteLLM credential projection is incomplete: %#v", dropIns)
+	}
+	if strings.Contains(strings.Join([]string{dropIns["lab-tailnet-01"]["tailscaled.service"], dropIns["lab-litellm-01"]["litellm.service"]}, "\n"), "synthetic-secret") {
+		t.Fatal("module credential projection contains a secret value")
+	}
+}
+
+func TestCredentialNameMatchesAnsibleNormalizationForValidReferences(t *testing.T) {
+	if got := credentialName("OpenRouter__api_key."); got != "openrouter--api-key-" {
+		t.Fatalf("credential name normalization = %q", got)
 	}
 }
 
@@ -74,6 +132,14 @@ func TestCredentialInstallationStreamsValuesOutsideCommands(t *testing.T) {
 		if strings.Contains(command, secret) {
 			t.Fatalf("credential value entered remote command: %s", command)
 		}
+		if strings.Contains(command, "sudo") {
+			t.Fatalf("credential installation retained a sudo dependency: %s", command)
+		}
+	}
+	for _, user := range runner.users {
+		if user != "root" {
+			t.Fatalf("credential installation used durable user %q", user)
+		}
 	}
 }
 
@@ -84,7 +150,7 @@ func TestPowerDNSExceptionStreamsProtectedBackendSQL(t *testing.T) {
 	}
 	runner := &credentialDeploymentRunner{}
 	secret := "synthetic-powerdns-secret"
-	if err := installPowerDNSTSIG(context.Background(), runner, "10.10.20.10", plan, secret); err != nil {
+	if err := installPowerDNSTSIG(context.Background(), runner, "10.10.10.10", plan, secret); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.values) != 1 || !strings.Contains(runner.values[0], secret) {
@@ -92,5 +158,8 @@ func TestPowerDNSExceptionStreamsProtectedBackendSQL(t *testing.T) {
 	}
 	if strings.Contains(runner.commands[0], secret) {
 		t.Fatal("PowerDNS secret entered the remote command")
+	}
+	if runner.users[0] != "root" || strings.Contains(runner.commands[0], "sudo") {
+		t.Fatalf("PowerDNS exception did not use the temporary root transport: users=%v commands=%v", runner.users, runner.commands)
 	}
 }

@@ -59,6 +59,7 @@ var PublicBuildInputs = []string{
 	"cmd/render-blocky-config",
 	"internal/artifacts",
 	"internal/dns",
+	"internal/logging",
 	"internal/model",
 	"internal/modules",
 	"images",

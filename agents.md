@@ -10,7 +10,7 @@ boetticher is an opinionated v0.3 Proxmox distribution, not a generic homelab
 framework. The canonical model is deterministic for a fixed platform version,
 site configuration, enabled official modules, and relevant secret metadata. Core
 composes first-party module declarations and its model revision drives
-OpenTofu, Ansible, gateway policy, Zabbix, SSH, portal, inventory, and
+OpenTofu, Ansible, gateway policy, Pulse, SSH, portal, inventory, and
 verification projections.
 
 boetticher owns only its declared platform resources and generated platform
@@ -22,11 +22,12 @@ for deletion or import.
 
 - The managed Debian gateway owns routing, NAT, nftables, Kea DHCP, and the inter-zone boundary. External mode publishes a contract only.
 - `vmbr0` is the HOME/upstream bridge; `vmbr1` is the internal VLAN-aware bridge.
-- V1 is IPv4-only with VLANs 10 TRUSTED, 20 SERVERS, 50 SANDBOX, and 99 MGMT.
+- V1 is IPv4-only with VLANs 5 TRANSIT, 10 INFRA, 20 SERVERS, 30 TRUSTED,
+  40 SANDBOX, and 99 MGMT.
 - Proxmox is the normal bootstrap/recovery SSH bastion. The managed gateway is reached through that path.
 - Physical NIC identity uses observed hardware evidence; interface enumeration order is never architecture.
 - Secrets are SOPS-encrypted. The Age private identity, OpenTofu state, plans, caches, and temporary credentials stay outside Git.
-- The portal is passive generated static documentation. Zabbix owns live observability.
+- The portal is passive generated static documentation. Pulse owns live monitoring state and alerts.
 - Dynamic DNS is lease publication, not workload ownership.
 - DNS/NTP is mandatory; monitoring and the managed firewall are default-on.
 - Modules are compiled into the release and emit declarations only. Core owns
@@ -63,7 +64,7 @@ for deletion or import.
   common base; modules do not invent transports.
 - DNS is one mandatory module with typed `blocky`/`adguard` provider selection.
   Both providers share PowerDNS/Chrony and the common DNS conformance contract.
-- Monitoring is a normal SERVERS workload at `10.10.20.20`; MGMT is not a
+- Monitoring is Core infrastructure in INFRA at `10.10.10.20`; MGMT is not a
   generic application placement zone.
 - Official artifacts have a deterministic definition identity and a verified
   SHA-256 for the concrete bytes being deployed. Build smoke tests and Trivy
@@ -115,6 +116,12 @@ If the third answer is yes and the first two answers are no, defer the work.
 
 Additional rules:
 
+- During an explicitly authorized live qualification, minor permission or ACL
+  mutations are allowed only when they are the minimum required for the
+  observed product path, preserve the security boundary, target an exact
+  boetticher-owned object, and are documented with the failure and resulting
+  state. This does not authorize credential disclosure, unrelated resources,
+  or broad privilege grants.
 - Prefer the smallest implementation that enables the next real test.
 - Do not make diagnostic, provenance, audit, or reporting metadata a deployment
   prerequisite unless it directly enforces a current safety property.

@@ -24,26 +24,27 @@ var PublicUpstreams = []string{"https://cloudflare-dns.com/dns-query", "https://
 var hostnameLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 
 type Plan struct {
-	ModelRevision                string         `json:"model_revision"`
-	Implementation               string         `json:"authoritative_implementation"`
-	ImplementationVersion        string         `json:"authoritative_version"`
-	PackageVersion               string         `json:"authoritative_package_version"`
-	AuthoritativePort            string         `json:"authoritative_port"`
-	AuthoritativeListenAddresses []string       `json:"authoritative_listen_addresses"`
-	AuthoritativeForwardTarget   string         `json:"authoritative_forward_target"`
-	StaticZone                   string         `json:"static_zone"`
-	Nameservers                  []string       `json:"nameservers"`
-	DynamicZones                 []DynamicZone  `json:"dynamic_zones"`
-	ReverseZones                 []ReverseZone  `json:"reverse_zones"`
-	StaticRecords                []StaticRecord `json:"static_records"`
-	DDNS                         DDNSPlan       `json:"ddns"`
-	AdGuardForwardZones          []string       `json:"adguard_forward_zones"`
-	AdGuardReverseZones          []string       `json:"adguard_reverse_zones"`
-	RecursiveProvider            string         `json:"recursive_provider"`
-	RecursiveUpstreams           []string       `json:"recursive_upstreams"`
-	AuthoritativeForwardZones    []string       `json:"authoritative_forward_zones"`
-	AuthoritativeReverseZones    []string       `json:"authoritative_reverse_zones"`
-	AuthoritativeNXDOMAINNoLeak  bool           `json:"authoritative_nxdomain_no_public_leak"`
+	ModelRevision                string              `json:"model_revision"`
+	Implementation               string              `json:"authoritative_implementation"`
+	ImplementationVersion        string              `json:"authoritative_version"`
+	PackageVersion               string              `json:"authoritative_package_version"`
+	AuthoritativePort            string              `json:"authoritative_port"`
+	AuthoritativeListenAddresses []string            `json:"authoritative_listen_addresses"`
+	AuthoritativeForwardTarget   string              `json:"authoritative_forward_target"`
+	StaticZone                   string              `json:"static_zone"`
+	Nameservers                  []string            `json:"nameservers"`
+	DynamicZones                 []DynamicZone       `json:"dynamic_zones"`
+	ReverseZones                 []ReverseZone       `json:"reverse_zones"`
+	StaticRecords                []StaticRecord      `json:"static_records"`
+	PendingDeletions             []model.DNSDeletion `json:"pending_deletions,omitempty"`
+	DDNS                         DDNSPlan            `json:"ddns"`
+	AdGuardForwardZones          []string            `json:"adguard_forward_zones"`
+	AdGuardReverseZones          []string            `json:"adguard_reverse_zones"`
+	RecursiveProvider            string              `json:"recursive_provider"`
+	RecursiveUpstreams           []string            `json:"recursive_upstreams"`
+	AuthoritativeForwardZones    []string            `json:"authoritative_forward_zones"`
+	AuthoritativeReverseZones    []string            `json:"authoritative_reverse_zones"`
+	AuthoritativeNXDOMAINNoLeak  bool                `json:"authoritative_nxdomain_no_public_leak"`
 }
 
 type DynamicZone struct {
@@ -59,9 +60,10 @@ type ReverseZone struct {
 }
 
 type StaticRecord struct {
-	Name    string `json:"name"`
-	Type    string `json:"type"`
-	Address string `json:"address"`
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Value string `json:"value"`
+	Owner string `json:"owner"`
 }
 
 type DDNSPlan struct {
@@ -122,6 +124,9 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	dynamic := make([]DynamicZone, 0, len(zones))
 	reverse := make([]ReverseZone, 0, len(zones))
 	for _, zone := range zones {
+		if zone.Type != model.ZoneTypeTrusted && zone.Type != model.ZoneTypeSandbox && zone.Type != model.ZoneTypeServers {
+			continue
+		}
 		dynamic = append(dynamic, DynamicZone{Name: strings.ToLower(zone.Name) + "." + s.Network.Domain, SourceZone: zone.Name, Network: zone.Network, Gateway: zone.Gateway})
 		reverse = append(reverse, ReverseZone{Name: reverseZone(zone.Network), Network: zone.Network})
 	}
@@ -133,9 +138,9 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	for index, zone := range dynamic {
 		ddnsZones = append(ddnsZones, DDNSZone{SourceZone: zone.SourceZone, ForwardZone: zone.Name, ReverseZone: reverse[index].Name, TSIGKeyName: TSIGKeyName(zone.SourceZone, s.Network.Domain)})
 	}
-	listenAddresses := []string{"127.0.0.1", "10.10.20.10"}
+	listenAddresses := []string{"127.0.0.1", "10.10.10.10"}
 	ddns := DDNSPlan{
-		Enabled: true, Source: "Kea D2 on lab-fw-01", UpdateTarget: "10.10.20.10:" + AuthoritativePort,
+		Enabled: true, Source: "Kea D2 on lab-fw-01", UpdateTarget: "10.10.10.10:" + AuthoritativePort,
 		UpdateSources: []string{"10.10.99.1"}, TSIGSecretReference: TSIGSecretReference,
 		ConflictPolicy: ConflictPolicy, LeaseFailurePolicy: "lease-continues-without-DNS-registration", Replication: "PowerDNS AXFR/IXFR lab-dns-01 primary to lab-dns-02 secondary on port " + AuthoritativePort,
 		TSIGAlgorithm: "hmac-sha256", Zones: ddnsZones,
@@ -155,8 +160,8 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	return Plan{
 		ModelRevision: revision, Implementation: AuthoritativeImplementation, ImplementationVersion: AuthoritativeVersion, PackageVersion: model.AuthoritativePackageVersion, AuthoritativePort: AuthoritativePort,
 		AuthoritativeListenAddresses: listenAddresses, AuthoritativeForwardTarget: listenAddresses[0] + ":" + AuthoritativePort,
-		StaticZone: s.Network.Domain, Nameservers: []string{"10.10.20.10", "10.10.20.11"},
-		DynamicZones: dynamic, ReverseZones: reverse, StaticRecords: static,
+		StaticZone: s.Network.Domain, Nameservers: []string{"10.10.10.10", "10.10.10.11"},
+		DynamicZones: dynamic, ReverseZones: reverse, StaticRecords: static, PendingDeletions: pendingDeletions(s, static),
 		DDNS:                ddns,
 		AdGuardForwardZones: authoritativeForwardZones, AdGuardReverseZones: authoritativeReverseZones,
 		RecursiveProvider: provider, RecursiveUpstreams: append([]string(nil), PublicUpstreams...),
@@ -171,28 +176,33 @@ func TSIGKeyName(sourceZone, domain string) string {
 }
 
 func staticRecords(s model.Site) ([]StaticRecord, error) {
-	seen := map[string]string{}
+	seen := map[string]StaticRecord{}
 	result := make([]StaticRecord, 0)
-	add := func(name, address string) error {
+	add := func(name, recordType, value, owner string) error {
 		name = strings.ToLower(strings.TrimSuffix(name, "."))
+		candidate := StaticRecord{Name: name, Type: recordType, Value: value, Owner: owner}
 		if existing, ok := seen[name]; ok {
-			if existing != address {
+			if existing.Type != candidate.Type || existing.Value != candidate.Value {
 				return fmt.Errorf("duplicate static DNS name %s", name)
 			}
 			return nil
 		}
-		seen[name] = address
-		result = append(result, StaticRecord{Name: name, Type: "A", Address: address})
+		seen[name] = candidate
+		result = append(result, candidate)
 		return nil
 	}
 	for _, module := range s.PlatformComponents() {
 		name := strings.ToLower(module.Hostname + "." + s.Network.Domain)
-		if err := add(name, module.Address); err != nil {
+		owner := "core"
+		if module.Module != "" {
+			owner = "module:" + module.Module
+		}
+		if err := add(name, "A", module.Address, owner); err != nil {
 			return nil, err
 		}
 		for _, alias := range module.DNSAliases {
 			aliasName := strings.ToLower(alias + "." + s.Network.Domain)
-			if err := add(aliasName, module.Address); err != nil {
+			if err := add(aliasName, "A", module.Address, owner); err != nil {
 				return nil, fmt.Errorf("duplicate static DNS alias %s: %w", aliasName, err)
 			}
 		}
@@ -203,14 +213,63 @@ func staticRecords(s model.Site) ([]StaticRecord, error) {
 			}
 			host := strings.ToLower(parsed.Hostname())
 			if strings.HasSuffix(host, "."+strings.ToLower(s.Network.Domain)) {
-				if err := add(host, module.Address); err != nil {
+				if err := add(host, "A", module.Address, owner); err != nil {
 					return nil, fmt.Errorf("component %s URL: %w", module.Name, err)
 				}
 			}
 		}
 	}
+	for _, declaration := range s.Declarations {
+		for _, record := range declaration.DNSRecords {
+			if err := add(record.Name, record.Type, record.Address, "module:"+declaration.Module); err != nil {
+				return nil, fmt.Errorf("module %s DNS record: %w", declaration.Module, err)
+			}
+		}
+	}
+	for _, record := range s.Normalize().DNSRecords {
+		if err := add(record.Name, record.Type, record.Value, "user"); err != nil {
+			return nil, fmt.Errorf("user DNS record: %w", err)
+		}
+	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result, nil
+}
+
+func pendingDeletions(s model.Site, static []StaticRecord) []model.DNSDeletion {
+	present := make(map[string]struct{}, len(s.DNSRecords))
+	for _, record := range s.DNSRecords {
+		present[strings.ToLower(strings.TrimSuffix(record.Name, "."))+"\x00"+record.Type] = struct{}{}
+	}
+	owned := map[string]struct{}{}
+	for _, record := range static {
+		if record.Owner != "user" {
+			owned[strings.ToLower(strings.TrimSuffix(record.Name, "."))] = struct{}{}
+		}
+	}
+	seen := map[string]struct{}{}
+	result := make([]model.DNSDeletion, 0, len(s.PendingDNSDeletions))
+	for _, deletion := range s.PendingDNSDeletions {
+		name := strings.ToLower(strings.TrimSuffix(deletion.Name, "."))
+		key := name + "\x00" + deletion.Type
+		if _, exists := present[key]; exists {
+			continue
+		}
+		if _, exists := owned[name]; exists {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, model.DNSDeletion{Name: strings.ToLower(strings.TrimSuffix(deletion.Name, ".")), Type: deletion.Type})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Name != result[j].Name {
+			return result[i].Name < result[j].Name
+		}
+		return result[i].Type < result[j].Type
+	})
+	return result
 }
 
 func dynamicZoneNames(zones []DynamicZone) []string {
@@ -252,7 +311,7 @@ func QualifiedName(s model.Site, zoneName, raw string) (string, error) {
 	}
 	name := label + "." + zone.Name
 	for _, record := range plan.StaticRecords {
-		if record.Name == name || strings.SplitN(record.Name, ".", 2)[0] == label {
+		if record.Owner != "user" && (record.Name == name || strings.SplitN(record.Name, ".", 2)[0] == label) {
 			return "", fmt.Errorf("dynamic name label %s is platform-owned", label)
 		}
 	}

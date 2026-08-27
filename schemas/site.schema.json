@@ -1,5 +1,32 @@
 {
   "$defs": {
+    "DHCPReservation": {
+      "additionalProperties": false,
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "mac": {
+          "type": "string"
+        },
+        "vmid": {
+          "type": "integer"
+        },
+        "zone": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "zone",
+        "hostname",
+        "address",
+        "mac"
+      ],
+      "type": "object"
+    },
     "DNSModuleConfig": {
       "additionalProperties": false,
       "properties": {
@@ -30,6 +57,67 @@
       ],
       "type": "object"
     },
+    "LiteLLMModelConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "alias": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "upstream": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "alias",
+        "upstream",
+        "model"
+      ],
+      "type": "object"
+    },
+    "LiteLLMModuleConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "models": {
+          "items": {
+            "$ref": "#/$defs/LiteLLMModelConfig"
+          },
+          "type": "array"
+        },
+        "upstreams": {
+          "items": {
+            "$ref": "#/$defs/LiteLLMUpstreamConfig"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "LiteLLMUpstreamConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "api_key_secret": {
+          "type": "string"
+        },
+        "base_url": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "base_url",
+        "api_key_secret"
+      ],
+      "type": "object"
+    },
     "MandatoryModuleConfig": {
       "additionalProperties": false,
       "properties": {},
@@ -44,10 +132,16 @@
         "firewall": {
           "$ref": "#/$defs/ToggleModuleConfig"
         },
+        "litellm": {
+          "$ref": "#/$defs/LiteLLMModuleConfig"
+        },
         "logging": {
           "$ref": "#/$defs/MandatoryModuleConfig"
         },
         "monitoring": {
+          "$ref": "#/$defs/ToggleModuleConfig"
+        },
+        "tailnet-router": {
           "$ref": "#/$defs/ToggleModuleConfig"
         }
       },
@@ -201,13 +295,13 @@
         "gateway": {
           "type": "string"
         },
-        "zabbix": {
+        "pulse": {
           "type": "string"
         }
       },
       "required": [
         "gateway",
-        "zabbix"
+        "pulse"
       ],
       "type": "object"
     },
@@ -218,6 +312,26 @@
           "type": "boolean"
         }
       },
+      "type": "object"
+    },
+    "UserDNSRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "value"
+      ],
       "type": "object"
     },
     "Zone": {
@@ -247,12 +361,24 @@
           },
           "type": "array"
         },
+        "type": {
+          "enum": [
+            "transit",
+            "infrastructure",
+            "servers",
+            "trusted",
+            "sandbox",
+            "management"
+          ],
+          "type": "string"
+        },
         "vlan": {
           "type": "integer"
         }
       },
       "required": [
         "name",
+        "type",
         "vlan",
         "network",
         "gateway",
@@ -274,6 +400,18 @@
     "bootstrap_address": {
       "type": "string"
     },
+    "dhcp_reservations": {
+      "items": {
+        "$ref": "#/$defs/DHCPReservation"
+      },
+      "type": "array"
+    },
+    "dns_records": {
+      "items": {
+        "$ref": "#/$defs/UserDNSRecord"
+      },
+      "type": "array"
+    },
     "gateway": {
       "$ref": "#/$defs/Gateway"
     },
@@ -293,7 +431,7 @@
       "$ref": "#/$defs/PKIMetadata"
     },
     "platform_version": {
-      "const": "0.3.1",
+      "const": "0.3.33",
       "type": "string"
     },
     "schema_version": {

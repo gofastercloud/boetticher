@@ -20,8 +20,9 @@ func TestRenderUsesBastionAndCanonicalHostKey(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"Host lab-bastion",
+		"Host lab-fw-01 lab-fw-01.lab.home.arpa firewall",
 		"Host lab-dns-01 lab-dns-01.lab.home.arpa dns01 dns",
-		"HostName 10.10.20.10",
+		"HostName 10.10.10.10",
 		"ProxyJump lab-bastion",
 		"HostKeyAlias lab-dns-01.lab.home.arpa",
 		"StrictHostKeyChecking accept-new",
@@ -44,7 +45,7 @@ func TestBastionPolicyOnlyAllowsModelledHosts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(content, "PermitOpen 10.10.20.10:22") || strings.Contains(content, "10.10.50.") {
+	if !strings.Contains(content, "PermitOpen 10.10.10.10:22") || strings.Contains(content, "10.10.50.") {
 		t.Fatalf("unexpected bastion destination policy: %s", content)
 	}
 }
@@ -75,7 +76,7 @@ func TestRenderComposedSiteIncludesDeclaredModuleGuests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, destination := range []string{"10.10.99.1:22", "10.10.20.10:22", "10.10.20.40:22"} {
+	for _, destination := range []string{"10.10.99.1:22", "10.10.10.10:22", "10.10.10.40:22"} {
 		if !strings.Contains(policy, destination) {
 			t.Errorf("composed bastion policy missing module destination %q", destination)
 		}

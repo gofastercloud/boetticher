@@ -21,8 +21,11 @@ boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--
 boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]
 boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]
 boetticher dhcp status|leases [--site DIR] [--live] [--json]
+boetticher dhcp reservation add|list|remove [--site DIR] [--hostname NAME] [--address ADDRESS] [--mac MAC] [--vmid VMID] [--json]
+boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME] [--value VALUE] [--json]
 boetticher storage status|initialize [--site DIR] [--live] [--confirmed]
 boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
+boetticher modules list|MODULE show|plan|enable|disable|status|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher config validate|show|schema [--site DIR]
 boetticher portal build [--site DIR] [--output DIR] [--docs DIR]
 ```
@@ -85,9 +88,9 @@ Usage: `boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH]
 
 Arguments: No positional arguments.
 
-Options: --dry-run plans without mutation; --confirm authorizes destructive operations supported by the active providers; an artifact qualification mismatch remains HOLD; connection options select the Proxmox trust path.
+Options: --dry-run plans without mutation; --confirm authorizes destructive operations supported by the active providers, including replacement of an owned appliance rootfs when its declared persistent volumes can be retained; connection options select the Proxmox trust path.
 
-Safety: This is the sole public platform-application operation. Review the plan before applying it; unsupported rootfs replacement remains HOLD rather than being bypassed by --confirm.
+Safety: This is the sole public platform-application operation. It requires the temporary root SSH access established by bootstrap, uses the scoped Proxmox API token for lifecycle operations, and removes temporary root access after successful convergence. Review the plan before applying it; unowned occupants, invalid persistent-volume identities, and unsupported replacement conditions remain HOLD.
 
 Examples: `boetticher deploy --site ./my-boetticher --dry-run`; `boetticher deploy --site ./my-boetticher --confirm`
 
@@ -237,22 +240,6 @@ Examples: `boetticher pki client create operator --site ./my-boetticher`
 
 Related commands: access, deploy, verify
 
-### pki
-
-Purpose: Manage bounded client certificates from the controller-side PKI authority.
-
-Usage: `boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]`
-
-Arguments: NAME is a validated client identity; trust export has no client NAME.
-
-Options: --output selects an export path; --age-identity selects the external recovery identity; --site selects local state.
-
-Safety: Private keys are never written to stdout and certificate actions update local generated state.
-
-Examples: `boetticher pki client create operator --site ./my-boetticher`
-
-Related commands: access, deploy, verify
-
 ### firewall
 
 Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
@@ -271,19 +258,35 @@ Related commands: dhcp, network, logs, verify
 
 ### dhcp
 
-Purpose: Inspect generated DHCP/DDNS intent or read bounded managed-gateway lease evidence.
+Purpose: Inspect DHCP/DDNS intent, read bounded leases, or manage explicit user-workload reservations.
 
-Usage: `boetticher dhcp status|leases [--site DIR] [--live] [--json]`
+Usage: `boetticher dhcp status|leases|reservation add|list|remove [--site DIR] [--live] [--json]`
 
-Arguments: status and leases select the view.
+Arguments: status and leases select inspection; reservation add, list, and remove manage SERVERS reservations.
 
-Options: --live queries the managed gateway; --json emits machine-readable output.
+Options: --live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output.
 
-Safety: Read-only. External-gateway DHCP remains outside boetticher management.
+Safety: Reservation changes edit site.yml only and never adopt or mutate user guests; VMID lookup is read-only; deployment remains boetticher deploy. External-gateway DHCP remains outside boetticher management.
 
-Examples: `boetticher dhcp leases --site ./my-boetticher --live`
+Examples: `boetticher dhcp reservation add --hostname app-01 --address 10.10.20.61 --mac 02:00:00:00:02:61 --site ./my-boetticher`; `boetticher dhcp leases --site ./my-boetticher --live`
 
-Related commands: firewall, verify, logs
+Related commands: firewall, dns, verify
+
+### dns
+
+Purpose: Manage bounded user-owned A and CNAME records in the private lab namespace.
+
+Usage: `boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME] [--value VALUE] [--json]`
+
+Arguments: add requires --name, --type, and --value; remove requires --name and --type; list has no required arguments.
+
+Options: --value is an IPv4 address for A or a private FQDN for CNAME; --json emits machine-readable output; --site selects local desired state.
+
+Safety: Changes are local site.yml intent only and apply through boetticher deploy. Core, module, and DHCP/DDNS-owned names cannot be replaced; arbitrary PowerDNS administration is not exposed.
+
+Examples: `boetticher dns record add --name app.lab.home.arpa --type CNAME --value app-01.servers.lab.home.arpa --site ./my-boetticher`
+
+Related commands: dhcp, config validate, deploy
 
 ### storage
 
@@ -314,6 +317,22 @@ Options: --dry-run shows the resolved effect; --confirm authorizes configuration
 Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive.
 
 Examples: `boetticher module list --site ./my-boetticher`; `boetticher module disable monitoring --confirm --site ./my-boetticher`
+
+Related commands: config validate, deploy, doctor
+
+### modules
+
+Purpose: Inspect or change first-party module intent through the shared registry and deploy engine.
+
+Usage: `boetticher modules list|MODULE show|plan|enable|disable|status|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+
+Arguments: MODULE is a registered first-party module. list retains the generic module inventory; lifecycle commands are resolved by the same generic implementation.
+
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; purge requires --confirm and removes retained module resources only after exact ownership proof.
+
+Safety: Both tailnet-router and litellm are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership.
+
+Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules tailnet-router plan --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
@@ -433,35 +452,147 @@ Related commands: preflight, module list, deploy --dry-run
 
 ### dhcp leases
 
-Purpose: Inspect generated DHCP/DDNS intent or read bounded managed-gateway lease evidence.
+Purpose: Inspect DHCP/DDNS intent, read bounded leases, or manage explicit user-workload reservations.
 
-Usage: `boetticher dhcp status|leases [--site DIR] [--live] [--json]`
+Usage: `boetticher dhcp status|leases|reservation add|list|remove [--site DIR] [--live] [--json]`
 
-Arguments: status and leases select the view.
+Arguments: status and leases select inspection; reservation add, list, and remove manage SERVERS reservations.
 
-Options: --live queries the managed gateway; --json emits machine-readable output.
+Options: --live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output.
 
-Safety: Read-only. External-gateway DHCP remains outside boetticher management.
+Safety: Reservation changes edit site.yml only and never adopt or mutate user guests; VMID lookup is read-only; deployment remains boetticher deploy. External-gateway DHCP remains outside boetticher management.
 
-Examples: `boetticher dhcp leases --site ./my-boetticher --live`
+Examples: `boetticher dhcp reservation add --hostname app-01 --address 10.10.20.61 --mac 02:00:00:00:02:61 --site ./my-boetticher`; `boetticher dhcp leases --site ./my-boetticher --live`
 
-Related commands: firewall, verify, logs
+Related commands: firewall, dns, verify
+
+### dhcp reservation add
+
+Purpose: Inspect DHCP/DDNS intent, read bounded leases, or manage explicit user-workload reservations.
+
+Usage: `boetticher dhcp status|leases|reservation add|list|remove [--site DIR] [--live] [--json]`
+
+Arguments: status and leases select inspection; reservation add, list, and remove manage SERVERS reservations.
+
+Options: --live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output.
+
+Safety: Reservation changes edit site.yml only and never adopt or mutate user guests; VMID lookup is read-only; deployment remains boetticher deploy. External-gateway DHCP remains outside boetticher management.
+
+Examples: `boetticher dhcp reservation add --hostname app-01 --address 10.10.20.61 --mac 02:00:00:00:02:61 --site ./my-boetticher`; `boetticher dhcp leases --site ./my-boetticher --live`
+
+Related commands: firewall, dns, verify
+
+### dhcp reservation list
+
+Purpose: Inspect DHCP/DDNS intent, read bounded leases, or manage explicit user-workload reservations.
+
+Usage: `boetticher dhcp status|leases|reservation add|list|remove [--site DIR] [--live] [--json]`
+
+Arguments: status and leases select inspection; reservation add, list, and remove manage SERVERS reservations.
+
+Options: --live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output.
+
+Safety: Reservation changes edit site.yml only and never adopt or mutate user guests; VMID lookup is read-only; deployment remains boetticher deploy. External-gateway DHCP remains outside boetticher management.
+
+Examples: `boetticher dhcp reservation add --hostname app-01 --address 10.10.20.61 --mac 02:00:00:00:02:61 --site ./my-boetticher`; `boetticher dhcp leases --site ./my-boetticher --live`
+
+Related commands: firewall, dns, verify
+
+### dhcp reservation remove
+
+Purpose: Inspect DHCP/DDNS intent, read bounded leases, or manage explicit user-workload reservations.
+
+Usage: `boetticher dhcp status|leases|reservation add|list|remove [--site DIR] [--live] [--json]`
+
+Arguments: status and leases select inspection; reservation add, list, and remove manage SERVERS reservations.
+
+Options: --live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output.
+
+Safety: Reservation changes edit site.yml only and never adopt or mutate user guests; VMID lookup is read-only; deployment remains boetticher deploy. External-gateway DHCP remains outside boetticher management.
+
+Examples: `boetticher dhcp reservation add --hostname app-01 --address 10.10.20.61 --mac 02:00:00:00:02:61 --site ./my-boetticher`; `boetticher dhcp leases --site ./my-boetticher --live`
+
+Related commands: firewall, dns, verify
 
 ### dhcp status
 
-Purpose: Inspect generated DHCP/DDNS intent or read bounded managed-gateway lease evidence.
+Purpose: Inspect DHCP/DDNS intent, read bounded leases, or manage explicit user-workload reservations.
 
-Usage: `boetticher dhcp status|leases [--site DIR] [--live] [--json]`
+Usage: `boetticher dhcp status|leases|reservation add|list|remove [--site DIR] [--live] [--json]`
 
-Arguments: status and leases select the view.
+Arguments: status and leases select inspection; reservation add, list, and remove manage SERVERS reservations.
 
-Options: --live queries the managed gateway; --json emits machine-readable output.
+Options: --live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output.
 
-Safety: Read-only. External-gateway DHCP remains outside boetticher management.
+Safety: Reservation changes edit site.yml only and never adopt or mutate user guests; VMID lookup is read-only; deployment remains boetticher deploy. External-gateway DHCP remains outside boetticher management.
 
-Examples: `boetticher dhcp leases --site ./my-boetticher --live`
+Examples: `boetticher dhcp reservation add --hostname app-01 --address 10.10.20.61 --mac 02:00:00:00:02:61 --site ./my-boetticher`; `boetticher dhcp leases --site ./my-boetticher --live`
 
-Related commands: firewall, verify, logs
+Related commands: firewall, dns, verify
+
+### dns
+
+Purpose: Manage bounded user-owned A and CNAME records in the private lab namespace.
+
+Usage: `boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME] [--value VALUE] [--json]`
+
+Arguments: add requires --name, --type, and --value; remove requires --name and --type; list has no required arguments.
+
+Options: --value is an IPv4 address for A or a private FQDN for CNAME; --json emits machine-readable output; --site selects local desired state.
+
+Safety: Changes are local site.yml intent only and apply through boetticher deploy. Core, module, and DHCP/DDNS-owned names cannot be replaced; arbitrary PowerDNS administration is not exposed.
+
+Examples: `boetticher dns record add --name app.lab.home.arpa --type CNAME --value app-01.servers.lab.home.arpa --site ./my-boetticher`
+
+Related commands: dhcp, config validate, deploy
+
+### dns record add
+
+Purpose: Manage bounded user-owned A and CNAME records in the private lab namespace.
+
+Usage: `boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME] [--value VALUE] [--json]`
+
+Arguments: add requires --name, --type, and --value; remove requires --name and --type; list has no required arguments.
+
+Options: --value is an IPv4 address for A or a private FQDN for CNAME; --json emits machine-readable output; --site selects local desired state.
+
+Safety: Changes are local site.yml intent only and apply through boetticher deploy. Core, module, and DHCP/DDNS-owned names cannot be replaced; arbitrary PowerDNS administration is not exposed.
+
+Examples: `boetticher dns record add --name app.lab.home.arpa --type CNAME --value app-01.servers.lab.home.arpa --site ./my-boetticher`
+
+Related commands: dhcp, config validate, deploy
+
+### dns record list
+
+Purpose: Manage bounded user-owned A and CNAME records in the private lab namespace.
+
+Usage: `boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME] [--value VALUE] [--json]`
+
+Arguments: add requires --name, --type, and --value; remove requires --name and --type; list has no required arguments.
+
+Options: --value is an IPv4 address for A or a private FQDN for CNAME; --json emits machine-readable output; --site selects local desired state.
+
+Safety: Changes are local site.yml intent only and apply through boetticher deploy. Core, module, and DHCP/DDNS-owned names cannot be replaced; arbitrary PowerDNS administration is not exposed.
+
+Examples: `boetticher dns record add --name app.lab.home.arpa --type CNAME --value app-01.servers.lab.home.arpa --site ./my-boetticher`
+
+Related commands: dhcp, config validate, deploy
+
+### dns record remove
+
+Purpose: Manage bounded user-owned A and CNAME records in the private lab namespace.
+
+Usage: `boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME] [--value VALUE] [--json]`
+
+Arguments: add requires --name, --type, and --value; remove requires --name and --type; list has no required arguments.
+
+Options: --value is an IPv4 address for A or a private FQDN for CNAME; --json emits machine-readable output; --site selects local desired state.
+
+Safety: Changes are local site.yml intent only and apply through boetticher deploy. Core, module, and DHCP/DDNS-owned names cannot be replaced; arbitrary PowerDNS administration is not exposed.
+
+Examples: `boetticher dns record add --name app.lab.home.arpa --type CNAME --value app-01.servers.lab.home.arpa --site ./my-boetticher`
+
+Related commands: dhcp, config validate, deploy
 
 ### firewall counters
 
@@ -652,6 +783,22 @@ Options: --dry-run shows the resolved effect; --confirm authorizes configuration
 Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive.
 
 Examples: `boetticher module list --site ./my-boetticher`; `boetticher module disable monitoring --confirm --site ./my-boetticher`
+
+Related commands: config validate, deploy, doctor
+
+### modules list
+
+Purpose: Inspect or change first-party module intent through the shared registry and deploy engine.
+
+Usage: `boetticher modules list|MODULE show|plan|enable|disable|status|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+
+Arguments: MODULE is a registered first-party module. list retains the generic module inventory; lifecycle commands are resolved by the same generic implementation.
+
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; purge requires --confirm and removes retained module resources only after exact ownership proof.
+
+Safety: Both tailnet-router and litellm are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership.
+
+Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules tailnet-router plan --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 

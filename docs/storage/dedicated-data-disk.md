@@ -28,7 +28,7 @@ backup mount by filesystem UUID, and registers `boetticher-thin` and
 layout; an unexpected existing volume group stops rather than reformatting.
 
 The system disk remains the Proxmox root device. Guest databases remain
-ordinary guest disks, including PostgreSQL on the monitor guest.
+ordinary guest disks, including Pulse persistent state on the monitor guest.
 
 The data disk is still one physical failure domain. Local backups provide
 rollback and recovery convenience, not independent disaster recovery.

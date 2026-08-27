@@ -18,6 +18,8 @@ import (
 	"github.com/gofastercloud/boetticher/internal/pki"
 )
 
+var ErrPlatformSecretMissing = errors.New("encrypted platform secret is missing")
+
 func Load(dir string) (model.Site, error) {
 	config, err := LoadConfig(dir)
 	if err != nil {
@@ -32,6 +34,11 @@ func Load(dir string) (model.Site, error) {
 		return model.Site{}, err
 	}
 	s.RetainedModules = retained
+	pendingDNS, err := LoadPendingDNSDeletions(dir, s)
+	if err != nil {
+		return model.Site{}, err
+	}
+	s.PendingDNSDeletions = pendingDNS
 	return s, nil
 }
 
@@ -367,11 +374,7 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 	if err != nil {
 		return err
 	}
-	zabbixDBPassword, err := randomSecret()
-	if err != nil {
-		return err
-	}
-	zabbixAPIPassword, err := randomSecret()
+	pulseAdminPassword, err := randomSecret()
 	if err != nil {
 		return err
 	}
@@ -384,8 +387,7 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 		"issuing_key_pem_b64":  pki.Encode(authority.IssuingKeyPEM),
 		"issuing_cert_pem_b64": pki.Encode(authority.IssuingCertPEM),
 		"ddns_tsig_secret":     ddnsSecret,
-		"zabbix_db_password":   zabbixDBPassword,
-		"zabbix_api_password":  zabbixAPIPassword,
+		"pulse_admin_password": pulseAdminPassword,
 	}
 	return StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), document)
 }
@@ -399,9 +401,86 @@ func LoadPlatformSecret(dir string, s model.Site, ageIdentityPath, key string) (
 	}
 	value := stringValue(values, key)
 	if value == "" {
-		return "", fmt.Errorf("encrypted platform secrets missing %s", key)
+		return "", fmt.Errorf("%w: %s", ErrPlatformSecretMissing, key)
 	}
 	return value, nil
+}
+
+// StorePlatformSecret updates one encrypted platform secret without writing a
+// plaintext intermediate. Callers retain the value only in process memory
+// until SOPS has encrypted the complete document.
+func StorePlatformSecret(dir string, s model.Site, ageIdentityPath, key, value string) error {
+	if strings.TrimSpace(key) == "" || value == "" {
+		return errors.New("platform secret key and value are required")
+	}
+	values, err := LoadEncryptedDocument(dir, ageIdentityPath, filepath.Join("secrets", "boetticher.sops.yaml"))
+	if err != nil {
+		return fmt.Errorf("load encrypted platform secrets: %w", err)
+	}
+	values[key] = value
+	return StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), values)
+}
+
+// PurgeModuleSecrets removes only secret names declared by one module after
+// its caller has completed the module's exact ownership-checked resource
+// purge. A name referenced by another composed declaration is shared, not
+// module-owned, and causes a fail-closed refusal rather than deletion.
+func PurgeModuleSecrets(dir string, s model.Site, ageIdentityPath string, module string, declaration model.ModuleDeclaration) error {
+	owned, err := moduleSecretOwnership(s, module, declaration)
+	if err != nil || len(owned) == 0 {
+		return err
+	}
+	values, err := LoadEncryptedDocument(dir, ageIdentityPath, filepath.Join("secrets", "boetticher.sops.yaml"))
+	if err != nil {
+		return fmt.Errorf("load encrypted platform secrets for module %s purge: %w", module, err)
+	}
+	changed := purgeModuleSecretValues(values, owned)
+	if !changed {
+		return nil
+	}
+	if err := StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), values); err != nil {
+		return fmt.Errorf("store encrypted platform secrets after module %s purge: %w", module, err)
+	}
+	return nil
+}
+
+// ValidateModuleSecretOwnership performs the non-mutating ownership check used
+// before a module's live resources are purged.
+func ValidateModuleSecretOwnership(s model.Site, module string, declaration model.ModuleDeclaration) error {
+	_, err := moduleSecretOwnership(s, module, declaration)
+	return err
+}
+
+func moduleSecretOwnership(s model.Site, module string, declaration model.ModuleDeclaration) (map[string]struct{}, error) {
+	if module == "" || declaration.Module != module {
+		return nil, errors.New("module secret purge requires a matching declaration owner")
+	}
+	owned := make(map[string]struct{}, len(declaration.Secrets))
+	for _, secret := range declaration.Secrets {
+		owned[secret.Name] = struct{}{}
+	}
+	for _, other := range s.Declarations {
+		if other.Module == module {
+			continue
+		}
+		for _, secret := range other.Secrets {
+			if _, shared := owned[secret.Name]; shared {
+				return nil, fmt.Errorf("HOLD: refusing to purge module %s secret %q because it is also declared by module %s", module, secret.Name, other.Module)
+			}
+		}
+	}
+	return owned, nil
+}
+
+func purgeModuleSecretValues(values map[string]any, owned map[string]struct{}) bool {
+	changed := false
+	for name := range owned {
+		if _, exists := values[name]; exists {
+			delete(values, name)
+			changed = true
+		}
+	}
+	return changed
 }
 
 func randomID() (string, error) {

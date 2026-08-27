@@ -1,5 +1,7 @@
 package dns
 
+import "strings"
+
 // PowerDNSCommand is the reviewable, deterministic command contract used by
 // the DNS role. TSIG material is supplied to sqlite3 through protected stdin,
 // never as a process argument.
@@ -21,8 +23,8 @@ func PrimaryCommandPlan(plan Plan) []PowerDNSCommand {
 	commands := make([]PowerDNSCommand, 0)
 	for _, zone := range allZones(plan) {
 		commands = append(commands,
-			PowerDNSCommand{Args: []string{"pdnsutil", "zone", "create", zone}},
-			PowerDNSCommand{Args: []string{"pdnsutil", "rrset", "replace", zone, zone, "NS", "300", "lab-dns-01." + plan.StaticZone + ".", "lab-dns-02." + plan.StaticZone + "."}},
+			PowerDNSCommand{Args: []string{"pdnsutil", "create-zone", zone}},
+			PowerDNSCommand{Args: []string{"pdnsutil", "replace-rrset", zone, "@", "NS", "300", "lab-dns-01." + plan.StaticZone + ".", "lab-dns-02." + plan.StaticZone + "."}},
 		)
 	}
 	if plan.DDNS.Enabled {
@@ -32,17 +34,29 @@ func PrimaryCommandPlan(plan Plan) []PowerDNSCommand {
 			}
 			commands = append(commands,
 				PowerDNSCommand{Args: []string{"sqlite3", "/var/lib/powerdns/pdns.sqlite3"}, Stdin: "INSERT OR REPLACE INTO tsigkeys (name, algorithm, secret) VALUES ('" + zone.TSIGKeyName + "', '" + plan.DDNS.TSIGAlgorithm + "', '" + DDNSSecretPlaceholder + "');", SecretStdin: true},
-				PowerDNSCommand{Args: []string{"pdnsutil", "metadata", "set", zone.ForwardZone, "ALLOW-DNSUPDATE-FROM", plan.DDNS.UpdateSources[0]}},
-				PowerDNSCommand{Args: []string{"pdnsutil", "metadata", "set", zone.ForwardZone, "TSIG-ALLOW-DNSUPDATE", zone.TSIGKeyName}},
-				PowerDNSCommand{Args: []string{"pdnsutil", "metadata", "set", zone.ReverseZone, "ALLOW-DNSUPDATE-FROM", plan.DDNS.UpdateSources[0]}},
-				PowerDNSCommand{Args: []string{"pdnsutil", "metadata", "set", zone.ReverseZone, "TSIG-ALLOW-DNSUPDATE", zone.TSIGKeyName}},
+				PowerDNSCommand{Args: []string{"pdnsutil", "set-meta", zone.ForwardZone, "ALLOW-DNSUPDATE-FROM", plan.DDNS.UpdateSources[0]}},
+				PowerDNSCommand{Args: []string{"pdnsutil", "set-meta", zone.ForwardZone, "TSIG-ALLOW-DNSUPDATE", zone.TSIGKeyName}},
+				PowerDNSCommand{Args: []string{"pdnsutil", "set-meta", zone.ReverseZone, "ALLOW-DNSUPDATE-FROM", plan.DDNS.UpdateSources[0]}},
+				PowerDNSCommand{Args: []string{"pdnsutil", "set-meta", zone.ReverseZone, "TSIG-ALLOW-DNSUPDATE", zone.TSIGKeyName}},
 			)
 		}
 	}
 	for _, record := range plan.StaticRecords {
-		commands = append(commands, PowerDNSCommand{Args: []string{"pdnsutil", "rrset", "replace", plan.StaticZone, record.Name + ".", record.Type, "300", record.Address}})
+		commands = append(commands, PowerDNSCommand{Args: []string{"pdnsutil", "replace-rrset", plan.StaticZone, zoneRelativeName(record.Name, plan.StaticZone), record.Type, "300", record.Value}})
+	}
+	for _, deletion := range plan.PendingDeletions {
+		commands = append(commands, PowerDNSCommand{Args: []string{"pdnsutil", "delete-rrset", plan.StaticZone, deletion.Name + ".", deletion.Type}})
 	}
 	return commands
+}
+
+func zoneRelativeName(name, zone string) string {
+	name = strings.TrimSuffix(strings.ToLower(name), ".")
+	zone = strings.TrimSuffix(strings.ToLower(zone), ".")
+	if name == zone {
+		return "@"
+	}
+	return strings.TrimSuffix(name, "."+zone)
 }
 
 func allZones(plan Plan) []string {

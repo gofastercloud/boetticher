@@ -5,26 +5,26 @@
     fail_msg: "Monitoring runtime configuration requires a qualified boetticher appliance artifact"
   when: inventory_hostname == 'lab-monitor-01'
 
-- name: Require the encrypted Zabbix database password at runtime
+- name: Require the encrypted Pulse administrative credential at runtime
   ansible.builtin.assert:
     that:
-      - credential_dropins[inventory_hostname]['zabbix-server.service'] is defined
-    fail_msg: "Zabbix convergence requires the SOPS-provided database password"
+      - credential_dropins[inventory_hostname]['pulse.service'] is defined
+    fail_msg: "Pulse convergence requires the SOPS-provided administrative credential"
   no_log: true
   when:
     - inventory_hostname == 'lab-monitor-01'
 
-- name: Require the controller-issued Zabbix mTLS material
+- name: Require the controller-issued Pulse mTLS material
   ansible.builtin.assert:
     that:
       - client_ca_pem is defined
       - (pki_bootstrap_phase | default(false) | bool) or (monitor_server_cert_pem is defined and monitor_server_cert_pem | length > 0)
-    fail_msg: "Zabbix mTLS requires controller-issued server and client-CA material"
+    fail_msg: "Pulse mTLS requires controller-issued server and client-CA material"
   no_log: true
   when:
     - inventory_hostname == 'lab-monitor-01'
 
-- name: Create the Zabbix TLS directory before generating endpoint keys
+- name: Create the Pulse TLS directory before generating endpoint keys
   ansible.builtin.file:
     path: /etc/boetticher/tls
     state: directory
@@ -85,7 +85,7 @@
     - inventory_hostname == 'lab-monitor-01'
     - pki_bootstrap_phase | default(false) | bool
 
-- name: Install Zabbix server certificate
+- name: Install Pulse server certificate
   ansible.builtin.copy:
     content: "{{ monitor_server_cert_pem }}"
     dest: /etc/boetticher/tls/monitor.crt.pem
@@ -99,7 +99,7 @@
     - monitor_server_cert_pem is defined
     - monitor_server_cert_pem | length > 0
 
-- name: Install the client CA for Zabbix mTLS
+- name: Install the client CA for Pulse mTLS
   ansible.builtin.copy:
     content: "{{ client_ca_pem }}"
     dest: /etc/boetticher/tls/client-ca.pem
@@ -110,90 +110,45 @@
   no_log: true
   when: inventory_hostname == 'lab-monitor-01'
 
-- name: Check the installed Zabbix server series
-  ansible.builtin.command: zabbix_server --version
-  register: zabbix_server_version
+- name: Check the installed Pulse release
+  ansible.builtin.command: /opt/pulse/bin/pulse --version
+  register: pulse_version
   changed_when: false
   check_mode: false
   when: inventory_hostname == 'lab-monitor-01'
 
-- name: Refuse an unsupported Zabbix server series
+- name: Refuse an unsupported Pulse release
   ansible.builtin.assert:
-    that: "'7.0.' in zabbix_server_version.stdout"
-    fail_msg: "The installed Zabbix server is not in the qualified 7.0 LTS series"
+    that: "'6.1.2' in pulse_version.stdout"
+    fail_msg: "The installed Pulse server is not the qualified 6.1.2 release"
   when: inventory_hostname == 'lab-monitor-01'
 
-- name: Create the dedicated Zabbix database role and database
-  become_user: postgres
-  ansible.builtin.command: psql --dbname postgres --set ON_ERROR_STOP=1
-  args:
-    stdin: |
-      DO $do$
-      BEGIN
-        IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'zabbix') THEN
-          CREATE ROLE zabbix LOGIN;
-        ELSE
-          ALTER ROLE zabbix LOGIN;
-        END IF;
-      END
-      $do$;
-      SELECT 'CREATE DATABASE zabbix OWNER zabbix'
-      WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'zabbix')\gexec
-  changed_when: false
-  no_log: true
-  when: inventory_hostname == 'lab-monitor-01'
-
-- name: Check whether the Zabbix schema marker exists
-  ansible.builtin.stat:
-    path: /var/lib/zabbix/.boetticher-schema-loaded
-  register: zabbix_schema_marker
-  when: inventory_hostname == 'lab-monitor-01'
-
-- name: Load the packaged Zabbix PostgreSQL schema
-  become_user: zabbix
-  ansible.builtin.shell: >-
-    zcat /usr/share/zabbix-sql-scripts/postgresql/server.sql.gz
-    | psql --dbname zabbix --username zabbix
-  args:
-    creates: /var/lib/zabbix/.boetticher-schema-loaded
-  when:
-    - inventory_hostname == 'lab-monitor-01'
-    - not zabbix_schema_marker.stat.exists
-
-- name: Record the loaded Zabbix schema
+- name: Create the persistent Pulse state directory
   ansible.builtin.file:
-    path: /var/lib/zabbix/.boetticher-schema-loaded
-    state: touch
-    owner: zabbix
-    group: zabbix
-    mode: '0600'
+    path: /var/lib/pulse
+    state: directory
+    owner: pulse
+    group: pulse
+    mode: '0700'
   when: inventory_hostname == 'lab-monitor-01'
 
-- name: Configure Zabbix server
-  ansible.builtin.template:
-    src: zabbix_server.conf.j2
-    dest: /etc/zabbix/zabbix_server.conf.template
-    owner: root
-    group: zabbix
-    mode: '0640'
-  notify: restart zabbix-server
-  no_log: true
-  when: inventory_hostname == 'lab-monitor-01'
-
-- name: Configure Zabbix Agent 2 on the monitoring host
-  ansible.builtin.template:
-    src: zabbix_agent2.conf.j2
-    dest: /etc/zabbix/zabbix_agent2.conf
+- name: Install the Proxmox CA for Pulse outbound TLS verification
+  ansible.builtin.copy:
+    content: "{{ proxmox_ca_pem }}"
+    dest: /usr/local/share/ca-certificates/boetticher-proxmox.crt
     owner: root
     group: root
     mode: '0644'
-  notify: restart zabbix-agent2
-  when: inventory_hostname == 'lab-monitor-01'
+  notify: update CA certificates
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - proxmox_ca_pem is defined
+    - proxmox_ca_pem | length > 0
 
-- name: Configure the Zabbix frontend with server TLS and client certificate authentication
+- name: Configure the Pulse frontend with server TLS and client certificate authentication
   ansible.builtin.template:
-    src: zabbix-loopback.conf.j2
-    dest: /etc/nginx/sites-available/zabbix.conf
+    src: pulse-loopback.conf.j2
+    dest: /etc/nginx/sites-available/pulse.conf
     owner: root
     group: root
     mode: '0644'
@@ -203,10 +158,10 @@
     - monitor_server_cert_pem is defined
     - monitor_server_cert_pem | length > 0
 
-- name: Enable the mTLS-protected Zabbix frontend
+- name: Enable the mTLS-protected Pulse frontend
   ansible.builtin.file:
-    src: /etc/nginx/sites-available/zabbix.conf
-    dest: /etc/nginx/sites-enabled/zabbix.conf
+    src: /etc/nginx/sites-available/pulse.conf
+    dest: /etc/nginx/sites-enabled/pulse.conf
     state: link
   notify: reload nginx
   when:
@@ -224,23 +179,14 @@
     - monitor_server_cert_pem is defined
     - monitor_server_cert_pem | length > 0
 
-- name: Publish boetticher-owned Zabbix source definitions
-  ansible.builtin.copy:
-    src: zabbix-platform/
-    dest: /etc/zabbix/boetticher-platform/
-    owner: root
-    group: root
-    mode: '0644'
-  when: inventory_hostname == 'lab-monitor-01'
-
-- name: Publish the deterministic boetticher Zabbix desired-object manifest
-  ansible.builtin.template:
-    src: zabbix-platform.json.j2
-    dest: /etc/zabbix/boetticher-platform/desired-objects.json
-    owner: root
-    group: root
-    mode: '0644'
-  when: inventory_hostname == 'lab-monitor-01'
+- name: Reload nginx after enabling the monitoring frontend
+  ansible.builtin.service:
+    name: nginx
+    state: reloaded
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - monitor_server_cert_pem is defined
+    - monitor_server_cert_pem | length > 0
 
 - name: Enable monitoring services
   ansible.builtin.service:
@@ -248,8 +194,6 @@
     enabled: true
     state: started
   loop:
-    - postgresql
-    - zabbix-server
-    - zabbix-agent2
+    - pulse
     - nginx
   when: inventory_hostname == 'lab-monitor-01'

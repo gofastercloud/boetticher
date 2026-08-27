@@ -42,6 +42,28 @@ func TestClientUsesTokenAndDecodesEnvelope(t *testing.T) {
 	}
 }
 
+func TestClientIncludesStructuredProxmoxErrors(t *testing.T) {
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: roundTripFunc(func(r *http.Request) *http.Response {
+		return apiResponse(http.StatusBadRequest, `{"message":"Parameter verification failed.","errors":{"name":"invalid"},"data":null}`)
+	})}}
+	err := client.Get(context.Background(), "/nodes/proxmox/qemu/190/config", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), `"name":"invalid"`) {
+		t.Fatalf("structured Proxmox error was discarded: %v", err)
+	}
+}
+
+func TestCheckTLSAcceptsUnauthenticatedAPIResponse(t *testing.T) {
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/version" {
+			t.Fatalf("unexpected TLS probe request: %s %s", r.Method, r.URL.Path)
+		}
+		return &http.Response{StatusCode: http.StatusUnauthorized, Status: "401 Unauthorized", Body: io.NopCloser(strings.NewReader("unauthorized")), Header: make(http.Header)}
+	})}}
+	if err := client.CheckTLS(context.Background()); err != nil {
+		t.Fatalf("CheckTLS() = %v", err)
+	}
+}
+
 func TestNodesUsesAuthoritativeNodesEndpoint(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes" {
@@ -53,6 +75,23 @@ func TestNodesUsesAuthoritativeNodesEndpoint(t *testing.T) {
 	nodes, err := client.Nodes(context.Background())
 	if err != nil || len(nodes) != 1 || nodes[0].Node != "proxmox" {
 		t.Fatalf("Nodes() = %#v, %v", nodes, err)
+	}
+}
+
+func TestReloadNodeNetworkWaitsForPendingNetworkTask(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodPut && r.URL.Path == "/api2/json/nodes/proxmox/network" {
+			return response([]byte(`{"data":"UPID:pve:reload-network"}`))
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/proxmox/tasks/UPID:pve:reload-network/status" {
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		}
+		t.Fatalf("unexpected network reload request: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.ReloadNodeNetwork(context.Background(), "proxmox"); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -84,7 +123,7 @@ func TestQEMUAgentNetworkInterfacesUsesGuestAgentEndpoint(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/lab-proxmox-01/qemu/190/agent/network-get-interfaces" {
 			t.Fatalf("unexpected guest-agent request: %s %s", r.Method, r.URL.Path)
 		}
-		return response([]byte(`{"data":[{"name":"eth0","hardware-address":"02:00:00:00:00:01","ip-addresses":[{"ip-address":"127.0.0.1","ip-address-type":"ipv4"},{"ip-address":"192.0.2.15","ip-address-type":"ipv4"}]}]}`))
+		return response([]byte(`{"data":{"result":[{"name":"eth0","hardware-address":"02:00:00:00:00:01","ip-addresses":[{"ip-address":"127.0.0.1","ip-address-type":"ipv4"},{"ip-address":"192.0.2.15","ip-address-type":"ipv4"}]}]}}`))
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
 	interfaces, err := client.QEMUAgentNetworkInterfaces(context.Background(), "lab-proxmox-01", 190)
@@ -147,6 +186,19 @@ func TestCreateLXCWaitsForProxmoxTaskBeforeReturning(t *testing.T) {
 	}
 }
 
+func TestWaitTaskAcceptsProxmoxWarningCompletion(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/node/tasks/UPID:pve:create-lxc/status" {
+			t.Fatalf("unexpected task status request: %s %s", r.Method, r.URL.Path)
+		}
+		return response([]byte(`{"data":{"status":"stopped","exitstatus":"WARNINGS: 1"}}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.WaitTask(context.Background(), "node", "UPID:pve:create-lxc"); err != nil {
+		t.Fatalf("WaitTask() rejected successful task warnings: %v", err)
+	}
+}
+
 func TestResizeQEMUDiskUsesExplicitBoundedGrowth(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method != http.MethodPut || r.URL.Path != "/api2/json/nodes/node/qemu/190/resize" {
@@ -198,6 +250,25 @@ func TestDestroyQEMUPurgesBuilderConfigurationAndUnreferencedDisks(t *testing.T)
 	}
 }
 
+func TestDestroyLXCPurgesConfigurationAndUnreferencedVolumes(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api2/json/nodes/node/lxc/200" {
+			t.Fatalf("unexpected LXC destruction request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("purge") != "1" || r.URL.Query().Get("destroy-unreferenced-disks") != "1" {
+			t.Fatalf("LXC destruction did not request bounded cleanup: %v", r.URL.Query())
+		}
+		return response([]byte(`{"data":null}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.DestroyLXC(context.Background(), "node", 200); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DestroyLXC(context.Background(), "node", 0); err == nil {
+		t.Fatal("invalid LXC destruction identity was accepted")
+	}
+}
+
 func TestQEMUStatusUsesLiveStatusEndpoint(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/node/qemu/190/status/current" {
@@ -209,6 +280,32 @@ func TestQEMUStatusUsesLiveStatusEndpoint(t *testing.T) {
 	status, err := client.QEMUStatus(context.Background(), "node", 190)
 	if err != nil || status != "running" {
 		t.Fatalf("QEMUStatus() = %q, %v", status, err)
+	}
+}
+
+func TestEnsureVMRunningDoesNotRestartRunningVM(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/node/qemu/100/status/current" {
+			t.Fatalf("unexpected request while checking running VM: %s %s", r.Method, r.URL.Path)
+		}
+		return response([]byte(`{"data":{"status":"running"}}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.EnsureVMRunning(context.Background(), "node", 100); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsureLXCRunningDoesNotRestartRunningContainer(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/node/lxc/110/status/current" {
+			t.Fatalf("unexpected request while checking running LXC: %s %s", r.Method, r.URL.Path)
+		}
+		return response([]byte(`{"data":{"status":"running"}}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.EnsureLXCRunning(context.Background(), "node", 110); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -269,6 +366,9 @@ func TestUploadStorageFileUsesMultipartArtifactContract(t *testing.T) {
 		if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data;") {
 			t.Fatalf("upload was not multipart: %q", r.Header.Get("Content-Type"))
 		}
+		if r.ContentLength <= 0 || len(r.TransferEncoding) != 0 {
+			t.Fatalf("upload framing is not length-delimited: content-length=%d transfer-encoding=%v", r.ContentLength, r.TransferEncoding)
+		}
 		if err := r.ParseMultipartForm(1 << 20); err != nil {
 			t.Fatal(err)
 		}
@@ -315,6 +415,9 @@ func TestUploadStorageFileStreamsLargeArtifactBody(t *testing.T) {
 		if r.GetBody != nil {
 			t.Fatal("streamed multipart request unexpectedly exposes a replayable buffered body")
 		}
+		if r.ContentLength <= 0 || len(r.TransferEncoding) != 0 {
+			t.Fatalf("large upload framing is not length-delimited: content-length=%d transfer-encoding=%v", r.ContentLength, r.TransferEncoding)
+		}
 		if _, err := io.Copy(io.Discard, r.Body); err != nil {
 			t.Fatal(err)
 		}
@@ -329,10 +432,10 @@ func TestUploadStorageFileStreamsLargeArtifactBody(t *testing.T) {
 
 func TestEnsureDirectoryStorageCreatesBackupStorage(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
-		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/cluster/storage" {
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/storage" {
 			return response([]byte(`{"data":[]}`))
 		}
-		if r.Method == http.MethodPost && r.URL.Path == "/api2/json/cluster/storage" {
+		if r.Method == http.MethodPost && r.URL.Path == "/api2/json/storage" {
 			if err := r.ParseForm(); err != nil {
 				t.Errorf("parse storage form: %v", err)
 			}
@@ -371,10 +474,10 @@ func TestEnsureDirectoryStorageRejectsConflictingDefinition(t *testing.T) {
 
 func TestEnsureDirectoryStorageContentAddsOnlyRequiredTypes(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
-		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/cluster/storage" {
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/storage" {
 			return response([]byte(`{"data":[{"storage":"local","type":"dir","path":"/var/lib/vz","content":"backup,iso,vztmpl"}]}`))
 		}
-		if r.Method == http.MethodPut && r.URL.Path == "/api2/json/cluster/storage/local" {
+		if r.Method == http.MethodPut && r.URL.Path == "/api2/json/storage/local" {
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
 			}
@@ -402,7 +505,7 @@ func TestDownloadURLUsesPinnedChecksumWithoutShellArguments(t *testing.T) {
 			t.Fatal(err)
 		}
 		for key, want := range map[string]string{
-			"content": "iso", "filename": "debian-13.qcow2", "url": "https://images.example/debian-13.qcow2", "checksum": checksum, "checksum-algorithm": "sha512",
+			"content": "import", "filename": "debian-13.qcow2", "url": "https://images.example/debian-13.qcow2", "checksum": checksum, "checksum-algorithm": "sha512",
 		} {
 			if got := r.Form.Get(key); got != want {
 				t.Errorf("%s = %q, want %q", key, got, want)
@@ -417,6 +520,44 @@ func TestDownloadURLUsesPinnedChecksumWithoutShellArguments(t *testing.T) {
 	}
 }
 
+func TestEnsureCloudImageAcceptsPVEImportWithoutListingChecksumAfterVerifiedDownload(t *testing.T) {
+	checksum := strings.Repeat("a", 128)
+	var contentRequests int
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+			contentRequests++
+			if contentRequests == 1 {
+				return response([]byte(`{"data":[{"content":"import","volid":"local:import/image.qcow2","format":"qcow2","size":42}]}`))
+			}
+			return response([]byte(`{"data":[{"content":"import","volid":"local:import/image.qcow2","format":"qcow2","size":42}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/download-url":
+			return response([]byte(`{"data":"UPID:pve:download"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:download/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		default:
+			t.Fatalf("unexpected cloud image request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	volID, err := client.EnsureCloudImage(context.Background(), "node", "local", "image.qcow2", "https://images.example/image.qcow2", checksum)
+	if err != nil || volID != "local:import/image.qcow2" {
+		t.Fatalf("EnsureCloudImage() = %q, %v", volID, err)
+	}
+}
+
+func TestUploadStorageTextUsesAuthenticatedSSHForSnippets(t *testing.T) {
+	runner := &fakeRunner{}
+	client := &Client{snippetRunner: runner, snippetAddr: "192.0.2.10", snippetUser: "root"}
+	if err := client.UploadStorageText(context.Background(), "node", "local", "snippets", "boetticher-190-meta.yaml", "instance-id: trial\n"); err != nil {
+		t.Fatal(err)
+	}
+	if runner.address != "192.0.2.10" || runner.user != "root" || !strings.Contains(runner.command, "/var/lib/vz/snippets/boetticher-190-meta.yaml") {
+		t.Fatalf("unexpected SSH snippet upload: %#v", runner)
+	}
+}
+
 func TestDownloadURLRejectsUnpinnedOrUnsafeInputs(t *testing.T) {
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: roundTripFunc(func(r *http.Request) *http.Response { return response([]byte(`{"data":"unexpected"}`)) })}}
 	if _, err := client.DownloadURL(context.Background(), "node", "local", "../image.qcow2", "https://images.example/image.qcow2", strings.Repeat("a", 128)); err == nil {
@@ -427,22 +568,16 @@ func TestDownloadURLRejectsUnpinnedOrUnsafeInputs(t *testing.T) {
 	}
 }
 
-func TestImportDiskUsesThePinnedStoragePlan(t *testing.T) {
+func TestImportDiskUsesTheSupportedQEMUImportFromConfig(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
-		if r.Method != http.MethodPost || r.URL.Path != "/api2/json/nodes/node/qemu/100/importdisk" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api2/json/nodes/node/qemu/100/config" {
 			t.Fatalf("unexpected import request: %s %s", r.Method, r.URL.Path)
 		}
 		if err := r.ParseForm(); err != nil {
 			t.Fatal(err)
 		}
-		if got := url.Values(r.Form).Get("source"); got != "local:iso/debian-13.qcow2" {
-			t.Errorf("source = %q", got)
-		}
-		if got := r.Form.Get("storage"); got != "boetticher-thin" {
-			t.Errorf("storage = %q", got)
-		}
-		if got := r.Form.Get("format"); got != "qcow2" {
-			t.Errorf("format = %q", got)
+		if got := r.Form.Get("scsi0"); got != "boetticher-thin:0,import-from=local:iso/debian-13.qcow2,format=qcow2" {
+			t.Errorf("scsi0 = %q", got)
 		}
 		return response([]byte(`{"data":"UPID:pve:import"}`))
 	})
@@ -455,6 +590,19 @@ func TestImportDiskUsesThePinnedStoragePlan(t *testing.T) {
 
 func response(data []byte) *http.Response {
 	return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(data)))}
+}
+
+func TestIsNotFoundAcceptsProxmoxMissingGuestConfigResponse(t *testing.T) {
+	err := &APIError{
+		StatusCode: http.StatusInternalServerError,
+		Message:    "Configuration file 'nodes/proxmox/qemu-server/190.conf' does not exist\n",
+	}
+	if !IsNotFound(err) {
+		t.Fatal("Proxmox missing guest configuration was not classified as not found")
+	}
+	if IsNotFound(&APIError{StatusCode: http.StatusInternalServerError, Message: "storage backend failed"}) {
+		t.Fatal("unrelated Proxmox HTTP 500 was classified as not found")
+	}
 }
 
 func apiResponse(status int, data string) *http.Response {

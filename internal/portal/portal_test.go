@@ -79,3 +79,24 @@ func TestPortalPublishesModuleArtifactAndLoggingSummary(t *testing.T) {
 		t.Fatal("portal exposed internal secret/evidence material")
 	}
 }
+
+func TestPortalUsesModuleDeclarationForFirstPartyModuleSummary(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	site.Modules = []model.ResolvedModule{{Name: "tailnet-router", Version: "1.0.0", Policy: "default-off", Enabled: true, State: "Enabled"}}
+	site.Declarations = []model.ModuleDeclaration{{
+		Module:   "tailnet-router",
+		Artifact: model.Artifact{Name: "boetticher-tailnet-router", Version: "1.0.0", DefinitionSHA256: strings.Repeat("a", 64)},
+		Portal:   []model.PortalEntry{{Name: "tailnet-router", Description: "Tailscale subnet router"}},
+	}}
+	dir := t.TempDir()
+	if err := Build(site, filepath.Join(dir, "portal"), "", Evidence{}, networkmodel.Discovery{Mode: model.ModeVirtualOnly}, time.Unix(0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "portal", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "Tailscale subnet router") {
+		t.Fatal("portal omitted the module declaration summary")
+	}
+}

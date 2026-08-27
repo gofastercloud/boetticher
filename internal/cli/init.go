@@ -107,6 +107,7 @@ func runPreflight(args []string, out interface{ Write([]byte) (int, error) }) er
 		return err
 	}
 	discovery := discovered.Discovery
+	discovery = honorRequestedPhysicalMode(discovery, s.PhysicalNetwork.Mode, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
 	fmt.Fprintf(out, "Proxmox node: PASS %s (discovered from /nodes)\n", discovered.Node)
 	printPhysicalDiscovery(out, discovery)
 	if err := writePhysicalDiscovery(*siteDir, s, discovery); err != nil {

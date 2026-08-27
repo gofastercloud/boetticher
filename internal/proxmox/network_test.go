@@ -17,6 +17,24 @@ func TestNetworkInterfacePreservesHardwareEvidence(t *testing.T) {
 	}
 }
 
+func TestNetworkInterfaceDerivesHardwareEvidenceFromStableMACName(t *testing.T) {
+	var iface NetworkInterface
+	if err := json.Unmarshal([]byte(`{"iface":"enp0s31f6","type":"eth","altnames":["enx482ae3209591"]}`), &iface); err != nil {
+		t.Fatal(err)
+	}
+	if iface.HWAddr != "48:2a:e3:20:95:91" {
+		t.Fatalf("stable MAC-derived interface name was not preserved: %#v", iface)
+	}
+
+	var enx NetworkInterface
+	if err := json.Unmarshal([]byte(`{"iface":"enxa0cec8a2b210","type":"eth"}`), &enx); err != nil {
+		t.Fatal(err)
+	}
+	if enx.HWAddr != "a0:ce:c8:a2:b2:10" {
+		t.Fatalf("enx interface name was not treated as stable hardware evidence: %#v", enx)
+	}
+}
+
 func TestAnalyzePhysicalNetworkUsesBridgeAndAddressEvidence(t *testing.T) {
 	result, err := AnalyzePhysicalNetwork([]NetworkInterface{
 		{Iface: "vmbr0", Type: "bridge", Address: "192.0.2.73/24", Gateway: "192.0.2.1", BridgePorts: "eno1"},

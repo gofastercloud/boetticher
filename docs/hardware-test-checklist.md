@@ -16,11 +16,12 @@ these journeys.
    that explicitly requires confirmation.
 4. Prove `ssh firewall`, `ssh dns01`, `ssh monitor`, and `ssh portal` through
    the Proxmox bastion.
-5. Confirm VM 100 has WAN plus four tagged zone vNICs and that it is the
+5. Confirm VM 100 has WAN plus six tagged zone vNICs and that it is the
    qualified boetticher firewall appliance.
 6. Prove Kea leases, PowerDNS DDNS, secondary replication, and both DNS/NTP
    paths.
-7. Prove Zabbix Agent 2, platform objects, dashboards, and backup freshness.
+7. Prove Pulse Proxmox API inventory, tagged Proxmox-host agent hardware
+   telemetry, alerts, availability checks, and backup freshness.
 8. Prove portal TLS/mTLS and reject an unauthenticated client.
 9. Exercise the positive and negative firewall journeys, especially SANDBOX.
 10. Attach a clean second NIC with `boetticher network trunk attach IFACE` and

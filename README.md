@@ -1,11 +1,11 @@
 # boetticher
 
-**Status: pre-alpha.** boetticher v0.3.1 has a typed module model and offline
+**Status: pre-alpha.** boetticher v0.3.33 has a typed module model and offline
 contracts, but the appliance build and live installation still need
 qualification. Do not use boetticher on a system you cannot recover.
 
 boetticher is a small, opinionated Proxmox platform for a private lab. It
-creates the platform foundation—network zones, DNS/NTP, PKI, Zabbix, a static
+creates the platform foundation—network zones, DNS/NTP, PKI, Pulse Community monitoring, a static
 portal, backups, and recovery metadata—from one deterministic site model.
 
 It is not a generic Proxmox management tool. boetticher owns its declared
@@ -29,24 +29,33 @@ HOME / upstream
        |
      vmbr1
        |
- VLAN 10 / 20 / 50 / 99
+ VLAN 5 / 10 / 20 / 30 / 40 / 99
        |
- TRUSTED / SERVERS / SANDBOX / MGMT
+ TRANSIT / INFRA / SERVERS / TRUSTED / SANDBOX / MGMT
 ```
 
 The platform services are:
 
 ```text
-lab-dns-01       PowerDNS, Blocky (AdGuard alternative), Chrony
-lab-dns-02       PowerDNS, Blocky (AdGuard alternative), Chrony
-lab-monitor-01   Zabbix and PostgreSQL
-lab-log-01       Central systemd journal collector
-lab-portal-01    generated static documentation
+lab-dns-01       10.10.10.10  PowerDNS, Blocky (AdGuard alternative), Chrony
+lab-dns-02       10.10.10.11  PowerDNS, Blocky (AdGuard alternative), Chrony
+lab-monitor-01   10.10.10.20  Pulse Community monitoring
+lab-log-01       10.10.10.40  Central systemd journal collector
+lab-portal-01    10.10.10.30  generated static documentation
 ```
 
-The fixed networks are VLAN 10 TRUSTED (`10.10.10.0/24`), VLAN 20 SERVERS
-(`10.10.20.0/24`), VLAN 50 SANDBOX (`10.10.50.0/24`), and VLAN 99 MGMT
-(`10.10.99.0/24`). v0.3 remains IPv4-only.
+Pulse reads Proxmox inventory and guest state through its dedicated API token.
+A Pulse host agent is installed only on components carrying the generic
+`monitoring-agent` tag; the default tag is on `lab-proxmox-01` for host CPU,
+memory, temperature, and SMART telemetry. VM and LXC guests do not receive an
+agent. The monitor UI remains `https://monitor.lab.home.arpa` behind the
+platform HTTPS/mTLS boundary.
+
+The fixed networks are VLAN 5 TRANSIT (`10.10.5.0/24`), VLAN 10 INFRA
+(`10.10.10.0/24`), VLAN 20 SERVERS (`10.10.20.0/24`), VLAN 30 TRUSTED
+(`10.10.30.0/24`), VLAN 40 SANDBOX (`10.10.40.0/24`), and VLAN 99 MGMT
+(`10.10.99.0/24`). Every gateway owns `.1`; managed Proxmox uses
+`10.10.99.250` on MGMT. v0.3 remains IPv4-only.
 
 The platform resolves to Core plus the mandatory DNS/NTP module and the
 default-on monitoring and managed firewall modules. Modules are built into the
@@ -58,16 +67,23 @@ upload to `lab-log-01`. The default DNS provider is Blocky; set
 
 ## Two gateway modes
 
-`managed` is the default. boetticher creates `lab-fw-01`, configures its five
-interfaces, renders the nftables policy, and runs Kea, DDNS, and the SANDBOX
-DNS/NTP services.
+`managed` is the default. boetticher creates `lab-fw-01`, configures its WAN
+interface and six fixed internal interfaces, renders the nftables policy, and
+runs Kea, DDNS, and the SANDBOX DNS/NTP services. SERVERS uses reservation-only
+DHCP with DDNS; TRUSTED and SANDBOX use their existing DHCP/DDNS modes. The
+gateway owns `.1` in TRANSIT, INFRA, SERVERS, TRUSTED, SANDBOX, and MGMT.
 
 `external` is bring-your-own firewall mode. boetticher creates no firewall VM,
 does not manage the appliance, and publishes a deterministic contract for the
 operator to configure. It requires a separately selected physical trunk NIC
-carrying VLANs 10, 20, 50, and 99; bootstrap never silently selects even a
-sole eligible NIC. See
+carrying VLANs 5, 10, 20, 30, 40, and 99; the operator firewall owns `.1` in
+each subnet, and bootstrap never silently selects even a sole eligible NIC.
+See
 [`docs/networking/external-firewall.md`](docs/networking/external-firewall.md).
+
+This network layout is for the next clean deployment/rebuild. Existing
+installations require an operator-planned rebuild or migration; this tranche
+does not automatically renumber live hosts or guests.
 
 ## Requirements
 
@@ -78,7 +94,7 @@ sole eligible NIC. See
   second NIC and managed VLAN switch are needed for a physical trunk; they are
   mandatory in external-firewall mode.
 - Either the single-disk or dedicated-data-disk storage profile.
-- Zabbix 7.0 LTS and the pinned Debian 13 appliance definitions are the v0.3
+- Pulse Community 6.1.2 and the pinned Debian 13 appliance definitions are the v0.3
   qualification targets (`debian-13-genericcloud-amd64-20260327-2429`).
 
 ## Quickstart
@@ -89,12 +105,12 @@ From the controller and the Proxmox HOME-side DHCP address:
 boetticher init
 boetticher bootstrap-endpoint set 192.0.2.10
 boetticher preflight --live
-boetticher bootstrap --recovery-confirmed
-boetticher deploy --dry-run
-boetticher deploy
+boetticher bootstrap --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem
+boetticher deploy --dry-run --proxmox-ca /path/to/pve-root-ca.pem
+boetticher deploy --proxmox-ca /path/to/pve-root-ca.pem
 boetticher ssh-config --install-include
-boetticher verify
-boetticher doctor --live
+boetticher verify --proxmox-ca /path/to/pve-root-ca.pem
+boetticher doctor --live --proxmox-ca /path/to/pve-root-ca.pem
 ```
 
 Supply `--confirm` only when the deployment plan identifies a supported
@@ -112,10 +128,11 @@ firewall contract before running the live workflow.
 ## Ownership and access
 
 boetticher owns the platform guests, bridges and VLAN policy it declares, the
-managed gateway when selected, platform DNS/NTP, PKI, Zabbix objects, backups,
+managed gateway when selected, platform DNS/NTP, PKI, Pulse monitoring state, backups,
 portal output, and verification metadata. Unknown Proxmox guests remain user-
-managed and are never imported, changed, deleted, monitored, or backed up by
-boetticher.
+managed and are never imported, changed, deleted, or backed up by boetticher.
+Pulse may display API-visible user guests without adopting them into the
+boetticher model.
 
 Proxmox is the normal SSH bastion. The controller reaches Proxmox over the
 HOME network, then uses the forwarding-only `lab-bastion` path to reach

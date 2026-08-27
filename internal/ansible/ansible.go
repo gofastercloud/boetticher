@@ -8,14 +8,34 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/logging"
 	"github.com/gofastercloud/boetticher/internal/model"
-	"github.com/gofastercloud/boetticher/internal/zabbix"
+	"github.com/gofastercloud/boetticher/internal/pulse"
 )
+
+// MonitoringAgentTargets derives host-agent installation targets from the
+// generic component tag. Monitoring is the only module that owns this
+// projection; an untagged guest is never selected implicitly.
+func MonitoringAgentTargets(s model.Site) []string {
+	seen := map[string]bool{}
+	result := make([]string, 0)
+	for _, component := range s.PlatformComponents() {
+		for _, tag := range component.Tags {
+			if tag == model.TagMonitoringAgent && !seen[component.Name] {
+				seen[component.Name] = true
+				result = append(result, component.Name)
+				break
+			}
+		}
+	}
+	sort.Strings(result)
+	return result
+}
 
 func Inventory(s model.Site) (string, error) {
 	if err := s.Validate(); err != nil {
@@ -64,6 +84,18 @@ func Inventory(s model.Site) (string, error) {
 			writeHost(&b, component, true)
 		}
 	}
+	b.WriteString("\n[tailnet-router]\n")
+	for _, component := range components {
+		if component.Module == "tailnet-router" {
+			writeHost(&b, component, true)
+		}
+	}
+	b.WriteString("\n[litellm]\n")
+	for _, component := range components {
+		if component.Module == "litellm" {
+			writeHost(&b, component, true)
+		}
+	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		b.WriteString("\n[firewall]\n")
 		for _, component := range components {
@@ -72,7 +104,7 @@ func Inventory(s model.Site) (string, error) {
 			}
 		}
 	}
-	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\n")
+	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\ntailnet-router\nlitellm\n")
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		b.WriteString("firewall\n")
 	}
@@ -86,16 +118,9 @@ func writeHost(b *strings.Builder, component model.Component, throughBastion boo
 }
 
 func writeHostAt(b *strings.Builder, component model.Component, address string, throughBastion bool) {
-	user := component.SSHUser
-	if user == "" {
-		user = model.DefaultAdminSSHUser
-	}
-	fmt.Fprintf(b, "%s ansible_host=%s ansible_user=%s", component.Name, address, user)
-	if throughBastion {
-		fmt.Fprintf(b, " ansible_ssh_common_args='-o ProxyJump=lab-bastion -o HostKeyAlias=%s.%s'", component.Hostname, model.DefaultDomain)
-	} else {
-		fmt.Fprintf(b, " ansible_ssh_common_args='-o HostKeyAlias=%s.%s'", component.Hostname, model.DefaultDomain)
-	}
+	// The generated deployment inventory is used only during the temporary
+	// root-SSH convergence window. Durable labadmin has no become boundary.
+	fmt.Fprintf(b, "%s ansible_host=%s ansible_user=root", component.Name, address)
 	b.WriteByte('\n')
 }
 
@@ -111,7 +136,7 @@ func Variables(s model.Site) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	zabbixPlan, err := zabbix.PlanFromSite(s)
+	monitoringPlan, err := pulse.PlanFromSite(s)
 	if err != nil {
 		return nil, err
 	}
@@ -137,26 +162,32 @@ func Variables(s model.Site) ([]byte, error) {
 		}
 	}
 	value := struct {
-		ModelRevision               string            `json:"model_revision"`
-		Domain                      string            `json:"domain"`
-		IPv4Only                    bool              `json:"ipv4_only"`
-		AuthoritativeDNS            string            `json:"authoritative_dns"`
-		AuthoritativeDNSVersion     string            `json:"authoritative_dns_version"`
-		AuthoritativePackageVersion string            `json:"authoritative_package_version"`
-		AuthoritativeDNSPort        string            `json:"authoritative_dns_port"`
-		DynamicZones                []string          `json:"dynamic_zones"`
-		AdGuardForwardZones         []string          `json:"adguard_forward_zones"`
-		DNSPlan                     dns.Plan          `json:"dns_plan"`
-		FirewallPlan                firewall.Plan     `json:"firewall_plan"`
-		ZabbixPlan                  zabbix.Plan       `json:"zabbix_plan"`
-		BlockyConfig                string            `json:"blocky_config"`
-		LoggingPlan                 logging.Plan      `json:"logging_plan"`
-		LoggingCollectorConfig      string            `json:"logging_collector_config"`
-		LoggingServiceOverride      string            `json:"logging_collector_service_override"`
-		LoggingUploadConfigs        map[string]string `json:"logging_upload_configs"`
-		LoggingClientCertificates   map[string]string `json:"logging_client_certificates"`
-		LoggingCollectorCertificate string            `json:"logging_collector_certificate"`
-	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, zabbixPlan, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), loggingUploads, map[string]string{}, ""}
+		ModelRevision               string                        `json:"model_revision"`
+		Domain                      string                        `json:"domain"`
+		IPv4Only                    bool                          `json:"ipv4_only"`
+		AuthoritativeDNS            string                        `json:"authoritative_dns"`
+		AuthoritativeDNSVersion     string                        `json:"authoritative_dns_version"`
+		AuthoritativePackageVersion string                        `json:"authoritative_package_version"`
+		AuthoritativeDNSPort        string                        `json:"authoritative_dns_port"`
+		DynamicZones                []string                      `json:"dynamic_zones"`
+		AdGuardForwardZones         []string                      `json:"adguard_forward_zones"`
+		DNSPlan                     dns.Plan                      `json:"dns_plan"`
+		FirewallPlan                firewall.Plan                 `json:"firewall_plan"`
+		MonitoringPlan              pulse.Plan                    `json:"monitoring_plan"`
+		PulseAgentTargets           []string                      `json:"pulse_agent_targets"`
+		PulseAgentVersion           string                        `json:"pulse_agent_version"`
+		PulseAgentReleaseURL        string                        `json:"pulse_agent_release_url"`
+		PulseAgentReleaseSHA256     string                        `json:"pulse_agent_release_sha256"`
+		BlockyConfig                string                        `json:"blocky_config"`
+		LoggingPlan                 logging.Plan                  `json:"logging_plan"`
+		LoggingCollectorConfig      string                        `json:"logging_collector_config"`
+		LoggingServiceOverride      string                        `json:"logging_collector_service_override"`
+		LoggingUploadConfigs        map[string]string             `json:"logging_upload_configs"`
+		LoggingClientCertificates   map[string]string             `json:"logging_client_certificates"`
+		LoggingCollectorCertificate string                        `json:"logging_collector_certificate"`
+		ModuleConfigs               map[string]model.ModuleConfig `json:"module_configs"`
+		ModuleDeclarations          []model.ModuleDeclaration     `json:"module_declarations"`
+	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), loggingUploads, map[string]string{}, "", s.ModuleConfig, s.Declarations}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err
@@ -198,17 +229,33 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	if err != nil {
 		return fmt.Errorf("ansible-playbook is required: %w", err)
 	}
-	args := []string{"-i", inventory, playbook, "--extra-vars", "@-", "--ssh-common-args", "-F " + generatedSSHConfigPath(inventory)}
+	args := []string{"-i", inventory, "--user", "root", playbook, "--extra-vars", "@/dev/stdin", "--ssh-common-args", "-F " + generatedSSHConfigPath(inventory)}
 	if limit != "" {
 		args = append(args, "--limit", limit)
 	}
 	command := exec.CommandContext(ctx, executable, args...)
 	command.Stdin = strings.NewReader(string(variables))
 	command.Env = append(os.Environ(), "ANSIBLE_HOST_KEY_CHECKING=True")
-	if _, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("ansible-playbook failed: %w", err)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		diagnostic := failureDiagnostic(output)
+		if diagnostic == "" {
+			return fmt.Errorf("ansible-playbook failed: %w", err)
+		}
+		return fmt.Errorf("ansible-playbook failed: %w: %s", err, diagnostic)
 	}
 	return nil
+}
+
+func failureDiagnostic(output []byte) string {
+	lines := strings.Split(string(output), "\n")
+	selected := make([]string, 0, 3)
+	for _, line := range lines {
+		if strings.Contains(line, "[ERROR]:") || strings.Contains(line, "fatal:") || strings.Contains(line, "unreachable=") {
+			selected = append(selected, strings.TrimSpace(line))
+		}
+	}
+	return strings.Join(selected, " | ")
 }
 
 // generatedSSHConfigPath derives the site-local SSH projection from the

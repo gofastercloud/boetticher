@@ -18,10 +18,10 @@ import (
 	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/portal"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
+	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
 	"github.com/gofastercloud/boetticher/internal/storage"
-	"github.com/gofastercloud/boetticher/internal/zabbix"
 )
 
 func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error {
@@ -78,7 +78,7 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 		portal.CheckResult{Name: "Proxmox API least privilege", Status: "NOT TESTED", Detail: "requires authenticated Proxmox API evidence"},
 		portal.CheckResult{Name: "internal CA available", Status: "STATIC PASS", Detail: "CA metadata is present in the initialized model"},
 		portal.CheckResult{Name: "portal requires client certificate", Status: "NOT TESTED", Detail: "requires deployed mTLS journey"},
-		portal.CheckResult{Name: "Zabbix requires client certificate", Status: "NOT TESTED", Detail: "requires deployed mTLS journey"},
+		portal.CheckResult{Name: "Pulse requires client certificate", Status: "NOT TESTED", Detail: "requires deployed mTLS journey"},
 		portal.CheckResult{Name: "latest VM/LXC backup", Status: "NOT TESTED", Detail: "requires current backup evidence"},
 		portal.CheckResult{Name: "Age recovery fixture", Status: "NOT TESTED", Detail: "requires independent recovery copy"},
 	)
@@ -88,7 +88,7 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 			portal.CheckResult{Name: "SANDBOX cannot access TRUSTED", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
 			portal.CheckResult{Name: "SANDBOX cannot access SERVERS", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
 			portal.CheckResult{Name: "SANDBOX cannot access MGMT", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
-			portal.CheckResult{Name: "MGMT DHCP is reservation-only", Status: "NOT TESTED", Detail: "requires deployed Kea evidence"},
+			portal.CheckResult{Name: "TRANSIT/INFRA/MGMT are static-only; SERVERS is reservation-only", Status: "NOT TESTED", Detail: "requires deployed static-address, reservation, and Kea evidence"},
 		)
 	} else {
 		results = append(results, portal.CheckResult{Name: "external gateway contract", Status: "STATIC PASS", Detail: "required VLAN, gateway, DHCP, DNS, NTP, and policy intent is generated"})
@@ -481,7 +481,7 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 			if err != nil {
 				return err
 			}
-			if len(plan.DynamicZones) != 4 {
+			if len(plan.DynamicZones) != 2 {
 				return errors.New("dynamic DNS zone contract is incomplete")
 			}
 			if s.Gateway.Mode == model.GatewayModeManaged && !plan.DDNS.Enabled {
@@ -492,13 +492,13 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 			}
 			return nil
 		}},
-		{"Zabbix platform projection", func() error {
-			plan, err := zabbix.PlanFromSite(s)
+		{"Pulse monitoring projection", func() error {
+			plan, err := pulse.PlanFromSite(s)
 			if err != nil {
 				return err
 			}
 			if !plan.PlatformOnly || len(plan.Components) != len(s.PlatformComponents()) {
-				return errors.New("Zabbix projection is not platform-only")
+				return errors.New("Pulse monitoring projection is not platform-only")
 			}
 			return nil
 		}},
@@ -638,7 +638,11 @@ func checkSOPSBoundary(siteDir string, s model.Site) error {
 }
 
 func checkRuntimeBoundary(siteDir string, s model.Site) error {
-	relative, err := filepath.Rel(filepath.Clean(siteDir), filepath.Clean(site.RuntimeDir(s)))
+	absSiteDir, err := filepath.Abs(siteDir)
+	if err != nil {
+		return err
+	}
+	relative, err := filepath.Rel(filepath.Clean(absSiteDir), filepath.Clean(site.RuntimeDir(s)))
 	if err != nil {
 		return err
 	}

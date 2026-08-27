@@ -17,7 +17,10 @@ func Compose(config model.SiteConfig) (model.Site, []ResolvedModule, error) {
 		return model.Site{}, nil, err
 	}
 	site := config.BaseSite()
-	site.Components = composeComponents(site.Components, resolved)
+	site.Components, err = composeComponents(site.Components, resolved, site)
+	if err != nil {
+		return model.Site{}, nil, err
+	}
 	declarations, err := composeDeclarations(site, resolved)
 	if err != nil {
 		return model.Site{}, nil, err
@@ -46,25 +49,36 @@ func Compose(config model.SiteConfig) (model.Site, []ResolvedModule, error) {
 	return site, resolved, nil
 }
 
-func composeComponents(base []model.Component, resolved []ResolvedModule) []model.Component {
+func composeComponents(base []model.Component, resolved []ResolvedModule, site model.Site) ([]model.Component, error) {
 	components := append([]model.Component(nil), base...)
 	for _, module := range resolved {
 		if !module.Enabled {
 			continue
 		}
-		components = append(components, moduleGuestProjections(module.Definition)...)
+		projected, err := moduleGuestProjections(module.Definition, site)
+		if err != nil {
+			return nil, err
+		}
+		components = append(components, projected...)
 	}
 	sort.Slice(components, func(i, j int) bool { return components[i].Name < components[j].Name })
-	return components
+	return components, nil
 }
 
 // moduleGuestProjections is the single projection boundary for first-party
 // guest definitions. The same generated guest data feeds Site.Components and
 // ModuleDeclaration.Guests so downstream providers cannot invent ownership or
 // resource identities from names.
-func moduleGuestProjections(definition ModuleDefinition) []model.Component {
+func moduleGuestProjections(definition ModuleDefinition, site model.Site) ([]model.Component, error) {
 	components := make([]model.Component, 0, len(definition.Guests))
 	for _, component := range definition.Guests {
+		if definition.Placement.ZoneType != "" {
+			zone, err := site.ZoneForType(definition.Placement.ZoneType)
+			if err != nil {
+				return nil, fmt.Errorf("module %s placement: %w", definition.Name, err)
+			}
+			component.Zone = zone.Name
+		}
 		component.Module = definition.Name
 		component.Tags = append(component.Tags, model.TagBoetticher, model.TagManaged, model.TagModule, "module-"+definition.Name, model.ModuleOwnershipTag(definition.Name), model.TagBackup)
 		component.SSHUser = model.DefaultAdminSSHUser
@@ -73,7 +87,7 @@ func moduleGuestProjections(definition ModuleDefinition) []model.Component {
 		sort.Strings(component.Tags)
 		components = append(components, component)
 	}
-	return components
+	return components, nil
 }
 
 func IsEnabled(site model.Site, name string) bool {

@@ -1,0 +1,19 @@
+[Unit]
+Description=Boetticher LiteLLM loopback backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=litellm
+Group=litellm
+ExecStart=/usr/lib/boetticher/litellm-start --config /etc/boetticher/litellm/config.yaml --host 127.0.0.1 --port 4000
+Restart=on-failure
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/litellm
+
+[Install]
+WantedBy=multi-user.target
