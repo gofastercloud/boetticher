@@ -533,7 +533,7 @@ func TestEnsureArtifactInStorageHoldsOnPostUploadChecksumMismatch(t *testing.T) 
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
 			storageReads++
 			if storageReads == 1 {
-				return response([]byte(`{"data":[{"volid":"local:import/boetticher-firewall-1.0.0-amd64.qcow2","filename":"boetticher-firewall-1.0.0-amd64.qcow2"}]}`))
+				return response([]byte(`{"data":[]}`))
 			}
 			return response([]byte(`{"data":[{"filename":"` + filename + `","checksum":"` + strings.Repeat("a", 64) + `"}]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
@@ -575,7 +575,7 @@ func TestEnsureQEMUUploadsQcow2ThroughImportContent(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
 			storageReads++
 			if storageReads == 1 {
-				return response([]byte(`{"data":[]}`))
+				return response([]byte(`{"data":[{"volid":"local:import/boetticher-firewall-1.0.0-amd64.qcow2","filename":"boetticher-firewall-1.0.0-amd64.qcow2"}]}`))
 			}
 			return response([]byte(`{"data":[{"volid":"local:import/boetticher-firewall-1.0.0-amd64.qcow2","filename":"boetticher-firewall-1.0.0-amd64.qcow2"}]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
