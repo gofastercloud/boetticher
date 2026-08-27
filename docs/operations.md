@@ -18,7 +18,11 @@ before a host is available; service journeys still need to be tried for real.
 `INCONSISTENT` against the current model revision, and separately reports
 physical binding and unmanaged Proxmox guests.
 
-Generated artifacts may be committed to the private site repository. Runtime state, OpenTofu state/plans/caches, bootstrap state, and temporary credentials remain outside Git.
+Appliance binaries, scan roots, build caches, and qualification runtime state
+are ignored in the private site repository. Keep those files in the bounded
+controller artifact cache or regenerate them through the hosted builder. The
+portable recovery set remains the site configuration, encrypted secrets,
+recovery authority, and non-secret desired-state projections.
 
 ## Portal versus Zabbix
 

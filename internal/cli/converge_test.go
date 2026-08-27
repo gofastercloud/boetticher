@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -54,6 +57,28 @@ func TestArtifactQualificationStatusDistinguishesDefinitionAndContent(t *testing
 	artifact.ContentSHA256 = strings.Repeat("b", 64)
 	if got := artifactQualificationStatus(artifact); got != "QUALIFIED content="+artifact.ContentSHA256 {
 		t.Fatalf("qualified artifact status = %q", got)
+	}
+}
+
+func TestDeployDryRunDoesNotWriteLocalProjections(t *testing.T) {
+	siteDir := t.TempDir()
+	config := model.ConfigFromSite(model.NewDefaultSite("trial", "age1trial"))
+	data, err := model.RenderSiteConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(siteDir, "site.yml"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := runDeploy([]string{"--site", siteDir, "--dry-run"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "Artifact qualification: HOLD") {
+		t.Fatalf("dry-run omitted missing qualification hold: %s", output.String())
+	}
+	if _, err := os.Stat(filepath.Join(siteDir, "generated", "model.json")); !os.IsNotExist(err) {
+		t.Fatalf("deploy dry-run wrote a local model projection: %v", err)
 	}
 }
 

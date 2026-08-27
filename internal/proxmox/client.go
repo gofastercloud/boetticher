@@ -3,8 +3,10 @@ package proxmox
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -95,6 +97,20 @@ func (c *Client) Put(ctx context.Context, endpoint string, form url.Values, out 
 
 func (c *Client) Delete(ctx context.Context, endpoint string) error {
 	return c.request(ctx, http.MethodDelete, endpoint, nil, nil, nil)
+}
+
+// DestroyQEMU removes a QEMU guest and asks Proxmox to purge related
+// configuration and unreferenced disks. Callers must prove ownership before
+// invoking this destructive operation; the API client deliberately does not
+// infer ownership from a VMID.
+func (c *Client) DestroyQEMU(ctx context.Context, node string, vmid int) error {
+	if node == "" || vmid <= 0 {
+		return errors.New("Proxmox node and positive VMID are required")
+	}
+	return c.request(ctx, http.MethodDelete, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid)), url.Values{
+		"purge":                      {"1"},
+		"destroy-unreferenced-disks": {"1"},
+	}, nil, nil)
 }
 
 func (c *Client) Version(ctx context.Context) (string, error) {
@@ -208,12 +224,45 @@ func (c *Client) SetVMConfig(ctx context.Context, node string, vmid int, params 
 	return c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "config"), params, nil)
 }
 
+// ResizeQEMUDisk grows one QEMU disk by the requested number of GiB. The
+// builder starts from a pinned cloud image and receives an additional bounded
+// growth operation; this never selects or formats a physical device.
+func (c *Client) ResizeQEMUDisk(ctx context.Context, node string, vmid int, disk string, sizeGiB int) error {
+	if node == "" || vmid <= 0 || disk == "" || sizeGiB <= 0 || strings.ContainsAny(disk, "/\\\r\n") {
+		return errors.New("node, positive VMID, disk, and positive size are required")
+	}
+	var upid string
+	if err := c.Put(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "resize"), url.Values{
+		"disk": {disk}, "size": {fmt.Sprintf("+%dG", sizeGiB)},
+	}, &upid); err != nil {
+		return fmt.Errorf("resize QEMU disk: %w", err)
+	}
+	if upid != "" {
+		return c.WaitTask(ctx, node, upid)
+	}
+	return nil
+}
+
 func (c *Client) StartVM(ctx context.Context, node string, vmid int) error {
-	return c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "start"), nil, nil)
+	var upid string
+	if err := c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "start"), nil, &upid); err != nil {
+		return err
+	}
+	if upid != "" {
+		return c.WaitTask(ctx, node, upid)
+	}
+	return nil
 }
 
 func (c *Client) StopVM(ctx context.Context, node string, vmid int) error {
-	return c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "stop"), nil, nil)
+	var upid string
+	if err := c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "stop"), nil, &upid); err != nil {
+		return err
+	}
+	if upid != "" {
+		return c.WaitTask(ctx, node, upid)
+	}
+	return nil
 }
 
 func (c *Client) CreateLXC(ctx context.Context, node string, vmid int, params url.Values) error {
@@ -247,6 +296,26 @@ func (c *Client) StartLXC(ctx context.Context, node string, vmid int) error {
 
 func (c *Client) QEMUConfig(ctx context.Context, node string, vmid int, out any) error {
 	return c.Get(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "config"), nil, out)
+}
+
+// QEMUStatus reads the live status endpoint separately from the guest
+// configuration. Proxmox does not include a reliable running/stopped state in
+// every configuration response, and destructive builder cleanup must stop a
+// running VM before requesting its removal.
+func (c *Client) QEMUStatus(ctx context.Context, node string, vmid int) (string, error) {
+	if c == nil || node == "" || vmid <= 0 {
+		return "", errors.New("Proxmox client, node, and positive VMID are required")
+	}
+	var status struct {
+		Status string `json:"status"`
+	}
+	if err := c.Get(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "current"), nil, &status); err != nil {
+		return "", fmt.Errorf("read QEMU guest status: %w", err)
+	}
+	if status.Status == "" {
+		return "", errors.New("Proxmox QEMU status response did not contain a status")
+	}
+	return status.Status, nil
 }
 
 // GuestConfig inspects both Proxmox guest kinds for a VMID. A reserved
@@ -332,9 +401,15 @@ func (c *Client) StorageContent(ctx context.Context, node, storage, content stri
 // UploadStorageFile imports one already-qualified appliance byte stream into
 // a named Proxmox storage content class. The caller must verify its content
 // digest before calling this method.
-func (c *Client) UploadStorageFile(ctx context.Context, node, storage, content, source, filename string) error {
-	if node == "" || storage == "" || content == "" || source == "" || filename == "" {
-		return errors.New("node, storage, content, source, and filename are required")
+func (c *Client) UploadStorageFile(ctx context.Context, node, storage, content, source, filename, checksum string) error {
+	if node == "" || storage == "" || content == "" || source == "" || filename == "" || checksum == "" {
+		return errors.New("node, storage, content, source, filename, and checksum are required")
+	}
+	if len(checksum) != sha256.Size*2 {
+		return errors.New("artifact checksum must be a SHA-256 hex digest")
+	}
+	if _, err := hex.DecodeString(checksum); err != nil {
+		return errors.New("artifact checksum must be a SHA-256 hex digest")
 	}
 	if strings.ContainsAny(filename, "/\\\r\n") {
 		return errors.New("uploaded filename must be a plain filename")
@@ -344,42 +419,72 @@ func (c *Client) UploadStorageFile(ctx context.Context, node, storage, content, 
 		return fmt.Errorf("open qualified artifact %s: %w", source, err)
 	}
 	defer file.Close()
-	body := &bytes.Buffer{}
-	multipartWriter := multipart.NewWriter(body)
-	if err := multipartWriter.WriteField("content", content); err != nil {
-		return err
-	}
-	part, err := multipartWriter.CreateFormFile("filename", filename)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(part, file); err != nil {
-		return fmt.Errorf("read qualified artifact %s: %w", source, err)
-	}
-	if err := multipartWriter.Close(); err != nil {
-		return err
-	}
 	base, err := url.Parse(c.BaseURL)
 	if err != nil {
 		return err
 	}
 	base.Path = path.Join(base.Path, "/nodes", node, "storage", storage, "upload")
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, base.String(), body)
+	pipeReader, pipeWriter := io.Pipe()
+	multipartWriter := multipart.NewWriter(pipeWriter)
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, base.String(), pipeReader)
 	if err != nil {
+		_ = pipeReader.Close()
 		return err
 	}
 	request.Header.Set("Content-Type", multipartWriter.FormDataContentType())
 	if c.Token != "" {
 		request.Header.Set("Authorization", c.Token)
 	}
+	streamErr := make(chan error, 1)
+	go func() {
+		if err := multipartWriter.WriteField("content", content); err != nil {
+			_ = pipeWriter.CloseWithError(err)
+			streamErr <- err
+			return
+		}
+		if err := multipartWriter.WriteField("checksum", checksum); err != nil {
+			_ = pipeWriter.CloseWithError(err)
+			streamErr <- err
+			return
+		}
+		if err := multipartWriter.WriteField("checksum-algorithm", "sha256"); err != nil {
+			_ = pipeWriter.CloseWithError(err)
+			streamErr <- err
+			return
+		}
+		part, err := multipartWriter.CreateFormFile("filename", filename)
+		if err != nil {
+			_ = pipeWriter.CloseWithError(err)
+			streamErr <- err
+			return
+		}
+		if _, err := io.Copy(part, file); err != nil {
+			_ = pipeWriter.CloseWithError(fmt.Errorf("read qualified artifact %s: %w", source, err))
+			streamErr <- err
+			return
+		}
+		if err := multipartWriter.Close(); err != nil {
+			_ = pipeWriter.CloseWithError(err)
+			streamErr <- err
+			return
+		}
+		streamErr <- pipeWriter.Close()
+	}()
 	response, err := c.HTTP.Do(request)
 	if err != nil {
+		_ = pipeReader.CloseWithError(err)
+		_ = <-streamErr
 		return err
 	}
 	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
 	if err != nil {
+		_ = pipeReader.CloseWithError(err)
+		_ = <-streamErr
 		return err
+	}
+	if err := <-streamErr; err != nil {
+		return fmt.Errorf("stream qualified artifact %s: %w", source, err)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return &APIError{StatusCode: response.StatusCode, Status: response.Status, Message: strings.TrimSpace(string(data))}
@@ -437,6 +542,16 @@ func (c *Client) UploadStorageText(ctx context.Context, node, storage, content, 
 		return &APIError{StatusCode: response.StatusCode, Status: response.Status, Message: strings.TrimSpace(string(data))}
 	}
 	return nil
+}
+
+// DeleteStorageSnippet deletes only a plain, generated snippet filename. It
+// deliberately does not expose arbitrary storage-content deletion to module
+// code or callers handling untrusted paths.
+func (c *Client) DeleteStorageSnippet(ctx context.Context, node, storage, filename string) error {
+	if node == "" || storage == "" || filename == "" || strings.ContainsAny(filename, "/\\\r\n") {
+		return errors.New("node, storage, and plain snippet filename are required")
+	}
+	return c.Delete(ctx, path.Join("/nodes", node, "storage", storage, "content", "snippets", filename))
 }
 
 // DownloadURL asks Proxmox to download a pinned image and verify it before

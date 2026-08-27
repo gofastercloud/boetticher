@@ -72,18 +72,18 @@ func TestLimitedRunRejectsShellSyntaxInInventoryIdentity(t *testing.T) {
 	}
 }
 
-func TestAgent2IsEnabledOnEveryManagedLinuxHost(t *testing.T) {
+func TestMonitoringApplianceUsesImageProvidedAgent2(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "groups.get('portal', []) + ['lab-monitor-01']") {
-		t.Fatal("portal is not included in the managed Agent 2 service condition")
+	if !strings.Contains(text, "Require an immutable monitoring appliance artifact") {
+		t.Fatal("monitoring does not require an immutable appliance artifact")
 	}
-	if !strings.Contains(text, "groups.get('firewall', []) + groups.get('portal', []) + ['lab-monitor-01']") {
-		t.Fatal("managed firewall is not included in the Agent 2 service condition")
+	if !strings.Contains(text, "- zabbix-agent2") || !strings.Contains(text, "Enable monitoring services") {
+		t.Fatal("monitoring appliance does not enable its image-provided Agent 2 service")
 	}
 }
 
@@ -172,22 +172,32 @@ func TestDNSAppliancePathCannotInstallAResolver(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, task := range []string{"Install pinned AdGuard Home archive", "Install AdGuard Home under its own service directory"} {
-		start := strings.Index(text, "- name: "+task)
-		if start < 0 {
-			t.Fatalf("DNS role task %q is missing", task)
-		}
-		end := strings.Index(text[start:], "\n- name:")
-		if end < 0 {
-			end = len(text) - start
-		}
-		block := text[start : start+end]
-		if !strings.Contains(block, "not (boetticher_appliance_artifact | default(false) | bool)") {
-			t.Fatalf("DNS appliance path can still run resolver installation task %q:\n%s", task, block)
+	for _, forbidden := range []string{"ansible.builtin.get_url:", "ansible.builtin.unarchive:", "AdGuardHome_linux_amd64.tar.gz"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("DNS role retains software installation path %q", forbidden)
 		}
 	}
 	if !strings.Contains(text, "Require the qualified AdGuard binary in an appliance") || !strings.Contains(text, "/opt/AdGuardHome/AdGuardHome --version") {
 		t.Fatal("AdGuard appliance path does not assert that the selected binary is image-provided")
+	}
+}
+
+func TestApplianceRolesDoNotMutateModuleSoftware(t *testing.T) {
+	for _, role := range []string{"dns", "monitor", "firewall", "logging", "portal"} {
+		path := filepath.Join("..", "..", "ansible", "roles", role, "tasks", "main.yml")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		for _, forbidden := range []string{"ansible.builtin.apt:", "ansible.builtin.apt_repository:", "ansible.builtin.get_url:", "ansible.builtin.unarchive:"} {
+			if strings.Contains(text, forbidden) {
+				t.Fatalf("%s appliance role retains software mutation task %q", role, forbidden)
+			}
+		}
+		if !strings.Contains(text, "boetticher_appliance_artifact") {
+			t.Fatalf("%s appliance role does not require the qualified artifact path", role)
+		}
 	}
 }
 

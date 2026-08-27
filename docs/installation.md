@@ -37,9 +37,11 @@ running a destructive bootstrap.
    Dedicated storage also requires `--storage-confirmed` after reviewing the
    stable `/dev/disk/by-id/...` device.
 
-Managed mode creates VM 100, `lab-fw-01`, as a Debian VM with one ordinary vNIC
-for WAN and one Proxmox-tagged vNIC for each internal zone. The managed gateway
-receives no 802.1Q trunk and has no VLAN subinterfaces.
+Managed mode prepares the host and artifact substrate during bootstrap. The
+first `deploy` creates VM 100, `lab-fw-01`, as the qualified boetticher Debian
+firewall appliance with one ordinary vNIC for WAN and one Proxmox-tagged vNIC
+for each internal zone. The managed gateway receives no 802.1Q trunk and has
+no VLAN subinterfaces.
 
 External mode does not create VM 100. It requires a distinct physical vmbr1
 trunk and publishes `generated/network/external-firewall-contract.md`. The

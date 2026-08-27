@@ -54,6 +54,38 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	}
 }
 
+func TestModuleDeclarationsProjectDefinitionsDirectly(t *testing.T) {
+	base := testConfig(model.GatewayModeManaged).BaseSite()
+	definition, ok := FirstPartyRegistry().Definition("dns")
+	if !ok {
+		t.Fatal("DNS definition is missing")
+	}
+	declaration, err := declarationFor(definition, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(declaration.Guests) != len(definition.Guests) {
+		t.Fatalf("DNS declaration has %d guests, want %d", len(declaration.Guests), len(definition.Guests))
+	}
+	for index, guest := range declaration.Guests {
+		if guest.Name != definition.Guests[index].Name || guest.VMID != definition.Guests[index].VMID {
+			t.Fatalf("declaration guest %d = %#v, want definition guest %#v", index, guest, definition.Guests[index])
+		}
+		if guest.Module != definition.Name || !containsTag(guest.Tags, model.ModuleOwnershipTag(definition.Name)) {
+			t.Fatalf("declaration guest %s lacks generated module ownership: %#v", guest.Name, guest)
+		}
+	}
+}
+
+func TestBaseSiteHasOnlyCoreComponentsBeforeComposition(t *testing.T) {
+	base := testConfig(model.GatewayModeManaged).BaseSite()
+	for _, component := range base.Components {
+		if component.Module != "" {
+			t.Fatalf("base site contains module-owned component %s before composition", component.Name)
+		}
+	}
+}
+
 func findDeclaration(site model.Site, name string) (model.ModuleDeclaration, bool) {
 	for _, declaration := range site.Declarations {
 		if declaration.Module == name {

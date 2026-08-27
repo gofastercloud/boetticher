@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -107,6 +108,40 @@ func TestComposedDNSGuestsReceiveOnlyTheirOwnPersistentVolumes(t *testing.T) {
 	}
 }
 
+func TestComposedPlanRejectsMissingModuleDeclaration(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	site.Declarations = nil
+	if _, err := PlanFromSite(site); err == nil || !strings.Contains(err.Error(), "composed module guest") {
+		t.Fatalf("composed plan accepted missing declarations: %v", err)
+	}
+}
+
+func TestComposedFirewallKindComesFromDeclaredArtifact(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range site.Declarations {
+		if site.Declarations[index].Module == "firewall" {
+			site.Declarations[index].Artifact.Kind = string(KindLXC)
+		}
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, guest := range plan.Guests {
+		if guest.Name == "lab-fw-01" && guest.Kind != KindLXC {
+			t.Fatalf("firewall kind was inferred from its name instead of its artifact: %#v", guest)
+		}
+	}
+}
+
 func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {
@@ -123,7 +158,7 @@ func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	evidence.ArtifactPath = artifactFile
-	for filename, content := range map[string]string{"package-manifest.txt": "package: test\n", "sbom.json": "{}\n", "trivy.json": "{\"Results\":[]}\n"} {
+	for filename, content := range map[string]string{"package-manifest.txt": "package: test\n", "sbom.json": "{}\n", "trivy.json": "{\"Results\":[]}\n", "builder-provenance.json": "{\"platform\":\"debian-13-amd64\",\"input_image\":\"debian-13-genericcloud-amd64-20260327-2429\",\"kernel\":\"6.1.0\",\"go\":\"go version go1.26.5 linux/amd64\",\"trivy\":\"Version: 0.69.3\",\"mmdebstrap\":\"mmdebstrap 1.5.0\",\"architecture\":\"amd64\",\"boetticher_version\":\"0.3.1\"}\n"} {
 		if err := os.WriteFile(filepath.Join(filepath.Dir(artifactFile), filename), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -131,6 +166,8 @@ func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
 	evidence.PackageManifestSHA, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactFile), "package-manifest.txt"), "package manifest")
 	evidence.SBOMSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactFile), "sbom.json"), "SBOM")
 	evidence.TrivyReportSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactFile), "trivy.json"), "Trivy report")
+	evidence.BuilderProvenanceSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactFile), "builder-provenance.json"), "builder provenance")
+	evidence.Builder = artifacts.BuilderProvenance{Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429", Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3", MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.1"}
 	evidence, err = artifacts.QualifyEvidence(evidence, artifacts.ScanSummary{Completed: true})
 	if err != nil {
 		t.Fatal(err)
@@ -172,6 +209,101 @@ func TestLXCBootstrapKeyCanBeOmittedForPlanRendering(t *testing.T) {
 	}
 	if len(params) != 0 {
 		t.Fatalf("empty bootstrap key produced Proxmox parameters: %#v", params)
+	}
+}
+
+func TestEnsureBuilderArmsCleanupWhenCreateTaskFails(t *testing.T) {
+	plan := Plan{
+		Node:            "node",
+		Storage:         "local",
+		GatewayImage:    "debian-13-builder-input",
+		GatewayImageURL: "https://example.invalid/debian-13-builder-input.qcow2",
+		GatewaySHA512:   strings.Repeat("a", 128),
+	}
+	snippetsDeleted := 0
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/190/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/190/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+			return response([]byte(`{"data":[{"volid":"local:iso/debian-13-builder-input.qcow2","filename":"debian-13-builder-input.qcow2","checksum":"` + strings.Repeat("a", 128) + `"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
+			_, _ = io.Copy(io.Discard, r.Body)
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu":
+			return response([]byte(`{"data":"UPID:pve:create-builder"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:create-builder/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"create failed"}}`))
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api2/json/nodes/node/storage/local/content/snippets/boetticher-190-"):
+			snippetsDeleted++
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected builder creation request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	created, err := EnsureBuilderVM(context.Background(), client, plan, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator")
+	if err == nil || !strings.Contains(err.Error(), "create temporary builder") {
+		t.Fatalf("EnsureBuilderVM() error = %v, want create-task failure", err)
+	}
+	if !created {
+		t.Fatal("EnsureBuilderVM did not arm caller cleanup after submitting a potentially-created VM")
+	}
+	if snippetsDeleted != 3 {
+		t.Fatalf("builder snippets deleted = %d, want 3", snippetsDeleted)
+	}
+}
+
+func TestEnsureBuilderCleansPartialSnippetUploads(t *testing.T) {
+	for failAt := 1; failAt <= 3; failAt++ {
+		t.Run(fmt.Sprintf("upload-%d", failAt), func(t *testing.T) {
+			plan := Plan{
+				Node:            "node",
+				Storage:         "local",
+				GatewayImage:    "debian-13-builder-input",
+				GatewayImageURL: "https://example.invalid/debian-13-builder-input.qcow2",
+				GatewaySHA512:   strings.Repeat("a", 128),
+			}
+			uploads := 0
+			deletes := 0
+			transport := roundTripFunc(func(r *http.Request) *http.Response {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/190/config":
+					return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+				case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/190/config":
+					return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+				case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+					return response([]byte(`{"data":[{"volid":"local:iso/debian-13-builder-input.qcow2","filename":"debian-13-builder-input.qcow2","checksum":"` + strings.Repeat("a", 128) + `"}]}`))
+				case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
+					uploads++
+					_, _ = io.Copy(io.Discard, r.Body)
+					if uploads == failAt {
+						return apiResponse(http.StatusInternalServerError, `{"errors":{"upload":"failed"}}`)
+					}
+					return response([]byte(`{"data":null}`))
+				case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api2/json/nodes/node/storage/local/content/snippets/boetticher-190-"):
+					deletes++
+					return response([]byte(`{"data":null}`))
+				default:
+					t.Fatalf("unexpected builder request: %s %s", r.Method, r.URL.Path)
+					return nil
+				}
+			})
+			client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+			_, err := EnsureBuilderVM(context.Background(), client, plan, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator")
+			if err == nil {
+				t.Fatal("partial snippet upload unexpectedly succeeded")
+			}
+			if uploads != failAt {
+				t.Fatalf("snippet uploads = %d, want failure at %d", uploads, failAt)
+			}
+			if deletes != 3 {
+				t.Fatalf("snippet cleanup requests = %d, want all 3 exact names", deletes)
+			}
+		})
 	}
 }
 
@@ -307,6 +439,7 @@ func TestEnsureArtifactInStorageVerifiesPostUploadChecksum(t *testing.T) {
 			}
 			return response([]byte(`{"data":[{"volid":"local:vztmpl/boetticher-logging-1.0.0-amd64.tar.zst","filename":"boetticher-logging-1.0.0-amd64.tar.zst","checksum":"` + checksum + `"}]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
+			_, _ = io.Copy(io.Discard, r.Body)
 			return response([]byte(`{"data":null}`))
 		default:
 			t.Fatalf("unexpected artifact storage request: %s %s", r.Method, r.URL.Path)
@@ -340,6 +473,7 @@ func TestEnsureArtifactInStorageHoldsOnPostUploadChecksumMismatch(t *testing.T) 
 			}
 			return response([]byte(`{"data":[{"filename":"` + filename + `","checksum":"` + strings.Repeat("a", 64) + `"}]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
+			_, _ = io.Copy(io.Discard, r.Body)
 			return response([]byte(`{"data":null}`))
 		default:
 			t.Fatalf("unexpected artifact storage request: %s %s", r.Method, r.URL.Path)

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/artifacts"
@@ -330,7 +331,7 @@ func honorRequestedPhysicalMode(discovery networkmodel.Discovery, desiredMode, c
 	return discovery
 }
 
-func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan proxmox.Plan, siteDir, publicKey, knownHosts, identityFile string) error {
+func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan proxmox.Plan, siteDir, publicKey, _ string, identityFile string) (returnErr error) {
 	base, err := artifacts.ArtifactFor("base")
 	if err != nil {
 		return err
@@ -343,22 +344,67 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if client == nil {
 		return errors.New("Proxmox client is required for appliance construction")
 	}
-	if err := proxmox.EnsureBuilderVM(ctx, client, plan, publicKey); err != nil {
+	builderKnownHosts, err := createBuilderKnownHosts()
+	if err != nil {
+		return fmt.Errorf("create temporary builder known_hosts: %w", err)
+	}
+	defer func() {
+		if cleanupErr := os.Remove(builderKnownHosts); cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
+			if returnErr == nil {
+				returnErr = fmt.Errorf("remove temporary builder known_hosts: %w", cleanupErr)
+			} else {
+				returnErr = fmt.Errorf("%w (temporary builder known_hosts cleanup: %v)", returnErr, cleanupErr)
+			}
+		}
+	}()
+	builderCreated, err := proxmox.EnsureBuilderVM(ctx, client, plan, publicKey)
+	builderAddress := ""
+	builderRunner := proxmox.SSHRunner{KnownHosts: builderKnownHosts, StrictHostKey: "accept-new", IdentityFile: identityFile}
+	buildSucceeded := false
+	builderOutput := ""
+	if builderCreated {
+		defer func() {
+			var cleanupErr error
+			if !buildSucceeded {
+				if builderAddress != "" {
+					if err := persistBuilderDiagnosticsWithOutput(ctx, builderRunner, builderAddress, model.DefaultAdminSSHUser, siteDir, builderOutput); err != nil {
+						cleanupErr = errors.Join(cleanupErr, err)
+					}
+				} else if err := persistBuilderUnavailableDiagnostics(siteDir, returnErr); err != nil {
+					cleanupErr = errors.Join(cleanupErr, err)
+				}
+			}
+			if err := proxmox.DestroyBuilderVM(ctx, client, plan.Node); err != nil {
+				cleanupErr = errors.Join(cleanupErr, err)
+			}
+			if cleanupErr != nil {
+				if returnErr == nil {
+					returnErr = cleanupErr
+				} else {
+					returnErr = fmt.Errorf("%w (temporary builder cleanup: %v)", returnErr, cleanupErr)
+				}
+			}
+		}()
+	}
+	if err != nil {
 		return err
 	}
 	if err := client.StartVM(ctx, plan.Node, model.BuilderVMID); err != nil {
 		return fmt.Errorf("start temporary appliance builder: %w", err)
 	}
-	builderAddress, err := proxmox.WaitForQEMUIPv4(ctx, client, plan.Node, model.BuilderVMID, 60, 5*time.Second)
+	builderAddress, err = proxmox.WaitForQEMUIPv4(ctx, client, plan.Node, model.BuilderVMID, 60, 5*time.Second)
 	if err != nil {
 		return err
 	}
-	builderRunner := proxmox.SSHRunner{KnownHosts: knownHosts, StrictHostKey: "accept-new", IdentityFile: identityFile}
 	if err := proxmox.WaitForSSH(ctx, builderRunner, builderAddress, model.DefaultAdminSSHUser, 60, 5*time.Second); err != nil {
 		return fmt.Errorf("HOLD: temporary appliance builder SSH is not ready: %w", err)
 	}
 	if err := proxmox.WaitForCommand(ctx, builderRunner, builderAddress, model.DefaultAdminSSHUser, "test -f /run/boetticher-builder-ready", 60, 5*time.Second); err != nil {
 		return fmt.Errorf("HOLD: temporary appliance builder cloud-init is not ready: %w", err)
+	}
+	builder := artifacts.Builder()
+	if err := proxmox.CheckBuilderCapacity(ctx, builderRunner, builderAddress, model.DefaultAdminSSHUser, builder.MinimumFreeGiB); err != nil {
+		return err
 	}
 	sourceRoot, sourceErr := applianceBuildSourceRoot()
 	var archive []byte
@@ -373,21 +419,154 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if _, err := builderRunner.RunWithStdin(ctx, builderAddress, model.DefaultAdminSSHUser, "set -eu; install -d -m 0755 /home/labadmin/build; tar -xzf - -C /home/labadmin/build", bytes.NewReader(archive)); err != nil {
 		return fmt.Errorf("transfer public appliance build definitions: %w", err)
 	}
-	if _, err := builderRunner.Run(ctx, builderAddress, model.DefaultAdminSSHUser, "sudo -n /usr/local/sbin/boetticher-build"); err != nil {
+	var buildOutputBuffer boundedBuilderOutput
+	if err := builderRunner.RunStream(ctx, builderAddress, model.DefaultAdminSSHUser, "sudo -n /usr/local/sbin/boetticher-build", &buildOutputBuffer); err != nil {
+		builderOutput = buildOutputBuffer.String()
 		return fmt.Errorf("qualify default appliance artifacts on temporary builder: %w", err)
 	}
-	result, err := builderRunner.Run(ctx, builderAddress, model.DefaultAdminSSHUser, "tar -czf - -C /home/labadmin/build generated/artifacts")
+	archiveFile, err := os.CreateTemp("", "boetticher-builder-artifacts-*.tar.gz")
 	if err != nil {
+		return fmt.Errorf("create temporary artifact archive: %w", err)
+	}
+	archivePath := archiveFile.Name()
+	defer os.Remove(archivePath)
+	if err := archiveFile.Chmod(0o600); err != nil {
+		_ = archiveFile.Close()
+		return fmt.Errorf("protect temporary artifact archive: %w", err)
+	}
+	if err := builderRunner.RunStream(ctx, builderAddress, model.DefaultAdminSSHUser, "tar -czf - -C /home/labadmin/build generated/artifacts", archiveFile); err != nil {
+		_ = archiveFile.Close()
 		return fmt.Errorf("retrieve qualified appliance evidence: %w", err)
 	}
-	if err := artifacts.ExtractBuildArchive(result, siteDir); err != nil {
+	if err := archiveFile.Close(); err != nil {
+		return fmt.Errorf("close qualified appliance evidence: %w", err)
+	}
+	if err := artifacts.ExtractBuildArchiveFile(archivePath, siteDir); err != nil {
 		return fmt.Errorf("extract qualified appliance evidence: %w", err)
 	}
 	if err := artifacts.RebindEvidencePaths(siteDir); err != nil {
 		return fmt.Errorf("bind qualified evidence to controller artifact bytes: %w", err)
 	}
-	if err := proxmox.DestroyBuilderVM(ctx, client, plan.Node); err != nil {
+	buildSucceeded = true
+	return nil
+}
+
+func createBuilderKnownHosts() (string, error) {
+	file, err := os.CreateTemp("", "boetticher-builder-known-hosts-")
+	if err != nil {
+		return "", err
+	}
+	name := file.Name()
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		_ = os.Remove(name)
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(name)
+		return "", err
+	}
+	return name, nil
+}
+
+const maxBuilderDiagnosticOutput = 32 << 10
+
+func persistBuilderDiagnostics(ctx context.Context, runner proxmox.CommandRunner, address, user, siteDir string) error {
+	return persistBuilderDiagnosticsWithOutput(ctx, runner, address, user, siteDir, "")
+}
+
+func persistBuilderDiagnosticsWithOutput(ctx context.Context, runner proxmox.CommandRunner, address, user, siteDir, buildOutput string) error {
+	if runner == nil || address == "" || user == "" || siteDir == "" {
+		return errors.New("builder diagnostics require an authenticated runner and destination")
+	}
+	commands := []struct {
+		label   string
+		command string
+	}{
+		{label: "cloud-init", command: "cloud-init status --long"},
+		{label: "cloud-final", command: "journalctl -u cloud-final --no-pager --lines=100"},
+		{label: "boetticher-build", command: "tail -n 200 /var/log/boetticher-build.log"},
+		{label: "disk", command: "df -h"},
+		{label: "memory", command: "free -h"},
+		{label: "go", command: "/usr/local/go/bin/go version"},
+		{label: "trivy", command: "trivy --version"},
+		{label: "mmdebstrap", command: "mmdebstrap --version"},
+		{label: "kernel", command: "uname -a"},
+	}
+	var report strings.Builder
+	for _, item := range commands {
+		fmt.Fprintf(&report, "[%s]\n", item.label)
+		output, err := runner.Run(ctx, address, user, item.command)
+		if len(output) > maxBuilderDiagnosticOutput {
+			output = append(output[:maxBuilderDiagnosticOutput], []byte("\n[output truncated]\n")...)
+		}
+		report.Write(output)
+		if err != nil {
+			fmt.Fprintf(&report, "command error: %v\n", err)
+		}
+		report.WriteByte('\n')
+	}
+	if buildOutput != "" {
+		fmt.Fprintf(&report, "[builder-command-output]\n%s\n", buildOutput)
+	}
+	return writeBuilderDiagnostics(siteDir, report.String())
+}
+
+type boundedBuilderOutput struct {
+	buffer bytes.Buffer
+}
+
+func (b *boundedBuilderOutput) Write(data []byte) (int, error) {
+	remaining := maxBuilderDiagnosticOutput - b.buffer.Len()
+	if remaining > 0 {
+		if len(data) > remaining {
+			_, _ = b.buffer.Write(data[:remaining])
+		} else {
+			_, _ = b.buffer.Write(data)
+		}
+	}
+	return len(data), nil
+}
+
+func (b *boundedBuilderOutput) String() string { return b.buffer.String() }
+
+func persistBuilderUnavailableDiagnostics(siteDir string, cause error) error {
+	if siteDir == "" {
+		return errors.New("builder diagnostics require a destination")
+	}
+	var report strings.Builder
+	report.WriteString("remote builder diagnostics unavailable before a guest address was observed\n")
+	if cause != nil {
+		fmt.Fprintf(&report, "builder lifecycle error: %v\n", cause)
+	}
+	return writeBuilderDiagnostics(siteDir, report.String())
+}
+
+func writeBuilderDiagnostics(siteDir, content string) error {
+	directory := filepath.Join(siteDir, "generated", "runtime")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return fmt.Errorf("create builder diagnostics directory: %w", err)
+	}
+	temporary, err := os.CreateTemp(directory, ".builder-failure-")
+	if err != nil {
+		return fmt.Errorf("create builder diagnostics file: %w", err)
+	}
+	temporaryName := temporary.Name()
+	defer os.Remove(temporaryName)
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
 		return err
+	}
+	if _, err := temporary.WriteString(content); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("write builder diagnostics: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close builder diagnostics: %w", err)
+	}
+	destination := filepath.Join(directory, "builder-failure.txt")
+	if err := os.Rename(temporaryName, destination); err != nil {
+		return fmt.Errorf("publish builder diagnostics: %w", err)
 	}
 	return nil
 }

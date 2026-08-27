@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofastercloud/boetticher/internal/logging"
 	"github.com/gofastercloud/boetticher/internal/model"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 )
@@ -113,16 +114,61 @@ func home(s model.Site, revision string, evidence Evidence, now time.Time) strin
 		gateway = "managed Debian firewall"
 	}
 	var moduleTable strings.Builder
-	moduleTable.WriteString("<h2>Platform modules</h2><table><tr><th>Name</th><th>Policy</th><th>Implementation</th><th>State</th><th>Reason</th></tr>")
+	moduleTable.WriteString("<h2>Platform modules</h2><table><tr><th>Name</th><th>Policy</th><th>Implementation</th><th>Version</th><th>Artifact</th><th>Definition</th><th>Qualification</th><th>State</th><th>Reason</th></tr>")
 	for _, module := range s.Modules {
 		implementation := map[string]string{"dns": "Blocky", "logging": "systemd journal", "monitoring": "Zabbix", "firewall": "Debian/nftables"}[module.Name]
 		if module.Name == "dns" && s.ModuleConfig["dns"].Provider == string(model.DNSProviderAdGuard) {
 			implementation = "AdGuard"
 		}
-		fmt.Fprintf(&moduleTable, "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>", html.EscapeString(module.Name), html.EscapeString(module.Policy), html.EscapeString(implementation), html.EscapeString(module.State), html.EscapeString(module.Reason))
+		version, artifact, definition, qualification := moduleArtifactDetails(s, module.Name, module.Version)
+		fmt.Fprintf(&moduleTable, "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><code>%s</code></td><td><code>%s</code></td><td>%s</td><td>%s</td><td>%s</td></tr>", html.EscapeString(module.Name), html.EscapeString(module.Policy), html.EscapeString(implementation), html.EscapeString(version), html.EscapeString(artifact), html.EscapeString(definition), html.EscapeString(qualification), html.EscapeString(module.State), html.EscapeString(module.Reason))
 	}
 	moduleTable.WriteString("</table>")
-	return fmt.Sprintf("<p>Generated platform view; not a wiki or monitoring dashboard.</p><table><tr><th>Platform version</th><td>%s</td></tr><tr><th>Schema</th><td>%d</td></tr><tr><th>Gateway</th><td>%s</td></tr><tr><th>Model revision</th><td><code>%s</code></td></tr><tr><th>Portal generated</th><td>%s</td></tr><tr><th>Latest verification</th><td>%s</td></tr></table>%s<h2>Quick links</h2><p><a href=\"%s\">Proxmox</a> · <a href=\"https://monitor.%s\">Zabbix</a> · <a href=\"https://portal.%s\">Portal</a> · <a href=\"https://dns.%s\">DNS</a></p>", html.EscapeString(s.PlatformVersion), s.SchemaVersion, html.EscapeString(gateway), html.EscapeString(revision), now.UTC().Format(time.RFC3339), html.EscapeString(status), moduleTable.String(), html.EscapeString("https://proxmox."+s.Network.Domain+":8006"), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain))
+	return fmt.Sprintf("<p>Generated platform view; not a wiki or monitoring dashboard.</p><table><tr><th>Platform version</th><td>%s</td></tr><tr><th>Schema</th><td>%d</td></tr><tr><th>Gateway</th><td>%s</td></tr><tr><th>Model revision</th><td><code>%s</code></td></tr><tr><th>Portal generated</th><td>%s</td></tr><tr><th>Latest verification</th><td>%s</td></tr></table>%s%s<h2>Quick links</h2><p><a href=\"%s\">Proxmox</a> · <a href=\"https://monitor.%s\">Zabbix</a> · <a href=\"https://portal.%s\">Portal</a> · <a href=\"https://dns.%s\">DNS</a></p>", html.EscapeString(s.PlatformVersion), s.SchemaVersion, html.EscapeString(gateway), html.EscapeString(revision), now.UTC().Format(time.RFC3339), html.EscapeString(status), moduleTable.String(), loggingSummary(s, evidence), html.EscapeString("https://proxmox."+s.Network.Domain+":8006"), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain))
+}
+
+func moduleArtifactDetails(s model.Site, name, fallbackVersion string) (version, artifact, definition, qualification string) {
+	version = fallbackVersion
+	qualification = "NOT TESTED (content evidence is controller runtime state)"
+	for _, declaration := range s.Declarations {
+		if declaration.Module != name {
+			continue
+		}
+		version = declaration.Artifact.Version
+		artifact = declaration.Artifact.Name
+		definition = declaration.Artifact.DefinitionSHA256
+		if declaration.Artifact.ContentSHA256 != "" {
+			qualification = "QUALIFIED content=" + declaration.Artifact.ContentSHA256
+		}
+		return
+	}
+	return
+}
+
+func loggingSummary(s model.Site, evidence Evidence) string {
+	collector := logging.CollectorName
+	address := logging.CollectorAddress
+	for _, component := range s.PlatformComponents() {
+		if component.Name == logging.CollectorName {
+			collector = component.Hostname
+			address = component.Address
+			break
+		}
+	}
+	expectedSources := 0
+	for _, component := range s.PlatformComponents() {
+		if component.Logging && component.Name != logging.CollectorName {
+			expectedSources++
+		}
+	}
+	observed := "NOT TESTED"
+	for _, result := range evidence.Results {
+		if strings.Contains(strings.ToLower(result.Name), "logging") {
+			observed = result.Status
+			break
+		}
+	}
+	return fmt.Sprintf("<h2>Logging</h2><table><tr><th>Collector</th><td>%s (%s)</td></tr><tr><th>Receiver</th><td><code>https://logs.%s:%d</code> with mTLS</td></tr><tr><th>Persistent storage</th><td><code>%s</code> · %d GiB · prefer-data-disk · backup=false</td></tr><tr><th>Retention</th><td>SplitMode=host · MaxUse=%s · KeepFree=%s</td></tr><tr><th>Expected upload sources</th><td>%d</td></tr><tr><th>Observed evidence</th><td>%s</td></tr></table>", html.EscapeString(collector), html.EscapeString(address), html.EscapeString(s.Network.Domain), logging.CollectorPort, html.EscapeString(logging.RemoteJournalPath), logging.CollectorVolumeGiB, html.EscapeString(logging.CollectorMaxUse), html.EscapeString(logging.CollectorKeepFree), expectedSources, html.EscapeString(observed))
 }
 
 func inventory(s model.Site, revision string) string {

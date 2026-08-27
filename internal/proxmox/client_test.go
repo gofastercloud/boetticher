@@ -2,11 +2,14 @@ package proxmox
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -107,11 +110,121 @@ func TestCreateLXCWaitsForProxmoxTaskBeforeReturning(t *testing.T) {
 	}
 }
 
-func TestUploadStorageFileUsesMultipartArtifactContract(t *testing.T) {
-	path := t.TempDir() + "/artifact.tar.zst"
-	if err := os.WriteFile(path, []byte("artifact bytes"), 0o600); err != nil {
+func TestResizeQEMUDiskUsesExplicitBoundedGrowth(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodPut || r.URL.Path != "/api2/json/nodes/node/qemu/190/resize" {
+			t.Fatalf("unexpected resize request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil || r.Form.Get("disk") != "scsi0" || r.Form.Get("size") != "+32G" {
+			t.Fatalf("unexpected resize form: %v", r.Form)
+		}
+		return response([]byte(`{"data":""}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.ResizeQEMUDisk(context.Background(), "node", 190, "scsi0", 32); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestDeleteStorageSnippetRejectsPathsAndUsesExactEndpoint(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api2/json/nodes/node/storage/local/content/snippets/boetticher-190-meta.yaml" {
+			t.Fatalf("unexpected snippet deletion request: %s %s", r.Method, r.URL.Path)
+		}
+		return response([]byte(`{"data":null}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.DeleteStorageSnippet(context.Background(), "node", "local", "boetticher-190-meta.yaml"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DeleteStorageSnippet(context.Background(), "node", "local", "../other"); err == nil {
+		t.Fatal("snippet deletion accepted a path")
+	}
+}
+
+func TestDestroyQEMUPurgesBuilderConfigurationAndUnreferencedDisks(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api2/json/nodes/node/qemu/190" {
+			t.Fatalf("unexpected QEMU destruction request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("purge") != "1" || r.URL.Query().Get("destroy-unreferenced-disks") != "1" {
+			t.Fatalf("QEMU destruction did not request bounded cleanup: %v", r.URL.Query())
+		}
+		return response([]byte(`{"data":null}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.DestroyQEMU(context.Background(), "node", 190); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DestroyQEMU(context.Background(), "node", 0); err == nil {
+		t.Fatal("invalid QEMU destruction identity was accepted")
+	}
+}
+
+func TestQEMUStatusUsesLiveStatusEndpoint(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/node/qemu/190/status/current" {
+			t.Fatalf("unexpected QEMU status request: %s %s", r.Method, r.URL.Path)
+		}
+		return response([]byte(`{"data":{"status":"running"}}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	status, err := client.QEMUStatus(context.Background(), "node", 190)
+	if err != nil || status != "running" {
+		t.Fatalf("QEMUStatus() = %q, %v", status, err)
+	}
+}
+
+func TestDestroyBuilderStopsRunningOwnedVMBeforeRemoval(t *testing.T) {
+	stopped := false
+	removed := false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/190/config":
+			if removed {
+				return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+			}
+			return response([]byte(`{"data":{"name":"lab-builder-01","tags":"boetticher;boetticher-builder"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/190/status/current":
+			if stopped {
+				return response([]byte(`{"data":{"status":"stopped"}}`))
+			}
+			return response([]byte(`{"data":{"status":"running"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/190/status/stop":
+			stopped = true
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api2/json/nodes/node/qemu/190":
+			if !stopped {
+				t.Fatalf("builder removal was requested before stop")
+			}
+			removed = true
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/190/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api2/json/nodes/node/storage/local/content/snippets/boetticher-190-"):
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected builder cleanup request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := DestroyBuilderVM(context.Background(), client, "node"); err != nil {
+		t.Fatalf("DestroyBuilderVM() = %v", err)
+	}
+	if !stopped || !removed {
+		t.Fatalf("builder cleanup state stopped=%t removed=%t", stopped, removed)
+	}
+}
+
+func TestUploadStorageFileUsesMultipartArtifactContract(t *testing.T) {
+	path := t.TempDir() + "/artifact.tar.zst"
+	content := []byte("artifact bytes")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	checksum := sha256.Sum256(content)
+	wantChecksum := hex.EncodeToString(checksum[:])
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method != http.MethodPost || r.URL.Path != "/api2/json/nodes/lab-proxmox-01/storage/local/upload" {
 			t.Fatalf("unexpected upload request: %s %s", r.Method, r.URL.Path)
@@ -124,6 +237,9 @@ func TestUploadStorageFileUsesMultipartArtifactContract(t *testing.T) {
 		}
 		if got := r.FormValue("content"); got != "vztmpl" {
 			t.Fatalf("content = %q, want vztmpl", got)
+		}
+		if got := r.FormValue("checksum"); got != wantChecksum || r.FormValue("checksum-algorithm") != "sha256" {
+			t.Fatalf("checksum fields = %q/%q", got, r.FormValue("checksum-algorithm"))
 		}
 		file, header, err := r.FormFile("filename")
 		if err != nil {
@@ -140,7 +256,36 @@ func TestUploadStorageFileUsesMultipartArtifactContract(t *testing.T) {
 		return response([]byte(`{"data":null}`))
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	if err := client.UploadStorageFile(context.Background(), "lab-proxmox-01", "local", "vztmpl", path, "boetticher-logging-1.0.0-amd64.tar.zst"); err != nil {
+	if err := client.UploadStorageFile(context.Background(), "lab-proxmox-01", "local", "vztmpl", path, "boetticher-logging-1.0.0-amd64.tar.zst", wantChecksum); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUploadStorageFileStreamsLargeArtifactBody(t *testing.T) {
+	artifactPath := filepath.Join(t.TempDir(), "large-artifact.tar.zst")
+	artifact, err := os.Create(artifactPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := artifact.Truncate(32 << 20); err != nil {
+		_ = artifact.Close()
+		t.Fatal(err)
+	}
+	if err := artifact.Close(); err != nil {
+		t.Fatal(err)
+	}
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.GetBody != nil {
+			t.Fatal("streamed multipart request unexpectedly exposes a replayable buffered body")
+		}
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Fatal(err)
+		}
+		return response([]byte(`{"data":null}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	checksum := sha256.Sum256(make([]byte, 32<<20))
+	if err := client.UploadStorageFile(context.Background(), "node", "local", "vztmpl", artifactPath, "large-artifact.tar.zst", hex.EncodeToString(checksum[:])); err != nil {
 		t.Fatal(err)
 	}
 }

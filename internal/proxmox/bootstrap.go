@@ -1,6 +1,7 @@
 package proxmox
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,8 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +20,48 @@ import (
 
 type CommandRunner interface {
 	Run(ctx context.Context, address, user, command string) ([]byte, error)
+}
+
+// StreamCommandRunner exposes remote stdout without materialising it in a
+// byte slice. It is used for artifact-sized builder output.
+type StreamCommandRunner interface {
+	RunStream(ctx context.Context, address, user, command string, stdout io.Writer) error
+	RunArgsStream(ctx context.Context, address, user string, commandArgs []string, stdout io.Writer) error
+}
+
+// CheckBuilderCapacity verifies the disposable builder has enough free space
+// for the full appliance construction before any build work starts.
+func CheckBuilderCapacity(ctx context.Context, runner CommandRunner, address, user string, minimumFreeGiB int) error {
+	if runner == nil || minimumFreeGiB <= 0 {
+		return errors.New("builder capacity check requires a runner and positive minimum")
+	}
+	output, err := runner.Run(ctx, address, user, "df -Pk /")
+	if err != nil {
+		return fmt.Errorf("inspect temporary builder capacity: %w", err)
+	}
+	availableKiB, err := parseAvailableKiB(output)
+	if err != nil {
+		return fmt.Errorf("inspect temporary builder capacity: %w", err)
+	}
+	wantedKiB := int64(minimumFreeGiB) * 1024 * 1024
+	if availableKiB < wantedKiB {
+		return fmt.Errorf("HOLD: temporary builder has %d GiB free, need at least %d GiB", availableKiB/(1024*1024), minimumFreeGiB)
+	}
+	return nil
+}
+
+func parseAvailableKiB(output []byte) (int64, error) {
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 || fields[0] == "Filesystem" {
+			continue
+		}
+		available, err := strconv.ParseInt(fields[3], 10, 64)
+		if err == nil && available >= 0 {
+			return available, nil
+		}
+	}
+	return 0, errors.New("df output did not contain a valid available-space value")
 }
 
 // ArgsCommandRunner executes a fixed remote executable with separate
@@ -170,6 +215,24 @@ func (r SSHRunner) RunWithStdin(ctx context.Context, address, user, command stri
 	return r.runArgs(ctx, address, user, []string{command}, stdin)
 }
 
+// RunStream executes a fixed remote command and writes stdout directly to the
+// supplied destination. SSH stderr is bounded so a failed remote process
+// cannot create an unbounded controller-side diagnostic buffer.
+func (r SSHRunner) RunStream(ctx context.Context, address, user, command string, stdout io.Writer) error {
+	if stdout == nil {
+		return errors.New("SSH stdout destination is required")
+	}
+	return r.runArgsStream(ctx, address, user, []string{command}, os.Stdin, stdout)
+}
+
+// RunArgsStream is the argument-preserving streaming form of RunArgs.
+func (r SSHRunner) RunArgsStream(ctx context.Context, address, user string, commandArgs []string, stdout io.Writer) error {
+	if stdout == nil {
+		return errors.New("SSH stdout destination is required")
+	}
+	return r.runArgsStream(ctx, address, user, commandArgs, os.Stdin, stdout)
+}
+
 const managementInterfaceConfig = `auto vmbr1.99
 iface vmbr1.99 inet static
     address 10.10.99.5/24
@@ -188,34 +251,103 @@ func ConfigureManagementNetwork(ctx context.Context, runner StdinCommandRunner, 
 	if _, err := runner.RunWithStdin(ctx, address, user, install, strings.NewReader(managementInterfaceConfig)); err != nil {
 		return fmt.Errorf("install Proxmox management interface configuration: %w", err)
 	}
-	verify := `sudo -n sh -c 'set -eu
-before_vmbr0_addr=$(ip -4 -j addr show dev vmbr0)
-before_default_route=$(ip -4 -j route show default)
-ifreload -a
-test "$(ip -4 -j addr show dev vmbr0)" = "$before_vmbr0_addr"
-test "$(ip -4 -j route show default)" = "$before_default_route"
-ip -4 addr show dev vmbr1.99 | grep -Fq "inet 10.10.99.5/24"
-ip -4 route show 10.10.0.0/16 | grep -Fq "10.10.0.0/16 via 10.10.99.1 dev vmbr1.99"
-ip -d link show dev vmbr1 | grep -Eq "vlan_filtering (1|on)"
-'`
-	if _, err := runner.Run(ctx, address, user, verify); err != nil {
-		return fmt.Errorf("apply and verify Proxmox management interface configuration: %w", err)
+	beforeAddress, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -4 -j addr show dev vmbr0")
+	if err != nil {
+		return fmt.Errorf("read Proxmox HOME address before management reload: %w", err)
+	}
+	beforeRoute, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -4 -j route show default")
+	if err != nil {
+		return fmt.Errorf("read Proxmox default route before management reload: %w", err)
+	}
+	if _, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ifreload -a"); err != nil {
+		return fmt.Errorf("apply Proxmox management interface configuration: %w", err)
+	}
+	afterAddress, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -4 -j addr show dev vmbr0")
+	if err != nil {
+		return fmt.Errorf("read Proxmox HOME address after management reload: %w", err)
+	}
+	if !bytes.Equal(beforeAddress, afterAddress) {
+		return errors.New("HOLD: Proxmox HOME address changed while applying the management interface")
+	}
+	afterRoute, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -4 -j route show default")
+	if err != nil {
+		return fmt.Errorf("read Proxmox default route after management reload: %w", err)
+	}
+	if !bytes.Equal(beforeRoute, afterRoute) {
+		return errors.New("HOLD: Proxmox HOME default route changed while applying the management interface")
+	}
+	mgmtAddress, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -4 addr show dev vmbr1.99")
+	if err != nil {
+		return fmt.Errorf("read Proxmox management address: %w", err)
+	}
+	if !strings.Contains(string(mgmtAddress), "inet 10.10.99.5/24") {
+		return errors.New("HOLD: Proxmox vmbr1.99 does not have 10.10.99.5/24")
+	}
+	internalRoute, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -4 route show 10.10.0.0/16")
+	if err != nil {
+		return fmt.Errorf("read Proxmox internal management route: %w", err)
+	}
+	if !strings.Contains(string(internalRoute), "10.10.0.0/16 via 10.10.99.1 dev vmbr1.99") {
+		return errors.New("HOLD: Proxmox internal route does not use 10.10.99.1 via vmbr1.99")
+	}
+	vlanState, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -d link show dev vmbr1")
+	if err != nil {
+		return fmt.Errorf("read Proxmox vmbr1 VLAN state: %w", err)
+	}
+	if !strings.Contains(string(vlanState), "vlan_filtering 1") && !strings.Contains(string(vlanState), "vlan_filtering on") {
+		return errors.New("HOLD: Proxmox vmbr1 is not VLAN-aware after management reload")
 	}
 	return nil
 }
 
 func (r SSHRunner) runArgs(ctx context.Context, address, user string, commandArgs []string, stdin io.Reader) ([]byte, error) {
+	var output bytes.Buffer
+	if err := r.runArgsStream(ctx, address, user, commandArgs, stdin, &output); err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
+}
+
+func (r SSHRunner) runArgsStream(ctx context.Context, address, user string, commandArgs []string, stdin io.Reader, stdout io.Writer) error {
 	args, err := r.commandArgs(address, user, commandArgs)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	process := exec.CommandContext(ctx, "ssh", args...)
 	process.Stdin = stdin
-	output, err := process.Output()
+	process.Stdout = stdout
+	stderr := &boundedOutput{limit: 64 << 10}
+	process.Stderr = stderr
+	err = process.Run()
 	if err != nil {
-		return nil, fmt.Errorf("SSH bootstrap command failed: %w", err)
+		message := strings.TrimSpace(stderr.String())
+		if message != "" {
+			return fmt.Errorf("SSH bootstrap command failed: %w: %s", err, message)
+		}
+		return fmt.Errorf("SSH bootstrap command failed: %w", err)
 	}
-	return output, nil
+	return nil
+}
+
+type boundedOutput struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (b *boundedOutput) Write(data []byte) (int, error) {
+	remaining := b.limit - b.buf.Len()
+	if remaining > 0 {
+		if len(data) > remaining {
+			_, _ = b.buf.Write(data[:remaining])
+		} else {
+			_, _ = b.buf.Write(data)
+		}
+	}
+	return len(data), nil
+}
+
+func (b *boundedOutput) String() string {
+	return b.buf.String()
 }
 
 func (r SSHRunner) commandArgs(address, user string, commandArgs []string) ([]string, error) {
@@ -282,10 +414,15 @@ func ConfigureIdentities(ctx context.Context, runner CommandRunner, address, ini
 	// Public keys and destination addresses are the only values interpolated;
 	// credentials are never placed in this command.
 	jumpKey := "restrict,port-forwarding,permitopen=\"" + strings.Join(allowedDestinations, "\",permitopen=\"") + "\" " + publicKeyLine(adminPublicKey)
-	command := "set -eu; id -u labadmin >/dev/null 2>&1 || useradd --create-home --shell /bin/bash labadmin; id -u lab-jump >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin lab-jump; install -d -m 700 /home/labadmin/.ssh /etc/ssh/sshd_config.d; install -m 600 /dev/null /home/labadmin/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /home/labadmin/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /home/labadmin/.ssh/authorized_keys; install -m 600 /dev/null /home/lab-jump.authorized_keys; printf '%s\\n' " + shellQuote(jumpKey) + " > /home/lab-jump.authorized_keys; chown -R labadmin:labadmin /home/labadmin/.ssh; cat > /etc/ssh/sshd_config.d/90-boetticher-jump.conf <<'EOF'\nMatch User lab-jump\n    AuthorizedKeysFile /home/lab-jump.authorized_keys\n    PermitTTY no\n    X11Forwarding no\n    AllowAgentForwarding no\n    AllowTcpForwarding local\n    PermitOpen " + strings.Join(allowedDestinations, " ") + "\nEOF\nsshd -t\nsystemctl reload ssh || systemctl reload sshd"
+	command := "set -eu; id -u labadmin >/dev/null 2>&1 || useradd --create-home --shell /bin/bash labadmin; passwd --lock labadmin; id -u lab-jump >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin lab-jump; install -d -m 700 /home/labadmin/.ssh /etc/ssh/sshd_config.d; install -m 600 /dev/null /home/labadmin/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /home/labadmin/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /home/labadmin/.ssh/authorized_keys; install -m 600 /dev/null /home/lab-jump.authorized_keys; printf '%s\\n' " + shellQuote(jumpKey) + " > /home/lab-jump.authorized_keys; chown -R labadmin:labadmin /home/labadmin/.ssh; cat > /etc/sudoers.d/boetticher-labadmin <<'EOF'\n" + proxmoxLabadminSudoers + "\nEOF\nchmod 0440 /etc/sudoers.d/boetticher-labadmin; cat > /etc/ssh/sshd_config.d/90-boetticher-jump.conf <<'EOF'\nMatch User lab-jump\n    AuthorizedKeysFile /home/lab-jump.authorized_keys\n    PermitTTY no\n    X11Forwarding no\n    AllowAgentForwarding no\n    AllowTcpForwarding local\n    PermitOpen " + strings.Join(allowedDestinations, " ") + "\nEOF\nvisudo -cf /etc/sudoers\nsshd -t\nsystemctl reload ssh || systemctl reload sshd"
 	_, err := runner.Run(ctx, address, initialUser, command)
 	return err
 }
+
+// proxmoxLabadminSudoers is the key-only host-administration boundary used
+// after bootstrap. The list is intentionally command-scoped; it is not an
+// unrestricted root shell and it does not grant lab-jump any privilege.
+const proxmoxLabadminSudoers = `labadmin ALL=(root) NOPASSWD: /usr/bin/pvesh *, /usr/bin/pvesm *, /usr/sbin/ip *, /usr/sbin/ifreload -a, /usr/bin/install *, /usr/bin/mkdir *, /usr/bin/chown *, /usr/bin/chmod *, /usr/bin/systemctl reload ssh, /usr/bin/systemctl reload sshd, /usr/sbin/sshd -t, /usr/bin/visudo -cf /etc/sudoers, /bin/sh -c * /usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*`
 
 func CreateScopedCredentials(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID string) (string, error) {
 	return CreateScopedCredentialsWithRole(ctx, runner, address, initialUser, userID, tokenID, "BoetticherProvisioner")
@@ -295,8 +432,47 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 	if !safeID(userID) || !safeID(tokenID) || !safeID(role) {
 		return "", errors.New("Proxmox identity and token IDs must be simple identifiers")
 	}
-	privileges := "VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options VM.Console VM.PowerMgmt Datastore.AllocateSpace Datastore.Audit Sys.Audit"
-	command := "set -eu; pvesh get /access/roles/" + shellQuote(role) + " >/dev/null 2>&1 || pvesh create /access/roles/" + shellQuote(role) + " --privs " + shellQuote(privileges) + " >/dev/null; pvesh get /access/users/" + shellQuote(userID) + " >/dev/null 2>&1 || pvesh create /access/users --userid " + shellQuote(userID) + " --comment 'boetticher automation identity' >/dev/null; if pvesh get /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID) + " >/dev/null 2>&1; then echo 'the requested Proxmox token already exists; use a new token ID or existing encrypted credentials' >&2; exit 23; fi; pvesh create /access/acl --path / --users " + shellQuote(userID) + " --roles " + shellQuote(role) + " --propagate 1 >/dev/null; pvesh create /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID) + " --privsep 1 --output-format json"
+	privileges := ScopedProvisionerPrivileges()
+	roleOutput, err := runner.Run(ctx, address, initialUser, "pvesh get /access/roles --output-format json")
+	if err != nil {
+		return "", fmt.Errorf("HOLD: inspect Proxmox role %q: %w", role, err)
+	}
+	exists, err := validateScopedRoleJSON(roleOutput, role, privileges)
+	if err != nil {
+		return "", fmt.Errorf("HOLD: Proxmox role %q is not the expected bounded role: %w", role, err)
+	}
+	if !exists {
+		createRole := "pvesh create /access/roles/" + shellQuote(role) + " --privs " + shellQuote(privileges)
+		if _, err := runner.Run(ctx, address, initialUser, createRole); err != nil {
+			return "", fmt.Errorf("create bounded Proxmox role %q: %w", role, err)
+		}
+	}
+	usersOutput, err := runner.Run(ctx, address, initialUser, "pvesh get /access/users --output-format json")
+	if err != nil {
+		return "", fmt.Errorf("HOLD: inspect Proxmox users: %w", err)
+	}
+	users, err := accessIDs(usersOutput, "userid", "id")
+	if err != nil {
+		return "", fmt.Errorf("HOLD: decode Proxmox users: %w", err)
+	}
+	if !users[userID] {
+		createUser := "pvesh create /access/users --userid " + shellQuote(userID) + " --comment 'boetticher automation identity'"
+		if _, err := runner.Run(ctx, address, initialUser, createUser); err != nil {
+			return "", fmt.Errorf("create Proxmox automation user: %w", err)
+		}
+	}
+	tokensOutput, err := runner.Run(ctx, address, initialUser, "pvesh get /access/users/"+shellQuote(userID)+"/token --output-format json")
+	if err != nil {
+		return "", fmt.Errorf("HOLD: inspect Proxmox tokens for %s: %w", userID, err)
+	}
+	tokens, err := accessIDs(tokensOutput, "tokenid", "id")
+	if err != nil {
+		return "", fmt.Errorf("HOLD: decode Proxmox tokens: %w", err)
+	}
+	if tokens[tokenID] {
+		return "", errors.New("the requested Proxmox token already exists; use a new token ID or existing encrypted credentials")
+	}
+	command := "set -eu; pvesh create /access/acl --path / --users " + shellQuote(userID) + " --roles " + shellQuote(role) + " --propagate 1 >/dev/null; pvesh create /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID) + " --privsep 1 --output-format json"
 	output, err := runner.Run(ctx, address, initialUser, command)
 	if err != nil {
 		return "", err
@@ -311,6 +487,166 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 		return "", errors.New("Proxmox token response did not contain a secret")
 	}
 	return response.Value, nil
+}
+
+// accessIDs decodes the small JSON listings returned by pvesh for users and
+// tokens. Listing first is intentional: a failed lookup must remain a HOLD,
+// rather than being interpreted as permission or transport failure and
+// followed by an unauthorized create operation.
+func accessIDs(output []byte, fields ...string) (map[string]bool, error) {
+	var document any
+	if err := json.Unmarshal(output, &document); err != nil {
+		return nil, err
+	}
+	for {
+		object, ok := document.(map[string]any)
+		if !ok {
+			break
+		}
+		data, exists := object["data"]
+		if !exists {
+			break
+		}
+		document = data
+	}
+	result := make(map[string]bool)
+	add := func(object map[string]any) {
+		for _, field := range fields {
+			if value, ok := object[field].(string); ok && value != "" {
+				result[value] = true
+				return
+			}
+		}
+	}
+	switch value := document.(type) {
+	case []any:
+		for _, item := range value {
+			object, ok := item.(map[string]any)
+			if !ok {
+				return nil, errors.New("access listing contains a non-object entry")
+			}
+			add(object)
+		}
+	case map[string]any:
+		add(value)
+		if len(result) == 0 {
+			for key, item := range value {
+				if _, ok := item.(map[string]any); ok {
+					result[key] = true
+				}
+			}
+		}
+	default:
+		return nil, errors.New("access listing must be a JSON object or array")
+	}
+	return result, nil
+}
+
+// validateScopedRoleJSON validates the exact privilege boundary returned by
+// the Proxmox role listing endpoint. Role lookup is deliberately performed
+// separately from role creation so an API/permission failure cannot be
+// mistaken for an absent role and silently trigger a mutation.
+func validateScopedRoleJSON(output []byte, wantedRole, wantedPrivileges string) (bool, error) {
+	var document any
+	if err := json.Unmarshal(output, &document); err != nil {
+		return false, fmt.Errorf("decode role listing: %w", err)
+	}
+	entries, err := roleEntries(document)
+	if err != nil {
+		return false, err
+	}
+	wanted := canonicalPrivileges(wantedPrivileges)
+	for _, entry := range entries {
+		if entry.RoleID != wantedRole {
+			continue
+		}
+		if roleHasSpecialPrivileges(entry.Special) {
+			return true, errors.New("role has special privileges")
+		}
+		if canonicalPrivileges(entry.Privileges) != wanted {
+			return true, fmt.Errorf("privileges %q do not match required set %q", entry.Privileges, wantedPrivileges)
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+type proxmoxRoleEntry struct {
+	RoleID     string
+	Privileges string
+	Special    any
+}
+
+func roleEntries(document any) ([]proxmoxRoleEntry, error) {
+	if object, ok := document.(map[string]any); ok {
+		if data, exists := object["data"]; exists {
+			return roleEntries(data)
+		}
+		if _, hasRoleID := object["roleid"]; hasRoleID {
+			return []proxmoxRoleEntry{roleEntryFromObject(object, "")}, nil
+		}
+		if _, hasPrivileges := object["privs"]; hasPrivileges {
+			return []proxmoxRoleEntry{roleEntryFromObject(object, "")}, nil
+		}
+		entries := make([]proxmoxRoleEntry, 0, len(object))
+		for roleID, value := range object {
+			roleObject, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			entries = append(entries, roleEntryFromObject(roleObject, roleID))
+		}
+		sort.Slice(entries, func(i, j int) bool { return entries[i].RoleID < entries[j].RoleID })
+		return entries, nil
+	}
+	if array, ok := document.([]any); ok {
+		entries := make([]proxmoxRoleEntry, 0, len(array))
+		for _, value := range array {
+			object, ok := value.(map[string]any)
+			if !ok {
+				return nil, errors.New("role listing contains a non-object entry")
+			}
+			entries = append(entries, roleEntryFromObject(object, ""))
+		}
+		return entries, nil
+	}
+	return nil, errors.New("role listing must be a JSON object or array")
+}
+
+func roleEntryFromObject(object map[string]any, fallbackRoleID string) proxmoxRoleEntry {
+	roleID, _ := object["roleid"].(string)
+	if roleID == "" {
+		roleID = fallbackRoleID
+	}
+	privileges, _ := object["privs"].(string)
+	return proxmoxRoleEntry{RoleID: roleID, Privileges: privileges, Special: object["special"]}
+}
+
+func roleHasSpecialPrivileges(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case float64:
+		return typed != 0
+	case string:
+		return typed != "" && typed != "0" && !strings.EqualFold(typed, "false")
+	default:
+		return value != nil
+	}
+}
+
+func canonicalPrivileges(value string) string {
+	fields := strings.Fields(value)
+	sort.Strings(fields)
+	return strings.Join(fields, " ")
+}
+
+// ScopedProvisionerPrivileges is the complete privilege set required by the
+// currently implemented artifact, guest, storage, guest-agent, and pinned
+// image-download paths. Keep this explicit so a new API operation requires a
+// deliberate privilege review rather than silently broadening the role.
+func ScopedProvisionerPrivileges() string {
+	return "VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.MountPoint VM.Config.Network VM.Config.Options VM.GuestAgent.Audit VM.PowerMgmt Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit Sys.AccessNetwork Sys.Audit"
 }
 
 func ValidatePublicKey(publicKey string) error {

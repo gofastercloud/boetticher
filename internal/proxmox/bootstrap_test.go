@@ -2,6 +2,7 @@ package proxmox
 
 import (
 	"context"
+	"errors"
 	"io"
 	"reflect"
 	"strings"
@@ -16,6 +17,7 @@ type fakeRunner struct {
 	commands    []string
 	output      []byte
 	routeOutput []byte
+	responses   map[string][]byte
 }
 
 func TestManagementNetworkConfigIsFixedAndPreservesHOME(t *testing.T) {
@@ -93,27 +95,52 @@ func TestSSHRunnerUsesBoundedTOFUForFreshApplianceHostKeys(t *testing.T) {
 }
 
 func TestConfigureManagementNetworkValidatesUnchangedHOMEAndVLANState(t *testing.T) {
-	runner := &fakeRunner{}
+	runner := &fakeRunner{responses: map[string][]byte{
+		"sudo -n /usr/sbin/ip -4 -j addr show dev vmbr0":  []byte(`[{"addr":"192.0.2.10/24"}]`),
+		"sudo -n /usr/sbin/ip -4 -j route show default":   []byte(`[{"dst":"default","gateway":"192.0.2.1"}]`),
+		"sudo -n /usr/sbin/ip -4 addr show dev vmbr1.99":  []byte("inet 10.10.99.5/24"),
+		"sudo -n /usr/sbin/ip -4 route show 10.10.0.0/16": []byte("10.10.0.0/16 via 10.10.99.1 dev vmbr1.99"),
+		"sudo -n /usr/sbin/ip -d link show dev vmbr1":     []byte("vlan_filtering 1"),
+	}}
 	if err := ConfigureManagementNetwork(context.Background(), runner, "192.0.2.10", "labadmin"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(runner.command, "before_vmbr0_addr") || !strings.Contains(runner.command, "before_default_route") {
-		t.Fatalf("management verification does not preserve HOME state: %s", runner.command)
-	}
-	for _, required := range []string{"10.10.99.5/24", "10.10.0.0/16 via 10.10.99.1 dev vmbr1.99", "vlan_filtering"} {
-		if !strings.Contains(runner.command, required) {
-			t.Fatalf("management verification missing %q: %s", required, runner.command)
+	for _, required := range []string{
+		"sudo -n /usr/sbin/ip -4 -j addr show dev vmbr0",
+		"sudo -n /usr/sbin/ip -4 -j route show default",
+		"sudo -n /usr/sbin/ifreload -a",
+		"sudo -n /usr/sbin/ip -4 addr show dev vmbr1.99",
+		"sudo -n /usr/sbin/ip -4 route show 10.10.0.0/16",
+		"sudo -n /usr/sbin/ip -d link show dev vmbr1",
+	} {
+		if !containsString(runner.commands, required) {
+			t.Fatalf("management verification missing fixed command %q: %#v", required, runner.commands)
 		}
+	}
+	if containsString(runner.commands, "sudo -n sh -c") {
+		t.Fatalf("management verification uses an unbounded shell: %#v", runner.commands)
 	}
 }
 
 func (f *fakeRunner) Run(_ context.Context, address, user, command string) ([]byte, error) {
 	f.address, f.user, f.command = address, user, command
 	f.commands = append(f.commands, command)
+	if response, ok := f.responses[command]; ok {
+		return response, nil
+	}
 	if command == "ip -j route show default" && f.routeOutput != nil {
 		return f.routeOutput, nil
 	}
 	return f.output, nil
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fakeRunner) RunWithStdin(_ context.Context, address, user, command string, _ io.Reader) ([]byte, error) {
@@ -137,7 +164,14 @@ func TestInstallOperatorKeyUsesSafeConstantRemoteCommand(t *testing.T) {
 }
 
 func TestCreateScopedCredentialsCapturesOnlyReturnedSecret(t *testing.T) {
-	runner := &fakeRunner{output: []byte(`{"value":"opaque-token-secret"}`)}
+	runner := &fakeRunner{
+		output: []byte(`{"value":"opaque-token-secret"}`),
+		responses: map[string][]byte{
+			"pvesh get /access/roles --output-format json":                      []byte(`[]`),
+			"pvesh get /access/users --output-format json":                      []byte(`[]`),
+			"pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[]`),
+		},
+	}
 	secret, err := CreateScopedCredentials(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher")
 	if err != nil || secret != "opaque-token-secret" {
 		t.Fatalf("CreateScopedCredentials() = %q, %v", secret, err)
@@ -147,6 +181,102 @@ func TestCreateScopedCredentialsCapturesOnlyReturnedSecret(t *testing.T) {
 	}
 	if strings.Contains(runner.command, "|| true") {
 		t.Fatal("credential bootstrap must not mask identity or privilege errors")
+	}
+}
+
+func TestCreateScopedCredentialsStopsOnUserLookupFailure(t *testing.T) {
+	runner := &credentialLookupRunner{responses: map[string]error{
+		"pvesh get /access/users --output-format json": errors.New("permission denied"),
+	}}
+	_, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner")
+	if err == nil || !strings.Contains(err.Error(), "HOLD: inspect Proxmox users") {
+		t.Fatalf("user lookup failure was not held: %v", err)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "create /access/users") {
+			t.Fatalf("user lookup failure triggered creation: %s", command)
+		}
+	}
+}
+
+type credentialLookupRunner struct {
+	responses map[string]error
+	commands  []string
+}
+
+func (r *credentialLookupRunner) Run(_ context.Context, _ string, _ string, command string) ([]byte, error) {
+	r.commands = append(r.commands, command)
+	if err, ok := r.responses[command]; ok {
+		return nil, err
+	}
+	if strings.Contains(command, "/access/roles") {
+		return []byte(`[]`), nil
+	}
+	return []byte(`[]`), nil
+}
+
+func TestScopedProvisionerPrivilegesAreExplicitAndBounded(t *testing.T) {
+	want := "VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.MountPoint VM.Config.Network VM.Config.Options VM.GuestAgent.Audit VM.PowerMgmt Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit Sys.AccessNetwork Sys.Audit"
+	if got := ScopedProvisionerPrivileges(); got != want {
+		t.Fatalf("ScopedProvisionerPrivileges() = %q, want %q", got, want)
+	}
+	if strings.Contains(strings.ToLower(ScopedProvisionerPrivileges()), "administrator") || strings.Contains(strings.ToLower(ScopedProvisionerPrivileges()), "root") {
+		t.Fatal("scoped provisioner role contains an administrator-equivalent privilege")
+	}
+}
+
+func TestValidateScopedRoleJSONRequiresExactPrivileges(t *testing.T) {
+	wanted := ScopedProvisionerPrivileges()
+	roleJSON := `{"data":[{"roleid":"BoetticherProvisioner","privs":"Sys.Audit VM.PowerMgmt VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.MountPoint VM.Config.Network VM.Config.Options VM.GuestAgent.Audit Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit Sys.AccessNetwork","special":0}]}`
+	exists, err := validateScopedRoleJSON([]byte(roleJSON), "BoetticherProvisioner", wanted)
+	if err != nil || !exists {
+		t.Fatalf("equivalent privilege set was rejected: exists=%t err=%v", exists, err)
+	}
+
+	missing, err := validateScopedRoleJSON([]byte(`[]`), "BoetticherProvisioner", wanted)
+	if err != nil || missing {
+		t.Fatalf("absent role was not distinguishable: exists=%t err=%v", missing, err)
+	}
+
+	_, err = validateScopedRoleJSON([]byte(`[{"roleid":"BoetticherProvisioner","privs":"VM.Audit","special":0}]`), "BoetticherProvisioner", wanted)
+	if err == nil || !strings.Contains(err.Error(), "do not match required set") {
+		t.Fatalf("incomplete privilege set was accepted: %v", err)
+	}
+	_, err = validateScopedRoleJSON([]byte(`[{"roleid":"BoetticherProvisioner","privs":"VM.Audit","special":1}]`), "BoetticherProvisioner", wanted)
+	if err == nil || !strings.Contains(err.Error(), "special privileges") {
+		t.Fatalf("special role privileges were accepted: %v", err)
+	}
+}
+
+func TestConfigureIdentitiesLocksProxmoxLabadminAndInstallsBoundedSudo(t *testing.T) {
+	runner := &fakeRunner{}
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator"
+	if err := ConfigureIdentities(context.Background(), runner, "192.0.2.10", "root", key, []string{"lab-fw-01:22"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"passwd --lock labadmin", "/etc/sudoers.d/boetticher-labadmin", "visudo -cf /etc/sudoers", "/bin/sh -c * /usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*", "Match User lab-jump"} {
+		if !strings.Contains(runner.command, required) {
+			t.Fatalf("identity bootstrap missing %q: %s", required, runner.command)
+		}
+	}
+	if strings.Contains(runner.command, "NOPASSWD:ALL") {
+		t.Fatal("Proxmox labadmin received unrestricted sudo")
+	}
+	for _, command := range []string{"/usr/bin/pvesh *", "/usr/bin/pvesm *"} {
+		if !strings.Contains(runner.command, command) {
+			t.Fatalf("Proxmox labadmin sudo policy is missing %s", command)
+		}
+	}
+}
+
+func TestCheckBuilderCapacityHoldsBelowMinimum(t *testing.T) {
+	runner := &fakeRunner{output: []byte("Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/vda1 33554432 12582912 20971520 38% /\n")}
+	if err := CheckBuilderCapacity(context.Background(), runner, "192.0.2.10", "labadmin", 20); err != nil {
+		t.Fatalf("expected exact minimum builder capacity to pass: %v", err)
+	}
+	runner.output = []byte("Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/vda1 33554432 12582912 10485760 69% /\n")
+	if err := CheckBuilderCapacity(context.Background(), runner, "192.0.2.10", "labadmin", 20); err == nil || !strings.Contains(err.Error(), "HOLD") {
+		t.Fatalf("insufficient builder capacity was not held: %v", err)
 	}
 }
 

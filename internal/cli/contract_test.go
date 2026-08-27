@@ -97,6 +97,29 @@ func TestNestedHelpPathsArePathAwareAndSubstantive(t *testing.T) {
 	}
 }
 
+func TestCommandMetadataHasSubstantiveHelpForEveryPath(t *testing.T) {
+	for path, spec := range helpSpecs {
+		t.Run(path, func(t *testing.T) {
+			for name, value := range map[string]string{
+				"Purpose": spec.Purpose, "Usage": spec.Usage, "Arguments": spec.Arguments,
+				"Options": spec.Options, "Safety": spec.Safety, "Examples": spec.Examples,
+				"Related": spec.Related,
+			} {
+				if strings.TrimSpace(value) == "" {
+					t.Errorf("help metadata has empty %s field", name)
+				}
+			}
+		})
+	}
+	for path, spec := range nestedHelpSpecs {
+		t.Run("nested/"+path, func(t *testing.T) {
+			if spec.Usage == "" || spec.Purpose == "" || spec.Safety == "" {
+				t.Fatalf("nested help metadata is incomplete: %#v", spec)
+			}
+		})
+	}
+}
+
 func TestConvergeIsNotAnActiveCommand(t *testing.T) {
 	var output bytes.Buffer
 	if err := Run([]string{"converge"}, &output, &output); err == nil {

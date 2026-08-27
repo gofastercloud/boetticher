@@ -42,6 +42,11 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	if !strings.Contains(buildText, `if [ "$(id -u)" -ne 0 ]`) || !strings.Contains(buildText, "requires root in the supported Linux builder environment") {
 		t.Fatal("real appliance construction does not fail closed when mount/build privileges are unavailable")
 	}
+	for _, required := range []string{"DefinitionSHA256", "ContentSHA256", "BuilderProvenanceSHA256", "qualification evaluator", "jq"} {
+		if !strings.Contains(buildText+string(mustRead(t, filepath.Join(repoRoot, "internal", "artifacts", "catalog.go"))), required) {
+			t.Fatalf("hosted qualification contract is missing %s", required)
+		}
+	}
 	for _, artifact := range []string{"boetticher-base", "boetticher-firewall", "boetticher-dns-blocky", "boetticher-logging", "boetticher-monitoring", "boetticher-portal"} {
 		if !strings.Contains(buildText, artifact) {
 			t.Fatalf("default trial builder does not produce %s", artifact)
@@ -52,9 +57,18 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	bootstrapText := string(bootstrapSource)
-	for _, required := range []string{"EnsureBuilderVM", "RebindEvidencePaths", "DestroyBuilderVM"} {
+	for _, required := range []string{"EnsureBuilderVM", "RebindEvidencePaths", "DestroyBuilderVM", "createBuilderKnownHosts", "CheckBuilderCapacity", "RunStream", "ExtractBuildArchiveFile"} {
 		if !strings.Contains(bootstrapText, required) {
 			t.Fatalf("bootstrap does not complete the builder qualification lifecycle: %s", required)
+		}
+	}
+	builderSource, err := os.ReadFile(filepath.Join(repoRoot, "internal", "proxmox", "plan.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"BuilderVMID", "DestroyBuilderVM", "WaitForGuestAbsent", "cleanupBuilderSnippets", "ResizeQEMUDisk"} {
+		if !strings.Contains(string(builderSource), required) {
+			t.Fatalf("temporary builder lifecycle is missing %s", required)
 		}
 	}
 	deploySource, err := os.ReadFile(filepath.Join(repoRoot, "internal", "cli", "converge.go"))
@@ -98,7 +112,7 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		evidence.ArtifactPath = artifactPath
-		for filename, content := range map[string]string{"package-manifest.txt": "package: trial\n", "sbom.json": "{}\n", "trivy.json": "{\"Results\":[]}\n"} {
+		for filename, content := range map[string]string{"package-manifest.txt": "package: trial\n", "sbom.json": "{}\n", "trivy.json": "{\"Results\":[]}\n", "builder-provenance.json": "{\"platform\":\"debian-13-amd64\",\"input_image\":\"debian-13-genericcloud-amd64-20260327-2429\",\"kernel\":\"6.1.0\",\"go\":\"go version go1.26.5 linux/amd64\",\"trivy\":\"Version: 0.69.3\",\"mmdebstrap\":\"mmdebstrap 1.5.0\",\"architecture\":\"amd64\",\"boetticher_version\":\"0.3.1\"}\n"} {
 			if err := os.WriteFile(filepath.Join(filepath.Dir(artifactPath), filename), []byte(content), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -106,6 +120,8 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 		evidence.PackageManifestSHA, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactPath), "package-manifest.txt"), "package manifest")
 		evidence.SBOMSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactPath), "sbom.json"), "SBOM")
 		evidence.TrivyReportSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactPath), "trivy.json"), "Trivy report")
+		evidence.BuilderProvenanceSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactPath), "builder-provenance.json"), "builder provenance")
+		evidence.Builder = artifacts.BuilderProvenance{Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429", Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3", MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.1"}
 		evidence, err = artifacts.QualifyEvidence(evidence, artifacts.ScanSummary{Completed: true})
 		if err != nil {
 			t.Fatal(err)
@@ -180,6 +196,15 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 			t.Fatal("external gateway trial retained managed firewall")
 		}
 	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 func contains(values []string, wanted string) bool {

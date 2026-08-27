@@ -147,11 +147,39 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 	if !strings.Contains(files.UserData, "boetticher-build") || !strings.Contains(files.UserData, "scripts/scan-images.sh scan-images") || !strings.Contains(files.UserData, "boetticher-builder-ready") {
 		t.Fatal("builder cloud-init does not invoke the first-party build and qualification path")
 	}
+	for _, required := range []string{
+		"/usr/local/go/bin/go version",
+		"go1.26.5.linux-amd64.tar.gz",
+		"5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053",
+		"go version go1.26.5 linux/amd64",
+	} {
+		if !strings.Contains(files.UserData, required) {
+			t.Fatalf("builder cloud-init does not pin and verify %q", required)
+		}
+	}
+	if strings.Contains(files.UserData, "package_update: true") || strings.Contains(files.UserData, "packages:") {
+		t.Fatal("builder cloud-init uses unpinned cloud-init package installation")
+	}
+	for _, required := range []string{
+		"https://snapshot.debian.org/archive/debian/20260327T000000Z/",
+		"apt-get -o Acquire::Check-Valid-Until=false update",
+		"apt-get install --yes --no-install-recommends ca-certificates curl jq libguestfs-tools mmdebstrap",
+	} {
+		if !strings.Contains(files.UserData, required) {
+			t.Fatalf("builder cloud-init does not pin package bootstrap input %q", required)
+		}
+	}
+	if strings.Contains(files.UserData, "golang-go") {
+		t.Fatal("builder cloud-init relies on an unqualified distro Go package")
+	}
 	if !strings.Contains(string(RenderBuilderCloudInit().UserData), "qemu-guest-agent") {
 		t.Fatal("builder cloud-init does not enable the guest agent needed for address discovery")
 	}
-	if !strings.Contains(files.UserData, "qemu-guest-agent") || !strings.Contains(files.NetworkConfig, "dhcp4: true") {
+	if !strings.Contains(files.UserData, "qemu-guest-agent") || !strings.Contains(files.NetworkConfig, "dhcp4: true") || !strings.Contains(files.NetworkConfig, "macaddress: "+model.BuilderMAC) || !strings.Contains(files.NetworkConfig, "set-name: eth0") {
 		t.Fatal("builder cloud-init lacks guest-agent or bootstrap network setup")
+	}
+	if !strings.Contains(files.UserData, "exec >/var/log/boetticher-build.log 2>&1") {
+		t.Fatal("builder command does not retain bounded build diagnostics")
 	}
 	if !strings.Contains(files.UserData, "trivy_0.69.3_Linux-64bit.tar.gz") || !strings.Contains(files.UserData, "1816b632dfe529869c740c0913e36bd1629cb7688bd5634f4a858c1d57c88b75") {
 		t.Fatal("builder cloud-init does not pin the Trivy qualification input")

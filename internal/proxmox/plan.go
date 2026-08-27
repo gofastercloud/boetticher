@@ -298,6 +298,10 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	if err := s.Validate(); err != nil {
 		return Plan{}, err
 	}
+	// A loaded site is always composed and must carry declaration-owned
+	// appliance identity. The uncomposed path exists only for the explicit
+	// NewDefaultSite provider fixtures used by package tests.
+	composed := len(s.Modules) > 0 || len(s.Declarations) > 0
 	storagePlan, err := storage.PlanFromSite(s)
 	if err != nil {
 		return Plan{}, err
@@ -322,8 +326,10 @@ func PlanFromSite(s model.Site) (Plan, error) {
 			Monitoring: component.Monitoring, Backup: component.Backup, Tags: componentTags(s, component.Name),
 		}
 		if component.Module != "" {
+			declarationFound := false
 			for _, declaration := range s.Declarations {
 				if declaration.Module == component.Module {
+					declarationFound = true
 					guest.Owner = "boetticher/module/" + component.Module
 					guest.Artifact = declaration.Artifact
 					guest.Persistent = persistentForGuest(declaration.Persistent, component.Name)
@@ -337,6 +343,9 @@ func PlanFromSite(s model.Site) (Plan, error) {
 					}
 					break
 				}
+			}
+			if composed && !declarationFound {
+				return Plan{}, fmt.Errorf("HOLD: composed module guest %s has no declaration for module %s", component.Name, component.Module)
 			}
 			if guest.Artifact.Name == "" {
 				provider := ""
@@ -370,9 +379,22 @@ func PlanFromSite(s model.Site) (Plan, error) {
 				}
 			}
 		}
+		if component.Module != "" && guest.Artifact.Kind != "" {
+			switch guest.Artifact.Kind {
+			case string(KindQEMU):
+				guest.Kind = KindQEMU
+			case string(KindLXC):
+				guest.Kind = KindLXC
+			default:
+				return Plan{}, fmt.Errorf("HOLD: guest %s has unsupported declared artifact kind %q", guest.Name, guest.Artifact.Kind)
+			}
+		}
+		// Artifact kind is authoritative for composed module guests. The
+		// firewall name still selects its fixed network topology and sizing,
+		// but must not be the source of guest-kind ownership.
 		switch component.Name {
 		case "lab-fw-01":
-			guest.Kind, guest.Cores, guest.MemoryMiB, guest.DiskGiB = KindQEMU, 2, 2048, 16
+			guest.Cores, guest.MemoryMiB, guest.DiskGiB = 2, 2048, 16
 			guest.NICs = gatewayNICs(s)
 		case "lab-monitor-01":
 			guest.MemoryMiB, guest.DiskGiB = 2048, 16
@@ -623,39 +645,42 @@ const builderOwnerTag = "boetticher-builder"
 // pinned Debian input. It is Core bootstrap infrastructure, not a module or a
 // user workload, and an existing object must prove that ownership before it is
 // touched.
-func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey string) error {
+func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey string) (created bool, err error) {
 	if client == nil {
-		return errors.New("Proxmox client is required")
+		return false, errors.New("Proxmox client is required")
 	}
 	kind, current, err := client.GuestConfig(ctx, plan.Node, model.BuilderVMID)
 	if err == nil {
 		if kind != KindQEMU {
-			return fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, not the temporary builder", model.BuilderVMID, kind)
+			return false, fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, not the temporary builder", model.BuilderVMID, kind)
 		}
 		if name, _ := current["name"].(string); name != "lab-builder-01" {
-			return fmt.Errorf("HOLD: VMID %d is not the expected temporary builder", model.BuilderVMID)
+			return false, fmt.Errorf("HOLD: VMID %d is not the expected temporary builder", model.BuilderVMID)
 		}
 		if !hasOwnerTag(currentTags(current), builderOwnerTag) {
-			return fmt.Errorf("HOLD: VMID %d lacks canonical builder ownership proof %q", model.BuilderVMID, builderOwnerTag)
+			return false, fmt.Errorf("HOLD: VMID %d lacks canonical builder ownership proof %q", model.BuilderVMID, builderOwnerTag)
 		}
-		return nil
-	}
-	if !IsNotFound(err) {
-		return fmt.Errorf("inspect temporary builder: %w", err)
+		if err := DestroyBuilderVM(ctx, client, plan.Node); err != nil {
+			return false, fmt.Errorf("remove existing temporary builder before a fresh build: %w", err)
+		}
+	} else if !IsNotFound(err) {
+		return false, fmt.Errorf("inspect temporary builder: %w", err)
 	}
 	image, err := client.EnsureCloudImage(ctx, plan.Node, "local", plan.GatewayImage+".qcow2", plan.GatewayImageURL, plan.GatewaySHA512)
 	if err != nil {
-		return fmt.Errorf("prepare pinned builder input: %w", err)
+		return false, fmt.Errorf("prepare pinned builder input: %w", err)
 	}
+	builder := artifacts.Builder()
 	params := url.Values{
 		"name":      {"lab-builder-01"},
-		"memory":    {"4096"},
-		"cores":     {"4"},
+		"memory":    {strconv.Itoa(builder.MemoryMiB)},
+		"cores":     {strconv.Itoa(builder.Cores)},
+		"cpu":       {"host"},
 		"ostype":    {"l26"},
 		"onboot":    {"0"},
 		"agent":     {"1"},
 		"tags":      {strings.Join([]string{model.TagBoetticher, model.TagManaged, model.TagPlatform, builderOwnerTag}, ";")},
-		"net0":      {"virtio,bridge=vmbr0,firewall=1"},
+		"net0":      {"virtio,bridge=vmbr0,firewall=1,macaddr=" + model.BuilderMAC},
 		"ide2":      {"local:cloudinit"},
 		"ipconfig0": {"ip=dhcp"},
 		"ciuser":    {model.DefaultAdminSSHUser},
@@ -665,41 +690,67 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 	}
 	cloudInit, err := RenderBuilderCloudInitWithKey(publicKey)
 	if err != nil {
-		return fmt.Errorf("render builder cloud-init: %w", err)
+		return false, fmt.Errorf("render builder cloud-init: %w", err)
 	}
-	for key, value := range map[string]string{"meta": cloudInit.MetaData, "user": cloudInit.UserData, "network": cloudInit.NetworkConfig} {
+	// Arm snippet cleanup before the first upload. A partial upload must not
+	// leave VM190-specific cloud-init material behind on Proxmox.
+	snippetsUploaded := true
+	defer func() {
+		if err != nil && snippetsUploaded {
+			if cleanupErr := cleanupBuilderSnippets(ctx, client, plan.Node); cleanupErr != nil {
+				err = errors.Join(err, cleanupErr)
+			}
+		}
+	}()
+	for _, snippet := range []struct {
+		key   string
+		value string
+	}{
+		{key: "meta", value: cloudInit.MetaData},
+		{key: "user", value: cloudInit.UserData},
+		{key: "network", value: cloudInit.NetworkConfig},
+	} {
+		key, value := snippet.key, snippet.value
 		if value == "" {
-			return errors.New("builder cloud-init input is incomplete")
+			return false, errors.New("builder cloud-init input is incomplete")
 		}
 		names := cloudInitSnippetNames(model.BuilderVMID)
 		if err := client.UploadStorageText(ctx, plan.Node, "local", "snippets", names[key], value); err != nil {
-			return fmt.Errorf("upload builder cloud-init %s: %w", key, err)
+			return false, fmt.Errorf("upload builder cloud-init %s: %w", key, err)
 		}
 	}
 	params.Set("cicustom", cloudInitCICustom(model.BuilderVMID))
 	params.Set("ipconfig0", "ip=dhcp")
+	// Arm caller cleanup before submitting the create task. Proxmox may have
+	// created the guest even when the API request or task wait reports an
+	// error, and a failed attempt must not leave a dirty builder behind.
+	created = true
 	if err := client.CreateVM(ctx, plan.Node, model.BuilderVMID, params); err != nil {
-		return fmt.Errorf("create temporary builder: %w", err)
+		return created, fmt.Errorf("create temporary builder: %w", err)
 	}
+	snippetsUploaded = false
 	upid, err := client.ImportDisk(ctx, plan.Node, model.BuilderVMID, image, plan.Storage, "qcow2")
 	if err != nil {
-		return fmt.Errorf("import builder input: %w", err)
+		return created, fmt.Errorf("import builder input: %w", err)
 	}
 	if err := client.WaitTask(ctx, plan.Node, upid); err != nil {
-		return fmt.Errorf("wait for builder input: %w", err)
+		return created, fmt.Errorf("wait for builder input: %w", err)
 	}
 	var imported map[string]any
 	if err := client.QEMUConfig(ctx, plan.Node, model.BuilderVMID, &imported); err != nil {
-		return fmt.Errorf("inspect builder disk: %w", err)
+		return created, fmt.Errorf("inspect builder disk: %w", err)
 	}
 	unused, ok := imported["unused0"].(string)
 	if !ok || unused == "" {
-		return errors.New("builder disk import completed without an unused disk reference")
+		return created, errors.New("builder disk import completed without an unused disk reference")
 	}
 	if err := client.SetVMConfig(ctx, plan.Node, model.BuilderVMID, url.Values{"scsi0": {unused}, "delete": {"unused0"}}); err != nil {
-		return fmt.Errorf("attach builder disk: %w", err)
+		return created, fmt.Errorf("attach builder disk: %w", err)
 	}
-	return nil
+	if err := client.ResizeQEMUDisk(ctx, plan.Node, model.BuilderVMID, "scsi0", builder.DiskGiB); err != nil {
+		return created, fmt.Errorf("size builder disk: %w", err)
+	}
+	return created, nil
 }
 
 // WaitForQEMUIPv4 waits for the guest agent to report a routable IPv4 address
@@ -744,13 +795,13 @@ func WaitForQEMUIPv4(ctx context.Context, client *Client, node string, vmid, att
 	return "", fmt.Errorf("HOLD: QEMU guest %d did not report a routable IPv4 address after %d attempts: %w", vmid, attempts, lastErr)
 }
 
-func DestroyBuilderVM(ctx context.Context, client *Client, node string) error {
+func DestroyBuilderVM(ctx context.Context, client *Client, node string) (returnErr error) {
 	if client == nil || node == "" {
 		return errors.New("Proxmox client and node are required")
 	}
 	kind, current, err := client.GuestConfig(ctx, node, model.BuilderVMID)
 	if IsNotFound(err) {
-		return nil
+		return cleanupBuilderSnippets(ctx, client, node)
 	}
 	if err != nil {
 		return fmt.Errorf("inspect temporary builder before destruction: %w", err)
@@ -761,13 +812,69 @@ func DestroyBuilderVM(ctx context.Context, client *Client, node string) error {
 	if name, _ := current["name"].(string); name != "lab-builder-01" || !hasOwnerTag(currentTags(current), builderOwnerTag) {
 		return fmt.Errorf("HOLD: refusing to destroy unproven VMID %d builder ownership", model.BuilderVMID)
 	}
-	if status, _ := current["status"].(string); status == "running" {
+	// Once identity and ownership are proven, remove only the exact builder
+	// snippets even if stopping or deletion later fails. This leaves no stale
+	// VM190 bootstrap material after a bounded cleanup attempt.
+	defer func() {
+		if cleanupErr := cleanupBuilderSnippets(ctx, client, node); cleanupErr != nil {
+			returnErr = errors.Join(returnErr, cleanupErr)
+		}
+	}()
+	status, err := client.QEMUStatus(ctx, node, model.BuilderVMID)
+	if err != nil {
+		return fmt.Errorf("inspect temporary builder status: %w", err)
+	}
+	if status == "running" {
 		if err := client.StopVM(ctx, node, model.BuilderVMID); err != nil {
 			return fmt.Errorf("stop temporary builder: %w", err)
 		}
 	}
-	if err := client.Delete(ctx, fmt.Sprintf("/nodes/%s/qemu/%d", node, model.BuilderVMID)); err != nil {
+	if err := client.DestroyQEMU(ctx, node, model.BuilderVMID); err != nil {
 		return fmt.Errorf("destroy temporary builder: %w", err)
+	}
+	if err := WaitForGuestAbsent(ctx, client, node, model.BuilderVMID, 30, time.Second); err != nil {
+		return err
+	}
+	return cleanupBuilderSnippets(ctx, client, node)
+}
+
+// WaitForGuestAbsent verifies that Proxmox has finished removing a guest.
+// Cleanup never treats an accepted delete request as proof that the reserved
+// identity is available for a fresh builder.
+func WaitForGuestAbsent(ctx context.Context, client *Client, node string, vmid, attempts int, interval time.Duration) error {
+	if client == nil || node == "" || vmid <= 0 || attempts < 1 {
+		return errors.New("guest absence readiness identity is invalid")
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
+		_, _, err := client.GuestConfig(ctx, node, vmid)
+		if IsNotFound(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inspect guest %d while waiting for removal: %w", vmid, err)
+		}
+		if attempt+1 < attempts {
+			timer := time.NewTimer(interval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+	}
+	return fmt.Errorf("HOLD: guest %d remains present after deletion", vmid)
+}
+
+func cleanupBuilderSnippets(ctx context.Context, client *Client, node string) error {
+	names := cloudInitSnippetNames(model.BuilderVMID)
+	for _, name := range []string{names["meta"], names["user"], names["network"]} {
+		if err := client.DeleteStorageSnippet(ctx, node, "local", name); err != nil && !IsNotFound(err) {
+			return fmt.Errorf("remove builder cloud-init snippet %s: %w", name, err)
+		}
 	}
 	return nil
 }
@@ -1318,7 +1425,7 @@ func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage,
 	if !strings.EqualFold(actual, checksum) {
 		return fmt.Errorf("local artifact %s checksum %s does not match qualified %s", filename, actual, checksum)
 	}
-	if err := client.UploadStorageFile(ctx, node, storage, content, source, filename); err != nil {
+	if err := client.UploadStorageFile(ctx, node, storage, content, source, filename, checksum); err != nil {
 		return fmt.Errorf("upload %s: %w", filename, err)
 	}
 	entries, err = client.StorageContent(ctx, node, storage, content)

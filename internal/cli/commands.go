@@ -1,5 +1,10 @@
 package cli
 
+import (
+	"sort"
+	"strings"
+)
+
 // commandSpec is the single source for the public top-level command reference
 // printed by the CLI and checked against docs/commands.md.
 type commandSpec struct {
@@ -31,7 +36,7 @@ var commandSpecs = []commandSpec{
 	{Usage: "boetticher network trunk status|attach|detach [INTERFACE] [--site DIR] [--confirm] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
 	{Usage: "boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]"},
 	{Usage: "boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]"},
-	{Usage: "boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json]"},
+	{Usage: "boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]"},
 	{Usage: "boetticher dhcp status|leases [--site DIR] [--live] [--json]"},
 	{Usage: "boetticher storage status|initialize [--site DIR] [--live] [--confirmed]"},
 	{Usage: "boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
@@ -53,7 +58,7 @@ var helpSpecs = map[string]helpSpec{
 		Usage: "boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]", Purpose: "Prepare Proxmox trust, bridges, storage, the temporary Linux builder, and qualified appliance artifacts.", Arguments: "No positional arguments.", Options: "--dry-run renders only; --recovery-confirmed confirms the independent Age recovery copy; --storage-confirmed confirms explicit dedicated-storage initialization.", Safety: "May change Proxmox bootstrap infrastructure and creates a temporary builder. Review the plan and recovery prerequisites before applying.", Examples: "boetticher bootstrap --site ./my-boetticher --recovery-confirmed", Related: "preflight, deploy, verify",
 	},
 	"deploy": {
-		Usage: "boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]", Purpose: "Make boetticher-owned platform resources match the complete resolved desired model.", Arguments: "No positional arguments.", Options: "--dry-run plans without mutation; --confirm authorizes destructive appliance replacement when the plan requires it; connection options select the Proxmox trust path.", Safety: "This is the sole public platform-application operation. Review the plan; rootfs replacement and purge-like actions require explicit confirmation.", Examples: "boetticher deploy --site ./my-boetticher --dry-run; boetticher deploy --site ./my-boetticher --confirm", Related: "preflight, verify, doctor",
+		Usage: "boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]", Purpose: "Make boetticher-owned platform resources match the complete resolved desired model.", Arguments: "No positional arguments.", Options: "--dry-run plans without mutation; --confirm authorizes destructive operations supported by the active providers; an artifact qualification mismatch remains HOLD; connection options select the Proxmox trust path.", Safety: "This is the sole public platform-application operation. Review the plan before applying it; unsupported rootfs replacement remains HOLD rather than being bypassed by --confirm.", Examples: "boetticher deploy --site ./my-boetticher --dry-run; boetticher deploy --site ./my-boetticher --confirm", Related: "preflight, verify, doctor",
 	},
 	"logs": {
 		Usage: "boetticher logs [HOST] [--site DIR] [--unit UNIT] [--since DURATION] [--priority LEVEL] [--limit N]", Purpose: "Read a bounded journal view through the central collector using the normal Proxmox bastion path.", Arguments: "HOST is a known boetticher-managed or retained endpoint; omitted HOST reads the collector-local journal.", Options: "--site selects the private site repository; --unit accepts a bounded systemd unit name such as blocky or blocky.service; --since accepts a positive duration up to 168h; --priority accepts a fixed journal priority; --limit is 1-500 and defaults to 100.", Safety: "Read-only. Output is bounded; there is no follow mode, TUI, arbitrary journal path, or query language. Central logging is asynchronous and not an availability dependency.", Examples: "boetticher logs lab-dns-01 --site ./my-boetticher --unit blocky --since 1h; boetticher logs lab-fw-01 --priority warning --limit 100", Related: "doctor, verify",
@@ -83,7 +88,7 @@ var helpSpecs = map[string]helpSpec{
 		Usage: "boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]", Purpose: "Manage bounded client certificates from the controller-side PKI authority.", Arguments: "NAME is a validated client identity; trust export has no client NAME.", Options: "--output selects an export path; --age-identity selects the external recovery identity; --site selects local state.", Safety: "Private keys are never written to stdout and certificate actions update local generated state.", Examples: "boetticher pki client create operator --site ./my-boetticher", Related: "access, deploy, verify",
 	},
 	"firewall": {
-		Usage: "boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json]", Purpose: "Inspect the generated or live managed gateway policy and bounded evidence.", Arguments: "Subcommands select the read-only view; firewall logs may accept a zone and limit.", Options: "--live queries the managed firewall; --json emits machine-readable output; show also accepts --format human|nft.", Safety: "Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.", Examples: "boetticher firewall diff --site ./my-boetticher --live", Related: "dhcp, network, logs, verify",
+		Usage: "boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]", Purpose: "Inspect the generated or live managed gateway policy and bounded evidence.", Arguments: "Subcommands select the read-only view; firewall logs may accept a zone and limit.", Options: "--live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.", Safety: "Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.", Examples: "boetticher firewall diff --site ./my-boetticher --live", Related: "dhcp, network, logs, verify",
 	},
 	"dhcp": {
 		Usage: "boetticher dhcp status|leases [--site DIR] [--live] [--json]", Purpose: "Inspect generated DHCP/DDNS intent or read bounded managed-gateway lease evidence.", Arguments: "status and leases select the view.", Options: "--live queries the managed gateway; --json emits machine-readable output.", Safety: "Read-only. External-gateway DHCP remains outside boetticher management.", Examples: "boetticher dhcp leases --site ./my-boetticher --live", Related: "firewall, verify, logs",
@@ -132,4 +137,57 @@ var nestedHelpSpecs = map[string]helpSpec{
 	"config validate":         helpSpecs["config"],
 	"config show":             helpSpecs["config"],
 	"config schema":           helpSpecs["config"],
+}
+
+// CommandReferenceMarkdown renders the public command reference from the same
+// metadata used by CLI help. Keeping the generated document here prevents
+// option descriptions and safety notes from drifting between the operator
+// interface and the runbook.
+func CommandReferenceMarkdown() string {
+	var document strings.Builder
+	document.WriteString("# Command reference\n\n")
+	document.WriteString("This reference is generated from the CLI command metadata. `deploy` is the only public platform-application command; inspection and planning commands are read-oriented unless they explicitly request confirmation.\n\n")
+	document.WriteString("## Usage\n\n```text\n")
+	for _, spec := range commandSpecs {
+		document.WriteString(spec.Usage + "\n")
+	}
+	document.WriteString("```\n\n")
+
+	document.WriteString("## Command details\n\n")
+	for _, spec := range commandSpecs {
+		path := commandPath(spec.Usage)
+		if detail, ok := helpSpecs[path]; ok {
+			writeHelpMarkdown(&document, path, detail)
+		}
+	}
+
+	paths := make([]string, 0, len(nestedHelpSpecs))
+	for path := range nestedHelpSpecs {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	document.WriteString("## Nested command details\n\n")
+	for _, path := range paths {
+		writeHelpMarkdown(&document, path, nestedHelpSpecs[path])
+	}
+	return strings.TrimRight(document.String(), "\n") + "\n"
+}
+
+func commandPath(usage string) string {
+	fields := strings.Fields(usage)
+	if len(fields) < 2 {
+		return ""
+	}
+	return fields[1]
+}
+
+func writeHelpMarkdown(document *strings.Builder, path string, detail helpSpec) {
+	document.WriteString("### " + path + "\n\n")
+	document.WriteString("Purpose: " + detail.Purpose + "\n\n")
+	document.WriteString("Usage: `" + detail.Usage + "`\n\n")
+	document.WriteString("Arguments: " + detail.Arguments + "\n\n")
+	document.WriteString("Options: " + detail.Options + "\n\n")
+	document.WriteString("Safety: " + detail.Safety + "\n\n")
+	document.WriteString("Examples: `" + strings.ReplaceAll(detail.Examples, "; ", "`; `") + "`\n\n")
+	document.WriteString("Related commands: " + detail.Related + "\n\n")
 }

@@ -8,6 +8,27 @@ import (
 	"strings"
 )
 
+func validateEvidenceName(name string) error {
+	if name == "" || name == "." || name == ".." || filepath.Base(name) != name || strings.ContainsAny(name, `/\\`) {
+		return fmt.Errorf("artifact evidence name %q is not a plain identity", name)
+	}
+	return nil
+}
+
+func validateEvidenceEntry(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("artifact evidence entry %s must not be a symlink", path)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("artifact evidence entry %s is not a regular file", path)
+	}
+	return nil
+}
+
 func EvidencePath(root, name string) string {
 	return filepath.Join(root, "generated", "artifacts", strings.ToLower(name)+".json")
 }
@@ -15,6 +36,9 @@ func EvidencePath(root, name string) string {
 func WriteEvidence(root, name string, evidence Evidence) error {
 	if root == "" || name == "" || evidence.ArtifactPath == "" || evidence.ContentSHA256 == "" || evidence.DefinitionSHA256 == "" {
 		return fmt.Errorf("artifact evidence requires root, name, artifact path, definition digest, and content digest")
+	}
+	if err := validateEvidenceName(name); err != nil {
+		return err
 	}
 	if evidence.Qualified {
 		if !evidence.qualifiedByEvaluator {
@@ -72,6 +96,9 @@ func RebindEvidencePaths(root string) error {
 			continue
 		}
 		path := filepath.Join(root, "generated", "artifacts", entry.Name())
+		if err := validateEvidenceEntry(path); err != nil {
+			return fmt.Errorf("inspect transferred evidence %s: %w", entry.Name(), err)
+		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
@@ -82,6 +109,9 @@ func RebindEvidencePaths(root string) error {
 		}
 		if evidence.Artifact.Name == "" {
 			return fmt.Errorf("transferred evidence %s has no artifact identity", entry.Name())
+		}
+		if err := validateEvidenceName(evidence.Artifact.Name); err != nil {
+			return fmt.Errorf("transferred evidence %s has invalid artifact identity: %w", entry.Name(), err)
 		}
 		filename := fmt.Sprintf("%s-%s-%s.tar.zst", evidence.Artifact.Name, evidence.Artifact.Version, evidence.Artifact.Architecture)
 		if evidence.Artifact.Kind == "qemu" {
@@ -100,7 +130,7 @@ func RebindEvidencePaths(root string) error {
 			return fmt.Errorf("transferred evidence %s is not qualified", evidence.Artifact.Name)
 		}
 		if err := validateQualificationDigests(evidence); err != nil {
-			return fmt.Errorf("transferred evidence %s is incomplete: %w", evidence.Artifact.Name, err)
+			return fmt.Errorf("transferred evidence %s has unauthorized or incomplete qualification: %w", evidence.Artifact.Name, err)
 		}
 		if err := verifyQualificationInputs(evidence); err != nil {
 			return fmt.Errorf("transferred evidence %s is not bound to its qualification inputs: %w", evidence.Artifact.Name, err)

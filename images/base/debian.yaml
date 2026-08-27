@@ -7,18 +7,27 @@ init: systemd
 source:
   mirror: https://snapshot.debian.org/archive/debian/20260327T000000Z/
   snapshot: 20260327T000000Z
+build:
+  packages:
+    - systemd
+    - systemd-sysv
+    - systemd-journal-remote
+    - ca-certificates
+    - openssl
+    - openssh-server
+    - sudo
+    - iproute2
+    - iputils-ping
+    - nftables
+    - chrony
+    - curl
+    - jq
+    - bash
+    - python3
 runtime:
-  - ca-certificates
-  - systemd
-  - openssh-client
-  - iproute2
-  - nftables
-  - journald
-  - systemd-journal-upload
-  - openssh-server
-  - sudo
-  - bash
-  - iputils-ping
+  journal: systemd-journal
+  journal_upload: systemd-journal-upload
+  ca_trust: ca-certificates
 administration:
   user: labadmin
   shell: /bin/bash

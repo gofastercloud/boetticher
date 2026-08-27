@@ -49,6 +49,64 @@ func TestQualificationInputRejectsMissingOrEmptyEvidence(t *testing.T) {
 	}
 }
 
+func TestEvidenceRejectsSymlinkedArtifactAndQualificationInput(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	artifact := filepath.Join(root, "artifact")
+	if err := os.WriteFile(target, []byte("bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, artifact); err != nil {
+		t.Fatal(err)
+	}
+	definition, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EvidenceForFile(artifact, definition); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("symlinked artifact was accepted: %v", err)
+	}
+	if _, err := QualificationInputSHA256(artifact, "SBOM"); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("symlinked qualification input was accepted: %v", err)
+	}
+}
+
+func TestRebindEvidenceRejectsArtifactIdentityTraversal(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "generated", "artifacts")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := `{"artifact":{"name":"../outside","version":"1.0.0","architecture":"amd64","kind":"lxc"},"qualified":true}`
+	if err := os.WriteFile(filepath.Join(directory, "transferred.json"), []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RebindEvidencePaths(root); err == nil || !strings.Contains(err.Error(), "plain identity") {
+		t.Fatalf("traversing transferred artifact identity was accepted: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "generated", "outside")); !os.IsNotExist(err) {
+		t.Fatalf("path traversal created an outside evidence path: %v", err)
+	}
+}
+
+func TestRebindEvidenceRejectsSymlinkedEvidenceEntry(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "generated", "artifacts")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "evidence-target.json")
+	if err := os.WriteFile(target, []byte(`{"artifact":{"name":"boetticher-logging","version":"1.0.0","architecture":"amd64","kind":"lxc"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(directory, "transferred.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := RebindEvidencePaths(root); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("symlinked transferred evidence was accepted: %v", err)
+	}
+}
+
 func TestResolveArtifactEvidenceRejectsChangedBytes(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "logging.tar.zst")
@@ -80,6 +138,52 @@ func TestResolveArtifactEvidenceRejectsChangedBytes(t *testing.T) {
 	}
 	if _, _, err := ResolveArtifactEvidence(root, artifact); err == nil {
 		t.Fatal("changed artifact bytes were accepted")
+	}
+}
+
+func TestQualifiedArtifactCacheJourneys(t *testing.T) {
+	root := t.TempDir()
+	artifactPath := filepath.Join(root, "artifact.bin")
+	if err := os.WriteFile(artifactPath, []byte("cached appliance"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveArtifactEvidence(root, artifact); err == nil {
+		t.Fatal("missing cache evidence was accepted; a builder is required")
+	}
+	evidence, err := EvidenceForFile(artifactPath, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = artifactPath
+	evidence = completeQualificationEvidence(t, evidence)
+	evidence, err = QualifyEvidence(evidence, ScanSummary{Completed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteEvidence(root, artifact.Name, evidence); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveArtifactEvidence(root, artifact); err != nil {
+		t.Fatalf("matching qualified cache was rejected: %v", err)
+	}
+	if err := os.Remove(artifactPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveArtifactEvidence(root, artifact); err == nil || !strings.Contains(err.Error(), "stat artifact") {
+		t.Fatalf("missing cached artifact was accepted: %v", err)
+	}
+	if err := os.WriteFile(artifactPath, []byte("cached appliance"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifactPath, []byte("corrupted appliance"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveArtifactEvidence(root, artifact); err == nil {
+		t.Fatal("corrupt cached artifact was accepted; a fresh builder is required")
 	}
 }
 
@@ -179,6 +283,39 @@ func TestQualificationRejectsIncompleteScan(t *testing.T) {
 	}
 }
 
+func TestQualificationAllowsMissingBuilderProvenance(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "artifact.bin")
+	if err := os.WriteFile(path, []byte("qualified bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := EvidenceForFile(path, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = path
+	evidence = completeQualificationEvidence(t, evidence)
+	provenancePath := filepath.Join(filepath.Dir(path), "builder-provenance.json")
+	if err := os.Remove(provenancePath); err != nil {
+		t.Fatal(err)
+	}
+	evidence.BuilderProvenanceSHA256 = ""
+	qualified, err := QualifyEvidence(evidence, ScanSummary{Completed: true})
+	if err != nil || !qualified.Qualified {
+		t.Fatalf("qualification rejected missing optional builder provenance: %#v %v", qualified, err)
+	}
+	root := filepath.Dir(path)
+	if err := WriteEvidence(root, artifact.Name, qualified); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveArtifactEvidence(root, artifact); err != nil {
+		t.Fatalf("resolution rejected qualified artifact without optional builder provenance: %v", err)
+	}
+}
+
 func TestWriteEvidenceCannotForgeEvaluatorAuthorization(t *testing.T) {
 	root := t.TempDir()
 	artifact, err := ArtifactFor("logging")
@@ -226,18 +363,62 @@ func TestWriteEvidenceCannotAuthorizeUnqualifiedInputs(t *testing.T) {
 	}
 }
 
+func TestQualifiedEvidenceRequiresEvaluatorAndPolicyMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "artifact.bin")
+	if err := os.WriteFile(path, []byte("qualified bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := EvidenceForFile(path, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = path
+	evidence = completeQualificationEvidence(t, evidence)
+	evidence.Qualified = true
+	evidence.ScanCompleted = true
+	for name, mutate := range map[string]func(*Evidence){
+		"wrong evaluator": func(value *Evidence) {
+			value.QualificationEvaluator = "untrusted-evaluator"
+			value.QualificationPolicyVersion = QualificationPolicyVersion
+		},
+		"missing policy": func(value *Evidence) {
+			value.QualificationEvaluator = QualificationEvaluator
+			value.QualificationPolicyVersion = ""
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := evidence
+			mutate(&candidate)
+			if err := validateQualificationDigests(candidate); err == nil {
+				t.Fatal("unauthorized qualified evidence was accepted")
+			}
+		})
+	}
+}
+
 func completeQualificationEvidence(t *testing.T, evidence Evidence) Evidence {
 	t.Helper()
 	if evidence.ArtifactPath == "" {
 		evidence.PackageManifestSHA = strings.Repeat("a", 64)
 		evidence.SBOMSHA256 = strings.Repeat("b", 64)
 		evidence.TrivyReportSHA256 = strings.Repeat("c", 64)
+		evidence.BuilderProvenanceSHA256 = strings.Repeat("d", 64)
+		evidence.Builder = BuilderProvenance{
+			Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429",
+			Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3",
+			MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.1",
+		}
 		return evidence
 	}
 	inputs := map[string]string{
-		"package-manifest.txt": "package: boetticher-test\n",
-		"sbom.json":            `{"bomFormat":"CycloneDX","specVersion":"1.5"}` + "\n",
-		"trivy.json":           `{"Results":[]}` + "\n",
+		"package-manifest.txt":    "package: boetticher-test\n",
+		"sbom.json":               `{"bomFormat":"CycloneDX","specVersion":"1.5"}` + "\n",
+		"trivy.json":              `{"Results":[]}` + "\n",
+		"builder-provenance.json": `{"platform":"debian-13-amd64","input_image":"debian-13-genericcloud-amd64-20260327-2429","kernel":"6.1.0","go":"go version go1.26.5 linux/amd64","trivy":"Version: 0.69.3","mmdebstrap":"mmdebstrap 1.5.0","architecture":"amd64","boetticher_version":"0.3.1"}` + "\n",
 	}
 	for filename, content := range inputs {
 		if err := os.WriteFile(filepath.Join(filepath.Dir(evidence.ArtifactPath), filename), []byte(content), 0o600); err != nil {
@@ -247,6 +428,12 @@ func completeQualificationEvidence(t *testing.T, evidence Evidence) Evidence {
 	evidence.PackageManifestSHA, _ = QualificationInputSHA256(filepath.Join(filepath.Dir(evidence.ArtifactPath), "package-manifest.txt"), "package manifest")
 	evidence.SBOMSHA256, _ = QualificationInputSHA256(filepath.Join(filepath.Dir(evidence.ArtifactPath), "sbom.json"), "SBOM")
 	evidence.TrivyReportSHA256, _ = QualificationInputSHA256(filepath.Join(filepath.Dir(evidence.ArtifactPath), "trivy.json"), "Trivy report")
+	evidence.BuilderProvenanceSHA256, _ = QualificationInputSHA256(filepath.Join(filepath.Dir(evidence.ArtifactPath), "builder-provenance.json"), "builder provenance")
+	evidence.Builder = BuilderProvenance{
+		Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429",
+		Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3",
+		MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.1",
+	}
 	return evidence
 }
 
@@ -394,6 +581,7 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	for _, required := range []string{
 		"mirror: https://snapshot.debian.org/archive/debian/20260327T000000Z/",
 		"snapshot: 20260327T000000Z",
+		"build:\n  packages:",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("base definition is missing pinned Debian source %q", required)
@@ -403,8 +591,28 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(buildScript), "mirror=https://snapshot.debian.org/archive/debian/20260327T000000Z/") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Check-Valid-Until=false") {
+	if !strings.Contains(string(buildScript), "base_packages=$(awk") || !strings.Contains(string(buildScript), "--include=\"$base_packages\"") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Check-Valid-Until=false") {
 		t.Fatal("base builder does not use the pinned Debian snapshot")
+	}
+}
+
+func TestApplianceBuildEmbedsDefinitionIdentityWithoutContentEvidence(t *testing.T) {
+	buildScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(buildScript)
+	for _, required := range []string{
+		"write_artifact_identity \"$rootfs\" base",
+		"write_artifact_identity \"$rootfs\" dns blocky",
+		"write_artifact_identity \"$rootfs\" logging",
+		"write_artifact_identity \"$rootfs\" monitoring",
+		"write_artifact_identity \"$rootfs\" portal",
+		"-upload \"$artifact_identity:/usr/lib/boetticher/artifact.json\"",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("build path does not embed non-secret definition identity: %q", required)
+		}
 	}
 }
 

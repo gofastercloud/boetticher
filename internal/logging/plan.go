@@ -13,6 +13,7 @@ const (
 	CollectorAddress   = "10.10.20.40"
 	CollectorPort      = 19532
 	RemoteJournalPath  = "/var/log/journal/remote"
+	CollectorVolumeGiB = 10
 	CollectorMaxUse    = "8G"
 	CollectorKeepFree  = "1G"
 	LocalJournalMaxUse = "256M"

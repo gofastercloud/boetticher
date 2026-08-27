@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/gofastercloud/boetticher/internal/artifacts"
+	"github.com/gofastercloud/boetticher/internal/logging"
 	"github.com/gofastercloud/boetticher/internal/model"
 )
 
@@ -14,7 +15,7 @@ func composeDeclarations(site model.Site, resolved []ResolvedModule) ([]model.Mo
 		if !module.Enabled {
 			continue
 		}
-		declaration, err := declarationFor(module.Definition.Name, site)
+		declaration, err := declarationFor(module.Definition, site)
 		if err != nil {
 			return nil, err
 		}
@@ -24,8 +25,9 @@ func composeDeclarations(site model.Site, resolved []ResolvedModule) ([]model.Mo
 	return declarations, nil
 }
 
-func declarationFor(name string, site model.Site) (model.ModuleDeclaration, error) {
-	components := moduleComponents(site, name)
+func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleDeclaration, error) {
+	name := definition.Name
+	components := moduleGuestProjections(definition)
 	provider := ""
 	if name == "dns" {
 		provider = site.ModuleConfig["dns"].Provider
@@ -70,17 +72,6 @@ func declarationFor(name string, site model.Site) (model.ModuleDeclaration, erro
 	return declaration, nil
 }
 
-func moduleComponents(site model.Site, name string) []model.Component {
-	components := make([]model.Component, 0)
-	for _, component := range site.PlatformComponents() {
-		if component.Module == name {
-			components = append(components, component)
-		}
-	}
-	sort.Slice(components, func(i, j int) bool { return components[i].Name < components[j].Name })
-	return components
-}
-
 func persistentFor(module, guest string) []model.PersistentState {
 	identity := model.PersistentState{Name: "ssh-identity", Guest: guest, Path: "/var/lib/boetticher/identity/ssh", Kind: "endpoint-identity", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}
 	switch module {
@@ -111,7 +102,7 @@ func volumesFor(module, guest string) []model.PersistentVolumeDeclaration {
 		// Central journals are a bounded secondary evidence cache. The logging
 		// appliance remains in the platform backup set, while this high-churn
 		// volume is intentionally excluded from guest backups.
-		v := volume("journal", "/var/log/journal/remote", 10, false)
+		v := volume("journal", "/var/log/journal/remote", logging.CollectorVolumeGiB, false)
 		v.Placement = model.StoragePreferDataDisk
 		return []model.PersistentVolumeDeclaration{identity, v}
 	default:

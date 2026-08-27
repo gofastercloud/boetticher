@@ -36,19 +36,37 @@ type Definition struct {
 // artifact definition. Build timestamps and tool versions are evidence only;
 // they never become desired-state inputs.
 type Evidence struct {
-	Artifact                   model.Artifact `json:"artifact"`
-	ArtifactPath               string         `json:"artifact_path,omitempty"`
-	ContentSHA256              string         `json:"content_sha256"`
-	SizeBytes                  int64          `json:"size_bytes"`
-	PackageManifestSHA         string         `json:"package_manifest_sha256,omitempty"`
-	SBOMSHA256                 string         `json:"sbom_sha256,omitempty"`
-	TrivyReportSHA256          string         `json:"trivy_report_sha256,omitempty"`
-	QualificationPolicyVersion string         `json:"qualification_policy_version,omitempty"`
-	QualificationEvaluator     string         `json:"qualification_evaluator,omitempty"`
-	ScanCompleted              bool           `json:"scan_completed"`
-	DefinitionSHA256           string         `json:"definition_sha256"`
-	Qualified                  bool           `json:"qualified"`
+	Artifact                   model.Artifact    `json:"artifact"`
+	ArtifactPath               string            `json:"artifact_path,omitempty"`
+	ContentSHA256              string            `json:"content_sha256"`
+	SizeBytes                  int64             `json:"size_bytes"`
+	PackageManifestSHA         string            `json:"package_manifest_sha256,omitempty"`
+	SBOMSHA256                 string            `json:"sbom_sha256,omitempty"`
+	TrivyReportSHA256          string            `json:"trivy_report_sha256,omitempty"`
+	BuilderProvenanceSHA256    string            `json:"builder_provenance_sha256,omitempty"`
+	QualificationPolicyVersion string            `json:"qualification_policy_version,omitempty"`
+	QualificationEvaluator     string            `json:"qualification_evaluator,omitempty"`
+	ScanCompleted              bool              `json:"scan_completed"`
+	DefinitionSHA256           string            `json:"definition_sha256"`
+	Qualified                  bool              `json:"qualified"`
+	Builder                    BuilderProvenance `json:"builder,omitempty"`
 	qualifiedByEvaluator       bool
+}
+
+// BuilderProvenance records the non-deterministic environment that produced
+// qualification evidence. It is evidence only and never enters the
+// deterministic Site revision.
+type BuilderProvenance struct {
+	Platform          string `json:"platform"`
+	InputImage        string `json:"input_image"`
+	Kernel            string `json:"kernel"`
+	Go                string `json:"go"`
+	Trivy             string `json:"trivy"`
+	MMDebstrap        string `json:"mmdebstrap"`
+	Libguestfs        string `json:"libguestfs,omitempty"`
+	QEMUImg           string `json:"qemu_img,omitempty"`
+	Architecture      string `json:"architecture"`
+	BoetticherVersion string `json:"boetticher_version"`
 }
 
 type ScanSummary struct {
@@ -64,8 +82,8 @@ const QualificationPolicyVersion = "boetticher-trivy-v1"
 const QualificationEvaluator = "boetticher-qualify-artifact"
 
 // QualifyEvidence is the only operation allowed to mark artifact evidence
-// qualified. Hashing a file proves its bytes, but does not prove package,
-// SBOM, or Trivy qualification policy.
+// qualified. The evaluator records the completed smoke/Trivy gate; optional
+// manifests, SBOMs, and builder provenance remain useful release outputs.
 func QualifyEvidence(evidence Evidence, scan ScanSummary) (Evidence, error) {
 	if err := validateQualificationDigests(evidence); err != nil {
 		return Evidence{}, fmt.Errorf("qualification evidence is incomplete: %w", err)
@@ -94,7 +112,14 @@ func LoadEvidence(root, name string) (Evidence, error) {
 	if root == "" || name == "" {
 		return Evidence{}, fmt.Errorf("artifact evidence requires root and name")
 	}
-	data, err := os.ReadFile(EvidencePath(root, name))
+	if err := validateEvidenceName(name); err != nil {
+		return Evidence{}, err
+	}
+	path := EvidencePath(root, name)
+	if err := validateEvidenceEntry(path); err != nil {
+		return Evidence{}, fmt.Errorf("inspect artifact evidence %s: %w", name, err)
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return Evidence{}, fmt.Errorf("read artifact evidence %s: %w", name, err)
 	}
@@ -146,10 +171,9 @@ func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artif
 	return resolved, evidence, nil
 }
 
-// verifyQualificationInputs binds the qualified artifact to the exact
-// manifest, SBOM, and raw scanner report stored beside it. The content digest
-// alone is not sufficient to establish that the qualification evidence still
-// describes the bytes being deployed.
+// verifyQualificationInputs checks any qualification outputs that were
+// recorded beside the artifact. The content digest and completed Trivy gate
+// are authoritative; manifests, SBOMs, and provenance are optional outputs.
 func verifyQualificationInputs(evidence Evidence) error {
 	if evidence.ArtifactPath == "" {
 		return fmt.Errorf("artifact path is required")
@@ -165,6 +189,9 @@ func verifyQualificationInputs(evidence Evidence) error {
 		{name: "Trivy report", filename: "trivy.json", expected: evidence.TrivyReportSHA256},
 	}
 	for _, input := range inputs {
+		if input.expected == "" {
+			continue
+		}
 		actual, err := QualificationInputSHA256(filepath.Join(directory, input.filename), input.name)
 		if err != nil {
 			return err
@@ -179,12 +206,17 @@ func verifyQualificationInputs(evidence Evidence) error {
 var sha256Pattern = regexp.MustCompile(`^[a-fA-F0-9]{64}$`)
 
 func validateQualificationDigests(evidence Evidence) error {
+	if !sha256Pattern.MatchString(evidence.ContentSHA256) {
+		return fmt.Errorf("content_sha256 must be a SHA-256 digest")
+	}
 	for name, value := range map[string]string{
-		"content_sha256":          evidence.ContentSHA256,
 		"package_manifest_sha256": evidence.PackageManifestSHA,
 		"sbom_sha256":             evidence.SBOMSHA256,
 		"trivy_report_sha256":     evidence.TrivyReportSHA256,
 	} {
+		if value == "" {
+			continue
+		}
 		if !sha256Pattern.MatchString(value) {
 			return fmt.Errorf("%s must be a SHA-256 digest", name)
 		}
@@ -195,8 +227,14 @@ func validateQualificationDigests(evidence Evidence) error {
 	if evidence.Qualified && evidence.QualificationEvaluator != QualificationEvaluator {
 		return fmt.Errorf("qualified evidence must be produced by %s", QualificationEvaluator)
 	}
+	if evidence.Qualified && evidence.QualificationPolicyVersion != QualificationPolicyVersion {
+		return fmt.Errorf("qualified evidence must declare policy %s", QualificationPolicyVersion)
+	}
 	if evidence.Qualified && !evidence.ScanCompleted {
 		return fmt.Errorf("qualified evidence must include a completed Trivy scan")
+	}
+	if evidence.Qualified && !sha256Pattern.MatchString(evidence.TrivyReportSHA256) {
+		return fmt.Errorf("qualified evidence must include a Trivy report digest")
 	}
 	return nil
 }
@@ -211,6 +249,7 @@ const (
 
 var commonDefinitionInputs = []string{
 	"images/base",
+	"cmd/artifact-identity",
 	"scripts/build-images.sh",
 	"scripts/smoke-appliance.sh",
 }
@@ -353,18 +392,11 @@ func definitionFiles(inputs []string) ([]string, error) {
 }
 
 func EvidenceForFile(path string, artifact model.Artifact) (Evidence, error) {
-	file, err := os.Open(path)
+	file, info, err := openEvidenceFile(path, "artifact")
 	if err != nil {
 		return Evidence{}, fmt.Errorf("open artifact %s: %w", path, err)
 	}
 	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return Evidence{}, fmt.Errorf("stat artifact %s: %w", path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return Evidence{}, fmt.Errorf("artifact %s is not a regular file", path)
-	}
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
 		return Evidence{}, fmt.Errorf("hash artifact %s: %w", path, err)
@@ -377,23 +409,46 @@ func EvidenceForFile(path string, artifact model.Artifact) (Evidence, error) {
 // is a non-empty regular file. Empty or special files cannot provide evidence
 // for a package manifest, SBOM, or scanner report.
 func QualificationInputSHA256(path, name string) (string, error) {
-	info, err := os.Stat(path)
+	file, info, err := openEvidenceFile(path, name+" qualification input")
 	if err != nil {
-		return "", fmt.Errorf("stat %s qualification input: %w", name, err)
-	}
-	if !info.Mode().IsRegular() || info.Size() == 0 {
-		return "", fmt.Errorf("%s qualification input must be a non-empty regular file", name)
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("open %s qualification input: %w", name, err)
+		return "", err
 	}
 	defer file.Close()
+	if info.Size() == 0 {
+		return "", fmt.Errorf("%s qualification input must be a non-empty regular file", name)
+	}
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
 		return "", fmt.Errorf("hash %s qualification input: %w", name, err)
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func openEvidenceFile(path, description string) (*os.File, os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("stat %s: %w", description, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, nil, fmt.Errorf("%s must not be a symlink", description)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("%s must be a regular file", description)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open %s: %w", description, err)
+	}
+	opened, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("stat opened %s: %w", description, err)
+	}
+	if !os.SameFile(info, opened) {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("%s changed while opening", description)
+	}
+	return file, opened, nil
 }
 
 // ContentSHA256ForFile recalculates the checksum immediately before an

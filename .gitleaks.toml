@@ -6,10 +6,6 @@ description = "Historical pre-rename command prose is not a credential"
 regexTarget = "line"
 regexes = ['homelab bootstrap']
 
-[[allowlists]]
-description = "The PowerDNS input-pinning commit contains only public repository verification metadata"
-commits = ['c27c981845d960146559ad785f576e4e22c391a9']
-
 [[rules]]
 id = "generic-api-key"
 

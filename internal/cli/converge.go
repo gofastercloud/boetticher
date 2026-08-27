@@ -46,9 +46,6 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return err
 	}
-	if err := writeModelProjections(*siteDir, s); err != nil {
-		return err
-	}
 	if *dryRun {
 		fmt.Fprintf(out, "Deployment plan: PASS model %s\n", firewallPlan.ModelRevision)
 		fmt.Fprintf(out, "  Mode: %s\n  Engine: %s\n  DHCP subnets: %d\n  Policy rules: %d\n", firewallPlan.Mode, firewallPlan.Engine, len(firewallPlan.DHCP), len(firewallPlan.Rules))
@@ -66,9 +63,12 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 		fmt.Fprintln(out, "  Destructive actions: NOT RUN (dry-run)")
 		if plan, planErr := proxmox.PlanFromSite(s); planErr == nil {
-			qualified, qualifyErr := proxmox.ResolveQualifiedArtifacts(*siteDir, plan, false)
-			if qualifyErr == nil {
+			qualified, qualifyErr := proxmox.ResolveQualifiedArtifacts(*siteDir, plan, true)
+			if qualifyErr != nil {
+				fmt.Fprintf(out, "  Artifact qualification: HOLD (%v)\n", qualifyErr)
+			} else {
 				plan = qualified
+				fmt.Fprintln(out, "  Artifact qualification: PASS (all selected artifacts qualified)")
 			}
 			fmt.Fprintln(out, "  Appliances:")
 			for _, guest := range plan.Guests {
@@ -79,6 +79,9 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			}
 		}
 		return nil
+	}
+	if err := writeModelProjections(*siteDir, s); err != nil {
+		return err
 	}
 	backupPlan, err := backup.PlanFromSite(s)
 	if err != nil {
