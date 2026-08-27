@@ -3,6 +3,13 @@
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 
+## [0.3.32] - 2026-08-27
+
+### Fixed
+
+- Explicitly attach the hosted builder disk through the qualified
+  `virtio-scsi-single` controller.
+
 ## [0.3.31] - 2026-08-27
 
 ### Fixed

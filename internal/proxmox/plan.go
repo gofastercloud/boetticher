@@ -716,6 +716,7 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 		"memory":    {strconv.Itoa(builder.MemoryMiB)},
 		"cores":     {strconv.Itoa(builder.Cores)},
 		"cpu":       {"host"},
+		"scsihw":    {"virtio-scsi-single"},
 		"ostype":    {"l26"},
 		"onboot":    {"0"},
 		"agent":     {"1"},
