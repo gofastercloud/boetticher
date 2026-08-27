@@ -164,6 +164,20 @@ func TestGuestPlaybookProjectsLoggingClientsBeyondTheCollector(t *testing.T) {
 	}
 }
 
+func TestFirewallRoleCreatesNftablesConfigurationDirectory(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{"- name: Create nftables configuration directory", "path: /etc/nftables.d", "state: directory"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("firewall role missing %q", expected)
+		}
+	}
+}
+
 func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	variables, err := Variables(site)

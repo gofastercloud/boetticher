@@ -63,6 +63,14 @@
 - name: Load credential drop-ins before starting gateway services
   ansible.builtin.meta: flush_handlers
 
+- name: Create nftables configuration directory
+  ansible.builtin.file:
+    path: /etc/nftables.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
 - name: Install the candidate boetticher nftables ruleset
   ansible.builtin.copy:
     content: "{{ firewall_ruleset }}"
