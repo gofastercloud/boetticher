@@ -1427,7 +1427,7 @@ func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage,
 	if err != nil {
 		return fmt.Errorf("inspect %s artifact storage: %w", content, err)
 	}
-	if found, err := verifyStoredArtifact(entries, filename, checksum); err != nil {
+	if found, err := verifyStoredArtifact(entries, filename, checksum, false); err != nil {
 		return err
 	} else if found {
 		return nil
@@ -1449,7 +1449,7 @@ func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage,
 	if err != nil {
 		return fmt.Errorf("verify uploaded %s artifact storage: %w", filename, err)
 	}
-	found, err := verifyStoredArtifact(entries, filename, checksum)
+	found, err := verifyStoredArtifact(entries, filename, checksum, content == "import")
 	if err != nil {
 		return err
 	}
@@ -1463,7 +1463,7 @@ func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage,
 // task is not evidence that Proxmox stored the qualified bytes under the
 // expected content identity; the storage listing must expose the same
 // checksum before the artifact can be used for guest creation.
-func verifyStoredArtifact(entries []StorageContent, filename, checksum string) (bool, error) {
+func verifyStoredArtifact(entries []StorageContent, filename, checksum string, allowMissingChecksum bool) (bool, error) {
 	for _, entry := range entries {
 		if entry.Filename != filename && !strings.HasSuffix(entry.VolID, "/"+filename) {
 			continue
@@ -1473,6 +1473,12 @@ func verifyStoredArtifact(entries []StorageContent, filename, checksum string) (
 			observed = entry.CSum
 		}
 		if observed == "" {
+			if allowMissingChecksum {
+				// Import content listings omit checksums. A just-completed upload
+				// task already verified the requested checksum, so its presence is
+				// sufficient evidence for this post-upload check.
+				return true, nil
+			}
 			return false, fmt.Errorf("stored artifact %s has no checksum evidence", filename)
 		}
 		if !strings.EqualFold(observed, checksum) {

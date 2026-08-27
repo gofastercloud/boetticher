@@ -577,7 +577,7 @@ func TestEnsureQEMUUploadsQcow2ThroughImportContent(t *testing.T) {
 			if storageReads == 1 {
 				return response([]byte(`{"data":[]}`))
 			}
-			return response([]byte(`{"data":[{"volid":"local:import/boetticher-firewall-1.0.0-amd64.qcow2","filename":"boetticher-firewall-1.0.0-amd64.qcow2","checksum":"` + checksum + `"}]}`))
+			return response([]byte(`{"data":[{"volid":"local:import/boetticher-firewall-1.0.0-amd64.qcow2","filename":"boetticher-firewall-1.0.0-amd64.qcow2"}]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
 			reader, err := r.MultipartReader()
 			if err != nil {
@@ -599,7 +599,9 @@ func TestEnsureQEMUUploadsQcow2ThroughImportContent(t *testing.T) {
 					uploadContent = string(value)
 				}
 			}
-			return response([]byte(`{"data":null}`))
+			return response([]byte(`{"data":"UPID:pve:upload"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:upload/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu":
 			return response([]byte(`{"data":null}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/100/config":

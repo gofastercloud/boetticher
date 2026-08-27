@@ -569,6 +569,17 @@ func (c *Client) UploadStorageFile(ctx context.Context, node, storage, content, 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return &APIError{StatusCode: response.StatusCode, Status: response.Status, Message: strings.TrimSpace(string(data))}
 	}
+	var result struct {
+		UPID string `json:"data"`
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return fmt.Errorf("decode Proxmox upload response: %w", err)
+	}
+	if result.UPID != "" {
+		if err := c.WaitTask(ctx, node, result.UPID); err != nil {
+			return fmt.Errorf("wait for Proxmox artifact upload: %w", err)
+		}
+	}
 	return nil
 }
 
