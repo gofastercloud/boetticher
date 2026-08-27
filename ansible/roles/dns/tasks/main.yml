@@ -179,7 +179,7 @@
     - dns_plan.recursive_provider == 'adguard'
 
 - name: Assert the qualified Blocky binary is present
-  ansible.builtin.command: blocky --version
+  ansible.builtin.command: blocky version
   register: blocky_version
   changed_when: false
   when:

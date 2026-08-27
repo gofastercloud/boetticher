@@ -213,6 +213,21 @@ func TestDNSRoleUsesPowerDNS49CommandNames(t *testing.T) {
 	}
 }
 
+func TestDNSRoleUsesBlockyVersionSubcommand(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "ansible.builtin.command: blocky version") {
+		t.Fatal("DNS role does not use Blocky's supported version subcommand")
+	}
+	if strings.Contains(text, "blocky --version") {
+		t.Fatal("DNS role retains Blocky's unsupported --version flag")
+	}
+}
+
 func TestFirewallRoleCreatesNftablesConfigurationDirectory(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
