@@ -270,6 +270,19 @@ func TestQEMUStatusUsesLiveStatusEndpoint(t *testing.T) {
 	}
 }
 
+func TestEnsureVMRunningDoesNotRestartRunningVM(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/node/qemu/100/status/current" {
+			t.Fatalf("unexpected request while checking running VM: %s %s", r.Method, r.URL.Path)
+		}
+		return response([]byte(`{"data":{"status":"running"}}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.EnsureVMRunning(context.Background(), "node", 100); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDestroyBuilderStopsRunningOwnedVMBeforeRemoval(t *testing.T) {
 	stopped := false
 	removed := false
@@ -327,6 +340,9 @@ func TestUploadStorageFileUsesMultipartArtifactContract(t *testing.T) {
 		if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data;") {
 			t.Fatalf("upload was not multipart: %q", r.Header.Get("Content-Type"))
 		}
+		if r.ContentLength <= 0 || len(r.TransferEncoding) != 0 {
+			t.Fatalf("upload framing is not length-delimited: content-length=%d transfer-encoding=%v", r.ContentLength, r.TransferEncoding)
+		}
 		if err := r.ParseMultipartForm(1 << 20); err != nil {
 			t.Fatal(err)
 		}
@@ -372,6 +388,9 @@ func TestUploadStorageFileStreamsLargeArtifactBody(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.GetBody != nil {
 			t.Fatal("streamed multipart request unexpectedly exposes a replayable buffered body")
+		}
+		if r.ContentLength <= 0 || len(r.TransferEncoding) != 0 {
+			t.Fatalf("large upload framing is not length-delimited: content-length=%d transfer-encoding=%v", r.ContentLength, r.TransferEncoding)
 		}
 		if _, err := io.Copy(io.Discard, r.Body); err != nil {
 			t.Fatal(err)

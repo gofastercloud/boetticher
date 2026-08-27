@@ -289,6 +289,7 @@ install_zabbix() {
 package_lxc() {
   name=$1
   rootfs=$(rootfs_for "$name")
+  rm -f "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
   printf '%s\n' "boetticher package stage: $name smoke"
   destination="$output_root/$name"
   mkdir -p "$destination"
@@ -473,6 +474,7 @@ build_firewall() {
     --upload images/base/runtime/debian-snapshot.sources:/etc/apt/sources.list.d/boetticher-debian.sources \
     --upload images/base/runtime/debian-security-snapshot.sources:/etc/apt/sources.list.d/boetticher-debian-security.sources \
     --run-command 'rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; apt-get -o Acquire::Check-Valid-Until=false update' \
+    --run-command 'DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes --no-install-recommends' \
     --run-command 'DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony openssh-server sudo cloud-init systemd-journal-remote curl jq openssl qemu-guest-agent' \
     --upload "$zabbix_release:/tmp/zabbix-release.deb" \
     --run-command 'dpkg --install /tmp/zabbix-release.deb' \

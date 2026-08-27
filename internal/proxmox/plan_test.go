@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -449,8 +450,40 @@ func TestQEMUPersistentVolumeParamsUseCoreResolvedStorage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := params["scsi1"]; got != modelStorageIDForTest+":4,backup=1,serial=boetticher-firewall-lab-fw-01-kea-leases" {
+	if got := params["scsi1"]; got != modelStorageIDForTest+":4,backup=1,serial=boetticher-131072f5f225f1be9bdcc358d" {
 		t.Fatalf("unexpected persistent QEMU disk: %q", got)
+	}
+}
+
+func TestEnsureQEMUMigratesLegacyPersistentVolumeSerial(t *testing.T) {
+	guest := GuestPlan{VMID: 100, Name: "test-fw", Volumes: []model.PersistentVolumeDeclaration{{
+		Name: "kea-leases", Module: "firewall", Guest: "lab-fw-01", SizeGiB: 4,
+		MountPath: "/var/lib/kea", Storage: "local", Backup: true,
+	}}}
+	legacy := "local:100/vm-100-disk-0.raw,backup=1,serial=boetticher-firewall-lab-fw-01-kea-leases,size=4G"
+	updated := ""
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/config":
+			return response([]byte(`{"data":{"name":"test-fw","scsi1":"` + legacy + `"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/100/config":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			updated = r.Form.Get("scsi1")
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected QEMU migration request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := ensureQEMU(context.Background(), client, Plan{Node: "node"}, guest); err != nil {
+		t.Fatalf("ensureQEMU() = %v", err)
+	}
+	want := "local:4,backup=1,serial=boetticher-131072f5f225f1be9bdcc358d"
+	if updated != want {
+		t.Fatalf("migrated QEMU disk = %q, want %q", updated, want)
 	}
 }
 
@@ -469,9 +502,11 @@ func TestExistingQEMUPersistentVolumesRequireStableIdentity(t *testing.T) {
 		MountPath: "/var/lib/kea", Storage: modelStorageIDForTest, Backup: true,
 	}}}
 	plan := Plan{}
-	if err := validateExistingQEMUVolumes(map[string]any{
-		"scsi1": modelStorageIDForTest + ":4,backup=1,serial=boetticher-firewall-lab-fw-01-kea-leases",
-	}, plan, guest); err != nil {
+	expected, err := qemuPersistentVolumeParam(plan, guest.Volumes[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateExistingQEMUVolumes(map[string]any{"scsi1": expected}, plan, guest); err != nil {
 		t.Fatalf("stable QEMU volume identity was rejected: %v", err)
 	}
 	for _, observed := range []string{
@@ -562,6 +597,94 @@ func TestEnsureArtifactInStorageHoldsOnPostUploadChecksumMismatch(t *testing.T) 
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
 	if err := ensureArtifactInStorage(context.Background(), client, "node", "local", "vztmpl", filename, checksum, artifactPath); err == nil || !strings.Contains(err.Error(), "does not match qualified") {
 		t.Fatalf("post-upload checksum mismatch was not rejected: %v", err)
+	}
+}
+
+func TestEnsureQEMUUploadsQcow2ThroughImportContent(t *testing.T) {
+	artifactPath := filepath.Join(t.TempDir(), "firewall.qcow2")
+	content := []byte("qualified firewall bytes")
+	if err := os.WriteFile(artifactPath, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	checksum := fmt.Sprintf("%x", sha256.Sum256(content))
+	guest := GuestPlan{VMID: 100, Name: "test-fw", Artifact: model.Artifact{
+		Name: "boetticher-firewall", Version: "1.0.0", Architecture: "amd64", ContentSHA256: checksum,
+	}}
+	plan := Plan{Node: "node", Storage: modelStorageIDForTest, ArtifactFiles: map[string]string{
+		artifactKey(guest.Artifact): artifactPath,
+	}, OperatorPublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator"}
+	uploadContent := ""
+	importDisk := ""
+	createSSHKeys := ""
+	storageReads := 0
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/100/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+			storageReads++
+			if storageReads == 1 {
+				return response([]byte(`{"data":[{"volid":"local:import/boetticher-firewall-1.0.0-amd64.qcow2","filename":"boetticher-firewall-1.0.0-amd64.qcow2"}]}`))
+			}
+			return response([]byte(`{"data":[{"volid":"local:import/boetticher-firewall-1.0.0-amd64.qcow2","filename":"boetticher-firewall-1.0.0-amd64.qcow2"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
+			reader, err := r.MultipartReader()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for {
+				part, err := reader.NextPart()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if part.FormName() == "content" {
+					value, err := io.ReadAll(part)
+					if err != nil {
+						t.Fatal(err)
+					}
+					uploadContent = string(value)
+				}
+			}
+			return response([]byte(`{"data":"UPID:pve:upload"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:upload/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			createSSHKeys = r.Form.Get("sshkeys")
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/100/config":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			importDisk = r.Form.Get("scsi0")
+			return response([]byte(`{"data":"UPID:pve:import"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:import/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		default:
+			t.Fatalf("unexpected QEMU request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := ensureQEMU(context.Background(), client, plan, guest); err != nil {
+		t.Fatalf("ensureQEMU() = %v", err)
+	}
+	if uploadContent != "import" {
+		t.Fatalf("qcow2 upload content = %q, want import", uploadContent)
+	}
+	wantImport := "boetticher-thin:0,import-from=local:import/boetticher-firewall-1.0.0-amd64.qcow2,format=qcow2"
+	if importDisk != wantImport {
+		t.Fatalf("QEMU import disk = %q, want %q", importDisk, wantImport)
+	}
+	if want := url.PathEscape(plan.OperatorPublicKey); createSSHKeys != want {
+		t.Fatalf("QEMU sshkeys = %q, want URL-encoded key %q", createSSHKeys, want)
 	}
 }
 
