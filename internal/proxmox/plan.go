@@ -782,7 +782,7 @@ func DestroyBuilderVM(ctx context.Context, client *Client, node string) error {
 			return fmt.Errorf("stop temporary builder: %w", err)
 		}
 	}
-	if err := client.Delete(ctx, fmt.Sprintf("/nodes/%s/qemu/%d", node, model.BuilderVMID)); err != nil {
+	if err := client.DestroyQEMU(ctx, node, model.BuilderVMID); err != nil {
 		return fmt.Errorf("destroy temporary builder: %w", err)
 	}
 	if err := WaitForGuestAbsent(ctx, client, node, model.BuilderVMID, 30, time.Second); err != nil {

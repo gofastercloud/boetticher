@@ -140,6 +140,25 @@ func TestDeleteStorageSnippetRejectsPathsAndUsesExactEndpoint(t *testing.T) {
 	}
 }
 
+func TestDestroyQEMUPurgesBuilderConfigurationAndUnreferencedDisks(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api2/json/nodes/node/qemu/190" {
+			t.Fatalf("unexpected QEMU destruction request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("purge") != "1" || r.URL.Query().Get("destroy-unreferenced-disks") != "1" {
+			t.Fatalf("QEMU destruction did not request bounded cleanup: %v", r.URL.Query())
+		}
+		return response([]byte(`{"data":null}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.DestroyQEMU(context.Background(), "node", 190); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DestroyQEMU(context.Background(), "node", 0); err == nil {
+		t.Fatal("invalid QEMU destruction identity was accepted")
+	}
+}
+
 func TestUploadStorageFileUsesMultipartArtifactContract(t *testing.T) {
 	path := t.TempDir() + "/artifact.tar.zst"
 	if err := os.WriteFile(path, []byte("artifact bytes"), 0o600); err != nil {
