@@ -1,7 +1,7 @@
 name: boetticher-base
 version: 0.3.33
 distribution: debian
-release: "13"
+release: trixie
 architecture: amd64
 init: systemd
 source:

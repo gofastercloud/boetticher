@@ -13,6 +13,8 @@ project, so releases can make clean breaks while the design is settling.
   downloads.
 - Decode the Proxmox QEMU guest-agent interface response from its `result`
   object so hosted-builder address readiness matches the live API contract.
+- Use Debian 13's `trixie` suite name when mmdebstrap consumes the pinned
+  snapshot; the numeric `13` suite returned 404 during hosted construction.
 
 ## [0.3.32] - 2026-08-27
 
