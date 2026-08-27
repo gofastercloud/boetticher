@@ -91,11 +91,6 @@ func writeHostAt(b *strings.Builder, component model.Component, address string, 
 		user = model.DefaultAdminSSHUser
 	}
 	fmt.Fprintf(b, "%s ansible_host=%s ansible_user=%s", component.Name, address, user)
-	if throughBastion {
-		fmt.Fprintf(b, " ansible_ssh_common_args='-o ProxyJump=lab-bastion -o HostKeyAlias=%s.%s'", component.Hostname, model.DefaultDomain)
-	} else {
-		fmt.Fprintf(b, " ansible_ssh_common_args='-o HostKeyAlias=%s.%s'", component.Hostname, model.DefaultDomain)
-	}
 	b.WriteByte('\n')
 }
 

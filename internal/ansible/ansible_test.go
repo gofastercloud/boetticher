@@ -24,8 +24,6 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"lab-dns-01 ansible_host=10.10.20.10",
-		"ProxyJump=lab-bastion",
-		"HostKeyAlias=lab-dns-01.lab.home.arpa",
 		"ansible_remote_tmp=/tmp/boetticher-ansible",
 		"[managed:children]",
 		"[logging]",
@@ -34,6 +32,9 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 		if !strings.Contains(first, expected) {
 			t.Errorf("inventory missing %q", expected)
 		}
+	}
+	if strings.Contains(first, "ansible_ssh_common_args") {
+		t.Fatal("inventory duplicated the site-local SSH transport policy")
 	}
 }
 
