@@ -54,6 +54,9 @@ project, so releases can make clean breaks while the design is settling.
   making package resolution unpinned.
 - Remove Debian's generated snakeoil private key from appliance images before
   Trivy qualification; endpoint keys remain deployment-time identity material.
+- Upgrade pre-existing packages in the imported firewall cloud image before
+  installing the firewall contract, so pinned Debian security fixes are not
+  skipped for already-installed packages.
 
 ## [0.3.32] - 2026-08-27
 
