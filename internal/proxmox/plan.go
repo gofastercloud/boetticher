@@ -1633,7 +1633,14 @@ func guestArtifactNeedsReplacement(current map[string]any, expected GuestPlan) b
 		return false
 	}
 	observed, _ := current["description"].(string)
-	return observed != artifactDescription(expected.Artifact)
+	return normalizeArtifactDescription(observed) != artifactDescription(expected.Artifact)
+}
+
+func normalizeArtifactDescription(value string) string {
+	if decoded, err := url.PathUnescape(value); err == nil {
+		value = decoded
+	}
+	return strings.TrimSuffix(value, "\n")
 }
 
 func replaceQEMURootDisk(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {

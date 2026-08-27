@@ -57,6 +57,8 @@ project, so releases can make clean breaks while the design is settling.
   verifying the qualified local artifact bytes.
 - Treat Proxmox task completion with a `WARNINGS: N` status as successful while
   retaining failures for other non-OK statuses.
+- Normalize Proxmox's URL-encoded trailing newline when comparing an owned LXC
+  artifact description.
 - Resume an owned running gateway without issuing a duplicate Proxmox start
   request after a prior deployment attempt.
 - Discover the hosted builder address through the QEMU guest agent after

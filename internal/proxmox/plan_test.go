@@ -506,6 +506,20 @@ func TestEnsureQEMURequiresConfirmationToReplaceOwnedArtifact(t *testing.T) {
 	}
 }
 
+func TestExistingLXCArtifactAcceptsProxmoxEncodedDescriptionNewline(t *testing.T) {
+	guest := GuestPlan{VMID: 110, Name: "test-dns", Hostname: "test-dns", Artifact: model.Artifact{
+		Name: "boetticher-dns-blocky", Version: "1.0.0", ContentSHA256: "content",
+	}}
+	current := map[string]any{
+		"name": guest.Name, "hostname": guest.Name,
+		"description": artifactDescription(guest.Artifact) + "%0A",
+		"tags":        "boetticher;managed;boetticher-module-dns",
+	}
+	if err := validateExistingGuestIdentity(current, guest); err != nil {
+		t.Fatalf("encoded Proxmox description was rejected: %v", err)
+	}
+}
+
 func TestUploadFirewallCloudInitRefreshesAllReplacementSnippets(t *testing.T) {
 	var uploaded []string
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
