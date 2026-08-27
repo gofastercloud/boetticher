@@ -29,6 +29,8 @@ project, so releases can make clean breaks while the design is settling.
   qualification imports it through the composed module declarations.
 - Include the same logging package in the transferred public-input allow-list
   so embedded and source-checkout builder archives remain equivalent.
+- Label DNS appliance smoke assertions so a hosted-builder failure after base
+  packaging identifies the specific provider or runtime check.
 
 ## [0.3.32] - 2026-08-27
 

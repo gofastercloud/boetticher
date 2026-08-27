@@ -44,9 +44,12 @@ case "$name" in
     test ! -e "$rootfs/root/.ssh/authorized_keys"
     ;;
   boetticher-dns-blocky)
+    printf '%s\n' 'boetticher smoke check: blocky version'
     chroot "$rootfs" /usr/local/bin/blocky --version 2>&1 | grep -Fq '0.34.0'
+    printf '%s\n' 'boetticher smoke check: PowerDNS and Chrony binaries'
     run pdns_server --version
     run chronyd --version
+    printf '%s\n' 'boetticher smoke check: Blocky files and provider separation'
     test -x "$rootfs/usr/local/bin/blocky"
     test -f "$rootfs/etc/boetticher/dns/filtering/boetticher.hosts"
     test -f "$rootfs/etc/systemd/system/blocky.service"
