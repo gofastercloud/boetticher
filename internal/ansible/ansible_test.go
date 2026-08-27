@@ -113,7 +113,7 @@ func TestLimitedRunRejectsShellSyntaxInInventoryIdentity(t *testing.T) {
 	}
 }
 
-func TestMonitoringApplianceUsesImageProvidedAgent2(t *testing.T) {
+func TestMonitoringApplianceUsesImageProvidedPulseRuntime(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -123,8 +123,13 @@ func TestMonitoringApplianceUsesImageProvidedAgent2(t *testing.T) {
 	if !strings.Contains(text, "Require an immutable monitoring appliance artifact") {
 		t.Fatal("monitoring does not require an immutable appliance artifact")
 	}
-	if !strings.Contains(text, "- zabbix-agent2") || !strings.Contains(text, "Enable monitoring services") {
-		t.Fatal("monitoring appliance does not enable its image-provided Agent 2 service")
+	for _, expected := range []string{"/opt/pulse/bin/pulse --version", "path: /var/lib/pulse", "- pulse", "- nginx", "pulse-loopback.conf.j2"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("monitoring appliance is missing Pulse runtime contract %q", expected)
+		}
+	}
+	if strings.Contains(text, "zabbix") || strings.Contains(text, "postgres") {
+		t.Fatal("monitoring appliance retains an obsolete product or database contract")
 	}
 }
 
@@ -274,54 +279,47 @@ func TestDNSRoleMakesPowerDNSConfigReadableByServiceUser(t *testing.T) {
 	}
 }
 
-func TestMonitoringRoleUsesRunuserForDatabaseServiceUsers(t *testing.T) {
+func TestMonitoringRoleHasNoDatabaseOrGuestAgentSetup(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if strings.Contains(text, "become_user: postgres") || strings.Contains(text, "become_user: zabbix") {
-		t.Fatal("monitoring role uses Ansible's unprivileged secondary-become path")
-	}
-	for _, expected := range []string{
-		"runuser -u postgres -- psql --dbname postgres",
-		"runuser -u zabbix -- sh -c",
-	} {
-		if !strings.Contains(text, expected) {
-			t.Fatalf("monitoring role missing explicit service-user execution %q", expected)
+	for _, obsolete := range []string{"become_user: postgres", "become_user: zabbix", "runuser -u postgres", "runuser -u zabbix", "zabbix", "postgres"} {
+		if strings.Contains(text, obsolete) {
+			t.Fatalf("monitoring role retains obsolete setup %q", obsolete)
 		}
 	}
 }
 
-func TestMonitoringRolePreparesPostgreSQLTLSAndCluster(t *testing.T) {
+func TestMonitoringRoleUsesExistingTLSBoundary(t *testing.T) {
+	tasksPath := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
+	tasks, err := os.ReadFile(tasksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	templatePath := filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "pulse-loopback.conf.j2")
+	template, err := os.ReadFile(templatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(tasks) + string(template)
+	for _, expected := range []string{"monitor_server_cert_pem", "client_ca_pem", "ssl_verify_client on", "proxy_pass http://127.0.0.1:7655"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("monitoring role missing TLS/frontend contract %q", expected)
+		}
+	}
+}
+
+func TestMonitoringRoleCreatesPulseStateDirectory(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(data)
-	for _, expected := range []string{
-		"/usr/sbin/make-ssl-cert generate-default-snakeoil",
-		"creates: /etc/ssl/private/ssl-cert-snakeoil.key",
-		"pg_ctlcluster --skip-systemctl-redirect",
-		"$(pg_lsclusters -h)",
-		"Cluster is already running.",
-	} {
-		if !strings.Contains(text, expected) {
-			t.Fatalf("monitoring role missing PostgreSQL startup prerequisite %q", expected)
-		}
-	}
-}
-
-func TestMonitoringRoleCreatesZabbixStateDirectory(t *testing.T) {
-	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "path: /var/lib/zabbix\n    state: directory\n    owner: zabbix\n    group: zabbix\n    mode: '0750'") {
-		t.Fatal("monitoring role does not create the Zabbix state directory before its schema marker")
+	if !strings.Contains(string(data), "path: /var/lib/pulse\n    state: directory\n    owner: pulse\n    group: pulse\n    mode: '0700'") {
+		t.Fatal("monitoring role does not create the Pulse state directory")
 	}
 }
 

@@ -60,8 +60,9 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		declaration.DNSRecords = []model.DNSRecord{{Name: "dns01." + site.Network.Domain, Type: "A", Address: "10.10.10.10", Owner: "dns"}, {Name: "dns02." + site.Network.Domain, Type: "A", Address: "10.10.10.11", Owner: "dns"}}
 	case "monitoring":
 		declaration.Secrets = []model.SecretDeclaration{
-			{Name: "zabbix_db_password", Purpose: "monitoring database access", Consumer: "zabbix-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential"},
-			{Name: "zabbix_api_password", Purpose: "bounded monitoring API reconciliation", Consumer: "controller", Generation: "random", Rotation: "replaceable", Delivery: "controller-memory"},
+			{Name: "pulse_admin_password", Purpose: "Pulse administrative bootstrap authentication", Consumer: "pulse-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential"},
+			{Name: "pulse_proxmox_token", Purpose: "API-only Proxmox monitoring token value", Consumer: "deployment-controller", Generation: "ephemeral", Rotation: "replaceable", Delivery: "controller-memory"},
+			{Name: "pulse_api_token", Purpose: "read-only Pulse monitoring API integration", Consumer: "deployment-controller", Generation: "ephemeral", Rotation: "replaceable", Delivery: "controller-memory"},
 		}
 	case "firewall":
 		declaration.Secrets = []model.SecretDeclaration{{Name: "ddns_tsig_secret", Purpose: "authenticated DHCP DNS updates", Consumer: "kea-dhcp-ddns-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file"}}
@@ -128,7 +129,7 @@ func persistentFor(module, guest string) []model.PersistentState {
 	case "dns":
 		return []model.PersistentState{identity, {Name: "powerdns-database", Guest: guest, Path: "/var/lib/powerdns", Kind: "application-database", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	case "monitoring":
-		return []model.PersistentState{identity, {Name: "postgresql-data", Guest: guest, Path: "/var/lib/postgresql", Kind: "application-database", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
+		return []model.PersistentState{identity, {Name: "pulse-state", Guest: guest, Path: "/var/lib/pulse", Kind: "monitoring-state", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	case "firewall":
 		return []model.PersistentState{identity, {Name: "kea-leases", Guest: guest, Path: "/var/lib/kea", Kind: "lease-state", Backup: true, Sensitive: false, Replacement: "retain-across-rootfs-replacement"}}
 	case "tailnet-router":
@@ -149,7 +150,7 @@ func volumesFor(module, guest string) []model.PersistentVolumeDeclaration {
 	case "dns":
 		return []model.PersistentVolumeDeclaration{identity, volume("powerdns-database", "/var/lib/powerdns", 8, true)}
 	case "monitoring":
-		return []model.PersistentVolumeDeclaration{identity, volume("postgresql-data", "/var/lib/postgresql", 16, true)}
+		return []model.PersistentVolumeDeclaration{identity, volume("pulse-state", "/var/lib/pulse", 8, true)}
 	case "firewall":
 		return []model.PersistentVolumeDeclaration{identity, volume("kea-leases", "/var/lib/kea", 4, true)}
 	case "tailnet-router":

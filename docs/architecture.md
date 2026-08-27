@@ -24,7 +24,7 @@ The internal namespace is `lab.home.arpa`. The platform identities are:
 | `lab-fw-01` | `.1` in all six zones | managed Debian gateway |
 | `lab-dns-01` | `10.10.10.10` | PowerDNS, Blocky by default, Chrony |
 | `lab-dns-02` | `10.10.10.11` | PowerDNS, Blocky by default, Chrony |
-| `lab-monitor-01` | `10.10.10.20` | Zabbix and PostgreSQL |
+| `lab-monitor-01` | `10.10.10.20` | Pulse Community monitoring |
 | `lab-log-01` | `10.10.10.40` | Central systemd journal collector |
 | `lab-portal-01` | `10.10.10.30` | generated portal |
 
@@ -59,7 +59,7 @@ a bridge.
 
 The gateway is deliberately small: a qualified Debian 13 boetticher appliance
 containing nftables, Kea DHCPv4/D2, minimal SANDBOX DNS/NTP services, SSH,
-Chrony where needed, and Zabbix Agent 2. Its pinned Debian 13 GenericCloud
+Chrony where needed. Its pinned Debian 13 GenericCloud
 input is `debian-13-genericcloud-amd64-20260327-2429`; the input SHA-512 is
 recorded in the model and verified during firewall image construction.
 IPv4 forwarding stays disabled until a validated ruleset is installed.
@@ -88,14 +88,22 @@ The fixed network identities are intended for the next clean deployment or
 rebuild. Existing installations are not automatically renumbered or live
 migrated by this model change.
 
-Zabbix monitors boetticher-owned platform hosts and services. The portal is a
-static generated view of the model, documentation, and non-secret status; it
-is not a second monitoring application.
+Pulse Community 6.1.2 runs on `lab-monitor-01`, uses the dedicated
+`pulse-monitor@pve` Proxmox HTTPS API token, and exposes its UI at
+`https://monitor.lab.home.arpa`. The service binds its backend to loopback on
+port 7655 behind the existing HTTPS/mTLS boundary, stores its state under
+`/var/lib/pulse`, and exposes read-only monitoring state through the Pulse REST
+API using the `monitoring:read` scope. The Proxmox identity uses the built-in
+`PVEAuditor` role at `/` and `PVEDatastoreAdmin` at `/storage` for bounded
+backup visibility. There are no Proxmox or guest monitoring agents and no
+external database. Boetticher `verify` and `doctor` retain semantic platform
+verification; the portal is a static generated view of the model,
+documentation, and non-secret status.
 
 ## Determinism and ownership
 
 The canonical model revision is a SHA-256 digest of the normalized site model.
-It drives Proxmox, nftables, Kea, DNS, Ansible, Zabbix, SSH, portal, backup, and
+It drives Proxmox, nftables, Kea, DNS, Ansible, monitoring, SSH, portal, backup, and
 verification projections. Timestamps and live evidence are excluded from the
 digest. Unknown user guests and user-created service objects remain outside
 boetticher ownership.

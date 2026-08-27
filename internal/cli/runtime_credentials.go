@@ -41,12 +41,12 @@ func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, erro
 		bindings = append(bindings, deploymentCredential{
 			Guest:     "lab-monitor-01",
 			Address:   "10.10.10.20",
-			SecretKey: "monitoring-db-password",
+			SecretKey: "pulse_admin_password",
 			Spec: secrets.CredentialSpec{
-				Name:       "zabbix-db-password",
-				Unit:       "zabbix-server.service",
-				StorePath:  "/var/lib/boetticher/credentials/zabbix-db-password.cred",
-				RuntimeRef: "/run/credentials/zabbix-server.service/zabbix-db-password",
+				Name:       "pulse-admin-password",
+				Unit:       "pulse.service",
+				StorePath:  "/var/lib/boetticher/credentials/pulse-admin-password.cred",
+				RuntimeRef: "/run/credentials/pulse.service/pulse-admin-password",
 			},
 		})
 	}
@@ -155,20 +155,6 @@ func installPowerDNSTSIG(ctx context.Context, runner proxmox.StdinCommandRunner,
 	sql.WriteString("COMMIT;\n")
 	if _, err := runner.RunWithStdin(ctx, address, model.DefaultAdminSSHUser, "sudo -n sqlite3 /var/lib/powerdns/pdns.sqlite3", strings.NewReader(sql.String())); err != nil {
 		return fmt.Errorf("install PowerDNS protected TSIG backend state: %w", err)
-	}
-	return nil
-}
-
-// installZabbixAPIPassword updates the controller login after the database
-// exists. It is a Core provider operation and does not pass the value through
-// Ansible variables or command arguments.
-func installZabbixAPIPassword(ctx context.Context, runner proxmox.StdinCommandRunner, address, secret string) error {
-	if runner == nil || secret == "" {
-		return fmt.Errorf("Zabbix API password installation requires a runner and secret")
-	}
-	sql := "CREATE EXTENSION IF NOT EXISTS pgcrypto;\nUPDATE users SET passwd = crypt(" + sqlQuote(secret) + ", gen_salt('bf')) WHERE username = 'Admin';\n"
-	if _, err := runner.RunWithStdin(ctx, address, model.DefaultAdminSSHUser, "sudo -n -u postgres psql --dbname zabbix --set ON_ERROR_STOP=1", strings.NewReader(sql)); err != nil {
-		return fmt.Errorf("install Zabbix API password: %w", err)
 	}
 	return nil
 }

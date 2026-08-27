@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Use API-only Proxmox monitoring through the Core Pulse appliance.
+
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 

@@ -60,14 +60,28 @@ case "$name" in
     run journalctl --version
     ;;
   boetticher-monitoring)
-    run psql --version
     run nginx -v
-    run zabbix_server --version
-    run zabbix_agent2 --version
-    chroot "$rootfs" /usr/sbin/zabbix_server --version 2>&1 | grep -q '7\.0\.30'
-    test -f "$rootfs/usr/share/zabbix-sql-scripts/postgresql/server.sql.gz"
-    test -x "$rootfs/usr/lib/boetticher/prepare-zabbix-config"
-    test -f "$rootfs/etc/systemd/system/zabbix-server.service.d/boetticher-credentials.conf"
+    test -x "$rootfs/opt/pulse/bin/pulse"
+    test -f "$rootfs/opt/pulse/VERSION"
+    grep -Fxq '6.1.2' "$rootfs/opt/pulse/VERSION"
+    test -x "$rootfs/usr/lib/boetticher/run-pulse"
+    test -f "$rootfs/etc/systemd/system/pulse.service"
+    grep -Fxq 'Environment=BIND_ADDRESS=127.0.0.1' "$rootfs/etc/systemd/system/pulse.service"
+    test -d "$rootfs/var/lib/pulse"
+    test ! -e "$rootfs/etc/systemd/system/pulse-update.service"
+    test ! -e "$rootfs/etc/systemd/system/pulse-update.timer"
+    if find "$rootfs" -type f \( -name 'pulse-agent' -o -name 'pulse-agent-*' \) -print -quit | grep -q .; then
+      echo "monitoring artifact contains a Pulse agent" >&2
+      exit 1
+    fi
+    if chroot "$rootfs" dpkg-query -W -f='${binary:Package}\n' 2>/dev/null | grep -Eq '^(postgresql|zabbix|zabbix-agent)'; then
+      echo "monitoring artifact contains an obsolete database or monitoring agent" >&2
+      exit 1
+    fi
+    if grep -R -n -E 'pulse_admin_password|pulse_proxmox_token|pulse_api_token|synthetic-secret' "$rootfs/opt/pulse" "$rootfs/usr/lib/boetticher" 2>/dev/null; then
+      echo "monitoring artifact contains a monitoring credential" >&2
+      exit 1
+    fi
     ;;
   boetticher-portal)
     run nginx -v

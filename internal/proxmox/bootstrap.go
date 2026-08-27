@@ -526,6 +526,118 @@ func CreateScopedCredentials(ctx context.Context, runner CommandRunner, address,
 	return CreateScopedCredentialsWithRole(ctx, runner, address, initialUser, userID, tokenID, "BoetticherProvisioner")
 }
 
+const (
+	PulseMonitoringUser        = "pulse-monitor@pve"
+	PulseMonitoringToken       = "boetticher-monitoring"
+	PulseMonitoringRole        = "PVEAuditor"
+	PulseMonitoringStorageRole = "PVEDatastoreAdmin"
+	PulseMonitoringStoragePath = "/storage"
+)
+
+// CreatePulseMonitoringCredentials creates the API-only identity used by the
+// Pulse server. The built-in PVEAuditor role is assigned at the root path. A
+// separate PVEDatastoreAdmin ACL is limited to /storage because the selected
+// Pulse release uses that path for backup inventory; no VM mutation, guest
+// agent, SSH, or root monitoring privilege is granted.
+func CreatePulseMonitoringCredentials(ctx context.Context, runner CommandRunner, address, initialUser string) (string, error) {
+	if runner == nil || address == "" || initialUser == "" {
+		return "", errors.New("Pulse monitoring credential bootstrap inputs are invalid")
+	}
+	rolesOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/roles --output-format json"))
+	if err != nil {
+		return "", fmt.Errorf("HOLD: inspect Proxmox monitoring roles: %w", err)
+	}
+	if err := requireBuiltInRole(rolesOutput, PulseMonitoringRole); err != nil {
+		return "", fmt.Errorf("HOLD: Proxmox monitoring role %q is unavailable: %w", PulseMonitoringRole, err)
+	}
+	if err := requireBuiltInRole(rolesOutput, PulseMonitoringStorageRole); err != nil {
+		return "", fmt.Errorf("HOLD: Proxmox backup visibility role %q is unavailable: %w", PulseMonitoringStorageRole, err)
+	}
+	usersOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users --output-format json"))
+	if err != nil {
+		return "", fmt.Errorf("HOLD: inspect Proxmox monitoring user: %w", err)
+	}
+	users, err := accessIDs(usersOutput, "userid", "id")
+	if err != nil {
+		return "", fmt.Errorf("HOLD: decode Proxmox monitoring users: %w", err)
+	}
+	if !users[PulseMonitoringUser] {
+		createUser := "pvesh create /access/users --userid " + shellQuote(PulseMonitoringUser) + " --comment 'Pulse API-only monitoring identity'"
+		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, createUser)); err != nil {
+			return "", fmt.Errorf("create Pulse monitoring user: %w", err)
+		}
+	}
+	tokensPath := "pvesh get /access/users/" + shellQuote(PulseMonitoringUser) + "/token --output-format json"
+	tokensOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, tokensPath))
+	if err != nil {
+		return "", fmt.Errorf("HOLD: inspect Pulse monitoring tokens: %w", err)
+	}
+	tokens, err := accessIDs(tokensOutput, "tokenid", "id")
+	if err != nil {
+		return "", fmt.Errorf("HOLD: decode Pulse monitoring tokens: %w", err)
+	}
+	if tokens[PulseMonitoringToken] {
+		return "", errors.New("the Pulse monitoring Proxmox token already exists; use its encrypted value or remove it through the approved lifecycle")
+	}
+	createToken := "pvesh create /access/users/" + shellQuote(PulseMonitoringUser) + "/token/" + shellQuote(PulseMonitoringToken) + " --privsep 1 --output-format json"
+	output, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, createToken))
+	if err != nil {
+		return "", fmt.Errorf("create Pulse monitoring token: %w", err)
+	}
+	var response struct {
+		Value string `json:"value"`
+	}
+	if err := json.Unmarshal(output, &response); err != nil {
+		return "", fmt.Errorf("decode Pulse monitoring token response: %w", err)
+	}
+	if response.Value == "" {
+		return "", errors.New("Pulse monitoring token response did not contain a secret")
+	}
+	tokenIdentity := PulseMonitoringUser + "!" + PulseMonitoringToken
+	for _, acl := range []struct {
+		path string
+		role string
+	}{
+		{path: "/", role: PulseMonitoringRole},
+		{path: PulseMonitoringStoragePath, role: PulseMonitoringStorageRole},
+	} {
+		for _, subject := range []struct {
+			flag  string
+			value string
+		}{
+			{flag: "--users", value: PulseMonitoringUser},
+			{flag: "--tokens", value: tokenIdentity},
+		} {
+			setACL := "pvesh set /access/acl --path " + shellQuote(acl.path) + " " + subject.flag + " " + shellQuote(subject.value) + " --roles " + shellQuote(acl.role) + " --propagate 1"
+			if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, setACL)); err != nil {
+				return "", fmt.Errorf("assign Pulse monitoring role %q at %s: %w", acl.role, acl.path, err)
+			}
+		}
+	}
+	return response.Value, nil
+}
+
+func requireBuiltInRole(output []byte, wanted string) error {
+	var document any
+	if err := json.Unmarshal(output, &document); err != nil {
+		return fmt.Errorf("decode role listing: %w", err)
+	}
+	entries, err := roleEntries(document)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.RoleID != wanted {
+			continue
+		}
+		if roleHasSpecialPrivileges(entry.Special) {
+			return errors.New("role has special privileges")
+		}
+		return nil
+	}
+	return errors.New("role is not present")
+}
+
 func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID, role string) (string, error) {
 	if !safeID(userID) || !safeID(tokenID) || !safeID(role) {
 		return "", errors.New("Proxmox identity and token IDs must be simple identifiers")

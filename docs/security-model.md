@@ -48,7 +48,7 @@ The controller is separate from Proxmox. SOPS encrypts platform secrets and
 the Age private identity stays outside Git. CA private keys remain controller-
 side; endpoint private keys are generated on managed hosts where practical.
 The Proxmox SSH bastion is the normal path to internal hosts. The portal is
-static generated documentation; live state belongs in Zabbix.
+static generated documentation; live monitoring state belongs in Pulse.
 
 The platform is IPv4-only in v0.3. Dynamic DHCP DNS registration publishes a
 lease-derived name; it never makes that workload boetticher-managed.
@@ -60,7 +60,7 @@ compiled-in boetticher code that emits bounded declarations for guests,
 network intent, DNS, certificates, monitoring, backups, and portal metadata.
 Core resolves dependencies, capabilities, fixed identities, ownership, and
 conflicts before deployment. Modules do not call Proxmox, nftables, SOPS/Age,
-CA signing, Zabbix, or arbitrary host-shell mutation paths directly.
+CA signing, Pulse, or arbitrary host-shell mutation paths directly.
 
 Appliance definitions are deterministic and derive from pinned Debian 13
 inputs. Concrete artifact bytes are independently SHA-256 verified before

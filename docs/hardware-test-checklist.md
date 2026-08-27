@@ -20,7 +20,7 @@ these journeys.
    qualified boetticher firewall appliance.
 6. Prove Kea leases, PowerDNS DDNS, secondary replication, and both DNS/NTP
    paths.
-7. Prove Zabbix Agent 2, platform objects, dashboards, and backup freshness.
+7. Prove Pulse API-only Proxmox inventory, alerts, availability checks, and backup freshness.
 8. Prove portal TLS/mTLS and reject an unauthenticated client.
 9. Exercise the positive and negative firewall journeys, especially SANDBOX.
 10. Attach a clean second NIC with `boetticher network trunk attach IFACE` and

@@ -5,10 +5,10 @@ boetticher owns the platform. Proxmox owns the user's homelab.
 boetticher manages only declared platform resources: the Proxmox host, managed
 gateway when selected, DNS/NTP guests, monitor, portal, owned bridge/VLAN
 configuration, firewall policy, Kea, PKI, SOPS state, SSH bastion policy,
-Zabbix platform objects, platform backups, and generated platform state.
+Pulse monitoring state, platform backups, and generated platform state.
 
 Arbitrary user VMs and LXCs remain outside the model, OpenTofu state, Ansible
-inventory, Zabbix ownership, backup guarantee, and deletion logic. They may use
+inventory, Pulse monitoring ownership, backup guarantee, and deletion logic. They may use
 the provided network simply by attaching a NIC to `vmbr1` and selecting a VLAN:
 
 Platform guests carry canonical `boetticher` and `managed` tags. The `backup`

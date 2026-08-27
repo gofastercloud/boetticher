@@ -21,7 +21,9 @@ const (
 	QualifiedGatewayImage       = "debian-13-genericcloud-amd64-20260327-2429"
 	QualifiedGatewayImageURL    = "https://cloud.debian.org/images/cloud/trixie/20260327-2429/debian-13-genericcloud-amd64-20260327-2429.qcow2"
 	QualifiedGatewayImageSHA512 = "09559ec27d263997827dd8cddf76e97ea8e0f1803380aa501ea7eaa4b4968cd76ffef4ec7eb07ef1a9ccbeb0925a5020492ea9ed53eb167d62f3a2285039912c"
-	ZabbixSeries                = "7.0 LTS"
+	PulseVersion                = "6.1.2"
+	PulseReleaseURL             = "https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-v6.1.2-linux-amd64.tar.gz"
+	PulseReleaseSHA256          = "844cd054bcfce528cbcf434d782e571791cc7b02ef2fe298cf138b1cab1087ea"
 	AuthoritativeDNS            = "PowerDNS Authoritative"
 	AuthoritativeDNSVersion     = "4.9.17"
 	AuthoritativePackageVersion = "4.9.17-1pdns.trixie"
@@ -125,7 +127,7 @@ type Site struct {
 
 type TestedVersions struct {
 	Gateway string `yaml:"gateway" json:"gateway"`
-	Zabbix  string `yaml:"zabbix" json:"zabbix"`
+	Pulse   string `yaml:"pulse" json:"pulse"`
 }
 
 type Gateway struct {
@@ -423,7 +425,7 @@ func NewDefaultSite(installationID, ageRecipient string) Site {
 		{Name: "lab-fw-01", VMID: ProxmoxVMID, Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "Debian firewall", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "firewall"},
 		{Name: "lab-dns-01", VMID: DNS01VMID, Hostname: "lab-dns-01", Zone: "INFRA", Address: "10.10.10.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "dns"},
 		{Name: "lab-dns-02", VMID: DNS02VMID, Hostname: "lab-dns-02", Zone: "INFRA", Address: "10.10.10.11", Role: "DNS/NTP", DNSAliases: []string{"dns02"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "dns"},
-		{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "INFRA", Address: "10.10.10.20", Role: "Zabbix", DNSAliases: []string{"monitor"}, URL: "https://monitor." + DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "monitoring"},
+		{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "INFRA", Address: "10.10.10.20", Role: "Pulse monitoring", DNSAliases: []string{"monitor"}, URL: "https://monitor." + DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "monitoring"},
 		{Name: "lab-log-01", VMID: LoggingVMID, Hostname: "lab-log-01", Zone: "INFRA", Address: "10.10.10.40", Role: "Central systemd journal", DNSAliases: []string{"logs"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "logging"},
 	} {
 		component.Tags = []string{TagBoetticher, TagManaged, TagModule, "module-" + component.Module, ModuleOwnershipTag(component.Module), TagBackup}
@@ -444,7 +446,7 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 		LogicalProxmoxIdentity: LogicalProxmoxIdentity,
 		TestedVersions: TestedVersions{
 			Gateway: QualifiedGatewayImage,
-			Zabbix:  ZabbixSeries,
+			Pulse:   PulseVersion,
 		},
 		Network: Network{
 			Domain: DefaultDomain,
@@ -559,8 +561,8 @@ func (s Site) Validate() error {
 	if s.TestedVersions.Gateway != QualifiedGatewayImage {
 		return fmt.Errorf("tested_versions.gateway must equal the qualified image %q", QualifiedGatewayImage)
 	}
-	if s.TestedVersions.Zabbix != ZabbixSeries {
-		return fmt.Errorf("tested_versions.zabbix must be %q", ZabbixSeries)
+	if s.TestedVersions.Pulse != PulseVersion {
+		return fmt.Errorf("tested_versions.pulse must be %q", PulseVersion)
 	}
 	if s.PhysicalNetwork.Mode != ModeVirtualOnly && s.PhysicalNetwork.Mode != ModePhysicalTrunk {
 		return fmt.Errorf("physical_network.mode must be virtual-only or physical-trunk")

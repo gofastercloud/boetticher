@@ -52,9 +52,9 @@ powerdns_key_sha256=efeb5b1451c76de1dac8eefaddba5af5549e8fd93484728744ea7b4923de
 powerdns_repo=https://repo.powerdns.com/debian
 powerdns_suite=trixie-auth-49
 powerdns_package_version=4.9.17-1pdns.trixie
-zabbix_release_url=https://repo.zabbix.com/zabbix/7.0/debian/pool/main/z/zabbix-release/zabbix-release_7.0-5+debian13_all.deb
-zabbix_release_sha256=4a926b8815cdefddc31558fe622676730a3987610f75d5af0d4024809d21dd43
-zabbix_package_version=1:7.0.30-1+debian13
+pulse_version=6.1.2
+pulse_release_url=https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-v6.1.2-linux-amd64.tar.gz
+pulse_release_sha256=844cd054bcfce528cbcf434d782e571791cc7b02ef2fe298cf138b1cab1087ea
 tailscale_package_version=1.76.6
 tailscale_key_url=https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg
 tailscale_key_sha256=3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39
@@ -252,39 +252,25 @@ install_powerdns() {
     "$rootfs/etc/apt/keyrings/auth-49-pub.asc"
 }
 
-install_zabbix() {
+install_pulse() {
   rootfs=$1
-  release="$work_root/zabbix-release_7.0-5+debian13_all.deb"
+  release="$work_root/pulse-v${pulse_version}-linux-amd64.tar.gz"
   if [ ! -f "$release" ]; then
-    curl --fail --location --silent --show-error --output "$release" "$zabbix_release_url"
+    curl --fail --location --silent --show-error --output "$release" "$pulse_release_url"
   fi
-  printf '%s  %s\n' "$zabbix_release_sha256" "$release" | sha256sum --check --status
-  install -D -m 0644 "$release" "$rootfs/tmp/zabbix-release.deb"
-  mount --bind /dev "$rootfs/dev"
-  mount -t proc proc "$rootfs/proc"
-  mount --rbind /sys "$rootfs/sys"
-  chroot "$rootfs" dpkg --install /tmp/zabbix-release.deb
-  umount -R "$rootfs/dev" || true
-  umount -R "$rootfs/proc" || true
-  umount -R "$rootfs/sys" || true
-  install_packages "$rootfs" \
-    "zabbix-server-pgsql=$zabbix_package_version" \
-    "zabbix-frontend-php=$zabbix_package_version" \
-    "zabbix-nginx-conf=$zabbix_package_version" \
-    "zabbix-sql-scripts=$zabbix_package_version" \
-    "zabbix-agent2=$zabbix_package_version" \
-    php-pgsql postgresql nginx ssl-cert
-  installed_version=$(chroot "$rootfs" dpkg-query -W -f='${Version}' zabbix-server-pgsql)
-  if [ "$installed_version" != "$zabbix_package_version" ]; then
-    echo "HOLD: unexpected Zabbix server package version: $installed_version" >&2
+  printf '%s  %s\n' "$pulse_release_sha256" "$release" | sha256sum --check --status
+  install_packages "$rootfs" nginx
+  install -D -m 0755 /dev/null "$rootfs/opt/pulse/bin/pulse"
+  tar -xOf "$release" ./bin/pulse > "$rootfs/opt/pulse/bin/pulse"
+  chmod 0755 "$rootfs/opt/pulse/bin/pulse"
+  install -D -m 0644 /dev/null "$rootfs/opt/pulse/VERSION"
+  tar -xOf "$release" ./VERSION > "$rootfs/opt/pulse/VERSION"
+  if ! grep -Fxq "$pulse_version" "$rootfs/opt/pulse/VERSION"; then
+    echo "HOLD: Pulse archive VERSION does not match the qualified release" >&2
     return 2
   fi
-  if ! chroot "$rootfs" /usr/sbin/zabbix_server --version 2>&1 | grep -q '7\.0\.30'; then
-    echo "HOLD: Zabbix executable is not the qualified 7.0.30 release" >&2
-    return 2
-  fi
-  chroot "$rootfs" dpkg --purge zabbix-release >/dev/null 2>&1 || true
-  rm -f "$rootfs/tmp/zabbix-release.deb"
+  chroot "$rootfs" useradd --system --home-dir /var/lib/pulse --create-home --shell /usr/sbin/nologin pulse
+  chroot "$rootfs" chown -R pulse:pulse /var/lib/pulse /opt/pulse
 }
 
 package_lxc() {
@@ -371,10 +357,9 @@ build_logging() {
 build_monitoring() {
   printf '%s\n' 'boetticher build stage: monitoring'
   rootfs=$(prepare_rootfs boetticher-monitoring)
-  install_zabbix "$rootfs"
-  install -D -m 0755 images/monitoring/runtime/prepare-zabbix-config.sh "$rootfs/usr/lib/boetticher/prepare-zabbix-config"
-  mkdir -p "$rootfs/etc/systemd/system/zabbix-server.service.d"
-  printf '%s\n' '[Service]' 'LoadCredentialEncrypted=zabbix-db-password:/var/lib/boetticher/credentials/zabbix-db-password.cred' 'ExecStartPre=/usr/lib/boetticher/prepare-zabbix-config' 'ExecStart=' 'ExecStart=/usr/sbin/zabbix_server -c /run/zabbix/zabbix_server.conf' > "$rootfs/etc/systemd/system/zabbix-server.service.d/boetticher-credentials.conf"
+  install_pulse "$rootfs"
+  install -D -m 0755 images/monitoring/runtime/run-pulse.sh "$rootfs/usr/lib/boetticher/run-pulse"
+  install -D -m 0644 images/monitoring/runtime/pulse.service "$rootfs/etc/systemd/system/pulse.service"
   write_artifact_identity "$rootfs" monitoring
   package_lxc boetticher-monitoring
 }
@@ -461,11 +446,6 @@ build_firewall() {
     curl --fail --location --silent --show-error --output "$input" https://cloud.debian.org/images/cloud/trixie/20260327-2429/debian-13-genericcloud-amd64-20260327-2429.qcow2
   fi
   printf '%s  %s\n' 09559ec27d263997827dd8cddf76e97ea8e0f1803380aa501ea7eaa4b4968cd76ffef4ec7eb07ef1a9ccbeb0925a5020492ea9ed53eb167d62f3a2285039912c "$input" | sha512sum --check --status
-  zabbix_release="$work_root/zabbix-release_7.0-5+debian13_all.deb"
-  if [ ! -f "$zabbix_release" ]; then
-    curl --fail --location --silent --show-error --output "$zabbix_release" "$zabbix_release_url"
-  fi
-  printf '%s  %s\n' "$zabbix_release_sha256" "$zabbix_release" | sha256sum --check --status
   image="$destination/boetticher-firewall-1.0.0-amd64.qcow2"
   artifact_identity="$work_root/firewall-artifact.json"
   go run ./cmd/artifact-identity -module firewall > "$artifact_identity"
@@ -477,12 +457,7 @@ build_firewall() {
     --run-command 'rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; apt-get -o Acquire::Check-Valid-Until=false update' \
     --run-command 'DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes --no-install-recommends' \
     --run-command 'DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony openssh-server sudo cloud-init systemd-journal-remote curl jq openssl qemu-guest-agent' \
-    --upload "$zabbix_release:/tmp/zabbix-release.deb" \
-    --run-command 'dpkg --install /tmp/zabbix-release.deb' \
-    --run-command 'apt-get -o Acquire::Check-Valid-Until=false update' \
-    --run-command "DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends zabbix-agent2=$zabbix_package_version" \
-    --run-command 'dpkg --purge zabbix-release >/dev/null 2>&1 || true' \
-    --run-command 'rm -f /tmp/zabbix-release.deb; apt-get clean; rm -rf /var/lib/apt/lists/*' \
+    --run-command 'apt-get clean; rm -rf /var/lib/apt/lists/*' \
     --mkdir /etc/boetticher \
     --mkdir /usr/lib/boetticher \
     --mkdir /var/lib/boetticher/identity/ssh \
