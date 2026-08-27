@@ -178,6 +178,51 @@ func TestLXCBootstrapKeyCanBeOmittedForPlanRendering(t *testing.T) {
 	}
 }
 
+func TestEnsureBuilderArmsCleanupWhenCreateTaskFails(t *testing.T) {
+	plan := Plan{
+		Node:            "node",
+		Storage:         "local",
+		GatewayImage:    "debian-13-builder-input",
+		GatewayImageURL: "https://example.invalid/debian-13-builder-input.qcow2",
+		GatewaySHA512:   strings.Repeat("a", 128),
+	}
+	snippetsDeleted := 0
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/190/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/190/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+			return response([]byte(`{"data":[{"volid":"local:iso/debian-13-builder-input.qcow2","filename":"debian-13-builder-input.qcow2","checksum":"` + strings.Repeat("a", 128) + `"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
+			_, _ = io.Copy(io.Discard, r.Body)
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu":
+			return response([]byte(`{"data":"UPID:pve:create-builder"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:create-builder/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"create failed"}}`))
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api2/json/nodes/node/storage/local/content/snippets/boetticher-190-"):
+			snippetsDeleted++
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected builder creation request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	created, err := EnsureBuilderVM(context.Background(), client, plan, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator")
+	if err == nil || !strings.Contains(err.Error(), "create temporary builder") {
+		t.Fatalf("EnsureBuilderVM() error = %v, want create-task failure", err)
+	}
+	if !created {
+		t.Fatal("EnsureBuilderVM did not arm caller cleanup after submitting a potentially-created VM")
+	}
+	if snippetsDeleted != 3 {
+		t.Fatalf("builder snippets deleted = %d, want 3", snippetsDeleted)
+	}
+}
+
 func TestManagedFirewallUsesTaggedPerZoneVNICs(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {

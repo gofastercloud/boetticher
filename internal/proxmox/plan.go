@@ -689,10 +689,13 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 	}()
 	params.Set("cicustom", cloudInitCICustom(model.BuilderVMID))
 	params.Set("ipconfig0", "ip=dhcp")
-	if err := client.CreateVM(ctx, plan.Node, model.BuilderVMID, params); err != nil {
-		return false, fmt.Errorf("create temporary builder: %w", err)
-	}
+	// Arm caller cleanup before submitting the create task. Proxmox may have
+	// created the guest even when the API request or task wait reports an
+	// error, and a failed attempt must not leave a dirty builder behind.
 	created = true
+	if err := client.CreateVM(ctx, plan.Node, model.BuilderVMID, params); err != nil {
+		return created, fmt.Errorf("create temporary builder: %w", err)
+	}
 	snippetsUploaded = false
 	upid, err := client.ImportDisk(ctx, plan.Node, model.BuilderVMID, image, plan.Storage, "qcow2")
 	if err != nil {
