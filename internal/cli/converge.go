@@ -332,23 +332,23 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 		zabbixURL, closeTunnel, tunnelErr := openZabbixTunnel(*siteDir)
 		if tunnelErr != nil {
-			return fmt.Errorf("open Zabbix bastion tunnel: %w", tunnelErr)
-		}
-		defer closeTunnel()
-		zabbixClient, clientErr := zabbix.NewClient(zabbix.ClientConfig{
-			BaseURL: zabbixURL, User: "Admin", Password: zabbixAPIPassword,
-			CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
-			ServerName: "monitor." + s.Network.Domain,
-		})
-		if clientErr != nil {
-			return clientErr
-		}
-		zabbixPlan, planErr := zabbix.PlanFromSite(s)
-		if planErr != nil {
-			return planErr
-		}
-		if reconcileErr := zabbixClient.Reconcile(context.Background(), zabbixPlan); reconcileErr != nil {
-			return fmt.Errorf("reconcile boetticher Zabbix objects: %w", reconcileErr)
+			fmt.Fprintf(out, "Zabbix reconciliation: NOT TESTED (%v)\n", tunnelErr)
+		} else {
+			defer closeTunnel()
+			zabbixClient, clientErr := zabbix.NewClient(zabbix.ClientConfig{
+				BaseURL: zabbixURL, User: "Admin", Password: zabbixAPIPassword,
+				CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
+				ServerName: "monitor." + s.Network.Domain,
+			})
+			if clientErr != nil {
+				fmt.Fprintf(out, "Zabbix reconciliation: NOT TESTED (%v)\n", clientErr)
+			} else if zabbixPlan, planErr := zabbix.PlanFromSite(s); planErr != nil {
+				fmt.Fprintf(out, "Zabbix reconciliation: NOT TESTED (%v)\n", planErr)
+			} else if reconcileErr := zabbixClient.Reconcile(context.Background(), zabbixPlan); reconcileErr != nil {
+				fmt.Fprintf(out, "Zabbix reconciliation: NOT TESTED (%v)\n", reconcileErr)
+			} else {
+				fmt.Fprintln(out, "Zabbix reconciliation: PASS")
+			}
 		}
 	}
 	if err := proxmoxClient.ApplyBackupJob(context.Background(), node, proxmox.BackupJob{

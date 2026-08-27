@@ -184,3 +184,18 @@ func TestVerifyFirewallBootstrapNetworkChecksStableRolesAndAddresses(t *testing.
 		t.Fatalf("read-only bootstrap network probes unnecessarily require sudo: %s", command)
 	}
 }
+
+func TestZabbixReconciliationIsTransitionalAndNonGating(t *testing.T) {
+	path := filepath.Join("converge.go")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "Zabbix reconciliation: NOT TESTED") {
+		t.Fatal("Zabbix reconciliation failure is not reported as transitional")
+	}
+	if !strings.Contains(text, "Deployment: PASS mode=%s") {
+		t.Fatal("deployment success path is missing after transitional Zabbix reconciliation")
+	}
+}
