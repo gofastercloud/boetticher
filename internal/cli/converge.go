@@ -383,6 +383,12 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}); err != nil {
 		return err
 	}
+	if len(s.PendingDNSDeletions) > 0 {
+		if err := site.SavePendingDNSDeletions(*siteDir, s, nil); err != nil {
+			return fmt.Errorf("clear reconciled DNS deletion state: %w", err)
+		}
+		s.PendingDNSDeletions = nil
+	}
 	if err := writeModelProjections(*siteDir, s); err != nil {
 		return err
 	}

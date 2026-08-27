@@ -40,7 +40,10 @@ func PrimaryCommandPlan(plan Plan) []PowerDNSCommand {
 		}
 	}
 	for _, record := range plan.StaticRecords {
-		commands = append(commands, PowerDNSCommand{Args: []string{"pdnsutil", "replace-rrset", plan.StaticZone, record.Name + ".", record.Type, "300", record.Address}})
+		commands = append(commands, PowerDNSCommand{Args: []string{"pdnsutil", "replace-rrset", plan.StaticZone, record.Name + ".", record.Type, "300", record.Value}})
+	}
+	for _, deletion := range plan.PendingDeletions {
+		commands = append(commands, PowerDNSCommand{Args: []string{"pdnsutil", "delete-rrset", plan.StaticZone, deletion.Name + ".", deletion.Type}})
 	}
 	return commands
 }

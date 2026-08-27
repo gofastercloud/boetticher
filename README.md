@@ -62,8 +62,9 @@ upload to `lab-log-01`. The default DNS provider is Blocky; set
 
 `managed` is the default. boetticher creates `lab-fw-01`, configures its WAN
 interface and six fixed internal interfaces, renders the nftables policy, and
-runs Kea, DDNS, and the SANDBOX DNS/NTP services. The gateway owns `.1` in
-TRANSIT, INFRA, SERVERS, TRUSTED, SANDBOX, and MGMT.
+runs Kea, DDNS, and the SANDBOX DNS/NTP services. SERVERS uses reservation-only
+DHCP with DDNS; TRUSTED and SANDBOX use their existing DHCP/DDNS modes. The
+gateway owns `.1` in TRANSIT, INFRA, SERVERS, TRUSTED, SANDBOX, and MGMT.
 
 `external` is bring-your-own firewall mode. boetticher creates no firewall VM,
 does not manage the appliance, and publishes a deterministic contract for the

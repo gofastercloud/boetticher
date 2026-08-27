@@ -97,11 +97,17 @@
   loop: "{{ [dns_plan.static_zone] + (dns_plan.dynamic_zones | map(attribute='name') | list) + (dns_plan.reverse_zones | map(attribute='name') | list) }}"
   when: inventory_hostname == 'lab-dns-01'
 
-- name: Publish model-owned static A records to the primary
+- name: Publish model-owned static DNS records to the primary
   ansible.builtin.command: >-
     pdnsutil replace-rrset {{ dns_plan.static_zone }} {{ item.name }}.
-    {{ item.type }} 300 {{ item.address }}
+    {{ item.type }} 300 {{ item.value }}
   loop: "{{ dns_plan.static_records }}"
+  when: inventory_hostname == 'lab-dns-01'
+
+- name: Remove explicitly deleted user DNS records from the primary
+  ansible.builtin.command: >-
+    pdnsutil delete-rrset {{ dns_plan.static_zone }} {{ item.name }}. {{ item.type }}
+  loop: "{{ dns_plan.pending_deletions | default([]) }}"
   when: inventory_hostname == 'lab-dns-01'
 
 - name: Authorize Kea DDNS updates for dynamic forward zones

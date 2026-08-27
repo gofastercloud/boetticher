@@ -38,6 +38,8 @@ func Run(args []string, out, errOut interface{ Write([]byte) (int, error) }) err
 		return runFirewall(args[1:], out)
 	case "dhcp":
 		return runDHCP(args[1:], out)
+	case "dns":
+		return runDNS(args[1:], out)
 	case "storage":
 		return runStorage(args[1:], out)
 	case "module":

@@ -28,8 +28,8 @@ v0.3.
 
 SANDBOX may use the gateway for DHCP, public DNS, and NTP, but cannot reach the
 TRUSTED, SERVERS, INFRA, or MGMT networks. The deny rules precede Internet
-egress. DHCP and DDNS are limited to TRUSTED and SANDBOX; TRANSIT, INFRA,
-SERVERS, and MGMT are static-only.
+egress. TRUSTED and SANDBOX use dynamic DHCP plus DDNS; SERVERS uses
+reservation-only DHCP plus DDNS. TRANSIT, INFRA, and MGMT are static-only.
 MGMT is intentionally small and administrative; it is not a general
 "important servers" VLAN.
 
