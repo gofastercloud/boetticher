@@ -109,7 +109,7 @@ case "$name" in
     chroot "$rootfs" dpkg-query -W -f='${Version}' python3-venv | grep -Fxq '3.13.5-1'
     chroot "$rootfs" dpkg-query -W -f='${Version}' python3-pip | grep -Fxq '25.1.1+dfsg-1'
     chroot "$rootfs" dpkg-query -W -f='${Version}' nginx | grep -Fxq '1.26.3-3+deb13u7'
-    chroot "$rootfs" /opt/litellm/bin/python -c 'import litellm; assert litellm.__version__ == "1.74.9"'
+    chroot "$rootfs" /opt/litellm/bin/python -c 'from importlib.metadata import version; assert version("litellm") == "1.74.9"'
     test -f "$rootfs/etc/systemd/system/litellm.service"
     grep -Fq -- '--host 127.0.0.1' "$rootfs/etc/systemd/system/litellm.service"
     test ! -e "$rootfs/etc/boetticher/litellm/config.yaml"

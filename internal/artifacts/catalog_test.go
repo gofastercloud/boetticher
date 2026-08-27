@@ -629,7 +629,16 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	if !strings.Contains(string(lock), "litellm==1.74.9") || !strings.Contains(string(lock), "--hash=sha256:") {
 		t.Fatal("LiteLLM dependency lock is not transitive and hash pinned")
 	}
-	if !strings.Contains(string(buildScript), "build_tailnet_router") || !strings.Contains(string(buildScript), "build_litellm") || !strings.Contains(string(buildScript), "--require-hashes") || !strings.Contains(string(buildScript), "rm -f \"$rootfs/etc/nginx/sites-enabled/default\"") {
+	smokeScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "smoke-appliance.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildText := string(buildScript)
+	smokeText := string(smokeScript)
+	if strings.Contains(buildText+smokeText, "litellm.__version__") || !strings.Contains(buildText, "from importlib.metadata import version") || !strings.Contains(buildText, `version("litellm")`) || !strings.Contains(smokeText, `version("litellm")`) {
+		t.Fatal("LiteLLM qualification does not use stable distribution metadata for version verification")
+	}
+	if !strings.Contains(buildText, "build_tailnet_router") || !strings.Contains(buildText, "build_litellm") || !strings.Contains(buildText, "--require-hashes") || !strings.Contains(buildText, "rm -f \"$rootfs/etc/nginx/sites-enabled/default\"") {
 		t.Fatal("first-party appliance build paths are incomplete or do not enforce the dependency lock")
 	}
 }
