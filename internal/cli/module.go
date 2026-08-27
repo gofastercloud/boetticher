@@ -245,6 +245,11 @@ func runModuleChange(args []string, out interface{ Write([]byte) (int, error) },
 		if err != nil {
 			return err
 		}
+		node, err := client.SingleNode(context.Background())
+		if err != nil {
+			return fmt.Errorf("resolve live Proxmox node for module purge: %w", err)
+		}
+		oldPlan.Node = node
 		if err := proxmox.PurgeModule(context.Background(), client, oldPlan, name); err != nil {
 			return err
 		}

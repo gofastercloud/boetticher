@@ -42,6 +42,43 @@ func TestClientUsesTokenAndDecodesEnvelope(t *testing.T) {
 	}
 }
 
+func TestNodesUsesAuthoritativeNodesEndpoint(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes" {
+			t.Fatalf("unexpected node discovery request: %s %s", r.Method, r.URL.Path)
+		}
+		return response([]byte(`{"data":[{"node":"proxmox","status":"online"}]}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	nodes, err := client.Nodes(context.Background())
+	if err != nil || len(nodes) != 1 || nodes[0].Node != "proxmox" {
+		t.Fatalf("Nodes() = %#v, %v", nodes, err)
+	}
+}
+
+func TestResolveSingleNodeRejectsUnsupportedTopologyAndUnsafeIdentifiers(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		nodes []Node
+		want  string
+	}{
+		{name: "none", nodes: nil},
+		{name: "cluster", nodes: []Node{{Node: "pve01"}, {Node: "pve02"}}},
+		{name: "unsafe", nodes: []Node{{Node: "pve/01"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got, err := ResolveSingleNode(test.nodes); err == nil || got != test.want || !strings.Contains(err.Error(), "HOLD") {
+				t.Fatalf("ResolveSingleNode() = %q, %v", got, err)
+			}
+		})
+	}
+	for _, node := range []string{"proxmox", "pve", "my-node_01.example"} {
+		if got, err := ResolveSingleNode([]Node{{Node: node}}); err != nil || got != node {
+			t.Fatalf("safe node %q rejected: %q, %v", node, got, err)
+		}
+	}
+}
+
 func TestQEMUAgentNetworkInterfacesUsesGuestAgentEndpoint(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/lab-proxmox-01/qemu/190/agent/network-get-interfaces" {

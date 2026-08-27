@@ -144,8 +144,12 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err != nil {
 		return err
 	}
-	runner := proxmox.SSHRunner{KnownHosts: *knownHosts}
+	runner := proxmox.SSHRunner{KnownHosts: *knownHosts, HostKeyAlias: model.LogicalProxmoxIdentity}
 	ctx := context.Background()
+	sshDiscovery, err := proxmox.DiscoverPhysicalNetworkViaSSH(ctx, runner, s.BootstrapAddress, *initialUser, s.BootstrapAddress, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
+	if err != nil {
+		return err
+	}
 	if err := proxmox.InstallOperatorKey(ctx, runner, s.BootstrapAddress, *initialUser, publicKey); err != nil {
 		return fmt.Errorf("install operator SSH key: %w", err)
 	}
@@ -177,10 +181,15 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err != nil {
 		return fmt.Errorf("authenticate to Proxmox with scoped identity: %w", err)
 	}
-	discovery, err := proxmox.DiscoverPhysicalNetworkWithSelection(ctx, client, plan.Node, s.BootstrapAddress, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
+	apiNode, err := client.SingleNode(ctx)
 	if err != nil {
 		return err
 	}
+	if apiNode != sshDiscovery.Node {
+		return fmt.Errorf("HOLD: Proxmox node identity changed between SSH and API discovery; SSH observed %q, API observed %q", sshDiscovery.Node, apiNode)
+	}
+	plan.Node = apiNode
+	discovery, err := proxmox.DiscoverPhysicalNetworkWithSelection(ctx, client, apiNode, s.BootstrapAddress, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
 	virtualOnlyRequested := s.PhysicalNetwork.Mode == model.ModeVirtualOnly && s.PhysicalNetwork.Trunk.Name == "" && *trunkInterface == ""
 	discovery = honorRequestedPhysicalMode(discovery, s.PhysicalNetwork.Mode, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
 	printPhysicalDiscovery(out, discovery)
@@ -190,7 +199,7 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if s.Gateway.Mode == model.GatewayModeExternal && discovery.Trunk == nil {
 		return errors.New("external gateway mode requires a distinct physical vmbr1 trunk interface")
 	}
-	if err := proxmox.EnsureVirtualBridge(ctx, client, plan.Node); err != nil {
+	if err := proxmox.EnsureVirtualBridge(ctx, client, apiNode); err != nil {
 		return err
 	}
 	if err := proxmox.ConfigureManagementNetwork(ctx, runner, s.BootstrapAddress, *initialUser); err != nil {
@@ -205,15 +214,15 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	}
 	trunkChanged := false
 	if discovery.Trunk != nil && discovery.Trunk.Bridge != "vmbr1" {
-		if err := proxmox.AttachTrunk(ctx, client, plan.Node, discovery.Trunk.Name, s.BootstrapAddress); err != nil {
+		if err := proxmox.AttachTrunk(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress); err != nil {
 			return err
 		}
 		trunkChanged = true
 	}
 	var postInterfaces []proxmox.NetworkInterface
-	if err := client.NodeNetwork(ctx, plan.Node, &postInterfaces); err != nil {
+	if err := client.NodeNetwork(ctx, apiNode, &postInterfaces); err != nil {
 		if trunkChanged {
-			return rollbackTrunkChange(ctx, client, plan.Node, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network mutation could not be re-read", err)
+			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network mutation could not be re-read", err)
 		}
 		return fmt.Errorf("HOLD: bootstrap network state could not be re-read: %w", err)
 	}
@@ -227,7 +236,7 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	}
 	if err != nil {
 		if trunkChanged {
-			return rollbackTrunkChange(ctx, client, plan.Node, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network mutation failed physical validation", err)
+			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network mutation failed physical validation", err)
 		}
 		return fmt.Errorf("HOLD: bootstrap network state failed physical validation: %w", err)
 	}
@@ -241,13 +250,13 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	}
 	if _, err := proxmox.ValidatePhysicalBinding(s, postInterfaces); err != nil {
 		if trunkChanged {
-			return rollbackTrunkChange(ctx, client, plan.Node, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network binding validation failed", err)
+			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network binding validation failed", err)
 		}
 		return fmt.Errorf("HOLD: bootstrap network binding validation failed: %w", err)
 	}
 	if err := site.Save(*siteDir, s); err != nil {
 		if trunkChanged {
-			return rollbackTrunkChange(ctx, client, plan.Node, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network binding could not be persisted", err)
+			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network binding could not be persisted", err)
 		}
 		return fmt.Errorf("HOLD: bootstrap network binding could not be persisted: %w", err)
 	}
@@ -255,6 +264,7 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err != nil {
 		return fmt.Errorf("HOLD: recompute platform plan after physical binding: %w", err)
 	}
+	plan.Node = apiNode
 	if err := buildDefaultArtifacts(ctx, client, plan, *siteDir, publicKey, *knownHosts, model.ExpandUserPath(s.SSHIdentityFile)); err != nil {
 		return err
 	}
@@ -282,6 +292,7 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err != nil {
 		return err
 	}
+	plan.Node = apiNode
 	if err := writeProjection(filepath.Join(*siteDir, "generated", "bootstrap.json"), struct {
 		ModelRevision     string `json:"model_revision"`
 		ProxmoxVersion    string `json:"proxmox_version"`

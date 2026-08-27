@@ -54,11 +54,15 @@ func runNetwork(args []string, out interface{ Write([]byte) (int, error) }) erro
 		if err != nil {
 			return err
 		}
-		var interfaces []proxmox.NetworkInterface
-		if err := client.NodeNetwork(context.Background(), s.ProxmoxNode, &interfaces); err != nil {
+		node, err := client.SingleNode(context.Background())
+		if err != nil {
 			return err
 		}
-		discovery, err := proxmox.DiscoverPhysicalNetwork(context.Background(), client, s.ProxmoxNode, s.BootstrapAddress, s.PhysicalNetwork.Trunk.Name)
+		var interfaces []proxmox.NetworkInterface
+		if err := client.NodeNetwork(context.Background(), node, &interfaces); err != nil {
+			return err
+		}
+		discovery, err := proxmox.DiscoverPhysicalNetwork(context.Background(), client, node, s.BootstrapAddress, s.PhysicalNetwork.Trunk.Name)
 		if err != nil {
 			return err
 		}
@@ -82,9 +86,13 @@ func runNetwork(args []string, out interface{ Write([]byte) (int, error) }) erro
 			return err
 		}
 		ctx := context.Background()
+		node, err := client.SingleNode(ctx)
+		if err != nil {
+			return err
+		}
 		var observedDiscovery *networkmodel.Discovery
 		if command == "attach" {
-			discovery, discoveryErr := proxmox.DiscoverPhysicalNetworkWithSelection(ctx, client, s.ProxmoxNode, s.BootstrapAddress, s.PhysicalNetwork.Trunk.Name, interfaceName)
+			discovery, discoveryErr := proxmox.DiscoverPhysicalNetworkWithSelection(ctx, client, node, s.BootstrapAddress, s.PhysicalNetwork.Trunk.Name, interfaceName)
 			if discoveryErr != nil {
 				return discoveryErr
 			}
@@ -93,7 +101,7 @@ func runNetwork(args []string, out interface{ Write([]byte) (int, error) }) erro
 			if !*confirm {
 				return fmt.Errorf("network trunk attach is a potentially locking live change; review the proposal and repeat with --confirm")
 			}
-			if err := proxmox.AttachTrunk(ctx, client, s.ProxmoxNode, interfaceName, s.BootstrapAddress); err != nil {
+			if err := proxmox.AttachTrunk(ctx, client, node, interfaceName, s.BootstrapAddress); err != nil {
 				return err
 			}
 			s.PhysicalNetwork.Mode = model.ModePhysicalTrunk
@@ -106,15 +114,15 @@ func runNetwork(args []string, out interface{ Write([]byte) (int, error) }) erro
 				s.PhysicalNetwork.Upstream = model.PhysicalNIC{Name: discovery.Upstream.Name, PermanentMAC: discovery.Upstream.PermanentMAC, PCIAddress: discovery.Upstream.PCIAddress}
 			}
 			var after []proxmox.NetworkInterface
-			if err := client.NodeNetwork(ctx, s.ProxmoxNode, &after); err != nil {
-				return rollbackTrunkChange(ctx, client, s.ProxmoxNode, interfaceName, s.BootstrapAddress, "HOLD: trunk attach could not be re-read", err)
+			if err := client.NodeNetwork(ctx, node, &after); err != nil {
+				return rollbackTrunkChange(ctx, client, node, interfaceName, s.BootstrapAddress, "HOLD: trunk attach could not be re-read", err)
 			}
 			if _, err := proxmox.ValidatePhysicalBinding(s, after); err != nil {
-				return rollbackTrunkChange(ctx, client, s.ProxmoxNode, interfaceName, s.BootstrapAddress, "HOLD: trunk attach failed post-change validation", err)
+				return rollbackTrunkChange(ctx, client, node, interfaceName, s.BootstrapAddress, "HOLD: trunk attach failed post-change validation", err)
 			}
 			postDiscovery, err := proxmox.AnalyzePhysicalNetwork(after, s.BootstrapAddress, interfaceName)
 			if err != nil {
-				return rollbackTrunkChange(ctx, client, s.ProxmoxNode, interfaceName, s.BootstrapAddress, "HOLD: trunk attach produced ambiguous physical evidence", err)
+				return rollbackTrunkChange(ctx, client, node, interfaceName, s.BootstrapAddress, "HOLD: trunk attach produced ambiguous physical evidence", err)
 			}
 			observedDiscovery = &postDiscovery
 		} else {
@@ -124,21 +132,21 @@ func runNetwork(args []string, out interface{ Write([]byte) (int, error) }) erro
 			if !*confirm {
 				return fmt.Errorf("network trunk detach is a potentially locking live change; repeat with --confirm")
 			}
-			if err := proxmox.DetachTrunk(ctx, client, s.ProxmoxNode, interfaceName, s.BootstrapAddress); err != nil {
+			if err := proxmox.DetachTrunk(ctx, client, node, interfaceName, s.BootstrapAddress); err != nil {
 				return err
 			}
 			s.PhysicalNetwork.Mode = model.ModeVirtualOnly
 			s.PhysicalNetwork.Trunk = model.PhysicalNIC{}
 			var after []proxmox.NetworkInterface
-			if err := client.NodeNetwork(ctx, s.ProxmoxNode, &after); err != nil {
-				return rollbackDetachedTrunkChange(ctx, client, s.ProxmoxNode, interfaceName, s.BootstrapAddress, "HOLD: trunk detach could not be re-read", err)
+			if err := client.NodeNetwork(ctx, node, &after); err != nil {
+				return rollbackDetachedTrunkChange(ctx, client, node, interfaceName, s.BootstrapAddress, "HOLD: trunk detach could not be re-read", err)
 			}
 			if _, err := proxmox.ValidatePhysicalBinding(s, after); err != nil {
-				return rollbackDetachedTrunkChange(ctx, client, s.ProxmoxNode, interfaceName, s.BootstrapAddress, "HOLD: trunk detach failed post-change validation", err)
+				return rollbackDetachedTrunkChange(ctx, client, node, interfaceName, s.BootstrapAddress, "HOLD: trunk detach failed post-change validation", err)
 			}
 			postDiscovery, err := proxmox.AnalyzePhysicalNetwork(after, s.BootstrapAddress, "")
 			if err != nil {
-				return rollbackDetachedTrunkChange(ctx, client, s.ProxmoxNode, interfaceName, s.BootstrapAddress, "HOLD: trunk detach produced ambiguous physical evidence", err)
+				return rollbackDetachedTrunkChange(ctx, client, node, interfaceName, s.BootstrapAddress, "HOLD: trunk detach produced ambiguous physical evidence", err)
 			}
 			observedDiscovery = &postDiscovery
 		}

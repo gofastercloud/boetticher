@@ -1,11 +1,21 @@
 package storage
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 )
+
+type recordingInitializeRunner struct {
+	command string
+}
+
+func (r *recordingInitializeRunner) Run(_ context.Context, _, _, command string) ([]byte, error) {
+	r.command = command
+	return nil, nil
+}
 
 func TestDedicatedPlanUsesFixedLayout(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
@@ -62,6 +72,23 @@ func TestInitializationRejectsTransientOrUnsafeDevice(t *testing.T) {
 		if _, err := InitializationCommand(device, true); err == nil {
 			t.Fatalf("unsafe storage device %q was accepted", device)
 		}
+	}
+}
+
+func TestInitializationUsesNonInteractiveSudoForNonRoot(t *testing.T) {
+	runner := &recordingInitializeRunner{}
+	if err := Initialize(context.Background(), runner, "192.0.2.10", "labadmin", "/dev/disk/by-id/ata-example-data", true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(runner.command, "sudo -n sh -c ") {
+		t.Fatalf("dedicated storage initialization did not use non-interactive sudo: %q", runner.command)
+	}
+	rootRunner := &recordingInitializeRunner{}
+	if err := Initialize(context.Background(), rootRunner, "192.0.2.10", "root", "/dev/disk/by-id/ata-example-data", true); err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(rootRunner.command, "sudo -n ") {
+		t.Fatalf("root storage initialization unnecessarily used sudo: %q", rootRunner.command)
 	}
 }
 
