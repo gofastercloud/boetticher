@@ -224,6 +224,9 @@ func validateQualificationDigests(evidence Evidence) error {
 	if evidence.Qualified && evidence.QualificationEvaluator != QualificationEvaluator {
 		return fmt.Errorf("qualified evidence must be produced by %s", QualificationEvaluator)
 	}
+	if evidence.Qualified && evidence.QualificationPolicyVersion != QualificationPolicyVersion {
+		return fmt.Errorf("qualified evidence must declare policy %s", QualificationPolicyVersion)
+	}
 	if evidence.Qualified && !evidence.ScanCompleted {
 		return fmt.Errorf("qualified evidence must include a completed Trivy scan")
 	}

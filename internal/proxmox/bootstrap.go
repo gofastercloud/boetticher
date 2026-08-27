@@ -447,7 +447,32 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 			return "", fmt.Errorf("create bounded Proxmox role %q: %w", role, err)
 		}
 	}
-	command := "set -eu; pvesh get /access/users/" + shellQuote(userID) + " >/dev/null 2>&1 || pvesh create /access/users --userid " + shellQuote(userID) + " --comment 'boetticher automation identity' >/dev/null; if pvesh get /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID) + " >/dev/null 2>&1; then echo 'the requested Proxmox token already exists; use a new token ID or existing encrypted credentials' >&2; exit 23; fi; pvesh create /access/acl --path / --users " + shellQuote(userID) + " --roles " + shellQuote(role) + " --propagate 1 >/dev/null; pvesh create /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID) + " --privsep 1 --output-format json"
+	usersOutput, err := runner.Run(ctx, address, initialUser, "pvesh get /access/users --output-format json")
+	if err != nil {
+		return "", fmt.Errorf("HOLD: inspect Proxmox users: %w", err)
+	}
+	users, err := accessIDs(usersOutput, "userid", "id")
+	if err != nil {
+		return "", fmt.Errorf("HOLD: decode Proxmox users: %w", err)
+	}
+	if !users[userID] {
+		createUser := "pvesh create /access/users --userid " + shellQuote(userID) + " --comment 'boetticher automation identity'"
+		if _, err := runner.Run(ctx, address, initialUser, createUser); err != nil {
+			return "", fmt.Errorf("create Proxmox automation user: %w", err)
+		}
+	}
+	tokensOutput, err := runner.Run(ctx, address, initialUser, "pvesh get /access/users/"+shellQuote(userID)+"/token --output-format json")
+	if err != nil {
+		return "", fmt.Errorf("HOLD: inspect Proxmox tokens for %s: %w", userID, err)
+	}
+	tokens, err := accessIDs(tokensOutput, "tokenid", "id")
+	if err != nil {
+		return "", fmt.Errorf("HOLD: decode Proxmox tokens: %w", err)
+	}
+	if tokens[tokenID] {
+		return "", errors.New("the requested Proxmox token already exists; use a new token ID or existing encrypted credentials")
+	}
+	command := "set -eu; pvesh create /access/acl --path / --users " + shellQuote(userID) + " --roles " + shellQuote(role) + " --propagate 1 >/dev/null; pvesh create /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID) + " --privsep 1 --output-format json"
 	output, err := runner.Run(ctx, address, initialUser, command)
 	if err != nil {
 		return "", err
@@ -462,6 +487,59 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 		return "", errors.New("Proxmox token response did not contain a secret")
 	}
 	return response.Value, nil
+}
+
+// accessIDs decodes the small JSON listings returned by pvesh for users and
+// tokens. Listing first is intentional: a failed lookup must remain a HOLD,
+// rather than being interpreted as permission or transport failure and
+// followed by an unauthorized create operation.
+func accessIDs(output []byte, fields ...string) (map[string]bool, error) {
+	var document any
+	if err := json.Unmarshal(output, &document); err != nil {
+		return nil, err
+	}
+	for {
+		object, ok := document.(map[string]any)
+		if !ok {
+			break
+		}
+		data, exists := object["data"]
+		if !exists {
+			break
+		}
+		document = data
+	}
+	result := make(map[string]bool)
+	add := func(object map[string]any) {
+		for _, field := range fields {
+			if value, ok := object[field].(string); ok && value != "" {
+				result[value] = true
+				return
+			}
+		}
+	}
+	switch value := document.(type) {
+	case []any:
+		for _, item := range value {
+			object, ok := item.(map[string]any)
+			if !ok {
+				return nil, errors.New("access listing contains a non-object entry")
+			}
+			add(object)
+		}
+	case map[string]any:
+		add(value)
+		if len(result) == 0 {
+			for key, item := range value {
+				if _, ok := item.(map[string]any); ok {
+					result[key] = true
+				}
+			}
+		}
+	default:
+		return nil, errors.New("access listing must be a JSON object or array")
+	}
+	return result, nil
 }
 
 // validateScopedRoleJSON validates the exact privilege boundary returned by

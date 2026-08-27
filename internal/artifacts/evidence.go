@@ -130,7 +130,7 @@ func RebindEvidencePaths(root string) error {
 			return fmt.Errorf("transferred evidence %s is not qualified", evidence.Artifact.Name)
 		}
 		if err := validateQualificationDigests(evidence); err != nil {
-			return fmt.Errorf("transferred evidence %s is incomplete: %w", evidence.Artifact.Name, err)
+			return fmt.Errorf("transferred evidence %s has unauthorized or incomplete qualification: %w", evidence.Artifact.Name, err)
 		}
 		if err := verifyQualificationInputs(evidence); err != nil {
 			return fmt.Errorf("transferred evidence %s is not bound to its qualification inputs: %w", evidence.Artifact.Name, err)

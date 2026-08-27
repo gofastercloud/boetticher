@@ -2,6 +2,7 @@ package proxmox
 
 import (
 	"context"
+	"errors"
 	"io"
 	"reflect"
 	"strings"
@@ -166,7 +167,9 @@ func TestCreateScopedCredentialsCapturesOnlyReturnedSecret(t *testing.T) {
 	runner := &fakeRunner{
 		output: []byte(`{"value":"opaque-token-secret"}`),
 		responses: map[string][]byte{
-			"pvesh get /access/roles --output-format json": []byte(`[]`),
+			"pvesh get /access/roles --output-format json":                      []byte(`[]`),
+			"pvesh get /access/users --output-format json":                      []byte(`[]`),
+			"pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[]`),
 		},
 	}
 	secret, err := CreateScopedCredentials(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher")
@@ -179,6 +182,37 @@ func TestCreateScopedCredentialsCapturesOnlyReturnedSecret(t *testing.T) {
 	if strings.Contains(runner.command, "|| true") {
 		t.Fatal("credential bootstrap must not mask identity or privilege errors")
 	}
+}
+
+func TestCreateScopedCredentialsStopsOnUserLookupFailure(t *testing.T) {
+	runner := &credentialLookupRunner{responses: map[string]error{
+		"pvesh get /access/users --output-format json": errors.New("permission denied"),
+	}}
+	_, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner")
+	if err == nil || !strings.Contains(err.Error(), "HOLD: inspect Proxmox users") {
+		t.Fatalf("user lookup failure was not held: %v", err)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "create /access/users") {
+			t.Fatalf("user lookup failure triggered creation: %s", command)
+		}
+	}
+}
+
+type credentialLookupRunner struct {
+	responses map[string]error
+	commands  []string
+}
+
+func (r *credentialLookupRunner) Run(_ context.Context, _ string, _ string, command string) ([]byte, error) {
+	r.commands = append(r.commands, command)
+	if err, ok := r.responses[command]; ok {
+		return nil, err
+	}
+	if strings.Contains(command, "/access/roles") {
+		return []byte(`[]`), nil
+	}
+	return []byte(`[]`), nil
 }
 
 func TestScopedProvisionerPrivilegesAreExplicitAndBounded(t *testing.T) {

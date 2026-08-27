@@ -2,6 +2,8 @@ package proxmox
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -217,9 +219,12 @@ func TestDestroyBuilderStopsRunningOwnedVMBeforeRemoval(t *testing.T) {
 
 func TestUploadStorageFileUsesMultipartArtifactContract(t *testing.T) {
 	path := t.TempDir() + "/artifact.tar.zst"
-	if err := os.WriteFile(path, []byte("artifact bytes"), 0o600); err != nil {
+	content := []byte("artifact bytes")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	checksum := sha256.Sum256(content)
+	wantChecksum := hex.EncodeToString(checksum[:])
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method != http.MethodPost || r.URL.Path != "/api2/json/nodes/lab-proxmox-01/storage/local/upload" {
 			t.Fatalf("unexpected upload request: %s %s", r.Method, r.URL.Path)
@@ -232,6 +237,9 @@ func TestUploadStorageFileUsesMultipartArtifactContract(t *testing.T) {
 		}
 		if got := r.FormValue("content"); got != "vztmpl" {
 			t.Fatalf("content = %q, want vztmpl", got)
+		}
+		if got := r.FormValue("checksum"); got != wantChecksum || r.FormValue("checksum-algorithm") != "sha256" {
+			t.Fatalf("checksum fields = %q/%q", got, r.FormValue("checksum-algorithm"))
 		}
 		file, header, err := r.FormFile("filename")
 		if err != nil {
@@ -248,7 +256,7 @@ func TestUploadStorageFileUsesMultipartArtifactContract(t *testing.T) {
 		return response([]byte(`{"data":null}`))
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	if err := client.UploadStorageFile(context.Background(), "lab-proxmox-01", "local", "vztmpl", path, "boetticher-logging-1.0.0-amd64.tar.zst"); err != nil {
+	if err := client.UploadStorageFile(context.Background(), "lab-proxmox-01", "local", "vztmpl", path, "boetticher-logging-1.0.0-amd64.tar.zst", wantChecksum); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -276,7 +284,8 @@ func TestUploadStorageFileStreamsLargeArtifactBody(t *testing.T) {
 		return response([]byte(`{"data":null}`))
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	if err := client.UploadStorageFile(context.Background(), "node", "local", "vztmpl", artifactPath, "large-artifact.tar.zst"); err != nil {
+	checksum := sha256.Sum256(make([]byte, 32<<20))
+	if err := client.UploadStorageFile(context.Background(), "node", "local", "vztmpl", artifactPath, "large-artifact.tar.zst", hex.EncodeToString(checksum[:])); err != nil {
 		t.Fatal(err)
 	}
 }

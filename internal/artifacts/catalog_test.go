@@ -351,6 +351,43 @@ func TestWriteEvidenceCannotAuthorizeUnqualifiedInputs(t *testing.T) {
 	}
 }
 
+func TestQualifiedEvidenceRequiresEvaluatorAndPolicyMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "artifact.bin")
+	if err := os.WriteFile(path, []byte("qualified bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := EvidenceForFile(path, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = path
+	evidence = completeQualificationEvidence(t, evidence)
+	evidence.Qualified = true
+	evidence.ScanCompleted = true
+	for name, mutate := range map[string]func(*Evidence){
+		"wrong evaluator": func(value *Evidence) {
+			value.QualificationEvaluator = "untrusted-evaluator"
+			value.QualificationPolicyVersion = QualificationPolicyVersion
+		},
+		"missing policy": func(value *Evidence) {
+			value.QualificationEvaluator = QualificationEvaluator
+			value.QualificationPolicyVersion = ""
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := evidence
+			mutate(&candidate)
+			if err := validateQualificationDigests(candidate); err == nil {
+				t.Fatal("unauthorized qualified evidence was accepted")
+			}
+		})
+	}
+}
+
 func completeQualificationEvidence(t *testing.T, evidence Evidence) Evidence {
 	t.Helper()
 	if evidence.ArtifactPath == "" {

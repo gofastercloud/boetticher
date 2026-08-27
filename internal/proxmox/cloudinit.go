@@ -145,6 +145,7 @@ users:
     content: |
       #!/bin/sh
       set -eu
+      exec >/var/log/boetticher-build.log 2>&1
       export PATH=/usr/local/go/bin:$PATH
       test "$(/usr/local/go/bin/go version)" = "go version go1.26.5 linux/amd64"
       cd /home/labadmin/build
@@ -171,11 +172,14 @@ runcmd:
 	return CloudInitFiles{
 		MetaData: "instance-id: boetticher-builder-0.3.1\nlocal-hostname: lab-builder-01\n",
 		UserData: userData,
-		NetworkConfig: `version: 2
+		NetworkConfig: fmt.Sprintf(`version: 2
 ethernets:
   eth0:
+    match:
+      macaddress: %s
+    set-name: eth0
     dhcp4: true
-`,
+`, model.BuilderMAC),
 	}, nil
 }
 

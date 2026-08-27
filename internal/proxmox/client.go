@@ -3,8 +3,10 @@ package proxmox
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -242,11 +244,25 @@ func (c *Client) ResizeQEMUDisk(ctx context.Context, node string, vmid int, disk
 }
 
 func (c *Client) StartVM(ctx context.Context, node string, vmid int) error {
-	return c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "start"), nil, nil)
+	var upid string
+	if err := c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "start"), nil, &upid); err != nil {
+		return err
+	}
+	if upid != "" {
+		return c.WaitTask(ctx, node, upid)
+	}
+	return nil
 }
 
 func (c *Client) StopVM(ctx context.Context, node string, vmid int) error {
-	return c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "stop"), nil, nil)
+	var upid string
+	if err := c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "stop"), nil, &upid); err != nil {
+		return err
+	}
+	if upid != "" {
+		return c.WaitTask(ctx, node, upid)
+	}
+	return nil
 }
 
 func (c *Client) CreateLXC(ctx context.Context, node string, vmid int, params url.Values) error {
@@ -385,9 +401,15 @@ func (c *Client) StorageContent(ctx context.Context, node, storage, content stri
 // UploadStorageFile imports one already-qualified appliance byte stream into
 // a named Proxmox storage content class. The caller must verify its content
 // digest before calling this method.
-func (c *Client) UploadStorageFile(ctx context.Context, node, storage, content, source, filename string) error {
-	if node == "" || storage == "" || content == "" || source == "" || filename == "" {
-		return errors.New("node, storage, content, source, and filename are required")
+func (c *Client) UploadStorageFile(ctx context.Context, node, storage, content, source, filename, checksum string) error {
+	if node == "" || storage == "" || content == "" || source == "" || filename == "" || checksum == "" {
+		return errors.New("node, storage, content, source, filename, and checksum are required")
+	}
+	if len(checksum) != sha256.Size*2 {
+		return errors.New("artifact checksum must be a SHA-256 hex digest")
+	}
+	if _, err := hex.DecodeString(checksum); err != nil {
+		return errors.New("artifact checksum must be a SHA-256 hex digest")
 	}
 	if strings.ContainsAny(filename, "/\\\r\n") {
 		return errors.New("uploaded filename must be a plain filename")
@@ -416,6 +438,16 @@ func (c *Client) UploadStorageFile(ctx context.Context, node, storage, content, 
 	streamErr := make(chan error, 1)
 	go func() {
 		if err := multipartWriter.WriteField("content", content); err != nil {
+			_ = pipeWriter.CloseWithError(err)
+			streamErr <- err
+			return
+		}
+		if err := multipartWriter.WriteField("checksum", checksum); err != nil {
+			_ = pipeWriter.CloseWithError(err)
+			streamErr <- err
+			return
+		}
+		if err := multipartWriter.WriteField("checksum-algorithm", "sha256"); err != nil {
 			_ = pipeWriter.CloseWithError(err)
 			streamErr <- err
 			return

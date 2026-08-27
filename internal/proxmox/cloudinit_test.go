@@ -175,8 +175,11 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 	if !strings.Contains(string(RenderBuilderCloudInit().UserData), "qemu-guest-agent") {
 		t.Fatal("builder cloud-init does not enable the guest agent needed for address discovery")
 	}
-	if !strings.Contains(files.UserData, "qemu-guest-agent") || !strings.Contains(files.NetworkConfig, "dhcp4: true") {
+	if !strings.Contains(files.UserData, "qemu-guest-agent") || !strings.Contains(files.NetworkConfig, "dhcp4: true") || !strings.Contains(files.NetworkConfig, "macaddress: "+model.BuilderMAC) || !strings.Contains(files.NetworkConfig, "set-name: eth0") {
 		t.Fatal("builder cloud-init lacks guest-agent or bootstrap network setup")
+	}
+	if !strings.Contains(files.UserData, "exec >/var/log/boetticher-build.log 2>&1") {
+		t.Fatal("builder command does not retain bounded build diagnostics")
 	}
 	if !strings.Contains(files.UserData, "trivy_0.69.3_Linux-64bit.tar.gz") || !strings.Contains(files.UserData, "1816b632dfe529869c740c0913e36bd1629cb7688bd5634f4a858c1d57c88b75") {
 		t.Fatal("builder cloud-init does not pin the Trivy qualification input")

@@ -348,17 +348,26 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if err != nil {
 		return fmt.Errorf("create temporary builder known_hosts: %w", err)
 	}
-	defer os.Remove(builderKnownHosts)
+	defer func() {
+		if cleanupErr := os.Remove(builderKnownHosts); cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
+			if returnErr == nil {
+				returnErr = fmt.Errorf("remove temporary builder known_hosts: %w", cleanupErr)
+			} else {
+				returnErr = fmt.Errorf("%w (temporary builder known_hosts cleanup: %v)", returnErr, cleanupErr)
+			}
+		}
+	}()
 	builderCreated, err := proxmox.EnsureBuilderVM(ctx, client, plan, publicKey)
 	builderAddress := ""
 	builderRunner := proxmox.SSHRunner{KnownHosts: builderKnownHosts, StrictHostKey: "accept-new", IdentityFile: identityFile}
 	buildSucceeded := false
+	builderOutput := ""
 	if builderCreated {
 		defer func() {
 			var cleanupErr error
 			if !buildSucceeded {
 				if builderAddress != "" {
-					if err := persistBuilderDiagnostics(ctx, builderRunner, builderAddress, model.DefaultAdminSSHUser, siteDir); err != nil {
+					if err := persistBuilderDiagnosticsWithOutput(ctx, builderRunner, builderAddress, model.DefaultAdminSSHUser, siteDir, builderOutput); err != nil {
 						cleanupErr = errors.Join(cleanupErr, err)
 					}
 				} else if err := persistBuilderUnavailableDiagnostics(siteDir, returnErr); err != nil {
@@ -410,7 +419,9 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if _, err := builderRunner.RunWithStdin(ctx, builderAddress, model.DefaultAdminSSHUser, "set -eu; install -d -m 0755 /home/labadmin/build; tar -xzf - -C /home/labadmin/build", bytes.NewReader(archive)); err != nil {
 		return fmt.Errorf("transfer public appliance build definitions: %w", err)
 	}
-	if _, err := builderRunner.Run(ctx, builderAddress, model.DefaultAdminSSHUser, "sudo -n /usr/local/sbin/boetticher-build"); err != nil {
+	var buildOutputBuffer boundedBuilderOutput
+	if err := builderRunner.RunStream(ctx, builderAddress, model.DefaultAdminSSHUser, "sudo -n /usr/local/sbin/boetticher-build", &buildOutputBuffer); err != nil {
+		builderOutput = buildOutputBuffer.String()
 		return fmt.Errorf("qualify default appliance artifacts on temporary builder: %w", err)
 	}
 	archiveFile, err := os.CreateTemp("", "boetticher-builder-artifacts-*.tar.gz")
@@ -461,6 +472,10 @@ func createBuilderKnownHosts() (string, error) {
 const maxBuilderDiagnosticOutput = 32 << 10
 
 func persistBuilderDiagnostics(ctx context.Context, runner proxmox.CommandRunner, address, user, siteDir string) error {
+	return persistBuilderDiagnosticsWithOutput(ctx, runner, address, user, siteDir, "")
+}
+
+func persistBuilderDiagnosticsWithOutput(ctx context.Context, runner proxmox.CommandRunner, address, user, siteDir, buildOutput string) error {
 	if runner == nil || address == "" || user == "" || siteDir == "" {
 		return errors.New("builder diagnostics require an authenticated runner and destination")
 	}
@@ -470,7 +485,7 @@ func persistBuilderDiagnostics(ctx context.Context, runner proxmox.CommandRunner
 	}{
 		{label: "cloud-init", command: "cloud-init status --long"},
 		{label: "cloud-final", command: "journalctl -u cloud-final --no-pager --lines=100"},
-		{label: "boetticher-build", command: "journalctl -u boetticher-build --no-pager --lines=100"},
+		{label: "boetticher-build", command: "tail -n 200 /var/log/boetticher-build.log"},
 		{label: "disk", command: "df -h"},
 		{label: "memory", command: "free -h"},
 		{label: "go", command: "/usr/local/go/bin/go version"},
@@ -491,8 +506,29 @@ func persistBuilderDiagnostics(ctx context.Context, runner proxmox.CommandRunner
 		}
 		report.WriteByte('\n')
 	}
+	if buildOutput != "" {
+		fmt.Fprintf(&report, "[builder-command-output]\n%s\n", buildOutput)
+	}
 	return writeBuilderDiagnostics(siteDir, report.String())
 }
+
+type boundedBuilderOutput struct {
+	buffer bytes.Buffer
+}
+
+func (b *boundedBuilderOutput) Write(data []byte) (int, error) {
+	remaining := maxBuilderDiagnosticOutput - b.buffer.Len()
+	if remaining > 0 {
+		if len(data) > remaining {
+			_, _ = b.buffer.Write(data[:remaining])
+		} else {
+			_, _ = b.buffer.Write(data)
+		}
+	}
+	return len(data), nil
+}
+
+func (b *boundedBuilderOutput) String() string { return b.buffer.String() }
 
 func persistBuilderUnavailableDiagnostics(siteDir string, cause error) error {
 	if siteDir == "" {

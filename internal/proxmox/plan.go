@@ -680,7 +680,7 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 		"onboot":    {"0"},
 		"agent":     {"1"},
 		"tags":      {strings.Join([]string{model.TagBoetticher, model.TagManaged, model.TagPlatform, builderOwnerTag}, ";")},
-		"net0":      {"virtio,bridge=vmbr0,firewall=1"},
+		"net0":      {"virtio,bridge=vmbr0,firewall=1,macaddr=" + model.BuilderMAC},
 		"ide2":      {"local:cloudinit"},
 		"ipconfig0": {"ip=dhcp"},
 		"ciuser":    {model.DefaultAdminSSHUser},
@@ -795,7 +795,7 @@ func WaitForQEMUIPv4(ctx context.Context, client *Client, node string, vmid, att
 	return "", fmt.Errorf("HOLD: QEMU guest %d did not report a routable IPv4 address after %d attempts: %w", vmid, attempts, lastErr)
 }
 
-func DestroyBuilderVM(ctx context.Context, client *Client, node string) error {
+func DestroyBuilderVM(ctx context.Context, client *Client, node string) (returnErr error) {
 	if client == nil || node == "" {
 		return errors.New("Proxmox client and node are required")
 	}
@@ -812,6 +812,14 @@ func DestroyBuilderVM(ctx context.Context, client *Client, node string) error {
 	if name, _ := current["name"].(string); name != "lab-builder-01" || !hasOwnerTag(currentTags(current), builderOwnerTag) {
 		return fmt.Errorf("HOLD: refusing to destroy unproven VMID %d builder ownership", model.BuilderVMID)
 	}
+	// Once identity and ownership are proven, remove only the exact builder
+	// snippets even if stopping or deletion later fails. This leaves no stale
+	// VM190 bootstrap material after a bounded cleanup attempt.
+	defer func() {
+		if cleanupErr := cleanupBuilderSnippets(ctx, client, node); cleanupErr != nil {
+			returnErr = errors.Join(returnErr, cleanupErr)
+		}
+	}()
 	status, err := client.QEMUStatus(ctx, node, model.BuilderVMID)
 	if err != nil {
 		return fmt.Errorf("inspect temporary builder status: %w", err)
@@ -1417,7 +1425,7 @@ func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage,
 	if !strings.EqualFold(actual, checksum) {
 		return fmt.Errorf("local artifact %s checksum %s does not match qualified %s", filename, actual, checksum)
 	}
-	if err := client.UploadStorageFile(ctx, node, storage, content, source, filename); err != nil {
+	if err := client.UploadStorageFile(ctx, node, storage, content, source, filename, checksum); err != nil {
 		return fmt.Errorf("upload %s: %w", filename, err)
 	}
 	entries, err = client.StorageContent(ctx, node, storage, content)
