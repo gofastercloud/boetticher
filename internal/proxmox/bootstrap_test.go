@@ -16,6 +16,7 @@ type fakeRunner struct {
 	commands    []string
 	output      []byte
 	routeOutput []byte
+	responses   map[string][]byte
 }
 
 func TestManagementNetworkConfigIsFixedAndPreservesHOME(t *testing.T) {
@@ -93,27 +94,52 @@ func TestSSHRunnerUsesBoundedTOFUForFreshApplianceHostKeys(t *testing.T) {
 }
 
 func TestConfigureManagementNetworkValidatesUnchangedHOMEAndVLANState(t *testing.T) {
-	runner := &fakeRunner{}
+	runner := &fakeRunner{responses: map[string][]byte{
+		"sudo -n /usr/sbin/ip -4 -j addr show dev vmbr0":  []byte(`[{"addr":"192.0.2.10/24"}]`),
+		"sudo -n /usr/sbin/ip -4 -j route show default":   []byte(`[{"dst":"default","gateway":"192.0.2.1"}]`),
+		"sudo -n /usr/sbin/ip -4 addr show dev vmbr1.99":  []byte("inet 10.10.99.5/24"),
+		"sudo -n /usr/sbin/ip -4 route show 10.10.0.0/16": []byte("10.10.0.0/16 via 10.10.99.1 dev vmbr1.99"),
+		"sudo -n /usr/sbin/ip -d link show dev vmbr1":     []byte("vlan_filtering 1"),
+	}}
 	if err := ConfigureManagementNetwork(context.Background(), runner, "192.0.2.10", "labadmin"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(runner.command, "before_vmbr0_addr") || !strings.Contains(runner.command, "before_default_route") {
-		t.Fatalf("management verification does not preserve HOME state: %s", runner.command)
-	}
-	for _, required := range []string{"10.10.99.5/24", "10.10.0.0/16 via 10.10.99.1 dev vmbr1.99", "vlan_filtering"} {
-		if !strings.Contains(runner.command, required) {
-			t.Fatalf("management verification missing %q: %s", required, runner.command)
+	for _, required := range []string{
+		"sudo -n /usr/sbin/ip -4 -j addr show dev vmbr0",
+		"sudo -n /usr/sbin/ip -4 -j route show default",
+		"sudo -n /usr/sbin/ifreload -a",
+		"sudo -n /usr/sbin/ip -4 addr show dev vmbr1.99",
+		"sudo -n /usr/sbin/ip -4 route show 10.10.0.0/16",
+		"sudo -n /usr/sbin/ip -d link show dev vmbr1",
+	} {
+		if !containsString(runner.commands, required) {
+			t.Fatalf("management verification missing fixed command %q: %#v", required, runner.commands)
 		}
+	}
+	if containsString(runner.commands, "sudo -n sh -c") {
+		t.Fatalf("management verification uses an unbounded shell: %#v", runner.commands)
 	}
 }
 
 func (f *fakeRunner) Run(_ context.Context, address, user, command string) ([]byte, error) {
 	f.address, f.user, f.command = address, user, command
 	f.commands = append(f.commands, command)
+	if response, ok := f.responses[command]; ok {
+		return response, nil
+	}
 	if command == "ip -j route show default" && f.routeOutput != nil {
 		return f.routeOutput, nil
 	}
 	return f.output, nil
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fakeRunner) RunWithStdin(_ context.Context, address, user, command string, _ io.Reader) ([]byte, error) {

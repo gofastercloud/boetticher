@@ -250,18 +250,51 @@ func ConfigureManagementNetwork(ctx context.Context, runner StdinCommandRunner, 
 	if _, err := runner.RunWithStdin(ctx, address, user, install, strings.NewReader(managementInterfaceConfig)); err != nil {
 		return fmt.Errorf("install Proxmox management interface configuration: %w", err)
 	}
-	verify := `sudo -n sh -c 'set -eu
-before_vmbr0_addr=$(ip -4 -j addr show dev vmbr0)
-before_default_route=$(ip -4 -j route show default)
-ifreload -a
-test "$(ip -4 -j addr show dev vmbr0)" = "$before_vmbr0_addr"
-test "$(ip -4 -j route show default)" = "$before_default_route"
-ip -4 addr show dev vmbr1.99 | grep -Fq "inet 10.10.99.5/24"
-ip -4 route show 10.10.0.0/16 | grep -Fq "10.10.0.0/16 via 10.10.99.1 dev vmbr1.99"
-ip -d link show dev vmbr1 | grep -Eq "vlan_filtering (1|on)"
-'`
-	if _, err := runner.Run(ctx, address, user, verify); err != nil {
-		return fmt.Errorf("apply and verify Proxmox management interface configuration: %w", err)
+	beforeAddress, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -4 -j addr show dev vmbr0")
+	if err != nil {
+		return fmt.Errorf("read Proxmox HOME address before management reload: %w", err)
+	}
+	beforeRoute, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -4 -j route show default")
+	if err != nil {
+		return fmt.Errorf("read Proxmox default route before management reload: %w", err)
+	}
+	if _, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ifreload -a"); err != nil {
+		return fmt.Errorf("apply Proxmox management interface configuration: %w", err)
+	}
+	afterAddress, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -4 -j addr show dev vmbr0")
+	if err != nil {
+		return fmt.Errorf("read Proxmox HOME address after management reload: %w", err)
+	}
+	if !bytes.Equal(beforeAddress, afterAddress) {
+		return errors.New("HOLD: Proxmox HOME address changed while applying the management interface")
+	}
+	afterRoute, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -4 -j route show default")
+	if err != nil {
+		return fmt.Errorf("read Proxmox default route after management reload: %w", err)
+	}
+	if !bytes.Equal(beforeRoute, afterRoute) {
+		return errors.New("HOLD: Proxmox HOME default route changed while applying the management interface")
+	}
+	mgmtAddress, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -4 addr show dev vmbr1.99")
+	if err != nil {
+		return fmt.Errorf("read Proxmox management address: %w", err)
+	}
+	if !strings.Contains(string(mgmtAddress), "inet 10.10.99.5/24") {
+		return errors.New("HOLD: Proxmox vmbr1.99 does not have 10.10.99.5/24")
+	}
+	internalRoute, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -4 route show 10.10.0.0/16")
+	if err != nil {
+		return fmt.Errorf("read Proxmox internal management route: %w", err)
+	}
+	if !strings.Contains(string(internalRoute), "10.10.0.0/16 via 10.10.99.1 dev vmbr1.99") {
+		return errors.New("HOLD: Proxmox internal route does not use 10.10.99.1 via vmbr1.99")
+	}
+	vlanState, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -d link show dev vmbr1")
+	if err != nil {
+		return fmt.Errorf("read Proxmox vmbr1 VLAN state: %w", err)
+	}
+	if !strings.Contains(string(vlanState), "vlan_filtering 1") && !strings.Contains(string(vlanState), "vlan_filtering on") {
+		return errors.New("HOLD: Proxmox vmbr1 is not VLAN-aware after management reload")
 	}
 	return nil
 }
