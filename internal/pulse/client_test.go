@@ -51,8 +51,13 @@ func TestPlanPreservesCoreMonitoringIdentityAndGenericProjection(t *testing.T) {
 	if monitor.VMID != model.MonitorVMID || monitor.Address != "10.10.10.20" || !monitor.ProductOwned {
 		t.Fatalf("monitoring ownership/network identity changed: %#v", monitor)
 	}
-	if len(plan.AvailabilityChecks) != 4 || plan.AvailabilityChecks[1].URL != "https://monitor.lab.home.arpa" {
+	if len(plan.AvailabilityChecks) != 2 || plan.AvailabilityChecks[0].Name != "dns01-authoritative" || plan.AvailabilityChecks[1].Name != "dns02-authoritative" {
 		t.Fatalf("unexpected bounded availability projection: %#v", plan.AvailabilityChecks)
+	}
+	for _, check := range plan.AvailabilityChecks {
+		if check.Name == "portal" || check.Name == "monitoring" {
+			t.Fatalf("mTLS endpoint availability check was projected: %#v", check)
+		}
 	}
 }
 
@@ -163,10 +168,23 @@ func TestAdminConfiguresPVEThroughAuthenticatedAPIAndCreatesReadToken(t *testing
 				Name   string   `json:"name"`
 				Scopes []string `json:"scopes"`
 			}
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.Name != "boetticher monitoring read" || len(request.Scopes) != 1 || request.Scopes[0] != "monitoring:read" {
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || len(request.Scopes) != 1 {
 				return fakeResponse(r, http.StatusBadRequest, "unexpected token scope", nil), nil
 			}
-			return fakeResponse(r, http.StatusOK, `{"token":"read-token","record":{"scopes":["monitoring:read"]}}`, nil), nil
+			switch request.Name {
+			case "boetticher monitoring read":
+				if request.Scopes[0] != "monitoring:read" {
+					return fakeResponse(r, http.StatusBadRequest, "unexpected read scope", nil), nil
+				}
+				return fakeResponse(r, http.StatusOK, `{"token":"read-token","record":{"scopes":["monitoring:read"]}}`, nil), nil
+			case "boetticher monitoring agent":
+				if request.Scopes[0] != "agent:report" {
+					return fakeResponse(r, http.StatusBadRequest, "unexpected agent scope", nil), nil
+				}
+				return fakeResponse(r, http.StatusOK, `{"token":"agent-token","record":{"scopes":["agent:report"]}}`, nil), nil
+			default:
+				return fakeResponse(r, http.StatusBadRequest, "unexpected token name", nil), nil
+			}
 		default:
 			return fakeResponse(r, http.StatusNotFound, "not found", nil), nil
 		}
@@ -184,6 +202,10 @@ func TestAdminConfiguresPVEThroughAuthenticatedAPIAndCreatesReadToken(t *testing
 	token, err := client.CreateReadToken(context.Background(), "boetticher monitoring read")
 	if err != nil || token != "read-token" {
 		t.Fatalf("CreateReadToken() = %q, %v", token, err)
+	}
+	agentToken, err := client.CreateAgentReportToken(context.Background(), "boetticher monitoring agent")
+	if err != nil || agentToken != "agent-token" {
+		t.Fatalf("CreateAgentReportToken() = %q, %v", agentToken, err)
 	}
 }
 

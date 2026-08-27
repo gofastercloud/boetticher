@@ -88,6 +88,14 @@ Central logging uses bounded local journald and asynchronous HTTPS/mTLS upload
 to a mandatory journal collector. The collector is a secondary operational log
 copy, not an availability dependency or cryptographic non-repudiation system.
 
+Pulse uses a dedicated read/audit-oriented Proxmox API identity for inventory,
+guest, storage, and backup state. A separate `agent:report` token is delivered
+to the Pulse host agent through an encrypted systemd credential. The generic
+`monitoring-agent` tag selects agent targets; `lab-proxmox-01` is the default
+target, and VM/LXC guests do not receive an agent. The monitor UI retains the
+HTTPS/mTLS boundary, while the supported token-authenticated agent routes carry
+host reports without a client certificate.
+
 The DNS module is mandatory. Blocky is the default recursive/filtering
 implementation and AdGuard is a typed alternative; PowerDNS remains
 authoritative in both modes, and internal negative answers never leak to public

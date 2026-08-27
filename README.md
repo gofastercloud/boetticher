@@ -44,6 +44,13 @@ lab-log-01       10.10.10.40  Central systemd journal collector
 lab-portal-01    10.10.10.30  generated static documentation
 ```
 
+Pulse reads Proxmox inventory and guest state through its dedicated API token.
+A Pulse host agent is installed only on components carrying the generic
+`monitoring-agent` tag; the default tag is on `lab-proxmox-01` for host CPU,
+memory, temperature, and SMART telemetry. VM and LXC guests do not receive an
+agent. The monitor UI remains `https://monitor.lab.home.arpa` behind the
+platform HTTPS/mTLS boundary.
+
 The fixed networks are VLAN 5 TRANSIT (`10.10.5.0/24`), VLAN 10 INFRA
 (`10.10.10.0/24`), VLAN 20 SERVERS (`10.10.20.0/24`), VLAN 30 TRUSTED
 (`10.10.30.0/24`), VLAN 40 SANDBOX (`10.10.40.0/24`), and VLAN 99 MGMT
@@ -123,8 +130,9 @@ firewall contract before running the live workflow.
 boetticher owns the platform guests, bridges and VLAN policy it declares, the
 managed gateway when selected, platform DNS/NTP, PKI, Pulse monitoring state, backups,
 portal output, and verification metadata. Unknown Proxmox guests remain user-
-managed and are never imported, changed, deleted, monitored, or backed up by
-boetticher.
+managed and are never imported, changed, deleted, or backed up by boetticher.
+Pulse may display API-visible user guests without adopting them into the
+boetticher model.
 
 Proxmox is the normal SSH bastion. The controller reaches Proxmox over the
 HOME network, then uses the forwarding-only `lab-bastion` path to reach

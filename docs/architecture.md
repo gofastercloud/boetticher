@@ -93,10 +93,15 @@ Pulse Community 6.1.2 runs on `lab-monitor-01`, uses the dedicated
 `https://monitor.lab.home.arpa`. The service binds its backend to loopback on
 port 7655 behind the existing HTTPS/mTLS boundary, stores its state under
 `/var/lib/pulse`, and exposes read-only monitoring state through the Pulse REST
-API using the `monitoring:read` scope. The Proxmox identity uses the built-in
-`PVEAuditor` role at `/` and `PVEDatastoreAdmin` at `/storage` for bounded
-backup visibility. There are no Proxmox or guest monitoring agents and no
-external database. Boetticher `verify` and `doctor` retain semantic platform
+API using the `monitoring:read` scope. The Proxmox identity assigns the built-in
+`PVEAuditor` role at `/` to both the service user and its privilege-separated
+token. Backup visibility remains bounded by that read/audit contract. A Pulse
+host agent is installed only on components carrying the generic
+`monitoring-agent` tag; the default tag is on `lab-proxmox-01`, where the agent
+collects host-local CPU, memory, temperature, and SMART telemetry. VMs and LXCs
+do not receive monitoring agents. The host-agent report token uses the
+`agent:report` scope and is delivered through a systemd credential. There is no
+external monitoring database. Boetticher `verify` and `doctor` retain semantic platform
 verification; the portal is a static generated view of the model,
 documentation, and non-secret status.
 

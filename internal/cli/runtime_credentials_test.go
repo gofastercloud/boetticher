@@ -53,6 +53,20 @@ func TestDeploymentCredentialProjectionContainsOnlyEncryptedPaths(t *testing.T) 
 	if !strings.Contains(dropIns["lab-monitor-01"]["pulse.service"], "LoadCredentialEncrypted=pulse-admin-password:/var/lib/boetticher/credentials/pulse-admin-password.cred") {
 		t.Fatalf("Pulse administrative credential projection is incomplete: %#v", dropIns)
 	}
+	agentBindings, err := monitoringAgentCredentialBindings(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agentBindings) != 1 || agentBindings[0].Guest != model.LogicalProxmoxIdentity {
+		t.Fatalf("default Pulse agent bindings = %#v, want only the Proxmox host", agentBindings)
+	}
+	agentDropIns, err := credentialDropIns(agentBindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(agentDropIns[model.LogicalProxmoxIdentity]["pulse-agent.service"], "LoadCredentialEncrypted=pulse-agent-token:/var/lib/boetticher/credentials/pulse-agent-token.cred") {
+		t.Fatalf("Pulse agent credential projection is incomplete: %#v", agentDropIns)
+	}
 }
 
 func TestFirstPartyModuleCredentialsUseEphemeralSystemdPaths(t *testing.T) {

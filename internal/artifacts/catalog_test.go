@@ -550,6 +550,8 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 		"version: 6.1.2",
 		"release_url: https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-v6.1.2-linux-amd64.tar.gz",
 		"release_sha256: 844cd054bcfce528cbcf434d782e571791cc7b02ef2fe298cf138b1cab1087ea",
+		"release_url: https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-agent-linux-amd64",
+		"release_sha256: 1f3cfda2b112e82f311f05673f750bc6e5cb05bd0f942f9b84d7612d56f1ba75",
 	} {
 		if !strings.Contains(string(monitoring), required) {
 			t.Fatalf("monitoring image definition is missing Pulse qualification input %q", required)
@@ -570,6 +572,9 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	}
 	if !strings.Contains(string(pulseService), "Environment=BIND_ADDRESS=127.0.0.1") {
 		t.Fatal("Pulse service is not bound to loopback behind the TLS frontend")
+	}
+	if strings.Contains(string(pulseService), "CAP_NET_RAW") || strings.Contains(string(pulseService), "AmbientCapabilities") || strings.Contains(string(pulseService), "CapabilityBoundingSet") {
+		t.Fatal("Pulse service grants an unnecessary raw-socket capability")
 	}
 	if strings.Contains(string(monitoring), "latest") || strings.Contains(string(buildScript), "zabbix") || strings.Contains(string(buildScript), "postgresql") {
 		t.Fatal("monitoring build retains a floating input or obsolete monitoring dependency")

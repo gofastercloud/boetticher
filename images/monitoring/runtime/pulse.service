@@ -16,8 +16,6 @@ PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/var/lib/pulse
-AmbientCapabilities=CAP_NET_RAW
-CapabilityBoundingSet=CAP_NET_RAW
 Environment=PULSE_DATA_DIR=/var/lib/pulse
 Environment=BIND_ADDRESS=127.0.0.1
 Environment=PULSE_DEPLOYMENT_METHOD=systemd

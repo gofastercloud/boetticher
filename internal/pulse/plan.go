@@ -47,8 +47,6 @@ func PlanFromSite(s model.Site) (Plan, error) {
 
 func platformAvailabilityChecks(domain string) []AvailabilityCheck {
 	return []AvailabilityCheck{
-		{Name: "portal", URL: "https://portal." + domain, Protocol: "https", Description: "Core portal HTTPS availability"},
-		{Name: "monitoring", URL: "https://monitor." + domain, Protocol: "https", Description: "Core monitoring HTTPS availability"},
 		{Name: "dns01-authoritative", URL: "tcp://10.10.10.10:5353", Protocol: "tcp", Description: "Primary authoritative DNS listener availability"},
 		{Name: "dns02-authoritative", URL: "tcp://10.10.10.11:5353", Protocol: "tcp", Description: "Secondary authoritative DNS listener availability"},
 	}

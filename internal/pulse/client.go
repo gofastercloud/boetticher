@@ -18,8 +18,9 @@ import (
 )
 
 const (
-	readScope       = "monitoring:read"
-	maxResponseSize = 4 << 20
+	readScope        = "monitoring:read"
+	agentReportScope = "agent:report"
+	maxResponseSize  = 4 << 20
 )
 
 type ClientConfig struct {
@@ -330,6 +331,29 @@ func (c *Client) CreateReadToken(ctx context.Context, name string) (string, erro
 	}
 	if response.Token == "" || len(response.Record.Scopes) != 1 || response.Record.Scopes[0] != readScope {
 		return "", errors.New("Pulse token response did not prove the monitoring-read scope")
+	}
+	return response.Token, nil
+}
+
+// CreateAgentReportToken creates the least-privilege token used by tagged
+// Pulse host agents. It deliberately does not grant monitoring-read,
+// settings-write, agent-management, or command scopes.
+func (c *Client) CreateAgentReportToken(ctx context.Context, name string) (string, error) {
+	if !c.admin || strings.TrimSpace(name) == "" {
+		return "", errors.New("Pulse agent-token creation requires the admin client and a name")
+	}
+	request := map[string]any{"name": name, "scopes": []string{agentReportScope}}
+	var response struct {
+		Token  string `json:"token"`
+		Record struct {
+			Scopes []string `json:"scopes"`
+		} `json:"record"`
+	}
+	if err := c.adminJSON(ctx, http.MethodPost, "/security/tokens", request, &response); err != nil {
+		return "", fmt.Errorf("create Pulse agent-report token: %w", err)
+	}
+	if response.Token == "" || len(response.Record.Scopes) != 1 || response.Record.Scopes[0] != agentReportScope {
+		return "", errors.New("Pulse token response did not prove the agent-report scope")
 	}
 	return response.Token, nil
 }

@@ -63,6 +63,7 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 			{Name: "pulse_admin_password", Purpose: "Pulse administrative bootstrap authentication", Consumer: "pulse-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential"},
 			{Name: "pulse_proxmox_token", Purpose: "API-only Proxmox monitoring token value", Consumer: "deployment-controller", Generation: "ephemeral", Rotation: "replaceable", Delivery: "controller-memory"},
 			{Name: "pulse_api_token", Purpose: "read-only Pulse monitoring API integration", Consumer: "deployment-controller", Generation: "ephemeral", Rotation: "replaceable", Delivery: "controller-memory"},
+			{Name: "pulse_agent_token", Purpose: "read-only Pulse host-agent report authentication", Consumer: "pulse-agent", Generation: "ephemeral", Rotation: "replaceable", Delivery: "systemd-credential"},
 		}
 	case "firewall":
 		declaration.Secrets = []model.SecretDeclaration{{Name: "ddns_tsig_secret", Purpose: "authenticated DHCP DNS updates", Consumer: "kea-dhcp-ddns-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file"}}

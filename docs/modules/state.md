@@ -10,7 +10,8 @@ service accounts, and health tooling. It is replaceable.
 replacement:
 
 - DNS01 and DNS02: PowerDNS database and stable SSH host identity;
-- monitoring: Pulse persistent state and stable SSH host identity;
+- monitoring: Pulse persistent state and stable SSH host identity; tagged
+  host-agent identity and buffered report state at `/var/lib/boetticher/pulse-agent`;
 - firewall: Kea lease state and stable SSH host identity.
 - logging: bounded remote journal volume with `backup: false`, plus stable SSH
   host identity.

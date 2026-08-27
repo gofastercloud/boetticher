@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/dns"
@@ -16,6 +17,25 @@ import (
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/pulse"
 )
+
+// MonitoringAgentTargets derives host-agent installation targets from the
+// generic component tag. Monitoring is the only module that owns this
+// projection; an untagged guest is never selected implicitly.
+func MonitoringAgentTargets(s model.Site) []string {
+	seen := map[string]bool{}
+	result := make([]string, 0)
+	for _, component := range s.PlatformComponents() {
+		for _, tag := range component.Tags {
+			if tag == model.TagMonitoringAgent && !seen[component.Name] {
+				seen[component.Name] = true
+				result = append(result, component.Name)
+				break
+			}
+		}
+	}
+	sort.Strings(result)
+	return result
+}
 
 func Inventory(s model.Site) (string, error) {
 	if err := s.Validate(); err != nil {
@@ -156,6 +176,10 @@ func Variables(s model.Site) ([]byte, error) {
 		DNSPlan                     dns.Plan                      `json:"dns_plan"`
 		FirewallPlan                firewall.Plan                 `json:"firewall_plan"`
 		MonitoringPlan              pulse.Plan                    `json:"monitoring_plan"`
+		PulseAgentTargets           []string                      `json:"pulse_agent_targets"`
+		PulseAgentVersion           string                        `json:"pulse_agent_version"`
+		PulseAgentReleaseURL        string                        `json:"pulse_agent_release_url"`
+		PulseAgentReleaseSHA256     string                        `json:"pulse_agent_release_sha256"`
 		BlockyConfig                string                        `json:"blocky_config"`
 		LoggingPlan                 logging.Plan                  `json:"logging_plan"`
 		LoggingCollectorConfig      string                        `json:"logging_collector_config"`
@@ -165,7 +189,7 @@ func Variables(s model.Site) ([]byte, error) {
 		LoggingCollectorCertificate string                        `json:"logging_collector_certificate"`
 		ModuleConfigs               map[string]model.ModuleConfig `json:"module_configs"`
 		ModuleDeclarations          []model.ModuleDeclaration     `json:"module_declarations"`
-	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, monitoringPlan, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), loggingUploads, map[string]string{}, "", s.ModuleConfig, s.Declarations}
+	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), loggingUploads, map[string]string{}, "", s.ModuleConfig, s.Declarations}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err

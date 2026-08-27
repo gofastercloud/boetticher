@@ -69,7 +69,10 @@ guest identities, artifacts, services, backups, and shared policy are applied
 through `deploy`.
 
 The managed path configures Debian networking, nftables, Kea, sandbox DNS/NTP,
-DNS/NTP guests, the Pulse monitoring appliance, the portal, PKI certificates, and platform backups.
+DNS/NTP guests, the Pulse monitoring appliance, the tagged Pulse host agent,
+the portal, PKI certificates, and platform backups. The default agent target is
+the Proxmox host; guest agents require an explicit `monitoring-agent` tag on a
+declared managed component.
 The external path configures the boetticher-owned platform and leaves the
 firewall appliance alone.
 

@@ -263,7 +263,7 @@ func TestCreateScopedCredentialsCreatesRoleAtCollectionEndpoint(t *testing.T) {
 func TestCreatePulseMonitoringCredentialsUsesBoundedAPIOnlyIdentity(t *testing.T) {
 	runner := &fakeRunner{
 		responses: map[string][]byte{
-			"pvesh get /access/roles --output-format json":                                                                  []byte(`[{"roleid":"PVEAuditor","privs":"Sys.Audit","special":0},{"roleid":"PVEDatastoreAdmin","privs":"Datastore.Audit","special":0}]`),
+			"pvesh get /access/roles --output-format json":                                                                  []byte(`[{"roleid":"PVEAuditor","privs":"Sys.Audit","special":0}]`),
 			"pvesh get /access/users --output-format json":                                                                  []byte(`[]`),
 			"pvesh get /access/users/'pulse-monitor@pve'/token --output-format json":                                        []byte(`[]`),
 			"pvesh create /access/users/'pulse-monitor@pve'/token/'boetticher-monitoring' --privsep 1 --output-format json": []byte(`{"value":"opaque-monitoring-secret"}`),
@@ -282,25 +282,25 @@ func TestCreatePulseMonitoringCredentialsUsesBoundedAPIOnlyIdentity(t *testing.T
 		"pvesh create /access/users --userid 'pulse-monitor@pve'",
 		"pvesh create /access/users/'pulse-monitor@pve'/token/'boetticher-monitoring' --privsep 1 --output-format json",
 		"pvesh set /access/acl --path '/' --users 'pulse-monitor@pve' --roles 'PVEAuditor' --propagate 1",
-		"pvesh set /access/acl --path '/storage' --tokens 'pulse-monitor@pve!boetticher-monitoring' --roles 'PVEDatastoreAdmin' --propagate 1",
+		"pvesh set /access/acl --path '/' --tokens 'pulse-monitor@pve!boetticher-monitoring' --roles 'PVEAuditor' --propagate 1",
 	} {
 		if !strings.Contains(joined, required) {
 			t.Fatalf("Pulse monitoring bootstrap is missing %q:\n%s", required, joined)
 		}
 	}
-	for _, forbidden := range []string{"root@pam", "BoetticherProvisioner", "VM.Monitor", "VM.GuestAgent", "ssh", "opaque-monitoring-secret"} {
+	for _, forbidden := range []string{"root@pam", "BoetticherProvisioner", "VM.Monitor", "VM.GuestAgent", "PVEDatastoreAdmin", "/storage", "ssh", "opaque-monitoring-secret"} {
 		if strings.Contains(joined, forbidden) {
 			t.Fatalf("Pulse monitoring bootstrap contains forbidden %q:\n%s", forbidden, joined)
 		}
 	}
 }
 
-func TestCreatePulseMonitoringCredentialsFailsClosedWhenRequiredRoleIsMissing(t *testing.T) {
+func TestCreatePulseMonitoringCredentialsFailsClosedWhenAuditorRoleIsMissing(t *testing.T) {
 	runner := &fakeRunner{responses: map[string][]byte{
-		"pvesh get /access/roles --output-format json": []byte(`[{"roleid":"PVEAuditor","privs":"Sys.Audit","special":0}]`),
+		"pvesh get /access/roles --output-format json": []byte(`[]`),
 	}}
-	if _, err := CreatePulseMonitoringCredentials(context.Background(), runner, "192.0.2.10", "root"); err == nil || !strings.Contains(err.Error(), "PVEDatastoreAdmin") {
-		t.Fatalf("missing backup-visibility role was not rejected: %v", err)
+	if _, err := CreatePulseMonitoringCredentials(context.Background(), runner, "192.0.2.10", "root"); err == nil || !strings.Contains(err.Error(), "PVEAuditor") {
+		t.Fatalf("missing auditor role was not rejected: %v", err)
 	}
 	if len(runner.commands) != 1 {
 		t.Fatalf("role failure continued into mutation: %#v", runner.commands)

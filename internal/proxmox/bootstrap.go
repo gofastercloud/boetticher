@@ -527,18 +527,15 @@ func CreateScopedCredentials(ctx context.Context, runner CommandRunner, address,
 }
 
 const (
-	PulseMonitoringUser        = "pulse-monitor@pve"
-	PulseMonitoringToken       = "boetticher-monitoring"
-	PulseMonitoringRole        = "PVEAuditor"
-	PulseMonitoringStorageRole = "PVEDatastoreAdmin"
-	PulseMonitoringStoragePath = "/storage"
+	PulseMonitoringUser  = "pulse-monitor@pve"
+	PulseMonitoringToken = "boetticher-monitoring"
+	PulseMonitoringRole  = "PVEAuditor"
 )
 
 // CreatePulseMonitoringCredentials creates the API-only identity used by the
-// Pulse server. The built-in PVEAuditor role is assigned at the root path. A
-// separate PVEDatastoreAdmin ACL is limited to /storage because the selected
-// Pulse release uses that path for backup inventory; no VM mutation, guest
-// agent, SSH, or root monitoring privilege is granted.
+// Pulse server. The built-in PVEAuditor role is assigned at the root path to
+// both the service user and its privilege-separated token; no VM mutation,
+// guest agent, SSH, datastore-admin, or root monitoring privilege is granted.
 func CreatePulseMonitoringCredentials(ctx context.Context, runner CommandRunner, address, initialUser string) (string, error) {
 	if runner == nil || address == "" || initialUser == "" {
 		return "", errors.New("Pulse monitoring credential bootstrap inputs are invalid")
@@ -549,9 +546,6 @@ func CreatePulseMonitoringCredentials(ctx context.Context, runner CommandRunner,
 	}
 	if err := requireBuiltInRole(rolesOutput, PulseMonitoringRole); err != nil {
 		return "", fmt.Errorf("HOLD: Proxmox monitoring role %q is unavailable: %w", PulseMonitoringRole, err)
-	}
-	if err := requireBuiltInRole(rolesOutput, PulseMonitoringStorageRole); err != nil {
-		return "", fmt.Errorf("HOLD: Proxmox backup visibility role %q is unavailable: %w", PulseMonitoringStorageRole, err)
 	}
 	usersOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users --output-format json"))
 	if err != nil {
@@ -599,7 +593,6 @@ func CreatePulseMonitoringCredentials(ctx context.Context, runner CommandRunner,
 		role string
 	}{
 		{path: "/", role: PulseMonitoringRole},
-		{path: PulseMonitoringStoragePath, role: PulseMonitoringStorageRole},
 	} {
 		for _, subject := range []struct {
 			flag  string

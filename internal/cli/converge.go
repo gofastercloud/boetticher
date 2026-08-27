@@ -122,6 +122,9 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	runtimeVariables["portal_source_dir"] = filepath.Join(*siteDir, "generated", "portal")
 	runtimeVariables["boetticher_appliance_artifact"] = true
+	// Agent installation is enabled only in the post-Pulse bootstrap pass,
+	// after the scoped report token and encrypted credential projection exist.
+	runtimeVariables["pulse_agent_install_enabled"] = false
 	monitoringEnabled := modules.IsEnabled(s, "monitoring")
 	secretValues := map[string]string{}
 	if s.Gateway.Mode == model.GatewayModeManaged {
@@ -176,6 +179,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return err
 	}
 	runtimeVariables["client_ca_pem"] = authority.IssuingCertPEM
+	runtimeVariables["pulse_server_ca_pem"] = authority.IssuingCertPEM
 	if *proxmoxCA != "" {
 		proxmoxCAPEM, readErr := os.ReadFile(*proxmoxCA)
 		if readErr != nil {
@@ -427,6 +431,69 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 		if _, err := pulseRead.Resources(context.Background()); err != nil {
 			return fmt.Errorf("verify Pulse resources: %w", err)
+		}
+
+		agentBindings, bindingErr := monitoringAgentCredentialBindings(s)
+		if bindingErr != nil {
+			return bindingErr
+		}
+		if len(agentBindings) > 0 {
+			agentToken, agentTokenErr := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_agent_token")
+			if errors.Is(agentTokenErr, site.ErrPlatformSecretMissing) {
+				agentToken, agentTokenErr = pulseAdmin.CreateAgentReportToken(context.Background(), "boetticher monitoring agent")
+				if agentTokenErr != nil {
+					return agentTokenErr
+				}
+				if err := site.StorePlatformSecret(*siteDir, s, *ageIdentity, "pulse_agent_token", agentToken); err != nil {
+					return fmt.Errorf("store encrypted Pulse agent token: %w", err)
+				}
+			} else if agentTokenErr != nil {
+				return fmt.Errorf("load encrypted Pulse agent token: %w", agentTokenErr)
+			}
+
+			for _, target := range ansible.MonitoringAgentTargets(s) {
+				var agentRunner proxmox.CommandRunner
+				if target == model.LogicalProxmoxIdentity {
+					agentRunner = proxmox.SSHRunner{
+						IdentityFile:  operatorIdentityFile(s),
+						ConfigFile:    filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"),
+						StrictHostKey: "accept-new", HostKeyAlias: model.LogicalProxmoxIdentity,
+					}
+				} else {
+					agentRunner = applianceSSHRunner(s, *siteDir, target)
+				}
+				if err := installCredentialsForGuest(context.Background(), agentRunner, target, agentBindings, map[string]string{"pulse_agent_token": agentToken}); err != nil {
+					return fmt.Errorf("install Pulse agent credential on %s: %w", target, err)
+				}
+			}
+			agentDropIns, dropInErr := credentialDropIns(agentBindings)
+			if dropInErr != nil {
+				return dropInErr
+			}
+			existingDropIns, ok := runtimeVariables["credential_dropins"].(map[string]map[string]string)
+			if !ok {
+				existingDropIns = map[string]map[string]string{}
+			}
+			for guest, dropIns := range agentDropIns {
+				if existingDropIns[guest] == nil {
+					existingDropIns[guest] = map[string]string{}
+				}
+				for unit, content := range dropIns {
+					existingDropIns[guest][unit] = content
+				}
+			}
+			runtimeVariables["credential_dropins"] = existingDropIns
+			runtimeVariables["pulse_agent_install_enabled"] = true
+			agentVariables, marshalErr := json.MarshalIndent(runtimeVariables, "", "  ")
+			if marshalErr != nil {
+				return marshalErr
+			}
+			agentVariables = append(agentVariables, '\n')
+			for _, target := range ansible.MonitoringAgentTargets(s) {
+				if err := ansible.RunLimited(context.Background(), ansiblePlaybook, inventoryPath, agentVariables, target); err != nil {
+					return fmt.Errorf("install Pulse agent on %s: %w", target, err)
+				}
+			}
 		}
 	}
 	if err := proxmoxClient.ApplyBackupJob(context.Background(), node, proxmox.BackupJob{

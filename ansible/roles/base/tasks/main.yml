@@ -139,3 +139,107 @@
   loop_control:
     label: "{{ item.key }}"
   notify: reload systemd
+
+- name: Install Pulse host-agent hardware collection dependencies
+  ansible.builtin.apt:
+    name:
+      - lm-sensors
+      - smartmontools
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+
+- name: Require the encrypted Pulse host-agent credential projection
+  ansible.builtin.assert:
+    that:
+      - credential_dropins[inventory_hostname]['pulse-agent.service'] is defined
+    fail_msg: "Pulse host-agent setup requires the encrypted report-token credential"
+  no_log: true
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+
+- name: Create Pulse host-agent state directory
+  ansible.builtin.file:
+    path: /var/lib/boetticher/pulse-agent
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+
+- name: Install the Boetticher CA for Pulse host-agent HTTPS
+  ansible.builtin.copy:
+    content: "{{ pulse_server_ca_pem }}"
+    dest: /usr/local/share/ca-certificates/boetticher-pulse.crt
+    owner: root
+    group: root
+    mode: '0644'
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+
+- name: Refresh system CA trust for the Pulse host agent
+  ansible.builtin.command: update-ca-certificates
+  register: pulse_agent_ca_update
+  changed_when: "'0 added, 0 removed' not in pulse_agent_ca_update.stdout"
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+
+- name: Install the exact pinned Pulse host-agent binary
+  ansible.builtin.get_url:
+    url: "{{ pulse_agent_release_url }}"
+    dest: /usr/local/bin/pulse-agent
+    checksum: "sha256:{{ pulse_agent_release_sha256 }}"
+    owner: root
+    group: root
+    mode: '0755'
+  notify: restart pulse-agent
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+
+- name: Verify the pinned Pulse host-agent version
+  ansible.builtin.command: /usr/local/bin/pulse-agent --version
+  register: pulse_agent_version_result
+  changed_when: false
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+
+- name: Prove the expected Pulse host-agent version is installed
+  ansible.builtin.assert:
+    that:
+      - pulse_agent_version in pulse_agent_version_result.stdout
+    fail_msg: "Installed Pulse host-agent did not report the pinned version"
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+
+- name: Install the Pulse host-agent systemd service
+  ansible.builtin.template:
+    src: pulse-agent.service.j2
+    dest: /etc/systemd/system/pulse-agent.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart pulse-agent
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+
+- name: Enable the Pulse host-agent service
+  ansible.builtin.systemd_service:
+    name: pulse-agent
+    enabled: true
+    state: started
+    daemon_reload: true
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))

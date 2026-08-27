@@ -24,9 +24,11 @@ desired configuration.
 
 Appliance root filesystems are reconstructable from the boetticher version,
 required release/build definitions, site configuration, and controller
-recovery authority. Runtime configuration, credentials, and replaceable
-certificates are regenerated during deploy. Persistent application data is
-restored or reattached separately from the root filesystem.
+recovery authority. Runtime configuration, credentials, replaceable
+certificates, and tagged Pulse host-agent installation are regenerated during
+deploy. Persistent application data is restored or reattached separately from
+the root filesystem; the monitor guest retains `/var/lib/pulse`, and tagged
+host-agent identity/buffer state is kept under `/var/lib/boetticher/pulse-agent`.
 
 In external mode, boetticher regenerates the network/security contract but does
 not back up or restore the operator's appliance. Use that appliance's own

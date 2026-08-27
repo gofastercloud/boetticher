@@ -11,6 +11,10 @@ pulse:
   version: 6.1.2
   release_url: https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-v6.1.2-linux-amd64.tar.gz
   release_sha256: 844cd054bcfce528cbcf434d782e571791cc7b02ef2fe298cf138b1cab1087ea
+pulse_agent:
+  version: 6.1.2
+  release_url: https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-agent-linux-amd64
+  release_sha256: 1f3cfda2b112e82f311f05673f750bc6e5cb05bd0f942f9b84d7612d56f1ba75
 logging: inherited-from-base
 runtime_config: /etc/boetticher/module.yaml
 persistent:

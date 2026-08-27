@@ -24,6 +24,9 @@ const (
 	PulseVersion                = "6.1.2"
 	PulseReleaseURL             = "https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-v6.1.2-linux-amd64.tar.gz"
 	PulseReleaseSHA256          = "844cd054bcfce528cbcf434d782e571791cc7b02ef2fe298cf138b1cab1087ea"
+	PulseAgentVersion           = "6.1.2"
+	PulseAgentReleaseURL        = "https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-agent-linux-amd64"
+	PulseAgentReleaseSHA256     = "1f3cfda2b112e82f311f05673f750bc6e5cb05bd0f942f9b84d7612d56f1ba75"
 	AuthoritativeDNS            = "PowerDNS Authoritative"
 	AuthoritativeDNSVersion     = "4.9.17"
 	AuthoritativePackageVersion = "4.9.17-1pdns.trixie"
@@ -79,6 +82,7 @@ const (
 	TagObservability            = "observability"
 	TagPortal                   = "portal"
 	TagCorePortal               = "boetticher-core-portal"
+	TagMonitoringAgent          = "monitoring-agent"
 )
 
 var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
@@ -468,7 +472,7 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 			UserWorkloadsManaged: false,
 		},
 		Components: []Component{
-			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: ProxmoxManagementAddress, Role: "Proxmox host", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork}, URL: "https://proxmox." + DefaultDomain + ":8006", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Logging: true},
+			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: ProxmoxManagementAddress, Role: "Proxmox host", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork, TagMonitoringAgent}, URL: "https://proxmox." + DefaultDomain + ":8006", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Logging: true},
 			{Name: "lab-portal-01", VMID: PortalVMID, Hostname: "lab-portal-01", Zone: "INFRA", Address: "10.10.10.30", Role: "Generated platform portal", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagPortal, TagCorePortal, TagBackup}, URL: "https://portal." + DefaultDomain, DNSAliases: []string{"portal"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Logging: true},
 		},
 	}

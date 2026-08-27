@@ -8,12 +8,18 @@ configuration, firewall policy, Kea, PKI, SOPS state, SSH bastion policy,
 Pulse monitoring state, platform backups, and generated platform state.
 
 Arbitrary user VMs and LXCs remain outside the model, OpenTofu state, Ansible
-inventory, Pulse monitoring ownership, backup guarantee, and deletion logic. They may use
+inventory, boetticher monitoring ownership, backup guarantee, and deletion logic. Pulse may
+display them when the Proxmox API exposes them, but they may use
 the provided network simply by attaching a NIC to `vmbr1` and selecting a VLAN:
 
 Platform guests carry canonical `boetticher` and `managed` tags. The `backup`
 tag marks a declared platform guest for the platform backup projection; it is
 metadata and does not cause user workloads to be adopted or backed up.
+
+The generic `monitoring-agent` tag is the Pulse host-agent installation signal.
+It is attached to `lab-proxmox-01` by default. Only declared managed components
+with that tag receive the host agent; the tag is absent from VM and LXC guests
+by default.
 
 ```text
 Create VM/LXC in Proxmox → attach to vmbr1 → choose a zone VLAN → boot

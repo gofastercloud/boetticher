@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gofastercloud/boetticher/internal/ansible"
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
@@ -70,6 +71,52 @@ func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, erro
 	}
 	if err := secrets.Validate(items); err != nil {
 		return nil, fmt.Errorf("validate appliance credential declarations: %w", err)
+	}
+	return bindings, nil
+}
+
+// monitoringAgentCredentialBindings creates one systemd credential projection
+// for each model component carrying the generic monitoring-agent tag. The
+// token is created only after Pulse is configured, so these bindings are
+// deliberately installed in the post-bootstrap pass rather than mixed into
+// the initial credential load.
+func monitoringAgentCredentialBindings(site model.Site) ([]deploymentCredential, error) {
+	if !modules.IsEnabled(site, "monitoring") {
+		return nil, nil
+	}
+	components := make(map[string]model.Component)
+	for _, component := range site.PlatformComponents() {
+		components[component.Name] = component
+	}
+	bindings := make([]deploymentCredential, 0)
+	for _, target := range ansible.MonitoringAgentTargets(site) {
+		component, ok := components[target]
+		if !ok || !component.SSHManaged {
+			return nil, fmt.Errorf("monitoring-agent target %q is not a managed platform component", target)
+		}
+		address := component.Address
+		if target == model.LogicalProxmoxIdentity && site.BootstrapAddress != "" {
+			address = site.BootstrapAddress
+		}
+		if address == "" {
+			return nil, fmt.Errorf("monitoring-agent target %q has no deployment address", target)
+		}
+		bindings = append(bindings, deploymentCredential{
+			Guest: target, Address: address, SecretKey: "pulse_agent_token",
+			Spec: secrets.CredentialSpec{
+				Name:       "pulse-agent-token",
+				Unit:       "pulse-agent.service",
+				StorePath:  "/var/lib/boetticher/credentials/pulse-agent-token.cred",
+				RuntimeRef: "/run/credentials/pulse-agent.service/pulse-agent-token",
+			},
+		})
+	}
+	items := make([]secrets.CredentialSpec, 0, len(bindings))
+	for _, binding := range bindings {
+		items = append(items, binding.Spec)
+	}
+	if err := secrets.Validate(items); err != nil {
+		return nil, fmt.Errorf("validate monitoring-agent credential declarations: %w", err)
 	}
 	return bindings, nil
 }
