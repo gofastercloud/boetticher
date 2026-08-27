@@ -13,7 +13,7 @@ test ! -e "$rootfs/etc/boetticher/module.yaml"
 printf '%s\n' 'boetticher smoke check: artifact identity presence'
 test -s "$rootfs/usr/lib/boetticher/artifact.json"
 printf '%s\n' 'boetticher smoke check: artifact definition checksum'
-grep -Eq '"definition_sha256": "[a-fA-F0-9]{64}"' "$rootfs/usr/lib/boetticher/artifact.json"
+grep -Eq '"definition_sha256"[[:space:]]*:[[:space:]]*"[a-fA-F0-9]{64}"' "$rootfs/usr/lib/boetticher/artifact.json"
 if grep -q 'content_sha256' "$rootfs/usr/lib/boetticher/artifact.json"; then
   echo "artifact definition identity must not embed the built content checksum" >&2
   exit 1

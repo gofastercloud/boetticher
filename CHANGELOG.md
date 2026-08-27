@@ -21,6 +21,8 @@ project, so releases can make clean breaks while the design is settling.
   failed base-contract checks identify the exact assertion.
 - Label the smoke preamble assertions so artifact identity and baked-identity
   failures remain diagnosable in the hosted-builder log.
+- Accept compact JSON whitespace in the artifact identity smoke check; the
+  generated Go JSON is valid without a space after the field separator.
 
 ## [0.3.32] - 2026-08-27
 
