@@ -120,13 +120,27 @@ func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, json
 		for _, service := range []string{"nftables", "kea-dhcp4-server", "kea-dhcp-ddns-server", "dnsmasq"} {
 			fmt.Fprintf(out, "  %-18s %s\n", service, liveStatus.Services[service])
 		}
-	}
-	if live {
-		fmt.Fprintln(out, "Live state    PASS (managed gateway queried)")
+		if gatewayStatusHealthy(liveStatus) {
+			fmt.Fprintln(out, "Live state    PASS (managed gateway healthy)")
+		} else {
+			fmt.Fprintln(out, "Live state    FAIL (managed gateway has inactive services or forwarding)")
+		}
 	} else {
 		fmt.Fprintln(out, "Live state    NOT TESTED (use --live)")
 	}
 	return nil
+}
+
+func gatewayStatusHealthy(status gatewayLiveStatus) bool {
+	if status.Forwarding != "1" {
+		return false
+	}
+	for _, service := range []string{"nftables", "kea-dhcp4-server", "kea-dhcp-ddns-server", "dnsmasq"} {
+		if status.Services[service] != "active" {
+			return false
+		}
+	}
+	return true
 }
 
 const gatewayStatusScript = `printf 'forwarding=%s\n' "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || printf unknown)"
