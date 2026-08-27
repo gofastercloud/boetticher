@@ -29,7 +29,7 @@ func TestPlanProjectsMandatoryCollectorAndManagedSources(t *testing.T) {
 	if strings.Contains(CollectorConfiguration(plan), "[Journal]") || strings.Contains(CollectorConfiguration(plan), "SystemMaxUse=") {
 		t.Fatal("collector retention was emitted using journald-only configuration keys")
 	}
-	if !strings.Contains(CollectorServiceOverride(plan), "--listen-https=-3") || !strings.Contains(CollectorServiceOverride(plan), RemoteJournalPath) {
+	if !strings.Contains(CollectorServiceOverride(plan), "LogsDirectory=") || !strings.Contains(CollectorServiceOverride(plan), "--listen-https=-3") || !strings.Contains(CollectorServiceOverride(plan), RemoteJournalPath) {
 		t.Fatal("collector service override does not bind HTTPS journal transport and persistent output")
 	}
 	if !strings.Contains(CollectorServiceOverride(plan), "ExecStart=/usr/lib/systemd/systemd-journal-remote --listen-https=-3 --output="+RemoteJournalPath) {
