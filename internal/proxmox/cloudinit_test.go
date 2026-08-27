@@ -20,7 +20,7 @@ func TestFirewallCloudInitUsesStableInterfaceIdentities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, value := range []string{"set-name: wan0", "set-name: trusted0", "set-name: servers0", "set-name: sandbox0", "set-name: mgmt0", "net.ipv4.ip_forward=0", "net.ipv6.conf.all.forwarding=0"} {
+	for _, value := range []string{"set-name: wan0", "set-name: trusted0", "set-name: servers0", "set-name: sandbox0", "set-name: mgmt0", "net.ipv4.ip_forward=0", "net.ipv6.conf.all.forwarding=0", "/bin/cat /var/lib/kea/kea-leases4.csv"} {
 		if !strings.Contains(files.NetworkConfig+files.UserData, value) {
 			t.Fatalf("cloud-init omitted %q", value)
 		}
