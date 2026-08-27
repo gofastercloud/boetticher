@@ -109,13 +109,23 @@
   when: inventory_hostname in logging_upload_configs
 
 - name: Install bounded journal-upload retry policy
-  ansible.builtin.copy:
-    content: "[Service]\nRestartSec=15s\n"
-    dest: /etc/systemd/system/systemd-journal-upload.service.d/boetticher.conf
-    owner: root
-    group: root
-    mode: '0644'
-  notify: reload systemd
+  block:
+    - name: Create journal-upload service drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/systemd-journal-upload.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Write journal-upload retry policy
+      ansible.builtin.copy:
+        content: "[Service]\nRestartSec=15s\n"
+        dest: /etc/systemd/system/systemd-journal-upload.service.d/boetticher.conf
+        owner: root
+        group: root
+        mode: '0644'
+      notify: reload systemd
   when: inventory_hostname in logging_upload_configs
 
 - name: Enable asynchronous journal upload after endpoint certificate installation
