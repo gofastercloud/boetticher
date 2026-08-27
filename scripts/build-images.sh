@@ -264,7 +264,7 @@ install_zabbix() {
     "zabbix-nginx-conf=$zabbix_package_version" \
     "zabbix-sql-scripts=$zabbix_package_version" \
     "zabbix-agent2=$zabbix_package_version" \
-    php-pgsql postgresql nginx
+    php-pgsql postgresql nginx ssl-cert
   installed_version=$(chroot "$rootfs" dpkg-query -W -f='${Version}' zabbix-server-pgsql)
   if [ "$installed_version" != "$zabbix_package_version" ]; then
     echo "HOLD: unexpected Zabbix server package version: $installed_version" >&2

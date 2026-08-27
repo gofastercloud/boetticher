@@ -123,6 +123,25 @@
     fail_msg: "The installed Zabbix server is not in the qualified 7.0 LTS series"
   when: inventory_hostname == 'lab-monitor-01'
 
+- name: Generate the local PostgreSQL TLS key required by the packaged cluster
+  ansible.builtin.command: /usr/sbin/make-ssl-cert generate-default-snakeoil
+  args:
+    creates: /etc/ssl/private/ssl-cert-snakeoil.key
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Start down PostgreSQL clusters before database initialization
+  ansible.builtin.shell: |
+    set -eu
+    while read -r version name _port status _owner _data _log; do
+      if [ "$status" != online ]; then
+        pg_ctlcluster --skip-systemctl-redirect "$version" "$name" start
+      fi
+    done <<EOF
+    $(pg_lsclusters -h)
+    EOF
+  changed_when: false
+  when: inventory_hostname == 'lab-monitor-01'
+
 - name: Create the dedicated Zabbix database role and database
   ansible.builtin.command: runuser -u postgres -- psql --dbname postgres --set ON_ERROR_STOP=1
   args:

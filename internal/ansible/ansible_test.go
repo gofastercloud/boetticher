@@ -279,6 +279,25 @@ func TestMonitoringRoleUsesRunuserForDatabaseServiceUsers(t *testing.T) {
 	}
 }
 
+func TestMonitoringRolePreparesPostgreSQLTLSAndCluster(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"/usr/sbin/make-ssl-cert generate-default-snakeoil",
+		"creates: /etc/ssl/private/ssl-cert-snakeoil.key",
+		"pg_ctlcluster --skip-systemctl-redirect",
+		"$(pg_lsclusters -h)",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("monitoring role missing PostgreSQL startup prerequisite %q", expected)
+		}
+	}
+}
+
 func TestFirewallRoleCreatesNftablesConfigurationDirectory(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
 	data, err := os.ReadFile(path)

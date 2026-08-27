@@ -558,7 +558,7 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"zabbix-sql-scripts=$zabbix_package_version", "php-pgsql"} {
+	for _, required := range []string{"zabbix-sql-scripts=$zabbix_package_version", "php-pgsql", "ssl-cert"} {
 		if !strings.Contains(string(buildScript), required) {
 			t.Fatalf("monitoring build is missing runtime package %q", required)
 		}
