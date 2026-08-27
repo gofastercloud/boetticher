@@ -64,6 +64,13 @@ func TestEndpointClientTrustProjectionIncludesRootAndIssuingCAs(t *testing.T) {
 	}
 }
 
+func TestRuntimeBoundaryAcceptsRelativeSiteDirectory(t *testing.T) {
+	site := model.NewDefaultSite("trial", "age1trial")
+	if err := checkRuntimeBoundary("relative-site", site); err != nil {
+		t.Fatalf("relative site directory rejected: %v", err)
+	}
+}
+
 func TestDeploymentModuleNamesFollowResolvedExternalGraph(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("trial", "age1trial", model.GatewayModeExternal))
 	disabled := false
