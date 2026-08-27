@@ -30,18 +30,15 @@ func PurgeModule(ctx context.Context, client *Client, plan Plan, module string) 
 		if guest.Owner != owner {
 			continue
 		}
-		var current map[string]any
-		var err error
-		if guest.Kind == KindQEMU {
-			err = client.QEMUConfig(ctx, plan.Node, guest.VMID, &current)
-		} else {
-			err = client.LXCConfig(ctx, plan.Node, guest.VMID, &current)
-		}
+		kind, current, err := client.GuestConfig(ctx, plan.Node, guest.VMID)
 		if err != nil {
 			if IsNotFound(err) {
 				continue
 			}
 			return fmt.Errorf("inspect module guest %d before purge: %w", guest.VMID, err)
+		}
+		if kind != guest.Kind {
+			return fmt.Errorf("HOLD: refusing to purge %s at VMID %d because the occupant is %s, expected %s", guest.Name, guest.VMID, kind, guest.Kind)
 		}
 		ownerTag := model.ModuleOwnershipTag(module)
 		if ownerTag == "" || !hasOwnerTag(currentTags(current), ownerTag) {
