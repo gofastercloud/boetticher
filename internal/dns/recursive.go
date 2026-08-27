@@ -18,6 +18,7 @@ type BlockyConfig struct {
 	Blocking     BlockyBlocking    `yaml:"blocking"`
 	Ports        BlockyPorts       `yaml:"ports"`
 	Caching      BlockyCaching     `yaml:"caching"`
+	DNSSEC       BlockyDNSSEC      `yaml:"dnssec"`
 }
 
 type BlockyUpstreams struct {
@@ -40,6 +41,10 @@ type BlockyPorts struct {
 
 type BlockyCaching struct {
 	MinTime string `yaml:"minTime,omitempty"`
+}
+
+type BlockyDNSSEC struct {
+	Validate bool `yaml:"validate"`
 }
 
 const (
@@ -79,6 +84,7 @@ func RenderBlockyConfig(plan Plan) ([]byte, error) {
 		},
 		Ports:   BlockyPorts{DNS: 53},
 		Caching: BlockyCaching{MinTime: "5m"},
+		DNSSEC:  BlockyDNSSEC{Validate: true},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal Blocky configuration: %w", err)

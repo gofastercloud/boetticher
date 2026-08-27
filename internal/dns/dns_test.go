@@ -105,6 +105,9 @@ func TestRenderBlockyConfigPinsAuthoritativeZonesWithoutPublicFallback(t *testin
 	if decoded.Conditional.FallbackUpstream {
 		t.Fatal("Blocky authoritative mappings allow public fallback")
 	}
+	if !decoded.DNSSEC.Validate {
+		t.Fatal("Blocky DNSSEC validation is not enabled")
+	}
 	if got := decoded.Blocking.Denylists[FilteringPolicyGroup]; len(got) != 1 || got[0] != FilteringPolicyFile {
 		t.Fatalf("unexpected Blocky denylist: %#v", decoded.Blocking.Denylists)
 	}
