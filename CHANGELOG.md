@@ -3,6 +3,13 @@
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 
+## [0.3.3] - 2026-08-27
+
+### Fixed
+
+- Preflight now honors an explicitly configured virtual-only network and
+  leaves eligible spare NICs unclaimed unless trunk selection is explicit.
+
 ## [0.3.2] - 2026-08-27
 
 ### Fixed
