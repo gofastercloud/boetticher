@@ -69,9 +69,6 @@ project, so releases can make clean breaks while the design is settling.
 - Check the PowerDNS qualification banner on either command output stream.
 - Use the PowerDNS 4.9 `pdnsutil` command names supported by the qualified
   appliance.
-- Replace confirmed stale owned LXC appliances while retaining declared
-  persistent volumes.
-- Use Proxmox's PUT method for LXC configuration updates.
 - Resume an owned running gateway without issuing a duplicate Proxmox start
   request after a prior deployment attempt.
 - Discover the hosted builder address through the QEMU guest agent after

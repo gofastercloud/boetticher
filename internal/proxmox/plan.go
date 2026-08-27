@@ -1325,35 +1325,19 @@ func qemuPersistentVolumeParam(plan Plan, volume model.PersistentVolumeDeclarati
 
 func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
 	kind, current, err := client.GuestConfig(ctx, plan.Node, guest.VMID)
-	retainedVolumes := map[int]string{}
-	replaced := false
 	if err == nil {
 		if kind != KindLXC {
 			return fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, expected LXC %s", guest.VMID, kind, guest.Name)
 		}
-		if err := validateExistingGuestIdentityFields(current, guest); err != nil {
+		if err := validateExistingGuestIdentity(current, guest); err != nil {
 			return err
 		}
 		if err := validateExistingGuestVolumes(current, guest); err != nil {
 			return err
 		}
-		if !guestArtifactNeedsReplacement(current, guest) {
-			return ensureExistingGuestTags(ctx, client, plan, guest, current)
-		}
-		if !plan.DestructiveConfirmed {
-			return fmt.Errorf("HOLD: guest %s has artifact identity %q, expected %q; appliance replacement requires --confirm", guest.Name, current["description"], artifactDescription(guest.Artifact))
-		}
-		for index := range guest.Volumes {
-			if value, ok := current[fmt.Sprintf("mp%d", index)].(string); ok {
-				retainedVolumes[index] = value
-			}
-		}
-		if err := replaceLXCRootfs(ctx, client, plan, guest); err != nil {
-			return err
-		}
-		replaced = true
+		return ensureExistingGuestTags(ctx, client, plan, guest, current)
 	}
-	if !replaced && !IsNotFound(err) {
+	if !IsNotFound(err) {
 		return fmt.Errorf("inspect container %s: %w", guest.Name, err)
 	}
 	if guest.Artifact.Name == "" || guest.Artifact.DefinitionSHA256 == "" {
@@ -1390,45 +1374,14 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		}
 	}
 	for index, volume := range guest.Volumes {
-		value := retainedVolumes[index]
-		if value == "" {
-			value, err = persistentVolumeParam(volume)
-			if err != nil {
-				return fmt.Errorf("validate persistent volume %s for %s: %w", volume.Name, guest.Name, err)
-			}
+		value, err := persistentVolumeParam(volume)
+		if err != nil {
+			return fmt.Errorf("validate persistent volume %s for %s: %w", volume.Name, guest.Name, err)
 		}
 		params.Set(fmt.Sprintf("mp%d", index), value)
 	}
 	if err := client.CreateLXC(ctx, plan.Node, guest.VMID, params); err != nil {
 		return fmt.Errorf("create container %s: %w", guest.Name, err)
-	}
-	return nil
-}
-
-func replaceLXCRootfs(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
-	status, err := client.LXCStatus(ctx, plan.Node, guest.VMID)
-	if err != nil {
-		return fmt.Errorf("inspect %s status before appliance replacement: %w", guest.Name, err)
-	}
-	if status == "running" {
-		if err := client.StopLXC(ctx, plan.Node, guest.VMID); err != nil {
-			return fmt.Errorf("stop %s before appliance replacement: %w", guest.Name, err)
-		}
-	}
-	if len(guest.Volumes) > 0 {
-		mountpoints := make([]string, 0, len(guest.Volumes))
-		for index := range guest.Volumes {
-			mountpoints = append(mountpoints, fmt.Sprintf("mp%d", index))
-		}
-		if err := client.SetLXCConfig(ctx, plan.Node, guest.VMID, url.Values{"delete": {strings.Join(mountpoints, ",")}}); err != nil {
-			return fmt.Errorf("detach persistent volumes from %s: %w", guest.Name, err)
-		}
-	}
-	if err := client.DestroyLXC(ctx, plan.Node, guest.VMID); err != nil {
-		return fmt.Errorf("destroy %s for appliance replacement: %w", guest.Name, err)
-	}
-	if err := WaitForGuestAbsent(ctx, client, plan.Node, guest.VMID, 30, time.Second); err != nil {
-		return err
 	}
 	return nil
 }

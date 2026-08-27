@@ -391,51 +391,20 @@ func (c *Client) StartLXC(ctx context.Context, node string, vmid int) error {
 	return c.Post(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "status", "start"), nil, nil)
 }
 
-func (c *Client) StopLXC(ctx context.Context, node string, vmid int) error {
-	var upid string
-	if err := c.Post(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "status", "stop"), nil, &upid); err != nil {
-		return err
-	}
-	if upid != "" {
-		return c.WaitTask(ctx, node, upid)
-	}
-	return nil
-}
-
-// DestroyLXC removes a container configuration without requesting deletion of
-// detached unreferenced volumes. Callers must detach and prove ownership of
-// persistent volumes before invoking this destructive operation.
-func (c *Client) DestroyLXC(ctx context.Context, node string, vmid int) error {
-	if node == "" || vmid <= 0 {
-		return errors.New("Proxmox node and positive VMID are required")
-	}
-	return c.request(ctx, http.MethodDelete, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid)), url.Values{
-		"purge": {"1"},
-	}, nil, nil)
-}
-
-func (c *Client) LXCStatus(ctx context.Context, node string, vmid int) (string, error) {
+func (c *Client) EnsureLXCRunning(ctx context.Context, node string, vmid int) error {
 	if c == nil || node == "" || vmid <= 0 {
-		return "", errors.New("Proxmox client, node, and positive VMID are required")
+		return errors.New("Proxmox client, node, and positive VMID are required")
 	}
 	var status struct {
 		Status string `json:"status"`
 	}
 	if err := c.Get(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "status", "current"), nil, &status); err != nil {
-		return "", fmt.Errorf("read LXC guest status: %w", err)
+		return fmt.Errorf("read LXC guest status: %w", err)
 	}
 	if status.Status == "" {
-		return "", errors.New("Proxmox LXC status response did not contain a status")
+		return errors.New("Proxmox LXC status response did not contain a status")
 	}
-	return status.Status, nil
-}
-
-func (c *Client) EnsureLXCRunning(ctx context.Context, node string, vmid int) error {
-	status, err := c.LXCStatus(ctx, node, vmid)
-	if err != nil {
-		return err
-	}
-	if status == "running" {
+	if status.Status == "running" {
 		return nil
 	}
 	return c.StartLXC(ctx, node, vmid)
