@@ -1428,7 +1428,11 @@ func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage,
 		return fmt.Errorf("inspect %s artifact storage: %w", content, err)
 	}
 	if found, err := verifyStoredArtifact(entries, filename, checksum, false); err != nil {
-		return err
+		if content != "import" || !strings.HasSuffix(err.Error(), "has no checksum evidence") {
+			return err
+		}
+		// Import listings omit checksums. Re-upload the qualified local bytes so
+		// the upload task can re-establish checksum evidence before use.
 	} else if found {
 		return nil
 	}

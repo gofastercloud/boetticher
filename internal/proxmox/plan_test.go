@@ -499,7 +499,7 @@ func TestEnsureArtifactInStorageVerifiesPostUploadChecksum(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
 			storageReads++
 			if storageReads == 1 {
-				return response([]byte(`{"data":[]}`))
+				return response([]byte(`{"data":[{"volid":"local:import/boetticher-firewall-1.0.0-amd64.qcow2","filename":"boetticher-firewall-1.0.0-amd64.qcow2"}]}`))
 			}
 			return response([]byte(`{"data":[{"volid":"local:vztmpl/boetticher-logging-1.0.0-amd64.tar.zst","filename":"boetticher-logging-1.0.0-amd64.tar.zst","checksum":"` + checksum + `"}]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":

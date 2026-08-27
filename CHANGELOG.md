@@ -12,6 +12,8 @@ project, so releases can make clean breaks while the design is settling.
 - Send streamed Proxmox artifact uploads with a computed `Content-Length`,
   which the pveproxy upload endpoint requires.
 - Emit upload checksum metadata in the field order expected by pveproxy.
+- Revalidate a checksum-less partial QEMU import by re-uploading the qualified
+  local bytes before retrying deployment.
 - Discover the hosted builder address through the QEMU guest agent after
   confirming the guest reaches userspace.
 - Start the hosted builder guest agent before the remaining qualification
