@@ -161,6 +161,15 @@
   no_log: true
   when: inventory_hostname == 'lab-monitor-01'
 
+- name: Create the Zabbix state directory before recording schema state
+  ansible.builtin.file:
+    path: /var/lib/zabbix
+    state: directory
+    owner: zabbix
+    group: zabbix
+    mode: '0750'
+  when: inventory_hostname == 'lab-monitor-01'
+
 - name: Check whether the Zabbix schema marker exists
   ansible.builtin.stat:
     path: /var/lib/zabbix/.boetticher-schema-loaded

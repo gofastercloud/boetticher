@@ -298,6 +298,17 @@ func TestMonitoringRolePreparesPostgreSQLTLSAndCluster(t *testing.T) {
 	}
 }
 
+func TestMonitoringRoleCreatesZabbixStateDirectory(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "path: /var/lib/zabbix\n    state: directory\n    owner: zabbix\n    group: zabbix\n    mode: '0750'") {
+		t.Fatal("monitoring role does not create the Zabbix state directory before its schema marker")
+	}
+}
+
 func TestFirewallRoleCreatesNftablesConfigurationDirectory(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
