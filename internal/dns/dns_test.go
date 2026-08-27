@@ -161,7 +161,23 @@ func hasRecord(records []StaticRecord, name, address string) bool {
 	return false
 }
 
-func TestPowerDNSCommandPlanUsesQualifiedSyntaxAndNeverEmbedsARealSecret(t *testing.T) {
+func TestZoneRelativeNameUsesPowerDNSZoneOwners(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		zone string
+		want string
+	}{
+		{name: "portal.lab.home.arpa", zone: "lab.home.arpa", want: "portal"},
+		{name: "lab.home.arpa", zone: "lab.home.arpa", want: "@"},
+		{name: "portal.lab.home.arpa.", zone: "lab.home.arpa.", want: "portal"},
+	} {
+		if got := zoneRelativeName(test.name, test.zone); got != test.want {
+			t.Fatalf("zoneRelativeName(%q, %q) = %q, want %q", test.name, test.zone, got, test.want)
+		}
+	}
+}
+
+func TestPowerDNSCommandPlanUsesZoneRelativeSyntaxAndNeverEmbedsARealSecret(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {
 		t.Fatal(err)
@@ -175,6 +191,8 @@ func TestPowerDNSCommandPlanUsesQualifiedSyntaxAndNeverEmbedsARealSecret(t *test
 	seenReverse := false
 	seenZone := false
 	seenRecord := false
+	seenApex := false
+	seenRelativeRecord := false
 	for _, command := range commands {
 		if command.SecretStdin {
 			seenTSIG = true
@@ -197,9 +215,15 @@ func TestPowerDNSCommandPlanUsesQualifiedSyntaxAndNeverEmbedsARealSecret(t *test
 		}
 		if len(command.Args) >= 2 && command.Args[1] == "replace-rrset" {
 			seenRecord = true
+			if command.Args[3] == "@" {
+				seenApex = true
+			}
+			if command.Args[2] == plan.StaticZone && command.Args[3] == "portal" {
+				seenRelativeRecord = true
+			}
 		}
 	}
-	if !seenTSIG || !seenForward || !seenReverse || !seenZone || !seenRecord {
+	if !seenTSIG || !seenForward || !seenReverse || !seenZone || !seenRecord || !seenApex || !seenRelativeRecord {
 		t.Fatalf("incomplete PowerDNS command plan: %#v", commands)
 	}
 }
