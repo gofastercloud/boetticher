@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/gofastercloud/boetticher/internal/artifacts"
+	"github.com/gofastercloud/boetticher/internal/logging"
 	"github.com/gofastercloud/boetticher/internal/model"
 )
 
@@ -111,7 +112,7 @@ func volumesFor(module, guest string) []model.PersistentVolumeDeclaration {
 		// Central journals are a bounded secondary evidence cache. The logging
 		// appliance remains in the platform backup set, while this high-churn
 		// volume is intentionally excluded from guest backups.
-		v := volume("journal", "/var/log/journal/remote", 10, false)
+		v := volume("journal", "/var/log/journal/remote", logging.CollectorVolumeGiB, false)
 		v.Placement = model.StoragePreferDataDisk
 		return []model.PersistentVolumeDeclaration{identity, v}
 	default:
