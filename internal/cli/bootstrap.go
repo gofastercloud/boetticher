@@ -431,7 +431,7 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if err := client.StartVM(ctx, plan.Node, model.BuilderVMID); err != nil {
 		return fmt.Errorf("start temporary appliance builder: %w", err)
 	}
-	builderAddress, err = proxmox.WaitForQEMUIPv4ViaNeighbor(ctx, hostRunner, hostAddress, hostUser, model.BuilderMAC, 60, 5*time.Second)
+	builderAddress, err = proxmox.WaitForQEMUIPv4(ctx, client, plan.Node, model.BuilderVMID, 60, 5*time.Second)
 	if err != nil {
 		return err
 	}

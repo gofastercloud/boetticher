@@ -3,6 +3,13 @@
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 
+## [0.3.33] - 2026-08-27
+
+### Fixed
+
+- Discover the hosted builder address through the QEMU guest agent after
+  confirming the guest reaches userspace.
+
 ## [0.3.32] - 2026-08-27
 
 ### Fixed

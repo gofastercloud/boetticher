@@ -2,7 +2,7 @@ name: boetticher-firewall
 version: 1.0.0
 kind: qemu
 base: boetticher-base
-base_version: 0.3.32
+base_version: 0.3.33
 architecture: amd64
 base_input:
   name: debian-13-genericcloud-amd64-20260327-2429

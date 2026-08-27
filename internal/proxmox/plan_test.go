@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -39,6 +40,20 @@ func TestFoundationPlanIsDeterministic(t *testing.T) {
 	}
 	if first.GatewayImageURL != model.QualifiedGatewayImageURL || first.GatewaySHA512 != model.QualifiedGatewayImageSHA512 {
 		t.Fatalf("gateway image pin is incomplete: %#v", first)
+	}
+}
+
+func TestWaitForQEMUIPv4UsesRoutableGuestAgentAddress(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/node/qemu/190/agent/network-get-interfaces" {
+			t.Fatalf("unexpected guest-agent request: %s %s", r.Method, r.URL.Path)
+		}
+		return response([]byte(`{"data":[{"name":"ens18","ip-addresses":[{"ip-address":"127.0.0.1","ip-address-type":"ipv4"},{"ip-address":"192.168.4.36","ip-address-type":"ipv4"}]}]}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	address, err := WaitForQEMUIPv4(context.Background(), client, "node", 190, 1, time.Millisecond)
+	if err != nil || address != "192.168.4.36" {
+		t.Fatalf("WaitForQEMUIPv4() = %q, %v", address, err)
 	}
 }
 
@@ -184,7 +199,7 @@ func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	evidence.ArtifactPath = artifactFile
-	for filename, content := range map[string]string{"package-manifest.txt": "package: test\n", "sbom.json": "{}\n", "trivy.json": "{\"Results\":[]}\n", "builder-provenance.json": "{\"platform\":\"debian-13-amd64\",\"input_image\":\"debian-13-genericcloud-amd64-20260327-2429\",\"kernel\":\"6.1.0\",\"go\":\"go version go1.26.5 linux/amd64\",\"trivy\":\"Version: 0.69.3\",\"mmdebstrap\":\"mmdebstrap 1.5.0\",\"architecture\":\"amd64\",\"boetticher_version\":\"0.3.32\"}\n"} {
+	for filename, content := range map[string]string{"package-manifest.txt": "package: test\n", "sbom.json": "{}\n", "trivy.json": "{\"Results\":[]}\n", "builder-provenance.json": "{\"platform\":\"debian-13-amd64\",\"input_image\":\"debian-13-genericcloud-amd64-20260327-2429\",\"kernel\":\"6.1.0\",\"go\":\"go version go1.26.5 linux/amd64\",\"trivy\":\"Version: 0.69.3\",\"mmdebstrap\":\"mmdebstrap 1.5.0\",\"architecture\":\"amd64\",\"boetticher_version\":\"0.3.33\"}\n"} {
 		if err := os.WriteFile(filepath.Join(filepath.Dir(artifactFile), filename), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -193,7 +208,7 @@ func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
 	evidence.SBOMSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactFile), "sbom.json"), "SBOM")
 	evidence.TrivyReportSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactFile), "trivy.json"), "Trivy report")
 	evidence.BuilderProvenanceSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactFile), "builder-provenance.json"), "builder provenance")
-	evidence.Builder = artifacts.BuilderProvenance{Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429", Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3", MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.32"}
+	evidence.Builder = artifacts.BuilderProvenance{Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429", Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3", MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.33"}
 	evidence, err = artifacts.QualifyEvidence(evidence, artifacts.ScanSummary{Completed: true})
 	if err != nil {
 		t.Fatal(err)
