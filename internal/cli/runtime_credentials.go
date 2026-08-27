@@ -76,17 +76,14 @@ func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, erro
 
 func credentialName(reference string) string {
 	var b strings.Builder
-	lastDash := false
 	for _, character := range strings.ToLower(reference) {
 		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
 			b.WriteRune(character)
-			lastDash = false
-		} else if !lastDash {
+		} else {
 			b.WriteByte('-')
-			lastDash = true
 		}
 	}
-	return strings.Trim(b.String(), "-")
+	return b.String()
 }
 
 // credentialDropIns returns non-secret systemd projections grouped by

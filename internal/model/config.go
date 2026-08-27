@@ -187,7 +187,7 @@ func ValidateLiteLLMConfig(config ModuleConfig) error {
 		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 			return fmt.Errorf("modules.litellm upstream %s requires a valid HTTPS base_url", upstream.Name)
 		}
-		if !modelTokenPattern.MatchString(upstream.APIKeySecret) {
+		if !secretReferencePattern.MatchString(upstream.APIKeySecret) {
 			return fmt.Errorf("modules.litellm upstream %s has an invalid api_key_secret reference", upstream.Name)
 		}
 	}

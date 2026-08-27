@@ -78,6 +78,7 @@ const (
 var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
 var networkPortPattern = regexp.MustCompile(`^[0-9]{1,5}(?:-[0-9]{1,5})?$`)
 var providerModelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$`)
+var secretReferencePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
 
 // ModuleOwnershipTag returns the single Proxmox-safe ownership proof used for
 // every first-party module guest. Invalid names return an empty tag so callers
