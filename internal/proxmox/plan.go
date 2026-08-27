@@ -1329,10 +1329,19 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		if kind != KindLXC {
 			return fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, expected LXC %s", guest.VMID, kind, guest.Name)
 		}
-		if err := validateExistingGuestIdentity(current, guest); err != nil {
+		if err := validateExistingGuestVolumes(current, guest); err != nil {
 			return err
 		}
-		if err := validateExistingGuestVolumes(current, guest); err != nil {
+		if guestArtifactNeedsReplacement(current, guest) {
+			if !plan.DestructiveConfirmed {
+				return fmt.Errorf("HOLD: guest %s has artifact identity mismatch; appliance replacement requires --confirm", guest.Name)
+			}
+			if err := replaceLXC(ctx, client, plan, guest); err != nil {
+				return err
+			}
+			return ensureLXC(ctx, client, plan, guest)
+		}
+		if err := validateExistingGuestIdentity(current, guest); err != nil {
 			return err
 		}
 		return ensureExistingGuestTags(ctx, client, plan, guest, current)
@@ -1382,6 +1391,31 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 	}
 	if err := client.CreateLXC(ctx, plan.Node, guest.VMID, params); err != nil {
 		return fmt.Errorf("create container %s: %w", guest.Name, err)
+	}
+	return nil
+}
+
+func replaceLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
+	status, err := client.LXCStatus(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("inspect %s status before appliance replacement: %w", guest.Name, err)
+	}
+	if status == "running" {
+		if err := client.StopLXC(ctx, plan.Node, guest.VMID); err != nil {
+			return fmt.Errorf("stop %s before appliance replacement: %w", guest.Name, err)
+		}
+	}
+	detach := url.Values{}
+	for index := range guest.Volumes {
+		detach.Add("delete", fmt.Sprintf("mp%d", index))
+	}
+	if len(detach) > 0 {
+		if err := client.SetLXCConfig(ctx, plan.Node, guest.VMID, detach); err != nil {
+			return fmt.Errorf("detach persistent volumes from %s before appliance replacement: %w", guest.Name, err)
+		}
+	}
+	if err := client.DestroyLXC(ctx, plan.Node, guest.VMID); err != nil {
+		return fmt.Errorf("destroy %s rootfs for appliance replacement: %w", guest.Name, err)
 	}
 	return nil
 }

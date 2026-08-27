@@ -387,6 +387,55 @@ func (c *Client) SetLXCConfig(ctx context.Context, node string, vmid int, params
 	return c.Put(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "config"), params, nil)
 }
 
+func (c *Client) LXCStatus(ctx context.Context, node string, vmid int) (string, error) {
+	if c == nil || node == "" || vmid <= 0 {
+		return "", errors.New("Proxmox client, node, and positive VMID are required")
+	}
+	var status struct {
+		Status string `json:"status"`
+	}
+	if err := c.Get(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "status", "current"), nil, &status); err != nil {
+		return "", err
+	}
+	if status.Status == "" {
+		return "", errors.New("Proxmox LXC status response did not contain a status")
+	}
+	return status.Status, nil
+}
+
+func (c *Client) StopLXC(ctx context.Context, node string, vmid int) error {
+	if c == nil || node == "" || vmid <= 0 {
+		return errors.New("Proxmox client, node, and positive VMID are required")
+	}
+	var upid string
+	if err := c.Post(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "status", "stop"), nil, &upid); err != nil {
+		return err
+	}
+	if upid != "" {
+		return c.WaitTask(ctx, node, upid)
+	}
+	return nil
+}
+
+// DestroyLXC removes only the exact owned container configuration and rootfs.
+// Detached mount-point volumes remain available for the replacement create.
+func (c *Client) DestroyLXC(ctx context.Context, node string, vmid int) error {
+	if c == nil || node == "" || vmid <= 0 {
+		return errors.New("Proxmox client, node, and positive VMID are required")
+	}
+	var upid string
+	if err := c.request(ctx, http.MethodDelete, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid)), url.Values{
+		"purge":                      {"0"},
+		"destroy-unreferenced-disks": {"0"},
+	}, nil, &upid); err != nil {
+		return err
+	}
+	if upid != "" {
+		return c.WaitTask(ctx, node, upid)
+	}
+	return nil
+}
+
 func (c *Client) StartLXC(ctx context.Context, node string, vmid int) error {
 	return c.Post(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "status", "start"), nil, nil)
 }
@@ -395,16 +444,11 @@ func (c *Client) EnsureLXCRunning(ctx context.Context, node string, vmid int) er
 	if c == nil || node == "" || vmid <= 0 {
 		return errors.New("Proxmox client, node, and positive VMID are required")
 	}
-	var status struct {
-		Status string `json:"status"`
-	}
-	if err := c.Get(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "status", "current"), nil, &status); err != nil {
+	status, err := c.LXCStatus(ctx, node, vmid)
+	if err != nil {
 		return fmt.Errorf("read LXC guest status: %w", err)
 	}
-	if status.Status == "" {
-		return errors.New("Proxmox LXC status response did not contain a status")
-	}
-	if status.Status == "running" {
+	if status == "running" {
 		return nil
 	}
 	return c.StartLXC(ctx, node, vmid)
