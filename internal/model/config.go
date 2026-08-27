@@ -42,6 +42,7 @@ type ModulesConfig struct {
 	TailnetRouter *ToggleModuleConfig    `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
 	LiteLLM       *LiteLLMModuleConfig   `yaml:"litellm,omitempty" json:"litellm,omitempty"`
 	Printer       *ToggleModuleConfig    `yaml:"printer,omitempty" json:"printer,omitempty"`
+	AIOps         *AIOpsModuleConfig     `yaml:"aiops,omitempty" json:"aiops,omitempty"`
 }
 
 type DNSModuleConfig struct {
@@ -75,6 +76,11 @@ type LiteLLMModelConfig struct {
 	Model    string `yaml:"model" json:"model"`
 }
 
+type AIOpsModuleConfig struct {
+	Enabled    *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	ModelAlias string `yaml:"model_alias" json:"model_alias"`
+}
+
 // Map returns the normalized internal lookup projection. It is deliberately
 // not used as the persisted SiteConfig representation.
 func (m ModulesConfig) Map() map[string]ModuleConfig {
@@ -99,6 +105,9 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 	}
 	if m.Printer != nil {
 		result["printer"] = ModuleConfig{Enabled: cloneBool(m.Printer.Enabled)}
+	}
+	if m.AIOps != nil {
+		result["aiops"] = ModuleConfig{Enabled: cloneBool(m.AIOps.Enabled), ModelAlias: m.AIOps.ModelAlias}
 	}
 	return result
 }
@@ -125,6 +134,9 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 	}
 	if config, ok := input["printer"]; ok {
 		result.Printer = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+	}
+	if config, ok := input["aiops"]; ok {
+		result.AIOps = &AIOpsModuleConfig{Enabled: cloneBool(config.Enabled), ModelAlias: config.ModelAlias}
 	}
 	return result
 }
@@ -157,6 +169,12 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 		m.LiteLLM = &LiteLLMModuleConfig{Enabled: cloneBool(config.Enabled), Upstreams: cloneLiteLLMUpstreams(upstreams), Models: cloneLiteLLMModels(models)}
 	case "printer":
 		m.Printer = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+	case "aiops":
+		alias := config.ModelAlias
+		if alias == "" && m.AIOps != nil {
+			alias = m.AIOps.ModelAlias
+		}
+		m.AIOps = &AIOpsModuleConfig{Enabled: cloneBool(config.Enabled), ModelAlias: alias}
 	default:
 		return fmt.Errorf("modules.%s: unknown first-party module", name)
 	}
@@ -371,7 +389,7 @@ func cloneModuleConfig(input map[string]ModuleConfig) map[string]ModuleConfig {
 	}
 	output := make(map[string]ModuleConfig, len(input))
 	for name, config := range input {
-		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), Provider: config.Provider, Upstreams: cloneLiteLLMUpstreams(config.Upstreams), Models: cloneLiteLLMModels(config.Models)}
+		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), Provider: config.Provider, ModelAlias: config.ModelAlias, Upstreams: cloneLiteLLMUpstreams(config.Upstreams), Models: cloneLiteLLMModels(config.Models)}
 	}
 	return output
 }

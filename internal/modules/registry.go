@@ -110,6 +110,13 @@ func FirstPartyRegistry() Registry {
 			},
 			USBRequirements: []model.USBRequirement{{Name: "serial", Guest: "lab-printer-01", DeviceType: "serial", Access: "rw", Required: true, AllowedIdentities: []model.USBIdentity{{VendorID: "1a86", ProductID: "7523"}}}},
 		},
+		"aiops": {
+			Name: "aiops", Description: "Read-only HolmesGPT incident investigation", Version: "1.0.0", Policy: DefaultOff,
+			DependsOn: []string{"monitoring", "logging", "litellm"}, Requires: []Capability{CapabilityMonitoring, CapabilityLogging, CapabilityAIAPI, CapabilityDNS, CapabilityNTP}, GuestIDs: []int{240}, ReservedVMIDStart: 240, ReservedVMIDEnd: 249,
+			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
+				{Name: "lab-aiops-01", VMID: 240, Hostname: "lab-aiops-01", Zone: "SERVERS", Address: "10.10.20.90", Role: "HolmesGPT AIOps investigation", DNSAliases: []string{"aiops"}, URL: "https://aiops." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			},
+		},
 	}}
 }
 
@@ -297,6 +304,18 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 				return nil, err
 			}
 		}
+		if name == "aiops" && moduleConfig.Enabled != nil && *moduleConfig.Enabled {
+			if !modelToken(moduleConfig.ModelAlias) {
+				return nil, fmt.Errorf("modules.aiops.model_alias: a safe declared AI Router alias is required")
+			}
+			litellm, ok := configs["litellm"]
+			if !ok {
+				return nil, fmt.Errorf("modules.aiops.model_alias: LiteLLM configuration is required")
+			}
+			if _, err := model.ResolveLiteLLMAlias(litellm, moduleConfig.ModelAlias); err != nil {
+				return nil, fmt.Errorf("modules.aiops.model_alias: %w", err)
+			}
+		}
 		if name == "dns" && moduleConfig.Provider != "" && moduleConfig.Provider != string(model.DNSProviderBlocky) && moduleConfig.Provider != string(model.DNSProviderAdGuard) {
 			return nil, fmt.Errorf("modules.dns.provider: expected one of: blocky, adguard")
 		}
@@ -419,6 +438,18 @@ func validateModuleConfigNames(r Registry, configs map[string]model.ModuleConfig
 		}
 	}
 	return nil
+}
+
+func modelToken(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for _, r := range value {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.') {
+			return false
+		}
+	}
+	return true
 }
 
 func defaultEnabled(policy EnablementPolicy) bool {

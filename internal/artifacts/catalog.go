@@ -278,6 +278,7 @@ func Definitions() []Definition {
 		{Name: "tailnet-router", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/tailnet-router", "internal/model", "internal/modules")},
 		{Name: "litellm", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/litellm", "internal/model", "internal/modules")},
 		{Name: "printer", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/printer", "internal/model", "internal/modules", "internal/usbexport")},
+		{Name: "aiops", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/aiops", "internal/aiops", "internal/model", "internal/modules", "cmd/boetticher-aiops")},
 	}
 }
 
