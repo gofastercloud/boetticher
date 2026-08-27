@@ -14,6 +14,20 @@
     cache_valid_time: 3600
   when: inventory_hostname in groups.get('proxmox', [])
 
+- name: Remove labadmin from the sudo group
+  ansible.builtin.command: gpasswd --delete labadmin sudo
+  register: remove_labadmin_sudo_group
+  changed_when: remove_labadmin_sudo_group.rc == 0
+  failed_when: remove_labadmin_sudo_group.rc not in [0, 3]
+
+- name: Remove legacy labadmin sudo policy
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/sudoers.d/boetticher
+    - /etc/sudoers.d/boetticher-labadmin
+
 - name: Configure Chrony for unprivileged appliances
   ansible.builtin.copy:
     content: "DAEMON_OPTS=\"-x\"\n"

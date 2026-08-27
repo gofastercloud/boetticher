@@ -26,6 +26,7 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 	for _, expected := range []string{
 		"lab-proxmox-01 ansible_host=10.10.99.250",
 		"lab-dns-01 ansible_host=10.10.10.10",
+		"ansible_user=root",
 		"ansible_remote_tmp=/tmp/boetticher-ansible",
 		"[managed:children]",
 		"[logging]",
@@ -86,6 +87,9 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	}
 	if strings.Contains(text, "@-\n") {
 		t.Fatalf("Ansible received the unsupported stdin filename:\n%s", text)
+	}
+	if !strings.Contains(text, "--user\nroot\n") {
+		t.Fatalf("Ansible deployment did not select the temporary root transport:\n%s", text)
 	}
 }
 
@@ -162,6 +166,30 @@ func TestGuestPlaybookProjectsLoggingClientsBeyondTheCollector(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "inventory_hostname in logging_upload_configs or inventory_hostname == 'lab-log-01'") {
 		t.Fatal("managed guest playbook does not apply the logging client role to endpoint sources")
+	}
+}
+
+func TestManagedPlaybookDoesNotUseDurableBecomeEscalation(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "ansible", "site.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "become: false") || strings.Contains(text, "become: true") {
+		t.Fatalf("managed playbook retains a durable become path: %s", text)
+	}
+}
+
+func TestBaseRoleRemovesLegacyLabadminPrivilegeContracts(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{"gpasswd --delete labadmin sudo", "/etc/sudoers.d/boetticher", "/etc/sudoers.d/boetticher-labadmin", "failed_when: remove_labadmin_sudo_group.rc not in [0, 3]"} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("base role does not remove legacy privilege contract %q", required)
+		}
 	}
 }
 

@@ -84,6 +84,31 @@ allows it. A compromised module process is not granted controller identity,
 SOPS/Age authority, CA signing keys, or another module's ownership. Proxmox
 and host root remain trusted boundaries.
 
+## Privilege lifecycle
+
+Bootstrap uses the supplied initial administrator path to establish platform
+identities, host configuration, and the scoped Proxmox API token. It installs
+the operator key for a temporary root SSH deployment window on the Proxmox
+host and managed guests. Ansible connects through that root transport with
+`become: false`; it does not use a durable sudo rule for `labadmin`.
+
+The durable `labadmin` identity has an unprivileged shell on Proxmox and
+appliances and no general sudo authority. The managed firewall retains only
+fixed, read-only inspection helpers for status, nftables observation, leases,
+and bounded kernel logs. Proxmox lifecycle operations use the scoped
+`BoetticherProvisioner` API token. Runtime configuration and credential
+installation are fixed Core operations over the temporary root transport.
+
+After successful convergence, Core removes the temporary root authorized key
+from every managed guest and the Proxmox host, removes the host's temporary
+root SSH allowance, and locks the root password. If deployment stops before cleanup,
+the temporary root window remains available for a safe retry. Cleanup failure
+is a deployment hold; recovery uses the authenticated root/bootstrap path to
+complete cleanup. Operator break-glass root access is separate recovery
+authority and is not represented as durable `labadmin` privilege. The
+ephemeral builder uses the temporary root deployment key and is destroyed by
+bootstrap cleanup.
+
 Central logging uses bounded local journald and asynchronous HTTPS/mTLS upload
 to a mandatory journal collector. The collector is a secondary operational log
 copy, not an availability dependency or cryptographic non-repudiation system.

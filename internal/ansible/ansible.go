@@ -98,11 +98,9 @@ func writeHost(b *strings.Builder, component model.Component, throughBastion boo
 }
 
 func writeHostAt(b *strings.Builder, component model.Component, address string, throughBastion bool) {
-	user := component.SSHUser
-	if user == "" {
-		user = model.DefaultAdminSSHUser
-	}
-	fmt.Fprintf(b, "%s ansible_host=%s ansible_user=%s", component.Name, address, user)
+	// The generated deployment inventory is used only during the temporary
+	// root-SSH convergence window. Durable labadmin has no become boundary.
+	fmt.Fprintf(b, "%s ansible_host=%s ansible_user=root", component.Name, address)
 	b.WriteByte('\n')
 }
 
@@ -207,7 +205,7 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	if err != nil {
 		return fmt.Errorf("ansible-playbook is required: %w", err)
 	}
-	args := []string{"-i", inventory, playbook, "--extra-vars", "@/dev/stdin", "--ssh-common-args", "-F " + generatedSSHConfigPath(inventory)}
+	args := []string{"-i", inventory, "--user", "root", playbook, "--extra-vars", "@/dev/stdin", "--ssh-common-args", "-F " + generatedSSHConfigPath(inventory)}
 	if limit != "" {
 		args = append(args, "--limit", limit)
 	}

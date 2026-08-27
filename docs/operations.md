@@ -24,6 +24,17 @@ controller artifact cache or regenerate them through the hosted builder. The
 portable recovery set remains the site configuration, encrypted secrets,
 recovery authority, and non-secret desired-state projections.
 
+## Deployment privilege
+
+`labadmin` is an unprivileged durable SSH identity on Proxmox and appliances,
+with only fixed read-only inspection helpers on the managed firewall. The
+scoped Proxmox API token performs ordinary lifecycle operations. A
+successful bootstrap supplies temporary root SSH access for deployment;
+Ansible connects as root and does not use `become`. Convergence removes the
+temporary guest keys and Proxmox host root allowance. A failed deployment
+retains that access for retry, while cleanup failure is a hold. Operator root
+access remains the break-glass bootstrap and recovery path.
+
 ## Portal versus Zabbix
 
 The portal is the human-readable projection of architecture, configuration,

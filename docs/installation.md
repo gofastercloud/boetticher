@@ -51,6 +51,17 @@ firewall appliance with one ordinary vNIC for WAN and one Proxmox-tagged vNIC
 for each internal zone. The managed gateway receives no 802.1Q trunk and has
 no VLAN subinterfaces.
 
+Bootstrap also establishes a temporary root SSH deployment window on the
+Proxmox host. Managed guest first boot preserves the injected root key for the
+same window and installs the `labadmin` key without granting general `labadmin`
+sudo authority; the managed firewall image retains only fixed, read-only
+inspection helpers.
+The deployment playbook connects as root without Ansible `become`. Successful
+convergence removes the root key, disables the host root SSH allowance, and
+locks the root password. If deployment fails before cleanup, retry through the
+same temporary root path; cleanup failure is a hold requiring bootstrap or
+recovery authority.
+
 External mode does not create VM 100. It requires a distinct physical vmbr1
 trunk and publishes `generated/network/external-firewall-contract.md`. The
 external appliance, DHCP, and its own recovery remain operator-owned.

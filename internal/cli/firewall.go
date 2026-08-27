@@ -50,14 +50,14 @@ func runFirewall(args []string, out interface{ Write([]byte) (int, error) }) err
 	case "counters":
 		return firewallCounters(*siteDir, s, *live, *jsonOutput, out)
 	case "logs":
-		prefix := "boetticher"
+		zoneName := "all"
 		if *zone != "" {
-			prefix += " " + strings.ToUpper(*zone)
+			zoneName = strings.ToUpper(*zone)
 		}
 		if *limit < 1 || *limit > 1000 {
 			return errors.New("--limit must be between 1 and 1000")
 		}
-		return firewallLiveRead(*siteDir, s, []string{"sudo", "journalctl", "-k", "-n", fmt.Sprint(*limit), "--no-pager", "-g", prefix}, *live, false, out, "Kernel log entries for boetticher firewall drops.")
+		return firewallLiveRead(*siteDir, s, []string{"sudo", "/usr/lib/boetticher/inspect-firewall", "kernel-logs", fmt.Sprint(*limit), zoneName}, *live, false, out, "Kernel log entries for boetticher firewall drops.")
 	case "verify":
 		return firewallVerify(*siteDir, s, plan, *live, *jsonOutput, out)
 	default:
@@ -68,7 +68,7 @@ func runFirewall(args []string, out interface{ Write([]byte) (int, error) }) err
 func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
 	status := map[string]any{"mode": plan.Mode, "engine": plan.Engine, "model_revision": plan.ModelRevision, "ipv4_only": plan.IPv4Only, "forwarding_after_policy": plan.Forwarding, "interfaces": plan.Interfaces}
 	if live && s.Gateway.Mode == model.GatewayModeManaged {
-		data, err := gatewayCommand(siteDir, s, "sudo", "sh", "-c", remoteShellQuote(gatewayStatusScript))
+		data, err := gatewayCommand(siteDir, s, "sudo", gatewayStatusScript, "status")
 		if err != nil {
 			return err
 		}
@@ -129,15 +129,7 @@ func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, json
 	return nil
 }
 
-const gatewayStatusScript = `printf 'forwarding=%s\n' "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || printf unknown)"
-for service in nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq; do
-  printf 'service.%s=' "$service"
-  systemctl is-active "$service" 2>/dev/null || true
-done
-for iface in wan0 trusted0 servers0 sandbox0 mgmt0 transit0 infra0; do
-  printf 'iface.%s=' "$iface"
-  ip -br addr show "$iface" 2>/dev/null || printf absent
-done`
+const gatewayStatusScript = "/usr/lib/boetticher/inspect-firewall"
 
 type gatewayLiveStatus struct {
 	Forwarding string            `json:"forwarding"`
@@ -171,10 +163,6 @@ func parseGatewayStatus(output string) (gatewayLiveStatus, error) {
 		return gatewayLiveStatus{}, errors.New("managed gateway status is incomplete")
 	}
 	return status, nil
-}
-
-func remoteShellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func firewallShow(s model.Site, plan firewall.Plan, format string, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
@@ -234,7 +222,7 @@ func firewallDiff(siteDir string, s model.Site, plan firewall.Plan, live, jsonOu
 	}
 	result := map[string]any{"model_revision": plan.ModelRevision, "desired": true, "live_checked": live, "status": "NOT TESTED", "detail": "live boetticher-owned nftables state was not queried"}
 	if live {
-		data, commandErr := gatewayCommand(siteDir, s, "sudo", "nft", "--json", "list", "ruleset")
+		data, commandErr := gatewayCommand(siteDir, s, "sudo", "/usr/lib/boetticher/inspect-firewall", "ruleset")
 		if commandErr != nil {
 			return commandErr
 		}
@@ -292,7 +280,7 @@ func firewallCounters(siteDir string, s model.Site, live, jsonOutput bool, out i
 		fmt.Fprintln(out, "Firewall counters are live nftables state. Use --live to query lab-fw-01.")
 		return nil
 	}
-	data, err := gatewayCommand(siteDir, s, "sudo", "nft", "--json", "list", "ruleset")
+	data, err := gatewayCommand(siteDir, s, "sudo", "/usr/lib/boetticher/inspect-firewall", "ruleset")
 	if err != nil {
 		return err
 	}
@@ -329,7 +317,7 @@ func firewallVerify(siteDir string, s model.Site, plan firewall.Plan, live, json
 		results["nat"] = "PASS"
 		results["ipv4_only"] = "PASS"
 		if live {
-			if _, err := gatewayCommand(siteDir, s, "sudo", "nft", "list", "table", "inet", firewall.FilterTable); err != nil {
+			if _, err := gatewayCommand(siteDir, s, "sudo", "/usr/lib/boetticher/inspect-firewall", "table"); err != nil {
 				return err
 			}
 			results["live_ruleset"] = "PASS"
@@ -375,9 +363,19 @@ func gatewayCommand(siteDir string, s model.Site, command ...string) ([]byte, er
 	if s.Gateway.Mode != model.GatewayModeManaged {
 		return nil, errors.New("live gateway inspection is unavailable in external mode")
 	}
-	args := append([]string{"-F", filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"), "firewall"}, command...)
+	quoted := make([]string, len(command))
+	for i, argument := range command {
+		quoted[i] = remoteShellQuote(argument)
+	}
+	args := []string{"-F", filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"), "firewall", strings.Join(quoted, " ")}
 	process := exec.CommandContext(context.Background(), "ssh", args...)
 	return process.Output()
+}
+
+// OpenSSH passes the remote command through the account shell. Quote each
+// fixed-helper argument so a CLI filter cannot become shell syntax remotely.
+func remoteShellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func writeCLIJSON(out interface{ Write([]byte) (int, error) }, value any) error {

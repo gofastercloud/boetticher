@@ -8,4 +8,10 @@ and IPv4-only contract and are streamed through `--extra-vars @/dev/stdin` rathe
 written as a plaintext file. Appliance software and versions come from the
 qualified immutable artifacts; these roles do not install application stacks.
 
+Deployment connects as `root` through the operator key that bootstrap installs
+for the deployment window. The playbook has `become: false`; it does not rely
+on a durable `labadmin` sudo rule. Successful convergence removes the root SSH
+key and host root-login allowance. A failed run retains that temporary access
+for an authenticated retry and reports cleanup failure as a hold.
+
 The roles establish the base/Chrony/nginx boundaries and provide the module-owned hooks for AdGuard Home, Zabbix, mTLS, and portal publication. Exact package/image pins, service credentials, and endpoint-specific configuration remain release qualification inputs rather than being invented as mutable plaintext defaults. Credentials must come from SOPS-backed controller memory or an approved runtime mechanism. Plaintext credentials, caches, and bootstrap state never belong in Git.

@@ -1,5 +1,5 @@
 [Unit]
-Description=Install the Core-injected operator key for labadmin
+Description=Install temporary Core deployment access and the labadmin key
 After=local-fs.target cloud-init.service
 Before=ssh.service
 [Service]

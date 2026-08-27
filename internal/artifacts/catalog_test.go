@@ -747,22 +747,63 @@ func TestApplianceBootstrapInputsContainNoOperatorKeyOrSiteState(t *testing.T) {
 		t.Fatal(err)
 	}
 	buildText := string(buildScript)
-	for _, required := range []string{`chroot "$rootfs" chown root:root /etc/sudoers.d/boetticher`, `--run-command 'chown root:root /etc/sudoers.d/boetticher; chmod 0440 /etc/sudoers.d/boetticher'`} {
+	for _, required := range []string{`chroot "$rootfs" chown root:root /etc/sudoers.d/boetticher`, `--run-command 'chown root:root /etc/sudoers.d/boetticher-firewall; chmod 0440 /etc/sudoers.d/boetticher-firewall'`} {
 		if !strings.Contains(buildText, required) {
 			t.Fatalf("image build does not reset sudoers ownership: missing %q", required)
 		}
+	}
+	if strings.Contains(buildText, "usermod --append --groups sudo labadmin") {
+		t.Fatal("image build grants durable labadmin membership in the sudo group")
 	}
 	sudoers, err := os.ReadFile(filepath.Join(root, "base", "runtime", "boetticher.sudoers"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"/tmp/boetticher-ansible", "/usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*", "/usr/bin/systemd-creds *", "/usr/bin/sqlite3 *", "/usr/bin/psql *"} {
-		if !strings.Contains(string(sudoers), required) {
-			t.Fatalf("appliance sudo policy does not constrain runtime command %q", required)
+	policy := string(sudoers)
+	for _, forbidden := range []string{"labadmin ALL=", "NOPASSWD", "/bin/sh -c", "install *", "mkdir *", "chown *", "chmod *", "systemctl *", "nft *", "sysctl *", "sqlite3 *", "systemd-creds *", "psql *", "/usr/bin/pvesh *", "/usr/bin/pvesm *"} {
+		if strings.Contains(policy, forbidden) {
+			t.Fatalf("durable appliance labadmin policy retains forbidden privilege %q: %s", forbidden, policy)
 		}
 	}
-	if strings.Contains(buildText+string(sudoers), "NOPASSWD:ALL") {
-		t.Fatal("appliance sudo policy grants an unrestricted root command")
+}
+
+func TestDurableApplianceLabadminCannotUseRootCommandContracts(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "images", "base", "runtime", "boetticher.sudoers"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			t.Fatalf("durable appliance sudoers contains an active rule: %q", line)
+		}
+	}
+}
+
+func TestFirewallInspectionContractIsRootOwnedAndFailClosed(t *testing.T) {
+	policy, err := os.ReadFile(filepath.Join("..", "..", "images", "firewall", "runtime", "boetticher.sudoers"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper, err := os.ReadFile(filepath.Join("..", "..", "images", "firewall", "runtime", "inspect-firewall.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	policyText, helperText := string(policy), string(helper)
+	for _, operation := range []string{"status", "ruleset", "table", "leases", "kernel-logs"} {
+		if !strings.Contains(policyText, "inspect-firewall "+operation) || !strings.Contains(helperText, operation) {
+			t.Fatalf("firewall inspection operation %q is not present in both contracts", operation)
+		}
+	}
+	for _, required := range []string{"[ \"$#\" -eq 1 ]", "[ \"$#\" -eq 3 ]", "-le 1000", "boetticher_filter", "case \"$3\""} {
+		if !strings.Contains(helperText, required) {
+			t.Fatalf("firewall helper is missing fail-closed validation %q", required)
+		}
+	}
+	for _, forbidden := range []string{"sh -c", "eval ", "install ", "mkdir ", "chown ", "chmod ", "systemctl start", "systemctl stop", "sysctl -w", "pvesh", "pvesm", "sqlite3", "systemd-creds"} {
+		if strings.Contains(policyText+helperText, forbidden) {
+			t.Fatalf("firewall inspection contract contains forbidden privileged operation %q", forbidden)
+		}
 	}
 }
 

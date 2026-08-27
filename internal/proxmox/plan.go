@@ -1443,8 +1443,8 @@ func lxcDeviceParam(device model.DeviceRequirement) string {
 
 // lxcBootstrapKeyParams is the only operator-key input accepted by appliance
 // creation. Proxmox writes this key into the container's root bootstrap
-// identity; the image first-boot service copies it to labadmin and removes the
-// bootstrap copy before normal deployment configuration begins.
+// identity; the image first-boot service copies it to labadmin and Core removes
+// the root bootstrap copy after successful convergence.
 func lxcBootstrapKeyParams(publicKey string) (url.Values, error) {
 	if publicKey == "" {
 		return url.Values{}, nil

@@ -74,7 +74,7 @@ Arguments: No positional arguments.
 
 Options: --dry-run renders only; --recovery-confirmed confirms the independent Age recovery copy; --storage-confirmed confirms explicit dedicated-storage initialization.
 
-Safety: May change Proxmox bootstrap infrastructure and creates a temporary builder. Review the plan and recovery prerequisites before applying.
+Safety: May change Proxmox bootstrap infrastructure, creates a temporary builder, and installs temporary root SSH deployment access. Review the plan and recovery prerequisites before applying; the root key and host allowance are removed after successful convergence.
 
 Examples: `boetticher bootstrap --site ./my-boetticher --recovery-confirmed`
 
@@ -90,7 +90,7 @@ Arguments: No positional arguments.
 
 Options: --dry-run plans without mutation; --confirm authorizes destructive operations supported by the active providers; an artifact qualification mismatch remains HOLD; connection options select the Proxmox trust path.
 
-Safety: This is the sole public platform-application operation. Review the plan before applying it; unsupported rootfs replacement remains HOLD rather than being bypassed by --confirm.
+Safety: This is the sole public platform-application operation. It requires the temporary root SSH access established by bootstrap, uses the scoped Proxmox API token for lifecycle operations, and removes temporary root access after successful convergence. Review the plan before applying it; unsupported rootfs replacement remains HOLD rather than being bypassed by --confirm.
 
 Examples: `boetticher deploy --site ./my-boetticher --dry-run`; `boetticher deploy --site ./my-boetticher --confirm`
 

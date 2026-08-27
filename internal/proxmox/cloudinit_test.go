@@ -30,6 +30,9 @@ func TestFirewallCloudInitUsesStableInterfaceIdentities(t *testing.T) {
 	if strings.Contains(files.UserData, "ssh-ed25519") || strings.Contains(files.UserData, "password:") {
 		t.Fatal("firewall cloud-init embedded operator or password material")
 	}
+	if strings.Contains(files.UserData, "sudo:") || strings.Contains(files.UserData, "groups: [sudo]") || !strings.Contains(files.UserData, "disable_root: true") {
+		t.Fatalf("firewall cloud-init grants durable labadmin privilege: %s", files.UserData)
+	}
 }
 
 func TestFirewallCloudInitInjectsOperatorKeyOnlyAtDeployment(t *testing.T) {
@@ -43,7 +46,8 @@ func TestFirewallCloudInitInjectsOperatorKeyOnlyAtDeployment(t *testing.T) {
 		t.Fatalf("firewall bootstrap key was not injected into deployment-only NoCloud data: %s", files.UserData)
 	}
 	var document struct {
-		Users []any `yaml:"users"`
+		Users       []any `yaml:"users"`
+		DisableRoot bool  `yaml:"disable_root"`
 	}
 	if err := yaml.Unmarshal([]byte(files.UserData), &document); err != nil {
 		t.Fatalf("firewall cloud-init is not valid YAML: %v", err)
@@ -63,6 +67,24 @@ func TestFirewallCloudInitInjectsOperatorKeyOnlyAtDeployment(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("firewall cloud-init does not configure labadmin")
+	}
+	if document.DisableRoot {
+		t.Fatal("deployment cloud-init disables the temporary root transport")
+	}
+	rootFound := false
+	for _, rawUser := range document.Users {
+		user, ok := rawUser.(map[string]any)
+		if !ok || user["name"] != "root" {
+			continue
+		}
+		keys, ok := user["ssh_authorized_keys"].([]any)
+		if !ok || len(keys) != 1 || keys[0] != key {
+			t.Fatalf("temporary root key was not preserved as one YAML scalar: %#v", user["ssh_authorized_keys"])
+		}
+		rootFound = true
+	}
+	if !rootFound {
+		t.Fatal("deployment cloud-init does not configure temporary root access")
 	}
 	if strings.Contains(files.MetaData+files.NetworkConfig, key) {
 		t.Fatal("operator key leaked into unrelated NoCloud documents")
@@ -162,6 +184,9 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 	if strings.Contains(files.UserData, "package_update: true") || strings.Contains(files.UserData, "packages:") {
 		t.Fatal("builder cloud-init uses unpinned cloud-init package installation")
 	}
+	if strings.Contains(files.UserData, "groups: [sudo]") || strings.Contains(files.UserData, "/etc/sudoers.d/boetticher-builder") {
+		t.Fatal("builder cloud-init grants labadmin a root-capable sudo path")
+	}
 	for _, required := range []string{
 		"https://snapshot.debian.org/archive/debian/20260825T000000Z/",
 		"https://snapshot.debian.org/archive/debian-security/20260825T000000Z/",
@@ -210,14 +235,15 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 	}
 }
 
-func TestRenderBuilderCloudInitWithKeyBootstrapsLabadmin(t *testing.T) {
+func TestRenderBuilderCloudInitWithKeyBootstrapsTemporaryRoot(t *testing.T) {
 	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator #1"
 	files, err := RenderBuilderCloudInitWithKey(key)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var document struct {
-		Users []any `yaml:"users"`
+		Users       []any `yaml:"users"`
+		DisableRoot bool  `yaml:"disable_root"`
 	}
 	if err := yaml.Unmarshal([]byte(files.UserData), &document); err != nil {
 		t.Fatalf("builder cloud-init is not valid YAML: %v", err)
@@ -236,6 +262,24 @@ func TestRenderBuilderCloudInitWithKeyBootstrapsLabadmin(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("builder cloud-init does not explicitly configure labadmin")
+	}
+	if document.DisableRoot {
+		t.Fatal("builder cloud-init disables the temporary root transport")
+	}
+	rootFound := false
+	for _, rawUser := range document.Users {
+		user, ok := rawUser.(map[string]any)
+		if !ok || user["name"] != "root" {
+			continue
+		}
+		keys, ok := user["ssh_authorized_keys"].([]any)
+		if !ok || len(keys) != 1 || keys[0] != key {
+			t.Fatalf("builder temporary root key = %#v, want %q", user["ssh_authorized_keys"], key)
+		}
+		rootFound = true
+	}
+	if !rootFound {
+		t.Fatal("builder cloud-init does not explicitly configure temporary root access")
 	}
 	if strings.Contains(files.MetaData+files.NetworkConfig, key) {
 		t.Fatal("builder operator key leaked into unrelated cloud-init documents")
