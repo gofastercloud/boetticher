@@ -486,6 +486,25 @@ func TestEnsureQEMUMigratesLegacyPersistentVolumeSerial(t *testing.T) {
 	}
 }
 
+func TestEnsureQEMURequiresConfirmationToReplaceOwnedArtifact(t *testing.T) {
+	guest := GuestPlan{VMID: 100, Name: "test-fw", Artifact: model.Artifact{
+		Name: "boetticher-firewall", Version: "1.0.0", Architecture: "amd64", ContentSHA256: "new-content",
+	}}
+	currentDescription := artifactDescription(model.Artifact{Name: "boetticher-firewall", Version: "1.0.0", Architecture: "amd64", ContentSHA256: "old-content"})
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/config" {
+			return response([]byte(`{"data":{"name":"test-fw","description":"` + currentDescription + `"}}`))
+		}
+		t.Fatalf("unexpected request before replacement confirmation: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err := ensureQEMU(context.Background(), client, Plan{Node: "node"}, guest)
+	if err == nil || !strings.Contains(err.Error(), "requires --confirm") {
+		t.Fatalf("artifact replacement without confirmation = %v", err)
+	}
+}
+
 func TestQEMUPersistentVolumeParamsRejectUnresolvedStorage(t *testing.T) {
 	_, err := qemuPersistentVolumeParams(Plan{}, GuestPlan{Volumes: []model.PersistentVolumeDeclaration{{
 		Name: "kea-leases", SizeGiB: 4, MountPath: "/var/lib/kea",
