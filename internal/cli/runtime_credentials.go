@@ -23,7 +23,7 @@ type deploymentCredential struct {
 }
 
 func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, error) {
-	bindings := make([]deploymentCredential, 0, 2)
+	bindings := make([]deploymentCredential, 0, 4)
 	if site.Gateway.Mode == model.GatewayModeManaged {
 		bindings = append(bindings, deploymentCredential{
 			Guest:     "lab-fw-01",
@@ -40,7 +40,7 @@ func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, erro
 	if modules.IsEnabled(site, "monitoring") {
 		bindings = append(bindings, deploymentCredential{
 			Guest:     "lab-monitor-01",
-			Address:   "10.10.20.20",
+			Address:   "10.10.10.20",
 			SecretKey: "monitoring-db-password",
 			Spec: secrets.CredentialSpec{
 				Name:       "zabbix-db-password",
@@ -50,6 +50,20 @@ func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, erro
 			},
 		})
 	}
+	if modules.IsEnabled(site, "tailnet-router") {
+		bindings = append(bindings, deploymentCredential{
+			Guest: "lab-tailnet-01", Address: "10.10.5.10", SecretKey: "tailscale_auth_key",
+			Spec: secrets.CredentialSpec{Name: "tailscale-auth-key", Unit: "tailscaled.service", StorePath: "/var/lib/boetticher/credentials/tailscale-auth-key.cred", RuntimeRef: "/run/credentials/tailscaled.service/tailscale-auth-key"},
+		})
+	}
+	if modules.IsEnabled(site, "litellm") {
+		for _, upstream := range site.ModuleConfig["litellm"].Upstreams {
+			bindings = append(bindings, deploymentCredential{
+				Guest: "lab-litellm-01", Address: "10.10.20.60", SecretKey: upstream.APIKeySecret,
+				Spec: secrets.CredentialSpec{Name: credentialName(upstream.APIKeySecret), Unit: "litellm.service", StorePath: "/var/lib/boetticher/credentials/" + credentialName(upstream.APIKeySecret) + ".cred", RuntimeRef: "/run/credentials/litellm.service/" + credentialName(upstream.APIKeySecret)},
+			})
+		}
+	}
 	items := make([]secrets.CredentialSpec, 0, len(bindings))
 	for _, binding := range bindings {
 		items = append(items, binding.Spec)
@@ -58,6 +72,21 @@ func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, erro
 		return nil, fmt.Errorf("validate appliance credential declarations: %w", err)
 	}
 	return bindings, nil
+}
+
+func credentialName(reference string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, character := range strings.ToLower(reference) {
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
+			b.WriteRune(character)
+			lastDash = false
+		} else if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 // credentialDropIns returns non-secret systemd projections grouped by

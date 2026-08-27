@@ -11,16 +11,18 @@ import (
 func TestFirewallCloudInitUsesStableInterfaceIdentities(t *testing.T) {
 	guest := GuestPlan{Name: "lab-fw-01", Address: "10.10.99.1", NICs: []GuestNIC{
 		{Name: "wan0", MAC: "02:00:00:00:01:01", Method: "dhcp"},
-		{Name: "trusted0", MAC: "02:00:00:00:01:02", Method: "static", Address: "10.10.10.1"},
+		{Name: "trusted0", MAC: "02:00:00:00:01:02", Method: "static", Address: "10.10.30.1"},
 		{Name: "servers0", MAC: "02:00:00:00:01:03", Method: "static", Address: "10.10.20.1"},
-		{Name: "sandbox0", MAC: "02:00:00:00:01:04", Method: "static", Address: "10.10.50.1"},
+		{Name: "sandbox0", MAC: "02:00:00:00:01:04", Method: "static", Address: "10.10.40.1"},
 		{Name: "mgmt0", MAC: "02:00:00:00:01:05", Method: "static", Address: "10.10.99.1"},
+		{Name: "transit0", MAC: "02:00:00:00:01:06", Method: "static", Address: "10.10.5.1"},
+		{Name: "infra0", MAC: "02:00:00:00:01:07", Method: "static", Address: "10.10.10.1"},
 	}}
 	files, err := RenderFirewallCloudInit(guest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, value := range []string{"set-name: wan0", "set-name: trusted0", "set-name: servers0", "set-name: sandbox0", "set-name: mgmt0", "net.ipv4.ip_forward=0", "net.ipv6.conf.all.forwarding=0"} {
+	for _, value := range []string{"set-name: wan0", "set-name: trusted0", "set-name: servers0", "set-name: sandbox0", "set-name: mgmt0", "set-name: transit0", "set-name: infra0", "net.ipv4.ip_forward=0", "net.ipv6.conf.all.forwarding=0"} {
 		if !strings.Contains(files.NetworkConfig+files.UserData, value) {
 			t.Fatalf("cloud-init omitted %q", value)
 		}
@@ -76,13 +78,13 @@ func TestFirewallCloudInitRejectsInvalidOperatorKey(t *testing.T) {
 
 func TestFirewallCloudInitDoesNotDuplicateStaticPrefixLength(t *testing.T) {
 	guest := GuestPlan{Name: "lab-fw-01", Address: "10.10.99.1", NICs: []GuestNIC{
-		{Name: "trusted0", MAC: "02:00:00:00:01:02", Method: "static", Address: "10.10.10.1"},
+		{Name: "trusted0", MAC: "02:00:00:00:01:02", Method: "static", Address: "10.10.30.1"},
 	}}
 	files, err := RenderFirewallCloudInit(guest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(files.NetworkConfig, "addresses: [10.10.10.1/24]") || strings.Contains(files.NetworkConfig, "/24/24") {
+	if !strings.Contains(files.NetworkConfig, "addresses: [10.10.30.1/24]") || strings.Contains(files.NetworkConfig, "/24/24") {
 		t.Fatalf("invalid static address rendered: %s", files.NetworkConfig)
 	}
 }

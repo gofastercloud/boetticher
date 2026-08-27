@@ -64,6 +64,18 @@ func Inventory(s model.Site) (string, error) {
 			writeHost(&b, component, true)
 		}
 	}
+	b.WriteString("\n[tailnet-router]\n")
+	for _, component := range components {
+		if component.Module == "tailnet-router" {
+			writeHost(&b, component, true)
+		}
+	}
+	b.WriteString("\n[litellm]\n")
+	for _, component := range components {
+		if component.Module == "litellm" {
+			writeHost(&b, component, true)
+		}
+	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		b.WriteString("\n[firewall]\n")
 		for _, component := range components {
@@ -72,7 +84,7 @@ func Inventory(s model.Site) (string, error) {
 			}
 		}
 	}
-	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\n")
+	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\ntailnet-router\nlitellm\n")
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		b.WriteString("firewall\n")
 	}
@@ -132,26 +144,28 @@ func Variables(s model.Site) ([]byte, error) {
 		}
 	}
 	value := struct {
-		ModelRevision               string            `json:"model_revision"`
-		Domain                      string            `json:"domain"`
-		IPv4Only                    bool              `json:"ipv4_only"`
-		AuthoritativeDNS            string            `json:"authoritative_dns"`
-		AuthoritativeDNSVersion     string            `json:"authoritative_dns_version"`
-		AuthoritativePackageVersion string            `json:"authoritative_package_version"`
-		AuthoritativeDNSPort        string            `json:"authoritative_dns_port"`
-		DynamicZones                []string          `json:"dynamic_zones"`
-		AdGuardForwardZones         []string          `json:"adguard_forward_zones"`
-		DNSPlan                     dns.Plan          `json:"dns_plan"`
-		FirewallPlan                firewall.Plan     `json:"firewall_plan"`
-		ZabbixPlan                  zabbix.Plan       `json:"zabbix_plan"`
-		BlockyConfig                string            `json:"blocky_config"`
-		LoggingPlan                 logging.Plan      `json:"logging_plan"`
-		LoggingCollectorConfig      string            `json:"logging_collector_config"`
-		LoggingServiceOverride      string            `json:"logging_collector_service_override"`
-		LoggingUploadConfigs        map[string]string `json:"logging_upload_configs"`
-		LoggingClientCertificates   map[string]string `json:"logging_client_certificates"`
-		LoggingCollectorCertificate string            `json:"logging_collector_certificate"`
-	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, zabbixPlan, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), loggingUploads, map[string]string{}, ""}
+		ModelRevision               string                        `json:"model_revision"`
+		Domain                      string                        `json:"domain"`
+		IPv4Only                    bool                          `json:"ipv4_only"`
+		AuthoritativeDNS            string                        `json:"authoritative_dns"`
+		AuthoritativeDNSVersion     string                        `json:"authoritative_dns_version"`
+		AuthoritativePackageVersion string                        `json:"authoritative_package_version"`
+		AuthoritativeDNSPort        string                        `json:"authoritative_dns_port"`
+		DynamicZones                []string                      `json:"dynamic_zones"`
+		AdGuardForwardZones         []string                      `json:"adguard_forward_zones"`
+		DNSPlan                     dns.Plan                      `json:"dns_plan"`
+		FirewallPlan                firewall.Plan                 `json:"firewall_plan"`
+		ZabbixPlan                  zabbix.Plan                   `json:"zabbix_plan"`
+		BlockyConfig                string                        `json:"blocky_config"`
+		LoggingPlan                 logging.Plan                  `json:"logging_plan"`
+		LoggingCollectorConfig      string                        `json:"logging_collector_config"`
+		LoggingServiceOverride      string                        `json:"logging_collector_service_override"`
+		LoggingUploadConfigs        map[string]string             `json:"logging_upload_configs"`
+		LoggingClientCertificates   map[string]string             `json:"logging_client_certificates"`
+		LoggingCollectorCertificate string                        `json:"logging_collector_certificate"`
+		ModuleConfigs               map[string]model.ModuleConfig `json:"module_configs"`
+		ModuleDeclarations          []model.ModuleDeclaration     `json:"module_declarations"`
+	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, zabbixPlan, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), loggingUploads, map[string]string{}, "", s.ModuleConfig, s.Declarations}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err

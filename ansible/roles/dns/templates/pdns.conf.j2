@@ -8,9 +8,9 @@ daemon=yes
 guardian=yes
 secondary={{ (inventory_hostname == 'lab-dns-02') | ternary('yes', 'no') }}
 primary={{ (inventory_hostname == 'lab-dns-01') | ternary('yes', 'no') }}
-allow-axfr-ips={{ (inventory_hostname == 'lab-dns-01') | ternary('10.10.20.11', '10.10.20.10') }}
-allow-notify-from={{ (inventory_hostname == 'lab-dns-01') | ternary('10.10.20.11', '10.10.20.10') }}
-also-notify=10.10.20.11:5353
+allow-axfr-ips={{ (inventory_hostname == 'lab-dns-01') | ternary('10.10.10.11', '10.10.10.10') }}
+allow-notify-from={{ (inventory_hostname == 'lab-dns-01') | ternary('10.10.10.11', '10.10.10.10') }}
+also-notify=10.10.10.11:5353
 dnsupdate=yes
 allow-dnsupdate-from=
 default-soa-content=lab-dns-01.{{ dns_plan.static_zone }} hostmaster.{{ dns_plan.static_zone }} 0 10800 3600 604800 300

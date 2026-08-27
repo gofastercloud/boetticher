@@ -24,11 +24,12 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 		t.Fatal("inventory was not deterministic")
 	}
 	for _, expected := range []string{
-		"lab-dns-01 ansible_host=10.10.20.10",
+		"lab-proxmox-01 ansible_host=10.10.99.250",
+		"lab-dns-01 ansible_host=10.10.10.10",
 		"ansible_remote_tmp=/tmp/boetticher-ansible",
 		"[managed:children]",
 		"[logging]",
-		"lab-log-01 ansible_host=10.10.20.40",
+		"lab-log-01 ansible_host=10.10.10.40",
 	} {
 		if !strings.Contains(first, expected) {
 			t.Errorf("inventory missing %q", expected)
@@ -49,7 +50,7 @@ func TestInventoryUsesBootstrapAddressForProxmoxTransport(t *testing.T) {
 	if !strings.Contains(inventory, "lab-proxmox-01 ansible_host=192.0.2.5") {
 		t.Fatalf("Proxmox inventory did not use bootstrap address:\n%s", inventory)
 	}
-	if strings.Contains(inventory, "lab-proxmox-01 ansible_host=10.10.99.5") {
+	if strings.Contains(inventory, "lab-proxmox-01 ansible_host=10.10.99.250") {
 		t.Fatal("Proxmox inventory used the internal management address for controller transport")
 	}
 }
@@ -425,6 +426,8 @@ func TestFirewallInterfaceBindingsCarryStableRoleMACs(t *testing.T) {
 		`"name": "servers0"`, `"mac": "02:00:00:00:01:03"`,
 		`"name": "sandbox0"`, `"mac": "02:00:00:00:01:04"`,
 		`"name": "mgmt0"`, `"mac": "02:00:00:00:01:05"`,
+		`"name": "transit0"`, `"mac": "02:00:00:00:01:06"`,
+		`"name": "infra0"`, `"mac": "02:00:00:00:01:07"`,
 	} {
 		if !strings.Contains(text, expected) {
 			t.Errorf("firewall variables missing stable interface binding %q", expected)
@@ -462,8 +465,59 @@ func TestPowerDNSBindsEachDNSGuestAddressAlongsideLoopback(t *testing.T) {
 		t.Fatal("PowerDNS does not bind loopback and the current DNS guest address")
 	}
 	for _, line := range strings.Split(text, "\n") {
-		if strings.HasPrefix(line, "local-address=") && strings.Contains(line, "10.10.20.10") {
+		if strings.HasPrefix(line, "local-address=") && strings.Contains(line, "10.10.10.10") {
 			t.Fatal("PowerDNS local listener hard-codes the primary address for both DNS guests")
+		}
+	}
+}
+
+func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
+	tests := []struct {
+		role      string
+		required  []string
+		forbidden []string
+	}{
+		{
+			role: "tailnet-router",
+			required: []string{
+				"boetticher_appliance_artifact",
+				"ExecStartPost=/usr/lib/boetticher/tailscale-router-bootstrap",
+				"/var/lib/tailscale",
+				"--accept-dns=false",
+				"--advertise-routes=10.10.0.0/16",
+				"--snat-subnet-routes=true",
+			},
+			forbidden: []string{"advertise-exit-node", "privileged: true", "ansible.builtin.apt:"},
+		},
+		{
+			role: "litellm",
+			required: []string{
+				"boetticher_appliance_artifact",
+				"no_log: true",
+				"ssl_verify_client on;",
+				"proxy_pass http://127.0.0.1:4000;",
+				"listen 10.10.20.60:443 ssl;",
+				"proxy_pass http://127.0.0.1:4000;",
+			},
+			forbidden: []string{"listen 10.10.20.60:80", "api_key: {{", "ansible.builtin.get_url:"},
+		},
+	}
+	for _, test := range tests {
+		path := filepath.Join("..", "..", "ansible", "roles", test.role, "tasks", "main.yml")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		for _, required := range test.required {
+			if !strings.Contains(text, required) {
+				t.Errorf("%s role is missing bounded runtime contract %q", test.role, required)
+			}
+		}
+		for _, forbidden := range test.forbidden {
+			if strings.Contains(text, forbidden) {
+				t.Errorf("%s role contains forbidden runtime contract %q", test.role, forbidden)
+			}
 		}
 	}
 }

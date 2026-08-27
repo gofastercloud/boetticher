@@ -72,6 +72,35 @@ case "$name" in
   boetticher-portal)
     run nginx -v
     ;;
+  boetticher-tailnet-router)
+    run tailscale version
+    run tailscaled --version
+    chroot "$rootfs" tailscale version 2>&1 | grep -Fq '1.76.6'
+    test -x "$rootfs/usr/sbin/tailscaled"
+    test ! -e "$rootfs/etc/tailscale/auth.key"
+    if grep -R -n -E 'advertise-exit-node|auth-key|auth_key' "$rootfs/etc" "$rootfs/usr/lib" 2>/dev/null; then
+      echo "tailnet-router artifact contains forbidden exit-node or auth-key configuration" >&2
+      exit 1
+    fi
+    ;;
+  boetticher-litellm)
+    run nginx -v
+    run /opt/litellm/bin/python --version
+    chroot "$rootfs" dpkg-query -W -f='${Version}' python3 | grep -Fxq '3.13.5-1'
+    chroot "$rootfs" dpkg-query -W -f='${Version}' python3-venv | grep -Fxq '3.13.5-1'
+    chroot "$rootfs" dpkg-query -W -f='${Version}' python3-pip | grep -Fxq '25.1.1+dfsg-1'
+    chroot "$rootfs" dpkg-query -W -f='${Version}' nginx | grep -Fxq '1.26.3-3+deb13u7'
+    chroot "$rootfs" /opt/litellm/bin/python -c 'import litellm; assert litellm.__version__ == "1.74.9"'
+    test -f "$rootfs/etc/systemd/system/litellm.service"
+    grep -Fq -- '--host 127.0.0.1' "$rootfs/etc/systemd/system/litellm.service"
+    test ! -e "$rootfs/etc/boetticher/litellm/config.yaml"
+    test ! -e "$rootfs/etc/nginx/sites-enabled/default"
+    test ! -e "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
+    if find "$rootfs/etc/nginx" -type f \( -name '*.pem' -o -name '*.key' \) -print -quit | grep -q .; then
+      echo "litellm artifact contains generated TLS material" >&2
+      exit 1
+    fi
+    ;;
   *)
     echo "unknown smoke target: $name" >&2
     exit 2

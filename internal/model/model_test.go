@@ -104,6 +104,101 @@ func TestExternalGatewayOmitsManagedFirewall(t *testing.T) {
 	}
 }
 
+func TestTransitIsFixedCoreNetworkAndSemanticPlacement(t *testing.T) {
+	site := NewSite("installation", "age1example", GatewayModeManaged)
+	transit, err := site.ZoneForType(ZoneTypeTransit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transit.Name != "TRANSIT" || transit.Type != ZoneTypeTransit || transit.VLAN != TransitVLAN || transit.Network != TransitNetwork || transit.Gateway != TransitGateway {
+		t.Fatalf("unexpected TRANSIT contract: %#v", transit)
+	}
+	if err := site.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := site.ZoneForType(ZoneType("unknown")); err == nil {
+		t.Fatal("unknown semantic zone type was accepted")
+	}
+}
+
+func TestCoreZonesUseCanonicalNetworkContract(t *testing.T) {
+	site := NewSite("installation", "age1example", GatewayModeManaged)
+	want := map[string]Zone{
+		"TRANSIT": {Name: "TRANSIT", Type: ZoneTypeTransit, VLAN: 5, Network: "10.10.5.0/24", Gateway: "10.10.5.1", AddressMode: "none"},
+		"INFRA":   {Name: "INFRA", Type: ZoneTypeInfrastructure, VLAN: 10, Network: "10.10.10.0/24", Gateway: "10.10.10.1", AddressMode: "static"},
+		"SERVERS": {Name: "SERVERS", Type: ZoneTypeServers, VLAN: 20, Network: "10.10.20.0/24", Gateway: "10.10.20.1", AddressMode: "static"},
+		"TRUSTED": {Name: "TRUSTED", Type: ZoneTypeTrusted, VLAN: 30, Network: "10.10.30.0/24", Gateway: "10.10.30.1", AddressMode: "dynamic-reservations"},
+		"SANDBOX": {Name: "SANDBOX", Type: ZoneTypeSandbox, VLAN: 40, Network: "10.10.40.0/24", Gateway: "10.10.40.1", AddressMode: "dynamic"},
+		"MGMT":    {Name: "MGMT", Type: ZoneTypeManagement, VLAN: 99, Network: "10.10.99.0/24", Gateway: "10.10.99.1", AddressMode: "static"},
+	}
+	if len(site.Network.Zones) != len(want) {
+		t.Fatalf("got %d zones, want %d", len(site.Network.Zones), len(want))
+	}
+	for _, zone := range site.Network.Zones {
+		expected, ok := want[zone.Name]
+		if !ok || zone.Name != expected.Name || zone.Type != expected.Type || zone.VLAN != expected.VLAN || zone.Network != expected.Network || zone.Gateway != expected.Gateway || zone.AddressMode != expected.AddressMode {
+			t.Errorf("unexpected zone: %#v", zone)
+		}
+	}
+	if got := site.Components[0].Address; got != ProxmoxManagementAddress {
+		t.Fatalf("Proxmox management address = %s, want %s", got, ProxmoxManagementAddress)
+	}
+	if err := site.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCoreInfrastructureUsesInfraAddresses(t *testing.T) {
+	site := NewDefaultSite("installation", "age1example")
+	want := map[string]string{
+		"lab-dns-01":     "10.10.10.10",
+		"lab-dns-02":     "10.10.10.11",
+		"lab-monitor-01": "10.10.10.20",
+		"lab-log-01":     "10.10.10.40",
+		"lab-portal-01":  "10.10.10.30",
+	}
+	found := make(map[string]bool, len(want))
+	for _, component := range site.Components {
+		address, ok := want[component.Name]
+		if !ok {
+			continue
+		}
+		if component.Zone != "INFRA" || component.Address != address {
+			t.Errorf("%s projection = zone %s, address %s; want INFRA, %s", component.Name, component.Zone, component.Address, address)
+		}
+		found[component.Name] = true
+	}
+	for name := range want {
+		if !found[name] {
+			t.Errorf("default site is missing Core infrastructure component %s", name)
+		}
+	}
+}
+
+func TestUnknownZoneSemanticTypeIsRejected(t *testing.T) {
+	site := NewSite("installation", "age1example", GatewayModeManaged)
+	for index := range site.Network.Zones {
+		if site.Network.Zones[index].Name == "TRANSIT" {
+			site.Network.Zones[index].Type = ZoneType("edge")
+		}
+	}
+	if err := site.Validate(); err == nil || !strings.Contains(err.Error(), "unknown semantic type") {
+		t.Fatalf("unknown zone semantic type was accepted: %v", err)
+	}
+}
+
+func TestNetworkIntentCannotCarryRawFirewallCommand(t *testing.T) {
+	site := NewDefaultSite("installation", "age1example")
+	site.Declarations = []ModuleDeclaration{{
+		Module:         "example",
+		Artifact:       Artifact{DefinitionSHA256: strings.Repeat("a", 64)},
+		NetworkIntents: []NetworkIntent{{Source: "nft add rule", Destination: "SERVERS", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "unsafe"}},
+	}}
+	if err := site.Validate(); err == nil || !strings.Contains(err.Error(), "safe references") {
+		t.Fatalf("raw firewall command was accepted as a network intent: %v", err)
+	}
+}
+
 func TestOldSiteSchemaRequiresFreshV03Initialization(t *testing.T) {
 	site := NewDefaultSite("installation", "age1example")
 	site.APIVersion = "boetticher/v1"
@@ -116,7 +211,7 @@ func TestOldSiteSchemaRequiresFreshV03Initialization(t *testing.T) {
 
 func TestUserManagedVMIDMustUseReservedRange(t *testing.T) {
 	site := NewDefaultSite("installation", "age1example")
-	site.Components = append(site.Components, Component{Name: "user-vm", VMID: 450, Hostname: "user-vm", Zone: "SANDBOX", Address: "10.10.50.50", Role: "user workload"})
+	site.Components = append(site.Components, Component{Name: "user-vm", VMID: 450, Hostname: "user-vm", Zone: "SANDBOX", Address: "10.10.40.50", Role: "user workload"})
 	if err := site.Validate(); err == nil || !strings.Contains(err.Error(), "reserved user-workload range") {
 		t.Fatalf("invalid user VMID was accepted: %v", err)
 	}

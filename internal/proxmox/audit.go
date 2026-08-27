@@ -3,9 +3,7 @@ package proxmox
 import (
 	"context"
 	"fmt"
-	"path"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -47,9 +45,17 @@ func PurgeModule(ctx context.Context, client *Client, plan Plan, module string) 
 		if err := validateExistingGuest(current, guest); err != nil {
 			return fmt.Errorf("refusing to purge %s: ownership proof failed: %w", guest.Name, err)
 		}
-		endpoint := path.Join("/nodes", plan.Node, string(guest.Kind), strconv.Itoa(guest.VMID))
-		if err := client.Delete(ctx, endpoint); err != nil {
-			return fmt.Errorf("purge module guest %s: %w", guest.Name, err)
+		var purgeErr error
+		switch guest.Kind {
+		case KindQEMU:
+			purgeErr = client.DestroyQEMU(ctx, plan.Node, guest.VMID)
+		case KindLXC:
+			purgeErr = client.DestroyLXC(ctx, plan.Node, guest.VMID)
+		default:
+			return fmt.Errorf("HOLD: refusing to purge %s with unsupported guest kind %s", guest.Name, guest.Kind)
+		}
+		if purgeErr != nil {
+			return fmt.Errorf("purge module guest %s: %w", guest.Name, purgeErr)
 		}
 	}
 	return nil

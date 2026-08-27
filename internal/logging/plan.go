@@ -10,7 +10,7 @@ import (
 
 const (
 	CollectorName      = "lab-log-01"
-	CollectorAddress   = "10.10.20.40"
+	CollectorAddress   = "10.10.10.40"
 	CollectorPort      = 19532
 	RemoteJournalPath  = "/var/log/journal/remote"
 	CollectorVolumeGiB = 10

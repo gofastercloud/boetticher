@@ -32,5 +32,10 @@ In external mode, boetticher regenerates the network/security contract but does
 not back up or restore the operator's appliance. Use that appliance's own
 recovery procedure.
 
+The fixed network identities in this tranche are for the next clean
+deployment/rebuild. Existing installations require an operator-planned
+migration or rebuild; boetticher does not automatically renumber live guests,
+interfaces, routes, or gateways.
+
 Local backups share the failure domain of their storage profile. They are useful
 for rollback and local recovery, not independent disaster recovery.

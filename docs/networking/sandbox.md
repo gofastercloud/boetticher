@@ -1,8 +1,9 @@
 # SANDBOX
 
-SANDBOX is VLAN 50, `10.10.50.0/24`, gateway `10.10.50.1`. It is for test,
+SANDBOX is VLAN 40, `10.10.40.0/24`, gateway `10.10.40.1`. It is for test,
 untrusted, or externally managed devices. Its default policy allows Internet
-egress and gateway DHCP/DNS/NTP, while denying TRUSTED, SERVERS, and MGMT.
+egress and gateway DHCP/DNS/NTP, while denying TRUSTED, SERVERS, INFRA, and
+MGMT.
 
 Managed mode provides the gateway services on `lab-fw-01`. External mode
 requires the operator appliance to provide the same observable behavior. The

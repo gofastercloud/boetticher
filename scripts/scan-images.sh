@@ -15,7 +15,9 @@ case "$target" in
   scan-monitoring) names="boetticher-monitoring" ;;
   scan-firewall) names="boetticher-firewall" ;;
   scan-portal) names="boetticher-portal" ;;
-  scan-images) names="boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-firewall boetticher-portal" ;;
+  scan-tailnet-router) names="boetticher-tailnet-router" ;;
+  scan-litellm) names="boetticher-litellm" ;;
+  scan-images) names="boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-firewall boetticher-portal boetticher-tailnet-router boetticher-litellm" ;;
   *) echo "unknown scan target: $target" >&2; exit 2 ;;
 esac
 
@@ -112,6 +114,8 @@ for name in $names; do
     boetticher-monitoring) module=monitoring ;;
     boetticher-firewall) module=firewall ;;
     boetticher-portal) module=portal ;;
+    boetticher-tailnet-router) module=tailnet-router ;;
+    boetticher-litellm) module=litellm ;;
   esac
   if [ -n "$provider" ]; then
     GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact \

@@ -22,7 +22,8 @@ for deletion or import.
 
 - The managed Debian gateway owns routing, NAT, nftables, Kea DHCP, and the inter-zone boundary. External mode publishes a contract only.
 - `vmbr0` is the HOME/upstream bridge; `vmbr1` is the internal VLAN-aware bridge.
-- V1 is IPv4-only with VLANs 10 TRUSTED, 20 SERVERS, 50 SANDBOX, and 99 MGMT.
+- V1 is IPv4-only with VLANs 5 TRANSIT, 10 INFRA, 20 SERVERS, 30 TRUSTED,
+  40 SANDBOX, and 99 MGMT.
 - Proxmox is the normal bootstrap/recovery SSH bastion. The managed gateway is reached through that path.
 - Physical NIC identity uses observed hardware evidence; interface enumeration order is never architecture.
 - Secrets are SOPS-encrypted. The Age private identity, OpenTofu state, plans, caches, and temporary credentials stay outside Git.
@@ -63,7 +64,7 @@ for deletion or import.
   common base; modules do not invent transports.
 - DNS is one mandatory module with typed `blocky`/`adguard` provider selection.
   Both providers share PowerDNS/Chrony and the common DNS conformance contract.
-- Monitoring is a normal SERVERS workload at `10.10.20.20`; MGMT is not a
+- Monitoring is Core infrastructure in INFRA at `10.10.10.20`; MGMT is not a
   generic application placement zone.
 - Official artifacts have a deterministic definition identity and a verified
   SHA-256 for the concrete bytes being deployed. Build smoke tests and Trivy

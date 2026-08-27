@@ -3,7 +3,7 @@ package cli
 import "testing"
 
 func TestParseGatewayStatus(t *testing.T) {
-	status, err := parseGatewayStatus("forwarding=1\nservice.nftables=active\nservice.kea-dhcp4-server=active\nservice.kea-dhcp-ddns-server=active\nservice.dnsmasq=active\niface.wan0=wan0 UP 192.0.2.10/24\niface.trusted0=trusted0 UP 10.10.10.1/24\niface.servers0=servers0 UP 10.10.20.1/24\niface.sandbox0=sandbox0 UP 10.10.50.1/24\niface.mgmt0=mgmt0 UP 10.10.99.1/24\n")
+	status, err := parseGatewayStatus("forwarding=1\nservice.nftables=active\nservice.kea-dhcp4-server=active\nservice.kea-dhcp-ddns-server=active\nservice.dnsmasq=active\niface.wan0=wan0 UP 192.0.2.10/24\niface.trusted0=trusted0 UP 10.10.30.1/24\niface.servers0=servers0 UP 10.10.20.1/24\niface.sandbox0=sandbox0 UP 10.10.40.1/24\niface.mgmt0=mgmt0 UP 10.10.99.1/24\niface.transit0=transit0 UP 10.10.5.1/24\niface.infra0=infra0 UP 10.10.10.1/24\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -19,7 +19,7 @@ func TestParseGatewayStatusRejectsIncompleteOutput(t *testing.T) {
 }
 
 func TestGatewayStatusScriptDoesNotDependOnInterfaceEnumeration(t *testing.T) {
-	for _, role := range []string{"wan0", "trusted0", "servers0", "sandbox0", "mgmt0"} {
+	for _, role := range []string{"wan0", "trusted0", "servers0", "sandbox0", "mgmt0", "transit0", "infra0"} {
 		if !containsString(gatewayStatusScript, role) {
 			t.Fatalf("gateway status script does not inspect stable role interface %q", role)
 		}

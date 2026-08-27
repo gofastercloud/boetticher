@@ -18,23 +18,32 @@ const (
 type Capability string
 
 const (
-	CapabilityGateway    Capability = "gateway"
-	CapabilityDNS        Capability = "dns"
-	CapabilityNTP        Capability = "ntp"
-	CapabilityMonitoring Capability = "monitoring"
-	CapabilityLogging    Capability = "logging"
+	CapabilityGateway       Capability = "gateway"
+	CapabilityDNS           Capability = "dns"
+	CapabilityNTP           Capability = "ntp"
+	CapabilityMonitoring    Capability = "monitoring"
+	CapabilityLogging       Capability = "logging"
+	CapabilityTailnetAccess Capability = "tailnet-access"
+	CapabilityAIAPI         Capability = "ai-api"
 )
 
+type PlacementRequirement struct {
+	ZoneType model.ZoneType
+}
+
 type ModuleDefinition struct {
-	Name        string
-	Description string
-	Version     string
-	Policy      EnablementPolicy
-	DependsOn   []string
-	Requires    []Capability
-	Provides    []Capability
-	GuestIDs    []int
-	Guests      []model.Component
+	Name              string
+	Description       string
+	Version           string
+	Policy            EnablementPolicy
+	DependsOn         []string
+	Requires          []Capability
+	Provides          []Capability
+	GuestIDs          []int
+	ReservedVMIDStart int
+	ReservedVMIDEnd   int
+	Placement         PlacementRequirement
+	Guests            []model.Component
 }
 
 type Registry struct {
@@ -53,27 +62,42 @@ func FirstPartyRegistry() Registry {
 	return Registry{definitions: map[string]ModuleDefinition{
 		"dns": {
 			Name: "dns", Description: "Mandatory DNS and NTP platform capability", Version: "1.0.0", Policy: Mandatory,
-			Requires: []Capability{CapabilityGateway}, Provides: []Capability{CapabilityDNS, CapabilityNTP}, GuestIDs: []int{model.DNS01VMID, model.DNS02VMID}, Guests: []model.Component{
-				{Name: "lab-dns-01", VMID: model.DNS01VMID, Hostname: "lab-dns-01", Zone: "SERVERS", Address: "10.10.20.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-				{Name: "lab-dns-02", VMID: model.DNS02VMID, Hostname: "lab-dns-02", Zone: "SERVERS", Address: "10.10.20.11", Role: "DNS/NTP", DNSAliases: []string{"dns02"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+
+			Requires: []Capability{CapabilityGateway}, Provides: []Capability{CapabilityDNS, CapabilityNTP}, GuestIDs: []int{model.DNS01VMID, model.DNS02VMID}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeInfrastructure}, Guests: []model.Component{
+				{Name: "lab-dns-01", VMID: model.DNS01VMID, Hostname: "lab-dns-01", Zone: "INFRA", Address: "10.10.10.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+				{Name: "lab-dns-02", VMID: model.DNS02VMID, Hostname: "lab-dns-02", Zone: "INFRA", Address: "10.10.10.11", Role: "DNS/NTP", DNSAliases: []string{"dns02"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 		"monitoring": {
 			Name: "monitoring", Description: "Zabbix platform monitoring capability", Version: "1.0.0", Policy: DefaultOn,
-			Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityMonitoring}, GuestIDs: []int{model.MonitorVMID}, Guests: []model.Component{
-				{Name: "lab-monitor-01", VMID: model.MonitorVMID, Hostname: "lab-monitor-01", Zone: "SERVERS", Address: "10.10.20.20", Role: "Zabbix", DNSAliases: []string{"monitor"}, URL: "https://monitor." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityMonitoring}, GuestIDs: []int{model.MonitorVMID}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeInfrastructure}, Guests: []model.Component{
+				{Name: "lab-monitor-01", VMID: model.MonitorVMID, Hostname: "lab-monitor-01", Zone: "INFRA", Address: "10.10.10.20", Role: "Zabbix", DNSAliases: []string{"monitor"}, URL: "https://monitor." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 		"firewall": {
 			Name: "firewall", Description: "Managed Debian gateway, nftables, and Kea capability", Version: "1.0.0", Policy: DefaultOn,
-			Provides: []Capability{CapabilityGateway}, GuestIDs: []int{model.ProxmoxVMID}, Guests: []model.Component{
-				{Name: "lab-fw-01", VMID: model.ProxmoxVMID, Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "Debian firewall", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			Provides: []Capability{CapabilityGateway}, GuestIDs: []int{model.ProxmoxVMID}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeManagement}, Guests: []model.Component{
+				{Name: "lab-fw-01", VMID: model.ProxmoxVMID, Hostname: "lab-fw-01", Address: "10.10.99.1", Role: "Debian firewall", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 		"logging": {
 			Name: "logging", Description: "Central systemd journal collection", Version: "1.0.0", Policy: Mandatory,
-			DependsOn: []string{"dns"}, Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityLogging}, GuestIDs: []int{model.LoggingVMID}, Guests: []model.Component{
-				{Name: "lab-log-01", VMID: model.LoggingVMID, Hostname: "lab-log-01", Zone: "SERVERS", Address: "10.10.20.40", Role: "Central systemd journal", DNSAliases: []string{"logs"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			DependsOn: []string{"dns"}, Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityLogging}, GuestIDs: []int{model.LoggingVMID}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeInfrastructure}, Guests: []model.Component{
+				{Name: "lab-log-01", VMID: model.LoggingVMID, Hostname: "lab-log-01", Zone: "INFRA", Address: "10.10.10.40", Role: "Central systemd journal", DNSAliases: []string{"logs"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			},
+		},
+		"tailnet-router": {
+			Name: "tailnet-router", Description: "Tailscale subnet router for the TRANSIT security edge", Version: "1.0.0", Policy: DefaultOff,
+			Requires: []Capability{CapabilityGateway, CapabilityDNS}, Provides: []Capability{CapabilityTailnetAccess}, GuestIDs: []int{200}, ReservedVMIDStart: 200, ReservedVMIDEnd: 209,
+			Placement: PlacementRequirement{ZoneType: model.ZoneTypeTransit}, Guests: []model.Component{
+				{Name: "lab-tailnet-01", VMID: 200, Hostname: "lab-tailnet-01", Address: "10.10.5.10", Role: "Tailnet subnet router", DNSAliases: []string{"tailnet-router", "tailnet"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			},
+		},
+		"litellm": {
+			Name: "litellm", Description: "mTLS-protected LiteLLM AI API router", Version: "1.0.0", Policy: DefaultOff,
+			Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityAIAPI}, GuestIDs: []int{210}, ReservedVMIDStart: 210, ReservedVMIDEnd: 219,
+			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
+				{Name: "lab-litellm-01", VMID: 210, Hostname: "lab-litellm-01", Address: "10.10.20.60", Role: "LiteLLM AI API router", DNSAliases: []string{"litellm", "ai"}, URL: "https://litellm." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 	}}
@@ -101,7 +125,79 @@ type ResolvedModule struct {
 }
 
 func (r Registry) Resolve(config model.SiteConfig) ([]ResolvedModule, error) {
+	if err := r.Validate(); err != nil {
+		return nil, err
+	}
 	return r.resolve(config, config.Modules.Map())
+}
+
+func (r Registry) Validate() error {
+	reserved := make(map[int]string)
+	guestVMIDs := make(map[int]string)
+	guestAddresses := make(map[string]string)
+	for _, definition := range r.Definitions() {
+		if definition.Name == "" || definition.Version == "" {
+			return fmt.Errorf("module definition has incomplete identity")
+		}
+		if definition.ReservedVMIDStart != 0 || definition.ReservedVMIDEnd != 0 {
+			if definition.ReservedVMIDStart < model.ModuleGuestIDMin || definition.ReservedVMIDEnd > model.ModuleGuestIDMax || definition.ReservedVMIDStart > definition.ReservedVMIDEnd {
+				return fmt.Errorf("module %s has invalid reserved VMID block %d-%d", definition.Name, definition.ReservedVMIDStart, definition.ReservedVMIDEnd)
+			}
+			for vmid := definition.ReservedVMIDStart; vmid <= definition.ReservedVMIDEnd; vmid++ {
+				if previous, exists := reserved[vmid]; exists && previous != definition.Name {
+					return fmt.Errorf("reserved VMID %d collides between modules %s and %s", vmid, previous, definition.Name)
+				}
+				reserved[vmid] = definition.Name
+			}
+		}
+		if definition.Placement.ZoneType != "" && !supportedPlacementZoneType(definition.Placement.ZoneType) {
+			return fmt.Errorf("module %s has unknown placement zone type %q", definition.Name, definition.Placement.ZoneType)
+		}
+		for _, guest := range definition.Guests {
+			if previous, exists := guestVMIDs[guest.VMID]; exists && guest.VMID != 0 && previous != definition.Name {
+				return fmt.Errorf("guest VMID %d collides between modules %s and %s", guest.VMID, previous, definition.Name)
+			}
+			if guest.VMID != 0 {
+				guestVMIDs[guest.VMID] = definition.Name
+			}
+			if previous, exists := guestAddresses[guest.Address]; exists && guest.Address != "" && previous != definition.Name {
+				return fmt.Errorf("guest address %s collides between modules %s and %s", guest.Address, previous, definition.Name)
+			}
+			if guest.Address != "" {
+				guestAddresses[guest.Address] = definition.Name
+			}
+			if definition.ReservedVMIDStart != 0 && (guest.VMID < definition.ReservedVMIDStart || guest.VMID > definition.ReservedVMIDEnd) {
+				return fmt.Errorf("module %s guest VMID %d is outside its reserved block", definition.Name, guest.VMID)
+			}
+			if guest.VMID != 0 && !containsInt(definition.GuestIDs, guest.VMID) {
+				return fmt.Errorf("module %s guest VMID %d is not declared in GuestIDs", definition.Name, guest.VMID)
+			}
+		}
+	}
+	for vmid, owner := range reserved {
+		if guestOwner, exists := guestVMIDs[vmid]; exists && guestOwner != owner {
+			return fmt.Errorf("reserved VMID %d for module %s collides with guest owned by %s", vmid, owner, guestOwner)
+		}
+	}
+	return nil
+}
+
+func supportedPlacementZoneType(value model.ZoneType) bool {
+	switch value {
+	case model.ZoneTypeInfrastructure, model.ZoneTypeTrusted, model.ZoneTypeServers, model.ZoneTypeSandbox, model.ZoneTypeManagement, model.ZoneTypeTransit:
+		return true
+	default:
+		return false
+	}
+}
+
+func containsInt(values []int, wanted int) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 // resolve accepts a resolved lookup projection for synthetic registry tests
@@ -114,6 +210,11 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 	for name, moduleConfig := range configs {
 		if moduleConfig.Provider != "" && name != "dns" {
 			return nil, fmt.Errorf("modules.%s.provider: provider selection is only supported by dns", name)
+		}
+		if name == "litellm" && (moduleConfig.Enabled != nil && *moduleConfig.Enabled || len(moduleConfig.Upstreams) > 0 || len(moduleConfig.Models) > 0) {
+			if err := model.ValidateLiteLLMConfig(moduleConfig); err != nil {
+				return nil, err
+			}
 		}
 		if name == "dns" && moduleConfig.Provider != "" && moduleConfig.Provider != string(model.DNSProviderBlocky) && moduleConfig.Provider != string(model.DNSProviderAdGuard) {
 			return nil, fmt.Errorf("modules.dns.provider: expected one of: blocky, adguard")

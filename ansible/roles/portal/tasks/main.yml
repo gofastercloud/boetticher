@@ -120,7 +120,7 @@
     mode: "0644"
     content: |
       server {
-          listen 10.10.20.30:443 ssl;
+          listen 10.10.10.30:443 ssl;
           server_name portal.lab.home.arpa;
           root /var/www/boetticher;
           index index.html;

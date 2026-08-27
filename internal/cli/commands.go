@@ -40,6 +40,7 @@ var commandSpecs = []commandSpec{
 	{Usage: "boetticher dhcp status|leases [--site DIR] [--live] [--json]"},
 	{Usage: "boetticher storage status|initialize [--site DIR] [--live] [--confirmed]"},
 	{Usage: "boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
+	{Usage: "boetticher modules list|MODULE show|plan|enable|disable|status|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
 	{Usage: "boetticher config validate|show|schema [--site DIR]"},
 	{Usage: "boetticher portal build [--site DIR] [--output DIR] [--docs DIR]"},
 }
@@ -99,6 +100,9 @@ var helpSpecs = map[string]helpSpec{
 	"module": {
 		Usage: "boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]", Purpose: "Inspect or change first-party module intent through the shared deploy engine.", Arguments: "NAME is required for show, plan, enable, disable, and optional for status.", Options: "--dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; --purge requires --confirm and explicitly removes retained module resources.", Safety: "DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive.", Examples: "boetticher module list --site ./my-boetticher; boetticher module disable monitoring --confirm --site ./my-boetticher", Related: "config validate, deploy, doctor",
 	},
+	"modules": {
+		Usage: "boetticher modules list|MODULE show|plan|enable|disable|status|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]", Purpose: "Inspect or change first-party module intent through the shared registry and deploy engine.", Arguments: "MODULE is a registered first-party module. list retains the generic module inventory; lifecycle commands are resolved by the same generic implementation.", Options: "--dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; purge requires --confirm and removes retained module resources only after exact ownership proof.", Safety: "Both tailnet-router and litellm are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership.", Examples: "boetticher modules list --site ./my-boetticher; boetticher modules tailnet-router plan --site ./my-boetticher", Related: "config validate, deploy, doctor",
+	},
 	"config": {
 		Usage: "boetticher config validate|show|schema [--site DIR]", Purpose: "Validate, display, or locate the typed non-secret SiteConfig schema and resolved model.", Arguments: "validate, show, and schema select the read-only operation.", Options: "--site selects the private site repository; schema does not require a site directory.", Safety: "Read-only. Unknown fields, invalid providers, and mandatory-module disable attempts fail before infrastructure mutation.", Examples: "boetticher config validate --site ./my-boetticher; boetticher config schema", Related: "preflight, module list, deploy --dry-run",
 	},
@@ -134,6 +138,7 @@ var nestedHelpSpecs = map[string]helpSpec{
 	"module enable":           helpSpecs["module"],
 	"module disable":          helpSpecs["module"],
 	"module status":           helpSpecs["module"],
+	"modules list":            helpSpecs["modules"],
 	"config validate":         helpSpecs["config"],
 	"config show":             helpSpecs["config"],
 	"config schema":           helpSpecs["config"],

@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"net/url"
 )
 
 // SiteConfig is the concise operator-authored v0.3 configuration. Expanded
@@ -31,10 +32,12 @@ type SiteConfig struct {
 // keeps a small internal projection for providers that only need lookup by
 // module name.
 type ModulesConfig struct {
-	DNS        *DNSModuleConfig       `yaml:"dns,omitempty" json:"dns,omitempty"`
-	Monitoring *ToggleModuleConfig    `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
-	Firewall   *ToggleModuleConfig    `yaml:"firewall,omitempty" json:"firewall,omitempty"`
-	Logging    *MandatoryModuleConfig `yaml:"logging,omitempty" json:"logging,omitempty"`
+	DNS           *DNSModuleConfig       `yaml:"dns,omitempty" json:"dns,omitempty"`
+	Monitoring    *ToggleModuleConfig    `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
+	Firewall      *ToggleModuleConfig    `yaml:"firewall,omitempty" json:"firewall,omitempty"`
+	Logging       *MandatoryModuleConfig `yaml:"logging,omitempty" json:"logging,omitempty"`
+	TailnetRouter *ToggleModuleConfig    `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
+	LiteLLM       *LiteLLMModuleConfig   `yaml:"litellm,omitempty" json:"litellm,omitempty"`
 }
 
 type DNSModuleConfig struct {
@@ -48,6 +51,24 @@ type MandatoryModuleConfig struct{}
 
 type ToggleModuleConfig struct {
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+type LiteLLMModuleConfig struct {
+	Enabled   *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Upstreams []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	Models    []LiteLLMModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
+}
+
+type LiteLLMUpstreamConfig struct {
+	Name         string `yaml:"name" json:"name"`
+	BaseURL      string `yaml:"base_url" json:"base_url"`
+	APIKeySecret string `yaml:"api_key_secret" json:"api_key_secret"`
+}
+
+type LiteLLMModelConfig struct {
+	Alias    string `yaml:"alias" json:"alias"`
+	Upstream string `yaml:"upstream" json:"upstream"`
+	Model    string `yaml:"model" json:"model"`
 }
 
 // Map returns the normalized internal lookup projection. It is deliberately
@@ -66,6 +87,12 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 	if m.Logging != nil {
 		result["logging"] = ModuleConfig{}
 	}
+	if m.TailnetRouter != nil {
+		result["tailnet-router"] = ModuleConfig{Enabled: cloneBool(m.TailnetRouter.Enabled)}
+	}
+	if m.LiteLLM != nil {
+		result["litellm"] = ModuleConfig{Enabled: cloneBool(m.LiteLLM.Enabled), Upstreams: cloneLiteLLMUpstreams(m.LiteLLM.Upstreams), Models: cloneLiteLLMModels(m.LiteLLM.Models)}
+	}
 	return result
 }
 
@@ -82,6 +109,12 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 	}
 	if _, ok := input["logging"]; ok {
 		result.Logging = &MandatoryModuleConfig{}
+	}
+	if config, ok := input["tailnet-router"]; ok {
+		result.TailnetRouter = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+	}
+	if config, ok := input["litellm"]; ok {
+		result.LiteLLM = &LiteLLMModuleConfig{Enabled: cloneBool(config.Enabled), Upstreams: cloneLiteLLMUpstreams(config.Upstreams), Models: cloneLiteLLMModels(config.Models)}
 	}
 	return result
 }
@@ -102,6 +135,16 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 			return errors.New("modules.logging.enabled: mandatory module cannot be disabled")
 		}
 		m.Logging = &MandatoryModuleConfig{}
+	case "tailnet-router":
+		m.TailnetRouter = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+	case "litellm":
+		upstreams := config.Upstreams
+		models := config.Models
+		if len(upstreams) == 0 && len(models) == 0 && m.LiteLLM != nil {
+			upstreams = m.LiteLLM.Upstreams
+			models = m.LiteLLM.Models
+		}
+		m.LiteLLM = &LiteLLMModuleConfig{Enabled: cloneBool(config.Enabled), Upstreams: cloneLiteLLMUpstreams(upstreams), Models: cloneLiteLLMModels(models)}
 	default:
 		return fmt.Errorf("modules.%s: unknown first-party module", name)
 	}
@@ -114,6 +157,72 @@ func cloneBool(value *bool) *bool {
 	}
 	copy := *value
 	return &copy
+}
+
+func cloneLiteLLMUpstreams(values []LiteLLMUpstreamConfig) []LiteLLMUpstreamConfig {
+	return append([]LiteLLMUpstreamConfig(nil), values...)
+}
+
+func cloneLiteLLMModels(values []LiteLLMModelConfig) []LiteLLMModelConfig {
+	return append([]LiteLLMModelConfig(nil), values...)
+}
+
+func ValidateLiteLLMConfig(config ModuleConfig) error {
+	if len(config.Upstreams) == 0 {
+		return errors.New("modules.litellm.upstreams must contain at least one upstream")
+	}
+	if len(config.Models) == 0 {
+		return errors.New("modules.litellm.models must contain at least one explicit model alias")
+	}
+	upstreams := make(map[string]struct{}, len(config.Upstreams))
+	for _, upstream := range config.Upstreams {
+		if !modelTokenPattern.MatchString(upstream.Name) {
+			return fmt.Errorf("modules.litellm.upstreams.name %q is not a safe token", upstream.Name)
+		}
+		if _, exists := upstreams[upstream.Name]; exists {
+			return fmt.Errorf("modules.litellm has duplicate upstream %q", upstream.Name)
+		}
+		upstreams[upstream.Name] = struct{}{}
+		parsed, err := url.Parse(upstream.BaseURL)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return fmt.Errorf("modules.litellm upstream %s requires a valid HTTPS base_url", upstream.Name)
+		}
+		if !modelTokenPattern.MatchString(upstream.APIKeySecret) {
+			return fmt.Errorf("modules.litellm upstream %s has an invalid api_key_secret reference", upstream.Name)
+		}
+	}
+	aliases := make(map[string]struct{}, len(config.Models))
+	for _, model := range config.Models {
+		if !modelTokenPattern.MatchString(model.Alias) {
+			return fmt.Errorf("modules.litellm model alias %q is not a safe token", model.Alias)
+		}
+		if _, exists := aliases[model.Alias]; exists {
+			return fmt.Errorf("modules.litellm has duplicate model alias %q", model.Alias)
+		}
+		aliases[model.Alias] = struct{}{}
+		if _, exists := upstreams[model.Upstream]; !exists {
+			return fmt.Errorf("modules.litellm model alias %s references unknown upstream %q", model.Alias, model.Upstream)
+		}
+		if !providerModelPattern.MatchString(model.Model) {
+			return fmt.Errorf("modules.litellm model %s has an invalid provider model identifier", model.Alias)
+		}
+	}
+	return nil
+}
+
+// ResolveLiteLLMAlias is the provider-neutral client contract. Callers may
+// use only an explicitly declared alias; provider model identifiers are
+// internal mapping data and are never accepted as implicit public models.
+func ResolveLiteLLMAlias(config ModuleConfig, alias string) (LiteLLMModelConfig, error) {
+	if err := ValidateLiteLLMConfig(config); err != nil {
+		return LiteLLMModelConfig{}, err
+	}
+	for _, model := range config.Models {
+		if model.Alias == alias {
+			return model, nil
+		}
+	}
+	return LiteLLMModelConfig{}, fmt.Errorf("undeclared LiteLLM model alias %q", alias)
 }
 
 func ConfigFromSite(s Site) SiteConfig {
@@ -170,6 +279,14 @@ func (c SiteConfig) BaseSite() Site {
 	}
 	if len(c.Network.Zones) > 0 {
 		s.Network.Zones = append([]Zone(nil), c.Network.Zones...)
+		for index := range s.Network.Zones {
+			// Keep existing v3 site files without the semantic field readable;
+			// the fixed V1 names make this inference unambiguous. New rendered
+			// configuration always includes the explicit type.
+			if s.Network.Zones[index].Type == "" {
+				s.Network.Zones[index].Type = zoneTypeForName(s.Network.Zones[index].Name)
+			}
+		}
 	}
 	if c.PKI.RootCommonName != "" {
 		s.PKI.RootCommonName = c.PKI.RootCommonName
@@ -228,7 +345,7 @@ func cloneModuleConfig(input map[string]ModuleConfig) map[string]ModuleConfig {
 	}
 	output := make(map[string]ModuleConfig, len(input))
 	for name, config := range input {
-		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), Provider: config.Provider}
+		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), Provider: config.Provider, Upstreams: cloneLiteLLMUpstreams(config.Upstreams), Models: cloneLiteLLMModels(config.Models)}
 	}
 	return output
 }

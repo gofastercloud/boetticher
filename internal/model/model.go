@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -45,6 +46,13 @@ const (
 	BuilderGoVersion            = "1.26.5"
 	BuilderGoURL                = "https://go.dev/dl/go1.26.5.linux-amd64.tar.gz"
 	BuilderGoSHA256             = "5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053"
+	TransitVLAN                 = 5
+	TransitNetwork              = "10.10.5.0/24"
+	TransitGateway              = "10.10.5.1"
+	InfraVLAN                   = 10
+	InfraNetwork                = "10.10.10.0/24"
+	InfraGateway                = "10.10.10.1"
+	ProxmoxManagementAddress    = "10.10.99.250"
 	PlatformGuestIDMin          = 100
 	PlatformGuestIDMax          = 199
 	ModuleGuestIDMin            = 200
@@ -72,6 +80,8 @@ const (
 )
 
 var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
+var networkPortPattern = regexp.MustCompile(`^[0-9]{1,5}(?:-[0-9]{1,5})?$`)
+var providerModelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$`)
 
 // ModuleOwnershipTag returns the single Proxmox-safe ownership proof used for
 // every first-party module guest. Invalid names return an empty tag so callers
@@ -123,6 +133,20 @@ type Network struct {
 	Zones  []Zone `yaml:"zones" json:"zones"`
 }
 
+// ZoneType is the stable architectural meaning of a network zone. Concrete
+// names, VLANs, and interface names remain site-resolved implementation
+// details; modules request this semantic type instead.
+type ZoneType string
+
+const (
+	ZoneTypeTransit        ZoneType = "transit"
+	ZoneTypeInfrastructure ZoneType = "infrastructure"
+	ZoneTypeServers        ZoneType = "servers"
+	ZoneTypeTrusted        ZoneType = "trusted"
+	ZoneTypeSandbox        ZoneType = "sandbox"
+	ZoneTypeManagement     ZoneType = "management"
+)
+
 // PhysicalNetwork stores installation-specific hardware bindings separately
 // from the fixed logical architecture. Observed speed, carrier, and current
 // interface names are generated evidence; stable MAC/PCI identity is the
@@ -141,6 +165,7 @@ type PhysicalNIC struct {
 
 type Zone struct {
 	Name         string   `yaml:"name" json:"name"`
+	Type         ZoneType `yaml:"type" json:"type" jsonschema:"enum=transit,enum=infrastructure,enum=servers,enum=trusted,enum=sandbox,enum=management"`
 	VLAN         int      `yaml:"vlan" json:"vlan"`
 	Network      string   `yaml:"network" json:"network"`
 	Gateway      string   `yaml:"gateway" json:"gateway"`
@@ -198,8 +223,10 @@ type Component struct {
 }
 
 type ModuleConfig struct {
-	Enabled  *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
+	Enabled   *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Provider  string                  `yaml:"provider,omitempty" json:"provider,omitempty"`
+	Upstreams []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	Models    []LiteLLMModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
 }
 
 type DNSProvider string
@@ -273,9 +300,24 @@ type SecretDeclaration struct {
 	Persistent bool   `json:"persistent"`
 }
 
+type DeviceRequirement struct {
+	Path   string `json:"path"`
+	Type   string `json:"type"`
+	Major  int    `json:"major"`
+	Minor  int    `json:"minor"`
+	Access string `json:"access"`
+}
+
+type GuestSecurityDeclaration struct {
+	Unprivileged bool                `json:"unprivileged"`
+	Devices      []DeviceRequirement `json:"devices,omitempty"`
+	Capabilities []string            `json:"capabilities,omitempty"`
+}
+
 type NetworkIntent struct {
 	Source      string   `json:"source"`
 	Destination string   `json:"destination"`
+	Endpoint    string   `json:"endpoint,omitempty"`
 	Protocol    string   `json:"protocol"`
 	Ports       []string `json:"ports,omitempty"`
 	Direction   string   `json:"direction"`
@@ -316,18 +358,21 @@ type PortalEntry struct {
 }
 
 type ModuleDeclaration struct {
-	Module         string                        `json:"module"`
-	Artifact       Artifact                      `json:"artifact"`
-	Guests         []Component                   `json:"guests,omitempty"`
-	Persistent     []PersistentState             `json:"persistent,omitempty"`
-	Volumes        []PersistentVolumeDeclaration `json:"volumes,omitempty"`
-	Secrets        []SecretDeclaration           `json:"secrets,omitempty"`
-	NetworkIntents []NetworkIntent               `json:"network_intents,omitempty"`
-	DNSRecords     []DNSRecord                   `json:"dns_records,omitempty"`
-	Certificates   []CertificateRequest          `json:"certificates,omitempty"`
-	Monitoring     []MonitoringDeclaration       `json:"monitoring,omitempty"`
-	Backups        []BackupDeclaration           `json:"backups,omitempty"`
-	Portal         []PortalEntry                 `json:"portal,omitempty"`
+	Module           string                        `json:"module"`
+	Artifact         Artifact                      `json:"artifact"`
+	Guests           []Component                   `json:"guests,omitempty"`
+	Persistent       []PersistentState             `json:"persistent,omitempty"`
+	Volumes          []PersistentVolumeDeclaration `json:"volumes,omitempty"`
+	Secrets          []SecretDeclaration           `json:"secrets,omitempty"`
+	NetworkIntents   []NetworkIntent               `json:"network_intents,omitempty"`
+	DNSRecords       []DNSRecord                   `json:"dns_records,omitempty"`
+	Certificates     []CertificateRequest          `json:"certificates,omitempty"`
+	Monitoring       []MonitoringDeclaration       `json:"monitoring,omitempty"`
+	Backups          []BackupDeclaration           `json:"backups,omitempty"`
+	Portal           []PortalEntry                 `json:"portal,omitempty"`
+	Security         GuestSecurityDeclaration      `json:"security,omitempty"`
+	AdvertisedRoutes []string                      `json:"advertised_routes,omitempty"`
+	ReturnRouting    []string                      `json:"return_routing,omitempty"`
 }
 
 type RetainedModule struct {
@@ -346,10 +391,10 @@ func NewDefaultSite(installationID, ageRecipient string) Site {
 	// components part of NewSite's Core-owned canonical seed.
 	for _, component := range []Component{
 		{Name: "lab-fw-01", VMID: ProxmoxVMID, Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "Debian firewall", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "firewall"},
-		{Name: "lab-dns-01", VMID: DNS01VMID, Hostname: "lab-dns-01", Zone: "SERVERS", Address: "10.10.20.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "dns"},
-		{Name: "lab-dns-02", VMID: DNS02VMID, Hostname: "lab-dns-02", Zone: "SERVERS", Address: "10.10.20.11", Role: "DNS/NTP", DNSAliases: []string{"dns02"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "dns"},
-		{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "SERVERS", Address: "10.10.20.20", Role: "Zabbix", DNSAliases: []string{"monitor"}, URL: "https://monitor." + DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "monitoring"},
-		{Name: "lab-log-01", VMID: LoggingVMID, Hostname: "lab-log-01", Zone: "SERVERS", Address: "10.10.20.40", Role: "Central systemd journal", DNSAliases: []string{"logs"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "logging"},
+		{Name: "lab-dns-01", VMID: DNS01VMID, Hostname: "lab-dns-01", Zone: "INFRA", Address: "10.10.10.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "dns"},
+		{Name: "lab-dns-02", VMID: DNS02VMID, Hostname: "lab-dns-02", Zone: "INFRA", Address: "10.10.10.11", Role: "DNS/NTP", DNSAliases: []string{"dns02"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "dns"},
+		{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "INFRA", Address: "10.10.10.20", Role: "Zabbix", DNSAliases: []string{"monitor"}, URL: "https://monitor." + DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "monitoring"},
+		{Name: "lab-log-01", VMID: LoggingVMID, Hostname: "lab-log-01", Zone: "INFRA", Address: "10.10.10.40", Role: "Central systemd journal", DNSAliases: []string{"logs"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "logging"},
 	} {
 		component.Tags = []string{TagBoetticher, TagManaged, TagModule, "module-" + component.Module, ModuleOwnershipTag(component.Module), TagBackup}
 		component.SSHUser, component.SSHPort = DefaultAdminSSHUser, 22
@@ -374,10 +419,12 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 		Network: Network{
 			Domain: DefaultDomain,
 			Zones: []Zone{
-				{Name: "TRUSTED", VLAN: 10, Network: "10.10.10.0/24", Gateway: "10.10.10.1", AddressMode: "dynamic-reservations", DNSAddresses: []string{"10.10.20.10", "10.10.20.11"}, NTPAddresses: []string{"10.10.20.10", "10.10.20.11"}},
-				{Name: "SERVERS", VLAN: 20, Network: "10.10.20.0/24", Gateway: "10.10.20.1", AddressMode: "dynamic-reservations", DNSAddresses: []string{"10.10.20.10", "10.10.20.11"}, NTPAddresses: []string{"10.10.20.10", "10.10.20.11"}},
-				{Name: "SANDBOX", VLAN: 50, Network: "10.10.50.0/24", Gateway: "10.10.50.1", AddressMode: "dynamic", DNSAddresses: []string{"10.10.50.1"}, NTPAddresses: []string{"10.10.50.1"}},
-				{Name: "MGMT", VLAN: 99, Network: "10.10.99.0/24", Gateway: "10.10.99.1", AddressMode: "reservations-only", DNSAddresses: []string{"10.10.20.10", "10.10.20.11"}, NTPAddresses: []string{"10.10.20.10", "10.10.20.11"}},
+				{Name: "TRANSIT", Type: ZoneTypeTransit, VLAN: TransitVLAN, Network: TransitNetwork, Gateway: TransitGateway, AddressMode: "none"},
+				{Name: "INFRA", Type: ZoneTypeInfrastructure, VLAN: InfraVLAN, Network: InfraNetwork, Gateway: InfraGateway, AddressMode: "static", DNSAddresses: []string{"10.10.10.10", "10.10.10.11"}, NTPAddresses: []string{"10.10.10.10", "10.10.10.11"}},
+				{Name: "SERVERS", Type: ZoneTypeServers, VLAN: 20, Network: "10.10.20.0/24", Gateway: "10.10.20.1", AddressMode: "static", DNSAddresses: []string{"10.10.10.10", "10.10.10.11"}, NTPAddresses: []string{"10.10.10.10", "10.10.10.11"}},
+				{Name: "TRUSTED", Type: ZoneTypeTrusted, VLAN: 30, Network: "10.10.30.0/24", Gateway: "10.10.30.1", AddressMode: "dynamic-reservations", DNSAddresses: []string{"10.10.10.10", "10.10.10.11"}, NTPAddresses: []string{"10.10.10.10", "10.10.10.11"}},
+				{Name: "SANDBOX", Type: ZoneTypeSandbox, VLAN: 40, Network: "10.10.40.0/24", Gateway: "10.10.40.1", AddressMode: "dynamic", DNSAddresses: []string{"10.10.40.1"}, NTPAddresses: []string{"10.10.40.1"}},
+				{Name: "MGMT", Type: ZoneTypeManagement, VLAN: 99, Network: "10.10.99.0/24", Gateway: "10.10.99.1", AddressMode: "static", DNSAddresses: []string{"10.10.10.10", "10.10.10.11"}, NTPAddresses: []string{"10.10.10.10", "10.10.10.11"}},
 			},
 		},
 		PhysicalNetwork: PhysicalNetwork{Mode: ModeVirtualOnly},
@@ -389,8 +436,8 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 			UserWorkloadsManaged: false,
 		},
 		Components: []Component{
-			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: "10.10.99.5", Role: "Proxmox host", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork}, URL: "https://proxmox." + DefaultDomain + ":8006", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Logging: true},
-			{Name: "lab-portal-01", VMID: PortalVMID, Hostname: "lab-portal-01", Zone: "SERVERS", Address: "10.10.20.30", Role: "Generated platform portal", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagPortal, TagCorePortal, TagBackup}, URL: "https://portal." + DefaultDomain, DNSAliases: []string{"portal"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Logging: true},
+			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: ProxmoxManagementAddress, Role: "Proxmox host", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork}, URL: "https://proxmox." + DefaultDomain + ":8006", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Logging: true},
+			{Name: "lab-portal-01", VMID: PortalVMID, Hostname: "lab-portal-01", Zone: "INFRA", Address: "10.10.10.30", Role: "Generated platform portal", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagPortal, TagCorePortal, TagBackup}, URL: "https://portal." + DefaultDomain, DNSAliases: []string{"portal"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Logging: true},
 		},
 	}
 	return site
@@ -498,28 +545,65 @@ func (s Site) Validate() error {
 	if s.SecretMetadata.InstallationID == "" || s.SecretMetadata.AgeRecipient == "" {
 		return fmt.Errorf("secret_metadata must contain installation_id and public age_recipient")
 	}
+	if litellm, ok := s.ModuleConfig["litellm"]; ok && (litellm.Enabled != nil && *litellm.Enabled || len(litellm.Upstreams) > 0 || len(litellm.Models) > 0) {
+		if err := ValidateLiteLLMConfig(litellm); err != nil {
+			return err
+		}
+	}
 	expectedZones := map[string]struct {
+		typ     ZoneType
 		vlan    int
 		network string
 		gateway string
 	}{
-		"TRUSTED": {vlan: 10, network: "10.10.10.0/24", gateway: "10.10.10.1"},
-		"SERVERS": {vlan: 20, network: "10.10.20.0/24", gateway: "10.10.20.1"},
-		"SANDBOX": {vlan: 50, network: "10.10.50.0/24", gateway: "10.10.50.1"},
-		"MGMT":    {vlan: 99, network: "10.10.99.0/24", gateway: "10.10.99.1"},
+		"TRANSIT": {typ: ZoneTypeTransit, vlan: TransitVLAN, network: TransitNetwork, gateway: TransitGateway},
+		"INFRA":   {typ: ZoneTypeInfrastructure, vlan: InfraVLAN, network: InfraNetwork, gateway: InfraGateway},
+		"SERVERS": {typ: ZoneTypeServers, vlan: 20, network: "10.10.20.0/24", gateway: "10.10.20.1"},
+		"TRUSTED": {typ: ZoneTypeTrusted, vlan: 30, network: "10.10.30.0/24", gateway: "10.10.30.1"},
+		"SANDBOX": {typ: ZoneTypeSandbox, vlan: 40, network: "10.10.40.0/24", gateway: "10.10.40.1"},
+		"MGMT":    {typ: ZoneTypeManagement, vlan: 99, network: "10.10.99.0/24", gateway: "10.10.99.1"},
 	}
 	seenZones := map[string]bool{}
+	seenVLANs := map[int]string{}
 	for _, z := range s.Network.Zones {
 		if seenZones[z.Name] {
 			return fmt.Errorf("duplicate zone %q", z.Name)
 		}
 		seenZones[z.Name] = true
+		if previous, exists := seenVLANs[z.VLAN]; exists {
+			return fmt.Errorf("zones %s and %s share VLAN %d", previous, z.Name, z.VLAN)
+		}
+		seenVLANs[z.VLAN] = z.Name
 		expected, ok := expectedZones[z.Name]
-		if !ok || z.VLAN != expected.vlan || z.Network != expected.network || z.Gateway != expected.gateway {
+		if !ok {
+			return fmt.Errorf("zone %s does not match the fixed V1 network contract", z.Name)
+		}
+		if !validZoneType(z.Type) {
+			return fmt.Errorf("zone %s has unknown semantic type %q", z.Name, z.Type)
+		}
+		if z.Type != expected.typ || z.VLAN != expected.vlan || z.Network != expected.network || z.Gateway != expected.gateway {
 			return fmt.Errorf("zone %s does not match the fixed V1 network contract", z.Name)
 		}
 		if _, _, err := net.ParseCIDR(z.Network); err != nil {
 			return fmt.Errorf("zone %s has invalid network: %w", z.Name, err)
+		}
+		switch z.Type {
+		case ZoneTypeTransit:
+			if z.AddressMode != "none" || len(z.DNSAddresses) != 0 || len(z.NTPAddresses) != 0 {
+				return errors.New("TRANSIT must not provide DHCP, DNS, or NTP services")
+			}
+		case ZoneTypeTrusted:
+			if z.AddressMode != "dynamic-reservations" {
+				return errors.New("TRUSTED must provide DHCP reservations")
+			}
+		case ZoneTypeSandbox:
+			if z.AddressMode != "dynamic" {
+				return errors.New("SANDBOX must provide dynamic DHCP")
+			}
+		case ZoneTypeInfrastructure, ZoneTypeServers, ZoneTypeManagement:
+			if z.AddressMode != "static" {
+				return fmt.Errorf("%s must use static assignments only", z.Name)
+			}
 		}
 	}
 	seenComponents := map[string]bool{}
@@ -585,14 +669,14 @@ func (s Site) Validate() error {
 		}
 	}
 	if len(seenZones) != len(expectedZones) {
-		return fmt.Errorf("V1 requires exactly TRUSTED, SERVERS, SANDBOX, and MGMT zones")
+		return fmt.Errorf("V1 requires exactly TRANSIT, INFRA, SERVERS, TRUSTED, SANDBOX, and MGMT zones")
 	}
 	requiredComponents := map[string]struct {
 		address string
 		vmid    int
 	}{
-		"lab-proxmox-01": {address: "10.10.99.5", vmid: 0},
-		"lab-portal-01":  {address: "10.10.20.30", vmid: PortalVMID},
+		"lab-proxmox-01": {address: ProxmoxManagementAddress, vmid: 0},
+		"lab-portal-01":  {address: "10.10.10.30", vmid: PortalVMID},
 	}
 	composed := len(s.Declarations) > 0
 	for _, component := range s.Components {
@@ -604,23 +688,23 @@ func (s Site) Validate() error {
 		requiredComponents["lab-dns-01"] = struct {
 			address string
 			vmid    int
-		}{address: "10.10.20.10", vmid: DNS01VMID}
+		}{address: "10.10.10.10", vmid: DNS01VMID}
 		requiredComponents["lab-dns-02"] = struct {
 			address string
 			vmid    int
-		}{address: "10.10.20.11", vmid: DNS02VMID}
+		}{address: "10.10.10.11", vmid: DNS02VMID}
 	}
 	if composed && resolvedModuleEnabled(s.Modules, "monitoring", true) {
 		requiredComponents["lab-monitor-01"] = struct {
 			address string
 			vmid    int
-		}{address: "10.10.20.20", vmid: MonitorVMID}
+		}{address: "10.10.10.20", vmid: MonitorVMID}
 	}
 	if composed && resolvedModuleEnabled(s.Modules, "logging", true) {
 		requiredComponents["lab-log-01"] = struct {
 			address string
 			vmid    int
-		}{address: "10.10.20.40", vmid: LoggingVMID}
+		}{address: "10.10.10.40", vmid: LoggingVMID}
 	}
 	if composed && s.Gateway.Mode == GatewayModeManaged && resolvedModuleEnabled(s.Modules, "firewall", true) {
 		requiredComponents["lab-fw-01"] = struct {
@@ -698,6 +782,37 @@ func validateDeclarations(s Site) error {
 				return fmt.Errorf("module %s persistent state %q is missing a replacement policy", declaration.Module, state.Name)
 			}
 		}
+		for _, intent := range declaration.NetworkIntents {
+			if err := validateNetworkIntent(intent); err != nil {
+				return fmt.Errorf("module %s network intent: %w", declaration.Module, err)
+			}
+		}
+		for _, route := range declaration.AdvertisedRoutes {
+			if _, network, err := net.ParseCIDR(route); err != nil || network.String() != route {
+				return fmt.Errorf("module %s has invalid advertised route %q", declaration.Module, route)
+			}
+		}
+		for _, secret := range declaration.Secrets {
+			if !modelTokenPattern.MatchString(secret.Name) || secret.Purpose == "" || secret.Consumer == "" || secret.Delivery == "" || strings.ContainsAny(secret.Purpose+secret.Consumer+secret.Delivery, "\r\n") {
+				return fmt.Errorf("module %s has invalid secret declaration %q", declaration.Module, secret.Name)
+			}
+		}
+		if !declaration.Security.Unprivileged && len(declaration.Security.Devices) != 0 {
+			return fmt.Errorf("module %s declares devices without an unprivileged security contract", declaration.Module)
+		}
+		if len(declaration.Security.Capabilities) != 0 {
+			return fmt.Errorf("module %s requests unrelated Linux capabilities", declaration.Module)
+		}
+		if declaration.Security.Unprivileged {
+			for _, device := range declaration.Security.Devices {
+				if device.Path == "" || device.Type == "" || device.Major < 0 || device.Minor < 0 || device.Access == "" {
+					return fmt.Errorf("module %s has an incomplete device requirement", declaration.Module)
+				}
+				if strings.ContainsAny(device.Path, "\r\n '") || device.Type != "c" || device.Access != "rwm" {
+					return fmt.Errorf("module %s has an unsafe device requirement for %s", declaration.Module, device.Path)
+				}
+			}
+		}
 		for _, volume := range declaration.Volumes {
 			if volume.Module != declaration.Module || volume.Guest == "" || volume.Name == "" || volume.SizeGiB <= 0 || volume.MountPath == "" {
 				return fmt.Errorf("module %s has invalid persistent volume %q", declaration.Module, volume.Name)
@@ -707,6 +822,80 @@ func validateDeclarations(s Site) error {
 			default:
 				return fmt.Errorf("module %s volume %s has unsupported storage placement %q", declaration.Module, volume.Name, volume.Placement)
 			}
+		}
+	}
+	return nil
+}
+
+func validZoneType(value ZoneType) bool {
+	switch value {
+	case ZoneTypeTransit, ZoneTypeInfrastructure, ZoneTypeServers, ZoneTypeTrusted, ZoneTypeSandbox, ZoneTypeManagement:
+		return true
+	default:
+		return false
+	}
+}
+
+func zoneTypeForName(name string) ZoneType {
+	switch name {
+	case "INFRA":
+		return ZoneTypeInfrastructure
+	case "TRUSTED":
+		return ZoneTypeTrusted
+	case "SERVERS":
+		return ZoneTypeServers
+	case "SANDBOX":
+		return ZoneTypeSandbox
+	case "MGMT":
+		return ZoneTypeManagement
+	case "TRANSIT":
+		return ZoneTypeTransit
+	default:
+		return ""
+	}
+}
+
+// ZoneForType resolves a module's semantic placement request through the
+// canonical site network. It never permits a module to select a VLAN or
+// interface directly.
+func (s Site) ZoneForType(zoneType ZoneType) (Zone, error) {
+	if !validZoneType(zoneType) {
+		return Zone{}, fmt.Errorf("unknown zone type %q", zoneType)
+	}
+	for _, zone := range s.Network.Zones {
+		if zone.Type == zoneType {
+			return zone, nil
+		}
+	}
+	return Zone{}, fmt.Errorf("zone type %q is not configured", zoneType)
+}
+
+func validateNetworkIntent(intent NetworkIntent) error {
+	if !modelTokenPattern.MatchString(intent.Source) || !modelTokenPattern.MatchString(intent.Destination) {
+		return fmt.Errorf("source and destination must be safe references")
+	}
+	switch intent.Protocol {
+	case "tcp", "udp", "tcp/udp", "icmp", "any":
+	default:
+		return fmt.Errorf("unsupported protocol %q", intent.Protocol)
+	}
+	switch intent.Direction {
+	case "egress", "ingress", "bidirectional":
+	default:
+		return fmt.Errorf("unsupported direction %q", intent.Direction)
+	}
+	if intent.Purpose == "" || strings.ContainsAny(intent.Purpose, "\r\n") {
+		return errors.New("purpose is required and must not contain newlines")
+	}
+	if intent.Endpoint != "" {
+		parsed, err := url.Parse(intent.Endpoint)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return fmt.Errorf("endpoint must be a valid HTTPS URL")
+		}
+	}
+	for _, port := range intent.Ports {
+		if !networkPortPattern.MatchString(port) {
+			return fmt.Errorf("unsafe port %q", port)
 		}
 	}
 	return nil

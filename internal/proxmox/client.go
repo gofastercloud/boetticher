@@ -125,6 +125,19 @@ func (c *Client) DestroyQEMU(ctx context.Context, node string, vmid int) error {
 	}, nil, nil)
 }
 
+// DestroyLXC removes an LXC guest and asks Proxmox to purge its configuration
+// and attached unreferenced volumes. Callers must prove the exact guest and
+// volume ownership before invoking this destructive operation.
+func (c *Client) DestroyLXC(ctx context.Context, node string, vmid int) error {
+	if node == "" || vmid <= 0 {
+		return errors.New("Proxmox node and positive VMID are required")
+	}
+	return c.request(ctx, http.MethodDelete, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid)), url.Values{
+		"purge":                      {"1"},
+		"destroy-unreferenced-disks": {"1"},
+	}, nil, nil)
+}
+
 func (c *Client) Version(ctx context.Context) (string, error) {
 	var result struct {
 		Version string `json:"version"`

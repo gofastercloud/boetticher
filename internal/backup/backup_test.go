@@ -39,7 +39,7 @@ func TestPlanFollowsComponentBackupIntent(t *testing.T) {
 func TestUserGuestTagDoesNotEnterBackupPlan(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	site.Components = append(site.Components, model.Component{
-		Name: "user-vm-550", VMID: 550, Hostname: "user-vm-550", Zone: "SANDBOX", Address: "10.10.50.50",
+		Name: "user-vm-550", VMID: 550, Hostname: "user-vm-550", Zone: "SANDBOX", Address: "10.10.40.50",
 		Role: "user workload", Tags: []string{model.TagBoetticher, model.TagManaged, model.TagBackup}, ProductOwned: false,
 	})
 	plan, err := PlanFromSite(site)

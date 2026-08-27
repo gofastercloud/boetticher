@@ -18,6 +18,8 @@ import (
 	"github.com/gofastercloud/boetticher/internal/pki"
 )
 
+var ErrPlatformSecretMissing = errors.New("encrypted platform secret is missing")
+
 func Load(dir string) (model.Site, error) {
 	config, err := LoadConfig(dir)
 	if err != nil {
@@ -399,7 +401,7 @@ func LoadPlatformSecret(dir string, s model.Site, ageIdentityPath, key string) (
 	}
 	value := stringValue(values, key)
 	if value == "" {
-		return "", fmt.Errorf("encrypted platform secrets missing %s", key)
+		return "", fmt.Errorf("%w: %s", ErrPlatformSecretMissing, key)
 	}
 	return value, nil
 }
