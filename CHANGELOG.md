@@ -25,6 +25,10 @@ project, so releases can make clean breaks while the design is settling.
   generated Go JSON is valid without a space after the field separator.
 - Invoke the Debian 13 journal-upload binary by its installed path during
   base-image smoke checks; the systemd service name is not a PATH executable.
+- Include the logging package in the embedded public builder source; Blocky
+  qualification imports it through the composed module declarations.
+- Include the same logging package in the transferred public-input allow-list
+  so embedded and source-checkout builder archives remain equivalent.
 
 ## [0.3.32] - 2026-08-27
 
