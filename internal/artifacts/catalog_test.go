@@ -580,8 +580,8 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	text := string(data)
 	for _, required := range []string{
 		"release: trixie",
-		"mirror: https://snapshot.debian.org/archive/debian/20260327T000000Z/",
-		"snapshot: 20260327T000000Z",
+		"mirror: https://snapshot.debian.org/archive/debian/20260825T000000Z/",
+		"snapshot: 20260825T000000Z",
 		"build:\n  packages:",
 	} {
 		if !strings.Contains(text, required) {

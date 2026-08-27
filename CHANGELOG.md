@@ -44,6 +44,9 @@ project, so releases can make clean breaks while the design is settling.
 - Report package, CVE, and fixed-version details when Trivy rejects an
   artifact for fixable CRITICAL findings, preserving the next investigation
   step in hosted-builder diagnostics.
+- Advance the pinned Debian snapshot to include the security revisions
+  required by the first live Trivy qualification; the prior snapshot supplied
+  vulnerable GnuTLS and OpenSSL packages.
 
 ## [0.3.32] - 2026-08-27
 

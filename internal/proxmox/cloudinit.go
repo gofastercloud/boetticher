@@ -136,7 +136,7 @@ users:
     permissions: '0644'
     content: |
       Types: deb
-      URIs: https://snapshot.debian.org/archive/debian/20260327T000000Z/
+      URIs: https://snapshot.debian.org/archive/debian/20260825T000000Z/
       Suites: trixie
       Components: main
       Check-Valid-Until: no

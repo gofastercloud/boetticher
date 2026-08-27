@@ -1,7 +1,7 @@
 # Appliance images
 
 Official appliances derive from the pinned Debian 13 boetticher base. The base
-uses the Debian snapshot `20260327T000000Z`; the snapshot input is recorded in
+uses the Debian snapshot `20260825T000000Z`; the snapshot input is recorded in
 the base definition and the builder disables snapshot metadata expiry checks.
 
 ## Hosted builder
