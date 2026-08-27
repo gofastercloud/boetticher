@@ -238,7 +238,7 @@ func RenderNFT(plan Plan) (string, error) {
 	b.WriteString("    iifname \"sandbox0\" oifname \"wan0\" ip saddr @sandbox_net counter accept comment \"boetticher:forward-sandbox-internet\"\n")
 	b.WriteString("    iifname \"trusted0\" oifname \"wan0\" ip saddr @trusted_net counter accept comment \"boetticher:forward-trusted-internet\"\n")
 	b.WriteString("    iifname \"servers0\" oifname \"wan0\" ip saddr @servers_net tcp dport { 53, 80, 443, 853 } counter accept comment \"boetticher:forward-servers-internet-tcp\"\n")
-	b.WriteString("    iifname \"servers0\" oifname \"wan0\" ip saddr @servers_net udp dport { 53, 853 } counter accept comment \"boetticher:forward-servers-internet-udp\"\n")
+	b.WriteString("    iifname \"servers0\" oifname \"wan0\" ip saddr @servers_net udp dport { 53, 123, 853 } counter accept comment \"boetticher:forward-servers-internet-udp\"\n")
 	b.WriteString("    iifname \"mgmt0\" oifname \"wan0\" ip saddr @mgmt_net tcp dport 443 counter accept comment \"boetticher:forward-mgmt-internet\"\n")
 	b.WriteString("  }\n  chain output { type filter hook output priority filter; policy accept; }\n}\n\n")
 	b.WriteString("table ip " + NATTable + " {\n  chain postrouting {\n    type nat hook postrouting priority srcnat; policy accept;\n    oifname \"wan0\" ip saddr " + networkFor(plan, "TRUSTED") + " masquerade comment \"boetticher:nat-trusted\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SERVERS") + " masquerade comment \"boetticher:nat-servers\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SANDBOX") + " masquerade comment \"boetticher:nat-sandbox\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "MGMT") + " masquerade comment \"boetticher:nat-mgmt\"\n  }\n}\n")
