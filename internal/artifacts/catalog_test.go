@@ -849,7 +849,15 @@ func TestBuildSourceArchiveContainsBlockyRendererDependencies(t *testing.T) {
 }
 
 func TestTransferredEvidenceIsReboundToControllerArtifactBytes(t *testing.T) {
-	root := t.TempDir()
+	root, err := os.MkdirTemp(".", ".artifact-relative-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	relativeRoot, err := filepath.Rel(".", root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	artifact, err := ArtifactFor("logging")
 	if err != nil {
 		t.Fatal(err)
@@ -875,12 +883,15 @@ func TestTransferredEvidenceIsReboundToControllerArtifactBytes(t *testing.T) {
 	if err := WriteEvidence(root, artifact.Name, qualified); err != nil {
 		t.Fatal(err)
 	}
-	if err := RebindEvidencePaths(root); err != nil {
+	if err := RebindEvidencePaths(relativeRoot); err != nil {
 		t.Fatal(err)
 	}
-	resolved, _, err := ResolveArtifactEvidence(root, artifact)
+	resolved, rebound, err := ResolveArtifactEvidence(relativeRoot, artifact)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !filepath.IsAbs(rebound.ArtifactPath) {
+		t.Fatalf("rebound artifact path = %q, want absolute path", rebound.ArtifactPath)
 	}
 	if resolved.ContentSHA256 != evidence.ContentSHA256 {
 		t.Fatalf("rebound content checksum = %q, want %q", resolved.ContentSHA256, evidence.ContentSHA256)
