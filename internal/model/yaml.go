@@ -60,7 +60,7 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 		return SiteConfig{}, fmt.Errorf("decode site.yml: %w", err)
 	}
 	for name, module := range config.Modules.Map() {
-		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "litellm" {
+		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "litellm" && name != "streamdeck" && name != "printer" && name != "aiops" {
 			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s is not a registered first-party module", name)
 		}
 		if name != "dns" && module.Provider != "" {
@@ -110,6 +110,9 @@ func validateModuleConfigShape(data []byte) error {
 			for _, field := range []string{"enabled", "brightness", "refresh_seconds", "request_timeout_seconds", "default_page", "pinned_guests", "storage_warning_percent", "storage_critical_percent"} {
 				allowed[field] = true
 			}
+		case "aiops":
+			allowed["enabled"] = true
+			allowed["model_alias"] = true
 		default:
 			return fmt.Errorf("site.yml: modules.%s: unknown first-party module", name)
 		}
@@ -136,6 +139,9 @@ func validateModuleConfigShape(data []byte) error {
 			}
 			if name == "streamdeck" && field == "pinned_guests" && fieldValue.Kind != yaml.SequenceNode {
 				return errors.New("site.yml: modules.streamdeck.pinned_guests: expected a list")
+			}
+			if name == "aiops" && field == "model_alias" && fieldValue.Tag != "!!str" {
+				return fmt.Errorf("site.yml: modules.aiops.model_alias: expected a string")
 			}
 		}
 	}

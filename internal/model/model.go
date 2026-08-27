@@ -240,6 +240,7 @@ type Component struct {
 type ModuleConfig struct {
 	Enabled                *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Provider               string                  `yaml:"provider,omitempty" json:"provider,omitempty"`
+	ModelAlias             string                  `yaml:"model_alias,omitempty" json:"model_alias,omitempty"`
 	Upstreams              []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
 	Models                 []LiteLLMModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
 	Brightness             int                     `json:"brightness,omitempty"`

@@ -279,6 +279,7 @@ func Definitions() []Definition {
 		{Name: "litellm", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/litellm", "internal/model", "internal/modules")},
 		{Name: "streamdeck", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/streamdeck", "services/streamdeck", "internal/model", "internal/modules", "internal/usbexport")},
 		{Name: "printer", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/printer", "internal/model", "internal/modules", "internal/usbexport")},
+		{Name: "aiops", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/aiops", "internal/aiops", "internal/model", "internal/modules", "cmd/boetticher-aiops")},
 	}
 }
 
