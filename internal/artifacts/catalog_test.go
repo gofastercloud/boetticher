@@ -700,6 +700,11 @@ func TestApplianceBootstrapInputsContainNoOperatorKeyOrSiteState(t *testing.T) {
 		t.Fatal(err)
 	}
 	buildText := string(buildScript)
+	for _, required := range []string{`chroot "$rootfs" chown root:root /etc/sudoers.d/boetticher`, `--run-command 'chown root:root /etc/sudoers.d/boetticher; chmod 0440 /etc/sudoers.d/boetticher'`} {
+		if !strings.Contains(buildText, required) {
+			t.Fatalf("image build does not reset sudoers ownership: missing %q", required)
+		}
+	}
 	sudoers, err := os.ReadFile(filepath.Join(root, "base", "runtime", "boetticher.sudoers"))
 	if err != nil {
 		t.Fatal(err)
