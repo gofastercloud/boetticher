@@ -247,17 +247,37 @@ func TestCreateScopedCredentialsCreatesRoleAtCollectionEndpoint(t *testing.T) {
 	if _, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
 		t.Fatal(err)
 	}
+	var userACL, tokenACL bool
 	for _, command := range runner.commands {
 		if strings.Contains(command, "pvesh create /access/roles") {
 			if !strings.Contains(command, "pvesh create /access/roles --roleid 'BoetticherProvisioner'") {
 				t.Fatalf("role creation used the wrong Proxmox API shape: %s", command)
 			}
 		}
-		if strings.Contains(command, "pvesh set /access/acl") && strings.Contains(command, "--tokens 'labadmin@pve!boetticher'") && !strings.Contains(command, "--users") {
-			return
+		if strings.Contains(command, "pvesh set /access/acl") && strings.Contains(command, "--users 'labadmin@pve'") && strings.Contains(command, "--roles 'BoetticherProvisioner'") {
+			userACL = true
+		}
+		if strings.Contains(command, "pvesh set /access/acl") && strings.Contains(command, "--tokens 'labadmin@pve!boetticher'") && strings.Contains(command, "--roles 'BoetticherProvisioner'") {
+			tokenACL = true
 		}
 	}
-	t.Fatal("credential bootstrap did not update ACL through the Proxmox set endpoint")
+	if !userACL || !tokenACL {
+		t.Fatalf("credential bootstrap ACLs incomplete: user=%t token=%t commands=%v", userACL, tokenACL, runner.commands)
+	}
+}
+
+func TestEnsureScopedCredentialACLRepairsBackingUserAndToken(t *testing.T) {
+	runner := &fakeRunner{}
+	if err := EnsureScopedCredentialACL(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"pvesh set /access/acl --path / --users 'labadmin@pve' --roles 'BoetticherProvisioner' --propagate 1",
+		"pvesh set /access/acl --path / --tokens 'labadmin@pve!boetticher' --roles 'BoetticherProvisioner' --propagate 1",
+	}
+	if !reflect.DeepEqual(runner.commands, want) {
+		t.Fatalf("scoped credential ACL repair commands = %#v, want %#v", runner.commands, want)
+	}
 }
 
 func TestCreatePulseMonitoringCredentialsUsesBoundedAPIOnlyIdentity(t *testing.T) {
