@@ -421,7 +421,7 @@ build_litellm() {
   install -D -m 0644 images/litellm/runtime/requirements.lock "$rootfs/tmp/litellm-requirements.lock"
   install -D -m 0644 images/litellm/runtime/litellm.service "$rootfs/etc/systemd/system/litellm.service"
   chroot "$rootfs" /opt/litellm/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/litellm-requirements.lock
-  installed_version=$(chroot "$rootfs" /opt/litellm/bin/python -c 'import litellm; print(litellm.__version__)')
+  installed_version=$(chroot "$rootfs" /opt/litellm/bin/python -c 'from importlib.metadata import version; print(version("litellm"))')
   if [ "$installed_version" != "$litellm_version" ]; then
     echo "HOLD: unexpected LiteLLM version: $installed_version" >&2
     return 2
