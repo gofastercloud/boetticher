@@ -11,6 +11,8 @@ project, so releases can make clean breaks while the design is settling.
   confirming the guest reaches userspace.
 - Start the hosted builder guest agent before the remaining qualification
   downloads.
+- Decode the Proxmox QEMU guest-agent interface response from its `result`
+  object so hosted-builder address readiness matches the live API contract.
 
 ## [0.3.32] - 2026-08-27
 

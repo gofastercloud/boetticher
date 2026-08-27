@@ -123,7 +123,7 @@ func TestQEMUAgentNetworkInterfacesUsesGuestAgentEndpoint(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/lab-proxmox-01/qemu/190/agent/network-get-interfaces" {
 			t.Fatalf("unexpected guest-agent request: %s %s", r.Method, r.URL.Path)
 		}
-		return response([]byte(`{"data":[{"name":"eth0","hardware-address":"02:00:00:00:00:01","ip-addresses":[{"ip-address":"127.0.0.1","ip-address-type":"ipv4"},{"ip-address":"192.0.2.15","ip-address-type":"ipv4"}]}]}`))
+		return response([]byte(`{"data":{"result":[{"name":"eth0","hardware-address":"02:00:00:00:00:01","ip-addresses":[{"ip-address":"127.0.0.1","ip-address-type":"ipv4"},{"ip-address":"192.0.2.15","ip-address-type":"ipv4"}]}]}}`))
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
 	interfaces, err := client.QEMUAgentNetworkInterfaces(context.Background(), "lab-proxmox-01", 190)

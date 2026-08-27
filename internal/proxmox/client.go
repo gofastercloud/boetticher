@@ -432,11 +432,13 @@ func (c *Client) QEMUAgentNetworkInterfaces(ctx context.Context, node string, vm
 	if node == "" || vmid <= 0 {
 		return nil, errors.New("node and positive VMID are required")
 	}
-	var interfaces []GuestAgentInterface
-	if err := c.Get(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "agent", "network-get-interfaces"), nil, &interfaces); err != nil {
+	var response struct {
+		Result []GuestAgentInterface `json:"result"`
+	}
+	if err := c.Get(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "agent", "network-get-interfaces"), nil, &response); err != nil {
 		return nil, fmt.Errorf("read QEMU guest-agent network interfaces: %w", err)
 	}
-	return interfaces, nil
+	return response.Result, nil
 }
 
 func (c *Client) LXCConfig(ctx context.Context, node string, vmid int, out any) error {

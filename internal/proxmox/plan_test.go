@@ -48,7 +48,7 @@ func TestWaitForQEMUIPv4UsesRoutableGuestAgentAddress(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/node/qemu/190/agent/network-get-interfaces" {
 			t.Fatalf("unexpected guest-agent request: %s %s", r.Method, r.URL.Path)
 		}
-		return response([]byte(`{"data":[{"name":"ens18","ip-addresses":[{"ip-address":"127.0.0.1","ip-address-type":"ipv4"},{"ip-address":"192.168.4.36","ip-address-type":"ipv4"}]}]}`))
+		return response([]byte(`{"data":{"result":[{"name":"ens18","ip-addresses":[{"ip-address":"127.0.0.1","ip-address-type":"ipv4"},{"ip-address":"192.168.4.36","ip-address-type":"ipv4"}]}]}}`))
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
 	address, err := WaitForQEMUIPv4(context.Background(), client, "node", 190, 1, time.Millisecond)
