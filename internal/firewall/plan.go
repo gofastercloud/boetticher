@@ -110,12 +110,19 @@ func PlanFromSite(s model.Site) (Plan, error) {
 
 func moduleSourceCIDRs(s model.Site) []string {
 	seen := map[string]bool{}
-	for _, component := range s.PlatformComponents() {
-		if component.Module == "" {
-			continue
-		}
-		if address := net.ParseIP(component.Address).To4(); address != nil {
-			seen[address.String()+"/32"] = true
+	// A module guest is isolated from broad zone policy only when its own
+	// declaration supplies source-specific intents. Core-owned module guests
+	// without such an intent continue to receive the established platform
+	// baseline (for example DNS update egress).
+	for _, declaration := range s.Declarations {
+		for _, intent := range declaration.NetworkIntents {
+			component, ok := componentReference(s, intent.Source)
+			if !ok || component.Module != declaration.Module {
+				continue
+			}
+			if address := net.ParseIP(component.Address).To4(); address != nil {
+				seen[address.String()+"/32"] = true
+			}
 		}
 	}
 	result := make([]string, 0, len(seen))

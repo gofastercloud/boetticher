@@ -47,7 +47,7 @@
   ansible.builtin.copy:
     dest: /usr/lib/boetticher/litellm-start
     owner: root
-    group: root
+    group: litellm
     mode: '0750'
     content: |
       #!/bin/sh
@@ -55,7 +55,7 @@
       {% for upstream in module_configs.litellm.upstreams %}
       export LITELLM_SECRET_{{ upstream.api_key_secret | upper | replace('-', '_') | replace('.', '_') }}="$(cat /run/credentials/litellm.service/{{ upstream.api_key_secret | lower | replace('_', '-') | replace('.', '-') }})"
       {% endfor %}
-      exec /opt/litellm/bin/litellm --config /etc/boetticher/litellm/config.yaml --host 127.0.0.1 --port 4000
+      exec /opt/litellm/bin/litellm "$@"
   no_log: true
   notify: restart litellm
 

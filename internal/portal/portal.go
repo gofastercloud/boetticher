@@ -120,6 +120,15 @@ func home(s model.Site, revision string, evidence Evidence, now time.Time) strin
 		if module.Name == "dns" && s.ModuleConfig["dns"].Provider == string(model.DNSProviderAdGuard) {
 			implementation = "AdGuard"
 		}
+		if implementation == "" {
+			for _, declaration := range s.Declarations {
+				if declaration.Module != module.Name || len(declaration.Portal) == 0 {
+					continue
+				}
+				implementation = declaration.Portal[0].Description
+				break
+			}
+		}
 		version, artifact, definition := moduleArtifactDetails(s, module.Name, module.Version)
 		fmt.Fprintf(&moduleTable, "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><code>%s</code></td><td><code>%s</code></td><td>%s</td><td>%s</td></tr>", html.EscapeString(module.Name), html.EscapeString(module.Policy), html.EscapeString(implementation), html.EscapeString(version), html.EscapeString(artifact), html.EscapeString(definition), html.EscapeString(module.State), html.EscapeString(module.Reason))
 	}

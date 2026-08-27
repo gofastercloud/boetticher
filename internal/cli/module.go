@@ -275,9 +275,17 @@ func runModuleChange(args []string, out interface{ Write([]byte) (int, error) },
 		if err != nil {
 			return fmt.Errorf("load Proxmox client for module purge: %w", err)
 		}
-		oldPlan, err := proxmox.PlanFromSite(oldSite)
+		purgeSite, err := modulePurgeSite(oldSite, name)
 		if err != nil {
 			return err
+		}
+		oldPlan, err := proxmox.PlanFromSite(purgeSite)
+		if err != nil {
+			return err
+		}
+		oldPlan, err = proxmox.ResolveQualifiedArtifacts(*siteDir, oldPlan, true)
+		if err != nil {
+			return fmt.Errorf("resolve qualified artifacts for module purge: %w", err)
 		}
 		node, err := client.SingleNode(context.Background())
 		if err != nil {
@@ -287,9 +295,16 @@ func runModuleChange(args []string, out interface{ Write([]byte) (int, error) },
 		if err := proxmox.PurgeModule(context.Background(), client, oldPlan, name); err != nil {
 			return err
 		}
+		declaration, ok := findDeclaration(purgeSite, name)
+		if !ok {
+			return fmt.Errorf("module %s purge declaration is missing", name)
+		}
+		if err := site.PurgeModuleSecrets(*siteDir, purgeSite, *ageIdentity, name, declaration); err != nil {
+			return err
+		}
 	}
 	retained := append([]model.RetainedModule(nil), oldSite.RetainedModules...)
-	if enable {
+	if enable || *purge {
 		filtered := retained[:0]
 		for _, item := range retained {
 			if item.Module != name {
@@ -323,6 +338,23 @@ func runModuleChange(args []string, out interface{ Write([]byte) (int, error) },
 		return fmt.Errorf("deploy module change: %w", err)
 	}
 	return nil
+}
+
+// modulePurgeSite reconstructs the disabled module's declaration in memory so
+// the generic Proxmox purge path can prove its exact guest, volume, and
+// security identity. It never changes the persisted site configuration; the
+// caller saves the already-disabled resolved configuration separately.
+func modulePurgeSite(s model.Site, name string) (model.Site, error) {
+	config := model.ConfigFromSite(s)
+	enabled := true
+	if err := config.Modules.Set(name, model.ModuleConfig{Enabled: &enabled}); err != nil {
+		return model.Site{}, err
+	}
+	purgeSite, _, err := modules.Compose(config)
+	if err != nil {
+		return model.Site{}, fmt.Errorf("reconstruct module %s for purge: %w", name, err)
+	}
+	return purgeSite, nil
 }
 
 func findResolvedModule(s model.Site, name string) (model.ResolvedModule, bool) {

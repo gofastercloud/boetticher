@@ -84,6 +84,12 @@ func TestFirstPartyModuleCredentialsUseEphemeralSystemdPaths(t *testing.T) {
 	}
 }
 
+func TestCredentialNameMatchesAnsibleNormalizationForValidReferences(t *testing.T) {
+	if got := credentialName("OpenRouter__api_key."); got != "openrouter--api-key-" {
+		t.Fatalf("credential name normalization = %q", got)
+	}
+}
+
 func TestCredentialInstallationStreamsValuesOutsideCommands(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	site, _, err := modules.Compose(config)

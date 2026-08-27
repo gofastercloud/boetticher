@@ -1817,6 +1817,7 @@ func uploadFirewallCloudInit(ctx context.Context, client *Client, plan Plan, vmi
 	}
 	return nil
 }
+
 func artifactDescription(artifact model.Artifact) string {
 	return fmt.Sprintf("boetticher-artifact=%s@%s definition=%s content=%s", artifact.Name, artifact.Version, artifact.DefinitionSHA256, artifact.ContentSHA256)
 }
