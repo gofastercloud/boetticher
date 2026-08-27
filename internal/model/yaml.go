@@ -60,7 +60,7 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 		return SiteConfig{}, fmt.Errorf("decode site.yml: %w", err)
 	}
 	for name, module := range config.Modules.Map() {
-		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "litellm" {
+		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "litellm" && name != "aiops" {
 			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s is not a registered first-party module", name)
 		}
 		if name != "dns" && module.Provider != "" {
@@ -106,6 +106,9 @@ func validateModuleConfigShape(data []byte) error {
 			allowed["enabled"] = true
 			allowed["upstreams"] = true
 			allowed["models"] = true
+		case "aiops":
+			allowed["enabled"] = true
+			allowed["model_alias"] = true
 		default:
 			return fmt.Errorf("site.yml: modules.%s: unknown first-party module", name)
 		}
@@ -129,6 +132,9 @@ func validateModuleConfigShape(data []byte) error {
 			}
 			if name == "litellm" && (field == "upstreams" || field == "models") && fieldValue.Kind != yaml.SequenceNode {
 				return fmt.Errorf("site.yml: modules.litellm.%s: expected a list", field)
+			}
+			if name == "aiops" && field == "model_alias" && fieldValue.Tag != "!!str" {
+				return fmt.Errorf("site.yml: modules.aiops.model_alias: expected a string")
 			}
 		}
 	}

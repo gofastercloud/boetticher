@@ -16,7 +16,7 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(modules) != 6 || modules[0].Definition.Name != "firewall" || modules[1].Definition.Name != "dns" || modules[2].Definition.Name != "logging" || modules[3].Definition.Name != "monitoring" || modules[4].Definition.Name != "litellm" || modules[5].Definition.Name != "tailnet-router" {
+	if len(modules) != 7 || modules[0].Definition.Name != "firewall" || modules[1].Definition.Name != "dns" || modules[2].Definition.Name != "logging" || modules[3].Definition.Name != "monitoring" || modules[4].Definition.Name != "aiops" || modules[5].Definition.Name != "litellm" || modules[6].Definition.Name != "tailnet-router" {
 		t.Fatalf("unexpected module resolution: %#v", modules)
 	}
 	if len(site.PlatformComponents()) != 7 {
@@ -81,7 +81,7 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	if err := registry.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"tailnet-router", "litellm"} {
+	for _, name := range []string{"tailnet-router", "litellm", "aiops"} {
 		definition, ok := registry.Definition(name)
 		if !ok || definition.Policy != DefaultOff {
 			t.Fatalf("%s is not a default-off first-party module: %#v", name, definition)
@@ -94,6 +94,57 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	litellm, _ := registry.Definition("litellm")
 	if litellm.ReservedVMIDStart != 210 || litellm.ReservedVMIDEnd != 219 || litellm.Guests[0].VMID != 210 || litellm.Placement.ZoneType != model.ZoneTypeServers {
 		t.Fatalf("litellm identity contract is incomplete: %#v", litellm)
+	}
+	aiops, _ := registry.Definition("aiops")
+	if aiops.ReservedVMIDStart != 220 || aiops.ReservedVMIDEnd != 229 || aiops.Guests[0].VMID != 220 || aiops.Guests[0].Address != "10.10.20.70" || aiops.Placement.ZoneType != model.ZoneTypeServers {
+		t.Fatalf("aiops identity contract is incomplete: %#v", aiops)
+	}
+}
+
+func TestAIOpsRequiresDeclaredLiteLLMAliasAndComposesReadOnlyBoundary(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	enabled := true
+	config.Modules.AIOps = &model.AIOpsModuleConfig{Enabled: &enabled, ModelAlias: "operations-investigator"}
+	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key"}},
+		Models:    []model.LiteLLMModelConfig{{Alias: "operations-investigator", Upstream: "provider", Model: "provider/model"}},
+	}
+	site, _, err := Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	declaration, ok := findDeclaration(site, "aiops")
+	if !ok {
+		t.Fatal("aiops declaration is missing")
+	}
+	if declaration.Guests[0].Address != "10.10.20.70" || declaration.Guests[0].Role != "HolmesGPT AIOps investigation" {
+		t.Fatalf("unexpected aiops guest: %#v", declaration.Guests[0])
+	}
+	if len(declaration.Volumes) != 2 || declaration.Volumes[1].Name != "aiops-state" || declaration.Volumes[1].SizeGiB != 1 {
+		t.Fatalf("unexpected aiops volumes: %#v", declaration.Volumes)
+	}
+	for _, intent := range declaration.NetworkIntents {
+		if intent.Ports[0] == "22" || strings.Contains(intent.Endpoint, "internet") {
+			t.Fatalf("aiops declaration acquired forbidden SSH/Internet authority: %#v", intent)
+		}
+	}
+	if got := site.ModuleConfig["aiops"].ModelAlias; got != "operations-investigator" {
+		t.Fatalf("aiops alias = %q", got)
+	}
+}
+
+func TestAIOpsRejectsUndeclaredAliasAndExplicitlyDisabledDependency(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	enabled, disabled := true, false
+	config.Modules.AIOps = &model.AIOpsModuleConfig{Enabled: &enabled, ModelAlias: "missing"}
+	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{Upstreams: []model.LiteLLMUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key"}}, Models: []model.LiteLLMModelConfig{{Alias: "other", Upstream: "provider", Model: "provider/model"}}}
+	if _, _, err := Compose(config); err == nil || !strings.Contains(err.Error(), "undeclared LiteLLM model alias") {
+		t.Fatalf("undeclared alias was accepted: %v", err)
+	}
+	config.Modules.LiteLLM.Enabled = &disabled
+	config.Modules.AIOps.ModelAlias = "other"
+	if _, _, err := Compose(config); err == nil || !strings.Contains(err.Error(), "explicitly disabled") {
+		t.Fatalf("disabled dependency was accepted: %v", err)
 	}
 }
 

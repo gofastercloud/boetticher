@@ -100,6 +100,13 @@ func FirstPartyRegistry() Registry {
 				{Name: "lab-litellm-01", VMID: 210, Hostname: "lab-litellm-01", Address: "10.10.20.60", Role: "LiteLLM AI API router", DNSAliases: []string{"litellm", "ai"}, URL: "https://litellm." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
+		"aiops": {
+			Name: "aiops", Description: "Read-only HolmesGPT incident investigation", Version: "1.0.0", Policy: DefaultOff,
+			DependsOn: []string{"monitoring", "logging", "litellm"}, Requires: []Capability{CapabilityMonitoring, CapabilityLogging, CapabilityAIAPI, CapabilityDNS, CapabilityNTP}, GuestIDs: []int{220}, ReservedVMIDStart: 220, ReservedVMIDEnd: 229,
+			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
+				{Name: "lab-aiops-01", VMID: 220, Hostname: "lab-aiops-01", Zone: "SERVERS", Address: "10.10.20.70", Role: "HolmesGPT AIOps investigation", DNSAliases: []string{"aiops"}, URL: "https://aiops." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			},
+		},
 	}}
 }
 
@@ -216,6 +223,18 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 				return nil, err
 			}
 		}
+		if name == "aiops" && moduleConfig.Enabled != nil && *moduleConfig.Enabled {
+			if !modelToken(moduleConfig.ModelAlias) {
+				return nil, fmt.Errorf("modules.aiops.model_alias: a safe declared AI Router alias is required")
+			}
+			litellm, ok := configs["litellm"]
+			if !ok {
+				return nil, fmt.Errorf("modules.aiops.model_alias: LiteLLM configuration is required")
+			}
+			if _, err := model.ResolveLiteLLMAlias(litellm, moduleConfig.ModelAlias); err != nil {
+				return nil, fmt.Errorf("modules.aiops.model_alias: %w", err)
+			}
+		}
 		if name == "dns" && moduleConfig.Provider != "" && moduleConfig.Provider != string(model.DNSProviderBlocky) && moduleConfig.Provider != string(model.DNSProviderAdGuard) {
 			return nil, fmt.Errorf("modules.dns.provider: expected one of: blocky, adguard")
 		}
@@ -329,6 +348,18 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 		result = append(result, ResolvedModule{Definition: definition, Enabled: false, Reason: reason, State: "Disabled"})
 	}
 	return result, nil
+}
+
+func modelToken(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for _, r := range value {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.') {
+			return false
+		}
+	}
+	return true
 }
 
 func validateModuleConfigNames(r Registry, configs map[string]model.ModuleConfig) error {

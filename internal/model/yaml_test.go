@@ -1,6 +1,7 @@
 package model
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"strings"
@@ -298,5 +299,29 @@ secret_metadata:
 	}
 	if err := config.Validate(); err != nil {
 		t.Fatalf("default-off LiteLLM should not require unused runtime config: %v", err)
+	}
+}
+
+func TestAIOpsConfigurationIsStrictAndProviderNeutral(t *testing.T) {
+	data := []byte(`api_version: boetticher/v3
+platform_version: 0.3.33
+schema_version: 3
+modules:
+  aiops:
+    enabled: true
+    model_alias: operations-investigator
+`)
+	config, err := ParseSiteConfig(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Modules.AIOps == nil || config.Modules.AIOps.ModelAlias != "operations-investigator" {
+		t.Fatalf("unexpected aiops config: %#v", config.Modules.AIOps)
+	}
+	for _, field := range []string{"provider", "model", "api_key", "ssh_probes", "tools"} {
+		invalid := bytes.Replace(data, []byte("    model_alias: operations-investigator\n"), []byte("    model_alias: operations-investigator\n    "+field+": forbidden\n"), 1)
+		if _, err := ParseSiteConfig(invalid); err == nil {
+			t.Fatalf("aiops field %s was accepted", field)
+		}
 	}
 }
