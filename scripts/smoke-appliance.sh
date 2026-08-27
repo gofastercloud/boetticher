@@ -56,7 +56,7 @@ case "$name" in
     test ! -e "$rootfs/opt/AdGuardHome/AdGuardHome"
     ;;
   boetticher-logging)
-    run systemd-journal-remote --version
+    run /usr/lib/systemd/systemd-journal-remote --version
     run journalctl --version
     ;;
   boetticher-monitoring)

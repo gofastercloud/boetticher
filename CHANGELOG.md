@@ -33,6 +33,8 @@ project, so releases can make clean breaks while the design is settling.
   packaging identifies the specific provider or runtime check.
 - Invoke Blocky’s `version` subcommand in the DNS smoke check; Blocky 0.34
   does not expose the version through a `--version` flag.
+- Invoke the Debian 13 journal-remote binary by its installed path in the
+  logging smoke check; its systemd service name is not a PATH executable.
 
 ## [0.3.32] - 2026-08-27
 
