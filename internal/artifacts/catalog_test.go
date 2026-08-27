@@ -598,6 +598,9 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	if !strings.Contains(string(buildScript), `dpkg-query -W -f='\${binary:Package}\\t\${Version}\\n'`) {
 		t.Fatal("firewall package-manifest command does not protect dpkg-query format variables from the guest shell")
 	}
+	if strings.Contains(string(buildScript), "systemctl disable --now systemd-networkd-wait-online.service") {
+		t.Fatal("firewall image customization tries to start or stop systemd in an offline image")
+	}
 }
 
 func TestApplianceBuildEmbedsDefinitionIdentityWithoutContentEvidence(t *testing.T) {

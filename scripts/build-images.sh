@@ -436,7 +436,7 @@ build_firewall() {
     --run-command 'visudo -cf /etc/sudoers' \
     --run-command "dpkg-query -W -f='\${binary:Package}\\t\${Version}\\n' | sort > /var/lib/boetticher/package-manifest.txt" \
     --run-command 'systemctl enable boetticher-first-boot.service' \
-    --run-command 'if systemctl list-unit-files systemd-networkd-wait-online.service >/dev/null 2>&1; then systemctl disable --now systemd-networkd-wait-online.service; fi'
+    --run-command 'if systemctl list-unit-files systemd-networkd-wait-online.service >/dev/null 2>&1; then systemctl disable systemd-networkd-wait-online.service; fi'
   sha256sum "$image" > "$destination/content.sha256"
   virt-cat -a "$image" /var/lib/boetticher/package-manifest.txt > "$destination/package-manifest.txt"
   ./scripts/smoke-firewall-image.sh "$image"

@@ -37,6 +37,8 @@ project, so releases can make clean breaks while the design is settling.
   logging smoke check; its systemd service name is not a PATH executable.
 - Quote the firewall package-manifest format through the guest shell so
   `dpkg-query` receives its `${binary:Package}` and `${Version}` placeholders.
+- Disable the firewall image's network wait-online unit without `--now`, which
+  is rejected by offline systemd customization.
 
 ## [0.3.32] - 2026-08-27
 
