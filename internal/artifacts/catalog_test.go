@@ -595,6 +595,9 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	if !strings.Contains(string(buildScript), "base_packages=$(awk") || !strings.Contains(string(buildScript), "--include=\"$base_packages\"") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Check-Valid-Until=false") {
 		t.Fatal("base builder does not use the pinned Debian snapshot")
 	}
+	if !strings.Contains(string(buildScript), `dpkg-query -W -f='\${binary:Package}\\t\${Version}\\n'`) {
+		t.Fatal("firewall package-manifest command does not protect dpkg-query format variables from the guest shell")
+	}
 }
 
 func TestApplianceBuildEmbedsDefinitionIdentityWithoutContentEvidence(t *testing.T) {

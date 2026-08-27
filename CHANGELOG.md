@@ -35,6 +35,8 @@ project, so releases can make clean breaks while the design is settling.
   does not expose the version through a `--version` flag.
 - Invoke the Debian 13 journal-remote binary by its installed path in the
   logging smoke check; its systemd service name is not a PATH executable.
+- Quote the firewall package-manifest format through the guest shell so
+  `dpkg-query` receives its `${binary:Package}` and `${Version}` placeholders.
 
 ## [0.3.32] - 2026-08-27
 
