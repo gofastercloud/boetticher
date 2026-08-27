@@ -16,7 +16,7 @@ these journeys.
    that explicitly requires confirmation.
 4. Prove `ssh firewall`, `ssh dns01`, `ssh monitor`, and `ssh portal` through
    the Proxmox bastion.
-5. Confirm VM 100 has WAN plus four tagged zone vNICs and that it is the
+5. Confirm VM 100 has WAN plus six tagged zone vNICs and that it is the
    qualified boetticher firewall appliance.
 6. Prove Kea leases, PowerDNS DDNS, secondary replication, and both DNS/NTP
    paths.

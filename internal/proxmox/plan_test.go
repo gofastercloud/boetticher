@@ -386,6 +386,9 @@ func TestManagedFirewallUsesTaggedPerZoneVNICs(t *testing.T) {
 	}{
 		{"wan0", "vmbr0", 0}, {"trusted0", "vmbr1", 30}, {"servers0", "vmbr1", 20}, {"sandbox0", "vmbr1", 40}, {"mgmt0", "vmbr1", 99}, {"transit0", "vmbr1", model.TransitVLAN}, {"infra0", "vmbr1", 10},
 	}
+	if len(plan.Guests[0].NICs) != len(want) {
+		t.Fatalf("got %d firewall NICs, want exact WAN plus six internal VLANs", len(plan.Guests[0].NICs))
+	}
 	for index, expected := range want {
 		nic := plan.Guests[0].NICs[index]
 		if nic.Name != expected.name || nic.Bridge != expected.bridge || nic.VLAN != expected.vlan || nic.MAC == "" {

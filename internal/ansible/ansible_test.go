@@ -23,6 +23,7 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 		t.Fatal("inventory was not deterministic")
 	}
 	for _, expected := range []string{
+		"lab-proxmox-01 ansible_host=10.10.99.250",
 		"lab-dns-01 ansible_host=10.10.10.10",
 		"ProxyJump=lab-bastion",
 		"HostKeyAlias=lab-dns-01.lab.home.arpa",

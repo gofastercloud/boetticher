@@ -29,24 +29,26 @@ HOME / upstream
        |
      vmbr1
        |
- VLAN 10 / 20 / 50 / 99
+ VLAN 5 / 10 / 20 / 30 / 40 / 99
        |
- TRUSTED / SERVERS / SANDBOX / MGMT
+ TRANSIT / INFRA / SERVERS / TRUSTED / SANDBOX / MGMT
 ```
 
 The platform services are:
 
 ```text
-lab-dns-01       PowerDNS, Blocky (AdGuard alternative), Chrony
-lab-dns-02       PowerDNS, Blocky (AdGuard alternative), Chrony
-lab-monitor-01   Zabbix and PostgreSQL
-lab-log-01       Central systemd journal collector
-lab-portal-01    generated static documentation
+lab-dns-01       10.10.10.10  PowerDNS, Blocky (AdGuard alternative), Chrony
+lab-dns-02       10.10.10.11  PowerDNS, Blocky (AdGuard alternative), Chrony
+lab-monitor-01   10.10.10.20  Zabbix and PostgreSQL
+lab-log-01       10.10.10.40  Central systemd journal collector
+lab-portal-01    10.10.10.30  generated static documentation
 ```
 
-The fixed networks are VLAN 10 TRUSTED (`10.10.10.0/24`), VLAN 20 SERVERS
-(`10.10.20.0/24`), VLAN 50 SANDBOX (`10.10.50.0/24`), and VLAN 99 MGMT
-(`10.10.99.0/24`). v0.3 remains IPv4-only.
+The fixed networks are VLAN 5 TRANSIT (`10.10.5.0/24`), VLAN 10 INFRA
+(`10.10.10.0/24`), VLAN 20 SERVERS (`10.10.20.0/24`), VLAN 30 TRUSTED
+(`10.10.30.0/24`), VLAN 40 SANDBOX (`10.10.40.0/24`), and VLAN 99 MGMT
+(`10.10.99.0/24`). Every gateway owns `.1`; managed Proxmox uses
+`10.10.99.250` on MGMT. v0.3 remains IPv4-only.
 
 The platform resolves to Core plus the mandatory DNS/NTP module and the
 default-on monitoring and managed firewall modules. Modules are built into the
@@ -58,16 +60,22 @@ upload to `lab-log-01`. The default DNS provider is Blocky; set
 
 ## Two gateway modes
 
-`managed` is the default. boetticher creates `lab-fw-01`, configures its five
-interfaces, renders the nftables policy, and runs Kea, DDNS, and the SANDBOX
-DNS/NTP services.
+`managed` is the default. boetticher creates `lab-fw-01`, configures its WAN
+interface and six fixed internal interfaces, renders the nftables policy, and
+runs Kea, DDNS, and the SANDBOX DNS/NTP services. The gateway owns `.1` in
+TRANSIT, INFRA, SERVERS, TRUSTED, SANDBOX, and MGMT.
 
 `external` is bring-your-own firewall mode. boetticher creates no firewall VM,
 does not manage the appliance, and publishes a deterministic contract for the
 operator to configure. It requires a separately selected physical trunk NIC
-carrying VLANs 10, 20, 50, and 99; bootstrap never silently selects even a
-sole eligible NIC. See
+carrying VLANs 5, 10, 20, 30, 40, and 99; the operator firewall owns `.1` in
+each subnet, and bootstrap never silently selects even a sole eligible NIC.
+See
 [`docs/networking/external-firewall.md`](docs/networking/external-firewall.md).
+
+This network layout is for the next clean deployment/rebuild. Existing
+installations require an operator-planned rebuild or migration; this tranche
+does not automatically renumber live hosts or guests.
 
 ## Requirements
 

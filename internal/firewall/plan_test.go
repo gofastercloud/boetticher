@@ -24,6 +24,9 @@ func TestManagedPlanUsesOneUntaggedFirewallInterfacePerZone(t *testing.T) {
 		{Role: "TRANSIT", Name: "transit0", MAC: "02:00:00:00:01:06", Bridge: "vmbr1", VLAN: 5, Address: "10.10.5.1/24", Method: "static"},
 		{Role: "INFRA", Name: "infra0", MAC: "02:00:00:00:01:07", Bridge: "vmbr1", VLAN: 10, Address: "10.10.10.1/24", Method: "static"},
 	}
+	if len(plan.Interfaces) != len(want) {
+		t.Fatalf("got %d interfaces, want exact fixed WAN plus six internal interfaces", len(plan.Interfaces))
+	}
 	for i := range want {
 		if plan.Interfaces[i] != want[i] {
 			t.Fatalf("interface %d = %#v, want %#v", i, plan.Interfaces[i], want[i])
@@ -103,7 +106,7 @@ func TestExternalPlanHasPolicyButNoManagedInterfaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"TRANSIT", "INFRA", "`transit`", "`infrastructure`", "VLAN 5", "VLAN 10", "VLAN 30", "VLAN 40", "VLAN 99", "10.10.5.0/24", "10.10.10.0/24", "10.10.30.0/24", "10.10.40.0/24", "enforcement is NOT ACTIVE", "Required routes", "Required allows", "Required denies", "Source address expectations", "Module-advertised routes: none"} {
+	for _, expected := range []string{"TRANSIT", "INFRA", "`transit`", "`infrastructure`", "VLAN 5", "VLAN 10", "VLAN 20", "VLAN 30", "VLAN 40", "VLAN 99", "10.10.5.0/24", "10.10.10.0/24", "10.10.20.0/24", "10.10.30.0/24", "10.10.40.0/24", "enforcement is NOT ACTIVE", "Required routes", "Required allows", "Required denies", "Source address expectations", "Module-advertised routes: none"} {
 		if !strings.Contains(contract, expected) {
 			t.Errorf("external contract missing %q", expected)
 		}

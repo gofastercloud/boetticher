@@ -13,8 +13,9 @@ paths are allowed explicitly. Internal traffic is not NATed. Intended internal
 networks are masqueraded only when leaving `wan0`.
 
 Proxmox performs VLAN classification by attaching separate firewall vNICs to
-`vmbr1` with tags 5, 10, 20, 50, and 99. The firewall sees ordinary interfaces
-named `wan0`, `trusted0`, `servers0`, `sandbox0`, `mgmt0`, and `transit0`; it does not see a
+`vmbr1` with tags 5, 10, 20, 30, 40, and 99. The firewall sees ordinary interfaces
+named `wan0`, `transit0`, `infra0`, `servers0`, `trusted0`, `sandbox0`, and
+`mgmt0`; it does not see a
 trunk and does not create VLAN subinterfaces. Proxmox is already trusted to
 attach guests to the right bridge and VLAN. A compromised hypervisor can bypass
 guest firewall guarantees.
@@ -26,7 +27,9 @@ only after the policy and services are ready. IPv6 forwarding is disabled in
 v0.3.
 
 SANDBOX may use the gateway for DHCP, public DNS, and NTP, but cannot reach the
-TRUSTED, SERVERS, or MGMT networks. The deny rules precede Internet egress.
+TRUSTED, SERVERS, INFRA, or MGMT networks. The deny rules precede Internet
+egress. DHCP and DDNS are limited to TRUSTED and SANDBOX; TRANSIT, INFRA,
+SERVERS, and MGMT are static-only.
 MGMT is intentionally small and administrative; it is not a general
 "important servers" VLAN.
 

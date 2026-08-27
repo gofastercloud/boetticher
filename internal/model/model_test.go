@@ -148,6 +148,33 @@ func TestCoreZonesUseCanonicalNetworkContract(t *testing.T) {
 	}
 }
 
+func TestCoreInfrastructureUsesInfraAddresses(t *testing.T) {
+	site := NewDefaultSite("installation", "age1example")
+	want := map[string]string{
+		"lab-dns-01":     "10.10.10.10",
+		"lab-dns-02":     "10.10.10.11",
+		"lab-monitor-01": "10.10.10.20",
+		"lab-log-01":     "10.10.10.40",
+		"lab-portal-01":  "10.10.10.30",
+	}
+	found := make(map[string]bool, len(want))
+	for _, component := range site.Components {
+		address, ok := want[component.Name]
+		if !ok {
+			continue
+		}
+		if component.Zone != "INFRA" || component.Address != address {
+			t.Errorf("%s projection = zone %s, address %s; want INFRA, %s", component.Name, component.Zone, component.Address, address)
+		}
+		found[component.Name] = true
+	}
+	for name := range want {
+		if !found[name] {
+			t.Errorf("default site is missing Core infrastructure component %s", name)
+		}
+	}
+}
+
 func TestUnknownZoneSemanticTypeIsRejected(t *testing.T) {
 	site := NewSite("installation", "age1example", GatewayModeManaged)
 	for index := range site.Network.Zones {
