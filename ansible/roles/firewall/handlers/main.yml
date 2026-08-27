@@ -8,6 +8,11 @@
     name: systemd-networkd
     state: restarted
 
+- name: reload AppArmor
+  ansible.builtin.service:
+    name: apparmor
+    state: reloaded
+
 - name: restart Kea DHCPv4
   ansible.builtin.service:
     name: kea-dhcp4-server

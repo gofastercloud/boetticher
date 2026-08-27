@@ -179,6 +179,15 @@
     - monitor_server_cert_pem is defined
     - monitor_server_cert_pem | length > 0
 
+- name: Reload nginx after enabling the monitoring frontend
+  ansible.builtin.service:
+    name: nginx
+    state: reloaded
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - monitor_server_cert_pem is defined
+    - monitor_server_cert_pem | length > 0
+
 - name: Enable monitoring services
   ansible.builtin.service:
     name: "{{ item }}"

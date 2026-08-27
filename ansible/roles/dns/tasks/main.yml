@@ -90,16 +90,40 @@
     - inventory_hostname == 'lab-dns-01'
     - item not in primary_zones.stdout
 
+- name: Remove exact malformed PowerDNS NS rrsets from the prior boetticher attempt
+  ansible.builtin.shell: |
+    set -eu
+    records="$(pdnsutil list-zone {{ item }})"
+    if printf '%s\n' "$records" | awk '$1 == "{{ item }}.{{ item }}" && $3 == "NS" && ($4 == "lab-dns-01.{{ dns_plan.static_zone }}." || $4 == "lab-dns-02.{{ dns_plan.static_zone }}.") { found=1 } END { exit !found }'; then
+      pdnsutil delete-rrset {{ item }} {{ item }} NS
+    fi
+  args:
+    executable: /bin/sh
+  loop: "{{ [dns_plan.static_zone] + (dns_plan.dynamic_zones | map(attribute='name') | list) + (dns_plan.reverse_zones | map(attribute='name') | list) }}"
+  when: inventory_hostname == 'lab-dns-01'
+
+- name: Remove exact malformed PowerDNS static rrsets from the prior boetticher attempt
+  ansible.builtin.shell: |
+    set -eu
+    records="$(pdnsutil list-zone {{ dns_plan.static_zone }})"
+    if printf '%s\n' "$records" | awk '$1 == "{{ item.name }}.{{ dns_plan.static_zone }}" && $3 == "{{ item.type }}" && $4 == "{{ item.address }}" { found=1 } END { exit !found }'; then
+      pdnsutil delete-rrset {{ dns_plan.static_zone }} {{ item.name }} {{ item.type }}
+    fi
+  args:
+    executable: /bin/sh
+  loop: "{{ dns_plan.static_records }}"
+  when: inventory_hostname == 'lab-dns-01'
+
 - name: Initialize authoritative NS records on the primary
   ansible.builtin.command: >-
-    pdnsutil replace-rrset {{ item }} {{ item }} NS 300
+    pdnsutil replace-rrset {{ item }} @ NS 300
     lab-dns-01.{{ dns_plan.static_zone }}. lab-dns-02.{{ dns_plan.static_zone }}.
   loop: "{{ [dns_plan.static_zone] + (dns_plan.dynamic_zones | map(attribute='name') | list) + (dns_plan.reverse_zones | map(attribute='name') | list) }}"
   when: inventory_hostname == 'lab-dns-01'
 
 - name: Publish model-owned static DNS records to the primary
   ansible.builtin.command: >-
-    pdnsutil replace-rrset {{ dns_plan.static_zone }} {{ item.name }}.
+    pdnsutil replace-rrset {{ dns_plan.static_zone }} {{ item.name | replace('.' ~ dns_plan.static_zone, '') }}
     {{ item.type }} 300 {{ item.value }}
   loop: "{{ dns_plan.static_records }}"
   when: inventory_hostname == 'lab-dns-01'

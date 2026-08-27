@@ -120,7 +120,11 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return err
 	}
-	runtimeVariables["portal_source_dir"] = filepath.Join(*siteDir, "generated", "portal")
+	portalSourceDir, err := absolutePortalSourceDir(*siteDir)
+	if err != nil {
+		return err
+	}
+	runtimeVariables["portal_source_dir"] = portalSourceDir
 	runtimeVariables["boetticher_appliance_artifact"] = true
 	// Agent installation is enabled only in the post-Pulse bootstrap pass,
 	// after the scoped report token and encrypted credential projection exist.
@@ -178,8 +182,8 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return err
 	}
-	runtimeVariables["client_ca_pem"] = authority.IssuingCertPEM
-	runtimeVariables["pulse_server_ca_pem"] = authority.IssuingCertPEM
+	runtimeVariables["client_ca_pem"] = authority.RootCertPEM + authority.IssuingCertPEM
+	runtimeVariables["pulse_server_ca_pem"] = authority.RootCertPEM + authority.IssuingCertPEM
 	if *proxmoxCA != "" {
 		proxmoxCAPEM, readErr := os.ReadFile(*proxmoxCA)
 		if readErr != nil {
@@ -516,6 +520,14 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	fmt.Fprintf(out, "Deployment: PASS mode=%s model=%s (storage %s)\n", s.Gateway.Mode, firewallPlan.ModelRevision, storagePlan.GuestStorage)
 	return nil
+}
+
+func absolutePortalSourceDir(siteDir string) (string, error) {
+	absoluteSiteDir, err := filepath.Abs(siteDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve portal source directory: %w", err)
+	}
+	return filepath.Join(absoluteSiteDir, "generated", "portal"), nil
 }
 
 func artifactQualificationStatus(artifact model.Artifact) string {

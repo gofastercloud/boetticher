@@ -236,6 +236,18 @@ func TestMonitoringApplianceUsesImageProvidedPulseRuntime(t *testing.T) {
 	}
 }
 
+func TestMonitoringFrontendHandlersFlushBeforeReconciliation(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "Reload nginx after enabling the monitoring frontend") || !strings.Contains(text, "state: reloaded") {
+		t.Fatal("monitoring frontend is not reloaded before controller reconciliation")
+	}
+}
+
 func TestEndpointTLSKeysAreGeneratedLocallyAndNeverSuppliedByController(t *testing.T) {
 	for _, role := range []string{"monitor", "portal"} {
 		path := filepath.Join("..", "..", "ansible", "roles", role, "tasks", "main.yml")
@@ -273,6 +285,54 @@ func TestGuestPlaybookProjectsLoggingClientsBeyondTheCollector(t *testing.T) {
 	}
 }
 
+func TestLoggingCollectorKeyIsReadableByItsServiceUser(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "logging", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "path: \"{{ logging_plan.remote_journal_path }}\"\n    state: directory\n    owner: root\n    group: systemd-journal-remote\n    mode: '2770'") || !strings.Contains(text, "Grant the managed administrator read access to collected journals") || !strings.Contains(text, "groups: systemd-journal-remote\n    append: true") || !strings.Contains(text, "path: /var/lib/boetticher/identity/logging/collector.key") || !strings.Contains(text, "group: systemd-journal-remote\n    mode: '0640'") {
+		t.Fatal("logging collector private key is not readable by the systemd-journal-remote service user")
+	}
+}
+
+func TestLoggingUploadKeyIsReadableByItsServiceGroup(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "Create endpoint-local logging identity directory") || !strings.Contains(text, "group: systemd-journal\n    mode: '0750'") || !strings.Contains(text, "Allow the upload service to read its private key") || !strings.Contains(text, "group: systemd-journal\n    mode: '0640'") {
+		t.Fatal("journal upload private keys are not readable by the systemd-journal service group")
+	}
+}
+
+func TestJournalUploadRetriesAfterDependencyStartup(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "path: /etc/systemd/system/systemd-journal-upload.service.d\n") || !strings.Contains(text, "systemd-journal-upload.service.d/boetticher.conf") || !strings.Contains(text, "RestartSec=15s") || !strings.Contains(text, "Reload systemd after installing journal-upload policy") {
+		t.Fatal("journal upload has no bounded retry policy for DNS-dependent startup")
+	}
+}
+
+func TestApplianceResolverUsesPlatformDNSPair(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "Configure appliances to use the platform DNS pair") || !strings.Contains(text, "nameserver {{ nameserver }}") || !strings.Contains(text, "dest: /etc/resolv.conf") || !strings.Contains(text, "inventory_hostname not in groups.get('proxmox', [])") {
+		t.Fatal("appliances do not receive the model DNS pair without modifying the Proxmox host")
+	}
+}
+
 func TestBaseRoleRunsChronyWithoutKernelClockControlInAppliances(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
@@ -285,6 +345,13 @@ func TestBaseRoleRunsChronyWithoutKernelClockControlInAppliances(t *testing.T) {
 		"content: \"DAEMON_OPTS=\\\"-x\\\"\\n\"",
 		"dest: /etc/default/chrony",
 		"when: inventory_hostname not in groups.get('proxmox', [])",
+		"- name: Allow Chrony startup without kernel clock control",
+		"path: /etc/systemd/system/chrony.service.d",
+		"state: directory",
+		"- name: Install Chrony startup override",
+		"content: \"[Unit]\\nConditionCapability=\\n\"",
+		"dest: /etc/systemd/system/chrony.service.d/boetticher.conf",
+		"notify: reload systemd",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("base role missing %q", expected)
@@ -315,7 +382,7 @@ func TestDNSRoleUsesPowerDNS49CommandNames(t *testing.T) {
 			t.Fatalf("DNS role retains obsolete PowerDNS command namespace %q", forbidden)
 		}
 	}
-	for _, expected := range []string{"pdnsutil list-all-zones", "pdnsutil create-zone", "pdnsutil replace-rrset", "pdnsutil delete-rrset", "pdnsutil set-meta", "pdnsutil create-secondary-zone", "item.value", "item.name"} {
+	for _, expected := range []string{"pdnsutil list-all-zones", "pdnsutil create-zone", "pdnsutil replace-rrset", "pdnsutil delete-rrset", "pdnsutil set-meta", "pdnsutil create-secondary-zone", "replace-rrset {{ item }} @ NS", "item.name | replace('.' ~ dns_plan.static_zone, '')", "item.value"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("DNS role missing qualified PowerDNS command %q", expected)
 		}
@@ -436,6 +503,69 @@ func TestFirewallRoleCreatesNftablesConfigurationDirectory(t *testing.T) {
 	for _, expected := range []string{"- name: Create nftables configuration directory", "path: /etc/nftables.d", "state: directory"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("firewall role missing %q", expected)
+		}
+	}
+}
+
+func TestFirewallRolePersistsForwardingReadinessGate(t *testing.T) {
+	tasksPath := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
+	tasksData, err := os.ReadFile(tasksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks := string(tasksData)
+	for _, expected := range []string{
+		"src: boetticher-forwarding.service.j2",
+		"dest: /etc/systemd/system/boetticher-forwarding.service",
+		"name: boetticher-forwarding.service",
+		"enabled: true",
+		"daemon_reload: true",
+		"name: Reassert IPv4 forwarding after the readiness gate",
+		"argv: [sysctl, -w, net.ipv4.ip_forward=1]",
+		"changed_when: false",
+	} {
+		if !strings.Contains(tasks, expected) {
+			t.Fatalf("firewall role missing forwarding readiness gate contract %q", expected)
+		}
+	}
+
+	unitPath := filepath.Join("..", "..", "ansible", "roles", "firewall", "templates", "boetticher-forwarding.service.j2")
+	unitData, err := os.ReadFile(unitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := string(unitData)
+	for _, expected := range []string{
+		"Requires=nftables.service kea-dhcp4-server.service kea-dhcp-ddns-server.service dnsmasq.service",
+		"After=network-online.target nftables.service kea-dhcp4-server.service kea-dhcp-ddns-server.service dnsmasq.service",
+		"ExecStart=/usr/sbin/sysctl -w net.ipv4.ip_forward=1",
+		"ExecStop=/usr/sbin/sysctl -w net.ipv4.ip_forward=0",
+	} {
+		if !strings.Contains(unit, expected) {
+			t.Fatalf("forwarding readiness gate missing %q", expected)
+		}
+	}
+}
+
+func TestFirewallRoleAllowsKeaCredentialThroughAppArmor(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"Allow Kea DDNS to read its systemd credential",
+		"/run/credentials/kea-dhcp-ddns-server.service/kea-ddns-tsig r,",
+		"dest: /etc/apparmor.d/local/usr.sbin.kea-dhcp-ddns",
+		"notify: reload AppArmor",
+		"Permit read-only Kea lease evidence",
+		"labadmin ALL=(root) NOPASSWD: /bin/cat /var/lib/kea/kea-leases4.csv",
+		"dest: /etc/sudoers.d/boetticher-kea-leases",
+		"validate: /usr/sbin/visudo -cf %s",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("firewall role missing Kea AppArmor rule %q", expected)
 		}
 	}
 }
@@ -567,6 +697,10 @@ func TestDNSRoleDoesNotPlaceTSIGSecretsInProcessArguments(t *testing.T) {
 	}
 	if !strings.Contains(string(kea), "secret-file") || strings.Contains(string(kea), "{{ ddns_tsig_secret }}") {
 		t.Fatal("Kea does not consume its TSIG through the systemd credential runtime file")
+	}
+	keaText := string(kea)
+	if !strings.Contains(keaText, `"forward-ddns": {`) || !strings.Contains(keaText, `"reverse-ddns": {`) || !strings.Contains(keaText, `"ddns-domains":`) || !strings.Contains(keaText, `"key-name": "{{ zone.tsig_key_name }}"`) {
+		t.Fatal("Kea D2 does not use the qualified domain catalogs and TSIG key references")
 	}
 }
 

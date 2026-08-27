@@ -44,6 +44,33 @@ func TestAnsiblePlaybookIsAvailableFromControllerSource(t *testing.T) {
 	}
 }
 
+func TestPortalSourceDirectoryIsAbsoluteForAnsible(t *testing.T) {
+	got, err := absolutePortalSourceDir("relative-site")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(got) || !strings.HasSuffix(got, filepath.Join("relative-site", "generated", "portal")) {
+		t.Fatalf("portal source directory = %q, want absolute generated portal path", got)
+	}
+}
+
+func TestEndpointClientTrustProjectionIncludesRootAndIssuingCAs(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "runtimeVariables[\"client_ca_pem\"] = authority.RootCertPEM + authority.IssuingCertPEM") {
+		t.Fatal("endpoint mTLS trust projection does not include the complete platform CA chain")
+	}
+}
+
+func TestRuntimeBoundaryAcceptsRelativeSiteDirectory(t *testing.T) {
+	site := model.NewDefaultSite("trial", "age1trial")
+	if err := checkRuntimeBoundary("relative-site", site); err != nil {
+		t.Fatalf("relative site directory rejected: %v", err)
+	}
+}
+
 func TestDeploymentModuleNamesFollowResolvedExternalGraph(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("trial", "age1trial", model.GatewayModeExternal))
 	disabled := false

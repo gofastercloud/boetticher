@@ -1338,10 +1338,19 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		if kind != KindLXC {
 			return fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, expected LXC %s", guest.VMID, kind, guest.Name)
 		}
-		if err := validateExistingGuestIdentity(current, guest); err != nil {
+		if err := validateExistingGuestVolumes(current, guest); err != nil {
 			return err
 		}
-		if err := validateExistingGuestVolumes(current, guest); err != nil {
+		if guestArtifactNeedsReplacement(current, guest) {
+			if !plan.DestructiveConfirmed {
+				return fmt.Errorf("HOLD: guest %s has artifact identity mismatch; appliance replacement requires --confirm", guest.Name)
+			}
+			if err := replaceLXC(ctx, client, plan, guest); err != nil {
+				return err
+			}
+			return ensureLXC(ctx, client, plan, guest)
+		}
+		if err := validateExistingGuestIdentity(current, guest); err != nil {
 			return err
 		}
 		return ensureExistingGuestTags(ctx, client, plan, guest, current)
@@ -1439,6 +1448,31 @@ func validateLXCDeviceContract(guest GuestPlan) error {
 // no broad device wildcard or Linux capability is requested.
 func lxcDeviceParam(device model.DeviceRequirement) string {
 	return fmt.Sprintf("path=%s,mode=0666", device.Path)
+}
+
+func replaceLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
+	status, err := client.LXCStatus(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("inspect %s status before appliance replacement: %w", guest.Name, err)
+	}
+	if status == "running" {
+		if err := client.StopLXC(ctx, plan.Node, guest.VMID); err != nil {
+			return fmt.Errorf("stop %s before appliance replacement: %w", guest.Name, err)
+		}
+	}
+	detach := url.Values{}
+	for index := range guest.Volumes {
+		detach.Add("delete", fmt.Sprintf("mp%d", index))
+	}
+	if len(detach) > 0 {
+		if err := client.SetLXCConfig(ctx, plan.Node, guest.VMID, detach); err != nil {
+			return fmt.Errorf("detach persistent volumes from %s before appliance replacement: %w", guest.Name, err)
+		}
+	}
+	if err := client.destroyLXCForReplacement(ctx, plan.Node, guest.VMID); err != nil {
+		return fmt.Errorf("destroy %s rootfs for appliance replacement: %w", guest.Name, err)
+	}
+	return nil
 }
 
 // lxcBootstrapKeyParams is the only operator-key input accepted by appliance

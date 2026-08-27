@@ -510,6 +510,63 @@ func TestEnsureQEMURequiresConfirmationToReplaceOwnedArtifact(t *testing.T) {
 	}
 }
 
+func TestEnsureLXCRequiresConfirmationToReplaceOwnedArtifact(t *testing.T) {
+	guest := GuestPlan{VMID: 110, Name: "test-dns", Hostname: "test-dns", Artifact: model.Artifact{
+		Name: "boetticher-dns-blocky", Version: "1.0.0", Architecture: "amd64", ContentSHA256: "new-content",
+	}}
+	currentDescription := artifactDescription(model.Artifact{Name: "boetticher-dns-blocky", Version: "1.0.0", Architecture: "amd64", ContentSHA256: "old-content"})
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/110/config" {
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/config" {
+			return response([]byte(`{"data":{"name":"test-dns","hostname":"test-dns","description":"` + currentDescription + `","tags":"boetticher;managed;boetticher-module-dns"}}`))
+		}
+		t.Fatalf("unexpected request before replacement confirmation: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err := ensureLXC(context.Background(), client, Plan{Node: "node"}, guest)
+	if err == nil || !strings.Contains(err.Error(), "requires --confirm") {
+		t.Fatalf("artifact replacement without confirmation = %v", err)
+	}
+}
+
+func TestReplaceLXCDetachesPersistentVolumesBeforeDestroy(t *testing.T) {
+	var detached []string
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/current":
+			return response([]byte(`{"data":{"status":"stopped"}}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			detached = append(detached, r.Form["delete"]...)
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api2/json/nodes/node/lxc/110":
+			if r.URL.Query().Get("purge") != "0" || r.URL.Query().Get("destroy-unreferenced-disks") != "0" {
+				t.Fatalf("replacement destroy query = %v", r.URL.Query())
+			}
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected LXC replacement request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	guest := GuestPlan{VMID: 110, Name: "test-dns", Volumes: []model.PersistentVolumeDeclaration{
+		{Name: "powerdns-database", Guest: "lab-dns-01", Module: "dns", SizeGiB: 8, MountPath: "/var/lib/powerdns"},
+		{Name: "ssh-identity", Guest: "lab-dns-01", Module: "dns", SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/ssh"},
+	}}
+	if err := replaceLXC(context.Background(), client, Plan{Node: "node"}, guest); err != nil {
+		t.Fatalf("replaceLXC() = %v", err)
+	}
+	if !reflect.DeepEqual(detached, []string{"mp0", "mp1"}) {
+		t.Fatalf("detached mount points = %#v, want [mp0 mp1]", detached)
+	}
+}
+
 func TestExistingLXCArtifactAcceptsProxmoxEncodedDescriptionNewline(t *testing.T) {
 	guest := GuestPlan{VMID: 110, Name: "test-dns", Hostname: "test-dns", Artifact: model.Artifact{
 		Name: "boetticher-dns-blocky", Version: "1.0.0", ContentSHA256: "content",

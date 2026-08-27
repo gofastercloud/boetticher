@@ -107,7 +107,7 @@ func TestUserDNSRecordsUseValueAndMayAliasDynamicNames(t *testing.T) {
 	commands := PrimaryCommandPlan(plan)
 	foundCNAME := false
 	for _, command := range commands {
-		if len(command.Args) == 7 && command.Args[1] == "replace-rrset" && command.Args[2] == model.DefaultDomain && command.Args[3] == "app.lab.home.arpa." && command.Args[4] == "CNAME" && command.Args[6] == "app-01.servers.lab.home.arpa" {
+		if len(command.Args) == 7 && command.Args[1] == "replace-rrset" && command.Args[2] == model.DefaultDomain && command.Args[3] == "app" && command.Args[4] == "CNAME" && command.Args[6] == "app-01.servers.lab.home.arpa" {
 			foundCNAME = true
 		}
 	}
@@ -175,8 +175,14 @@ func TestRenderBlockyConfigPinsAuthoritativeZonesWithoutPublicFallback(t *testin
 	if len(decoded.Upstreams.Groups["default"]) != 2 || decoded.Upstreams.Groups["default"][0] != "https://cloudflare-dns.com/dns-query" {
 		t.Fatalf("unexpected Blocky upstream group: %#v", decoded.Upstreams)
 	}
+	if strings.Join(decoded.BootstrapDNS, ",") != "1.1.1.1,8.8.8.8" {
+		t.Fatalf("unexpected Blocky bootstrap DNS: %#v", decoded.BootstrapDNS)
+	}
 	if decoded.Conditional.FallbackUpstream {
 		t.Fatal("Blocky authoritative mappings allow public fallback")
+	}
+	if !decoded.DNSSEC.Validate {
+		t.Fatal("Blocky DNSSEC validation is not enabled")
 	}
 	if got := decoded.Blocking.Denylists[FilteringPolicyGroup]; len(got) != 1 || got[0] != FilteringPolicyFile {
 		t.Fatalf("unexpected Blocky denylist: %#v", decoded.Blocking.Denylists)
@@ -251,7 +257,23 @@ func hasRecordValue(records []StaticRecord, name, recordType, value, owner strin
 	return false
 }
 
-func TestPowerDNSCommandPlanUsesQualifiedSyntaxAndNeverEmbedsARealSecret(t *testing.T) {
+func TestZoneRelativeNameUsesPowerDNSZoneOwners(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		zone string
+		want string
+	}{
+		{name: "portal.lab.home.arpa", zone: "lab.home.arpa", want: "portal"},
+		{name: "lab.home.arpa", zone: "lab.home.arpa", want: "@"},
+		{name: "portal.lab.home.arpa.", zone: "lab.home.arpa.", want: "portal"},
+	} {
+		if got := zoneRelativeName(test.name, test.zone); got != test.want {
+			t.Fatalf("zoneRelativeName(%q, %q) = %q, want %q", test.name, test.zone, got, test.want)
+		}
+	}
+}
+
+func TestPowerDNSCommandPlanUsesZoneRelativeSyntaxAndNeverEmbedsARealSecret(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {
 		t.Fatal(err)
@@ -265,6 +287,8 @@ func TestPowerDNSCommandPlanUsesQualifiedSyntaxAndNeverEmbedsARealSecret(t *test
 	seenReverse := false
 	seenZone := false
 	seenRecord := false
+	seenApex := false
+	seenRelativeRecord := false
 	for _, command := range commands {
 		if command.SecretStdin {
 			seenTSIG = true
@@ -287,9 +311,15 @@ func TestPowerDNSCommandPlanUsesQualifiedSyntaxAndNeverEmbedsARealSecret(t *test
 		}
 		if len(command.Args) >= 2 && command.Args[1] == "replace-rrset" {
 			seenRecord = true
+			if command.Args[3] == "@" {
+				seenApex = true
+			}
+			if command.Args[2] == plan.StaticZone && command.Args[3] == "portal" {
+				seenRelativeRecord = true
+			}
 		}
 	}
-	if !seenTSIG || !seenForward || !seenReverse || !seenZone || !seenRecord {
+	if !seenTSIG || !seenForward || !seenReverse || !seenZone || !seenRecord || !seenApex || !seenRelativeRecord {
 		t.Fatalf("incomplete PowerDNS command plan: %#v", commands)
 	}
 }

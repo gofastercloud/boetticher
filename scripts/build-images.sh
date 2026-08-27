@@ -324,6 +324,7 @@ build_dns_blocky() {
 [Unit]
 Description=Boetticher Blocky recursive resolver
 After=network-online.target
+ConditionPathExists=/etc/blocky/config.yml
 
 [Service]
 User=blocky

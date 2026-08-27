@@ -23,11 +23,43 @@
     mode: '0644'
   when: inventory_hostname not in groups.get('proxmox', [])
 
+- name: Allow Chrony startup without kernel clock control
+  ansible.builtin.file:
+    path: /etc/systemd/system/chrony.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: inventory_hostname not in groups.get('proxmox', [])
+
+- name: Install Chrony startup override
+  ansible.builtin.copy:
+    content: "[Unit]\nConditionCapability=\n"
+    dest: /etc/systemd/system/chrony.service.d/boetticher.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd
+  when: inventory_hostname not in groups.get('proxmox', [])
+
+- name: Flush systemd after installing the Chrony override
+  ansible.builtin.meta: flush_handlers
+  when: inventory_hostname not in groups.get('proxmox', [])
+
 - name: Enable chrony
   ansible.builtin.service:
     name: chrony
     enabled: true
     state: started
+
+- name: Configure appliances to use the platform DNS pair
+  ansible.builtin.copy:
+    content: "{% for nameserver in dns_plan.nameservers %}nameserver {{ nameserver }}\n{% endfor %}"
+    dest: /etc/resolv.conf
+    owner: root
+    group: root
+    mode: '0644'
+  when: inventory_hostname not in groups.get('proxmox', [])
 
 - name: Install bounded local journald configuration
   ansible.builtin.file:
@@ -51,8 +83,8 @@
     path: /var/lib/boetticher/identity/logging
     state: directory
     owner: root
-    group: root
-    mode: '0700'
+    group: systemd-journal
+    mode: '0750'
   when: inventory_hostname in logging_upload_configs
 
 - name: Generate endpoint-local logging private key
@@ -60,6 +92,14 @@
     argv: [openssl, genpkey, -algorithm, EC, -pkeyopt, ec_paramgen_curve:P-256, -out, "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key"]
   args:
     creates: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key"
+  when: inventory_hostname in logging_upload_configs
+
+- name: Allow the upload service to read its private key
+  ansible.builtin.file:
+    path: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key"
+    owner: root
+    group: systemd-journal
+    mode: '0640'
   when: inventory_hostname in logging_upload_configs
 
 - name: Generate endpoint-local logging CSR
@@ -106,6 +146,29 @@
     owner: root
     group: root
     mode: '0644'
+  when: inventory_hostname in logging_upload_configs
+
+- name: Install bounded journal-upload retry policy
+  block:
+    - name: Create journal-upload service drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/systemd-journal-upload.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Write journal-upload retry policy
+      ansible.builtin.copy:
+        content: "[Service]\nRestartSec=15s\n"
+        dest: /etc/systemd/system/systemd-journal-upload.service.d/boetticher.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Reload systemd after installing journal-upload policy
+      ansible.builtin.systemd:
+        daemon_reload: true
   when: inventory_hostname in logging_upload_configs
 
 - name: Enable asynchronous journal upload after endpoint certificate installation

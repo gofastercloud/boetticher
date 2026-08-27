@@ -47,7 +47,7 @@ func renderFirewallCloudInit(guest GuestPlan, operatorPublicKey string) (CloudIn
 			fmt.Fprintf(&network, "    addresses: [%s/24]\n", nic.Address)
 		}
 	}
-	userData := "#cloud-config\nhostname: lab-fw-01\nmanage_etc_hosts: true\nusers:\n  - name: labadmin\n    shell: /bin/bash\n    groups: [sudo]\n    sudo: [\"ALL=(ALL) NOPASSWD:/usr/bin/systemctl, /usr/sbin/nft, /usr/sbin/kea-dhcp4, /usr/sbin/kea-dhcp-ddns, /bin/sh -c * /usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*\"]\n"
+	userData := "#cloud-config\nhostname: lab-fw-01\nmanage_etc_hosts: true\nusers:\n  - name: labadmin\n    shell: /bin/bash\n    groups: [sudo]\n    sudo: [\"ALL=(ALL) NOPASSWD:/usr/bin/systemctl, /usr/sbin/nft, /usr/sbin/kea-dhcp4, /usr/sbin/kea-dhcp-ddns, /bin/cat /var/lib/kea/kea-leases4.csv, /bin/sh -c * /usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*\"]\n"
 	if operatorPublicKey != "" {
 		// JSON strings are valid YAML scalars and preserve an OpenSSH comment
 		// without allowing it to alter the cloud-init document structure.

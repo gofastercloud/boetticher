@@ -1,5 +1,7 @@
 package dns
 
+import "strings"
+
 // PowerDNSCommand is the reviewable, deterministic command contract used by
 // the DNS role. TSIG material is supplied to sqlite3 through protected stdin,
 // never as a process argument.
@@ -22,7 +24,7 @@ func PrimaryCommandPlan(plan Plan) []PowerDNSCommand {
 	for _, zone := range allZones(plan) {
 		commands = append(commands,
 			PowerDNSCommand{Args: []string{"pdnsutil", "create-zone", zone}},
-			PowerDNSCommand{Args: []string{"pdnsutil", "replace-rrset", zone, zone, "NS", "300", "lab-dns-01." + plan.StaticZone + ".", "lab-dns-02." + plan.StaticZone + "."}},
+			PowerDNSCommand{Args: []string{"pdnsutil", "replace-rrset", zone, "@", "NS", "300", "lab-dns-01." + plan.StaticZone + ".", "lab-dns-02." + plan.StaticZone + "."}},
 		)
 	}
 	if plan.DDNS.Enabled {
@@ -40,12 +42,21 @@ func PrimaryCommandPlan(plan Plan) []PowerDNSCommand {
 		}
 	}
 	for _, record := range plan.StaticRecords {
-		commands = append(commands, PowerDNSCommand{Args: []string{"pdnsutil", "replace-rrset", plan.StaticZone, record.Name + ".", record.Type, "300", record.Value}})
+		commands = append(commands, PowerDNSCommand{Args: []string{"pdnsutil", "replace-rrset", plan.StaticZone, zoneRelativeName(record.Name, plan.StaticZone), record.Type, "300", record.Value}})
 	}
 	for _, deletion := range plan.PendingDeletions {
 		commands = append(commands, PowerDNSCommand{Args: []string{"pdnsutil", "delete-rrset", plan.StaticZone, deletion.Name + ".", deletion.Type}})
 	}
 	return commands
+}
+
+func zoneRelativeName(name, zone string) string {
+	name = strings.TrimSuffix(strings.ToLower(name), ".")
+	zone = strings.TrimSuffix(strings.ToLower(zone), ".")
+	if name == zone {
+		return "@"
+	}
+	return strings.TrimSuffix(name, "."+zone)
 }
 
 func allZones(plan Plan) []string {

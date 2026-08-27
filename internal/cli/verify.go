@@ -638,7 +638,11 @@ func checkSOPSBoundary(siteDir string, s model.Site) error {
 }
 
 func checkRuntimeBoundary(siteDir string, s model.Site) error {
-	relative, err := filepath.Rel(filepath.Clean(siteDir), filepath.Clean(site.RuntimeDir(s)))
+	absSiteDir, err := filepath.Abs(siteDir)
+	if err != nil {
+		return err
+	}
+	relative, err := filepath.Rel(filepath.Clean(absSiteDir), filepath.Clean(site.RuntimeDir(s)))
 	if err != nil {
 		return err
 	}
