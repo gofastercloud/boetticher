@@ -78,7 +78,7 @@ func CollectorConfiguration(plan Plan) string {
 
 func CollectorServiceOverride(plan Plan) string {
 	return strings.Join([]string{
-		"[Service]", "LogsDirectory=", "ExecStart=", "ExecStart=/usr/lib/systemd/systemd-journal-remote --listen-https=-3 --output=" + plan.RemoteJournalPath,
+		"[Service]", "LogsDirectory=", "ReadWritePaths=" + plan.RemoteJournalPath, "ExecStart=", "ExecStart=/usr/lib/systemd/systemd-journal-remote --listen-https=-3 --output=" + plan.RemoteJournalPath,
 	}, "\n") + "\n"
 }
 
