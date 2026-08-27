@@ -3,6 +3,13 @@
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 
+## [0.3.23] - 2026-08-27
+
+### Fixed
+
+- Upload deterministic cloud-init snippets through the authenticated host SSH
+  path because PVE 9.2's storage upload API excludes snippets content.
+
 ## [0.3.22] - 2026-08-27
 
 ### Fixed

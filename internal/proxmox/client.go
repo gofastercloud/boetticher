@@ -23,9 +23,12 @@ import (
 )
 
 type Client struct {
-	BaseURL string
-	Token   string
-	HTTP    *http.Client
+	BaseURL       string
+	Token         string
+	HTTP          *http.Client
+	snippetRunner StdinCommandRunner
+	snippetAddr   string
+	snippetUser   string
 }
 
 type Config struct {
@@ -36,6 +39,11 @@ type Config struct {
 	CAFile      string
 	Insecure    bool
 	Timeout     time.Duration
+	// SnippetRunner is the authenticated Proxmox host path used because PVE
+	// 9.2's storage upload API does not accept snippets content.
+	SnippetRunner  StdinCommandRunner
+	SnippetAddress string
+	SnippetUser    string
 }
 
 type APIError struct {
@@ -80,7 +88,11 @@ func NewClient(config Config) (*Client, error) {
 	if config.User != "" && config.TokenID != "" {
 		token = "PVEAPIToken=" + config.User + "!" + config.TokenID + "=" + config.TokenSecret
 	}
-	return &Client{BaseURL: strings.TrimRight(config.BaseURL, "/"), Token: token, HTTP: &http.Client{Transport: transport, Timeout: timeout}}, nil
+	return &Client{
+		BaseURL: strings.TrimRight(config.BaseURL, "/"), Token: token,
+		HTTP:          &http.Client{Transport: transport, Timeout: timeout},
+		snippetRunner: config.SnippetRunner, snippetAddr: config.SnippetAddress, snippetUser: config.SnippetUser,
+	}, nil
 }
 
 func (c *Client) Get(ctx context.Context, endpoint string, query url.Values, out any) error {
@@ -573,6 +585,12 @@ func (c *Client) UploadStorageText(ctx context.Context, node, storage, content, 
 	if strings.ContainsAny(filename, "/\\\r\n") {
 		return errors.New("uploaded filename must be a plain filename")
 	}
+	if content == "snippets" && c.snippetRunner != nil {
+		if storage != "local" || c.snippetAddr == "" || c.snippetUser == "" {
+			return errors.New("SSH snippet upload requires the local storage and bootstrap host identity")
+		}
+		return uploadSnippetViaSSH(ctx, c.snippetRunner, c.snippetAddr, c.snippetUser, filename, value)
+	}
 	body := &bytes.Buffer{}
 	multipartWriter := multipart.NewWriter(body)
 	if err := multipartWriter.WriteField("content", content); err != nil {
@@ -612,6 +630,17 @@ func (c *Client) UploadStorageText(ctx context.Context, node, storage, content, 
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return &APIError{StatusCode: response.StatusCode, Status: response.Status, Message: strings.TrimSpace(string(data))}
+	}
+	return nil
+}
+
+func uploadSnippetViaSSH(ctx context.Context, runner StdinCommandRunner, address, user, filename, value string) error {
+	if runner == nil || address == "" || user == "" || filename == "" {
+		return errors.New("SSH snippet upload identity is incomplete")
+	}
+	command := privilegedCommand(user, "install -D -m 0644 /dev/stdin "+shellQuote("/var/lib/vz/snippets/"+filename))
+	if _, err := runner.RunWithStdin(ctx, address, user, command, strings.NewReader(value)); err != nil {
+		return fmt.Errorf("upload Proxmox snippet over SSH: %w", err)
 	}
 	return nil
 }

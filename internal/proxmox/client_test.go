@@ -473,6 +473,17 @@ func TestEnsureCloudImageAcceptsPVEImportWithoutListingChecksumAfterVerifiedDown
 	}
 }
 
+func TestUploadStorageTextUsesAuthenticatedSSHForSnippets(t *testing.T) {
+	runner := &fakeRunner{}
+	client := &Client{snippetRunner: runner, snippetAddr: "192.0.2.10", snippetUser: "root"}
+	if err := client.UploadStorageText(context.Background(), "node", "local", "snippets", "boetticher-190-meta.yaml", "instance-id: trial\n"); err != nil {
+		t.Fatal(err)
+	}
+	if runner.address != "192.0.2.10" || runner.user != "root" || !strings.Contains(runner.command, "/var/lib/vz/snippets/boetticher-190-meta.yaml") {
+		t.Fatalf("unexpected SSH snippet upload: %#v", runner)
+	}
+}
+
 func TestDownloadURLRejectsUnpinnedOrUnsafeInputs(t *testing.T) {
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: roundTripFunc(func(r *http.Request) *http.Response { return response([]byte(`{"data":"unexpected"}`)) })}}
 	if _, err := client.DownloadURL(context.Background(), "node", "local", "../image.qcow2", "https://images.example/image.qcow2", strings.Repeat("a", 128)); err == nil {

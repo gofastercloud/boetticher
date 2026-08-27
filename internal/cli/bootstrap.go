@@ -197,6 +197,7 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	client, err := proxmox.NewClient(proxmox.Config{
 		BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", User: credentials.APIUser,
 		TokenID: credentials.TokenID, TokenSecret: credentials.TokenSecret, CAFile: *proxmoxCA, Insecure: *insecure,
+		SnippetRunner: runner, SnippetAddress: s.BootstrapAddress, SnippetUser: *initialUser,
 	})
 	if err != nil {
 		return err
