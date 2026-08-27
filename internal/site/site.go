@@ -406,6 +406,61 @@ func LoadPlatformSecret(dir string, s model.Site, ageIdentityPath, key string) (
 	return value, nil
 }
 
+// PurgeModuleSecrets removes only secret names declared by one module after
+// its caller has completed the module's exact ownership-checked resource
+// purge. A name referenced by another composed declaration is shared, not
+// module-owned, and causes a fail-closed refusal rather than deletion.
+func PurgeModuleSecrets(dir string, s model.Site, ageIdentityPath string, module string, declaration model.ModuleDeclaration) error {
+	owned, err := moduleSecretOwnership(s, module, declaration)
+	if err != nil || len(owned) == 0 {
+		return err
+	}
+	values, err := LoadEncryptedDocument(dir, ageIdentityPath, filepath.Join("secrets", "boetticher.sops.yaml"))
+	if err != nil {
+		return fmt.Errorf("load encrypted platform secrets for module %s purge: %w", module, err)
+	}
+	changed := purgeModuleSecretValues(values, owned)
+	if !changed {
+		return nil
+	}
+	if err := StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), values); err != nil {
+		return fmt.Errorf("store encrypted platform secrets after module %s purge: %w", module, err)
+	}
+	return nil
+}
+
+func moduleSecretOwnership(s model.Site, module string, declaration model.ModuleDeclaration) (map[string]struct{}, error) {
+	if module == "" || declaration.Module != module {
+		return nil, errors.New("module secret purge requires a matching declaration owner")
+	}
+	owned := make(map[string]struct{}, len(declaration.Secrets))
+	for _, secret := range declaration.Secrets {
+		owned[secret.Name] = struct{}{}
+	}
+	for _, other := range s.Declarations {
+		if other.Module == module {
+			continue
+		}
+		for _, secret := range other.Secrets {
+			if _, shared := owned[secret.Name]; shared {
+				return nil, fmt.Errorf("HOLD: refusing to purge module %s secret %q because it is also declared by module %s", module, secret.Name, other.Module)
+			}
+		}
+	}
+	return owned, nil
+}
+
+func purgeModuleSecretValues(values map[string]any, owned map[string]struct{}) bool {
+	changed := false
+	for name := range owned {
+		if _, exists := values[name]; exists {
+			delete(values, name)
+			changed = true
+		}
+	}
+	return changed
+}
+
 func randomID() (string, error) {
 	var data [16]byte
 	if _, err := rand.Read(data[:]); err != nil {

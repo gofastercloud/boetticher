@@ -295,6 +295,13 @@ func runModuleChange(args []string, out interface{ Write([]byte) (int, error) },
 		if err := proxmox.PurgeModule(context.Background(), client, oldPlan, name); err != nil {
 			return err
 		}
+		declaration, ok := findDeclaration(purgeSite, name)
+		if !ok {
+			return fmt.Errorf("module %s purge declaration is missing", name)
+		}
+		if err := site.PurgeModuleSecrets(*siteDir, purgeSite, *ageIdentity, name, declaration); err != nil {
+			return err
+		}
 	}
 	retained := append([]model.RetainedModule(nil), oldSite.RetainedModules...)
 	if enable || *purge {
