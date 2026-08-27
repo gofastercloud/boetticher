@@ -15,6 +15,8 @@ project, so releases can make clean breaks while the design is settling.
   object so hosted-builder address readiness matches the live API contract.
 - Use Debian 13's `trixie` suite name when mmdebstrap consumes the pinned
   snapshot; the numeric `13` suite returned 404 during hosted construction.
+- Add bounded stage markers to hosted-builder output so a failed appliance
+  construction identifies the exact build phase.
 
 ## [0.3.32] - 2026-08-27
 

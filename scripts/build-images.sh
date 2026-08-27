@@ -288,12 +288,16 @@ package_lxc() {
 
 build_base() {
   rootfs=$(rootfs_for boetticher-base)
+  printf '%s\n' 'boetticher build stage: base rootfs'
   create_base_rootfs "$rootfs"
+  printf '%s\n' 'boetticher build stage: base identity'
   write_artifact_identity "$rootfs" base
+  printf '%s\n' 'boetticher build stage: base package'
   package_lxc boetticher-base
 }
 
 build_dns_blocky() {
+  printf '%s\n' 'boetticher build stage: dns blocky'
   rootfs=$(prepare_rootfs boetticher-dns-blocky)
   install_powerdns "$rootfs"
   install_packages "$rootfs" chrony
@@ -340,6 +344,7 @@ EOF
 }
 
 build_logging() {
+  printf '%s\n' 'boetticher build stage: logging'
   rootfs=$(prepare_rootfs boetticher-logging)
   install_packages "$rootfs" systemd-journal-remote
   write_artifact_identity "$rootfs" logging
@@ -347,6 +352,7 @@ build_logging() {
 }
 
 build_monitoring() {
+  printf '%s\n' 'boetticher build stage: monitoring'
   rootfs=$(prepare_rootfs boetticher-monitoring)
   install_zabbix "$rootfs"
   install -D -m 0755 images/monitoring/runtime/prepare-zabbix-config.sh "$rootfs/usr/lib/boetticher/prepare-zabbix-config"
@@ -357,6 +363,7 @@ build_monitoring() {
 }
 
 build_portal() {
+  printf '%s\n' 'boetticher build stage: portal'
   rootfs=$(prepare_rootfs boetticher-portal)
   install_packages "$rootfs" nginx
   write_artifact_identity "$rootfs" portal
@@ -364,6 +371,7 @@ build_portal() {
 }
 
 build_firewall() {
+  printf '%s\n' 'boetticher build stage: firewall'
   for tool in qemu-img virt-customize virt-cat sha512sum; do
     if ! command -v "$tool" >/dev/null 2>&1; then
       echo "HOLD: required firewall VM-image tool is unavailable: $tool" >&2
