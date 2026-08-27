@@ -125,7 +125,10 @@
         owner: root
         group: root
         mode: '0644'
-      notify: reload systemd
+
+    - name: Reload systemd after installing journal-upload policy
+      ansible.builtin.systemd:
+        daemon_reload: true
   when: inventory_hostname in logging_upload_configs
 
 - name: Enable asynchronous journal upload after endpoint certificate installation
