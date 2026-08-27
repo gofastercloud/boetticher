@@ -247,6 +247,18 @@ func TestPowerDNSTemplateUsesCurrentPrimarySecondarySettings(t *testing.T) {
 	}
 }
 
+func TestDNSRoleMakesPowerDNSConfigReadableByServiceUser(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "dest: /etc/powerdns/pdns.conf\n    owner: root\n    group: pdns\n    mode: '0640'") {
+		t.Fatal("PowerDNS configuration is not readable by the pdns service user")
+	}
+}
+
 func TestFirewallRoleCreatesNftablesConfigurationDirectory(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
 	data, err := os.ReadFile(path)

@@ -71,7 +71,7 @@
     src: pdns.conf.j2
     dest: /etc/powerdns/pdns.conf
     owner: root
-    group: root
+    group: pdns
     mode: '0640'
   notify: restart pdns
   when: inventory_hostname in groups.get('dns', [])
