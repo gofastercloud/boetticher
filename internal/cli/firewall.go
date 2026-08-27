@@ -68,7 +68,7 @@ func runFirewall(args []string, out interface{ Write([]byte) (int, error) }) err
 func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
 	status := map[string]any{"mode": plan.Mode, "engine": plan.Engine, "model_revision": plan.ModelRevision, "ipv4_only": plan.IPv4Only, "forwarding_after_policy": plan.Forwarding, "interfaces": plan.Interfaces}
 	if live && s.Gateway.Mode == model.GatewayModeManaged {
-		data, err := gatewayCommand(siteDir, s, "sudo", "sh", "-c", remoteShellQuote(gatewayStatusScript))
+		data, err := gatewayCommand(siteDir, s, "sh", "-c", remoteShellQuote(gatewayStatusScript))
 		if err != nil {
 			return err
 		}

@@ -26,6 +26,12 @@ func TestGatewayStatusScriptDoesNotDependOnInterfaceEnumeration(t *testing.T) {
 	}
 }
 
+func TestGatewayStatusScriptUsesReadOnlyTransport(t *testing.T) {
+	if containsString(gatewayStatusScript, "sudo") {
+		t.Fatal("read-only gateway status script unexpectedly requires sudo")
+	}
+}
+
 func containsString(value, wanted string) bool {
 	for i := 0; i+len(wanted) <= len(value); i++ {
 		if value[i:i+len(wanted)] == wanted {
