@@ -175,6 +175,9 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 	if !strings.Contains(string(RenderBuilderCloudInit().UserData), "qemu-guest-agent") {
 		t.Fatal("builder cloud-init does not enable the guest agent needed for address discovery")
 	}
+	if !strings.Contains(files.UserData, "bootcmd:") || !strings.Contains(files.UserData, "apt-get install --yes --no-install-recommends qemu-guest-agent") {
+		t.Fatal("builder cloud-init does not install the guest agent before readiness discovery")
+	}
 	if !strings.Contains(files.UserData, "qemu-guest-agent") || !strings.Contains(files.NetworkConfig, "dhcp4: true") || !strings.Contains(files.NetworkConfig, "macaddress: "+model.BuilderMAC) || !strings.Contains(files.NetworkConfig, "set-name: eth0") {
 		t.Fatal("builder cloud-init lacks guest-agent or bootstrap network setup")
 	}

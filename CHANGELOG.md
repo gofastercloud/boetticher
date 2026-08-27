@@ -3,6 +3,13 @@
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 
+## [0.3.27] - 2026-08-27
+
+### Fixed
+
+- Install and start the builder guest agent in the early pinned bootstrap
+  stage so address readiness does not wait for the later build command stage.
+
 ## [0.3.26] - 2026-08-27
 
 ### Fixed

@@ -162,6 +162,8 @@ users:
     permissions: '0440'
     content: |
       labadmin ALL=(root) NOPASSWD: /usr/local/sbin/boetticher-build
+bootcmd:
+  - [sh, -c, "set -eu; rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; install -d -m 0755 /etc/apt/sources.list.d; printf '%s\\n' 'Types: deb' 'URIs: https://snapshot.debian.org/archive/debian/20260327T000000Z/' 'Suites: trixie' 'Components: main' 'Check-Valid-Until: no' > /etc/apt/sources.list.d/boetticher-builder.sources; apt-get -o Acquire::Check-Valid-Until=false update; DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends qemu-guest-agent; systemctl enable --now qemu-guest-agent"]
 runcmd:
   - [sh, -c, "set -eu; rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; apt-get -o Acquire::Check-Valid-Until=false update; DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends ca-certificates curl jq libguestfs-tools mmdebstrap openssh-server qemu-guest-agent qemu-utils sudo tar zstd"]
   - [sh, -c, "set -eu; archive=/tmp/go1.26.5.linux-amd64.tar.gz; curl --fail --location --silent --show-error --output $archive https://go.dev/dl/go1.26.5.linux-amd64.tar.gz; printf '%s  %s\\n' 5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053 $archive | sha256sum --check --status; rm -rf /usr/local/go; tar -C /usr/local -xzf $archive; printf '%s\\n' 'export PATH=/usr/local/go/bin:$PATH' > /etc/profile.d/boetticher-go.sh; test \"$(/usr/local/go/bin/go version)\" = \"go version go1.26.5 linux/amd64\"; rm -f $archive"]
@@ -170,7 +172,7 @@ runcmd:
   - [touch, /run/boetticher-builder-ready]
 `
 	return CloudInitFiles{
-		MetaData: "instance-id: boetticher-builder-0.3.26\nlocal-hostname: lab-builder-01\n",
+		MetaData: "instance-id: boetticher-builder-0.3.27\nlocal-hostname: lab-builder-01\n",
 		UserData: userData,
 		NetworkConfig: fmt.Sprintf(`version: 2
 ethernets:
