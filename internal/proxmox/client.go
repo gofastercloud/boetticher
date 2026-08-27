@@ -746,7 +746,7 @@ func (c *Client) WaitTask(ctx context.Context, node, upid string) error {
 			return fmt.Errorf("inspect Proxmox task: %w", err)
 		}
 		if status.Status == "stopped" {
-			if status.ExitStatus != "OK" && status.ExitStatus != "" {
+			if status.ExitStatus != "OK" && status.ExitStatus != "" && !strings.HasPrefix(status.ExitStatus, "WARNINGS:") {
 				return fmt.Errorf("Proxmox task failed: %s", status.ExitStatus)
 			}
 			return nil

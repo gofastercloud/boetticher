@@ -55,6 +55,8 @@ project, so releases can make clean breaks while the design is settling.
   qualified Ansible/Jinja runtime.
 - Accept checksumless Proxmox `vztmpl` listings only after re-uploading and
   verifying the qualified local artifact bytes.
+- Treat Proxmox task completion with a `WARNINGS: N` status as successful while
+  retaining failures for other non-OK statuses.
 - Resume an owned running gateway without issuing a duplicate Proxmox start
   request after a prior deployment attempt.
 - Discover the hosted builder address through the QEMU guest agent after
