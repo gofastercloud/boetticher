@@ -108,6 +108,40 @@ func TestComposedDNSGuestsReceiveOnlyTheirOwnPersistentVolumes(t *testing.T) {
 	}
 }
 
+func TestComposedPlanRejectsMissingModuleDeclaration(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	site.Declarations = nil
+	if _, err := PlanFromSite(site); err == nil || !strings.Contains(err.Error(), "composed module guest") {
+		t.Fatalf("composed plan accepted missing declarations: %v", err)
+	}
+}
+
+func TestComposedFirewallKindComesFromDeclaredArtifact(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range site.Declarations {
+		if site.Declarations[index].Module == "firewall" {
+			site.Declarations[index].Artifact.Kind = string(KindLXC)
+		}
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, guest := range plan.Guests {
+		if guest.Name == "lab-fw-01" && guest.Kind != KindLXC {
+			t.Fatalf("firewall kind was inferred from its name instead of its artifact: %#v", guest)
+		}
+	}
+}
+
 func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {

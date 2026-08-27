@@ -298,6 +298,10 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	if err := s.Validate(); err != nil {
 		return Plan{}, err
 	}
+	// A loaded site is always composed and must carry declaration-owned
+	// appliance identity. The uncomposed path exists only for the explicit
+	// NewDefaultSite provider fixtures used by package tests.
+	composed := len(s.Modules) > 0 || len(s.Declarations) > 0
 	storagePlan, err := storage.PlanFromSite(s)
 	if err != nil {
 		return Plan{}, err
@@ -322,8 +326,10 @@ func PlanFromSite(s model.Site) (Plan, error) {
 			Monitoring: component.Monitoring, Backup: component.Backup, Tags: componentTags(s, component.Name),
 		}
 		if component.Module != "" {
+			declarationFound := false
 			for _, declaration := range s.Declarations {
 				if declaration.Module == component.Module {
+					declarationFound = true
 					guest.Owner = "boetticher/module/" + component.Module
 					guest.Artifact = declaration.Artifact
 					guest.Persistent = persistentForGuest(declaration.Persistent, component.Name)
@@ -337,6 +343,9 @@ func PlanFromSite(s model.Site) (Plan, error) {
 					}
 					break
 				}
+			}
+			if composed && !declarationFound {
+				return Plan{}, fmt.Errorf("HOLD: composed module guest %s has no declaration for module %s", component.Name, component.Module)
 			}
 			if guest.Artifact.Name == "" {
 				provider := ""
@@ -370,9 +379,22 @@ func PlanFromSite(s model.Site) (Plan, error) {
 				}
 			}
 		}
+		if component.Module != "" && guest.Artifact.Kind != "" {
+			switch guest.Artifact.Kind {
+			case string(KindQEMU):
+				guest.Kind = KindQEMU
+			case string(KindLXC):
+				guest.Kind = KindLXC
+			default:
+				return Plan{}, fmt.Errorf("HOLD: guest %s has unsupported declared artifact kind %q", guest.Name, guest.Artifact.Kind)
+			}
+		}
+		// Artifact kind is authoritative for composed module guests. The
+		// firewall name still selects its fixed network topology and sizing,
+		// but must not be the source of guest-kind ownership.
 		switch component.Name {
 		case "lab-fw-01":
-			guest.Kind, guest.Cores, guest.MemoryMiB, guest.DiskGiB = KindQEMU, 2, 2048, 16
+			guest.Cores, guest.MemoryMiB, guest.DiskGiB = 2, 2048, 16
 			guest.NICs = gatewayNICs(s)
 		case "lab-monitor-01":
 			guest.MemoryMiB, guest.DiskGiB = 2048, 16
