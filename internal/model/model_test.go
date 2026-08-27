@@ -218,6 +218,16 @@ func TestUserNetworkIntentValidatesReservationsAndDNSOwnership(t *testing.T) {
 			value.DNSRecords = []UserDNSRecord{{Name: "app.lab.home.arpa", Type: "TXT", Value: "bad"}}
 			return value
 		}(),
+		func() Site {
+			value := site
+			value.DHCPReservations = []DHCPReservation{{Zone: "SERVERS", Hostname: "network", Address: "10.10.20.0", MAC: "02:00:00:00:02:62"}}
+			return value
+		}(),
+		func() Site {
+			value := site
+			value.DHCPReservations = []DHCPReservation{{Zone: "SERVERS", Hostname: "broadcast", Address: "10.10.20.255", MAC: "02:00:00:00:02:63"}}
+			return value
+		}(),
 	} {
 		if err := invalid.Validate(); err == nil {
 			t.Fatal("invalid user network intent was accepted")

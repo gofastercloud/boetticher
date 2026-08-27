@@ -103,8 +103,20 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 	if strings.Contains(ruleset, `iifname "transit0" ip daddr @servers_net accept`) {
 		t.Fatal("managed module policy contains a broad TRANSIT-to-SERVERS allow")
 	}
+	if strings.Contains(ruleset, "10051") {
+		t.Fatal("Pulse-based monitoring policy retains the removed Zabbix port")
+	}
 	if strings.Contains(ruleset, `iifname "servers0" oifname "wan0" ip saddr @servers_net tcp dport { 53, 80, 443, 853 } counter accept`) {
 		t.Fatal("module-owned SERVERS guests inherit the unrestricted zone Internet allow")
+	}
+}
+
+func TestQualifiedModuleLoggingIntentResolvesCollector(t *testing.T) {
+	rule := policyRuleForIntent(model.NewDefaultSite("installation", "age1example"), "logging", model.NetworkIntent{
+		Source: "lab-portal-01", Destination: "logs.lab.home.arpa", Protocol: "tcp", Ports: []string{"19532"}, Purpose: "native journal upload",
+	})
+	if rule.DestinationCIDR != "10.10.10.40/32" || rule.To != "INFRA" {
+		t.Fatalf("qualified logging destination resolved incorrectly: %#v", rule)
 	}
 }
 

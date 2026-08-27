@@ -918,7 +918,7 @@ func validateDHCPReservations(s Site) error {
 			return fmt.Errorf("DHCP reservation hostname %q must be one DNS label", reservation.Hostname)
 		}
 		address := net.ParseIP(reservation.Address)
-		if address == nil || address.To4() == nil || !ipInZone(address, servers) || address.To4().String() == servers.Gateway {
+		if address == nil || address.To4() == nil || !usableIPInZone(address, servers) || address.To4().String() == servers.Gateway {
 			return fmt.Errorf("DHCP reservation %s address %q is outside usable SERVERS addresses", reservation.Hostname, reservation.Address)
 		}
 		canonicalAddress := address.To4().String()
@@ -1055,6 +1055,23 @@ func zoneByName(s Site, name string) (Zone, bool) {
 func ipInZone(ip net.IP, zone Zone) bool {
 	_, network, err := net.ParseCIDR(zone.Network)
 	return err == nil && network.Contains(ip.To4())
+}
+
+func usableIPInZone(ip net.IP, zone Zone) bool {
+	_, network, err := net.ParseCIDR(zone.Network)
+	if err != nil {
+		return false
+	}
+	candidate := ip.To4()
+	networkAddress := network.IP.To4()
+	if candidate == nil || networkAddress == nil || !network.Contains(candidate) {
+		return false
+	}
+	broadcast := make(net.IP, net.IPv4len)
+	for index := range broadcast {
+		broadcast[index] = networkAddress[index] | ^network.Mask[index]
+	}
+	return !candidate.Equal(networkAddress) && !candidate.Equal(broadcast)
 }
 
 func ipInAnyZone(ip net.IP, zones []Zone) bool {

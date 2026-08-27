@@ -246,8 +246,6 @@ func policyRules(s model.Site) []PolicyRule {
 	add("TRUSTED administration to MGMT", "TRUSTED", "MGMT", "allow", "tcp", []string{"22", "443", "8006"}, false, false)
 	add("SERVERS DNS to INFRA", "SERVERS", "INFRA", "allow", "tcp/udp", []string{"53"}, false, false)
 	add("SERVERS NTP to INFRA", "SERVERS", "INFRA", "allow", "udp", []string{"123"}, false, false)
-	add("SERVERS monitoring to MGMT", "SERVERS", "MGMT", "allow", "tcp", []string{"10051"}, false, false)
-	add("INFRA monitoring to MGMT", "INFRA", "MGMT", "allow", "tcp", []string{"10051"}, false, false)
 	add("MGMT administration to SERVERS", "MGMT", "SERVERS", "allow", "tcp", []string{"22", "53", "80", "443"}, false, false)
 	add("MGMT administration to INFRA", "MGMT", "INFRA", "allow", "tcp", []string{"22", "53", "80", "443"}, false, false)
 	add("MGMT diagnostics to TRUSTED", "MGMT", "TRUSTED", "allow", "icmp", nil, false, false)
@@ -303,12 +301,14 @@ func policyRuleForIntent(s model.Site, module string, intent model.NetworkIntent
 }
 
 func componentReference(s model.Site, reference string) (model.Component, bool) {
+	reference = strings.TrimSuffix(strings.ToLower(reference), ".")
+	domain := strings.TrimSuffix(strings.ToLower(s.Network.Domain), ".")
 	for _, component := range s.PlatformComponents() {
-		if component.Name == reference || component.Hostname == reference {
-			return component, true
-		}
-		for _, alias := range component.DNSAliases {
-			if alias == reference {
+		identities := []string{component.Name, component.Hostname}
+		identities = append(identities, component.DNSAliases...)
+		for _, identity := range identities {
+			identity = strings.TrimSuffix(strings.ToLower(identity), ".")
+			if identity == reference || (domain != "" && identity+"."+domain == reference) {
 				return component, true
 			}
 		}
@@ -410,8 +410,6 @@ func RenderNFT(plan Plan) (string, error) {
 	b.WriteString("    iifname \"servers0\" " + moduleSourceCondition + "ip daddr @infra_net udp dport { 53, 123 } counter accept comment \"boetticher:forward-servers-infra-udp\"\n")
 	b.WriteString("    iifname \"servers0\" " + moduleSourceCondition + "ip daddr @servers_net tcp dport 53 counter accept comment \"boetticher:forward-servers-dns-tcp\"\n")
 	b.WriteString("    iifname \"servers0\" " + moduleSourceCondition + "ip daddr @servers_net udp dport { 53, 123 } counter accept comment \"boetticher:forward-servers-dns-udp\"\n")
-	b.WriteString("    iifname \"servers0\" " + moduleSourceCondition + "ip daddr @mgmt_net tcp dport 10051 counter accept comment \"boetticher:forward-servers-monitoring\"\n")
-	b.WriteString("    iifname \"infra0\" " + moduleSourceCondition + "ip daddr @mgmt_net tcp dport 10051 counter accept comment \"boetticher:forward-infra-monitoring\"\n")
 	b.WriteString("    iifname \"mgmt0\" " + moduleSourceCondition + "ip daddr @infra_net tcp dport { 22, 53, 80, 443 } counter accept comment \"boetticher:forward-mgmt-infra-tcp\"\n")
 	b.WriteString("    iifname \"mgmt0\" " + moduleSourceCondition + "ip daddr @infra_net udp dport { 53, 123 } counter accept comment \"boetticher:forward-mgmt-infra-udp\"\n")
 	b.WriteString("    iifname \"mgmt0\" " + moduleSourceCondition + "ip daddr @servers_net tcp dport { 22, 53, 80, 443 } counter accept comment \"boetticher:forward-mgmt-servers-tcp\"\n")

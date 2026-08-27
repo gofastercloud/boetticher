@@ -444,6 +444,13 @@ func PurgeModuleSecrets(dir string, s model.Site, ageIdentityPath string, module
 	return nil
 }
 
+// ValidateModuleSecretOwnership performs the non-mutating ownership check used
+// before a module's live resources are purged.
+func ValidateModuleSecretOwnership(s model.Site, module string, declaration model.ModuleDeclaration) error {
+	_, err := moduleSecretOwnership(s, module, declaration)
+	return err
+}
+
 func moduleSecretOwnership(s model.Site, module string, declaration model.ModuleDeclaration) (map[string]struct{}, error) {
 	if module == "" || declaration.Module != module {
 		return nil, errors.New("module secret purge requires a matching declaration owner")

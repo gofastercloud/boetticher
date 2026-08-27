@@ -271,13 +271,20 @@ func runModuleChange(args []string, out interface{ Write([]byte) (int, error) },
 		return err
 	}
 	if *purge {
-		client, _, err := loadProxmoxClient(*siteDir, oldSite, *ageIdentity, *proxmoxCA, *insecure)
-		if err != nil {
-			return fmt.Errorf("load Proxmox client for module purge: %w", err)
-		}
 		purgeSite, err := modulePurgeSite(oldSite, name)
 		if err != nil {
 			return err
+		}
+		declaration, ok := findDeclaration(purgeSite, name)
+		if !ok {
+			return fmt.Errorf("module %s purge declaration is missing", name)
+		}
+		if err := site.ValidateModuleSecretOwnership(purgeSite, name, declaration); err != nil {
+			return err
+		}
+		client, _, err := loadProxmoxClient(*siteDir, oldSite, *ageIdentity, *proxmoxCA, *insecure)
+		if err != nil {
+			return fmt.Errorf("load Proxmox client for module purge: %w", err)
 		}
 		oldPlan, err := proxmox.PlanFromSite(purgeSite)
 		if err != nil {
@@ -294,10 +301,6 @@ func runModuleChange(args []string, out interface{ Write([]byte) (int, error) },
 		oldPlan.Node = node
 		if err := proxmox.PurgeModule(context.Background(), client, oldPlan, name); err != nil {
 			return err
-		}
-		declaration, ok := findDeclaration(purgeSite, name)
-		if !ok {
-			return fmt.Errorf("module %s purge declaration is missing", name)
 		}
 		if err := site.PurgeModuleSecrets(*siteDir, purgeSite, *ageIdentity, name, declaration); err != nil {
 			return err
