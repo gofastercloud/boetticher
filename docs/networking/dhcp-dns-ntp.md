@@ -13,5 +13,5 @@ Blocky as the default client-facing recursive/filtering provider. AdGuard Home
 is a supported typed alternative. PowerDNS receives authenticated Kea D2
 RFC2136 updates from TRUSTED and SANDBOX only.
 
-MGMT has reservations only. Core guests use fixed model addresses and do not
-depend on DHCP for their own operation.
+Core guests in TRANSIT, INFRA, SERVERS, and MGMT use fixed model addresses and
+do not depend on DHCP for their own operation.
