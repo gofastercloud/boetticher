@@ -44,7 +44,7 @@ const (
 	PortalVMID                  = 130
 	LoggingVMID                 = 140
 	BuilderVMID                 = 190
-	PrinterVMID                = 230
+	PrinterVMID                 = 230
 	BuilderCores                = 4
 	BuilderMemoryMiB            = 8192
 	BuilderDiskGiB              = 32
@@ -315,10 +315,11 @@ type Component struct {
 }
 
 type ModuleConfig struct {
-	Enabled   *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Provider  string                  `yaml:"provider,omitempty" json:"provider,omitempty"`
-	Upstreams []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
-	Models    []LiteLLMModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
+	Enabled    *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Provider   string                  `yaml:"provider,omitempty" json:"provider,omitempty"`
+	ModelAlias string                  `yaml:"model_alias,omitempty" json:"model_alias,omitempty"`
+	Upstreams  []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	Models     []LiteLLMModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
 }
 
 type USBExportBinding struct {

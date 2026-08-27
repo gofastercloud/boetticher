@@ -1,0 +1,29 @@
+name: boetticher-aiops
+version: 0.3.33
+base: boetticher-base
+architecture: amd64
+runtime:
+  adapter: boetticher-aiops
+  holmesgpt: 0.40.0
+  users:
+    - boetticher-aiops
+    - holmes
+  listeners:
+    - tcp://0.0.0.0:443
+    - tcp://127.0.0.1:8090
+  persistent_state: /var/lib/boetticher/aiops
+  transient_evidence: /run/boetticher-aiops
+security:
+  internet_toolset: disabled
+  bash_toolset: disabled
+  kubernetes_toolset: disabled
+  remediation: disabled
+  mcp: disabled
+  ssh_probes: disabled
+  holmes_network: loopback-only
+qualification:
+  - adapter-health
+  - holmes-loopback
+  - strict-tool-schema
+  - structured-inconclusive-output
+  - no-direct-egress

@@ -1,0 +1,15 @@
+toolsets:
+  internet:
+    enabled: false
+  bash:
+    enabled: false
+  kubernetes:
+    enabled: false
+  boetticher-evidence:
+    type: http
+    enabled: true
+    config:
+      hosts:
+        - http://127.0.0.1:8443
+      paths:
+        - /v1/evidence/query

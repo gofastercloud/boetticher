@@ -1,0 +1,25 @@
+[Unit]
+Description=HolmesGPT read-only investigation engine
+After=network.target
+
+[Service]
+User=holmes
+Group=holmes
+ExecStart=/opt/holmes/bin/holmes serve --host 127.0.0.1 --port 8090 --config /etc/boetticher-aiops/holmes.yaml
+Environment=OPENAI_API_BASE=http://127.0.0.1:8444/v1
+Environment=HOLMES_DISABLE_STRICT_TOOL_CALLS=false
+NoNewPrivileges=true
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+ReadOnlyPaths=/etc/boetticher-aiops
+RuntimeDirectory=holmes
+
+[Install]
+WantedBy=multi-user.target

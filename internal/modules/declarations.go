@@ -130,6 +130,37 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 			model.MonitoringDeclaration{Name: "octoprint", Kind: "service", Target: "lab-printer-01", Checks: []string{"octoprint", "loopback", "serial"}, Description: "OctoPrint backend and printer serial availability"},
 		)
 		declaration.Portal = []model.PortalEntry{{Name: "printer", Description: "mTLS-protected OctoPrint management for the Ender-3 V3 SE", URLs: []string{"https://octoprint." + site.Network.Domain}, Docs: []string{"docs/modules/printer.md"}}}
+	case "aiops":
+		config := site.ModuleConfig[name]
+		if _, err := model.ResolveLiteLLMAlias(site.ModuleConfig["litellm"], config.ModelAlias); err != nil {
+			return model.ModuleDeclaration{}, fmt.Errorf("aiops model alias: %w", err)
+		}
+		declaration.Secrets = []model.SecretDeclaration{
+			{Name: "aiops_webhook_secret", Purpose: "authenticate Pulse alert admission", Consumer: "boetticher-aiops", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential"},
+			{Name: "aiops_pulse_read_token", Purpose: "read bounded Pulse evidence", Consumer: "boetticher-aiops", Generation: "ephemeral", Rotation: "replaceable", Delivery: "systemd-credential"},
+			{Name: "aiops_pulse_note_token", Purpose: "write incident notes only", Consumer: "boetticher-aiops", Generation: "ephemeral", Rotation: "replaceable", Delivery: "systemd-credential"},
+		}
+		declaration.Certificates = append(declaration.Certificates,
+			model.CertificateRequest{Identity: "aiops-pulse-read", SANs: []string{"aiops-pulse-read." + site.Network.Domain}, Consumer: "boetticher-aiops-pulse-read"},
+			model.CertificateRequest{Identity: "aiops-pulse-note", SANs: []string{"aiops-pulse-note." + site.Network.Domain}, Consumer: "boetticher-aiops-pulse-note"},
+			model.CertificateRequest{Identity: "aiops-log-read", SANs: []string{"aiops-log-read." + site.Network.Domain}, Consumer: "boetticher-aiops-log-read"},
+			model.CertificateRequest{Identity: "aiops-router-client", SANs: []string{"aiops-router-client." + site.Network.Domain}, Consumer: "boetticher-aiops-router"},
+		)
+		declaration.NetworkIntents = []model.NetworkIntent{
+			{Source: "lab-monitor-01", Destination: "lab-aiops-01", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "Pulse webhook delivery and AIOps health"},
+			{Source: "lab-aiops-01", Destination: "monitor", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "bounded Pulse evidence reads and incident notes"},
+			{Source: "lab-aiops-01", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19533"}, Direction: "egress", Purpose: "bounded central journal evidence"},
+			{Source: "lab-aiops-01", Destination: "litellm", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "selected AI Router model alias"},
+			{Source: "lab-aiops-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Direction: "egress", Purpose: "AIOps DNS resolution"},
+			{Source: "lab-aiops-01", Destination: "dns", Protocol: "udp", Ports: []string{"123"}, Direction: "egress", Purpose: "AIOps time synchronisation"},
+			{Source: "lab-aiops-01", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"},
+		}
+		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true}
+		declaration.Monitoring = append(declaration.Monitoring,
+			model.MonitoringDeclaration{Name: "boetticher-aiops", Kind: "service", Target: "lab-aiops-01", Checks: []string{"https", "queue", "budgets"}, Description: "durable incident adapter health"},
+			model.MonitoringDeclaration{Name: "holmes", Kind: "service", Target: "lab-aiops-01", Checks: []string{"loopback"}, Description: "loopback-only HolmesGPT health"},
+		)
+		declaration.Portal = []model.PortalEntry{{Name: "aiops", Description: "Read-only HolmesGPT incident investigation", URLs: []string{"https://aiops." + site.Network.Domain}, Docs: []string{"docs/modules/aiops.md"}}}
 	default:
 		return model.ModuleDeclaration{}, fmt.Errorf("no declaration provider for first-party module %q", name)
 	}
@@ -167,6 +198,8 @@ func persistentFor(module, guest string) []model.PersistentState {
 			{Name: "octoprint-state", Guest: guest, Path: "/var/lib/octoprint", Kind: "application-state", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"},
 			{Name: "tls-identity", Guest: guest, Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"},
 		}
+	case "aiops":
+		return []model.PersistentState{identity, {Name: "aiops-state", Guest: guest, Path: "/var/lib/boetticher/aiops", Kind: "incident-state-and-endpoint-identities", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	default:
 		return []model.PersistentState{identity}
 	}
@@ -190,6 +223,8 @@ func volumesFor(module, guest string) []model.PersistentVolumeDeclaration {
 		return []model.PersistentVolumeDeclaration{identity, volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true)}
 	case "printer":
 		return []model.PersistentVolumeDeclaration{identity, volume("octoprint-state", "/var/lib/octoprint", 8, true), volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true)}
+	case "aiops":
+		return []model.PersistentVolumeDeclaration{identity, volume("aiops-state", "/var/lib/boetticher/aiops", 1, true)}
 	case "logging":
 		// Central journals are a bounded secondary evidence cache. The logging
 		// appliance remains in the platform backup set, while this high-churn

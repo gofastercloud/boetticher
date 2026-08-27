@@ -1,0 +1,12 @@
+[Unit]
+Description=Boetticher AIOps HTTPS listener
+
+[Socket]
+ListenStream=443
+Accept=no
+SocketUser=boetticher-aiops
+SocketGroup=boetticher-aiops
+SocketMode=0600
+
+[Install]
+WantedBy=sockets.target
