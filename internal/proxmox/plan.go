@@ -2,6 +2,8 @@ package proxmox
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1159,6 +1161,9 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 		if err := validateExistingGuestIdentity(current, guest); err != nil {
 			return err
 		}
+		if err := migrateLegacyQEMUPersistentVolumeSerials(ctx, client, plan, guest, current); err != nil {
+			return err
+		}
 		if err := validateExistingQEMUVolumes(current, plan, guest); err != nil {
 			return err
 		}
@@ -1393,6 +1398,18 @@ func persistentVolumeParam(volume model.PersistentVolumeDeclaration) (string, er
 }
 
 func persistentVolumeSerial(volume model.PersistentVolumeDeclaration) (string, error) {
+	identity, err := persistentVolumeIdentity(volume)
+	if err != nil {
+		return "", err
+	}
+	if len(identity) <= 36 {
+		return identity, nil
+	}
+	digest := sha256.Sum256([]byte(identity))
+	return "boetticher-" + hex.EncodeToString(digest[:])[:25], nil
+}
+
+func persistentVolumeIdentity(volume model.PersistentVolumeDeclaration) (string, error) {
 	if volume.Module == "" || volume.Guest == "" || volume.Name == "" {
 		return "", errors.New("persistent volume identity is incomplete")
 	}
@@ -1404,6 +1421,38 @@ func persistentVolumeSerial(volume model.PersistentVolumeDeclaration) (string, e
 		}
 	}
 	return "boetticher-" + volume.Module + "-" + volume.Guest + "-" + volume.Name, nil
+}
+
+func migrateLegacyQEMUPersistentVolumeSerials(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) error {
+	params := url.Values{}
+	for index, volume := range guest.Volumes {
+		serial, err := persistentVolumeSerial(volume)
+		if err != nil {
+			return err
+		}
+		legacySerial, err := persistentVolumeIdentity(volume)
+		if err != nil || serial == legacySerial {
+			continue
+		}
+		expected, err := qemuPersistentVolumeParam(plan, volume)
+		if err != nil {
+			return err
+		}
+		legacy := strings.Replace(expected, ",serial="+serial, ",serial="+legacySerial, 1)
+		if observed, _ := current[fmt.Sprintf("scsi%d", index+1)].(string); observed == legacy {
+			params.Set(fmt.Sprintf("scsi%d", index+1), expected)
+		}
+	}
+	if len(params) == 0 {
+		return nil
+	}
+	if err := client.SetVMConfig(ctx, plan.Node, guest.VMID, params); err != nil {
+		return fmt.Errorf("migrate legacy persistent volume serials for %s: %w", guest.Name, err)
+	}
+	for key, value := range params {
+		current[key] = value[0]
+	}
+	return nil
 }
 
 func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) error {

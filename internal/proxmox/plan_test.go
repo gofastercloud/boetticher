@@ -449,8 +449,40 @@ func TestQEMUPersistentVolumeParamsUseCoreResolvedStorage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := params["scsi1"]; got != modelStorageIDForTest+":4,backup=1,serial=boetticher-firewall-lab-fw-01-kea-leases" {
+	if got := params["scsi1"]; got != modelStorageIDForTest+":4,backup=1,serial=boetticher-131072f5f225f1be9bdcc358d" {
 		t.Fatalf("unexpected persistent QEMU disk: %q", got)
+	}
+}
+
+func TestEnsureQEMUMigratesLegacyPersistentVolumeSerial(t *testing.T) {
+	guest := GuestPlan{VMID: 100, Name: "test-fw", Volumes: []model.PersistentVolumeDeclaration{{
+		Name: "kea-leases", Module: "firewall", Guest: "lab-fw-01", SizeGiB: 4,
+		MountPath: "/var/lib/kea", Storage: modelStorageIDForTest, Backup: true,
+	}}}
+	legacy := modelStorageIDForTest + ":4,backup=1,serial=boetticher-firewall-lab-fw-01-kea-leases"
+	updated := ""
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/config":
+			return response([]byte(`{"data":{"name":"test-fw","scsi1":"` + legacy + `"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/100/config":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			updated = r.Form.Get("scsi1")
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected QEMU migration request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := ensureQEMU(context.Background(), client, Plan{Node: "node"}, guest); err != nil {
+		t.Fatalf("ensureQEMU() = %v", err)
+	}
+	want := modelStorageIDForTest + ":4,backup=1,serial=boetticher-131072f5f225f1be9bdcc358d"
+	if updated != want {
+		t.Fatalf("migrated QEMU disk = %q, want %q", updated, want)
 	}
 }
 
@@ -469,9 +501,11 @@ func TestExistingQEMUPersistentVolumesRequireStableIdentity(t *testing.T) {
 		MountPath: "/var/lib/kea", Storage: modelStorageIDForTest, Backup: true,
 	}}}
 	plan := Plan{}
-	if err := validateExistingQEMUVolumes(map[string]any{
-		"scsi1": modelStorageIDForTest + ":4,backup=1,serial=boetticher-firewall-lab-fw-01-kea-leases",
-	}, plan, guest); err != nil {
+	expected, err := qemuPersistentVolumeParam(plan, guest.Volumes[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateExistingQEMUVolumes(map[string]any{"scsi1": expected}, plan, guest); err != nil {
 		t.Fatalf("stable QEMU volume identity was rejected: %v", err)
 	}
 	for _, observed := range []string{

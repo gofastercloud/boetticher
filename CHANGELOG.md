@@ -9,6 +9,8 @@ project, so releases can make clean breaks while the design is settling.
 
 - Encode the managed firewall's QEMU cloud-init SSH key in the format required
   by the Proxmox 9.2 API.
+- Bound QEMU persistent-disk serials to Proxmox's 36-character limit and migrate
+  the deterministic legacy serial on retry.
 - Upload qualified QEMU appliance images through Proxmox's supported `import`
   content class before importing them into the selected VM storage.
 - Send streamed Proxmox artifact uploads with a computed `Content-Length`,
