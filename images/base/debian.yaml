@@ -1,5 +1,5 @@
 name: boetticher-base
-version: 0.3.23
+version: 0.3.24
 distribution: debian
 release: "13"
 architecture: amd64

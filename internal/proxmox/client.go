@@ -975,6 +975,16 @@ func (c *Client) request(ctx context.Context, method, endpoint string, query url
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		message := envelope.Message
+		if len(envelope.Errors) > 0 {
+			errorsJSON, marshalErr := json.Marshal(envelope.Errors)
+			if marshalErr == nil {
+				if message == "" {
+					message = string(errorsJSON)
+				} else {
+					message += ": " + string(errorsJSON)
+				}
+			}
+		}
 		if message == "" {
 			message = strings.TrimSpace(string(data))
 		}

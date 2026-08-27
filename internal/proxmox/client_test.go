@@ -42,6 +42,16 @@ func TestClientUsesTokenAndDecodesEnvelope(t *testing.T) {
 	}
 }
 
+func TestClientIncludesStructuredProxmoxErrors(t *testing.T) {
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: roundTripFunc(func(r *http.Request) *http.Response {
+		return apiResponse(http.StatusBadRequest, `{"message":"Parameter verification failed.","errors":{"name":"invalid"},"data":null}`)
+	})}}
+	err := client.Get(context.Background(), "/nodes/proxmox/qemu/190/config", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), `"name":"invalid"`) {
+		t.Fatalf("structured Proxmox error was discarded: %v", err)
+	}
+}
+
 func TestCheckTLSAcceptsUnauthenticatedAPIResponse(t *testing.T) {
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/version" {

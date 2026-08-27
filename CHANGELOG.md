@@ -3,6 +3,13 @@
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 
+## [0.3.24] - 2026-08-27
+
+### Fixed
+
+- Preserve structured PVE parameter errors in API failures so live bootstrap
+  diagnostics identify the rejected field.
+
 ## [0.3.23] - 2026-08-27
 
 ### Fixed
