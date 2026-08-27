@@ -9,6 +9,8 @@ project, so releases can make clean breaks while the design is settling.
 
 - Discover the hosted builder address through the QEMU guest agent after
   confirming the guest reaches userspace.
+- Start the hosted builder guest agent before the remaining qualification
+  downloads.
 
 ## [0.3.32] - 2026-08-27
 

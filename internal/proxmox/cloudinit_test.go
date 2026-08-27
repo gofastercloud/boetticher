@@ -178,6 +178,11 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 	if !strings.Contains(files.UserData, "qemu-guest-agent") || !strings.Contains(files.NetworkConfig, "dhcp4: true") || !strings.Contains(files.NetworkConfig, "macaddress: "+model.BuilderMAC) || !strings.Contains(files.NetworkConfig, "  ens18:") {
 		t.Fatal("builder cloud-init lacks guest-agent or bootstrap network setup")
 	}
+	guestAgent := strings.Index(files.UserData, "- [systemctl, enable, --now, qemu-guest-agent]")
+	goDownload := strings.Index(files.UserData, "archive=/tmp/go1.26.5.linux-amd64.tar.gz")
+	if guestAgent < 0 || goDownload < 0 || guestAgent > goDownload {
+		t.Fatal("builder cloud-init starts the guest agent after toolchain setup")
+	}
 	if !strings.Contains(files.UserData, "exec >/var/log/boetticher-build.log 2>&1") {
 		t.Fatal("builder command does not retain bounded build diagnostics")
 	}
