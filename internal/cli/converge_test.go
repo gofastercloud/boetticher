@@ -54,6 +54,16 @@ func TestPortalSourceDirectoryIsAbsoluteForAnsible(t *testing.T) {
 	}
 }
 
+func TestEndpointClientTrustProjectionIncludesRootAndIssuingCAs(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "runtimeVariables[\"client_ca_pem\"] = authority.RootCertPEM + authority.IssuingCertPEM") {
+		t.Fatal("endpoint mTLS trust projection does not include the complete platform CA chain")
+	}
+}
+
 func TestDeploymentModuleNamesFollowResolvedExternalGraph(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("trial", "age1trial", model.GatewayModeExternal))
 	disabled := false

@@ -165,7 +165,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 		secretValues["monitoring-db-password"] = zabbixDBPassword
 	}
-	runtimeVariables["client_ca_pem"] = authority.IssuingCertPEM
+	runtimeVariables["client_ca_pem"] = authority.RootCertPEM + authority.IssuingCertPEM
 	inventoryPath := filepath.Join(*siteDir, "generated", "ansible", "inventory.ini")
 	csrDir := filepath.Join(site.RuntimeDir(s), "pki")
 	if err := os.MkdirAll(csrDir, 0700); err != nil {
