@@ -178,6 +178,18 @@ func TestFirewallRoleCreatesNftablesConfigurationDirectory(t *testing.T) {
 	}
 }
 
+func TestKeaTemplateHandlesOptionalDHCPPool(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "firewall", "templates", "kea-dhcp4.conf.j2")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "subnet.get('pool', '')") {
+		t.Fatal("Kea template does not default the optional DHCP pool")
+	}
+}
+
 func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	variables, err := Variables(site)
