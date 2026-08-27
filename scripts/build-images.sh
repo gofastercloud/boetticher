@@ -278,11 +278,15 @@ install_zabbix() {
 package_lxc() {
   name=$1
   rootfs=$(rootfs_for "$name")
+  printf '%s\n' "boetticher package stage: $name smoke"
   destination="$output_root/$name"
   mkdir -p "$destination"
   ./scripts/smoke-appliance.sh "$name" "$rootfs"
+  printf '%s\n' "boetticher package stage: $name manifest"
   chroot "$rootfs" dpkg-query -W -f='${binary:Package}\t${Version}\n' | sort > "$destination/package-manifest.txt"
+  printf '%s\n' "boetticher package stage: $name archive"
   tar --numeric-owner --xattrs --acls -C "$rootfs" -cf - . | zstd -T0 -19 -o "$(artifact_for "$name")"
+  printf '%s\n' "boetticher package stage: $name checksum"
   sha256sum "$(artifact_for "$name")" > "$destination/content.sha256"
 }
 
