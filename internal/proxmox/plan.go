@@ -812,7 +812,11 @@ func DestroyBuilderVM(ctx context.Context, client *Client, node string) error {
 	if name, _ := current["name"].(string); name != "lab-builder-01" || !hasOwnerTag(currentTags(current), builderOwnerTag) {
 		return fmt.Errorf("HOLD: refusing to destroy unproven VMID %d builder ownership", model.BuilderVMID)
 	}
-	if status, _ := current["status"].(string); status == "running" {
+	status, err := client.QEMUStatus(ctx, node, model.BuilderVMID)
+	if err != nil {
+		return fmt.Errorf("inspect temporary builder status: %w", err)
+	}
+	if status == "running" {
 		if err := client.StopVM(ctx, node, model.BuilderVMID); err != nil {
 			return fmt.Errorf("stop temporary builder: %w", err)
 		}

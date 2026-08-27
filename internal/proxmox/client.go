@@ -282,6 +282,26 @@ func (c *Client) QEMUConfig(ctx context.Context, node string, vmid int, out any)
 	return c.Get(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "config"), nil, out)
 }
 
+// QEMUStatus reads the live status endpoint separately from the guest
+// configuration. Proxmox does not include a reliable running/stopped state in
+// every configuration response, and destructive builder cleanup must stop a
+// running VM before requesting its removal.
+func (c *Client) QEMUStatus(ctx context.Context, node string, vmid int) (string, error) {
+	if c == nil || node == "" || vmid <= 0 {
+		return "", errors.New("Proxmox client, node, and positive VMID are required")
+	}
+	var status struct {
+		Status string `json:"status"`
+	}
+	if err := c.Get(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "current"), nil, &status); err != nil {
+		return "", fmt.Errorf("read QEMU guest status: %w", err)
+	}
+	if status.Status == "" {
+		return "", errors.New("Proxmox QEMU status response did not contain a status")
+	}
+	return status.Status, nil
+}
+
 // GuestConfig inspects both Proxmox guest kinds for a VMID. A reserved
 // identity must be held when the opposite guest kind occupies it; treating a
 // kind mismatch as absence would turn an ownership collision into a create
