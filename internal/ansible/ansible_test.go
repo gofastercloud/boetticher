@@ -188,6 +188,18 @@ func TestLoggingCollectorKeyIsReadableByItsServiceUser(t *testing.T) {
 	}
 }
 
+func TestJournalUploadRetriesAfterDependencyStartup(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "systemd-journal-upload.service.d/boetticher.conf") || !strings.Contains(text, "RestartSec=15s") {
+		t.Fatal("journal upload has no bounded retry policy for DNS-dependent startup")
+	}
+}
+
 func TestBaseRoleRunsChronyWithoutKernelClockControlInAppliances(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
