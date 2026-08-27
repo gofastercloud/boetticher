@@ -18,6 +18,8 @@ project, so releases can make clean breaks while the design is settling.
   PVE 9.2 does not accept `snippets` through the storage upload API.
 - Select the local operator private key for deploy-time Proxmox and appliance
   SSH when the site does not override `ssh_identity_file`.
+- Include the managed `labadmin` account in the Proxmox SSH allow-list during
+  bootstrap so routine bastion access does not depend on root.
 - Discover the hosted builder address through the QEMU guest agent after
   confirming the guest reaches userspace.
 - Start the hosted builder guest agent before the remaining qualification
