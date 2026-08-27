@@ -39,6 +39,8 @@ project, so releases can make clean breaks while the design is settling.
   `dpkg-query` receives its `${binary:Package}` and `${Version}` placeholders.
 - Disable the firewall image's network wait-online unit without `--now`, which
   is rejected by offline systemd customization.
+- Accept compact JSON whitespace in the firewall image definition-identity
+  smoke check as well as the LXC appliance check.
 
 ## [0.3.32] - 2026-08-27
 

@@ -601,6 +601,13 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	if strings.Contains(string(buildScript), "systemctl disable --now systemd-networkd-wait-online.service") {
 		t.Fatal("firewall image customization tries to start or stop systemd in an offline image")
 	}
+	smokeFirewall, err := os.ReadFile(filepath.Join("..", "..", "scripts", "smoke-firewall-image.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(smokeFirewall), `"definition_sha256"[[:space:]]*:[[:space:]]*"[a-fA-F0-9]{64}"`) {
+		t.Fatal("firewall smoke check does not accept compact JSON artifact identity")
+	}
 }
 
 func TestApplianceBuildEmbedsDefinitionIdentityWithoutContentEvidence(t *testing.T) {

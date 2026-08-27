@@ -11,7 +11,7 @@ for package in nftables kea-dhcp4-server kea-dhcp-ddns-server chrony openssh-ser
 done
 printf '%s\n' "$packages" | grep -q '^Package: openssh-server$' || exit 1
 printf '%s\n' "$(virt-cat -a "$image" /etc/passwd)" | grep -q '^labadmin:' || { echo "firewall image is missing labadmin" >&2; exit 1; }
-virt-cat -a "$image" /usr/lib/boetticher/artifact.json | grep -Eq '"definition_sha256": "[a-fA-F0-9]{64}"' || { echo "firewall image is missing definition identity" >&2; exit 1; }
+virt-cat -a "$image" /usr/lib/boetticher/artifact.json | grep -Eq '"definition_sha256"[[:space:]]*:[[:space:]]*"[a-fA-F0-9]{64}"' || { echo "firewall image is missing definition identity" >&2; exit 1; }
 if virt-cat -a "$image" /usr/lib/boetticher/artifact.json | grep -q 'content_sha256'; then
   echo "firewall artifact definition identity must not embed content checksum" >&2
   exit 1
