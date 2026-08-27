@@ -507,51 +507,43 @@ func (c *Client) UploadStorageFile(ctx context.Context, node, storage, content, 
 		return fmt.Errorf("open qualified artifact %s: %w", source, err)
 	}
 	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect qualified artifact %s: %w", source, err)
+	}
+	prefix, suffix, contentType, err := artifactMultipartParts(content, checksum, filename)
+	if err != nil {
+		return err
+	}
 	base, err := url.Parse(c.BaseURL)
 	if err != nil {
 		return err
 	}
 	base.Path = path.Join(base.Path, "/nodes", node, "storage", storage, "upload")
 	pipeReader, pipeWriter := io.Pipe()
-	multipartWriter := multipart.NewWriter(pipeWriter)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, base.String(), pipeReader)
 	if err != nil {
 		_ = pipeReader.Close()
 		return err
 	}
-	request.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+	request.Header.Set("Content-Type", contentType)
+	request.ContentLength = int64(len(prefix)) + info.Size() + int64(len(suffix))
 	if c.Token != "" {
 		request.Header.Set("Authorization", c.Token)
 	}
 	streamErr := make(chan error, 1)
 	go func() {
-		if err := multipartWriter.WriteField("content", content); err != nil {
+		if _, err := pipeWriter.Write(prefix); err != nil {
 			_ = pipeWriter.CloseWithError(err)
 			streamErr <- err
 			return
 		}
-		if err := multipartWriter.WriteField("checksum", checksum); err != nil {
-			_ = pipeWriter.CloseWithError(err)
-			streamErr <- err
-			return
-		}
-		if err := multipartWriter.WriteField("checksum-algorithm", "sha256"); err != nil {
-			_ = pipeWriter.CloseWithError(err)
-			streamErr <- err
-			return
-		}
-		part, err := multipartWriter.CreateFormFile("filename", filename)
-		if err != nil {
-			_ = pipeWriter.CloseWithError(err)
-			streamErr <- err
-			return
-		}
-		if _, err := io.Copy(part, file); err != nil {
+		if _, err := io.Copy(pipeWriter, file); err != nil {
 			_ = pipeWriter.CloseWithError(fmt.Errorf("read qualified artifact %s: %w", source, err))
 			streamErr <- err
 			return
 		}
-		if err := multipartWriter.Close(); err != nil {
+		if _, err := pipeWriter.Write(suffix); err != nil {
 			_ = pipeWriter.CloseWithError(err)
 			streamErr <- err
 			return
@@ -578,6 +570,34 @@ func (c *Client) UploadStorageFile(ctx context.Context, node, storage, content, 
 		return &APIError{StatusCode: response.StatusCode, Status: response.Status, Message: strings.TrimSpace(string(data))}
 	}
 	return nil
+}
+
+// artifactMultipartParts builds the fixed multipart framing separately from
+// the artifact bytes. This keeps uploads streamed while allowing the request
+// to send Content-Length, which pveproxy requires for file uploads.
+func artifactMultipartParts(content, checksum, filename string) ([]byte, []byte, string, error) {
+	var body bytes.Buffer
+	multipartWriter := multipart.NewWriter(&body)
+	if err := multipartWriter.WriteField("content", content); err != nil {
+		return nil, nil, "", err
+	}
+	if err := multipartWriter.WriteField("checksum", checksum); err != nil {
+		return nil, nil, "", err
+	}
+	if err := multipartWriter.WriteField("checksum-algorithm", "sha256"); err != nil {
+		return nil, nil, "", err
+	}
+	if _, err := multipartWriter.CreateFormFile("filename", filename); err != nil {
+		return nil, nil, "", err
+	}
+	prefixLength := body.Len()
+	if err := multipartWriter.Close(); err != nil {
+		return nil, nil, "", err
+	}
+	full := body.Bytes()
+	prefix := append([]byte(nil), full[:prefixLength]...)
+	suffix := append([]byte(nil), full[prefixLength:]...)
+	return prefix, suffix, multipartWriter.FormDataContentType(), nil
 }
 
 // UploadStorageText uploads deterministic non-secret cloud-init content to a
