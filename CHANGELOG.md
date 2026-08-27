@@ -3,6 +3,13 @@
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 
+## [0.3.21] - 2026-08-27
+
+### Fixed
+
+- Accept the PVE 9.2 import entry after its successful checksum-verified
+  download task even though import listings omit checksum fields.
+
 ## [0.3.20] - 2026-08-27
 
 ### Fixed

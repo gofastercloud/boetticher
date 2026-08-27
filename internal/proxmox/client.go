@@ -722,7 +722,15 @@ func (c *Client) EnsureCloudImage(ctx context.Context, node, storage, filename, 
 			if observed == "" {
 				observed = content.CSum
 			}
-			if observed == "" || !strings.EqualFold(observed, checksum) {
+			// PVE validates the requested checksum inside the completed
+			// download task but does not expose it for import content in the
+			// storage listing. A newly downloaded matching entry is therefore
+			// qualified by the successful task; pre-existing entries still
+			// require listing checksum evidence above.
+			if observed == "" {
+				return content.VolID, nil
+			}
+			if !strings.EqualFold(observed, checksum) {
 				return "", fmt.Errorf("downloaded gateway image %q has no matching checksum evidence", filename)
 			}
 			return content.VolID, nil

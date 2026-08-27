@@ -1,5 +1,5 @@
 api_version: boetticher/v3
-platform_version: 0.3.20
+platform_version: 0.3.21
 schema_version: 3
 storage_profile: single-disk
 gateway:

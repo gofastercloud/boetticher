@@ -446,6 +446,33 @@ func TestDownloadURLUsesPinnedChecksumWithoutShellArguments(t *testing.T) {
 	}
 }
 
+func TestEnsureCloudImageAcceptsPVEImportWithoutListingChecksumAfterVerifiedDownload(t *testing.T) {
+	checksum := strings.Repeat("a", 128)
+	var contentRequests int
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+			contentRequests++
+			if contentRequests == 1 {
+				return response([]byte(`{"data":[]}`))
+			}
+			return response([]byte(`{"data":[{"content":"import","volid":"local:import/image.qcow2","format":"qcow2","size":42}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/download-url":
+			return response([]byte(`{"data":"UPID:pve:download"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:download/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		default:
+			t.Fatalf("unexpected cloud image request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	volID, err := client.EnsureCloudImage(context.Background(), "node", "local", "image.qcow2", "https://images.example/image.qcow2", checksum)
+	if err != nil || volID != "local:import/image.qcow2" {
+		t.Fatalf("EnsureCloudImage() = %q, %v", volID, err)
+	}
+}
+
 func TestDownloadURLRejectsUnpinnedOrUnsafeInputs(t *testing.T) {
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: roundTripFunc(func(r *http.Request) *http.Response { return response([]byte(`{"data":"unexpected"}`)) })}}
 	if _, err := client.DownloadURL(context.Background(), "node", "local", "../image.qcow2", "https://images.example/image.qcow2", strings.Repeat("a", 128)); err == nil {
