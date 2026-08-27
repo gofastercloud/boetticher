@@ -8,15 +8,20 @@ run() {
   chroot "$rootfs" "$@" >/dev/null 2>&1
 }
 
+printf '%s\n' 'boetticher smoke check: module descriptor absence'
 test ! -e "$rootfs/etc/boetticher/module.yaml"
+printf '%s\n' 'boetticher smoke check: artifact identity presence'
 test -s "$rootfs/usr/lib/boetticher/artifact.json"
+printf '%s\n' 'boetticher smoke check: artifact definition checksum'
 grep -Eq '"definition_sha256": "[a-fA-F0-9]{64}"' "$rootfs/usr/lib/boetticher/artifact.json"
 if grep -q 'content_sha256' "$rootfs/usr/lib/boetticher/artifact.json"; then
   echo "artifact definition identity must not embed the built content checksum" >&2
   exit 1
 fi
+printf '%s\n' 'boetticher smoke check: authorized key absence'
 test ! -e "$rootfs/home/labadmin/.ssh/authorized_keys"
 test ! -e "$rootfs/root/.ssh/authorized_keys"
+printf '%s\n' 'boetticher smoke check: SSH host identity absence'
 if find "$rootfs/etc/ssh" -maxdepth 1 -name 'ssh_host_*' -print -quit | grep -q .; then
   echo "artifact contains baked SSH host identity" >&2
   exit 1

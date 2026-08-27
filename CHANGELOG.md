@@ -19,6 +19,8 @@ project, so releases can make clean breaks while the design is settling.
   construction identifies the exact build phase.
 - Label the existing appliance smoke checks in hosted-builder diagnostics so
   failed base-contract checks identify the exact assertion.
+- Label the smoke preamble assertions so artifact identity and baked-identity
+  failures remain diagnosable in the hosted-builder log.
 
 ## [0.3.32] - 2026-08-27
 
