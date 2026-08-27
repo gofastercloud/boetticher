@@ -134,8 +134,8 @@ func TestMonitoringFrontendHandlersFlushBeforeReconciliation(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "Apply monitoring frontend handlers before controller reconciliation") || !strings.Contains(text, "ansible.builtin.meta: flush_handlers") {
-		t.Fatal("monitoring frontend handlers are not flushed before controller reconciliation")
+	if !strings.Contains(text, "Reload nginx after enabling the monitoring frontend") || !strings.Contains(text, "state: reloaded") {
+		t.Fatal("monitoring frontend is not reloaded before controller reconciliation")
 	}
 }
 

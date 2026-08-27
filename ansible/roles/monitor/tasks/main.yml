@@ -256,8 +256,10 @@
     - monitor_server_cert_pem is defined
     - monitor_server_cert_pem | length > 0
 
-- name: Apply monitoring frontend handlers before controller reconciliation
-  ansible.builtin.meta: flush_handlers
+- name: Reload nginx after enabling the monitoring frontend
+  ansible.builtin.service:
+    name: nginx
+    state: reloaded
   when:
     - inventory_hostname == 'lab-monitor-01'
     - monitor_server_cert_pem is defined
