@@ -180,7 +180,7 @@ func DiscoverPhysicalNetworkViaSSH(ctx context.Context, runner CommandRunner, ad
 	}
 	nodeOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /nodes --output-format json"))
 	if err != nil {
-		if initialUser != "root" {
+		if initialUser != "root" && strings.Contains(strings.ToLower(err.Error()), "sudo") {
 			return SSHPhysicalNetworkDiscovery{}, fmt.Errorf("HOLD: initial Proxmox user must be root or have non-interactive sudo for bootstrap discovery: %w", err)
 		}
 		return SSHPhysicalNetworkDiscovery{}, fmt.Errorf("discover Proxmox nodes: %w", err)
