@@ -391,6 +391,25 @@ func (c *Client) StartLXC(ctx context.Context, node string, vmid int) error {
 	return c.Post(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "status", "start"), nil, nil)
 }
 
+func (c *Client) EnsureLXCRunning(ctx context.Context, node string, vmid int) error {
+	if c == nil || node == "" || vmid <= 0 {
+		return errors.New("Proxmox client, node, and positive VMID are required")
+	}
+	var status struct {
+		Status string `json:"status"`
+	}
+	if err := c.Get(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "status", "current"), nil, &status); err != nil {
+		return fmt.Errorf("read LXC guest status: %w", err)
+	}
+	if status.Status == "" {
+		return errors.New("Proxmox LXC status response did not contain a status")
+	}
+	if status.Status == "running" {
+		return nil
+	}
+	return c.StartLXC(ctx, node, vmid)
+}
+
 func (c *Client) QEMUConfig(ctx context.Context, node string, vmid int, out any) error {
 	return c.Get(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "config"), nil, out)
 }

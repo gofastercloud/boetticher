@@ -277,6 +277,19 @@ func TestEnsureVMRunningDoesNotRestartRunningVM(t *testing.T) {
 	}
 }
 
+func TestEnsureLXCRunningDoesNotRestartRunningContainer(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/node/lxc/110/status/current" {
+			t.Fatalf("unexpected request while checking running LXC: %s %s", r.Method, r.URL.Path)
+		}
+		return response([]byte(`{"data":{"status":"running"}}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.EnsureLXCRunning(context.Background(), "node", 110); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDestroyBuilderStopsRunningOwnedVMBeforeRemoval(t *testing.T) {
 	stopped := false
 	removed := false

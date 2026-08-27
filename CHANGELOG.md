@@ -65,6 +65,7 @@ project, so releases can make clean breaks while the design is settling.
   `/etc/network/interfaces` is brought up on first boot.
 - Run Chrony in unprivileged appliances without attempting forbidden guest
   kernel-clock control.
+- Treat an already-running owned LXC as ready during deployment retry.
 - Resume an owned running gateway without issuing a duplicate Proxmox start
   request after a prior deployment attempt.
 - Discover the hosted builder address through the QEMU guest agent after

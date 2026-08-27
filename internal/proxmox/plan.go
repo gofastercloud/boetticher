@@ -627,7 +627,7 @@ func Provision(ctx context.Context, client *Client, plan Plan, _ ...string) erro
 			if err := ensureLXC(ctx, client, plan, guest); err != nil {
 				return err
 			}
-			if err := client.StartLXC(ctx, plan.Node, guest.VMID); err != nil {
+			if err := client.EnsureLXCRunning(ctx, plan.Node, guest.VMID); err != nil {
 				return fmt.Errorf("start container %s: %w", guest.Name, err)
 			}
 		default:
@@ -660,7 +660,7 @@ func ProvisionModule(ctx context.Context, client *Client, plan Plan, module stri
 		if err := ensureLXC(ctx, client, plan, guest); err != nil {
 			return err
 		}
-		if err := client.StartLXC(ctx, plan.Node, guest.VMID); err != nil {
+		if err := client.EnsureLXCRunning(ctx, plan.Node, guest.VMID); err != nil {
 			return fmt.Errorf("start %s: %w", guest.Name, err)
 		}
 	}
