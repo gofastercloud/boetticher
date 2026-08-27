@@ -25,3 +25,8 @@ ethernets:
       macaddress: 02:00:00:00:01:05
     set-name: mgmt0
     addresses: [10.10.99.1/24]
+  transit0:
+    match:
+      macaddress: 02:00:00:00:01:06
+    set-name: transit0
+    addresses: [10.10.5.1/24]

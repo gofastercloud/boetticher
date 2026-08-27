@@ -165,6 +165,8 @@ func TestVerifyFirewallBootstrapNetworkChecksStableRolesAndAddresses(t *testing.
 		"10.10.50.1/24",
 		"mgmt0",
 		"10.10.99.1/24",
+		"transit0",
+		"10.10.5.1/24",
 	} {
 		if !strings.Contains(command, required) {
 			t.Fatalf("firewall bootstrap network check omitted %q: %s", required, command)

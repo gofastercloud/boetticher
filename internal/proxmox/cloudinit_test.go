@@ -15,12 +15,13 @@ func TestFirewallCloudInitUsesStableInterfaceIdentities(t *testing.T) {
 		{Name: "servers0", MAC: "02:00:00:00:01:03", Method: "static", Address: "10.10.20.1"},
 		{Name: "sandbox0", MAC: "02:00:00:00:01:04", Method: "static", Address: "10.10.50.1"},
 		{Name: "mgmt0", MAC: "02:00:00:00:01:05", Method: "static", Address: "10.10.99.1"},
+		{Name: "transit0", MAC: "02:00:00:00:01:06", Method: "static", Address: "10.10.5.1"},
 	}}
 	files, err := RenderFirewallCloudInit(guest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, value := range []string{"set-name: wan0", "set-name: trusted0", "set-name: servers0", "set-name: sandbox0", "set-name: mgmt0", "net.ipv4.ip_forward=0", "net.ipv6.conf.all.forwarding=0"} {
+	for _, value := range []string{"set-name: wan0", "set-name: trusted0", "set-name: servers0", "set-name: sandbox0", "set-name: mgmt0", "set-name: transit0", "net.ipv4.ip_forward=0", "net.ipv6.conf.all.forwarding=0"} {
 		if !strings.Contains(files.NetworkConfig+files.UserData, value) {
 			t.Fatalf("cloud-init omitted %q", value)
 		}

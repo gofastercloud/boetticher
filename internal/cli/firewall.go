@@ -87,7 +87,7 @@ func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, json
 	fmt.Fprintf(out, "  Mode        %s\n  Engine      %s\n  Model       %s\n", plan.Mode, plan.Engine, plan.ModelRevision)
 	if s.Gateway.Mode == model.GatewayModeExternal {
 		fmt.Fprintln(out, "  Management  outside boetticher")
-		fmt.Fprintln(out, "  Trunk       VLANs 10, 20, 50, 99")
+		fmt.Fprintln(out, "  Trunk       VLANs 5, 10, 20, 50, 99")
 		return nil
 	}
 	if live {
@@ -134,7 +134,7 @@ for service in nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq; do
   printf 'service.%s=' "$service"
   systemctl is-active "$service" 2>/dev/null || true
 done
-for iface in wan0 trusted0 servers0 sandbox0 mgmt0; do
+for iface in wan0 trusted0 servers0 sandbox0 mgmt0 transit0; do
   printf 'iface.%s=' "$iface"
   ip -br addr show "$iface" 2>/dev/null || printf absent
 done`
@@ -167,7 +167,7 @@ func parseGatewayStatus(output string) (gatewayLiveStatus, error) {
 			return gatewayLiveStatus{}, fmt.Errorf("managed gateway status contains unknown field %q", key)
 		}
 	}
-	if status.Forwarding == "" || len(status.Services) != 4 || len(status.Interfaces) != 5 {
+	if status.Forwarding == "" || len(status.Services) != 4 || len(status.Interfaces) != 6 {
 		return gatewayLiveStatus{}, errors.New("managed gateway status is incomplete")
 	}
 	return status, nil

@@ -122,6 +122,9 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	dynamic := make([]DynamicZone, 0, len(zones))
 	reverse := make([]ReverseZone, 0, len(zones))
 	for _, zone := range zones {
+		if zone.Type == model.ZoneTypeTransit {
+			continue
+		}
 		dynamic = append(dynamic, DynamicZone{Name: strings.ToLower(zone.Name) + "." + s.Network.Domain, SourceZone: zone.Name, Network: zone.Network, Gateway: zone.Gateway})
 		reverse = append(reverse, ReverseZone{Name: reverseZone(zone.Network), Network: zone.Network})
 	}

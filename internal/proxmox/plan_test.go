@@ -384,7 +384,7 @@ func TestManagedFirewallUsesTaggedPerZoneVNICs(t *testing.T) {
 		bridge string
 		vlan   int
 	}{
-		{"wan0", "vmbr0", 0}, {"trusted0", "vmbr1", 10}, {"servers0", "vmbr1", 20}, {"sandbox0", "vmbr1", 50}, {"mgmt0", "vmbr1", 99},
+		{"wan0", "vmbr0", 0}, {"trusted0", "vmbr1", 10}, {"servers0", "vmbr1", 20}, {"sandbox0", "vmbr1", 50}, {"mgmt0", "vmbr1", 99}, {"transit0", "vmbr1", model.TransitVLAN},
 	}
 	for index, expected := range want {
 		nic := plan.Guests[0].NICs[index]
@@ -411,7 +411,7 @@ func TestExternalGatewayOmitsFirewallGuest(t *testing.T) {
 
 func TestGatewayForFoundationZones(t *testing.T) {
 	for zone, expected := range map[string]string{
-		"TRUSTED": "10.10.10.1", "SERVERS": "10.10.20.1", "SANDBOX": "10.10.50.1", "MGMT": "10.10.99.1",
+		"TRUSTED": "10.10.10.1", "SERVERS": "10.10.20.1", "SANDBOX": "10.10.50.1", "MGMT": "10.10.99.1", "TRANSIT": model.TransitGateway,
 	} {
 		if got := gatewayFor(zone); got != expected {
 			t.Fatalf("gatewayFor(%q) = %q, want %q", zone, got, expected)

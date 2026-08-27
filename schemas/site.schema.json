@@ -247,12 +247,23 @@
           },
           "type": "array"
         },
+        "type": {
+          "enum": [
+            "trusted",
+            "servers",
+            "sandbox",
+            "management",
+            "transit"
+          ],
+          "type": "string"
+        },
         "vlan": {
           "type": "integer"
         }
       },
       "required": [
         "name",
+        "type",
         "vlan",
         "network",
         "gateway",

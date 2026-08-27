@@ -45,6 +45,9 @@ const (
 	BuilderGoVersion            = "1.26.5"
 	BuilderGoURL                = "https://go.dev/dl/go1.26.5.linux-amd64.tar.gz"
 	BuilderGoSHA256             = "5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053"
+	TransitVLAN                 = 5
+	TransitNetwork              = "10.10.5.0/24"
+	TransitGateway              = "10.10.5.1"
 	PlatformGuestIDMin          = 100
 	PlatformGuestIDMax          = 199
 	ModuleGuestIDMin            = 200
@@ -72,6 +75,7 @@ const (
 )
 
 var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
+var networkPortPattern = regexp.MustCompile(`^[0-9]{1,5}(?:-[0-9]{1,5})?$`)
 
 // ModuleOwnershipTag returns the single Proxmox-safe ownership proof used for
 // every first-party module guest. Invalid names return an empty tag so callers
@@ -123,6 +127,19 @@ type Network struct {
 	Zones  []Zone `yaml:"zones" json:"zones"`
 }
 
+// ZoneType is the stable architectural meaning of a network zone. Concrete
+// names, VLANs, and interface names remain site-resolved implementation
+// details; modules request this semantic type instead.
+type ZoneType string
+
+const (
+	ZoneTypeTrusted    ZoneType = "trusted"
+	ZoneTypeServers    ZoneType = "servers"
+	ZoneTypeSandbox    ZoneType = "sandbox"
+	ZoneTypeManagement ZoneType = "management"
+	ZoneTypeTransit    ZoneType = "transit"
+)
+
 // PhysicalNetwork stores installation-specific hardware bindings separately
 // from the fixed logical architecture. Observed speed, carrier, and current
 // interface names are generated evidence; stable MAC/PCI identity is the
@@ -141,6 +158,7 @@ type PhysicalNIC struct {
 
 type Zone struct {
 	Name         string   `yaml:"name" json:"name"`
+	Type         ZoneType `yaml:"type" json:"type" jsonschema:"enum=trusted,enum=servers,enum=sandbox,enum=management,enum=transit"`
 	VLAN         int      `yaml:"vlan" json:"vlan"`
 	Network      string   `yaml:"network" json:"network"`
 	Gateway      string   `yaml:"gateway" json:"gateway"`
@@ -374,10 +392,11 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 		Network: Network{
 			Domain: DefaultDomain,
 			Zones: []Zone{
-				{Name: "TRUSTED", VLAN: 10, Network: "10.10.10.0/24", Gateway: "10.10.10.1", AddressMode: "dynamic-reservations", DNSAddresses: []string{"10.10.20.10", "10.10.20.11"}, NTPAddresses: []string{"10.10.20.10", "10.10.20.11"}},
-				{Name: "SERVERS", VLAN: 20, Network: "10.10.20.0/24", Gateway: "10.10.20.1", AddressMode: "dynamic-reservations", DNSAddresses: []string{"10.10.20.10", "10.10.20.11"}, NTPAddresses: []string{"10.10.20.10", "10.10.20.11"}},
-				{Name: "SANDBOX", VLAN: 50, Network: "10.10.50.0/24", Gateway: "10.10.50.1", AddressMode: "dynamic", DNSAddresses: []string{"10.10.50.1"}, NTPAddresses: []string{"10.10.50.1"}},
-				{Name: "MGMT", VLAN: 99, Network: "10.10.99.0/24", Gateway: "10.10.99.1", AddressMode: "reservations-only", DNSAddresses: []string{"10.10.20.10", "10.10.20.11"}, NTPAddresses: []string{"10.10.20.10", "10.10.20.11"}},
+				{Name: "TRUSTED", Type: ZoneTypeTrusted, VLAN: 10, Network: "10.10.10.0/24", Gateway: "10.10.10.1", AddressMode: "dynamic-reservations", DNSAddresses: []string{"10.10.20.10", "10.10.20.11"}, NTPAddresses: []string{"10.10.20.10", "10.10.20.11"}},
+				{Name: "SERVERS", Type: ZoneTypeServers, VLAN: 20, Network: "10.10.20.0/24", Gateway: "10.10.20.1", AddressMode: "dynamic-reservations", DNSAddresses: []string{"10.10.20.10", "10.10.20.11"}, NTPAddresses: []string{"10.10.20.10", "10.10.20.11"}},
+				{Name: "SANDBOX", Type: ZoneTypeSandbox, VLAN: 50, Network: "10.10.50.0/24", Gateway: "10.10.50.1", AddressMode: "dynamic", DNSAddresses: []string{"10.10.50.1"}, NTPAddresses: []string{"10.10.50.1"}},
+				{Name: "MGMT", Type: ZoneTypeManagement, VLAN: 99, Network: "10.10.99.0/24", Gateway: "10.10.99.1", AddressMode: "reservations-only", DNSAddresses: []string{"10.10.20.10", "10.10.20.11"}, NTPAddresses: []string{"10.10.20.10", "10.10.20.11"}},
+				{Name: "TRANSIT", Type: ZoneTypeTransit, VLAN: TransitVLAN, Network: TransitNetwork, Gateway: TransitGateway, AddressMode: "none"},
 			},
 		},
 		PhysicalNetwork: PhysicalNetwork{Mode: ModeVirtualOnly},
@@ -499,27 +518,43 @@ func (s Site) Validate() error {
 		return fmt.Errorf("secret_metadata must contain installation_id and public age_recipient")
 	}
 	expectedZones := map[string]struct {
+		typ     ZoneType
 		vlan    int
 		network string
 		gateway string
 	}{
-		"TRUSTED": {vlan: 10, network: "10.10.10.0/24", gateway: "10.10.10.1"},
-		"SERVERS": {vlan: 20, network: "10.10.20.0/24", gateway: "10.10.20.1"},
-		"SANDBOX": {vlan: 50, network: "10.10.50.0/24", gateway: "10.10.50.1"},
-		"MGMT":    {vlan: 99, network: "10.10.99.0/24", gateway: "10.10.99.1"},
+		"TRUSTED": {typ: ZoneTypeTrusted, vlan: 10, network: "10.10.10.0/24", gateway: "10.10.10.1"},
+		"SERVERS": {typ: ZoneTypeServers, vlan: 20, network: "10.10.20.0/24", gateway: "10.10.20.1"},
+		"SANDBOX": {typ: ZoneTypeSandbox, vlan: 50, network: "10.10.50.0/24", gateway: "10.10.50.1"},
+		"MGMT":    {typ: ZoneTypeManagement, vlan: 99, network: "10.10.99.0/24", gateway: "10.10.99.1"},
+		"TRANSIT": {typ: ZoneTypeTransit, vlan: TransitVLAN, network: TransitNetwork, gateway: TransitGateway},
 	}
 	seenZones := map[string]bool{}
+	seenVLANs := map[int]string{}
 	for _, z := range s.Network.Zones {
 		if seenZones[z.Name] {
 			return fmt.Errorf("duplicate zone %q", z.Name)
 		}
 		seenZones[z.Name] = true
+		if previous, exists := seenVLANs[z.VLAN]; exists {
+			return fmt.Errorf("zones %s and %s share VLAN %d", previous, z.Name, z.VLAN)
+		}
+		seenVLANs[z.VLAN] = z.Name
 		expected, ok := expectedZones[z.Name]
-		if !ok || z.VLAN != expected.vlan || z.Network != expected.network || z.Gateway != expected.gateway {
+		if !ok {
+			return fmt.Errorf("zone %s does not match the fixed V1 network contract", z.Name)
+		}
+		if !validZoneType(z.Type) {
+			return fmt.Errorf("zone %s has unknown semantic type %q", z.Name, z.Type)
+		}
+		if z.Type != expected.typ || z.VLAN != expected.vlan || z.Network != expected.network || z.Gateway != expected.gateway {
 			return fmt.Errorf("zone %s does not match the fixed V1 network contract", z.Name)
 		}
 		if _, _, err := net.ParseCIDR(z.Network); err != nil {
 			return fmt.Errorf("zone %s has invalid network: %w", z.Name, err)
+		}
+		if z.Type == ZoneTypeTransit && (z.AddressMode != "none" || len(z.DNSAddresses) != 0 || len(z.NTPAddresses) != 0) {
+			return errors.New("TRANSIT must not provide DHCP, DNS, or NTP services")
 		}
 	}
 	seenComponents := map[string]bool{}
@@ -585,7 +620,7 @@ func (s Site) Validate() error {
 		}
 	}
 	if len(seenZones) != len(expectedZones) {
-		return fmt.Errorf("V1 requires exactly TRUSTED, SERVERS, SANDBOX, and MGMT zones")
+		return fmt.Errorf("V1 requires exactly TRUSTED, SERVERS, SANDBOX, MGMT, and TRANSIT zones")
 	}
 	requiredComponents := map[string]struct {
 		address string
@@ -698,6 +733,11 @@ func validateDeclarations(s Site) error {
 				return fmt.Errorf("module %s persistent state %q is missing a replacement policy", declaration.Module, state.Name)
 			}
 		}
+		for _, intent := range declaration.NetworkIntents {
+			if err := validateNetworkIntent(intent); err != nil {
+				return fmt.Errorf("module %s network intent: %w", declaration.Module, err)
+			}
+		}
 		for _, volume := range declaration.Volumes {
 			if volume.Module != declaration.Module || volume.Guest == "" || volume.Name == "" || volume.SizeGiB <= 0 || volume.MountPath == "" {
 				return fmt.Errorf("module %s has invalid persistent volume %q", declaration.Module, volume.Name)
@@ -707,6 +747,72 @@ func validateDeclarations(s Site) error {
 			default:
 				return fmt.Errorf("module %s volume %s has unsupported storage placement %q", declaration.Module, volume.Name, volume.Placement)
 			}
+		}
+	}
+	return nil
+}
+
+func validZoneType(value ZoneType) bool {
+	switch value {
+	case ZoneTypeTrusted, ZoneTypeServers, ZoneTypeSandbox, ZoneTypeManagement, ZoneTypeTransit:
+		return true
+	default:
+		return false
+	}
+}
+
+func zoneTypeForName(name string) ZoneType {
+	switch name {
+	case "TRUSTED":
+		return ZoneTypeTrusted
+	case "SERVERS":
+		return ZoneTypeServers
+	case "SANDBOX":
+		return ZoneTypeSandbox
+	case "MGMT":
+		return ZoneTypeManagement
+	case "TRANSIT":
+		return ZoneTypeTransit
+	default:
+		return ""
+	}
+}
+
+// ZoneForType resolves a module's semantic placement request through the
+// canonical site network. It never permits a module to select a VLAN or
+// interface directly.
+func (s Site) ZoneForType(zoneType ZoneType) (Zone, error) {
+	if !validZoneType(zoneType) {
+		return Zone{}, fmt.Errorf("unknown zone type %q", zoneType)
+	}
+	for _, zone := range s.Network.Zones {
+		if zone.Type == zoneType {
+			return zone, nil
+		}
+	}
+	return Zone{}, fmt.Errorf("zone type %q is not configured", zoneType)
+}
+
+func validateNetworkIntent(intent NetworkIntent) error {
+	if !modelTokenPattern.MatchString(intent.Source) || !modelTokenPattern.MatchString(intent.Destination) {
+		return fmt.Errorf("source and destination must be safe references")
+	}
+	switch intent.Protocol {
+	case "tcp", "udp", "tcp/udp", "icmp", "any":
+	default:
+		return fmt.Errorf("unsupported protocol %q", intent.Protocol)
+	}
+	switch intent.Direction {
+	case "egress", "ingress", "bidirectional":
+	default:
+		return fmt.Errorf("unsupported direction %q", intent.Direction)
+	}
+	if intent.Purpose == "" || strings.ContainsAny(intent.Purpose, "\r\n") {
+		return errors.New("purpose is required and must not contain newlines")
+	}
+	for _, port := range intent.Ports {
+		if !networkPortPattern.MatchString(port) {
+			return fmt.Errorf("unsafe port %q", port)
 		}
 	}
 	return nil

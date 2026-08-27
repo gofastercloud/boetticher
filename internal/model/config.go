@@ -170,6 +170,14 @@ func (c SiteConfig) BaseSite() Site {
 	}
 	if len(c.Network.Zones) > 0 {
 		s.Network.Zones = append([]Zone(nil), c.Network.Zones...)
+		for index := range s.Network.Zones {
+			// Keep existing v3 site files without the semantic field readable;
+			// the fixed V1 names make this inference unambiguous. New rendered
+			// configuration always includes the explicit type.
+			if s.Network.Zones[index].Type == "" {
+				s.Network.Zones[index].Type = zoneTypeForName(s.Network.Zones[index].Name)
+			}
+		}
 	}
 	if c.PKI.RootCommonName != "" {
 		s.PKI.RootCommonName = c.PKI.RootCommonName

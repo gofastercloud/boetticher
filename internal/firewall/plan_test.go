@@ -12,8 +12,8 @@ func TestManagedPlanUsesOneUntaggedFirewallInterfacePerZone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Interfaces) != 5 {
-		t.Fatalf("got %d gateway interfaces, want 5", len(plan.Interfaces))
+	if len(plan.Interfaces) != 6 {
+		t.Fatalf("got %d gateway interfaces, want 6", len(plan.Interfaces))
 	}
 	want := []Interface{
 		{Role: "WAN", Name: "wan0", MAC: "02:00:00:00:01:01", Bridge: "vmbr0", Address: "dhcp", Method: "dhcp"},
@@ -21,6 +21,7 @@ func TestManagedPlanUsesOneUntaggedFirewallInterfacePerZone(t *testing.T) {
 		{Role: "SERVERS", Name: "servers0", MAC: "02:00:00:00:01:03", Bridge: "vmbr1", VLAN: 20, Address: "10.10.20.1/24", Method: "static"},
 		{Role: "SANDBOX", Name: "sandbox0", MAC: "02:00:00:00:01:04", Bridge: "vmbr1", VLAN: 50, Address: "10.10.50.1/24", Method: "static"},
 		{Role: "MGMT", Name: "mgmt0", MAC: "02:00:00:00:01:05", Bridge: "vmbr1", VLAN: 99, Address: "10.10.99.1/24", Method: "static"},
+		{Role: "TRANSIT", Name: "transit0", MAC: "02:00:00:00:01:06", Bridge: "vmbr1", VLAN: 5, Address: "10.10.5.1/24", Method: "static"},
 	}
 	for i := range want {
 		if plan.Interfaces[i] != want[i] {
@@ -59,6 +60,14 @@ func TestManagedRulesetIsDeterministicAndFailClosed(t *testing.T) {
 		"SANDBOX-TRUSTED-DROP",
 		"SANDBOX-SERVERS-DROP",
 		"SANDBOX-MGMT-DROP",
+		"transit_net",
+		"TRANSIT-TRUSTED-DROP",
+		"TRANSIT-SERVERS-DROP",
+		"TRANSIT-SANDBOX-DROP",
+		"TRANSIT-MGMT-DROP",
+		"TRANSIT-ADMIN-DROP",
+		"TRANSIT-INTERNET-DROP",
+		"TO-TRANSIT-DROP",
 		"table ip boetticher_nat",
 		"oifname \"wan0\" ip saddr 10.10.50.0/24 masquerade",
 	} {
@@ -81,6 +90,15 @@ func TestExternalPlanHasPolicyButNoManagedInterfaces(t *testing.T) {
 	}
 	if len(plan.Rules) == 0 || len(plan.DHCP) != 4 {
 		t.Fatalf("external contract lost policy or DHCP requirements: %#v", plan)
+	}
+	contract, err := RenderExternalContract(model.NewSite("installation", "age1example", model.GatewayModeExternal), plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"TRANSIT", "`transit`", "VLAN 5", "10.10.5.0/24", "enforcement is NOT ACTIVE", "Required routes", "Required allows", "Required denies", "Source address expectations", "Module-advertised routes: none"} {
+		if !strings.Contains(contract, expected) {
+			t.Errorf("external contract missing %q", expected)
+		}
 	}
 	if _, err := RenderNFT(plan); err == nil {
 		t.Fatal("external mode rendered a managed nftables ruleset")

@@ -13,8 +13,8 @@ paths are allowed explicitly. Internal traffic is not NATed. Intended internal
 networks are masqueraded only when leaving `wan0`.
 
 Proxmox performs VLAN classification by attaching separate firewall vNICs to
-`vmbr1` with tags 10, 20, 50, and 99. The firewall sees ordinary interfaces
-named `wan0`, `trusted0`, `servers0`, `sandbox0`, and `mgmt0`; it does not see a
+`vmbr1` with tags 5, 10, 20, 50, and 99. The firewall sees ordinary interfaces
+named `wan0`, `trusted0`, `servers0`, `sandbox0`, `mgmt0`, and `transit0`; it does not see a
 trunk and does not create VLAN subinterfaces. Proxmox is already trusted to
 attach guests to the right bridge and VLAN. A compromised hypervisor can bypass
 guest firewall guarantees.

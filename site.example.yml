@@ -14,6 +14,7 @@ network:
   domain: lab.home.arpa
   zones:
     - name: TRUSTED
+      type: trusted
       vlan: 10
       network: 10.10.10.0/24
       gateway: 10.10.10.1
@@ -21,6 +22,7 @@ network:
       dns_addresses: [10.10.20.10, 10.10.20.11]
       ntp_addresses: [10.10.20.10, 10.10.20.11]
     - name: SERVERS
+      type: servers
       vlan: 20
       network: 10.10.20.0/24
       gateway: 10.10.20.1
@@ -28,6 +30,7 @@ network:
       dns_addresses: [10.10.20.10, 10.10.20.11]
       ntp_addresses: [10.10.20.10, 10.10.20.11]
     - name: SANDBOX
+      type: sandbox
       vlan: 50
       network: 10.10.50.0/24
       gateway: 10.10.50.1
@@ -35,12 +38,21 @@ network:
       dns_addresses: [10.10.50.1]
       ntp_addresses: [10.10.50.1]
     - name: MGMT
+      type: management
       vlan: 99
       network: 10.10.99.0/24
       gateway: 10.10.99.1
       address_mode: reservations-only
       dns_addresses: [10.10.20.10, 10.10.20.11]
       ntp_addresses: [10.10.20.10, 10.10.20.11]
+    - name: TRANSIT
+      type: transit
+      vlan: 5
+      network: 10.10.5.0/24
+      gateway: 10.10.5.1
+      address_mode: none
+      dns_addresses: []
+      ntp_addresses: []
 secret_metadata:
   installation_id: generated-by-boetticher-init
   age_recipient: generated-by-boetticher-init

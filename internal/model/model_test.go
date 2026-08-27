@@ -104,6 +104,47 @@ func TestExternalGatewayOmitsManagedFirewall(t *testing.T) {
 	}
 }
 
+func TestTransitIsFixedCoreNetworkAndSemanticPlacement(t *testing.T) {
+	site := NewSite("installation", "age1example", GatewayModeManaged)
+	transit, err := site.ZoneForType(ZoneTypeTransit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transit.Name != "TRANSIT" || transit.Type != ZoneTypeTransit || transit.VLAN != TransitVLAN || transit.Network != TransitNetwork || transit.Gateway != TransitGateway {
+		t.Fatalf("unexpected TRANSIT contract: %#v", transit)
+	}
+	if err := site.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := site.ZoneForType(ZoneType("unknown")); err == nil {
+		t.Fatal("unknown semantic zone type was accepted")
+	}
+}
+
+func TestUnknownZoneSemanticTypeIsRejected(t *testing.T) {
+	site := NewSite("installation", "age1example", GatewayModeManaged)
+	for index := range site.Network.Zones {
+		if site.Network.Zones[index].Name == "TRANSIT" {
+			site.Network.Zones[index].Type = ZoneType("edge")
+		}
+	}
+	if err := site.Validate(); err == nil || !strings.Contains(err.Error(), "unknown semantic type") {
+		t.Fatalf("unknown zone semantic type was accepted: %v", err)
+	}
+}
+
+func TestNetworkIntentCannotCarryRawFirewallCommand(t *testing.T) {
+	site := NewDefaultSite("installation", "age1example")
+	site.Declarations = []ModuleDeclaration{{
+		Module:         "example",
+		Artifact:       Artifact{DefinitionSHA256: strings.Repeat("a", 64)},
+		NetworkIntents: []NetworkIntent{{Source: "nft add rule", Destination: "SERVERS", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "unsafe"}},
+	}}
+	if err := site.Validate(); err == nil || !strings.Contains(err.Error(), "safe references") {
+		t.Fatalf("raw firewall command was accepted as a network intent: %v", err)
+	}
+}
+
 func TestOldSiteSchemaRequiresFreshV03Initialization(t *testing.T) {
 	site := NewDefaultSite("installation", "age1example")
 	site.APIVersion = "boetticher/v1"

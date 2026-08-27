@@ -563,7 +563,11 @@ func fixtureVolumes(module, guest string) []model.PersistentVolumeDeclaration {
 
 func gatewayNICs(s model.Site) []GuestNIC {
 	nics := []GuestNIC{{Name: "wan0", Bridge: "vmbr0", Method: "dhcp", MAC: "02:00:00:00:01:01"}}
-	for _, zone := range s.Normalize().Network.Zones {
+	for _, zoneType := range []model.ZoneType{model.ZoneTypeTrusted, model.ZoneTypeServers, model.ZoneTypeSandbox, model.ZoneTypeManagement, model.ZoneTypeTransit} {
+		zone, err := s.ZoneForType(zoneType)
+		if err != nil {
+			continue
+		}
 		nics = append(nics, GuestNIC{Name: strings.ToLower(zone.Name) + "0", Bridge: "vmbr1", VLAN: zone.VLAN, Address: zone.Gateway, Method: "static", MAC: fmt.Sprintf("02:00:00:00:01:%02x", len(nics)+1)})
 	}
 	return nics
@@ -1573,10 +1577,9 @@ func canonicalTags(value string) string {
 }
 
 func gatewayFor(zone string) string {
-	for _, prefix := range []string{"10.10.10", "10.10.20", "10.10.50", "10.10.99"} {
-		if strings.HasSuffix(prefix, "."+map[string]string{"TRUSTED": "10", "SERVERS": "20", "SANDBOX": "50", "MGMT": "99"}[zone]) {
-			return prefix + ".1"
-		}
-	}
-	return ""
+	return map[string]string{
+		"TRUSTED": "10.10.10.1", "SERVERS": "10.10.20.1",
+		"SANDBOX": "10.10.50.1", "MGMT": "10.10.99.1",
+		"TRANSIT": model.TransitGateway,
+	}[zone]
 }
