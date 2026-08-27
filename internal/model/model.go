@@ -118,6 +118,9 @@ type Site struct {
 	ModuleConfig           map[string]ModuleConfig `json:"module_config,omitempty"`
 	Declarations           []ModuleDeclaration     `json:"declarations,omitempty"`
 	RetainedModules        []RetainedModule        `json:"retained_modules,omitempty"`
+	DHCPReservations       []DHCPReservation       `json:"dhcp_reservations,omitempty"`
+	DNSRecords             []UserDNSRecord         `json:"dns_records,omitempty"`
+	PendingDNSDeletions    []DNSDeletion           `json:"-"`
 }
 
 type TestedVersions struct {
@@ -332,6 +335,32 @@ type DNSRecord struct {
 	Owner   string `json:"owner"`
 }
 
+// DHCPReservation is an operator-provided Kea identity for a user workload.
+// VMID is optional lookup metadata; MAC remains the network identity and this
+// model never gives boetticher ownership of the guest.
+type DHCPReservation struct {
+	Zone     string `yaml:"zone" json:"zone"`
+	Hostname string `yaml:"hostname" json:"hostname"`
+	Address  string `yaml:"address" json:"address"`
+	MAC      string `yaml:"mac" json:"mac"`
+	VMID     int    `yaml:"vmid,omitempty" json:"vmid,omitempty"`
+}
+
+// UserDNSRecord is an operator-owned record in the private namespace. Value
+// is an IPv4 address for A records and a private FQDN for CNAME records.
+type UserDNSRecord struct {
+	Name  string `yaml:"name" json:"name"`
+	Type  string `yaml:"type" json:"type"`
+	Value string `yaml:"value" json:"value"`
+}
+
+// DNSDeletion is runtime reconciliation state for an explicitly removed user
+// record. It is intentionally excluded from the canonical model revision.
+type DNSDeletion struct {
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
 type CertificateRequest struct {
 	Identity string   `json:"identity"`
 	SANs     []string `json:"sans"`
@@ -422,7 +451,7 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 			Zones: []Zone{
 				{Name: "TRANSIT", Type: ZoneTypeTransit, VLAN: TransitVLAN, Network: TransitNetwork, Gateway: TransitGateway, AddressMode: "none"},
 				{Name: "INFRA", Type: ZoneTypeInfrastructure, VLAN: InfraVLAN, Network: InfraNetwork, Gateway: InfraGateway, AddressMode: "static", DNSAddresses: []string{"10.10.10.10", "10.10.10.11"}, NTPAddresses: []string{"10.10.10.10", "10.10.10.11"}},
-				{Name: "SERVERS", Type: ZoneTypeServers, VLAN: 20, Network: "10.10.20.0/24", Gateway: "10.10.20.1", AddressMode: "static", DNSAddresses: []string{"10.10.10.10", "10.10.10.11"}, NTPAddresses: []string{"10.10.10.10", "10.10.10.11"}},
+				{Name: "SERVERS", Type: ZoneTypeServers, VLAN: 20, Network: "10.10.20.0/24", Gateway: "10.10.20.1", AddressMode: "reservations-only", DNSAddresses: []string{"10.10.10.10", "10.10.10.11"}, NTPAddresses: []string{"10.10.10.10", "10.10.10.11"}},
 				{Name: "TRUSTED", Type: ZoneTypeTrusted, VLAN: 30, Network: "10.10.30.0/24", Gateway: "10.10.30.1", AddressMode: "dynamic-reservations", DNSAddresses: []string{"10.10.10.10", "10.10.10.11"}, NTPAddresses: []string{"10.10.10.10", "10.10.10.11"}},
 				{Name: "SANDBOX", Type: ZoneTypeSandbox, VLAN: 40, Network: "10.10.40.0/24", Gateway: "10.10.40.1", AddressMode: "dynamic", DNSAddresses: []string{"10.10.40.1"}, NTPAddresses: []string{"10.10.40.1"}},
 				{Name: "MGMT", Type: ZoneTypeManagement, VLAN: 99, Network: "10.10.99.0/24", Gateway: "10.10.99.1", AddressMode: "static", DNSAddresses: []string{"10.10.10.10", "10.10.10.11"}, NTPAddresses: []string{"10.10.10.10", "10.10.10.11"}},
@@ -452,11 +481,32 @@ func (s Site) Normalize() Site {
 	copySite.ModuleConfig = cloneModuleConfig(s.ModuleConfig)
 	copySite.Declarations = append([]ModuleDeclaration(nil), s.Declarations...)
 	copySite.RetainedModules = append([]RetainedModule(nil), s.RetainedModules...)
+	copySite.DHCPReservations = append([]DHCPReservation(nil), s.DHCPReservations...)
+	copySite.DNSRecords = append([]UserDNSRecord(nil), s.DNSRecords...)
+	copySite.PendingDNSDeletions = append([]DNSDeletion(nil), s.PendingDNSDeletions...)
 	sort.Slice(copySite.Network.Zones, func(i, j int) bool { return copySite.Network.Zones[i].VLAN < copySite.Network.Zones[j].VLAN })
 	sort.Slice(copySite.Components, func(i, j int) bool { return copySite.Components[i].Name < copySite.Components[j].Name })
 	sort.Slice(copySite.Modules, func(i, j int) bool { return copySite.Modules[i].Name < copySite.Modules[j].Name })
 	sort.Slice(copySite.Declarations, func(i, j int) bool { return copySite.Declarations[i].Module < copySite.Declarations[j].Module })
 	sort.Slice(copySite.RetainedModules, func(i, j int) bool { return copySite.RetainedModules[i].Module < copySite.RetainedModules[j].Module })
+	sort.Slice(copySite.DHCPReservations, func(i, j int) bool {
+		if copySite.DHCPReservations[i].Hostname != copySite.DHCPReservations[j].Hostname {
+			return copySite.DHCPReservations[i].Hostname < copySite.DHCPReservations[j].Hostname
+		}
+		return copySite.DHCPReservations[i].MAC < copySite.DHCPReservations[j].MAC
+	})
+	sort.Slice(copySite.DNSRecords, func(i, j int) bool {
+		if copySite.DNSRecords[i].Name != copySite.DNSRecords[j].Name {
+			return copySite.DNSRecords[i].Name < copySite.DNSRecords[j].Name
+		}
+		return copySite.DNSRecords[i].Type < copySite.DNSRecords[j].Type
+	})
+	sort.Slice(copySite.PendingDNSDeletions, func(i, j int) bool {
+		if copySite.PendingDNSDeletions[i].Name != copySite.PendingDNSDeletions[j].Name {
+			return copySite.PendingDNSDeletions[i].Name < copySite.PendingDNSDeletions[j].Name
+		}
+		return copySite.PendingDNSDeletions[i].Type < copySite.PendingDNSDeletions[j].Type
+	})
 	for i := range copySite.Components {
 		copySite.Components[i].DNSAliases = append([]string(nil), copySite.Components[i].DNSAliases...)
 		sort.Strings(copySite.Components[i].DNSAliases)
@@ -601,7 +651,11 @@ func (s Site) Validate() error {
 			if z.AddressMode != "dynamic" {
 				return errors.New("SANDBOX must provide dynamic DHCP")
 			}
-		case ZoneTypeInfrastructure, ZoneTypeServers, ZoneTypeManagement:
+		case ZoneTypeServers:
+			if z.AddressMode != "reservations-only" {
+				return errors.New("SERVERS must provide reservation-only DHCP")
+			}
+		case ZoneTypeInfrastructure, ZoneTypeManagement:
 			if z.AddressMode != "static" {
 				return fmt.Errorf("%s must use static assignments only", z.Name)
 			}
@@ -671,6 +725,12 @@ func (s Site) Validate() error {
 	}
 	if len(seenZones) != len(expectedZones) {
 		return fmt.Errorf("V1 requires exactly TRANSIT, INFRA, SERVERS, TRUSTED, SANDBOX, and MGMT zones")
+	}
+	if err := validateDHCPReservations(s); err != nil {
+		return err
+	}
+	if err := validateUserDNSRecords(s); err != nil {
+		return err
 	}
 	requiredComponents := map[string]struct {
 		address string
@@ -826,6 +886,178 @@ func validateDeclarations(s Site) error {
 		}
 	}
 	return nil
+}
+
+var dnsLabelPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+
+func validateDHCPReservations(s Site) error {
+	servers, ok := zoneByName(s, "SERVERS")
+	if !ok {
+		return errors.New("SERVERS zone is required before validating DHCP reservations")
+	}
+	seenHostnames := map[string]struct{}{}
+	seenAddresses := map[string]struct{}{}
+	seenMACs := map[string]struct{}{}
+	platformAddresses := map[string]struct{}{}
+	for _, component := range s.PlatformComponents() {
+		if address := net.ParseIP(component.Address).To4(); address != nil {
+			platformAddresses[address.String()] = struct{}{}
+		}
+	}
+	for _, reservation := range s.DHCPReservations {
+		if reservation.Zone != "SERVERS" {
+			return fmt.Errorf("DHCP reservation %q must use the fixed SERVERS zone", reservation.Hostname)
+		}
+		if !dnsLabelPattern.MatchString(strings.ToLower(reservation.Hostname)) {
+			return fmt.Errorf("DHCP reservation hostname %q must be one DNS label", reservation.Hostname)
+		}
+		address := net.ParseIP(reservation.Address)
+		if address == nil || address.To4() == nil || !ipInZone(address, servers) || address.To4().String() == servers.Gateway {
+			return fmt.Errorf("DHCP reservation %s address %q is outside usable SERVERS addresses", reservation.Hostname, reservation.Address)
+		}
+		canonicalAddress := address.To4().String()
+		if _, exists := platformAddresses[canonicalAddress]; exists {
+			return fmt.Errorf("DHCP reservation %s address %s collides with an existing platform address", reservation.Hostname, canonicalAddress)
+		}
+		if _, exists := seenAddresses[canonicalAddress]; exists {
+			return fmt.Errorf("duplicate DHCP reservation address %s", canonicalAddress)
+		}
+		seenAddresses[canonicalAddress] = struct{}{}
+		parsedMAC, err := net.ParseMAC(reservation.MAC)
+		if err != nil || len(parsedMAC) != 6 {
+			return fmt.Errorf("DHCP reservation %s has invalid Ethernet MAC %q", reservation.Hostname, reservation.MAC)
+		}
+		canonicalMAC := strings.ToLower(parsedMAC.String())
+		if _, exists := seenHostnames[strings.ToLower(reservation.Hostname)]; exists {
+			return fmt.Errorf("duplicate DHCP reservation hostname %q", reservation.Hostname)
+		}
+		if _, exists := seenMACs[canonicalMAC]; exists {
+			return fmt.Errorf("duplicate DHCP reservation MAC %q", reservation.MAC)
+		}
+		seenHostnames[strings.ToLower(reservation.Hostname)] = struct{}{}
+		seenMACs[canonicalMAC] = struct{}{}
+		if reservation.VMID != 0 && (reservation.VMID < UserGuestIDMin || reservation.VMID > UserGuestIDMax) {
+			return fmt.Errorf("DHCP reservation %s uses VMID %d outside the user-workload range", reservation.Hostname, reservation.VMID)
+		}
+	}
+	return nil
+}
+
+func validateUserDNSRecords(s Site) error {
+	domain := strings.ToLower(strings.TrimSuffix(s.Network.Domain, "."))
+	owned := map[string]struct{}{}
+	for _, component := range s.PlatformComponents() {
+		owned[strings.ToLower(component.Hostname+"."+domain)] = struct{}{}
+		for _, alias := range component.DNSAliases {
+			owned[strings.ToLower(strings.TrimSuffix(alias, ".")+"."+domain)] = struct{}{}
+		}
+		if component.URL != "" {
+			parsed, err := url.Parse(component.URL)
+			if err == nil && strings.HasSuffix(strings.ToLower(parsed.Hostname()), "."+domain) {
+				owned[strings.ToLower(parsed.Hostname())] = struct{}{}
+			}
+		}
+	}
+	for _, declaration := range s.Declarations {
+		for _, record := range declaration.DNSRecords {
+			owned[strings.ToLower(strings.TrimSuffix(record.Name, "."))] = struct{}{}
+		}
+	}
+	managedZones := make([]string, 0, 3)
+	for _, zone := range s.Network.Zones {
+		if zone.Type == ZoneTypeServers || zone.Type == ZoneTypeTrusted || zone.Type == ZoneTypeSandbox {
+			managedZones = append(managedZones, strings.ToLower(zone.Name)+"."+domain)
+		}
+	}
+	seen := map[string]struct{}{}
+	cnameTargets := map[string]string{}
+	for _, record := range s.DNSRecords {
+		name, err := privateDNSName(record.Name, domain)
+		if err != nil {
+			return fmt.Errorf("user DNS record %q: %w", record.Name, err)
+		}
+		if _, exists := owned[name]; exists {
+			return fmt.Errorf("user DNS record %s collides with a Core or module-owned name", name)
+		}
+		for _, zone := range managedZones {
+			if name == zone || strings.HasSuffix(name, "."+zone) {
+				return fmt.Errorf("user DNS record %s is inside the DHCP/DDNS-owned namespace %s", name, zone)
+			}
+		}
+		if _, exists := seen[name]; exists {
+			return fmt.Errorf("duplicate user DNS record %q", name)
+		}
+		seen[name] = struct{}{}
+		switch record.Type {
+		case "A":
+			ip := net.ParseIP(record.Value)
+			if ip == nil || ip.To4() == nil || !ipInAnyZone(ip, s.Network.Zones) {
+				return fmt.Errorf("user A record %s must contain an address from a fixed internal network", name)
+			}
+		case "CNAME":
+			target, targetErr := privateDNSName(record.Value, domain)
+			if targetErr != nil {
+				return fmt.Errorf("user CNAME record %s: %w", name, targetErr)
+			}
+			if target == name {
+				return fmt.Errorf("user CNAME record %s cannot target itself", name)
+			}
+			cnameTargets[name] = target
+		default:
+			return fmt.Errorf("user DNS record %s has unsupported type %q", name, record.Type)
+		}
+	}
+	for name := range cnameTargets {
+		seenPath := map[string]struct{}{}
+		for current := name; ; {
+			if _, exists := seenPath[current]; exists {
+				return fmt.Errorf("user DNS CNAME records contain a cycle at %s", current)
+			}
+			seenPath[current] = struct{}{}
+			next, exists := cnameTargets[current]
+			if !exists {
+				break
+			}
+			current = next
+		}
+	}
+	return nil
+}
+
+func privateDNSName(raw, domain string) (string, error) {
+	name := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(raw), "."))
+	if name == "" || name == domain || !strings.HasSuffix(name, "."+domain) {
+		return "", fmt.Errorf("name must be inside %s", domain)
+	}
+	for _, label := range strings.Split(name, ".") {
+		if !dnsLabelPattern.MatchString(label) {
+			return "", fmt.Errorf("name %q contains an unsafe label", raw)
+		}
+	}
+	return name, nil
+}
+
+func zoneByName(s Site, name string) (Zone, bool) {
+	for _, zone := range s.Network.Zones {
+		if zone.Name == name {
+			return zone, true
+		}
+	}
+	return Zone{}, false
+}
+
+func ipInZone(ip net.IP, zone Zone) bool {
+	_, network, err := net.ParseCIDR(zone.Network)
+	return err == nil && network.Contains(ip.To4())
+}
+
+func ipInAnyZone(ip net.IP, zones []Zone) bool {
+	for _, zone := range zones {
+		if ipInZone(ip, zone) {
+			return true
+		}
+	}
+	return false
 }
 
 func validZoneType(value ZoneType) bool {

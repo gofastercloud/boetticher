@@ -34,7 +34,7 @@ network:
       vlan: 20
       network: 10.10.20.0/24
       gateway: 10.10.20.1
-      address_mode: static
+      address_mode: reservations-only
       dns_addresses: [10.10.10.10, 10.10.10.11]
       ntp_addresses: [10.10.10.10, 10.10.10.11]
     - name: TRUSTED

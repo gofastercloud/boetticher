@@ -36,6 +36,32 @@ func TestManagedPlanUsesOneUntaggedFirewallInterfacePerZone(t *testing.T) {
 	}
 }
 
+func TestServersDHCPIsReservationOnly(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	site.DHCPReservations = []model.DHCPReservation{{Zone: "SERVERS", Hostname: "app-01", Address: "10.10.20.61", MAC: "02:00:00:00:02:61"}}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.DHCP) != 3 || plan.DHCP[0].Zone != "SERVERS" || plan.DHCP[0].Pool != "" || len(plan.DHCP[0].Reservations) != 1 {
+		t.Fatalf("unexpected SERVERS DHCP contract: %#v", plan.DHCP)
+	}
+	reservation := plan.DHCP[0].Reservations[0]
+	if reservation.Hostname != "app-01" || reservation.Address != "10.10.20.61" || reservation.MAC != "02:00:00:00:02:61" {
+		t.Fatalf("unexpected SERVERS reservation: %#v", reservation)
+	}
+	if plan.DHCP[1].Pool != "10.10.30.100-10.10.30.199" || plan.DHCP[2].Pool != "10.10.40.100-10.10.40.199" {
+		t.Fatalf("existing dynamic pools changed unexpectedly: %#v", plan.DHCP)
+	}
+	ruleset, err := RenderNFT(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ruleset, `iifname { "trusted0", "servers0", "sandbox0" } udp dport 67`) {
+		t.Fatal("managed firewall does not permit SERVERS DHCP requests")
+	}
+}
+
 func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	tailnetEnabled, litellmEnabled := true, true
@@ -221,10 +247,10 @@ func TestExternalPlanHasPolicyButNoManagedInterfaces(t *testing.T) {
 	if plan.Mode != model.GatewayModeExternal || len(plan.Interfaces) != 0 {
 		t.Fatalf("unexpected external gateway plan: %#v", plan)
 	}
-	if len(plan.Rules) == 0 || len(plan.DHCP) != 2 {
+	if len(plan.Rules) == 0 || len(plan.DHCP) != 3 {
 		t.Fatalf("external contract lost policy or DHCP requirements: %#v", plan)
 	}
-	if plan.DHCP[0].Zone != "TRUSTED" || plan.DHCP[0].Network != "10.10.30.0/24" || plan.DHCP[1].Zone != "SANDBOX" || plan.DHCP[1].Network != "10.10.40.0/24" {
+	if plan.DHCP[0].Zone != "SERVERS" || plan.DHCP[0].Network != "10.10.20.0/24" || plan.DHCP[1].Zone != "TRUSTED" || plan.DHCP[1].Network != "10.10.30.0/24" || plan.DHCP[2].Zone != "SANDBOX" || plan.DHCP[2].Network != "10.10.40.0/24" {
 		t.Fatalf("external contract has unexpected DHCP scopes: %#v", plan.DHCP)
 	}
 	contract, err := RenderExternalContract(model.NewSite("installation", "age1example", model.GatewayModeExternal), plan)

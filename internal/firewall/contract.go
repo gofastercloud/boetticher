@@ -65,14 +65,18 @@ func RenderExternalContract(s model.Site, plan Plan) (string, error) {
 	b.WriteString("\n## Required behavior\n\n")
 	b.WriteString("- Route the six fixed IPv4 networks and provide upstream Internet/NAT as appropriate to the site.\n")
 	b.WriteString("- Keep the inter-zone policy in this document: SANDBOX cannot reach TRUSTED, SERVERS, INFRA, or MGMT; ordinary platform administration is explicit; Internet egress follows the generated policy.\n")
-	b.WriteString("- Provide DHCP and DDNS only for TRUSTED and SANDBOX with the generated gateway, DNS, and NTP values. TRANSIT, INFRA, SERVERS, and MGMT use static assignments only.\n")
+	b.WriteString("- Provide dynamic DHCP pools and DDNS for TRUSTED and SANDBOX with the generated gateway, DNS, and NTP values. Provide reservation-only DHCP and DDNS for SERVERS. TRANSIT, INFRA, and MGMT use static assignments only.\n")
 	b.WriteString("- Keep SANDBOX DNS/NTP isolated from the broad internal namespace.\n")
 	b.WriteString("- If dynamic DHCP names are wanted, send authenticated RFC2136 updates to the generated PowerDNS target using the generated zone and TSIG contract. DHCP failure must not prevent a lease.\n\n")
 	b.WriteString("## DHCP options\n\n")
 	for _, subnet := range plan.DHCP {
 		fmt.Fprintf(&b, "### %s\n\n- Network: `%s`\n- Gateway: `%s`\n- DNS: `%s`\n- NTP: `%s`\n- Dynamic name zone: `%s`\n- Reverse zone: `%s`\n", subnet.Zone, subnet.Network, subnet.Gateway, strings.Join(subnet.DNS, ", "), strings.Join(subnet.NTP, ", "), subnet.ForwardZone, subnet.ReverseZone)
 		if subnet.Pool == "" {
-			b.WriteString("- Allocation: reservations only\n\n")
+			b.WriteString("- Allocation: reservations only\n")
+			for _, reservation := range subnet.Reservations {
+				fmt.Fprintf(&b, "- Reservation: `%s` `%s` `%s`\n", reservation.Hostname, reservation.Address, reservation.MAC)
+			}
+			b.WriteString("\n")
 		} else {
 			fmt.Fprintf(&b, "- Pool: `%s`\n\n", subnet.Pool)
 		}

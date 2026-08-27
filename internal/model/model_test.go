@@ -126,7 +126,7 @@ func TestCoreZonesUseCanonicalNetworkContract(t *testing.T) {
 	want := map[string]Zone{
 		"TRANSIT": {Name: "TRANSIT", Type: ZoneTypeTransit, VLAN: 5, Network: "10.10.5.0/24", Gateway: "10.10.5.1", AddressMode: "none"},
 		"INFRA":   {Name: "INFRA", Type: ZoneTypeInfrastructure, VLAN: 10, Network: "10.10.10.0/24", Gateway: "10.10.10.1", AddressMode: "static"},
-		"SERVERS": {Name: "SERVERS", Type: ZoneTypeServers, VLAN: 20, Network: "10.10.20.0/24", Gateway: "10.10.20.1", AddressMode: "static"},
+		"SERVERS": {Name: "SERVERS", Type: ZoneTypeServers, VLAN: 20, Network: "10.10.20.0/24", Gateway: "10.10.20.1", AddressMode: "reservations-only"},
 		"TRUSTED": {Name: "TRUSTED", Type: ZoneTypeTrusted, VLAN: 30, Network: "10.10.30.0/24", Gateway: "10.10.30.1", AddressMode: "dynamic-reservations"},
 		"SANDBOX": {Name: "SANDBOX", Type: ZoneTypeSandbox, VLAN: 40, Network: "10.10.40.0/24", Gateway: "10.10.40.1", AddressMode: "dynamic"},
 		"MGMT":    {Name: "MGMT", Type: ZoneTypeManagement, VLAN: 99, Network: "10.10.99.0/24", Gateway: "10.10.99.1", AddressMode: "static"},
@@ -172,6 +172,50 @@ func TestCoreInfrastructureUsesInfraAddresses(t *testing.T) {
 		if !found[name] {
 			t.Errorf("default site is missing Core infrastructure component %s", name)
 		}
+	}
+}
+
+func TestUserNetworkIntentValidatesReservationsAndDNSOwnership(t *testing.T) {
+	site := NewDefaultSite("installation", "age1example")
+	site.DHCPReservations = []DHCPReservation{{Zone: "SERVERS", Hostname: "app-01", Address: "10.10.20.61", MAC: "02:00:00:00:02:61", VMID: 550}}
+	site.DNSRecords = []UserDNSRecord{
+		{Name: "app.lab.home.arpa", Type: "CNAME", Value: "app-01.servers.lab.home.arpa"},
+		{Name: "app-ip.lab.home.arpa", Type: "A", Value: "10.10.20.61"},
+	}
+	if err := site.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, invalid := range []Site{
+		func() Site {
+			value := site
+			value.DHCPReservations = []DHCPReservation{{Zone: "TRUSTED", Hostname: "app-01", Address: "10.10.20.61", MAC: "02:00:00:00:02:61"}}
+			return value
+		}(),
+		func() Site {
+			value := site
+			value.DNSRecords = []UserDNSRecord{{Name: "app-01.servers.lab.home.arpa", Type: "A", Value: "10.10.20.61"}}
+			return value
+		}(),
+		func() Site {
+			value := site
+			value.DNSRecords = []UserDNSRecord{{Name: "app.lab.home.arpa", Type: "TXT", Value: "bad"}}
+			return value
+		}(),
+	} {
+		if err := invalid.Validate(); err == nil {
+			t.Fatal("invalid user network intent was accepted")
+		}
+	}
+}
+
+func TestUserCNAMECyclesAreRejected(t *testing.T) {
+	site := NewDefaultSite("installation", "age1example")
+	site.DNSRecords = []UserDNSRecord{
+		{Name: "one.lab.home.arpa", Type: "CNAME", Value: "two.lab.home.arpa"},
+		{Name: "two.lab.home.arpa", Type: "CNAME", Value: "one.lab.home.arpa"},
+	}
+	if err := site.Validate(); err == nil {
+		t.Fatal("CNAME cycle was accepted")
 	}
 }
 
