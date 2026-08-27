@@ -48,6 +48,10 @@ const (
 	TransitVLAN                 = 5
 	TransitNetwork              = "10.10.5.0/24"
 	TransitGateway              = "10.10.5.1"
+	InfraVLAN                   = 10
+	InfraNetwork                = "10.10.10.0/24"
+	InfraGateway                = "10.10.10.1"
+	ProxmoxManagementAddress    = "10.10.99.250"
 	PlatformGuestIDMin          = 100
 	PlatformGuestIDMax          = 199
 	ModuleGuestIDMin            = 200
@@ -133,11 +137,12 @@ type Network struct {
 type ZoneType string
 
 const (
-	ZoneTypeTrusted    ZoneType = "trusted"
-	ZoneTypeServers    ZoneType = "servers"
-	ZoneTypeSandbox    ZoneType = "sandbox"
-	ZoneTypeManagement ZoneType = "management"
-	ZoneTypeTransit    ZoneType = "transit"
+	ZoneTypeTransit        ZoneType = "transit"
+	ZoneTypeInfrastructure ZoneType = "infrastructure"
+	ZoneTypeServers        ZoneType = "servers"
+	ZoneTypeTrusted        ZoneType = "trusted"
+	ZoneTypeSandbox        ZoneType = "sandbox"
+	ZoneTypeManagement     ZoneType = "management"
 )
 
 // PhysicalNetwork stores installation-specific hardware bindings separately
@@ -158,7 +163,7 @@ type PhysicalNIC struct {
 
 type Zone struct {
 	Name         string   `yaml:"name" json:"name"`
-	Type         ZoneType `yaml:"type" json:"type" jsonschema:"enum=trusted,enum=servers,enum=sandbox,enum=management,enum=transit"`
+	Type         ZoneType `yaml:"type" json:"type" jsonschema:"enum=transit,enum=infrastructure,enum=servers,enum=trusted,enum=sandbox,enum=management"`
 	VLAN         int      `yaml:"vlan" json:"vlan"`
 	Network      string   `yaml:"network" json:"network"`
 	Gateway      string   `yaml:"gateway" json:"gateway"`
@@ -364,10 +369,10 @@ func NewDefaultSite(installationID, ageRecipient string) Site {
 	// components part of NewSite's Core-owned canonical seed.
 	for _, component := range []Component{
 		{Name: "lab-fw-01", VMID: ProxmoxVMID, Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "Debian firewall", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "firewall"},
-		{Name: "lab-dns-01", VMID: DNS01VMID, Hostname: "lab-dns-01", Zone: "SERVERS", Address: "10.10.20.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "dns"},
-		{Name: "lab-dns-02", VMID: DNS02VMID, Hostname: "lab-dns-02", Zone: "SERVERS", Address: "10.10.20.11", Role: "DNS/NTP", DNSAliases: []string{"dns02"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "dns"},
-		{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "SERVERS", Address: "10.10.20.20", Role: "Zabbix", DNSAliases: []string{"monitor"}, URL: "https://monitor." + DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "monitoring"},
-		{Name: "lab-log-01", VMID: LoggingVMID, Hostname: "lab-log-01", Zone: "SERVERS", Address: "10.10.20.40", Role: "Central systemd journal", DNSAliases: []string{"logs"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "logging"},
+		{Name: "lab-dns-01", VMID: DNS01VMID, Hostname: "lab-dns-01", Zone: "INFRA", Address: "10.10.10.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "dns"},
+		{Name: "lab-dns-02", VMID: DNS02VMID, Hostname: "lab-dns-02", Zone: "INFRA", Address: "10.10.10.11", Role: "DNS/NTP", DNSAliases: []string{"dns02"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "dns"},
+		{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "INFRA", Address: "10.10.10.20", Role: "Zabbix", DNSAliases: []string{"monitor"}, URL: "https://monitor." + DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "monitoring"},
+		{Name: "lab-log-01", VMID: LoggingVMID, Hostname: "lab-log-01", Zone: "INFRA", Address: "10.10.10.40", Role: "Central systemd journal", DNSAliases: []string{"logs"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "logging"},
 	} {
 		component.Tags = []string{TagBoetticher, TagManaged, TagModule, "module-" + component.Module, ModuleOwnershipTag(component.Module), TagBackup}
 		component.SSHUser, component.SSHPort = DefaultAdminSSHUser, 22
@@ -392,11 +397,12 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 		Network: Network{
 			Domain: DefaultDomain,
 			Zones: []Zone{
-				{Name: "TRUSTED", Type: ZoneTypeTrusted, VLAN: 10, Network: "10.10.10.0/24", Gateway: "10.10.10.1", AddressMode: "dynamic-reservations", DNSAddresses: []string{"10.10.20.10", "10.10.20.11"}, NTPAddresses: []string{"10.10.20.10", "10.10.20.11"}},
-				{Name: "SERVERS", Type: ZoneTypeServers, VLAN: 20, Network: "10.10.20.0/24", Gateway: "10.10.20.1", AddressMode: "dynamic-reservations", DNSAddresses: []string{"10.10.20.10", "10.10.20.11"}, NTPAddresses: []string{"10.10.20.10", "10.10.20.11"}},
-				{Name: "SANDBOX", Type: ZoneTypeSandbox, VLAN: 50, Network: "10.10.50.0/24", Gateway: "10.10.50.1", AddressMode: "dynamic", DNSAddresses: []string{"10.10.50.1"}, NTPAddresses: []string{"10.10.50.1"}},
-				{Name: "MGMT", Type: ZoneTypeManagement, VLAN: 99, Network: "10.10.99.0/24", Gateway: "10.10.99.1", AddressMode: "reservations-only", DNSAddresses: []string{"10.10.20.10", "10.10.20.11"}, NTPAddresses: []string{"10.10.20.10", "10.10.20.11"}},
 				{Name: "TRANSIT", Type: ZoneTypeTransit, VLAN: TransitVLAN, Network: TransitNetwork, Gateway: TransitGateway, AddressMode: "none"},
+				{Name: "INFRA", Type: ZoneTypeInfrastructure, VLAN: InfraVLAN, Network: InfraNetwork, Gateway: InfraGateway, AddressMode: "static", DNSAddresses: []string{"10.10.10.10", "10.10.10.11"}, NTPAddresses: []string{"10.10.10.10", "10.10.10.11"}},
+				{Name: "SERVERS", Type: ZoneTypeServers, VLAN: 20, Network: "10.10.20.0/24", Gateway: "10.10.20.1", AddressMode: "static", DNSAddresses: []string{"10.10.10.10", "10.10.10.11"}, NTPAddresses: []string{"10.10.10.10", "10.10.10.11"}},
+				{Name: "TRUSTED", Type: ZoneTypeTrusted, VLAN: 30, Network: "10.10.30.0/24", Gateway: "10.10.30.1", AddressMode: "dynamic-reservations", DNSAddresses: []string{"10.10.10.10", "10.10.10.11"}, NTPAddresses: []string{"10.10.10.10", "10.10.10.11"}},
+				{Name: "SANDBOX", Type: ZoneTypeSandbox, VLAN: 40, Network: "10.10.40.0/24", Gateway: "10.10.40.1", AddressMode: "dynamic", DNSAddresses: []string{"10.10.40.1"}, NTPAddresses: []string{"10.10.40.1"}},
+				{Name: "MGMT", Type: ZoneTypeManagement, VLAN: 99, Network: "10.10.99.0/24", Gateway: "10.10.99.1", AddressMode: "static", DNSAddresses: []string{"10.10.10.10", "10.10.10.11"}, NTPAddresses: []string{"10.10.10.10", "10.10.10.11"}},
 			},
 		},
 		PhysicalNetwork: PhysicalNetwork{Mode: ModeVirtualOnly},
@@ -408,8 +414,8 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 			UserWorkloadsManaged: false,
 		},
 		Components: []Component{
-			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: "10.10.99.5", Role: "Proxmox host", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork}, URL: "https://proxmox." + DefaultDomain + ":8006", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Logging: true},
-			{Name: "lab-portal-01", VMID: PortalVMID, Hostname: "lab-portal-01", Zone: "SERVERS", Address: "10.10.20.30", Role: "Generated platform portal", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagPortal, TagCorePortal, TagBackup}, URL: "https://portal." + DefaultDomain, DNSAliases: []string{"portal"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Logging: true},
+			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: ProxmoxManagementAddress, Role: "Proxmox host", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork}, URL: "https://proxmox." + DefaultDomain + ":8006", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Logging: true},
+			{Name: "lab-portal-01", VMID: PortalVMID, Hostname: "lab-portal-01", Zone: "INFRA", Address: "10.10.10.30", Role: "Generated platform portal", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagPortal, TagCorePortal, TagBackup}, URL: "https://portal." + DefaultDomain, DNSAliases: []string{"portal"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Logging: true},
 		},
 	}
 	return site
@@ -523,11 +529,12 @@ func (s Site) Validate() error {
 		network string
 		gateway string
 	}{
-		"TRUSTED": {typ: ZoneTypeTrusted, vlan: 10, network: "10.10.10.0/24", gateway: "10.10.10.1"},
-		"SERVERS": {typ: ZoneTypeServers, vlan: 20, network: "10.10.20.0/24", gateway: "10.10.20.1"},
-		"SANDBOX": {typ: ZoneTypeSandbox, vlan: 50, network: "10.10.50.0/24", gateway: "10.10.50.1"},
-		"MGMT":    {typ: ZoneTypeManagement, vlan: 99, network: "10.10.99.0/24", gateway: "10.10.99.1"},
 		"TRANSIT": {typ: ZoneTypeTransit, vlan: TransitVLAN, network: TransitNetwork, gateway: TransitGateway},
+		"INFRA":   {typ: ZoneTypeInfrastructure, vlan: InfraVLAN, network: InfraNetwork, gateway: InfraGateway},
+		"SERVERS": {typ: ZoneTypeServers, vlan: 20, network: "10.10.20.0/24", gateway: "10.10.20.1"},
+		"TRUSTED": {typ: ZoneTypeTrusted, vlan: 30, network: "10.10.30.0/24", gateway: "10.10.30.1"},
+		"SANDBOX": {typ: ZoneTypeSandbox, vlan: 40, network: "10.10.40.0/24", gateway: "10.10.40.1"},
+		"MGMT":    {typ: ZoneTypeManagement, vlan: 99, network: "10.10.99.0/24", gateway: "10.10.99.1"},
 	}
 	seenZones := map[string]bool{}
 	seenVLANs := map[int]string{}
@@ -553,8 +560,23 @@ func (s Site) Validate() error {
 		if _, _, err := net.ParseCIDR(z.Network); err != nil {
 			return fmt.Errorf("zone %s has invalid network: %w", z.Name, err)
 		}
-		if z.Type == ZoneTypeTransit && (z.AddressMode != "none" || len(z.DNSAddresses) != 0 || len(z.NTPAddresses) != 0) {
-			return errors.New("TRANSIT must not provide DHCP, DNS, or NTP services")
+		switch z.Type {
+		case ZoneTypeTransit:
+			if z.AddressMode != "none" || len(z.DNSAddresses) != 0 || len(z.NTPAddresses) != 0 {
+				return errors.New("TRANSIT must not provide DHCP, DNS, or NTP services")
+			}
+		case ZoneTypeTrusted:
+			if z.AddressMode != "dynamic-reservations" {
+				return errors.New("TRUSTED must provide DHCP reservations")
+			}
+		case ZoneTypeSandbox:
+			if z.AddressMode != "dynamic" {
+				return errors.New("SANDBOX must provide dynamic DHCP")
+			}
+		case ZoneTypeInfrastructure, ZoneTypeServers, ZoneTypeManagement:
+			if z.AddressMode != "static" {
+				return fmt.Errorf("%s must use static assignments only", z.Name)
+			}
 		}
 	}
 	seenComponents := map[string]bool{}
@@ -620,14 +642,14 @@ func (s Site) Validate() error {
 		}
 	}
 	if len(seenZones) != len(expectedZones) {
-		return fmt.Errorf("V1 requires exactly TRUSTED, SERVERS, SANDBOX, MGMT, and TRANSIT zones")
+		return fmt.Errorf("V1 requires exactly TRANSIT, INFRA, SERVERS, TRUSTED, SANDBOX, and MGMT zones")
 	}
 	requiredComponents := map[string]struct {
 		address string
 		vmid    int
 	}{
-		"lab-proxmox-01": {address: "10.10.99.5", vmid: 0},
-		"lab-portal-01":  {address: "10.10.20.30", vmid: PortalVMID},
+		"lab-proxmox-01": {address: ProxmoxManagementAddress, vmid: 0},
+		"lab-portal-01":  {address: "10.10.10.30", vmid: PortalVMID},
 	}
 	composed := len(s.Declarations) > 0
 	for _, component := range s.Components {
@@ -639,23 +661,23 @@ func (s Site) Validate() error {
 		requiredComponents["lab-dns-01"] = struct {
 			address string
 			vmid    int
-		}{address: "10.10.20.10", vmid: DNS01VMID}
+		}{address: "10.10.10.10", vmid: DNS01VMID}
 		requiredComponents["lab-dns-02"] = struct {
 			address string
 			vmid    int
-		}{address: "10.10.20.11", vmid: DNS02VMID}
+		}{address: "10.10.10.11", vmid: DNS02VMID}
 	}
 	if composed && resolvedModuleEnabled(s.Modules, "monitoring", true) {
 		requiredComponents["lab-monitor-01"] = struct {
 			address string
 			vmid    int
-		}{address: "10.10.20.20", vmid: MonitorVMID}
+		}{address: "10.10.10.20", vmid: MonitorVMID}
 	}
 	if composed && resolvedModuleEnabled(s.Modules, "logging", true) {
 		requiredComponents["lab-log-01"] = struct {
 			address string
 			vmid    int
-		}{address: "10.10.20.40", vmid: LoggingVMID}
+		}{address: "10.10.10.40", vmid: LoggingVMID}
 	}
 	if composed && s.Gateway.Mode == GatewayModeManaged && resolvedModuleEnabled(s.Modules, "firewall", true) {
 		requiredComponents["lab-fw-01"] = struct {
@@ -754,7 +776,7 @@ func validateDeclarations(s Site) error {
 
 func validZoneType(value ZoneType) bool {
 	switch value {
-	case ZoneTypeTrusted, ZoneTypeServers, ZoneTypeSandbox, ZoneTypeManagement, ZoneTypeTransit:
+	case ZoneTypeTransit, ZoneTypeInfrastructure, ZoneTypeServers, ZoneTypeTrusted, ZoneTypeSandbox, ZoneTypeManagement:
 		return true
 	default:
 		return false
@@ -763,6 +785,8 @@ func validZoneType(value ZoneType) bool {
 
 func zoneTypeForName(name string) ZoneType {
 	switch name {
+	case "INFRA":
+		return ZoneTypeInfrastructure
 	case "TRUSTED":
 		return ZoneTypeTrusted
 	case "SERVERS":

@@ -121,6 +121,33 @@ func TestTransitIsFixedCoreNetworkAndSemanticPlacement(t *testing.T) {
 	}
 }
 
+func TestCoreZonesUseCanonicalNetworkContract(t *testing.T) {
+	site := NewSite("installation", "age1example", GatewayModeManaged)
+	want := map[string]Zone{
+		"TRANSIT": {Name: "TRANSIT", Type: ZoneTypeTransit, VLAN: 5, Network: "10.10.5.0/24", Gateway: "10.10.5.1", AddressMode: "none"},
+		"INFRA":   {Name: "INFRA", Type: ZoneTypeInfrastructure, VLAN: 10, Network: "10.10.10.0/24", Gateway: "10.10.10.1", AddressMode: "static"},
+		"SERVERS": {Name: "SERVERS", Type: ZoneTypeServers, VLAN: 20, Network: "10.10.20.0/24", Gateway: "10.10.20.1", AddressMode: "static"},
+		"TRUSTED": {Name: "TRUSTED", Type: ZoneTypeTrusted, VLAN: 30, Network: "10.10.30.0/24", Gateway: "10.10.30.1", AddressMode: "dynamic-reservations"},
+		"SANDBOX": {Name: "SANDBOX", Type: ZoneTypeSandbox, VLAN: 40, Network: "10.10.40.0/24", Gateway: "10.10.40.1", AddressMode: "dynamic"},
+		"MGMT":    {Name: "MGMT", Type: ZoneTypeManagement, VLAN: 99, Network: "10.10.99.0/24", Gateway: "10.10.99.1", AddressMode: "static"},
+	}
+	if len(site.Network.Zones) != len(want) {
+		t.Fatalf("got %d zones, want %d", len(site.Network.Zones), len(want))
+	}
+	for _, zone := range site.Network.Zones {
+		expected, ok := want[zone.Name]
+		if !ok || zone.Name != expected.Name || zone.Type != expected.Type || zone.VLAN != expected.VLAN || zone.Network != expected.Network || zone.Gateway != expected.Gateway || zone.AddressMode != expected.AddressMode {
+			t.Errorf("unexpected zone: %#v", zone)
+		}
+	}
+	if got := site.Components[0].Address; got != ProxmoxManagementAddress {
+		t.Fatalf("Proxmox management address = %s, want %s", got, ProxmoxManagementAddress)
+	}
+	if err := site.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUnknownZoneSemanticTypeIsRejected(t *testing.T) {
 	site := NewSite("installation", "age1example", GatewayModeManaged)
 	for index := range site.Network.Zones {
@@ -157,7 +184,7 @@ func TestOldSiteSchemaRequiresFreshV03Initialization(t *testing.T) {
 
 func TestUserManagedVMIDMustUseReservedRange(t *testing.T) {
 	site := NewDefaultSite("installation", "age1example")
-	site.Components = append(site.Components, Component{Name: "user-vm", VMID: 450, Hostname: "user-vm", Zone: "SANDBOX", Address: "10.10.50.50", Role: "user workload"})
+	site.Components = append(site.Components, Component{Name: "user-vm", VMID: 450, Hostname: "user-vm", Zone: "SANDBOX", Address: "10.10.40.50", Role: "user workload"})
 	if err := site.Validate(); err == nil || !strings.Contains(err.Error(), "reserved user-workload range") {
 		t.Fatalf("invalid user VMID was accepted: %v", err)
 	}
