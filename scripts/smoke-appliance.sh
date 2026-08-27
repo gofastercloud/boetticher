@@ -4,6 +4,7 @@ set -eu
 name=${1:?artifact name is required}
 rootfs=${2:?rootfs path is required}
 run() {
+  printf '%s\n' "boetticher smoke check: $*"
   chroot "$rootfs" "$@" >/dev/null 2>&1
 }
 
@@ -23,6 +24,7 @@ fi
 
 case "$name" in
   boetticher-base)
+    printf '%s\n' 'boetticher smoke check: base user and files'
     run id labadmin
     test -x "$rootfs/usr/sbin/sshd"
     run systemd-journal-upload --version
@@ -32,6 +34,7 @@ case "$name" in
     test -f "$rootfs/etc/systemd/journald.conf.d/boetticher.conf"
     test -f "$rootfs/etc/systemd/journal-upload.conf"
     run visudo -cf /etc/sudoers
+    printf '%s\n' 'boetticher smoke check: base secret and host identity absence'
     test ! -e "$rootfs/home/labadmin/.ssh/authorized_keys"
     test ! -e "$rootfs/root/.ssh/authorized_keys"
     ;;

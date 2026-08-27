@@ -17,6 +17,8 @@ project, so releases can make clean breaks while the design is settling.
   snapshot; the numeric `13` suite returned 404 during hosted construction.
 - Add bounded stage markers to hosted-builder output so a failed appliance
   construction identifies the exact build phase.
+- Label the existing appliance smoke checks in hosted-builder diagnostics so
+  failed base-contract checks identify the exact assertion.
 
 ## [0.3.32] - 2026-08-27
 
