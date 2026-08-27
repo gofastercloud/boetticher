@@ -583,6 +583,7 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 		"mirror: https://snapshot.debian.org/archive/debian/20260825T000000Z/",
 		"snapshot: 20260825T000000Z",
 		"build:\n  packages:",
+		"    - ifupdown",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("base definition is missing pinned Debian source %q", required)

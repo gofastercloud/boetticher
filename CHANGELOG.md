@@ -61,6 +61,8 @@ project, so releases can make clean breaks while the design is settling.
   artifact description.
 - Compare owned LXC persistent volumes by Proxmox's canonical volume ID and
   declared mount, backup, and size fields.
+- Include ifupdown in the base LXC image so Proxmox's generated
+  `/etc/network/interfaces` is brought up on first boot.
 - Resume an owned running gateway without issuing a duplicate Proxmox start
   request after a prior deployment attempt.
 - Discover the hosted builder address through the QEMU guest agent after
