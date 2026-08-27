@@ -228,6 +228,25 @@ func TestDNSRoleUsesBlockyVersionSubcommand(t *testing.T) {
 	}
 }
 
+func TestPowerDNSTemplateUsesCurrentPrimarySecondarySettings(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "dns", "templates", "pdns.conf.j2")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, forbidden := range []string{"master=", "slave="} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("PowerDNS template retains obsolete setting %q", forbidden)
+		}
+	}
+	for _, expected := range []string{"secondary=", "primary="} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("PowerDNS template missing current setting %q", expected)
+		}
+	}
+}
+
 func TestFirewallRoleCreatesNftablesConfigurationDirectory(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
 	data, err := os.ReadFile(path)

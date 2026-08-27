@@ -70,6 +70,8 @@ project, so releases can make clean breaks while the design is settling.
 - Use the PowerDNS 4.9 `pdnsutil` command names supported by the qualified
   appliance.
 - Use Blocky's supported `version` subcommand during DNS qualification.
+- Use PowerDNS 4.9's `primary` and `secondary` settings without obsolete
+  `master` and `slave` options.
 - Resume an owned running gateway without issuing a duplicate Proxmox start
   request after a prior deployment attempt.
 - Discover the hosted builder address through the QEMU guest agent after
