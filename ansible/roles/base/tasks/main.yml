@@ -29,6 +29,15 @@
     enabled: true
     state: started
 
+- name: Configure appliances to use the platform DNS pair
+  ansible.builtin.copy:
+    content: "{% for nameserver in dns_plan.nameservers %}nameserver {{ nameserver }}\n{% endfor %}"
+    dest: /etc/resolv.conf
+    owner: root
+    group: root
+    mode: '0644'
+  when: inventory_hostname not in groups.get('proxmox', [])
+
 - name: Install bounded local journald configuration
   ansible.builtin.file:
     path: /etc/systemd/journald.conf.d

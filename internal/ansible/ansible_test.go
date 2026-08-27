@@ -200,6 +200,18 @@ func TestJournalUploadRetriesAfterDependencyStartup(t *testing.T) {
 	}
 }
 
+func TestApplianceResolverUsesPlatformDNSPair(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "Configure appliances to use the platform DNS pair") || !strings.Contains(text, "nameserver {{ nameserver }}") || !strings.Contains(text, "dest: /etc/resolv.conf") || !strings.Contains(text, "inventory_hostname not in groups.get('proxmox', [])") {
+		t.Fatal("appliances do not receive the model DNS pair without modifying the Proxmox host")
+	}
+}
+
 func TestBaseRoleRunsChronyWithoutKernelClockControlInAppliances(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
