@@ -19,7 +19,7 @@ boetticher bootstrap-endpoint show|set ADDRESS [--site DIR]
 boetticher network trunk status|attach|detach [INTERFACE] [--site DIR] [--confirm] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]
 boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]
-boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json]
+boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]
 boetticher dhcp status|leases [--site DIR] [--live] [--json]
 boetticher storage status|initialize [--site DIR] [--live] [--confirmed]
 boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
@@ -85,9 +85,9 @@ Usage: `boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH]
 
 Arguments: No positional arguments.
 
-Options: --dry-run plans without mutation; --confirm authorizes destructive appliance replacement when the plan requires it; connection options select the Proxmox trust path.
+Options: --dry-run plans without mutation; --confirm authorizes destructive operations supported by the active providers; an artifact qualification mismatch remains HOLD; connection options select the Proxmox trust path.
 
-Safety: This is the sole public platform-application operation. Review the plan; rootfs replacement and purge-like actions require explicit confirmation.
+Safety: This is the sole public platform-application operation. Review the plan before applying it; unsupported rootfs replacement remains HOLD rather than being bypassed by --confirm.
 
 Examples: `boetticher deploy --site ./my-boetticher --dry-run`; `boetticher deploy --site ./my-boetticher --confirm`
 
@@ -257,11 +257,11 @@ Related commands: access, deploy, verify
 
 Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
 
-Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json]`
+Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
 
 Arguments: Subcommands select the read-only view; firewall logs may accept a zone and limit.
 
-Options: --live queries the managed firewall; --json emits machine-readable output; show also accepts --format human|nft.
+Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
 
 Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
 
@@ -467,11 +467,11 @@ Related commands: firewall, verify, logs
 
 Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
 
-Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json]`
+Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
 
 Arguments: Subcommands select the read-only view; firewall logs may accept a zone and limit.
 
-Options: --live queries the managed firewall; --json emits machine-readable output; show also accepts --format human|nft.
+Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
 
 Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
 
@@ -483,11 +483,11 @@ Related commands: dhcp, network, logs, verify
 
 Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
 
-Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json]`
+Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
 
 Arguments: Subcommands select the read-only view; firewall logs may accept a zone and limit.
 
-Options: --live queries the managed firewall; --json emits machine-readable output; show also accepts --format human|nft.
+Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
 
 Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
 
@@ -499,11 +499,11 @@ Related commands: dhcp, network, logs, verify
 
 Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
 
-Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json]`
+Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
 
 Arguments: Subcommands select the read-only view; firewall logs may accept a zone and limit.
 
-Options: --live queries the managed firewall; --json emits machine-readable output; show also accepts --format human|nft.
+Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
 
 Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
 
@@ -515,11 +515,11 @@ Related commands: dhcp, network, logs, verify
 
 Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
 
-Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json]`
+Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
 
 Arguments: Subcommands select the read-only view; firewall logs may accept a zone and limit.
 
-Options: --live queries the managed firewall; --json emits machine-readable output; show also accepts --format human|nft.
+Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
 
 Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
 
@@ -531,11 +531,11 @@ Related commands: dhcp, network, logs, verify
 
 Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
 
-Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json]`
+Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
 
 Arguments: Subcommands select the read-only view; firewall logs may accept a zone and limit.
 
-Options: --live queries the managed firewall; --json emits machine-readable output; show also accepts --format human|nft.
+Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
 
 Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
 
@@ -547,11 +547,11 @@ Related commands: dhcp, network, logs, verify
 
 Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
 
-Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json]`
+Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
 
 Arguments: Subcommands select the read-only view; firewall logs may accept a zone and limit.
 
-Options: --live queries the managed firewall; --json emits machine-readable output; show also accepts --format human|nft.
+Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
 
 Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
 

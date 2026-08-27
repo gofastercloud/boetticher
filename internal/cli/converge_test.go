@@ -74,6 +74,9 @@ func TestDeployDryRunDoesNotWriteLocalProjections(t *testing.T) {
 	if err := runDeploy([]string{"--site", siteDir, "--dry-run"}, &output); err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(output.String(), "Artifact qualification: HOLD") {
+		t.Fatalf("dry-run omitted missing qualification hold: %s", output.String())
+	}
 	if _, err := os.Stat(filepath.Join(siteDir, "generated", "model.json")); !os.IsNotExist(err) {
 		t.Fatalf("deploy dry-run wrote a local model projection: %v", err)
 	}

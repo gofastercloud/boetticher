@@ -63,9 +63,12 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 		fmt.Fprintln(out, "  Destructive actions: NOT RUN (dry-run)")
 		if plan, planErr := proxmox.PlanFromSite(s); planErr == nil {
-			qualified, qualifyErr := proxmox.ResolveQualifiedArtifacts(*siteDir, plan, false)
-			if qualifyErr == nil {
+			qualified, qualifyErr := proxmox.ResolveQualifiedArtifacts(*siteDir, plan, true)
+			if qualifyErr != nil {
+				fmt.Fprintf(out, "  Artifact qualification: HOLD (%v)\n", qualifyErr)
+			} else {
 				plan = qualified
+				fmt.Fprintln(out, "  Artifact qualification: PASS (all selected artifacts qualified)")
 			}
 			fmt.Fprintln(out, "  Appliances:")
 			for _, guest := range plan.Guests {
