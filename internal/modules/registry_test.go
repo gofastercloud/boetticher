@@ -25,6 +25,11 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if !IsEnabled(site, "dns") || !IsEnabled(site, "monitoring") || !IsEnabled(site, "firewall") {
 		t.Fatalf("default modules were not enabled: %#v", site.Modules)
 	}
+	for _, module := range modules {
+		if module.State != "Enabled" {
+			t.Fatalf("active module %s reported unexpected desired state %q", module.Definition.Name, module.State)
+		}
+	}
 	if len(site.Declarations) != 4 || site.Declarations[0].Artifact.DefinitionSHA256 == "" {
 		t.Fatalf("default module declarations are incomplete: %#v", site.Declarations)
 	}
@@ -114,6 +119,11 @@ func TestMonitoringCanBeDisabledWithoutRemovingOtherModules(t *testing.T) {
 	}
 	if IsEnabled(site, "monitoring") {
 		t.Fatal("monitoring remained enabled")
+	}
+	for _, module := range site.Modules {
+		if module.Name == "monitoring" && module.State != "Disabled" {
+			t.Fatalf("disabled monitoring reported unexpected desired state %q", module.State)
+		}
 	}
 	for _, component := range site.PlatformComponents() {
 		if component.Name == "lab-monitor-01" {

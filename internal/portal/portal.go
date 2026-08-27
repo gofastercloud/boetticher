@@ -114,22 +114,21 @@ func home(s model.Site, revision string, evidence Evidence, now time.Time) strin
 		gateway = "managed Debian firewall"
 	}
 	var moduleTable strings.Builder
-	moduleTable.WriteString("<h2>Platform modules</h2><table><tr><th>Name</th><th>Policy</th><th>Implementation</th><th>Version</th><th>Artifact</th><th>Definition</th><th>Qualification</th><th>State</th><th>Reason</th></tr>")
+	moduleTable.WriteString("<h2>Platform modules</h2><table><tr><th>Name</th><th>Policy</th><th>Implementation</th><th>Version</th><th>Artifact</th><th>Definition</th><th>State</th><th>Reason</th></tr>")
 	for _, module := range s.Modules {
 		implementation := map[string]string{"dns": "Blocky", "logging": "systemd journal", "monitoring": "Zabbix", "firewall": "Debian/nftables"}[module.Name]
 		if module.Name == "dns" && s.ModuleConfig["dns"].Provider == string(model.DNSProviderAdGuard) {
 			implementation = "AdGuard"
 		}
-		version, artifact, definition, qualification := moduleArtifactDetails(s, module.Name, module.Version)
-		fmt.Fprintf(&moduleTable, "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><code>%s</code></td><td><code>%s</code></td><td>%s</td><td>%s</td><td>%s</td></tr>", html.EscapeString(module.Name), html.EscapeString(module.Policy), html.EscapeString(implementation), html.EscapeString(version), html.EscapeString(artifact), html.EscapeString(definition), html.EscapeString(qualification), html.EscapeString(module.State), html.EscapeString(module.Reason))
+		version, artifact, definition := moduleArtifactDetails(s, module.Name, module.Version)
+		fmt.Fprintf(&moduleTable, "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><code>%s</code></td><td><code>%s</code></td><td>%s</td><td>%s</td></tr>", html.EscapeString(module.Name), html.EscapeString(module.Policy), html.EscapeString(implementation), html.EscapeString(version), html.EscapeString(artifact), html.EscapeString(definition), html.EscapeString(module.State), html.EscapeString(module.Reason))
 	}
 	moduleTable.WriteString("</table>")
 	return fmt.Sprintf("<p>Generated platform view; not a wiki or monitoring dashboard.</p><table><tr><th>Platform version</th><td>%s</td></tr><tr><th>Schema</th><td>%d</td></tr><tr><th>Gateway</th><td>%s</td></tr><tr><th>Model revision</th><td><code>%s</code></td></tr><tr><th>Portal generated</th><td>%s</td></tr><tr><th>Latest verification</th><td>%s</td></tr></table>%s%s<h2>Quick links</h2><p><a href=\"%s\">Proxmox</a> · <a href=\"https://monitor.%s\">Zabbix</a> · <a href=\"https://portal.%s\">Portal</a> · <a href=\"https://dns.%s\">DNS</a></p>", html.EscapeString(s.PlatformVersion), s.SchemaVersion, html.EscapeString(gateway), html.EscapeString(revision), now.UTC().Format(time.RFC3339), html.EscapeString(status), moduleTable.String(), loggingSummary(s, evidence), html.EscapeString("https://proxmox."+s.Network.Domain+":8006"), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain))
 }
 
-func moduleArtifactDetails(s model.Site, name, fallbackVersion string) (version, artifact, definition, qualification string) {
+func moduleArtifactDetails(s model.Site, name, fallbackVersion string) (version, artifact, definition string) {
 	version = fallbackVersion
-	qualification = "NOT TESTED (content evidence is controller runtime state)"
 	for _, declaration := range s.Declarations {
 		if declaration.Module != name {
 			continue
@@ -137,9 +136,6 @@ func moduleArtifactDetails(s model.Site, name, fallbackVersion string) (version,
 		version = declaration.Artifact.Version
 		artifact = declaration.Artifact.Name
 		definition = declaration.Artifact.DefinitionSHA256
-		if declaration.Artifact.ContentSHA256 != "" {
-			qualification = "QUALIFIED content=" + declaration.Artifact.ContentSHA256
-		}
 		return
 	}
 	return

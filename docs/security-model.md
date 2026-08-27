@@ -53,55 +53,42 @@ lease-derived name; it never makes that workload boetticher-managed.
 ## Core and module boundary
 
 Core is the only privileged mutation boundary. Built-in modules are trusted
-compiled-in boetticher code, but they emit bounded declarations for guests,
+compiled-in boetticher code that emits bounded declarations for guests,
 network intent, DNS, certificates, monitoring, backups, and portal metadata.
-They do not call Proxmox, nftables, SOPS/Age, CA signing, Zabbix, or arbitrary
-host-shell mutation paths directly. Core resolves dependencies, capabilities,
-fixed identities, ownership, and conflicts before deployment.
+Core resolves dependencies, capabilities, fixed identities, ownership, and
+conflicts before deployment. Modules do not call Proxmox, nftables, SOPS/Age,
+CA signing, Zabbix, or arbitrary host-shell mutation paths directly.
 
-Official appliance artifacts derive from pinned Debian 13 definitions and are
-checksum-verified before use. The appliance root filesystem is replaceable;
+Appliance definitions are deterministic and derive from pinned Debian 13
+inputs. Concrete artifact bytes are independently SHA-256 verified before
+use; build smoke tests and the Trivy policy must pass. Package manifests,
+SBOMs, scanner reports, and builder metadata are useful release/debug outputs,
+not separate trust authorities. Appliance root filesystems are replaceable;
 module-declared databases, lease state, and SSH host identity are persistent.
 Site configuration, policy, certificates, and runtime configuration are
 deployment-derived.
 
-Systemd credentials are the standard service-secret delivery mechanism. Kea
-receives a credential through a protected ephemeral secret file. PowerDNS may
-persist its TSIG material in its protected supported backend because its
-operating model requires that datastore. SOPS/Age remains the controller-side
-recovery authority in both cases. Proxmox/root remains a trusted host boundary.
+Modules request durable volumes but cannot claim disks or create storage
+topology. Systemd credentials are the standard service-secret delivery
+mechanism. Kea receives a credential through a protected ephemeral secret
+file. PowerDNS may persist TSIG material in its protected supported backend
+because its operating model requires that datastore. SOPS/Age remains the
+controller-side recovery authority, and endpoint private keys remain
+endpoint-local where designed.
 
 Application services run as dedicated non-root users wherever their software
 allows it. A compromised module process is not granted controller identity,
-SOPS/Age authority, CA signing keys, or another module's ownership. A root
-compromise inside a guest remains bounded by the trusted Proxmox and network
-boundaries described above.
-
-Malformed configuration, duplicate DNS identities, fixed VMID collisions,
-conflicting network declarations, artifact checksum mismatches, missing
-gateway capability, dependency cycles, and secret values in declarations are
-rejected before infrastructure mutation.
-## v0.3.1 module and appliance boundary
-
-Core alone mutates Proxmox, storage, network policy, PKI, secrets, backups,
-DNS providers, and monitoring. Built-in modules emit bounded declarations and
-run from immutable qualified Debian 13 appliances. Artifact definition
-identity is deterministic; actual bytes are independently qualified with a
-content SHA-256, package manifest, SBOM, and Trivy evidence.
-
-Modules request durable volumes but cannot claim disks or create storage
-topology. Root filesystems are replaceable and declared volumes are retained
-across replacement. SOPS/Age remains the controller-side recovery authority;
-systemd credentials are the standard runtime delivery mechanism. PowerDNS may
-persist TSIG material in its protected supported backend as an explicit,
-recoverable third-party exception.
-
-Central logging uses bounded local journald, asynchronous HTTPS/mTLS upload,
-and a mandatory journal collector. The collector is operational evidence, not
-an availability dependency or cryptographic non-repudiation system. Proxmox
+SOPS/Age authority, CA signing keys, or another module's ownership. Proxmox
 and host root remain trusted boundaries.
+
+Central logging uses bounded local journald and asynchronous HTTPS/mTLS upload
+to a mandatory journal collector. The collector is a secondary operational log
+copy, not an availability dependency or cryptographic non-repudiation system.
 
 The DNS module is mandatory. Blocky is the default recursive/filtering
 implementation and AdGuard is a typed alternative; PowerDNS remains
 authoritative in both modes, and internal negative answers never leak to public
-upstreams.
+upstreams. Malformed configuration, duplicate DNS identities, fixed VMID
+collisions, conflicting network declarations, artifact checksum mismatches,
+missing gateway capability, dependency cycles, and secret values in
+declarations are rejected before infrastructure mutation.

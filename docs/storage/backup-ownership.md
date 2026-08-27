@@ -1,6 +1,8 @@
 # Backup ownership
 
-boetticher guarantees backup coverage for its own platform guests through the clearly named Proxmox job `boetticher-platform`. The V1 generated policy includes only platform VM/LXC IDs:
+boetticher guarantees backup coverage for its own platform guests through the
+clearly named Proxmox job `boetticher-platform`. In the default managed
+configuration, the platform backup set contains these platform VM/LXC IDs:
 
 ```text
 100 lab-fw-01
@@ -11,14 +13,16 @@ boetticher guarantees backup coverage for its own platform guests through the cl
 140 lab-log-01
 ```
 
-Each managed guest also receives a canonical Proxmox tag set. All six V1
-guests carry `boetticher`, `managed`, `platform`, `infra`, and `backup`, plus
-role tags such as `network`, `dns`, `ntp`, `observability`, or `portal`.
+The actual list is derived from active boetticher-owned guests carrying the
+backup contract. External gateway mode therefore has no VM 100, and disabling
+monitoring has no VM 120 in the active backup set. Each managed guest also
+receives a canonical Proxmox tag set, including the backup contract where
+applicable.
 
 The logging guest is included in the platform backup set. Its bounded central
 journal volume at `/var/log/journal/remote` is explicitly `backup=false`
-because endpoint journals remain the recovery evidence source and the central
-copy is high-churn operational data. The logging appliance and its declared
+because endpoint journals remain available for recovery and the central copy
+is high-churn operational data. The logging appliance and its declared
 volume remain boetticher-owned.
 
 The `backup` tag is the model-level selection signal. boetticher turns the

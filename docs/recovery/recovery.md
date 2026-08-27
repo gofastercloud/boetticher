@@ -1,9 +1,19 @@
 # Recovery
 
-The minimum control-plane recovery set is the private site repository and an
-independent copy of the Age private identity. The repository may contain
-encrypted secrets and non-secret evidence; OpenTofu state, plans, caches, and
-temporary credentials remain outside it.
+The minimum recovery authority is:
+
+- the private site repository;
+- an independent Age private identity;
+- the required boetticher release and build definitions;
+- the CA/recovery authority; and
+- declared persistent data and backups where applicable.
+
+Artifact binaries are reconstructable. Package manifests, SBOMs, scanner
+reports, qualification records, and builder metadata are reconstructable
+operational/build outputs, not recovery authority. Loss of `generated/artifacts/`,
+Trivy reports, or builder provenance does not prevent rebuilding the platform.
+Cached qualified artifacts can still shorten recovery when they are available
+and their checksums remain valid.
 
 In managed mode, a lost gateway is rebuilt as VM 100 from the qualified
 boetticher firewall appliance artifact and deployed from the model: network
@@ -13,7 +23,7 @@ Platform backups can shorten the path but are not required to recreate the
 desired configuration.
 
 Appliance root filesystems are reconstructable from the boetticher version,
-qualified artifact definitions/evidence, site configuration, and controller
+required release/build definitions, site configuration, and controller
 recovery authority. Runtime configuration, credentials, and replaceable
 certificates are regenerated during deploy. Persistent application data is
 restored or reattached separately from the root filesystem.

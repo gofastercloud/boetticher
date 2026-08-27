@@ -19,5 +19,7 @@ guest and declared persistent data are retained and remain marked as owned.
 mandatory modules. A purge plan must identify the module-owned guest and
 persistent data before removal.
 
-Module states are `Disabled`, `Enabled`, `Ready`, and `Degraded`. Disabled
-optional modules are intentional, not failures.
+`module list`, `module show`, and `module status` report desired module state
+as `Enabled` or `Disabled`. Live readiness is established separately through
+`verify`, `doctor`, and service-specific live checks. Disabled optional modules
+are intentional, not failures.

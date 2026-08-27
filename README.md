@@ -64,8 +64,9 @@ DNS/NTP services.
 
 `external` is bring-your-own firewall mode. boetticher creates no firewall VM,
 does not manage the appliance, and publishes a deterministic contract for the
-operator to configure. It requires a separate physical trunk NIC carrying
-VLANs 10, 20, 50, and 99. See
+operator to configure. It requires a separately selected physical trunk NIC
+carrying VLANs 10, 20, 50, and 99; bootstrap never silently selects even a
+sole eligible NIC. See
 [`docs/networking/external-firewall.md`](docs/networking/external-firewall.md).
 
 ## Requirements
@@ -87,13 +88,17 @@ From the controller and the Proxmox HOME-side DHCP address:
 ```sh
 boetticher init
 boetticher bootstrap-endpoint set 192.0.2.10
-boetticher preflight
+boetticher preflight --live
 boetticher bootstrap --recovery-confirmed
+boetticher deploy --dry-run
 boetticher deploy
 boetticher ssh-config --install-include
 boetticher verify
-boetticher access
+boetticher doctor --live
 ```
+
+Supply `--confirm` only when the deployment plan identifies a supported
+destructive action that explicitly requires confirmation.
 
 For an external firewall, start with:
 
