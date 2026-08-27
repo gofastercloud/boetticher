@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gofastercloud/boetticher/internal/ansible"
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
@@ -41,12 +42,12 @@ func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, erro
 		bindings = append(bindings, deploymentCredential{
 			Guest:     "lab-monitor-01",
 			Address:   "10.10.10.20",
-			SecretKey: "monitoring-db-password",
+			SecretKey: "pulse_admin_password",
 			Spec: secrets.CredentialSpec{
-				Name:       "zabbix-db-password",
-				Unit:       "zabbix-server.service",
-				StorePath:  "/var/lib/boetticher/credentials/zabbix-db-password.cred",
-				RuntimeRef: "/run/credentials/zabbix-server.service/zabbix-db-password",
+				Name:       "pulse-admin-password",
+				Unit:       "pulse.service",
+				StorePath:  "/var/lib/boetticher/credentials/pulse-admin-password.cred",
+				RuntimeRef: "/run/credentials/pulse.service/pulse-admin-password",
 			},
 		})
 	}
@@ -70,6 +71,52 @@ func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, erro
 	}
 	if err := secrets.Validate(items); err != nil {
 		return nil, fmt.Errorf("validate appliance credential declarations: %w", err)
+	}
+	return bindings, nil
+}
+
+// monitoringAgentCredentialBindings creates one systemd credential projection
+// for each model component carrying the generic monitoring-agent tag. The
+// token is created only after Pulse is configured, so these bindings are
+// deliberately installed in the post-bootstrap pass rather than mixed into
+// the initial credential load.
+func monitoringAgentCredentialBindings(site model.Site) ([]deploymentCredential, error) {
+	if !modules.IsEnabled(site, "monitoring") {
+		return nil, nil
+	}
+	components := make(map[string]model.Component)
+	for _, component := range site.PlatformComponents() {
+		components[component.Name] = component
+	}
+	bindings := make([]deploymentCredential, 0)
+	for _, target := range ansible.MonitoringAgentTargets(site) {
+		component, ok := components[target]
+		if !ok || !component.SSHManaged {
+			return nil, fmt.Errorf("monitoring-agent target %q is not a managed platform component", target)
+		}
+		address := component.Address
+		if target == model.LogicalProxmoxIdentity && site.BootstrapAddress != "" {
+			address = site.BootstrapAddress
+		}
+		if address == "" {
+			return nil, fmt.Errorf("monitoring-agent target %q has no deployment address", target)
+		}
+		bindings = append(bindings, deploymentCredential{
+			Guest: target, Address: address, SecretKey: "pulse_agent_token",
+			Spec: secrets.CredentialSpec{
+				Name:       "pulse-agent-token",
+				Unit:       "pulse-agent.service",
+				StorePath:  "/var/lib/boetticher/credentials/pulse-agent-token.cred",
+				RuntimeRef: "/run/credentials/pulse-agent.service/pulse-agent-token",
+			},
+		})
+	}
+	items := make([]secrets.CredentialSpec, 0, len(bindings))
+	for _, binding := range bindings {
+		items = append(items, binding.Spec)
+	}
+	if err := secrets.Validate(items); err != nil {
+		return nil, fmt.Errorf("validate monitoring-agent credential declarations: %w", err)
 	}
 	return bindings, nil
 }
@@ -155,20 +202,6 @@ func installPowerDNSTSIG(ctx context.Context, runner proxmox.StdinCommandRunner,
 	sql.WriteString("COMMIT;\n")
 	if _, err := runner.RunWithStdin(ctx, address, model.DefaultAdminSSHUser, "sudo -n sqlite3 /var/lib/powerdns/pdns.sqlite3", strings.NewReader(sql.String())); err != nil {
 		return fmt.Errorf("install PowerDNS protected TSIG backend state: %w", err)
-	}
-	return nil
-}
-
-// installZabbixAPIPassword updates the controller login after the database
-// exists. It is a Core provider operation and does not pass the value through
-// Ansible variables or command arguments.
-func installZabbixAPIPassword(ctx context.Context, runner proxmox.StdinCommandRunner, address, secret string) error {
-	if runner == nil || secret == "" {
-		return fmt.Errorf("Zabbix API password installation requires a runner and secret")
-	}
-	sql := "CREATE EXTENSION IF NOT EXISTS pgcrypto;\nUPDATE users SET passwd = crypt(" + sqlQuote(secret) + ", gen_salt('bf')) WHERE username = 'Admin';\n"
-	if _, err := runner.RunWithStdin(ctx, address, model.DefaultAdminSSHUser, "sudo -n -u postgres psql --dbname zabbix --set ON_ERROR_STOP=1", strings.NewReader(sql)); err != nil {
-		return fmt.Errorf("install Zabbix API password: %w", err)
 	}
 	return nil
 }

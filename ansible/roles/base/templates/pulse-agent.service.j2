@@ -1,0 +1,21 @@
+[Unit]
+Description=Pulse host monitoring agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/pulse-agent --url=https://monitor.{{ domain }} --token-file=/run/credentials/pulse-agent.service/pulse-agent-token --enable-host=true --enable-docker=false --enable-kubernetes=false --enable-proxmox=false --enable-commands=false --disable-auto-update --state-dir=/var/lib/boetticher/pulse-agent --cacert=/etc/ssl/certs/ca-certificates.crt --hostname={{ inventory_hostname }}
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=20s
+UMask=0077
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/boetticher/pulse-agent
+
+[Install]
+WantedBy=multi-user.target

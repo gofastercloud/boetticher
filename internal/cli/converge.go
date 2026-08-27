@@ -20,9 +20,9 @@ import (
 	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/pki"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
+	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/storage"
-	"github.com/gofastercloud/boetticher/internal/zabbix"
 )
 
 func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error {
@@ -122,6 +122,9 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	runtimeVariables["portal_source_dir"] = filepath.Join(*siteDir, "generated", "portal")
 	runtimeVariables["boetticher_appliance_artifact"] = true
+	// Agent installation is enabled only in the post-Pulse bootstrap pass,
+	// after the scoped report token and encrypted credential projection exist.
+	runtimeVariables["pulse_agent_install_enabled"] = false
 	monitoringEnabled := modules.IsEnabled(s, "monitoring")
 	secretValues := map[string]string{}
 	if s.Gateway.Mode == model.GatewayModeManaged {
@@ -142,21 +145,18 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return fmt.Errorf("load platform CA chain: %w", err)
 	}
-	var zabbixAPIPassword string
+	var pulseAdminPassword string
 	if monitoringEnabled {
-		zabbixDBPassword, loadErr := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "zabbix_db_password")
+		var loadErr error
+		pulseAdminPassword, loadErr = site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_admin_password")
 		if loadErr != nil {
-			return fmt.Errorf("load encrypted Zabbix database password: %w", loadErr)
+			return fmt.Errorf("load encrypted Pulse administrative password: %w", loadErr)
 		}
-		zabbixAPIPassword, loadErr = site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "zabbix_api_password")
-		if loadErr != nil {
-			return fmt.Errorf("load encrypted Zabbix API password: %w", loadErr)
-		}
-		secretValues["monitoring-db-password"] = zabbixDBPassword
+		secretValues["pulse_admin_password"] = pulseAdminPassword
 	}
 	activeCredentialBindings := make([]deploymentCredential, 0, len(credentialBindings))
 	for _, binding := range credentialBindings {
-		if _, alreadyLoaded := secretValues[binding.SecretKey]; alreadyLoaded || binding.SecretKey == "firewall-ddns-tsig" || binding.SecretKey == "monitoring-db-password" {
+		if _, alreadyLoaded := secretValues[binding.SecretKey]; alreadyLoaded {
 			activeCredentialBindings = append(activeCredentialBindings, binding)
 			continue
 		}
@@ -179,6 +179,14 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return err
 	}
 	runtimeVariables["client_ca_pem"] = authority.IssuingCertPEM
+	runtimeVariables["pulse_server_ca_pem"] = authority.IssuingCertPEM
+	if *proxmoxCA != "" {
+		proxmoxCAPEM, readErr := os.ReadFile(*proxmoxCA)
+		if readErr != nil {
+			return fmt.Errorf("read Proxmox API CA file: %w", readErr)
+		}
+		runtimeVariables["proxmox_ca_pem"] = string(proxmoxCAPEM)
+	}
 	inventoryPath := filepath.Join(*siteDir, "generated", "ansible", "inventory.ini")
 	csrDir := filepath.Join(site.RuntimeDir(s), "pki")
 	if err := os.MkdirAll(csrDir, 0700); err != nil {
@@ -214,6 +222,26 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return fmt.Errorf("resolve live Proxmox node: %w", err)
 	}
 	proxmoxPlan.Node = node
+	var pulseProxmoxToken string
+	if monitoringEnabled {
+		pulseProxmoxToken, err = site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_proxmox_token")
+		if errors.Is(err, site.ErrPlatformSecretMissing) {
+			proxmoxRunner := proxmox.SSHRunner{
+				IdentityFile:  operatorIdentityFile(s),
+				ConfigFile:    filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"),
+				StrictHostKey: "accept-new", HostKeyAlias: model.LogicalProxmoxIdentity,
+			}
+			pulseProxmoxToken, err = proxmox.CreatePulseMonitoringCredentials(context.Background(), proxmoxRunner, s.BootstrapAddress, model.DefaultAdminSSHUser)
+			if err != nil {
+				return err
+			}
+			if err := site.StorePlatformSecret(*siteDir, s, *ageIdentity, "pulse_proxmox_token", pulseProxmoxToken); err != nil {
+				return fmt.Errorf("store encrypted Pulse Proxmox token: %w", err)
+			}
+		} else if err != nil {
+			return fmt.Errorf("load encrypted Pulse Proxmox token: %w", err)
+		}
+	}
 	proxmoxPlan.DestructiveConfirmed = *confirm
 	if backupPlan.StorageTarget == backup.DedicatedStorageID {
 		if err := proxmoxClient.EnsureLVMThinStorage(context.Background(), storage.GuestStorageID, storage.VolumeGroup, storage.ThinPool); err != nil {
@@ -295,12 +323,6 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err := ansible.Run(context.Background(), ansiblePlaybook, inventoryPath, variables); err != nil {
 		return err
 	}
-	if monitoringEnabled {
-		monitorRunner := applianceSSHRunner(s, *siteDir, "lab-monitor-01")
-		if err := installZabbixAPIPassword(context.Background(), monitorRunner, "10.10.10.20", zabbixAPIPassword); err != nil {
-			return err
-		}
-	}
 	loggingClientCertificates, loggingCollectorCertificate, err := signLoggingCertificates(authority, s, csrDir)
 	if err != nil {
 		return fmt.Errorf("sign logging transport certificates: %w", err)
@@ -359,22 +381,119 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if monitoringEnabled {
 		clientCertificate, issueErr := pki.IssueClient(authority, "boetticher-reconciler", s.Network.Domain, time.Now().UTC())
 		if issueErr != nil {
-			return fmt.Errorf("issue runtime Zabbix reconciliation certificate: %w", issueErr)
+			return fmt.Errorf("issue runtime Pulse reconciliation certificate: %w", issueErr)
 		}
-		zabbixClient, clientErr := zabbix.NewClient(zabbix.ClientConfig{
-			BaseURL: "https://monitor." + s.Network.Domain, User: "Admin", Password: zabbixAPIPassword,
+		pulseAdmin, clientErr := pulse.NewAdminClient(pulse.ClientConfig{
+			BaseURL: "https://monitor." + s.Network.Domain, AdminUser: "admin", AdminPassword: pulseAdminPassword,
 			CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
 			ServerName: "monitor." + s.Network.Domain,
 		})
 		if clientErr != nil {
 			return clientErr
 		}
-		zabbixPlan, planErr := zabbix.PlanFromSite(s)
-		if planErr != nil {
-			return planErr
+		if err := pulseAdmin.ConfigureProxmox(context.Background(), pulse.PVEConfig{
+			Name: model.LogicalProxmoxIdentity, Host: "https://proxmox." + s.Network.Domain + ":8006",
+			TokenID: proxmox.PulseMonitoringUser + "!" + proxmox.PulseMonitoringToken, TokenSecret: pulseProxmoxToken,
+			VerifySSL: true, MonitorVMs: true, MonitorContainers: true, MonitorStorage: true, MonitorBackups: true,
+			MonitorPhysicalDisks: false, MonitorTemperatures: false,
+		}); err != nil {
+			return err
 		}
-		if reconcileErr := zabbixClient.Reconcile(context.Background(), zabbixPlan); reconcileErr != nil {
-			return fmt.Errorf("reconcile boetticher Zabbix objects: %w", reconcileErr)
+		readToken, tokenErr := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_api_token")
+		if errors.Is(tokenErr, site.ErrPlatformSecretMissing) {
+			readToken, tokenErr = pulseAdmin.CreateReadToken(context.Background(), "boetticher monitoring read")
+			if tokenErr != nil {
+				return tokenErr
+			}
+			if err := site.StorePlatformSecret(*siteDir, s, *ageIdentity, "pulse_api_token", readToken); err != nil {
+				return fmt.Errorf("store encrypted Pulse read token: %w", err)
+			}
+		} else if tokenErr != nil {
+			return fmt.Errorf("load encrypted Pulse read token: %w", tokenErr)
+		}
+		pulseRead, clientErr := pulse.NewReadClient(pulse.ClientConfig{
+			BaseURL: "https://monitor." + s.Network.Domain, APIToken: readToken,
+			CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
+			ServerName: "monitor." + s.Network.Domain,
+		})
+		if clientErr != nil {
+			return clientErr
+		}
+		health, err := pulseRead.Health(context.Background())
+		if err != nil || !strings.EqualFold(health.Status, "healthy") {
+			if err != nil {
+				return fmt.Errorf("verify Pulse health: %w", err)
+			}
+			return fmt.Errorf("verify Pulse health: unexpected status %q", health.Status)
+		}
+		if _, err := pulseRead.StateSummary(context.Background()); err != nil {
+			return fmt.Errorf("verify Pulse state summary: %w", err)
+		}
+		if _, err := pulseRead.Resources(context.Background()); err != nil {
+			return fmt.Errorf("verify Pulse resources: %w", err)
+		}
+
+		agentBindings, bindingErr := monitoringAgentCredentialBindings(s)
+		if bindingErr != nil {
+			return bindingErr
+		}
+		if len(agentBindings) > 0 {
+			agentToken, agentTokenErr := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_agent_token")
+			if errors.Is(agentTokenErr, site.ErrPlatformSecretMissing) {
+				agentToken, agentTokenErr = pulseAdmin.CreateAgentReportToken(context.Background(), "boetticher monitoring agent")
+				if agentTokenErr != nil {
+					return agentTokenErr
+				}
+				if err := site.StorePlatformSecret(*siteDir, s, *ageIdentity, "pulse_agent_token", agentToken); err != nil {
+					return fmt.Errorf("store encrypted Pulse agent token: %w", err)
+				}
+			} else if agentTokenErr != nil {
+				return fmt.Errorf("load encrypted Pulse agent token: %w", agentTokenErr)
+			}
+
+			for _, target := range ansible.MonitoringAgentTargets(s) {
+				var agentRunner proxmox.CommandRunner
+				if target == model.LogicalProxmoxIdentity {
+					agentRunner = proxmox.SSHRunner{
+						IdentityFile:  operatorIdentityFile(s),
+						ConfigFile:    filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"),
+						StrictHostKey: "accept-new", HostKeyAlias: model.LogicalProxmoxIdentity,
+					}
+				} else {
+					agentRunner = applianceSSHRunner(s, *siteDir, target)
+				}
+				if err := installCredentialsForGuest(context.Background(), agentRunner, target, agentBindings, map[string]string{"pulse_agent_token": agentToken}); err != nil {
+					return fmt.Errorf("install Pulse agent credential on %s: %w", target, err)
+				}
+			}
+			agentDropIns, dropInErr := credentialDropIns(agentBindings)
+			if dropInErr != nil {
+				return dropInErr
+			}
+			existingDropIns, ok := runtimeVariables["credential_dropins"].(map[string]map[string]string)
+			if !ok {
+				existingDropIns = map[string]map[string]string{}
+			}
+			for guest, dropIns := range agentDropIns {
+				if existingDropIns[guest] == nil {
+					existingDropIns[guest] = map[string]string{}
+				}
+				for unit, content := range dropIns {
+					existingDropIns[guest][unit] = content
+				}
+			}
+			runtimeVariables["credential_dropins"] = existingDropIns
+			runtimeVariables["pulse_agent_install_enabled"] = true
+			agentVariables, marshalErr := json.MarshalIndent(runtimeVariables, "", "  ")
+			if marshalErr != nil {
+				return marshalErr
+			}
+			agentVariables = append(agentVariables, '\n')
+			for _, target := range ansible.MonitoringAgentTargets(s) {
+				if err := ansible.RunLimited(context.Background(), ansiblePlaybook, inventoryPath, agentVariables, target); err != nil {
+					return fmt.Errorf("install Pulse agent on %s: %w", target, err)
+				}
+			}
 		}
 	}
 	if err := proxmoxClient.ApplyBackupJob(context.Background(), node, proxmox.BackupJob{

@@ -374,11 +374,7 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 	if err != nil {
 		return err
 	}
-	zabbixDBPassword, err := randomSecret()
-	if err != nil {
-		return err
-	}
-	zabbixAPIPassword, err := randomSecret()
+	pulseAdminPassword, err := randomSecret()
 	if err != nil {
 		return err
 	}
@@ -391,8 +387,7 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 		"issuing_key_pem_b64":  pki.Encode(authority.IssuingKeyPEM),
 		"issuing_cert_pem_b64": pki.Encode(authority.IssuingCertPEM),
 		"ddns_tsig_secret":     ddnsSecret,
-		"zabbix_db_password":   zabbixDBPassword,
-		"zabbix_api_password":  zabbixAPIPassword,
+		"pulse_admin_password": pulseAdminPassword,
 	}
 	return StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), document)
 }
@@ -409,6 +404,21 @@ func LoadPlatformSecret(dir string, s model.Site, ageIdentityPath, key string) (
 		return "", fmt.Errorf("%w: %s", ErrPlatformSecretMissing, key)
 	}
 	return value, nil
+}
+
+// StorePlatformSecret updates one encrypted platform secret without writing a
+// plaintext intermediate. Callers retain the value only in process memory
+// until SOPS has encrypted the complete document.
+func StorePlatformSecret(dir string, s model.Site, ageIdentityPath, key, value string) error {
+	if strings.TrimSpace(key) == "" || value == "" {
+		return errors.New("platform secret key and value are required")
+	}
+	values, err := LoadEncryptedDocument(dir, ageIdentityPath, filepath.Join("secrets", "boetticher.sops.yaml"))
+	if err != nil {
+		return fmt.Errorf("load encrypted platform secrets: %w", err)
+	}
+	values[key] = value
+	return StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), values)
 }
 
 // PurgeModuleSecrets removes only secret names declared by one module after

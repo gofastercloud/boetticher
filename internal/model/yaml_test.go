@@ -16,7 +16,7 @@ gateway:
   mode: managed
 tested_versions:
   gateway: debian-13-genericcloud-amd64-20260327-2429
-  zabbix: "7.0 LTS"
+  pulse: "6.1.2"
 network:
   domain: lab.home.arpa
   zones:

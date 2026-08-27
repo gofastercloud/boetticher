@@ -274,8 +274,8 @@ func (c SiteConfig) BaseSite() Site {
 	if c.TestedVersions.Gateway != "" {
 		s.TestedVersions.Gateway = c.TestedVersions.Gateway
 	}
-	if c.TestedVersions.Zabbix != "" {
-		s.TestedVersions.Zabbix = c.TestedVersions.Zabbix
+	if c.TestedVersions.Pulse != "" {
+		s.TestedVersions.Pulse = c.TestedVersions.Pulse
 	}
 	if c.Network.Domain != "" {
 		s.Network.Domain = c.Network.Domain

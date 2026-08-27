@@ -13,7 +13,6 @@ services:
   - kea-dhcp4
   - kea-dhcp-ddns
   - chrony
-  - zabbix-agent2
 logging: inherited-from-base
 runtime_config: /etc/boetticher/module.yaml
 persistent:

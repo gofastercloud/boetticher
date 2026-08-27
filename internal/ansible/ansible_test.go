@@ -55,6 +55,109 @@ func TestInventoryUsesBootstrapAddressForProxmoxTransport(t *testing.T) {
 	}
 }
 
+func TestMonitoringAgentTargetsAreTagDrivenAndDefaultToProxmox(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	got := MonitoringAgentTargets(site)
+	if len(got) != 1 || got[0] != model.LogicalProxmoxIdentity {
+		t.Fatalf("default monitoring-agent targets = %v, want only %q", got, model.LogicalProxmoxIdentity)
+	}
+	for _, component := range site.PlatformComponents() {
+		if component.Name == "lab-monitor-01" || component.Name == "lab-dns-01" || component.Name == "lab-portal-01" {
+			for _, tag := range component.Tags {
+				if tag == model.TagMonitoringAgent {
+					t.Fatalf("untargeted component %s carries the monitoring-agent tag", component.Name)
+				}
+			}
+		}
+	}
+	for index := range site.Components {
+		if site.Components[index].Name == "lab-monitor-01" {
+			site.Components[index].Tags = append(site.Components[index].Tags, model.TagMonitoringAgent)
+		}
+	}
+	got = MonitoringAgentTargets(site)
+	if len(got) != 2 || got[0] != "lab-monitor-01" || got[1] != model.LogicalProxmoxIdentity {
+		t.Fatalf("tagged monitoring-agent targets = %v, want sorted Proxmox and monitor targets", got)
+	}
+	site.Components = append(site.Components, model.Component{
+		Name: "user-vm-501", VMID: 501, Hostname: "user-vm-501", Zone: "SANDBOX", Address: "10.10.40.1",
+		Role: "user workload", Tags: []string{model.TagMonitoringAgent}, ProductOwned: false,
+	})
+	if err := site.Validate(); err != nil {
+		t.Fatalf("valid user workload with monitoring-agent tag was rejected: %v", err)
+	}
+	got = MonitoringAgentTargets(site)
+	if len(got) != 2 || got[0] != "lab-monitor-01" || got[1] != model.LogicalProxmoxIdentity {
+		t.Fatalf("user workload with monitoring-agent tag was selected: %v", got)
+	}
+}
+
+func TestAnsibleVariablesPinPulseHostAgentAndExposeNoSecret(t *testing.T) {
+	data, err := Variables(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"\"pulse_agent_targets\": [\n    \"lab-proxmox-01\"",
+		`"pulse_agent_version": "6.1.2"`,
+		`"pulse_agent_release_url": "https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-agent-linux-amd64"`,
+		`"pulse_agent_release_sha256": "1f3cfda2b112e82f311f05673f750bc6e5cb05bd0f942f9b84d7612d56f1ba75"`,
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("Ansible variables missing Pulse host-agent contract %q", expected)
+		}
+	}
+	if strings.Contains(text, "agent-token") || strings.Contains(text, "pulse_agent_token") {
+		t.Fatal("Ansible variables contain a Pulse agent credential")
+	}
+}
+
+func TestBaseRoleInstallsPulseAgentOnlyForEnabledTaggedTargets(t *testing.T) {
+	tasks, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "base", "templates", "pulse-agent.service.j2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(tasks) + "\n" + string(service)
+	for _, expected := range []string{
+		"pulse_agent_install_enabled",
+		"pulse_agent_targets",
+		"pulse-agent.service",
+		"pulse_agent_release_url",
+		"pulse_agent_release_sha256",
+		"lm-sensors",
+		"smartmontools",
+		"--enable-host=true",
+		"--enable-proxmox=false",
+		"--enable-docker=false",
+		"--enable-kubernetes=false",
+		"--enable-commands=false",
+		"--disable-auto-update",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("Pulse host-agent setup missing %q", expected)
+		}
+	}
+}
+
+func TestMonitorFrontendKeepsMTLSExceptForScopedAgentRoutes(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "pulse-loopback.conf.j2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "ssl_verify_client on") || !strings.Contains(text, "ssl_verify_client off") {
+		t.Fatal("monitor frontend does not distinguish mTLS UI and token-authenticated agent routes")
+	}
+	if !strings.Contains(text, "location ^~ /api/agents/") {
+		t.Fatal("monitor frontend does not proxy the supported Pulse agent routes")
+	}
+}
+
 func TestGeneratedSSHConfigPathIsBoundToInventoryProjection(t *testing.T) {
 	got := generatedSSHConfigPath("/tmp/site/generated/ansible/inventory.ini")
 	if got != "/tmp/site/generated/ssh/boetticher.conf" {
@@ -113,7 +216,7 @@ func TestLimitedRunRejectsShellSyntaxInInventoryIdentity(t *testing.T) {
 	}
 }
 
-func TestMonitoringApplianceUsesImageProvidedAgent2(t *testing.T) {
+func TestMonitoringApplianceUsesImageProvidedPulseRuntime(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -123,8 +226,13 @@ func TestMonitoringApplianceUsesImageProvidedAgent2(t *testing.T) {
 	if !strings.Contains(text, "Require an immutable monitoring appliance artifact") {
 		t.Fatal("monitoring does not require an immutable appliance artifact")
 	}
-	if !strings.Contains(text, "- zabbix-agent2") || !strings.Contains(text, "Enable monitoring services") {
-		t.Fatal("monitoring appliance does not enable its image-provided Agent 2 service")
+	for _, expected := range []string{"/opt/pulse/bin/pulse --version", "path: /var/lib/pulse", "- pulse", "- nginx", "pulse-loopback.conf.j2"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("monitoring appliance is missing Pulse runtime contract %q", expected)
+		}
+	}
+	if strings.Contains(text, "zabbix") || strings.Contains(text, "postgres") {
+		t.Fatal("monitoring appliance retains an obsolete product or database contract")
 	}
 }
 
@@ -274,54 +382,47 @@ func TestDNSRoleMakesPowerDNSConfigReadableByServiceUser(t *testing.T) {
 	}
 }
 
-func TestMonitoringRoleUsesRunuserForDatabaseServiceUsers(t *testing.T) {
+func TestMonitoringRoleHasNoDatabaseOrGuestAgentSetup(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if strings.Contains(text, "become_user: postgres") || strings.Contains(text, "become_user: zabbix") {
-		t.Fatal("monitoring role uses Ansible's unprivileged secondary-become path")
-	}
-	for _, expected := range []string{
-		"runuser -u postgres -- psql --dbname postgres",
-		"runuser -u zabbix -- sh -c",
-	} {
-		if !strings.Contains(text, expected) {
-			t.Fatalf("monitoring role missing explicit service-user execution %q", expected)
+	for _, obsolete := range []string{"become_user: postgres", "become_user: zabbix", "runuser -u postgres", "runuser -u zabbix", "zabbix", "postgres"} {
+		if strings.Contains(text, obsolete) {
+			t.Fatalf("monitoring role retains obsolete setup %q", obsolete)
 		}
 	}
 }
 
-func TestMonitoringRolePreparesPostgreSQLTLSAndCluster(t *testing.T) {
+func TestMonitoringRoleUsesExistingTLSBoundary(t *testing.T) {
+	tasksPath := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
+	tasks, err := os.ReadFile(tasksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	templatePath := filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "pulse-loopback.conf.j2")
+	template, err := os.ReadFile(templatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(tasks) + string(template)
+	for _, expected := range []string{"monitor_server_cert_pem", "client_ca_pem", "ssl_verify_client on", "proxy_pass http://127.0.0.1:7655"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("monitoring role missing TLS/frontend contract %q", expected)
+		}
+	}
+}
+
+func TestMonitoringRoleCreatesPulseStateDirectory(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(data)
-	for _, expected := range []string{
-		"/usr/sbin/make-ssl-cert generate-default-snakeoil",
-		"creates: /etc/ssl/private/ssl-cert-snakeoil.key",
-		"pg_ctlcluster --skip-systemctl-redirect",
-		"$(pg_lsclusters -h)",
-		"Cluster is already running.",
-	} {
-		if !strings.Contains(text, expected) {
-			t.Fatalf("monitoring role missing PostgreSQL startup prerequisite %q", expected)
-		}
-	}
-}
-
-func TestMonitoringRoleCreatesZabbixStateDirectory(t *testing.T) {
-	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "path: /var/lib/zabbix\n    state: directory\n    owner: zabbix\n    group: zabbix\n    mode: '0750'") {
-		t.Fatal("monitoring role does not create the Zabbix state directory before its schema marker")
+	if !strings.Contains(string(data), "path: /var/lib/pulse\n    state: directory\n    owner: pulse\n    group: pulse\n    mode: '0700'") {
+		t.Fatal("monitoring role does not create the Pulse state directory")
 	}
 }
 

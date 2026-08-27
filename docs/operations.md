@@ -24,11 +24,15 @@ controller artifact cache or regenerate them through the hosted builder. The
 portable recovery set remains the site configuration, encrypted secrets,
 recovery authority, and non-secret desired-state projections.
 
-## Portal versus Zabbix
+## Portal versus monitoring
 
 The portal is the human-readable projection of architecture, configuration,
 runbooks, and the latest platform verification results. It is rebuilt after
 successful platform commands and can be refreshed from non-secret status
-metadata. It does not poll guests or reproduce graphs. Zabbix owns metrics,
-dashboards, synthetic checks, certificates, events, alerting, and
-notifications.
+metadata. It does not poll guests or reproduce graphs. Pulse owns Proxmox API
+inventory, metrics, availability checks, alerts, and notifications. Its
+tagged host agent collects host-local hardware telemetry from the Proxmox host;
+the default target is `lab-proxmox-01`, and VM/LXC guests receive no agent.
+The Pulse REST API is the read-only machine interface, using `monitoring:read`
+for Core integrations and `agent:report` for host-agent reports.
+Boetticher verify and doctor remain authoritative for platform semantics.

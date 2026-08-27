@@ -5,15 +5,21 @@ boetticher owns the platform. Proxmox owns the user's homelab.
 boetticher manages only declared platform resources: the Proxmox host, managed
 gateway when selected, DNS/NTP guests, monitor, portal, owned bridge/VLAN
 configuration, firewall policy, Kea, PKI, SOPS state, SSH bastion policy,
-Zabbix platform objects, platform backups, and generated platform state.
+Pulse monitoring state, platform backups, and generated platform state.
 
 Arbitrary user VMs and LXCs remain outside the model, OpenTofu state, Ansible
-inventory, Zabbix ownership, backup guarantee, and deletion logic. They may use
+inventory, boetticher monitoring ownership, backup guarantee, and deletion logic. Pulse may
+display them when the Proxmox API exposes them, but they may use
 the provided network simply by attaching a NIC to `vmbr1` and selecting a VLAN:
 
 Platform guests carry canonical `boetticher` and `managed` tags. The `backup`
 tag marks a declared platform guest for the platform backup projection; it is
 metadata and does not cause user workloads to be adopted or backed up.
+
+The generic `monitoring-agent` tag is the Pulse host-agent installation signal.
+It is attached to `lab-proxmox-01` by default. Only declared managed components
+with that tag receive the host agent; the tag is absent from VM and LXC guests
+by default.
 
 ```text
 Create VM/LXC in Proxmox → attach to vmbr1 → choose a zone VLAN → boot

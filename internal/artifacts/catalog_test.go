@@ -547,21 +547,37 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, required := range []string{
-		"package_version: 1:7.0.30-1+debian13",
-		"release_package_sha256: 4a926b8815cdefddc31558fe622676730a3987610f75d5af0d4024809d21dd43",
+		"version: 6.1.2",
+		"release_url: https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-v6.1.2-linux-amd64.tar.gz",
+		"release_sha256: 844cd054bcfce528cbcf434d782e571791cc7b02ef2fe298cf138b1cab1087ea",
+		"release_url: https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-agent-linux-amd64",
+		"release_sha256: 1f3cfda2b112e82f311f05673f750bc6e5cb05bd0f942f9b84d7612d56f1ba75",
 	} {
 		if !strings.Contains(string(monitoring), required) {
-			t.Fatalf("monitoring image definition is missing Zabbix qualification input %q", required)
+			t.Fatalf("monitoring image definition is missing Pulse qualification input %q", required)
 		}
 	}
 	buildScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"zabbix-sql-scripts=$zabbix_package_version", "php-pgsql", "ssl-cert"} {
+	pulseService, err := os.ReadFile(filepath.Join(root, "monitoring", "runtime", "pulse.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"pulse_release_sha256", "/opt/pulse/bin/pulse", "pulse.service", "run-pulse.sh"} {
 		if !strings.Contains(string(buildScript), required) {
-			t.Fatalf("monitoring build is missing runtime package %q", required)
+			t.Fatalf("monitoring build is missing Pulse runtime contract %q", required)
 		}
+	}
+	if !strings.Contains(string(pulseService), "Environment=BIND_ADDRESS=127.0.0.1") {
+		t.Fatal("Pulse service is not bound to loopback behind the TLS frontend")
+	}
+	if strings.Contains(string(pulseService), "CAP_NET_RAW") || strings.Contains(string(pulseService), "AmbientCapabilities") || strings.Contains(string(pulseService), "CapabilityBoundingSet") {
+		t.Fatal("Pulse service grants an unnecessary raw-socket capability")
+	}
+	if strings.Contains(string(monitoring), "latest") || strings.Contains(string(buildScript), "zabbix") || strings.Contains(string(buildScript), "postgresql") {
+		t.Fatal("monitoring build retains a floating input or obsolete monitoring dependency")
 	}
 	firewall, err := os.ReadFile(filepath.Join(root, "firewall", "image.yaml"))
 	if err != nil {
@@ -756,10 +772,13 @@ func TestApplianceBootstrapInputsContainNoOperatorKeyOrSiteState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"/tmp/boetticher-ansible", "/usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*", "/usr/bin/systemd-creds *", "/usr/bin/sqlite3 *", "/usr/bin/psql *"} {
+	for _, required := range []string{"/tmp/boetticher-ansible", "/usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*", "/usr/bin/systemd-creds *", "/usr/bin/sqlite3 *"} {
 		if !strings.Contains(string(sudoers), required) {
 			t.Fatalf("appliance sudo policy does not constrain runtime command %q", required)
 		}
+	}
+	if strings.Contains(string(sudoers), "/usr/bin/psql") {
+		t.Fatal("appliance sudo policy retains the removed PostgreSQL monitoring command")
 	}
 	if strings.Contains(buildText+string(sudoers), "NOPASSWD:ALL") {
 		t.Fatal("appliance sudo policy grants an unrestricted root command")

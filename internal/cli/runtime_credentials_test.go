@@ -47,8 +47,25 @@ func TestDeploymentCredentialProjectionContainsOnlyEncryptedPaths(t *testing.T) 
 	if !strings.Contains(dropIns["lab-fw-01"]["kea-dhcp-ddns-server.service"], "LoadCredentialEncrypted=kea-ddns-tsig:/var/lib/boetticher/credentials/kea-ddns-tsig.cred") {
 		t.Fatalf("firewall credential projection is incomplete: %#v", dropIns)
 	}
-	if strings.Contains(strings.Join([]string{dropIns["lab-fw-01"]["kea-dhcp-ddns-server.service"], dropIns["lab-monitor-01"]["zabbix-server.service"]}, "\n"), "synthetic-secret") {
+	if strings.Contains(strings.Join([]string{dropIns["lab-fw-01"]["kea-dhcp-ddns-server.service"], dropIns["lab-monitor-01"]["pulse.service"]}, "\n"), "synthetic-secret") {
 		t.Fatal("credential projection contains a secret value")
+	}
+	if !strings.Contains(dropIns["lab-monitor-01"]["pulse.service"], "LoadCredentialEncrypted=pulse-admin-password:/var/lib/boetticher/credentials/pulse-admin-password.cred") {
+		t.Fatalf("Pulse administrative credential projection is incomplete: %#v", dropIns)
+	}
+	agentBindings, err := monitoringAgentCredentialBindings(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agentBindings) != 1 || agentBindings[0].Guest != model.LogicalProxmoxIdentity {
+		t.Fatalf("default Pulse agent bindings = %#v, want only the Proxmox host", agentBindings)
+	}
+	agentDropIns, err := credentialDropIns(agentBindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(agentDropIns[model.LogicalProxmoxIdentity]["pulse-agent.service"], "LoadCredentialEncrypted=pulse-agent-token:/var/lib/boetticher/credentials/pulse-agent-token.cred") {
+		t.Fatalf("Pulse agent credential projection is incomplete: %#v", agentDropIns)
 	}
 }
 

@@ -116,7 +116,7 @@ func home(s model.Site, revision string, evidence Evidence, now time.Time) strin
 	var moduleTable strings.Builder
 	moduleTable.WriteString("<h2>Platform modules</h2><table><tr><th>Name</th><th>Policy</th><th>Implementation</th><th>Version</th><th>Artifact</th><th>Definition</th><th>State</th><th>Reason</th></tr>")
 	for _, module := range s.Modules {
-		implementation := map[string]string{"dns": "Blocky", "logging": "systemd journal", "monitoring": "Zabbix", "firewall": "Debian/nftables"}[module.Name]
+		implementation := map[string]string{"dns": "Blocky", "logging": "systemd journal", "monitoring": "Pulse Community", "firewall": "Debian/nftables"}[module.Name]
 		if module.Name == "dns" && s.ModuleConfig["dns"].Provider == string(model.DNSProviderAdGuard) {
 			implementation = "AdGuard"
 		}
@@ -133,7 +133,7 @@ func home(s model.Site, revision string, evidence Evidence, now time.Time) strin
 		fmt.Fprintf(&moduleTable, "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><code>%s</code></td><td><code>%s</code></td><td>%s</td><td>%s</td></tr>", html.EscapeString(module.Name), html.EscapeString(module.Policy), html.EscapeString(implementation), html.EscapeString(version), html.EscapeString(artifact), html.EscapeString(definition), html.EscapeString(module.State), html.EscapeString(module.Reason))
 	}
 	moduleTable.WriteString("</table>")
-	return fmt.Sprintf("<p>Generated platform view; not a wiki or monitoring dashboard.</p><table><tr><th>Platform version</th><td>%s</td></tr><tr><th>Schema</th><td>%d</td></tr><tr><th>Gateway</th><td>%s</td></tr><tr><th>Model revision</th><td><code>%s</code></td></tr><tr><th>Portal generated</th><td>%s</td></tr><tr><th>Latest verification</th><td>%s</td></tr></table>%s%s<h2>Quick links</h2><p><a href=\"%s\">Proxmox</a> · <a href=\"https://monitor.%s\">Zabbix</a> · <a href=\"https://portal.%s\">Portal</a> · <a href=\"https://dns.%s\">DNS</a></p>", html.EscapeString(s.PlatformVersion), s.SchemaVersion, html.EscapeString(gateway), html.EscapeString(revision), now.UTC().Format(time.RFC3339), html.EscapeString(status), moduleTable.String(), loggingSummary(s, evidence), html.EscapeString("https://proxmox."+s.Network.Domain+":8006"), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain))
+	return fmt.Sprintf("<p>Generated platform view; not a wiki or monitoring dashboard.</p><table><tr><th>Platform version</th><td>%s</td></tr><tr><th>Schema</th><td>%d</td></tr><tr><th>Gateway</th><td>%s</td></tr><tr><th>Model revision</th><td><code>%s</code></td></tr><tr><th>Portal generated</th><td>%s</td></tr><tr><th>Latest verification</th><td>%s</td></tr></table>%s%s<h2>Quick links</h2><p><a href=\"%s\">Proxmox</a> · <a href=\"https://monitor.%s\">Pulse monitoring</a> · <a href=\"https://portal.%s\">Portal</a> · <a href=\"https://dns.%s\">DNS</a></p>", html.EscapeString(s.PlatformVersion), s.SchemaVersion, html.EscapeString(gateway), html.EscapeString(revision), now.UTC().Format(time.RFC3339), html.EscapeString(status), moduleTable.String(), loggingSummary(s, evidence), html.EscapeString("https://proxmox."+s.Network.Domain+":8006"), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain))
 }
 
 func moduleArtifactDetails(s model.Site, name, fallbackVersion string) (version, artifact, definition string) {
@@ -300,7 +300,7 @@ func unique(values []string) []string {
 
 func security(revision string, evidence Evidence) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Expected security properties and latest available conformance evidence. Live telemetry belongs to Zabbix.</p><table><tr><th>Property</th><th>Status</th><th>Detail</th></tr>", html.EscapeString(revision))
+	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Expected security properties and latest available conformance evidence. Live telemetry belongs to the Pulse monitoring appliance.</p><table><tr><th>Property</th><th>Status</th><th>Detail</th></tr>", html.EscapeString(revision))
 	for _, result := range evidence.Results {
 		class := strings.ToLower(result.Status)
 		fmt.Fprintf(&b, "<tr><td>%s</td><td class=\"%s\">%s</td><td>%s</td></tr>", html.EscapeString(result.Name), html.EscapeString(class), html.EscapeString(result.Status), html.EscapeString(result.Detail))

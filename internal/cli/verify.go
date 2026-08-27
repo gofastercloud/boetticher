@@ -18,10 +18,10 @@ import (
 	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/portal"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
+	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
 	"github.com/gofastercloud/boetticher/internal/storage"
-	"github.com/gofastercloud/boetticher/internal/zabbix"
 )
 
 func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error {
@@ -78,7 +78,7 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 		portal.CheckResult{Name: "Proxmox API least privilege", Status: "NOT TESTED", Detail: "requires authenticated Proxmox API evidence"},
 		portal.CheckResult{Name: "internal CA available", Status: "STATIC PASS", Detail: "CA metadata is present in the initialized model"},
 		portal.CheckResult{Name: "portal requires client certificate", Status: "NOT TESTED", Detail: "requires deployed mTLS journey"},
-		portal.CheckResult{Name: "Zabbix requires client certificate", Status: "NOT TESTED", Detail: "requires deployed mTLS journey"},
+		portal.CheckResult{Name: "Pulse requires client certificate", Status: "NOT TESTED", Detail: "requires deployed mTLS journey"},
 		portal.CheckResult{Name: "latest VM/LXC backup", Status: "NOT TESTED", Detail: "requires current backup evidence"},
 		portal.CheckResult{Name: "Age recovery fixture", Status: "NOT TESTED", Detail: "requires independent recovery copy"},
 	)
@@ -492,13 +492,13 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 			}
 			return nil
 		}},
-		{"Zabbix platform projection", func() error {
-			plan, err := zabbix.PlanFromSite(s)
+		{"Pulse monitoring projection", func() error {
+			plan, err := pulse.PlanFromSite(s)
 			if err != nil {
 				return err
 			}
 			if !plan.PlatformOnly || len(plan.Components) != len(s.PlatformComponents()) {
-				return errors.New("Zabbix projection is not platform-only")
+				return errors.New("Pulse monitoring projection is not platform-only")
 			}
 			return nil
 		}},

@@ -295,13 +295,13 @@
         "gateway": {
           "type": "string"
         },
-        "zabbix": {
+        "pulse": {
           "type": "string"
         }
       },
       "required": [
         "gateway",
-        "zabbix"
+        "pulse"
       ],
       "type": "object"
     },

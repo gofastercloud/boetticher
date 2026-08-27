@@ -5,7 +5,7 @@ contracts, but the appliance build and live installation still need
 qualification. Do not use boetticher on a system you cannot recover.
 
 boetticher is a small, opinionated Proxmox platform for a private lab. It
-creates the platform foundation—network zones, DNS/NTP, PKI, Zabbix, a static
+creates the platform foundation—network zones, DNS/NTP, PKI, Pulse Community monitoring, a static
 portal, backups, and recovery metadata—from one deterministic site model.
 
 It is not a generic Proxmox management tool. boetticher owns its declared
@@ -39,10 +39,17 @@ The platform services are:
 ```text
 lab-dns-01       10.10.10.10  PowerDNS, Blocky (AdGuard alternative), Chrony
 lab-dns-02       10.10.10.11  PowerDNS, Blocky (AdGuard alternative), Chrony
-lab-monitor-01   10.10.10.20  Zabbix and PostgreSQL
+lab-monitor-01   10.10.10.20  Pulse Community monitoring
 lab-log-01       10.10.10.40  Central systemd journal collector
 lab-portal-01    10.10.10.30  generated static documentation
 ```
+
+Pulse reads Proxmox inventory and guest state through its dedicated API token.
+A Pulse host agent is installed only on components carrying the generic
+`monitoring-agent` tag; the default tag is on `lab-proxmox-01` for host CPU,
+memory, temperature, and SMART telemetry. VM and LXC guests do not receive an
+agent. The monitor UI remains `https://monitor.lab.home.arpa` behind the
+platform HTTPS/mTLS boundary.
 
 The fixed networks are VLAN 5 TRANSIT (`10.10.5.0/24`), VLAN 10 INFRA
 (`10.10.10.0/24`), VLAN 20 SERVERS (`10.10.20.0/24`), VLAN 30 TRUSTED
@@ -87,7 +94,7 @@ does not automatically renumber live hosts or guests.
   second NIC and managed VLAN switch are needed for a physical trunk; they are
   mandatory in external-firewall mode.
 - Either the single-disk or dedicated-data-disk storage profile.
-- Zabbix 7.0 LTS and the pinned Debian 13 appliance definitions are the v0.3
+- Pulse Community 6.1.2 and the pinned Debian 13 appliance definitions are the v0.3
   qualification targets (`debian-13-genericcloud-amd64-20260327-2429`).
 
 ## Quickstart
@@ -121,10 +128,11 @@ firewall contract before running the live workflow.
 ## Ownership and access
 
 boetticher owns the platform guests, bridges and VLAN policy it declares, the
-managed gateway when selected, platform DNS/NTP, PKI, Zabbix objects, backups,
+managed gateway when selected, platform DNS/NTP, PKI, Pulse monitoring state, backups,
 portal output, and verification metadata. Unknown Proxmox guests remain user-
-managed and are never imported, changed, deleted, monitored, or backed up by
-boetticher.
+managed and are never imported, changed, deleted, or backed up by boetticher.
+Pulse may display API-visible user guests without adopting them into the
+boetticher model.
 
 Proxmox is the normal SSH bastion. The controller reaches Proxmox over the
 HOME network, then uses the forwarding-only `lab-bastion` path to reach

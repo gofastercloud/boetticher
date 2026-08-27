@@ -36,6 +36,20 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if len(site.Declarations) != 4 || site.Declarations[0].Artifact.DefinitionSHA256 == "" {
 		t.Fatalf("default module declarations are incomplete: %#v", site.Declarations)
 	}
+	monitoring, ok := findDeclaration(site, "monitoring")
+	if !ok {
+		t.Fatal("monitoring declaration is missing")
+	}
+	var agentToken model.SecretDeclaration
+	for _, secret := range monitoring.Secrets {
+		if secret.Name == "pulse_agent_token" {
+			agentToken = secret
+			break
+		}
+	}
+	if agentToken.Consumer != "pulse-agent" || agentToken.Delivery != "systemd-credential" || agentToken.Generation != "ephemeral" {
+		t.Fatalf("Pulse agent credential contract is incomplete: %#v", agentToken)
+	}
 	for _, declaration := range site.Declarations {
 		for _, guest := range declaration.Guests {
 			if guest.Module != declaration.Module || !containsTag(guest.Tags, model.TagModule) || !containsTag(guest.Tags, "module-"+declaration.Module) {
