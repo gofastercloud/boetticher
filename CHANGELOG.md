@@ -3,6 +3,13 @@
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 
+## [0.3.30] - 2026-08-27
+
+### Fixed
+
+- Match the observed Debian virtio builder interface name `ens18` for DHCP
+  while preserving the exact builder MAC match.
+
 ## [0.3.29] - 2026-08-27
 
 ### Fixed
