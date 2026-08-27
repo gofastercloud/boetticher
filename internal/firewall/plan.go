@@ -141,7 +141,7 @@ func poolForNetwork(network, addressMode string) string {
 	if bits != 32 || ones != 24 {
 		return ""
 	}
-	prefix := strings.TrimSuffix(base.String(), ".0/24")
+	prefix := strings.TrimSuffix(base.String(), ".0")
 	return prefix + ".100-" + prefix + ".199"
 }
 

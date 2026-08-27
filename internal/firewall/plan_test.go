@@ -29,6 +29,24 @@ func TestManagedPlanUsesOneUntaggedFirewallInterfacePerZone(t *testing.T) {
 	}
 }
 
+func TestManagedPlanRendersValidDHCPPools(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"10.10.10.100-10.10.10.199",
+		"10.10.20.100-10.10.20.199",
+		"10.10.50.100-10.10.50.199",
+		"",
+	}
+	for i, pool := range want {
+		if plan.DHCP[i].Pool != pool {
+			t.Fatalf("DHCP pool %d = %q, want %q", i, plan.DHCP[i].Pool, pool)
+		}
+	}
+}
+
 func TestManagedRulesetIsDeterministicAndFailClosed(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	first, err := PlanFromSite(site)

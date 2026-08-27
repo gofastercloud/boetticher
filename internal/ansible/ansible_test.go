@@ -462,6 +462,10 @@ func TestDNSRoleDoesNotPlaceTSIGSecretsInProcessArguments(t *testing.T) {
 	if !strings.Contains(string(kea), "secret-file") || strings.Contains(string(kea), "{{ ddns_tsig_secret }}") {
 		t.Fatal("Kea does not consume its TSIG through the systemd credential runtime file")
 	}
+	keaText := string(kea)
+	if !strings.Contains(keaText, `"forward-ddns": {`) || !strings.Contains(keaText, `"reverse-ddns": {`) || !strings.Contains(keaText, `"ddns-domains":`) || !strings.Contains(keaText, `"key-name": "{{ zone.tsig_key_name }}"`) {
+		t.Fatal("Kea D2 does not use the qualified domain catalogs and TSIG key references")
+	}
 }
 
 func TestPowerDNSBindsEachDNSGuestAddressAlongsideLoopback(t *testing.T) {
