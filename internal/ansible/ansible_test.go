@@ -336,6 +336,25 @@ func TestFirewallRoleCreatesNftablesConfigurationDirectory(t *testing.T) {
 	}
 }
 
+func TestFirewallRoleAllowsKeaCredentialThroughAppArmor(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"Allow Kea DDNS to read its systemd credential",
+		"/run/credentials/kea-dhcp-ddns-server.service/kea-ddns-tsig r,",
+		"dest: /etc/apparmor.d/local/usr.sbin.kea-dhcp-ddns",
+		"notify: reload AppArmor",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("firewall role missing Kea AppArmor rule %q", expected)
+		}
+	}
+}
+
 func TestKeaTemplateHandlesOptionalDHCPPool(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "firewall", "templates", "kea-dhcp4.conf.j2")
 	data, err := os.ReadFile(path)

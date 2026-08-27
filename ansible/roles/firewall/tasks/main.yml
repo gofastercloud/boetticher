@@ -13,6 +13,15 @@
       - firewall_ruleset | length > 0
   no_log: true
 
+- name: Allow Kea DDNS to read its systemd credential
+  ansible.builtin.copy:
+    content: "/run/credentials/kea-dhcp-ddns-server.service/kea-ddns-tsig r,\n"
+    dest: /etc/apparmor.d/local/usr.sbin.kea-dhcp-ddns
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload AppArmor
+
 - name: Require qualified gateway software in the appliance
   ansible.builtin.command:
     argv: [sh, -c, "command -v nft && command -v kea-dhcp4 && command -v kea-dhcp-ddns && command -v dnsmasq"]
