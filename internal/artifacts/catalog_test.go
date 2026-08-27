@@ -623,6 +623,7 @@ func TestApplianceBuildEmbedsDefinitionIdentityWithoutContentEvidence(t *testing
 		"write_artifact_identity \"$rootfs\" logging",
 		"write_artifact_identity \"$rootfs\" monitoring",
 		"write_artifact_identity \"$rootfs\" portal",
+		"ConditionPathExists=/etc/blocky/config.yml",
 		"-upload \"$artifact_identity:/usr/lib/boetticher/artifact.json\"",
 	} {
 		if !strings.Contains(text, required) {
