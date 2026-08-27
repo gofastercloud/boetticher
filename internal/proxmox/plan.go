@@ -698,6 +698,10 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 	if client == nil {
 		return false, errors.New("Proxmox client is required")
 	}
+	buildTargets, err := builderArtifactTargets(plan)
+	if err != nil {
+		return false, fmt.Errorf("resolve builder artifact targets: %w", err)
+	}
 	kind, current, err := client.GuestConfig(ctx, plan.Node, model.BuilderVMID)
 	if err == nil {
 		if kind != KindQEMU {
@@ -736,7 +740,7 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 		"ipconfig0": {"ip=dhcp"},
 		"ciuser":    {model.DefaultAdminSSHUser},
 	}
-	cloudInit, err := RenderBuilderCloudInitWithKey(publicKey)
+	cloudInit, err := RenderBuilderCloudInitWithKeyAndTargets(publicKey, buildTargets)
 	if err != nil {
 		return false, fmt.Errorf("render builder cloud-init: %w", err)
 	}

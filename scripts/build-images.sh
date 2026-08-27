@@ -5,10 +5,27 @@ set -eu
 # execute this same script; macOS controllers intentionally stop before any
 # image tooling is attempted.
 target=${1:-images}
+shift || true
 case "$target" in
   image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|images) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
+
+default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-litellm image-firewall"
+if [ "$target" = images ]; then
+  selected_image_targets="$*"
+  if [ -z "$selected_image_targets" ]; then
+    selected_image_targets=$default_image_targets
+  fi
+  for selected_target in $selected_image_targets; do
+    case "$selected_target" in
+      image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm) ;;
+      *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
+    esac
+  done
+else
+  selected_image_targets=$target
+fi
 
 if [ "$(uname -s)" != Linux ]; then
   echo "HOLD: appliance construction requires the supported Linux builder environment; use boetticher bootstrap on macOS" >&2
@@ -25,6 +42,24 @@ fi
 # unqualified network input.
 export GOTOOLCHAIN=local
 
+timing_now_ms() {
+  date +%s%3N
+}
+
+timing_emit() {
+  stage=$1
+  duration_ms=$2
+  artifact=${3:-}
+  line="timing stage=$stage duration_ms=$duration_ms"
+  if [ -n "$artifact" ]; then
+    line="$line artifact=$artifact"
+  fi
+  printf '%s\n' "$line"
+  if [ -n "${timing_log:-}" ]; then
+    printf '%s\n' "$line" >> "$timing_log"
+  fi
+}
+
 for tool in mmdebstrap tar zstd sha256sum curl chroot go jq; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "HOLD: required Linux image-build tool is unavailable: $tool" >&2
@@ -34,6 +69,8 @@ done
 
 output_root=${BOETTICHER_ARTIFACT_OUTPUT:-generated/artifacts}
 work_root=${BOETTICHER_IMAGE_WORK:-/tmp/boetticher-image-build}
+timing_log=${BOETTICHER_TIMING_LOG:-}
+script_path=$0
 base_definition=images/base/debian.yaml
 base_release=$(sed -n 's/^release: *//p' "$base_definition")
 mirror=$(sed -n 's/^  mirror: *//p' "$base_definition")
@@ -93,7 +130,9 @@ write_builder_provenance() {
   chmod 0644 "$provenance_path"
 }
 
-write_builder_provenance
+if [ "${BOETTICHER_SKIP_PROVENANCE:-0}" != 1 ]; then
+  write_builder_provenance
+fi
 
 cleanup() {
   if [ -n "${ACTIVE_ROOT:-}" ] && [ -d "$ACTIVE_ROOT" ]; then
@@ -105,7 +144,11 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 rootfs_for() {
-  printf '%s/%s-rootfs' "$work_root" "$1"
+  if [ "$1" = boetticher-base ]; then
+    printf '%s\n' "${BOETTICHER_BASE_ROOTFS:-$work_root/boetticher-base-rootfs}"
+  else
+    printf '%s/%s-rootfs\n' "$work_root" "$1"
+  fi
 }
 
 artifact_for() {
@@ -229,7 +272,7 @@ install_powerdns() {
   install_packages "$rootfs" \
     "pdns-server=$powerdns_package_version" \
     "pdns-backend-sqlite3=$powerdns_package_version" \
-    sqlite3
+    sqlite3 chrony
 
   installed_version=$(chroot "$rootfs" dpkg-query -W -f='${Version}' pdns-server)
   if [ "$installed_version" != "$powerdns_package_version" ]; then
@@ -302,7 +345,6 @@ build_dns_blocky() {
   printf '%s\n' 'boetticher build stage: dns blocky'
   rootfs=$(prepare_rootfs boetticher-dns-blocky)
   install_powerdns "$rootfs"
-  install_packages "$rootfs" chrony
   install -D -m 0644 images/dns/common/filtering-policy.hosts "$rootfs/etc/boetticher/dns/filtering/boetticher.hosts"
   mkdir -p "$rootfs/usr/local/bin"
   archive="$work_root/blocky_v0.34.0_Linux_x86_64.tar.gz"
@@ -493,24 +535,221 @@ build_firewall() {
   ./scripts/smoke-firewall-image.sh "$image"
 }
 
+image_artifact_name() {
+  printf 'boetticher-%s\n' "${1#image-}"
+}
+
+launch_image_worker() {
+  worker_target=$1
+  worker_name=${worker_target#image-}
+  worker_artifact=$(image_artifact_name "$worker_target")
+  worker_root="$work_root/workers/$worker_name"
+  worker_log="$output_root/$worker_artifact/build.log"
+  mkdir -p "$worker_root" "$(dirname "$worker_log")"
+  BOETTICHER_IMAGE_WORK="$worker_root" \
+  BOETTICHER_BASE_ROOTFS="$base_rootfs" \
+  BOETTICHER_SKIP_PROVENANCE=1 \
+  BOETTICHER_TIMING_LOG="$worker_root/timings.log" \
+    "$script_path" "$worker_target" >"$worker_log" 2>&1 &
+  worker_pid=$!
+}
+
+append_worker_timings() {
+  worker_root=$1
+  if [ -f "$worker_root/timings.log" ]; then
+    cat "$worker_root/timings.log"
+    if [ -n "$timing_log" ]; then
+      cat "$worker_root/timings.log" >> "$timing_log"
+    fi
+  fi
+}
+
+wait_image_worker() {
+  worker_pid=$1
+  worker_target=$2
+  worker_root=$3
+  worker_log=$4
+  if wait "$worker_pid"; then
+    worker_status=0
+  else
+    worker_status=$?
+  fi
+  append_worker_timings "$worker_root"
+  if [ "$worker_status" -ne 0 ]; then
+    cat "$worker_log" >&2
+  fi
+  return "$worker_status"
+}
+
+contains_image_target() {
+  case " $selected_image_targets " in
+    *" $1 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+build_selected_images() {
+  build_started=$(timing_now_ms)
+  timing_log="$output_root/build-timings.log"
+  : > "$timing_log"
+  mkdir -p "$work_root/workers"
+  base_rootfs=$(rootfs_for boetticher-base)
+
+  normalized_image_targets=
+  for selected_target in $selected_image_targets; do
+    case " $normalized_image_targets " in
+      *" $selected_target "*) ;;
+      *) normalized_image_targets="$normalized_image_targets $selected_target" ;;
+    esac
+  done
+  selected_image_targets=$(printf '%s\n' "$normalized_image_targets" | sed 's/^ *//')
+  need_base=0
+  for selected_target in $selected_image_targets; do
+    if [ "$selected_target" != image-base ] && [ "$selected_target" != image-firewall ]; then
+      need_base=1
+    fi
+  done
+  if [ "$need_base" -eq 1 ] && ! contains_image_target image-base; then
+    selected_image_targets="image-base $selected_image_targets"
+  fi
+
+  failed=0
+  pid_a=
+  pid_b=
+  # The base and firewall have no dependency on one another. Starting them
+  # together shortens the critical path while every worker keeps its own
+  # rootfs, mounts, cleanup trap, log, and temporary download directory.
+  if contains_image_target image-base; then
+    launch_image_worker image-base
+    pid_a=$worker_pid
+    root_a=$worker_root
+    log_a=$worker_log
+  fi
+  if contains_image_target image-firewall; then
+    launch_image_worker image-firewall
+    if [ -z "$pid_a" ]; then
+      pid_a=$worker_pid
+      root_a=$worker_root
+      log_a=$worker_log
+    else
+      pid_b=$worker_pid
+      root_b=$worker_root
+      log_b=$worker_log
+    fi
+  fi
+  if [ -n "$pid_a" ]; then
+    if ! wait_image_worker "$pid_a" "${root_a##*/}" "$root_a" "$log_a"; then
+      failed=1
+    fi
+    pid_a=
+  fi
+  if [ -n "$pid_b" ]; then
+    if ! wait_image_worker "$pid_b" "${root_b##*/}" "$root_b" "$log_b"; then
+      failed=1
+    fi
+    pid_b=
+  fi
+  if [ "$failed" -ne 0 ]; then
+    build_finished=$(timing_now_ms)
+    timing_emit "artifact_build_all" "$((build_finished - build_started))"
+    return 1
+  fi
+
+  for selected_target in $selected_image_targets; do
+    case "$selected_target" in
+      image-base|image-firewall) continue ;;
+    esac
+    if [ -n "$pid_a" ] && [ -n "$pid_b" ]; then
+      if ! wait_image_worker "$pid_a" "${root_a##*/}" "$root_a" "$log_a"; then
+        failed=1
+      fi
+      pid_a=
+      if [ -n "$pid_b" ]; then
+        if ! wait_image_worker "$pid_b" "${root_b##*/}" "$root_b" "$log_b"; then
+          failed=1
+        fi
+        pid_b=
+      fi
+      if [ "$failed" -ne 0 ]; then
+        break
+      fi
+    fi
+    launch_image_worker "$selected_target"
+    if [ -z "$pid_a" ]; then
+      pid_a=$worker_pid
+      root_a=$worker_root
+      log_a=$worker_log
+    else
+      pid_b=$worker_pid
+      root_b=$worker_root
+      log_b=$worker_log
+    fi
+  done
+  if [ -n "$pid_a" ]; then
+    if ! wait_image_worker "$pid_a" "${root_a##*/}" "$root_a" "$log_a"; then
+      failed=1
+    fi
+  fi
+  if [ -n "$pid_b" ]; then
+    if ! wait_image_worker "$pid_b" "${root_b##*/}" "$root_b" "$log_b"; then
+      failed=1
+    fi
+  fi
+  build_finished=$(timing_now_ms)
+  timing_emit "artifact_build_all" "$((build_finished - build_started))"
+  if [ "$failed" -ne 0 ]; then
+    return 1
+  fi
+}
+
+run_timed_image_target() {
+  timed_target=$1
+  shift
+  timed_start=$(timing_now_ms)
+  "$@"
+  timed_finish=$(timing_now_ms)
+  timing_emit "artifact_build" "$((timed_finish - timed_start))" "$(image_artifact_name "$timed_target")"
+}
+
+build_dns_blocky_target() {
+  [ -f "$(artifact_for boetticher-base)" ] || build_base
+  build_dns_blocky
+}
+
+build_logging_target() {
+  [ -f "$(artifact_for boetticher-base)" ] || build_base
+  build_logging
+}
+
+build_monitoring_target() {
+  [ -f "$(artifact_for boetticher-base)" ] || build_base
+  build_monitoring
+}
+
+build_portal_target() {
+  [ -f "$(artifact_for boetticher-base)" ] || build_base
+  build_portal
+}
+
+build_tailnet_router_target() {
+  [ -f "$(artifact_for boetticher-base)" ] || build_base
+  build_tailnet_router
+}
+
+build_litellm_target() {
+  [ -f "$(artifact_for boetticher-base)" ] || build_base
+  build_litellm
+}
+
 case "$target" in
-  image-base) build_base ;;
-  image-dns-blocky) [ -f "$(artifact_for boetticher-base)" ] || build_base; build_dns_blocky ;;
-  image-logging) [ -f "$(artifact_for boetticher-base)" ] || build_base; build_logging ;;
-  image-monitoring) [ -f "$(artifact_for boetticher-base)" ] || build_base; build_monitoring ;;
-  image-portal) [ -f "$(artifact_for boetticher-base)" ] || build_base; build_portal ;;
-  image-tailnet-router) [ -f "$(artifact_for boetticher-base)" ] || build_base; build_tailnet_router ;;
-  image-litellm) [ -f "$(artifact_for boetticher-base)" ] || build_base; build_litellm ;;
+  image-base) run_timed_image_target "$target" build_base ;;
+  image-dns-blocky) run_timed_image_target "$target" build_dns_blocky_target ;;
+  image-logging) run_timed_image_target "$target" build_logging_target ;;
+  image-monitoring) run_timed_image_target "$target" build_monitoring_target ;;
+  image-portal) run_timed_image_target "$target" build_portal_target ;;
+  image-tailnet-router) run_timed_image_target "$target" build_tailnet_router_target ;;
+  image-litellm) run_timed_image_target "$target" build_litellm_target ;;
   image-dns-adguard) echo "HOLD: AdGuard provider qualification is outside the default Blocky readiness tranche" >&2; exit 2 ;;
-  image-firewall) build_firewall ;;
-  images)
-    build_base
-    build_dns_blocky
-    build_logging
-    build_monitoring
-    build_portal
-    build_tailnet_router
-    build_litellm
-    build_firewall
-    ;;
+  image-firewall) run_timed_image_target "$target" build_firewall ;;
+  images) build_selected_images ;;
 esac
