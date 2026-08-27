@@ -397,6 +397,9 @@ func TestFirewallRolePersistsForwardingReadinessGate(t *testing.T) {
 		"name: boetticher-forwarding.service",
 		"enabled: true",
 		"daemon_reload: true",
+		"name: Reassert IPv4 forwarding after the readiness gate",
+		"argv: [sysctl, -w, net.ipv4.ip_forward=1]",
+		"changed_when: false",
 	} {
 		if !strings.Contains(tasks, expected) {
 			t.Fatalf("firewall role missing forwarding readiness gate contract %q", expected)

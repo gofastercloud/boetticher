@@ -193,3 +193,8 @@
     enabled: true
     state: started
     daemon_reload: true
+
+- name: Reassert IPv4 forwarding after the readiness gate
+  ansible.builtin.command:
+    argv: [sysctl, -w, net.ipv4.ip_forward=1]
+  changed_when: false
