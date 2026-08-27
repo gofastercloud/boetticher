@@ -46,9 +46,6 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return err
 	}
-	if err := writeModelProjections(*siteDir, s); err != nil {
-		return err
-	}
 	if *dryRun {
 		fmt.Fprintf(out, "Deployment plan: PASS model %s\n", firewallPlan.ModelRevision)
 		fmt.Fprintf(out, "  Mode: %s\n  Engine: %s\n  DHCP subnets: %d\n  Policy rules: %d\n", firewallPlan.Mode, firewallPlan.Engine, len(firewallPlan.DHCP), len(firewallPlan.Rules))
@@ -79,6 +76,9 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			}
 		}
 		return nil
+	}
+	if err := writeModelProjections(*siteDir, s); err != nil {
+		return err
 	}
 	backupPlan, err := backup.PlanFromSite(s)
 	if err != nil {
