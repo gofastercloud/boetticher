@@ -60,8 +60,8 @@
     path: /var/lib/boetticher/identity/logging
     state: directory
     owner: root
-    group: root
-    mode: '0700'
+    group: systemd-journal
+    mode: '0750'
   when: inventory_hostname in logging_upload_configs
 
 - name: Generate endpoint-local logging private key
@@ -69,6 +69,14 @@
     argv: [openssl, genpkey, -algorithm, EC, -pkeyopt, ec_paramgen_curve:P-256, -out, "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key"]
   args:
     creates: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key"
+  when: inventory_hostname in logging_upload_configs
+
+- name: Allow the upload service to read its private key
+  ansible.builtin.file:
+    path: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key"
+    owner: root
+    group: systemd-journal
+    mode: '0640'
   when: inventory_hostname in logging_upload_configs
 
 - name: Generate endpoint-local logging CSR

@@ -188,6 +188,18 @@ func TestLoggingCollectorKeyIsReadableByItsServiceUser(t *testing.T) {
 	}
 }
 
+func TestLoggingUploadKeyIsReadableByItsServiceGroup(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "Create endpoint-local logging identity directory") || !strings.Contains(text, "group: systemd-journal\n    mode: '0750'") || !strings.Contains(text, "Allow the upload service to read its private key") || !strings.Contains(text, "group: systemd-journal\n    mode: '0640'") {
+		t.Fatal("journal upload private keys are not readable by the systemd-journal service group")
+	}
+}
+
 func TestJournalUploadRetriesAfterDependencyStartup(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
