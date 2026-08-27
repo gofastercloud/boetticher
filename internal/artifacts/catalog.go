@@ -115,7 +115,14 @@ func LoadEvidence(root, name string) (Evidence, error) {
 	if root == "" || name == "" {
 		return Evidence{}, fmt.Errorf("artifact evidence requires root and name")
 	}
-	data, err := os.ReadFile(EvidencePath(root, name))
+	if err := validateEvidenceName(name); err != nil {
+		return Evidence{}, err
+	}
+	path := EvidencePath(root, name)
+	if err := validateEvidenceEntry(path); err != nil {
+		return Evidence{}, fmt.Errorf("inspect artifact evidence %s: %w", name, err)
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return Evidence{}, fmt.Errorf("read artifact evidence %s: %w", name, err)
 	}
@@ -404,18 +411,11 @@ func definitionFiles(inputs []string) ([]string, error) {
 }
 
 func EvidenceForFile(path string, artifact model.Artifact) (Evidence, error) {
-	file, err := os.Open(path)
+	file, info, err := openEvidenceFile(path, "artifact")
 	if err != nil {
 		return Evidence{}, fmt.Errorf("open artifact %s: %w", path, err)
 	}
 	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return Evidence{}, fmt.Errorf("stat artifact %s: %w", path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return Evidence{}, fmt.Errorf("artifact %s is not a regular file", path)
-	}
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
 		return Evidence{}, fmt.Errorf("hash artifact %s: %w", path, err)
@@ -428,23 +428,46 @@ func EvidenceForFile(path string, artifact model.Artifact) (Evidence, error) {
 // is a non-empty regular file. Empty or special files cannot provide evidence
 // for a package manifest, SBOM, or scanner report.
 func QualificationInputSHA256(path, name string) (string, error) {
-	info, err := os.Stat(path)
+	file, info, err := openEvidenceFile(path, name+" qualification input")
 	if err != nil {
-		return "", fmt.Errorf("stat %s qualification input: %w", name, err)
-	}
-	if !info.Mode().IsRegular() || info.Size() == 0 {
-		return "", fmt.Errorf("%s qualification input must be a non-empty regular file", name)
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("open %s qualification input: %w", name, err)
+		return "", err
 	}
 	defer file.Close()
+	if info.Size() == 0 {
+		return "", fmt.Errorf("%s qualification input must be a non-empty regular file", name)
+	}
 	hash := sha256.New()
 	if _, err := io.Copy(hash, file); err != nil {
 		return "", fmt.Errorf("hash %s qualification input: %w", name, err)
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func openEvidenceFile(path, description string) (*os.File, os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("stat %s: %w", description, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, nil, fmt.Errorf("%s must not be a symlink", description)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("%s must be a regular file", description)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open %s: %w", description, err)
+	}
+	opened, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("stat opened %s: %w", description, err)
+	}
+	if !os.SameFile(info, opened) {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("%s changed while opening", description)
+	}
+	return file, opened, nil
 }
 
 // ContentSHA256ForFile recalculates the checksum immediately before an

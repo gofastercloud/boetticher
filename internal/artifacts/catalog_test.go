@@ -49,6 +49,64 @@ func TestQualificationInputRejectsMissingOrEmptyEvidence(t *testing.T) {
 	}
 }
 
+func TestEvidenceRejectsSymlinkedArtifactAndQualificationInput(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	artifact := filepath.Join(root, "artifact")
+	if err := os.WriteFile(target, []byte("bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, artifact); err != nil {
+		t.Fatal(err)
+	}
+	definition, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EvidenceForFile(artifact, definition); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("symlinked artifact was accepted: %v", err)
+	}
+	if _, err := QualificationInputSHA256(artifact, "SBOM"); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("symlinked qualification input was accepted: %v", err)
+	}
+}
+
+func TestRebindEvidenceRejectsArtifactIdentityTraversal(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "generated", "artifacts")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := `{"artifact":{"name":"../outside","version":"1.0.0","architecture":"amd64","kind":"lxc"},"qualified":true}`
+	if err := os.WriteFile(filepath.Join(directory, "transferred.json"), []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RebindEvidencePaths(root); err == nil || !strings.Contains(err.Error(), "plain identity") {
+		t.Fatalf("traversing transferred artifact identity was accepted: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "generated", "outside")); !os.IsNotExist(err) {
+		t.Fatalf("path traversal created an outside evidence path: %v", err)
+	}
+}
+
+func TestRebindEvidenceRejectsSymlinkedEvidenceEntry(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "generated", "artifacts")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "evidence-target.json")
+	if err := os.WriteFile(target, []byte(`{"artifact":{"name":"boetticher-logging","version":"1.0.0","architecture":"amd64","kind":"lxc"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(directory, "transferred.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := RebindEvidencePaths(root); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("symlinked transferred evidence was accepted: %v", err)
+	}
+}
+
 func TestResolveArtifactEvidenceRejectsChangedBytes(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "logging.tar.zst")

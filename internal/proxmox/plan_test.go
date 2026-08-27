@@ -223,6 +223,56 @@ func TestEnsureBuilderArmsCleanupWhenCreateTaskFails(t *testing.T) {
 	}
 }
 
+func TestEnsureBuilderCleansPartialSnippetUploads(t *testing.T) {
+	for failAt := 1; failAt <= 3; failAt++ {
+		t.Run(fmt.Sprintf("upload-%d", failAt), func(t *testing.T) {
+			plan := Plan{
+				Node:            "node",
+				Storage:         "local",
+				GatewayImage:    "debian-13-builder-input",
+				GatewayImageURL: "https://example.invalid/debian-13-builder-input.qcow2",
+				GatewaySHA512:   strings.Repeat("a", 128),
+			}
+			uploads := 0
+			deletes := 0
+			transport := roundTripFunc(func(r *http.Request) *http.Response {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/190/config":
+					return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+				case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/190/config":
+					return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+				case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+					return response([]byte(`{"data":[{"volid":"local:iso/debian-13-builder-input.qcow2","filename":"debian-13-builder-input.qcow2","checksum":"` + strings.Repeat("a", 128) + `"}]}`))
+				case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
+					uploads++
+					_, _ = io.Copy(io.Discard, r.Body)
+					if uploads == failAt {
+						return apiResponse(http.StatusInternalServerError, `{"errors":{"upload":"failed"}}`)
+					}
+					return response([]byte(`{"data":null}`))
+				case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api2/json/nodes/node/storage/local/content/snippets/boetticher-190-"):
+					deletes++
+					return response([]byte(`{"data":null}`))
+				default:
+					t.Fatalf("unexpected builder request: %s %s", r.Method, r.URL.Path)
+					return nil
+				}
+			})
+			client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+			_, err := EnsureBuilderVM(context.Background(), client, plan, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator")
+			if err == nil {
+				t.Fatal("partial snippet upload unexpectedly succeeded")
+			}
+			if uploads != failAt {
+				t.Fatalf("snippet uploads = %d, want failure at %d", uploads, failAt)
+			}
+			if deletes != 3 {
+				t.Fatalf("snippet cleanup requests = %d, want all 3 exact names", deletes)
+			}
+		})
+	}
+}
+
 func TestManagedFirewallUsesTaggedPerZoneVNICs(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {

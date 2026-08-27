@@ -670,15 +670,8 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 	if err != nil {
 		return false, fmt.Errorf("render builder cloud-init: %w", err)
 	}
-	for key, value := range map[string]string{"meta": cloudInit.MetaData, "user": cloudInit.UserData, "network": cloudInit.NetworkConfig} {
-		if value == "" {
-			return false, errors.New("builder cloud-init input is incomplete")
-		}
-		names := cloudInitSnippetNames(model.BuilderVMID)
-		if err := client.UploadStorageText(ctx, plan.Node, "local", "snippets", names[key], value); err != nil {
-			return false, fmt.Errorf("upload builder cloud-init %s: %w", key, err)
-		}
-	}
+	// Arm snippet cleanup before the first upload. A partial upload must not
+	// leave VM190-specific cloud-init material behind on Proxmox.
 	snippetsUploaded := true
 	defer func() {
 		if err != nil && snippetsUploaded {
@@ -687,6 +680,23 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 			}
 		}
 	}()
+	for _, snippet := range []struct {
+		key   string
+		value string
+	}{
+		{key: "meta", value: cloudInit.MetaData},
+		{key: "user", value: cloudInit.UserData},
+		{key: "network", value: cloudInit.NetworkConfig},
+	} {
+		key, value := snippet.key, snippet.value
+		if value == "" {
+			return false, errors.New("builder cloud-init input is incomplete")
+		}
+		names := cloudInitSnippetNames(model.BuilderVMID)
+		if err := client.UploadStorageText(ctx, plan.Node, "local", "snippets", names[key], value); err != nil {
+			return false, fmt.Errorf("upload builder cloud-init %s: %w", key, err)
+		}
+	}
 	params.Set("cicustom", cloudInitCICustom(model.BuilderVMID))
 	params.Set("ipconfig0", "ip=dhcp")
 	// Arm caller cleanup before submitting the create task. Proxmox may have

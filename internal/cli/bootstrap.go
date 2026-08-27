@@ -356,8 +356,12 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if builderCreated {
 		defer func() {
 			var cleanupErr error
-			if !buildSucceeded && builderAddress != "" {
-				if err := persistBuilderDiagnostics(ctx, builderRunner, builderAddress, model.DefaultAdminSSHUser, siteDir); err != nil {
+			if !buildSucceeded {
+				if builderAddress != "" {
+					if err := persistBuilderDiagnostics(ctx, builderRunner, builderAddress, model.DefaultAdminSSHUser, siteDir); err != nil {
+						cleanupErr = errors.Join(cleanupErr, err)
+					}
+				} else if err := persistBuilderUnavailableDiagnostics(siteDir, returnErr); err != nil {
 					cleanupErr = errors.Join(cleanupErr, err)
 				}
 			}
@@ -487,6 +491,22 @@ func persistBuilderDiagnostics(ctx context.Context, runner proxmox.CommandRunner
 		}
 		report.WriteByte('\n')
 	}
+	return writeBuilderDiagnostics(siteDir, report.String())
+}
+
+func persistBuilderUnavailableDiagnostics(siteDir string, cause error) error {
+	if siteDir == "" {
+		return errors.New("builder diagnostics require a destination")
+	}
+	var report strings.Builder
+	report.WriteString("remote builder diagnostics unavailable before a guest address was observed\n")
+	if cause != nil {
+		fmt.Fprintf(&report, "builder lifecycle error: %v\n", cause)
+	}
+	return writeBuilderDiagnostics(siteDir, report.String())
+}
+
+func writeBuilderDiagnostics(siteDir, content string) error {
 	directory := filepath.Join(siteDir, "generated", "runtime")
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return fmt.Errorf("create builder diagnostics directory: %w", err)
@@ -501,7 +521,7 @@ func persistBuilderDiagnostics(ctx context.Context, runner proxmox.CommandRunner
 		_ = temporary.Close()
 		return err
 	}
-	if _, err := temporary.WriteString(report.String()); err != nil {
+	if _, err := temporary.WriteString(content); err != nil {
 		_ = temporary.Close()
 		return fmt.Errorf("write builder diagnostics: %w", err)
 	}

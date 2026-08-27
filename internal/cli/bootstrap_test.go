@@ -88,6 +88,20 @@ func TestPersistBuilderDiagnosticsIsBoundedAndPrivate(t *testing.T) {
 	}
 }
 
+func TestPersistBuilderUnavailableDiagnosticsRecordsEarlyFailure(t *testing.T) {
+	directory := t.TempDir()
+	if err := persistBuilderUnavailableDiagnostics(directory, context.DeadlineExceeded); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(directory, "generated", "runtime", "builder-failure.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "unavailable before a guest address was observed") || !strings.Contains(string(data), "context deadline exceeded") {
+		t.Fatalf("early builder failure evidence is incomplete: %s", data)
+	}
+}
+
 type diagnosticRunner struct {
 	output []byte
 }
