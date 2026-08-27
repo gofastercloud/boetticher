@@ -16,6 +16,8 @@ project, so releases can make clean breaks while the design is settling.
   local bytes before retrying deployment.
 - Use the existing authenticated Proxmox SSH path for cloud-init snippets;
   PVE 9.2 does not accept `snippets` through the storage upload API.
+- Select the local operator private key for deploy-time Proxmox and appliance
+  SSH when the site does not override `ssh_identity_file`.
 - Discover the hosted builder address through the QEMU guest agent after
   confirming the guest reaches userspace.
 - Start the hosted builder guest agent before the remaining qualification

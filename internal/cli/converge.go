@@ -532,7 +532,7 @@ func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Si
 // because the generated configuration is keyed by stable appliance identity.
 func applianceSSHRunner(s model.Site, siteDir, hostAlias string) proxmox.SSHRunner {
 	return proxmox.SSHRunner{
-		IdentityFile:  model.ExpandUserPath(s.SSHIdentityFile),
+		IdentityFile:  operatorIdentityFile(s),
 		ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),
 		StrictHostKey: "accept-new",
 		HostAlias:     hostAlias,
@@ -562,6 +562,7 @@ func loadProxmoxClient(siteDir string, s model.Site, ageIdentity, caFile string,
 		BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", User: credentials.APIUser,
 		TokenID: credentials.TokenID, TokenSecret: credentials.TokenSecret, CAFile: caFile, Insecure: insecure,
 		SnippetRunner: proxmox.SSHRunner{
+			IdentityFile:  operatorIdentityFile(s),
 			ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),
 			StrictHostKey: "accept-new", HostKeyAlias: model.LogicalProxmoxIdentity,
 		},
@@ -571,6 +572,21 @@ func loadProxmoxClient(siteDir string, s model.Site, ageIdentity, caFile string,
 		return nil, site.ProxmoxCredentials{}, err
 	}
 	return client, credentials, nil
+}
+
+func operatorIdentityFile(s model.Site) string {
+	if identity := model.ExpandUserPath(s.SSHIdentityFile); identity != "" {
+		return identity
+	}
+	publicKey := defaultOperatorPublicKey()
+	if !strings.HasSuffix(publicKey, ".pub") {
+		return ""
+	}
+	identity := strings.TrimSuffix(publicKey, ".pub")
+	if _, err := os.Stat(identity); err != nil {
+		return ""
+	}
+	return identity
 }
 
 func checkBootstrapEndpoint(siteDir string, s model.Site) error {
