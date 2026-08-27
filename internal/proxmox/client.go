@@ -887,9 +887,10 @@ func IsNotFound(err error) bool {
 	// Proxmox 9.2 reports an absent QEMU/LXC config as HTTP 500 rather than
 	// HTTP 404. Keep this narrowly scoped to its exact guest-config message;
 	// unrelated server errors must remain fatal.
-	return apiErr.StatusCode == http.StatusInternalServerError && strings.HasPrefix(apiErr.Message, "Configuration file 'nodes/") &&
-		(strings.Contains(apiErr.Message, "/qemu-server/") || strings.Contains(apiErr.Message, "/lxc/")) &&
-		strings.HasSuffix(apiErr.Message, ".conf' does not exist")
+	message := strings.TrimSpace(apiErr.Message)
+	return apiErr.StatusCode == http.StatusInternalServerError && strings.HasPrefix(message, "Configuration file 'nodes/") &&
+		(strings.Contains(message, "/qemu-server/") || strings.Contains(message, "/lxc/")) &&
+		strings.HasSuffix(message, ".conf' does not exist")
 }
 
 func (c *Client) request(ctx context.Context, method, endpoint string, query url.Values, form url.Values, out any) error {

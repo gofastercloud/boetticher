@@ -489,7 +489,7 @@ func response(data []byte) *http.Response {
 func TestIsNotFoundAcceptsProxmoxMissingGuestConfigResponse(t *testing.T) {
 	err := &APIError{
 		StatusCode: http.StatusInternalServerError,
-		Message:    "Configuration file 'nodes/proxmox/qemu-server/190.conf' does not exist",
+		Message:    "Configuration file 'nodes/proxmox/qemu-server/190.conf' does not exist\n",
 	}
 	if !IsNotFound(err) {
 		t.Fatal("Proxmox missing guest configuration was not classified as not found")

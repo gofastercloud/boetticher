@@ -3,6 +3,13 @@
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 
+## [0.3.19] - 2026-08-27
+
+### Fixed
+
+- Trim the trailing newline in PVE 9.2's absent guest-config response before
+  classifying the reserved QEMU/LXC identity as not found.
+
 ## [0.3.18] - 2026-08-27
 
 ### Fixed
