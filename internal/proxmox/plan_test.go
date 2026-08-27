@@ -457,9 +457,9 @@ func TestQEMUPersistentVolumeParamsUseCoreResolvedStorage(t *testing.T) {
 func TestEnsureQEMUMigratesLegacyPersistentVolumeSerial(t *testing.T) {
 	guest := GuestPlan{VMID: 100, Name: "test-fw", Volumes: []model.PersistentVolumeDeclaration{{
 		Name: "kea-leases", Module: "firewall", Guest: "lab-fw-01", SizeGiB: 4,
-		MountPath: "/var/lib/kea", Storage: modelStorageIDForTest, Backup: true,
+		MountPath: "/var/lib/kea", Storage: "local", Backup: true,
 	}}}
-	legacy := modelStorageIDForTest + ":4,backup=1,serial=boetticher-firewall-lab-fw-01-kea-leases,size=4G"
+	legacy := "local:100/vm-100-disk-0.raw,backup=1,serial=boetticher-firewall-lab-fw-01-kea-leases,size=4G"
 	updated := ""
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		switch {
@@ -480,7 +480,7 @@ func TestEnsureQEMUMigratesLegacyPersistentVolumeSerial(t *testing.T) {
 	if err := ensureQEMU(context.Background(), client, Plan{Node: "node"}, guest); err != nil {
 		t.Fatalf("ensureQEMU() = %v", err)
 	}
-	want := modelStorageIDForTest + ":4,backup=1,serial=boetticher-131072f5f225f1be9bdcc358d"
+	want := "local:4,backup=1,serial=boetticher-131072f5f225f1be9bdcc358d"
 	if updated != want {
 		t.Fatalf("migrated QEMU disk = %q, want %q", updated, want)
 	}

@@ -11,6 +11,8 @@ project, so releases can make clean breaks while the design is settling.
   by the Proxmox 9.2 API.
 - Bound QEMU persistent-disk serials to Proxmox's 36-character limit and migrate
   the deterministic legacy serial on retry.
+- Match Proxmox's expanded persistent-disk volume identifiers when validating
+  or resuming an owned QEMU guest.
 - Upload qualified QEMU appliance images through Proxmox's supported `import`
   content class before importing them into the selected VM storage.
 - Send streamed Proxmox artifact uploads with a computed `Content-Length`,

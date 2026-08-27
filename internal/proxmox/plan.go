@@ -1275,7 +1275,10 @@ func validateExistingQEMUVolumes(current map[string]any, plan Plan, guest GuestP
 			return fmt.Errorf("HOLD: guest %s has no persistent volume identity for %s, expected %q", guest.Name, key, expected)
 		}
 		observedParts := strings.Split(observed, ",")
-		if observedParts[0] != strings.Split(expected, ",")[0] {
+		expectedParts := strings.Split(expected, ",")
+		expectedStorage, expectedSize, expectedOK := strings.Cut(expectedParts[0], ":")
+		observedStorage, _, observedOK := strings.Cut(observedParts[0], ":")
+		if !expectedOK || !observedOK || observedStorage != expectedStorage {
 			return fmt.Errorf("HOLD: guest %s has persistent volume %s=%q, expected storage/size %q", guest.Name, key, observed, expected)
 		}
 		observedOptions := make(map[string]string, len(observedParts)-1)
@@ -1286,11 +1289,14 @@ func validateExistingQEMUVolumes(current map[string]any, plan Plan, guest GuestP
 			}
 		}
 		expectedOptions := make(map[string]string)
-		for _, option := range strings.Split(expected, ",")[1:] {
+		for _, option := range expectedParts[1:] {
 			name, value, ok := strings.Cut(option, "=")
 			if ok {
 				expectedOptions[name] = value
 			}
+		}
+		if size := observedOptions["size"]; size != "" && size != expectedSize+"G" {
+			return fmt.Errorf("HOLD: guest %s has persistent volume %s=%q, expected storage/size %q", guest.Name, key, observed, expected)
 		}
 		for _, name := range []string{"backup", "serial"} {
 			if observedOptions[name] != expectedOptions[name] {
@@ -1457,7 +1463,12 @@ func migrateLegacyQEMUPersistentVolumeSerials(ctx context.Context, client *Clien
 func qemuVolumeMatchesSerial(observed, expected, serial string) bool {
 	observedParts := strings.Split(observed, ",")
 	expectedParts := strings.Split(expected, ",")
-	if len(observedParts) == 0 || len(expectedParts) == 0 || observedParts[0] != expectedParts[0] {
+	if len(observedParts) == 0 || len(expectedParts) == 0 {
+		return false
+	}
+	expectedStorage, expectedSize, expectedOK := strings.Cut(expectedParts[0], ":")
+	observedStorage, _, observedOK := strings.Cut(observedParts[0], ":")
+	if !expectedOK || !observedOK || observedStorage != expectedStorage {
 		return false
 	}
 	options := make(map[string]string, len(observedParts)-1)
@@ -1474,7 +1485,8 @@ func qemuVolumeMatchesSerial(observed, expected, serial string) bool {
 			expectedOptions[name] = value
 		}
 	}
-	return options["backup"] == expectedOptions["backup"] && options["serial"] == serial
+	return options["backup"] == expectedOptions["backup"] && options["serial"] == serial &&
+		(options["size"] == "" || options["size"] == expectedSize+"G")
 }
 
 func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) error {
