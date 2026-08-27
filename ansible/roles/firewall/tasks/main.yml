@@ -1,4 +1,9 @@
 ---
+- name: Require an immutable firewall appliance artifact
+  ansible.builtin.assert:
+    that: boetticher_appliance_artifact | default(false) | bool
+    fail_msg: "Firewall runtime configuration requires a qualified boetticher appliance artifact"
+
 - name: Require the managed gateway contract
   ansible.builtin.assert:
     that:

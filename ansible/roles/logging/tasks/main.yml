@@ -1,4 +1,10 @@
 ---
+- name: Require an immutable logging appliance artifact
+  ansible.builtin.assert:
+    that: boetticher_appliance_artifact | default(false) | bool
+    fail_msg: "Logging runtime configuration requires a qualified boetticher appliance artifact"
+  when: inventory_hostname == logging_plan.collector
+
 - name: Install the bounded collector journal directory
   ansible.builtin.file:
     path: "{{ logging_plan.remote_journal_path }}"

@@ -1,4 +1,9 @@
 ---
+- name: Require an immutable portal appliance artifact
+  ansible.builtin.assert:
+    that: boetticher_appliance_artifact | default(false) | bool
+    fail_msg: "Portal runtime configuration requires a qualified boetticher appliance artifact"
+
 - name: Require a controller-built portal artifact
   ansible.builtin.assert:
     that:
