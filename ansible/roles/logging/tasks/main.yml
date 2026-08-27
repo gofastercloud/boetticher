@@ -14,6 +14,13 @@
     mode: '2770'
   when: inventory_hostname == logging_plan.collector
 
+- name: Grant the managed administrator read access to collected journals
+  ansible.builtin.user:
+    name: labadmin
+    groups: systemd-journal-remote
+    append: true
+  when: inventory_hostname == logging_plan.collector
+
 - name: Create collector logging identity directory
   ansible.builtin.file:
     path: /var/lib/boetticher/identity/logging
