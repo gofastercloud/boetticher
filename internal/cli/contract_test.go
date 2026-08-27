@@ -157,7 +157,7 @@ func validateCommandForm(t *testing.T, fields []string) {
 		"logs":               {"--site": true, "--unit": true, "--since": true, "--priority": true, "--limit": true},
 		"ssh-config":         {"--site": true, "--output": true, "--force": true, "--check": true, "--install-include": true},
 		"verify":             {"--site": true},
-		"doctor":             {"--site": true},
+		"doctor":             {"--site": true, "--live": true},
 		"upgrade":            {"--site": true},
 		"access":             {"--site": true},
 		"portal":             {"--site": true, "--output": true, "--docs": true},

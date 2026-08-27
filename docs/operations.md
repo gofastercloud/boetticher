@@ -26,4 +26,9 @@ recovery authority, and non-secret desired-state projections.
 
 ## Portal versus Zabbix
 
-The portal is the human-readable projection of architecture, configuration, runbooks, and the latest platform verification evidence. It is rebuilt after successful platform commands and can be refreshed from non-secret status metadata. It does not poll guests or reproduce graphs. Zabbix owns metrics, dashboards, synthetic checks, certificates, events, alerting, and notifications.
+The portal is the human-readable projection of architecture, configuration,
+runbooks, and the latest platform verification results. It is rebuilt after
+successful platform commands and can be refreshed from non-secret status
+metadata. It does not poll guests or reproduce graphs. Zabbix owns metrics,
+dashboards, synthetic checks, certificates, events, alerting, and
+notifications.

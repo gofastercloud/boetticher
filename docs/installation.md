@@ -30,8 +30,11 @@ running a destructive bootstrap.
 2. Record that address with
    `boetticher bootstrap-endpoint set ADDRESS --site my-boetticher`.
 3. Run `boetticher preflight --site my-boetticher --live`. It identifies the
-   physical upstream interface conservatively and proposes a safe trunk
-   candidate. Multiple candidates require `--trunk-interface`.
+   physical upstream interface conservatively and reports safe trunk
+   candidates. Managed mode defaults to virtual-only: spare NICs remain
+   unclaimed until the operator explicitly attaches a selected trunk. External
+   mode requires an explicitly selected physical trunk, even when only one
+   eligible NIC is discovered; use `--trunk-interface` for that selection.
 4. Run `boetticher ssh-config --site my-boetticher --force --install-include`.
 5. Run `boetticher bootstrap --site my-boetticher --recovery-confirmed`.
    Dedicated storage also requires `--storage-confirmed` after reviewing the

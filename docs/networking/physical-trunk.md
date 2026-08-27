@@ -16,11 +16,12 @@ vmbr1 = VLAN-aware, no physical member
 mode  = virtual-only
 ```
 
-If exactly one safe unused Ethernet NIC remains, bootstrap may attach it to
-`vmbr1`. If several candidates remain, select one explicitly. A disconnected
-but otherwise clean NIC is eligible; carrier is not required. External mode
-always requires a distinct physical trunk because the operator appliance must
-receive VLANs 10, 20, 50, and 99.
+Managed mode remains virtual-only by default, so spare NICs stay unclaimed.
+The operator may explicitly select and attach a physical trunk later. A
+disconnected but otherwise clean NIC is eligible; carrier is not required.
+External mode always requires a distinct physical trunk and an explicit
+selection, even when exactly one eligible NIC remains, because the operator
+appliance must receive VLANs 10, 20, 50, and 99.
 
 For later changes use:
 

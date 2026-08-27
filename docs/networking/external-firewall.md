@@ -34,6 +34,11 @@ These snippets are starting points rather than complete configurations. They
 have not been exercised as part of the boetticher test suite, so check syntax
 and defaults against the version of your firewall before applying them.
 
+External mode requires an explicitly selected physical trunk before bootstrap,
+including when preflight discovers exactly one eligible NIC. Bootstrap does
+not silently select a candidate. Managed mode remains virtual-only unless the
+operator explicitly attaches a selected trunk later.
+
 ## OPNsense example
 
 On an OPNsense appliance, create VLAN interfaces 10, 20, 50, and 99 on the

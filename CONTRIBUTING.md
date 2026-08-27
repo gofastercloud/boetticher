@@ -35,12 +35,17 @@ installation state.
 - Do not weaken SSH host-key verification or bypass an ownership boundary to make a test pass.
 - Use an imperative commit subject and keep commits cohesive.
 - Appliance changes must preserve the hosted-builder contract: public
-  allow-listed inputs, qualified Go/tool versions, independent content hashes,
-  package/SBOM/Trivy evidence, bounded failure diagnostics, streamed artifact
-  transfer, and cleanup of VM 190 after a required build.
-- Do not add module application installation to Ansible or generic Debian
-  template provisioning. The artifact determines software; deploy injects
-  site-specific runtime state.
+  allow-listed inputs, deterministic definition identity, independently
+  verified content SHA, successful build smoke checks, passing Trivy policy,
+  bounded failure diagnostics, safe streamed artifact transfer, and cleanup
+  of VM 190 after a required build. Package manifests, SBOMs, scanner reports,
+  and builder provenance remain useful build/release outputs, not a nested
+  deployment trust hierarchy.
+- Appliance artifacts determine module-version-determined application
+  software. Ansible may perform bounded site-specific runtime configuration,
+  service enablement, certificate/config installation, and verification, but
+  must not install or replace the application software selected by the
+  appliance artifact.
 - Modules declare persistent volumes and placement policy; Core owns physical
   disks, PVs, VGs, filesystems, and destructive storage operations.
 - Logging is mandatory and inherited from the common appliance base. DNS is

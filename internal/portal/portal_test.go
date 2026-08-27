@@ -51,8 +51,8 @@ func TestManagedPortalPublishesGatewayDetails(t *testing.T) {
 func TestPortalPublishesModuleArtifactAndLoggingSummary(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	site.Modules = []model.ResolvedModule{
-		{Name: "dns", Version: "1.0.0", Policy: "mandatory", Enabled: true, Reason: "mandatory", State: "Ready"},
-		{Name: "logging", Version: "1.0.0", Policy: "mandatory", Enabled: true, Reason: "mandatory", State: "Ready"},
+		{Name: "dns", Version: "1.0.0", Policy: "mandatory", Enabled: true, Reason: "mandatory", State: "Enabled"},
+		{Name: "logging", Version: "1.0.0", Policy: "mandatory", Enabled: true, Reason: "mandatory", State: "Enabled"},
 	}
 	site.Declarations = []model.ModuleDeclaration{
 		{Module: "dns", Artifact: model.Artifact{Name: "boetticher-dns-blocky", Version: "1.0.0", Provider: "blocky", DefinitionSHA256: strings.Repeat("a", 64)}},
@@ -67,10 +67,13 @@ func TestPortalPublishesModuleArtifactAndLoggingSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := string(data)
-	for _, want := range []string{"boetticher-dns-blocky", "prefer-data-disk", "backup=false", "NOT TESTED", "logs.lab.home.arpa:19532"} {
+	for _, want := range []string{"boetticher-dns-blocky", "prefer-data-disk", "backup=false", "logs.lab.home.arpa:19532"} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("portal omitted %q", want)
 		}
+	}
+	if strings.Contains(page, "<th>Qualification</th>") {
+		t.Fatal("portal exposed controller-only artifact qualification")
 	}
 	if strings.Contains(page, "content_sha256") || strings.Contains(page, "BEGIN PRIVATE KEY") {
 		t.Fatal("portal exposed internal secret/evidence material")

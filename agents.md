@@ -72,8 +72,11 @@ for deletion or import.
   desired-state authorities. Metadata-only artifacts are not deployable.
 - Modules declare persistent volumes and placement preferences. Core alone owns
   physical disks, PVs, VGs, filesystems, and destructive storage lifecycle.
-- Module application installation does not use generic Debian templates or
-  module-specific Ansible roles; `deploy` selects immutable artifacts.
+- Appliance artifacts determine module-version-determined application
+  software. Ansible may currently perform bounded site-specific runtime
+  configuration, service enablement, certificate/config installation, and
+  verification, but it must not install or replace the application software
+  selected by the appliance artifact.
 - `make images` is real Linux artifact construction and `make image-check` is
   static validation only. Hosted-builder qualification is a release gate;
   source tests do not prove a T580 or Proxmox deployment. Until that workflow
