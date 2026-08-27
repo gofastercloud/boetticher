@@ -1521,11 +1521,11 @@ func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage,
 		return fmt.Errorf("inspect %s artifact storage: %w", content, err)
 	}
 	if found, err := verifyStoredArtifact(entries, filename, checksum, false); err != nil {
-		if content != "import" || !strings.HasSuffix(err.Error(), "has no checksum evidence") {
+		if (content != "import" && content != "vztmpl") || !strings.HasSuffix(err.Error(), "has no checksum evidence") {
 			return err
 		}
-		// Import listings omit checksums. Re-upload the qualified local bytes so
-		// the upload task can re-establish checksum evidence before use.
+		// Some Proxmox content listings omit checksums. Re-upload the qualified
+		// local bytes so the upload task can verify the exact content before use.
 	} else if found {
 		return nil
 	}
@@ -1546,7 +1546,7 @@ func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage,
 	if err != nil {
 		return fmt.Errorf("verify uploaded %s artifact storage: %w", filename, err)
 	}
-	found, err := verifyStoredArtifact(entries, filename, checksum, content == "import")
+	found, err := verifyStoredArtifact(entries, filename, checksum, content == "import" || content == "vztmpl")
 	if err != nil {
 		return err
 	}

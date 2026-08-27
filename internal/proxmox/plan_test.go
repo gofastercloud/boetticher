@@ -636,6 +636,37 @@ func TestEnsureArtifactInStorageHoldsOnPostUploadChecksumMismatch(t *testing.T) 
 	}
 }
 
+func TestEnsureArtifactInStorageAcceptsChecksumlessVZTemplateAfterVerifiedUpload(t *testing.T) {
+	artifactPath := filepath.Join(t.TempDir(), "artifact.tar.zst")
+	content := []byte("qualified appliance bytes")
+	if err := os.WriteFile(artifactPath, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	checksum := fmt.Sprintf("%x", sha256.Sum256(content))
+	filename := "boetticher-logging-1.0.0-amd64.tar.zst"
+	storageReads := 0
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+			storageReads++
+			return response([]byte(`{"data":[{"filename":"` + filename + `"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
+			_, _ = io.Copy(io.Discard, r.Body)
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected artifact storage request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := ensureArtifactInStorage(context.Background(), client, "node", "local", "vztmpl", filename, checksum, artifactPath); err != nil {
+		t.Fatalf("ensureArtifactInStorage() = %v", err)
+	}
+	if storageReads != 2 {
+		t.Fatalf("storage reads = %d, want pre-upload and post-upload verification", storageReads)
+	}
+}
+
 func TestEnsureQEMUUploadsQcow2ThroughImportContent(t *testing.T) {
 	artifactPath := filepath.Join(t.TempDir(), "firewall.qcow2")
 	content := []byte("qualified firewall bytes")
