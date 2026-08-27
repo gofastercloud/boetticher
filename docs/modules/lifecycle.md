@@ -9,6 +9,11 @@ boetticher module show monitoring
 boetticher module plan monitoring
 boetticher module enable monitoring --dry-run
 boetticher module disable monitoring --dry-run
+
+boetticher modules list
+boetticher modules tailnet-router show
+boetticher modules tailnet-router plan
+boetticher modules litellm status
 ```
 
 Enable and disable changes require `--confirm` when they persist configuration.
@@ -16,8 +21,9 @@ Normal disable is non-destructive: active declarations stop, while the owned
 guest and declared persistent data are retained and remain marked as owned.
 
 `--purge --confirm` is the explicit destructive form. It is not available for
-mandatory modules. A purge plan must identify the module-owned guest and
-persistent data before removal.
+mandatory modules. A purge plan must reconstruct the disabled module's
+declaration in memory, resolve its qualified artifact, and identify the exact
+module-owned guest, attached volumes, and persistent data before removal.
 
 `module list`, `module show`, and `module status` report desired module state
 as `Enabled` or `Disabled`. Live readiness is established separately through
