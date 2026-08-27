@@ -7,6 +7,8 @@ project, so releases can make clean breaks while the design is settling.
 
 ### Fixed
 
+- Encode the managed firewall's QEMU cloud-init SSH key in the format required
+  by the Proxmox 9.2 API.
 - Upload qualified QEMU appliance images through Proxmox's supported `import`
   content class before importing them into the selected VM storage.
 - Send streamed Proxmox artifact uploads with a computed `Content-Length`,

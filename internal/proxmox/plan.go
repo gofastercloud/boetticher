@@ -1205,7 +1205,9 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 		if err := ValidatePublicKey(plan.OperatorPublicKey); err != nil {
 			return err
 		}
-		params.Set("sshkeys", plan.OperatorPublicKey)
+		// Proxmox declares this field as urlencoded and decodes it once more
+		// after the application/x-www-form-urlencoded request is parsed.
+		params.Set("sshkeys", url.PathEscape(plan.OperatorPublicKey))
 	}
 	volumeParams, err := qemuPersistentVolumeParams(plan, guest)
 	if err != nil {

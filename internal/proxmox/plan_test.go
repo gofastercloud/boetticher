@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -562,9 +563,10 @@ func TestEnsureQEMUUploadsQcow2ThroughImportContent(t *testing.T) {
 	}}
 	plan := Plan{Node: "node", Storage: modelStorageIDForTest, ArtifactFiles: map[string]string{
 		artifactKey(guest.Artifact): artifactPath,
-	}}
+	}, OperatorPublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator"}
 	uploadContent := ""
 	importDisk := ""
+	createSSHKeys := ""
 	storageReads := 0
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		switch {
@@ -603,6 +605,10 @@ func TestEnsureQEMUUploadsQcow2ThroughImportContent(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:upload/status":
 			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			createSSHKeys = r.Form.Get("sshkeys")
 			return response([]byte(`{"data":null}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/100/config":
 			if err := r.ParseForm(); err != nil {
@@ -627,6 +633,9 @@ func TestEnsureQEMUUploadsQcow2ThroughImportContent(t *testing.T) {
 	wantImport := "boetticher-thin:0,import-from=local:import/boetticher-firewall-1.0.0-amd64.qcow2,format=qcow2"
 	if importDisk != wantImport {
 		t.Fatalf("QEMU import disk = %q, want %q", importDisk, wantImport)
+	}
+	if want := url.PathEscape(plan.OperatorPublicKey); createSSHKeys != want {
+		t.Fatalf("QEMU sshkeys = %q, want URL-encoded key %q", createSSHKeys, want)
 	}
 }
 
