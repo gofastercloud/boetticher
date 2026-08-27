@@ -8,11 +8,18 @@ boetticher guarantees backup coverage for its own platform guests through the cl
 111 lab-dns-02
 120 lab-monitor-01
 130 lab-portal-01
+140 lab-log-01
 ```
 
-Each managed guest also receives a canonical Proxmox tag set. All five V1
+Each managed guest also receives a canonical Proxmox tag set. All six V1
 guests carry `boetticher`, `managed`, `platform`, `infra`, and `backup`, plus
 role tags such as `network`, `dns`, `ntp`, `observability`, or `portal`.
+
+The logging guest is included in the platform backup set. Its bounded central
+journal volume at `/var/log/journal/remote` is explicitly `backup=false`
+because endpoint journals remain the recovery evidence source and the central
+copy is high-churn operational data. The logging appliance and its declared
+volume remain boetticher-owned.
 
 The `backup` tag is the model-level selection signal. boetticher turns the
 tagged, declared guests into the explicit VMID list submitted to the

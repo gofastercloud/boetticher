@@ -38,6 +38,16 @@ informational, never drift, and never targets for deletion or import.
 - Bootstrap builds deployable appliances only through the bounded temporary
   Linux builder. `make image-check` validates definitions; `make images` and
   Trivy qualification produce the real artifact evidence required for deploy.
+- VM 190 (`lab-builder-01`) is ephemeral Core infrastructure on `vmbr0`, sized
+  at 4 vCPUs, 8 GiB RAM, and 32 GiB minimum root storage. Every construction
+  attempt that needs a build starts from a fresh proven builder, uses only the
+  public allow-listed source bundle, records bounded diagnostics on failure,
+  streams artifacts, and destroys the VM plus its disposable host-key database
+  and exact cloud-init snippets.
+- The builder uses the explicitly qualified Go toolchain and records builder
+  provenance. Scoped Proxmox privileges must cover only the actual VM,
+  snippet, guest-agent, template-upload, and artifact-storage operations; a
+  blanket administrator role is not acceptable.
 - Official LXC appliances use the pinned Debian 13 boetticher base. Services run
   non-root where practical, and systemd credentials are the standard secret
   delivery path. PowerDNS backend persistence is an explicit third-party
@@ -58,6 +68,11 @@ informational, never drift, and never targets for deletion or import.
   physical disks, PVs, VGs, filesystems, and destructive storage lifecycle.
 - Module application installation does not use generic Debian templates or
   module-specific Ansible roles; `deploy` selects immutable artifacts.
+- `make images` is real Linux artifact construction and `make image-check` is
+  static validation only. Hosted-builder qualification is a release gate;
+  source tests do not prove a T580 or Proxmox deployment. Until that workflow
+  is physically executed, hardware and live service behavior remain
+  `NOT TESTED`.
 
 ## Coding standards
 

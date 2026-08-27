@@ -1,7 +1,7 @@
 ---
-# boetticher guest convergence entry point.
+# boetticher managed-appliance runtime configuration entry point.
 # Runtime credentials are intentionally not represented in this playbook.
-- name: Converge managed Debian guests
+- name: Configure managed appliance runtime state
   hosts: managed
   become: true
   gather_facts: true

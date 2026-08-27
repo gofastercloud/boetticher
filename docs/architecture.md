@@ -53,11 +53,11 @@ and no VLAN subinterface inside `lab-fw-01`. Proxmox performs the VLAN
 classification on the guest attachments. The guest is a routed firewall, not
 a bridge.
 
-The gateway is deliberately small: Debian 13, nftables, Kea DHCPv4/D2,
-minimal SANDBOX DNS/NTP services, SSH, Chrony where needed, and Zabbix Agent 2.
-The qualified cloud image is the pinned Debian 13 GenericCloud amd64 input
-`debian-13-genericcloud-amd64-20260327-2429`; its SHA-512 is recorded in the model and
-verified before firewall image customization.
+The gateway is deliberately small: a qualified Debian 13 boetticher appliance
+containing nftables, Kea DHCPv4/D2, minimal SANDBOX DNS/NTP services, SSH,
+Chrony where needed, and Zabbix Agent 2. Its pinned Debian 13 GenericCloud
+input is `debian-13-genericcloud-amd64-20260327-2429`; the input SHA-512 is
+recorded in the model and verified during firewall image construction.
 IPv4 forwarding stays disabled until a validated ruleset is installed.
 
 ## External gateway

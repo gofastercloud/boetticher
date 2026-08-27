@@ -34,6 +34,20 @@ installation state.
 - Do not add generic VM/LXC lifecycle management or silently adopt user guests.
 - Do not weaken SSH host-key verification or bypass an ownership boundary to make a test pass.
 - Use an imperative commit subject and keep commits cohesive.
+- Appliance changes must preserve the hosted-builder contract: public
+  allow-listed inputs, qualified Go/tool versions, independent content hashes,
+  package/SBOM/Trivy evidence, bounded failure diagnostics, streamed artifact
+  transfer, and cleanup of VM 190 after a required build.
+- Do not add module application installation to Ansible or generic Debian
+  template provisioning. The artifact determines software; deploy injects
+  site-specific runtime state.
+- Modules declare persistent volumes and placement policy; Core owns physical
+  disks, PVs, VGs, filesystems, and destructive storage operations.
+- Logging is mandatory and inherited from the common appliance base. DNS is
+  one mandatory module with typed Blocky/AdGuard provider selection.
+- Keep current-architecture prose direct in docs, help, and comments. Use
+  release or migration material for historical wording. A T580 or other live
+  hardware journey remains `NOT TESTED` until it is actually run.
 
 ## Reporting security issues
 
