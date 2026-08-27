@@ -193,7 +193,7 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	if err != nil {
 		return fmt.Errorf("ansible-playbook is required: %w", err)
 	}
-	args := []string{"-i", inventory, playbook, "--extra-vars", "@-", "--ssh-common-args", "-F " + generatedSSHConfigPath(inventory)}
+	args := []string{"-i", inventory, playbook, "--extra-vars", "@/dev/stdin", "--ssh-common-args", "-F " + generatedSSHConfigPath(inventory)}
 	if limit != "" {
 		args = append(args, "--limit", limit)
 	}

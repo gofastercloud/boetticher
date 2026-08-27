@@ -45,6 +45,8 @@ project, so releases can make clean breaks while the design is settling.
 - Run the managed gateway's read-only bootstrap interface checks without sudo;
   the constrained appliance sudo policy does not grant unnecessary `ip`
   elevation.
+- Stream Ansible variables through `/dev/stdin`, which is the supported stdin
+  filename form in the qualified Ansible release.
 - Resume an owned running gateway without issuing a duplicate Proxmox start
   request after a prior deployment attempt.
 - Discover the hosted builder address through the QEMU guest agent after

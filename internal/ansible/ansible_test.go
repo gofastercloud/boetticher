@@ -1,6 +1,7 @@
 package ansible
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,6 +58,33 @@ func TestGeneratedSSHConfigPathIsBoundToInventoryProjection(t *testing.T) {
 	got := generatedSSHConfigPath("/tmp/site/generated/ansible/inventory.ini")
 	if got != "/tmp/site/generated/ssh/boetticher.conf" {
 		t.Fatalf("generated SSH config path = %q", got)
+	}
+}
+
+func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
+	tempDir := t.TempDir()
+	argsPath := filepath.Join(tempDir, "args")
+	scriptPath := filepath.Join(tempDir, "ansible-playbook")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ANSIBLE_ARGS_FILE\"\ncat >/dev/null\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tempDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("ANSIBLE_ARGS_FILE", argsPath)
+
+	if err := run(context.Background(), "ansible/site.yml", "/tmp/site/generated/ansible/inventory.ini", []byte("{}"), "lab-fw-01"); err != nil {
+		t.Fatal(err)
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(args)
+	if !strings.Contains(text, "--extra-vars\n@/dev/stdin\n") {
+		t.Fatalf("Ansible did not receive the supported stdin path:\n%s", text)
+	}
+	if strings.Contains(text, "@-\n") {
+		t.Fatalf("Ansible received the unsupported stdin filename:\n%s", text)
 	}
 }
 
