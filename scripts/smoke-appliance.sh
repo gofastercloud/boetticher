@@ -8,7 +8,12 @@ run() {
 }
 
 test ! -e "$rootfs/etc/boetticher/module.yaml"
-test ! -e "$rootfs/usr/lib/boetticher/artifact.json"
+test -s "$rootfs/usr/lib/boetticher/artifact.json"
+grep -Eq '"definition_sha256": "[a-fA-F0-9]{64}"' "$rootfs/usr/lib/boetticher/artifact.json"
+if grep -q 'content_sha256' "$rootfs/usr/lib/boetticher/artifact.json"; then
+  echo "artifact definition identity must not embed the built content checksum" >&2
+  exit 1
+fi
 test ! -e "$rootfs/home/labadmin/.ssh/authorized_keys"
 test ! -e "$rootfs/root/.ssh/authorized_keys"
 if find "$rootfs/etc/ssh" -maxdepth 1 -name 'ssh_host_*' -print -quit | grep -q .; then

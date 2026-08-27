@@ -34,7 +34,19 @@ done
 
 output_root=${BOETTICHER_ARTIFACT_OUTPUT:-generated/artifacts}
 work_root=${BOETTICHER_IMAGE_WORK:-/tmp/boetticher-image-build}
-mirror=https://snapshot.debian.org/archive/debian/20260327T000000Z/
+base_definition=images/base/debian.yaml
+base_release=$(sed -n 's/^release: *//p' "$base_definition")
+mirror=$(sed -n 's/^  mirror: *//p' "$base_definition")
+base_packages=$(awk '
+  /^build:$/ { in_build=1; next }
+  in_build && /^  packages:$/ { in_packages=1; next }
+  in_packages && /^    - / { sub(/^    - /, ""); printf "%s%s", separator, $0; separator=","; next }
+  in_packages && !/^    - / { exit }
+' "$base_definition")
+if [ -z "$base_release" ] || [ -z "$mirror" ] || [ -z "$base_packages" ]; then
+  echo "HOLD: base image definition is missing its pinned release, mirror, or build package contract" >&2
+  exit 2
+fi
 powerdns_key_url=https://repo.powerdns.com/FD380FBB-pub.asc
 powerdns_key_sha256=efeb5b1451c76de1dac8eefaddba5af5549e8fd93484728744ea7b4923decae8
 powerdns_repo=https://repo.powerdns.com/debian
@@ -103,8 +115,8 @@ create_base_rootfs() {
   mmdebstrap --variant=minbase --architectures=amd64 \
     --aptopt=Acquire::Check-Valid-Until=false \
     --aptopt=Acquire::Languages=none \
-    --include=systemd,systemd-sysv,systemd-journal-remote,ca-certificates,openssl,openssh-server,sudo,iproute2,iputils-ping,nftables,chrony,curl,jq,bash,python3 \
-    trixie "$rootfs" "$mirror"
+    --include="$base_packages" \
+    "$base_release" "$rootfs" "$mirror"
   mkdir -p "$rootfs/etc/boetticher" "$rootfs/usr/lib/boetticher" "$rootfs/run/boetticher/bootstrap"
   install -D -m 0644 images/base/runtime/journal-upload.conf "$rootfs/etc/systemd/journal-upload.conf"
   install -D -m 0440 images/base/runtime/boetticher.sudoers "$rootfs/etc/sudoers.d/boetticher"
@@ -126,6 +138,18 @@ create_base_rootfs() {
   rm -f "$rootfs"/etc/ssh/ssh_host_*
   rm -f "$rootfs/root/.ssh/authorized_keys" "$rootfs/home/labadmin/.ssh/authorized_keys"
   chroot "$rootfs" systemctl enable boetticher-first-boot.service
+}
+
+write_artifact_identity() {
+  rootfs=$1
+  module=$2
+  provider=${3:-}
+  if [ -n "$provider" ]; then
+    go run ./cmd/artifact-identity -module "$module" -provider "$provider" > "$rootfs/usr/lib/boetticher/artifact.json"
+  else
+    go run ./cmd/artifact-identity -module "$module" > "$rootfs/usr/lib/boetticher/artifact.json"
+  fi
+  chmod 0644 "$rootfs/usr/lib/boetticher/artifact.json"
 }
 
 prepare_rootfs() {
@@ -265,6 +289,7 @@ package_lxc() {
 build_base() {
   rootfs=$(rootfs_for boetticher-base)
   create_base_rootfs "$rootfs"
+  write_artifact_identity "$rootfs" base
   package_lxc boetticher-base
 }
 
@@ -310,12 +335,14 @@ CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 WantedBy=multi-user.target
 EOF
   mkdir -p "$rootfs/etc/blocky"
+  write_artifact_identity "$rootfs" dns blocky
   package_lxc boetticher-dns-blocky
 }
 
 build_logging() {
   rootfs=$(prepare_rootfs boetticher-logging)
   install_packages "$rootfs" systemd-journal-remote
+  write_artifact_identity "$rootfs" logging
   package_lxc boetticher-logging
 }
 
@@ -325,12 +352,14 @@ build_monitoring() {
   install -D -m 0755 images/monitoring/runtime/prepare-zabbix-config.sh "$rootfs/usr/lib/boetticher/prepare-zabbix-config"
   mkdir -p "$rootfs/etc/systemd/system/zabbix-server.service.d"
   printf '%s\n' '[Service]' 'LoadCredentialEncrypted=zabbix-db-password:/var/lib/boetticher/credentials/zabbix-db-password.cred' 'ExecStartPre=/usr/lib/boetticher/prepare-zabbix-config' 'ExecStart=' 'ExecStart=/usr/sbin/zabbix_server -c /run/zabbix/zabbix_server.conf' > "$rootfs/etc/systemd/system/zabbix-server.service.d/boetticher-credentials.conf"
+  write_artifact_identity "$rootfs" monitoring
   package_lxc boetticher-monitoring
 }
 
 build_portal() {
   rootfs=$(prepare_rootfs boetticher-portal)
   install_packages "$rootfs" nginx
+  write_artifact_identity "$rootfs" portal
   package_lxc boetticher-portal
 }
 
@@ -354,13 +383,17 @@ build_firewall() {
   fi
   printf '%s  %s\n' "$zabbix_release_sha256" "$zabbix_release" | sha256sum --check --status
   image="$destination/boetticher-firewall-1.0.0-amd64.qcow2"
+  artifact_identity="$work_root/firewall-artifact.json"
+  go run ./cmd/artifact-identity -module firewall > "$artifact_identity"
   cp "$input" "$image"
   virt-customize -a "$image" \
     --network \
-    --install nftables,kea-dhcp4-server,kea-dhcp-ddns-server,dnsmasq,chrony,openssh-server,sudo,cloud-init,systemd-journal-remote,curl,jq,openssl,qemu-guest-agent \
+    --upload images/base/runtime/debian-snapshot.sources:/etc/apt/sources.list.d/boetticher-debian.sources \
+    --run-command 'rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; apt-get -o Acquire::Check-Valid-Until=false update' \
+    --run-command 'DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony openssh-server sudo cloud-init systemd-journal-remote curl jq openssl qemu-guest-agent' \
     --upload "$zabbix_release:/tmp/zabbix-release.deb" \
     --run-command 'dpkg --install /tmp/zabbix-release.deb' \
-    --run-command 'apt-get update' \
+    --run-command 'apt-get -o Acquire::Check-Valid-Until=false update' \
     --run-command "DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends zabbix-agent2=$zabbix_package_version" \
     --run-command 'dpkg --purge zabbix-release >/dev/null 2>&1 || true' \
     --run-command 'rm -f /tmp/zabbix-release.deb; apt-get clean; rm -rf /var/lib/apt/lists/*' \
@@ -380,8 +413,9 @@ build_firewall() {
     --upload images/base/runtime/sshd.conf:/etc/ssh/sshd_config.d/boetticher.conf \
     --upload images/base/runtime/sshd-host-key.conf:/etc/ssh/sshd_config.d/boetticher-host-key.conf \
     --upload images/base/runtime/boetticher.sudoers:/etc/sudoers.d/boetticher \
+    --upload "$artifact_identity:/usr/lib/boetticher/artifact.json" \
     --upload images/firewall/runtime/forwarding.conf:/etc/sysctl.d/boetticher-forwarding.conf \
-    --run-command 'useradd --create-home --shell /bin/bash labadmin || true' \
+    --run-command 'useradd --create-home --shell /bin/bash labadmin' \
     --run-command 'usermod --append --groups sudo labadmin' \
     --run-command 'passwd --lock labadmin' \
     --run-command 'chown labadmin:labadmin /tmp/boetticher-ansible && chmod 0700 /tmp/boetticher-ansible' \
@@ -389,8 +423,8 @@ build_firewall() {
     --run-command 'rm -f /etc/ssh/ssh_host_* /root/.ssh/authorized_keys /home/labadmin/.ssh/authorized_keys' \
     --run-command 'visudo -cf /etc/sudoers' \
     --run-command 'dpkg-query -W -f="${binary:Package}\\t${Version}\\n" | sort > /var/lib/boetticher/package-manifest.txt' \
-    --run-command 'systemctl enable boetticher-first-boot.service || true' \
-    --run-command 'systemctl disable --now systemd-networkd-wait-online.service || true'
+    --run-command 'systemctl enable boetticher-first-boot.service' \
+    --run-command 'if systemctl list-unit-files systemd-networkd-wait-online.service >/dev/null 2>&1; then systemctl disable --now systemd-networkd-wait-online.service; fi'
   sha256sum "$image" > "$destination/content.sha256"
   virt-cat -a "$image" /var/lib/boetticher/package-manifest.txt > "$destination/package-manifest.txt"
   ./scripts/smoke-firewall-image.sh "$image"

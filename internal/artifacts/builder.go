@@ -54,6 +54,7 @@ var PublicBuildInputs = []string{
 	"buildbundle.go",
 	"go.mod",
 	"go.sum",
+	"cmd/artifact-identity",
 	"cmd/qualify-artifact",
 	"cmd/render-blocky-config",
 	"internal/artifacts",

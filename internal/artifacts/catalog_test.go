@@ -523,6 +523,7 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	for _, required := range []string{
 		"mirror: https://snapshot.debian.org/archive/debian/20260327T000000Z/",
 		"snapshot: 20260327T000000Z",
+		"build:\n  packages:",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("base definition is missing pinned Debian source %q", required)
@@ -532,8 +533,28 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(buildScript), "mirror=https://snapshot.debian.org/archive/debian/20260327T000000Z/") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Check-Valid-Until=false") {
+	if !strings.Contains(string(buildScript), "base_packages=$(awk") || !strings.Contains(string(buildScript), "--include=\"$base_packages\"") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Check-Valid-Until=false") {
 		t.Fatal("base builder does not use the pinned Debian snapshot")
+	}
+}
+
+func TestApplianceBuildEmbedsDefinitionIdentityWithoutContentEvidence(t *testing.T) {
+	buildScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(buildScript)
+	for _, required := range []string{
+		"write_artifact_identity \"$rootfs\" base",
+		"write_artifact_identity \"$rootfs\" dns blocky",
+		"write_artifact_identity \"$rootfs\" logging",
+		"write_artifact_identity \"$rootfs\" monitoring",
+		"write_artifact_identity \"$rootfs\" portal",
+		"-upload \"$artifact_identity:/usr/lib/boetticher/artifact.json\"",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("build path does not embed non-secret definition identity: %q", required)
+		}
 	}
 }
 

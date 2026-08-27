@@ -269,6 +269,7 @@ const (
 
 var commonDefinitionInputs = []string{
 	"images/base",
+	"cmd/artifact-identity",
 	"scripts/build-images.sh",
 	"scripts/smoke-appliance.sh",
 }
