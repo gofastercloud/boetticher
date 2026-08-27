@@ -71,6 +71,7 @@ project, so releases can make clean breaks while the design is settling.
   appliance.
 - Replace confirmed stale owned LXC appliances while retaining declared
   persistent volumes.
+- Use Proxmox's PUT method for LXC configuration updates.
 - Resume an owned running gateway without issuing a duplicate Proxmox start
   request after a prior deployment attempt.
 - Discover the hosted builder address through the QEMU guest agent after

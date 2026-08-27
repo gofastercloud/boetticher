@@ -384,7 +384,7 @@ func (c *Client) SetLXCConfig(ctx context.Context, node string, vmid int, params
 	if vmid <= 0 || node == "" {
 		return errors.New("Proxmox node and positive VMID are required")
 	}
-	return c.Post(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "config"), params, nil)
+	return c.Put(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "config"), params, nil)
 }
 
 func (c *Client) StartLXC(ctx context.Context, node string, vmid int) error {

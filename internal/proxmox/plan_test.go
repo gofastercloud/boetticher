@@ -527,7 +527,7 @@ func TestEnsureLXCReplacementRetainsDeclaredPersistentVolumes(t *testing.T) {
 			return response([]byte(`{"data":{"status":"running"}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/stop":
 			return response([]byte(`{"data":null}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
+		case r.Method == http.MethodPut && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
 			if err := r.ParseForm(); err != nil || r.Form.Get("delete") != "mp0" {
 				t.Fatalf("persistent mountpoint was not detached narrowly: %v", r.Form)
 			}
