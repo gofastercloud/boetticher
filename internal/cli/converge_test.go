@@ -127,7 +127,7 @@ func TestVerifyDNSReadinessChecksTheQualifiedBlockyRuntime(t *testing.T) {
 	for _, required := range []string{
 		"systemctl is-active pdns chrony blocky",
 		"test ! -e /opt/AdGuardHome/AdGuardHome",
-		"blocky --version | grep -Fq '0.34.0'",
+		"blocky version | grep -Fq '0.34.0'",
 		"blocky validate --config /etc/blocky/config.yml",
 	} {
 		if !strings.Contains(command, required) {

@@ -435,7 +435,7 @@ func verifyDNSReadiness(ctx context.Context, runner proxmox.CommandRunner, addre
 		service = "adguardhome"
 		config = "/opt/AdGuardHome/AdGuardHome.yaml"
 	} else if provider == string(model.DNSProviderBlocky) {
-		checks = "; test ! -e /opt/AdGuardHome/AdGuardHome; blocky --version | grep -Fq '0.34.0'; blocky validate --config /etc/blocky/config.yml"
+		checks = "; test ! -e /opt/AdGuardHome/AdGuardHome; blocky version | grep -Fq '0.34.0'; blocky validate --config /etc/blocky/config.yml"
 	}
 	command := fmt.Sprintf("set -eu; sudo -n systemctl is-active pdns chrony %s; sudo -n test -s /etc/powerdns/pdns.conf; sudo -n test -s %s%s", service, config, checks)
 	if _, err := runner.Run(ctx, address, model.DefaultAdminSSHUser, command); err != nil {
