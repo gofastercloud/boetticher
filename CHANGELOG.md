@@ -37,6 +37,9 @@ project, so releases can make clean breaks while the design is settling.
 - Refresh firewall cloud-init snippets and persist the artifact identity when
   an owned rootfs replacement is resumed, so bounded persistent-disk serials
   are mounted on the replacement boot.
+- Address firewall persistent volumes through Debian's stable PVE SCSI-slot
+  links; the QEMU serial remains the Proxmox ownership identity but does not
+  produce a guest `/dev/disk/by-id` link on the qualified image.
 - Resume an owned running gateway without issuing a duplicate Proxmox start
   request after a prior deployment attempt.
 - Discover the hosted builder address through the QEMU guest agent after
