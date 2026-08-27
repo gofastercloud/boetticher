@@ -684,6 +684,9 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 			return "", fmt.Errorf("create Proxmox automation user: %w", err)
 		}
 	}
+	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--users", userID, role); err != nil {
+		return "", fmt.Errorf("assign bounded Proxmox role to user: %w", err)
+	}
 	tokensOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users/"+shellQuote(userID)+"/token --output-format json"))
 	if err != nil {
 		return "", fmt.Errorf("HOLD: inspect Proxmox tokens for %s: %w", userID, err)
@@ -709,11 +712,32 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 	if response.Value == "" {
 		return "", errors.New("Proxmox token response did not contain a secret")
 	}
-	setTokenACL := "pvesh set /access/acl --path / --tokens " + shellQuote(userID+"!"+tokenID) + " --roles " + shellQuote(role) + " --propagate 1"
-	if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, setTokenACL)); err != nil {
+	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--tokens", userID+"!"+tokenID, role); err != nil {
 		return "", fmt.Errorf("assign bounded Proxmox role to token: %w", err)
 	}
 	return response.Value, nil
+}
+
+// EnsureScopedCredentialACL repairs the bounded user and token ACLs for an
+// existing privilege-separated provisioning identity. Proxmox restricts a
+// token to the permissions of its backing user, so both ACLs are required.
+func EnsureScopedCredentialACL(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID, role string) error {
+	if !safeID(userID) || !safeID(tokenID) || !safeID(role) {
+		return errors.New("Proxmox identity and token IDs must be simple identifiers")
+	}
+	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--users", userID, role); err != nil {
+		return fmt.Errorf("assign bounded Proxmox role to user: %w", err)
+	}
+	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--tokens", userID+"!"+tokenID, role); err != nil {
+		return fmt.Errorf("assign bounded Proxmox role to token: %w", err)
+	}
+	return nil
+}
+
+func setScopedCredentialACL(ctx context.Context, runner CommandRunner, address, initialUser, subjectFlag, subject, role string) error {
+	setACL := "pvesh set /access/acl --path / " + subjectFlag + " " + shellQuote(subject) + " --roles " + shellQuote(role) + " --propagate 1"
+	_, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, setACL))
+	return err
 }
 
 // accessIDs decodes the small JSON listings returned by pvesh for users and

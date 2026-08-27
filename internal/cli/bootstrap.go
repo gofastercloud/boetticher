@@ -181,6 +181,9 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 		if credentials.APIUser != "labadmin@pve" || credentials.TokenID != "boetticher" {
 			return fmt.Errorf("HOLD: encrypted Proxmox credentials identify %s!%s, expected labadmin@pve!boetticher", credentials.APIUser, credentials.TokenID)
 		}
+		if err := proxmox.EnsureScopedCredentialACL(ctx, runner, s.BootstrapAddress, *initialUser, credentials.APIUser, credentials.TokenID, "BoetticherProvisioner"); err != nil {
+			return fmt.Errorf("reconcile scoped Proxmox API credentials: %w", err)
+		}
 		fmt.Fprintln(out, "Existing encrypted Proxmox API credentials: PASS (reuse)")
 	} else if errors.Is(statErr, os.ErrNotExist) {
 		tokenSecret, createErr := proxmox.CreateScopedCredentialsWithRole(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner")
