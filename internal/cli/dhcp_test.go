@@ -13,9 +13,9 @@ func TestParseKeaLeaseCSVQualifiesActiveNamesByZone(t *testing.T) {
 		t.Fatal(err)
 	}
 	data := []byte("address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state,user_context\n" +
-		"10.10.10.104,aa:bb,,86400,0,1,1,1,laptop,0,\n" +
-		"10.10.50.112,aa:cc,,86400,0,3,1,1,kali.sandbox.lab.home.arpa.,0,\n" +
-		"10.10.20.123,aa:dd,,86400,0,2,1,1,expired,2,\n")
+		"10.10.30.104,aa:bb,,86400,0,1,1,1,laptop,0,\n" +
+		"10.10.40.112,aa:cc,,86400,0,2,1,1,kali.sandbox.lab.home.arpa.,0,\n" +
+		"10.10.30.123,aa:dd,,86400,0,1,1,1,expired,2,\n")
 	leases, err := parseKeaLeaseCSV(data, plan)
 	if err != nil {
 		t.Fatal(err)
@@ -36,7 +36,7 @@ func TestParseKeaLeaseCSVRejectsMissingContractColumns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parseKeaLeaseCSV([]byte("address,hostname\n10.10.10.1,test\n"), plan); err == nil {
+	if _, err := parseKeaLeaseCSV([]byte("address,hostname\n10.10.30.1,test\n"), plan); err == nil {
 		t.Fatal("lease parser accepted an incomplete Kea CSV header")
 	}
 }

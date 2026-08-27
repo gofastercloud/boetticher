@@ -184,10 +184,10 @@ func inventory(s model.Site, revision string) string {
 func network(s model.Site, revision string) string {
 	var b strings.Builder
 	gateway := "external firewall contract"
-	diagram := "HOME / upstream\n  |\nProxmox\n  `-- vmbr1 (VLAN-aware physical trunk)\n      +-- TRANSIT VLAN 5\n      +-- TRUSTED VLAN 10\n      +-- SERVERS VLAN 20\n      +-- SANDBOX VLAN 50\n      `-- MGMT VLAN 99"
+	diagram := "HOME / upstream\n  |\nProxmox (MGMT 10.10.99.250)\n  `-- vmbr1 (VLAN-aware physical trunk)\n      +-- TRANSIT VLAN 5\n      +-- INFRA VLAN 10\n      +-- SERVERS VLAN 20\n      +-- TRUSTED VLAN 30\n      +-- SANDBOX VLAN 40\n      `-- MGMT VLAN 99"
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		gateway = "Debian lab-fw-01 (nftables + Kea)"
-		diagram = "HOME / upstream\n  |\nProxmox\n  +-- managed gateway vNICs: WAN, TRUSTED, SERVERS, SANDBOX, MGMT, TRANSIT\n  `-- vmbr1 (VLAN-aware internal bridge)\n      +-- TRANSIT VLAN 5\n      +-- TRUSTED VLAN 10\n      +-- SERVERS VLAN 20\n      +-- SANDBOX VLAN 50\n      `-- MGMT VLAN 99"
+		diagram = "HOME / upstream\n  |\nProxmox (MGMT 10.10.99.250)\n  +-- managed gateway vNICs: WAN, TRANSIT, INFRA, SERVERS, TRUSTED, SANDBOX, MGMT\n  `-- vmbr1 (VLAN-aware internal bridge)\n      +-- TRANSIT VLAN 5\n      +-- INFRA VLAN 10\n      +-- SERVERS VLAN 20\n      +-- TRUSTED VLAN 30\n      +-- SANDBOX VLAN 40\n      `-- MGMT VLAN 99"
 	}
 	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Gateway: <strong>%s</strong>.</p><pre>%s</pre><table><tr><th>Zone</th><th>VLAN</th><th>Network</th><th>Gateway</th><th>DHCP mode</th></tr>", html.EscapeString(revision), html.EscapeString(gateway), html.EscapeString(diagram))
 	for _, z := range s.Network.Zones {

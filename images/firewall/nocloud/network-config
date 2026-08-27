@@ -9,7 +9,7 @@ ethernets:
     match:
       macaddress: 02:00:00:00:01:02
     set-name: trusted0
-    addresses: [10.10.10.1/24]
+    addresses: [10.10.30.1/24]
   servers0:
     match:
       macaddress: 02:00:00:00:01:03
@@ -19,7 +19,7 @@ ethernets:
     match:
       macaddress: 02:00:00:00:01:04
     set-name: sandbox0
-    addresses: [10.10.50.1/24]
+    addresses: [10.10.40.1/24]
   mgmt0:
     match:
       macaddress: 02:00:00:00:01:05
@@ -30,3 +30,8 @@ ethernets:
       macaddress: 02:00:00:00:01:06
     set-name: transit0
     addresses: [10.10.5.1/24]
+  infra0:
+    match:
+      macaddress: 02:00:00:00:01:07
+    set-name: infra0
+    addresses: [10.10.10.1/24]

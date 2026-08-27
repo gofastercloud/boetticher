@@ -15,7 +15,7 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Implementation != "PowerDNS Authoritative" || plan.PackageVersion != "4.9.17-1pdns.trixie" || len(plan.DynamicZones) != 4 || len(plan.ReverseZones) != 4 {
+	if plan.Implementation != "PowerDNS Authoritative" || plan.PackageVersion != "4.9.17-1pdns.trixie" || len(plan.DynamicZones) != 2 || len(plan.ReverseZones) != 2 {
 		t.Fatalf("unexpected DNS plan: %#v", plan)
 	}
 	if plan.RecursiveProvider != "blocky" || !plan.AuthoritativeNXDOMAINNoLeak || len(plan.RecursiveUpstreams) < 2 {
@@ -30,10 +30,10 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	if plan.DDNS.Source != "Kea D2 on lab-fw-01" || len(plan.DDNS.UpdateSources) != 1 || plan.DDNS.UpdateSources[0] != "10.10.99.1" || plan.DDNS.LeaseFailurePolicy != "lease-continues-without-DNS-registration" {
 		t.Fatalf("unexpected DDNS boundary: %#v", plan.DDNS)
 	}
-	if len(plan.AdGuardForwardZones) != 5 || len(plan.AdGuardReverseZones) != 4 {
+	if len(plan.AdGuardForwardZones) != 3 || len(plan.AdGuardReverseZones) != 2 {
 		t.Fatalf("AdGuard did not receive static and dynamic forwarding zones: %#v", plan.AdGuardForwardZones)
 	}
-	if !hasRecord(plan.StaticRecords, "proxmox.lab.home.arpa", "10.10.99.5") {
+	if !hasRecord(plan.StaticRecords, "proxmox.lab.home.arpa", "10.10.99.250") {
 		t.Fatal("Proxmox component URL hostname was not added to the static DNS projection")
 	}
 	for _, component := range site.PlatformComponents() {
@@ -54,15 +54,20 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 			t.Fatalf("TSIG key for %s = %q, want %q", zone.SourceZone, zone.TSIGKeyName, want)
 		}
 	}
-	name, err := QualifiedName(site, "SERVERS", "nas01")
-	if err != nil || name != "nas01.servers.lab.home.arpa" {
+	name, err := QualifiedName(site, "TRUSTED", "nas01")
+	if err != nil || name != "nas01.trusted.lab.home.arpa" {
 		t.Fatalf("QualifiedName() = %q, %v", name, err)
 	}
-	if _, err := QualifiedName(site, "SERVERS", "monitor"); err == nil {
+	if _, err := QualifiedName(site, "TRUSTED", "monitor"); err == nil {
 		t.Fatal("dynamic registration claimed a platform-owned service alias")
 	}
-	if _, err := QualifiedName(site, "SERVERS", "lab-dns-01"); err == nil {
+	if _, err := QualifiedName(site, "TRUSTED", "lab-dns-01"); err == nil {
 		t.Fatal("dynamic registration claimed a platform-owned host label")
+	}
+	for _, zone := range []string{"TRANSIT", "INFRA", "SERVERS", "MGMT"} {
+		if _, err := QualifiedName(site, zone, "static-host"); err == nil {
+			t.Fatalf("static-only zone %s was accepted for dynamic registration", zone)
+		}
 	}
 }
 
@@ -108,9 +113,14 @@ func TestRenderBlockyConfigPinsAuthoritativeZonesWithoutPublicFallback(t *testin
 	if got := decoded.Blocking.ClientGroupsBlock["default"]; len(got) != 1 || got[0] != FilteringPolicyGroup {
 		t.Fatalf("unexpected Blocky client group: %#v", decoded.Blocking.ClientGroupsBlock)
 	}
-	for _, zone := range []string{"lab.home.arpa", "trusted.lab.home.arpa", "servers.lab.home.arpa", "sandbox.lab.home.arpa", "mgmt.lab.home.arpa", "10.10.10.in-addr.arpa"} {
+	for _, zone := range []string{"lab.home.arpa", "trusted.lab.home.arpa", "sandbox.lab.home.arpa", "30.10.10.in-addr.arpa", "40.10.10.in-addr.arpa"} {
 		if got := decoded.Conditional.Mapping[zone]; got != "127.0.0.1:5353" {
 			t.Fatalf("unexpected PowerDNS mapping for %q: %#v", zone, got)
+		}
+	}
+	for _, zone := range []string{"servers.lab.home.arpa", "mgmt.lab.home.arpa", "10.10.10.in-addr.arpa"} {
+		if _, ok := decoded.Conditional.Mapping[zone]; ok {
+			t.Fatalf("static-only zone %q was published as dynamic DNS", zone)
 		}
 	}
 	if decoded.Ports.DNS != 53 || decoded.Caching.MinTime != "5m" {
@@ -134,7 +144,7 @@ func TestExternalPlanPublishesOptionalDDNSContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.DDNS.Enabled || plan.DDNS.Source != "External DHCP/DDNS contract" || len(plan.DDNS.UpdateSources) != 0 || len(plan.DDNS.Zones) != 4 {
+	if plan.DDNS.Enabled || plan.DDNS.Source != "External DHCP/DDNS contract" || len(plan.DDNS.UpdateSources) != 0 || len(plan.DDNS.Zones) != 2 {
 		t.Fatalf("external DDNS contract is not optional and complete: %#v", plan.DDNS)
 	}
 }
@@ -188,7 +198,7 @@ func TestPowerDNSCommandPlanUsesQualifiedSyntaxAndNeverEmbedsARealSecret(t *test
 		}
 		if len(command.Args) >= 5 && command.Args[1] == "metadata" && command.Args[4] == "ALLOW-DNSUPDATE-FROM" {
 			seenForward = true
-			seenReverse = seenReverse || command.Args[3] == "10.10.10.in-addr.arpa"
+			seenReverse = seenReverse || command.Args[3] == "30.10.10.in-addr.arpa"
 		}
 	}
 	if !seenTSIG || !seenForward || !seenReverse {
@@ -198,11 +208,11 @@ func TestPowerDNSCommandPlanUsesQualifiedSyntaxAndNeverEmbedsARealSecret(t *test
 
 func TestLeaseUpdateAndConflictPolicy(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
-	update, err := BuildLeaseUpdate(site, "SANDBOX", Lease{LeaseID: "lease-1", Name: "kali", Address: "10.10.50.123", Active: true, State: "active"})
+	update, err := BuildLeaseUpdate(site, "SANDBOX", Lease{LeaseID: "lease-1", Name: "kali", Address: "10.10.40.123", Active: true, State: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if update.ForwardName != "kali.sandbox.lab.home.arpa" || update.ReverseName != "123.50.10.10.in-addr.arpa" || update.Action != "upsert" {
+	if update.ForwardName != "kali.sandbox.lab.home.arpa" || update.ReverseName != "123.40.10.10.in-addr.arpa" || update.Action != "upsert" {
 		t.Fatalf("unexpected lease update: %#v", update)
 	}
 	if _, err := ResolveConflict(Lease{LeaseID: "lease-1", Active: true}, Lease{LeaseID: "lease-2", Active: true}); err == nil {
@@ -212,8 +222,8 @@ func TestLeaseUpdateAndConflictPolicy(t *testing.T) {
 		t.Fatalf("same lease conflict result = %q, %v", got, err)
 	}
 	updates, err := BuildLeaseReplacement(site, "SANDBOX",
-		Lease{LeaseID: "lease-1", Name: "kali", Address: "10.10.50.123", Active: true, State: "active"},
-		Lease{LeaseID: "lease-2", Name: "kali", Address: "10.10.50.124", Active: true, State: "active"},
+		Lease{LeaseID: "lease-1", Name: "kali", Address: "10.10.40.123", Active: true, State: "active"},
+		Lease{LeaseID: "lease-2", Name: "kali", Address: "10.10.40.124", Active: true, State: "active"},
 	)
 	if err != nil || len(updates) != 2 || updates[0].Action != "delete" || updates[1].Action != "upsert" {
 		t.Fatalf("unexpected replacement lifecycle: %#v, %v", updates, err)
@@ -222,10 +232,10 @@ func TestLeaseUpdateAndConflictPolicy(t *testing.T) {
 
 func TestInvalidHostnameDoesNotCreateRecord(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
-	if _, err := BuildLeaseUpdate(site, "TRUSTED", Lease{LeaseID: "lease-1", Name: "bad_name", Address: "10.10.10.12", Active: true, State: "active"}); err == nil {
+	if _, err := BuildLeaseUpdate(site, "TRUSTED", Lease{LeaseID: "lease-1", Name: "bad_name", Address: "10.10.30.12", Active: true, State: "active"}); err == nil {
 		t.Fatal("unsafe DHCP hostname created a record")
 	}
-	if _, err := BuildLeaseUpdate(site, "TRUSTED", Lease{LeaseID: "lease-1", Name: "laptop", Address: "10.10.50.12", Active: true, State: "active"}); err == nil {
+	if _, err := BuildLeaseUpdate(site, "TRUSTED", Lease{LeaseID: "lease-1", Name: "laptop", Address: "10.10.40.12", Active: true, State: "active"}); err == nil {
 		t.Fatal("lease outside its zone was accepted")
 	}
 }

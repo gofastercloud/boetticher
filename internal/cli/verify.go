@@ -88,7 +88,7 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 			portal.CheckResult{Name: "SANDBOX cannot access TRUSTED", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
 			portal.CheckResult{Name: "SANDBOX cannot access SERVERS", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
 			portal.CheckResult{Name: "SANDBOX cannot access MGMT", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
-			portal.CheckResult{Name: "MGMT DHCP is reservation-only", Status: "NOT TESTED", Detail: "requires deployed Kea evidence"},
+			portal.CheckResult{Name: "TRANSIT/INFRA/SERVERS/MGMT are static-only", Status: "NOT TESTED", Detail: "requires deployed static-address and Kea evidence"},
 		)
 	} else {
 		results = append(results, portal.CheckResult{Name: "external gateway contract", Status: "STATIC PASS", Detail: "required VLAN, gateway, DHCP, DNS, NTP, and policy intent is generated"})
@@ -481,7 +481,7 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 			if err != nil {
 				return err
 			}
-			if len(plan.DynamicZones) != 4 {
+			if len(plan.DynamicZones) != 2 {
 				return errors.New("dynamic DNS zone contract is incomplete")
 			}
 			if s.Gateway.Mode == model.GatewayModeManaged && !plan.DDNS.Enabled {

@@ -104,10 +104,10 @@ func PlanFromSite(s model.Site) (Plan, error) {
 
 func gatewayInterfaces(s model.Site) []Interface {
 	interfaces := []Interface{{Role: "WAN", Name: "wan0", MAC: "02:00:00:00:01:01", Bridge: "vmbr0", Address: "dhcp", Method: "dhcp"}}
-	// Keep the established four interface/MAC identities stable. TRANSIT is a
-	// permanent platform interface appended after them, not a module-created
-	// vNIC whose presence changes the existing identities.
-	for _, zoneType := range []model.ZoneType{model.ZoneTypeTrusted, model.ZoneTypeServers, model.ZoneTypeSandbox, model.ZoneTypeManagement, model.ZoneTypeTransit} {
+	// Keep the established interface/MAC identities stable. TRANSIT and INFRA
+	// are permanent platform interfaces appended after the existing identities,
+	// not module-created vNICs whose presence changes them.
+	for _, zoneType := range []model.ZoneType{model.ZoneTypeTrusted, model.ZoneTypeServers, model.ZoneTypeSandbox, model.ZoneTypeManagement, model.ZoneTypeTransit, model.ZoneTypeInfrastructure} {
 		zone, err := s.ZoneForType(zoneType)
 		if err != nil {
 			continue
@@ -125,7 +125,7 @@ func dhcpSubnets(s model.Site) []DHCPSubnet {
 	sort.Slice(zones, func(i, j int) bool { return zones[i].VLAN < zones[j].VLAN })
 	result := make([]DHCPSubnet, 0, len(zones))
 	for _, zone := range zones {
-		if zone.Type == model.ZoneTypeTransit {
+		if zone.Type != model.ZoneTypeTrusted && zone.Type != model.ZoneTypeSandbox {
 			continue
 		}
 		forward := strings.ToLower(zone.Name) + "." + s.Network.Domain + "."
@@ -187,7 +187,7 @@ func policyRules(s model.Site) []PolicyRule {
 	}
 	// These are gateway-local services. Forwarding rules below deliberately
 	// place internal denies before any Internet egress rule.
-	for _, zone := range []string{"TRUSTED", "SERVERS", "SANDBOX", "MGMT"} {
+	for _, zone := range []string{"TRUSTED", "SANDBOX"} {
 		add(strings.ToLower(zone)+" DHCP to gateway", zone, "gateway", "allow", "udp", []string{"67"}, false, false)
 	}
 	add("SANDBOX DNS to gateway", "SANDBOX", "gateway", "allow", "tcp/udp", []string{"53"}, false, false)
@@ -196,21 +196,26 @@ func policyRules(s model.Site) []PolicyRule {
 
 	add("SANDBOX to TRUSTED deny", "SANDBOX", "TRUSTED", "deny", "any", nil, true, false)
 	add("SANDBOX to SERVERS deny", "SANDBOX", "SERVERS", "deny", "any", nil, true, false)
+	add("SANDBOX to INFRA deny", "SANDBOX", "INFRA", "deny", "any", nil, true, false)
 	add("SANDBOX to MGMT deny", "SANDBOX", "MGMT", "deny", "any", nil, true, false)
-	add("TRUSTED DNS to SERVERS", "TRUSTED", "SERVERS", "allow", "tcp/udp", []string{"53"}, false, false)
-	add("TRUSTED NTP to SERVERS", "TRUSTED", "SERVERS", "allow", "udp", []string{"123"}, false, false)
+	add("TRUSTED DNS to INFRA", "TRUSTED", "INFRA", "allow", "tcp/udp", []string{"53"}, false, false)
+	add("TRUSTED NTP to INFRA", "TRUSTED", "INFRA", "allow", "udp", []string{"123"}, false, false)
+	add("TRUSTED HTTPS to INFRA", "TRUSTED", "INFRA", "allow", "tcp", []string{"443"}, false, false)
 	add("TRUSTED HTTPS to SERVERS", "TRUSTED", "SERVERS", "allow", "tcp", []string{"443"}, false, false)
 	add("TRUSTED administration to MGMT", "TRUSTED", "MGMT", "allow", "tcp", []string{"22", "443", "8006"}, false, false)
-	add("SERVERS DNS to SERVERS", "SERVERS", "SERVERS", "allow", "tcp/udp", []string{"53"}, false, false)
-	add("SERVERS NTP to SERVERS", "SERVERS", "SERVERS", "allow", "udp", []string{"123"}, false, false)
+	add("SERVERS DNS to INFRA", "SERVERS", "INFRA", "allow", "tcp/udp", []string{"53"}, false, false)
+	add("SERVERS NTP to INFRA", "SERVERS", "INFRA", "allow", "udp", []string{"123"}, false, false)
 	add("SERVERS monitoring to MGMT", "SERVERS", "MGMT", "allow", "tcp", []string{"10051"}, false, false)
+	add("INFRA monitoring to MGMT", "INFRA", "MGMT", "allow", "tcp", []string{"10051"}, false, false)
 	add("MGMT administration to SERVERS", "MGMT", "SERVERS", "allow", "tcp", []string{"22", "53", "80", "443"}, false, false)
+	add("MGMT administration to INFRA", "MGMT", "INFRA", "allow", "tcp", []string{"22", "53", "80", "443"}, false, false)
 	add("MGMT diagnostics to TRUSTED", "MGMT", "TRUSTED", "allow", "icmp", nil, false, false)
 	add("SANDBOX Internet egress", "SANDBOX", "WAN", "allow", "any", nil, false, true)
 	add("TRUSTED Internet egress", "TRUSTED", "WAN", "allow", "any", nil, false, true)
 	add("SERVERS update egress", "SERVERS", "WAN", "allow", "tcp/udp", []string{"53", "80", "443", "853"}, false, true)
+	add("INFRA update egress", "INFRA", "WAN", "allow", "tcp/udp", []string{"53", "80", "443", "853"}, false, true)
 	add("MGMT update egress", "MGMT", "WAN", "allow", "tcp", []string{"443"}, false, true)
-	for _, destination := range []string{"TRUSTED", "SERVERS", "SANDBOX", "MGMT", "Proxmox API", "SSH", "Internet"} {
+	for _, destination := range []string{"INFRA", "TRUSTED", "SERVERS", "SANDBOX", "MGMT", "Proxmox API", "SSH", "Internet"} {
 		add("TRANSIT to "+destination+" deny", "TRANSIT", destination, "deny", "any", nil, true, false)
 	}
 	add("any to TRANSIT deny", "any", "TRANSIT", "deny", "any", nil, true, false)
@@ -221,23 +226,23 @@ func RenderNFT(plan Plan) (string, error) {
 	if plan.Mode != model.GatewayModeManaged {
 		return "", errors.New("nftables is only rendered for managed gateway mode")
 	}
-	if len(plan.Interfaces) != 6 {
-		return "", errors.New("managed gateway requires WAN plus five zone interfaces")
+	if len(plan.Interfaces) != 7 {
+		return "", errors.New("managed gateway requires WAN plus six zone interfaces")
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Generated by boetticher. Model revision: %s\n", plan.ModelRevision)
 	b.WriteString("destroy table inet " + FilterTable + "\n")
 	b.WriteString("destroy table ip " + NATTable + "\n\n")
 	b.WriteString("table inet " + FilterTable + " {\n")
-	for _, zone := range []string{"TRUSTED", "SERVERS", "SANDBOX", "MGMT", "TRANSIT"} {
+	for _, zone := range []string{"INFRA", "TRUSTED", "SERVERS", "SANDBOX", "MGMT", "TRANSIT"} {
 		fmt.Fprintf(&b, "  set %s_net { type ipv4_addr; flags interval; elements = { %s } }\n", strings.ToLower(zone), networkFor(plan, zone))
 	}
-	b.WriteString("  chain input {\n    type filter hook input priority filter; policy drop;\n    iifname \"lo\" accept comment \"boetticher:input-loopback\"\n    ct state established,related accept comment \"boetticher:input-established\"\n    iifname \"wan0\" udp sport 67 udp dport 68 accept comment \"boetticher:input-wan-dhcp\"\n    iifname { \"trusted0\", \"servers0\", \"sandbox0\", \"mgmt0\" } udp dport 67 counter accept comment \"boetticher:input-zone-dhcp\"\n    iifname \"sandbox0\" udp dport 53 counter accept comment \"boetticher:input-sandbox-dns-udp\"\n    iifname \"sandbox0\" tcp dport 53 counter accept comment \"boetticher:input-sandbox-dns-tcp\"\n    iifname \"sandbox0\" udp dport 123 counter accept comment \"boetticher:input-sandbox-ntp\"\n    iifname \"mgmt0\" tcp dport 22 counter accept comment \"boetticher:input-mgmt-ssh\"\n  }\n")
+	b.WriteString("  chain input {\n    type filter hook input priority filter; policy drop;\n    iifname \"lo\" accept comment \"boetticher:input-loopback\"\n    ct state established,related accept comment \"boetticher:input-established\"\n    iifname \"wan0\" udp sport 67 udp dport 68 accept comment \"boetticher:input-wan-dhcp\"\n    iifname { \"trusted0\", \"sandbox0\" } udp dport 67 counter accept comment \"boetticher:input-zone-dhcp\"\n    iifname \"sandbox0\" udp dport 53 counter accept comment \"boetticher:input-sandbox-dns-udp\"\n    iifname \"sandbox0\" tcp dport 53 counter accept comment \"boetticher:input-sandbox-dns-tcp\"\n    iifname \"sandbox0\" udp dport 123 counter accept comment \"boetticher:input-sandbox-ntp\"\n    iifname \"mgmt0\" tcp dport 22 counter accept comment \"boetticher:input-mgmt-ssh\"\n  }\n")
 	b.WriteString("  chain forward {\n    type filter hook forward priority filter; policy drop;\n    ct state established,related accept comment \"boetticher:forward-established\"\n")
-	for _, deny := range []struct{ zone, set, label string }{{"sandbox0", "trusted_net", "SANDBOX-TRUSTED-DROP"}, {"sandbox0", "servers_net", "SANDBOX-SERVERS-DROP"}, {"sandbox0", "mgmt_net", "SANDBOX-MGMT-DROP"}} {
+	for _, deny := range []struct{ zone, set, label string }{{"sandbox0", "trusted_net", "SANDBOX-TRUSTED-DROP"}, {"sandbox0", "servers_net", "SANDBOX-SERVERS-DROP"}, {"sandbox0", "infra_net", "SANDBOX-INFRA-DROP"}, {"sandbox0", "mgmt_net", "SANDBOX-MGMT-DROP"}} {
 		fmt.Fprintf(&b, "    iifname \"%s\" ip daddr @%s counter log prefix \"boetticher %s \" drop comment \"boetticher:forward-%s\"\n", deny.zone, deny.set, deny.label, strings.ToLower(strings.ReplaceAll(deny.label, "-", "-")))
 	}
-	for _, deny := range []struct{ set, label string }{{"trusted_net", "TRANSIT-TRUSTED-DROP"}, {"servers_net", "TRANSIT-SERVERS-DROP"}, {"sandbox_net", "TRANSIT-SANDBOX-DROP"}, {"mgmt_net", "TRANSIT-MGMT-DROP"}} {
+	for _, deny := range []struct{ set, label string }{{"infra_net", "TRANSIT-INFRA-DROP"}, {"trusted_net", "TRANSIT-TRUSTED-DROP"}, {"servers_net", "TRANSIT-SERVERS-DROP"}, {"sandbox_net", "TRANSIT-SANDBOX-DROP"}, {"mgmt_net", "TRANSIT-MGMT-DROP"}} {
 		fmt.Fprintf(&b, "    iifname \"transit0\" ip daddr @%s counter log prefix \"boetticher %s \" drop comment \"boetticher:forward-%s\"\n", deny.set, deny.label, strings.ToLower(deny.label))
 	}
 	b.WriteString("    iifname \"transit0\" tcp dport { 22, 8006 } counter log prefix \"boetticher TRANSIT-ADMIN-DROP \" drop comment \"boetticher:forward-transit-admin-drop\"\n")
@@ -248,10 +253,17 @@ func RenderNFT(plan Plan) (string, error) {
 	// ordered SANDBOX deny rules below.
 	b.WriteString("    iifname \"trusted0\" ip daddr @servers_net tcp dport { 53, 443 } counter accept comment \"boetticher:forward-trusted-servers-tcp\"\n")
 	b.WriteString("    iifname \"trusted0\" ip daddr @servers_net udp dport { 53, 123 } counter accept comment \"boetticher:forward-trusted-servers-udp\"\n")
+	b.WriteString("    iifname \"trusted0\" ip daddr @infra_net tcp dport { 53, 443 } counter accept comment \"boetticher:forward-trusted-infra-tcp\"\n")
+	b.WriteString("    iifname \"trusted0\" ip daddr @infra_net udp dport { 53, 123 } counter accept comment \"boetticher:forward-trusted-infra-udp\"\n")
 	b.WriteString("    iifname \"trusted0\" ip daddr @mgmt_net tcp dport { 22, 443, 8006 } counter accept comment \"boetticher:forward-trusted-mgmt\"\n")
+	b.WriteString("    iifname \"servers0\" ip daddr @infra_net tcp dport 53 counter accept comment \"boetticher:forward-servers-infra-tcp\"\n")
+	b.WriteString("    iifname \"servers0\" ip daddr @infra_net udp dport { 53, 123 } counter accept comment \"boetticher:forward-servers-infra-udp\"\n")
 	b.WriteString("    iifname \"servers0\" ip daddr @servers_net tcp dport 53 counter accept comment \"boetticher:forward-servers-dns-tcp\"\n")
 	b.WriteString("    iifname \"servers0\" ip daddr @servers_net udp dport { 53, 123 } counter accept comment \"boetticher:forward-servers-dns-udp\"\n")
 	b.WriteString("    iifname \"servers0\" ip daddr @mgmt_net tcp dport 10051 counter accept comment \"boetticher:forward-servers-monitoring\"\n")
+	b.WriteString("    iifname \"infra0\" ip daddr @mgmt_net tcp dport 10051 counter accept comment \"boetticher:forward-infra-monitoring\"\n")
+	b.WriteString("    iifname \"mgmt0\" ip daddr @infra_net tcp dport { 22, 53, 80, 443 } counter accept comment \"boetticher:forward-mgmt-infra-tcp\"\n")
+	b.WriteString("    iifname \"mgmt0\" ip daddr @infra_net udp dport { 53, 123 } counter accept comment \"boetticher:forward-mgmt-infra-udp\"\n")
 	b.WriteString("    iifname \"mgmt0\" ip daddr @servers_net tcp dport { 22, 53, 80, 443 } counter accept comment \"boetticher:forward-mgmt-servers-tcp\"\n")
 	b.WriteString("    iifname \"mgmt0\" ip daddr @servers_net udp dport { 53, 123 } counter accept comment \"boetticher:forward-mgmt-servers-udp\"\n")
 	b.WriteString("    iifname \"mgmt0\" ip daddr @trusted_net ip protocol icmp counter accept comment \"boetticher:forward-mgmt-trusted-icmp\"\n")
@@ -259,9 +271,11 @@ func RenderNFT(plan Plan) (string, error) {
 	b.WriteString("    iifname \"trusted0\" oifname \"wan0\" ip saddr @trusted_net counter accept comment \"boetticher:forward-trusted-internet\"\n")
 	b.WriteString("    iifname \"servers0\" oifname \"wan0\" ip saddr @servers_net tcp dport { 53, 80, 443, 853 } counter accept comment \"boetticher:forward-servers-internet-tcp\"\n")
 	b.WriteString("    iifname \"servers0\" oifname \"wan0\" ip saddr @servers_net udp dport { 53, 853 } counter accept comment \"boetticher:forward-servers-internet-udp\"\n")
+	b.WriteString("    iifname \"infra0\" oifname \"wan0\" ip saddr @infra_net tcp dport { 53, 80, 443, 853 } counter accept comment \"boetticher:forward-infra-internet-tcp\"\n")
+	b.WriteString("    iifname \"infra0\" oifname \"wan0\" ip saddr @infra_net udp dport { 53, 853 } counter accept comment \"boetticher:forward-infra-internet-udp\"\n")
 	b.WriteString("    iifname \"mgmt0\" oifname \"wan0\" ip saddr @mgmt_net tcp dport 443 counter accept comment \"boetticher:forward-mgmt-internet\"\n")
 	b.WriteString("  }\n  chain output { type filter hook output priority filter; policy accept; }\n}\n\n")
-	b.WriteString("table ip " + NATTable + " {\n  chain postrouting {\n    type nat hook postrouting priority srcnat; policy accept;\n    oifname \"wan0\" ip saddr " + networkFor(plan, "TRUSTED") + " masquerade comment \"boetticher:nat-trusted\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SERVERS") + " masquerade comment \"boetticher:nat-servers\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SANDBOX") + " masquerade comment \"boetticher:nat-sandbox\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "MGMT") + " masquerade comment \"boetticher:nat-mgmt\"\n  }\n}\n")
+	b.WriteString("table ip " + NATTable + " {\n  chain postrouting {\n    type nat hook postrouting priority srcnat; policy accept;\n    oifname \"wan0\" ip saddr " + networkFor(plan, "TRUSTED") + " masquerade comment \"boetticher:nat-trusted\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SERVERS") + " masquerade comment \"boetticher:nat-servers\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "INFRA") + " masquerade comment \"boetticher:nat-infra\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SANDBOX") + " masquerade comment \"boetticher:nat-sandbox\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "MGMT") + " masquerade comment \"boetticher:nat-mgmt\"\n  }\n}\n")
 	return b.String(), nil
 }
 
@@ -269,6 +283,15 @@ func networkFor(plan Plan, zone string) string {
 	for _, subnet := range plan.DHCP {
 		if subnet.Zone == zone {
 			return subnet.Network
+		}
+	}
+	for _, iface := range plan.Interfaces {
+		if iface.Role != zone {
+			continue
+		}
+		_, network, err := net.ParseCIDR(iface.Address)
+		if err == nil {
+			return network.String()
 		}
 	}
 	if zone == "TRANSIT" {

@@ -271,7 +271,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	if monitoringEnabled {
 		monitorRunner := applianceSSHRunner(s, *siteDir, "lab-monitor-01")
-		if err := installZabbixAPIPassword(context.Background(), monitorRunner, "10.10.20.20", zabbixAPIPassword); err != nil {
+		if err := installZabbixAPIPassword(context.Background(), monitorRunner, "10.10.10.20", zabbixAPIPassword); err != nil {
 			return err
 		}
 	}
@@ -411,7 +411,7 @@ func verifyFirewallBootstrapNetwork(ctx context.Context, runner proxmox.CommandR
 	if runner == nil {
 		return errors.New("firewall bootstrap network runner is required")
 	}
-	command := "set -eu; for interface in wan0 trusted0 servers0 sandbox0 mgmt0 transit0; do sudo -n ip link show dev \"$interface\" >/dev/null; done; sudo -n ip -4 -o addr show dev trusted0 | grep -Fq '10.10.10.1/24'; sudo -n ip -4 -o addr show dev servers0 | grep -Fq '10.10.20.1/24'; sudo -n ip -4 -o addr show dev sandbox0 | grep -Fq '10.10.50.1/24'; sudo -n ip -4 -o addr show dev mgmt0 | grep -Fq '10.10.99.1/24'; sudo -n ip -4 -o addr show dev transit0 | grep -Fq '10.10.5.1/24'"
+	command := "set -eu; for interface in wan0 trusted0 servers0 sandbox0 mgmt0 transit0 infra0; do sudo -n ip link show dev \"$interface\" >/dev/null; done; sudo -n ip -4 -o addr show dev trusted0 | grep -Fq '10.10.30.1/24'; sudo -n ip -4 -o addr show dev servers0 | grep -Fq '10.10.20.1/24'; sudo -n ip -4 -o addr show dev sandbox0 | grep -Fq '10.10.40.1/24'; sudo -n ip -4 -o addr show dev mgmt0 | grep -Fq '10.10.99.1/24'; sudo -n ip -4 -o addr show dev transit0 | grep -Fq '10.10.5.1/24'; sudo -n ip -4 -o addr show dev infra0 | grep -Fq '10.10.10.1/24'"
 	if _, err := runner.Run(ctx, "10.10.99.1", model.DefaultAdminSSHUser, command); err != nil {
 		return fmt.Errorf("role-named interfaces or static addresses are not ready: %w", err)
 	}

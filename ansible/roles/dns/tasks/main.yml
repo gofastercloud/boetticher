@@ -138,7 +138,7 @@
 
 - name: Configure secondary transfer for each platform zone
   ansible.builtin.command: >-
-    pdnsutil zone create-secondary {{ item }} 10.10.20.10:5353
+    pdnsutil zone create-secondary {{ item }} 10.10.10.10:5353
   loop: "{{ [dns_plan.static_zone] + (dns_plan.dynamic_zones | map(attribute='name') | list) + (dns_plan.reverse_zones | map(attribute='name') | list) }}"
   when:
     - inventory_hostname == 'lab-dns-02'

@@ -28,16 +28,16 @@ func RenderExternalContract(s model.Site, plan Plan) (string, error) {
 		fmt.Fprintf(&b, "| %d | %s | `%s` | `%s` | `%s` |\n", zone.VLAN, zone.Name, zone.Type, zone.Network, zone.Gateway)
 	}
 	b.WriteString("\n## Required routes\n\n")
-	b.WriteString("The operator must route each fixed site CIDR through its listed gateway and provide the TRANSIT gateway as the routed edge for any enabled module advertisements. Do not infer routes from VMID range or module enablement.\n\n")
+	b.WriteString("The operator must route each fixed site CIDR through its listed gateway and provide the TRANSIT gateway as the routed edge for any enabled module advertisements. Do not infer routes from VMID range or module enablement. Proxmox management is `10.10.99.250` on MGMT; the external gateway owns `.1` in every listed subnet.\n\n")
 	for _, zone := range s.Normalize().Network.Zones {
 		fmt.Fprintf(&b, "- `%s` via `%s` on VLAN %d (`%s`, semantic type `%s`).\n", zone.Network, zone.Gateway, zone.VLAN, zone.Name, zone.Type)
 	}
 	b.WriteString("- Module-advertised routes: none in the Core-only contract. Any later module route is listed explicitly in its composed contract.\n")
 	b.WriteString("- Return routing: responses to fixed site CIDRs and any module-advertised route must return through the corresponding external-gateway route and the TRANSIT gateway; asymmetric return paths are not accepted.\n\n")
 	b.WriteString("\n## Required behavior\n\n")
-	b.WriteString("- Route the five fixed IPv4 networks and provide upstream Internet/NAT as appropriate to the site.\n")
-	b.WriteString("- Keep the inter-zone policy in this document: SANDBOX cannot reach TRUSTED, SERVERS, or MGMT; ordinary platform administration is explicit; Internet egress follows the generated policy.\n")
-	b.WriteString("- Provide DHCP with the generated gateway, DNS, and NTP values for each zone.\n")
+	b.WriteString("- Route the six fixed IPv4 networks and provide upstream Internet/NAT as appropriate to the site.\n")
+	b.WriteString("- Keep the inter-zone policy in this document: SANDBOX cannot reach TRUSTED, SERVERS, INFRA, or MGMT; ordinary platform administration is explicit; Internet egress follows the generated policy.\n")
+	b.WriteString("- Provide DHCP and DDNS only for TRUSTED and SANDBOX with the generated gateway, DNS, and NTP values. TRANSIT, INFRA, SERVERS, and MGMT use static assignments only.\n")
 	b.WriteString("- Keep SANDBOX DNS/NTP isolated from the broad internal namespace.\n")
 	b.WriteString("- If dynamic DHCP names are wanted, send authenticated RFC2136 updates to the generated PowerDNS target using the generated zone and TSIG contract. DHCP failure must not prevent a lease.\n\n")
 	b.WriteString("## DHCP options\n\n")
@@ -85,7 +85,7 @@ func RenderExternalContract(s model.Site, plan Plan) (string, error) {
 }
 
 func zoneTypeForName(name string) model.ZoneType {
-	for _, zone := range []model.ZoneType{model.ZoneTypeTrusted, model.ZoneTypeServers, model.ZoneTypeSandbox, model.ZoneTypeManagement, model.ZoneTypeTransit} {
+	for _, zone := range []model.ZoneType{model.ZoneTypeTransit, model.ZoneTypeInfrastructure, model.ZoneTypeServers, model.ZoneTypeTrusted, model.ZoneTypeSandbox, model.ZoneTypeManagement} {
 		if strings.EqualFold(string(zone), name) {
 			return zone
 		}

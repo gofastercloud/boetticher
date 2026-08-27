@@ -82,7 +82,7 @@ func TestSSHRunnerPreservesJournalArgumentsWithoutShellInterpolation(t *testing.
 
 func TestSSHRunnerUsesBoundedTOFUForFreshApplianceHostKeys(t *testing.T) {
 	runner := SSHRunner{StrictHostKey: "accept-new", HostAlias: "lab-dns-01"}
-	args, err := runner.commandArgs("10.10.20.10", "labadmin", []string{"true"})
+	args, err := runner.commandArgs("10.10.10.10", "labadmin", []string{"true"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestSSHRunnerSeparatesHostKeyAliasFromNetworkTarget(t *testing.T) {
 
 func TestSSHRunnerHostAliasStillSelectsApplianceConfigHost(t *testing.T) {
 	runner := SSHRunner{HostAlias: "lab-dns-01", HostKeyAlias: "lab-proxmox-01"}
-	args, err := runner.commandArgs("10.10.20.10", "labadmin", []string{"true"})
+	args, err := runner.commandArgs("10.10.10.10", "labadmin", []string{"true"})
 	if err != nil {
 		t.Fatal(err)
 	}

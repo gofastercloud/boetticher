@@ -40,7 +40,7 @@ func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, erro
 	if modules.IsEnabled(site, "monitoring") {
 		bindings = append(bindings, deploymentCredential{
 			Guest:     "lab-monitor-01",
-			Address:   "10.10.20.20",
+			Address:   "10.10.10.20",
 			SecretKey: "monitoring-db-password",
 			Spec: secrets.CredentialSpec{
 				Name:       "zabbix-db-password",

@@ -384,7 +384,7 @@ func TestManagedFirewallUsesTaggedPerZoneVNICs(t *testing.T) {
 		bridge string
 		vlan   int
 	}{
-		{"wan0", "vmbr0", 0}, {"trusted0", "vmbr1", 10}, {"servers0", "vmbr1", 20}, {"sandbox0", "vmbr1", 50}, {"mgmt0", "vmbr1", 99}, {"transit0", "vmbr1", model.TransitVLAN},
+		{"wan0", "vmbr0", 0}, {"trusted0", "vmbr1", 30}, {"servers0", "vmbr1", 20}, {"sandbox0", "vmbr1", 40}, {"mgmt0", "vmbr1", 99}, {"transit0", "vmbr1", model.TransitVLAN}, {"infra0", "vmbr1", 10},
 	}
 	for index, expected := range want {
 		nic := plan.Guests[0].NICs[index]
@@ -411,7 +411,7 @@ func TestExternalGatewayOmitsFirewallGuest(t *testing.T) {
 
 func TestGatewayForFoundationZones(t *testing.T) {
 	for zone, expected := range map[string]string{
-		"TRUSTED": "10.10.10.1", "SERVERS": "10.10.20.1", "SANDBOX": "10.10.50.1", "MGMT": "10.10.99.1", "TRANSIT": model.TransitGateway,
+		"INFRA": "10.10.10.1", "SERVERS": "10.10.20.1", "TRUSTED": "10.10.30.1", "SANDBOX": "10.10.40.1", "MGMT": "10.10.99.1", "TRANSIT": model.TransitGateway,
 	} {
 		if got := gatewayFor(zone); got != expected {
 			t.Fatalf("gatewayFor(%q) = %q, want %q", zone, got, expected)
@@ -422,7 +422,7 @@ func TestGatewayForFoundationZones(t *testing.T) {
 func TestUserWorkloadNeverEntersPlatformPlan(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	site.Components = append(site.Components, model.Component{
-		Name: "user-vm-550", VMID: 550, Hostname: "user-vm-550", Zone: "SANDBOX", Address: "10.10.50.50",
+		Name: "user-vm-550", VMID: 550, Hostname: "user-vm-550", Zone: "SANDBOX", Address: "10.10.40.50",
 		Role: "user workload", ProductOwned: false,
 	})
 	plan, err := PlanFromSite(site)

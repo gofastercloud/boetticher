@@ -84,7 +84,7 @@ func TestPowerDNSExceptionStreamsProtectedBackendSQL(t *testing.T) {
 	}
 	runner := &credentialDeploymentRunner{}
 	secret := "synthetic-powerdns-secret"
-	if err := installPowerDNSTSIG(context.Background(), runner, "10.10.20.10", plan, secret); err != nil {
+	if err := installPowerDNSTSIG(context.Background(), runner, "10.10.10.10", plan, secret); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.values) != 1 || !strings.Contains(runner.values[0], secret) {

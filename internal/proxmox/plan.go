@@ -563,7 +563,7 @@ func fixtureVolumes(module, guest string) []model.PersistentVolumeDeclaration {
 
 func gatewayNICs(s model.Site) []GuestNIC {
 	nics := []GuestNIC{{Name: "wan0", Bridge: "vmbr0", Method: "dhcp", MAC: "02:00:00:00:01:01"}}
-	for _, zoneType := range []model.ZoneType{model.ZoneTypeTrusted, model.ZoneTypeServers, model.ZoneTypeSandbox, model.ZoneTypeManagement, model.ZoneTypeTransit} {
+	for _, zoneType := range []model.ZoneType{model.ZoneTypeTrusted, model.ZoneTypeServers, model.ZoneTypeSandbox, model.ZoneTypeManagement, model.ZoneTypeTransit, model.ZoneTypeInfrastructure} {
 		zone, err := s.ZoneForType(zoneType)
 		if err != nil {
 			continue
@@ -1578,8 +1578,8 @@ func canonicalTags(value string) string {
 
 func gatewayFor(zone string) string {
 	return map[string]string{
-		"TRUSTED": "10.10.10.1", "SERVERS": "10.10.20.1",
-		"SANDBOX": "10.10.50.1", "MGMT": "10.10.99.1",
+		"INFRA": "10.10.10.1", "SERVERS": "10.10.20.1",
+		"TRUSTED": "10.10.30.1", "SANDBOX": "10.10.40.1", "MGMT": "10.10.99.1",
 		"TRANSIT": model.TransitGateway,
 	}[zone]
 }

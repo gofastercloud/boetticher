@@ -23,13 +23,13 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 		t.Fatal("inventory was not deterministic")
 	}
 	for _, expected := range []string{
-		"lab-dns-01 ansible_host=10.10.20.10",
+		"lab-dns-01 ansible_host=10.10.10.10",
 		"ProxyJump=lab-bastion",
 		"HostKeyAlias=lab-dns-01.lab.home.arpa",
 		"ansible_remote_tmp=/tmp/boetticher-ansible",
 		"[managed:children]",
 		"[logging]",
-		"lab-log-01 ansible_host=10.10.20.40",
+		"lab-log-01 ansible_host=10.10.10.40",
 	} {
 		if !strings.Contains(first, expected) {
 			t.Errorf("inventory missing %q", expected)
@@ -47,7 +47,7 @@ func TestInventoryUsesBootstrapAddressForProxmoxTransport(t *testing.T) {
 	if !strings.Contains(inventory, "lab-proxmox-01 ansible_host=192.0.2.5") {
 		t.Fatalf("Proxmox inventory did not use bootstrap address:\n%s", inventory)
 	}
-	if strings.Contains(inventory, "lab-proxmox-01 ansible_host=10.10.99.5") {
+	if strings.Contains(inventory, "lab-proxmox-01 ansible_host=10.10.99.250") {
 		t.Fatal("Proxmox inventory used the internal management address for controller transport")
 	}
 }
@@ -214,6 +214,8 @@ func TestFirewallInterfaceBindingsCarryStableRoleMACs(t *testing.T) {
 		`"name": "servers0"`, `"mac": "02:00:00:00:01:03"`,
 		`"name": "sandbox0"`, `"mac": "02:00:00:00:01:04"`,
 		`"name": "mgmt0"`, `"mac": "02:00:00:00:01:05"`,
+		`"name": "transit0"`, `"mac": "02:00:00:00:01:06"`,
+		`"name": "infra0"`, `"mac": "02:00:00:00:01:07"`,
 	} {
 		if !strings.Contains(text, expected) {
 			t.Errorf("firewall variables missing stable interface binding %q", expected)
@@ -251,7 +253,7 @@ func TestPowerDNSBindsEachDNSGuestAddressAlongsideLoopback(t *testing.T) {
 		t.Fatal("PowerDNS does not bind loopback and the current DNS guest address")
 	}
 	for _, line := range strings.Split(text, "\n") {
-		if strings.HasPrefix(line, "local-address=") && strings.Contains(line, "10.10.20.10") {
+		if strings.HasPrefix(line, "local-address=") && strings.Contains(line, "10.10.10.10") {
 			t.Fatal("PowerDNS local listener hard-codes the primary address for both DNS guests")
 		}
 	}

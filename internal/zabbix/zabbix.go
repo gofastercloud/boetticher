@@ -63,7 +63,7 @@ func platformTemplateItems() []TemplateItem {
 		{Template: "boetticher Linux platform", Name: "Memory available", Key: "vm.memory.size[pavailable]", ValueType: 0, Delay: "60s", Description: "Managed Linux host available memory", Tags: append([]string(nil), tag...)},
 		{Template: "boetticher Linux platform", Name: "Root filesystem usage", Key: "vfs.fs.size[/,pused]", ValueType: 0, Delay: "60s", Description: "Managed Linux host root filesystem usage", Tags: append([]string(nil), tag...)},
 		{Template: "boetticher Linux platform", Name: "Chrony service", Key: "proc.num[chronyd]", ValueType: 3, Delay: "60s", Description: "Managed Linux host Chrony process count", Tags: append([]string(nil), tag...)},
-		{Template: "boetticher Proxmox platform", Name: "Proxmox HTTPS", Key: "net.tcp.service[https,10.10.99.5,8006]", ValueType: 3, Delay: "60s", Description: "Proxmox API listener availability", Tags: append([]string(nil), tag...)},
+		{Template: "boetticher Proxmox platform", Name: "Proxmox HTTPS", Key: "net.tcp.service[https,10.10.99.250,8006]", ValueType: 3, Delay: "60s", Description: "Proxmox API listener availability", Tags: append([]string(nil), tag...)},
 		{Template: "boetticher gateway platform", Name: "Gateway SSH", Key: "net.tcp.service[ssh,10.10.99.1,22]", ValueType: 3, Delay: "60s", Description: "Managed gateway SSH listener availability", Tags: append([]string(nil), tag...)},
 	}
 }
@@ -79,7 +79,7 @@ func platformObjects() []ManagedObject {
 		{Kind: "dashboard", Name: "boetticher Recovery", ManagedBy: "boetticher", Tags: append([]string(nil), tag...), Description: "Backup freshness, certificate expiry, and recovery metadata"},
 		{Kind: "check", Name: "boetticher portal HTTPS", Key: "net.tcp.service[https,portal.lab.home.arpa,443]", ManagedBy: "boetticher", Tags: append([]string(nil), tag...), Description: "Portal TLS and availability check"},
 		{Kind: "check", Name: "boetticher Zabbix HTTPS", Key: "net.tcp.service[https,monitor.lab.home.arpa,443]", ManagedBy: "boetticher", Tags: append([]string(nil), tag...), Description: "Zabbix frontend TLS and availability check"},
-		{Kind: "check", Name: "boetticher DNS01 authoritative", Key: "net.tcp.service[tcp,10.10.20.10,5353]", ManagedBy: "boetticher", Tags: append([]string(nil), tag...), Description: "PowerDNS authoritative listener check"},
-		{Kind: "check", Name: "boetticher DNS02 authoritative", Key: "net.tcp.service[tcp,10.10.20.11,5353]", ManagedBy: "boetticher", Tags: append([]string(nil), tag...), Description: "PowerDNS secondary listener check"},
+		{Kind: "check", Name: "boetticher DNS01 authoritative", Key: "net.tcp.service[tcp,10.10.10.10,5353]", ManagedBy: "boetticher", Tags: append([]string(nil), tag...), Description: "PowerDNS authoritative listener check"},
+		{Kind: "check", Name: "boetticher DNS02 authoritative", Key: "net.tcp.service[tcp,10.10.10.11,5353]", ManagedBy: "boetticher", Tags: append([]string(nil), tag...), Description: "PowerDNS secondary listener check"},
 	}
 }

@@ -10,7 +10,7 @@ import (
 func TestPlanDoesNotAdoptUserWorkloads(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	site.Components = append(site.Components, model.Component{
-		Name: "user-vm-550", VMID: 550, Hostname: "user-vm-550", Zone: "SANDBOX", Address: "10.10.50.50", Role: "user workload",
+		Name: "user-vm-550", VMID: 550, Hostname: "user-vm-550", Zone: "SANDBOX", Address: "10.10.40.50", Role: "user workload",
 	})
 	plan, err := PlanFromSite(site)
 	if err != nil {

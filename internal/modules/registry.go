@@ -54,14 +54,14 @@ func FirstPartyRegistry() Registry {
 		"dns": {
 			Name: "dns", Description: "Mandatory DNS and NTP platform capability", Version: "1.0.0", Policy: Mandatory,
 			Requires: []Capability{CapabilityGateway}, Provides: []Capability{CapabilityDNS, CapabilityNTP}, GuestIDs: []int{model.DNS01VMID, model.DNS02VMID}, Guests: []model.Component{
-				{Name: "lab-dns-01", VMID: model.DNS01VMID, Hostname: "lab-dns-01", Zone: "SERVERS", Address: "10.10.20.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-				{Name: "lab-dns-02", VMID: model.DNS02VMID, Hostname: "lab-dns-02", Zone: "SERVERS", Address: "10.10.20.11", Role: "DNS/NTP", DNSAliases: []string{"dns02"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+				{Name: "lab-dns-01", VMID: model.DNS01VMID, Hostname: "lab-dns-01", Zone: "INFRA", Address: "10.10.10.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+				{Name: "lab-dns-02", VMID: model.DNS02VMID, Hostname: "lab-dns-02", Zone: "INFRA", Address: "10.10.10.11", Role: "DNS/NTP", DNSAliases: []string{"dns02"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 		"monitoring": {
 			Name: "monitoring", Description: "Zabbix platform monitoring capability", Version: "1.0.0", Policy: DefaultOn,
 			Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityMonitoring}, GuestIDs: []int{model.MonitorVMID}, Guests: []model.Component{
-				{Name: "lab-monitor-01", VMID: model.MonitorVMID, Hostname: "lab-monitor-01", Zone: "SERVERS", Address: "10.10.20.20", Role: "Zabbix", DNSAliases: []string{"monitor"}, URL: "https://monitor." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+				{Name: "lab-monitor-01", VMID: model.MonitorVMID, Hostname: "lab-monitor-01", Zone: "INFRA", Address: "10.10.10.20", Role: "Zabbix", DNSAliases: []string{"monitor"}, URL: "https://monitor." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 		"firewall": {
@@ -73,7 +73,7 @@ func FirstPartyRegistry() Registry {
 		"logging": {
 			Name: "logging", Description: "Central systemd journal collection", Version: "1.0.0", Policy: Mandatory,
 			DependsOn: []string{"dns"}, Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityLogging}, GuestIDs: []int{model.LoggingVMID}, Guests: []model.Component{
-				{Name: "lab-log-01", VMID: model.LoggingVMID, Hostname: "lab-log-01", Zone: "SERVERS", Address: "10.10.20.40", Role: "Central systemd journal", DNSAliases: []string{"logs"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+				{Name: "lab-log-01", VMID: model.LoggingVMID, Hostname: "lab-log-01", Zone: "INFRA", Address: "10.10.10.40", Role: "Central systemd journal", DNSAliases: []string{"logs"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 	}}
