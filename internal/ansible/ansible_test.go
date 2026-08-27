@@ -164,6 +164,89 @@ func TestGuestPlaybookProjectsLoggingClientsBeyondTheCollector(t *testing.T) {
 	}
 }
 
+func TestBaseRoleRunsChronyWithoutKernelClockControlInAppliances(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"- name: Configure Chrony for unprivileged appliances",
+		"content: \"DAEMON_OPTS=\\\"-x\\\"\\n\"",
+		"dest: /etc/default/chrony",
+		"when: inventory_hostname not in groups.get('proxmox', [])",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("base role missing %q", expected)
+		}
+	}
+}
+
+func TestDNSRoleChecksPowerDNSVersionOutputOnEitherStream(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "'4.9.17' in powerdns_version.stdout or '4.9.17' in powerdns_version.stderr") {
+		t.Fatal("DNS role ignores PowerDNS version output written to stderr")
+	}
+}
+
+func TestDNSRoleUsesPowerDNS49CommandNames(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, forbidden := range []string{"pdnsutil zone ", "pdnsutil rrset ", "pdnsutil metadata "} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("DNS role retains obsolete PowerDNS command namespace %q", forbidden)
+		}
+	}
+	for _, expected := range []string{"pdnsutil list-all-zones", "pdnsutil create-zone", "pdnsutil replace-rrset", "pdnsutil set-meta", "pdnsutil create-secondary-zone"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("DNS role missing qualified PowerDNS command %q", expected)
+		}
+	}
+}
+
+func TestDNSRoleUsesBlockyVersionSubcommand(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "ansible.builtin.command: blocky version") {
+		t.Fatal("DNS role does not use Blocky's supported version subcommand")
+	}
+	if strings.Contains(text, "blocky --version") {
+		t.Fatal("DNS role retains Blocky's unsupported --version flag")
+	}
+}
+
+func TestPowerDNSTemplateUsesCurrentPrimarySecondarySettings(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "dns", "templates", "pdns.conf.j2")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, forbidden := range []string{"master=", "slave="} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("PowerDNS template retains obsolete setting %q", forbidden)
+		}
+	}
+	for _, expected := range []string{"secondary=", "primary="} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("PowerDNS template missing current setting %q", expected)
+		}
+	}
+}
+
 func TestFirewallRoleCreatesNftablesConfigurationDirectory(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
