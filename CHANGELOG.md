@@ -3,6 +3,13 @@
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 
+## [0.3.26] - 2026-08-27
+
+### Fixed
+
+- Import QEMU builder and gateway disks through the supported PVE 9.2
+  `import-from` configuration path.
+
 ## [0.3.25] - 2026-08-27
 
 ### Fixed

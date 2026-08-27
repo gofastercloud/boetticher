@@ -288,11 +288,13 @@ func (c *Client) ImportDisk(ctx context.Context, node string, vmid int, source, 
 		return "", errors.New("node, positive VMID, source, and storage are required")
 	}
 	var upid string
-	form := url.Values{"source": {source}, "storage": {storage}}
+	// PVE 9.2 exposes disk import through the QEMU config endpoint. The
+	// legacy /importdisk route is a CLI-only operation on that release.
+	form := url.Values{"scsi0": {fmt.Sprintf("%s:0,import-from=%s", storage, source)}}
 	if format != "" {
-		form.Set("format", format)
+		form.Set("scsi0", fmt.Sprintf("%s:0,import-from=%s,format=%s", storage, source, format))
 	}
-	if err := c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "importdisk"), form, &upid); err != nil {
+	if err := c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "config"), form, &upid); err != nil {
 		return "", fmt.Errorf("import gateway disk: %w", err)
 	}
 	if upid == "" {

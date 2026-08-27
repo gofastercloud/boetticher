@@ -773,17 +773,6 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 	if err := client.WaitTask(ctx, plan.Node, upid); err != nil {
 		return created, fmt.Errorf("wait for builder input: %w", err)
 	}
-	var imported map[string]any
-	if err := client.QEMUConfig(ctx, plan.Node, model.BuilderVMID, &imported); err != nil {
-		return created, fmt.Errorf("inspect builder disk: %w", err)
-	}
-	unused, ok := imported["unused0"].(string)
-	if !ok || unused == "" {
-		return created, errors.New("builder disk import completed without an unused disk reference")
-	}
-	if err := client.SetVMConfig(ctx, plan.Node, model.BuilderVMID, url.Values{"scsi0": {unused}, "delete": {"unused0"}}); err != nil {
-		return created, fmt.Errorf("attach builder disk: %w", err)
-	}
 	if err := client.ResizeQEMUDisk(ctx, plan.Node, model.BuilderVMID, "scsi0", builder.DiskGiB); err != nil {
 		return created, fmt.Errorf("size builder disk: %w", err)
 	}
@@ -1239,17 +1228,6 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 	}
 	if err := client.WaitTask(ctx, plan.Node, upid); err != nil {
 		return fmt.Errorf("wait for gateway image import: %w", err)
-	}
-	var imported map[string]any
-	if err := client.QEMUConfig(ctx, plan.Node, guest.VMID, &imported); err != nil {
-		return fmt.Errorf("inspect imported gateway disk: %w", err)
-	}
-	unused, ok := imported["unused0"].(string)
-	if !ok || unused == "" {
-		return errors.New("gateway disk import completed without an unused disk reference")
-	}
-	if err := client.SetVMConfig(ctx, plan.Node, guest.VMID, url.Values{"scsi0": {unused}, "delete": {"unused0"}}); err != nil {
-		return fmt.Errorf("attach imported gateway disk: %w", err)
 	}
 	return nil
 }

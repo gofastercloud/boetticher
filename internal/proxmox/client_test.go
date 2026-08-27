@@ -504,22 +504,16 @@ func TestDownloadURLRejectsUnpinnedOrUnsafeInputs(t *testing.T) {
 	}
 }
 
-func TestImportDiskUsesThePinnedStoragePlan(t *testing.T) {
+func TestImportDiskUsesTheSupportedQEMUImportFromConfig(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
-		if r.Method != http.MethodPost || r.URL.Path != "/api2/json/nodes/node/qemu/100/importdisk" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api2/json/nodes/node/qemu/100/config" {
 			t.Fatalf("unexpected import request: %s %s", r.Method, r.URL.Path)
 		}
 		if err := r.ParseForm(); err != nil {
 			t.Fatal(err)
 		}
-		if got := url.Values(r.Form).Get("source"); got != "local:iso/debian-13.qcow2" {
-			t.Errorf("source = %q", got)
-		}
-		if got := r.Form.Get("storage"); got != "boetticher-thin" {
-			t.Errorf("storage = %q", got)
-		}
-		if got := r.Form.Get("format"); got != "qcow2" {
-			t.Errorf("format = %q", got)
+		if got := r.Form.Get("scsi0"); got != "boetticher-thin:0,import-from=local:iso/debian-13.qcow2,format=qcow2" {
+			t.Errorf("scsi0 = %q", got)
 		}
 		return response([]byte(`{"data":"UPID:pve:import"}`))
 	})
