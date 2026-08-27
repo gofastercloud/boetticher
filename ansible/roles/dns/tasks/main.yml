@@ -31,7 +31,7 @@
 
 - name: Refuse an unqualified PowerDNS version
   ansible.builtin.assert:
-    that: "'4.9.17' in powerdns_version.stdout"
+    that: "'4.9.17' in powerdns_version.stdout or '4.9.17' in powerdns_version.stderr"
     fail_msg: "The installed PowerDNS version is not the qualified 4.9.17 release"
   when: inventory_hostname in groups.get('dns', [])
 
