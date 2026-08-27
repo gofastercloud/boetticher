@@ -127,6 +127,18 @@ func TestMonitoringApplianceUsesImageProvidedAgent2(t *testing.T) {
 	}
 }
 
+func TestMonitoringFrontendHandlersFlushBeforeReconciliation(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "Apply monitoring frontend handlers before controller reconciliation") || !strings.Contains(text, "ansible.builtin.meta: flush_handlers") {
+		t.Fatal("monitoring frontend handlers are not flushed before controller reconciliation")
+	}
+}
+
 func TestEndpointTLSKeysAreGeneratedLocallyAndNeverSuppliedByController(t *testing.T) {
 	for _, role := range []string{"monitor", "portal"} {
 		path := filepath.Join("..", "..", "ansible", "roles", role, "tasks", "main.yml")
