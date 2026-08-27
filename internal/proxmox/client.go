@@ -340,6 +340,17 @@ func (c *Client) StartVM(ctx context.Context, node string, vmid int) error {
 	return nil
 }
 
+func (c *Client) EnsureVMRunning(ctx context.Context, node string, vmid int) error {
+	status, err := c.QEMUStatus(ctx, node, vmid)
+	if err != nil {
+		return err
+	}
+	if status == "running" {
+		return nil
+	}
+	return c.StartVM(ctx, node, vmid)
+}
+
 func (c *Client) StopVM(ctx context.Context, node string, vmid int) error {
 	var upid string
 	if err := c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "stop"), nil, &upid); err != nil {

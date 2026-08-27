@@ -251,6 +251,19 @@ func TestQEMUStatusUsesLiveStatusEndpoint(t *testing.T) {
 	}
 }
 
+func TestEnsureVMRunningDoesNotRestartRunningVM(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/node/qemu/100/status/current" {
+			t.Fatalf("unexpected request while checking running VM: %s %s", r.Method, r.URL.Path)
+		}
+		return response([]byte(`{"data":{"status":"running"}}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.EnsureVMRunning(context.Background(), "node", 100); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDestroyBuilderStopsRunningOwnedVMBeforeRemoval(t *testing.T) {
 	stopped := false
 	removed := false

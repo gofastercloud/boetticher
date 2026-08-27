@@ -203,7 +203,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		if err := proxmox.EnsureFirewallVM(context.Background(), proxmoxClient, proxmoxPlan); err != nil {
 			return fmt.Errorf("create managed gateway appliance: %w", err)
 		}
-		if err := proxmoxClient.StartVM(context.Background(), proxmoxPlan.Node, model.ProxmoxVMID); err != nil {
+		if err := proxmoxClient.EnsureVMRunning(context.Background(), proxmoxPlan.Node, model.ProxmoxVMID); err != nil {
 			return fmt.Errorf("start managed gateway appliance: %w", err)
 		}
 	}
