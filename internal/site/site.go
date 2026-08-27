@@ -337,15 +337,24 @@ func createAgeIdentity(path string) (string, error) {
 	if path == "" {
 		return "", fmt.Errorf("Age identity path is required")
 	}
+	ageKeygen, err := exec.LookPath("age-keygen")
+	if err != nil {
+		return "", fmt.Errorf("age-keygen is required to initialize secrets: %w", err)
+	}
 	if _, err := os.Stat(path); err == nil {
-		return "", fmt.Errorf("Age identity already exists at %s", path)
+		output, err := exec.Command(ageKeygen, "-y", path).Output()
+		if err != nil {
+			return "", fmt.Errorf("read existing Age identity: %w", err)
+		}
+		recipient := strings.TrimSpace(string(output))
+		if recipient == "" {
+			return "", fmt.Errorf("existing Age identity at %s did not contain a public recipient", path)
+		}
+		return recipient, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
-	if _, err := exec.LookPath("age-keygen"); err != nil {
-		return "", fmt.Errorf("age-keygen is required to initialize secrets: %w", err)
-	}
-	command := exec.Command("age-keygen")
+	command := exec.Command(ageKeygen)
 	output, err := command.Output()
 	if err != nil {
 		return "", fmt.Errorf("generate Age identity: %w", err)

@@ -21,7 +21,9 @@ default is the managed Debian gateway. The site repository contains desired
 state, encrypted SOPS documents, and non-secret generated projections. The Age
 private identity is outside Git at `~/.config/boetticher/age/identity.txt` (or
 the explicit path supplied to `init`). Keep an independent recovery copy before
-running a destructive bootstrap.
+running a destructive bootstrap. `init` reuses an existing identity after
+validating its public recipient and never overwrites it; it creates one only
+when the configured path is absent.
 
 ## Bootstrap
 
