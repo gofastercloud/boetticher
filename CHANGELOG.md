@@ -28,6 +28,8 @@ project, so releases can make clean breaks while the design is settling.
   bootstrap so routine bastion access does not depend on root.
 - Include the managed `lab-jump` bastion account in the same allow-list so
   gateway readiness can use the documented Proxmox jump path.
+- Set the managed bastion authorized-key file ownership so privilege-separated
+  sshd can read it on the Proxmox host.
 - Resume an owned running gateway without issuing a duplicate Proxmox start
   request after a prior deployment attempt.
 - Discover the hosted builder address through the QEMU guest agent after
