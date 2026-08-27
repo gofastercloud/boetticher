@@ -194,6 +194,25 @@ func TestDNSRoleChecksPowerDNSVersionOutputOnEitherStream(t *testing.T) {
 	}
 }
 
+func TestDNSRoleUsesPowerDNS49CommandNames(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, forbidden := range []string{"pdnsutil zone ", "pdnsutil rrset ", "pdnsutil metadata "} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("DNS role retains obsolete PowerDNS command namespace %q", forbidden)
+		}
+	}
+	for _, expected := range []string{"pdnsutil list-all-zones", "pdnsutil create-zone", "pdnsutil replace-rrset", "pdnsutil set-meta", "pdnsutil create-secondary-zone"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("DNS role missing qualified PowerDNS command %q", expected)
+		}
+	}
+}
+
 func TestFirewallRoleCreatesNftablesConfigurationDirectory(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
 	data, err := os.ReadFile(path)

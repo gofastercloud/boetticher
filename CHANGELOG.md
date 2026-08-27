@@ -67,6 +67,8 @@ project, so releases can make clean breaks while the design is settling.
   kernel-clock control.
 - Treat an already-running owned LXC as ready during deployment retry.
 - Check the PowerDNS qualification banner on either command output stream.
+- Use the PowerDNS 4.9 `pdnsutil` command names supported by the qualified
+  appliance.
 - Resume an owned running gateway without issuing a duplicate Proxmox start
   request after a prior deployment attempt.
 - Discover the hosted builder address through the QEMU guest agent after
