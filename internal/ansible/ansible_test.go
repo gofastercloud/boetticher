@@ -384,6 +384,43 @@ func TestFirewallRoleCreatesNftablesConfigurationDirectory(t *testing.T) {
 	}
 }
 
+func TestFirewallRolePersistsForwardingReadinessGate(t *testing.T) {
+	tasksPath := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
+	tasksData, err := os.ReadFile(tasksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks := string(tasksData)
+	for _, expected := range []string{
+		"src: boetticher-forwarding.service.j2",
+		"dest: /etc/systemd/system/boetticher-forwarding.service",
+		"name: boetticher-forwarding.service",
+		"enabled: true",
+		"daemon_reload: true",
+	} {
+		if !strings.Contains(tasks, expected) {
+			t.Fatalf("firewall role missing forwarding readiness gate contract %q", expected)
+		}
+	}
+
+	unitPath := filepath.Join("..", "..", "ansible", "roles", "firewall", "templates", "boetticher-forwarding.service.j2")
+	unitData, err := os.ReadFile(unitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := string(unitData)
+	for _, expected := range []string{
+		"Requires=nftables.service kea-dhcp4-server.service kea-dhcp-ddns-server.service dnsmasq.service",
+		"After=network-online.target nftables.service kea-dhcp4-server.service kea-dhcp-ddns-server.service dnsmasq.service",
+		"ExecStart=/usr/sbin/sysctl -w net.ipv4.ip_forward=1",
+		"ExecStop=/usr/sbin/sysctl -w net.ipv4.ip_forward=0",
+	} {
+		if !strings.Contains(unit, expected) {
+			t.Fatalf("forwarding readiness gate missing %q", expected)
+		}
+	}
+}
+
 func TestFirewallRoleAllowsKeaCredentialThroughAppArmor(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
