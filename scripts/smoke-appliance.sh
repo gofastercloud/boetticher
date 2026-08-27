@@ -45,7 +45,7 @@ case "$name" in
     ;;
   boetticher-dns-blocky)
     printf '%s\n' 'boetticher smoke check: blocky version'
-    chroot "$rootfs" /usr/local/bin/blocky --version 2>&1 | grep -Fq '0.34.0'
+    chroot "$rootfs" /usr/local/bin/blocky version 2>&1 | grep -Fq '0.34.0'
     printf '%s\n' 'boetticher smoke check: PowerDNS and Chrony binaries'
     run pdns_server --version
     run chronyd --version

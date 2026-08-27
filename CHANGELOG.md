@@ -31,6 +31,8 @@ project, so releases can make clean breaks while the design is settling.
   so embedded and source-checkout builder archives remain equivalent.
 - Label DNS appliance smoke assertions so a hosted-builder failure after base
   packaging identifies the specific provider or runtime check.
+- Invoke Blocky’s `version` subcommand in the DNS smoke check; Blocky 0.34
+  does not expose the version through a `--version` flag.
 
 ## [0.3.32] - 2026-08-27
 
