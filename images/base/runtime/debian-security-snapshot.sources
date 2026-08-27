@@ -1,0 +1,5 @@
+Types: deb
+URIs: https://snapshot.debian.org/archive/debian-security/20260825T000000Z/
+Suites: trixie-security
+Components: main
+Check-Valid-Until: no

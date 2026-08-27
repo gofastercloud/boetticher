@@ -162,6 +162,7 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 	}
 	for _, required := range []string{
 		"https://snapshot.debian.org/archive/debian/20260825T000000Z/",
+		"https://snapshot.debian.org/archive/debian-security/20260825T000000Z/",
 		"apt-get -o Acquire::Check-Valid-Until=false update",
 		"apt-get install --yes --no-install-recommends ca-certificates curl jq libguestfs-tools mmdebstrap",
 	} {

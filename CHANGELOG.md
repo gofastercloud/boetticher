@@ -47,6 +47,11 @@ project, so releases can make clean breaks while the design is settling.
 - Advance the pinned Debian snapshot to include the security revisions
   required by the first live Trivy qualification; the prior snapshot supplied
   vulnerable GnuTLS and OpenSSL packages.
+- Preserve secret-scan target, rule, category, and line diagnostics without
+  emitting the detected secret value when artifact qualification fails.
+- Include the matching pinned Debian security snapshot in appliance and
+  hosted-builder package sources so security-only fixes are available without
+  making package resolution unpinned.
 
 ## [0.3.32] - 2026-08-27
 

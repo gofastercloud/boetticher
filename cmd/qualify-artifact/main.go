@@ -13,6 +13,7 @@ import (
 
 type trivyReport struct {
 	Results []struct {
+		Target          string `json:"Target"`
 		Vulnerabilities []struct {
 			VulnerabilityID  string `json:"VulnerabilityID"`
 			PkgName          string `json:"PkgName"`
@@ -20,7 +21,13 @@ type trivyReport struct {
 			Severity         string `json:"Severity"`
 			FixedVersion     string `json:"FixedVersion"`
 		} `json:"Vulnerabilities"`
-		Secrets []struct{} `json:"Secrets"`
+		Secrets []struct {
+			RuleID    string `json:"RuleID"`
+			Category  string `json:"Category"`
+			Title     string `json:"Title"`
+			StartLine int    `json:"StartLine"`
+			EndLine   int    `json:"EndLine"`
+		} `json:"Secrets"`
 	} `json:"Results"`
 }
 
@@ -81,6 +88,9 @@ func main() {
 		for _, finding := range fixableCriticalFindings(data) {
 			fmt.Fprintf(os.Stderr, "Trivy fixable CRITICAL: %s package=%s installed=%s fixed=%s\n", finding.id, finding.packageName, finding.installed, finding.fixed)
 		}
+		for _, finding := range secretFindings(data) {
+			fmt.Fprintf(os.Stderr, "Trivy secret: target=%s rule=%s category=%s title=%s lines=%d-%d\n", finding.target, finding.ruleID, finding.category, finding.title, finding.startLine, finding.endLine)
+		}
 		os.Exit(1)
 	}
 	if err := artifacts.WriteEvidence(*evidenceRoot, artifact.Name, evidence); err != nil {
@@ -91,6 +101,11 @@ func main() {
 
 type fixableCriticalFinding struct {
 	id, packageName, installed, fixed string
+}
+
+type secretFinding struct {
+	target, ruleID, category, title string
+	startLine, endLine              int
 }
 
 func fixableCriticalFindings(data []byte) []fixableCriticalFinding {
@@ -107,6 +122,23 @@ func fixableCriticalFindings(data []byte) []fixableCriticalFinding {
 					installed: vulnerability.InstalledVersion, fixed: vulnerability.FixedVersion,
 				})
 			}
+		}
+	}
+	return findings
+}
+
+func secretFindings(data []byte) []secretFinding {
+	var report trivyReport
+	if err := json.Unmarshal(data, &report); err != nil {
+		return nil
+	}
+	findings := make([]secretFinding, 0)
+	for _, result := range report.Results {
+		for _, secret := range result.Secrets {
+			findings = append(findings, secretFinding{
+				target: result.Target, ruleID: secret.RuleID, category: secret.Category,
+				title: secret.Title, startLine: secret.StartLine, endLine: secret.EndLine,
+			})
 		}
 	}
 	return findings

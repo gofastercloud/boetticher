@@ -44,3 +44,22 @@ func TestFixableCriticalFindingsExposePackageAndVersionDetails(t *testing.T) {
 		t.Fatalf("unexpected finding details: %#v", findings[0])
 	}
 }
+
+func TestSecretFindingsExposeLocationWithoutSecretValue(t *testing.T) {
+	findings := secretFindings([]byte(`{
+  "Results": [{"Target": "/etc/example.conf", "Secrets": [{
+    "RuleID": "generic-api-key",
+    "Category": "generic",
+    "Title": "Generic API Key",
+    "StartLine": 7,
+    "EndLine": 7,
+    "Match": "must-not-be-printed"
+  }]}]
+}`))
+	if len(findings) != 1 {
+		t.Fatalf("unexpected findings: %#v", findings)
+	}
+	if findings[0].target != "/etc/example.conf" || findings[0].ruleID != "generic-api-key" || findings[0].startLine != 7 || findings[0].endLine != 7 {
+		t.Fatalf("unexpected finding details: %#v", findings[0])
+	}
+}

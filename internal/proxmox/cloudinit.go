@@ -140,6 +140,14 @@ users:
       Suites: trixie
       Components: main
       Check-Valid-Until: no
+  - path: /etc/apt/sources.list.d/boetticher-builder-security.sources
+    permissions: '0644'
+    content: |
+      Types: deb
+      URIs: https://snapshot.debian.org/archive/debian-security/20260825T000000Z/
+      Suites: trixie-security
+      Components: main
+      Check-Valid-Until: no
   - path: /usr/local/sbin/boetticher-build
     permissions: '0755'
     content: |

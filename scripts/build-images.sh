@@ -117,6 +117,7 @@ create_base_rootfs() {
     --aptopt=Acquire::Languages=none \
     --include="$base_packages" \
     "$base_release" "$rootfs" "$mirror"
+  install -D -m 0644 images/base/runtime/debian-security-snapshot.sources "$rootfs/etc/apt/sources.list.d/boetticher-debian-security.sources"
   mkdir -p "$rootfs/etc/boetticher" "$rootfs/usr/lib/boetticher" "$rootfs/run/boetticher/bootstrap"
   install -D -m 0644 images/base/runtime/journal-upload.conf "$rootfs/etc/systemd/journal-upload.conf"
   install -D -m 0440 images/base/runtime/boetticher.sudoers "$rootfs/etc/sudoers.d/boetticher"
@@ -401,6 +402,7 @@ build_firewall() {
   virt-customize -a "$image" \
     --network \
     --upload images/base/runtime/debian-snapshot.sources:/etc/apt/sources.list.d/boetticher-debian.sources \
+    --upload images/base/runtime/debian-security-snapshot.sources:/etc/apt/sources.list.d/boetticher-debian-security.sources \
     --run-command 'rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; apt-get -o Acquire::Check-Valid-Until=false update' \
     --run-command 'DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony openssh-server sudo cloud-init systemd-journal-remote curl jq openssl qemu-guest-agent' \
     --upload "$zabbix_release:/tmp/zabbix-release.deb" \
