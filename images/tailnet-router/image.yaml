@@ -1,0 +1,18 @@
+name: boetticher-tailnet-router
+version: 1.0.0
+kind: lxc
+base: boetticher-base
+base_version: 0.3.33
+architecture: amd64
+tailscale:
+  package: tailscale
+  version: 1.76.6
+  repository: https://pkgs.tailscale.com/stable/debian
+  signing_key: https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg
+  signing_key_sha256: 3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39
+  repository_suite: trixie
+runtime:
+  accept_dns: false
+  advertise_routes: 10.10.0.0/16
+  subnet_route_snat: true
+  advertise_exit_node: false

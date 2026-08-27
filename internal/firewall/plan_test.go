@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/modules"
 )
 
 func TestManagedPlanUsesOneUntaggedFirewallInterfacePerZone(t *testing.T) {
@@ -30,6 +31,81 @@ func TestManagedPlanUsesOneUntaggedFirewallInterfacePerZone(t *testing.T) {
 	for i := range want {
 		if plan.Interfaces[i] != want[i] {
 			t.Fatalf("interface %d = %#v, want %#v", i, plan.Interfaces[i], want[i])
+		}
+	}
+}
+
+func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	tailnetEnabled, litellmEnabled := true, true
+	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
+	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+		Enabled:   &litellmEnabled,
+		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
+		Models:    []model.LiteLLMModelConfig{{Alias: "selected-alias", Upstream: "openrouter", Model: "selected/openrouter-model"}},
+	}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleset, err := RenderNFT(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"10.10.5.10/32 ip daddr 10.10.20.60/32 tcp dport 443",
+		"10.10.5.10/32 ip daddr 10.10.20.30/32 tcp dport 443",
+		"10.10.5.10/32 ip daddr 10.10.20.20/32 tcp dport 443",
+		"10.10.20.60/32 ip daddr openrouter.ai tcp dport 443",
+		"set module_guest_sources { type ipv4_addr; elements = {",
+		"10.10.20.60, 10.10.5.10",
+		"iifname \"servers0\" ip saddr != @module_guest_sources oifname \"wan0\"",
+		"arbitrary-egress-drop",
+	} {
+		if !strings.Contains(ruleset, expected) {
+			t.Errorf("managed module policy missing %q:\n%s", expected, ruleset)
+		}
+	}
+	if strings.Index(ruleset, "10.10.5.10/32 ip daddr 10.10.20.60/32") > strings.Index(ruleset, "TRANSIT-SERVERS-DROP") {
+		t.Fatal("narrow tailnet-to-LiteLLM allow occurs after the TRANSIT default deny")
+	}
+	if strings.Contains(ruleset, `iifname "transit0" ip daddr @servers_net accept`) {
+		t.Fatal("managed module policy contains a broad TRANSIT-to-SERVERS allow")
+	}
+	if strings.Contains(ruleset, `iifname "servers0" oifname "wan0" ip saddr @servers_net tcp dport { 53, 80, 443, 853 } counter accept`) {
+		t.Fatal("module-owned SERVERS guests inherit the unrestricted zone Internet allow")
+	}
+}
+
+func TestExternalComposedContractCarriesModuleRouteAndOperatorBoundary(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeExternal))
+	firewallDisabled, tailnetEnabled, litellmEnabled := false, true, true
+	config.Modules.Firewall = &model.ToggleModuleConfig{Enabled: &firewallDisabled}
+	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
+	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+		Enabled:   &litellmEnabled,
+		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
+		Models:    []model.LiteLLMModelConfig{{Alias: "selected-alias", Upstream: "openrouter", Model: "selected/openrouter-model"}},
+	}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract, err := RenderExternalContract(site, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"10.10.0.0/16", "10.10.5.10", "10.10.5.0/24", "10.10.5.1", "subnet-route", "route approval", "accept-dns=false", "LiteLLM HTTPS", "portal HTTPS", "monitoring HTTPS", "openrouter.ai", "required return routing", "Proxmox API", "SSH", "enforcement is NOT ACTIVE", "operator implementation responsibility"} {
+		if !strings.Contains(strings.ToLower(contract), strings.ToLower(expected)) {
+			t.Errorf("external module contract missing %q", expected)
 		}
 	}
 }
@@ -83,7 +159,7 @@ func TestManagedRulesetIsDeterministicAndFailClosed(t *testing.T) {
 			t.Errorf("ruleset missing %q", expected)
 		}
 	}
-	if strings.Index(a, "SANDBOX-MGMT-DROP") > strings.Index(a, "iifname \"sandbox0\" oifname \"wan0\"") {
+	if strings.Index(a, "SANDBOX-MGMT-DROP") > strings.Index(a, "forward-sandbox-internet") {
 		t.Error("SANDBOX internal deny occurs after Internet egress")
 	}
 }

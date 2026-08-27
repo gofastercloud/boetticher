@@ -2,6 +2,8 @@ package proxmox
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,6 +47,7 @@ type GuestPlan struct {
 	Artifact   model.Artifact                      `json:"artifact,omitempty"`
 	Persistent []model.PersistentState             `json:"persistent,omitempty"`
 	Volumes    []model.PersistentVolumeDeclaration `json:"volumes,omitempty"`
+	Security   model.GuestSecurityDeclaration      `json:"security,omitempty"`
 }
 
 type GuestNIC struct {
@@ -371,6 +374,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 					guest.Artifact = declaration.Artifact
 					guest.Persistent = persistentForGuest(declaration.Persistent, component.Name)
 					guest.Volumes = volumesForGuest(declaration.Volumes, component.Name)
+					guest.Security = declaration.Security
 					for index := range guest.Volumes {
 						for _, resolved := range storagePlan.Volumes {
 							if resolved.Module == guest.Volumes[index].Module && resolved.Name == guest.Volumes[index].Name && resolved.Guest == guest.Volumes[index].Guest {
@@ -1163,6 +1167,9 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 		if err := validateExistingGuestIdentity(current, guest); err != nil {
 			return err
 		}
+		if err := migrateLegacyQEMUPersistentVolumeSerials(ctx, client, plan, guest, current); err != nil {
+			return err
+		}
 		if err := validateExistingQEMUVolumes(current, plan, guest); err != nil {
 			return err
 		}
@@ -1173,10 +1180,10 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 	}
 	filename := fmt.Sprintf("%s-%s-%s.qcow2", guest.Artifact.Name, guest.Artifact.Version, guest.Artifact.Architecture)
 	source := plan.ArtifactFiles[artifactKey(guest.Artifact)]
-	if err := ensureArtifactInStorage(ctx, client, plan.Node, "local", "images", filename, guest.Artifact.ContentSHA256, source); err != nil {
+	if err := ensureArtifactInStorage(ctx, client, plan.Node, "local", "import", filename, guest.Artifact.ContentSHA256, source); err != nil {
 		return fmt.Errorf("prepare qualified %s artifact: %w", guest.Name, err)
 	}
-	imageFileID := "local:images/" + filename
+	imageFileID := "local:import/" + filename
 	params := url.Values{
 		"name":        {guest.Name},
 		"description": {artifactDescription(guest.Artifact)},
@@ -1209,7 +1216,9 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 		if err := ValidatePublicKey(plan.OperatorPublicKey); err != nil {
 			return err
 		}
-		params.Set("sshkeys", plan.OperatorPublicKey)
+		// Proxmox declares this field as urlencoded and decodes it once more
+		// after the application/x-www-form-urlencoded request is parsed.
+		params.Set("sshkeys", url.PathEscape(plan.OperatorPublicKey))
 	}
 	volumeParams, err := qemuPersistentVolumeParams(plan, guest)
 	if err != nil {
@@ -1272,7 +1281,10 @@ func validateExistingQEMUVolumes(current map[string]any, plan Plan, guest GuestP
 			return fmt.Errorf("HOLD: guest %s has no persistent volume identity for %s, expected %q", guest.Name, key, expected)
 		}
 		observedParts := strings.Split(observed, ",")
-		if observedParts[0] != strings.Split(expected, ",")[0] {
+		expectedParts := strings.Split(expected, ",")
+		expectedStorage, expectedSize, expectedOK := strings.Cut(expectedParts[0], ":")
+		observedStorage, _, observedOK := strings.Cut(observedParts[0], ":")
+		if !expectedOK || !observedOK || observedStorage != expectedStorage {
 			return fmt.Errorf("HOLD: guest %s has persistent volume %s=%q, expected storage/size %q", guest.Name, key, observed, expected)
 		}
 		observedOptions := make(map[string]string, len(observedParts)-1)
@@ -1283,11 +1295,14 @@ func validateExistingQEMUVolumes(current map[string]any, plan Plan, guest GuestP
 			}
 		}
 		expectedOptions := make(map[string]string)
-		for _, option := range strings.Split(expected, ",")[1:] {
+		for _, option := range expectedParts[1:] {
 			name, value, ok := strings.Cut(option, "=")
 			if ok {
 				expectedOptions[name] = value
 			}
+		}
+		if size := observedOptions["size"]; size != "" && size != expectedSize+"G" {
+			return fmt.Errorf("HOLD: guest %s has persistent volume %s=%q, expected storage/size %q", guest.Name, key, observed, expected)
 		}
 		for _, name := range []string{"backup", "serial"} {
 			if observedOptions[name] != expectedOptions[name] {
@@ -1307,6 +1322,9 @@ func qemuPersistentVolumeParam(plan Plan, volume model.PersistentVolumeDeclarati
 }
 
 func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
+	if err := validateLXCDeviceContract(guest); err != nil {
+		return err
+	}
 	kind, current, err := client.GuestConfig(ctx, plan.Node, guest.VMID)
 	if err == nil {
 		if kind != KindLXC {
@@ -1347,6 +1365,12 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		"tags":         {strings.Join(guest.Tags, ";")},
 		"net0":         {fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,ip=%s/24,gw=%s", guest.VLAN, guest.Address, gatewayFor(guest.Zone))},
 	}
+	if guest.Security.Unprivileged {
+		params.Set("unprivileged", "1")
+	}
+	for index, device := range guest.Security.Devices {
+		params.Set(fmt.Sprintf("dev%d", index), lxcDeviceParam(device))
+	}
 	bootstrapParams, err := lxcBootstrapKeyParams(plan.OperatorPublicKey)
 	if err != nil {
 		return fmt.Errorf("validate appliance bootstrap key for %s: %w", guest.Name, err)
@@ -1366,7 +1390,47 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 	if err := client.CreateLXC(ctx, plan.Node, guest.VMID, params); err != nil {
 		return fmt.Errorf("create container %s: %w", guest.Name, err)
 	}
+	// Creation is not sufficient evidence that Proxmox applied the security
+	// contract. Inspect the resulting object before ProvisionModule/Provision
+	// can issue a start request. A missing or altered device allowance is a
+	// HOLD; the newly created guest is never started or configured further.
+	kind, current, err = client.GuestConfig(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("HOLD: verify created container %s security contract: %w", guest.Name, err)
+	}
+	if kind != KindLXC {
+		return fmt.Errorf("HOLD: created guest %s was reported as %s, expected LXC", guest.Name, kind)
+	}
+	if err := validateExistingGuestIdentity(current, guest); err != nil {
+		return fmt.Errorf("HOLD: verify created container %s identity/security contract: %w", guest.Name, err)
+	}
+	if err := validateExistingGuestVolumes(current, guest); err != nil {
+		return fmt.Errorf("HOLD: verify created container %s persistent volumes: %w", guest.Name, err)
+	}
 	return nil
+}
+
+func validateLXCDeviceContract(guest GuestPlan) error {
+	if len(guest.Security.Capabilities) != 0 {
+		return fmt.Errorf("HOLD: guest %s requests unrelated Linux capabilities", guest.Name)
+	}
+	if !guest.Security.Unprivileged && len(guest.Security.Devices) != 0 {
+		return fmt.Errorf("HOLD: guest %s declares devices without an unprivileged contract", guest.Name)
+	}
+	for _, device := range guest.Security.Devices {
+		if device.Path != "/dev/net/tun" || device.Type != "c" || device.Major != 10 || device.Minor != 200 || device.Access != "rwm" {
+			return fmt.Errorf("HOLD: guest %s has unsupported device contract for %s", guest.Name, device.Path)
+		}
+	}
+	return nil
+}
+
+// lxcDeviceParam is the only Core-owned translation of the bounded TUN
+// contract into a Proxmox LXC device setting. Proxmox applies the matching
+// host character device and cgroup rule atomically with container creation;
+// no broad device wildcard or Linux capability is requested.
+func lxcDeviceParam(device model.DeviceRequirement) string {
+	return fmt.Sprintf("path=%s,mode=0666", device.Path)
 }
 
 // lxcBootstrapKeyParams is the only operator-key input accepted by appliance
@@ -1395,6 +1459,18 @@ func persistentVolumeParam(volume model.PersistentVolumeDeclaration) (string, er
 }
 
 func persistentVolumeSerial(volume model.PersistentVolumeDeclaration) (string, error) {
+	identity, err := persistentVolumeIdentity(volume)
+	if err != nil {
+		return "", err
+	}
+	if len(identity) <= 36 {
+		return identity, nil
+	}
+	digest := sha256.Sum256([]byte(identity))
+	return "boetticher-" + hex.EncodeToString(digest[:])[:25], nil
+}
+
+func persistentVolumeIdentity(volume model.PersistentVolumeDeclaration) (string, error) {
 	if volume.Module == "" || volume.Guest == "" || volume.Name == "" {
 		return "", errors.New("persistent volume identity is incomplete")
 	}
@@ -1406,6 +1482,66 @@ func persistentVolumeSerial(volume model.PersistentVolumeDeclaration) (string, e
 		}
 	}
 	return "boetticher-" + volume.Module + "-" + volume.Guest + "-" + volume.Name, nil
+}
+
+func migrateLegacyQEMUPersistentVolumeSerials(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) error {
+	params := url.Values{}
+	for index, volume := range guest.Volumes {
+		serial, err := persistentVolumeSerial(volume)
+		if err != nil {
+			return err
+		}
+		legacySerial, err := persistentVolumeIdentity(volume)
+		if err != nil || serial == legacySerial {
+			continue
+		}
+		expected, err := qemuPersistentVolumeParam(plan, volume)
+		if err != nil {
+			return err
+		}
+		if observed, _ := current[fmt.Sprintf("scsi%d", index+1)].(string); qemuVolumeMatchesSerial(observed, expected, legacySerial) {
+			params.Set(fmt.Sprintf("scsi%d", index+1), expected)
+		}
+	}
+	if len(params) == 0 {
+		return nil
+	}
+	if err := client.SetVMConfig(ctx, plan.Node, guest.VMID, params); err != nil {
+		return fmt.Errorf("migrate legacy persistent volume serials for %s: %w", guest.Name, err)
+	}
+	for key, value := range params {
+		current[key] = value[0]
+	}
+	return nil
+}
+
+func qemuVolumeMatchesSerial(observed, expected, serial string) bool {
+	observedParts := strings.Split(observed, ",")
+	expectedParts := strings.Split(expected, ",")
+	if len(observedParts) == 0 || len(expectedParts) == 0 {
+		return false
+	}
+	expectedStorage, expectedSize, expectedOK := strings.Cut(expectedParts[0], ":")
+	observedStorage, _, observedOK := strings.Cut(observedParts[0], ":")
+	if !expectedOK || !observedOK || observedStorage != expectedStorage {
+		return false
+	}
+	options := make(map[string]string, len(observedParts)-1)
+	for _, option := range observedParts[1:] {
+		name, value, ok := strings.Cut(option, "=")
+		if ok {
+			options[name] = value
+		}
+	}
+	expectedOptions := make(map[string]string, len(expectedParts)-1)
+	for _, option := range expectedParts[1:] {
+		name, value, ok := strings.Cut(option, "=")
+		if ok {
+			expectedOptions[name] = value
+		}
+	}
+	return options["backup"] == expectedOptions["backup"] && options["serial"] == serial &&
+		(options["size"] == "" || options["size"] == expectedSize+"G")
 }
 
 func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) error {
@@ -1420,6 +1556,15 @@ func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) er
 			return fmt.Errorf("HOLD: guest %s has persistent volume %s=%q, expected %q", expected.Name, key, observed, wanted)
 		}
 	}
+	for key := range current {
+		if !strings.HasPrefix(key, "mp") || len(key) <= len("mp") || key[2] < '0' || key[2] > '9' {
+			continue
+		}
+		index := int(key[2] - '0')
+		if index >= len(expected.Volumes) {
+			return fmt.Errorf("HOLD: guest %s has an undeclared persistent volume %s", expected.Name, key)
+		}
+	}
 	return nil
 }
 
@@ -1431,8 +1576,12 @@ func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage,
 	if err != nil {
 		return fmt.Errorf("inspect %s artifact storage: %w", content, err)
 	}
-	if found, err := verifyStoredArtifact(entries, filename, checksum); err != nil {
-		return err
+	if found, err := verifyStoredArtifact(entries, filename, checksum, false); err != nil {
+		if content != "import" || !strings.HasSuffix(err.Error(), "has no checksum evidence") {
+			return err
+		}
+		// Import listings omit checksums. Re-upload the qualified local bytes so
+		// the upload task can re-establish checksum evidence before use.
 	} else if found {
 		return nil
 	}
@@ -1453,7 +1602,7 @@ func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage,
 	if err != nil {
 		return fmt.Errorf("verify uploaded %s artifact storage: %w", filename, err)
 	}
-	found, err := verifyStoredArtifact(entries, filename, checksum)
+	found, err := verifyStoredArtifact(entries, filename, checksum, content == "import")
 	if err != nil {
 		return err
 	}
@@ -1467,7 +1616,7 @@ func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage,
 // task is not evidence that Proxmox stored the qualified bytes under the
 // expected content identity; the storage listing must expose the same
 // checksum before the artifact can be used for guest creation.
-func verifyStoredArtifact(entries []StorageContent, filename, checksum string) (bool, error) {
+func verifyStoredArtifact(entries []StorageContent, filename, checksum string, allowMissingChecksum bool) (bool, error) {
 	for _, entry := range entries {
 		if entry.Filename != filename && !strings.HasSuffix(entry.VolID, "/"+filename) {
 			continue
@@ -1477,6 +1626,12 @@ func verifyStoredArtifact(entries []StorageContent, filename, checksum string) (
 			observed = entry.CSum
 		}
 		if observed == "" {
+			if allowMissingChecksum {
+				// Import content listings omit checksums. A just-completed upload
+				// task already verified the requested checksum, so its presence is
+				// sufficient evidence for this post-upload check.
+				return true, nil
+			}
 			return false, fmt.Errorf("stored artifact %s has no checksum evidence", filename)
 		}
 		if !strings.EqualFold(observed, checksum) {
@@ -1511,6 +1666,26 @@ func validateExistingGuestIdentity(current map[string]any, expected GuestPlan) e
 			return fmt.Errorf("HOLD: guest %s has artifact identity %q, expected %q; appliance replacement is required", expected.Name, observed, wanted)
 		}
 	}
+	if expected.Security.Unprivileged {
+		if !observedTruthy(current["unprivileged"]) {
+			return fmt.Errorf("HOLD: guest %s is not unprivileged", expected.Name)
+		}
+		for index, device := range expected.Security.Devices {
+			key := fmt.Sprintf("dev%d", index)
+			observed, _ := current[key].(string)
+			if observed != lxcDeviceParam(device) {
+				return fmt.Errorf("HOLD: guest %s has %s=%q, expected exact TUN contract %q", expected.Name, key, observed, lxcDeviceParam(device))
+			}
+		}
+		for key := range current {
+			if strings.HasPrefix(key, "dev") && len(key) > len("dev") && key[3] >= '0' && key[3] <= '9' {
+				index := int(key[3] - '0')
+				if index >= len(expected.Security.Devices) {
+					return fmt.Errorf("HOLD: guest %s has an undeclared device allowance %s", expected.Name, key)
+				}
+			}
+		}
+	}
 	if expected.Owner == "boetticher/core/portal" {
 		if !hasOwnerTag(currentTags(current), model.TagCorePortal) {
 			return fmt.Errorf("HOLD: guest %s lacks canonical ownership proof %q", expected.Name, model.TagCorePortal)
@@ -1523,6 +1698,21 @@ func validateExistingGuestIdentity(current map[string]any, expected GuestPlan) e
 		}
 	}
 	return nil
+}
+
+func observedTruthy(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case float64:
+		return typed == 1
+	case int:
+		return typed == 1
+	case string:
+		return typed == "1" || strings.EqualFold(typed, "true")
+	default:
+		return false
+	}
 }
 
 func artifactDescription(artifact model.Artifact) string {

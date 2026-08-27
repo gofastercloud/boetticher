@@ -37,6 +37,40 @@ func runModule(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 }
 
+// runModules is the registry-driven plural namespace for first-party module
+// operations. The lifecycle implementation remains the established generic
+// module path so module-specific commands cannot acquire a second deploy
+// engine or different ownership semantics.
+func runModules(args []string, out interface{ Write([]byte) (int, error) }) error {
+	if len(args) == 0 {
+		return errors.New("usage: boetticher modules list|MODULE show|plan|enable|disable|status|purge")
+	}
+	if args[0] == "list" {
+		return runModuleList(args[1:], out)
+	}
+	if len(args) < 2 {
+		return errors.New("usage: boetticher modules MODULE show|plan|enable|disable|status|purge")
+	}
+	name, command := args[0], args[1]
+	forward := append([]string{name}, args[2:]...)
+	switch command {
+	case "show":
+		return runModuleShow(forward, out)
+	case "plan":
+		return runModulePlan(forward, out)
+	case "enable":
+		return runModuleChange(forward, out, true)
+	case "disable":
+		return runModuleChange(forward, out, false)
+	case "status":
+		return runModuleStatus(forward, out)
+	case "purge":
+		return runModuleChange(append(forward, "--purge"), out, false)
+	default:
+		return fmt.Errorf("unknown module command %q", command)
+	}
+}
+
 func moduleSite(args []string, name string) (string, *flag.FlagSet, *bool, *bool, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

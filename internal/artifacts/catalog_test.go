@@ -500,7 +500,7 @@ func TestArtifactDefinitionDigestBindsBuildInputs(t *testing.T) {
 
 func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	root := filepath.Join("..", "..", "images")
-	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "dns/adguard/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "portal/image.yaml"}
+	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "dns/adguard/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "portal/image.yaml", "tailnet-router/image.yaml", "litellm/image.yaml"}
 	for _, relative := range paths {
 		data, err := os.ReadFile(filepath.Join(root, relative))
 		if err != nil {
@@ -570,6 +570,52 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	if !strings.Contains(string(firewall), "debian-13-genericcloud-amd64-20260327-2429.qcow2") || !strings.Contains(string(firewall), "sha512:") || strings.Contains(string(firewall), "/daily/latest/") {
 		t.Fatal("firewall image does not pin its Debian 13 VM input")
 	}
+	tailnet, err := os.ReadFile(filepath.Join(root, "tailnet-router", "image.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"name: boetticher-tailnet-router",
+		"version: 1.0.0",
+		"version: 1.76.6",
+		"signing_key_sha256: 3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39",
+		"advertise_routes: 10.10.0.0/16",
+		"advertise_exit_node: false",
+	} {
+		if !strings.Contains(string(tailnet), required) {
+			t.Fatalf("tailnet-router image definition is missing %q", required)
+		}
+	}
+	litellm, err := os.ReadFile(filepath.Join(root, "litellm", "image.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"name: boetticher-litellm",
+		"version: 1.0.0",
+		"python: 3.13.5-1",
+		"python_venv: 3.13.5-1",
+		"pip: 25.1.1+dfsg-1",
+		"litellm: 1.74.9",
+		"nginx: 1.26.3-3+deb13u7",
+		"dependency_lock: requirements.lock",
+		"backend_bind: 127.0.0.1:4000",
+		"mtls_required: true",
+	} {
+		if !strings.Contains(string(litellm), required) {
+			t.Fatalf("LiteLLM image definition is missing %q", required)
+		}
+	}
+	lock, err := os.ReadFile(filepath.Join(root, "litellm", "runtime", "requirements.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(lock), "litellm==1.74.9") || !strings.Contains(string(lock), "--hash=sha256:") {
+		t.Fatal("LiteLLM dependency lock is not transitive and hash pinned")
+	}
+	if !strings.Contains(string(buildScript), "build_tailnet_router") || !strings.Contains(string(buildScript), "build_litellm") || !strings.Contains(string(buildScript), "--require-hashes") || !strings.Contains(string(buildScript), "rm -f \"$rootfs/etc/nginx/sites-enabled/default\"") {
+		t.Fatal("first-party appliance build paths are incomplete or do not enforce the dependency lock")
+	}
 }
 
 func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
@@ -592,7 +638,7 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(buildScript), "base_packages=$(awk") || !strings.Contains(string(buildScript), "--include=\"$base_packages\"") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Check-Valid-Until=false") || !strings.Contains(string(buildScript), "debian-security-snapshot.sources") {
+	if !strings.Contains(string(buildScript), "base_packages=$(awk") || !strings.Contains(string(buildScript), "--include=\"$base_packages\"") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Check-Valid-Until=false") || !strings.Contains(string(buildScript), "debian-security-snapshot.sources") || !strings.Contains(string(buildScript), "apt-get upgrade --yes --no-install-recommends") {
 		t.Fatal("base builder does not use the pinned Debian snapshot")
 	}
 	if !strings.Contains(string(buildScript), `dpkg-query -W -f='\${binary:Package}\\t\${Version}\\n'`) {
@@ -700,6 +746,11 @@ func TestApplianceBootstrapInputsContainNoOperatorKeyOrSiteState(t *testing.T) {
 		t.Fatal(err)
 	}
 	buildText := string(buildScript)
+	for _, required := range []string{`chroot "$rootfs" chown root:root /etc/sudoers.d/boetticher`, `--run-command 'chown root:root /etc/sudoers.d/boetticher; chmod 0440 /etc/sudoers.d/boetticher'`} {
+		if !strings.Contains(buildText, required) {
+			t.Fatalf("image build does not reset sudoers ownership: missing %q", required)
+		}
+	}
 	sudoers, err := os.ReadFile(filepath.Join(root, "base", "runtime", "boetticher.sudoers"))
 	if err != nil {
 		t.Fatal(err)
@@ -723,8 +774,8 @@ func TestBaseBuildRemovesBakedSSHHostKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(buildScript), `rm -f "$rootfs"/etc/ssh/ssh_host_*`) || !strings.Contains(string(buildScript), `rm -f "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"`) {
-		t.Fatal("base build does not remove generated SSH host keys before packaging")
+	if !strings.Contains(string(buildScript), `rm -f "$rootfs"/etc/ssh/ssh_host_*`) || !strings.Contains(string(buildScript), `rm -f "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"`) || !strings.Contains(string(buildScript), `package_lxc()`) {
+		t.Fatal("image build does not remove generated private identity material before packaging")
 	}
 	if strings.Contains(string(buildScript), `rm -f "$rootfs/etc/ssh/ssh_host_*"`) {
 		t.Fatal("base build quotes the SSH host-key glob and leaves baked keys behind")
@@ -762,7 +813,7 @@ func TestBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {
 		}
 		entries[header.Name] = true
 	}
-	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "cmd/qualify-artifact/main.go"} {
+	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "images/tailnet-router/image.yaml", "images/litellm/runtime/requirements.lock", "cmd/qualify-artifact/main.go"} {
 		if !entries[required] {
 			t.Fatalf("archive omitted public build input %s", required)
 		}

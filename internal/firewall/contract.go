@@ -32,8 +32,36 @@ func RenderExternalContract(s model.Site, plan Plan) (string, error) {
 	for _, zone := range s.Normalize().Network.Zones {
 		fmt.Fprintf(&b, "- `%s` via `%s` on VLAN %d (`%s`, semantic type `%s`).\n", zone.Network, zone.Gateway, zone.VLAN, zone.Name, zone.Type)
 	}
-	b.WriteString("- Module-advertised routes: none in the Core-only contract. Any later module route is listed explicitly in its composed contract.\n")
+	advertised := false
+	for _, declaration := range s.Declarations {
+		for _, route := range declaration.AdvertisedRoutes {
+			if !advertised {
+				b.WriteString("- Module-advertised routes:\n")
+				advertised = true
+			}
+			fmt.Fprintf(&b, "  - `%s` for module `%s`.\n", route, declaration.Module)
+		}
+	}
+	if !advertised {
+		b.WriteString("- Module-advertised routes: none in the Core-only contract. Any later module route is listed explicitly in its composed contract.\n")
+	}
 	b.WriteString("- Return routing: responses to fixed site CIDRs and any module-advertised route must return through the corresponding external-gateway route and the TRANSIT gateway; asymmetric return paths are not accepted.\n\n")
+	for _, declaration := range s.Declarations {
+		for _, route := range declaration.ReturnRouting {
+			fmt.Fprintf(&b, "- Module `%s` return-routing requirement: %s\n", declaration.Module, route)
+		}
+	}
+	if len(s.Declarations) > 0 {
+		b.WriteString("\n## Composed module contracts\n\n")
+	}
+	for _, declaration := range s.Declarations {
+		switch declaration.Module {
+		case "tailnet-router":
+			b.WriteString("### tailnet-router\n\n- Address: `10.10.5.10` on TRANSIT (`10.10.5.0/24`, gateway `10.10.5.1`).\n- Advertised route: `10.10.0.0/16`; Tailscale route approval is an operator action.\n- Subnet-route SNAT: enabled.\n- Tailscale runtime: `accept-dns=false`.\n- Permitted internal destinations: LiteLLM HTTPS, portal HTTPS, and monitoring HTTPS only, plus DNS/NTP and required Tailscale control/DERP egress.\n- Explicit deny expectations: TRUSTED, SANDBOX, MGMT, Proxmox API, SSH, arbitrary SERVERS workloads, and Internet exit-node behavior remain denied.\n- Required return routing: Tailnet traffic for `10.10.0.0/16` returns through the TRANSIT gateway.\n\n")
+		case "litellm":
+			b.WriteString("### litellm\n\n- Address: `10.10.20.60` in SERVERS.\n- Frontend: HTTPS on `443` with required client certificate; no plaintext listener.\n- Backend: loopback-only `127.0.0.1:4000`.\n- Outbound: only the configured upstream HTTPS endpoint(s), plus DNS/NTP as required; unknown Internet destinations remain denied.\n\n")
+		}
+	}
 	b.WriteString("\n## Required behavior\n\n")
 	b.WriteString("- Route the six fixed IPv4 networks and provide upstream Internet/NAT as appropriate to the site.\n")
 	b.WriteString("- Keep the inter-zone policy in this document: SANDBOX cannot reach TRUSTED, SERVERS, INFRA, or MGMT; ordinary platform administration is explicit; Internet egress follows the generated policy.\n")
@@ -58,7 +86,17 @@ func RenderExternalContract(s model.Site, plan Plan) (string, error) {
 		if len(rule.Ports) > 0 {
 			ports = " (" + strings.Join(rule.Ports, ", ") + ")"
 		}
-		fmt.Fprintf(&b, "- **%s:** `%s` -> `%s` `%s` %s%s\n", rule.Action, rule.From, rule.To, rule.Protocol, ports, "")
+		extra := ""
+		if rule.SourceCIDR != "" {
+			extra += " source=" + rule.SourceCIDR
+		}
+		if rule.DestinationCIDR != "" {
+			extra += " destination=" + rule.DestinationCIDR
+		}
+		if rule.DestinationHost != "" {
+			extra += " endpoint=" + rule.DestinationHost
+		}
+		fmt.Fprintf(&b, "- **%s:** `%s` -> `%s` `%s` %s%s%s\n", rule.Action, rule.From, rule.To, rule.Protocol, ports, extra, "")
 	}
 	b.WriteString("\n## Required denies\n\n")
 	for _, rule := range plan.Rules {

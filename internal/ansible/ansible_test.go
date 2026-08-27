@@ -259,3 +259,54 @@ func TestPowerDNSBindsEachDNSGuestAddressAlongsideLoopback(t *testing.T) {
 		}
 	}
 }
+
+func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
+	tests := []struct {
+		role      string
+		required  []string
+		forbidden []string
+	}{
+		{
+			role: "tailnet-router",
+			required: []string{
+				"boetticher_appliance_artifact",
+				"ExecStartPost=/usr/lib/boetticher/tailscale-router-bootstrap",
+				"/var/lib/tailscale",
+				"--accept-dns=false",
+				"--advertise-routes=10.10.0.0/16",
+				"--snat-subnet-routes=true",
+			},
+			forbidden: []string{"advertise-exit-node", "privileged: true", "ansible.builtin.apt:"},
+		},
+		{
+			role: "litellm",
+			required: []string{
+				"boetticher_appliance_artifact",
+				"no_log: true",
+				"ssl_verify_client on;",
+				"proxy_pass http://127.0.0.1:4000;",
+				"listen 10.10.20.60:443 ssl;",
+				"proxy_pass http://127.0.0.1:4000;",
+			},
+			forbidden: []string{"listen 10.10.20.60:80", "api_key: {{", "ansible.builtin.get_url:"},
+		},
+	}
+	for _, test := range tests {
+		path := filepath.Join("..", "..", "ansible", "roles", test.role, "tasks", "main.yml")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		for _, required := range test.required {
+			if !strings.Contains(text, required) {
+				t.Errorf("%s role is missing bounded runtime contract %q", test.role, required)
+			}
+		}
+		for _, forbidden := range test.forbidden {
+			if strings.Contains(text, forbidden) {
+				t.Errorf("%s role contains forbidden runtime contract %q", test.role, forbidden)
+			}
+		}
+	}
+}

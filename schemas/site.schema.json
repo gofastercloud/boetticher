@@ -30,6 +30,67 @@
       ],
       "type": "object"
     },
+    "LiteLLMModelConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "alias": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "upstream": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "alias",
+        "upstream",
+        "model"
+      ],
+      "type": "object"
+    },
+    "LiteLLMModuleConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "models": {
+          "items": {
+            "$ref": "#/$defs/LiteLLMModelConfig"
+          },
+          "type": "array"
+        },
+        "upstreams": {
+          "items": {
+            "$ref": "#/$defs/LiteLLMUpstreamConfig"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "LiteLLMUpstreamConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "api_key_secret": {
+          "type": "string"
+        },
+        "base_url": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "base_url",
+        "api_key_secret"
+      ],
+      "type": "object"
+    },
     "MandatoryModuleConfig": {
       "additionalProperties": false,
       "properties": {},
@@ -44,10 +105,16 @@
         "firewall": {
           "$ref": "#/$defs/ToggleModuleConfig"
         },
+        "litellm": {
+          "$ref": "#/$defs/LiteLLMModuleConfig"
+        },
         "logging": {
           "$ref": "#/$defs/MandatoryModuleConfig"
         },
         "monitoring": {
+          "$ref": "#/$defs/ToggleModuleConfig"
+        },
+        "tailnet-router": {
           "$ref": "#/$defs/ToggleModuleConfig"
         }
       },

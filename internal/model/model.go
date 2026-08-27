@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -80,6 +81,7 @@ const (
 
 var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
 var networkPortPattern = regexp.MustCompile(`^[0-9]{1,5}(?:-[0-9]{1,5})?$`)
+var providerModelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$`)
 
 // ModuleOwnershipTag returns the single Proxmox-safe ownership proof used for
 // every first-party module guest. Invalid names return an empty tag so callers
@@ -221,8 +223,10 @@ type Component struct {
 }
 
 type ModuleConfig struct {
-	Enabled  *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
+	Enabled   *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Provider  string                  `yaml:"provider,omitempty" json:"provider,omitempty"`
+	Upstreams []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	Models    []LiteLLMModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
 }
 
 type DNSProvider string
@@ -296,9 +300,24 @@ type SecretDeclaration struct {
 	Persistent bool   `json:"persistent"`
 }
 
+type DeviceRequirement struct {
+	Path   string `json:"path"`
+	Type   string `json:"type"`
+	Major  int    `json:"major"`
+	Minor  int    `json:"minor"`
+	Access string `json:"access"`
+}
+
+type GuestSecurityDeclaration struct {
+	Unprivileged bool                `json:"unprivileged"`
+	Devices      []DeviceRequirement `json:"devices,omitempty"`
+	Capabilities []string            `json:"capabilities,omitempty"`
+}
+
 type NetworkIntent struct {
 	Source      string   `json:"source"`
 	Destination string   `json:"destination"`
+	Endpoint    string   `json:"endpoint,omitempty"`
 	Protocol    string   `json:"protocol"`
 	Ports       []string `json:"ports,omitempty"`
 	Direction   string   `json:"direction"`
@@ -339,18 +358,21 @@ type PortalEntry struct {
 }
 
 type ModuleDeclaration struct {
-	Module         string                        `json:"module"`
-	Artifact       Artifact                      `json:"artifact"`
-	Guests         []Component                   `json:"guests,omitempty"`
-	Persistent     []PersistentState             `json:"persistent,omitempty"`
-	Volumes        []PersistentVolumeDeclaration `json:"volumes,omitempty"`
-	Secrets        []SecretDeclaration           `json:"secrets,omitempty"`
-	NetworkIntents []NetworkIntent               `json:"network_intents,omitempty"`
-	DNSRecords     []DNSRecord                   `json:"dns_records,omitempty"`
-	Certificates   []CertificateRequest          `json:"certificates,omitempty"`
-	Monitoring     []MonitoringDeclaration       `json:"monitoring,omitempty"`
-	Backups        []BackupDeclaration           `json:"backups,omitempty"`
-	Portal         []PortalEntry                 `json:"portal,omitempty"`
+	Module           string                        `json:"module"`
+	Artifact         Artifact                      `json:"artifact"`
+	Guests           []Component                   `json:"guests,omitempty"`
+	Persistent       []PersistentState             `json:"persistent,omitempty"`
+	Volumes          []PersistentVolumeDeclaration `json:"volumes,omitempty"`
+	Secrets          []SecretDeclaration           `json:"secrets,omitempty"`
+	NetworkIntents   []NetworkIntent               `json:"network_intents,omitempty"`
+	DNSRecords       []DNSRecord                   `json:"dns_records,omitempty"`
+	Certificates     []CertificateRequest          `json:"certificates,omitempty"`
+	Monitoring       []MonitoringDeclaration       `json:"monitoring,omitempty"`
+	Backups          []BackupDeclaration           `json:"backups,omitempty"`
+	Portal           []PortalEntry                 `json:"portal,omitempty"`
+	Security         GuestSecurityDeclaration      `json:"security,omitempty"`
+	AdvertisedRoutes []string                      `json:"advertised_routes,omitempty"`
+	ReturnRouting    []string                      `json:"return_routing,omitempty"`
 }
 
 type RetainedModule struct {
@@ -522,6 +544,11 @@ func (s Site) Validate() error {
 	}
 	if s.SecretMetadata.InstallationID == "" || s.SecretMetadata.AgeRecipient == "" {
 		return fmt.Errorf("secret_metadata must contain installation_id and public age_recipient")
+	}
+	if litellm, ok := s.ModuleConfig["litellm"]; ok && (litellm.Enabled != nil && *litellm.Enabled || len(litellm.Upstreams) > 0 || len(litellm.Models) > 0) {
+		if err := ValidateLiteLLMConfig(litellm); err != nil {
+			return err
+		}
 	}
 	expectedZones := map[string]struct {
 		typ     ZoneType
@@ -760,6 +787,32 @@ func validateDeclarations(s Site) error {
 				return fmt.Errorf("module %s network intent: %w", declaration.Module, err)
 			}
 		}
+		for _, route := range declaration.AdvertisedRoutes {
+			if _, network, err := net.ParseCIDR(route); err != nil || network.String() != route {
+				return fmt.Errorf("module %s has invalid advertised route %q", declaration.Module, route)
+			}
+		}
+		for _, secret := range declaration.Secrets {
+			if !modelTokenPattern.MatchString(secret.Name) || secret.Purpose == "" || secret.Consumer == "" || secret.Delivery == "" || strings.ContainsAny(secret.Purpose+secret.Consumer+secret.Delivery, "\r\n") {
+				return fmt.Errorf("module %s has invalid secret declaration %q", declaration.Module, secret.Name)
+			}
+		}
+		if !declaration.Security.Unprivileged && len(declaration.Security.Devices) != 0 {
+			return fmt.Errorf("module %s declares devices without an unprivileged security contract", declaration.Module)
+		}
+		if len(declaration.Security.Capabilities) != 0 {
+			return fmt.Errorf("module %s requests unrelated Linux capabilities", declaration.Module)
+		}
+		if declaration.Security.Unprivileged {
+			for _, device := range declaration.Security.Devices {
+				if device.Path == "" || device.Type == "" || device.Major < 0 || device.Minor < 0 || device.Access == "" {
+					return fmt.Errorf("module %s has an incomplete device requirement", declaration.Module)
+				}
+				if strings.ContainsAny(device.Path, "\r\n '") || device.Type != "c" || device.Access != "rwm" {
+					return fmt.Errorf("module %s has an unsafe device requirement for %s", declaration.Module, device.Path)
+				}
+			}
+		}
 		for _, volume := range declaration.Volumes {
 			if volume.Module != declaration.Module || volume.Guest == "" || volume.Name == "" || volume.SizeGiB <= 0 || volume.MountPath == "" {
 				return fmt.Errorf("module %s has invalid persistent volume %q", declaration.Module, volume.Name)
@@ -833,6 +886,12 @@ func validateNetworkIntent(intent NetworkIntent) error {
 	}
 	if intent.Purpose == "" || strings.ContainsAny(intent.Purpose, "\r\n") {
 		return errors.New("purpose is required and must not contain newlines")
+	}
+	if intent.Endpoint != "" {
+		parsed, err := url.Parse(intent.Endpoint)
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return fmt.Errorf("endpoint must be a valid HTTPS URL")
+		}
 	}
 	for _, port := range intent.Ports {
 		if !networkPortPattern.MatchString(port) {

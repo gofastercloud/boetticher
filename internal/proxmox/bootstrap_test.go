@@ -330,7 +330,7 @@ func TestConfigureIdentitiesLocksProxmoxLabadminAndInstallsBoundedSudo(t *testin
 	if err := ConfigureIdentities(context.Background(), runner, "192.0.2.10", "root", key, []string{"lab-fw-01:22"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"passwd --lock labadmin", "/etc/sudoers.d/boetticher-labadmin", "visudo -cf /etc/sudoers", "/bin/sh -c * /usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*", "Match User lab-jump"} {
+	for _, required := range []string{"passwd --lock labadmin", "/etc/sudoers.d/boetticher-labadmin", "visudo -cf /etc/sudoers", "/bin/sh -c * /usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*", "chown lab-jump:lab-jump /home/lab-jump.authorized_keys", "AllowUsers labadmin lab-jump", "Match User lab-jump"} {
 		if !strings.Contains(runner.command, required) {
 			t.Fatalf("identity bootstrap missing %q: %s", required, runner.command)
 		}

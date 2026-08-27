@@ -27,7 +27,10 @@ func composeDeclarations(site model.Site, resolved []ResolvedModule) ([]model.Mo
 
 func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleDeclaration, error) {
 	name := definition.Name
-	components := moduleGuestProjections(definition)
+	components, err := moduleGuestProjections(definition, site)
+	if err != nil {
+		return model.ModuleDeclaration{}, err
+	}
 	provider := ""
 	if name == "dns" {
 		provider = site.ModuleConfig["dns"].Provider
@@ -66,10 +69,57 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		declaration.NetworkIntents = []model.NetworkIntent{{Source: "boetticher-managed-endpoints", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"}}
 		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "logs." + site.Network.Domain, SANs: []string{"logs." + site.Network.Domain}, Consumer: "systemd-journal-remote"})
 		declaration.Portal = []model.PortalEntry{{Name: "logging", Description: "Central systemd journal collection", Docs: []string{"docs/operations/logs.md"}}}
+	case "tailnet-router":
+		declaration.Secrets = []model.SecretDeclaration{{Name: "tailscale_auth_key", Purpose: "initial Tailscale registration or re-registration", Consumer: "tailscaled", Generation: "operator-supplied", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file"}}
+		declaration.AdvertisedRoutes = []string{"10.10.0.0/16"}
+		declaration.ReturnRouting = []string{"Tailnet return traffic for 10.10.0.0/16 must use the TRANSIT gateway 10.10.5.1"}
+		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true, Devices: []model.DeviceRequirement{{Path: "/dev/net/tun", Type: "c", Major: 10, Minor: 200, Access: "rwm"}}}
+		declaration.NetworkIntents = []model.NetworkIntent{
+			{Source: "lab-tailnet-01", Destination: "litellm", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "routed LiteLLM HTTPS access"},
+			{Source: "lab-tailnet-01", Destination: "portal", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "routed portal HTTPS access"},
+			{Source: "lab-tailnet-01", Destination: "monitor", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "routed monitoring HTTPS access"},
+			{Source: "lab-tailnet-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Direction: "egress", Purpose: "Tailscale router DNS resolution"},
+			{Source: "lab-tailnet-01", Destination: "dns", Protocol: "udp", Ports: []string{"123"}, Direction: "egress", Purpose: "Tailscale router time synchronisation"},
+			{Source: "lab-tailnet-01", Destination: "tailscale-control-plane", Endpoint: "https://controlplane.tailscale.com", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "Tailscale control-plane operation"},
+			{Source: "lab-tailnet-01", Destination: "tailscale-derp", Endpoint: "https://derp.tailscale.com", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "Tailscale DERP operation"},
+		}
+		if IsEnabled(site, "logging") {
+			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-tailnet-01", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"})
+		}
+		declaration.Monitoring = append(declaration.Monitoring, model.MonitoringDeclaration{Name: "tailscaled", Kind: "service", Target: "lab-tailnet-01", Checks: []string{"tailscaled", "route-advertisement"}, Description: "Tailscale daemon and advertised subnet route health"})
+		declaration.Portal = []model.PortalEntry{{Name: "tailnet-router", Description: "Tailscale subnet router; Internet exit-node behavior is not enabled", Docs: []string{"docs/modules/tailnet-router.md"}}}
+	case "litellm":
+		config := site.ModuleConfig[name]
+		for _, upstream := range config.Upstreams {
+			declaration.Secrets = appendUniqueSecret(declaration.Secrets, model.SecretDeclaration{Name: upstream.APIKeySecret, Purpose: "server-side credential for the configured LiteLLM upstream", Consumer: "litellm", Generation: "operator-supplied", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file"})
+			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-litellm-01", Destination: upstream.Name, Endpoint: upstream.BaseURL, Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "configured LiteLLM upstream HTTPS access"})
+		}
+		declaration.NetworkIntents = append(declaration.NetworkIntents,
+			model.NetworkIntent{Source: "lab-litellm-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Direction: "egress", Purpose: "LiteLLM DNS resolution"},
+			model.NetworkIntent{Source: "lab-litellm-01", Destination: "dns", Protocol: "udp", Ports: []string{"123"}, Direction: "egress", Purpose: "LiteLLM time synchronisation"},
+		)
+		if IsEnabled(site, "logging") {
+			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-litellm-01", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"})
+		}
+		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "litellm." + site.Network.Domain, SANs: []string{"litellm." + site.Network.Domain, "ai." + site.Network.Domain}, Consumer: "nginx"})
+		declaration.Monitoring = append(declaration.Monitoring,
+			model.MonitoringDeclaration{Name: "nginx", Kind: "service", Target: "lab-litellm-01", Checks: []string{"nginx", "https", "mtls"}, Description: "LiteLLM mTLS frontend health"},
+			model.MonitoringDeclaration{Name: "litellm", Kind: "service", Target: "lab-litellm-01", Checks: []string{"litellm", "loopback"}, Description: "LiteLLM loopback backend health"},
+		)
+		declaration.Portal = []model.PortalEntry{{Name: "litellm", Description: "mTLS-protected provider-neutral AI API aliases", URLs: []string{"https://litellm." + site.Network.Domain}, Docs: []string{"docs/modules/litellm.md"}}}
 	default:
 		return model.ModuleDeclaration{}, fmt.Errorf("no declaration provider for first-party module %q", name)
 	}
 	return declaration, nil
+}
+
+func appendUniqueSecret(values []model.SecretDeclaration, secret model.SecretDeclaration) []model.SecretDeclaration {
+	for _, existing := range values {
+		if existing.Name == secret.Name {
+			return values
+		}
+	}
+	return append(values, secret)
 }
 
 func persistentFor(module, guest string) []model.PersistentState {
@@ -81,6 +131,10 @@ func persistentFor(module, guest string) []model.PersistentState {
 		return []model.PersistentState{identity, {Name: "postgresql-data", Guest: guest, Path: "/var/lib/postgresql", Kind: "application-database", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	case "firewall":
 		return []model.PersistentState{identity, {Name: "kea-leases", Guest: guest, Path: "/var/lib/kea", Kind: "lease-state", Backup: true, Sensitive: false, Replacement: "retain-across-rootfs-replacement"}}
+	case "tailnet-router":
+		return []model.PersistentState{identity, {Name: "tailscale-state", Guest: guest, Path: "/var/lib/tailscale", Kind: "node-identity", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
+	case "litellm":
+		return []model.PersistentState{identity, {Name: "tls-identity", Guest: guest, Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	default:
 		return []model.PersistentState{identity}
 	}
@@ -98,6 +152,10 @@ func volumesFor(module, guest string) []model.PersistentVolumeDeclaration {
 		return []model.PersistentVolumeDeclaration{identity, volume("postgresql-data", "/var/lib/postgresql", 16, true)}
 	case "firewall":
 		return []model.PersistentVolumeDeclaration{identity, volume("kea-leases", "/var/lib/kea", 4, true)}
+	case "tailnet-router":
+		return []model.PersistentVolumeDeclaration{identity, volume("tailscale-state", "/var/lib/tailscale", 4, true)}
+	case "litellm":
+		return []model.PersistentVolumeDeclaration{identity, volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true)}
 	case "logging":
 		// Central journals are a bounded secondary evidence cache. The logging
 		// appliance remains in the platform backup set, while this high-churn

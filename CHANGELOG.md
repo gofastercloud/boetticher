@@ -7,6 +7,33 @@ project, so releases can make clean breaks while the design is settling.
 
 ### Fixed
 
+- Encode the managed firewall's QEMU cloud-init SSH key in the format required
+  by the Proxmox 9.2 API.
+- Bound QEMU persistent-disk serials to Proxmox's 36-character limit and migrate
+  the deterministic legacy serial on retry.
+- Match Proxmox's expanded persistent-disk volume identifiers when validating
+  or resuming an owned QEMU guest.
+- Upload qualified QEMU appliance images through Proxmox's supported `import`
+  content class before importing them into the selected VM storage.
+- Send streamed Proxmox artifact uploads with a computed `Content-Length`,
+  which the pveproxy upload endpoint requires.
+- Emit upload checksum metadata in the field order expected by pveproxy.
+- Revalidate a checksum-less partial QEMU import by re-uploading the qualified
+  local bytes before retrying deployment.
+- Use the existing authenticated Proxmox SSH path for cloud-init snippets;
+  PVE 9.2 does not accept `snippets` through the storage upload API.
+- Select the local operator private key for deploy-time Proxmox and appliance
+  SSH when the site does not override `ssh_identity_file`.
+- Include the managed `labadmin` account in the Proxmox SSH allow-list during
+  bootstrap so routine bastion access does not depend on root.
+- Include the managed `lab-jump` bastion account in the same allow-list so
+  gateway readiness can use the documented Proxmox jump path.
+- Set the managed bastion authorized-key file ownership so privilege-separated
+  sshd can read it on the Proxmox host.
+- Reset appliance sudoers ownership during image construction so sudo can run
+  its no-password bootstrap checks after deployment.
+- Resume an owned running gateway without issuing a duplicate Proxmox start
+  request after a prior deployment attempt.
 - Discover the hosted builder address through the QEMU guest agent after
   confirming the guest reaches userspace.
 - Start the hosted builder guest agent before the remaining qualification
@@ -54,6 +81,9 @@ project, so releases can make clean breaks while the design is settling.
   making package resolution unpinned.
 - Remove Debian's generated snakeoil private key from appliance images before
   Trivy qualification; endpoint keys remain deployment-time identity material.
+- Upgrade pre-existing packages in the imported firewall cloud image before
+  installing the firewall contract, so pinned Debian security fixes are not
+  skipped for already-installed packages.
 
 ## [0.3.32] - 2026-08-27
 

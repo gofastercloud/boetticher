@@ -237,6 +237,25 @@ func TestDestroyQEMUPurgesBuilderConfigurationAndUnreferencedDisks(t *testing.T)
 	}
 }
 
+func TestDestroyLXCPurgesConfigurationAndUnreferencedVolumes(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api2/json/nodes/node/lxc/200" {
+			t.Fatalf("unexpected LXC destruction request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("purge") != "1" || r.URL.Query().Get("destroy-unreferenced-disks") != "1" {
+			t.Fatalf("LXC destruction did not request bounded cleanup: %v", r.URL.Query())
+		}
+		return response([]byte(`{"data":null}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.DestroyLXC(context.Background(), "node", 200); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DestroyLXC(context.Background(), "node", 0); err == nil {
+		t.Fatal("invalid LXC destruction identity was accepted")
+	}
+}
+
 func TestQEMUStatusUsesLiveStatusEndpoint(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/node/qemu/190/status/current" {
@@ -248,6 +267,19 @@ func TestQEMUStatusUsesLiveStatusEndpoint(t *testing.T) {
 	status, err := client.QEMUStatus(context.Background(), "node", 190)
 	if err != nil || status != "running" {
 		t.Fatalf("QEMUStatus() = %q, %v", status, err)
+	}
+}
+
+func TestEnsureVMRunningDoesNotRestartRunningVM(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/node/qemu/100/status/current" {
+			t.Fatalf("unexpected request while checking running VM: %s %s", r.Method, r.URL.Path)
+		}
+		return response([]byte(`{"data":{"status":"running"}}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.EnsureVMRunning(context.Background(), "node", 100); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -308,6 +340,9 @@ func TestUploadStorageFileUsesMultipartArtifactContract(t *testing.T) {
 		if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data;") {
 			t.Fatalf("upload was not multipart: %q", r.Header.Get("Content-Type"))
 		}
+		if r.ContentLength <= 0 || len(r.TransferEncoding) != 0 {
+			t.Fatalf("upload framing is not length-delimited: content-length=%d transfer-encoding=%v", r.ContentLength, r.TransferEncoding)
+		}
 		if err := r.ParseMultipartForm(1 << 20); err != nil {
 			t.Fatal(err)
 		}
@@ -353,6 +388,9 @@ func TestUploadStorageFileStreamsLargeArtifactBody(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.GetBody != nil {
 			t.Fatal("streamed multipart request unexpectedly exposes a replayable buffered body")
+		}
+		if r.ContentLength <= 0 || len(r.TransferEncoding) != 0 {
+			t.Fatalf("large upload framing is not length-delimited: content-length=%d transfer-encoding=%v", r.ContentLength, r.TransferEncoding)
 		}
 		if _, err := io.Copy(io.Discard, r.Body); err != nil {
 			t.Fatal(err)
