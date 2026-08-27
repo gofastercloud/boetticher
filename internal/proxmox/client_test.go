@@ -431,7 +431,7 @@ func TestDownloadURLUsesPinnedChecksumWithoutShellArguments(t *testing.T) {
 			t.Fatal(err)
 		}
 		for key, want := range map[string]string{
-			"content": "iso", "filename": "debian-13.qcow2", "url": "https://images.example/debian-13.qcow2", "checksum": checksum, "checksum-algorithm": "sha512",
+			"content": "import", "filename": "debian-13.qcow2", "url": "https://images.example/debian-13.qcow2", "checksum": checksum, "checksum-algorithm": "sha512",
 		} {
 			if got := r.Form.Get(key); got != want {
 				t.Errorf("%s = %q, want %q", key, got, want)

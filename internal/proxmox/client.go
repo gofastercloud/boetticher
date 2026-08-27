@@ -642,7 +642,7 @@ func (c *Client) DownloadURL(ctx context.Context, node, storage, filename, image
 	}
 	var upid string
 	if err := c.Post(ctx, path.Join("/nodes", node, "storage", storage, "download-url"), url.Values{
-		"content":            {"iso"},
+		"content":            {"import"},
 		"filename":           {filename},
 		"url":                {imageURL},
 		"checksum":           {checksum},
@@ -685,7 +685,7 @@ func (c *Client) WaitTask(ctx context.Context, node, upid string) error {
 }
 
 func (c *Client) EnsureCloudImage(ctx context.Context, node, storage, filename, imageURL, checksum string) (string, error) {
-	contents, err := c.StorageContent(ctx, node, storage, "iso")
+	contents, err := c.StorageContent(ctx, node, storage, "import")
 	if err != nil {
 		return "", err
 	}
@@ -712,7 +712,7 @@ func (c *Client) EnsureCloudImage(ctx context.Context, node, storage, filename, 
 	if err := c.WaitTask(ctx, node, upid); err != nil {
 		return "", err
 	}
-	contents, err = c.StorageContent(ctx, node, storage, "iso")
+	contents, err = c.StorageContent(ctx, node, storage, "import")
 	if err != nil {
 		return "", err
 	}

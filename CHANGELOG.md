@@ -3,6 +3,13 @@
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 
+## [0.3.20] - 2026-08-27
+
+### Fixed
+
+- Download the pinned qcow2 builder input as PVE `import` content rather than
+  `iso` content, which rejects non-ISO filenames on PVE 9.2.
+
 ## [0.3.19] - 2026-08-27
 
 ### Fixed
