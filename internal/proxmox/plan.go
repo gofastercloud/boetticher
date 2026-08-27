@@ -72,9 +72,10 @@ type Plan struct {
 	// ArtifactFiles is controller-local evidence and is intentionally excluded
 	// from canonical model output. It maps qualified definitions to the exact
 	// bytes that may be imported into Proxmox.
-	ArtifactFiles     map[string]string `json:"-"`
-	OperatorPublicKey string            `json:"-"`
-	CloudInitFiles    CloudInitFiles    `json:"-"`
+	ArtifactFiles        map[string]string `json:"-"`
+	OperatorPublicKey    string            `json:"-"`
+	CloudInitFiles       CloudInitFiles    `json:"-"`
+	DestructiveConfirmed bool              `json:"-"`
 }
 
 type NetworkInterface struct {
@@ -1164,8 +1165,17 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 		if kind != KindQEMU {
 			return fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, expected QEMU %s", guest.VMID, kind, guest.Name)
 		}
-		if err := validateExistingGuestIdentity(current, guest); err != nil {
+		if err := validateExistingGuestIdentityFields(current, guest); err != nil {
 			return err
+		}
+		if guestArtifactNeedsReplacement(current, guest) {
+			if !plan.DestructiveConfirmed {
+				return fmt.Errorf("HOLD: guest %s has artifact identity mismatch; appliance replacement requires --confirm", guest.Name)
+			}
+			if err := replaceQEMURootDisk(ctx, client, plan, guest); err != nil {
+				return err
+			}
+			current["description"] = artifactDescription(guest.Artifact)
 		}
 		if err := migrateLegacyQEMUPersistentVolumeSerials(ctx, client, plan, guest, current); err != nil {
 			return err
@@ -1654,16 +1664,20 @@ func validateExistingGuest(current map[string]any, expected GuestPlan) error {
 }
 
 func validateExistingGuestIdentity(current map[string]any, expected GuestPlan) error {
+	if err := validateExistingGuestIdentityFields(current, expected); err != nil {
+		return err
+	}
+	if guestArtifactNeedsReplacement(current, expected) {
+		observed, _ := current["description"].(string)
+		return fmt.Errorf("HOLD: guest %s has artifact identity %q, expected %q; appliance replacement is required", expected.Name, observed, artifactDescription(expected.Artifact))
+	}
+	return nil
+}
+
+func validateExistingGuestIdentityFields(current map[string]any, expected GuestPlan) error {
 	for key, want := range map[string]string{"name": expected.Name, "hostname": expected.Hostname} {
 		if got, ok := current[key].(string); ok && got != "" && got != want {
 			return fmt.Errorf("guest %s has unexpected %s %q, expected %q", expected.Name, key, got, want)
-		}
-	}
-	if expected.Artifact.Name != "" {
-		observed, _ := current["description"].(string)
-		wanted := artifactDescription(expected.Artifact)
-		if observed != wanted {
-			return fmt.Errorf("HOLD: guest %s has artifact identity %q, expected %q; appliance replacement is required", expected.Name, observed, wanted)
 		}
 	}
 	if expected.Security.Unprivileged {
@@ -1713,6 +1727,39 @@ func observedTruthy(value any) bool {
 	default:
 		return false
 	}
+}
+
+func guestArtifactNeedsReplacement(current map[string]any, expected GuestPlan) bool {
+	if expected.Artifact.Name == "" {
+		return false
+	}
+	observed, _ := current["description"].(string)
+	return observed != artifactDescription(expected.Artifact)
+}
+
+func replaceQEMURootDisk(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
+	status, err := client.QEMUStatus(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("inspect gateway status before appliance replacement: %w", err)
+	}
+	if status == "running" {
+		if err := client.StopVM(ctx, plan.Node, guest.VMID); err != nil {
+			return fmt.Errorf("stop gateway before appliance replacement: %w", err)
+		}
+	}
+	filename := fmt.Sprintf("%s-%s-%s.qcow2", guest.Artifact.Name, guest.Artifact.Version, guest.Artifact.Architecture)
+	source := plan.ArtifactFiles[artifactKey(guest.Artifact)]
+	if err := ensureArtifactInStorage(ctx, client, plan.Node, "local", "import", filename, guest.Artifact.ContentSHA256, source); err != nil {
+		return fmt.Errorf("prepare replacement %s artifact: %w", guest.Name, err)
+	}
+	upid, err := client.ImportDisk(ctx, plan.Node, guest.VMID, "local:import/"+filename, plan.Storage, "qcow2")
+	if err != nil {
+		return fmt.Errorf("import replacement gateway disk: %w", err)
+	}
+	if err := client.WaitTask(ctx, plan.Node, upid); err != nil {
+		return fmt.Errorf("wait for replacement gateway disk: %w", err)
+	}
+	return nil
 }
 
 func artifactDescription(artifact model.Artifact) string {

@@ -32,6 +32,8 @@ project, so releases can make clean breaks while the design is settling.
   sshd can read it on the Proxmox host.
 - Reset appliance sudoers ownership during image construction so sudo can run
   its no-password bootstrap checks after deployment.
+- Require explicit confirmation for an owned appliance rootfs replacement and
+  resume it while retaining declared persistent volumes.
 - Resume an owned running gateway without issuing a duplicate Proxmox start
   request after a prior deployment attempt.
 - Discover the hosted builder address through the QEMU guest agent after
