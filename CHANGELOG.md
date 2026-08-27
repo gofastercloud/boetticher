@@ -23,6 +23,8 @@ project, so releases can make clean breaks while the design is settling.
   failures remain diagnosable in the hosted-builder log.
 - Accept compact JSON whitespace in the artifact identity smoke check; the
   generated Go JSON is valid without a space after the field separator.
+- Invoke the Debian 13 journal-upload binary by its installed path during
+  base-image smoke checks; the systemd service name is not a PATH executable.
 
 ## [0.3.32] - 2026-08-27
 

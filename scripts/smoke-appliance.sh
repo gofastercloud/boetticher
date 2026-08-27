@@ -32,7 +32,7 @@ case "$name" in
     printf '%s\n' 'boetticher smoke check: base user and files'
     run id labadmin
     test -x "$rootfs/usr/sbin/sshd"
-    run systemd-journal-upload --version
+    run /usr/lib/systemd/systemd-journal-upload --version
     run journalctl --version
     test -d "$rootfs/etc/boetticher" -a -d "$rootfs/usr/lib/boetticher"
     test -x "$rootfs/usr/lib/boetticher/install-runtime-state"
