@@ -291,6 +291,7 @@ func TestMonitoringRolePreparesPostgreSQLTLSAndCluster(t *testing.T) {
 		"creates: /etc/ssl/private/ssl-cert-snakeoil.key",
 		"pg_ctlcluster --skip-systemctl-redirect",
 		"$(pg_lsclusters -h)",
+		"Cluster is already running.",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("monitoring role missing PostgreSQL startup prerequisite %q", expected)

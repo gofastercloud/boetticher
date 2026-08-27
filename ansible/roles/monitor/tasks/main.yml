@@ -134,7 +134,12 @@
     set -eu
     while read -r version name _port status _owner _data _log; do
       if [ "$status" != online ]; then
-        pg_ctlcluster --skip-systemctl-redirect "$version" "$name" start
+        if ! output=$(pg_ctlcluster --skip-systemctl-redirect "$version" "$name" start 2>&1); then
+          if ! printf '%s' "$output" | grep -Fq 'Cluster is already running.'; then
+            printf '%s\n' "$output" >&2
+            exit 1
+          fi
+        fi
       fi
     done <<EOF
     $(pg_lsclusters -h)
