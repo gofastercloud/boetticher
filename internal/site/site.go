@@ -34,6 +34,11 @@ func Load(dir string) (model.Site, error) {
 		return model.Site{}, err
 	}
 	s.RetainedModules = retained
+	pendingDNS, err := LoadPendingDNSDeletions(dir, s)
+	if err != nil {
+		return model.Site{}, err
+	}
+	s.PendingDNSDeletions = pendingDNS
 	return s, nil
 }
 

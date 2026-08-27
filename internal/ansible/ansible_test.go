@@ -207,9 +207,23 @@ func TestDNSRoleUsesPowerDNS49CommandNames(t *testing.T) {
 			t.Fatalf("DNS role retains obsolete PowerDNS command namespace %q", forbidden)
 		}
 	}
-	for _, expected := range []string{"pdnsutil list-all-zones", "pdnsutil create-zone", "pdnsutil replace-rrset", "pdnsutil set-meta", "pdnsutil create-secondary-zone"} {
+	for _, expected := range []string{"pdnsutil list-all-zones", "pdnsutil create-zone", "pdnsutil replace-rrset", "pdnsutil delete-rrset", "pdnsutil set-meta", "pdnsutil create-secondary-zone", "item.value", "item.name"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("DNS role missing qualified PowerDNS command %q", expected)
+		}
+	}
+}
+
+func TestFirewallDHCPTemplateProjectsExplicitReservations(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "firewall", "templates", "kea-dhcp4.conf.j2")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{"subnet.get('reservations'", "hw-address", "ip-address", "hostname"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("Kea template does not project reservation field %q", expected)
 		}
 	}
 }

@@ -88,7 +88,7 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 			portal.CheckResult{Name: "SANDBOX cannot access TRUSTED", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
 			portal.CheckResult{Name: "SANDBOX cannot access SERVERS", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
 			portal.CheckResult{Name: "SANDBOX cannot access MGMT", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
-			portal.CheckResult{Name: "TRANSIT/INFRA/SERVERS/MGMT are static-only", Status: "NOT TESTED", Detail: "requires deployed static-address and Kea evidence"},
+			portal.CheckResult{Name: "TRANSIT/INFRA/MGMT are static-only; SERVERS is reservation-only", Status: "NOT TESTED", Detail: "requires deployed static-address, reservation, and Kea evidence"},
 		)
 	} else {
 		results = append(results, portal.CheckResult{Name: "external gateway contract", Status: "STATIC PASS", Detail: "required VLAN, gateway, DHCP, DNS, NTP, and policy intent is generated"})

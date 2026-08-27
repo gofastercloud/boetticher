@@ -84,6 +84,23 @@ func TestRevisionIgnoresOperatorLocalSSHPath(t *testing.T) {
 	}
 }
 
+func TestRevisionIgnoresPendingDNSDeletionRuntimeState(t *testing.T) {
+	first := NewDefaultSite("installation", "age1example")
+	second := first
+	second.PendingDNSDeletions = []DNSDeletion{{Name: "old.lab.home.arpa", Type: "A"}}
+	firstRevision, err := first.Revision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondRevision, err := second.Revision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstRevision != secondRevision {
+		t.Fatalf("runtime DNS deletion state changed canonical revision: %s != %s", firstRevision, secondRevision)
+	}
+}
+
 func TestUnqualifiedGatewayImageIsRejected(t *testing.T) {
 	site := NewDefaultSite("installation", "age1example")
 	site.TestedVersions.Gateway = "debian-13-genericcloud-amd64-old"

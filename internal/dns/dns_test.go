@@ -15,7 +15,7 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Implementation != "PowerDNS Authoritative" || plan.PackageVersion != "4.9.17-1pdns.trixie" || len(plan.DynamicZones) != 2 || len(plan.ReverseZones) != 2 {
+	if plan.Implementation != "PowerDNS Authoritative" || plan.PackageVersion != "4.9.17-1pdns.trixie" || len(plan.DynamicZones) != 3 || len(plan.ReverseZones) != 3 {
 		t.Fatalf("unexpected DNS plan: %#v", plan)
 	}
 	if plan.RecursiveProvider != "blocky" || !plan.AuthoritativeNXDOMAINNoLeak || len(plan.RecursiveUpstreams) < 2 {
@@ -30,7 +30,7 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	if plan.DDNS.Source != "Kea D2 on lab-fw-01" || len(plan.DDNS.UpdateSources) != 1 || plan.DDNS.UpdateSources[0] != "10.10.99.1" || plan.DDNS.LeaseFailurePolicy != "lease-continues-without-DNS-registration" {
 		t.Fatalf("unexpected DDNS boundary: %#v", plan.DDNS)
 	}
-	if len(plan.AdGuardForwardZones) != 3 || len(plan.AdGuardReverseZones) != 2 {
+	if len(plan.AdGuardForwardZones) != 4 || len(plan.AdGuardReverseZones) != 3 {
 		t.Fatalf("AdGuard did not receive static and dynamic forwarding zones: %#v", plan.AdGuardForwardZones)
 	}
 	if !hasRecord(plan.StaticRecords, "proxmox.lab.home.arpa", "10.10.99.250") {
@@ -64,10 +64,13 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	if _, err := QualifiedName(site, "TRUSTED", "lab-dns-01"); err == nil {
 		t.Fatal("dynamic registration claimed a platform-owned host label")
 	}
-	for _, zone := range []string{"TRANSIT", "INFRA", "SERVERS", "MGMT"} {
+	for _, zone := range []string{"TRANSIT", "INFRA", "MGMT"} {
 		if _, err := QualifiedName(site, zone, "static-host"); err == nil {
 			t.Fatalf("static-only zone %s was accepted for dynamic registration", zone)
 		}
+	}
+	if name, err := QualifiedName(site, "SERVERS", "app-01"); err != nil || name != "app-01.servers.lab.home.arpa" {
+		t.Fatalf("SERVERS reservation name = %q, %v", name, err)
 	}
 }
 
@@ -84,6 +87,74 @@ func TestRecursiveProviderSelectionIsTypedAndProviderNeutral(t *testing.T) {
 	for _, upstream := range plan.RecursiveUpstreams {
 		if strings.Contains(upstream, "lab.home.arpa") {
 			t.Fatalf("authoritative namespace leaked into public upstreams: %q", upstream)
+		}
+	}
+}
+
+func TestUserDNSRecordsUseValueAndMayAliasDynamicNames(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	site.DNSRecords = []model.UserDNSRecord{
+		{Name: "app.lab.home.arpa", Type: "CNAME", Value: "app-01.servers.lab.home.arpa"},
+		{Name: "app-ip.lab.home.arpa", Type: "A", Value: "10.10.20.61"},
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasRecordValue(plan.StaticRecords, "app.lab.home.arpa", "CNAME", "app-01.servers.lab.home.arpa", "user") || !hasRecordValue(plan.StaticRecords, "app-ip.lab.home.arpa", "A", "10.10.20.61", "user") {
+		t.Fatalf("user DNS records were not projected: %#v", plan.StaticRecords)
+	}
+	commands := PrimaryCommandPlan(plan)
+	foundCNAME := false
+	for _, command := range commands {
+		if len(command.Args) == 7 && command.Args[1] == "replace-rrset" && command.Args[2] == model.DefaultDomain && command.Args[3] == "app.lab.home.arpa." && command.Args[4] == "CNAME" && command.Args[6] == "app-01.servers.lab.home.arpa" {
+			foundCNAME = true
+		}
+	}
+	if !foundCNAME {
+		t.Fatalf("CNAME value was not emitted as a PowerDNS target: %#v", commands)
+	}
+}
+
+func TestUserDNSRecordNamespaceAndPendingDeletionBoundaries(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	site.DNSRecords = []model.UserDNSRecord{{Name: "app.lab.home.arpa", Type: "A", Value: "10.10.20.61"}}
+	site.PendingDNSDeletions = []model.DNSDeletion{{Name: "app.lab.home.arpa", Type: "A"}, {Name: "old.lab.home.arpa", Type: "CNAME"}}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.PendingDeletions) != 1 || plan.PendingDeletions[0].Name != "old.lab.home.arpa" {
+		t.Fatalf("present record was not filtered from pending deletion: %#v", plan.PendingDeletions)
+	}
+	site.PendingDNSDeletions = append(site.PendingDNSDeletions, model.DNSDeletion{Name: "proxmox.lab.home.arpa", Type: "A"})
+	plan, err = PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, deletion := range plan.PendingDeletions {
+		if deletion.Name == "proxmox.lab.home.arpa" {
+			t.Fatal("pending user deletion was allowed to target a current platform RRset")
+		}
+	}
+	commands := PrimaryCommandPlan(plan)
+	foundDelete := false
+	for _, command := range commands {
+		if len(command.Args) == 5 && command.Args[1] == "delete-rrset" && command.Args[3] == "old.lab.home.arpa." && command.Args[4] == "CNAME" {
+			foundDelete = true
+		}
+	}
+	if !foundDelete {
+		t.Fatalf("pending DNS deletion was not emitted: %#v", commands)
+	}
+	for _, invalid := range []model.UserDNSRecord{
+		{Name: "app.servers.lab.home.arpa", Type: "A", Value: "10.10.20.61"},
+		{Name: "proxmox.lab.home.arpa", Type: "A", Value: "10.10.99.250"},
+	} {
+		candidate := model.NewDefaultSite("installation", "age1example")
+		candidate.DNSRecords = []model.UserDNSRecord{invalid}
+		if err := candidate.Validate(); err == nil {
+			t.Fatalf("invalid user DNS ownership was accepted: %#v", invalid)
 		}
 	}
 }
@@ -113,12 +184,12 @@ func TestRenderBlockyConfigPinsAuthoritativeZonesWithoutPublicFallback(t *testin
 	if got := decoded.Blocking.ClientGroupsBlock["default"]; len(got) != 1 || got[0] != FilteringPolicyGroup {
 		t.Fatalf("unexpected Blocky client group: %#v", decoded.Blocking.ClientGroupsBlock)
 	}
-	for _, zone := range []string{"lab.home.arpa", "trusted.lab.home.arpa", "sandbox.lab.home.arpa", "30.10.10.in-addr.arpa", "40.10.10.in-addr.arpa"} {
+	for _, zone := range []string{"lab.home.arpa", "servers.lab.home.arpa", "trusted.lab.home.arpa", "sandbox.lab.home.arpa", "20.10.10.in-addr.arpa", "30.10.10.in-addr.arpa", "40.10.10.in-addr.arpa"} {
 		if got := decoded.Conditional.Mapping[zone]; got != "127.0.0.1:5353" {
 			t.Fatalf("unexpected PowerDNS mapping for %q: %#v", zone, got)
 		}
 	}
-	for _, zone := range []string{"servers.lab.home.arpa", "mgmt.lab.home.arpa", "10.10.10.in-addr.arpa"} {
+	for _, zone := range []string{"mgmt.lab.home.arpa", "10.10.10.in-addr.arpa"} {
 		if _, ok := decoded.Conditional.Mapping[zone]; ok {
 			t.Fatalf("static-only zone %q was published as dynamic DNS", zone)
 		}
@@ -144,7 +215,7 @@ func TestExternalPlanPublishesOptionalDDNSContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.DDNS.Enabled || plan.DDNS.Source != "External DHCP/DDNS contract" || len(plan.DDNS.UpdateSources) != 0 || len(plan.DDNS.Zones) != 2 {
+	if plan.DDNS.Enabled || plan.DDNS.Source != "External DHCP/DDNS contract" || len(plan.DDNS.UpdateSources) != 0 || len(plan.DDNS.Zones) != 3 {
 		t.Fatalf("external DDNS contract is not optional and complete: %#v", plan.DDNS)
 	}
 }
@@ -164,7 +235,16 @@ func TestExternalPowerDNSPlanDoesNotRequireManagedDDNSSource(t *testing.T) {
 
 func hasRecord(records []StaticRecord, name, address string) bool {
 	for _, record := range records {
-		if record.Name == name && record.Address == address {
+		if record.Name == name && record.Value == address {
+			return true
+		}
+	}
+	return false
+}
+
+func hasRecordValue(records []StaticRecord, name, recordType, value, owner string) bool {
+	for _, record := range records {
+		if record.Name == name && record.Type == recordType && record.Value == value && record.Owner == owner {
 			return true
 		}
 	}

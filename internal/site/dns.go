@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -33,7 +34,7 @@ func LoadPendingDNSDeletions(dir string, s model.Site) ([]model.DNSDeletion, err
 	if err := json.Unmarshal(data, &deletions); err != nil {
 		return nil, fmt.Errorf("decode pending DNS deletions: %w", err)
 	}
-	deletions, err = normalizeDNSDeletions(deletions, s.Network.Domain)
+	deletions, err = normalizeDNSDeletions(deletions, s)
 	if err != nil {
 		return nil, fmt.Errorf("validate pending DNS deletions: %w", err)
 	}
@@ -45,7 +46,7 @@ func LoadPendingDNSDeletions(dir string, s model.Site) ([]model.DNSDeletion, err
 // accidentally treating this runtime state as a site-repository file.
 func SavePendingDNSDeletions(dir string, s model.Site, deletions []model.DNSDeletion) error {
 	_ = dir
-	normalized, err := normalizeDNSDeletions(deletions, s.Network.Domain)
+	normalized, err := normalizeDNSDeletions(deletions, s)
 	if err != nil {
 		return fmt.Errorf("validate pending DNS deletions: %w", err)
 	}
@@ -60,8 +61,31 @@ func modelRuntimeDir(s model.Site) string {
 	return RuntimeDir(s)
 }
 
-func normalizeDNSDeletions(input []model.DNSDeletion, domain string) ([]model.DNSDeletion, error) {
-	domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
+func normalizeDNSDeletions(input []model.DNSDeletion, s model.Site) ([]model.DNSDeletion, error) {
+	domain := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s.Network.Domain), "."))
+	owned := map[string]struct{}{}
+	for _, component := range s.PlatformComponents() {
+		owned[qualifiedRuntimeDNSName(component.Hostname, domain)] = struct{}{}
+		for _, alias := range component.DNSAliases {
+			owned[qualifiedRuntimeDNSName(alias, domain)] = struct{}{}
+		}
+		if component.URL != "" {
+			if parsed, err := url.Parse(component.URL); err == nil && parsed.Hostname() != "" {
+				owned[qualifiedRuntimeDNSName(parsed.Hostname(), domain)] = struct{}{}
+			}
+		}
+	}
+	for _, declaration := range s.Declarations {
+		for _, record := range declaration.DNSRecords {
+			owned[strings.ToLower(strings.TrimSuffix(record.Name, "."))] = struct{}{}
+		}
+	}
+	managedZones := map[string]struct{}{}
+	for _, zone := range s.Network.Zones {
+		if zone.Type == model.ZoneTypeServers || zone.Type == model.ZoneTypeTrusted || zone.Type == model.ZoneTypeSandbox {
+			managedZones[strings.ToLower(zone.Name)+"."+domain] = struct{}{}
+		}
+	}
 	seen := map[string]struct{}{}
 	result := make([]model.DNSDeletion, 0, len(input))
 	for _, deletion := range input {
@@ -79,6 +103,9 @@ func normalizeDNSDeletions(input []model.DNSDeletion, domain string) ([]model.DN
 				return nil, fmt.Errorf("deletion name %q contains an unsafe label", deletion.Name)
 			}
 		}
+		if _, exists := owned[deletion.Name]; exists || runtimeDNSNameInManagedZone(deletion.Name, managedZones) {
+			continue
+		}
 		if _, exists := seen[key]; exists {
 			continue
 		}
@@ -92,4 +119,21 @@ func normalizeDNSDeletions(input []model.DNSDeletion, domain string) ([]model.DN
 		return result[i].Type < result[j].Type
 	})
 	return result, nil
+}
+
+func qualifiedRuntimeDNSName(raw, domain string) string {
+	name := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(raw), "."))
+	if strings.HasSuffix(name, "."+domain) {
+		return name
+	}
+	return name + "." + domain
+}
+
+func runtimeDNSNameInManagedZone(name string, zones map[string]struct{}) bool {
+	for zone := range zones {
+		if name == zone || strings.HasSuffix(name, "."+zone) {
+			return true
+		}
+	}
+	return false
 }

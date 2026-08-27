@@ -38,6 +38,8 @@ var commandSpecs = []commandSpec{
 	{Usage: "boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]"},
 	{Usage: "boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]"},
 	{Usage: "boetticher dhcp status|leases [--site DIR] [--live] [--json]"},
+	{Usage: "boetticher dhcp reservation add|list|remove [--site DIR] [--hostname NAME] [--address ADDRESS] [--mac MAC] [--vmid VMID] [--json]"},
+	{Usage: "boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME] [--value VALUE] [--json]"},
 	{Usage: "boetticher storage status|initialize [--site DIR] [--live] [--confirmed]"},
 	{Usage: "boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
 	{Usage: "boetticher modules list|MODULE show|plan|enable|disable|status|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
@@ -92,7 +94,10 @@ var helpSpecs = map[string]helpSpec{
 		Usage: "boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]", Purpose: "Inspect the generated or live managed gateway policy and bounded evidence.", Arguments: "Subcommands select the read-only view; firewall logs may accept a zone and limit.", Options: "--live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.", Safety: "Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.", Examples: "boetticher firewall diff --site ./my-boetticher --live", Related: "dhcp, network, logs, verify",
 	},
 	"dhcp": {
-		Usage: "boetticher dhcp status|leases [--site DIR] [--live] [--json]", Purpose: "Inspect generated DHCP/DDNS intent or read bounded managed-gateway lease evidence.", Arguments: "status and leases select the view.", Options: "--live queries the managed gateway; --json emits machine-readable output.", Safety: "Read-only. External-gateway DHCP remains outside boetticher management.", Examples: "boetticher dhcp leases --site ./my-boetticher --live", Related: "firewall, verify, logs",
+		Usage: "boetticher dhcp status|leases|reservation add|list|remove [--site DIR] [--live] [--json]", Purpose: "Inspect DHCP/DDNS intent, read bounded leases, or manage explicit user-workload reservations.", Arguments: "status and leases select inspection; reservation add, list, and remove manage SERVERS reservations.", Options: "--live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output.", Safety: "Reservation changes edit site.yml only and never adopt or mutate user guests; VMID lookup is read-only; deployment remains boetticher deploy. External-gateway DHCP remains outside boetticher management.", Examples: "boetticher dhcp reservation add --hostname app-01 --address 10.10.20.61 --mac 02:00:00:00:02:61 --site ./my-boetticher; boetticher dhcp leases --site ./my-boetticher --live", Related: "firewall, dns, verify",
+	},
+	"dns": {
+		Usage: "boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME] [--value VALUE] [--json]", Purpose: "Manage bounded user-owned A and CNAME records in the private lab namespace.", Arguments: "add requires --name, --type, and --value; remove requires --name and --type; list has no required arguments.", Options: "--value is an IPv4 address for A or a private FQDN for CNAME; --json emits machine-readable output; --site selects local desired state.", Safety: "Changes are local site.yml intent only and apply through boetticher deploy. Core, module, and DHCP/DDNS-owned names cannot be replaced; arbitrary PowerDNS administration is not exposed.", Examples: "boetticher dns record add --name app.lab.home.arpa --type CNAME --value app-01.servers.lab.home.arpa --site ./my-boetticher", Related: "dhcp, config validate, deploy",
 	},
 	"storage": {
 		Usage: "boetticher storage status|initialize [--site DIR] [--live] [--confirmed]", Purpose: "Inspect the Core-owned storage substrate or perform its explicitly confirmed initialization.", Arguments: "status inspects; initialize prepares the configured dedicated data profile.", Options: "--live reads the Proxmox host; --confirmed authorizes fixed-device initialization.", Safety: "initialize can format the explicitly configured device. Modules cannot select disks or create VGs.", Examples: "boetticher storage status --site ./my-boetticher", Related: "bootstrap, deploy, doctor",
@@ -130,6 +135,13 @@ var nestedHelpSpecs = map[string]helpSpec{
 	"firewall verify":         helpSpecs["firewall"],
 	"dhcp status":             helpSpecs["dhcp"],
 	"dhcp leases":             helpSpecs["dhcp"],
+	"dhcp reservation add":    helpSpecs["dhcp"],
+	"dhcp reservation list":   helpSpecs["dhcp"],
+	"dhcp reservation remove": helpSpecs["dhcp"],
+	"dns":                     helpSpecs["dns"],
+	"dns record add":          helpSpecs["dns"],
+	"dns record list":         helpSpecs["dns"],
+	"dns record remove":       helpSpecs["dns"],
 	"storage status":          helpSpecs["storage"],
 	"storage initialize":      helpSpecs["storage"],
 	"module list":             helpSpecs["module"],
@@ -159,10 +171,15 @@ func CommandReferenceMarkdown() string {
 	document.WriteString("```\n\n")
 
 	document.WriteString("## Command details\n\n")
+	writtenDetails := map[string]struct{}{}
 	for _, spec := range commandSpecs {
 		path := commandPath(spec.Usage)
+		if _, written := writtenDetails[path]; written {
+			continue
+		}
 		if detail, ok := helpSpecs[path]; ok {
 			writeHelpMarkdown(&document, path, detail)
+			writtenDetails[path] = struct{}{}
 		}
 	}
 

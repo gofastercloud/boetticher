@@ -61,7 +61,7 @@ func TestPublicHelpPathsDoNotFail(t *testing.T) {
 	for _, args := range [][]string{
 		{"init", "--help"}, {"preflight", "-h"}, {"bootstrap", "--help"}, {"deploy", "--help"},
 		{"verify", "--help"}, {"doctor", "--help"}, {"network", "--help"}, {"firewall", "--help"},
-		{"dhcp", "--help"}, {"pki", "--help"}, {"access", "--help"}, {"portal", "--help"},
+		{"dhcp", "--help"}, {"dns", "--help"}, {"pki", "--help"}, {"access", "--help"}, {"portal", "--help"},
 		{"module", "--help"}, {"modules", "--help"}, {"config", "--help"}, {"logs", "--help"}, {"upgrade", "--help"},
 	} {
 		var output bytes.Buffer
