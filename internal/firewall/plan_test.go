@@ -1,6 +1,7 @@
 package firewall
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -99,6 +100,29 @@ func TestCoreModuleGuestsRetainBaselinePolicyWithoutSourceIntents(t *testing.T) 
 	}
 	if !strings.Contains(ruleset, `iifname "servers0" oifname "wan0" ip saddr @servers_net tcp dport { 53, 80, 443, 853 } counter accept`) {
 		t.Fatal("existing SERVERS baseline Internet policy was removed")
+	}
+}
+
+func TestModuleGuestSourcesRequireSourceSpecificIntent(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	tailnetEnabled, litellmEnabled := true, true
+	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
+	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+		Enabled:   &litellmEnabled,
+		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
+		Models:    []model.LiteLLMModelConfig{{Alias: "selected-alias", Upstream: "openrouter", Model: "selected/openrouter-model"}},
+	}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"10.10.20.60/32", "10.10.5.10/32"}
+	if !reflect.DeepEqual(plan.ModuleSources, want) {
+		t.Fatalf("module guest sources = %v, want only source-intent guests %v", plan.ModuleSources, want)
 	}
 }
 
