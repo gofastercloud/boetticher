@@ -7,6 +7,12 @@
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 
+## [0.3.34] - 2026-08-28
+
+### Changed
+
+- Prepare the T580 qualification branch at platform version 0.3.34; all first-party modules remain at version 1.0.0.
+
 ## [0.3.33] - 2026-08-27
 
 ### Fixed

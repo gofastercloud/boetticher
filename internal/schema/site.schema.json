@@ -431,7 +431,7 @@
       "$ref": "#/$defs/PKIMetadata"
     },
     "platform_version": {
-      "const": "0.3.33",
+      "const": "0.3.34",
       "type": "string"
     },
     "schema_version": {

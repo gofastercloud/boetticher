@@ -410,7 +410,7 @@ func completeQualificationEvidence(t *testing.T, evidence Evidence) Evidence {
 		evidence.Builder = BuilderProvenance{
 			Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429",
 			Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3",
-			MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.33",
+			MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.34",
 		}
 		return evidence
 	}
@@ -418,7 +418,7 @@ func completeQualificationEvidence(t *testing.T, evidence Evidence) Evidence {
 		"package-manifest.txt":    "package: boetticher-test\n",
 		"sbom.json":               `{"bomFormat":"CycloneDX","specVersion":"1.5"}` + "\n",
 		"trivy.json":              `{"Results":[]}` + "\n",
-		"builder-provenance.json": `{"platform":"debian-13-amd64","input_image":"debian-13-genericcloud-amd64-20260327-2429","kernel":"6.1.0","go":"go version go1.26.5 linux/amd64","trivy":"Version: 0.69.3","mmdebstrap":"mmdebstrap 1.5.0","architecture":"amd64","boetticher_version":"0.3.33"}` + "\n",
+		"builder-provenance.json": `{"platform":"debian-13-amd64","input_image":"debian-13-genericcloud-amd64-20260327-2429","kernel":"6.1.0","go":"go version go1.26.5 linux/amd64","trivy":"Version: 0.69.3","mmdebstrap":"mmdebstrap 1.5.0","architecture":"amd64","boetticher_version":"0.3.34"}` + "\n",
 	}
 	for filename, content := range inputs {
 		if err := os.WriteFile(filepath.Join(filepath.Dir(evidence.ArtifactPath), filename), []byte(content), 0o600); err != nil {
@@ -432,7 +432,7 @@ func completeQualificationEvidence(t *testing.T, evidence Evidence) Evidence {
 	evidence.Builder = BuilderProvenance{
 		Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429",
 		Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3",
-		MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.33",
+		MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.34",
 	}
 	return evidence
 }

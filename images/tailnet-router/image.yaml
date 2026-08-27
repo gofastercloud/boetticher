@@ -2,7 +2,7 @@ name: boetticher-tailnet-router
 version: 1.0.0
 kind: lxc
 base: boetticher-base
-base_version: 0.3.33
+base_version: 0.3.34
 architecture: amd64
 tailscale:
   package: tailscale
