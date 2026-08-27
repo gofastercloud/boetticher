@@ -280,6 +280,7 @@ install_zabbix() {
 package_lxc() {
   name=$1
   rootfs=$(rootfs_for "$name")
+  rm -f "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
   printf '%s\n' "boetticher package stage: $name smoke"
   destination="$output_root/$name"
   mkdir -p "$destination"

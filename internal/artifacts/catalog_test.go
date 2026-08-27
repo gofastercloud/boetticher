@@ -723,8 +723,8 @@ func TestBaseBuildRemovesBakedSSHHostKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(buildScript), `rm -f "$rootfs"/etc/ssh/ssh_host_*`) || !strings.Contains(string(buildScript), `rm -f "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"`) {
-		t.Fatal("base build does not remove generated SSH host keys before packaging")
+	if !strings.Contains(string(buildScript), `rm -f "$rootfs"/etc/ssh/ssh_host_*`) || !strings.Contains(string(buildScript), `rm -f "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"`) || !strings.Contains(string(buildScript), `package_lxc()`) {
+		t.Fatal("image build does not remove generated private identity material before packaging")
 	}
 	if strings.Contains(string(buildScript), `rm -f "$rootfs/etc/ssh/ssh_host_*"`) {
 		t.Fatal("base build quotes the SSH host-key glob and leaves baked keys behind")
