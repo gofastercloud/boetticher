@@ -34,6 +34,9 @@ project, so releases can make clean breaks while the design is settling.
   its no-password bootstrap checks after deployment.
 - Require explicit confirmation for an owned appliance rootfs replacement and
   resume it while retaining declared persistent volumes.
+- Refresh firewall cloud-init snippets and persist the artifact identity when
+  an owned rootfs replacement is resumed, so bounded persistent-disk serials
+  are mounted on the replacement boot.
 - Resume an owned running gateway without issuing a duplicate Proxmox start
   request after a prior deployment attempt.
 - Discover the hosted builder address through the QEMU guest agent after

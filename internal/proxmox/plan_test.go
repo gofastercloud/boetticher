@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -502,6 +503,37 @@ func TestEnsureQEMURequiresConfirmationToReplaceOwnedArtifact(t *testing.T) {
 	err := ensureQEMU(context.Background(), client, Plan{Node: "node"}, guest)
 	if err == nil || !strings.Contains(err.Error(), "requires --confirm") {
 		t.Fatalf("artifact replacement without confirmation = %v", err)
+	}
+}
+
+func TestUploadFirewallCloudInitRefreshesAllReplacementSnippets(t *testing.T) {
+	var uploaded []string
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodPost || r.URL.Path != "/api2/json/nodes/node/storage/local/upload" {
+			t.Fatalf("unexpected cloud-init upload request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseMultipartForm(1024 * 1024); err != nil {
+			t.Fatal(err)
+		}
+		files := r.MultipartForm.File["filename"]
+		if len(files) != 1 {
+			t.Fatalf("uploaded filename parts = %#v", files)
+		}
+		uploaded = append(uploaded, files[0].Filename)
+		return response([]byte(`{"data":null}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	plan := Plan{
+		Node:           "node",
+		CloudInitFiles: CloudInitFiles{MetaData: "meta", UserData: "user", NetworkConfig: "network"},
+	}
+	if err := uploadFirewallCloudInit(context.Background(), client, plan, 100); err != nil {
+		t.Fatalf("uploadFirewallCloudInit() = %v", err)
+	}
+	sort.Strings(uploaded)
+	want := []string{"boetticher-100-meta.yaml", "boetticher-100-network.yaml", "boetticher-100-user.yaml"}
+	if !reflect.DeepEqual(uploaded, want) {
+		t.Fatalf("replacement cloud-init snippets = %#v, want %#v", uploaded, want)
 	}
 }
 

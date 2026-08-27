@@ -1202,14 +1202,8 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 		"tags":        {strings.Join(guest.Tags, ";")},
 	}
 	if guest.Name == "lab-fw-01" && plan.CloudInitFiles.UserData != "" {
-		names := cloudInitSnippetNames(guest.VMID)
-		for key, value := range map[string]string{"meta": plan.CloudInitFiles.MetaData, "user": plan.CloudInitFiles.UserData, "network": plan.CloudInitFiles.NetworkConfig} {
-			if value == "" {
-				return errors.New("firewall cloud-init input is incomplete")
-			}
-			if err := client.UploadStorageText(ctx, plan.Node, "local", "snippets", names[key], value); err != nil {
-				return fmt.Errorf("upload firewall cloud-init %s: %w", key, err)
-			}
+		if err := uploadFirewallCloudInit(ctx, client, plan, guest.VMID); err != nil {
+			return err
 		}
 		params.Set("cicustom", cloudInitCICustom(guest.VMID))
 		params.Set("ide2", "local:cloudinit")
@@ -1648,6 +1642,11 @@ func replaceQEMURootDisk(ctx context.Context, client *Client, plan Plan, guest G
 			return fmt.Errorf("stop gateway before appliance replacement: %w", err)
 		}
 	}
+	if guest.Name == "lab-fw-01" {
+		if err := uploadFirewallCloudInit(ctx, client, plan, guest.VMID); err != nil {
+			return err
+		}
+	}
 	filename := fmt.Sprintf("%s-%s-%s.qcow2", guest.Artifact.Name, guest.Artifact.Version, guest.Artifact.Architecture)
 	source := plan.ArtifactFiles[artifactKey(guest.Artifact)]
 	if err := ensureArtifactInStorage(ctx, client, plan.Node, "local", "import", filename, guest.Artifact.ContentSHA256, source); err != nil {
@@ -1659,6 +1658,22 @@ func replaceQEMURootDisk(ctx context.Context, client *Client, plan Plan, guest G
 	}
 	if err := client.WaitTask(ctx, plan.Node, upid); err != nil {
 		return fmt.Errorf("wait for replacement gateway disk: %w", err)
+	}
+	if err := client.SetVMConfig(ctx, plan.Node, guest.VMID, url.Values{"description": {artifactDescription(guest.Artifact)}}); err != nil {
+		return fmt.Errorf("record replacement gateway artifact identity: %w", err)
+	}
+	return nil
+}
+
+func uploadFirewallCloudInit(ctx context.Context, client *Client, plan Plan, vmid int) error {
+	if plan.CloudInitFiles.MetaData == "" || plan.CloudInitFiles.UserData == "" || plan.CloudInitFiles.NetworkConfig == "" {
+		return errors.New("firewall cloud-init input is incomplete")
+	}
+	names := cloudInitSnippetNames(vmid)
+	for key, value := range map[string]string{"meta": plan.CloudInitFiles.MetaData, "user": plan.CloudInitFiles.UserData, "network": plan.CloudInitFiles.NetworkConfig} {
+		if err := client.UploadStorageText(ctx, plan.Node, "local", "snippets", names[key], value); err != nil {
+			return fmt.Errorf("upload firewall cloud-init %s: %w", key, err)
+		}
 	}
 	return nil
 }
