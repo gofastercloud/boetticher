@@ -127,7 +127,7 @@ func TestFirewallCloudInitMountsDeclaredVolumesByStableDiskIdentity(t *testing.T
 	if document.FSSetup[0].Label != "boetticher-ssh-identity" || document.FSSetup[1].Label != "boetticher-kea-leases" {
 		t.Fatalf("unexpected persistent volume labels: %#v", document.FSSetup)
 	}
-	if document.FSSetup[0].Device != "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_boetticher-9971c1f055aafc94542e28cd6" {
+	if document.FSSetup[0].Device != "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1" {
 		t.Fatalf("SSH identity device is not stable: %#v", document.FSSetup[0])
 	}
 	if document.Mounts[1][1] != "/var/lib/kea" || document.Mounts[1][3] != "defaults,nofail" {

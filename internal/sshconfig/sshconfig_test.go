@@ -21,6 +21,7 @@ func TestRenderUsesBastionAndCanonicalHostKey(t *testing.T) {
 	for _, expected := range []string{
 		"Host lab-bastion",
 		"Host lab-dns-01 lab-dns-01.lab.home.arpa dns01 dns",
+		"10.10.20.10",
 		"HostName 10.10.20.10",
 		"ProxyJump lab-bastion",
 		"HostKeyAlias lab-dns-01.lab.home.arpa",

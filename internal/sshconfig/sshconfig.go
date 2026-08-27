@@ -181,6 +181,7 @@ func ScanHostKey(ctx context.Context, address string) (string, error) {
 }
 
 func writeHost(b *strings.Builder, aliases []string, hostName, user, hostKeyAlias, identity string, throughBastion, bastion bool) {
+	aliases = uniqueStrings(append(append([]string{}, aliases...), hostName))
 	fmt.Fprintf(b, "Host %s\n", strings.Join(aliases, " "))
 	fmt.Fprintf(b, "    HostName %s\n", hostName)
 	if user != "" {

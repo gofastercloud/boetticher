@@ -103,11 +103,6 @@ func writeHostAt(b *strings.Builder, component model.Component, address string, 
 		user = model.DefaultAdminSSHUser
 	}
 	fmt.Fprintf(b, "%s ansible_host=%s ansible_user=%s", component.Name, address, user)
-	if throughBastion {
-		fmt.Fprintf(b, " ansible_ssh_common_args='-o ProxyJump=lab-bastion -o HostKeyAlias=%s.%s'", component.Hostname, model.DefaultDomain)
-	} else {
-		fmt.Fprintf(b, " ansible_ssh_common_args='-o HostKeyAlias=%s.%s'", component.Hostname, model.DefaultDomain)
-	}
 	b.WriteByte('\n')
 }
 
@@ -212,17 +207,33 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	if err != nil {
 		return fmt.Errorf("ansible-playbook is required: %w", err)
 	}
-	args := []string{"-i", inventory, playbook, "--extra-vars", "@-", "--ssh-common-args", "-F " + generatedSSHConfigPath(inventory)}
+	args := []string{"-i", inventory, playbook, "--extra-vars", "@/dev/stdin", "--ssh-common-args", "-F " + generatedSSHConfigPath(inventory)}
 	if limit != "" {
 		args = append(args, "--limit", limit)
 	}
 	command := exec.CommandContext(ctx, executable, args...)
 	command.Stdin = strings.NewReader(string(variables))
 	command.Env = append(os.Environ(), "ANSIBLE_HOST_KEY_CHECKING=True")
-	if _, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("ansible-playbook failed: %w", err)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		diagnostic := failureDiagnostic(output)
+		if diagnostic == "" {
+			return fmt.Errorf("ansible-playbook failed: %w", err)
+		}
+		return fmt.Errorf("ansible-playbook failed: %w: %s", err, diagnostic)
 	}
 	return nil
+}
+
+func failureDiagnostic(output []byte) string {
+	lines := strings.Split(string(output), "\n")
+	selected := make([]string, 0, 3)
+	for _, line := range lines {
+		if strings.Contains(line, "[ERROR]:") || strings.Contains(line, "fatal:") || strings.Contains(line, "unreachable=") {
+			selected = append(selected, strings.TrimSpace(line))
+		}
+	}
+	return strings.Join(selected, " | ")
 }
 
 // generatedSSHConfigPath derives the site-local SSH projection from the

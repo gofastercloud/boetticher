@@ -1,6 +1,7 @@
 package ansible
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,8 +25,6 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"lab-dns-01 ansible_host=10.10.20.10",
-		"ProxyJump=lab-bastion",
-		"HostKeyAlias=lab-dns-01.lab.home.arpa",
 		"ansible_remote_tmp=/tmp/boetticher-ansible",
 		"[managed:children]",
 		"[logging]",
@@ -34,6 +33,9 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 		if !strings.Contains(first, expected) {
 			t.Errorf("inventory missing %q", expected)
 		}
+	}
+	if strings.Contains(first, "ansible_ssh_common_args") {
+		t.Fatal("inventory duplicated the site-local SSH transport policy")
 	}
 }
 
@@ -56,6 +58,44 @@ func TestGeneratedSSHConfigPathIsBoundToInventoryProjection(t *testing.T) {
 	got := generatedSSHConfigPath("/tmp/site/generated/ansible/inventory.ini")
 	if got != "/tmp/site/generated/ssh/boetticher.conf" {
 		t.Fatalf("generated SSH config path = %q", got)
+	}
+}
+
+func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
+	tempDir := t.TempDir()
+	argsPath := filepath.Join(tempDir, "args")
+	scriptPath := filepath.Join(tempDir, "ansible-playbook")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ANSIBLE_ARGS_FILE\"\ncat >/dev/null\n"
+	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tempDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("ANSIBLE_ARGS_FILE", argsPath)
+
+	if err := run(context.Background(), "ansible/site.yml", "/tmp/site/generated/ansible/inventory.ini", []byte("{}"), "lab-fw-01"); err != nil {
+		t.Fatal(err)
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(args)
+	if !strings.Contains(text, "--extra-vars\n@/dev/stdin\n") {
+		t.Fatalf("Ansible did not receive the supported stdin path:\n%s", text)
+	}
+	if strings.Contains(text, "@-\n") {
+		t.Fatalf("Ansible received the unsupported stdin filename:\n%s", text)
+	}
+}
+
+func TestFailureDiagnosticKeepsOnlyBoundedErrorLines(t *testing.T) {
+	output := []byte("TASK [secret task] ***\nchanged: [host]\nfatal: [host]: FAILED! => {\"msg\":\"failed\"}\nPLAY RECAP ***\nhost : ok=1 unreachable=0 failed=1\n")
+	got := failureDiagnostic(output)
+	if !strings.Contains(got, "fatal: [host]") || !strings.Contains(got, "unreachable=0") {
+		t.Fatalf("diagnostic omitted failure context: %q", got)
+	}
+	if strings.Contains(got, "secret task") || strings.Contains(got, "changed:") {
+		t.Fatalf("diagnostic included non-error task output: %q", got)
 	}
 }
 
@@ -121,6 +161,32 @@ func TestGuestPlaybookProjectsLoggingClientsBeyondTheCollector(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "inventory_hostname in logging_upload_configs or inventory_hostname == 'lab-log-01'") {
 		t.Fatal("managed guest playbook does not apply the logging client role to endpoint sources")
+	}
+}
+
+func TestFirewallRoleCreatesNftablesConfigurationDirectory(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{"- name: Create nftables configuration directory", "path: /etc/nftables.d", "state: directory"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("firewall role missing %q", expected)
+		}
+	}
+}
+
+func TestKeaTemplateHandlesOptionalDHCPPool(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "firewall", "templates", "kea-dhcp4.conf.j2")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "subnet.get('pool', '')") {
+		t.Fatal("Kea template does not default the optional DHCP pool")
 	}
 }
 

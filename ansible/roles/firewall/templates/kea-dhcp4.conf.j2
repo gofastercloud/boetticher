@@ -17,7 +17,7 @@
       {
         "id": {{ subnet.id }},
         "subnet": "{{ subnet.network }}",
-        "pools": [{% if subnet.pool %}{"pool": "{{ subnet.pool }}"}{% endif %}],
+        "pools": [{% if subnet.get('pool', '') %}{"pool": "{{ subnet.get('pool') }}"}{% endif %}],
         "option-data": [
           {"name": "routers", "data": "{{ subnet.gateway }}"},
           {"name": "domain-name-servers", "data": "{{ subnet.dns | join(',') }}"},
