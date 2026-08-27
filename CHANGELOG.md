@@ -59,6 +59,8 @@ project, so releases can make clean breaks while the design is settling.
   retaining failures for other non-OK statuses.
 - Normalize Proxmox's URL-encoded trailing newline when comparing an owned LXC
   artifact description.
+- Compare owned LXC persistent volumes by Proxmox's canonical volume ID and
+  declared mount, backup, and size fields.
 - Resume an owned running gateway without issuing a duplicate Proxmox start
   request after a prior deployment attempt.
 - Discover the hosted builder address through the QEMU guest agent after

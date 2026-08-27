@@ -1505,11 +1505,41 @@ func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) er
 		}
 		key := fmt.Sprintf("mp%d", index)
 		observed, _ := current[key].(string)
-		if observed != wanted {
+		if !lxcPersistentVolumeMatches(observed, wanted) {
 			return fmt.Errorf("HOLD: guest %s has persistent volume %s=%q, expected %q", expected.Name, key, observed, wanted)
 		}
 	}
 	return nil
+}
+
+func lxcPersistentVolumeMatches(observed, wanted string) bool {
+	observedParts := strings.Split(observed, ",")
+	wantedParts := strings.Split(wanted, ",")
+	if len(observedParts) == 0 || len(wantedParts) == 0 {
+		return false
+	}
+	observedStorage, _, observedOK := strings.Cut(observedParts[0], ":")
+	wantedStorage, wantedSize, wantedOK := strings.Cut(wantedParts[0], ":")
+	if !observedOK || !wantedOK || observedStorage != wantedStorage || wantedSize == "" {
+		return false
+	}
+	observedOptions := make(map[string]string, len(observedParts)-1)
+	for _, option := range observedParts[1:] {
+		name, value, ok := strings.Cut(option, "=")
+		if ok {
+			observedOptions[name] = value
+		}
+	}
+	wantedOptions := make(map[string]string, len(wantedParts)-1)
+	for _, option := range wantedParts[1:] {
+		name, value, ok := strings.Cut(option, "=")
+		if ok {
+			wantedOptions[name] = value
+		}
+	}
+	return observedOptions["mp"] == wantedOptions["mp"] &&
+		observedOptions["backup"] == wantedOptions["backup"] &&
+		observedOptions["size"] == wantedSize+"G"
 }
 
 func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage, content, filename, checksum, source string) error {

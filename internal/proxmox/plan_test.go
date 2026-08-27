@@ -583,6 +583,20 @@ func TestExistingQEMUPersistentVolumesRequireStableIdentity(t *testing.T) {
 	}
 }
 
+func TestExistingLXCPersistentVolumesAcceptProxmoxCanonicalVolumeID(t *testing.T) {
+	guest := GuestPlan{Name: "test-dns", Volumes: []model.PersistentVolumeDeclaration{{
+		Storage: modelStorageIDForTest, SizeGiB: 8, MountPath: "/var/lib/powerdns", Backup: true,
+	}}}
+	current := map[string]any{"mp0": "boetticher-thin:110/vm-110-disk-1.raw,mp=/var/lib/powerdns,backup=1,size=8G"}
+	if err := validateExistingGuestVolumes(current, guest); err != nil {
+		t.Fatalf("canonical Proxmox LXC volume was rejected: %v", err)
+	}
+	current["mp0"] = "boetticher-thin:110/vm-110-disk-1.raw,mp=/var/lib/powerdns,backup=1,size=9G"
+	if err := validateExistingGuestVolumes(current, guest); err == nil {
+		t.Fatal("LXC volume with the wrong size was accepted")
+	}
+}
+
 const modelStorageIDForTest = "boetticher-thin"
 
 func TestEnsureArtifactInStorageVerifiesPostUploadChecksum(t *testing.T) {
