@@ -170,4 +170,7 @@ func TestVerifyFirewallBootstrapNetworkChecksStableRolesAndAddresses(t *testing.
 			t.Fatalf("firewall bootstrap network check omitted %q: %s", required, command)
 		}
 	}
+	if strings.Contains(command, "sudo -n ip") {
+		t.Fatalf("read-only bootstrap network probes unnecessarily require sudo: %s", command)
+	}
 }

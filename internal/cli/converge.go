@@ -412,7 +412,7 @@ func verifyFirewallBootstrapNetwork(ctx context.Context, runner proxmox.CommandR
 	if runner == nil {
 		return errors.New("firewall bootstrap network runner is required")
 	}
-	command := "set -eu; for interface in wan0 trusted0 servers0 sandbox0 mgmt0; do sudo -n ip link show dev \"$interface\" >/dev/null; done; sudo -n ip -4 -o addr show dev trusted0 | grep -Fq '10.10.10.1/24'; sudo -n ip -4 -o addr show dev servers0 | grep -Fq '10.10.20.1/24'; sudo -n ip -4 -o addr show dev sandbox0 | grep -Fq '10.10.50.1/24'; sudo -n ip -4 -o addr show dev mgmt0 | grep -Fq '10.10.99.1/24'"
+	command := "set -eu; for interface in wan0 trusted0 servers0 sandbox0 mgmt0; do ip link show dev \"$interface\" >/dev/null; done; ip -4 -o addr show dev trusted0 | grep -Fq '10.10.10.1/24'; ip -4 -o addr show dev servers0 | grep -Fq '10.10.20.1/24'; ip -4 -o addr show dev sandbox0 | grep -Fq '10.10.50.1/24'; ip -4 -o addr show dev mgmt0 | grep -Fq '10.10.99.1/24'"
 	if _, err := runner.Run(ctx, "10.10.99.1", model.DefaultAdminSSHUser, command); err != nil {
 		return fmt.Errorf("role-named interfaces or static addresses are not ready: %w", err)
 	}

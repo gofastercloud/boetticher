@@ -42,6 +42,9 @@ project, so releases can make clean breaks while the design is settling.
   produce a guest `/dev/disk/by-id` link on the qualified image.
 - Refresh the managed gateway cloud-init snippets when an existing owned guest
   is resumed, keeping its next supported first-boot/recovery path current.
+- Run the managed gateway's read-only bootstrap interface checks without sudo;
+  the constrained appliance sudo policy does not grant unnecessary `ip`
+  elevation.
 - Resume an owned running gateway without issuing a duplicate Proxmox start
   request after a prior deployment attempt.
 - Discover the hosted builder address through the QEMU guest agent after
