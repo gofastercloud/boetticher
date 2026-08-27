@@ -558,7 +558,15 @@ func loadProxmoxClient(siteDir string, s model.Site, ageIdentity, caFile string,
 	if err != nil {
 		return nil, site.ProxmoxCredentials{}, fmt.Errorf("load encrypted Proxmox API credentials: %w", err)
 	}
-	client, err := proxmox.NewClient(proxmox.Config{BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", User: credentials.APIUser, TokenID: credentials.TokenID, TokenSecret: credentials.TokenSecret, CAFile: caFile, Insecure: insecure})
+	client, err := proxmox.NewClient(proxmox.Config{
+		BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", User: credentials.APIUser,
+		TokenID: credentials.TokenID, TokenSecret: credentials.TokenSecret, CAFile: caFile, Insecure: insecure,
+		SnippetRunner: proxmox.SSHRunner{
+			ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),
+			StrictHostKey: "accept-new", HostKeyAlias: model.LogicalProxmoxIdentity,
+		},
+		SnippetAddress: s.BootstrapAddress, SnippetUser: model.DefaultAdminSSHUser,
+	})
 	if err != nil {
 		return nil, site.ProxmoxCredentials{}, err
 	}

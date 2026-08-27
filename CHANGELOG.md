@@ -14,6 +14,8 @@ project, so releases can make clean breaks while the design is settling.
 - Emit upload checksum metadata in the field order expected by pveproxy.
 - Revalidate a checksum-less partial QEMU import by re-uploading the qualified
   local bytes before retrying deployment.
+- Use the existing authenticated Proxmox SSH path for cloud-init snippets;
+  PVE 9.2 does not accept `snippets` through the storage upload API.
 - Discover the hosted builder address through the QEMU guest agent after
   confirming the guest reaches userspace.
 - Start the hosted builder guest agent before the remaining qualification
