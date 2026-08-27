@@ -99,6 +99,9 @@ func TestRenderBlockyConfigPinsAuthoritativeZonesWithoutPublicFallback(t *testin
 	if len(decoded.Upstreams.Groups["default"]) != 2 || decoded.Upstreams.Groups["default"][0] != "https://cloudflare-dns.com/dns-query" {
 		t.Fatalf("unexpected Blocky upstream group: %#v", decoded.Upstreams)
 	}
+	if strings.Join(decoded.BootstrapDNS, ",") != "1.1.1.1,8.8.8.8" {
+		t.Fatalf("unexpected Blocky bootstrap DNS: %#v", decoded.BootstrapDNS)
+	}
 	if decoded.Conditional.FallbackUpstream {
 		t.Fatal("Blocky authoritative mappings allow public fallback")
 	}

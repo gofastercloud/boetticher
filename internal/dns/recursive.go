@@ -12,11 +12,12 @@ import (
 // zones are mapped explicitly so a negative answer cannot fall through to a
 // public upstream.
 type BlockyConfig struct {
-	Upstreams   BlockyUpstreams   `yaml:"upstreams"`
-	Conditional BlockyConditional `yaml:"conditional"`
-	Blocking    BlockyBlocking    `yaml:"blocking"`
-	Ports       BlockyPorts       `yaml:"ports"`
-	Caching     BlockyCaching     `yaml:"caching"`
+	Upstreams    BlockyUpstreams   `yaml:"upstreams"`
+	BootstrapDNS []string          `yaml:"bootstrapDns"`
+	Conditional  BlockyConditional `yaml:"conditional"`
+	Blocking     BlockyBlocking    `yaml:"blocking"`
+	Ports        BlockyPorts       `yaml:"ports"`
+	Caching      BlockyCaching     `yaml:"caching"`
 }
 
 type BlockyUpstreams struct {
@@ -69,8 +70,9 @@ func RenderBlockyConfig(plan Plan) ([]byte, error) {
 		mapping[zone] = plan.AuthoritativeForwardTarget
 	}
 	config, err := yaml.Marshal(BlockyConfig{
-		Upstreams:   BlockyUpstreams{Groups: map[string][]string{"default": append([]string(nil), plan.RecursiveUpstreams...)}},
-		Conditional: BlockyConditional{FallbackUpstream: false, Mapping: mapping},
+		Upstreams:    BlockyUpstreams{Groups: map[string][]string{"default": append([]string(nil), plan.RecursiveUpstreams...)}},
+		BootstrapDNS: []string{"1.1.1.1", "8.8.8.8"},
+		Conditional:  BlockyConditional{FallbackUpstream: false, Mapping: mapping},
 		Blocking: BlockyBlocking{
 			Denylists:         map[string][]string{FilteringPolicyGroup: []string{FilteringPolicyFile}},
 			ClientGroupsBlock: map[string][]string{"default": []string{FilteringPolicyGroup}},
