@@ -133,7 +133,7 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 		fmt.Fprintf(out, "Bootstrap plan: PASS model %s\n", plan.ModelRevision)
 		fmt.Fprintf(out, "  Proxmox endpoint: %s\n  Gateway mode: %s\n  Gateway image: %s\n", s.BootstrapAddress, s.Gateway.Mode, model.QualifiedGatewayImage)
 		fmt.Fprintf(out, "  Storage: %s\n", s.StorageProfile)
-		fmt.Fprintln(out, "  Trust transition: SSH key → labadmin/lab-jump → scoped API token → SOPS")
+		fmt.Fprintln(out, "  Trust transition: initial administrator → temporary root deployment SSH → scoped API token → durable labadmin")
 		builder := artifacts.Builder()
 		fmt.Fprintf(out, "  Artifact builder: temporary VMID %d (%s, %s)\n", builder.VMID, builder.Hostname, builder.Network)
 		fmt.Fprintln(out, "  Artifact qualification: base, selected appliances, SBOM, Trivy, independent content SHA-256")
@@ -399,6 +399,7 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	builderCreated, err := proxmox.EnsureBuilderVM(ctx, client, plan, publicKey)
 	builderAddress := ""
 	builderRunner := proxmox.SSHRunner{KnownHosts: builderKnownHosts, StrictHostKey: "accept-new", IdentityFile: identityFile}
+	builderSSHUser := "root"
 	buildSucceeded := false
 	builderOutput := ""
 	if builderCreated {
@@ -406,7 +407,7 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 			var cleanupErr error
 			if !buildSucceeded {
 				if builderAddress != "" {
-					if err := persistBuilderDiagnosticsWithOutput(ctx, builderRunner, builderAddress, model.DefaultAdminSSHUser, siteDir, builderOutput); err != nil {
+					if err := persistBuilderDiagnosticsWithOutput(ctx, builderRunner, builderAddress, builderSSHUser, siteDir, builderOutput); err != nil {
 						cleanupErr = errors.Join(cleanupErr, err)
 					}
 				} else if err := persistBuilderUnavailableDiagnostics(siteDir, returnErr); err != nil {
@@ -435,14 +436,14 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if err != nil {
 		return err
 	}
-	if err := proxmox.WaitForSSH(ctx, builderRunner, builderAddress, model.DefaultAdminSSHUser, 60, 5*time.Second); err != nil {
+	if err := proxmox.WaitForSSH(ctx, builderRunner, builderAddress, builderSSHUser, 60, 5*time.Second); err != nil {
 		return fmt.Errorf("HOLD: temporary appliance builder SSH is not ready: %w", err)
 	}
-	if err := proxmox.WaitForCommand(ctx, builderRunner, builderAddress, model.DefaultAdminSSHUser, "test -f /run/boetticher-builder-ready", 60, 5*time.Second); err != nil {
+	if err := proxmox.WaitForCommand(ctx, builderRunner, builderAddress, builderSSHUser, "test -f /run/boetticher-builder-ready", 60, 5*time.Second); err != nil {
 		return fmt.Errorf("HOLD: temporary appliance builder cloud-init is not ready: %w", err)
 	}
 	builder := artifacts.Builder()
-	if err := proxmox.CheckBuilderCapacity(ctx, builderRunner, builderAddress, model.DefaultAdminSSHUser, builder.MinimumFreeGiB); err != nil {
+	if err := proxmox.CheckBuilderCapacity(ctx, builderRunner, builderAddress, builderSSHUser, builder.MinimumFreeGiB); err != nil {
 		return err
 	}
 	sourceRoot, sourceErr := applianceBuildSourceRoot()
@@ -455,11 +456,11 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if err != nil {
 		return fmt.Errorf("prepare public appliance build inputs: %w", err)
 	}
-	if _, err := builderRunner.RunWithStdin(ctx, builderAddress, model.DefaultAdminSSHUser, "set -eu; install -d -m 0755 /home/labadmin/build; tar -xzf - -C /home/labadmin/build", bytes.NewReader(archive)); err != nil {
+	if _, err := builderRunner.RunWithStdin(ctx, builderAddress, builderSSHUser, "set -eu; install -d -m 0755 -o labadmin -g labadmin /home/labadmin/build; tar -xzf - -C /home/labadmin/build", bytes.NewReader(archive)); err != nil {
 		return fmt.Errorf("transfer public appliance build definitions: %w", err)
 	}
 	var buildOutputBuffer boundedBuilderOutput
-	if err := builderRunner.RunStream(ctx, builderAddress, model.DefaultAdminSSHUser, "sudo -n /usr/local/sbin/boetticher-build", &buildOutputBuffer); err != nil {
+	if err := builderRunner.RunStream(ctx, builderAddress, builderSSHUser, "/usr/local/sbin/boetticher-build", &buildOutputBuffer); err != nil {
 		builderOutput = buildOutputBuffer.String()
 		return fmt.Errorf("qualify default appliance artifacts on temporary builder: %w", err)
 	}
@@ -473,7 +474,7 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 		_ = archiveFile.Close()
 		return fmt.Errorf("protect temporary artifact archive: %w", err)
 	}
-	if err := builderRunner.RunStream(ctx, builderAddress, model.DefaultAdminSSHUser, "tar -czf - -C /home/labadmin/build generated/artifacts", archiveFile); err != nil {
+	if err := builderRunner.RunStream(ctx, builderAddress, builderSSHUser, "tar -czf - -C /home/labadmin/build generated/artifacts", archiveFile); err != nil {
 		_ = archiveFile.Close()
 		return fmt.Errorf("retrieve qualified appliance evidence: %w", err)
 	}

@@ -30,6 +30,15 @@ deploy. Persistent application data is restored or reattached separately from
 the root filesystem; the monitor guest retains `/var/lib/pulse`, and tagged
 host-agent identity/buffer state is kept under `/var/lib/boetticher/pulse-agent`.
 
+Bootstrap is the recovery authority for the deployment transport. It may
+install a temporary operator root key on the Proxmox host and managed guests;
+the deployment playbook uses that key directly and has no Ansible `become`
+path. A successful deploy removes the key from guests and host, removes the
+host root SSH allowance, and locks the root password. A failed deploy before
+cleanup retains the temporary access for retry. If cleanup fails, treat the
+result as a hold and use the authenticated bootstrap or break-glass root path
+to complete the exact cleanup before declaring steady state.
+
 In external mode, boetticher regenerates the network/security contract but does
 not back up or restore the operator's appliance. Use that appliance's own
 recovery procedure.

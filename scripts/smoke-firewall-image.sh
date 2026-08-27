@@ -22,6 +22,9 @@ for setting in 'net.ipv4.ip_forward=0' 'net.ipv6.conf.all.forwarding=0'; do
 done
 virt-ls -a "$image" /usr/lib/boetticher | grep -qx 'boetticher-first-boot.sh'
 virt-cat -a "$image" /etc/ssh/sshd_config.d/boetticher-host-key.conf | grep -qx 'HostKey /var/lib/boetticher/identity/ssh/ssh_host_ed25519_key'
+virt-ls -a "$image" /usr/lib/boetticher | grep -qx 'inspect-firewall'
+virt-cat -a "$image" /etc/sudoers.d/boetticher-firewall | grep -Fq '/usr/lib/boetticher/inspect-firewall status'
+virt-cat -a "$image" /etc/sudoers.d/boetticher-firewall | grep -Fq '/usr/lib/boetticher/inspect-firewall kernel-logs *'
 for setting in 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' 'PermitRootLogin prohibit-password'; do
   virt-cat -a "$image" /etc/ssh/sshd_config.d/boetticher.conf | grep -Fxq "$setting" || { echo "firewall image is missing SSH hardening setting: $setting" >&2; exit 1; }
 done

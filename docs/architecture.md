@@ -112,3 +112,13 @@ It drives Proxmox, nftables, Kea, DNS, Ansible, monitoring, SSH, portal, backup,
 verification projections. Timestamps and live evidence are excluded from the
 digest. Unknown user guests and user-created service objects remain outside
 boetticher ownership.
+
+Deployment privilege is phase-specific. Bootstrap uses the initial
+administrator authority to install a temporary operator root SSH path and the
+scoped Proxmox API token. Core and Ansible use the temporary root transport for
+qualified convergence; Ansible does not escalate from `labadmin`. After
+successful convergence, Core removes the temporary root keys and the
+Proxmox-host root SSH allowance. Durable `labadmin` has no general sudo
+authority on the host or appliances; the managed firewall retains only fixed,
+read-only inspection helpers. Break-glass root remains an operator recovery
+path.

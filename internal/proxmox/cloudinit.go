@@ -47,13 +47,16 @@ func renderFirewallCloudInit(guest GuestPlan, operatorPublicKey string) (CloudIn
 			fmt.Fprintf(&network, "    addresses: [%s/24]\n", nic.Address)
 		}
 	}
-	userData := "#cloud-config\nhostname: lab-fw-01\nmanage_etc_hosts: true\nusers:\n  - name: labadmin\n    shell: /bin/bash\n    groups: [sudo]\n    sudo: [\"ALL=(ALL) NOPASSWD:/usr/bin/systemctl, /usr/sbin/nft, /usr/sbin/kea-dhcp4, /usr/sbin/kea-dhcp-ddns, /bin/cat /var/lib/kea/kea-leases4.csv, /bin/sh -c * /usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*\"]\n"
+	userData := "#cloud-config\nhostname: lab-fw-01\nmanage_etc_hosts: true\nusers:\n  - name: labadmin\n    shell: /bin/bash\n"
 	if operatorPublicKey != "" {
 		// JSON strings are valid YAML scalars and preserve an OpenSSH comment
 		// without allowing it to alter the cloud-init document structure.
 		userData += "    ssh_authorized_keys:\n      - " + strconv.Quote(operatorPublicKey) + "\n"
+		// Root access is a deployment-only transport. The deploy command removes
+		// this key and disables root SSH after all guests converge successfully.
+		userData += "  - name: root\n    ssh_authorized_keys:\n      - " + strconv.Quote(operatorPublicKey) + "\n"
 	}
-	userData += "ssh_pwauth: false\ndisable_root: true\n"
+	userData += "ssh_pwauth: false\ndisable_root: " + strconv.FormatBool(operatorPublicKey == "") + "\n"
 	fsSetup := strings.Builder{}
 	mounts := strings.Builder{}
 	for _, name := range []string{"ssh-identity", "kea-leases"} {
@@ -95,7 +98,8 @@ func guestVolume(guest GuestPlan, name string) (model.PersistentVolumeDeclaratio
 // RenderBuilderCloudInit prepares the temporary public-input build host
 // without operator-specific state. It is useful for inspecting the public
 // build contract; deployment uses RenderBuilderCloudInitWithKey so the
-// builder's management identity is present in the custom user-data document.
+// builder's temporary root deployment identity is present in the custom
+// user-data document.
 func RenderBuilderCloudInit() CloudInitFiles {
 	files, _ := renderBuilderCloudInit("")
 	return files
@@ -125,14 +129,14 @@ users:
   - default
   - name: labadmin
     shell: /bin/bash
-    groups: [sudo]
-    sudo: ["ALL=(root) NOPASSWD: /usr/local/sbin/boetticher-build"]
 `
 	if operatorPublicKey != "" {
 		// JSON strings are valid YAML scalars and preserve an OpenSSH comment
 		// without allowing it to alter the cloud-init document structure.
 		userData += "    ssh_authorized_keys:\n      - " + strconv.Quote(operatorPublicKey) + "\n"
+		userData += "  - name: root\n    ssh_authorized_keys:\n      - " + strconv.Quote(operatorPublicKey) + "\n"
 	}
+	userData += "ssh_pwauth: false\ndisable_root: " + strconv.FormatBool(operatorPublicKey == "") + "\n"
 	userData += `write_files:
   - path: /etc/apt/sources.list.d/boetticher-builder.sources
     permissions: '0644'
@@ -168,10 +172,6 @@ users:
       find /home/labadmin/build/generated/artifacts -type d -exec chmod 0755 {} +
       find /home/labadmin/build/generated/artifacts -type f -exec chmod 0644 {} +
       touch /home/labadmin/build/.qualification-complete
-  - path: /etc/sudoers.d/boetticher-builder
-    permissions: '0440'
-    content: |
-      labadmin ALL=(root) NOPASSWD: /usr/local/sbin/boetticher-build
 runcmd:
   - [sh, -c, "set -eu; rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; apt-get -o Acquire::Check-Valid-Until=false update; DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends ca-certificates curl jq libguestfs-tools mmdebstrap openssh-server qemu-guest-agent qemu-utils sudo tar zstd"]
   - [systemctl, enable, --now, qemu-guest-agent]

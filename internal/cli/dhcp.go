@@ -70,7 +70,7 @@ func runDHCP(args []string, out interface{ Write([]byte) (int, error) }) error {
 		return nil
 	}
 	if *live {
-		data, err := gatewayCommand(*siteDir, s, "sudo", "cat", "/var/lib/kea/kea-leases4.csv")
+		data, err := gatewayCommand(*siteDir, s, "sudo", "/usr/lib/boetticher/inspect-firewall", "leases")
 		if err != nil {
 			return err
 		}

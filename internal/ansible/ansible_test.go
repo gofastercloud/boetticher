@@ -333,6 +333,30 @@ func TestApplianceResolverUsesPlatformDNSPair(t *testing.T) {
 	}
 }
 
+func TestManagedPlaybookDoesNotUseDurableBecomeEscalation(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "ansible", "site.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "become: false") || strings.Contains(text, "become: true") {
+		t.Fatalf("managed playbook retains a durable become path: %s", text)
+	}
+}
+
+func TestBaseRoleRemovesLegacyLabadminPrivilegeContracts(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{"gpasswd --delete labadmin sudo", "/etc/sudoers.d/boetticher", "/etc/sudoers.d/boetticher-labadmin", "failed_when: remove_labadmin_sudo_group.rc not in [0, 3]"} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("base role does not remove legacy privilege contract %q", required)
+		}
+	}
+}
+
 func TestBaseRoleRunsChronyWithoutKernelClockControlInAppliances(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
 	data, err := os.ReadFile(path)

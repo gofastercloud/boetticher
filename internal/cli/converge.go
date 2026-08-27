@@ -217,7 +217,11 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			break
 		}
 	}
-	proxmoxClient, _, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
+	rootRunner := proxmoxRootSSHRunner(s, *siteDir)
+	if err := proxmox.WaitForSSH(context.Background(), rootRunner, s.BootstrapAddress, "root", 1, 0); err != nil {
+		return fmt.Errorf("HOLD: temporary root deployment authority is unavailable; rerun bootstrap or recovery: %w", err)
+	}
+	proxmoxClient, _, err := loadProxmoxClientWithSnippetUser(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure, "root")
 	if err != nil {
 		return fmt.Errorf("load Proxmox client for platform deployment: %w", err)
 	}
@@ -267,7 +271,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		firewallRunner := applianceSSHRunner(s, *siteDir, "lab-fw-01")
-		if err := proxmox.WaitForSSH(context.Background(), firewallRunner, "10.10.99.1", model.DefaultAdminSSHUser, 30, 2*time.Second); err != nil {
+		if err := proxmox.WaitForSSH(context.Background(), firewallRunner, "10.10.99.1", "root", 30, 2*time.Second); err != nil {
 			return fmt.Errorf("HOLD: managed gateway is not reachable before dependent appliances: %w", err)
 		}
 		if err := verifyFirewallBootstrapNetwork(context.Background(), firewallRunner); err != nil {
@@ -303,7 +307,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 				continue
 			}
 			guestRunner := applianceSSHRunner(s, *siteDir, guest.Name)
-			if err := proxmox.WaitForSSH(context.Background(), guestRunner, guest.Address, model.DefaultAdminSSHUser, 30, 2*time.Second); err != nil {
+			if err := proxmox.WaitForSSH(context.Background(), guestRunner, guest.Address, "root", 30, 2*time.Second); err != nil {
 				return fmt.Errorf("HOLD: %s guest %s is not reachable after first boot: %w", module, guest.Name, err)
 			}
 			if err := installCredentialsForGuest(context.Background(), guestRunner, guest.Name, credentialBindings, secretValues); err != nil {
@@ -506,6 +510,9 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}); err != nil {
 		return err
 	}
+	if err := revokeTemporaryRootAccess(context.Background(), s, *siteDir, proxmoxPlan, operatorPublicKey); err != nil {
+		return fmt.Errorf("HOLD: deployment converged but temporary root access cleanup failed: %w", err)
+	}
 	if len(s.PendingDNSDeletions) > 0 {
 		if err := site.SavePendingDNSDeletions(*siteDir, s, nil); err != nil {
 			return fmt.Errorf("clear reconciled DNS deletion state: %w", err)
@@ -577,8 +584,8 @@ func verifyGatewayReadiness(ctx context.Context, runner proxmox.CommandRunner, a
 	if runner == nil {
 		return errors.New("gateway readiness runner is required")
 	}
-	command := "set -eu; sudo -n nft -c -f /etc/nftables.conf; sudo -n systemctl is-active nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony; test \"$(sudo -n sysctl -n net.ipv4.ip_forward)\" = 1"
-	if _, err := runner.Run(ctx, address, model.DefaultAdminSSHUser, command); err != nil {
+	command := "set -eu; nft -c -f /etc/nftables.conf; systemctl is-active nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony; test \"$(sysctl -n net.ipv4.ip_forward)\" = 1"
+	if _, err := runner.Run(ctx, address, "root", command); err != nil {
 		return fmt.Errorf("gateway policy, DHCP, NTP, and forwarding checks failed: %w", err)
 	}
 	return nil
@@ -589,7 +596,7 @@ func verifyFirewallBootstrapNetwork(ctx context.Context, runner proxmox.CommandR
 		return errors.New("firewall bootstrap network runner is required")
 	}
 	command := "set -eu; for interface in wan0 trusted0 servers0 sandbox0 mgmt0 transit0 infra0; do ip link show dev \"$interface\" >/dev/null; done; ip -4 -o addr show dev trusted0 | grep -Fq '10.10.30.1/24'; ip -4 -o addr show dev servers0 | grep -Fq '10.10.20.1/24'; ip -4 -o addr show dev sandbox0 | grep -Fq '10.10.40.1/24'; ip -4 -o addr show dev mgmt0 | grep -Fq '10.10.99.1/24'; ip -4 -o addr show dev transit0 | grep -Fq '10.10.5.1/24'; ip -4 -o addr show dev infra0 | grep -Fq '10.10.10.1/24'"
-	if _, err := runner.Run(ctx, "10.10.99.1", model.DefaultAdminSSHUser, command); err != nil {
+	if _, err := runner.Run(ctx, "10.10.99.1", "root", command); err != nil {
 		return fmt.Errorf("role-named interfaces or static addresses are not ready: %w", err)
 	}
 	return nil
@@ -608,8 +615,8 @@ func verifyDNSReadiness(ctx context.Context, runner proxmox.CommandRunner, addre
 	} else if provider == string(model.DNSProviderBlocky) {
 		checks = "; test ! -e /opt/AdGuardHome/AdGuardHome; blocky version | grep -Fq '0.34.0'; blocky validate --config /etc/blocky/config.yml"
 	}
-	command := fmt.Sprintf("set -eu; sudo -n systemctl is-active pdns chrony %s; sudo -n test -s /etc/powerdns/pdns.conf; sudo -n test -s %s%s", service, config, checks)
-	if _, err := runner.Run(ctx, address, model.DefaultAdminSSHUser, command); err != nil {
+	command := fmt.Sprintf("set -eu; systemctl is-active pdns chrony %s; test -s /etc/powerdns/pdns.conf; test -s %s%s", service, config, checks)
+	if _, err := runner.Run(ctx, address, "root", command); err != nil {
 		return fmt.Errorf("authoritative, NTP, and %s resolver checks failed: %w", provider, err)
 	}
 	return nil
@@ -666,12 +673,8 @@ func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Si
 			return fmt.Errorf("runtime artifact identity for %s: qualified artifact content checksum is missing", guest.Name)
 		}
 		if guest.Module == "" {
-			user := guest.SSHUser
-			if user == "" {
-				user = model.DefaultAdminSSHUser
-			}
 			runner := applianceSSHRunner(s, siteDir, guest.Name)
-			if err := appliance.InstallArtifactIdentity(ctx, runner, guest.Address, user, resolvedGuest.Artifact); err != nil {
+			if err := appliance.InstallArtifactIdentity(ctx, runner, guest.Address, "root", resolvedGuest.Artifact); err != nil {
 				return fmt.Errorf("install artifact identity for %s: %w", guest.Name, err)
 			}
 			continue
@@ -688,15 +691,11 @@ func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Si
 		if err != nil {
 			return fmt.Errorf("render runtime configuration for %s: %w", guest.Name, err)
 		}
-		user := guest.SSHUser
-		if user == "" {
-			user = model.DefaultAdminSSHUser
-		}
 		runner := applianceSSHRunner(s, siteDir, guest.Name)
-		if err := appliance.InstallRuntimeConfig(ctx, runner, guest.Address, user, config); err != nil {
+		if err := appliance.InstallRuntimeConfig(ctx, runner, guest.Address, "root", config); err != nil {
 			return fmt.Errorf("install runtime configuration for %s: %w", guest.Name, err)
 		}
-		if err := appliance.InstallArtifactIdentity(ctx, runner, guest.Address, user, resolvedDeclaration.Artifact); err != nil {
+		if err := appliance.InstallArtifactIdentity(ctx, runner, guest.Address, "root", resolvedDeclaration.Artifact); err != nil {
 			return fmt.Errorf("install artifact identity for %s: %w", guest.Name, err)
 		}
 	}
@@ -716,6 +715,23 @@ func applianceSSHRunner(s model.Site, siteDir, hostAlias string) proxmox.SSHRunn
 	}
 }
 
+func revokeTemporaryRootAccess(ctx context.Context, s model.Site, siteDir string, plan proxmox.Plan, operatorPublicKey string) error {
+	for _, guest := range plan.Guests {
+		if guest.Owner == "" || guest.Address == "" {
+			continue
+		}
+		runner := applianceSSHRunner(s, siteDir, guest.Name)
+		if err := proxmox.RevokeTemporaryRootAccess(ctx, runner, guest.Address, "root", operatorPublicKey, false); err != nil {
+			return fmt.Errorf("revoke root access on %s: %w", guest.Name, err)
+		}
+	}
+	hostRunner := proxmoxRootSSHRunner(s, siteDir)
+	if err := proxmox.RevokeTemporaryRootAccess(ctx, hostRunner, s.BootstrapAddress, "root", operatorPublicKey, true); err != nil {
+		return fmt.Errorf("revoke root access on %s: %w", model.LogicalProxmoxIdentity, err)
+	}
+	return nil
+}
+
 func resolvedDeclarationForGuest(declaration model.ModuleDeclaration, guest proxmox.GuestPlan) (model.ModuleDeclaration, error) {
 	if declaration.Module == "" || declaration.Module != strings.TrimPrefix(guest.Owner, "boetticher/module/") {
 		return model.ModuleDeclaration{}, fmt.Errorf("module declaration ownership does not match guest %s", guest.Name)
@@ -728,6 +744,10 @@ func resolvedDeclarationForGuest(declaration model.ModuleDeclaration, guest prox
 }
 
 func loadProxmoxClient(siteDir string, s model.Site, ageIdentity, caFile string, insecure bool) (*proxmox.Client, site.ProxmoxCredentials, error) {
+	return loadProxmoxClientWithSnippetUser(siteDir, s, ageIdentity, caFile, insecure, model.DefaultAdminSSHUser)
+}
+
+func loadProxmoxClientWithSnippetUser(siteDir string, s model.Site, ageIdentity, caFile string, insecure bool, snippetUser string) (*proxmox.Client, site.ProxmoxCredentials, error) {
 	if s.BootstrapAddress == "" {
 		return nil, site.ProxmoxCredentials{}, errors.New("bootstrap endpoint is not configured")
 	}
@@ -743,12 +763,21 @@ func loadProxmoxClient(siteDir string, s model.Site, ageIdentity, caFile string,
 			ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),
 			StrictHostKey: "accept-new", HostKeyAlias: model.LogicalProxmoxIdentity,
 		},
-		SnippetAddress: s.BootstrapAddress, SnippetUser: model.DefaultAdminSSHUser,
+		SnippetAddress: s.BootstrapAddress, SnippetUser: snippetUser,
 	})
 	if err != nil {
 		return nil, site.ProxmoxCredentials{}, err
 	}
 	return client, credentials, nil
+}
+
+func proxmoxRootSSHRunner(s model.Site, siteDir string) proxmox.SSHRunner {
+	return proxmox.SSHRunner{
+		IdentityFile:  operatorIdentityFile(s),
+		ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),
+		StrictHostKey: "accept-new",
+		HostAlias:     model.LogicalProxmoxIdentity,
+	}
 }
 
 func operatorIdentityFile(s model.Site) string {

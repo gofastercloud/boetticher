@@ -3,9 +3,7 @@ hostname: lab-fw-01
 manage_etc_hosts: true
 users:
   - name: labadmin
-    groups: [sudo]
     shell: /bin/bash
-    sudo: ["ALL=(ALL) NOPASSWD:/usr/bin/systemctl, /usr/sbin/nft, /usr/sbin/kea-dhcp4, /usr/sbin/kea-dhcp-ddns"]
     ssh_authorized_keys: []
 ssh_pwauth: false
 disable_root: true

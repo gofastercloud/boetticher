@@ -165,7 +165,7 @@ func installCredentialsForGuest(ctx context.Context, runner proxmox.CommandRunne
 	if runner == nil {
 		return fmt.Errorf("credential runner is required for %s", guest)
 	}
-	if _, err := runner.Run(ctx, selected[0].Address, model.DefaultAdminSSHUser, "sudo -n install -d -m 0700 -o root -g root /var/lib/boetticher/credentials"); err != nil {
+	if _, err := runner.Run(ctx, selected[0].Address, "root", "install -d -m 0700 -o root -g root /var/lib/boetticher/credentials"); err != nil {
 		return fmt.Errorf("prepare encrypted credential store on %s: %w", guest, err)
 	}
 	stdinRunner, ok := runner.(secrets.StdinRunner)
@@ -177,11 +177,11 @@ func installCredentialsForGuest(ctx context.Context, runner proxmox.CommandRunne
 		if value == "" {
 			return fmt.Errorf("secret value for %s is unavailable", binding.Spec.Name)
 		}
-		if err := secrets.InstallCredential(ctx, stdinRunner, binding.Address, model.DefaultAdminSSHUser, binding.Spec, []byte(value)); err != nil {
+		if err := secrets.InstallCredential(ctx, stdinRunner, binding.Address, "root", binding.Spec, []byte(value)); err != nil {
 			return fmt.Errorf("install %s credential on %s: %w", binding.Spec.Name, guest, err)
 		}
 	}
-	if _, err := runner.Run(ctx, selected[0].Address, model.DefaultAdminSSHUser, "sudo -n systemctl daemon-reload"); err != nil {
+	if _, err := runner.Run(ctx, selected[0].Address, "root", "systemctl daemon-reload"); err != nil {
 		return fmt.Errorf("reload systemd after credential installation on %s: %w", guest, err)
 	}
 	return nil
@@ -200,7 +200,7 @@ func installPowerDNSTSIG(ctx context.Context, runner proxmox.StdinCommandRunner,
 		fmt.Fprintf(&sql, "INSERT OR REPLACE INTO tsigkeys (name, algorithm, secret) VALUES (%s, %s, %s);\n", sqlQuote(zone.TSIGKeyName), sqlQuote(plan.DDNS.TSIGAlgorithm), sqlQuote(secret))
 	}
 	sql.WriteString("COMMIT;\n")
-	if _, err := runner.RunWithStdin(ctx, address, model.DefaultAdminSSHUser, "sudo -n sqlite3 /var/lib/powerdns/pdns.sqlite3", strings.NewReader(sql.String())); err != nil {
+	if _, err := runner.RunWithStdin(ctx, address, "root", "sqlite3 /var/lib/powerdns/pdns.sqlite3", strings.NewReader(sql.String())); err != nil {
 		return fmt.Errorf("install PowerDNS protected TSIG backend state: %w", err)
 	}
 	return nil

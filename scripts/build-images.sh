@@ -135,7 +135,6 @@ create_base_rootfs() {
   install -D -m 0644 images/base/first-boot/boetticher-first-boot.service "$rootfs/etc/systemd/system/boetticher-first-boot.service"
   install -D -m 0755 images/base/runtime/install-runtime-state.sh "$rootfs/usr/lib/boetticher/install-runtime-state"
   chroot "$rootfs" useradd --create-home --shell /bin/bash labadmin
-  chroot "$rootfs" usermod --append --groups sudo labadmin
   chroot "$rootfs" passwd --lock labadmin
   mkdir -p "$rootfs/tmp/boetticher-ansible"
   chroot "$rootfs" chown labadmin:labadmin /tmp/boetticher-ansible
@@ -474,14 +473,15 @@ build_firewall() {
     --upload images/base/runtime/journal-upload.conf:/etc/systemd/journal-upload.conf \
     --upload images/base/runtime/sshd.conf:/etc/ssh/sshd_config.d/boetticher.conf \
     --upload images/base/runtime/sshd-host-key.conf:/etc/ssh/sshd_config.d/boetticher-host-key.conf \
-    --upload images/base/runtime/boetticher.sudoers:/etc/sudoers.d/boetticher \
+    --upload images/firewall/runtime/boetticher.sudoers:/etc/sudoers.d/boetticher-firewall \
+    --upload images/firewall/runtime/inspect-firewall.sh:/usr/lib/boetticher/inspect-firewall \
     --upload "$artifact_identity:/usr/lib/boetticher/artifact.json" \
     --upload images/firewall/runtime/forwarding.conf:/etc/sysctl.d/boetticher-forwarding.conf \
     --run-command 'useradd --create-home --shell /bin/bash labadmin' \
-    --run-command 'usermod --append --groups sudo labadmin' \
     --run-command 'passwd --lock labadmin' \
     --run-command 'chown labadmin:labadmin /tmp/boetticher-ansible && chmod 0700 /tmp/boetticher-ansible' \
-    --run-command 'chown root:root /etc/sudoers.d/boetticher; chmod 0440 /etc/sudoers.d/boetticher' \
+    --run-command 'chown root:root /etc/sudoers.d/boetticher-firewall; chmod 0440 /etc/sudoers.d/boetticher-firewall' \
+    --run-command 'chown root:root /usr/lib/boetticher/inspect-firewall; chmod 0755 /usr/lib/boetticher/inspect-firewall' \
     --run-command 'rm -f /etc/ssh/ssh_host_* /root/.ssh/authorized_keys /home/labadmin/.ssh/authorized_keys' \
     --run-command 'rm -f /etc/ssl/private/ssl-cert-snakeoil.key' \
     --run-command 'visudo -cf /etc/sudoers' \

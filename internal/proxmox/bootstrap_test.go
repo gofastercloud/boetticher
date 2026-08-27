@@ -371,24 +371,47 @@ func TestValidateScopedRoleJSONRequiresExactPrivileges(t *testing.T) {
 	}
 }
 
-func TestConfigureIdentitiesLocksProxmoxLabadminAndInstallsBoundedSudo(t *testing.T) {
+func TestConfigureIdentitiesInstallsTemporaryRootAccessWithoutLabadminSudo(t *testing.T) {
 	runner := &fakeRunner{}
 	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator"
 	if err := ConfigureIdentities(context.Background(), runner, "192.0.2.10", "root", key, []string{"lab-fw-01:22"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"passwd --lock labadmin", "/etc/sudoers.d/boetticher-labadmin", "visudo -cf /etc/sudoers", "/bin/sh -c * /usr/bin/python3 /tmp/boetticher-ansible/ansible-tmp-*/*", "chown lab-jump:lab-jump /home/lab-jump.authorized_keys", "AllowUsers labadmin lab-jump", "Match User lab-jump"} {
+	for _, required := range []string{"passwd --lock labadmin", "/root/.ssh/authorized_keys", "rm -f /etc/sudoers.d/boetticher-labadmin", "visudo -cf /etc/sudoers", "chown lab-jump:lab-jump /home/lab-jump.authorized_keys", "AllowUsers root labadmin lab-jump", "Match User lab-jump"} {
 		if !strings.Contains(runner.command, required) {
 			t.Fatalf("identity bootstrap missing %q: %s", required, runner.command)
 		}
 	}
-	if strings.Contains(runner.command, "NOPASSWD:ALL") {
-		t.Fatal("Proxmox labadmin received unrestricted sudo")
-	}
-	for _, command := range []string{"/usr/bin/pvesh *", "/usr/bin/pvesm *"} {
-		if !strings.Contains(runner.command, command) {
-			t.Fatalf("Proxmox labadmin sudo policy is missing %s", command)
+	for _, forbidden := range []string{"NOPASSWD", "/usr/bin/pvesh *", "/usr/bin/pvesm *", "/bin/sh -c *", "/usr/bin/install *", "/usr/bin/chown *", "/usr/bin/chmod *"} {
+		if strings.Contains(runner.command, forbidden) {
+			t.Fatalf("identity bootstrap retained durable wildcard privilege %q: %s", forbidden, runner.command)
 		}
+	}
+}
+
+func TestRevokeTemporaryRootAccessIsFixedAndIdempotent(t *testing.T) {
+	for _, host := range []bool{false, true} {
+		runner := &fakeRunner{}
+		if err := RevokeTemporaryRootAccess(context.Background(), runner, "192.0.2.10", "root", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator", host); err != nil {
+			t.Fatal(err)
+		}
+		if runner.user != "root" {
+			t.Fatalf("temporary cleanup used %q instead of root", runner.user)
+		}
+		if strings.Contains(runner.command, "sudo") || strings.Contains(runner.command, "pvesh") || strings.Contains(runner.command, "pvesm") || strings.Contains(runner.command, "sh -c") {
+			t.Fatalf("temporary cleanup exposed an unrelated privilege path: %s", runner.command)
+		}
+		if host && !strings.Contains(runner.command, "AllowUsers root labadmin lab-jump") {
+			t.Fatalf("host cleanup does not verify the temporary AllowUsers state: %s", runner.command)
+		}
+		for _, required := range []string{"grep -Fvx --", "authorized_keys.boetticher-cleanup", "passwd --lock root"} {
+			if !strings.Contains(runner.command, required) {
+				t.Fatalf("temporary cleanup does not remove only the injected key: missing %q in %s", required, runner.command)
+			}
+		}
+	}
+	if err := RevokeTemporaryRootAccess(context.Background(), &fakeRunner{}, "192.0.2.10", "labadmin", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator", false); err == nil {
+		t.Fatal("temporary cleanup accepted a non-root transport")
 	}
 }
 

@@ -26,6 +26,11 @@ if find "$rootfs/etc/ssh" -maxdepth 1 -name 'ssh_host_*' -print -quit | grep -q 
   echo "artifact contains baked SSH host identity" >&2
   exit 1
 fi
+printf '%s\n' 'boetticher smoke check: durable labadmin privilege absence'
+if grep -Eq '^[[:space:]]*labadmin[[:space:]]+ALL=' "$rootfs/etc/sudoers.d/boetticher"; then
+  echo "base appliance contains a durable labadmin sudo rule" >&2
+  exit 1
+fi
 
 case "$name" in
   boetticher-base)

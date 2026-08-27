@@ -81,13 +81,14 @@ func UnitDropIns(specs []CredentialSpec) (map[string]string, error) {
 	return result, nil
 }
 
-// InstallCommand returns an argv-safe systemd-creds invocation. The plaintext
-// value is supplied on stdin by the caller and never appears in argv.
+// InstallCommand returns an argv-safe systemd-creds invocation for the
+// temporary root deployment transport. The plaintext value is supplied on
+// stdin by the caller and never appears in argv.
 func InstallCommand(spec CredentialSpec) ([]string, error) {
 	if err := Validate([]CredentialSpec{spec}); err != nil {
 		return nil, err
 	}
-	return []string{"sudo", "-n", "systemd-creds", "encrypt", "--name=" + spec.Name, "/dev/stdin", spec.StorePath}, nil
+	return []string{"systemd-creds", "encrypt", "--name=" + spec.Name, "/dev/stdin", spec.StorePath}, nil
 }
 
 // StdinRunner is the narrow transport needed for secret installation.

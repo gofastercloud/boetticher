@@ -13,16 +13,19 @@ import (
 
 type credentialDeploymentRunner struct {
 	commands []string
+	users    []string
 	values   []string
 }
 
-func (r *credentialDeploymentRunner) Run(_ context.Context, _ string, _ string, command string) ([]byte, error) {
+func (r *credentialDeploymentRunner) Run(_ context.Context, _ string, user string, command string) ([]byte, error) {
 	r.commands = append(r.commands, command)
+	r.users = append(r.users, user)
 	return nil, nil
 }
 
-func (r *credentialDeploymentRunner) RunWithStdin(_ context.Context, _ string, _ string, command string, stdin io.Reader) ([]byte, error) {
+func (r *credentialDeploymentRunner) RunWithStdin(_ context.Context, _ string, user string, command string, stdin io.Reader) ([]byte, error) {
 	r.commands = append(r.commands, command)
+	r.users = append(r.users, user)
 	data, err := io.ReadAll(stdin)
 	if err == nil {
 		r.values = append(r.values, string(data))
@@ -129,6 +132,14 @@ func TestCredentialInstallationStreamsValuesOutsideCommands(t *testing.T) {
 		if strings.Contains(command, secret) {
 			t.Fatalf("credential value entered remote command: %s", command)
 		}
+		if strings.Contains(command, "sudo") {
+			t.Fatalf("credential installation retained a sudo dependency: %s", command)
+		}
+	}
+	for _, user := range runner.users {
+		if user != "root" {
+			t.Fatalf("credential installation used durable user %q", user)
+		}
 	}
 }
 
@@ -147,5 +158,8 @@ func TestPowerDNSExceptionStreamsProtectedBackendSQL(t *testing.T) {
 	}
 	if strings.Contains(runner.commands[0], secret) {
 		t.Fatal("PowerDNS secret entered the remote command")
+	}
+	if runner.users[0] != "root" || strings.Contains(runner.commands[0], "sudo") {
+		t.Fatalf("PowerDNS exception did not use the temporary root transport: users=%v commands=%v", runner.users, runner.commands)
 	}
 }
