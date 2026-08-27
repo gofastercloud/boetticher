@@ -183,7 +183,7 @@ func TestLoggingCollectorKeyIsReadableByItsServiceUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "group: systemd-journal-remote\n    mode: '0750'") || !strings.Contains(text, "path: /var/lib/boetticher/identity/logging/collector.key") || !strings.Contains(text, "group: systemd-journal-remote\n    mode: '0640'") {
+	if !strings.Contains(text, "path: \"{{ logging_plan.remote_journal_path }}\"\n    state: directory\n    owner: root\n    group: systemd-journal-remote\n    mode: '2770'") || !strings.Contains(text, "path: /var/lib/boetticher/identity/logging/collector.key") || !strings.Contains(text, "group: systemd-journal-remote\n    mode: '0640'") {
 		t.Fatal("logging collector private key is not readable by the systemd-journal-remote service user")
 	}
 }

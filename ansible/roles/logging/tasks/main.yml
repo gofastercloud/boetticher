@@ -10,8 +10,8 @@
     path: "{{ logging_plan.remote_journal_path }}"
     state: directory
     owner: root
-    group: systemd-journal
-    mode: '2755'
+    group: systemd-journal-remote
+    mode: '2770'
   when: inventory_hostname == logging_plan.collector
 
 - name: Create collector logging identity directory
