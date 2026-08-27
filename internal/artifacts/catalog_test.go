@@ -643,6 +643,37 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	}
 }
 
+func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *testing.T) {
+	buildScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "scan-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildText := string(buildScript)
+	scanText := string(scanScript)
+	if !strings.Contains(buildText, "BOETTICHER_BASE_ROOTFS") || !strings.Contains(buildText, "BOETTICHER_SKIP_PROVENANCE=1") || !strings.Contains(buildText, `timing_emit "artifact_build"`) {
+		t.Fatal("bounded image workers do not isolate their base rootfs, provenance, and timing contract")
+	}
+	if !strings.Contains(buildText, `timing_emit "artifact_build_all"`) || !strings.Contains(buildText, "pid_a=") || !strings.Contains(buildText, "pid_b=") {
+		t.Fatal("image construction is missing explicit bounded worker scheduling")
+	}
+	if strings.Count(scanText, "trivy fs --scanners vuln,secret") != 1 {
+		t.Fatalf("qualification performs more than one full Trivy filesystem scan: %d", strings.Count(scanText, "trivy fs --scanners vuln,secret"))
+	}
+	if strings.Count(scanText, "trivy convert") != 2 || !strings.Contains(scanText, "--list-all-pkgs") {
+		t.Fatal("qualification does not derive table and SBOM evidence from the canonical scan")
+	}
+	if !strings.Contains(scanText, `timing_emit "artifact_trivy_scan"`) || !strings.Contains(scanText, `timing_emit "artifact_qualification_all"`) {
+		t.Fatal("qualification timing output is incomplete")
+	}
+	if strings.Contains(buildText, "build_dns_blocky() {\n  printf '%s\\n' 'boetticher build stage: dns blocky'\n  rootfs=$(prepare_rootfs boetticher-dns-blocky)\n  install_powerdns \"$rootfs\"\n  install_packages \"$rootfs\" chrony") {
+		t.Fatal("DNS construction still performs a redundant package-index transaction")
+	}
+}
+
 func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "images", "base", "debian.yaml"))
 	if err != nil {

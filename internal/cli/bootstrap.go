@@ -77,6 +77,15 @@ func runBootstrapEndpoint(args []string, out interface{ Write([]byte) (int, erro
 }
 
 func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) error {
+	totalStarted := time.Now()
+	defer func() { emitTiming(out, "bootstrap_total", totalStarted) }()
+	networkStarted := time.Now()
+	networkFinished := false
+	defer func() {
+		if !networkFinished {
+			emitTiming(out, "bootstrap_network_trust_setup", networkStarted)
+		}
+	}()
 	fs := flag.NewFlagSet("bootstrap", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
@@ -296,7 +305,9 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 		return fmt.Errorf("HOLD: recompute platform plan after physical binding: %w", err)
 	}
 	plan.Node = apiNode
-	if err := buildDefaultArtifacts(ctx, client, plan, *siteDir, publicKey, *knownHosts, model.ExpandUserPath(s.SSHIdentityFile), runner, s.BootstrapAddress, *initialUser); err != nil {
+	emitTiming(out, "bootstrap_network_trust_setup", networkStarted)
+	networkFinished = true
+	if err := buildDefaultArtifacts(ctx, client, plan, *siteDir, publicKey, *knownHosts, model.ExpandUserPath(s.SSHIdentityFile), runner, s.BootstrapAddress, *initialUser, out); err != nil {
 		return err
 	}
 	plan, err = proxmox.ResolveQualifiedArtifacts(*siteDir, plan, true)
@@ -359,6 +370,13 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	return nil
 }
 
+func emitTiming(out interface{ Write([]byte) (int, error) }, stage string, started time.Time) {
+	if out == nil || stage == "" || started.IsZero() {
+		return
+	}
+	fmt.Fprintf(out, "timing stage=%s duration_ms=%d\n", stage, time.Since(started).Milliseconds())
+}
+
 // honorRequestedPhysicalMode keeps a fresh virtual-only site virtual-only even
 // when hardware discovery finds one eligible spare interface. A physical
 // trunk enters the model only through an explicit selection or an already
@@ -373,16 +391,19 @@ func honorRequestedPhysicalMode(discovery networkmodel.Discovery, desiredMode, c
 	return discovery
 }
 
-func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan proxmox.Plan, siteDir, publicKey, _ string, identityFile string, hostRunner proxmox.CommandRunner, hostAddress, hostUser string) (returnErr error) {
+func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan proxmox.Plan, siteDir, publicKey, _ string, identityFile string, hostRunner proxmox.CommandRunner, hostAddress, hostUser string, out interface{ Write([]byte) (int, error) }) (returnErr error) {
+	cacheStarted := time.Now()
 	base, err := artifacts.ArtifactFor("base")
 	if err != nil {
 		return err
 	}
 	if _, _, err := artifacts.ResolveArtifactEvidence(siteDir, base); err == nil {
 		if _, err := proxmox.ResolveQualifiedArtifacts(siteDir, plan, true); err == nil {
+			emitTiming(out, "artifact_cache_hit", cacheStarted)
 			return nil
 		}
 	}
+	emitTiming(out, "artifact_cache_check", cacheStarted)
 	if client == nil {
 		return errors.New("Proxmox client is required for appliance construction")
 	}
@@ -399,7 +420,9 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 			}
 		}
 	}()
+	provisionStarted := time.Now()
 	builderCreated, err := proxmox.EnsureBuilderVM(ctx, client, plan, publicKey)
+	emitTiming(out, "builder_vm_provisioning", provisionStarted)
 	builderAddress := ""
 	builderRunner := proxmox.SSHRunner{KnownHosts: builderKnownHosts, StrictHostKey: "accept-new", IdentityFile: identityFile}
 	builderSSHUser := "root"
@@ -432,6 +455,13 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if err != nil {
 		return err
 	}
+	readinessStarted := time.Now()
+	readinessFinished := false
+	defer func() {
+		if !readinessFinished {
+			emitTiming(out, "builder_cloud_init_readiness", readinessStarted)
+		}
+	}()
 	if err := client.StartVM(ctx, plan.Node, model.BuilderVMID); err != nil {
 		return fmt.Errorf("start temporary appliance builder: %w", err)
 	}
@@ -449,7 +479,10 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if err := proxmox.CheckBuilderCapacity(ctx, builderRunner, builderAddress, builderSSHUser, builder.MinimumFreeGiB); err != nil {
 		return err
 	}
+	emitTiming(out, "builder_cloud_init_readiness", readinessStarted)
+	readinessFinished = true
 	sourceRoot, sourceErr := applianceBuildSourceRoot()
+	sourceStarted := time.Now()
 	var archive []byte
 	if sourceErr == nil {
 		archive, err = artifacts.BuildSourceArchive(sourceRoot)
@@ -462,11 +495,16 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if _, err := builderRunner.RunWithStdin(ctx, builderAddress, builderSSHUser, "set -eu; install -d -m 0755 -o labadmin -g labadmin /home/labadmin/build; tar -xzf - -C /home/labadmin/build", bytes.NewReader(archive)); err != nil {
 		return fmt.Errorf("transfer public appliance build definitions: %w", err)
 	}
+	emitTiming(out, "builder_source_transfer", sourceStarted)
 	var buildOutputBuffer boundedBuilderOutput
+	buildStarted := time.Now()
 	if err := builderRunner.RunStream(ctx, builderAddress, builderSSHUser, "/usr/local/sbin/boetticher-build", &buildOutputBuffer); err != nil {
 		builderOutput = buildOutputBuffer.String()
+		emitTiming(out, "builder_build_and_qualification", buildStarted)
 		return fmt.Errorf("qualify default appliance artifacts on temporary builder: %w", err)
 	}
+	emitTiming(out, "builder_build_and_qualification", buildStarted)
+	returnStarted := time.Now()
 	archiveFile, err := os.CreateTemp("", "boetticher-builder-artifacts-*.tar.gz")
 	if err != nil {
 		return fmt.Errorf("create temporary artifact archive: %w", err)
@@ -490,6 +528,7 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if err := artifacts.RebindEvidencePaths(siteDir); err != nil {
 		return fmt.Errorf("bind qualified evidence to controller artifact bytes: %w", err)
 	}
+	emitTiming(out, "builder_artifact_return_extraction", returnStarted)
 	buildSucceeded = true
 	return nil
 }

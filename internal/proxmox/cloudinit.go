@@ -14,6 +14,76 @@ type CloudInitFiles struct {
 	NetworkConfig string
 }
 
+var builderArtifactTargetsInOrder = []struct {
+	artifact string
+	target   string
+	scan     string
+}{
+	{artifact: "boetticher-base", target: "image-base", scan: "boetticher-base"},
+	{artifact: "boetticher-dns-blocky", target: "image-dns-blocky", scan: "boetticher-dns-blocky"},
+	{artifact: "boetticher-dns-adguard", target: "image-dns-adguard", scan: "boetticher-dns-adguard"},
+	{artifact: "boetticher-logging", target: "image-logging", scan: "boetticher-logging"},
+	{artifact: "boetticher-monitoring", target: "image-monitoring", scan: "boetticher-monitoring"},
+	{artifact: "boetticher-firewall", target: "image-firewall", scan: "boetticher-firewall"},
+	{artifact: "boetticher-portal", target: "image-portal", scan: "boetticher-portal"},
+	{artifact: "boetticher-tailnet-router", target: "image-tailnet-router", scan: "boetticher-tailnet-router"},
+	{artifact: "boetticher-litellm", target: "image-litellm", scan: "boetticher-litellm"},
+}
+
+func defaultBuilderArtifactTargets() []string {
+	return []string{"image-base", "image-dns-blocky", "image-logging", "image-monitoring", "image-portal", "image-firewall"}
+}
+
+// builderArtifactTargets derives the public builder workload from the
+// resolved plan. Disabled modules have no guest and therefore cannot add a
+// build or scan target. The base remains an explicit prerequisite for every
+// LXC derivative; the firewall image is independent but is still selected
+// only when the managed firewall is in the plan.
+func builderArtifactTargets(plan Plan) ([]string, error) {
+	selected := map[string]bool{"boetticher-base": true}
+	for _, guest := range plan.Guests {
+		if guest.Artifact.Name == "" {
+			continue
+		}
+		found := false
+		for _, target := range builderArtifactTargetsInOrder {
+			if guest.Artifact.Name == target.artifact {
+				selected[target.artifact] = true
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("unsupported builder artifact %q for guest %s", guest.Artifact.Name, guest.Name)
+		}
+	}
+	targets := make([]string, 0, len(selected))
+	for _, target := range builderArtifactTargetsInOrder {
+		if selected[target.artifact] {
+			targets = append(targets, target.target)
+		}
+	}
+	return targets, nil
+}
+
+func builderScanTargets(buildTargets []string) ([]string, error) {
+	scans := make([]string, 0, len(buildTargets))
+	for _, buildTarget := range buildTargets {
+		found := false
+		for _, target := range builderArtifactTargetsInOrder {
+			if buildTarget == target.target {
+				scans = append(scans, target.scan)
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("unsupported builder build target %q", buildTarget)
+		}
+	}
+	return scans, nil
+}
+
 // RenderFirewallCloudInit creates only first-boot transport state. Runtime
 // firewall policy, DHCP scopes, and forwarding remain deployment-derived.
 func RenderFirewallCloudInit(guest GuestPlan) (CloudInitFiles, error) {
@@ -101,7 +171,7 @@ func guestVolume(guest GuestPlan, name string) (model.PersistentVolumeDeclaratio
 // builder's temporary root deployment identity is present in the custom
 // user-data document.
 func RenderBuilderCloudInit() CloudInitFiles {
-	files, _ := renderBuilderCloudInit("")
+	files, _ := renderBuilderCloudInit("", defaultBuilderArtifactTargets())
 	return files
 }
 
@@ -110,17 +180,34 @@ func RenderBuilderCloudInit() CloudInitFiles {
 // custom user-data document must not rely on Proxmox's generated sshkeys
 // fragment to configure the pre-existing labadmin account.
 func RenderBuilderCloudInitWithKey(operatorPublicKey string) (CloudInitFiles, error) {
+	return RenderBuilderCloudInitWithKeyAndTargets(operatorPublicKey, defaultBuilderArtifactTargets())
+}
+
+// RenderBuilderCloudInitWithKeyAndTargets adds the short-lived operator key
+// and the resolved artifact workload to the temporary builder. Targets are
+// validated against the first-party build contract before entering cloud-init.
+func RenderBuilderCloudInitWithKeyAndTargets(operatorPublicKey string, buildTargets []string) (CloudInitFiles, error) {
 	if err := ValidatePublicKey(operatorPublicKey); err != nil {
 		return CloudInitFiles{}, err
 	}
-	return renderBuilderCloudInit(operatorPublicKey)
+	if len(buildTargets) == 0 {
+		return CloudInitFiles{}, fmt.Errorf("builder artifact target set is empty")
+	}
+	if _, err := builderScanTargets(buildTargets); err != nil {
+		return CloudInitFiles{}, err
+	}
+	return renderBuilderCloudInit(operatorPublicKey, buildTargets)
 }
 
-func renderBuilderCloudInit(operatorPublicKey string) (CloudInitFiles, error) {
+func renderBuilderCloudInit(operatorPublicKey string, buildTargets []string) (CloudInitFiles, error) {
 	if operatorPublicKey != "" {
 		if err := ValidatePublicKey(operatorPublicKey); err != nil {
 			return CloudInitFiles{}, err
 		}
+	}
+	scanTargets, err := builderScanTargets(buildTargets)
+	if err != nil {
+		return CloudInitFiles{}, err
 	}
 	userData := `#cloud-config
 hostname: lab-builder-01
@@ -166,8 +253,9 @@ users:
       export BOETTICHER_ARTIFACT_OUTPUT=/home/labadmin/build/generated/artifacts
       export BOETTICHER_EVIDENCE_ROOT=/home/labadmin/build
       export BOETTICHER_IMAGE_WORK=/var/lib/boetticher/image-work
-      ./scripts/build-images.sh images
-      ./scripts/scan-images.sh scan-images
+      printf '%s\n' 'timing stage=builder_configuration vmid=190 cores=4 memory_mib=8192 disk_gib=32 network=bootstrap-upstream-only'
+      ./scripts/build-images.sh images ` + strings.Join(buildTargets, " ") + `
+      ./scripts/scan-images.sh scan-images ` + strings.Join(scanTargets, " ") + `
       chown -R labadmin:labadmin /home/labadmin/build/generated/artifacts
       find /home/labadmin/build/generated/artifacts -type d -exec chmod 0755 {} +
       find /home/labadmin/build/generated/artifacts -type f -exec chmod 0644 {} +

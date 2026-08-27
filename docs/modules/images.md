@@ -28,6 +28,20 @@ file are cleaned up. A valid controller cache with a matching build record and
 content hash avoids creating the builder. Missing, stale, or mismatched build
 records require a fresh construction.
 
+The builder receives an artifact target list derived from the resolved plan.
+The base, enabled provider/module appliances, and managed firewall are built
+and qualified; disabled optional modules such as Tailnet Router and LiteLLM
+are not constructed during the default workflow. After the base root filesystem
+is ready, independent LXC workers and the firewall worker use bounded
+concurrency of two. Each worker has its own root filesystem, temporary build
+directory, log, and cleanup trap; a failed worker fails the complete build.
+
+Bootstrap and the builder print structured `timing stage=... duration_ms=...`
+records. Successful builder runs also return `build-timings.log` and
+`scan-timings.log` under generated artifact state, together with the builder
+CPU/memory/disk configuration, so serial and parallel qualification runs can
+be compared without treating timing as desired-state evidence.
+
 Builder output is streamed to the controller and artifact uploads are streamed
 to Proxmox. Extraction rejects traversal, links, unsupported entries, excess
 entries, and excessive expanded output. Artifact binaries remain runtime/cache
@@ -48,8 +62,16 @@ they are not additional desired-state authorities, independent deployment
 authorities, or recovery authority. Builder provenance is optional and does
 not block an otherwise valid artifact.
 
+The pinned Trivy version performs one full filesystem scan per artifact with
+vulnerability and secret scanners enabled; its JSON result is converted into
+the human-readable summary and CycloneDX SBOM without rescanning the root
+filesystem. DNS package installation coalesces PowerDNS, SQLite, and Chrony
+into one repository transaction.
+
 Build timestamps, tool versions, and content hashes are not canonical
-desired-state inputs.
+desired-state inputs. The current `zstd -T0 -19` artifact compression and gzip
+transport remain unchanged until representative builder and transfer
+measurements justify a different setting.
 
 Root filesystems are immutable and replaceable; declared persistent volumes are
 attached independently and are not included in the artifact binary.

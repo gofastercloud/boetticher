@@ -171,6 +171,12 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 	if !strings.Contains(files.UserData, "boetticher-build") || !strings.Contains(files.UserData, "scripts/scan-images.sh scan-images") || !strings.Contains(files.UserData, "boetticher-builder-ready") {
 		t.Fatal("builder cloud-init does not invoke the first-party build and qualification path")
 	}
+	if !strings.Contains(files.UserData, "./scripts/build-images.sh images image-base image-dns-blocky image-logging image-monitoring image-portal image-firewall") || !strings.Contains(files.UserData, "./scripts/scan-images.sh scan-images boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-portal boetticher-firewall") {
+		t.Fatalf("builder cloud-init does not select the default core artifact set: %s", files.UserData)
+	}
+	if strings.Contains(files.UserData, "image-tailnet-router") || strings.Contains(files.UserData, "image-litellm") {
+		t.Fatal("default builder cloud-init selects disabled optional artifacts")
+	}
 	for _, required := range []string{
 		"/usr/local/go/bin/go version",
 		"go1.26.5.linux-amd64.tar.gz",
@@ -289,5 +295,45 @@ func TestRenderBuilderCloudInitWithKeyBootstrapsTemporaryRoot(t *testing.T) {
 func TestRenderBuilderCloudInitWithKeyRejectsInvalidKey(t *testing.T) {
 	if _, err := RenderBuilderCloudInitWithKey("not-a-key"); err == nil {
 		t.Fatal("invalid builder operator key was accepted")
+	}
+}
+
+func TestBuilderArtifactTargetsFollowResolvedPlan(t *testing.T) {
+	plan := Plan{Guests: []GuestPlan{
+		{Artifact: model.Artifact{Name: "boetticher-base"}},
+		{Artifact: model.Artifact{Name: "boetticher-dns-blocky"}},
+		{Artifact: model.Artifact{Name: "boetticher-logging"}},
+		{Artifact: model.Artifact{Name: "boetticher-monitoring"}},
+		{Artifact: model.Artifact{Name: "boetticher-portal"}},
+		{Artifact: model.Artifact{Name: "boetticher-firewall"}},
+	}}
+	targets, err := builderArtifactTargets(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"image-base", "image-dns-blocky", "image-logging", "image-monitoring", "image-firewall", "image-portal"}
+	if strings.Join(targets, ",") != strings.Join(want, ",") {
+		t.Fatalf("builder targets = %#v, want %#v", targets, want)
+	}
+	scans, err := builderScanTargets(targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(scans, " "), "tailnet") || strings.Contains(strings.Join(scans, " "), "litellm") {
+		t.Fatalf("disabled optional scans selected: %#v", scans)
+	}
+	if _, err := builderArtifactTargets(Plan{Guests: []GuestPlan{{Name: "unknown", Artifact: model.Artifact{Name: "unknown"}}}}); err == nil {
+		t.Fatal("unknown builder artifact was accepted")
+	}
+}
+
+func TestRenderBuilderCloudInitWithKeyAndTargetsUsesRequestedArtifacts(t *testing.T) {
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator #1"
+	files, err := RenderBuilderCloudInitWithKeyAndTargets(key, []string{"image-base", "image-dns-blocky"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(files.UserData, "./scripts/build-images.sh images image-base image-dns-blocky") || !strings.Contains(files.UserData, "./scripts/scan-images.sh scan-images boetticher-base boetticher-dns-blocky") {
+		t.Fatalf("requested builder target set was not rendered: %s", files.UserData)
 	}
 }
