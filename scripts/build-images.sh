@@ -78,7 +78,7 @@ write_builder_provenance() {
     --arg libguestfs "$(version_or_unavailable guestfish)" \
     --arg qemu_img "$(version_or_unavailable qemu-img)" \
     --arg architecture amd64 \
-    --arg boetticher_version 0.3.27 \
+    --arg boetticher_version 0.3.28 \
     '{platform:$platform,input_image:$input_image,kernel:$kernel,go:$go,trivy:$trivy,mmdebstrap:$mmdebstrap,libguestfs:$libguestfs,qemu_img:$qemu_img,architecture:$architecture,boetticher_version:$boetticher_version}' \
     > "$provenance_path"
   chmod 0644 "$provenance_path"
@@ -103,7 +103,7 @@ artifact_for() {
 	name=$1
 	version=1.0.0
 	if [ "$name" = boetticher-base ]; then
-		version=0.3.27
+		version=0.3.28
 	fi
 	printf '%s/%s/%s-%s-amd64.tar.zst' "$output_root" "$name" "$name" "$version"
 }

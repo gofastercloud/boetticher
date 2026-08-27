@@ -166,6 +166,25 @@ func (f *fakeRunner) Run(_ context.Context, address, user, command string) ([]by
 	return f.output, nil
 }
 
+func TestWaitForQEMUIPv4ViaNeighborMatchesOnlyBuilderMAC(t *testing.T) {
+	runner := &fakeRunner{responses: map[string][]byte{
+		"/usr/sbin/ip -4 neigh show dev vmbr0": []byte("192.168.4.50 lladdr aa:bb:cc:dd:ee:ff STALE\n192.168.4.51 lladdr 02:00:00:00:01:90 REACHABLE\n"),
+	}}
+	address, err := WaitForQEMUIPv4ViaNeighbor(context.Background(), runner, "192.168.4.5", "root", "02:00:00:00:01:90", 1, time.Millisecond)
+	if err != nil || address != "192.168.4.51" {
+		t.Fatalf("WaitForQEMUIPv4ViaNeighbor() = %q, %v", address, err)
+	}
+}
+
+func TestWaitForQEMUIPv4ViaNeighborRejectsMissingBuilderMAC(t *testing.T) {
+	runner := &fakeRunner{responses: map[string][]byte{
+		"/usr/sbin/ip -4 neigh show dev vmbr0": []byte("192.168.4.50 lladdr aa:bb:cc:dd:ee:ff STALE\n"),
+	}}
+	if address, err := WaitForQEMUIPv4ViaNeighbor(context.Background(), runner, "192.168.4.5", "root", "02:00:00:00:01:90", 1, time.Millisecond); err == nil || address != "" || !strings.Contains(err.Error(), "HOLD") {
+		t.Fatalf("WaitForQEMUIPv4ViaNeighbor() = %q, %v", address, err)
+	}
+}
+
 func containsString(values []string, wanted string) bool {
 	for _, value := range values {
 		if value == wanted {

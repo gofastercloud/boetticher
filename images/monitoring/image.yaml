@@ -2,7 +2,7 @@ name: boetticher-monitoring
 version: 1.0.0
 kind: lxc
 base: boetticher-base
-base_version: 0.3.27
+base_version: 0.3.28
 architecture: amd64
 services:
   - zabbix-server

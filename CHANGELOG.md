@@ -3,6 +3,13 @@
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 
+## [0.3.28] - 2026-08-27
+
+### Fixed
+
+- Discover the temporary DHCP builder through its exact HOME neighbor entry
+  before waiting for cloud-init to install the guest agent.
+
 ## [0.3.27] - 2026-08-27
 
 ### Fixed

@@ -293,7 +293,7 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 		return fmt.Errorf("HOLD: recompute platform plan after physical binding: %w", err)
 	}
 	plan.Node = apiNode
-	if err := buildDefaultArtifacts(ctx, client, plan, *siteDir, publicKey, *knownHosts, model.ExpandUserPath(s.SSHIdentityFile)); err != nil {
+	if err := buildDefaultArtifacts(ctx, client, plan, *siteDir, publicKey, *knownHosts, model.ExpandUserPath(s.SSHIdentityFile), runner, s.BootstrapAddress, *initialUser); err != nil {
 		return err
 	}
 	plan, err = proxmox.ResolveQualifiedArtifacts(*siteDir, plan, true)
@@ -370,7 +370,7 @@ func honorRequestedPhysicalMode(discovery networkmodel.Discovery, desiredMode, c
 	return discovery
 }
 
-func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan proxmox.Plan, siteDir, publicKey, _ string, identityFile string) (returnErr error) {
+func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan proxmox.Plan, siteDir, publicKey, _ string, identityFile string, hostRunner proxmox.CommandRunner, hostAddress, hostUser string) (returnErr error) {
 	base, err := artifacts.ArtifactFor("base")
 	if err != nil {
 		return err
@@ -431,7 +431,7 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if err := client.StartVM(ctx, plan.Node, model.BuilderVMID); err != nil {
 		return fmt.Errorf("start temporary appliance builder: %w", err)
 	}
-	builderAddress, err = proxmox.WaitForQEMUIPv4(ctx, client, plan.Node, model.BuilderVMID, 60, 5*time.Second)
+	builderAddress, err = proxmox.WaitForQEMUIPv4ViaNeighbor(ctx, hostRunner, hostAddress, hostUser, model.BuilderMAC, 60, 5*time.Second)
 	if err != nil {
 		return err
 	}

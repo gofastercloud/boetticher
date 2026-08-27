@@ -151,6 +151,52 @@ func WaitForCommand(ctx context.Context, runner CommandRunner, address, user, co
 	return fmt.Errorf("HOLD: command readiness failed for %s@%s after %d attempts: %w", user, address, attempts, lastErr)
 }
 
+// WaitForQEMUIPv4ViaNeighbor discovers a DHCP-backed temporary guest before
+// cloud-init can install qemu-guest-agent. The exact builder MAC is the only
+// accepted identity; unrelated HOME neighbors are never returned.
+func WaitForQEMUIPv4ViaNeighbor(ctx context.Context, runner CommandRunner, address, user, mac string, attempts int, interval time.Duration) (string, error) {
+	if runner == nil || address == "" || user == "" || attempts < 1 {
+		return "", errors.New("builder neighbor readiness inputs are invalid")
+	}
+	parsedMAC, err := net.ParseMAC(mac)
+	if err != nil || len(parsedMAC) != 6 {
+		return "", errors.New("builder neighbor readiness requires a valid MAC")
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		output, runErr := runner.Run(ctx, address, user, "/usr/sbin/ip -4 neigh show dev vmbr0")
+		if runErr != nil {
+			lastErr = runErr
+		} else {
+			for _, line := range strings.Split(string(output), "\n") {
+				fields := strings.Fields(line)
+				if len(fields) < 4 || fields[1] != "lladdr" {
+					continue
+				}
+				candidateIP := net.ParseIP(fields[0]).To4()
+				candidateMAC, parseErr := net.ParseMAC(fields[2])
+				if candidateIP != nil && parseErr == nil && len(candidateMAC) == 6 && candidateMAC.String() == parsedMAC.String() {
+					return candidateIP.String(), nil
+				}
+			}
+			lastErr = errors.New("builder MAC is not present in the Proxmox HOME neighbor table")
+		}
+		if attempt+1 < attempts {
+			timer := time.NewTimer(interval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return "", fmt.Errorf("builder neighbor readiness cancelled: %w", ctx.Err())
+			case <-timer.C:
+			}
+		}
+	}
+	return "", fmt.Errorf("HOLD: builder DHCP address was not observed for MAC %s after %d attempts: %w", parsedMAC, attempts, lastErr)
+}
+
 type SSHRunner struct {
 	Port          int
 	KnownHosts    string
