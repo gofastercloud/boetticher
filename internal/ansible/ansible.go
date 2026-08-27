@@ -200,10 +200,26 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	command := exec.CommandContext(ctx, executable, args...)
 	command.Stdin = strings.NewReader(string(variables))
 	command.Env = append(os.Environ(), "ANSIBLE_HOST_KEY_CHECKING=True")
-	if _, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("ansible-playbook failed: %w", err)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		diagnostic := failureDiagnostic(output)
+		if diagnostic == "" {
+			return fmt.Errorf("ansible-playbook failed: %w", err)
+		}
+		return fmt.Errorf("ansible-playbook failed: %w: %s", err, diagnostic)
 	}
 	return nil
+}
+
+func failureDiagnostic(output []byte) string {
+	lines := strings.Split(string(output), "\n")
+	selected := make([]string, 0, 3)
+	for _, line := range lines {
+		if strings.Contains(line, "[ERROR]:") || strings.Contains(line, "fatal:") || strings.Contains(line, "unreachable=") {
+			selected = append(selected, strings.TrimSpace(line))
+		}
+	}
+	return strings.Join(selected, " | ")
 }
 
 // generatedSSHConfigPath derives the site-local SSH projection from the

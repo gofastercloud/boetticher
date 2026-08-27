@@ -88,6 +88,17 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	}
 }
 
+func TestFailureDiagnosticKeepsOnlyBoundedErrorLines(t *testing.T) {
+	output := []byte("TASK [secret task] ***\nchanged: [host]\nfatal: [host]: FAILED! => {\"msg\":\"failed\"}\nPLAY RECAP ***\nhost : ok=1 unreachable=0 failed=1\n")
+	got := failureDiagnostic(output)
+	if !strings.Contains(got, "fatal: [host]") || !strings.Contains(got, "unreachable=0") {
+		t.Fatalf("diagnostic omitted failure context: %q", got)
+	}
+	if strings.Contains(got, "secret task") || strings.Contains(got, "changed:") {
+		t.Fatalf("diagnostic included non-error task output: %q", got)
+	}
+}
+
 func TestLimitedRunRejectsShellSyntaxInInventoryIdentity(t *testing.T) {
 	for _, value := range []string{"lab-fw-01", "lab_dns_01", "lab.fw"} {
 		if !safeInventoryIdentity(value) {
