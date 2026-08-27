@@ -454,7 +454,7 @@ func TestEnsureCloudImageAcceptsPVEImportWithoutListingChecksumAfterVerifiedDown
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
 			contentRequests++
 			if contentRequests == 1 {
-				return response([]byte(`{"data":[]}`))
+				return response([]byte(`{"data":[{"content":"import","volid":"local:import/image.qcow2","format":"qcow2","size":42}]}`))
 			}
 			return response([]byte(`{"data":[{"content":"import","volid":"local:import/image.qcow2","format":"qcow2","size":42}]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/download-url":

@@ -3,6 +3,13 @@
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 
+## [0.3.22] - 2026-08-27
+
+### Fixed
+
+- Retry a partial bootstrap by revalidating an existing unchecksummed PVE
+  import entry through the pinned download task.
+
 ## [0.3.21] - 2026-08-27
 
 ### Fixed

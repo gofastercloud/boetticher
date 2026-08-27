@@ -698,7 +698,10 @@ func (c *Client) EnsureCloudImage(ctx context.Context, node, storage, filename, 
 			observed = content.CSum
 		}
 		if observed == "" {
-			return "", fmt.Errorf("existing gateway image %q has no checksum evidence", filename)
+			// PVE import listings omit checksums. Re-download the exact pinned
+			// input so its task-level checksum verification establishes the
+			// bytes again after a partial bootstrap attempt.
+			break
 		}
 		if !strings.EqualFold(observed, checksum) {
 			return "", fmt.Errorf("existing gateway image %q has a different checksum", filename)
