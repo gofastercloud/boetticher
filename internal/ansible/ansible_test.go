@@ -348,6 +348,10 @@ func TestFirewallRoleAllowsKeaCredentialThroughAppArmor(t *testing.T) {
 		"/run/credentials/kea-dhcp-ddns-server.service/kea-ddns-tsig r,",
 		"dest: /etc/apparmor.d/local/usr.sbin.kea-dhcp-ddns",
 		"notify: reload AppArmor",
+		"Permit read-only Kea lease evidence",
+		"labadmin ALL=(root) NOPASSWD: /bin/cat /var/lib/kea/kea-leases4.csv",
+		"dest: /etc/sudoers.d/boetticher-kea-leases",
+		"validate: /usr/sbin/visudo -cf %s",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("firewall role missing Kea AppArmor rule %q", expected)

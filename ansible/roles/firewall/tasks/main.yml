@@ -22,6 +22,15 @@
     mode: '0644'
   notify: reload AppArmor
 
+- name: Permit read-only Kea lease evidence
+  ansible.builtin.copy:
+    content: "labadmin ALL=(root) NOPASSWD: /bin/cat /var/lib/kea/kea-leases4.csv\n"
+    dest: /etc/sudoers.d/boetticher-kea-leases
+    owner: root
+    group: root
+    mode: '0440'
+    validate: /usr/sbin/visudo -cf %s
+
 - name: Require qualified gateway software in the appliance
   ansible.builtin.command:
     argv: [sh, -c, "command -v nft && command -v kea-dhcp4 && command -v kea-dhcp-ddns && command -v dnsmasq"]
