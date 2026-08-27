@@ -26,6 +26,19 @@ if [ ! -s "$provenance" ]; then
   echo "HOLD: builder provenance is missing: $provenance" >&2
   exit 2
 fi
+scan_root=
+mounted=0
+cleanup_scan_root() {
+  if [ "$mounted" -eq 1 ] && [ -n "${scan_root:-}" ]; then
+    guestunmount "$scan_root" >/dev/null 2>&1 || true
+    mounted=0
+  fi
+  if [ -n "${scan_root:-}" ]; then
+    rm -rf -- "$scan_root"
+  fi
+}
+trap cleanup_scan_root EXIT HUP INT TERM
+
 artifact_filename() {
   name=$1
   version=1.0.0
@@ -72,30 +85,23 @@ for name in $names; do
   # Keep unfixed findings in the report. Policy evaluation is performed by the
   # qualification command after this raw, machine-readable scan completes.
   if ! trivy fs --scanners vuln,secret --format json --output "$report" "$scan_root"; then
-    if [ "$mounted" -eq 1 ]; then guestunmount "$scan_root" || true; fi
-    rm -rf "$scan_root"
     exit 2
   fi
   if ! trivy fs --scanners vuln,secret --format table --output "$summary" "$scan_root"; then
-    if [ "$mounted" -eq 1 ]; then guestunmount "$scan_root" || true; fi
-    rm -rf "$scan_root"
     exit 2
   fi
   if [ ! -s "$summary" ]; then
-    if [ "$mounted" -eq 1 ]; then guestunmount "$scan_root" || true; fi
-    rm -rf "$scan_root"
     echo "HOLD: Trivy human-readable summary is empty for $name" >&2
     exit 2
   fi
   if ! trivy fs --scanners vuln,secret --format cyclonedx --output "$sbom" "$scan_root"; then
-    if [ "$mounted" -eq 1 ]; then guestunmount "$scan_root" || true; fi
-    rm -rf "$scan_root"
     exit 2
   fi
   if [ "$mounted" -eq 1 ]; then
     guestunmount "$scan_root"
+    mounted=0
   fi
-  rm -rf "$scan_root"
+  cleanup_scan_root
   module=$name
   provider=""
   case "$name" in

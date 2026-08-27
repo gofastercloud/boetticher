@@ -157,6 +157,18 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 			t.Fatalf("builder cloud-init does not pin and verify %q", required)
 		}
 	}
+	if strings.Contains(files.UserData, "package_update: true") || strings.Contains(files.UserData, "packages:") {
+		t.Fatal("builder cloud-init uses unpinned cloud-init package installation")
+	}
+	for _, required := range []string{
+		"https://snapshot.debian.org/archive/debian/20260327T000000Z/",
+		"apt-get -o Acquire::Check-Valid-Until=false update",
+		"apt-get install --yes --no-install-recommends ca-certificates curl jq libguestfs-tools mmdebstrap",
+	} {
+		if !strings.Contains(files.UserData, required) {
+			t.Fatalf("builder cloud-init does not pin package bootstrap input %q", required)
+		}
+	}
 	if strings.Contains(files.UserData, "golang-go") {
 		t.Fatal("builder cloud-init relies on an unqualified distro Go package")
 	}
