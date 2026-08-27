@@ -44,6 +44,16 @@ func TestAnsiblePlaybookIsAvailableFromControllerSource(t *testing.T) {
 	}
 }
 
+func TestPortalSourceDirectoryIsAbsoluteForAnsible(t *testing.T) {
+	got, err := absolutePortalSourceDir("relative-site")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(got) || !strings.HasSuffix(got, filepath.Join("relative-site", "generated", "portal")) {
+		t.Fatalf("portal source directory = %q, want absolute generated portal path", got)
+	}
+}
+
 func TestDeploymentModuleNamesFollowResolvedExternalGraph(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("trial", "age1trial", model.GatewayModeExternal))
 	disabled := false

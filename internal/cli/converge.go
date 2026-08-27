@@ -127,7 +127,11 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return err
 	}
-	runtimeVariables["portal_source_dir"] = filepath.Join(*siteDir, "generated", "portal")
+	portalSourceDir, err := absolutePortalSourceDir(*siteDir)
+	if err != nil {
+		return err
+	}
+	runtimeVariables["portal_source_dir"] = portalSourceDir
 	runtimeVariables["boetticher_appliance_artifact"] = true
 	monitoringEnabled := modules.IsEnabled(s, "monitoring")
 	secretValues := map[string]string{}
@@ -365,6 +369,14 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	fmt.Fprintf(out, "Deployment: PASS mode=%s model=%s (storage %s)\n", s.Gateway.Mode, firewallPlan.ModelRevision, storagePlan.GuestStorage)
 	return nil
+}
+
+func absolutePortalSourceDir(siteDir string) (string, error) {
+	absoluteSiteDir, err := filepath.Abs(siteDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve portal source directory: %w", err)
+	}
+	return filepath.Join(absoluteSiteDir, "generated", "portal"), nil
 }
 
 func openZabbixTunnel(siteDir string) (string, func(), error) {
