@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -327,8 +330,13 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		if issueErr != nil {
 			return fmt.Errorf("issue runtime Zabbix reconciliation certificate: %w", issueErr)
 		}
+		zabbixURL, closeTunnel, tunnelErr := openZabbixTunnel(*siteDir)
+		if tunnelErr != nil {
+			return fmt.Errorf("open Zabbix bastion tunnel: %w", tunnelErr)
+		}
+		defer closeTunnel()
 		zabbixClient, clientErr := zabbix.NewClient(zabbix.ClientConfig{
-			BaseURL: "https://monitor." + s.Network.Domain, User: "Admin", Password: zabbixAPIPassword,
+			BaseURL: zabbixURL, User: "Admin", Password: zabbixAPIPassword,
 			CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
 			ServerName: "monitor." + s.Network.Domain,
 		})
@@ -357,6 +365,52 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	fmt.Fprintf(out, "Deployment: PASS mode=%s model=%s (storage %s)\n", s.Gateway.Mode, firewallPlan.ModelRevision, storagePlan.GuestStorage)
 	return nil
+}
+
+func openZabbixTunnel(siteDir string) (string, func(), error) {
+	configFile := filepath.Join(siteDir, "generated", "ssh", "boetticher.conf")
+	lastDiagnostic := ""
+	for attempt := 0; attempt < 3; attempt++ {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			return "", func() {}, fmt.Errorf("reserve local tunnel port: %w", err)
+		}
+		port := listener.Addr().(*net.TCPAddr).Port
+		_ = listener.Close()
+		command := exec.Command("ssh", "-F", configFile, "-o", "BatchMode=yes", "-o", "ExitOnForwardFailure=yes", "-N", "-L", fmt.Sprintf("127.0.0.1:%d:10.10.20.20:443", port), "lab-bastion")
+		var stderr bytes.Buffer
+		command.Stderr = &stderr
+		if err := command.Start(); err != nil {
+			return "", func() {}, fmt.Errorf("start SSH tunnel: %w", err)
+		}
+		address := fmt.Sprintf("127.0.0.1:%d", port)
+		ready := false
+		for check := 0; check < 20; check++ {
+			connection, dialErr := net.DialTimeout("tcp", address, 250*time.Millisecond)
+			if dialErr == nil {
+				_ = connection.Close()
+				ready = true
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if ready {
+			closeTunnel := func() {
+				if command.Process != nil {
+					_ = command.Process.Kill()
+				}
+				_ = command.Wait()
+			}
+			return "https://" + address, closeTunnel, nil
+		}
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		lastDiagnostic = strings.TrimSpace(stderr.String())
+	}
+	if lastDiagnostic != "" {
+		return "", func() {}, fmt.Errorf("SSH tunnel did not become locally reachable: %s", lastDiagnostic)
+	}
+	return "", func() {}, errors.New("SSH tunnel did not become locally reachable")
 }
 
 func artifactQualificationStatus(artifact model.Artifact) string {
