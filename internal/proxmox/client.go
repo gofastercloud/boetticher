@@ -581,10 +581,10 @@ func artifactMultipartParts(content, checksum, filename string) ([]byte, []byte,
 	if err := multipartWriter.WriteField("content", content); err != nil {
 		return nil, nil, "", err
 	}
-	if err := multipartWriter.WriteField("checksum", checksum); err != nil {
+	if err := multipartWriter.WriteField("checksum-algorithm", "sha256"); err != nil {
 		return nil, nil, "", err
 	}
-	if err := multipartWriter.WriteField("checksum-algorithm", "sha256"); err != nil {
+	if err := multipartWriter.WriteField("checksum", checksum); err != nil {
 		return nil, nil, "", err
 	}
 	if _, err := multipartWriter.CreateFormFile("filename", filename); err != nil {
