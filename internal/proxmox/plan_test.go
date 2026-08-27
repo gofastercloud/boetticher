@@ -550,6 +550,84 @@ func TestEnsureArtifactInStorageHoldsOnPostUploadChecksumMismatch(t *testing.T) 
 	}
 }
 
+func TestEnsureQEMUUploadsQcow2ThroughImportContent(t *testing.T) {
+	artifactPath := filepath.Join(t.TempDir(), "firewall.qcow2")
+	content := []byte("qualified firewall bytes")
+	if err := os.WriteFile(artifactPath, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	checksum := fmt.Sprintf("%x", sha256.Sum256(content))
+	guest := GuestPlan{VMID: 100, Name: "test-fw", Artifact: model.Artifact{
+		Name: "boetticher-firewall", Version: "1.0.0", Architecture: "amd64", ContentSHA256: checksum,
+	}}
+	plan := Plan{Node: "node", Storage: modelStorageIDForTest, ArtifactFiles: map[string]string{
+		artifactKey(guest.Artifact): artifactPath,
+	}}
+	uploadContent := ""
+	importDisk := ""
+	storageReads := 0
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/100/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+			storageReads++
+			if storageReads == 1 {
+				return response([]byte(`{"data":[]}`))
+			}
+			return response([]byte(`{"data":[{"volid":"local:import/boetticher-firewall-1.0.0-amd64.qcow2","filename":"boetticher-firewall-1.0.0-amd64.qcow2","checksum":"` + checksum + `"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
+			reader, err := r.MultipartReader()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for {
+				part, err := reader.NextPart()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if part.FormName() == "content" {
+					value, err := io.ReadAll(part)
+					if err != nil {
+						t.Fatal(err)
+					}
+					uploadContent = string(value)
+				}
+			}
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu":
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/100/config":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			importDisk = r.Form.Get("scsi0")
+			return response([]byte(`{"data":"UPID:pve:import"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:import/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		default:
+			t.Fatalf("unexpected QEMU request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := ensureQEMU(context.Background(), client, plan, guest); err != nil {
+		t.Fatalf("ensureQEMU() = %v", err)
+	}
+	if uploadContent != "import" {
+		t.Fatalf("qcow2 upload content = %q, want import", uploadContent)
+	}
+	wantImport := "boetticher-thin:0,import-from=local:import/boetticher-firewall-1.0.0-amd64.qcow2,format=qcow2"
+	if importDisk != wantImport {
+		t.Fatalf("QEMU import disk = %q, want %q", importDisk, wantImport)
+	}
+}
+
 func TestEnsureFirewallHoldsUnownedFixedIDBeforeArtifactUpload(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {

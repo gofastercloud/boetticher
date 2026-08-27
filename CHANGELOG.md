@@ -7,6 +7,8 @@ project, so releases can make clean breaks while the design is settling.
 
 ### Fixed
 
+- Upload qualified QEMU appliance images through Proxmox's supported `import`
+  content class before importing them into the selected VM storage.
 - Discover the hosted builder address through the QEMU guest agent after
   confirming the guest reaches userspace.
 - Start the hosted builder guest agent before the remaining qualification

@@ -1169,10 +1169,10 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 	}
 	filename := fmt.Sprintf("%s-%s-%s.qcow2", guest.Artifact.Name, guest.Artifact.Version, guest.Artifact.Architecture)
 	source := plan.ArtifactFiles[artifactKey(guest.Artifact)]
-	if err := ensureArtifactInStorage(ctx, client, plan.Node, "local", "images", filename, guest.Artifact.ContentSHA256, source); err != nil {
+	if err := ensureArtifactInStorage(ctx, client, plan.Node, "local", "import", filename, guest.Artifact.ContentSHA256, source); err != nil {
 		return fmt.Errorf("prepare qualified %s artifact: %w", guest.Name, err)
 	}
-	imageFileID := "local:images/" + filename
+	imageFileID := "local:import/" + filename
 	params := url.Values{
 		"name":        {guest.Name},
 		"description": {artifactDescription(guest.Artifact)},
