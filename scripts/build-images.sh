@@ -130,6 +130,7 @@ create_base_rootfs() {
   mkdir -p "$rootfs/etc/boetticher" "$rootfs/usr/lib/boetticher" "$rootfs/run/boetticher/bootstrap"
   install -D -m 0644 images/base/runtime/journal-upload.conf "$rootfs/etc/systemd/journal-upload.conf"
   install -D -m 0440 images/base/runtime/boetticher.sudoers "$rootfs/etc/sudoers.d/boetticher"
+  chroot "$rootfs" chown root:root /etc/sudoers.d/boetticher
   install -D -m 0755 images/base/first-boot/boetticher-first-boot.sh "$rootfs/usr/lib/boetticher/boetticher-first-boot.sh"
   install -D -m 0644 images/base/first-boot/boetticher-first-boot.service "$rootfs/etc/systemd/system/boetticher-first-boot.service"
   install -D -m 0755 images/base/runtime/install-runtime-state.sh "$rootfs/usr/lib/boetticher/install-runtime-state"
@@ -504,7 +505,7 @@ build_firewall() {
     --run-command 'usermod --append --groups sudo labadmin' \
     --run-command 'passwd --lock labadmin' \
     --run-command 'chown labadmin:labadmin /tmp/boetticher-ansible && chmod 0700 /tmp/boetticher-ansible' \
-    --run-command 'chmod 0440 /etc/sudoers.d/boetticher' \
+    --run-command 'chown root:root /etc/sudoers.d/boetticher; chmod 0440 /etc/sudoers.d/boetticher' \
     --run-command 'rm -f /etc/ssh/ssh_host_* /root/.ssh/authorized_keys /home/labadmin/.ssh/authorized_keys' \
     --run-command 'rm -f /etc/ssl/private/ssl-cert-snakeoil.key' \
     --run-command 'visudo -cf /etc/sudoers' \
