@@ -135,6 +135,9 @@ func Initialize(ctx context.Context, runner InitializeRunner, address, user, dev
 	if err != nil {
 		return err
 	}
+	if user != "root" {
+		command = "sudo -n sh -c " + shellQuote(command)
+	}
 	if _, err := runner.Run(ctx, address, user, command); err != nil {
 		return fmt.Errorf("initialize dedicated boetticher storage: %w", err)
 	}

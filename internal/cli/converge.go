@@ -184,6 +184,11 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return fmt.Errorf("load Proxmox client for platform deployment: %w", err)
 	}
+	node, err := proxmoxClient.SingleNode(context.Background())
+	if err != nil {
+		return fmt.Errorf("resolve live Proxmox node: %w", err)
+	}
+	proxmoxPlan.Node = node
 	if backupPlan.StorageTarget == backup.DedicatedStorageID {
 		if err := proxmoxClient.EnsureLVMThinStorage(context.Background(), storage.GuestStorageID, storage.VolumeGroup, storage.ThinPool); err != nil {
 			return fmt.Errorf("ensure dedicated guest storage: %w", err)
@@ -332,7 +337,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			return fmt.Errorf("reconcile boetticher Zabbix objects: %w", reconcileErr)
 		}
 	}
-	if err := proxmoxClient.ApplyBackupJob(context.Background(), s.ProxmoxNode, proxmox.BackupJob{
+	if err := proxmoxClient.ApplyBackupJob(context.Background(), node, proxmox.BackupJob{
 		JobName: backupPlan.JobName, ModelRevision: backupPlan.ModelRevision, StorageTarget: backupPlan.StorageTarget,
 		Schedule: backupPlan.Schedule, VMIDList: backupPlan.VMIDList(), Retention: backupPlan.Retention,
 	}); err != nil {

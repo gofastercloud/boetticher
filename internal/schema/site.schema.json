@@ -296,9 +296,6 @@
       "const": "0.3.1",
       "type": "string"
     },
-    "proxmox_node": {
-      "type": "string"
-    },
     "schema_version": {
       "const": 3,
       "type": "integer"

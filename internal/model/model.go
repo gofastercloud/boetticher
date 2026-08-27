@@ -29,7 +29,7 @@ const (
 	DefaultAgeIdentity          = "~/.config/boetticher/age/identity.txt"
 	DefaultSSHConfig            = "~/.ssh/config.d/boetticher.conf"
 	DefaultAdminSSHUser         = "labadmin"
-	DefaultProxmoxNode          = "lab-proxmox-01"
+	LogicalProxmoxIdentity      = "lab-proxmox-01"
 	ProxmoxVMID                 = 100
 	DNS01VMID                   = 110
 	DNS02VMID                   = 111
@@ -84,26 +84,29 @@ func ModuleOwnershipTag(module string) string {
 }
 
 type Site struct {
-	APIVersion       string                  `json:"api_version"`
-	PlatformVersion  string                  `json:"platform_version"`
-	SchemaVersion    int                     `json:"schema_version"`
-	StorageProfile   string                  `json:"storage_profile"`
-	StorageDevice    string                  `json:"storage_device,omitempty"`
-	Gateway          Gateway                 `json:"gateway"`
-	ProxmoxNode      string                  `json:"proxmox_node"`
-	BootstrapAddress string                  `json:"bootstrap_address,omitempty"`
-	SSHIdentityFile  string                  `json:"ssh_identity_file,omitempty"`
-	PhysicalNetwork  PhysicalNetwork         `json:"physical_network"`
-	TestedVersions   TestedVersions          `json:"tested_versions"`
-	Network          Network                 `json:"network"`
-	PKI              PKIMetadata             `json:"pki"`
-	SecretMetadata   SecretMetadata          `json:"secret_metadata"`
-	Ownership        OwnershipPolicy         `json:"ownership"`
-	Components       []Component             `json:"components"`
-	Modules          []ResolvedModule        `json:"modules,omitempty"`
-	ModuleConfig     map[string]ModuleConfig `json:"module_config,omitempty"`
-	Declarations     []ModuleDeclaration     `json:"declarations,omitempty"`
-	RetainedModules  []RetainedModule        `json:"retained_modules,omitempty"`
+	APIVersion      string  `json:"api_version"`
+	PlatformVersion string  `json:"platform_version"`
+	SchemaVersion   int     `json:"schema_version"`
+	StorageProfile  string  `json:"storage_profile"`
+	StorageDevice   string  `json:"storage_device,omitempty"`
+	Gateway         Gateway `json:"gateway"`
+	// LogicalProxmoxIdentity is the fixed boetticher platform identity. The
+	// live Proxmox API node identifier is discovered per invocation and is not
+	// part of operator-authored configuration or the API path binding.
+	LogicalProxmoxIdentity string                  `json:"logical_proxmox_identity"`
+	BootstrapAddress       string                  `json:"bootstrap_address,omitempty"`
+	SSHIdentityFile        string                  `json:"ssh_identity_file,omitempty"`
+	PhysicalNetwork        PhysicalNetwork         `json:"physical_network"`
+	TestedVersions         TestedVersions          `json:"tested_versions"`
+	Network                Network                 `json:"network"`
+	PKI                    PKIMetadata             `json:"pki"`
+	SecretMetadata         SecretMetadata          `json:"secret_metadata"`
+	Ownership              OwnershipPolicy         `json:"ownership"`
+	Components             []Component             `json:"components"`
+	Modules                []ResolvedModule        `json:"modules,omitempty"`
+	ModuleConfig           map[string]ModuleConfig `json:"module_config,omitempty"`
+	Declarations           []ModuleDeclaration     `json:"declarations,omitempty"`
+	RetainedModules        []RetainedModule        `json:"retained_modules,omitempty"`
 }
 
 type TestedVersions struct {
@@ -358,12 +361,12 @@ func NewDefaultSite(installationID, ageRecipient string) Site {
 
 func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 	site := Site{
-		APIVersion:      APIVersion,
-		PlatformVersion: PlatformVersion,
-		SchemaVersion:   SchemaVersion,
-		StorageProfile:  "single-disk",
-		Gateway:         Gateway{Mode: gatewayMode},
-		ProxmoxNode:     DefaultProxmoxNode,
+		APIVersion:             APIVersion,
+		PlatformVersion:        PlatformVersion,
+		SchemaVersion:          SchemaVersion,
+		StorageProfile:         "single-disk",
+		Gateway:                Gateway{Mode: gatewayMode},
+		LogicalProxmoxIdentity: LogicalProxmoxIdentity,
 		TestedVersions: TestedVersions{
 			Gateway: QualifiedGatewayImage,
 			Zabbix:  ZabbixSeries,
@@ -448,9 +451,6 @@ func (s Site) Validate() error {
 		}
 	} else if s.StorageDevice != "" {
 		return errors.New("storage_device is only valid for dedicated-data-disk")
-	}
-	if s.ProxmoxNode != DefaultProxmoxNode {
-		return fmt.Errorf("proxmox_node must be %q in V1", DefaultProxmoxNode)
 	}
 	if s.Gateway.Mode != GatewayModeManaged && s.Gateway.Mode != GatewayModeExternal {
 		return fmt.Errorf("gateway.mode must be managed or external")

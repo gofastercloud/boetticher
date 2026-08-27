@@ -73,6 +73,14 @@ func TestParseSiteConfigRejectsExpandedComponents(t *testing.T) {
 	}
 }
 
+func TestParseSiteConfigDoesNotAcceptLiveProxmoxNodeBinding(t *testing.T) {
+	data := []byte("api_version: boetticher/v3\nschema_version: 3\nproxmox_node: lab-proxmox-01\n")
+	_, err := ParseSiteConfig(data)
+	if err == nil || !strings.Contains(err.Error(), "field proxmox_node not found") {
+		t.Fatalf("live Proxmox node binding was accepted as site configuration: %v", err)
+	}
+}
+
 func TestParseSiteConfigRejectsUnknownModuleFields(t *testing.T) {
 	data := []byte("api_version: boetticher/v3\nschema_version: 3\nmodules:\n  monitoring:\n    retention_days: 7\n")
 	_, err := ParseSiteConfig(data)

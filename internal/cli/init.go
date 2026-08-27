@@ -101,11 +101,13 @@ func runPreflight(args []string, out interface{ Write([]byte) (int, error) }) er
 	if address == "" {
 		return errors.New("HOLD: upstream interface identity is ambiguous; set bootstrap-endpoint or pass --bootstrap-address")
 	}
-	runner := proxmox.SSHRunner{KnownHosts: *knownHosts}
-	discovery, err := proxmox.DiscoverPhysicalNetworkViaSSH(context.Background(), runner, address, *initialUser, s.ProxmoxNode, address, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
+	runner := proxmox.SSHRunner{KnownHosts: *knownHosts, HostKeyAlias: model.LogicalProxmoxIdentity}
+	discovered, err := proxmox.DiscoverPhysicalNetworkViaSSH(context.Background(), runner, address, *initialUser, address, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
 	if err != nil {
 		return err
 	}
+	discovery := discovered.Discovery
+	fmt.Fprintf(out, "Proxmox node: PASS %s (discovered from /nodes)\n", discovered.Node)
 	printPhysicalDiscovery(out, discovery)
 	if err := writePhysicalDiscovery(*siteDir, s, discovery); err != nil {
 		return err

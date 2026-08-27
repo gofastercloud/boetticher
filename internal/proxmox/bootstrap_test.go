@@ -18,6 +18,7 @@ type fakeRunner struct {
 	output      []byte
 	routeOutput []byte
 	responses   map[string][]byte
+	errors      map[string]error
 }
 
 func TestManagementNetworkConfigIsFixedAndPreservesHOME(t *testing.T) {
@@ -94,6 +95,34 @@ func TestSSHRunnerUsesBoundedTOFUForFreshApplianceHostKeys(t *testing.T) {
 	}
 }
 
+func TestSSHRunnerSeparatesHostKeyAliasFromNetworkTarget(t *testing.T) {
+	runner := SSHRunner{StrictHostKey: "accept-new", HostKeyAlias: "lab-proxmox-01"}
+	args, err := runner.commandArgs("192.0.4.5", "dave", []string{"pvesh", "get", "/nodes"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(args, "HostKeyAlias=lab-proxmox-01") {
+		t.Fatalf("bootstrap host-key alias missing: %#v", args)
+	}
+	if !containsString(args, "dave@192.0.4.5") {
+		t.Fatalf("bootstrap target changed from the address: %#v", args)
+	}
+	if containsString(args, "dave@lab-proxmox-01") {
+		t.Fatalf("bootstrap used the logical identity as a network target: %#v", args)
+	}
+}
+
+func TestSSHRunnerHostAliasStillSelectsApplianceConfigHost(t *testing.T) {
+	runner := SSHRunner{HostAlias: "lab-dns-01", HostKeyAlias: "lab-proxmox-01"}
+	args, err := runner.commandArgs("10.10.20.10", "labadmin", []string{"true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(args, "labadmin@lab-dns-01") || !containsString(args, "HostKeyAlias=lab-proxmox-01") {
+		t.Fatalf("appliance HostAlias and independent HostKeyAlias were not preserved: %#v", args)
+	}
+}
+
 func TestConfigureManagementNetworkValidatesUnchangedHOMEAndVLANState(t *testing.T) {
 	runner := &fakeRunner{responses: map[string][]byte{
 		"sudo -n /usr/sbin/ip -4 -j addr show dev vmbr0":  []byte(`[{"addr":"192.0.2.10/24"}]`),
@@ -125,6 +154,9 @@ func TestConfigureManagementNetworkValidatesUnchangedHOMEAndVLANState(t *testing
 func (f *fakeRunner) Run(_ context.Context, address, user, command string) ([]byte, error) {
 	f.address, f.user, f.command = address, user, command
 	f.commands = append(f.commands, command)
+	if err, ok := f.errors[command]; ok {
+		return nil, err
+	}
 	if response, ok := f.responses[command]; ok {
 		return response, nil
 	}
@@ -281,17 +313,105 @@ func TestCheckBuilderCapacityHoldsBelowMinimum(t *testing.T) {
 }
 
 func TestDiscoverPhysicalNetworkViaSSHUsesReadOnlyPveshEvidence(t *testing.T) {
-	runner := &fakeRunner{output: []byte(`[
+	runner := &fakeRunner{responses: map[string][]byte{
+		"pvesh get /nodes --output-format json": []byte(`[{"node":"proxmox"}]`),
+		"pvesh get /nodes/proxmox/network --output-format json": []byte(`[
   {"iface":"vmbr0","type":"bridge","address":"192.0.2.73/24","gateway":"192.0.2.1","bridge_ports":"eno1"},
   {"iface":"vmbr1","type":"bridge","bridge_ports":"none","bridge_vlan_aware":true},
   {"iface":"eno1","type":"eth","hwaddr":"00:11:22:33:44:55","active":true},
   {"iface":"enp5s0","type":"eth","hwaddr":"00:aa:bb:cc:dd:ee","active":false}
-	]`), routeOutput: []byte(`[{"dev":"vmbr0"}]`)}
-	discovery, err := DiscoverPhysicalNetworkViaSSH(context.Background(), runner, "192.0.2.73", "root", "lab-proxmox-01", "192.0.2.73", "", "")
-	if err != nil || discovery.Mode != "physical-trunk" || discovery.Trunk == nil || discovery.Trunk.Name != "enp5s0" {
+	]`),
+		"ip -j route show default": []byte(`[{"dev":"vmbr0"}]`),
+	}}
+	discovery, err := DiscoverPhysicalNetworkViaSSH(context.Background(), runner, "192.0.2.73", "root", "192.0.2.73", "", "")
+	if err != nil || discovery.Node != "proxmox" || discovery.Discovery.Mode != "physical-trunk" || discovery.Discovery.Trunk == nil || discovery.Discovery.Trunk.Name != "enp5s0" {
 		t.Fatalf("unexpected SSH discovery: %#v, %v", discovery, err)
 	}
-	if len(runner.commands) != 2 || runner.commands[0] != "pvesh get /nodes/lab-proxmox-01/network --output-format json" || runner.commands[1] != "ip -j route show default" {
+	if len(runner.commands) != 3 || runner.commands[0] != "pvesh get /nodes --output-format json" || runner.commands[1] != "pvesh get /nodes/proxmox/network --output-format json" || runner.commands[2] != "ip -j route show default" {
 		t.Fatalf("unexpected discovery commands: %#v", runner.commands)
+	}
+}
+
+func TestDiscoverPhysicalNetworkViaSSHResolvesSafeSingleNode(t *testing.T) {
+	for _, node := range []string{"proxmox", "pve", "my-node_01.example"} {
+		runner := &fakeRunner{responses: map[string][]byte{
+			"pvesh get /nodes --output-format json":                      []byte(`[{"node":"` + node + `"}]`),
+			"pvesh get /nodes/" + node + "/network --output-format json": []byte(`[{"iface":"vmbr0","type":"bridge","address":"192.0.2.73/24","gateway":"192.0.2.1","bridge_ports":"eno1"},{"iface":"eno1","type":"eth","hwaddr":"00:11:22:33:44:55","active":true}]`),
+			"ip -j route show default":                                   []byte(`[{"dev":"vmbr0"}]`),
+		}}
+		resolved, err := DiscoverPhysicalNetworkViaSSH(context.Background(), runner, "192.0.2.73", "root", "192.0.2.73", "", "")
+		if err != nil || resolved.Node != node {
+			t.Fatalf("node %q was not resolved: %#v, %v", node, resolved, err)
+		}
+	}
+}
+
+func TestDiscoverPhysicalNetworkViaSSHHoldsAmbiguousOrMalformedNodeListing(t *testing.T) {
+	for _, listing := range []string{"[]", `[{"node":"proxmox"},{"node":"pve02"}]`, `[{"node":"bad/node"}]`, "not-json"} {
+		runner := &fakeRunner{responses: map[string][]byte{"pvesh get /nodes --output-format json": []byte(listing)}}
+		if _, err := DiscoverPhysicalNetworkViaSSH(context.Background(), runner, "192.0.2.73", "root", "192.0.2.73", "", ""); err == nil || !strings.Contains(err.Error(), "HOLD") {
+			t.Fatalf("listing %q did not hold: %v", listing, err)
+		}
+	}
+}
+
+func TestDiscoverPhysicalNetworkViaSSHHoldsNetworkQueryFailure(t *testing.T) {
+	runner := &fakeRunner{
+		responses: map[string][]byte{"pvesh get /nodes --output-format json": []byte(`[{"node":"proxmox"}]`)},
+		errors:    map[string]error{"pvesh get /nodes/proxmox/network --output-format json": errors.New("permission denied")},
+	}
+	if _, err := DiscoverPhysicalNetworkViaSSH(context.Background(), runner, "192.0.2.73", "root", "192.0.2.73", "", ""); err == nil || !strings.Contains(err.Error(), "physical network") {
+		t.Fatalf("network query failure was not held clearly: %v", err)
+	}
+}
+
+func TestDiscoverPhysicalNetworkViaSSHUsesNonRootSudoWithoutPrompt(t *testing.T) {
+	runner := &fakeRunner{responses: map[string][]byte{
+		"sudo -n pvesh get /nodes --output-format json":                 []byte(`[{"node":"proxmox"}]`),
+		"sudo -n pvesh get /nodes/proxmox/network --output-format json": []byte(`[{"iface":"vmbr0","type":"bridge","address":"192.0.2.73/24","gateway":"192.0.2.1","bridge_ports":"eno1"},{"iface":"eno1","type":"eth","hwaddr":"00:11:22:33:44:55","active":true}]`),
+		"sudo -n ip -j route show default":                              []byte(`[{"dev":"vmbr0"}]`),
+	}}
+	if _, err := DiscoverPhysicalNetworkViaSSH(context.Background(), runner, "192.0.2.73", "dave", "192.0.2.73", "", ""); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDiscoverPhysicalNetworkViaSSHHoldsWhenNonRootSudoIsUnavailable(t *testing.T) {
+	runner := &fakeRunner{errors: map[string]error{
+		"sudo -n pvesh get /nodes --output-format json": errors.New("sudo: a password is required"),
+	}}
+	if _, err := DiscoverPhysicalNetworkViaSSH(context.Background(), runner, "192.0.2.73", "dave", "192.0.2.73", "", ""); err == nil || !strings.Contains(err.Error(), "must be root or have non-interactive sudo") {
+		t.Fatalf("missing sudo did not produce a clear HOLD: %v", err)
+	}
+}
+
+func TestConfigureIdentitiesUsesNonInteractiveSudoForNonRoot(t *testing.T) {
+	runner := &fakeRunner{}
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator"
+	if err := ConfigureIdentities(context.Background(), runner, "192.0.2.10", "dave", key, []string{"lab-fw-01:22"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(runner.command, "sudo -n sh -c ") {
+		t.Fatalf("root-required identity setup did not use non-interactive sudo: %q", runner.command)
+	}
+}
+
+func TestCreateScopedCredentialsUsesNonInteractiveSudoForNonRoot(t *testing.T) {
+	runner := &fakeRunner{
+		output: []byte(`{"value":"opaque-token-secret"}`),
+		responses: map[string][]byte{
+			"sudo -n pvesh get /access/roles --output-format json":                      []byte(`[]`),
+			"sudo -n pvesh get /access/users --output-format json":                      []byte(`[]`),
+			"sudo -n pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[]`),
+		},
+	}
+	secret, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "dave", "labadmin@pve", "boetticher", "BoetticherProvisioner")
+	if err != nil || secret != "opaque-token-secret" {
+		t.Fatalf("CreateScopedCredentialsWithRole() = %q, %v", secret, err)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "pvesh") && !strings.HasPrefix(command, "sudo -n ") {
+			t.Fatalf("privileged credential command ran without non-interactive sudo: %q", command)
+		}
 	}
 }

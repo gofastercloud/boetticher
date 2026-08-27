@@ -264,7 +264,7 @@ func templateLinks(component model.Component, templateIDs map[string]string) []m
 			result = append(result, map[string]string{"templateid": id})
 		}
 	}
-	if component.Name == model.DefaultProxmoxNode {
+	if component.Name == model.LogicalProxmoxIdentity {
 		if id := templateIDs["boetticher Proxmox platform"]; id != "" {
 			result = append(result, map[string]string{"templateid": id})
 		}

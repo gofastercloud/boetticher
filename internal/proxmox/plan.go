@@ -410,7 +410,10 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		}
 		return guests[i].VMID < guests[j].VMID
 	})
-	return Plan{ModelRevision: revision, ManagedBy: "boetticher", Node: s.ProxmoxNode, Storage: guestStorage, GatewayImage: model.QualifiedGatewayImage, GatewayImageURL: model.QualifiedGatewayImageURL, GatewaySHA512: model.QualifiedGatewayImageSHA512, Guests: guests, ArtifactFiles: map[string]string{}}, nil
+	// Node is a runtime binding. Static plans retain the logical identity only
+	// as a placeholder for projections; every live caller must bind the node
+	// returned by Client.SingleNode before using a node-scoped operation.
+	return Plan{ModelRevision: revision, ManagedBy: "boetticher", Node: s.LogicalProxmoxIdentity, Storage: guestStorage, GatewayImage: model.QualifiedGatewayImage, GatewayImageURL: model.QualifiedGatewayImageURL, GatewaySHA512: model.QualifiedGatewayImageSHA512, Guests: guests, ArtifactFiles: map[string]string{}}, nil
 }
 
 // deploymentOrder follows the resolved module graph carried by Site. This

@@ -310,6 +310,9 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 			fmt.Fprintf(out, "Platform guests       FAIL invalid platform plan: %v\n", planErr)
 		} else if client, _, clientErr := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure); clientErr != nil {
 			fmt.Fprintf(out, "Platform guests       NOT TESTED (%v)\n", clientErr)
+		} else if plan, nodeErr := bindPlanToLiveNode(context.Background(), client, plan); nodeErr != nil {
+			failed = true
+			fmt.Fprintf(out, "Platform guests       HOLD %v\n", nodeErr)
 		} else if audits, auditErr := proxmox.AuditGuests(context.Background(), client, plan); auditErr != nil {
 			failed = true
 			fmt.Fprintf(out, "Platform guests       FAIL %v\n", auditErr)
@@ -341,7 +344,7 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 				fmt.Fprintln(out, "User-managed guests  INFO none detected")
 			}
 			var interfaces []proxmox.NetworkInterface
-			if networkErr := client.NodeNetwork(context.Background(), s.ProxmoxNode, &interfaces); networkErr != nil {
+			if networkErr := client.NodeNetwork(context.Background(), plan.Node, &interfaces); networkErr != nil {
 				failed = true
 				fmt.Fprintf(out, "Physical binding     FAIL %v\n", networkErr)
 			} else if detail, bindingErr := proxmox.ValidatePhysicalBinding(s, interfaces); bindingErr != nil {
@@ -354,7 +357,7 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 			if storageErr != nil {
 				failed = true
 				fmt.Fprintf(out, "Platform storage     FAIL %v\n", storageErr)
-			} else if statuses, listErr := client.NodeStorage(context.Background(), s.ProxmoxNode); listErr != nil {
+			} else if statuses, listErr := client.NodeStorage(context.Background(), plan.Node); listErr != nil {
 				failed = true
 				fmt.Fprintf(out, "Platform storage     FAIL %v\n", listErr)
 			} else if status, statusErr := expectedStorageStatus(statuses, storagePlan); statusErr != nil {
@@ -384,7 +387,20 @@ func inspectBuilder(siteDir string, s model.Site, ageIdentity, proxmoxCA string,
 	if err != nil {
 		return proxmox.BuilderAudit{}, err
 	}
-	return proxmox.InspectBuilder(context.Background(), client, s.ProxmoxNode)
+	node, err := client.SingleNode(context.Background())
+	if err != nil {
+		return proxmox.BuilderAudit{}, err
+	}
+	return proxmox.InspectBuilder(context.Background(), client, node)
+}
+
+func bindPlanToLiveNode(ctx context.Context, client *proxmox.Client, plan proxmox.Plan) (proxmox.Plan, error) {
+	node, err := client.SingleNode(ctx)
+	if err != nil {
+		return proxmox.Plan{}, err
+	}
+	plan.Node = node
+	return plan, nil
 }
 
 func reportDedicatedStorageHost(ctx context.Context, s model.Site, plan storage.Plan, out interface{ Write([]byte) (int, error) }) error {
@@ -392,7 +408,7 @@ func reportDedicatedStorageHost(ctx context.Context, s model.Site, plan storage.
 	if err != nil {
 		return err
 	}
-	data, err := (proxmox.SSHRunner{}).Run(ctx, s.BootstrapAddress, model.DefaultAdminSSHUser, command)
+	data, err := (proxmox.SSHRunner{HostKeyAlias: model.LogicalProxmoxIdentity}).Run(ctx, s.BootstrapAddress, model.DefaultAdminSSHUser, command)
 	if err != nil {
 		return fmt.Errorf("read dedicated storage state: %w", err)
 	}

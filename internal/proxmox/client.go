@@ -129,10 +129,58 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 
 func (c *Client) Nodes(ctx context.Context) ([]Node, error) {
 	var nodes []Node
-	if err := c.Get(ctx, "/cluster/resources", nil, &nodes); err != nil {
+	if err := c.Get(ctx, "/nodes", nil, &nodes); err != nil {
 		return nil, err
 	}
 	return nodes, nil
+}
+
+// SingleNode resolves the one supported Proxmox node from the authoritative
+// node listing. The logical boetticher platform identity is not a Proxmox API
+// node binding and must never be used as a fallback here.
+func (c *Client) SingleNode(ctx context.Context) (string, error) {
+	nodes, err := c.Nodes(ctx)
+	if err != nil {
+		return "", fmt.Errorf("discover Proxmox nodes: %w", err)
+	}
+	if len(nodes) == 0 {
+		return "", errors.New("HOLD: no Proxmox node discovered")
+	}
+	if len(nodes) > 1 {
+		return "", fmt.Errorf("HOLD: clustered/multi-node Proxmox is unsupported (%d nodes discovered)", len(nodes))
+	}
+	if !safeNodeID(nodes[0].Node) {
+		return "", fmt.Errorf("HOLD: Proxmox node identifier %q is malformed", nodes[0].Node)
+	}
+	return nodes[0].Node, nil
+}
+
+// ResolveSingleNode validates a node listing returned by pvesh or the API.
+// It is exported for the pre-token SSH discovery path, which must apply the
+// same cardinality and path-safety rules as authenticated API calls.
+func ResolveSingleNode(nodes []Node) (string, error) {
+	if len(nodes) == 0 {
+		return "", errors.New("HOLD: no Proxmox node discovered")
+	}
+	if len(nodes) > 1 {
+		return "", fmt.Errorf("HOLD: clustered/multi-node Proxmox is unsupported (%d nodes discovered)", len(nodes))
+	}
+	if !safeNodeID(nodes[0].Node) {
+		return "", fmt.Errorf("HOLD: Proxmox node identifier %q is malformed", nodes[0].Node)
+	}
+	return nodes[0].Node, nil
+}
+
+func safeNodeID(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if !(r == '.' || r == '_' || r == '-' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
 }
 
 type Node struct {

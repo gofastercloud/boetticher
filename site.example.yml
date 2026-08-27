@@ -5,7 +5,6 @@ storage_profile: single-disk
 gateway:
   mode: managed
 modules: {}
-proxmox_node: lab-proxmox-01
 physical_network:
   mode: virtual-only
 tested_versions:

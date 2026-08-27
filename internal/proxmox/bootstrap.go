@@ -157,41 +157,74 @@ type SSHRunner struct {
 	StrictHostKey string
 	IdentityFile  string
 	ConfigFile    string
-	HostAlias     string
+	// HostAlias selects a generated SSH configuration host, including its
+	// ProxyJump policy. It does not change the network destination.
+	HostAlias string
+	// HostKeyAlias supplies OpenSSH's canonical host-key identity while the
+	// network target remains the supplied address. It is used for bootstrap
+	// connections whose address is not resolvable through HOME DNS.
+	HostKeyAlias string
+}
+
+type SSHPhysicalNetworkDiscovery struct {
+	Node      string
+	Discovery networkmodel.Discovery
 }
 
 // DiscoverPhysicalNetworkViaSSH uses the existing fresh-host trust path before
 // a Proxmox API token exists. It executes only fixed read-only pvesh and ip
 // operations; no interface name is interpolated into a shell command.
-func DiscoverPhysicalNetworkViaSSH(ctx context.Context, runner CommandRunner, address, initialUser, node, bootstrapAddress, configuredTrunk, selectedTrunk string) (networkmodel.Discovery, error) {
+func DiscoverPhysicalNetworkViaSSH(ctx context.Context, runner CommandRunner, address, initialUser, bootstrapAddress, configuredTrunk, selectedTrunk string) (SSHPhysicalNetworkDiscovery, error) {
 	if runner == nil {
-		return networkmodel.Discovery{}, errors.New("network discovery runner is required")
+		return SSHPhysicalNetworkDiscovery{}, errors.New("network discovery runner is required")
 	}
-	if !safeID(node) {
-		return networkmodel.Discovery{}, errors.New("Proxmox node is not a safe identifier")
-	}
-	output, err := runner.Run(ctx, address, initialUser, "pvesh get /nodes/"+node+"/network --output-format json")
+	nodeOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /nodes --output-format json"))
 	if err != nil {
-		return networkmodel.Discovery{}, fmt.Errorf("discover Proxmox physical network: %w", err)
+		if initialUser != "root" && strings.Contains(strings.ToLower(err.Error()), "sudo") {
+			return SSHPhysicalNetworkDiscovery{}, fmt.Errorf("HOLD: initial Proxmox user must be root or have non-interactive sudo for bootstrap discovery: %w", err)
+		}
+		return SSHPhysicalNetworkDiscovery{}, fmt.Errorf("discover Proxmox nodes: %w", err)
+	}
+	var nodes []Node
+	if err := json.Unmarshal(nodeOutput, &nodes); err != nil {
+		var envelope struct {
+			Data []Node `json:"data"`
+		}
+		if envelopeErr := json.Unmarshal(nodeOutput, &envelope); envelopeErr != nil || envelope.Data == nil {
+			return SSHPhysicalNetworkDiscovery{}, fmt.Errorf("HOLD: decode Proxmox node listing: %w", err)
+		}
+		nodes = envelope.Data
+	}
+	node, err := ResolveSingleNode(nodes)
+	if err != nil {
+		return SSHPhysicalNetworkDiscovery{}, err
+	}
+	output, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /nodes/"+node+"/network --output-format json"))
+	if err != nil {
+		return SSHPhysicalNetworkDiscovery{}, fmt.Errorf("discover Proxmox physical network for node %s: %w", node, err)
 	}
 	var interfaces []NetworkInterface
 	if err := json.Unmarshal(output, &interfaces); err != nil {
-		return networkmodel.Discovery{}, fmt.Errorf("decode Proxmox physical network evidence: %w", err)
+		return SSHPhysicalNetworkDiscovery{}, fmt.Errorf("HOLD: decode Proxmox physical network evidence: %w", err)
 	}
-	routeOutput, err := runner.Run(ctx, address, initialUser, "ip -j route show default")
+	routeOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "ip -j route show default"))
 	if err != nil {
-		return networkmodel.Discovery{}, fmt.Errorf("discover Proxmox default route: %w", err)
+		return SSHPhysicalNetworkDiscovery{}, fmt.Errorf("discover Proxmox default route: %w", err)
 	}
 	var routes []struct {
 		Dev string `json:"dev"`
 	}
 	if err := json.Unmarshal(routeOutput, &routes); err != nil {
-		return networkmodel.Discovery{}, fmt.Errorf("decode Proxmox default-route evidence: %w", err)
+		return SSHPhysicalNetworkDiscovery{}, fmt.Errorf("HOLD: decode Proxmox default-route evidence: %w", err)
 	}
 	if len(routes) != 1 || routes[0].Dev == "" {
-		return networkmodel.Discovery{}, errors.New("HOLD: upstream interface identity is ambiguous (default route is absent or has multiple entries)")
+		return SSHPhysicalNetworkDiscovery{}, errors.New("HOLD: upstream interface identity is ambiguous (default route is absent or has multiple entries)")
 	}
-	return AnalyzePhysicalNetworkWithDefaultRoute(interfaces, bootstrapAddress, configuredTrunk, selectedTrunk, routes[0].Dev)
+	discovery, err := AnalyzePhysicalNetworkWithDefaultRoute(interfaces, bootstrapAddress, configuredTrunk, selectedTrunk, routes[0].Dev)
+	if err != nil {
+		return SSHPhysicalNetworkDiscovery{}, err
+	}
+	return SSHPhysicalNetworkDiscovery{Node: node, Discovery: discovery}, nil
 }
 
 func (r SSHRunner) Run(ctx context.Context, address, user, command string) ([]byte, error) {
@@ -247,50 +280,50 @@ func ConfigureManagementNetwork(ctx context.Context, runner StdinCommandRunner, 
 	if runner == nil {
 		return errors.New("management network runner is required")
 	}
-	install := "sudo -n install -D -m 0644 /dev/stdin /etc/network/interfaces.d/boetticher-management"
+	install := privilegedCommand(user, "install -D -m 0644 /dev/stdin /etc/network/interfaces.d/boetticher-management")
 	if _, err := runner.RunWithStdin(ctx, address, user, install, strings.NewReader(managementInterfaceConfig)); err != nil {
 		return fmt.Errorf("install Proxmox management interface configuration: %w", err)
 	}
-	beforeAddress, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -4 -j addr show dev vmbr0")
+	beforeAddress, err := runner.Run(ctx, address, user, privilegedCommand(user, "/usr/sbin/ip -4 -j addr show dev vmbr0"))
 	if err != nil {
 		return fmt.Errorf("read Proxmox HOME address before management reload: %w", err)
 	}
-	beforeRoute, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -4 -j route show default")
+	beforeRoute, err := runner.Run(ctx, address, user, privilegedCommand(user, "/usr/sbin/ip -4 -j route show default"))
 	if err != nil {
 		return fmt.Errorf("read Proxmox default route before management reload: %w", err)
 	}
-	if _, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ifreload -a"); err != nil {
+	if _, err := runner.Run(ctx, address, user, privilegedCommand(user, "/usr/sbin/ifreload -a")); err != nil {
 		return fmt.Errorf("apply Proxmox management interface configuration: %w", err)
 	}
-	afterAddress, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -4 -j addr show dev vmbr0")
+	afterAddress, err := runner.Run(ctx, address, user, privilegedCommand(user, "/usr/sbin/ip -4 -j addr show dev vmbr0"))
 	if err != nil {
 		return fmt.Errorf("read Proxmox HOME address after management reload: %w", err)
 	}
 	if !bytes.Equal(beforeAddress, afterAddress) {
 		return errors.New("HOLD: Proxmox HOME address changed while applying the management interface")
 	}
-	afterRoute, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -4 -j route show default")
+	afterRoute, err := runner.Run(ctx, address, user, privilegedCommand(user, "/usr/sbin/ip -4 -j route show default"))
 	if err != nil {
 		return fmt.Errorf("read Proxmox default route after management reload: %w", err)
 	}
 	if !bytes.Equal(beforeRoute, afterRoute) {
 		return errors.New("HOLD: Proxmox HOME default route changed while applying the management interface")
 	}
-	mgmtAddress, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -4 addr show dev vmbr1.99")
+	mgmtAddress, err := runner.Run(ctx, address, user, privilegedCommand(user, "/usr/sbin/ip -4 addr show dev vmbr1.99"))
 	if err != nil {
 		return fmt.Errorf("read Proxmox management address: %w", err)
 	}
 	if !strings.Contains(string(mgmtAddress), "inet 10.10.99.5/24") {
 		return errors.New("HOLD: Proxmox vmbr1.99 does not have 10.10.99.5/24")
 	}
-	internalRoute, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -4 route show 10.10.0.0/16")
+	internalRoute, err := runner.Run(ctx, address, user, privilegedCommand(user, "/usr/sbin/ip -4 route show 10.10.0.0/16"))
 	if err != nil {
 		return fmt.Errorf("read Proxmox internal management route: %w", err)
 	}
 	if !strings.Contains(string(internalRoute), "10.10.0.0/16 via 10.10.99.1 dev vmbr1.99") {
 		return errors.New("HOLD: Proxmox internal route does not use 10.10.99.1 via vmbr1.99")
 	}
-	vlanState, err := runner.Run(ctx, address, user, "sudo -n /usr/sbin/ip -d link show dev vmbr1")
+	vlanState, err := runner.Run(ctx, address, user, privilegedCommand(user, "/usr/sbin/ip -d link show dev vmbr1"))
 	if err != nil {
 		return fmt.Errorf("read Proxmox vmbr1 VLAN state: %w", err)
 	}
@@ -378,6 +411,12 @@ func (r SSHRunner) commandArgs(address, user string, commandArgs []string) ([]st
 	if r.IdentityFile != "" {
 		args = append(args, "-i", r.IdentityFile)
 	}
+	if r.HostKeyAlias != "" {
+		if !safeNodeID(r.HostKeyAlias) {
+			return nil, errors.New("SSH host-key alias is not a safe identifier")
+		}
+		args = append(args, "-o", "HostKeyAlias="+r.HostKeyAlias)
+	}
 	target := address
 	if r.HostAlias != "" {
 		if !safeID(r.HostAlias) {
@@ -415,8 +454,21 @@ func ConfigureIdentities(ctx context.Context, runner CommandRunner, address, ini
 	// credentials are never placed in this command.
 	jumpKey := "restrict,port-forwarding,permitopen=\"" + strings.Join(allowedDestinations, "\",permitopen=\"") + "\" " + publicKeyLine(adminPublicKey)
 	command := "set -eu; id -u labadmin >/dev/null 2>&1 || useradd --create-home --shell /bin/bash labadmin; passwd --lock labadmin; id -u lab-jump >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin lab-jump; install -d -m 700 /home/labadmin/.ssh /etc/ssh/sshd_config.d; install -m 600 /dev/null /home/labadmin/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /home/labadmin/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /home/labadmin/.ssh/authorized_keys; install -m 600 /dev/null /home/lab-jump.authorized_keys; printf '%s\\n' " + shellQuote(jumpKey) + " > /home/lab-jump.authorized_keys; chown -R labadmin:labadmin /home/labadmin/.ssh; cat > /etc/sudoers.d/boetticher-labadmin <<'EOF'\n" + proxmoxLabadminSudoers + "\nEOF\nchmod 0440 /etc/sudoers.d/boetticher-labadmin; cat > /etc/ssh/sshd_config.d/90-boetticher-jump.conf <<'EOF'\nMatch User lab-jump\n    AuthorizedKeysFile /home/lab-jump.authorized_keys\n    PermitTTY no\n    X11Forwarding no\n    AllowAgentForwarding no\n    AllowTcpForwarding local\n    PermitOpen " + strings.Join(allowedDestinations, " ") + "\nEOF\nvisudo -cf /etc/sudoers\nsshd -t\nsystemctl reload ssh || systemctl reload sshd"
-	_, err := runner.Run(ctx, address, initialUser, command)
+	_, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, command))
 	return err
+}
+
+// privilegedCommand keeps root-required bootstrap commands non-interactive.
+// Root executes the fixed command directly; every other initial user must
+// have passwordless sudo or the operation fails without prompting.
+func privilegedCommand(user, command string) string {
+	if user == "root" {
+		return command
+	}
+	if !strings.ContainsAny(command, ";\n\r") {
+		return "sudo -n " + command
+	}
+	return "sudo -n sh -c " + shellQuote(command)
 }
 
 // proxmoxLabadminSudoers is the key-only host-administration boundary used
@@ -433,7 +485,7 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 		return "", errors.New("Proxmox identity and token IDs must be simple identifiers")
 	}
 	privileges := ScopedProvisionerPrivileges()
-	roleOutput, err := runner.Run(ctx, address, initialUser, "pvesh get /access/roles --output-format json")
+	roleOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/roles --output-format json"))
 	if err != nil {
 		return "", fmt.Errorf("HOLD: inspect Proxmox role %q: %w", role, err)
 	}
@@ -443,11 +495,11 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 	}
 	if !exists {
 		createRole := "pvesh create /access/roles/" + shellQuote(role) + " --privs " + shellQuote(privileges)
-		if _, err := runner.Run(ctx, address, initialUser, createRole); err != nil {
+		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, createRole)); err != nil {
 			return "", fmt.Errorf("create bounded Proxmox role %q: %w", role, err)
 		}
 	}
-	usersOutput, err := runner.Run(ctx, address, initialUser, "pvesh get /access/users --output-format json")
+	usersOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users --output-format json"))
 	if err != nil {
 		return "", fmt.Errorf("HOLD: inspect Proxmox users: %w", err)
 	}
@@ -457,11 +509,11 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 	}
 	if !users[userID] {
 		createUser := "pvesh create /access/users --userid " + shellQuote(userID) + " --comment 'boetticher automation identity'"
-		if _, err := runner.Run(ctx, address, initialUser, createUser); err != nil {
+		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, createUser)); err != nil {
 			return "", fmt.Errorf("create Proxmox automation user: %w", err)
 		}
 	}
-	tokensOutput, err := runner.Run(ctx, address, initialUser, "pvesh get /access/users/"+shellQuote(userID)+"/token --output-format json")
+	tokensOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users/"+shellQuote(userID)+"/token --output-format json"))
 	if err != nil {
 		return "", fmt.Errorf("HOLD: inspect Proxmox tokens for %s: %w", userID, err)
 	}
@@ -473,7 +525,7 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 		return "", errors.New("the requested Proxmox token already exists; use a new token ID or existing encrypted credentials")
 	}
 	command := "set -eu; pvesh create /access/acl --path / --users " + shellQuote(userID) + " --roles " + shellQuote(role) + " --propagate 1 >/dev/null; pvesh create /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID) + " --privsep 1 --output-format json"
-	output, err := runner.Run(ctx, address, initialUser, command)
+	output, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, command))
 	if err != nil {
 		return "", err
 	}

@@ -15,7 +15,6 @@ type SiteConfig struct {
 	StorageProfile   string          `yaml:"storage_profile" json:"storage_profile,omitempty" jsonschema:"enum=single-disk,enum=dedicated-data-disk"`
 	StorageDevice    string          `yaml:"storage_device,omitempty" json:"storage_device,omitempty"`
 	Gateway          Gateway         `yaml:"gateway" json:"gateway,omitempty"`
-	ProxmoxNode      string          `yaml:"proxmox_node" json:"proxmox_node,omitempty"`
 	BootstrapAddress string          `yaml:"bootstrap_address,omitempty" json:"bootstrap_address,omitempty"`
 	SSHIdentityFile  string          `yaml:"ssh_identity_file,omitempty" json:"ssh_identity_file,omitempty"`
 	PhysicalNetwork  PhysicalNetwork `yaml:"physical_network" json:"physical_network,omitempty"`
@@ -122,8 +121,8 @@ func ConfigFromSite(s Site) SiteConfig {
 		APIVersion: s.APIVersion, PlatformVersion: s.PlatformVersion,
 		SchemaVersion: s.SchemaVersion, StorageProfile: s.StorageProfile,
 		StorageDevice: s.StorageDevice, Gateway: s.Gateway,
-		ProxmoxNode: s.ProxmoxNode, BootstrapAddress: s.BootstrapAddress,
-		SSHIdentityFile: s.SSHIdentityFile, PhysicalNetwork: s.PhysicalNetwork,
+		BootstrapAddress: s.BootstrapAddress,
+		SSHIdentityFile:  s.SSHIdentityFile, PhysicalNetwork: s.PhysicalNetwork,
 		TestedVersions: s.TestedVersions, Network: s.Network, PKI: s.PKI,
 		SecretMetadata: s.SecretMetadata, Ownership: s.Ownership,
 		Modules: ModulesConfigFromMap(s.ModuleConfig),
@@ -150,9 +149,6 @@ func (c SiteConfig) BaseSite() Site {
 	}
 	if c.StorageDevice != "" {
 		s.StorageDevice = c.StorageDevice
-	}
-	if c.ProxmoxNode != "" {
-		s.ProxmoxNode = c.ProxmoxNode
 	}
 	if c.BootstrapAddress != "" {
 		s.BootstrapAddress = c.BootstrapAddress
