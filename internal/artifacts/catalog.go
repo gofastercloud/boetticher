@@ -241,7 +241,7 @@ func validateQualificationDigests(evidence Evidence) error {
 
 const (
 	BaseName      = "boetticher-base"
-	BaseVersion   = "0.3.30"
+	BaseVersion   = "0.3.31"
 	Architecture  = "amd64"
 	DebianRelease = "13"
 	ModuleVersion = "1.0.0"

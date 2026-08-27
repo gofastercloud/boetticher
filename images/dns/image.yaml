@@ -2,7 +2,7 @@ name: boetticher-dns-common
 version: 1.0.0
 kind: lxc
 base: boetticher-base
-base_version: 0.3.30
+base_version: 0.3.31
 architecture: amd64
 services:
   - powerdns-authoritative

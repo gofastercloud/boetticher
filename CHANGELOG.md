@@ -3,6 +3,13 @@
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 
+## [0.3.31] - 2026-08-27
+
+### Fixed
+
+- Keep the temporary hosted builder on the direct HOME bridge so Proxmox's
+  disabled guest-firewall path cannot block its DHCP bootstrap.
+
 ## [0.3.30] - 2026-08-27
 
 ### Fixed

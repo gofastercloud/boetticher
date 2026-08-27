@@ -721,7 +721,7 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 		"agent":     {"1"},
 		"boot":      {"order=scsi0;ide2;net0"},
 		"tags":      {strings.Join([]string{model.TagBoetticher, model.TagManaged, model.TagPlatform, builderOwnerTag}, ";")},
-		"net0":      {"virtio,bridge=vmbr0,firewall=1,macaddr=" + model.BuilderMAC},
+		"net0":      {"virtio,bridge=vmbr0,macaddr=" + model.BuilderMAC},
 		"ide2":      {"local:cloudinit"},
 		"ipconfig0": {"ip=dhcp"},
 		"ciuser":    {model.DefaultAdminSSHUser},

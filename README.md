@@ -1,6 +1,6 @@
 # boetticher
 
-**Status: pre-alpha.** boetticher v0.3.30 has a typed module model and offline
+**Status: pre-alpha.** boetticher v0.3.31 has a typed module model and offline
 contracts, but the appliance build and live installation still need
 qualification. Do not use boetticher on a system you cannot recover.
 
