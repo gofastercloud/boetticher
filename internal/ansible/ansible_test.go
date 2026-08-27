@@ -164,6 +164,25 @@ func TestGuestPlaybookProjectsLoggingClientsBeyondTheCollector(t *testing.T) {
 	}
 }
 
+func TestBaseRoleRunsChronyWithoutKernelClockControlInAppliances(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"- name: Configure Chrony for unprivileged appliances",
+		"content: \"DAEMON_OPTS=\\\"-x\\\"\\n\"",
+		"dest: /etc/default/chrony",
+		"when: inventory_hostname not in groups.get('proxmox', [])",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("base role missing %q", expected)
+		}
+	}
+}
+
 func TestFirewallRoleCreatesNftablesConfigurationDirectory(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
 	data, err := os.ReadFile(path)

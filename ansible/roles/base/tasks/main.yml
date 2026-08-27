@@ -14,6 +14,15 @@
     cache_valid_time: 3600
   when: inventory_hostname in groups.get('proxmox', [])
 
+- name: Configure Chrony for unprivileged appliances
+  ansible.builtin.copy:
+    content: "DAEMON_OPTS=\"-x\"\n"
+    dest: /etc/default/chrony
+    owner: root
+    group: root
+    mode: '0644'
+  when: inventory_hostname not in groups.get('proxmox', [])
+
 - name: Enable chrony
   ansible.builtin.service:
     name: chrony
