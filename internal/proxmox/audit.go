@@ -104,7 +104,13 @@ func InspectBuilder(ctx context.Context, client *Client, node string) (BuilderAu
 	if kind != KindQEMU {
 		return BuilderAudit{Exists: true, Name: fmt.Sprintf("%s guest at VMID %d", kind, model.BuilderVMID)}, nil
 	}
-	return classifyBuilder(current), nil
+	audit := classifyBuilder(current)
+	status, err := client.QEMUStatus(ctx, node, model.BuilderVMID)
+	if err != nil {
+		return BuilderAudit{}, fmt.Errorf("inspect temporary builder status: %w", err)
+	}
+	audit.Status = status
+	return audit, nil
 }
 
 func classifyBuilder(current map[string]any) BuilderAudit {

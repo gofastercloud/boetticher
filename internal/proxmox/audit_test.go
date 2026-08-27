@@ -94,6 +94,28 @@ func TestInspectBuilderHoldsForWrongGuestKind(t *testing.T) {
 	}
 }
 
+func TestInspectBuilderUsesLiveStatus(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch r.URL.Path {
+		case "/api2/json/nodes/lab-proxmox-01/qemu/190/config":
+			return response([]byte(`{"data":{"name":"lab-builder-01","status":"stopped","tags":"boetticher;boetticher-builder"}}`))
+		case "/api2/json/nodes/lab-proxmox-01/qemu/190/status/current":
+			return response([]byte(`{"data":{"status":"running"}}`))
+		default:
+			t.Fatalf("unexpected builder status request: %s", r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	audit, err := InspectBuilder(context.Background(), client, "lab-proxmox-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !audit.Exists || !audit.Owned || audit.Status != "running" {
+		t.Fatalf("live builder status was not reported: %#v", audit)
+	}
+}
+
 func TestPurgeModuleHoldsForOppositeGuestKindAtReservedIdentity(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {
