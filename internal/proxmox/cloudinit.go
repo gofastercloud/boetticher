@@ -180,7 +180,7 @@ runcmd:
   - [touch, /run/boetticher-builder-ready]
 `
 	return CloudInitFiles{
-		MetaData: "instance-id: boetticher-builder-0.3.33\nlocal-hostname: lab-builder-01\n",
+		MetaData: "instance-id: boetticher-builder-0.3.34\nlocal-hostname: lab-builder-01\n",
 		UserData: userData,
 		NetworkConfig: fmt.Sprintf(`version: 2
 ethernets:
