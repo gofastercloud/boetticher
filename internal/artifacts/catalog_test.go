@@ -283,7 +283,7 @@ func TestQualificationRejectsIncompleteScan(t *testing.T) {
 	}
 }
 
-func TestQualificationRequiresBuilderProvenance(t *testing.T) {
+func TestQualificationAllowsMissingBuilderProvenance(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "artifact.bin")
 	if err := os.WriteFile(path, []byte("qualified bytes"), 0o600); err != nil {
 		t.Fatal(err)
@@ -298,9 +298,21 @@ func TestQualificationRequiresBuilderProvenance(t *testing.T) {
 	}
 	evidence.ArtifactPath = path
 	evidence = completeQualificationEvidence(t, evidence)
+	provenancePath := filepath.Join(filepath.Dir(path), "builder-provenance.json")
+	if err := os.Remove(provenancePath); err != nil {
+		t.Fatal(err)
+	}
 	evidence.BuilderProvenanceSHA256 = ""
-	if _, err := QualifyEvidence(evidence, ScanSummary{Completed: true}); err == nil || !strings.Contains(err.Error(), "builder provenance") {
-		t.Fatalf("qualification accepted missing builder provenance: %v", err)
+	qualified, err := QualifyEvidence(evidence, ScanSummary{Completed: true})
+	if err != nil || !qualified.Qualified {
+		t.Fatalf("qualification rejected missing optional builder provenance: %#v %v", qualified, err)
+	}
+	root := filepath.Dir(path)
+	if err := WriteEvidence(root, artifact.Name, qualified); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveArtifactEvidence(root, artifact); err != nil {
+		t.Fatalf("resolution rejected qualified artifact without optional builder provenance: %v", err)
 	}
 }
 

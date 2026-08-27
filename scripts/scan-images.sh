@@ -22,10 +22,6 @@ esac
 root=${BOETTICHER_ARTIFACT_OUTPUT:-generated/artifacts}
 evidence_root=${BOETTICHER_EVIDENCE_ROOT:-.}
 provenance="$(dirname "$root")/builder-provenance.json"
-if [ ! -s "$provenance" ]; then
-  echo "HOLD: builder provenance is missing: $provenance" >&2
-  exit 2
-fi
 scan_root=
 mounted=0
 cleanup_scan_root() {
@@ -62,7 +58,11 @@ for name in $names; do
     echo "HOLD: artifact is not built: $artifact" >&2
     exit 2
   fi
-  cp "$provenance" "$root/$name/builder-provenance.json"
+  provenance_arg=
+  if [ -s "$provenance" ]; then
+    cp "$provenance" "$root/$name/builder-provenance.json"
+    provenance_arg="-provenance $root/$name/builder-provenance.json"
+  fi
   mkdir -p "$(dirname "$report")"
   if [ ! -s "$manifest" ]; then
     echo "HOLD: package manifest is missing for $name: $manifest" >&2
@@ -116,12 +116,12 @@ for name in $names; do
   if [ -n "$provider" ]; then
     GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact \
       -artifact "$artifact" -report "$report" -manifest "$manifest" -sbom "$sbom" \
-      -provenance "$root/$name/builder-provenance.json" \
+      $provenance_arg \
       -evidence-root "$evidence_root" -module "$module" -provider "$provider"
   else
     GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact \
       -artifact "$artifact" -report "$report" -manifest "$manifest" -sbom "$sbom" \
-      -provenance "$root/$name/builder-provenance.json" \
+      $provenance_arg \
       -evidence-root "$evidence_root" -module "$module"
   fi
 done

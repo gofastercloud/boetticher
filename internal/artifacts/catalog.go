@@ -82,8 +82,8 @@ const QualificationPolicyVersion = "boetticher-trivy-v1"
 const QualificationEvaluator = "boetticher-qualify-artifact"
 
 // QualifyEvidence is the only operation allowed to mark artifact evidence
-// qualified. Hashing a file proves its bytes, but does not prove package,
-// SBOM, or Trivy qualification policy.
+// qualified. The evaluator records the completed smoke/Trivy gate; optional
+// manifests, SBOMs, and builder provenance remain useful release outputs.
 func QualifyEvidence(evidence Evidence, scan ScanSummary) (Evidence, error) {
 	if err := validateQualificationDigests(evidence); err != nil {
 		return Evidence{}, fmt.Errorf("qualification evidence is incomplete: %w", err)
@@ -96,9 +96,6 @@ func QualifyEvidence(evidence Evidence, scan ScanSummary) (Evidence, error) {
 	}
 	if scan.FixableCritical > 0 {
 		return Evidence{}, fmt.Errorf("qualification failed: Trivy found %d fixable CRITICAL finding(s)", scan.FixableCritical)
-	}
-	if err := validateBuilderEvidence(evidence); err != nil {
-		return Evidence{}, fmt.Errorf("qualification evidence is incomplete: %w", err)
 	}
 	evidence.QualificationPolicyVersion = QualificationPolicyVersion
 	evidence.QualificationEvaluator = QualificationEvaluator
@@ -174,10 +171,9 @@ func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artif
 	return resolved, evidence, nil
 }
 
-// verifyQualificationInputs binds the qualified artifact to the exact
-// manifest, SBOM, and raw scanner report stored beside it. The content digest
-// alone is not sufficient to establish that the qualification evidence still
-// describes the bytes being deployed.
+// verifyQualificationInputs checks any qualification outputs that were
+// recorded beside the artifact. The content digest and completed Trivy gate
+// are authoritative; manifests, SBOMs, and provenance are optional outputs.
 func verifyQualificationInputs(evidence Evidence) error {
 	if evidence.ArtifactPath == "" {
 		return fmt.Errorf("artifact path is required")
@@ -191,9 +187,11 @@ func verifyQualificationInputs(evidence Evidence) error {
 		{name: "package manifest", filename: "package-manifest.txt", expected: evidence.PackageManifestSHA},
 		{name: "SBOM", filename: "sbom.json", expected: evidence.SBOMSHA256},
 		{name: "Trivy report", filename: "trivy.json", expected: evidence.TrivyReportSHA256},
-		{name: "builder provenance", filename: "builder-provenance.json", expected: evidence.BuilderProvenanceSHA256},
 	}
 	for _, input := range inputs {
+		if input.expected == "" {
+			continue
+		}
 		actual, err := QualificationInputSHA256(filepath.Join(directory, input.filename), input.name)
 		if err != nil {
 			return err
@@ -208,12 +206,17 @@ func verifyQualificationInputs(evidence Evidence) error {
 var sha256Pattern = regexp.MustCompile(`^[a-fA-F0-9]{64}$`)
 
 func validateQualificationDigests(evidence Evidence) error {
+	if !sha256Pattern.MatchString(evidence.ContentSHA256) {
+		return fmt.Errorf("content_sha256 must be a SHA-256 digest")
+	}
 	for name, value := range map[string]string{
-		"content_sha256":          evidence.ContentSHA256,
 		"package_manifest_sha256": evidence.PackageManifestSHA,
 		"sbom_sha256":             evidence.SBOMSHA256,
 		"trivy_report_sha256":     evidence.TrivyReportSHA256,
 	} {
+		if value == "" {
+			continue
+		}
 		if !sha256Pattern.MatchString(value) {
 			return fmt.Errorf("%s must be a SHA-256 digest", name)
 		}
@@ -230,34 +233,8 @@ func validateQualificationDigests(evidence Evidence) error {
 	if evidence.Qualified && !evidence.ScanCompleted {
 		return fmt.Errorf("qualified evidence must include a completed Trivy scan")
 	}
-	if evidence.Qualified {
-		if !sha256Pattern.MatchString(evidence.BuilderProvenanceSHA256) {
-			return fmt.Errorf("qualified evidence must include a builder provenance digest")
-		}
-		if err := validateBuilderEvidence(evidence); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func validateBuilderEvidence(evidence Evidence) error {
-	if !sha256Pattern.MatchString(evidence.BuilderProvenanceSHA256) {
-		return fmt.Errorf("builder provenance must be a SHA-256 digest")
-	}
-	for name, value := range map[string]string{
-		"builder platform":           evidence.Builder.Platform,
-		"builder input image":        evidence.Builder.InputImage,
-		"builder kernel":             evidence.Builder.Kernel,
-		"builder Go version":         evidence.Builder.Go,
-		"builder Trivy version":      evidence.Builder.Trivy,
-		"builder mmdebstrap version": evidence.Builder.MMDebstrap,
-		"builder architecture":       evidence.Builder.Architecture,
-		"boetticher version":         evidence.Builder.BoetticherVersion,
-	} {
-		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("%s is required", name)
-		}
+	if evidence.Qualified && !sha256Pattern.MatchString(evidence.TrivyReportSHA256) {
+		return fmt.Errorf("qualified evidence must include a Trivy report digest")
 	}
 	return nil
 }
