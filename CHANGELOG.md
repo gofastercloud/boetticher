@@ -26,6 +26,8 @@ project, so releases can make clean breaks while the design is settling.
   SSH when the site does not override `ssh_identity_file`.
 - Include the managed `labadmin` account in the Proxmox SSH allow-list during
   bootstrap so routine bastion access does not depend on root.
+- Include the managed `lab-jump` bastion account in the same allow-list so
+  gateway readiness can use the documented Proxmox jump path.
 - Discover the hosted builder address through the QEMU guest agent after
   confirming the guest reaches userspace.
 - Start the hosted builder guest agent before the remaining qualification
