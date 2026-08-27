@@ -19,8 +19,8 @@
     path: /var/lib/boetticher/identity/logging
     state: directory
     owner: root
-    group: root
-    mode: '0700'
+    group: systemd-journal-remote
+    mode: '0750'
   when: inventory_hostname == logging_plan.collector
 
 - name: Generate collector-local server private key
@@ -28,6 +28,14 @@
     argv: [openssl, genpkey, -algorithm, EC, -pkeyopt, ec_paramgen_curve:P-256, -out, /var/lib/boetticher/identity/logging/collector.key]
   args:
     creates: /var/lib/boetticher/identity/logging/collector.key
+  when: inventory_hostname == logging_plan.collector
+
+- name: Allow the collector service to read its private key
+  ansible.builtin.file:
+    path: /var/lib/boetticher/identity/logging/collector.key
+    owner: root
+    group: systemd-journal-remote
+    mode: '0640'
   when: inventory_hostname == logging_plan.collector
 
 - name: Generate collector server CSR
