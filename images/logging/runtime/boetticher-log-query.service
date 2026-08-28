@@ -16,7 +16,7 @@ PrivateDevices=true
 RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 IPAddressDeny=any
-IPAddressAllow=10.10.20.70
+IPAddressAllow=10.10.20.90
 ReadOnlyPaths=/var/log/journal/remote /etc/boetticher-log-query /etc/boetticher/pki /var/lib/boetticher/identity/tls
 
 [Install]
