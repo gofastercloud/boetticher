@@ -63,19 +63,24 @@
     flat: true
   when: pki_bootstrap_phase | default(false) | bool
 
-- name: Require the controller-issued printer certificate
+- name: Require the controller-issued printer mTLS material
   ansible.builtin.assert:
-    that: (pki_bootstrap_phase | default(false) | bool) or (octoprint_server_cert_pem is defined and octoprint_server_cert_pem | length > 0)
-    fail_msg: Printer nginx requires the existing Boetticher PKI server certificate
+    that:
+      - client_ca_pem | default('') | length > 0
+      - (pki_bootstrap_phase | default(false) | bool) or (octoprint_server_cert_pem is defined and octoprint_server_cert_pem | length > 0)
+    fail_msg: Printer nginx requires the existing Boetticher PKI server certificate and client CA
   no_log: true
 
-- name: Install the printer server certificate
+- name: Install the printer server certificate and client CA
   ansible.builtin.copy:
-    dest: /var/lib/boetticher/identity/tls/octoprint.crt.pem
-    content: "{{ octoprint_server_cert_pem | default('') }}"
+    dest: "{{ item.dest }}"
+    content: "{{ item.content }}"
     owner: root
     group: root
     mode: '0644'
+  loop:
+    - {dest: /var/lib/boetticher/identity/tls/octoprint.crt.pem, content: "{{ octoprint_server_cert_pem | default('') }}"}
+    - {dest: /var/lib/boetticher/identity/tls/client-ca.pem, content: "{{ client_ca_pem | default('') }}"}
   no_log: true
   when: octoprint_server_cert_pem | default('') | length > 0
   notify: reload printer nginx
@@ -96,6 +101,8 @@
           server_name octoprint.{{ domain }} printer.{{ domain }};
           ssl_certificate /var/lib/boetticher/identity/tls/octoprint.crt.pem;
           ssl_certificate_key /var/lib/boetticher/identity/tls/octoprint.key.pem;
+          ssl_client_certificate /var/lib/boetticher/identity/tls/client-ca.pem;
+          ssl_verify_client on;
           ssl_protocols TLSv1.2 TLSv1.3;
           client_max_body_size 1G;
           location / {
@@ -133,4 +140,16 @@
     enabled: true
     state: started
   loop: [octoprint, nginx]
+  when: octoprint_server_cert_pem | default('') | length > 0
+
+- name: Apply the mTLS frontend before testing its negative path
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify a client without a certificate is rejected before OctoPrint
+  ansible.builtin.uri:
+    url: "https://octoprint.{{ domain }}/"
+    method: GET
+    ca_path: /var/lib/boetticher/identity/tls/client-ca.pem
+    status_code: 400
+    return_content: false
   when: octoprint_server_cert_pem | default('') | length > 0

@@ -1,4 +1,4 @@
-.PHONY: ci test build vet fmt fmt-check tofu-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-dns-adguard image-logging image-monitoring image-firewall image-portal image-tailnet-router image-litellm image-streamdeck image-printer images scan-images scan-base scan-dns-blocky scan-dns-adguard scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-litellm scan-streamdeck scan-printer command-docs command-docs-check
+.PHONY: ci test usb-export-test build vet fmt fmt-check tofu-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-dns-adguard image-logging image-monitoring image-firewall image-portal image-tailnet-router image-litellm image-streamdeck image-printer images scan-images scan-base scan-dns-blocky scan-dns-adguard scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-litellm scan-streamdeck scan-printer command-docs command-docs-check
 
 GOCACHE ?= /tmp/boetticher-gocache
 GOMODCACHE ?= /tmp/boetticher-gomodcache
@@ -13,6 +13,9 @@ fmt-check:
 
 test:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./...
+
+usb-export-test:
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ansible/roles/usb-export-host/tests -p 'test_*.py' -v
 
 vet:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go vet ./...
@@ -68,4 +71,4 @@ vuln-check:
 
 security-check: naming-check actionlint vuln-check
 
-ci: fmt-check image-check schema-check command-docs-check test vet build tofu-check ansible-check security-check diff-check
+ci: fmt-check image-check schema-check command-docs-check test usb-export-test vet build tofu-check ansible-check security-check diff-check

@@ -783,6 +783,21 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 			},
 			forbidden: []string{"listen 10.10.20.60:80", "api_key: {{", "ansible.builtin.get_url:"},
 		},
+		{
+			role: "printer",
+			required: []string{
+				"boetticher_appliance_artifact",
+				"client_ca_pem | default('') | length > 0",
+				"ssl_client_certificate /var/lib/boetticher/identity/tls/client-ca.pem;",
+				"ssl_verify_client on;",
+				"proxy_pass http://127.0.0.1:5000;",
+				"listen 10.10.20.80:443 ssl;",
+				"Verify a client without a certificate is rejected before OctoPrint",
+				"ca_path: /var/lib/boetticher/identity/tls/client-ca.pem",
+				"status_code: 400",
+			},
+			forbidden: []string{"ssl_verify_client off", "listen 10.10.20.80:80", "ansible.builtin.apt:"},
+		},
 	}
 	for _, test := range tests {
 		path := filepath.Join("..", "..", "ansible", "roles", test.role, "tasks", "main.yml")

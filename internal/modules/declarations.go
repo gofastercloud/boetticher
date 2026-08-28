@@ -135,10 +135,10 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		}
 		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "octoprint." + site.Network.Domain, SANs: []string{"octoprint." + site.Network.Domain, "printer." + site.Network.Domain}, Consumer: "nginx"})
 		declaration.Monitoring = append(declaration.Monitoring,
-			model.MonitoringDeclaration{Name: "nginx", Kind: "service", Target: "lab-printer-01", Checks: []string{"nginx", "https"}, Description: "OctoPrint HTTPS frontend health"},
+			model.MonitoringDeclaration{Name: "nginx", Kind: "service", Target: "lab-printer-01", Checks: []string{"nginx", "https", "mtls"}, Description: "OctoPrint mTLS frontend health"},
 			model.MonitoringDeclaration{Name: "octoprint", Kind: "service", Target: "lab-printer-01", Checks: []string{"octoprint", "loopback", "serial"}, Description: "OctoPrint backend and printer serial availability"},
 		)
-		declaration.Portal = []model.PortalEntry{{Name: "printer", Description: "OctoPrint management for the Ender-3 V3 SE", URLs: []string{"https://octoprint." + site.Network.Domain}, Docs: []string{"docs/modules/printer.md"}}}
+		declaration.Portal = []model.PortalEntry{{Name: "printer", Description: "mTLS-protected OctoPrint management for the Ender-3 V3 SE", URLs: []string{"https://octoprint." + site.Network.Domain}, Docs: []string{"docs/modules/printer.md"}}}
 	default:
 		return model.ModuleDeclaration{}, fmt.Errorf("no declaration provider for first-party module %q", name)
 	}
