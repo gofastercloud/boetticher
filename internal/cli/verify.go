@@ -481,7 +481,7 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 			if err != nil {
 				return err
 			}
-			if len(plan.DynamicZones) != 2 {
+			if len(plan.DynamicZones) != 3 {
 				return errors.New("dynamic DNS zone contract is incomplete")
 			}
 			if s.Gateway.Mode == model.GatewayModeManaged && !plan.DDNS.Enabled {

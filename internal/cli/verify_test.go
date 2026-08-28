@@ -17,3 +17,17 @@ func TestCheckPlatformOwnershipIncludesComposedLoggingGuest(t *testing.T) {
 		t.Fatalf("external composed platform was rejected: %v", err)
 	}
 }
+
+func TestOfflineVerificationAcceptsAllManagedDynamicDNSZones(t *testing.T) {
+	site := model.NewDefaultSite("verify-dns", "age1verify")
+	results := offlineVerificationResults(t.TempDir(), site)
+	for _, result := range results {
+		if result.Name == "DNS/DDNS projection" {
+			if result.Status != "STATIC PASS" {
+				t.Fatalf("DNS/DDNS projection status = %q, detail = %q", result.Status, result.Detail)
+			}
+			return
+		}
+	}
+	t.Fatal("DNS/DDNS projection result is missing")
+}
