@@ -91,6 +91,9 @@ func jumpDestinations(s model.Site) []string {
 				port = 22
 			}
 			result = append(result, fmt.Sprintf("%s:%d", m.Address, port))
+			if m.Name == "lab-monitor-01" {
+				result = append(result, fmt.Sprintf("%s:443", m.Address))
+			}
 		}
 	}
 	sort.Strings(result)

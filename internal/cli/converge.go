@@ -388,7 +388,13 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 	}()
 	if monitoringEnabled {
-		pulseForward, err = rootRunner.StartLocalForward(context.Background(), s.BootstrapAddress, "root", "10.10.10.20", 443)
+		pulseRunner := proxmox.SSHRunner{
+			IdentityFile:  operatorIdentityFile(s),
+			ConfigFile:    filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"),
+			StrictHostKey: "accept-new",
+			HostAlias:     "lab-bastion",
+		}
+		pulseForward, err = pulseRunner.StartLocalForward(context.Background(), s.BootstrapAddress, "lab-jump", "10.10.10.20", 443)
 		if err != nil {
 			return fmt.Errorf("open Pulse API tunnel through Proxmox bastion: %w", err)
 		}
