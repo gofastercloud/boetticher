@@ -76,6 +76,32 @@ func TestExtractBuildArchiveReaderStreamsLargeArchive(t *testing.T) {
 	}
 }
 
+func TestExtractBuildArchiveReaderAcceptsPlainTarTransport(t *testing.T) {
+	var archive bytes.Buffer
+	tarWriter := tar.NewWriter(&archive)
+	content := []byte("plain transport artifact")
+	if err := tarWriter.WriteHeader(&tar.Header{Name: "generated/artifacts/example/artifact", Mode: 0o600, Size: int64(len(content))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tarWriter.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	destination := t.TempDir()
+	if err := ExtractBuildArchiveReader(bytes.NewReader(archive.Bytes()), destination); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(destination, "generated", "artifacts", "example", "artifact"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(content) {
+		t.Fatalf("plain transport content = %q, want %q", data, content)
+	}
+}
+
 func TestBuildSourceArchiveExcludesSiteSecrets(t *testing.T) {
 	root := t.TempDir()
 	for _, relative := range PublicBuildInputs {

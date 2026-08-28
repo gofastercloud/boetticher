@@ -70,8 +70,19 @@ into one repository transaction.
 
 Build timestamps, tool versions, and content hashes are not canonical
 desired-state inputs. The current `zstd -T0 -19` artifact compression and gzip
-transport remain unchanged until representative builder and transfer
-measurements justify a different setting.
+transport remain the defaults. On a supported Linux builder, operators may
+measure the Issue #22 compression candidates with
+`BOETTICHER_ZSTD_LEVEL=10 make images`,
+`BOETTICHER_ZSTD_LEVEL=15 make images`, and
+`BOETTICHER_ZSTD_LEVEL=19 make images`; each successful LXC package emits its
+compression duration and byte size in `build-timings.log`.
+The controller-side bootstrap experiment
+`BOETTICHER_BUILDER_TRANSPORT_COMPRESSION=plain boetticher bootstrap
+--recovery-confirmed` selects an uncompressed tar stream for comparison; the
+default gzip return stream is unchanged. Compare these measurements with the
+artifact return transfer and deployment timings before changing either
+default. The plain transport uses the same bounded, atomic, path-safe
+extraction as gzip.
 
 Root filesystems are immutable and replaceable; declared persistent volumes are
 attached independently and are not included in the artifact binary.

@@ -377,6 +377,17 @@ func emitTiming(out interface{ Write([]byte) (int, error) }, stage string, start
 	fmt.Fprintf(out, "timing stage=%s duration_ms=%d\n", stage, time.Since(started).Milliseconds())
 }
 
+func builderArtifactReturnCommand(compression string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(compression)) {
+	case "", "gzip":
+		return "tar -czf - -C /home/labadmin/build generated/artifacts", nil
+	case "plain", "none":
+		return "tar -cf - -C /home/labadmin/build generated/artifacts", nil
+	default:
+		return "", fmt.Errorf("unsupported builder artifact transport compression %q", compression)
+	}
+}
+
 // honorRequestedPhysicalMode keeps a fresh virtual-only site virtual-only even
 // when hardware discovery finds one eligible spare interface. A physical
 // trunk enters the model only through an explicit selection or an already
@@ -406,6 +417,14 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	emitTiming(out, "artifact_cache_check", cacheStarted)
 	if client == nil {
 		return errors.New("Proxmox client is required for appliance construction")
+	}
+	transportCompression := strings.ToLower(strings.TrimSpace(os.Getenv("BOETTICHER_BUILDER_TRANSPORT_COMPRESSION")))
+	if transportCompression == "" {
+		transportCompression = "gzip"
+	}
+	returnCommand, err := builderArtifactReturnCommand(transportCompression)
+	if err != nil {
+		return err
 	}
 	builderKnownHosts, err := createBuilderKnownHosts()
 	if err != nil {
@@ -504,7 +523,6 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 		return fmt.Errorf("qualify default appliance artifacts on temporary builder: %w", err)
 	}
 	emitTiming(out, "builder_build_and_qualification", buildStarted)
-	returnStarted := time.Now()
 	archiveFile, err := os.CreateTemp("", "boetticher-builder-artifacts-*.tar.gz")
 	if err != nil {
 		return fmt.Errorf("create temporary artifact archive: %w", err)
@@ -515,20 +533,28 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 		_ = archiveFile.Close()
 		return fmt.Errorf("protect temporary artifact archive: %w", err)
 	}
-	if err := builderRunner.RunStream(ctx, builderAddress, builderSSHUser, "tar -czf - -C /home/labadmin/build generated/artifacts", archiveFile); err != nil {
+	returnStarted := time.Now()
+	if err := builderRunner.RunStream(ctx, builderAddress, builderSSHUser, returnCommand, archiveFile); err != nil {
 		_ = archiveFile.Close()
 		return fmt.Errorf("retrieve qualified appliance evidence: %w", err)
 	}
 	if err := archiveFile.Close(); err != nil {
 		return fmt.Errorf("close qualified appliance evidence: %w", err)
 	}
+	emitTiming(out, "builder_artifact_return_transfer", returnStarted)
+	archiveInfo, err := os.Stat(archivePath)
+	if err != nil {
+		return fmt.Errorf("stat qualified appliance evidence: %w", err)
+	}
+	fmt.Fprintf(out, "measurement stage=builder_artifact_return transport=%s bytes=%d\n", transportCompression, archiveInfo.Size())
+	extractionStarted := time.Now()
 	if err := artifacts.ExtractBuildArchiveFile(archivePath, siteDir); err != nil {
 		return fmt.Errorf("extract qualified appliance evidence: %w", err)
 	}
 	if err := artifacts.RebindEvidencePaths(siteDir); err != nil {
 		return fmt.Errorf("bind qualified evidence to controller artifact bytes: %w", err)
 	}
-	emitTiming(out, "builder_artifact_return_extraction", returnStarted)
+	emitTiming(out, "builder_artifact_return_extraction", extractionStarted)
 	buildSucceeded = true
 	return nil
 }

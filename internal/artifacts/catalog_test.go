@@ -660,6 +660,9 @@ func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *tes
 	if !strings.Contains(buildText, `timing_emit "artifact_build_all"`) || !strings.Contains(buildText, "pid_a=") || !strings.Contains(buildText, "pid_b=") {
 		t.Fatal("image construction is missing explicit bounded worker scheduling")
 	}
+	if !strings.Contains(buildText, "zstd_level=${BOETTICHER_ZSTD_LEVEL:-19}") || !strings.Contains(buildText, `zstd -T0 "-$zstd_level"`) || !strings.Contains(buildText, `measurement_emit "artifact_compression"`) {
+		t.Fatal("artifact compression does not expose bounded measurement levels with the existing default")
+	}
 	if strings.Count(scanText, "trivy fs --scanners vuln,secret") != 1 {
 		t.Fatalf("qualification performs more than one full Trivy filesystem scan: %d", strings.Count(scanText, "trivy fs --scanners vuln,secret"))
 	}

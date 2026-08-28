@@ -60,7 +60,32 @@ timing_emit() {
   fi
 }
 
-for tool in mmdebstrap tar zstd sha256sum curl chroot go jq; do
+measurement_emit() {
+  measurement_stage=$1
+  shift
+  measurement_line="measurement stage=$measurement_stage"
+  for measurement_field in "$@"; do
+    measurement_line="$measurement_line $measurement_field"
+  done
+  printf '%s\n' "$measurement_line"
+  if [ -n "${timing_log:-}" ]; then
+    printf '%s\n' "$measurement_line" >> "$timing_log"
+  fi
+}
+
+zstd_level=${BOETTICHER_ZSTD_LEVEL:-19}
+case "$zstd_level" in
+  ''|*[!0-9]*)
+    echo "HOLD: BOETTICHER_ZSTD_LEVEL must be an integer from 1 through 22" >&2
+    exit 2
+    ;;
+esac
+if [ "$zstd_level" -lt 1 ] || [ "$zstd_level" -gt 22 ]; then
+  echo "HOLD: BOETTICHER_ZSTD_LEVEL must be an integer from 1 through 22" >&2
+  exit 2
+fi
+
+for tool in mmdebstrap tar zstd sha256sum curl chroot go jq stat; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "HOLD: required Linux image-build tool is unavailable: $tool" >&2
     exit 2
@@ -326,9 +351,14 @@ package_lxc() {
   printf '%s\n' "boetticher package stage: $name manifest"
   chroot "$rootfs" dpkg-query -W -f='${binary:Package}\t${Version}\n' | sort > "$destination/package-manifest.txt"
   printf '%s\n' "boetticher package stage: $name archive"
-  tar --numeric-owner --xattrs --acls -C "$rootfs" -cf - . | zstd -T0 -19 -o "$(artifact_for "$name")"
+  compression_started=$(timing_now_ms)
+  artifact_path=$(artifact_for "$name")
+  tar --numeric-owner --xattrs --acls -C "$rootfs" -cf - . | zstd -T0 "-$zstd_level" -o "$artifact_path"
+  compression_finished=$(timing_now_ms)
+  artifact_size=$(stat -c '%s' "$artifact_path")
+  measurement_emit "artifact_compression" "artifact=$name" "codec=zstd" "level=$zstd_level" "duration_ms=$((compression_finished - compression_started))" "size_bytes=$artifact_size"
   printf '%s\n' "boetticher package stage: $name checksum"
-  sha256sum "$(artifact_for "$name")" > "$destination/content.sha256"
+  sha256sum "$artifact_path" > "$destination/content.sha256"
 }
 
 build_base() {
