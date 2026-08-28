@@ -48,19 +48,23 @@ const (
 
 type Alert struct {
 	PulseAlertID string    `json:"id"`
-	StartedAt    time.Time `json:"start_time"`
-	ResourceID   string    `json:"resource_id"`
+	StartedAt    time.Time `json:"startTime"`
+	ResourceID   string    `json:"resourceId"`
 	Kind         string    `json:"type"`
 	Severity     string    `json:"level"`
 	Title        string    `json:"message"`
+	Status       string    `json:"status,omitempty"`
 }
 
 func (a Alert) Validate() error {
-	if !safeIdentifier(a.PulseAlertID) || a.StartedAt.IsZero() || !safeIdentifier(a.ResourceID) || !safeToken(a.Kind) || !safeToken(a.Severity) {
+	if !safeIdentifier(a.PulseAlertID) || a.StartedAt.IsZero() || !safeResourceID(a.ResourceID) || !safeToken(a.Kind) || !safeToken(a.Severity) {
 		return errors.New("alert identity, resource, kind, severity, and start_time are required and bounded")
 	}
 	if len(a.Title) == 0 || len(a.Title) > 512 || strings.ContainsRune(a.Title, 0) {
 		return errors.New("alert title must be 1-512 safe bytes")
+	}
+	if a.Status != "" && a.Status != "firing" && a.Status != "resolved" {
+		return errors.New("alert status must be firing or resolved")
 	}
 	return nil
 }
@@ -75,12 +79,31 @@ type Incident struct {
 	Fingerprint   string
 	PulseAlertID  string
 	ResourceID    string
+	Kind          string
+	Severity      string
+	Title         string
 	State         State
 	Outcome       Outcome
 	DeferReason   string
 	DeliveryCount int
 	AcceptedAt    time.Time
 	LastSeenAt    time.Time
+	QueuedAt      time.Time
+	StartedAt     time.Time
+}
+
+type Usage struct {
+	InputTokens  int
+	OutputTokens int
+	HolmesSteps  int
+}
+
+type EvidenceReference struct {
+	Reference   string
+	Source      Operation
+	SHA256      string
+	Bytes       int
+	CollectedAt time.Time
 }
 
 type Operation string
@@ -184,6 +207,8 @@ func (r Report) Validate(issued map[string]bool) error {
 
 var tokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 var identifierPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_./:@-]{0,255}$`)
+var resourcePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,255}$`)
 
 func safeToken(v string) bool      { return tokenPattern.MatchString(v) }
 func safeIdentifier(v string) bool { return identifierPattern.MatchString(v) }
+func safeResourceID(v string) bool { return resourcePattern.MatchString(v) }

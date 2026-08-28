@@ -4,7 +4,8 @@ After=systemd-journal-remote.service network.target
 
 [Service]
 User=boetticher-log-query
-Group=systemd-journal-remote
+Group=boetticher-log-query
+SupplementaryGroups=systemd-journal-remote
 ExecStart=/usr/local/libexec/boetticher-log-query
 NoNewPrivileges=true
 CapabilityBoundingSet=

@@ -148,6 +148,99 @@
   when:
     - inventory_hostname == logging_plan.collector
     - module_configs.aiops is defined
+    - module_configs.aiops.enabled | default(false) | bool
+
+- name: Create the journal-query endpoint identity directory
+  ansible.builtin.file:
+    path: /var/lib/boetticher/identity/tls
+    state: directory
+    owner: root
+    group: boetticher-log-query
+    mode: '0750'
+  when:
+    - inventory_hostname == logging_plan.collector
+    - module_configs.aiops is defined
+    - module_configs.aiops.enabled | default(false) | bool
+
+- name: Generate the journal-query server private key locally
+  ansible.builtin.command:
+    argv: [openssl, genpkey, -algorithm, EC, -pkeyopt, ec_paramgen_curve:P-256, -out, /var/lib/boetticher/identity/tls/log-query.key]
+  args:
+    creates: /var/lib/boetticher/identity/tls/log-query.key
+  when:
+    - inventory_hostname == logging_plan.collector
+    - module_configs.aiops is defined
+    - module_configs.aiops.enabled | default(false) | bool
+
+- name: Restrict the journal-query server private key
+  ansible.builtin.file:
+    path: /var/lib/boetticher/identity/tls/log-query.key
+    owner: root
+    group: boetticher-log-query
+    mode: '0640'
+  when:
+    - inventory_hostname == logging_plan.collector
+    - module_configs.aiops is defined
+    - module_configs.aiops.enabled | default(false) | bool
+
+- name: Generate the journal-query server CSR locally
+  ansible.builtin.command:
+    argv: [openssl, req, -new, -sha256, -key, /var/lib/boetticher/identity/tls/log-query.key, -subj, "/CN=log-query.{{ domain }}", -addext, "subjectAltName=DNS:logs.{{ domain }},DNS:lab-log-01.{{ domain }}", -out, /var/lib/boetticher/identity/tls/log-query.csr]
+  args:
+    creates: /var/lib/boetticher/identity/tls/log-query.csr
+  when:
+    - inventory_hostname == logging_plan.collector
+    - module_configs.aiops is defined
+    - module_configs.aiops.enabled | default(false) | bool
+
+- name: Fetch the journal-query CSR during PKI bootstrap
+  ansible.builtin.fetch:
+    src: /var/lib/boetticher/identity/tls/log-query.csr
+    dest: "{{ pki_csr_output_dir }}/log-query.csr.pem"
+    flat: true
+  when:
+    - inventory_hostname == logging_plan.collector
+    - module_configs.aiops is defined
+    - module_configs.aiops.enabled | default(false) | bool
+    - pki_bootstrap_phase | default(false) | bool
+
+- name: Create the journal-query PKI trust directory
+  ansible.builtin.file:
+    path: /etc/boetticher/pki
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when:
+    - inventory_hostname == logging_plan.collector
+    - module_configs.aiops is defined
+    - module_configs.aiops.enabled | default(false) | bool
+
+- name: Install the journal-query certificate and client CA
+  ansible.builtin.copy:
+    dest: "{{ item.dest }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: "{{ item.group }}"
+    mode: '0640'
+  loop:
+    - {dest: /var/lib/boetticher/identity/tls/log-query.crt, content: "{{ log_query_server_cert_pem | default('') }}", group: boetticher-log-query}
+    - {dest: /etc/boetticher/pki/client-ca.crt, content: "{{ client_ca_pem | default('') }}", group: root}
+  no_log: true
+  when:
+    - inventory_hostname == logging_plan.collector
+    - module_configs.aiops is defined
+    - module_configs.aiops.enabled | default(false) | bool
+    - log_query_server_cert_pem | default('') | length > 0
+    - client_ca_pem | default('') | length > 0
+
+- name: Record journal-query identity readiness
+  ansible.builtin.set_fact:
+    log_query_identity_ready: "{{ log_query_server_cert_pem | default('') | length > 0 and client_ca_pem | default('') | length > 0 }}"
+  when:
+    - inventory_hostname == logging_plan.collector
+    - module_configs.aiops is defined
+    - module_configs.aiops.enabled | default(false) | bool
 
 - name: Render the bounded AIOps journal query policy
   ansible.builtin.copy:
@@ -159,6 +252,7 @@
   when:
     - inventory_hostname == logging_plan.collector
     - module_configs.aiops is defined
+    - module_configs.aiops.enabled | default(false) | bool
 
 - name: Keep journal query disabled until its dedicated certificate is installed
   ansible.builtin.service:
@@ -168,4 +262,16 @@
   when:
     - inventory_hostname == logging_plan.collector
     - module_configs.aiops is defined
+    - module_configs.aiops.enabled | default(false) | bool
     - not (log_query_identity_ready | default(false) | bool)
+
+- name: Enable journal query after its dedicated certificate is installed
+  ansible.builtin.service:
+    name: boetticher-log-query
+    enabled: true
+    state: started
+  when:
+    - inventory_hostname == logging_plan.collector
+    - module_configs.aiops is defined
+    - module_configs.aiops.enabled | default(false) | bool
+    - log_query_identity_ready | default(false) | bool
