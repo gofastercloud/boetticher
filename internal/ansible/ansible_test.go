@@ -343,6 +343,26 @@ func TestLoggingUploadKeyIsReadableByItsServiceGroup(t *testing.T) {
 	}
 }
 
+func TestLoggingUploadServiceCanTraverseRuntimeStateParent(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"Allow endpoint services to traverse the boetticher runtime state path",
+		"path: /var/lib/boetticher",
+		"group: systemd-journal",
+		"mode: '0750'",
+		"when: inventory_hostname in logging_upload_configs",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("journal upload parent traversal is missing %q", expected)
+		}
+	}
+}
+
 func TestJournalUploadRetriesAfterDependencyStartup(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
