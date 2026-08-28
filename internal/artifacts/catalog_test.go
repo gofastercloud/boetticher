@@ -981,7 +981,7 @@ func TestBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {
 		}
 		entries[header.Name] = true
 	}
-	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "images/tailnet-router/image.yaml", "images/litellm/runtime/requirements.lock", "cmd/qualify-artifact/main.go", "cmd/boetticher-aiops/main.go", "cmd/boetticher-log-query/main.go", "internal/aiops/aiops.go"} {
+	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "images/tailnet-router/image.yaml", "images/litellm/runtime/requirements.lock", "cmd/qualify-artifact/main.go", "cmd/boetticher-aiops/main.go", "cmd/boetticher-log-query/main.go", "internal/aiops/aiops.go", "internal/usbexport/plan.go"} {
 		if !entries[required] {
 			t.Fatalf("archive omitted public build input %s", required)
 		}

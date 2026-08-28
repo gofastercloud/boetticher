@@ -70,6 +70,7 @@ var PublicBuildInputs = []string{
 	"internal/logging",
 	"internal/model",
 	"internal/modules",
+	"internal/usbexport",
 	"images",
 	"scripts/build-images.sh",
 	"scripts/scan-images.sh",
