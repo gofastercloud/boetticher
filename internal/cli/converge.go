@@ -919,7 +919,7 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 	if err != nil {
 		return err
 	}
-	if err := pulseAdmin.ConfigureAIOpsWebhook(ctx, "https://aiops."+s.Network.Domain+"/v1/pulse/events", webhookSecret, "10.10.20.70/32"); err != nil {
+	if err := pulseAdmin.ConfigureAIOpsWebhook(ctx, "https://aiops."+s.Network.Domain+"/v1/pulse/events", webhookSecret, "10.10.20.90/32"); err != nil {
 		return err
 	}
 
