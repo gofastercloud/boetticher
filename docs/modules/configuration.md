@@ -29,6 +29,9 @@ modules:
       - alias: selected-alias
         upstream: openrouter
         model: selected/openrouter-model
+  aiops:
+    enabled: false
+    model_alias: selected-alias
   printer:
     enabled: false
 usb_exports:
@@ -48,7 +51,9 @@ to inspect normalized non-secret configuration, and `boetticher config schema`
 to print the shipped generated JSON Schema. Unknown fields and unknown module names
 are errors with a configuration path. `tailnet-router`, `litellm`, and `printer` are
 default-off; LiteLLM exposes only the explicitly declared aliases and keeps
-the referenced provider credentials in SOPS-managed secret state.
+the referenced provider credentials in SOPS-managed secret state. `aiops` is
+also default-off and accepts only `enabled` plus a declared `model_alias`;
+provider, model, tool, and SSH fields are rejected.
 
 The managed gateway uses one ordinary `wan0` vNIC on the existing HOME/upstream
 bridge. `boetticher init` generates a locally administered unicast MAC with the
