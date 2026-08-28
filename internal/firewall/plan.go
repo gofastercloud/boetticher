@@ -252,7 +252,7 @@ func policyRules(s model.Site) []PolicyRule {
 	add("SANDBOX Internet egress", "SANDBOX", "WAN", "allow", "any", nil, false, true)
 	add("TRUSTED Internet egress", "TRUSTED", "WAN", "allow", "any", nil, false, true)
 	add("SERVERS update egress", "SERVERS", "WAN", "allow", "tcp/udp", []string{"53", "80", "443", "853"}, false, true)
-	add("INFRA update egress", "INFRA", "WAN", "allow", "tcp/udp", []string{"53", "80", "443", "853"}, false, true)
+	add("INFRA update egress", "INFRA", "WAN", "allow", "tcp/udp", []string{"53", "80", "123", "853"}, false, true)
 	add("MGMT update egress", "MGMT", "WAN", "allow", "tcp", []string{"443"}, false, true)
 	for _, destination := range []string{"INFRA", "TRUSTED", "SERVERS", "SANDBOX", "MGMT", "Proxmox API", "SSH", "Internet"} {
 		add("TRANSIT to "+destination+" deny", "TRANSIT", destination, "deny", "any", nil, true, false)
@@ -420,7 +420,7 @@ func RenderNFT(plan Plan) (string, error) {
 	b.WriteString("    iifname \"servers0\" " + moduleSourceCondition + "oifname \"wan0\" ip saddr @servers_net tcp dport { 53, 80, 443, 853 } counter accept comment \"boetticher:forward-servers-internet-tcp\"\n")
 	b.WriteString("    iifname \"servers0\" " + moduleSourceCondition + "oifname \"wan0\" ip saddr @servers_net udp dport { 53, 853 } counter accept comment \"boetticher:forward-servers-internet-udp\"\n")
 	b.WriteString("    iifname \"infra0\" " + moduleSourceCondition + "oifname \"wan0\" ip saddr @infra_net tcp dport { 53, 80, 443, 853 } counter accept comment \"boetticher:forward-infra-internet-tcp\"\n")
-	b.WriteString("    iifname \"infra0\" " + moduleSourceCondition + "oifname \"wan0\" ip saddr @infra_net udp dport { 53, 853 } counter accept comment \"boetticher:forward-infra-internet-udp\"\n")
+	b.WriteString("    iifname \"infra0\" " + moduleSourceCondition + "oifname \"wan0\" ip saddr @infra_net udp dport { 53, 123, 853 } counter accept comment \"boetticher:forward-infra-internet-udp\"\n")
 	b.WriteString("    iifname \"mgmt0\" " + moduleSourceCondition + "oifname \"wan0\" ip saddr @mgmt_net tcp dport 443 counter accept comment \"boetticher:forward-mgmt-internet\"\n")
 	b.WriteString("  }\n  chain output { type filter hook output priority filter; policy accept; }\n}\n\n")
 	b.WriteString("table ip " + NATTable + " {\n  chain postrouting {\n    type nat hook postrouting priority srcnat; policy accept;\n    oifname \"wan0\" ip saddr " + networkFor(plan, "TRUSTED") + " masquerade comment \"boetticher:nat-trusted\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SERVERS") + " masquerade comment \"boetticher:nat-servers\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "INFRA") + " masquerade comment \"boetticher:nat-infra\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SANDBOX") + " masquerade comment \"boetticher:nat-sandbox\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "MGMT") + " masquerade comment \"boetticher:nat-mgmt\"\n  }\n}\n")
