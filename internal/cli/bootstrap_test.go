@@ -102,6 +102,20 @@ func TestPersistBuilderUnavailableDiagnosticsRecordsEarlyFailure(t *testing.T) {
 	}
 }
 
+func TestBuilderArtifactReturnCommandKeepsGzipDefaultAndSupportsPlainBenchmark(t *testing.T) {
+	defaultCommand, err := builderArtifactReturnCommand("")
+	if err != nil || defaultCommand != "tar -czf - -C /home/labadmin/build generated/artifacts" {
+		t.Fatalf("default builder return command = %q, %v", defaultCommand, err)
+	}
+	plainCommand, err := builderArtifactReturnCommand("plain")
+	if err != nil || plainCommand != "tar -cf - -C /home/labadmin/build generated/artifacts" {
+		t.Fatalf("plain builder return command = %q, %v", plainCommand, err)
+	}
+	if _, err := builderArtifactReturnCommand("unsupported"); err == nil {
+		t.Fatal("unsupported builder return compression was accepted")
+	}
+}
+
 type diagnosticRunner struct {
 	output []byte
 }

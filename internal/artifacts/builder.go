@@ -2,8 +2,10 @@ package artifacts
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -280,12 +282,25 @@ func ExtractBuildArchiveReader(reader io.Reader, root string) error {
 		maxEntries = 8192
 		maxBytes   = int64(64 << 30)
 	)
-	gzipReader, err := gzip.NewReader(reader)
-	if err != nil {
-		return fmt.Errorf("open builder artifact archive: %w", err)
+	buffered := bufio.NewReader(reader)
+	var tarReader *tar.Reader
+	header, err := buffered.Peek(2)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return fmt.Errorf("inspect builder artifact archive: %w", err)
 	}
-	defer gzipReader.Close()
-	tarReader := tar.NewReader(gzipReader)
+	if len(header) == 2 && header[0] == 0x1f && header[1] == 0x8b {
+		gzipReader, gzipErr := gzip.NewReader(buffered)
+		if gzipErr != nil {
+			return fmt.Errorf("open builder artifact archive: %w", gzipErr)
+		}
+		defer gzipReader.Close()
+		tarReader = tar.NewReader(gzipReader)
+	} else {
+		// The controller can benchmark a plain tar return stream when the
+		// already-compressed appliance payloads make gzip transport wasteful.
+		// Keep the same bounded tar/path handling for either transport.
+		tarReader = tar.NewReader(buffered)
+	}
 	var entries int
 	var totalBytes int64
 	for {
