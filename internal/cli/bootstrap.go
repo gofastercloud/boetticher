@@ -159,6 +159,9 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err != nil {
 		return err
 	}
+	if err := proxmox.CheckScopedCredentialAvailability(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
+		return err
+	}
 	if err := proxmox.InstallOperatorKey(ctx, runner, s.BootstrapAddress, *initialUser, publicKey); err != nil {
 		return fmt.Errorf("install operator SSH key: %w", err)
 	}

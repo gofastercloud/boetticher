@@ -108,8 +108,12 @@ func runPreflight(args []string, out interface{ Write([]byte) (int, error) }) er
 	}
 	discovery := discovered.Discovery
 	discovery = honorRequestedPhysicalMode(discovery, s.PhysicalNetwork.Mode, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
+	if err := proxmox.CheckScopedCredentialAvailability(context.Background(), runner, address, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
+		return err
+	}
 	fmt.Fprintf(out, "Proxmox node: PASS %s (discovered from /nodes)\n", discovered.Node)
 	printPhysicalDiscovery(out, discovery)
+	fmt.Fprintln(out, "Proxmox credential reservation: PASS")
 	if err := writePhysicalDiscovery(*siteDir, s, discovery); err != nil {
 		return err
 	}
