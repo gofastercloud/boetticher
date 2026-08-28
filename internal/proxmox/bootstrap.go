@@ -626,6 +626,67 @@ func ConfigureIdentities(ctx context.Context, runner CommandRunner, address, ini
 	return err
 }
 
+// RestoreTemporaryRootAccess re-arms the deployment-only root key inside one
+// already-owned guest after a prior successful deployment cleaned it up. The
+// authenticated Proxmox root transport is the only authority used to cross
+// the guest boundary; the key remains temporary and is removed by
+// RevokeTemporaryRootAccess after convergence.
+func RestoreTemporaryRootAccess(ctx context.Context, runner CommandRunner, address, user string, kind GuestKind, vmid int, publicKey string) error {
+	if runner == nil {
+		return errors.New("temporary root restore runner is required")
+	}
+	if user != "root" {
+		return errors.New("temporary root restore requires the root transport")
+	}
+	if vmid <= 0 {
+		return errors.New("temporary root restore requires a positive guest VMID")
+	}
+	if kind != KindQEMU && kind != KindLXC {
+		return fmt.Errorf("temporary root restore does not support guest kind %q", kind)
+	}
+	if err := validatePublicKey(publicKey); err != nil {
+		return fmt.Errorf("temporary root restore key: %w", err)
+	}
+	guestCommand := "set -eu; install -d -m 700 -o root -g root /root/.ssh; touch /root/.ssh/authorized_keys; chown root:root /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys; grep -qxF -- " + shellQuote(publicKey) + " /root/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(publicKey) + " >> /root/.ssh/authorized_keys"
+	var command string
+	switch kind {
+	case KindQEMU:
+		command = fmt.Sprintf("/usr/sbin/qm guest exec %d -- /bin/sh -c %s", vmid, shellQuote(guestCommand))
+	case KindLXC:
+		command = fmt.Sprintf("/usr/sbin/pct exec %d -- /bin/sh -c %s", vmid, shellQuote(guestCommand))
+	}
+	output, err := runner.Run(ctx, address, user, command)
+	if err != nil {
+		return fmt.Errorf("restore temporary root access in guest %d: %w", vmid, err)
+	}
+	if kind == KindQEMU {
+		var result map[string]json.RawMessage
+		if err := json.Unmarshal(bytes.TrimSpace(output), &result); err != nil {
+			return fmt.Errorf("decode guest-agent restore result for guest %d: %w", vmid, err)
+		}
+		var exited int
+		var exitCode int
+		if err := json.Unmarshal(result["exited"], &exited); err != nil {
+			return fmt.Errorf("decode guest-agent completion for guest %d: %w", vmid, err)
+		}
+		if err := json.Unmarshal(result["exitcode"], &exitCode); err != nil {
+			return fmt.Errorf("decode guest-agent exit code for guest %d: %w", vmid, err)
+		}
+		if exited != 1 {
+			return fmt.Errorf("guest-agent restore for guest %d did not finish", vmid)
+		}
+		if exitCode != 0 {
+			var errData string
+			_ = json.Unmarshal(result["err-data"], &errData)
+			if errData != "" {
+				return fmt.Errorf("guest-agent restore for guest %d exited %d: %s", vmid, exitCode, strings.TrimSpace(errData))
+			}
+			return fmt.Errorf("guest-agent restore for guest %d exited %d", vmid, exitCode)
+		}
+	}
+	return nil
+}
+
 // RevokeTemporaryRootAccess removes the deployment-only root SSH identity
 // without deleting unrelated operator or recovery keys.
 // The host form also removes root from the explicit AllowUsers contract before

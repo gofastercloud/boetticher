@@ -266,7 +266,8 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		firewallRunner := applianceSSHRunner(s, *siteDir, "lab-fw-01")
-		if err := proxmox.WaitForSSH(context.Background(), firewallRunner, "10.10.99.1", "root", 30, 2*time.Second); err != nil {
+		firewallGuest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
+		if err := waitForDeploymentRoot(context.Background(), rootRunner, s.BootstrapAddress, firewallRunner, firewallGuest, operatorPublicKey); err != nil {
 			return fmt.Errorf("HOLD: managed gateway is not reachable before dependent appliances: %w", err)
 		}
 		if err := verifyFirewallBootstrapNetwork(context.Background(), firewallRunner); err != nil {
@@ -302,7 +303,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 				continue
 			}
 			guestRunner := applianceSSHRunner(s, *siteDir, guest.Name)
-			if err := proxmox.WaitForSSH(context.Background(), guestRunner, guest.Address, "root", 30, 2*time.Second); err != nil {
+			if err := waitForDeploymentRoot(context.Background(), rootRunner, s.BootstrapAddress, guestRunner, guest, operatorPublicKey); err != nil {
 				return fmt.Errorf("HOLD: %s guest %s is not reachable after first boot: %w", module, guest.Name, err)
 			}
 			if err := installCredentialsForGuest(context.Background(), guestRunner, guest.Name, credentialBindings, secretValues); err != nil {
@@ -584,6 +585,20 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return err
 	}
 	fmt.Fprintf(out, "Deployment: PASS mode=%s model=%s (storage %s)\n", s.Gateway.Mode, firewallPlan.ModelRevision, storagePlan.GuestStorage)
+	return nil
+}
+
+func waitForDeploymentRoot(ctx context.Context, hostRunner proxmox.CommandRunner, hostAddress string, guestRunner proxmox.CommandRunner, guest proxmox.GuestPlan, publicKey string) error {
+	if err := proxmox.WaitForSSH(ctx, guestRunner, guest.Address, "root", 1, 0); err == nil {
+		return nil
+	} else {
+		if restoreErr := proxmox.RestoreTemporaryRootAccess(ctx, hostRunner, hostAddress, "root", guest.Kind, guest.VMID, publicKey); restoreErr != nil {
+			return fmt.Errorf("initial root transport failed and guest re-arm failed: %w", restoreErr)
+		}
+		if retryErr := proxmox.WaitForSSH(ctx, guestRunner, guest.Address, "root", 30, 2*time.Second); retryErr != nil {
+			return retryErr
+		}
+	}
 	return nil
 }
 

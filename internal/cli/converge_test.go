@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,6 +77,38 @@ func TestPulseCredentialBootstrapUsesTemporaryRootAuthority(t *testing.T) {
 	if strings.Contains(text, `CreatePulseMonitoringCredentials(context.Background(), proxmoxRunner, s.BootstrapAddress, model.DefaultAdminSSHUser)`) {
 		t.Fatal("Pulse Proxmox credential bootstrap depends on durable labadmin sudo")
 	}
+}
+
+func TestDeploymentRearmsCleanedGuestRootTransportThroughHost(t *testing.T) {
+	hostRunner := &deploymentRootTestRunner{hostOutput: []byte("{\"exitcode\":0,\"exited\":1}")}
+	guestRunner := &deploymentRootTestRunner{guestErr: errors.New("permission denied"), guestSuccessAfter: 1}
+	guest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
+	if err := waitForDeploymentRoot(context.Background(), hostRunner, "192.0.2.10", guestRunner, guest, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator"); err != nil {
+		t.Fatal(err)
+	}
+	if hostRunner.calls != 1 || guestRunner.calls != 2 || !strings.Contains(hostRunner.lastCommand, "/usr/sbin/qm guest exec 100") {
+		t.Fatalf("deployment root re-arm calls = host:%d guest:%d command:%q", hostRunner.calls, guestRunner.calls, hostRunner.lastCommand)
+	}
+}
+
+type deploymentRootTestRunner struct {
+	calls             int
+	lastCommand       string
+	hostOutput        []byte
+	guestErr          error
+	guestSuccessAfter int
+}
+
+func (r *deploymentRootTestRunner) Run(_ context.Context, _ string, _ string, command string) ([]byte, error) {
+	r.calls++
+	r.lastCommand = command
+	if r.hostOutput != nil {
+		return r.hostOutput, nil
+	}
+	if r.calls <= r.guestSuccessAfter {
+		return nil, r.guestErr
+	}
+	return nil, nil
 }
 
 func TestPulseReconciliationForwardUsesRestrictedBastion(t *testing.T) {

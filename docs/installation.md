@@ -64,6 +64,10 @@ locks the root password. If deployment fails before cleanup, retry through the
 same temporary root path; cleanup failure is a hold requiring bootstrap or
 recovery authority.
 
+When a later deployment needs to change an already-converged guest, Core may
+re-arm the same temporary key through the authenticated Proxmox host boundary
+for that exact owned guest, then removes it again during cleanup.
+
 External mode does not create VM 100. It requires a distinct physical vmbr1
 trunk and publishes `generated/network/external-firewall-contract.md`. The
 external appliance, DHCP, and its own recovery remain operator-owned.
