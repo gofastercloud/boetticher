@@ -235,6 +235,23 @@ func TestCreateScopedCredentialsCapturesOnlyReturnedSecret(t *testing.T) {
 	}
 }
 
+func TestCheckScopedCredentialAvailabilityHoldsExistingToken(t *testing.T) {
+	runner := &fakeRunner{responses: map[string][]byte{
+		"pvesh get /access/roles --output-format json":                      []byte(`[]`),
+		"pvesh get /access/users --output-format json":                      []byte(`[{"userid":"labadmin@pve"}]`),
+		"pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[{"tokenid":"boetticher"}]`),
+	}}
+	err := CheckScopedCredentialAvailability(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner")
+	if err == nil || !strings.Contains(err.Error(), "HOLD") || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("existing reserved token was not held: %v", err)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, " create ") || strings.Contains(command, " set ") || strings.Contains(command, " delete ") {
+			t.Fatalf("credential reservation check mutated Proxmox: %s", command)
+		}
+	}
+}
+
 func TestCreateScopedCredentialsCreatesRoleAtCollectionEndpoint(t *testing.T) {
 	runner := &fakeRunner{
 		output: []byte(`{"value":"opaque-token-secret"}`),
