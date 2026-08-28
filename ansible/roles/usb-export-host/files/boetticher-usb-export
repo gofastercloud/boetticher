@@ -1,0 +1,137 @@
+#!/usr/bin/python3
+"""Reconcile Core-declared USB exports for one owned LXC.
+
+The manifest, never the caller, supplies paths and targets. Every caller for a
+VMID serializes on one lock and reconciles the complete desired set before a
+single optional restart.
+"""
+import fcntl
+import json
+import os
+from pathlib import Path
+import stat
+import subprocess
+import sys
+import tempfile
+
+MANIFEST_DIR = Path("/etc/boetticher/usb-exports")
+STATE_DIR = Path("/var/lib/boetticher/usb-export")
+SYS_USB = Path("/sys/bus/usb/devices")
+DEV_USB = Path("/dev/bus/usb")
+MAX_BYTES = 1024 * 1024
+
+class Hold(RuntimeError): pass
+
+def run(*args):
+    result = subprocess.run(args, check=False, text=True, capture_output=True)
+    if result.returncode:
+        raise Hold(f"command failed ({' '.join(args)}): {result.stderr.strip()[:500]}")
+    return result.stdout
+
+def load_json(path):
+    data = path.read_bytes()
+    if len(data) > MAX_BYTES: raise Hold(f"oversized JSON file: {path}")
+    return json.loads(data)
+
+def pct_config(vmid):
+    values = {}
+    for line in run("pct", "config", str(vmid)).splitlines():
+        if ":" in line:
+            key, value = line.split(":", 1)
+            values[key.strip()] = value.strip()
+    return values
+
+def validate_guest(manifest, config):
+    if config.get("hostname") != manifest["hostname"]: raise Hold("guest hostname does not match manifest")
+    tags = set(config.get("tags", "").replace(";", " ").split())
+    if manifest["ownership_tag"] not in tags or "boetticher" not in tags or "managed" not in tags: raise Hold("guest ownership tags do not match manifest")
+    if config.get("unprivileged", "0") != "1" or not manifest.get("unprivileged"): raise Hold("USB export target must be unprivileged")
+
+def resolve(export):
+    parent = SYS_USB / export["port"]
+    if not parent.is_dir(): return None
+    if (parent / "idVendor").read_text().strip().lower() != export["vendor_id"]: raise Hold(f"VID mismatch at USB port {export['port']}")
+    if (parent / "idProduct").read_text().strip().lower() != export["product_id"]: raise Hold(f"PID mismatch at USB port {export['port']}")
+    expected_serial = export.get("serial", "")
+    actual_serial = (parent / "serial").read_text().strip() if (parent / "serial").exists() else ""
+    if expected_serial and actual_serial != expected_serial: raise Hold(f"serial mismatch at USB port {export['port']}")
+    bus, device = int((parent / "busnum").read_text()), int((parent / "devnum").read_text())
+    path = DEV_USB / f"{bus:03d}" / f"{device:03d}"
+    try:
+        st = path.stat()
+    except FileNotFoundError:
+        return None
+    resolved = path.resolve()
+    if DEV_USB not in resolved.parents or not stat.S_ISCHR(st.st_mode): raise Hold("resolved USB path is not a character device below /dev/bus/usb")
+    return str(path)
+
+def device_values(config):
+    return {key: value for key, value in config.items() if key.startswith("dev") and key[3:].isdigit()}
+
+def device_path(value): return value.split(",", 1)[0]
+
+def desired_values(manifest):
+    result = {}
+    for export in manifest["exports"]:
+        path = resolve(export)
+        if path:
+            result[export["slot"]] = f"{path},uid=2200,gid=2200,mode=0660"
+    return result
+
+def atomic_state(vmid, values):
+    STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    payload = json.dumps({"vmid": vmid, "managed": values}, sort_keys=True, separators=(",", ":")) + "\n"
+    fd, temporary = tempfile.mkstemp(prefix=f".{vmid}.", dir=STATE_DIR)
+    try:
+        os.fchmod(fd, 0o600); os.write(fd, payload.encode()); os.fsync(fd); os.close(fd)
+        os.replace(temporary, STATE_DIR / f"{vmid}.json")
+        directory = os.open(STATE_DIR, os.O_DIRECTORY); os.fsync(directory); os.close(directory)
+    finally:
+        try: os.close(fd)
+        except OSError: pass
+        try: os.unlink(temporary)
+        except FileNotFoundError: pass
+
+def reconcile(manifest_path):
+    manifest = load_json(manifest_path); vmid = int(manifest["vmid"])
+    lock_path = Path(f"/run/lock/boetticher-usb-export-{vmid}.lock")
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        current = pct_config(vmid); validate_guest(manifest, current)
+        desired = desired_values(manifest)
+        existing = device_values(current)
+        state_path = STATE_DIR / f"{vmid}.json"
+        recorded = load_json(state_path).get("managed", {}) if state_path.exists() else {}
+        managed_slots = set(manifest["managed_slots"])
+        for slot, value in existing.items():
+            if slot in managed_slots and slot not in recorded and value != desired.get(slot):
+                raise Hold(f"occupied {slot} cannot be proven Core-managed")
+            if slot not in managed_slots and slot in recorded:
+                raise Hold(f"recorded managed slot {slot} is outside the current manifest")
+            if slot not in managed_slots:
+                raise Hold(f"occupied {slot} is not declared by the complete Core USB manifest")
+        changed = {slot: value for slot, value in existing.items() if slot in managed_slots} != desired
+        if changed:
+            # The lock covers every deletion, update, verification and restart.
+            for slot in sorted(managed_slots):
+                if slot in existing and slot not in desired: run("pct", "set", str(vmid), "--delete", slot)
+            for slot, value in sorted(desired.items()):
+                if existing.get(slot) != value: run("pct", "set", str(vmid), f"--{slot}", value)
+            verified_config = pct_config(vmid); validate_guest(manifest, verified_config)
+            verified = {slot: value for slot, value in device_values(verified_config).items() if slot in managed_slots}
+            if verified != desired: raise Hold("post-change verification did not produce the complete desired USB mapping")
+        atomic_state(vmid, desired)
+        if changed and run("pct", "status", str(vmid)).strip().endswith("running"):
+            run("pct", "reboot", str(vmid))
+
+def main(argv):
+    paths = sorted(MANIFEST_DIR.glob("*.json")) if argv == ["--all"] else [MANIFEST_DIR / f"{int(argv[0])}.json"] if len(argv) == 1 else []
+    if not paths: raise Hold("usage: boetticher-usb-export VMID | --all")
+    for path in paths:
+        if not path.is_file(): raise Hold(f"missing USB export manifest: {path}")
+        reconcile(path)
+
+if __name__ == "__main__":
+    try: main(sys.argv[1:])
+    except (Hold, ValueError, KeyError, json.JSONDecodeError) as error:
+        print(f"HOLD: USB export reconciliation refused: {error}", file=sys.stderr); raise SystemExit(2)

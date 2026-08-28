@@ -44,6 +44,7 @@ const (
 	PortalVMID                  = 130
 	LoggingVMID                 = 140
 	BuilderVMID                 = 190
+	StreamDeckVMID              = 220
 	BuilderCores                = 4
 	BuilderMemoryMiB            = 8192
 	BuilderDiskGiB              = 32
@@ -91,6 +92,8 @@ var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
 var networkPortPattern = regexp.MustCompile(`^[0-9]{1,5}(?:-[0-9]{1,5})?$`)
 var providerModelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$`)
 var secretReferencePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
+var usbPortPattern = regexp.MustCompile(`^[0-9]+-[0-9]+(?:\.[0-9]+)*$`)
+var usbIDPattern = regexp.MustCompile(`^[0-9a-f]{4}$`)
 
 // ModuleOwnershipTag returns the single Proxmox-safe ownership proof used for
 // every first-party module guest. Invalid names return an empty tag so callers
@@ -190,6 +193,7 @@ type Site struct {
 	Modules                []ResolvedModule        `json:"modules,omitempty"`
 	ModuleConfig           map[string]ModuleConfig `json:"module_config,omitempty"`
 	Declarations           []ModuleDeclaration     `json:"declarations,omitempty"`
+	USBExports             []USBExportBinding      `json:"usb_exports,omitempty"`
 	RetainedModules        []RetainedModule        `json:"retained_modules,omitempty"`
 	DHCPReservations       []DHCPReservation       `json:"dhcp_reservations,omitempty"`
 	DNSRecords             []UserDNSRecord         `json:"dns_records,omitempty"`
@@ -311,10 +315,39 @@ type Component struct {
 }
 
 type ModuleConfig struct {
-	Enabled   *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Provider  string                  `yaml:"provider,omitempty" json:"provider,omitempty"`
-	Upstreams []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
-	Models    []LiteLLMModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
+	Enabled                *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Provider               string                  `yaml:"provider,omitempty" json:"provider,omitempty"`
+	Upstreams              []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	Models                 []LiteLLMModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
+	Brightness             int                     `json:"brightness,omitempty"`
+	RefreshSeconds         int                     `json:"refresh_seconds,omitempty"`
+	RequestTimeoutSeconds  int                     `json:"request_timeout_seconds,omitempty"`
+	DefaultPage            string                  `json:"default_page,omitempty"`
+	PinnedGuests           []string                `json:"pinned_guests,omitempty"`
+	StorageWarningPercent  int                     `json:"storage_warning_percent,omitempty"`
+	StorageCriticalPercent int                     `json:"storage_critical_percent,omitempty"`
+}
+
+type USBExportBinding struct {
+	Module      string `yaml:"module" json:"module"`
+	Requirement string `yaml:"requirement" json:"requirement"`
+	Port        string `yaml:"port" json:"port"`
+	VendorID    string `yaml:"vendor_id" json:"vendor_id"`
+	ProductID   string `yaml:"product_id" json:"product_id"`
+	Serial      string `yaml:"serial,omitempty" json:"serial,omitempty"`
+}
+
+type USBRequirement struct {
+	Name              string        `json:"name"`
+	Guest             string        `json:"guest"`
+	Access            string        `json:"access"`
+	Required          bool          `json:"required"`
+	AllowedIdentities []USBIdentity `json:"allowed_identities"`
+}
+
+type USBIdentity struct {
+	VendorID  string `json:"vendor_id"`
+	ProductID string `json:"product_id"`
 }
 
 type DNSProvider string
@@ -395,6 +428,7 @@ const (
 )
 
 type DeviceRequirement struct {
+	Name   string `json:"name"`
 	Path   string `json:"path"`
 	Type   string `json:"type"`
 	Major  int    `json:"major"`
@@ -491,6 +525,7 @@ type ModuleDeclaration struct {
 	Backups          []BackupDeclaration           `json:"backups,omitempty"`
 	Portal           []PortalEntry                 `json:"portal,omitempty"`
 	Security         GuestSecurityDeclaration      `json:"security,omitempty"`
+	USBRequirements  []USBRequirement              `json:"usb_requirements,omitempty"`
 	AdvertisedRoutes []string                      `json:"advertised_routes,omitempty"`
 	ReturnRouting    []string                      `json:"return_routing,omitempty"`
 }
@@ -571,6 +606,7 @@ func (s Site) Normalize() Site {
 	copySite.Modules = append([]ResolvedModule(nil), s.Modules...)
 	copySite.ModuleConfig = cloneModuleConfig(s.ModuleConfig)
 	copySite.Declarations = append([]ModuleDeclaration(nil), s.Declarations...)
+	copySite.USBExports = append([]USBExportBinding(nil), s.USBExports...)
 	copySite.RetainedModules = append([]RetainedModule(nil), s.RetainedModules...)
 	copySite.DHCPReservations = append([]DHCPReservation(nil), s.DHCPReservations...)
 	copySite.DNSRecords = append([]UserDNSRecord(nil), s.DNSRecords...)
@@ -579,6 +615,12 @@ func (s Site) Normalize() Site {
 	sort.Slice(copySite.Components, func(i, j int) bool { return copySite.Components[i].Name < copySite.Components[j].Name })
 	sort.Slice(copySite.Modules, func(i, j int) bool { return copySite.Modules[i].Name < copySite.Modules[j].Name })
 	sort.Slice(copySite.Declarations, func(i, j int) bool { return copySite.Declarations[i].Module < copySite.Declarations[j].Module })
+	sort.Slice(copySite.USBExports, func(i, j int) bool {
+		if copySite.USBExports[i].Module != copySite.USBExports[j].Module {
+			return copySite.USBExports[i].Module < copySite.USBExports[j].Module
+		}
+		return copySite.USBExports[i].Requirement < copySite.USBExports[j].Requirement
+	})
 	sort.Slice(copySite.RetainedModules, func(i, j int) bool { return copySite.RetainedModules[i].Module < copySite.RetainedModules[j].Module })
 	sort.Slice(copySite.DHCPReservations, func(i, j int) bool {
 		if copySite.DHCPReservations[i].Hostname != copySite.DHCPReservations[j].Hostname {
@@ -625,6 +667,72 @@ func (s Site) Normalize() Site {
 		})
 	}
 	return copySite
+}
+
+func (s Site) validateUSBExports() error {
+	type key struct{ module, requirement string }
+	requirements := map[key]USBRequirement{}
+	enabled := map[string]bool{}
+	for _, module := range s.Modules {
+		enabled[module.Name] = module.Enabled
+	}
+	for _, declaration := range s.Declarations {
+		for _, requirement := range declaration.USBRequirements {
+			k := key{declaration.Module, requirement.Name}
+			if requirement.Name == "" || requirement.Guest == "" || requirement.Access != "rw" || len(requirement.AllowedIdentities) == 0 {
+				return fmt.Errorf("module %s has invalid USB requirement %q", declaration.Module, requirement.Name)
+			}
+			if _, exists := requirements[k]; exists {
+				return fmt.Errorf("module %s has duplicate USB requirement %q", declaration.Module, requirement.Name)
+			}
+			requirements[k] = requirement
+		}
+	}
+	ports, bindings, serialIdentities := map[string]bool{}, map[key]bool{}, map[string]bool{}
+	for _, binding := range s.USBExports {
+		k := key{binding.Module, binding.Requirement}
+		requirement, activeRequirement := requirements[k]
+		if !usbPortPattern.MatchString(binding.Port) {
+			return fmt.Errorf("usb_exports binding %s/%s has invalid physical port %q", binding.Module, binding.Requirement, binding.Port)
+		}
+		if binding.VendorID != strings.ToLower(binding.VendorID) || binding.ProductID != strings.ToLower(binding.ProductID) || !usbIDPattern.MatchString(binding.VendorID) || !usbIDPattern.MatchString(binding.ProductID) {
+			return fmt.Errorf("usb_exports binding %s/%s requires four-digit lowercase vendor_id and product_id", binding.Module, binding.Requirement)
+		}
+		if activeRequirement {
+			allowed := false
+			for _, identity := range requirement.AllowedIdentities {
+				if identity.VendorID == binding.VendorID && identity.ProductID == binding.ProductID {
+					allowed = true
+				}
+			}
+			if !allowed {
+				return fmt.Errorf("usb_exports identity %s:%s is not allowed for %s/%s", binding.VendorID, binding.ProductID, binding.Module, binding.Requirement)
+			}
+		}
+		if strings.ContainsAny(binding.Serial, "\r\n\x00") {
+			return fmt.Errorf("usb_exports binding %s/%s has invalid serial", binding.Module, binding.Requirement)
+		}
+		if binding.Serial != "" {
+			identity := binding.VendorID + ":" + binding.ProductID + ":" + binding.Serial
+			if serialIdentities[identity] {
+				return fmt.Errorf("usb_exports contains duplicate physical identity %s", identity)
+			}
+			serialIdentities[identity] = true
+		}
+		if ports[binding.Port] {
+			return fmt.Errorf("usb_exports contains duplicate physical port %q", binding.Port)
+		}
+		if bindings[k] {
+			return fmt.Errorf("usb_exports contains duplicate binding %s/%s", binding.Module, binding.Requirement)
+		}
+		ports[binding.Port], bindings[k] = true, true
+	}
+	for k, requirement := range requirements {
+		if enabled[k.module] && requirement.Required && !bindings[k] {
+			return fmt.Errorf("modules.%s requires usb_exports binding %s/%s", k.module, k.module, k.requirement)
+		}
+	}
+	return nil
 }
 
 func (s Site) Validate() error {
@@ -697,6 +805,14 @@ func (s Site) Validate() error {
 		if err := ValidateLiteLLMConfig(litellm); err != nil {
 			return err
 		}
+	}
+	if streamdeck, ok := s.ModuleConfig["streamdeck"]; ok {
+		if err := ValidateStreamDeckConfig(streamdeck); err != nil {
+			return err
+		}
+	}
+	if err := s.validateUSBExports(); err != nil {
+		return err
 	}
 	expectedZones := map[string]struct {
 		typ     ZoneType
@@ -988,12 +1104,19 @@ func validateDeclarations(s Site) error {
 			return fmt.Errorf("module %s requests unrelated Linux capabilities", declaration.Module)
 		}
 		if declaration.Security.Unprivileged {
+			deviceNames := map[string]bool{}
 			for _, device := range declaration.Security.Devices {
 				if device.Path == "" || device.Type == "" || device.Major < 0 || device.Minor < 0 || device.Access == "" {
 					return fmt.Errorf("module %s has an incomplete device requirement", declaration.Module)
 				}
 				if strings.ContainsAny(device.Path, "\r\n '") || device.Type != "c" || device.Access != "rwm" {
 					return fmt.Errorf("module %s has an unsafe device requirement for %s", declaration.Module, device.Path)
+				}
+				if device.Name != "" {
+					if !modelTokenPattern.MatchString(device.Name) || deviceNames[device.Name] {
+						return fmt.Errorf("module %s has invalid or duplicate device slot name %q", declaration.Module, device.Name)
+					}
+					deviceNames[device.Name] = true
 				}
 			}
 		}

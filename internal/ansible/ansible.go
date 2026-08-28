@@ -16,6 +16,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/logging"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/pulse"
+	"github.com/gofastercloud/boetticher/internal/usbexport"
 )
 
 // MonitoringAgentTargets derives host-agent installation targets from the
@@ -96,6 +97,12 @@ func Inventory(s model.Site) (string, error) {
 			writeHost(&b, component, true)
 		}
 	}
+	b.WriteString("\n[streamdeck]\n")
+	for _, component := range components {
+		if component.Module == "streamdeck" {
+			writeHost(&b, component, true)
+		}
+	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		b.WriteString("\n[firewall]\n")
 		for _, component := range components {
@@ -104,7 +111,7 @@ func Inventory(s model.Site) (string, error) {
 			}
 		}
 	}
-	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\ntailnet-router\nlitellm\n")
+	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\ntailnet-router\nlitellm\nstreamdeck\n")
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		b.WriteString("firewall\n")
 	}
@@ -161,6 +168,10 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
+	usbPlan, err := usbexport.PlanFromSite(s)
+	if err != nil {
+		return nil, err
+	}
 	var blockyConfig []byte
 	if dnsPlan.RecursiveProvider == string(model.DNSProviderBlocky) {
 		blockyConfig, err = dns.RenderBlockyConfig(dnsPlan)
@@ -201,7 +212,8 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation) ([]byte, er
 		LoggingCollectorCertificate string                        `json:"logging_collector_certificate"`
 		ModuleConfigs               map[string]model.ModuleConfig `json:"module_configs"`
 		ModuleDeclarations          []model.ModuleDeclaration     `json:"module_declarations"`
-	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), loggingUploads, map[string]string{}, "", s.ModuleConfig, s.Declarations}
+		USBExportManifests          []usbexport.GuestManifest     `json:"usb_export_manifests"`
+	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), loggingUploads, map[string]string{}, "", s.ModuleConfig, s.Declarations, usbPlan}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err
