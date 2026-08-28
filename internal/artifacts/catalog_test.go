@@ -565,9 +565,22 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	runPulse, err := os.ReadFile(filepath.Join(root, "monitoring", "runtime", "run-pulse.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, required := range []string{"pulse_release_sha256", "/opt/pulse/bin/pulse", "pulse.service", "run-pulse.sh", "chmod 0755 \"$rootfs/usr/lib/boetticher\""} {
 		if !strings.Contains(string(buildScript), required) {
 			t.Fatalf("monitoring build is missing Pulse runtime contract %q", required)
+		}
+	}
+	runPulseText := string(runPulse)
+	if strings.Contains(runPulseText, "grep -q '[\\r\\n]'") {
+		t.Fatal("Pulse credential wrapper uses a grep expression that rejects ordinary r/n characters")
+	}
+	for _, required := range []string{"[ \"$(wc -l < \"$credential\")\" -ne 0 ]", "grep -q \"$(printf '\\r')\" \"$credential\""} {
+		if !strings.Contains(runPulseText, required) {
+			t.Fatalf("Pulse credential wrapper is missing byte-safe validation %q", required)
 		}
 	}
 	if !strings.Contains(string(pulseService), "Environment=BIND_ADDRESS=127.0.0.1") {
