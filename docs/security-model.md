@@ -129,6 +129,10 @@ The managed gateway permits only `lab-monitor-01` to reach the Proxmox API on
 TCP/8006. This is the explicit network intent required for Pulse inventory and
 does not grant general INFRA-to-MGMT access.
 
+If a later deployment needs to modify an already-converged guest, Core may
+re-arm that same temporary key through the authenticated Proxmox host boundary
+for the exact owned guest, and removes it again after convergence.
+
 The DNS module is mandatory. Blocky is the default recursive/filtering
 implementation and AdGuard is a typed alternative; PowerDNS remains
 authoritative in both modes, and internal negative answers never leak to public

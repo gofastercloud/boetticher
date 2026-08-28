@@ -452,6 +452,44 @@ func TestConfigureIdentitiesInstallsTemporaryRootAccessWithoutLabadminSudo(t *te
 	}
 }
 
+func TestRestoreTemporaryRootAccessUsesExactOwnedGuestBoundary(t *testing.T) {
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator"
+	for _, guest := range []struct {
+		kind GuestKind
+		vmid int
+		want string
+	}{
+		{kind: KindQEMU, vmid: 100, want: "/usr/sbin/qm guest exec 100 -- /bin/sh -c"},
+		{kind: KindLXC, vmid: 110, want: "/usr/sbin/pct exec 110 -- /bin/sh -c"},
+	} {
+		t.Run(string(guest.kind), func(t *testing.T) {
+			runner := &fakeRunner{output: []byte("{\"exitcode\":0,\"exited\":1}")}
+			if err := RestoreTemporaryRootAccess(context.Background(), runner, "192.0.2.10", "root", guest.kind, guest.vmid, key); err != nil {
+				t.Fatal(err)
+			}
+			if runner.user != "root" || !strings.Contains(runner.command, guest.want) {
+				t.Fatalf("temporary root restore used unexpected host command: %#v", runner)
+			}
+			for _, forbidden := range []string{"sudo", "rm -rf", "StrictHostKeyChecking=no"} {
+				if strings.Contains(runner.command, forbidden) {
+					t.Fatalf("temporary root restore contains forbidden %q: %s", forbidden, runner.command)
+				}
+			}
+			if !strings.Contains(runner.command, "/root/.ssh/authorized_keys") || !strings.Contains(runner.command, "grep -qxF") {
+				t.Fatalf("temporary root restore did not install the exact key idempotently: %s", runner.command)
+			}
+		})
+	}
+}
+
+func TestRestoreTemporaryRootAccessRejectsGuestAgentFailure(t *testing.T) {
+	runner := &fakeRunner{output: []byte("{\"exitcode\":1,\"exited\":1,\"err-data\":\"permission denied\"}")}
+	err := RestoreTemporaryRootAccess(context.Background(), runner, "192.0.2.10", "root", KindQEMU, 100, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator")
+	if err == nil || !strings.Contains(err.Error(), "exited 1") {
+		t.Fatalf("guest-agent failure was not preserved: %v", err)
+	}
+}
+
 func TestRevokeTemporaryRootAccessIsFixedAndIdempotent(t *testing.T) {
 	for _, host := range []bool{false, true} {
 		runner := &fakeRunner{}
