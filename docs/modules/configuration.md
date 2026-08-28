@@ -24,6 +24,9 @@ modules:
       - alias: selected-alias
         upstream: openrouter
         model: selected/openrouter-model
+  aiops:
+    enabled: false
+    model_alias: selected-alias
   streamdeck:
     enabled: false
     brightness: 40
@@ -58,7 +61,9 @@ to inspect normalized non-secret configuration, and `boetticher config schema`
 to print the shipped generated JSON Schema. Unknown fields and unknown module names
 are errors with a configuration path. `tailnet-router`, `litellm`, `streamdeck`, and `printer` are
 default-off; LiteLLM exposes only the explicitly declared aliases and keeps
-the referenced provider credentials in SOPS-managed secret state. USB exports
+the referenced provider credentials in SOPS-managed secret state. `aiops` is
+also default-off and accepts only `enabled` plus a declared `model_alias`;
+provider, model, tool, and SSH fields are rejected. USB exports
 bind only compiled-in named requirements to stable physical ports; Core resolves
 raw USB or serial character devices according to the compiled requirement. They cannot
 name device paths, VMIDs, or user workloads.

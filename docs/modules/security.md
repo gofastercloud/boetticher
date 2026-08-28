@@ -33,3 +33,9 @@ temporary root SSH transport for qualified convergence. Ansible connects as
 root without `become`; successful convergence removes the temporary root
 access. Bootstrap and operator break-glass root access remain separate
 recovery authorities.
+
+The AIOps module has no SSH or Internet path. Holmes is loopback-only and never
+receives Pulse, AI Router, provider, PKI, SSH, or persistent-state credentials.
+The adapter and journal query service enforce strict typed schemas and bounded
+responses; HTTP path authorization remains distinct from firewall host/port
+policy.

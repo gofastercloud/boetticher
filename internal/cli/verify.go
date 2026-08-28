@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -275,6 +276,19 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 			fmt.Fprintf(out, " device=%s", storagePlan.Device)
 		}
 		fmt.Fprintln(out)
+	}
+	if modules.IsEnabled(s, "aiops") {
+		if !*live {
+			fmt.Fprintln(out, "AIOps                 NOT TESTED (use --live)")
+		} else {
+			var status bytes.Buffer
+			if err := runAIOps([]string{"status", "--site", *siteDir, "--live", "--json"}, &status); err != nil {
+				failed = true
+				fmt.Fprintf(out, "AIOps                 FAIL %v\n", err)
+			} else {
+				fmt.Fprintln(out, "AIOps                 PASS bounded live status available")
+			}
+		}
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		fmt.Fprintln(out, "Managed gateway        NOT TESTED live Debian/nftables qualification requires deployment")
