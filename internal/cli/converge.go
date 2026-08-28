@@ -2,15 +2,21 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	aiopsmodel "github.com/gofastercloud/boetticher/internal/aiops"
 	"github.com/gofastercloud/boetticher/internal/ansible"
 	"github.com/gofastercloud/boetticher/internal/appliance"
 	"github.com/gofastercloud/boetticher/internal/backup"
@@ -130,6 +136,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	// after the scoped report token and encrypted credential projection exist.
 	runtimeVariables["pulse_agent_install_enabled"] = false
 	monitoringEnabled := modules.IsEnabled(s, "monitoring")
+	aiopsEnabled := modules.IsEnabled(s, "aiops")
 	secretValues := map[string]string{}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		ddnsTSIG, loadErr := site.LoadDDNSTSIG(*siteDir, s, *ageIdentity)
@@ -160,6 +167,11 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	activeCredentialBindings := make([]deploymentCredential, 0, len(credentialBindings))
 	for _, binding := range credentialBindings {
+		if binding.Guest == "lab-aiops-01" {
+			// Pulse-scoped tokens and the webhook secret are reconciled only
+			// after Pulse and AI Router pass their live qualification gates.
+			continue
+		}
 		if _, alreadyLoaded := secretValues[binding.SecretKey]; alreadyLoaded {
 			activeCredentialBindings = append(activeCredentialBindings, binding)
 			continue
@@ -472,6 +484,11 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		})
 		if clientErr != nil {
 			return clientErr
+		}
+		if aiopsEnabled {
+			if err := qualifyAndConfigureAIOps(context.Background(), *siteDir, *ageIdentity, s, authority, clientCertificate, pulseAdmin, runtimeVariables, ansiblePlaybook, inventoryPath); err != nil {
+				return fmt.Errorf("HOLD: AIOps qualification failed: %w", err)
+			}
 		}
 		if err := pulseAdmin.ConfigureProxmox(context.Background(), pulse.PVEConfig{
 			Name: model.LogicalProxmoxIdentity, Host: "https://proxmox:8006",
@@ -861,6 +878,151 @@ func signAIOpsCertificates(authority pki.Authority, s model.Site, csrDir string)
 		result[request.variable] = certificate.ChainPEM
 	}
 	return result, nil
+}
+
+func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, s model.Site, authority pki.Authority, controllerCertificate pki.ClientCertificate, pulseAdmin *pulse.Client, runtimeVariables map[string]any, ansiblePlaybook, inventoryPath string) error {
+	modelConfig, err := selectedAIOpsModel(s)
+	if err != nil {
+		return err
+	}
+	runner := applianceSSHRunner(s, siteDir, "lab-litellm-01")
+	metadata, err := runner.RunArgs(ctx, "10.10.20.60", "root", []string{"/usr/local/libexec/boetticher-litellm-model-capabilities", modelConfig.Model})
+	if err != nil {
+		return fmt.Errorf("read pinned LiteLLM model metadata: %w", err)
+	}
+	if _, err := aiopsmodel.DecodeModelCapabilities(metadata); err != nil {
+		return err
+	}
+	routerClient, err := controllerMTLSClient(authority, controllerCertificate)
+	if err != nil {
+		return err
+	}
+	canaryContext, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	if err := aiopsmodel.QualifyModelAlias(canaryContext, routerClient, "https://ai."+s.Network.Domain+"/v1/chat/completions", s.ModuleConfig["aiops"].ModelAlias); err != nil {
+		return err
+	}
+
+	webhookSecret, err := loadOrCreateAIOpsSecret(siteDir, ageIdentity, s, "aiops_webhook_secret")
+	if err != nil {
+		return err
+	}
+	readToken, err := loadOrCreatePulseToken(siteDir, ageIdentity, s, "aiops_pulse_read_token", func() (string, error) {
+		return pulseAdmin.CreateReadToken(ctx, "boetticher aiops read")
+	})
+	if err != nil {
+		return err
+	}
+	noteToken, err := loadOrCreatePulseToken(siteDir, ageIdentity, s, "aiops_pulse_note_token", func() (string, error) {
+		return pulseAdmin.CreateIncidentNoteToken(ctx, "boetticher aiops notes")
+	})
+	if err != nil {
+		return err
+	}
+	if err := pulseAdmin.ConfigureAIOpsWebhook(ctx, "https://aiops."+s.Network.Domain+"/v1/pulse/events", webhookSecret, "10.10.20.70/32"); err != nil {
+		return err
+	}
+
+	allBindings, err := deploymentCredentialBindings(s)
+	if err != nil {
+		return err
+	}
+	var bindings []deploymentCredential
+	for _, binding := range allBindings {
+		if binding.Guest == "lab-aiops-01" {
+			bindings = append(bindings, binding)
+		}
+	}
+	values := map[string]string{"aiops_webhook_secret": webhookSecret, "aiops_pulse_read_token": readToken, "aiops_pulse_note_token": noteToken}
+	aiopsRunner := applianceSSHRunner(s, siteDir, "lab-aiops-01")
+	if err := installCredentialsForGuest(ctx, aiopsRunner, "lab-aiops-01", bindings, values); err != nil {
+		return err
+	}
+	dropIns, err := credentialDropIns(bindings)
+	if err != nil {
+		return err
+	}
+	existing, _ := runtimeVariables["credential_dropins"].(map[string]map[string]string)
+	if existing == nil {
+		existing = map[string]map[string]string{}
+	}
+	existing["lab-aiops-01"] = dropIns["lab-aiops-01"]
+	runtimeVariables["credential_dropins"] = existing
+	runtimeVariables["aiops_runtime_credentials_ready"] = true
+	runtimeVariables["aiops_model_alias_qualified"] = true
+	variables, err := json.MarshalIndent(runtimeVariables, "", "  ")
+	if err != nil {
+		return err
+	}
+	return ansible.RunLimited(ctx, ansiblePlaybook, inventoryPath, append(variables, '\n'), "lab-aiops-01")
+}
+
+func selectedAIOpsModel(s model.Site) (model.LiteLLMModelConfig, error) {
+	alias := s.ModuleConfig["aiops"].ModelAlias
+	var selected model.LiteLLMModelConfig
+	for _, candidate := range s.ModuleConfig["litellm"].Models {
+		if candidate.Alias != alias {
+			continue
+		}
+		if selected.Alias != "" {
+			return model.LiteLLMModelConfig{}, errors.New("AIOps model alias is ambiguous")
+		}
+		selected = candidate
+	}
+	if selected.Alias == "" {
+		return model.LiteLLMModelConfig{}, errors.New("AIOps model alias is undeclared")
+	}
+	return selected, nil
+}
+
+func controllerMTLSClient(authority pki.Authority, certificate pki.ClientCertificate) (*http.Client, error) {
+	identity, err := tls.X509KeyPair([]byte(certificate.CertPEM), []byte(certificate.KeyPEM))
+	if err != nil {
+		return nil, fmt.Errorf("load controller AIOps canary identity: %w", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM([]byte(authority.RootCertPEM + authority.IssuingCertPEM)) {
+		return nil, errors.New("platform CA contains no certificates")
+	}
+	transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, Certificates: []tls.Certificate{identity}}, DisableCompression: true, ResponseHeaderTimeout: 30 * time.Second}
+	return &http.Client{Transport: transport, Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("AI Router redirects are forbidden") }}, nil
+}
+
+func loadOrCreateAIOpsSecret(siteDir, ageIdentity string, s model.Site, key string) (string, error) {
+	value, err := site.LoadPlatformSecret(siteDir, s, ageIdentity, key)
+	if err == nil {
+		return value, nil
+	}
+	if !errors.Is(err, site.ErrPlatformSecretMissing) {
+		return "", fmt.Errorf("load encrypted %s: %w", key, err)
+	}
+	var data [32]byte
+	if _, err := rand.Read(data[:]); err != nil {
+		return "", fmt.Errorf("generate %s: %w", key, err)
+	}
+	value = base64.RawURLEncoding.EncodeToString(data[:])
+	if err := site.StorePlatformSecret(siteDir, s, ageIdentity, key, value); err != nil {
+		return "", fmt.Errorf("store encrypted %s: %w", key, err)
+	}
+	return value, nil
+}
+
+func loadOrCreatePulseToken(siteDir, ageIdentity string, s model.Site, key string, create func() (string, error)) (string, error) {
+	value, err := site.LoadPlatformSecret(siteDir, s, ageIdentity, key)
+	if err == nil {
+		return value, nil
+	}
+	if !errors.Is(err, site.ErrPlatformSecretMissing) {
+		return "", fmt.Errorf("load encrypted %s: %w", key, err)
+	}
+	value, err = create()
+	if err != nil {
+		return "", err
+	}
+	if err := site.StorePlatformSecret(siteDir, s, ageIdentity, key, value); err != nil {
+		return "", fmt.Errorf("store encrypted %s: %w", key, err)
+	}
+	return value, nil
 }
 
 // installModuleRuntimeConfigs is the deployment boundary for the common
