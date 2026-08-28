@@ -44,7 +44,7 @@ func runHardware(args []string, out interface{ Write([]byte) (int, error) }) err
 	if command == "list" {
 		for _, definition := range modules.FirstPartyRegistry().Definitions() {
 			for _, requirement := range definition.USBRequirements {
-				fmt.Fprintf(out, "%s/%s guest=%s required=%t allowed=%s\n", definition.Name, requirement.Name, requirement.Guest, requirement.Required, usbAllowed(requirement))
+				fmt.Fprintf(out, "%s/%s guest=%s type=%s required=%t allowed=%s\n", definition.Name, requirement.Name, requirement.Guest, requirement.DeviceType, requirement.Required, usbAllowed(requirement))
 			}
 		}
 		if *live {

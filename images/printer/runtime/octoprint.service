@@ -1,0 +1,33 @@
+[Unit]
+Description=Boetticher OctoPrint backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=octoprint
+Group=octoprint
+ExecStart=/opt/octoprint/bin/octoprint serve --host=127.0.0.1 --port=5000 --basedir=/var/lib/octoprint
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=no
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+DevicePolicy=closed
+DeviceAllow=char-ttyUSB rw
+ReadWritePaths=/var/lib/octoprint
+StateDirectory=octoprint
+UMask=0077
+TimeoutStopSec=30s
+
+[Install]
+WantedBy=multi-user.target

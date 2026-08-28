@@ -1258,3 +1258,24 @@ func TestEveryFixedGuestKindCollisionHoldsBeforeCreation(t *testing.T) {
 		})
 	}
 }
+
+func TestManagedUSBDeviceValueAllowsOnlyRawUSBOrSerialCharacterDevices(t *testing.T) {
+	for _, value := range []string{
+		"/dev/bus/usb/001/041,uid=2200,gid=2200,mode=0660",
+		"/dev/ttyUSB0,uid=2200,gid=2200,mode=0660",
+		"/dev/ttyACM12,uid=2200,gid=2200,mode=0660",
+	} {
+		if !validManagedUSBDeviceValue(value) {
+			t.Fatalf("safe managed USB device rejected: %q", value)
+		}
+	}
+	for _, value := range []string{
+		"/dev/sda,uid=2200,gid=2200,mode=0660",
+		"/dev/ttyUSB0,uid=0,gid=0,mode=0666",
+		"/dev/ttyUSB0",
+	} {
+		if validManagedUSBDeviceValue(value) {
+			t.Fatalf("unsafe managed USB device accepted: %q", value)
+		}
+	}
+}

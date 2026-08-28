@@ -114,6 +114,22 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 			model.MonitoringDeclaration{Name: "litellm", Kind: "service", Target: "lab-litellm-01", Checks: []string{"litellm", "loopback"}, Description: "LiteLLM loopback backend health"},
 		)
 		declaration.Portal = []model.PortalEntry{{Name: "litellm", Description: "mTLS-protected provider-neutral AI API aliases", URLs: []string{"https://litellm." + site.Network.Domain}, Docs: []string{"docs/modules/litellm.md"}}}
+	case "printer":
+		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true}
+		declaration.DNSRecords = []model.DNSRecord{{Name: "octoprint." + site.Network.Domain, Type: "A", Address: "10.10.20.80", Owner: "printer"}, {Name: "printer." + site.Network.Domain, Type: "A", Address: "10.10.20.80", Owner: "printer"}}
+		declaration.NetworkIntents = []model.NetworkIntent{
+			{Source: "lab-printer-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Direction: "egress", Purpose: "OctoPrint DNS resolution"},
+			{Source: "lab-printer-01", Destination: "dns", Protocol: "udp", Ports: []string{"123"}, Direction: "egress", Purpose: "OctoPrint time synchronisation"},
+		}
+		if IsEnabled(site, "logging") {
+			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-printer-01", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"})
+		}
+		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "octoprint." + site.Network.Domain, SANs: []string{"octoprint." + site.Network.Domain, "printer." + site.Network.Domain}, Consumer: "nginx"})
+		declaration.Monitoring = append(declaration.Monitoring,
+			model.MonitoringDeclaration{Name: "nginx", Kind: "service", Target: "lab-printer-01", Checks: []string{"nginx", "https"}, Description: "OctoPrint HTTPS frontend health"},
+			model.MonitoringDeclaration{Name: "octoprint", Kind: "service", Target: "lab-printer-01", Checks: []string{"octoprint", "loopback", "serial"}, Description: "OctoPrint backend and printer serial availability"},
+		)
+		declaration.Portal = []model.PortalEntry{{Name: "printer", Description: "OctoPrint management for the Ender-3 V3 SE", URLs: []string{"https://octoprint." + site.Network.Domain}, Docs: []string{"docs/modules/printer.md"}}}
 	default:
 		return model.ModuleDeclaration{}, fmt.Errorf("no declaration provider for first-party module %q", name)
 	}
@@ -146,6 +162,11 @@ func persistentFor(module, guest string) []model.PersistentState {
 		return []model.PersistentState{identity, {Name: "tailscale-state", Guest: guest, Path: "/var/lib/tailscale", Kind: "node-identity", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	case "litellm":
 		return []model.PersistentState{identity, {Name: "tls-identity", Guest: guest, Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
+	case "printer":
+		return []model.PersistentState{identity,
+			{Name: "octoprint-state", Guest: guest, Path: "/var/lib/octoprint", Kind: "application-state", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"},
+			{Name: "tls-identity", Guest: guest, Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"},
+		}
 	default:
 		return []model.PersistentState{identity}
 	}
@@ -167,6 +188,8 @@ func volumesFor(module, guest string) []model.PersistentVolumeDeclaration {
 		return []model.PersistentVolumeDeclaration{identity, volume("tailscale-state", "/var/lib/tailscale", 4, true)}
 	case "litellm":
 		return []model.PersistentVolumeDeclaration{identity, volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true)}
+	case "printer":
+		return []model.PersistentVolumeDeclaration{identity, volume("octoprint-state", "/var/lib/octoprint", 8, true), volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true)}
 	case "logging":
 		// Central journals are a bounded secondary evidence cache. The logging
 		// appliance remains in the platform backup set, while this high-churn

@@ -96,7 +96,7 @@ func validateModuleConfigShape(data []byte) error {
 		switch name {
 		case "dns":
 			allowed["provider"] = true
-		case "monitoring", "firewall":
+		case "monitoring", "firewall", "printer":
 			allowed["enabled"] = true
 		case "logging":
 			// Logging is mandatory and has no persisted lifecycle fields.

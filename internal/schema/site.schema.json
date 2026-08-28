@@ -185,6 +185,9 @@
         "monitoring": {
           "$ref": "#/$defs/ToggleModuleConfig"
         },
+        "printer": {
+          "$ref": "#/$defs/ToggleModuleConfig"
+        },
         "tailnet-router": {
           "$ref": "#/$defs/ToggleModuleConfig"
         }

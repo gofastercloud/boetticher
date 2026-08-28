@@ -29,6 +29,14 @@ modules:
       - alias: selected-alias
         upstream: openrouter
         model: selected/openrouter-model
+  printer:
+    enabled: false
+usb_exports:
+  - module: printer
+    requirement: serial
+    port: "1-2.4"
+    vendor_id: "1a86"
+    product_id: "7523"
 ```
 
 An omitted module map uses the defaults: DNS is mandatory, monitoring is
@@ -38,7 +46,7 @@ disable switch and accepts only `blocky` or `adguard` as its provider.
 Use `boetticher config validate` before deployment, `boetticher config show`
 to inspect normalized non-secret configuration, and `boetticher config schema`
 to print the shipped generated JSON Schema. Unknown fields and unknown module names
-are errors with a configuration path. `tailnet-router` and `litellm` are
+are errors with a configuration path. `tailnet-router`, `litellm`, and `printer` are
 default-off; LiteLLM exposes only the explicitly declared aliases and keeps
 the referenced provider credentials in SOPS-managed secret state.
 
@@ -59,4 +67,5 @@ upstream network.
 
 The Core-owned USB export framework binds compiled-in named requirements to
 stable physical ports; bindings cannot name device paths, VMIDs, or user
-workloads.
+workloads. Core resolves raw USB or serial character devices according to the
+compiled requirement.

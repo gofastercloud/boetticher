@@ -116,7 +116,7 @@ func home(s model.Site, revision string, evidence Evidence, now time.Time) strin
 	var moduleTable strings.Builder
 	moduleTable.WriteString("<h2>Platform modules</h2><table><tr><th>Name</th><th>Policy</th><th>Implementation</th><th>Version</th><th>Artifact</th><th>Definition</th><th>State</th><th>Reason</th></tr>")
 	for _, module := range s.Modules {
-		implementation := map[string]string{"dns": "Blocky", "logging": "systemd journal", "monitoring": "Pulse Community", "firewall": "Debian/nftables"}[module.Name]
+		implementation := map[string]string{"dns": "Blocky", "logging": "systemd journal", "monitoring": "Pulse Community", "firewall": "Debian/nftables", "printer": "OctoPrint / Ender-3 V3 SE"}[module.Name]
 		if module.Name == "dns" && s.ModuleConfig["dns"].Provider == string(model.DNSProviderAdGuard) {
 			implementation = "AdGuard"
 		}

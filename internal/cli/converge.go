@@ -377,6 +377,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	var monitorCertificate pki.ServerCertificate
 	var litellmCertificate pki.ServerCertificate
+	var octoprintCertificate pki.ServerCertificate
 	if monitoringEnabled {
 		monitorCSR, readErr := os.ReadFile(filepath.Join(csrDir, "monitor.csr.pem"))
 		if readErr != nil {
@@ -397,6 +398,16 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			return fmt.Errorf("sign LiteLLM endpoint CSR: %w", err)
 		}
 	}
+	if modules.IsEnabled(s, "printer") {
+		octoprintCSR, readErr := os.ReadFile(filepath.Join(csrDir, "octoprint.csr.pem"))
+		if readErr != nil {
+			return fmt.Errorf("read endpoint-generated OctoPrint CSR: %w", readErr)
+		}
+		octoprintCertificate, err = pki.SignServerCSR(authority, string(octoprintCSR), "octoprint", s.Network.Domain, []string{"printer." + s.Network.Domain, "lab-printer-01." + s.Network.Domain}, time.Now().UTC())
+		if err != nil {
+			return fmt.Errorf("sign OctoPrint endpoint CSR: %w", err)
+		}
+	}
 	portalCertificate, err := pki.SignServerCSR(authority, string(portalCSR), "portal", s.Network.Domain, []string{"lab-portal-01." + s.Network.Domain}, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("sign portal endpoint CSR: %w", err)
@@ -407,6 +418,9 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	if modules.IsEnabled(s, "litellm") {
 		runtimeVariables["litellm_server_cert_pem"] = litellmCertificate.ChainPEM
+	}
+	if modules.IsEnabled(s, "printer") {
+		runtimeVariables["octoprint_server_cert_pem"] = octoprintCertificate.ChainPEM
 	}
 	runtimeVariables["portal_server_cert_pem"] = portalCertificate.ChainPEM
 	runtimeVariables["logging_client_certificates"] = loggingClientCertificates
