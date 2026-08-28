@@ -31,10 +31,11 @@ records require a fresh construction.
 The builder receives an artifact target list derived from the resolved plan.
 The base, enabled provider/module appliances, and managed firewall are built
 and qualified; disabled optional modules such as Tailnet Router and LiteLLM
-are not constructed during the default workflow. After the base root filesystem
-is ready, independent LXC workers and the firewall worker use bounded
-concurrency of two. Each worker has its own root filesystem, temporary build
-directory, log, and cleanup trap; a failed worker fails the complete build.
+are not constructed during the default workflow. The memory-heavy base and
+firewall stages run sequentially on the bounded builder; after they complete,
+independent LXC workers use bounded concurrency of two. Each worker has its
+own root filesystem, temporary build directory, log, and cleanup trap; a
+failed worker fails the complete build.
 
 Bootstrap and the builder print structured `timing stage=... duration_ms=...`
 records. Successful builder runs also return `build-timings.log` and

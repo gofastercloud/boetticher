@@ -646,32 +646,23 @@ build_selected_images() {
   failed=0
   pid_a=
   pid_b=
-  # The base and firewall have no dependency on one another. Starting them
-  # together shortens the critical path while every worker keeps its own
-  # rootfs, mounts, cleanup trap, log, and temporary download directory.
+  # Base and firewall are both memory-heavy: keep them sequential on the
+  # bounded builder. Derived appliance workers retain bounded concurrency.
   if contains_image_target image-base; then
     launch_image_worker image-base
     pid_a=$worker_pid
     root_a=$worker_root
     log_a=$worker_log
-  fi
-  if contains_image_target image-firewall; then
-    launch_image_worker image-firewall
-    if [ -z "$pid_a" ]; then
-      pid_a=$worker_pid
-      root_a=$worker_root
-      log_a=$worker_log
-    else
-      pid_b=$worker_pid
-      root_b=$worker_root
-      log_b=$worker_log
-    fi
-  fi
-  if [ -n "$pid_a" ]; then
     if ! wait_image_worker "$pid_a" "${root_a##*/}" "$root_a" "$log_a"; then
       failed=1
     fi
     pid_a=
+  fi
+  if [ "$failed" -eq 0 ] && contains_image_target image-firewall; then
+    launch_image_worker image-firewall
+    if ! wait_image_worker "$worker_pid" "${worker_root##*/}" "$worker_root" "$worker_log"; then
+      failed=1
+    fi
   fi
   if [ -n "$pid_b" ]; then
     if ! wait_image_worker "$pid_b" "${root_b##*/}" "$root_b" "$log_b"; then
