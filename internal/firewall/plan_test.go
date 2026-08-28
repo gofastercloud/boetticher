@@ -65,6 +65,30 @@ func TestServersDHCPIsReservationOnly(t *testing.T) {
 	}
 }
 
+func TestManagedGatewayAllowsDiagnosticICMPEchoFromInternalZones(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleset, err := RenderNFT(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateNFT(ruleset); err != nil {
+		t.Fatalf("rendered ruleset is invalid: %v", err)
+	}
+	want := "iifname { \"infra0\", \"trusted0\", \"servers0\", \"sandbox0\", \"mgmt0\" } ip protocol icmp icmp type echo-request counter accept comment \"boetticher:input-diagnostic-icmp\""
+	if !strings.Contains(ruleset, want) {
+		t.Fatalf("managed firewall does not permit diagnostic ICMP echo requests from internal zones:\n%s", ruleset)
+	}
+	if strings.Contains(ruleset, "iifname \"wan0\" ip protocol icmp") {
+		t.Fatal("managed firewall permits WAN-sourced ICMP input")
+	}
+	if strings.Contains(ruleset, "iifname \"sandbox0\" oifname \"trusted0\" ip protocol icmp") {
+		t.Fatal("managed firewall added an inter-zone ICMP allow")
+	}
+}
+
 func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	tailnetEnabled, litellmEnabled := true, true

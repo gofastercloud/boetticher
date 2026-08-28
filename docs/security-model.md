@@ -12,6 +12,10 @@ policies are drop; stateful established/related traffic and documented service
 paths are allowed explicitly. Internal traffic is not NATed. Intended internal
 networks are masqueraded only when leaving `wan0`.
 
+Diagnostic IPv4 echo requests from internal non-TRANSIT zones to the managed
+gateway are allowed. WAN-sourced ICMP and inter-zone ICMP remain denied unless
+an explicit policy path permits them.
+
 Proxmox performs VLAN classification by attaching separate firewall vNICs to
 `vmbr1` with tags 5, 10, 20, 30, 40, and 99. The firewall sees ordinary interfaces
 named `wan0`, `transit0`, `infra0`, `servers0`, `trusted0`, `sandbox0`, and
