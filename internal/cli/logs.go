@@ -27,6 +27,7 @@ func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 	since := fs.String("since", "", "bounded duration such as 1h or 30m")
 	priority := fs.String("priority", "", "one of emerg, alert, crit, err, warning, notice, info, debug")
 	limit := fs.Int("limit", 100, "maximum number of journal entries (1-500)")
+	args = normalizeLogsArgs(args)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -94,6 +95,14 @@ func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 	}, string(data))
 	fmt.Fprint(out, clean)
 	return nil
+}
+
+func normalizeLogsArgs(args []string) []string {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return args
+	}
+	host := args[0]
+	return append(args[1:], host)
 }
 
 func findManagedEndpoint(s model.Site, wanted string) (model.Component, bool) {
