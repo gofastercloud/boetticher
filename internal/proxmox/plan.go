@@ -995,6 +995,9 @@ func AttachTrunk(ctx context.Context, client *Client, node, physicalInterface, b
 	if err := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"type": {"bridge"}, "bridge_ports": {physicalInterface}, "bridge_vlan_aware": {"1"}}); err != nil {
 		return fmt.Errorf("attach %s to vmbr1: %w", physicalInterface, err)
 	}
+	if err := client.ReloadNodeNetwork(ctx, node); err != nil {
+		return fmt.Errorf("reload network after attaching %s: %w", physicalInterface, err)
+	}
 	var after []NetworkInterface
 	if err := client.NodeNetwork(ctx, node, &after); err != nil {
 		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"type": {"bridge"}, "bridge_ports": {"none"}, "bridge_vlan_aware": {"1"}}); rollbackErr != nil {
@@ -1040,6 +1043,9 @@ func DetachTrunk(ctx context.Context, client *Client, node, physicalInterface, b
 	}
 	if err := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"type": {"bridge"}, "bridge_ports": {"none"}, "bridge_vlan_aware": {"1"}}); err != nil {
 		return fmt.Errorf("detach %s from vmbr1: %w", physicalInterface, err)
+	}
+	if err := client.ReloadNodeNetwork(ctx, node); err != nil {
+		return fmt.Errorf("reload network after detaching %s: %w", physicalInterface, err)
 	}
 	var after []NetworkInterface
 	if err := client.NodeNetwork(ctx, node, &after); err != nil {

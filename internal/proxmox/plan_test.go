@@ -88,6 +88,7 @@ func TestEnsureVirtualBridgeOmitsInvalidNonePort(t *testing.T) {
 
 func TestAttachTrunkSendsRequiredBridgeType(t *testing.T) {
 	networkReads := 0
+	networkReloads := 0
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/proxmox/network" {
 			networkReads++
@@ -115,12 +116,19 @@ func TestAttachTrunkSendsRequiredBridgeType(t *testing.T) {
 			}
 			return response([]byte(`{"data":null}`))
 		}
+		if r.Method == http.MethodPut && r.URL.Path == "/api2/json/nodes/proxmox/network" {
+			networkReloads++
+			return response([]byte(`{"data":null}`))
+		}
 		t.Fatalf("unexpected network request: %s %s", r.Method, r.URL.Path)
 		return nil
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
 	if err := AttachTrunk(context.Background(), client, "proxmox", "enxa0cec8a2b210", "192.0.2.73"); err != nil {
 		t.Fatal(err)
+	}
+	if networkReloads != 1 {
+		t.Fatalf("network reloads = %d, want 1", networkReloads)
 	}
 }
 
