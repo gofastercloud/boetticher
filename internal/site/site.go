@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -19,6 +20,8 @@ import (
 )
 
 var ErrPlatformSecretMissing = errors.New("encrypted platform secret is missing")
+
+var platformSecretName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
 
 func Load(dir string) (model.Site, error) {
 	config, err := LoadConfig(dir)
@@ -420,15 +423,79 @@ func LoadPlatformSecret(dir string, s model.Site, ageIdentityPath, key string) (
 // plaintext intermediate. Callers retain the value only in process memory
 // until SOPS has encrypted the complete document.
 func StorePlatformSecret(dir string, s model.Site, ageIdentityPath, key, value string) error {
-	if strings.TrimSpace(key) == "" || value == "" {
-		return errors.New("platform secret key and value are required")
+	return UpdatePlatformSecrets(dir, s, ageIdentityPath, map[string]string{key: value})
+}
+
+// UpdatePlatformSecrets applies a set of named values in one encrypted
+// document rewrite. Plaintext values remain in process memory and are never
+// written to a temporary file or included in an error.
+func UpdatePlatformSecrets(dir string, s model.Site, ageIdentityPath string, updates map[string]string) error {
+	if len(updates) == 0 {
+		return errors.New("at least one platform secret is required")
+	}
+	for key, value := range updates {
+		if !platformSecretName.MatchString(key) {
+			return fmt.Errorf("platform secret key %q is unsafe", key)
+		}
+		if value == "" || strings.ContainsRune(value, '\x00') {
+			return fmt.Errorf("platform secret %s has an empty or invalid value", key)
+		}
 	}
 	values, err := LoadEncryptedDocument(dir, ageIdentityPath, filepath.Join("secrets", "boetticher.sops.yaml"))
 	if err != nil {
 		return fmt.Errorf("load encrypted platform secrets: %w", err)
 	}
-	values[key] = value
+	for key, value := range updates {
+		values[key] = value
+	}
 	return StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), values)
+}
+
+// PlatformSecretPresence reports only whether each requested key has a
+// non-empty value. It deliberately does not return decrypted values.
+func PlatformSecretPresence(dir string, s model.Site, ageIdentityPath string, keys []string) (map[string]bool, error) {
+	values, err := LoadEncryptedDocument(dir, ageIdentityPath, filepath.Join("secrets", "boetticher.sops.yaml"))
+	if err != nil {
+		return nil, err
+	}
+	presence := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		if !platformSecretName.MatchString(key) {
+			return nil, fmt.Errorf("platform secret key %q is unsafe", key)
+		}
+		value, ok := values[key].(string)
+		presence[key] = ok && value != ""
+	}
+	return presence, nil
+}
+
+// RemovePlatformSecrets removes exact named keys from the encrypted platform
+// document. It is idempotent and never exposes the removed values.
+func RemovePlatformSecrets(dir string, s model.Site, ageIdentityPath string, keys []string) (bool, error) {
+	if len(keys) == 0 {
+		return false, errors.New("at least one platform secret is required")
+	}
+	values, err := LoadEncryptedDocument(dir, ageIdentityPath, filepath.Join("secrets", "boetticher.sops.yaml"))
+	if err != nil {
+		return false, err
+	}
+	changed := false
+	for _, key := range keys {
+		if !platformSecretName.MatchString(key) {
+			return false, fmt.Errorf("platform secret key %q is unsafe", key)
+		}
+		if _, ok := values[key]; ok {
+			delete(values, key)
+			changed = true
+		}
+	}
+	if !changed {
+		return false, nil
+	}
+	if err := StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), values); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // PurgeModuleSecrets removes only secret names declared by one module after
