@@ -54,20 +54,20 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 	switch name {
 	case "dns":
 		declaration.Secrets = []model.SecretDeclaration{
-			{Name: "ddns_tsig_secret", Purpose: "authenticated DHCP DNS updates", Consumer: "kea-dhcp-ddns-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file"},
-			{Name: "ddns_tsig_secret", Purpose: "PowerDNS authenticated update authorization", Consumer: "powerdns-authoritative", Generation: "random", Rotation: "replaceable", Delivery: "protected-powerdns-backend", Persistent: true},
+			{Name: "ddns_tsig_secret", Purpose: "authenticated DHCP DNS updates", Consumer: "kea-dhcp-ddns-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file", Lifecycle: model.SecretLifecycleRuntime},
+			{Name: "ddns_tsig_secret", Purpose: "PowerDNS authenticated update authorization", Consumer: "powerdns-authoritative", Generation: "random", Rotation: "replaceable", Delivery: "protected-powerdns-backend", Lifecycle: model.SecretLifecycleRuntime, Persistent: true},
 		}
 		declaration.DNSRecords = []model.DNSRecord{{Name: "dns01." + site.Network.Domain, Type: "A", Address: "10.10.10.10", Owner: "dns"}, {Name: "dns02." + site.Network.Domain, Type: "A", Address: "10.10.10.11", Owner: "dns"}}
 	case "monitoring":
 		declaration.Secrets = []model.SecretDeclaration{
-			{Name: "pulse_admin_password", Purpose: "Pulse administrative bootstrap authentication", Consumer: "pulse-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential"},
-			{Name: "pulse_proxmox_token", Purpose: "API-only Proxmox monitoring token value", Consumer: "deployment-controller", Generation: "ephemeral", Rotation: "replaceable", Delivery: "controller-memory"},
-			{Name: "pulse_api_token", Purpose: "read-only Pulse monitoring API integration", Consumer: "deployment-controller", Generation: "ephemeral", Rotation: "replaceable", Delivery: "controller-memory"},
-			{Name: "pulse_agent_token", Purpose: "read-only Pulse host-agent report authentication", Consumer: "pulse-agent", Generation: "ephemeral", Rotation: "replaceable", Delivery: "systemd-credential"},
+			{Name: "pulse_admin_password", Purpose: "Pulse administrative bootstrap authentication", Consumer: "pulse-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential", Lifecycle: model.SecretLifecycleRuntime},
+			{Name: "pulse_proxmox_token", Purpose: "API-only Proxmox monitoring token value", Consumer: "deployment-controller", Generation: "ephemeral", Rotation: "replaceable", Delivery: "controller-memory", Lifecycle: model.SecretLifecycleRuntime},
+			{Name: "pulse_api_token", Purpose: "read-only Pulse monitoring API integration", Consumer: "deployment-controller", Generation: "ephemeral", Rotation: "replaceable", Delivery: "controller-memory", Lifecycle: model.SecretLifecycleRuntime},
+			{Name: "pulse_agent_token", Purpose: "read-only Pulse host-agent report authentication", Consumer: "pulse-agent", Generation: "ephemeral", Rotation: "replaceable", Delivery: "systemd-credential", Lifecycle: model.SecretLifecycleRuntime},
 		}
 		declaration.NetworkIntents = []model.NetworkIntent{{Source: "lab-monitor-01", Destination: model.LogicalProxmoxIdentity, Protocol: "tcp", Ports: []string{"8006"}, Direction: "egress", Purpose: "Proxmox API monitoring"}}
 	case "firewall":
-		declaration.Secrets = []model.SecretDeclaration{{Name: "ddns_tsig_secret", Purpose: "authenticated DHCP DNS updates", Consumer: "kea-dhcp-ddns-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file"}}
+		declaration.Secrets = []model.SecretDeclaration{{Name: "ddns_tsig_secret", Purpose: "authenticated DHCP DNS updates", Consumer: "kea-dhcp-ddns-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file", Lifecycle: model.SecretLifecycleRuntime}}
 	case "logging":
 		declaration.NetworkIntents = []model.NetworkIntent{
 			{Source: "boetticher-managed-endpoints", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"},
@@ -76,7 +76,7 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "logs." + site.Network.Domain, SANs: []string{"logs." + site.Network.Domain}, Consumer: "systemd-journal-remote"})
 		declaration.Portal = []model.PortalEntry{{Name: "logging", Description: "Central systemd journal collection", Docs: []string{"docs/operations/logs.md"}}}
 	case "tailnet-router":
-		declaration.Secrets = []model.SecretDeclaration{{Name: "tailscale_auth_key", Purpose: "initial Tailscale registration or re-registration", Consumer: "tailscaled", Generation: "operator-supplied", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file"}}
+		declaration.Secrets = []model.SecretDeclaration{{Name: "tailscale_auth_key", Purpose: "initial Tailscale registration or re-registration", Consumer: "tailscaled", Generation: "operator-supplied", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file", Lifecycle: model.SecretLifecycleBootstrap}}
 		declaration.AdvertisedRoutes = []string{"10.10.0.0/16"}
 		declaration.ReturnRouting = []string{"Tailnet return traffic for 10.10.0.0/16 must use the TRANSIT gateway 10.10.5.1"}
 		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true, Devices: []model.DeviceRequirement{{Path: "/dev/net/tun", Type: "c", Major: 10, Minor: 200, Access: "rwm"}}}
@@ -97,7 +97,7 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 	case "litellm":
 		config := site.ModuleConfig[name]
 		for _, upstream := range config.Upstreams {
-			declaration.Secrets = appendUniqueSecret(declaration.Secrets, model.SecretDeclaration{Name: upstream.APIKeySecret, Purpose: "server-side credential for the configured LiteLLM upstream", Consumer: "litellm", Generation: "operator-supplied", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file"})
+			declaration.Secrets = appendUniqueSecret(declaration.Secrets, model.SecretDeclaration{Name: upstream.APIKeySecret, Purpose: "server-side credential for the configured LiteLLM upstream", Consumer: "litellm", Generation: "operator-supplied", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file", Lifecycle: model.SecretLifecycleRuntime})
 			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-litellm-01", Destination: upstream.Name, Endpoint: upstream.BaseURL, Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "configured LiteLLM upstream HTTPS access"})
 		}
 		declaration.NetworkIntents = append(declaration.NetworkIntents,

@@ -14,6 +14,8 @@ boetticher modules list
 boetticher modules tailnet-router show
 boetticher modules tailnet-router plan
 boetticher modules litellm status
+boetticher modules litellm secrets list
+boetticher modules litellm secrets set openrouter_api_key
 ```
 
 Enable and disable changes require `--confirm` when they persist configuration.
@@ -26,6 +28,8 @@ declaration in memory, resolve its qualified artifact, and identify the exact
 module-owned guest, attached volumes, and persistent data before removal.
 
 `module list`, `module show`, and `module status` report desired module state
-as `Enabled` or `Disabled`. Live readiness is established separately through
-`verify`, `doctor`, and service-specific live checks. Disabled optional modules
-are intentional, not failures.
+as `Enabled` or `Disabled`. A named module status also reports non-secret
+configuration and the presence of declared secrets; its runtime section is
+`NOT TESTED`. Live readiness is established separately through `verify`,
+`doctor`, and service-specific live checks. Disabled optional modules are
+intentional, not failures.

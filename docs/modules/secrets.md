@@ -7,6 +7,28 @@ Systemd credentials are the standard delivery mechanism. The consuming unit
 receives only its declared credential through its credentials directory, not a
 normal environment variable or public configuration file.
 
+Operators manage declared operator-supplied values through the shared CLI:
+
+```text
+boetticher modules litellm secrets list --site ./my-boetticher
+boetticher modules litellm secrets set openrouter_api_key --site ./my-boetticher
+boetticher modules litellm secrets remove openrouter_api_key --confirm --site ./my-boetticher
+```
+
+`set` reads from a hidden TTY prompt when interactive. When deliberately
+piped, it reads the value from stdin; the value must not be supplied as a
+command argument. The command updates the encrypted platform document only;
+run `boetticher deploy` separately to deliver the changed credential to a
+service. `remove` is confirmation-gated and refuses a name shared by another
+module. Secret listing and module status report only `present` or `missing`,
+never values.
+
+Enabling a module checks its declared operator secrets before saving or
+deploying. An interactive `enable --confirm` prompts for missing values and
+stores them in one encrypted update. Non-interactive enablement fails with
+the corresponding `secrets set` commands, and `--dry-run` reports the gap
+without prompting or changing state.
+
 First-party `tailnet-router` declares `tailscale_auth_key` as operator-supplied
 bootstrap material. `litellm` declares the configured upstream secret
 references, such as `openrouter_api_key`. These names are SOPS document keys,

@@ -385,8 +385,14 @@ type SecretDeclaration struct {
 	Generation string `json:"generation"`
 	Rotation   string `json:"rotation"`
 	Delivery   string `json:"delivery"`
+	Lifecycle  string `json:"lifecycle,omitempty"`
 	Persistent bool   `json:"persistent"`
 }
+
+const (
+	SecretLifecycleRuntime   = "runtime"
+	SecretLifecycleBootstrap = "bootstrap"
+)
 
 type DeviceRequirement struct {
 	Path   string `json:"path"`
@@ -970,6 +976,9 @@ func validateDeclarations(s Site) error {
 		for _, secret := range declaration.Secrets {
 			if !modelTokenPattern.MatchString(secret.Name) || secret.Purpose == "" || secret.Consumer == "" || secret.Delivery == "" || strings.ContainsAny(secret.Purpose+secret.Consumer+secret.Delivery, "\r\n") {
 				return fmt.Errorf("module %s has invalid secret declaration %q", declaration.Module, secret.Name)
+			}
+			if secret.Lifecycle != "" && secret.Lifecycle != SecretLifecycleRuntime && secret.Lifecycle != SecretLifecycleBootstrap {
+				return fmt.Errorf("module %s secret %s has unsupported lifecycle %q", declaration.Module, secret.Name, secret.Lifecycle)
 			}
 		}
 		if !declaration.Security.Unprivileged && len(declaration.Security.Devices) != 0 {
