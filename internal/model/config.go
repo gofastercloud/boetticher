@@ -35,13 +35,12 @@ type SiteConfig struct {
 // keeps a small internal projection for providers that only need lookup by
 // module name.
 type ModulesConfig struct {
-	DNS           *DNSModuleConfig        `yaml:"dns,omitempty" json:"dns,omitempty"`
-	Monitoring    *ToggleModuleConfig     `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
-	Firewall      *ToggleModuleConfig     `yaml:"firewall,omitempty" json:"firewall,omitempty"`
-	Logging       *MandatoryModuleConfig  `yaml:"logging,omitempty" json:"logging,omitempty"`
-	TailnetRouter *ToggleModuleConfig     `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
-	LiteLLM       *LiteLLMModuleConfig    `yaml:"litellm,omitempty" json:"litellm,omitempty"`
-	StreamDeck    *StreamDeckModuleConfig `yaml:"streamdeck,omitempty" json:"streamdeck,omitempty"`
+	DNS           *DNSModuleConfig       `yaml:"dns,omitempty" json:"dns,omitempty"`
+	Monitoring    *ToggleModuleConfig    `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
+	Firewall      *ToggleModuleConfig    `yaml:"firewall,omitempty" json:"firewall,omitempty"`
+	Logging       *MandatoryModuleConfig `yaml:"logging,omitempty" json:"logging,omitempty"`
+	TailnetRouter *ToggleModuleConfig    `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
+	LiteLLM       *LiteLLMModuleConfig   `yaml:"litellm,omitempty" json:"litellm,omitempty"`
 }
 
 type DNSModuleConfig struct {
@@ -61,17 +60,6 @@ type LiteLLMModuleConfig struct {
 	Enabled   *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Upstreams []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
 	Models    []LiteLLMModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
-}
-
-type StreamDeckModuleConfig struct {
-	Enabled                *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Brightness             int      `yaml:"brightness,omitempty" json:"brightness,omitempty" jsonschema:"minimum=1,maximum=100,default=40"`
-	RefreshSeconds         int      `yaml:"refresh_seconds,omitempty" json:"refresh_seconds,omitempty" jsonschema:"minimum=1,maximum=300,default=5"`
-	RequestTimeoutSeconds  int      `yaml:"request_timeout_seconds,omitempty" json:"request_timeout_seconds,omitempty" jsonschema:"minimum=1,maximum=30,default=3"`
-	DefaultPage            string   `yaml:"default_page,omitempty" json:"default_page,omitempty" jsonschema:"enum=overview,enum=guests,default=overview"`
-	PinnedGuests           []string `yaml:"pinned_guests,omitempty" json:"pinned_guests,omitempty"`
-	StorageWarningPercent  int      `yaml:"storage_warning_percent,omitempty" json:"storage_warning_percent,omitempty" jsonschema:"minimum=1,maximum=99,default=80"`
-	StorageCriticalPercent int      `yaml:"storage_critical_percent,omitempty" json:"storage_critical_percent,omitempty" jsonschema:"minimum=2,maximum=100,default=90"`
 }
 
 type LiteLLMUpstreamConfig struct {
@@ -108,10 +96,6 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 	if m.LiteLLM != nil {
 		result["litellm"] = ModuleConfig{Enabled: cloneBool(m.LiteLLM.Enabled), Upstreams: cloneLiteLLMUpstreams(m.LiteLLM.Upstreams), Models: cloneLiteLLMModels(m.LiteLLM.Models)}
 	}
-	if m.StreamDeck != nil {
-		c := normalizedStreamDeckConfig(*m.StreamDeck)
-		result["streamdeck"] = ModuleConfig{Enabled: cloneBool(c.Enabled), Brightness: c.Brightness, RefreshSeconds: c.RefreshSeconds, RequestTimeoutSeconds: c.RequestTimeoutSeconds, DefaultPage: c.DefaultPage, PinnedGuests: append([]string(nil), c.PinnedGuests...), StorageWarningPercent: c.StorageWarningPercent, StorageCriticalPercent: c.StorageCriticalPercent}
-	}
 	return result
 }
 
@@ -134,9 +118,6 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 	}
 	if config, ok := input["litellm"]; ok {
 		result.LiteLLM = &LiteLLMModuleConfig{Enabled: cloneBool(config.Enabled), Upstreams: cloneLiteLLMUpstreams(config.Upstreams), Models: cloneLiteLLMModels(config.Models)}
-	}
-	if config, ok := input["streamdeck"]; ok {
-		result.StreamDeck = &StreamDeckModuleConfig{Enabled: cloneBool(config.Enabled), Brightness: config.Brightness, RefreshSeconds: config.RefreshSeconds, RequestTimeoutSeconds: config.RequestTimeoutSeconds, DefaultPage: config.DefaultPage, PinnedGuests: append([]string(nil), config.PinnedGuests...), StorageWarningPercent: config.StorageWarningPercent, StorageCriticalPercent: config.StorageCriticalPercent}
 	}
 	return result
 }
@@ -167,87 +148,8 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 			models = m.LiteLLM.Models
 		}
 		m.LiteLLM = &LiteLLMModuleConfig{Enabled: cloneBool(config.Enabled), Upstreams: cloneLiteLLMUpstreams(upstreams), Models: cloneLiteLLMModels(models)}
-	case "streamdeck":
-		current := StreamDeckModuleConfig{}
-		if m.StreamDeck != nil {
-			current = *m.StreamDeck
-		}
-		if config.Brightness != 0 {
-			current.Brightness = config.Brightness
-		}
-		if config.RefreshSeconds != 0 {
-			current.RefreshSeconds = config.RefreshSeconds
-		}
-		if config.RequestTimeoutSeconds != 0 {
-			current.RequestTimeoutSeconds = config.RequestTimeoutSeconds
-		}
-		if config.DefaultPage != "" {
-			current.DefaultPage = config.DefaultPage
-		}
-		if config.PinnedGuests != nil {
-			current.PinnedGuests = append([]string(nil), config.PinnedGuests...)
-		}
-		if config.StorageWarningPercent != 0 {
-			current.StorageWarningPercent = config.StorageWarningPercent
-		}
-		if config.StorageCriticalPercent != 0 {
-			current.StorageCriticalPercent = config.StorageCriticalPercent
-		}
-		current.Enabled = cloneBool(config.Enabled)
-		m.StreamDeck = &current
 	default:
 		return fmt.Errorf("modules.%s: unknown first-party module", name)
-	}
-	return nil
-}
-
-func normalizedStreamDeckConfig(c StreamDeckModuleConfig) StreamDeckModuleConfig {
-	if c.Brightness == 0 {
-		c.Brightness = 40
-	}
-	if c.RefreshSeconds == 0 {
-		c.RefreshSeconds = 5
-	}
-	if c.RequestTimeoutSeconds == 0 {
-		c.RequestTimeoutSeconds = 3
-	}
-	if c.DefaultPage == "" {
-		c.DefaultPage = "overview"
-	}
-	if c.StorageWarningPercent == 0 {
-		c.StorageWarningPercent = 80
-	}
-	if c.StorageCriticalPercent == 0 {
-		c.StorageCriticalPercent = 90
-	}
-	return c
-}
-
-func ValidateStreamDeckConfig(c ModuleConfig) error {
-	if c.Brightness < 1 || c.Brightness > 100 {
-		return errors.New("modules.streamdeck.brightness must be between 1 and 100")
-	}
-	if c.RefreshSeconds < 1 || c.RefreshSeconds > 300 {
-		return errors.New("modules.streamdeck.refresh_seconds must be between 1 and 300")
-	}
-	if c.RequestTimeoutSeconds < 1 || c.RequestTimeoutSeconds > 30 {
-		return errors.New("modules.streamdeck.request_timeout_seconds must be between 1 and 30")
-	}
-	if c.DefaultPage != "overview" && c.DefaultPage != "guests" {
-		return errors.New("modules.streamdeck.default_page must be overview or guests")
-	}
-	if c.StorageWarningPercent < 1 || c.StorageWarningPercent > 99 || c.StorageCriticalPercent < 2 || c.StorageCriticalPercent > 100 || c.StorageWarningPercent >= c.StorageCriticalPercent {
-		return errors.New("modules.streamdeck storage thresholds must be ordered percentages")
-	}
-	seen := map[string]bool{}
-	for _, guest := range c.PinnedGuests {
-		if !modelTokenPattern.MatchString(guest) {
-			return fmt.Errorf("modules.streamdeck.pinned_guests contains unsafe guest %q", guest)
-		}
-		if seen[guest] {
-			return fmt.Errorf("modules.streamdeck.pinned_guests contains duplicate %q", guest)
-		}
-		seen[guest] = true
 	}
 	return nil
 }
@@ -460,7 +362,7 @@ func cloneModuleConfig(input map[string]ModuleConfig) map[string]ModuleConfig {
 	}
 	output := make(map[string]ModuleConfig, len(input))
 	for name, config := range input {
-		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), Provider: config.Provider, Upstreams: cloneLiteLLMUpstreams(config.Upstreams), Models: cloneLiteLLMModels(config.Models), Brightness: config.Brightness, RefreshSeconds: config.RefreshSeconds, RequestTimeoutSeconds: config.RequestTimeoutSeconds, DefaultPage: config.DefaultPage, PinnedGuests: append([]string(nil), config.PinnedGuests...), StorageWarningPercent: config.StorageWarningPercent, StorageCriticalPercent: config.StorageCriticalPercent}
+		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), Provider: config.Provider, Upstreams: cloneLiteLLMUpstreams(config.Upstreams), Models: cloneLiteLLMModels(config.Models)}
 	}
 	return output
 }

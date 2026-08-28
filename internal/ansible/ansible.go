@@ -97,12 +97,6 @@ func Inventory(s model.Site) (string, error) {
 			writeHost(&b, component, true)
 		}
 	}
-	b.WriteString("\n[streamdeck]\n")
-	for _, component := range components {
-		if component.Module == "streamdeck" {
-			writeHost(&b, component, true)
-		}
-	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		b.WriteString("\n[firewall]\n")
 		for _, component := range components {
@@ -111,7 +105,7 @@ func Inventory(s model.Site) (string, error) {
 			}
 		}
 	}
-	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\ntailnet-router\nlitellm\nstreamdeck\n")
+	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\ntailnet-router\nlitellm\n")
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		b.WriteString("firewall\n")
 	}
