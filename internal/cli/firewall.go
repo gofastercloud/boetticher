@@ -367,8 +367,16 @@ func firewallVerify(siteDir string, s model.Site, plan firewall.Plan, live, json
 		results["nat"] = "PASS"
 		results["ipv4_only"] = "PASS"
 		if live {
-			if _, err := gatewayCommand(siteDir, s, "sudo", "/usr/lib/boetticher/inspect-firewall", "table"); err != nil {
+			data, err := gatewayCommand(siteDir, s, "sudo", "/usr/lib/boetticher/inspect-firewall", "ruleset")
+			if err != nil {
 				return err
+			}
+			diff, err := firewall.CompareNFT(plan, data)
+			if err != nil {
+				return err
+			}
+			if !diff.Current() {
+				return fmt.Errorf("live firewall ruleset drift: %+v", diff)
 			}
 			results["live_ruleset"] = "PASS"
 		} else {

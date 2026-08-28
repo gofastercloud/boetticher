@@ -35,6 +35,19 @@ func TestDeploymentModuleNamesFollowResolvedManagedGraph(t *testing.T) {
 	}
 }
 
+func TestPublishedServicesActivateAtTheEndOfDNSModule(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	publicationActivation := strings.Index(text, `if module == "dns" && s.Gateway.Mode == model.GatewayModeManaged && len(firewallPlan.Publications) > 0`)
+	allHostsConvergence := strings.Index(text, `if err := ansible.Run(context.Background(), ansiblePlaybook, inventoryPath, variables); err != nil`)
+	if publicationActivation < 0 || allHostsConvergence < 0 || publicationActivation > allHostsConvergence {
+		t.Fatal("published services are not activated immediately after the DNS module")
+	}
+}
+
 func TestAnsiblePlaybookIsAvailableFromControllerSource(t *testing.T) {
 	root, err := applianceBuildSourceRoot()
 	if err != nil {

@@ -100,13 +100,25 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 			} else if observationErr := firewall.ValidateUpstreamObservation(plan, liveStatus.Upstream); observationErr != nil {
 				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "FAIL", Detail: observationErr.Error()}
 				publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "FAIL", Detail: "upstream observation is not safe for publication"}
+			} else if livePlan, planErr := firewall.PlanFromSiteWithUpstream(s, liveStatus.Upstream); planErr != nil {
+				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "PASS", Detail: fmt.Sprintf("MAC %s address %s gateway %s", liveStatus.Upstream.MAC, liveStatus.Upstream.Address, liveStatus.Upstream.Gateway)}
+				publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "FAIL", Detail: planErr.Error()}
+			} else if ruleset, commandErr := gatewayCommand(*siteDir, s, "sudo", gatewayStatusScript, "ruleset"); commandErr != nil {
+				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "PASS", Detail: fmt.Sprintf("MAC %s address %s gateway %s", liveStatus.Upstream.MAC, liveStatus.Upstream.Address, liveStatus.Upstream.Gateway)}
+				publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "FAIL", Detail: fmt.Sprintf("read installed firewall ruleset: %v", commandErr)}
+			} else if diff, compareErr := firewall.CompareNFT(livePlan, ruleset); compareErr != nil {
+				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "PASS", Detail: fmt.Sprintf("MAC %s address %s gateway %s", liveStatus.Upstream.MAC, liveStatus.Upstream.Address, liveStatus.Upstream.Gateway)}
+				publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "FAIL", Detail: fmt.Sprintf("compare installed firewall ruleset: %v", compareErr)}
+			} else if !diff.Current() {
+				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "PASS", Detail: fmt.Sprintf("MAC %s address %s gateway %s", liveStatus.Upstream.MAC, liveStatus.Upstream.Address, liveStatus.Upstream.Gateway)}
+				publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "FAIL", Detail: fmt.Sprintf("installed firewall ruleset drift: %+v", diff)}
 			} else {
 				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "PASS", Detail: fmt.Sprintf("MAC %s address %s gateway %s", liveStatus.Upstream.MAC, liveStatus.Upstream.Address, liveStatus.Upstream.Gateway)}
-				if len(plan.Publications) == 0 {
+				if len(livePlan.Publications) == 0 {
 					publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "STATIC PASS", Detail: "no upstream publication is configured"}
 				} else {
-					parts := make([]string, 0, len(plan.Publications))
-					for _, publication := range plan.Publications {
+					parts := make([]string, 0, len(livePlan.Publications))
+					for _, publication := range livePlan.Publications {
 						parts = append(parts, fmt.Sprintf("%s:%d/%s -> %s", strings.Split(liveStatus.Upstream.Address, "/")[0], publication.Port, publication.Protocol, publication.Destination))
 					}
 					publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "PASS", Detail: strings.Join(parts, ", ")}

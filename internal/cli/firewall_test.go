@@ -41,6 +41,19 @@ func TestGatewayStatusScriptDoesNotDependOnInterfaceEnumeration(t *testing.T) {
 	}
 }
 
+func TestGatewayStatusScriptRejectsAmbiguousUpstreamState(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "images", "firewall", "runtime", "inspect-firewall.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{"count == 1", `print "ambiguous"`} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("gateway status script does not reject ambiguous upstream state with %q", expected)
+		}
+	}
+}
+
 func TestRemoteShellQuoteKeepsFirewallFiltersData(t *testing.T) {
 	value := "HOME' ; id > /tmp/unexpected"
 	quoted := remoteShellQuote(value)
