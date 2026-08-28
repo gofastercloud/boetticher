@@ -2,6 +2,7 @@
   "Dhcp4": {
     "interfaces-config": { "interfaces": ["trusted0", "servers0", "sandbox0", "mgmt0"] },
     "control-socket": { "socket-type": "unix", "socket-name": "/run/kea/kea4-ctrl-socket" },
+    "dhcp-ddns": { "enable-updates": true, "server-ip": "127.0.0.1", "server-port": 53001 },
     "lease-database": { "type": "memfile", "persist": true, "name": "/var/lib/kea/kea-leases4.csv" },
     "valid-lifetime": 86400,
     "renew-timer": 43200,
