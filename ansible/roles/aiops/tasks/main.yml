@@ -148,7 +148,19 @@
     mode: '0640'
     content: "{{ {'hosts': {'lab-fw-01': ['kea-dhcp4.service', 'nftables.service'], 'lab-dns-01': ['blocky.service', 'pdns.service', 'chrony.service'], 'lab-dns-02': ['blocky.service', 'pdns.service', 'chrony.service'], 'lab-monitor-01': ['pulse.service'], 'lab-log-01': ['systemd-journal-remote.service', 'boetticher-log-query.service'], 'lab-litellm-01': ['litellm.service', 'nginx.service'], 'lab-aiops-01': ['boetticher-aiops.service', 'holmes.service']}} | to_nice_json }}"
 
-- name: Enable AIOps only after runtime credentials and endpoint identity exist
+- name: Keep AIOps stopped until every activation gate is proven
+  ansible.builtin.service:
+    name: "{{ item }}"
+    enabled: false
+    state: stopped
+  loop: [boetticher-aiops, boetticher-aiops.socket, holmes]
+  when: not (
+    aiops_runtime_credentials_ready | default(false) | bool
+    and aiops_server_identity_ready | default(false) | bool
+    and aiops_model_alias_qualified | default(false) | bool
+    )
+
+- name: Enable AIOps only after credentials, endpoint identity, metadata and live canary qualification exist
   ansible.builtin.service:
     name: "{{ item }}"
     enabled: true
@@ -157,3 +169,4 @@
   when:
     - aiops_runtime_credentials_ready | default(false) | bool
     - aiops_server_identity_ready | default(false) | bool
+    - aiops_model_alias_qualified | default(false) | bool
