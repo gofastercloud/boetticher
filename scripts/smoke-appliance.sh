@@ -120,6 +120,18 @@ case "$name" in
       exit 1
     fi
     ;;
+  boetticher-streamdeck)
+    run /opt/streamdeck/bin/python --version
+    chroot "$rootfs" /opt/streamdeck/bin/python -c 'import httpx, PIL, StreamDeck; assert PIL.__version__ == "11.3.0"; assert httpx.__version__ == "0.28.1"'
+    chroot "$rootfs" getent passwd streamdeck | grep -Fq ':2200:2200:'
+    chroot "$rootfs" dpkg-query -W -f='${Status}' libhidapi-libusb0 | grep -Fq 'install ok installed'
+    test -f "$rootfs/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    test -f "$rootfs/etc/systemd/system/streamdeck-status.service"
+    grep -Fq 'DevicePolicy=closed' "$rootfs/etc/systemd/system/streamdeck-status.service"
+    grep -Fq 'NoNewPrivileges=yes' "$rootfs/etc/systemd/system/streamdeck-status.service"
+    test ! -e "$rootfs/etc/boetticher/streamdeck.json"
+    if grep -R -n -E 'pulse-token|Authorization: Bearer' "$rootfs/etc" "$rootfs/opt/streamdeck" 2>/dev/null; then echo "streamdeck artifact contains credential material" >&2; exit 1; fi
+    ;;
   *)
     echo "unknown smoke target: $name" >&2
     exit 2

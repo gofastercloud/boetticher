@@ -18,6 +18,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/model"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 	"github.com/gofastercloud/boetticher/internal/storage"
+	"github.com/gofastercloud/boetticher/internal/usbexport"
 )
 
 type GuestKind string
@@ -28,26 +29,27 @@ const (
 )
 
 type GuestPlan struct {
-	VMID       int                                 `json:"vmid"`
-	Name       string                              `json:"name"`
-	Kind       GuestKind                           `json:"kind"`
-	Hostname   string                              `json:"hostname"`
-	Zone       string                              `json:"zone"`
-	Address    string                              `json:"address"`
-	Gateway    string                              `json:"gateway"`
-	VLAN       int                                 `json:"vlan"`
-	Cores      int                                 `json:"cores"`
-	MemoryMiB  int                                 `json:"memory_mib"`
-	DiskGiB    int                                 `json:"disk_gib"`
-	Monitoring bool                                `json:"monitoring"`
-	Backup     bool                                `json:"backup"`
-	Tags       []string                            `json:"tags,omitempty"`
-	NICs       []GuestNIC                          `json:"nics,omitempty"`
-	Owner      string                              `json:"owner,omitempty"`
-	Artifact   model.Artifact                      `json:"artifact,omitempty"`
-	Persistent []model.PersistentState             `json:"persistent,omitempty"`
-	Volumes    []model.PersistentVolumeDeclaration `json:"volumes,omitempty"`
-	Security   model.GuestSecurityDeclaration      `json:"security,omitempty"`
+	VMID            int                                 `json:"vmid"`
+	Name            string                              `json:"name"`
+	Kind            GuestKind                           `json:"kind"`
+	Hostname        string                              `json:"hostname"`
+	Zone            string                              `json:"zone"`
+	Address         string                              `json:"address"`
+	Gateway         string                              `json:"gateway"`
+	VLAN            int                                 `json:"vlan"`
+	Cores           int                                 `json:"cores"`
+	MemoryMiB       int                                 `json:"memory_mib"`
+	DiskGiB         int                                 `json:"disk_gib"`
+	Monitoring      bool                                `json:"monitoring"`
+	Backup          bool                                `json:"backup"`
+	Tags            []string                            `json:"tags,omitempty"`
+	NICs            []GuestNIC                          `json:"nics,omitempty"`
+	Owner           string                              `json:"owner,omitempty"`
+	Artifact        model.Artifact                      `json:"artifact,omitempty"`
+	Persistent      []model.PersistentState             `json:"persistent,omitempty"`
+	Volumes         []model.PersistentVolumeDeclaration `json:"volumes,omitempty"`
+	Security        model.GuestSecurityDeclaration      `json:"security,omitempty"`
+	ManagedUSBSlots []string                            `json:"managed_usb_slots,omitempty"`
 }
 
 type GuestNIC struct {
@@ -355,6 +357,14 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	if s.StorageProfile == "dedicated-data-disk" {
 		guestStorage = storage.GuestStorageID
 	}
+	usbManifests, err := usbexport.PlanFromSite(s)
+	if err != nil {
+		return Plan{}, err
+	}
+	usbSlots := map[int][]string{}
+	for _, manifest := range usbManifests {
+		usbSlots[manifest.VMID] = append([]string(nil), manifest.ManagedSlots...)
+	}
 	guests := make([]GuestPlan, 0, len(s.PlatformComponents()))
 	for _, component := range s.PlatformComponents() {
 		if component.VMID == 0 {
@@ -364,7 +374,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 			VMID: component.VMID, Name: component.Name, Hostname: component.Hostname, Zone: component.Zone,
 			Address: component.Address, Gateway: gatewayFor(component.Zone), VLAN: vlanFor(s, component.Zone),
 			Kind: KindLXC, Cores: 2, MemoryMiB: 1024, DiskGiB: 8,
-			Monitoring: component.Monitoring, Backup: component.Backup, Tags: componentTags(s, component.Name),
+			Monitoring: component.Monitoring, Backup: component.Backup, Tags: componentTags(s, component.Name), ManagedUSBSlots: usbSlots[component.VMID],
 		}
 		if component.Module != "" {
 			declarationFound := false
@@ -376,6 +386,17 @@ func PlanFromSite(s model.Site) (Plan, error) {
 					guest.Persistent = persistentForGuest(declaration.Persistent, component.Name)
 					guest.Volumes = volumesForGuest(declaration.Volumes, component.Name)
 					guest.Security = declaration.Security
+					guest.Security.Devices = append([]model.DeviceRequirement(nil), declaration.Security.Devices...)
+					sort.SliceStable(guest.Security.Devices, func(i, j int) bool {
+						left, right := guest.Security.Devices[i].Name, guest.Security.Devices[j].Name
+						if left == "" {
+							left = guest.Security.Devices[i].Path
+						}
+						if right == "" {
+							right = guest.Security.Devices[j].Path
+						}
+						return left < right
+					})
 					for index := range guest.Volumes {
 						for _, resolved := range storagePlan.Volumes {
 							if resolved.Module == guest.Volumes[index].Module && resolved.Name == guest.Volumes[index].Name && resolved.Guest == guest.Volumes[index].Guest {
@@ -1756,8 +1777,14 @@ func validateExistingGuestIdentityFields(current map[string]any, expected GuestP
 		for key := range current {
 			if strings.HasPrefix(key, "dev") && len(key) > len("dev") && key[3] >= '0' && key[3] <= '9' {
 				index := int(key[3] - '0')
-				if index >= len(expected.Security.Devices) {
+				if index >= len(expected.Security.Devices) && !stringIn(expected.ManagedUSBSlots, key) {
 					return fmt.Errorf("HOLD: guest %s has an undeclared device allowance %s", expected.Name, key)
+				}
+				if stringIn(expected.ManagedUSBSlots, key) {
+					observed, _ := current[key].(string)
+					if !validManagedUSBDeviceValue(observed) {
+						return fmt.Errorf("HOLD: guest %s has unsafe managed USB allowance %s=%q", expected.Name, key, observed)
+					}
 				}
 			}
 		}
@@ -1774,6 +1801,23 @@ func validateExistingGuestIdentityFields(current map[string]any, expected GuestP
 		}
 	}
 	return nil
+}
+
+func stringIn(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func validManagedUSBDeviceValue(value string) bool {
+	parts := strings.Split(value, ",")
+	if len(parts) != 4 || !strings.HasPrefix(parts[0], "/dev/bus/usb/") {
+		return false
+	}
+	return parts[1] == "uid=2200" && parts[2] == "gid=2200" && parts[3] == "mode=0660"
 }
 
 func observedTruthy(value any) bool {

@@ -6,7 +6,7 @@ set -eu
 # image tooling is attempted.
 target=${1:-images}
 case "$target" in
-  image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|images) ;;
+  image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-streamdeck|images) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
@@ -431,6 +431,24 @@ build_litellm() {
   package_lxc boetticher-litellm
 }
 
+build_streamdeck() {
+  printf '%s\n' 'boetticher build stage: streamdeck'
+  rootfs=$(prepare_rootfs boetticher-streamdeck)
+  install_packages "$rootfs" python3=3.13.5-1 python3-venv=3.13.5-1 python3-pip=25.1.1+dfsg-1 libhidapi-libusb0 fonts-dejavu-core
+  chroot "$rootfs" groupadd --system --gid 2200 streamdeck
+  chroot "$rootfs" useradd --system --uid 2200 --gid 2200 --home-dir /var/lib/streamdeck --create-home --shell /usr/sbin/nologin streamdeck
+  chroot "$rootfs" python3 -m venv /opt/streamdeck
+  install -D -m 0644 images/streamdeck/runtime/requirements.lock "$rootfs/tmp/streamdeck-requirements.lock"
+  mkdir -p "$rootfs/usr/src/boetticher-streamdeck"
+  cp -a services/streamdeck/pyproject.toml services/streamdeck/src "$rootfs/usr/src/boetticher-streamdeck/"
+  chroot "$rootfs" /opt/streamdeck/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/streamdeck-requirements.lock
+  chroot "$rootfs" /opt/streamdeck/bin/pip install --no-cache-dir --no-deps --no-build-isolation /usr/src/boetticher-streamdeck
+  install -D -m 0644 images/streamdeck/runtime/streamdeck-status.service "$rootfs/etc/systemd/system/streamdeck-status.service"
+  rm -rf "$rootfs/usr/src/boetticher-streamdeck" "$rootfs/tmp/streamdeck-requirements.lock"
+  write_artifact_identity "$rootfs" streamdeck
+  package_lxc boetticher-streamdeck
+}
+
 build_firewall() {
   printf '%s\n' 'boetticher build stage: firewall'
   for tool in qemu-img virt-customize virt-cat sha512sum; do
@@ -501,6 +519,7 @@ case "$target" in
   image-portal) [ -f "$(artifact_for boetticher-base)" ] || build_base; build_portal ;;
   image-tailnet-router) [ -f "$(artifact_for boetticher-base)" ] || build_base; build_tailnet_router ;;
   image-litellm) [ -f "$(artifact_for boetticher-base)" ] || build_base; build_litellm ;;
+  image-streamdeck) [ -f "$(artifact_for boetticher-base)" ] || build_base; build_streamdeck ;;
   image-dns-adguard) echo "HOLD: AdGuard provider qualification is outside the default Blocky readiness tranche" >&2; exit 2 ;;
   image-firewall) build_firewall ;;
   images)
@@ -511,6 +530,7 @@ case "$target" in
     build_portal
     build_tailnet_router
     build_litellm
+    build_streamdeck
     build_firewall
     ;;
 esac
