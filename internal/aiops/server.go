@@ -23,7 +23,6 @@ type Server struct {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
-	mux.HandleFunc("GET /v1/status", s.status)
 	mux.HandleFunc("POST /v1/pulse/events", s.admit)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'none'")
@@ -34,15 +33,6 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "healthy"})
-}
-
-func (s *Server) status(w http.ResponseWriter, r *http.Request) {
-	status, err := s.Store.Status(r.Context(), s.now())
-	if err != nil {
-		http.Error(w, "status unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	writeJSON(w, http.StatusOK, status)
 }
 
 func (s *Server) admit(w http.ResponseWriter, r *http.Request) {

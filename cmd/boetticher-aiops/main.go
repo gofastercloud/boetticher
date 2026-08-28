@@ -4,12 +4,13 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/aiops"
@@ -17,18 +18,24 @@ import (
 
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "status" {
-		store, err := aiops.OpenStore("/var/lib/boetticher/aiops/incidents.db")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:8443/v1/status", nil)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		defer store.Close()
-		status, err := store.Status(context.Background(), time.Now())
+		response, err := aiops.NewBoundedHTTPClient(http.DefaultTransport).Do(request)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, "AIOps adapter status unavailable")
 			os.Exit(1)
 		}
-		if err := json.NewEncoder(os.Stdout).Encode(status); err != nil {
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusOK || !strings.HasPrefix(response.Header.Get("Content-Type"), "application/json") {
+			fmt.Fprintln(os.Stderr, "AIOps adapter status unavailable")
+			os.Exit(1)
+		}
+		if _, err := io.Copy(os.Stdout, io.LimitReader(response.Body, 64*1024)); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -88,7 +95,7 @@ func run() error {
 	}
 	capabilities := aiops.NewCapabilityRegistry()
 	broker := &aiops.Broker{
-		Capabilities: capabilities, Evidence: evidence, Router: routerClient,
+		Capabilities: capabilities, Evidence: evidence, Router: routerClient, Store: store,
 		RouterURL: os.Getenv("AIOPS_ROUTER_URL"), ModelAlias: os.Getenv("AIOPS_MODEL_ALIAS"), RouterIdentity: "boetticher-holmes-active-investigation",
 	}
 	if err := broker.Validate(); err != nil {
