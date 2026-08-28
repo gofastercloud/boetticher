@@ -197,3 +197,20 @@
     - pulse
     - nginx
   when: inventory_hostname == 'lab-monitor-01'
+
+- name: Inspect Pulse service state after runtime configuration
+  ansible.builtin.command: systemctl show pulse --property=ActiveState --property=SubState --value
+  register: pulse_service_state
+  changed_when: false
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Restart Pulse after credential projection or an unhealthy start
+  ansible.builtin.systemd_service:
+    name: pulse
+    state: restarted
+    daemon_reload: true
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - >-
+      (boetticher_credential_dropin_install is changed) or
+      (pulse_service_state.stdout_lines | default([]) != ['active', 'running'])

@@ -215,6 +215,7 @@
   loop: "{{ (credential_dropins[inventory_hostname] | default({})) | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
+  register: boetticher_credential_dropin_install
   notify: reload systemd
 
 - name: Install Pulse host-agent hardware collection dependencies
