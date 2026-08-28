@@ -669,6 +669,9 @@ func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *tes
 	if !strings.Contains(buildText, `timing_emit "artifact_build_all"`) || !strings.Contains(buildText, "pid_a=") || !strings.Contains(buildText, "pid_b=") || !strings.Contains(buildText, "memory-heavy") {
 		t.Fatal("image construction is missing explicit bounded worker scheduling")
 	}
+	if strings.Count(buildText, "image-tailnet-router|image-litellm|image-aiops") != 2 {
+		t.Fatal("AIOps is not accepted by both direct and selected image target validation")
+	}
 	if !strings.Contains(buildText, "zstd_level=${BOETTICHER_ZSTD_LEVEL:-19}") || !strings.Contains(buildText, `zstd -T0 "-$zstd_level"`) || !strings.Contains(buildText, `measurement_emit "artifact_compression"`) {
 		t.Fatal("artifact compression does not expose bounded measurement levels with the existing default")
 	}
