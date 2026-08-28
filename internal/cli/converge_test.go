@@ -113,6 +113,16 @@ func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 	}
 }
 
+func TestPulseUsesTheProxmoxCertificateHostname(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `Name: model.LogicalProxmoxIdentity, Host: "https://proxmox:8006"`) {
+		t.Fatal("Pulse reconciliation does not use the hostname covered by the default Proxmox certificate")
+	}
+}
+
 func TestRuntimeBoundaryAcceptsRelativeSiteDirectory(t *testing.T) {
 	site := model.NewDefaultSite("trial", "age1trial")
 	if err := checkRuntimeBoundary("relative-site", site); err != nil {

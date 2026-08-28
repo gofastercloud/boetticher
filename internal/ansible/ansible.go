@@ -164,6 +164,7 @@ func Variables(s model.Site) ([]byte, error) {
 	value := struct {
 		ModelRevision               string                        `json:"model_revision"`
 		Domain                      string                        `json:"domain"`
+		ProxmoxManagementAddress    string                        `json:"proxmox_management_address"`
 		IPv4Only                    bool                          `json:"ipv4_only"`
 		AuthoritativeDNS            string                        `json:"authoritative_dns"`
 		AuthoritativeDNSVersion     string                        `json:"authoritative_dns_version"`
@@ -187,7 +188,7 @@ func Variables(s model.Site) ([]byte, error) {
 		LoggingCollectorCertificate string                        `json:"logging_collector_certificate"`
 		ModuleConfigs               map[string]model.ModuleConfig `json:"module_configs"`
 		ModuleDeclarations          []model.ModuleDeclaration     `json:"module_declarations"`
-	}{revision, s.Network.Domain, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), loggingUploads, map[string]string{}, "", s.ModuleConfig, s.Declarations}
+	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), loggingUploads, map[string]string{}, "", s.ModuleConfig, s.Declarations}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err
