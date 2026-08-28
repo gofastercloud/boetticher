@@ -227,7 +227,7 @@ func TestConfigureAIOpsWebhookUsesExactDestinationAndTemplate(t *testing.T) {
 		case "/api/system/settings/update":
 			var request map[string]string
 			_ = json.NewDecoder(r.Body).Decode(&request)
-			if request["webhookAllowedPrivateCIDRs"] != "10.10.20.70/32" {
+			if request["webhookAllowedPrivateCIDRs"] != "10.10.20.90/32" {
 				return fakeResponse(r, http.StatusBadRequest, "broad CIDR", nil), nil
 			}
 			return fakeResponse(r, http.StatusOK, `{}`, nil), nil
@@ -253,7 +253,7 @@ func TestConfigureAIOpsWebhookUsesExactDestinationAndTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.ConfigureAIOpsWebhook(context.Background(), "https://aiops.example.test/v1/pulse/events", "0123456789abcdef0123456789abcdef", "10.10.20.70/32"); err != nil || !updated {
+	if err := client.ConfigureAIOpsWebhook(context.Background(), "https://aiops.example.test/v1/pulse/events", "0123456789abcdef0123456789abcdef", "10.10.20.90/32"); err != nil || !updated {
 		t.Fatalf("ConfigureAIOpsWebhook() updated=%v err=%v", updated, err)
 	}
 	if err := client.ConfigureAIOpsWebhook(context.Background(), "https://attacker.example/other", "0123456789abcdef0123456789abcdef", "10.0.0.0/8"); err == nil {
