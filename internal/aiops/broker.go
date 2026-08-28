@@ -35,7 +35,7 @@ type Capability struct {
 	Policy         EvidencePolicy
 	EvidenceCalls  int
 	EvidenceBytes  int
-	Issued         map[string]bool
+	Issued         map[string]EvidenceReference
 	RouterRequests int
 }
 
@@ -59,7 +59,7 @@ func (r *CapabilityRegistry) Issue(policy EvidencePolicy, now time.Time) (string
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.caps[token] = &Capability{Token: token, IncidentID: policy.IncidentID, ExpiresAt: now.UTC().Add(MaxInvestigationTime), Policy: policy, Issued: map[string]bool{}}
+	r.caps[token] = &Capability{Token: token, IncidentID: policy.IncidentID, ExpiresAt: now.UTC().Add(MaxInvestigationTime), Policy: policy, Issued: map[string]EvidenceReference{}}
 	return token, nil
 }
 
@@ -91,28 +91,67 @@ func (r *CapabilityRegistry) use(token string, now time.Time, evidence bool) (*C
 	return capability, nil
 }
 
-func (r *CapabilityRegistry) record(token, reference string, size int) error {
+func (r *CapabilityRegistry) useActive(now time.Time) (*Capability, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var active *Capability
+	for token, capability := range r.caps {
+		if now.After(capability.ExpiresAt) {
+			delete(r.caps, token)
+			continue
+		}
+		if active != nil {
+			return nil, errors.New("ambiguous active investigation")
+		}
+		active = capability
+	}
+	if active == nil {
+		return nil, errors.New("no active investigation")
+	}
+	active.RouterRequests++
+	if active.RouterRequests > MaxHolmesSteps {
+		return nil, errors.New("Holmes step budget exhausted")
+	}
+	return active, nil
+}
+
+func (r *CapabilityRegistry) record(token string, evidence EvidenceReference) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	capability, ok := r.caps[token]
 	if !ok {
 		return errors.New("capability was revoked")
 	}
-	if size < 0 || capability.EvidenceBytes+size > MaxEvidenceBytes {
+	if evidence.Bytes < 0 || capability.EvidenceBytes+evidence.Bytes > MaxEvidenceBytes {
 		return errors.New("evidence byte budget exhausted")
 	}
-	capability.EvidenceBytes += size
-	capability.Issued[reference] = true
+	capability.EvidenceBytes += evidence.Bytes
+	capability.Issued[evidence.Reference] = evidence
 	return nil
 }
 
+func (r *CapabilityRegistry) Snapshot(token string) ([]EvidenceReference, int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	capability, ok := r.caps[token]
+	if !ok {
+		return nil, 0, errors.New("capability was revoked")
+	}
+	references := make([]EvidenceReference, 0, len(capability.Issued))
+	for _, reference := range capability.Issued {
+		references = append(references, reference)
+	}
+	return references, capability.RouterRequests, nil
+}
+
 type Broker struct {
-	Capabilities *CapabilityRegistry
-	Evidence     EvidenceSource
-	Router       *http.Client
-	RouterURL    string
-	ModelAlias   string
-	Now          func() time.Time
+	Capabilities   *CapabilityRegistry
+	Evidence       EvidenceSource
+	Router         *http.Client
+	RouterURL      string
+	ModelAlias     string
+	RouterIdentity string
+	Now            func() time.Time
 }
 
 func (b *Broker) EvidenceHandler() http.Handler {
@@ -174,11 +213,12 @@ func (b *Broker) queryEvidence(w http.ResponseWriter, r *http.Request) {
 	}
 	digest := sha256.Sum256(data)
 	reference := request.IncidentID + ":" + fmt.Sprint(capability.EvidenceCalls)
-	if err := b.Capabilities.record(token, reference, len(data)); err != nil {
+	metadata := EvidenceReference{Reference: reference, Source: request.Operation, SHA256: hex.EncodeToString(digest[:]), Bytes: len(data), CollectedAt: b.now()}
+	if err := b.Capabilities.record(token, metadata); err != nil {
 		http.Error(w, "evidence budget exhausted", http.StatusTooManyRequests)
 		return
 	}
-	writeJSON(w, http.StatusOK, Evidence{Reference: reference, Source: request.Operation, CollectedAt: b.now(), SHA256: hex.EncodeToString(digest[:]), Data: data})
+	writeJSON(w, http.StatusOK, Evidence{Reference: reference, Source: request.Operation, CollectedAt: metadata.CollectedAt, SHA256: metadata.SHA256, Data: data})
 }
 
 type completionRequest struct {
@@ -199,7 +239,11 @@ func (b *Broker) routeCompletion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if _, err := b.Capabilities.use(token, b.now(), false); err != nil {
+	if len(token) != len(b.RouterIdentity) || subtle.ConstantTimeCompare([]byte(token), []byte(b.RouterIdentity)) != 1 {
+		http.Error(w, "capability denied", http.StatusForbidden)
+		return
+	}
+	if _, err := b.Capabilities.useActive(b.now()); err != nil {
 		http.Error(w, "capability denied", http.StatusForbidden)
 		return
 	}
@@ -243,7 +287,7 @@ func (b *Broker) routeCompletion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Broker) Validate() error {
-	if b.Capabilities == nil || b.Evidence == nil || b.Router == nil || !safeToken(b.ModelAlias) {
+	if b.Capabilities == nil || b.Evidence == nil || b.Router == nil || !safeToken(b.ModelAlias) || !safeToken(b.RouterIdentity) || len(b.RouterIdentity) < 32 {
 		return errors.New("broker requires capabilities, evidence, router, and a safe model alias")
 	}
 	u, err := url.Parse(b.RouterURL)

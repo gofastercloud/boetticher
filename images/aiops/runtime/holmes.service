@@ -5,9 +5,17 @@ After=network.target
 [Service]
 User=holmes
 Group=holmes
-ExecStart=/opt/holmes/bin/holmes serve --host 127.0.0.1 --port 8090 --config /etc/boetticher-aiops/holmes.yaml
+ExecStart=/opt/holmes/bin/python -u /opt/holmes/server.py
 Environment=OPENAI_API_BASE=http://127.0.0.1:8444/v1
+Environment=OPENAI_API_KEY=boetticher-holmes-active-investigation
+Environment=HOLMES_HOST=127.0.0.1
+Environment=HOLMES_PORT=8090
+Environment=HOLMES_CONFIG_PATH=/etc/boetticher-aiops/holmes.yaml
 Environment=HOLMES_DISABLE_STRICT_TOOL_CALLS=false
+Environment=HOLMES_TOOL_RESULT_STORAGE_ENABLED=false
+Environment=OVERRIDE_MAX_OUTPUT_TOKEN=1200
+Environment=TRACE_TOKEN_USAGE=false
+Environment=LOG_LEVEL=WARNING
 NoNewPrivileges=true
 CapabilityBoundingSet=
 ProtectSystem=strict

@@ -126,6 +126,8 @@ litellm_python_package_version=3.13.5-1
 litellm_python_venv_package_version=3.13.5-1
 litellm_pip_package_version=25.1.1+dfsg-1
 litellm_nginx_package_version=1.26.3-3+deb13u7
+holmes_source_url=https://github.com/HolmesGPT/holmesgpt/archive/refs/tags/0.40.0.tar.gz
+holmes_source_sha256=3465cd634b0e478f058b026b37caa3b8f10651f7aa9058dc73368b5403f0fb3d
 mkdir -p "$output_root" "$work_root"
 
 provenance_path="$(dirname "$output_root")/builder-provenance.json"
@@ -424,7 +426,7 @@ build_logging() {
   install_packages "$rootfs" systemd-journal-remote
   CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/libexec/boetticher-log-query" ./cmd/boetticher-log-query
   install -D -m 0644 images/logging/runtime/boetticher-log-query.service "$rootfs/etc/systemd/system/boetticher-log-query.service"
-  chroot "$rootfs" useradd --system --no-create-home --shell /usr/sbin/nologin boetticher-log-query
+  chroot "$rootfs" useradd --system --user-group --no-create-home --shell /usr/sbin/nologin boetticher-log-query
   write_artifact_identity "$rootfs" logging
   package_lxc boetticher-logging
 }
@@ -554,6 +556,14 @@ build_aiops() {
   install -D -m 0644 images/aiops/runtime/requirements.lock "$rootfs/tmp/aiops-requirements.lock"
   chroot "$rootfs" /opt/holmes/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/aiops-requirements.lock
   chroot "$rootfs" /opt/holmes/bin/python -c 'import importlib.metadata; assert importlib.metadata.version("holmesgpt") == "0.40.0"'
+  holmes_archive="$work_root/holmesgpt-0.40.0.tar.gz"
+  curl --fail --location --silent --show-error --output "$holmes_archive" "$holmes_source_url"
+  printf '%s  %s\n' "$holmes_source_sha256" "$holmes_archive" | sha256sum --check --status - || {
+    echo "HOLD: HolmesGPT 0.40.0 source archive failed SHA-256 verification" >&2
+    return 2
+  }
+  tar -xOf "$holmes_archive" holmesgpt-0.40.0/server.py > "$rootfs/opt/holmes/server.py"
+  chmod 0644 "$rootfs/opt/holmes/server.py"
   rm -f "$rootfs/tmp/aiops-requirements.lock"
   CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/libexec/boetticher-aiops" ./cmd/boetticher-aiops
   chroot "$rootfs" useradd --system --home-dir /var/lib/boetticher/aiops --shell /usr/sbin/nologin boetticher-aiops

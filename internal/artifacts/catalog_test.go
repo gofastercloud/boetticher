@@ -500,7 +500,7 @@ func TestArtifactDefinitionDigestBindsBuildInputs(t *testing.T) {
 
 func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	root := filepath.Join("..", "..", "images")
-	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "dns/adguard/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "portal/image.yaml", "tailnet-router/image.yaml", "litellm/image.yaml"}
+	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "dns/adguard/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "portal/image.yaml", "tailnet-router/image.yaml", "litellm/image.yaml", "aiops/image.yaml"}
 	for _, relative := range paths {
 		data, err := os.ReadFile(filepath.Join(root, relative))
 		if err != nil {
@@ -716,6 +716,51 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	}
 	if !strings.Contains(string(smokeFirewall), `"definition_sha256"[[:space:]]*:[[:space:]]*"[a-fA-F0-9]{64}"`) {
 		t.Fatal("firewall smoke check does not accept compact JSON artifact identity")
+	}
+}
+
+func TestAIOpsArtifactPinsUnmodifiedHolmesAndIsolation(t *testing.T) {
+	root := filepath.Join("..", "..")
+	definition, err := os.ReadFile(filepath.Join(root, "images", "aiops", "image.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := os.ReadFile(filepath.Join(root, "images", "aiops", "runtime", "requirements.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := os.ReadFile(filepath.Join(root, "images", "aiops", "runtime", "holmes.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := os.ReadFile(filepath.Join(root, "images", "aiops", "runtime", "holmes.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, err := os.ReadFile(filepath.Join(root, "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := []struct {
+		name string
+		text string
+		want []string
+	}{
+		{"definition", string(definition), []string{"holmesgpt: 0.40.0", "https://github.com/HolmesGPT/holmesgpt/archive/refs/tags/0.40.0.tar.gz", "3465cd634b0e478f058b026b37caa3b8f10651f7aa9058dc73368b5403f0fb3d", "holmes_network: loopback-only"}},
+		{"lock", string(lock), []string{"holmesgpt==0.40.0", "--hash=sha256:"}},
+		{"service", string(service), []string{"/opt/holmes/bin/python -u /opt/holmes/server.py", "HOLMES_HOST=127.0.0.1", "HOLMES_TOOL_RESULT_STORAGE_ENABLED=false", "OVERRIDE_MAX_OUTPUT_TOKEN=1200", "IPAddressDeny=any", "IPAddressAllow=localhost"}},
+		{"config", string(config), []string{"max_steps: 12", "internet:\n    enabled: false", "http://127.0.0.1:8443", "/v1/evidence/query", "methods:\n            - POST"}},
+		{"build", string(build), []string{"holmes_source_sha256=3465cd634b0e478f058b026b37caa3b8f10651f7aa9058dc73368b5403f0fb3d", "sha256sum --check --status", "holmesgpt-0.40.0/server.py"}},
+	}
+	for _, check := range checks {
+		for _, required := range check.want {
+			if !strings.Contains(check.text, required) {
+				t.Errorf("%s is missing %q", check.name, required)
+			}
+		}
+	}
+	if strings.Contains(string(service), "holmes serve") {
+		t.Fatal("AIOps uses the nonexistent Holmes 0.40.0 wheel serve command")
 	}
 }
 

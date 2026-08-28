@@ -71,6 +71,9 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 	case "logging":
 		declaration.NetworkIntents = []model.NetworkIntent{{Source: "boetticher-managed-endpoints", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"}}
 		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "logs." + site.Network.Domain, SANs: []string{"logs." + site.Network.Domain}, Consumer: "systemd-journal-remote"})
+		if IsEnabled(site, "aiops") {
+			declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "log-query." + site.Network.Domain, SANs: []string{"logs." + site.Network.Domain, "lab-log-01." + site.Network.Domain}, Consumer: "boetticher-log-query"})
+		}
 		declaration.Portal = []model.PortalEntry{{Name: "logging", Description: "Central systemd journal collection", Docs: []string{"docs/operations/logs.md"}}}
 	case "tailnet-router":
 		declaration.Secrets = []model.SecretDeclaration{{Name: "tailscale_auth_key", Purpose: "initial Tailscale registration or re-registration", Consumer: "tailscaled", Generation: "operator-supplied", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file"}}
@@ -148,9 +151,9 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 			{Name: "aiops_webhook_secret", Purpose: "authenticate Pulse alert admission", Consumer: "boetticher-aiops", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential"},
 			{Name: "aiops_pulse_read_token", Purpose: "read bounded Pulse evidence", Consumer: "boetticher-aiops", Generation: "ephemeral", Rotation: "replaceable", Delivery: "systemd-credential"},
 			{Name: "aiops_pulse_note_token", Purpose: "write incident notes only", Consumer: "boetticher-aiops", Generation: "ephemeral", Rotation: "replaceable", Delivery: "systemd-credential"},
-			{Name: "aiops_loopback_secret", Purpose: "authenticate incident-scoped Holmes loopback calls", Consumer: "boetticher-aiops", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential"},
 		}
 		declaration.Certificates = append(declaration.Certificates,
+			model.CertificateRequest{Identity: "aiops." + site.Network.Domain, SANs: []string{"aiops." + site.Network.Domain, "lab-aiops-01." + site.Network.Domain}, Consumer: "boetticher-aiops-server"},
 			model.CertificateRequest{Identity: "aiops-pulse-read", SANs: []string{"aiops-pulse-read." + site.Network.Domain}, Consumer: "boetticher-aiops-pulse-read"},
 			model.CertificateRequest{Identity: "aiops-pulse-note", SANs: []string{"aiops-pulse-note." + site.Network.Domain}, Consumer: "boetticher-aiops-pulse-note"},
 			model.CertificateRequest{Identity: "aiops-log-read", SANs: []string{"aiops-log-read." + site.Network.Domain}, Consumer: "boetticher-aiops-log-read"},

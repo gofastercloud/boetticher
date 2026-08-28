@@ -142,7 +142,14 @@
           ssl_client_certificate /var/lib/boetticher/identity/tls/client-ca.pem;
           ssl_verify_client on;
           ssl_protocols TLSv1.2 TLSv1.3;
+          location = /v1/chat/completions {
+              limit_except POST { deny all; }
+              proxy_pass http://127.0.0.1:4000;
+              proxy_set_header Host $host;
+              proxy_set_header X-Forwarded-Proto https;
+          }
           location / {
+              if ($ssl_client_s_dn ~ "CN=aiops-router-client(?:,|$)") { return 403; }
               proxy_pass http://127.0.0.1:4000;
               proxy_set_header Host $host;
               proxy_set_header X-Forwarded-Proto https;

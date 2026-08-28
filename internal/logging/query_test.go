@@ -2,9 +2,23 @@ package logging
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"reflect"
 	"testing"
 )
+
+func TestVerifyQueryClientRequiresExactAIOpsIdentity(t *testing.T) {
+	if err := VerifyQueryClient(tls.ConnectionState{PeerCertificates: []*x509.Certificate{{Subject: pkix.Name{CommonName: AIOpsLogClientIdentity}}}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, identity := range []string{"operator", "aiops-log-read.attacker", ""} {
+		if err := VerifyQueryClient(tls.ConnectionState{PeerCertificates: []*x509.Certificate{{Subject: pkix.Name{CommonName: identity}}}}); err == nil {
+			t.Fatalf("identity %q was accepted", identity)
+		}
+	}
+}
 
 func TestJournalQueryIsTypedAndBounded(t *testing.T) {
 	policy := QueryPolicy{Hosts: map[string][]string{"lab-dns-01": {"blocky.service"}}}
