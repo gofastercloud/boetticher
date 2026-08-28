@@ -28,6 +28,15 @@
     - /etc/sudoers.d/boetticher
     - /etc/sudoers.d/boetticher-labadmin
 
+- name: Allow endpoint services to traverse the boetticher runtime state path
+  ansible.builtin.file:
+    path: /var/lib/boetticher
+    state: directory
+    owner: root
+    group: systemd-journal
+    mode: '0750'
+  when: inventory_hostname in logging_upload_configs
+
 - name: Configure Chrony for unprivileged appliances
   ansible.builtin.copy:
     content: "DAEMON_OPTS=\"-x\"\n"
