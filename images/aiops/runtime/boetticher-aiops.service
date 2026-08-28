@@ -1,7 +1,7 @@
 [Unit]
 Description=Boetticher AIOps incident adapter
 After=network-online.target holmes.service
-Requires=boetticher-aiops.socket
+Requires=boetticher-aiops.socket holmes.service
 
 [Service]
 User=boetticher-aiops
