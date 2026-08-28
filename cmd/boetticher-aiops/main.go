@@ -17,22 +17,26 @@ import (
 )
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "status" {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	if len(os.Args) == 2 && (os.Args[1] == "status" || os.Args[1] == "doctor") {
+		timeout := 5 * time.Second
+		if os.Args[1] == "doctor" {
+			timeout = 35 * time.Second
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:8443/v1/status", nil)
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:8443/v1/"+os.Args[1], nil)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 		response, err := aiops.NewBoundedHTTPClient(http.DefaultTransport).Do(request)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "AIOps adapter status unavailable")
+			fmt.Fprintln(os.Stderr, "AIOps adapter diagnostic unavailable")
 			os.Exit(1)
 		}
 		defer response.Body.Close()
 		if response.StatusCode != http.StatusOK || !strings.HasPrefix(response.Header.Get("Content-Type"), "application/json") {
-			fmt.Fprintln(os.Stderr, "AIOps adapter status unavailable")
+			fmt.Fprintln(os.Stderr, "AIOps adapter diagnostic unavailable")
 			os.Exit(1)
 		}
 		if _, err := io.Copy(os.Stdout, io.LimitReader(response.Body, 64*1024)); err != nil {
@@ -96,6 +100,7 @@ func run() error {
 	capabilities := aiops.NewCapabilityRegistry()
 	broker := &aiops.Broker{
 		Capabilities: capabilities, Evidence: evidence, Router: routerClient, Store: store,
+		Readiness: aiops.RuntimeReadiness{Pulse: pulse, Evidence: evidence},
 		RouterURL: os.Getenv("AIOPS_ROUTER_URL"), ModelAlias: os.Getenv("AIOPS_MODEL_ALIAS"), RouterIdentity: "boetticher-holmes-active-investigation",
 	}
 	if err := broker.Validate(); err != nil {
