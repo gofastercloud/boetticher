@@ -62,6 +62,7 @@ var PublicBuildInputs = []string{
 	"cmd/boetticher-log-query",
 	"cmd/qualify-artifact",
 	"cmd/render-blocky-config",
+	"internal/aiops",
 	"internal/artifacts",
 	"internal/dns",
 	"internal/firewall",
