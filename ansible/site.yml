@@ -24,3 +24,5 @@
       when: inventory_hostname in groups.get('tailnet-router', [])
     - role: litellm
       when: inventory_hostname in groups.get('litellm', [])
+    - role: aiops
+      when: inventory_hostname in groups.get('aiops', [])

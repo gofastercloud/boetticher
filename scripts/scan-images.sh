@@ -8,7 +8,7 @@ if ! command -v trivy >/dev/null 2>&1; then
   exit 2
 fi
 
-default_scan_names="boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-firewall boetticher-portal boetticher-tailnet-router boetticher-litellm"
+default_scan_names="boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-firewall boetticher-portal boetticher-tailnet-router boetticher-litellm boetticher-aiops"
 case "$target" in
   scan-base) names="boetticher-base" ;;
   scan-dns-blocky) names="boetticher-dns-blocky" ;;
@@ -19,6 +19,7 @@ case "$target" in
   scan-portal) names="boetticher-portal" ;;
   scan-tailnet-router) names="boetticher-tailnet-router" ;;
   scan-litellm) names="boetticher-litellm" ;;
+  scan-aiops) names="boetticher-aiops" ;;
   scan-images)
     names="$*"
     if [ -z "$names" ]; then
@@ -29,7 +30,7 @@ case "$target" in
 esac
 for name in $names; do
   case "$name" in
-    boetticher-base|boetticher-dns-blocky|boetticher-dns-adguard|boetticher-logging|boetticher-monitoring|boetticher-firewall|boetticher-portal|boetticher-tailnet-router|boetticher-litellm) ;;
+    boetticher-base|boetticher-dns-blocky|boetticher-dns-adguard|boetticher-logging|boetticher-monitoring|boetticher-firewall|boetticher-portal|boetticher-tailnet-router|boetticher-litellm|boetticher-aiops) ;;
     *) echo "unknown selected scan artifact: $name" >&2; exit 2 ;;
   esac
 done
@@ -153,6 +154,7 @@ scan_one() {
     boetticher-portal) module=portal ;;
     boetticher-tailnet-router) module=tailnet-router ;;
     boetticher-litellm) module=litellm ;;
+    boetticher-aiops) module=aiops ;;
   esac
   if [ -n "$provider" ]; then
     GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact \

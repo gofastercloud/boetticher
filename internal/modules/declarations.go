@@ -118,6 +118,7 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 			{Name: "aiops_webhook_secret", Purpose: "authenticate Pulse alert admission", Consumer: "boetticher-aiops", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential"},
 			{Name: "aiops_pulse_read_token", Purpose: "read bounded Pulse evidence", Consumer: "boetticher-aiops", Generation: "ephemeral", Rotation: "replaceable", Delivery: "systemd-credential"},
 			{Name: "aiops_pulse_note_token", Purpose: "write incident notes only", Consumer: "boetticher-aiops", Generation: "ephemeral", Rotation: "replaceable", Delivery: "systemd-credential"},
+			{Name: "aiops_loopback_secret", Purpose: "authenticate incident-scoped Holmes loopback calls", Consumer: "boetticher-aiops", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential"},
 		}
 		declaration.Certificates = append(declaration.Certificates,
 			model.CertificateRequest{Identity: "aiops-pulse-read", SANs: []string{"aiops-pulse-read." + site.Network.Domain}, Consumer: "boetticher-aiops-pulse-read"},
