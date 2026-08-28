@@ -101,6 +101,14 @@ func (e *apiError) Error() string {
 	return fmt.Sprintf("Pulse API returned HTTP %d", e.Status)
 }
 
+// IsUnauthorized reports whether an API request was rejected because its
+// bearer token is no longer accepted. Callers may use this to recover a
+// persisted token without treating other Pulse failures as credential drift.
+func IsUnauthorized(err error) bool {
+	var pulseErr *apiError
+	return errors.As(err, &pulseErr) && pulseErr.Status == http.StatusUnauthorized
+}
+
 func NewReadClient(config ClientConfig) (*Client, error) {
 	if strings.TrimSpace(config.APIToken) == "" {
 		return nil, errors.New("Pulse read client requires an API token")

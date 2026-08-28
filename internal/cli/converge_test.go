@@ -94,6 +94,25 @@ func TestPulseReconciliationForwardUsesRestrictedBastion(t *testing.T) {
 	}
 }
 
+func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		"readTokenRefreshed := false",
+		"pulse.IsUnauthorized(err)",
+		"pulseAdmin.CreateReadToken(context.Background(), \"boetticher monitoring read\")",
+		"site.StorePlatformSecret(*siteDir, s, *ageIdentity, \"pulse_api_token\", readToken)",
+		"verify Pulse state summary after read-token refresh",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Pulse read-token recovery is missing %q", required)
+		}
+	}
+}
+
 func TestRuntimeBoundaryAcceptsRelativeSiteDirectory(t *testing.T) {
 	site := model.NewDefaultSite("trial", "age1trial")
 	if err := checkRuntimeBoundary("relative-site", site); err != nil {

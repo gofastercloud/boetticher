@@ -3,6 +3,7 @@ package pulse
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -129,6 +130,15 @@ func TestAPIErrorDoesNotEchoConfiguredToken(t *testing.T) {
 	_, err = client.Health(context.Background())
 	if err == nil || strings.Contains(err.Error(), "read-token") {
 		t.Fatalf("API error exposed the configured token: %v", err)
+	}
+}
+
+func TestIsUnauthorizedRecognizesWrappedAPIError(t *testing.T) {
+	if !IsUnauthorized(fmt.Errorf("state check: %w", &apiError{Status: http.StatusUnauthorized})) {
+		t.Fatal("wrapped unauthorized Pulse API error was not recognized")
+	}
+	if IsUnauthorized(fmt.Errorf("state check: %w", &apiError{Status: http.StatusForbidden})) {
+		t.Fatal("forbidden Pulse API error was classified as unauthorized")
 	}
 }
 
