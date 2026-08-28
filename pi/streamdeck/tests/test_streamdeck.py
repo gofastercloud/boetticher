@@ -75,6 +75,30 @@ def test_screensaver_application_needs_no_pulse_credentials(tmp_path):
     assert (tmp_path / "key-14.png").exists()
 
 
+def test_next_from_overview_enters_first_guest_page():
+    class Deck:
+        def key_count(self):
+            return 15
+
+    app = Application({"default_page": "overview"}, None)
+    app.actions.put(14)
+    app.navigate(Deck())
+    assert app.page == "guests"
+    assert app.offset == 0
+
+
+def test_next_on_guest_page_advances_by_guest_page_size():
+    class Deck:
+        def key_count(self):
+            return 15
+
+    app = Application({"default_page": "guests"}, None)
+    app.page = "guests"
+    app.actions.put(14)
+    app.navigate(Deck())
+    assert app.offset == 12
+
+
 def test_pulse_rejects_oversized_response():
     client = PulseClient.__new__(PulseClient)
     client.base_url = "https://monitor.example"
@@ -95,18 +119,25 @@ def test_pulse_rejects_oversized_response():
 
 def test_pulse_accepts_optional_metrics():
     def handler(request):
+        assert request.headers["X-API-Token"] == "read-token"
+        if request.url.path.endswith("health"):
+            return httpx.Response(200, json={"status": "healthy"})
         if request.url.path.endswith("summary"):
-            return httpx.Response(200, json={"status": "ok", "alerts": 0})
-        return httpx.Response(200, json={"resources": [{"name": "guest-01", "type": "lxc", "status": "up"}]})
+            return httpx.Response(200, json={"activeAlerts": 2})
+        if request.url.path.endswith("resources"):
+            return httpx.Response(200, json={"resources": [{"name": "guest-01", "type": "lxc", "status": "up"}]})
+        return httpx.Response(404)
 
     client = PulseClient.__new__(PulseClient)
     client.base_url = "https://monitor.example"
     client.total_timeout = 3
     client.client = httpx.Client(transport=httpx.MockTransport(handler))
+    client.client.headers["X-API-Token"] = "read-token"
     try:
         state = client.fetch()
         assert state.resources[0].cpu is None
-        assert state.status == "ok"
+        assert state.status == "healthy"
+        assert state.alerts == 2
         assert state.received_at.tzinfo == timezone.utc
     finally:
         client.client.close()

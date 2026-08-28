@@ -58,11 +58,17 @@ class Application:
         while not self.actions.empty():
             key = self.actions.get()
             if key == count - 3:
-                self.offset = max(0, self.offset - max(1, count - 3))
+                if self.page == "guests" and self.offset == 0:
+                    self.page = "overview"
+                else:
+                    self.offset = max(0, self.offset - max(1, count - 3))
             elif key == count - 2:
                 self.page, self.offset = "overview", 0
             elif key == count - 1:
-                self.page, self.offset = "guests", self.offset + max(1, count - 3)
+                if self.page == "overview":
+                    self.page, self.offset = "guests", 0
+                else:
+                    self.offset += max(1, count - 3)
 
     def render(self, deck) -> None:
         if self.state is None:
