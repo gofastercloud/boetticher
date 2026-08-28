@@ -101,6 +101,10 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	if litellm.ReservedVMIDStart != 210 || litellm.ReservedVMIDEnd != 219 || litellm.Guests[0].VMID != 210 || litellm.Placement.ZoneType != model.ZoneTypeServers {
 		t.Fatalf("litellm identity contract is incomplete: %#v", litellm)
 	}
+	streamdeck, _ := registry.Definition("streamdeck")
+	if streamdeck.ReservedVMIDStart != 220 || streamdeck.ReservedVMIDEnd != 229 || streamdeck.Guests[0].VMID != model.StreamDeckVMID || streamdeck.Placement.ZoneType != model.ZoneTypeServers {
+		t.Fatalf("streamdeck identity contract is incomplete: %#v", streamdeck)
+	}
 	printer, _ := registry.Definition("printer")
 	if printer.ReservedVMIDStart != 230 || printer.ReservedVMIDEnd != 239 || printer.Guests[0].VMID != model.PrinterVMID || printer.Placement.ZoneType != model.ZoneTypeServers {
 		t.Fatalf("printer identity contract is incomplete: %#v", printer)
