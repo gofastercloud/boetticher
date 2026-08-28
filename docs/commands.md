@@ -122,7 +122,7 @@ Usage: `boetticher aiops status [--site DIR] [--live] [--json]`
 
 Arguments: status is the only operation.
 
-Options: --live reads the adapter database through the normal bastion; --json emits machine-readable output.
+Options: --live reads the adapter's loopback status through the normal bastion; --json emits machine-readable output.
 
 Safety: Read-only. No investigation, note, acknowledgement, clearing, restart, or remediation is triggered.
 
@@ -412,7 +412,7 @@ Usage: `boetticher aiops status [--site DIR] [--live] [--json]`
 
 Arguments: status is the only operation.
 
-Options: --live reads the adapter database through the normal bastion; --json emits machine-readable output.
+Options: --live reads the adapter's loopback status through the normal bastion; --json emits machine-readable output.
 
 Safety: Read-only. No investigation, note, acknowledgement, clearing, restart, or remediation is triggered.
 

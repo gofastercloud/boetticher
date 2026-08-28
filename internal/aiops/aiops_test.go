@@ -92,6 +92,12 @@ func TestStatusIsLoopbackOnlyAndAbsentFromWebhookListener(t *testing.T) {
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("external status route = %d", response.Code)
 	}
+	request = httptest.NewRequest(http.MethodGet, "/v1/doctor", nil)
+	response = httptest.NewRecorder()
+	(&Server{Store: store}).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("external doctor route = %d", response.Code)
+	}
 
 	request = httptest.NewRequest(http.MethodGet, "/v1/status", nil)
 	request.RemoteAddr = "127.0.0.1:12345"

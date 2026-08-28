@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	aiopsmodel "github.com/gofastercloud/boetticher/internal/aiops"
 	"github.com/gofastercloud/boetticher/internal/backup"
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/firewall"
@@ -332,6 +333,20 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 				fmt.Fprintf(out, "AIOps                 FAIL %v\n", err)
 			} else {
 				fmt.Fprintln(out, "AIOps                 PASS bounded live status available")
+			}
+			readiness, readinessErr := readAIOpsReadiness(*siteDir, s)
+			if readinessErr != nil {
+				failed = true
+				fmt.Fprintf(out, "AIOps readiness       FAIL %v\n", readinessErr)
+			} else {
+				for _, check := range []struct{ label, name string }{{"Pulse read path", aiopsmodel.ReadinessPulse}, {"Journal query path", aiopsmodel.ReadinessJournal}, {"AI Router alias", aiopsmodel.ReadinessRouter}} {
+					result := readiness.Checks[check.name]
+					if result != "PASS" {
+						failed = true
+						result = "FAIL"
+					}
+					fmt.Fprintf(out, "%-22s %s\n", check.label, result)
+				}
 			}
 		}
 	}
