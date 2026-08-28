@@ -16,8 +16,14 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(modules) != 6 || modules[0].Definition.Name != "firewall" || modules[1].Definition.Name != "dns" || modules[2].Definition.Name != "logging" || modules[3].Definition.Name != "monitoring" || modules[4].Definition.Name != "litellm" || modules[5].Definition.Name != "tailnet-router" {
+	wantOrder := []string{"firewall", "dns", "logging", "monitoring", "litellm", "streamdeck", "tailnet-router"}
+	if len(modules) != len(wantOrder) {
 		t.Fatalf("unexpected module resolution: %#v", modules)
+	}
+	for index, name := range wantOrder {
+		if modules[index].Definition.Name != name {
+			t.Fatalf("module %d = %s, want %s", index, modules[index].Definition.Name, name)
+		}
 	}
 	if len(site.PlatformComponents()) != 7 {
 		t.Fatalf("default composition produced %d platform components", len(site.PlatformComponents()))
@@ -81,7 +87,7 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	if err := registry.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"tailnet-router", "litellm"} {
+	for _, name := range []string{"tailnet-router", "litellm", "streamdeck"} {
 		definition, ok := registry.Definition(name)
 		if !ok || definition.Policy != DefaultOff {
 			t.Fatalf("%s is not a default-off first-party module: %#v", name, definition)
@@ -94,6 +100,10 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	litellm, _ := registry.Definition("litellm")
 	if litellm.ReservedVMIDStart != 210 || litellm.ReservedVMIDEnd != 219 || litellm.Guests[0].VMID != 210 || litellm.Placement.ZoneType != model.ZoneTypeServers {
 		t.Fatalf("litellm identity contract is incomplete: %#v", litellm)
+	}
+	streamdeck, _ := registry.Definition("streamdeck")
+	if streamdeck.ReservedVMIDStart != 220 || streamdeck.ReservedVMIDEnd != 229 || streamdeck.Guests[0].VMID != model.StreamDeckVMID || streamdeck.Placement.ZoneType != model.ZoneTypeServers {
+		t.Fatalf("streamdeck identity contract is incomplete: %#v", streamdeck)
 	}
 }
 

@@ -17,6 +17,7 @@ boetticher ssh-config [--site DIR] [--output PATH| -] [--force] [--check] [--ide
 boetticher access [--site DIR]
 boetticher bootstrap-endpoint show|set ADDRESS [--site DIR]
 boetticher network trunk status|attach|detach [INTERFACE] [--site DIR] [--confirm] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
+boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm]
 boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]
 boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]
 boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]
