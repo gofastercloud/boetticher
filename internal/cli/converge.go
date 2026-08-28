@@ -339,6 +339,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	var monitorCertificate pki.ServerCertificate
 	var litellmCertificate pki.ServerCertificate
+	var aiopsCertificates map[string]string
 	if monitoringEnabled {
 		monitorCSR, readErr := os.ReadFile(filepath.Join(csrDir, "monitor.csr.pem"))
 		if readErr != nil {
@@ -359,6 +360,12 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			return fmt.Errorf("sign LiteLLM endpoint CSR: %w", err)
 		}
 	}
+	if modules.IsEnabled(s, "aiops") {
+		aiopsCertificates, err = signAIOpsCertificates(authority, s, csrDir)
+		if err != nil {
+			return fmt.Errorf("sign AIOps endpoint certificates: %w", err)
+		}
+	}
 	portalCertificate, err := pki.SignServerCSR(authority, string(portalCSR), "portal", s.Network.Domain, []string{"lab-portal-01." + s.Network.Domain}, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("sign portal endpoint CSR: %w", err)
@@ -369,6 +376,9 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	if modules.IsEnabled(s, "litellm") {
 		runtimeVariables["litellm_server_cert_pem"] = litellmCertificate.ChainPEM
+	}
+	for name, certificate := range aiopsCertificates {
+		runtimeVariables[name] = certificate
 	}
 	runtimeVariables["portal_server_cert_pem"] = portalCertificate.ChainPEM
 	runtimeVariables["logging_client_certificates"] = loggingClientCertificates
@@ -659,6 +669,54 @@ func signLoggingCertificates(authority pki.Authority, s model.Site, csrDir strin
 		return nil, "", fmt.Errorf("sign logging collector CSR: %w", err)
 	}
 	return clients, collector.ChainPEM, nil
+}
+
+func signAIOpsCertificates(authority pki.Authority, s model.Site, csrDir string) (map[string]string, error) {
+	now := time.Now().UTC()
+	readCSR := func(name string) (string, error) {
+		data, err := os.ReadFile(filepath.Join(csrDir, name+".csr.pem"))
+		if err != nil {
+			return "", fmt.Errorf("read %s CSR: %w", name, err)
+		}
+		return string(data), nil
+	}
+	serverRequests := []struct {
+		file, identity, variable string
+		aliases                  []string
+	}{
+		{"aiops", "aiops", "aiops_server_cert_pem", []string{"lab-aiops-01." + s.Network.Domain}},
+		{"log-query", "log-query", "log_query_server_cert_pem", []string{"logs." + s.Network.Domain, "lab-log-01." + s.Network.Domain}},
+	}
+	result := make(map[string]string, 6)
+	for _, request := range serverRequests {
+		csr, err := readCSR(request.file)
+		if err != nil {
+			return nil, err
+		}
+		certificate, err := pki.SignServerCSR(authority, csr, request.identity, s.Network.Domain, request.aliases, now)
+		if err != nil {
+			return nil, fmt.Errorf("sign %s CSR: %w", request.file, err)
+		}
+		result[request.variable] = certificate.ChainPEM
+	}
+	clientRequests := []struct{ file, identity, variable string }{
+		{"pulse-read", "aiops-pulse-read", "aiops_pulse_read_cert_pem"},
+		{"pulse-note", "aiops-pulse-note", "aiops_pulse_note_cert_pem"},
+		{"log-query-client", "aiops-log-read", "aiops_log_read_cert_pem"},
+		{"ai-router-client", "aiops-router-client", "aiops_router_client_cert_pem"},
+	}
+	for _, request := range clientRequests {
+		csr, err := readCSR(request.file)
+		if err != nil {
+			return nil, err
+		}
+		certificate, err := pki.SignServiceClientCSR(authority, csr, request.identity, now)
+		if err != nil {
+			return nil, fmt.Errorf("sign %s CSR: %w", request.file, err)
+		}
+		result[request.variable] = certificate.ChainPEM
+	}
+	return result, nil
 }
 
 // installModuleRuntimeConfigs is the deployment boundary for the common

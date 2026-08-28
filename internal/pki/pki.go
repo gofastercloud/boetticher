@@ -92,6 +92,20 @@ func SignClientCSR(authority Authority, csrPEM, name, domain string, now time.Ti
 	if err := ValidateClientName(name); err != nil {
 		return ClientCertificate{}, err
 	}
+	return signClientCSR(authority, csrPEM, name, "client-"+name+"."+domain, now)
+}
+
+// SignServiceClientCSR signs a CSR for one explicitly approved service
+// identity. Unlike endpoint client certificates, these identities are not
+// derived from a guest name and carry no DNS or other subject alternatives.
+func SignServiceClientCSR(authority Authority, csrPEM, identity string, now time.Time) (ClientCertificate, error) {
+	if err := ValidateClientName(identity); err != nil {
+		return ClientCertificate{}, err
+	}
+	return signClientCSR(authority, csrPEM, identity, identity, now)
+}
+
+func signClientCSR(authority Authority, csrPEM, name, wanted string, now time.Time) (ClientCertificate, error) {
 	block, _ := pem.Decode([]byte(csrPEM))
 	if block == nil || block.Type != "CERTIFICATE REQUEST" {
 		return ClientCertificate{}, fmt.Errorf("client CSR PEM block missing")
@@ -103,7 +117,6 @@ func SignClientCSR(authority Authority, csrPEM, name, domain string, now time.Ti
 	if err := csr.CheckSignature(); err != nil {
 		return ClientCertificate{}, fmt.Errorf("verify client CSR signature: %w", err)
 	}
-	wanted := "client-" + name + "." + domain
 	if csr.Subject.CommonName != wanted || len(csr.DNSNames) != 0 || len(csr.IPAddresses) != 0 || len(csr.EmailAddresses) != 0 || len(csr.URIs) != 0 {
 		return ClientCertificate{}, fmt.Errorf("client CSR identity is not approved for %s", name)
 	}

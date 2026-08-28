@@ -19,6 +19,7 @@ import (
 
 const (
 	readScope        = "monitoring:read"
+	writeScope       = "monitoring:write"
 	agentReportScope = "agent:report"
 	maxResponseSize  = 4 << 20
 )
@@ -316,10 +317,21 @@ func (c *Client) ConfigureProxmox(ctx context.Context, config PVEConfig) error {
 }
 
 func (c *Client) CreateReadToken(ctx context.Context, name string) (string, error) {
+	return c.createScopedToken(ctx, name, readScope, "monitoring-read")
+}
+
+// CreateIncidentNoteToken creates the write-scoped token whose effective
+// authority is further restricted to the exact incident-note path by Pulse's
+// mTLS frontend.
+func (c *Client) CreateIncidentNoteToken(ctx context.Context, name string) (string, error) {
+	return c.createScopedToken(ctx, name, writeScope, "incident-note")
+}
+
+func (c *Client) createScopedToken(ctx context.Context, name, scope, purpose string) (string, error) {
 	if !c.admin || strings.TrimSpace(name) == "" {
-		return "", errors.New("Pulse read-token creation requires the admin client and a name")
+		return "", fmt.Errorf("Pulse %s token creation requires the admin client and a name", purpose)
 	}
-	request := map[string]any{"name": name, "scopes": []string{readScope}}
+	request := map[string]any{"name": name, "scopes": []string{scope}}
 	var response struct {
 		Token  string `json:"token"`
 		Record struct {
@@ -327,12 +339,65 @@ func (c *Client) CreateReadToken(ctx context.Context, name string) (string, erro
 		} `json:"record"`
 	}
 	if err := c.adminJSON(ctx, http.MethodPost, "/security/tokens", request, &response); err != nil {
-		return "", fmt.Errorf("create Pulse monitoring-read token: %w", err)
+		return "", fmt.Errorf("create Pulse %s token: %w", purpose, err)
 	}
-	if response.Token == "" || len(response.Record.Scopes) != 1 || response.Record.Scopes[0] != readScope {
-		return "", errors.New("Pulse token response did not prove the monitoring-read scope")
+	if response.Token == "" || len(response.Record.Scopes) != 1 || response.Record.Scopes[0] != scope {
+		return "", fmt.Errorf("Pulse token response did not prove the %s scope", purpose)
 	}
 	return response.Token, nil
+}
+
+const aiopsWebhookTemplate = `{"id":"{{jsonString .ID}}","startTime":"{{jsonString .StartTime}}","resourceId":"{{jsonString .ResourceID}}","type":"{{jsonString .Type}}","level":"{{jsonString .Level}}","message":"{{jsonString .Message}}","status":"{{if eq .Event \"resolved\"}}resolved{{else}}firing{{end}}"}`
+
+// ConfigureAIOpsWebhook reconciles the one Boetticher-owned Pulse webhook.
+// Pulse's own SSRF policy is narrowed to the single AIOps address before the
+// destination and bearer header are stored in Pulse's encrypted state.
+func (c *Client) ConfigureAIOpsWebhook(ctx context.Context, targetURL, bearerSecret, allowedCIDR string) error {
+	if !c.admin || len(bearerSecret) < 32 || allowedCIDR != "10.10.20.70/32" {
+		return errors.New("Pulse AIOps webhook requires admin authority, a bounded secret, and the exact AIOps CIDR")
+	}
+	target, err := url.Parse(targetURL)
+	if err != nil || target.Scheme != "https" || target.Hostname() == "" || target.Path != "/v1/pulse/events" || target.RawQuery != "" || target.Fragment != "" || target.User != nil {
+		return errors.New("Pulse AIOps webhook target must be an exact HTTPS event endpoint")
+	}
+	if err := c.adminJSON(ctx, http.MethodPost, "/system/settings/update", map[string]string{"webhookAllowedPrivateCIDRs": allowedCIDR}, nil); err != nil {
+		return fmt.Errorf("restrict Pulse AIOps webhook destination: %w", err)
+	}
+	type webhook struct {
+		ID       string            `json:"id,omitempty"`
+		Name     string            `json:"name"`
+		URL      string            `json:"url"`
+		Method   string            `json:"method"`
+		Headers  map[string]string `json:"headers"`
+		Enabled  bool              `json:"enabled"`
+		Service  string            `json:"service"`
+		Template string            `json:"template"`
+	}
+	var existing []webhook
+	if err := c.adminJSON(ctx, http.MethodGet, "/notifications/webhooks", nil, &existing); err != nil {
+		return fmt.Errorf("inspect Pulse AIOps webhook: %w", err)
+	}
+	desired := webhook{Name: "boetticher aiops incidents", URL: targetURL, Method: http.MethodPost, Headers: map[string]string{"Authorization": "Bearer " + bearerSecret}, Enabled: true, Service: "generic", Template: aiopsWebhookTemplate}
+	path := "/notifications/webhooks"
+	for _, configured := range existing {
+		if configured.Name != desired.Name {
+			continue
+		}
+		if configured.ID == "" || strings.ContainsAny(configured.ID, "/?#") {
+			return errors.New("Pulse AIOps webhook has an unsafe existing identity")
+		}
+		desired.ID = configured.ID
+		path += "/" + url.PathEscape(configured.ID)
+		break
+	}
+	method := http.MethodPost
+	if desired.ID != "" {
+		method = http.MethodPut
+	}
+	if err := c.adminJSON(ctx, method, path, desired, nil); err != nil {
+		return fmt.Errorf("reconcile Pulse AIOps webhook: %w", err)
+	}
+	return nil
 }
 
 // CreateAgentReportToken creates the least-privilege token used by tagged

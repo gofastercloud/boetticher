@@ -185,7 +185,7 @@
 
 - name: Generate the journal-query server CSR locally
   ansible.builtin.command:
-    argv: [openssl, req, -new, -sha256, -key, /var/lib/boetticher/identity/tls/log-query.key, -subj, "/CN=log-query.{{ domain }}", -addext, "subjectAltName=DNS:logs.{{ domain }},DNS:lab-log-01.{{ domain }}", -out, /var/lib/boetticher/identity/tls/log-query.csr]
+    argv: [openssl, req, -new, -sha256, -key, /var/lib/boetticher/identity/tls/log-query.key, -subj, "/CN=log-query.{{ domain }}", -addext, "subjectAltName=DNS:log-query.{{ domain }},DNS:logs.{{ domain }},DNS:lab-log-01.{{ domain }}", -out, /var/lib/boetticher/identity/tls/log-query.csr]
   args:
     creates: /var/lib/boetticher/identity/tls/log-query.csr
   when:
