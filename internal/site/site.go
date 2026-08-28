@@ -148,10 +148,6 @@ func Init(dir, ageIdentityPath string, externalFirewall bool) (model.Site, error
 
 const initialSiteGitignore = `# Runtime state never belongs in Git
 .runtime/
-.terraform/
-*.tfstate
-*.tfstate.*
-plans/
 caches/
 bootstrap/
 tmp/

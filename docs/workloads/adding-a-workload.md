@@ -1,8 +1,8 @@
 # Adding a workload
 
-Use Proxmox's Web UI, `qm`, `pct`, OpenTofu, Ansible, Pulumi, or another tool
-for user-owned workloads. boetticher does not provide a generic guest
-lifecycle command.
+Use Proxmox's Web UI, `qm`, `pct`, Ansible, Pulumi, or another tool for
+user-owned workloads. boetticher does not provide a generic guest lifecycle
+command.
 
 Create the guest, attach its NIC to `vmbr1`, choose a zone VLAN, and boot. A
 normal DHCP client receives the zone's address, gateway, DNS, NTP, Internet
