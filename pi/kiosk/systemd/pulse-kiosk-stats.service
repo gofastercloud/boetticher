@@ -1,0 +1,16 @@
+[Unit]
+Description=Publish local Raspberry Pi telemetry for the kiosk
+After=local-fs.target
+Before=pulse-kiosk.service
+
+[Service]
+Type=oneshot
+User=kiosk
+Group=kiosk
+ExecStart=/usr/local/libexec/pulse-kiosk-stats
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/kiosk/visualizer
+RestrictAddressFamilies=AF_UNIX

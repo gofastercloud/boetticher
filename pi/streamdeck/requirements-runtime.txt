@@ -1,0 +1,1 @@
+streamdeck @ https://github.com/abcminiuser/python-elgato-streamdeck/archive/5537d6991e651d0d293000fa61ee330d6209c8e5.tar.gz --hash=sha256:c7dfb8161c501422f494b19f3e901360b9bd380b38aff2673873a119e0e42f85

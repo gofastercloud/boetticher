@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+export LC_ALL=C
+out=/home/kiosk/visualizer/stats.js
+tmp="$out.tmp"
+
+temp_c=$(awk '{printf "%.1f", $1 / 1000}' /sys/class/thermal/thermal_zone0/temp)
+load=$(awk '{print $1}' /proc/loadavg)
+mem_total=$(awk '/MemTotal:/ {print $2}' /proc/meminfo)
+mem_available=$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)
+mem_pct=$(( (mem_total - mem_available) * 100 / mem_total ))
+disk_pct=$(df -P / | awk 'NR == 2 {gsub("%", "", $5); print $5}')
+uptime_sec=$(awk '{print int($1)}' /proc/uptime)
+fan_state=0
+
+for device in /sys/class/thermal/cooling_device*; do
+    if [ "$(cat "$device/type" 2>/dev/null || true)" = "gpio-fan" ]; then
+        fan_state=$(cat "$device/cur_state")
+        break
+    fi
+done
+
+umask 022
+printf 'window.__rpiStats={tempC:%s,load:%s,memPct:%s,diskPct:%s,uptimeSec:%s,fan:%s};\n' \
+    "$temp_c" "$load" "$mem_pct" "$disk_pct" "$uptime_sec" "$fan_state" > "$tmp"
+mv -f "$tmp" "$out"
