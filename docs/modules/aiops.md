@@ -64,6 +64,10 @@ The fixed limits are concurrency 1, queue 32, four starts per rolling hour, 24
 per day, ten minutes, 12 Holmes steps, four follow-up evidence calls, 64 KiB
 evidence, 200 journal lines over two hours, and 1,200 output tokens. Capacity
 limits defer an already persisted incident; they never discard admission.
+The adapter also enforces the 24,000-input-token ceiling conservatively across
+the complete serialized model input. Because an alias can route to different
+provider tokenizers, UTF-8 bytes are treated as the universal token upper bound;
+this can admit less context but cannot exceed the approved budget.
 
 Use `boetticher aiops status` for desired state and `--live` for bounded
 loopback appliance state, including lifecycle counts, queue/running age, last
