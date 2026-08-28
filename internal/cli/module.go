@@ -243,12 +243,19 @@ func runModuleStatusWithInput(args []string, input io.Reader, out, errOut interf
 		}
 		declarations, err := modules.SecretDeclarations(config, name)
 		if err != nil {
-			return err
+			configured := config.Modules.Map()[name]
+			if name != "litellm" || module.Enabled || len(configured.Upstreams) > 0 || len(configured.Models) > 0 {
+				return err
+			}
+			declarations = nil
 		}
 		keys := secretNamesOnly(declarations)
-		presence, err := site.PlatformSecretPresence(siteDir, s, ageIdentity, keys)
-		if err != nil {
-			return fmt.Errorf("inspect encrypted platform secrets: %w", err)
+		presence := map[string]bool{}
+		if len(keys) > 0 {
+			presence, err = site.PlatformSecretPresence(siteDir, s, ageIdentity, keys)
+			if err != nil {
+				return fmt.Errorf("inspect encrypted platform secrets: %w", err)
+			}
 		}
 		fmt.Fprintf(out, "Module %s\n\nConfiguration\n  State       %s\n  Enabled     %s\n  Reason      %s\n", module.Name, module.State, yesNo(module.Enabled), module.Reason)
 		if name == "litellm" {

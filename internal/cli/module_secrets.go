@@ -19,6 +19,20 @@ import (
 
 const maxOperatorSecretBytes = 64 * 1024
 
+var platformOwnedSecretNames = map[string]struct{}{
+	"installation_id":      {},
+	"bootstrap_secret":     {},
+	"root_key_pem_b64":     {},
+	"root_cert_pem_b64":    {},
+	"issuing_key_pem_b64":  {},
+	"issuing_cert_pem_b64": {},
+	"ddns_tsig_secret":     {},
+	"pulse_admin_password": {},
+	"pulse_proxmox_token":  {},
+	"pulse_api_token":      {},
+	"pulse_agent_token":    {},
+}
+
 func runModuleSecrets(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }) error {
 	if len(args) == 0 {
 		return errors.New("usage: boetticher module secrets MODULE list|set|remove")
@@ -112,7 +126,7 @@ func runModuleSecretSet(name string, args []string, input io.Reader, out, errOut
 	if err != nil {
 		return err
 	}
-	s, _, declarations, err := loadModuleSecretContract(flags, name)
+	s, config, declarations, err := loadModuleSecretContract(flags, name)
 	if err != nil {
 		return err
 	}
@@ -122,6 +136,9 @@ func runModuleSecretSet(name string, args []string, input io.Reader, out, errOut
 	}
 	if declaration.Generation != "operator-supplied" {
 		return fmt.Errorf("secret %q is managed by Core and cannot be set by the operator", key)
+	}
+	if err := validateModuleSecretMutation(config, name, key); err != nil {
+		return err
 	}
 	value, err := readOperatorSecret(input, errOut, key)
 	if err != nil {
@@ -157,17 +174,8 @@ func runModuleSecretRemove(name string, args []string, out interface{ Write([]by
 	if declaration.Generation != "operator-supplied" {
 		return fmt.Errorf("secret %q is managed by Core and cannot be removed by the operator", key)
 	}
-	all, err := modules.AllSecretDeclarations(config)
-	if err != nil {
+	if err := validateModuleSecretMutation(config, name, key); err != nil {
 		return err
-	}
-	for _, other := range all {
-		if other.Module == name {
-			continue
-		}
-		if _, shared := findSecretDeclaration(other.Secrets, key); shared {
-			return fmt.Errorf("HOLD: refusing to remove secret %q because module %s also declares it", key, other.Module)
-		}
 	}
 	changed, err := site.RemovePlatformSecrets(flags.siteDir, s, flags.ageIdentity, []string{key})
 	if err != nil {
@@ -242,6 +250,25 @@ func findSecretDeclaration(declarations []model.SecretDeclaration, name string) 
 	return model.SecretDeclaration{}, false
 }
 
+func validateModuleSecretMutation(config model.SiteConfig, module, key string) error {
+	if _, reserved := platformOwnedSecretNames[key]; reserved {
+		return fmt.Errorf("HOLD: refusing to mutate platform-owned secret %q", key)
+	}
+	all, err := modules.AllSecretDeclarations(config)
+	if err != nil {
+		return err
+	}
+	for _, other := range all {
+		if other.Module == module {
+			continue
+		}
+		if _, shared := findSecretDeclaration(other.Secrets, key); shared {
+			return fmt.Errorf("HOLD: refusing to mutate secret %q because module %s also declares it", key, other.Module)
+		}
+	}
+	return nil
+}
+
 func lifecycleName(declaration model.SecretDeclaration) string {
 	if declaration.Lifecycle == "" {
 		return model.SecretLifecycleRuntime
@@ -266,6 +293,11 @@ func ensureModuleSecrets(siteDir string, s model.Site, config model.SiteConfig, 
 	if len(operator) == 0 {
 		return nil
 	}
+	retainedModules, err := site.LoadRetainedModules(siteDir)
+	if err != nil {
+		return fmt.Errorf("load retained module state: %w", err)
+	}
+	retainedState := hasRetainedModuleState(retainedModules, module)
 	keys := secretNamesOnly(operator)
 	presence, err := site.PlatformSecretPresence(siteDir, s, ageIdentity, keys)
 	if err != nil {
@@ -273,6 +305,9 @@ func ensureModuleSecrets(siteDir string, s model.Site, config model.SiteConfig, 
 	}
 	missing := make([]model.SecretDeclaration, 0, len(operator))
 	for _, declaration := range operator {
+		if retainedState && declaration.Lifecycle == model.SecretLifecycleBootstrap {
+			continue
+		}
 		if !presence[declaration.Name] {
 			missing = append(missing, declaration)
 		}
@@ -305,4 +340,13 @@ func ensureModuleSecrets(siteDir string, s model.Site, config model.SiteConfig, 
 	}
 	fmt.Fprintf(out, "  Secrets: stored %s\n", strings.Join(secretNamesOnly(missing), ", "))
 	return nil
+}
+
+func hasRetainedModuleState(retained []model.RetainedModule, module string) bool {
+	for _, item := range retained {
+		if item.Module == module {
+			return true
+		}
+	}
+	return false
 }

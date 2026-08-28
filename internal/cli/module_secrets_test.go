@@ -10,6 +10,34 @@ import (
 	"github.com/gofastercloud/boetticher/internal/model"
 )
 
+func TestModuleSecretMutationRejectsPlatformAndSharedNames(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
+	litellmEnabled, tailnetEnabled := true, true
+	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+		Enabled:   &litellmEnabled,
+		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "root_key_pem_b64"}},
+		Models:    []model.LiteLLMModelConfig{{Alias: "qwen", Upstream: "openrouter", Model: "some/model"}},
+	}
+	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
+	if err := validateModuleSecretMutation(config, "litellm", "root_key_pem_b64"); err == nil || !strings.Contains(err.Error(), "platform-owned") {
+		t.Fatalf("platform-owned module secret was accepted: %v", err)
+	}
+	config.Modules.LiteLLM.Upstreams[0].APIKeySecret = "tailscale_auth_key"
+	if err := validateModuleSecretMutation(config, "litellm", "tailscale_auth_key"); err == nil || !strings.Contains(err.Error(), "tailnet-router") {
+		t.Fatalf("shared module secret was accepted: %v", err)
+	}
+}
+
+func TestBootstrapSecretRequirementIsSkippedForRetainedModuleState(t *testing.T) {
+	retained := []model.RetainedModule{{Module: "tailnet-router", Disposition: "retained"}}
+	if !hasRetainedModuleState(retained, "tailnet-router") {
+		t.Fatal("retained module state was not recognized")
+	}
+	if hasRetainedModuleState(retained, "litellm") {
+		t.Fatal("unrelated retained module state was accepted")
+	}
+}
+
 func TestReadOperatorSecretFromPipeRemovesOneTrailingLineEnding(t *testing.T) {
 	value, err := readOperatorSecret(strings.NewReader("secret-value\r\n"), &bytes.Buffer{}, "example")
 	if err != nil {
