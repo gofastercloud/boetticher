@@ -145,6 +145,63 @@ func Write(path string, content []byte, force bool) error {
 	return os.Rename(tmpName, path)
 }
 
+// RemoveHostKey removes one exact plain-host entry from a generated
+// known-hosts file. It is used only after boetticher has replaced the
+// corresponding owned appliance rootfs; all other changed-key checks remain
+// strict. Hashed entries are left untouched rather than guessed at.
+func RemoveHostKey(path, host string) error {
+	path = model.ExpandUserPath(path)
+	if path == "" || host == "" || strings.ContainsAny(host, " \t\r\n") {
+		return errors.New("known-hosts path and exact host are required")
+	}
+	content, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read SSH known-hosts file: %w", err)
+	}
+	lines := strings.SplitAfter(string(content), "\n")
+	kept := make([]string, 0, len(lines))
+	changed := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			kept = append(kept, line)
+			continue
+		}
+		fields := strings.Fields(trimmed)
+		if len(fields) < 3 || strings.HasPrefix(fields[0], "|") {
+			kept = append(kept, line)
+			continue
+		}
+		aliases := strings.Split(fields[0], ",")
+		remaining := aliases[:0]
+		matched := false
+		for _, alias := range aliases {
+			if alias == host {
+				matched = true
+				continue
+			}
+			remaining = append(remaining, alias)
+		}
+		if !matched {
+			kept = append(kept, line)
+			continue
+		}
+		changed = true
+		if len(remaining) == 0 {
+			continue
+		}
+		fields[0] = strings.Join(remaining, ",")
+		kept = append(kept, strings.Join(fields, " ")+"\n")
+	}
+	if !changed {
+		return nil
+	}
+	return Write(path, []byte(strings.Join(kept, "")), true)
+}
+
 func Check(path string, s model.Site) error {
 	content, err := os.ReadFile(model.ExpandUserPath(path))
 	if err != nil {

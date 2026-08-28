@@ -1897,6 +1897,27 @@ func guestArtifactNeedsReplacement(current map[string]any, expected GuestPlan) b
 	return normalizeArtifactDescription(observed) != artifactDescription(expected.Artifact)
 }
 
+// GuestArtifactNeedsReplacement reports whether one existing guest needs the
+// explicitly confirmed appliance-rootfs replacement. A missing guest is not a
+// replacement, and kind mismatches remain the responsibility of the normal
+// ensure path so its existing HOLD is preserved.
+func GuestArtifactNeedsReplacement(ctx context.Context, client *Client, node string, guest GuestPlan) (bool, error) {
+	if client == nil {
+		return false, errors.New("Proxmox client is required")
+	}
+	kind, current, err := client.GuestConfig(ctx, node, guest.VMID)
+	if IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect guest %s artifact identity: %w", guest.Name, err)
+	}
+	if kind != guest.Kind {
+		return false, nil
+	}
+	return guestArtifactNeedsReplacement(current, guest), nil
+}
+
 func normalizeArtifactDescription(value string) string {
 	if decoded, err := url.PathUnescape(value); err == nil {
 		value = decoded
