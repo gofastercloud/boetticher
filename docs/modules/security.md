@@ -41,3 +41,9 @@ directory. The snapshot unit has the only `nft` inspection authority; neither
 unit has a mutation command or a general sudo path. The HTTP API is bound to
 the firewall INFRA address, has a fixed allow-list containing only Pulse, and
 is blocked from the upstream/WAN interface.
+
+The AIOps module has no SSH or Internet path. Holmes is loopback-only and never
+receives Pulse, AI Router, provider, PKI, SSH, or persistent-state credentials.
+The adapter and journal query service enforce strict typed schemas and bounded
+responses; HTTP path authorization remains distinct from firewall host/port
+policy.

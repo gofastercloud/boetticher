@@ -1,5 +1,20 @@
 {
   "$defs": {
+    "AIOpsModuleConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "model_alias": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "model_alias"
+      ],
+      "type": "object"
+    },
     "DHCPReservation": {
       "additionalProperties": false,
       "properties": {
@@ -170,6 +185,9 @@
     "ModulesConfig": {
       "additionalProperties": false,
       "properties": {
+        "aiops": {
+          "$ref": "#/$defs/AIOpsModuleConfig"
+        },
         "dns": {
           "$ref": "#/$defs/DNSModuleConfig"
         },

@@ -62,7 +62,7 @@ func TestPublicHelpPathsDoNotFail(t *testing.T) {
 		{"init", "--help"}, {"preflight", "-h"}, {"bootstrap", "--help"}, {"deploy", "--help"},
 		{"verify", "--help"}, {"doctor", "--help"}, {"network", "--help"}, {"firewall", "--help"},
 		{"dhcp", "--help"}, {"dns", "--help"}, {"pki", "--help"}, {"access", "--help"}, {"portal", "--help"},
-		{"module", "--help"}, {"modules", "--help"}, {"config", "--help"}, {"logs", "--help"}, {"upgrade", "--help"},
+		{"module", "--help"}, {"modules", "--help"}, {"config", "--help"}, {"logs", "--help"}, {"aiops", "--help"}, {"upgrade", "--help"},
 	} {
 		var output bytes.Buffer
 		if err := Run(args, &output, &output); err != nil {
@@ -83,7 +83,7 @@ func TestPluralModuleNamespaceUsesGenericLifecycleAndRejectsUnknownCommands(t *t
 	if err := os.WriteFile(filepath.Join(dir, "site.yml"), config, 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"tailnet-router", "litellm"} {
+	for _, name := range []string{"tailnet-router", "litellm", "aiops"} {
 		var output bytes.Buffer
 		if err := Run([]string{"modules", name, "show", "--site", dir}, &output, &output); err != nil {
 			t.Fatal(err)

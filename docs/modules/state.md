@@ -16,6 +16,9 @@ replacement:
   firewall telemetry database at `/var/lib/boetticher/firewall-telemetry`.
 - logging: bounded remote journal volume with `backup: false`, plus stable SSH
   host identity.
+- aiops: a 1 GiB backed-up volume retaining bounded lifecycle, reports,
+  evidence hashes, token usage and audit state; raw evidence and prompts are
+  removed at terminal transition.
 
 `DEPLOYMENT-DERIVED` state is regenerated from the desired model: runtime
 configuration, DNS records, monitoring declarations, firewall policy,

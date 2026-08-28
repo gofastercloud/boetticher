@@ -10,6 +10,7 @@ boetticher preflight [--site DIR] [--live] [--bootstrap-address ADDRESS] [--init
 boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]
 boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]
 boetticher logs [HOST] [--site DIR] [--unit UNIT] [--since DURATION] [--priority LEVEL] [--limit N]
+boetticher aiops status [--site DIR] [--live] [--json]
 boetticher verify [--site DIR] [--ssh-config PATH] [--ssh-journey] [--live]
 boetticher doctor [--site DIR] [--ssh-config PATH] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher upgrade [--site DIR] [--age-identity PATH] [--recovery-confirmed]
@@ -112,6 +113,22 @@ Safety: Read-only. Output is bounded; there is no follow mode, TUI, arbitrary jo
 Examples: `boetticher logs lab-dns-01 --site ./my-boetticher --unit blocky --since 1h`; `boetticher logs lab-fw-01 --priority warning --limit 100`
 
 Related commands: doctor, verify
+
+### aiops
+
+Purpose: Inspect desired or bounded live AIOps incident lifecycle and usage state.
+
+Usage: `boetticher aiops status [--site DIR] [--live] [--json]`
+
+Arguments: status is the only operation.
+
+Options: --live reads the adapter database through the normal bastion; --json emits machine-readable output.
+
+Safety: Read-only. No investigation, note, acknowledgement, clearing, restart, or remediation is triggered.
+
+Examples: `boetticher aiops status --site ./my-boetticher --live`
+
+Related commands: module status, doctor, logs
 
 ### verify
 
@@ -386,6 +403,22 @@ Examples: `boetticher portal build --site ./my-boetticher`
 Related commands: access, verify, doctor
 
 ## Nested command details
+
+### aiops status
+
+Purpose: Inspect desired or bounded live AIOps incident lifecycle and usage state.
+
+Usage: `boetticher aiops status [--site DIR] [--live] [--json]`
+
+Arguments: status is the only operation.
+
+Options: --live reads the adapter database through the normal bastion; --json emits machine-readable output.
+
+Safety: Read-only. No investigation, note, acknowledgement, clearing, restart, or remediation is triggered.
+
+Examples: `boetticher aiops status --site ./my-boetticher --live`
+
+Related commands: module status, doctor, logs
 
 ### bootstrap-endpoint set
 

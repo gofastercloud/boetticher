@@ -74,6 +74,8 @@ func run(args []string, input io.Reader, out, errOut interface{ Write([]byte) (i
 		return runDeploy(args[1:], out)
 	case "logs":
 		return runLogs(args[1:], out)
+	case "aiops":
+		return runAIOps(args[1:], out)
 	case "upgrade":
 		return runIntegrationGate(args[0], args[1:], out)
 	}
