@@ -224,6 +224,22 @@ Examples: `boetticher network trunk status --site ./my-boetticher --live`
 
 Related commands: preflight, bootstrap, firewall
 
+### hardware
+
+Purpose: Inspect observed USB hardware and manage stable bindings for compiled-in module requirements.
+
+Usage: `boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm]`
+
+Arguments: status optionally filters MODULE REQUIREMENT; bind requires MODULE REQUIREMENT PORT; unbind requires MODULE REQUIREMENT.
+
+Options: --live reads parent usb_device identities from Proxmox; --confirm is required to change desired state and invoke deploy.
+
+Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
+
+Examples: `boetticher hardware usb bind streamdeck display 1-2.3 --confirm --site ./my-boetticher`
+
+Related commands: module, deploy, preflight
+
 ### pki
 
 Purpose: Manage bounded client certificates from the controller-side PKI authority.
@@ -689,6 +705,70 @@ Safety: Inspection only. This command does not edit nftables, DHCP, or routes; a
 Examples: `boetticher firewall diff --site ./my-boetticher --live`
 
 Related commands: dhcp, network, logs, verify
+
+### hardware usb bind
+
+Purpose: Inspect observed USB hardware and manage stable bindings for compiled-in module requirements.
+
+Usage: `boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm]`
+
+Arguments: status optionally filters MODULE REQUIREMENT; bind requires MODULE REQUIREMENT PORT; unbind requires MODULE REQUIREMENT.
+
+Options: --live reads parent usb_device identities from Proxmox; --confirm is required to change desired state and invoke deploy.
+
+Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
+
+Examples: `boetticher hardware usb bind streamdeck display 1-2.3 --confirm --site ./my-boetticher`
+
+Related commands: module, deploy, preflight
+
+### hardware usb list
+
+Purpose: Inspect observed USB hardware and manage stable bindings for compiled-in module requirements.
+
+Usage: `boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm]`
+
+Arguments: status optionally filters MODULE REQUIREMENT; bind requires MODULE REQUIREMENT PORT; unbind requires MODULE REQUIREMENT.
+
+Options: --live reads parent usb_device identities from Proxmox; --confirm is required to change desired state and invoke deploy.
+
+Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
+
+Examples: `boetticher hardware usb bind streamdeck display 1-2.3 --confirm --site ./my-boetticher`
+
+Related commands: module, deploy, preflight
+
+### hardware usb status
+
+Purpose: Inspect observed USB hardware and manage stable bindings for compiled-in module requirements.
+
+Usage: `boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm]`
+
+Arguments: status optionally filters MODULE REQUIREMENT; bind requires MODULE REQUIREMENT PORT; unbind requires MODULE REQUIREMENT.
+
+Options: --live reads parent usb_device identities from Proxmox; --confirm is required to change desired state and invoke deploy.
+
+Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
+
+Examples: `boetticher hardware usb bind streamdeck display 1-2.3 --confirm --site ./my-boetticher`
+
+Related commands: module, deploy, preflight
+
+### hardware usb unbind
+
+Purpose: Inspect observed USB hardware and manage stable bindings for compiled-in module requirements.
+
+Usage: `boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm]`
+
+Arguments: status optionally filters MODULE REQUIREMENT; bind requires MODULE REQUIREMENT PORT; unbind requires MODULE REQUIREMENT.
+
+Options: --live reads parent usb_device identities from Proxmox; --confirm is required to change desired state and invoke deploy.
+
+Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
+
+Examples: `boetticher hardware usb bind streamdeck display 1-2.3 --confirm --site ./my-boetticher`
+
+Related commands: module, deploy, preflight
 
 ### module disable
 

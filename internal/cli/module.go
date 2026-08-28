@@ -9,10 +9,13 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
+	"github.com/gofastercloud/boetticher/internal/pki"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
+	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
@@ -379,6 +382,11 @@ func runModuleChangeWithInput(args []string, input io.Reader, out, errOut interf
 		if err := proxmox.PurgeModule(context.Background(), client, oldPlan, name); err != nil {
 			return err
 		}
+		if name == "streamdeck" {
+			if err := revokeStreamDeckPulseToken(*siteDir, purgeSite, *ageIdentity); err != nil {
+				return err
+			}
+		}
 		if err := site.PurgeModuleSecrets(*siteDir, purgeSite, *ageIdentity, name, declaration); err != nil {
 			return err
 		}
@@ -416,6 +424,29 @@ func runModuleChangeWithInput(args []string, input io.Reader, out, errOut interf
 	}
 	if err := runDeploy(deployArgs, out); err != nil {
 		return fmt.Errorf("deploy module change: %w", err)
+	}
+	return nil
+}
+
+func revokeStreamDeckPulseToken(siteDir string, s model.Site, ageIdentity string) error {
+	authority, err := site.LoadAuthority(siteDir, s, ageIdentity)
+	if err != nil {
+		return fmt.Errorf("load authority for StreamDeck token revocation: %w", err)
+	}
+	password, err := site.LoadPlatformSecret(siteDir, s, ageIdentity, "pulse_admin_password")
+	if err != nil {
+		return fmt.Errorf("load Pulse admin credential for StreamDeck token revocation: %w", err)
+	}
+	certificate, err := pki.IssueClient(authority, "boetticher-streamdeck-purge", s.Network.Domain, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	admin, err := pulse.NewAdminClient(pulse.ClientConfig{BaseURL: "https://monitor." + s.Network.Domain, AdminUser: "admin", AdminPassword: password, CAPEM: authority.IssuingCertPEM, ClientCertPEM: certificate.CertPEM, ClientKeyPEM: certificate.KeyPEM, ServerName: "monitor." + s.Network.Domain})
+	if err != nil {
+		return err
+	}
+	if err := admin.RevokeNamedReadToken(context.Background(), "boetticher streamdeck monitoring read"); err != nil {
+		return fmt.Errorf("revoke dedicated StreamDeck Pulse token: %w", err)
 	}
 	return nil
 }

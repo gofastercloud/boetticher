@@ -129,6 +129,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	// Agent installation is enabled only in the post-Pulse bootstrap pass,
 	// after the scoped report token and encrypted credential projection exist.
 	runtimeVariables["pulse_agent_install_enabled"] = false
+	runtimeVariables["streamdeck_token_install_enabled"] = false
 	monitoringEnabled := modules.IsEnabled(s, "monitoring")
 	secretValues := map[string]string{}
 	if s.Gateway.Mode == model.GatewayModeManaged {
@@ -377,6 +378,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	var monitorCertificate pki.ServerCertificate
 	var litellmCertificate pki.ServerCertificate
+	var streamDeckCertificate pki.ClientCertificate
 	if monitoringEnabled {
 		monitorCSR, readErr := os.ReadFile(filepath.Join(csrDir, "monitor.csr.pem"))
 		if readErr != nil {
@@ -397,6 +399,16 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			return fmt.Errorf("sign LiteLLM endpoint CSR: %w", err)
 		}
 	}
+	if modules.IsEnabled(s, "streamdeck") {
+		streamDeckCSR, readErr := os.ReadFile(filepath.Join(csrDir, "streamdeck.csr.pem"))
+		if readErr != nil {
+			return fmt.Errorf("read endpoint-generated StreamDeck CSR: %w", readErr)
+		}
+		streamDeckCertificate, err = pki.SignClientCSR(authority, string(streamDeckCSR), "lab-streamdeck-01", s.Network.Domain, time.Now().UTC())
+		if err != nil {
+			return fmt.Errorf("sign StreamDeck client CSR: %w", err)
+		}
+	}
 	portalCertificate, err := pki.SignServerCSR(authority, string(portalCSR), "portal", s.Network.Domain, []string{"lab-portal-01." + s.Network.Domain}, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("sign portal endpoint CSR: %w", err)
@@ -407,6 +419,9 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	if modules.IsEnabled(s, "litellm") {
 		runtimeVariables["litellm_server_cert_pem"] = litellmCertificate.ChainPEM
+	}
+	if modules.IsEnabled(s, "streamdeck") {
+		runtimeVariables["streamdeck_client_cert_pem"] = streamDeckCertificate.ChainPEM
 	}
 	runtimeVariables["portal_server_cert_pem"] = portalCertificate.ChainPEM
 	runtimeVariables["logging_client_certificates"] = loggingClientCertificates
@@ -591,6 +606,51 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 				if err := ansible.RunLimited(context.Background(), ansiblePlaybook, inventoryPath, agentVariables, target); err != nil {
 					return fmt.Errorf("install Pulse agent on %s: %w", target, err)
 				}
+			}
+		}
+		if modules.IsEnabled(s, "streamdeck") {
+			streamDeckToken, tokenErr := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "streamdeck_pulse_token")
+			if errors.Is(tokenErr, site.ErrPlatformSecretMissing) {
+				streamDeckToken, tokenErr = pulseAdmin.CreateReadToken(context.Background(), "boetticher streamdeck monitoring read")
+				if tokenErr == nil {
+					tokenErr = site.StorePlatformSecret(*siteDir, s, *ageIdentity, "streamdeck_pulse_token", streamDeckToken)
+				}
+			}
+			if tokenErr != nil {
+				return fmt.Errorf("prepare encrypted StreamDeck Pulse token: %w", tokenErr)
+			}
+			bindings, bindingErr := streamDeckCredentialBindings(s)
+			if bindingErr != nil {
+				return bindingErr
+			}
+			if err := installCredentialsForGuest(context.Background(), applianceSSHRunner(s, *siteDir, "lab-streamdeck-01"), "lab-streamdeck-01", bindings, map[string]string{"streamdeck_pulse_token": streamDeckToken}); err != nil {
+				return fmt.Errorf("install StreamDeck Pulse credential: %w", err)
+			}
+			dropins, dropErr := credentialDropIns(bindings)
+			if dropErr != nil {
+				return dropErr
+			}
+			existing, _ := runtimeVariables["credential_dropins"].(map[string]map[string]string)
+			if existing == nil {
+				existing = map[string]map[string]string{}
+			}
+			for guest, units := range dropins {
+				if existing[guest] == nil {
+					existing[guest] = map[string]string{}
+				}
+				for unit, content := range units {
+					existing[guest][unit] = content
+				}
+			}
+			runtimeVariables["credential_dropins"] = existing
+			runtimeVariables["streamdeck_token_install_enabled"] = true
+			streamDeckVariables, marshalErr := json.MarshalIndent(runtimeVariables, "", "  ")
+			if marshalErr != nil {
+				return marshalErr
+			}
+			streamDeckVariables = append(streamDeckVariables, '\n')
+			if err := ansible.RunLimited(context.Background(), ansiblePlaybook, inventoryPath, streamDeckVariables, "lab-streamdeck-01"); err != nil {
+				return fmt.Errorf("start StreamDeck status service: %w", err)
 			}
 		}
 	}

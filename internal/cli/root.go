@@ -62,6 +62,8 @@ func run(args []string, input io.Reader, out, errOut interface{ Write([]byte) (i
 		return runConfig(args[1:], out)
 	case "network":
 		return runNetwork(args[1:], out)
+	case "hardware":
+		return runHardware(args[1:], out)
 	case "verify":
 		return runVerify(args[1:], out)
 	case "doctor":

@@ -7,11 +7,11 @@ set -eu
 target=${1:-images}
 shift || true
 case "$target" in
-  image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|images) ;;
+  image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-streamdeck|images) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
-default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-litellm image-firewall"
+default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-litellm image-streamdeck image-firewall"
 if [ "$target" = images ]; then
   selected_image_targets="$*"
   if [ -z "$selected_image_targets" ]; then
@@ -19,7 +19,7 @@ if [ "$target" = images ]; then
   fi
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
-      image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm) ;;
+      image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-streamdeck) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac
   done
@@ -504,6 +504,24 @@ build_litellm() {
   package_lxc boetticher-litellm
 }
 
+build_streamdeck() {
+  printf '%s\n' 'boetticher build stage: streamdeck'
+  rootfs=$(prepare_rootfs boetticher-streamdeck)
+  install_packages "$rootfs" python3=3.13.5-1 python3-venv=3.13.5-1 python3-pip=25.1.1+dfsg-1 libhidapi-libusb0 fonts-dejavu-core
+  chroot "$rootfs" groupadd --system --gid 2200 streamdeck
+  chroot "$rootfs" useradd --system --uid 2200 --gid 2200 --home-dir /var/lib/streamdeck --create-home --shell /usr/sbin/nologin streamdeck
+  chroot "$rootfs" python3 -m venv /opt/streamdeck
+  install -D -m 0644 images/streamdeck/runtime/requirements.lock "$rootfs/tmp/streamdeck-requirements.lock"
+  mkdir -p "$rootfs/usr/src/boetticher-streamdeck"
+  cp -a services/streamdeck/pyproject.toml services/streamdeck/src "$rootfs/usr/src/boetticher-streamdeck/"
+  chroot "$rootfs" /opt/streamdeck/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/streamdeck-requirements.lock
+  chroot "$rootfs" /opt/streamdeck/bin/pip install --no-cache-dir --no-deps --no-build-isolation /usr/src/boetticher-streamdeck
+  install -D -m 0644 images/streamdeck/runtime/streamdeck-status.service "$rootfs/etc/systemd/system/streamdeck-status.service"
+  rm -rf "$rootfs/usr/src/boetticher-streamdeck" "$rootfs/tmp/streamdeck-requirements.lock"
+  write_artifact_identity "$rootfs" streamdeck
+  package_lxc boetticher-streamdeck
+}
+
 build_firewall() {
   printf '%s\n' 'boetticher build stage: firewall'
   for tool in qemu-img virt-customize virt-cat sha512sum; do
@@ -776,6 +794,11 @@ build_litellm_target() {
   build_litellm
 }
 
+build_streamdeck_target() {
+  [ -f "$(artifact_for boetticher-base)" ] || build_base
+  build_streamdeck
+}
+
 case "$target" in
   image-base) run_timed_image_target "$target" build_base ;;
   image-dns-blocky) run_timed_image_target "$target" build_dns_blocky_target ;;
@@ -784,6 +807,7 @@ case "$target" in
   image-portal) run_timed_image_target "$target" build_portal_target ;;
   image-tailnet-router) run_timed_image_target "$target" build_tailnet_router_target ;;
   image-litellm) run_timed_image_target "$target" build_litellm_target ;;
+  image-streamdeck) run_timed_image_target "$target" build_streamdeck_target ;;
   image-dns-adguard) echo "HOLD: AdGuard provider qualification is outside the default Blocky readiness tranche" >&2; exit 2 ;;
   image-firewall) run_timed_image_target "$target" build_firewall ;;
   images) build_selected_images ;;

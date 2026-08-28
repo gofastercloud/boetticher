@@ -121,6 +121,17 @@ func monitoringAgentCredentialBindings(site model.Site) ([]deploymentCredential,
 	return bindings, nil
 }
 
+func streamDeckCredentialBindings(site model.Site) ([]deploymentCredential, error) {
+	if !modules.IsEnabled(site, "streamdeck") {
+		return nil, nil
+	}
+	binding := deploymentCredential{Guest: "lab-streamdeck-01", Address: "10.10.20.70", SecretKey: "streamdeck_pulse_token", Spec: secrets.CredentialSpec{Name: "pulse-token", Unit: "streamdeck-status.service", StorePath: "/var/lib/boetticher/credentials/streamdeck-pulse-token.cred", RuntimeRef: "/run/credentials/streamdeck-status.service/pulse-token"}}
+	if err := secrets.Validate([]secrets.CredentialSpec{binding.Spec}); err != nil {
+		return nil, err
+	}
+	return []deploymentCredential{binding}, nil
+}
+
 func credentialName(reference string) string {
 	var b strings.Builder
 	for _, character := range strings.ToLower(reference) {

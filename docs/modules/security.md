@@ -13,6 +13,12 @@ Modules cannot emit nftables rules, edit bridges, call arbitrary Proxmox APIs,
 load plugins, download code, run hooks, or access SOPS/Age and CA authority.
 Only first-party modules compiled into the boetticher release execute.
 
+USB access is a Core-owned export, not a generic passthrough interface. Modules
+declare named requirements and allowed physical identities; site configuration
+can bind only those requirements. The Proxmox-host helper accepts no device
+path or guest target from its caller and refuses unowned guests, ambiguous
+slots, non-character devices, and identity mismatches before restart.
+
 A compromised service remains subject to its non-root service account and
 systemd sandbox where supported. Proxmox/root is a trusted host boundary, and a
 root compromise inside a guest is not treated as a controller compromise.

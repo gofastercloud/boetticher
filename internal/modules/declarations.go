@@ -43,6 +43,7 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		return model.ModuleDeclaration{}, err
 	}
 	declaration := model.ModuleDeclaration{Module: name, Artifact: artifact}
+	declaration.USBRequirements = append([]model.USBRequirement(nil), definition.USBRequirements...)
 	for _, component := range components {
 		declaration.Guests = append(declaration.Guests, component)
 		declaration.Backups = append(declaration.Backups, model.BackupDeclaration{Guest: component.Name, Policy: "platform-default"})
@@ -79,7 +80,7 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		declaration.Secrets = []model.SecretDeclaration{{Name: "tailscale_auth_key", Purpose: "initial Tailscale registration or re-registration", Consumer: "tailscaled", Generation: "operator-supplied", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file", Lifecycle: model.SecretLifecycleBootstrap}}
 		declaration.AdvertisedRoutes = []string{"10.10.0.0/16"}
 		declaration.ReturnRouting = []string{"Tailnet return traffic for 10.10.0.0/16 must use the TRANSIT gateway 10.10.5.1"}
-		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true, Devices: []model.DeviceRequirement{{Path: "/dev/net/tun", Type: "c", Major: 10, Minor: 200, Access: "rwm"}}}
+		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true, Devices: []model.DeviceRequirement{{Name: "tun", Path: "/dev/net/tun", Type: "c", Major: 10, Minor: 200, Access: "rwm"}}}
 		declaration.NetworkIntents = []model.NetworkIntent{
 			{Source: "lab-tailnet-01", Destination: "litellm", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "routed LiteLLM HTTPS access"},
 			{Source: "lab-tailnet-01", Destination: "portal", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "routed portal HTTPS access"},
@@ -113,6 +114,19 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 			model.MonitoringDeclaration{Name: "litellm", Kind: "service", Target: "lab-litellm-01", Checks: []string{"litellm", "loopback"}, Description: "LiteLLM loopback backend health"},
 		)
 		declaration.Portal = []model.PortalEntry{{Name: "litellm", Description: "mTLS-protected provider-neutral AI API aliases", URLs: []string{"https://litellm." + site.Network.Domain}, Docs: []string{"docs/modules/litellm.md"}}}
+	case "streamdeck":
+		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true}
+		declaration.Secrets = []model.SecretDeclaration{{Name: "streamdeck_pulse_token", Purpose: "dedicated Pulse monitoring:read API access", Consumer: "streamdeck-status", Generation: "pulse-admin-api", Rotation: "replaceable", Delivery: "systemd-credential"}}
+		declaration.Persistent = append(declaration.Persistent, model.PersistentState{Name: "tls-identity", Guest: "lab-streamdeck-01", Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"})
+		declaration.Volumes = append(declaration.Volumes, model.PersistentVolumeDeclaration{Name: "tls-identity", Module: name, Guest: "lab-streamdeck-01", SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/tls", Placement: model.StorageDefault, Backup: true})
+		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "lab-streamdeck-01", SANs: []string{"lab-streamdeck-01." + site.Network.Domain}, Consumer: "streamdeck-status"})
+		declaration.NetworkIntents = append(declaration.NetworkIntents,
+			model.NetworkIntent{Source: "lab-streamdeck-01", Destination: "monitor." + site.Network.Domain, Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "read-only Pulse summary and resource polling"},
+			model.NetworkIntent{Source: "lab-streamdeck-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Direction: "egress", Purpose: "StreamDeck DNS resolution"},
+			model.NetworkIntent{Source: "lab-streamdeck-01", Destination: "dns", Protocol: "udp", Ports: []string{"123"}, Direction: "egress", Purpose: "StreamDeck time synchronisation"},
+		)
+		declaration.Monitoring = append(declaration.Monitoring, model.MonitoringDeclaration{Name: "streamdeck-status", Kind: "service", Target: "lab-streamdeck-01", Checks: []string{"streamdeck-status"}, Description: "StreamDeck status service and USB availability"})
+		declaration.Portal = []model.PortalEntry{{Name: "streamdeck", Description: "Local USB status display sourced only from Pulse", Docs: []string{"docs/modules/streamdeck.md"}}}
 	default:
 		return model.ModuleDeclaration{}, fmt.Errorf("no declaration provider for first-party module %q", name)
 	}

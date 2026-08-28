@@ -1,0 +1,90 @@
+---
+- name: Install Core USB export reconciler
+  ansible.builtin.copy:
+    src: boetticher-usb-export
+    dest: /usr/lib/boetticher/boetticher-usb-export
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create Core USB export state directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: /etc/boetticher/usb-exports, mode: '0700'}
+    - {path: /var/lib/boetticher/usb-export, mode: '0700'}
+
+- name: Install USB export manifests
+  ansible.builtin.copy:
+    content: "{{ item | to_nice_json }}\n"
+    dest: "/etc/boetticher/usb-exports/{{ item.vmid }}.json"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ usb_export_manifests }}"
+
+- name: Find obsolete USB export manifests
+  ansible.builtin.find:
+    paths: /etc/boetticher/usb-exports
+    patterns: '*.json'
+    file_type: file
+  register: usb_export_manifest_files
+
+- name: Remove manifests for purged USB consumers
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ usb_export_manifest_files.files }}"
+  when: item.path not in (usb_export_manifests | map(attribute='vmid') | map('string') | map('regex_replace', '^(.*)$', '/etc/boetticher/usb-exports/\\1.json') | list)
+
+- name: Remove managed state for purged USB consumers
+  ansible.builtin.file:
+    path: "/var/lib/boetticher/usb-export/{{ item.path | basename }}"
+    state: absent
+  loop: "{{ usb_export_manifest_files.files }}"
+  when: item.path not in (usb_export_manifests | map(attribute='vmid') | map('string') | map('regex_replace', '^(.*)$', '/etc/boetticher/usb-exports/\\1.json') | list)
+
+- name: Install narrowly scoped USB rules
+  ansible.builtin.template:
+    src: 90-boetticher-usb-export.rules.j2
+    dest: /etc/udev/rules.d/90-boetticher-usb-export.rules
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install boot reconciliation service
+  ansible.builtin.template:
+    src: boetticher-usb-export-boot.service.j2
+    dest: /etc/systemd/system/boetticher-usb-export-boot.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Install per-VMID USB event reconciliation service
+  ansible.builtin.template:
+    src: boetticher-usb-export@.service.j2
+    dest: /etc/systemd/system/boetticher-usb-export@.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable USB reconciliation before guest autostart
+  ansible.builtin.systemd_service:
+    name: boetticher-usb-export-boot.service
+    enabled: true
+    daemon_reload: true
+
+- name: Reload USB rules
+  ansible.builtin.command: udevadm control --reload-rules
+  changed_when: false
+
+- name: Reconcile the complete USB set after deployment
+  ansible.builtin.command: /usr/lib/boetticher/boetticher-usb-export --all
+  changed_when: false
+  when: usb_export_manifests | length > 0

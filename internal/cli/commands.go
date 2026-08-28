@@ -34,6 +34,7 @@ var commandSpecs = []commandSpec{
 	{Usage: "boetticher access [--site DIR]"},
 	{Usage: "boetticher bootstrap-endpoint show|set ADDRESS [--site DIR]"},
 	{Usage: "boetticher network trunk status|attach|detach [INTERFACE] [--site DIR] [--confirm] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
+	{Usage: "boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm]"},
 	{Usage: "boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]"},
 	{Usage: "boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]"},
 	{Usage: "boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]"},
@@ -87,6 +88,9 @@ var helpSpecs = map[string]helpSpec{
 	"network": {
 		Usage: "boetticher network trunk status|attach|detach [INTERFACE] [--site DIR] [--confirm] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]", Purpose: "Inspect or explicitly change the physical trunk binding while preserving the virtual-only contract by default.", Arguments: "INTERFACE is required for attach and detach and must match observed hardware identity.", Options: "--live queries Proxmox; --confirm authorizes a live trunk change; connection options select the target trust path.", Safety: "Physical trunk changes can lock out management. Virtual-only sites do not claim spare NICs automatically.", Examples: "boetticher network trunk status --site ./my-boetticher --live", Related: "preflight, bootstrap, firewall",
 	},
+	"hardware": {
+		Usage: "boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm]", Purpose: "Inspect observed USB hardware and manage stable bindings for compiled-in module requirements.", Arguments: "status optionally filters MODULE REQUIREMENT; bind requires MODULE REQUIREMENT PORT; unbind requires MODULE REQUIREMENT.", Options: "--live reads parent usb_device identities from Proxmox; --confirm is required to change desired state and invoke deploy.", Safety: "Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.", Examples: "boetticher hardware usb list --site ./my-boetticher", Related: "module, deploy, preflight",
+	},
 	"pki": {
 		Usage: "boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]", Purpose: "Manage bounded client certificates from the controller-side PKI authority.", Arguments: "NAME is a validated client identity; trust export has no client NAME.", Options: "--output selects an export path; --age-identity selects the external recovery identity; --site selects local state.", Safety: "Private keys are never written to stdout and certificate actions update local generated state.", Examples: "boetticher pki client create operator --site ./my-boetticher", Related: "access, deploy, verify",
 	},
@@ -123,6 +127,10 @@ var nestedHelpSpecs = map[string]helpSpec{
 	"network trunk status":    helpSpecs["network"],
 	"network trunk attach":    helpSpecs["network"],
 	"network trunk detach":    helpSpecs["network"],
+	"hardware usb list":       helpSpecs["hardware"],
+	"hardware usb status":     helpSpecs["hardware"],
+	"hardware usb bind":       helpSpecs["hardware"],
+	"hardware usb unbind":     helpSpecs["hardware"],
 	"pki client create":       helpSpecs["pki"],
 	"pki client export":       helpSpecs["pki"],
 	"pki client revoke":       helpSpecs["pki"],

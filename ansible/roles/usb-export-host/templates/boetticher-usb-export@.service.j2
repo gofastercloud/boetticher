@@ -1,0 +1,13 @@
+[Unit]
+Description=Reconcile boetticher USB exports for VMID %i
+After=pve-cluster.service
+Requires=pve-cluster.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/boetticher/boetticher-usb-export %i
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/run/lock /var/lib/boetticher/usb-export /etc/pve

@@ -56,3 +56,7 @@ ambiguous, publication stays inactive and the deployment is held. Use
 `boetticher verify --live` or `boetticher doctor --live` to inspect the effective
 mapping, including the source-prefix restriction to the directly connected
 upstream network.
+
+The Core-owned USB export framework binds compiled-in named requirements to
+stable physical ports; bindings cannot name device paths, VMIDs, or user
+workloads.
