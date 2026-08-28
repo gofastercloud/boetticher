@@ -304,8 +304,8 @@ func TestEndpointTLSKeysAreGeneratedLocallyAndNeverSuppliedByController(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(portal), "Enable and start the portal nginx service") {
-		t.Fatal("portal role does not enable and start nginx after installing its certificate")
+	if !strings.Contains(string(portal), "Enable and reload the portal nginx service") || !strings.Contains(string(portal), "state: reloaded") {
+		t.Fatal("portal role does not enable and reload nginx after installing its certificate")
 	}
 }
 
