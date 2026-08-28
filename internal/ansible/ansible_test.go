@@ -838,6 +838,7 @@ func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
 		`"sandbox.lab.home.arpa"`,
 		`"blocky_config"`,
 		`upstreams:\n    groups:\n        default:`,
+		`"usb_export_manifests": []`,
 	} {
 		if !strings.Contains(text, expected) {
 			t.Errorf("Ansible variables missing %q", expected)

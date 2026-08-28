@@ -38,7 +38,7 @@ func PlanFromSite(site model.Site) ([]GuestManifest, error) {
 	for _, binding := range site.USBExports {
 		bindings[binding.Module+"/"+binding.Requirement] = binding
 	}
-	var manifests []GuestManifest
+	manifests := make([]GuestManifest, 0)
 	enabled, retained := map[string]bool{}, map[string]bool{}
 	for _, module := range site.Modules {
 		enabled[module.Name] = module.Enabled
