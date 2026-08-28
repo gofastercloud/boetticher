@@ -188,6 +188,12 @@ func TestMonitorFrontendKeepsMTLSExceptForScopedAgentRoutes(t *testing.T) {
 	if !strings.Contains(text, "location ^~ /api/agents/") {
 		t.Fatal("monitor frontend does not proxy the supported Pulse agent routes")
 	}
+	if got := strings.Count(text, "if ($ssl_client_verify != SUCCESS) { return 403; }"); got != 6 {
+		t.Fatalf("monitor frontend mTLS guards = %d, want five exact AIOps routes plus the catch-all", got)
+	}
+	if !strings.Contains(text, `CN=aiops-pulse-(?:read|note)`) {
+		t.Fatal("monitor catch-all does not deny the AIOps identities outside their exact routes")
+	}
 }
 
 func TestGeneratedSSHConfigPathIsBoundToInventoryProjection(t *testing.T) {
