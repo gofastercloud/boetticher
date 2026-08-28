@@ -412,7 +412,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			return clientErr
 		}
 		if err := pulseAdmin.ConfigureProxmox(context.Background(), pulse.PVEConfig{
-			Name: model.LogicalProxmoxIdentity, Host: "https://proxmox." + s.Network.Domain + ":8006",
+			Name: model.LogicalProxmoxIdentity, Host: "https://proxmox:8006",
 			TokenID: proxmox.PulseMonitoringUser + "!" + proxmox.PulseMonitoringToken, TokenSecret: pulseProxmoxToken,
 			VerifySSL: true, MonitorVMs: true, MonitorContainers: true, MonitorStorage: true, MonitorBackups: true,
 			MonitorPhysicalDisks: false, MonitorTemperatures: false,

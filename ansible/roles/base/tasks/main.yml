@@ -75,6 +75,17 @@
     mode: '0644'
   when: inventory_hostname not in groups.get('proxmox', [])
 
+- name: Pin the Proxmox API certificate hostname for Pulse
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^\s*{{ proxmox_management_address | regex_escape }}\s+proxmox(\s|$)'
+    line: "{{ proxmox_management_address }} proxmox"
+    state: present
+    create: true
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - proxmox_management_address is defined
+
 - name: Pin the Proxmox collector hostname to the managed logging appliance
   ansible.builtin.lineinfile:
     path: /etc/hosts

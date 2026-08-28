@@ -99,6 +99,7 @@ func TestAnsibleVariablesPinPulseHostAgentAndExposeNoSecret(t *testing.T) {
 	}
 	text := string(data)
 	for _, expected := range []string{
+		`"proxmox_management_address": "10.10.99.5"`,
 		"\"pulse_agent_targets\": [\n    \"lab-proxmox-01\"",
 		`"pulse_agent_version": "6.1.2"`,
 		`"pulse_agent_release_url": "https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-agent-linux-amd64"`,
@@ -371,6 +372,25 @@ func TestProxmoxJournalUploadPinsTheCollectorWithoutChangingHomeDNS(t *testing.T
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("Proxmox journal upload is missing %q", expected)
+		}
+	}
+}
+
+func TestMonitorPinsTheProxmoxCertificateHostname(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"Pin the Proxmox API certificate hostname for Pulse",
+		"{{ proxmox_management_address | regex_escape }}",
+		"line: \"{{ proxmox_management_address }} proxmox\"",
+		"inventory_hostname == 'lab-monitor-01'",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("Pulse Proxmox certificate hostname mapping is missing %q", expected)
 		}
 	}
 }
