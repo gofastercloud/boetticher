@@ -411,6 +411,9 @@ func TestDNSRoleUsesPowerDNS49CommandNames(t *testing.T) {
 			t.Fatalf("DNS role missing qualified PowerDNS command %q", expected)
 		}
 	}
+	if strings.Contains(text, "item.address") {
+		t.Fatal("DNS role uses an unavailable address field for static records")
+	}
 }
 
 func TestFirewallDHCPTemplateProjectsExplicitReservations(t *testing.T) {
