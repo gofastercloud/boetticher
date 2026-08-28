@@ -61,6 +61,15 @@ func runAIOps(args []string, out interface{ Write([]byte) (int, error) }) error 
 		return err
 	}
 	fmt.Fprintf(out, "AIOps live status\nInvestigations 24h %d\nTokens 24h input=%d output=%d\nPending notes %d failed=%d\n", status.Investigations24h, status.InputTokens24h, status.OutputTokens24h, status.PendingNoteWrites, status.FailedNoteWrites)
+	if status.OldestQueuedAt != "" {
+		fmt.Fprintf(out, "Oldest queued %s age=%ds\n", status.OldestQueuedAt, status.OldestQueuedAge)
+	}
+	if status.CurrentStartedAt != "" {
+		fmt.Fprintf(out, "Current investigation %s age=%ds\n", status.CurrentStartedAt, status.CurrentRunningAge)
+	}
+	if status.LastTerminalAt != "" {
+		fmt.Fprintf(out, "Last terminal state=%s result=%s at=%s\n", status.LastTerminalState, status.LastTerminalResult, status.LastTerminalAt)
+	}
 	for _, state := range []aiops.State{aiops.StateQueued, aiops.StateRunning, aiops.StateCompleted, aiops.StateInconclusive, aiops.StateDeferred, aiops.StateFailed, aiops.StateResolved} {
 		fmt.Fprintf(out, "%-14s %d\n", state, status.States[state])
 	}

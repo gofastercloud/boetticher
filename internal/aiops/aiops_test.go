@@ -80,6 +80,28 @@ func TestResolvedWebhookCancelsActiveInvestigation(t *testing.T) {
 	}
 }
 
+func TestStatusIsLoopbackOnlyAndAbsentFromWebhookListener(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/incidents.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	request := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	response := httptest.NewRecorder()
+	(&Server{Store: store}).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("external status route = %d", response.Code)
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	request.RemoteAddr = "127.0.0.1:12345"
+	response = httptest.NewRecorder()
+	(&Broker{Store: store}).EvidenceHandler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"states"`) {
+		t.Fatalf("loopback status route = %d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func TestBudgetsDeferWithoutDroppingAdmission(t *testing.T) {
 	store, err := OpenStore(t.TempDir() + "/incidents.db")
 	if err != nil {

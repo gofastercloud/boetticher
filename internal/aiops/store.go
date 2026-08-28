@@ -18,16 +18,19 @@ type Store struct {
 }
 
 type Status struct {
-	States            map[State]int `json:"states"`
-	Investigations24h int           `json:"investigations_24h"`
-	InputTokens24h    int           `json:"input_tokens_24h"`
-	OutputTokens24h   int           `json:"output_tokens_24h"`
-	PendingNoteWrites int           `json:"pending_note_writes"`
-	FailedNoteWrites  int           `json:"failed_note_writes"`
-	OldestQueuedAt    string        `json:"oldest_queued_at,omitempty"`
-	CurrentStartedAt  string        `json:"current_started_at,omitempty"`
-	LastTerminalState State         `json:"last_terminal_state,omitempty"`
-	LastTerminalAt    string        `json:"last_terminal_at,omitempty"`
+	States             map[State]int `json:"states"`
+	Investigations24h  int           `json:"investigations_24h"`
+	InputTokens24h     int           `json:"input_tokens_24h"`
+	OutputTokens24h    int           `json:"output_tokens_24h"`
+	PendingNoteWrites  int           `json:"pending_note_writes"`
+	FailedNoteWrites   int           `json:"failed_note_writes"`
+	OldestQueuedAt     string        `json:"oldest_queued_at,omitempty"`
+	OldestQueuedAge    int64         `json:"oldest_queued_age_seconds,omitempty"`
+	CurrentStartedAt   string        `json:"current_started_at,omitempty"`
+	CurrentRunningAge  int64         `json:"current_investigation_age_seconds,omitempty"`
+	LastTerminalState  State         `json:"last_terminal_state,omitempty"`
+	LastTerminalResult Outcome       `json:"last_terminal_result,omitempty"`
+	LastTerminalAt     string        `json:"last_terminal_at,omitempty"`
 }
 
 func OpenStore(path string) (*Store, error) {
@@ -97,16 +100,24 @@ func (s *Store) Status(ctx context.Context, now time.Time) (Status, error) {
 	}
 	if oldest.Valid {
 		result.OldestQueuedAt = oldest.String
+		if accepted, parseErr := time.Parse(time.RFC3339Nano, oldest.String); parseErr == nil && now.After(accepted) {
+			result.OldestQueuedAge = int64(now.Sub(accepted).Seconds())
+		}
 	}
 	if err := s.db.QueryRowContext(ctx, `SELECT min(started_at) FROM incidents WHERE state='running'`).Scan(&running); err != nil {
 		return result, err
 	}
 	if running.Valid {
 		result.CurrentStartedAt = running.String
+		if started, parseErr := time.Parse(time.RFC3339Nano, running.String); parseErr == nil && now.After(started) {
+			result.CurrentRunningAge = int64(now.Sub(started).Seconds())
+		}
 	}
-	_ = s.db.QueryRowContext(ctx, `SELECT state,coalesce(completed_at,resolved_at) FROM incidents WHERE state IN ('completed','inconclusive','failed','resolved') ORDER BY coalesce(resolved_at,completed_at) DESC LIMIT 1`).Scan(&terminalState, &terminalAt)
+	var terminalResult sql.NullString
+	_ = s.db.QueryRowContext(ctx, `SELECT state,outcome,coalesce(resolved_at,completed_at) FROM incidents WHERE state IN ('completed','inconclusive','failed','resolved') ORDER BY coalesce(resolved_at,completed_at) DESC LIMIT 1`).Scan(&terminalState, &terminalResult, &terminalAt)
 	if terminalState.Valid {
 		result.LastTerminalState = State(terminalState.String)
+		result.LastTerminalResult = Outcome(terminalResult.String)
 		result.LastTerminalAt = terminalAt.String
 	}
 	return result, nil
