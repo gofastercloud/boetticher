@@ -1,8 +1,8 @@
 # AIOps
 
 `aiops` is an optional, default-off read-only incident-investigation module. It
-runs unmodified HolmesGPT 0.40.0 on `lab-aiops-01` and accepts only a declared
-AI Router model alias:
+runs unmodified HolmesGPT 0.40.0 on fixed LXC `lab-aiops-01` (VMID 240) at
+`10.10.20.90` and accepts only a declared AI Router model alias:
 
 ```yaml
 modules:

@@ -96,7 +96,7 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 		t.Fatalf("litellm identity contract is incomplete: %#v", litellm)
 	}
 	aiops, _ := registry.Definition("aiops")
-	if aiops.ReservedVMIDStart != 220 || aiops.ReservedVMIDEnd != 229 || aiops.Guests[0].VMID != 220 || aiops.Guests[0].Address != "10.10.20.70" || aiops.Placement.ZoneType != model.ZoneTypeServers {
+	if aiops.ReservedVMIDStart != 240 || aiops.ReservedVMIDEnd != 249 || aiops.Guests[0].VMID != 240 || aiops.Guests[0].Address != "10.10.20.90" || aiops.Placement.ZoneType != model.ZoneTypeServers {
 		t.Fatalf("aiops identity contract is incomplete: %#v", aiops)
 	}
 }
@@ -117,7 +117,7 @@ func TestAIOpsRequiresDeclaredLiteLLMAliasAndComposesReadOnlyBoundary(t *testing
 	if !ok {
 		t.Fatal("aiops declaration is missing")
 	}
-	if declaration.Guests[0].Address != "10.10.20.70" || declaration.Guests[0].Role != "HolmesGPT AIOps investigation" {
+	if declaration.Guests[0].Address != "10.10.20.90" || declaration.Guests[0].Role != "HolmesGPT AIOps investigation" {
 		t.Fatalf("unexpected aiops guest: %#v", declaration.Guests[0])
 	}
 	if len(declaration.Volumes) != 2 || declaration.Volumes[1].Name != "aiops-state" || declaration.Volumes[1].SizeGiB != 1 {

@@ -102,9 +102,9 @@ func FirstPartyRegistry() Registry {
 		},
 		"aiops": {
 			Name: "aiops", Description: "Read-only HolmesGPT incident investigation", Version: "1.0.0", Policy: DefaultOff,
-			DependsOn: []string{"monitoring", "logging", "litellm"}, Requires: []Capability{CapabilityMonitoring, CapabilityLogging, CapabilityAIAPI, CapabilityDNS, CapabilityNTP}, GuestIDs: []int{220}, ReservedVMIDStart: 220, ReservedVMIDEnd: 229,
+			DependsOn: []string{"monitoring", "logging", "litellm"}, Requires: []Capability{CapabilityMonitoring, CapabilityLogging, CapabilityAIAPI, CapabilityDNS, CapabilityNTP}, GuestIDs: []int{240}, ReservedVMIDStart: 240, ReservedVMIDEnd: 249,
 			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
-				{Name: "lab-aiops-01", VMID: 220, Hostname: "lab-aiops-01", Zone: "SERVERS", Address: "10.10.20.70", Role: "HolmesGPT AIOps investigation", DNSAliases: []string{"aiops"}, URL: "https://aiops." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+				{Name: "lab-aiops-01", VMID: 240, Hostname: "lab-aiops-01", Zone: "SERVERS", Address: "10.10.20.90", Role: "HolmesGPT AIOps investigation", DNSAliases: []string{"aiops"}, URL: "https://aiops." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 	}}

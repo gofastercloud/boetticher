@@ -353,7 +353,7 @@ const aiopsWebhookTemplate = `{"id":"{{jsonString .ID}}","startTime":"{{jsonStri
 // Pulse's own SSRF policy is narrowed to the single AIOps address before the
 // destination and bearer header are stored in Pulse's encrypted state.
 func (c *Client) ConfigureAIOpsWebhook(ctx context.Context, targetURL, bearerSecret, allowedCIDR string) error {
-	if !c.admin || len(bearerSecret) < 32 || allowedCIDR != "10.10.20.70/32" {
+	if !c.admin || len(bearerSecret) < 32 || allowedCIDR != "10.10.20.90/32" {
 		return errors.New("Pulse AIOps webhook requires admin authority, a bounded secret, and the exact AIOps CIDR")
 	}
 	target, err := url.Parse(targetURL)
