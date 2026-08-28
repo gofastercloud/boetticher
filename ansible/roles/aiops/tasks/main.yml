@@ -43,7 +43,25 @@
     mode: '0640'
   loop: [aiops, pulse-read, pulse-note, log-query-client, ai-router-client]
 
-- name: Generate AIOps endpoint CSRs locally
+- name: Generate the AIOps server CSR locally
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - req
+      - -new
+      - -sha256
+      - -key
+      - /var/lib/boetticher/identity/tls/aiops.key.pem
+      - -subj
+      - "/CN=aiops.{{ domain }}"
+      - -addext
+      - "subjectAltName=DNS:aiops.{{ domain }},DNS:lab-aiops-01.{{ domain }}"
+      - -out
+      - /var/lib/boetticher/identity/tls/aiops.csr.pem
+  args:
+    creates: /var/lib/boetticher/identity/tls/aiops.csr.pem
+
+- name: Generate exact AIOps service-client CSRs locally
   ansible.builtin.command:
     argv:
       - openssl
@@ -54,18 +72,15 @@
       - "/var/lib/boetticher/identity/tls/{{ item.file }}.key.pem"
       - -subj
       - "/CN={{ item.identity }}"
-      - -addext
-      - "subjectAltName=DNS:{{ item.san }}"
       - -out
       - "/var/lib/boetticher/identity/tls/{{ item.file }}.csr.pem"
   args:
     creates: "/var/lib/boetticher/identity/tls/{{ item.file }}.csr.pem"
   loop:
-    - {file: aiops, identity: "aiops.{{ domain }}", san: "aiops.{{ domain }},DNS:lab-aiops-01.{{ domain }}"}
-    - {file: pulse-read, identity: aiops-pulse-read, san: "aiops-pulse-read.{{ domain }}"}
-    - {file: pulse-note, identity: aiops-pulse-note, san: "aiops-pulse-note.{{ domain }}"}
-    - {file: log-query-client, identity: aiops-log-read, san: "aiops-log-read.{{ domain }}"}
-    - {file: ai-router-client, identity: aiops-router-client, san: "aiops-router-client.{{ domain }}"}
+    - {file: pulse-read, identity: aiops-pulse-read}
+    - {file: pulse-note, identity: aiops-pulse-note}
+    - {file: log-query-client, identity: aiops-log-read}
+    - {file: ai-router-client, identity: aiops-router-client}
 
 - name: Fetch AIOps CSRs during PKI bootstrap
   ansible.builtin.fetch:

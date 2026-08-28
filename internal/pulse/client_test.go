@@ -204,6 +204,11 @@ func TestAdminConfiguresPVEThroughAuthenticatedAPIAndCreatesReadToken(t *testing
 					return fakeResponse(r, http.StatusBadRequest, "unexpected agent scope", nil), nil
 				}
 				return fakeResponse(r, http.StatusOK, `{"token":"agent-token","record":{"scopes":["agent:report"]}}`, nil), nil
+			case "boetticher aiops notes":
+				if request.Scopes[0] != "monitoring:write" {
+					return fakeResponse(r, http.StatusBadRequest, "unexpected note scope", nil), nil
+				}
+				return fakeResponse(r, http.StatusOK, `{"token":"note-token","record":{"scopes":["monitoring:write"]}}`, nil), nil
 			default:
 				return fakeResponse(r, http.StatusBadRequest, "unexpected token name", nil), nil
 			}
@@ -228,6 +233,53 @@ func TestAdminConfiguresPVEThroughAuthenticatedAPIAndCreatesReadToken(t *testing
 	agentToken, err := client.CreateAgentReportToken(context.Background(), "boetticher monitoring agent")
 	if err != nil || agentToken != "agent-token" {
 		t.Fatalf("CreateAgentReportToken() = %q, %v", agentToken, err)
+	}
+	noteToken, err := client.CreateIncidentNoteToken(context.Background(), "boetticher aiops notes")
+	if err != nil || noteToken != "note-token" {
+		t.Fatalf("CreateIncidentNoteToken() = %q, %v", noteToken, err)
+	}
+}
+
+func TestConfigureAIOpsWebhookUsesExactDestinationAndTemplate(t *testing.T) {
+	var updated bool
+	transport := fakeTransport(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/api/login":
+			return fakeResponse(r, http.StatusOK, `{}`, map[string]string{"Set-Cookie": "pulse_csrf=csrf; Path=/"}), nil
+		case "/api/system/settings/update":
+			var request map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&request)
+			if request["webhookAllowedPrivateCIDRs"] != "10.10.20.70/32" {
+				return fakeResponse(r, http.StatusBadRequest, "broad CIDR", nil), nil
+			}
+			return fakeResponse(r, http.StatusOK, `{}`, nil), nil
+		case "/api/notifications/webhooks":
+			return fakeResponse(r, http.StatusOK, `[{"id":"webhook-aiops","name":"boetticher aiops incidents"}]`, nil), nil
+		case "/api/notifications/webhooks/webhook-aiops":
+			var request struct {
+				URL, Method, Service, Template string
+				Headers                        map[string]string
+				Enabled                        bool
+			}
+			_ = json.NewDecoder(r.Body).Decode(&request)
+			if r.Method != http.MethodPut || request.URL != "https://aiops.example.test/v1/pulse/events" || request.Method != http.MethodPost || request.Service != "generic" || !request.Enabled || request.Headers["Authorization"] != "Bearer 0123456789abcdef0123456789abcdef" || request.Template != aiopsWebhookTemplate {
+				return fakeResponse(r, http.StatusBadRequest, "unsafe webhook", nil), nil
+			}
+			updated = true
+			return fakeResponse(r, http.StatusOK, `{}`, nil), nil
+		default:
+			return fakeResponse(r, http.StatusNotFound, "not found", nil), nil
+		}
+	})
+	client, err := NewAdminClient(ClientConfig{BaseURL: "https://monitor.example.test", AdminUser: "admin", AdminPassword: "admin-pass", HTTP: &http.Client{Transport: transport}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.ConfigureAIOpsWebhook(context.Background(), "https://aiops.example.test/v1/pulse/events", "0123456789abcdef0123456789abcdef", "10.10.20.70/32"); err != nil || !updated {
+		t.Fatalf("ConfigureAIOpsWebhook() updated=%v err=%v", updated, err)
+	}
+	if err := client.ConfigureAIOpsWebhook(context.Background(), "https://attacker.example/other", "0123456789abcdef0123456789abcdef", "10.0.0.0/8"); err == nil {
+		t.Fatal("unsafe webhook authority was accepted")
 	}
 }
 

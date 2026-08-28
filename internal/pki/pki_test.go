@@ -93,6 +93,34 @@ func TestSignClientCSRKeepsEndpointKeyOutsideControllerCertificate(t *testing.T)
 	}
 }
 
+func TestSignServiceClientCSRRequiresExactIdentityWithoutSANs(t *testing.T) {
+	authority, err := GenerateAuthority(time.Unix(0, 0), "lab.home.arpa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	makeRequest := func(commonName string, dnsNames []string) string {
+		request, requestErr := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: commonName}, DNSNames: dnsNames}, key)
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: request}))
+	}
+	certificate, err := SignServiceClientCSR(authority, makeRequest("aiops-pulse-read", nil), "aiops-pulse-read", time.Unix(0, 0))
+	if err != nil || certificate.CertPEM == "" || certificate.KeyPEM != "" {
+		t.Fatalf("service client certificate = %#v err=%v", certificate, err)
+	}
+	if _, err := SignServiceClientCSR(authority, makeRequest("aiops-pulse-note", nil), "aiops-pulse-read", time.Unix(0, 0)); err == nil {
+		t.Fatal("mismatched service identity was signed")
+	}
+	if _, err := SignServiceClientCSR(authority, makeRequest("aiops-pulse-read", []string{"aiops-pulse-read.lab.home.arpa"}), "aiops-pulse-read", time.Unix(0, 0)); err == nil {
+		t.Fatal("service identity with a DNS SAN was signed")
+	}
+}
+
 func TestClientNameCannotEscapeRuntimeDirectory(t *testing.T) {
 	if err := ValidateClientName("../outside"); err == nil {
 		t.Fatal("path traversal client name was accepted")
