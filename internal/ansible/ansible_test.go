@@ -519,6 +519,20 @@ func TestDNSRoleUsesBlockyVersionSubcommand(t *testing.T) {
 	}
 }
 
+func TestDNSRoleAllowsBlockyToTraverseFilteringPolicy(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{"Allow Blocky to traverse its non-secret filtering policy path", "path: /etc/boetticher", "mode: '0755'", "dns_plan.recursive_provider == 'blocky'"} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("DNS role is missing Blocky filtering traversal contract %q", required)
+		}
+	}
+}
+
 func TestPowerDNSTemplateUsesCurrentPrimarySecondarySettings(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "dns", "templates", "pdns.conf.j2")
 	data, err := os.ReadFile(path)

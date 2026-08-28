@@ -216,6 +216,17 @@
     - inventory_hostname in groups.get('dns', [])
     - dns_plan.recursive_provider == 'blocky'
 
+- name: Allow Blocky to traverse its non-secret filtering policy path
+  ansible.builtin.file:
+    path: /etc/boetticher
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - dns_plan.recursive_provider == 'blocky'
+
 - name: Refuse an unsupported Blocky release
   ansible.builtin.assert:
     that: "'0.34.0' in blocky_version.stdout"
