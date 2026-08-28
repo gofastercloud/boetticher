@@ -64,6 +64,20 @@ func TestEndpointClientTrustProjectionIncludesRootAndIssuingCAs(t *testing.T) {
 	}
 }
 
+func TestPulseCredentialBootstrapUsesTemporaryRootAuthority(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `CreatePulseMonitoringCredentials(context.Background(), rootRunner, s.BootstrapAddress, "root")`) {
+		t.Fatal("Pulse Proxmox credential bootstrap does not use the temporary root authority")
+	}
+	if strings.Contains(text, `CreatePulseMonitoringCredentials(context.Background(), proxmoxRunner, s.BootstrapAddress, model.DefaultAdminSSHUser)`) {
+		t.Fatal("Pulse Proxmox credential bootstrap depends on durable labadmin sudo")
+	}
+}
+
 func TestRuntimeBoundaryAcceptsRelativeSiteDirectory(t *testing.T) {
 	site := model.NewDefaultSite("trial", "age1trial")
 	if err := checkRuntimeBoundary("relative-site", site); err != nil {
