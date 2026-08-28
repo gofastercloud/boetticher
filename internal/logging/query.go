@@ -3,6 +3,8 @@ package logging
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +18,18 @@ import (
 )
 
 const QueryPort = 19533
+const AIOpsLogClientIdentity = "aiops-log-read"
+
+func VerifyQueryClient(state tls.ConnectionState) error {
+	if len(state.PeerCertificates) == 0 {
+		return errors.New("journal query requires a leaf client certificate")
+	}
+	got := state.PeerCertificates[0].Subject.CommonName
+	if len(got) != len(AIOpsLogClientIdentity) || subtle.ConstantTimeCompare([]byte(got), []byte(AIOpsLogClientIdentity)) != 1 {
+		return errors.New("journal query client identity is not authorized")
+	}
+	return nil
+}
 
 type QueryRequest struct {
 	Host         string `json:"host"`

@@ -17,6 +17,7 @@ type Server struct {
 	Store         *Store
 	WebhookSecret []byte
 	Now           func() time.Time
+	OnResolved    func(string)
 }
 
 func (s *Server) Handler() http.Handler {
@@ -64,6 +65,16 @@ func (s *Server) admit(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, "incident was not persisted", http.StatusServiceUnavailable)
 		return
+	}
+	if alert.Status == "resolved" {
+		if err := s.Store.Resolve(r.Context(), incident.ID, "pulse_resolution", s.now()); err != nil {
+			http.Error(w, "resolution was not persisted", http.StatusServiceUnavailable)
+			return
+		}
+		if s.OnResolved != nil {
+			s.OnResolved(incident.ID)
+		}
+		incident.State = StateResolved
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"incident_id": incident.ID, "state": incident.State, "duplicate": duplicate})
 }
