@@ -324,42 +324,42 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 				}
 			}
 		}
-	}
-	if s.Gateway.Mode == model.GatewayModeManaged && len(firewallPlan.Publications) > 0 {
-		upstream, observeErr := observeGatewayUpstream(context.Background(), firewallRunner, firewallPlan)
-		if observeErr != nil {
-			return fmt.Errorf("HOLD: published services require a safe current upstream DHCP lease: %w", observeErr)
+		if module == "dns" && s.Gateway.Mode == model.GatewayModeManaged && len(firewallPlan.Publications) > 0 {
+			upstream, observeErr := observeGatewayUpstream(context.Background(), firewallRunner, firewallPlan)
+			if observeErr != nil {
+				return fmt.Errorf("HOLD: published services require a safe current upstream DHCP lease: %w", observeErr)
+			}
+			finalFirewallPlan, planErr := firewall.PlanFromSiteWithUpstream(s, upstream)
+			if planErr != nil {
+				return fmt.Errorf("HOLD: resolve published service policy from upstream lease: %w", planErr)
+			}
+			finalRuleset, renderErr := firewall.RenderNFT(finalFirewallPlan)
+			if renderErr != nil {
+				return fmt.Errorf("HOLD: render published service policy: %w", renderErr)
+			}
+			finalVariables, variablesErr := ansible.VariablesWithUpstream(s, upstream)
+			if variablesErr != nil {
+				return fmt.Errorf("HOLD: render published service Ansible variables: %w", variablesErr)
+			}
+			var finalVariableDocument map[string]any
+			if err := json.Unmarshal(finalVariables, &finalVariableDocument); err != nil {
+				return fmt.Errorf("HOLD: decode published service Ansible variables: %w", err)
+			}
+			runtimeVariables["firewall_plan"] = finalVariableDocument["firewall_plan"]
+			runtimeVariables["firewall_ruleset"] = finalRuleset
+			variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
+			if err != nil {
+				return fmt.Errorf("HOLD: encode published service Ansible variables: %w", err)
+			}
+			variables = append(variables, '\n')
+			if err := ansible.RunLimited(context.Background(), ansiblePlaybook, inventoryPath, variables, "lab-fw-01"); err != nil {
+				return fmt.Errorf("HOLD: activate published services on managed gateway: %w", err)
+			}
+			if err := verifyGatewayReadiness(context.Background(), firewallRunner, "10.10.99.1"); err != nil {
+				return fmt.Errorf("HOLD: managed gateway did not pass publication readiness: %w", err)
+			}
+			firewallPlan = finalFirewallPlan
 		}
-		finalFirewallPlan, planErr := firewall.PlanFromSiteWithUpstream(s, upstream)
-		if planErr != nil {
-			return fmt.Errorf("HOLD: resolve published service policy from upstream lease: %w", planErr)
-		}
-		finalRuleset, renderErr := firewall.RenderNFT(finalFirewallPlan)
-		if renderErr != nil {
-			return fmt.Errorf("HOLD: render published service policy: %w", renderErr)
-		}
-		finalVariables, variablesErr := ansible.VariablesWithUpstream(s, upstream)
-		if variablesErr != nil {
-			return fmt.Errorf("HOLD: render published service Ansible variables: %w", variablesErr)
-		}
-		var finalVariableDocument map[string]any
-		if err := json.Unmarshal(finalVariables, &finalVariableDocument); err != nil {
-			return fmt.Errorf("HOLD: decode published service Ansible variables: %w", err)
-		}
-		runtimeVariables["firewall_plan"] = finalVariableDocument["firewall_plan"]
-		runtimeVariables["firewall_ruleset"] = finalRuleset
-		variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
-		if err != nil {
-			return fmt.Errorf("HOLD: encode published service Ansible variables: %w", err)
-		}
-		variables = append(variables, '\n')
-		if err := ansible.RunLimited(context.Background(), ansiblePlaybook, inventoryPath, variables, "lab-fw-01"); err != nil {
-			return fmt.Errorf("HOLD: activate published services on managed gateway: %w", err)
-		}
-		if err := verifyGatewayReadiness(context.Background(), firewallRunner, "10.10.99.1"); err != nil {
-			return fmt.Errorf("HOLD: managed gateway did not pass publication readiness: %w", err)
-		}
-		firewallPlan = finalFirewallPlan
 	}
 	if err := ansible.Run(context.Background(), ansiblePlaybook, inventoryPath, variables); err != nil {
 		return err

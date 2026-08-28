@@ -18,10 +18,10 @@ case "$operation" in
 	    upstream_mac=$(/usr/bin/cat /sys/class/net/wan0/address 2>/dev/null || true)
 	    [ -n "$upstream_mac" ] || upstream_mac=absent
 	    printf 'upstream.mac=%s\n' "$upstream_mac"
-	    upstream_address=$(/usr/sbin/ip -4 -o addr show dev wan0 scope global 2>/dev/null | /usr/bin/awk 'NR == 1 { print $4; exit }' || true)
+	    upstream_address=$(/usr/sbin/ip -4 -o addr show dev wan0 scope global 2>/dev/null | /usr/bin/awk 'NF { count++; value=$4 } END { if (count == 1) print value; else if (count > 1) print "ambiguous" }' || true)
 	    [ -n "$upstream_address" ] || upstream_address=absent
 	    printf 'upstream.address=%s\n' "$upstream_address"
-	    upstream_gateway=$(/usr/sbin/ip -4 route show default dev wan0 2>/dev/null | /usr/bin/awk '$1 == "default" { print $3; exit }' || true)
+	    upstream_gateway=$(/usr/sbin/ip -4 route show default dev wan0 2>/dev/null | /usr/bin/awk '$1 == "default" { count++; value=$3 } END { if (count == 1) print value; else if (count > 1) print "ambiguous" }' || true)
 	    [ -n "$upstream_gateway" ] || upstream_gateway=absent
 	    printf 'upstream.gateway=%s\n' "$upstream_gateway"
 	    ;;
