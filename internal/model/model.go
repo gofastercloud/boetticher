@@ -44,7 +44,6 @@ const (
 	PortalVMID                  = 130
 	LoggingVMID                 = 140
 	BuilderVMID                 = 190
-	StreamDeckVMID              = 220
 	BuilderCores                = 4
 	BuilderMemoryMiB            = 8192
 	BuilderDiskGiB              = 32
@@ -315,17 +314,10 @@ type Component struct {
 }
 
 type ModuleConfig struct {
-	Enabled                *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Provider               string                  `yaml:"provider,omitempty" json:"provider,omitempty"`
-	Upstreams              []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
-	Models                 []LiteLLMModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
-	Brightness             int                     `json:"brightness,omitempty"`
-	RefreshSeconds         int                     `json:"refresh_seconds,omitempty"`
-	RequestTimeoutSeconds  int                     `json:"request_timeout_seconds,omitempty"`
-	DefaultPage            string                  `json:"default_page,omitempty"`
-	PinnedGuests           []string                `json:"pinned_guests,omitempty"`
-	StorageWarningPercent  int                     `json:"storage_warning_percent,omitempty"`
-	StorageCriticalPercent int                     `json:"storage_critical_percent,omitempty"`
+	Enabled   *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Provider  string                  `yaml:"provider,omitempty" json:"provider,omitempty"`
+	Upstreams []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	Models    []LiteLLMModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
 }
 
 type USBExportBinding struct {
@@ -803,11 +795,6 @@ func (s Site) Validate() error {
 	}
 	if litellm, ok := s.ModuleConfig["litellm"]; ok && (litellm.Enabled != nil && *litellm.Enabled || len(litellm.Upstreams) > 0 || len(litellm.Models) > 0) {
 		if err := ValidateLiteLLMConfig(litellm); err != nil {
-			return err
-		}
-	}
-	if streamdeck, ok := s.ModuleConfig["streamdeck"]; ok {
-		if err := ValidateStreamDeckConfig(streamdeck); err != nil {
 			return err
 		}
 	}

@@ -24,8 +24,6 @@
       when: inventory_hostname in groups.get('tailnet-router', [])
     - role: litellm
       when: inventory_hostname in groups.get('litellm', [])
-    - role: streamdeck
-      when: inventory_hostname in groups.get('streamdeck', [])
 
 - name: Reconcile Core-owned USB exports after appliance configuration
   hosts: proxmox

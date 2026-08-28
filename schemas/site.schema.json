@@ -185,9 +185,6 @@
         "monitoring": {
           "$ref": "#/$defs/ToggleModuleConfig"
         },
-        "streamdeck": {
-          "$ref": "#/$defs/StreamDeckModuleConfig"
-        },
         "tailnet-router": {
           "$ref": "#/$defs/ToggleModuleConfig"
         }
@@ -334,59 +331,6 @@
         "installation_id",
         "age_recipient"
       ],
-      "type": "object"
-    },
-    "StreamDeckModuleConfig": {
-      "additionalProperties": false,
-      "properties": {
-        "brightness": {
-          "default": 40,
-          "maximum": 100,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "default_page": {
-          "default": "overview",
-          "enum": [
-            "overview",
-            "guests"
-          ],
-          "type": "string"
-        },
-        "enabled": {
-          "type": "boolean"
-        },
-        "pinned_guests": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "refresh_seconds": {
-          "default": 5,
-          "maximum": 300,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "request_timeout_seconds": {
-          "default": 3,
-          "maximum": 30,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "storage_critical_percent": {
-          "default": 90,
-          "maximum": 100,
-          "minimum": 2,
-          "type": "integer"
-        },
-        "storage_warning_percent": {
-          "default": 80,
-          "maximum": 99,
-          "minimum": 1,
-          "type": "integer"
-        }
-      },
       "type": "object"
     },
     "TestedVersions": {

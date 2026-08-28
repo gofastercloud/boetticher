@@ -185,7 +185,8 @@ func usbAllowed(r model.USBRequirement) string {
 
 func observeUSB(ctx context.Context, s model.Site, siteDir string) (string, error) {
 	runner := proxmoxRootSSHRunner(s, siteDir)
-	return runner.Run(ctx, s.BootstrapAddress, "root", `set -eu; for d in /sys/bus/usb/devices/*-*; do test -f "$d/idVendor" || continue; test "$(cat "$d/uevent" | sed -n 's/^DEVTYPE=//p')" = usb_device || continue; printf '%s %s:%s %s\n' "$(basename "$d")" "$(cat "$d/idVendor")" "$(cat "$d/idProduct")" "$(cat "$d/serial" 2>/dev/null || true)"; done`)
+	output, err := runner.Run(ctx, s.BootstrapAddress, "root", `set -eu; for d in /sys/bus/usb/devices/*-*; do test -f "$d/idVendor" || continue; test "$(cat "$d/uevent" | sed -n 's/^DEVTYPE=//p')" = usb_device || continue; printf '%s %s:%s %s\n' "$(basename "$d")" "$(cat "$d/idVendor")" "$(cat "$d/idProduct")" "$(cat "$d/serial" 2>/dev/null || true)"; done`)
+	return string(output), err
 }
 func observeUSBPort(ctx context.Context, s model.Site, siteDir, port string) ([3]string, error) {
 	var zero [3]string
@@ -194,7 +195,7 @@ func observeUSBPort(ctx context.Context, s model.Site, siteDir, port string) ([3
 	if err != nil {
 		return zero, err
 	}
-	fields := strings.SplitN(strings.TrimSuffix(output, "\n"), "\n", 3)
+	fields := strings.SplitN(strings.TrimSuffix(string(output), "\n"), "\n", 3)
 	if len(fields) < 2 || strings.TrimSpace(fields[0]) == "" || strings.TrimSpace(fields[1]) == "" {
 		return zero, fmt.Errorf("incomplete USB identity at %s", port)
 	}

@@ -102,14 +102,6 @@ func FirstPartyRegistry() Registry {
 				{Name: "lab-litellm-01", VMID: 210, Hostname: "lab-litellm-01", Address: "10.10.20.60", Role: "LiteLLM AI API router", DNSAliases: []string{"litellm", "ai"}, URL: "https://litellm." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
-		"streamdeck": {
-			Name: "streamdeck", Description: "USB StreamDeck display backed exclusively by Pulse", Version: "1.0.0", Policy: DefaultOff,
-			DependsOn: []string{"monitoring"}, Requires: []Capability{CapabilityDNS, CapabilityMonitoring}, GuestIDs: []int{model.StreamDeckVMID}, ReservedVMIDStart: 220, ReservedVMIDEnd: 229,
-			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
-				{Name: "lab-streamdeck-01", VMID: model.StreamDeckVMID, Hostname: "lab-streamdeck-01", Address: "10.10.20.70", Role: "Pulse StreamDeck status display", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-			},
-			USBRequirements: []model.USBRequirement{{Name: "display", Guest: "lab-streamdeck-01", Access: "rw", Required: true, AllowedIdentities: []model.USBIdentity{{VendorID: "0fd9", ProductID: "006d"}}}},
-		},
 	}}
 }
 
@@ -282,11 +274,6 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 		}
 		if name == "litellm" && (moduleConfig.Enabled != nil && *moduleConfig.Enabled || len(moduleConfig.Upstreams) > 0 || len(moduleConfig.Models) > 0) {
 			if err := model.ValidateLiteLLMConfig(moduleConfig); err != nil {
-				return nil, err
-			}
-		}
-		if name == "streamdeck" {
-			if err := model.ValidateStreamDeckConfig(moduleConfig); err != nil {
 				return nil, err
 			}
 		}
