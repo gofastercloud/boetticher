@@ -431,6 +431,7 @@ build_monitoring() {
   rootfs=$(prepare_rootfs boetticher-monitoring)
   install_pulse "$rootfs"
   install -D -m 0755 images/monitoring/runtime/run-pulse.sh "$rootfs/usr/lib/boetticher/run-pulse"
+  chmod 0755 "$rootfs/usr/lib/boetticher"
   install -D -m 0644 images/monitoring/runtime/pulse.service "$rootfs/etc/systemd/system/pulse.service"
   write_artifact_identity "$rootfs" monitoring
   package_lxc boetticher-monitoring

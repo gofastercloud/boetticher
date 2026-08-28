@@ -565,7 +565,7 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"pulse_release_sha256", "/opt/pulse/bin/pulse", "pulse.service", "run-pulse.sh"} {
+	for _, required := range []string{"pulse_release_sha256", "/opt/pulse/bin/pulse", "pulse.service", "run-pulse.sh", "chmod 0755 \"$rootfs/usr/lib/boetticher\""} {
 		if !strings.Contains(string(buildScript), required) {
 			t.Fatalf("monitoring build is missing Pulse runtime contract %q", required)
 		}
