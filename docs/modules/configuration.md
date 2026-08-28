@@ -33,6 +33,8 @@ modules:
     pinned_guests: []
     storage_warning_percent: 80
     storage_critical_percent: 90
+  printer:
+    enabled: false
 usb_exports:
   - module: streamdeck
     requirement: display
@@ -40,6 +42,11 @@ usb_exports:
     vendor_id: "0fd9"
     product_id: "006d"
     serial: "optional-device-serial"
+  - module: printer
+    requirement: serial
+    port: "1-2.4"
+    vendor_id: "1a86"
+    product_id: "7523"
 ```
 
 An omitted module map uses the defaults: DNS is mandatory, monitoring is
@@ -49,8 +56,9 @@ disable switch and accepts only `blocky` or `adguard` as its provider.
 Use `boetticher config validate` before deployment, `boetticher config show`
 to inspect normalized non-secret configuration, and `boetticher config schema`
 to print the shipped generated JSON Schema. Unknown fields and unknown module names
-are errors with a configuration path. `tailnet-router`, `litellm`, and `streamdeck` are
+are errors with a configuration path. `tailnet-router`, `litellm`, `streamdeck`, and `printer` are
 default-off; LiteLLM exposes only the explicitly declared aliases and keeps
 the referenced provider credentials in SOPS-managed secret state. USB exports
-bind only compiled-in named requirements to stable physical ports; they cannot
+bind only compiled-in named requirements to stable physical ports; Core resolves
+raw USB or serial character devices according to the compiled requirement. They cannot
 name device paths, VMIDs, or user workloads.

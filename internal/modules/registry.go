@@ -108,7 +108,15 @@ func FirstPartyRegistry() Registry {
 			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
 				{Name: "lab-streamdeck-01", VMID: model.StreamDeckVMID, Hostname: "lab-streamdeck-01", Address: "10.10.20.70", Role: "Pulse StreamDeck status display", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
-			USBRequirements: []model.USBRequirement{{Name: "display", Guest: "lab-streamdeck-01", Access: "rw", Required: true, AllowedIdentities: []model.USBIdentity{{VendorID: "0fd9", ProductID: "006d"}}}},
+			USBRequirements: []model.USBRequirement{{Name: "display", Guest: "lab-streamdeck-01", DeviceType: "raw-usb", Access: "rw", Required: true, AllowedIdentities: []model.USBIdentity{{VendorID: "0fd9", ProductID: "006d"}}}},
+		},
+		"printer": {
+			Name: "printer", Description: "OctoPrint management for one USB-connected Ender-3 V3 SE", Version: "1.0.0", Policy: DefaultOff,
+			Requires: []Capability{CapabilityDNS}, GuestIDs: []int{model.PrinterVMID}, ReservedVMIDStart: 230, ReservedVMIDEnd: 239,
+			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
+				{Name: "lab-printer-01", VMID: model.PrinterVMID, Hostname: "lab-printer-01", Address: "10.10.20.80", Role: "OctoPrint for Ender-3 V3 SE", DNSAliases: []string{"octoprint", "printer"}, URL: "https://octoprint." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			},
+			USBRequirements: []model.USBRequirement{{Name: "serial", Guest: "lab-printer-01", DeviceType: "serial", Access: "rw", Required: true, AllowedIdentities: []model.USBIdentity{{VendorID: "1a86", ProductID: "7523"}}}},
 		},
 	}}
 }
@@ -221,6 +229,18 @@ func (r Registry) Validate() error {
 		}
 		if definition.Placement.ZoneType != "" && !supportedPlacementZoneType(definition.Placement.ZoneType) {
 			return fmt.Errorf("module %s has unknown placement zone type %q", definition.Name, definition.Placement.ZoneType)
+		}
+		guestNames := make(map[string]bool, len(definition.Guests))
+		for _, guest := range definition.Guests {
+			guestNames[guest.Name] = true
+		}
+		for _, requirement := range definition.USBRequirements {
+			if requirement.Name == "" || !guestNames[requirement.Guest] || requirement.Access != "rw" || len(requirement.AllowedIdentities) == 0 {
+				return fmt.Errorf("module %s has invalid USB requirement %q", definition.Name, requirement.Name)
+			}
+			if requirement.DeviceType != "raw-usb" && requirement.DeviceType != "serial" {
+				return fmt.Errorf("module %s USB device type %q is unsupported", definition.Name, requirement.DeviceType)
+			}
 		}
 		for _, guest := range definition.Guests {
 			if previous, exists := guestVMIDs[guest.VMID]; exists && guest.VMID != 0 && previous != definition.Name {

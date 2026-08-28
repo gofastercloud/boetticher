@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 
 MANIFEST_DIR = Path("/etc/boetticher/usb-exports")
 STATE_DIR = Path("/var/lib/boetticher/usb-export")
@@ -47,23 +48,47 @@ def validate_guest(manifest, config):
     if manifest["ownership_tag"] not in tags or "boetticher" not in tags or "managed" not in tags: raise Hold("guest ownership tags do not match manifest")
     if config.get("unprivileged", "0") != "1" or not manifest.get("unprivileged"): raise Hold("USB export target must be unprivileged")
 
-def resolve(export):
-    parent = SYS_USB / export["port"]
-    if not parent.is_dir(): return None
-    if (parent / "idVendor").read_text().strip().lower() != export["vendor_id"]: raise Hold(f"VID mismatch at USB port {export['port']}")
-    if (parent / "idProduct").read_text().strip().lower() != export["product_id"]: raise Hold(f"PID mismatch at USB port {export['port']}")
-    expected_serial = export.get("serial", "")
-    actual_serial = (parent / "serial").read_text().strip() if (parent / "serial").exists() else ""
-    if expected_serial and actual_serial != expected_serial: raise Hold(f"serial mismatch at USB port {export['port']}")
-    bus, device = int((parent / "busnum").read_text()), int((parent / "devnum").read_text())
-    path = DEV_USB / f"{bus:03d}" / f"{device:03d}"
+def checked_character_device(path, root):
     try:
         st = path.stat()
     except FileNotFoundError:
         return None
     resolved = path.resolve()
-    if DEV_USB not in resolved.parents or not stat.S_ISCHR(st.st_mode): raise Hold("resolved USB path is not a character device below /dev/bus/usb")
+    if (root != resolved and root not in resolved.parents) or not stat.S_ISCHR(st.st_mode):
+        raise Hold(f"resolved device is not a character device below {root}")
     return str(path)
+
+def serial_device(parent):
+    for _ in range(26):
+        names = sorted({candidate.name for candidate in parent.glob("**/tty*") if candidate.name.startswith(("ttyUSB", "ttyACM")) and candidate.name[6:].isdigit()})
+        devices = [Path("/dev") / name for name in names if (Path("/dev") / name).exists()]
+        if len(devices) > 1:
+            raise Hold(f"multiple serial devices found below USB port {parent.name}")
+        if devices:
+            return checked_character_device(devices[0], Path("/dev"))
+        time.sleep(0.2)
+    return None
+
+def resolve(export):
+    parent = SYS_USB / export["port"]
+    if not parent.is_dir(): return None
+    try:
+        vendor_id = (parent / "idVendor").read_text().strip().lower()
+        product_id = (parent / "idProduct").read_text().strip().lower()
+        expected_serial = export.get("serial", "")
+        actual_serial = (parent / "serial").read_text().strip() if (parent / "serial").exists() else ""
+    except FileNotFoundError:
+        return None
+    if vendor_id != export["vendor_id"]: raise Hold(f"VID mismatch at USB port {export['port']}")
+    if product_id != export["product_id"]: raise Hold(f"PID mismatch at USB port {export['port']}")
+    if expected_serial and actual_serial != expected_serial: raise Hold(f"serial mismatch at USB port {export['port']}")
+    device_type = export.get("device_type")
+    if device_type == "serial":
+        return serial_device(parent)
+    if device_type != "raw-usb":
+        raise Hold(f"unsupported USB device type: {device_type}")
+    bus, device = int((parent / "busnum").read_text()), int((parent / "devnum").read_text())
+    return checked_character_device(DEV_USB / f"{bus:03d}" / f"{device:03d}", DEV_USB)
 
 def device_values(config):
     return {key: value for key, value in config.items() if key.startswith("dev") and key[3:].isdigit()}

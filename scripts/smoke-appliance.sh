@@ -132,6 +132,26 @@ case "$name" in
     test ! -e "$rootfs/etc/boetticher/streamdeck.json"
     if grep -R -n -E 'pulse-token|Authorization: Bearer' "$rootfs/etc" "$rootfs/opt/streamdeck" 2>/dev/null; then echo "streamdeck artifact contains credential material" >&2; exit 1; fi
     ;;
+  boetticher-printer)
+    run nginx -v
+    run /opt/octoprint/bin/python --version
+    chroot "$rootfs" /opt/octoprint/bin/octoprint --version | grep -Fq '1.11.8'
+    chroot "$rootfs" getent passwd octoprint | grep -Fq ':2200:2200:'
+    chroot "$rootfs" dpkg-query -W -f='${Version}' python3 | grep -Fxq '3.13.5-1'
+    chroot "$rootfs" dpkg-query -W -f='${Version}' nginx | grep -Fxq '1.26.3-3+deb13u7'
+    test -f "$rootfs/etc/systemd/system/octoprint.service"
+    grep -Fq -- '--host=127.0.0.1' "$rootfs/etc/systemd/system/octoprint.service"
+    grep -Fq 'DevicePolicy=closed' "$rootfs/etc/systemd/system/octoprint.service"
+    grep -Fq 'DeviceAllow=char-ttyUSB rw' "$rootfs/etc/systemd/system/octoprint.service"
+    grep -Fq 'ProtectSystem=strict' "$rootfs/etc/systemd/system/octoprint.service"
+    grep -Fq 'MemoryDenyWriteExecute=yes' "$rootfs/etc/systemd/system/octoprint.service"
+    test ! -e "$rootfs/var/lib/octoprint/config.yaml"
+    test ! -e "$rootfs/etc/nginx/sites-enabled/default"
+    if find "$rootfs/etc/nginx" -type f \( -name '*.pem' -o -name '*.key' \) -print -quit | grep -q .; then
+      echo "printer artifact contains generated TLS material" >&2
+      exit 1
+    fi
+    ;;
   *)
     echo "unknown smoke target: $name" >&2
     exit 2

@@ -16,8 +16,14 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(modules) != 6 || modules[0].Definition.Name != "firewall" || modules[1].Definition.Name != "dns" || modules[2].Definition.Name != "logging" || modules[3].Definition.Name != "monitoring" || modules[4].Definition.Name != "litellm" || modules[5].Definition.Name != "tailnet-router" {
+	wantOrder := []string{"firewall", "dns", "logging", "monitoring", "litellm", "printer", "streamdeck", "tailnet-router"}
+	if len(modules) != len(wantOrder) {
 		t.Fatalf("unexpected module resolution: %#v", modules)
+	}
+	for index, name := range wantOrder {
+		if modules[index].Definition.Name != name {
+			t.Fatalf("module %d = %s, want %s", index, modules[index].Definition.Name, name)
+		}
 	}
 	if len(site.PlatformComponents()) != 7 {
 		t.Fatalf("default composition produced %d platform components", len(site.PlatformComponents()))
@@ -81,7 +87,7 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	if err := registry.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"tailnet-router", "litellm"} {
+	for _, name := range []string{"tailnet-router", "litellm", "streamdeck", "printer"} {
 		definition, ok := registry.Definition(name)
 		if !ok || definition.Policy != DefaultOff {
 			t.Fatalf("%s is not a default-off first-party module: %#v", name, definition)
@@ -94,6 +100,54 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	litellm, _ := registry.Definition("litellm")
 	if litellm.ReservedVMIDStart != 210 || litellm.ReservedVMIDEnd != 219 || litellm.Guests[0].VMID != 210 || litellm.Placement.ZoneType != model.ZoneTypeServers {
 		t.Fatalf("litellm identity contract is incomplete: %#v", litellm)
+	}
+	printer, _ := registry.Definition("printer")
+	if printer.ReservedVMIDStart != 230 || printer.ReservedVMIDEnd != 239 || printer.Guests[0].VMID != model.PrinterVMID || printer.Placement.ZoneType != model.ZoneTypeServers {
+		t.Fatalf("printer identity contract is incomplete: %#v", printer)
+	}
+}
+
+func TestPrinterComposesMinimalOctoPrintDeclaration(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	enabled := true
+	config.Modules.Printer = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.USBExports = []model.USBExportBinding{{Module: "printer", Requirement: "serial", Port: "1-2.4", VendorID: "1a86", ProductID: "7523"}}
+	site, _, err := Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	printer, ok := findDeclaration(site, "printer")
+	if !ok {
+		t.Fatal("printer declaration is missing")
+	}
+	if len(printer.Guests) != 1 || printer.Guests[0].Address != "10.10.20.80" || printer.Guests[0].URL != "https://octoprint."+site.Network.Domain {
+		t.Fatalf("printer guest contract is incomplete: %#v", printer.Guests)
+	}
+	if !printer.Security.Unprivileged || len(printer.USBRequirements) != 1 || printer.USBRequirements[0].DeviceType != "serial" {
+		t.Fatalf("printer USB security contract is incomplete: %#v", printer)
+	}
+	foundState, foundTLS := false, false
+	for _, state := range printer.Persistent {
+		foundState = foundState || state.Path == "/var/lib/octoprint" && state.Sensitive && state.Backup
+		foundTLS = foundTLS || state.Path == "/var/lib/boetticher/identity/tls" && state.Sensitive && state.Backup
+	}
+	if !foundState || !foundTLS {
+		t.Fatalf("printer persistent state contract is incomplete: %#v", printer.Persistent)
+	}
+	if len(printer.Secrets) != 0 {
+		t.Fatalf("printer declaration invented controller-owned secrets: %#v", printer.Secrets)
+	}
+}
+
+func TestRegistryRejectsUnsupportedUSBDeviceType(t *testing.T) {
+	registry := NewRegistry([]ModuleDefinition{{
+		Name: "bad-usb", Version: "1.0.0", Policy: DefaultOff,
+		GuestIDs: []int{240}, ReservedVMIDStart: 240, ReservedVMIDEnd: 249,
+		Guests:          []model.Component{{Name: "bad-usb", VMID: 240, Address: "10.10.20.90"}},
+		USBRequirements: []model.USBRequirement{{Name: "device", Guest: "bad-usb", DeviceType: "block", Access: "rw", Required: true, AllowedIdentities: []model.USBIdentity{{VendorID: "1234", ProductID: "5678"}}}},
+	}})
+	if err := registry.Validate(); err == nil || !strings.Contains(err.Error(), "USB device type") {
+		t.Fatalf("unsupported USB device type was accepted: %v", err)
 	}
 }
 

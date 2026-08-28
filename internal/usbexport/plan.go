@@ -16,6 +16,7 @@ type Export struct {
 	VendorID    string `json:"vendor_id"`
 	ProductID   string `json:"product_id"`
 	Serial      string `json:"serial,omitempty"`
+	DeviceType  string `json:"device_type"`
 	Access      string `json:"access"`
 }
 
@@ -86,7 +87,7 @@ func PlanFromSite(site model.Site) ([]GuestManifest, error) {
 				}
 				continue
 			}
-			byGuest[requirement.Guest] = append(byGuest[requirement.Guest], Export{Module: definition.Name, Requirement: requirement.Name, Slot: slotByRequirement[requirement.Name], Port: binding.Port, VendorID: binding.VendorID, ProductID: binding.ProductID, Serial: binding.Serial, Access: requirement.Access})
+			byGuest[requirement.Guest] = append(byGuest[requirement.Guest], Export{Module: definition.Name, Requirement: requirement.Name, Slot: slotByRequirement[requirement.Name], Port: binding.Port, VendorID: binding.VendorID, ProductID: binding.ProductID, Serial: binding.Serial, DeviceType: requirement.DeviceType, Access: requirement.Access})
 		}
 		for guestName, exports := range byGuest {
 			guest, ok := guests[guestName]

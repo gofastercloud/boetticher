@@ -1,0 +1,136 @@
+---
+- name: Require the immutable printer appliance and serial export
+  ansible.builtin.assert:
+    that:
+      - boetticher_appliance_artifact | default(false) | bool
+      - module_configs.printer is defined
+      - usb_export_manifests | selectattr('vmid', 'equalto', 230) | list | length == 1
+      - ((usb_export_manifests | selectattr('vmid', 'equalto', 230) | first).exports | length) == 1
+      - ((usb_export_manifests | selectattr('vmid', 'equalto', 230) | first).exports | first).device_type == 'serial'
+    fail_msg: Printer management requires its qualified appliance and validated serial export
+
+- name: Prepare persistent OctoPrint state
+  ansible.builtin.file:
+    path: /var/lib/octoprint
+    state: directory
+    owner: octoprint
+    group: octoprint
+    mode: '0700'
+
+- name: Create the printer TLS identity directory
+  ansible.builtin.file:
+    path: /var/lib/boetticher/identity/tls
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Generate the printer endpoint private key locally
+  ansible.builtin.command:
+    argv: [openssl, genpkey, -algorithm, EC, -pkeyopt, ec_paramgen_curve:P-256, -out, /var/lib/boetticher/identity/tls/octoprint.key.pem]
+  args:
+    creates: /var/lib/boetticher/identity/tls/octoprint.key.pem
+
+- name: Restrict the printer endpoint private key
+  ansible.builtin.file:
+    path: /var/lib/boetticher/identity/tls/octoprint.key.pem
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Generate the printer endpoint CSR locally
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - req
+      - -new
+      - -sha256
+      - -key
+      - /var/lib/boetticher/identity/tls/octoprint.key.pem
+      - -subj
+      - "/CN=octoprint.{{ domain }}"
+      - -addext
+      - "subjectAltName=DNS:octoprint.{{ domain }},DNS:printer.{{ domain }},DNS:lab-printer-01.{{ domain }}"
+      - -out
+      - /var/lib/boetticher/identity/tls/octoprint.csr.pem
+  args:
+    creates: /var/lib/boetticher/identity/tls/octoprint.csr.pem
+
+- name: Fetch the printer CSR during the PKI bootstrap phase
+  ansible.builtin.fetch:
+    src: /var/lib/boetticher/identity/tls/octoprint.csr.pem
+    dest: "{{ pki_csr_output_dir }}/octoprint.csr.pem"
+    flat: true
+  when: pki_bootstrap_phase | default(false) | bool
+
+- name: Require the controller-issued printer certificate
+  ansible.builtin.assert:
+    that: (pki_bootstrap_phase | default(false) | bool) or (octoprint_server_cert_pem is defined and octoprint_server_cert_pem | length > 0)
+    fail_msg: Printer nginx requires the existing Boetticher PKI server certificate
+  no_log: true
+
+- name: Install the printer server certificate
+  ansible.builtin.copy:
+    dest: /var/lib/boetticher/identity/tls/octoprint.crt.pem
+    content: "{{ octoprint_server_cert_pem | default('') }}"
+    owner: root
+    group: root
+    mode: '0644'
+  no_log: true
+  when: octoprint_server_cert_pem | default('') | length > 0
+  notify: reload printer nginx
+
+- name: Configure nginx as the only network listener for OctoPrint
+  ansible.builtin.copy:
+    dest: /etc/nginx/sites-available/octoprint.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      map $http_upgrade $connection_upgrade {
+          default upgrade;
+          '' close;
+      }
+      server {
+          listen 10.10.20.80:443 ssl;
+          server_name octoprint.{{ domain }} printer.{{ domain }};
+          ssl_certificate /var/lib/boetticher/identity/tls/octoprint.crt.pem;
+          ssl_certificate_key /var/lib/boetticher/identity/tls/octoprint.key.pem;
+          ssl_protocols TLSv1.2 TLSv1.3;
+          client_max_body_size 1G;
+          location / {
+              proxy_pass http://127.0.0.1:5000;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+              proxy_set_header X-Forwarded-Host $host;
+              proxy_set_header X-Forwarded-Proto https;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header Upgrade $http_upgrade;
+              proxy_set_header Connection $connection_upgrade;
+              proxy_read_timeout 3600s;
+          }
+      }
+  when: octoprint_server_cert_pem | default('') | length > 0
+  notify: reload printer nginx
+
+- name: Remove the distribution nginx default site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: reload printer nginx
+
+- name: Enable the printer nginx site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/octoprint.conf
+    dest: /etc/nginx/sites-enabled/octoprint.conf
+    state: link
+  when: octoprint_server_cert_pem | default('') | length > 0
+  notify: reload printer nginx
+
+- name: Enable and start OctoPrint and nginx after certificate installation
+  ansible.builtin.service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: [octoprint, nginx]
+  when: octoprint_server_cert_pem | default('') | length > 0

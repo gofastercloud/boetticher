@@ -1818,10 +1818,35 @@ func stringIn(values []string, wanted string) bool {
 
 func validManagedUSBDeviceValue(value string) bool {
 	parts := strings.Split(value, ",")
-	if len(parts) != 4 || !strings.HasPrefix(parts[0], "/dev/bus/usb/") {
+	if len(parts) != 4 || !validManagedUSBPath(parts[0]) {
 		return false
 	}
 	return parts[1] == "uid=2200" && parts[2] == "gid=2200" && parts[3] == "mode=0660"
+}
+
+func validManagedUSBPath(path string) bool {
+	if strings.HasPrefix(path, "/dev/bus/usb/") {
+		parts := strings.Split(strings.TrimPrefix(path, "/dev/bus/usb/"), "/")
+		return len(parts) == 2 && allDecimal(parts[0]) && allDecimal(parts[1])
+	}
+	for _, prefix := range []string{"/dev/ttyUSB", "/dev/ttyACM"} {
+		if strings.HasPrefix(path, prefix) {
+			return allDecimal(strings.TrimPrefix(path, prefix))
+		}
+	}
+	return false
+}
+
+func allDecimal(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func observedTruthy(value any) bool {

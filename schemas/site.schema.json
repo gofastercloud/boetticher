@@ -141,6 +141,9 @@
         "monitoring": {
           "$ref": "#/$defs/ToggleModuleConfig"
         },
+        "printer": {
+          "$ref": "#/$defs/ToggleModuleConfig"
+        },
         "streamdeck": {
           "$ref": "#/$defs/StreamDeckModuleConfig"
         },

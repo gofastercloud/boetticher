@@ -96,7 +96,7 @@ func validateModuleConfigShape(data []byte) error {
 		switch name {
 		case "dns":
 			allowed["provider"] = true
-		case "monitoring", "firewall":
+		case "monitoring", "firewall", "printer":
 			allowed["enabled"] = true
 		case "logging":
 			// Logging is mandatory and has no persisted lifecycle fields.
@@ -107,7 +107,9 @@ func validateModuleConfigShape(data []byte) error {
 			allowed["upstreams"] = true
 			allowed["models"] = true
 		case "streamdeck":
-			for _, field := range []string{"enabled", "brightness", "refresh_seconds", "request_timeout_seconds", "default_page", "pinned_guests", "storage_warning_percent", "storage_critical_percent"} { allowed[field] = true }
+			for _, field := range []string{"enabled", "brightness", "refresh_seconds", "request_timeout_seconds", "default_page", "pinned_guests", "storage_warning_percent", "storage_critical_percent"} {
+				allowed[field] = true
+			}
 		default:
 			return fmt.Errorf("site.yml: modules.%s: unknown first-party module", name)
 		}
@@ -132,7 +134,9 @@ func validateModuleConfigShape(data []byte) error {
 			if name == "litellm" && (field == "upstreams" || field == "models") && fieldValue.Kind != yaml.SequenceNode {
 				return fmt.Errorf("site.yml: modules.litellm.%s: expected a list", field)
 			}
-			if name == "streamdeck" && field == "pinned_guests" && fieldValue.Kind != yaml.SequenceNode { return errors.New("site.yml: modules.streamdeck.pinned_guests: expected a list") }
+			if name == "streamdeck" && field == "pinned_guests" && fieldValue.Kind != yaml.SequenceNode {
+				return errors.New("site.yml: modules.streamdeck.pinned_guests: expected a list")
+			}
 		}
 	}
 	return nil

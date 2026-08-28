@@ -18,6 +18,9 @@ declare named requirements and allowed physical identities; site configuration
 can bind only those requirements. The Proxmox-host helper accepts no device
 path or guest target from its caller and refuses unowned guests, ambiguous
 slots, non-character devices, and identity mismatches before restart.
+Raw USB consumers receive only the resolved parent device; serial consumers
+receive only the single tty descendant below that parent. Enumeration names
+are never accepted as desired-state identity.
 
 A compromised service remains subject to its non-root service account and
 systemd sandbox where supported. Proxmox/root is a trusted host boundary, and a

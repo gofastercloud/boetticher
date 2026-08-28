@@ -17,6 +17,7 @@ boetticher ssh-config [--site DIR] [--output PATH| -] [--force] [--check] [--ide
 boetticher access [--site DIR]
 boetticher bootstrap-endpoint show|set ADDRESS [--site DIR]
 boetticher network trunk status|attach|detach [INTERFACE] [--site DIR] [--confirm] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
+boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm]
 boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]
 boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]
 boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]
@@ -236,7 +237,7 @@ Options: --live reads parent usb_device identities from Proxmox; --confirm is re
 
 Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
 
-Examples: `boetticher hardware usb bind streamdeck display 1-2.3 --confirm --site ./my-boetticher`
+Examples: `boetticher hardware usb bind printer serial 1-2.4 --confirm --site ./my-boetticher`
 
 Related commands: module, deploy, preflight
 
@@ -346,9 +347,9 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; purge requires --confirm and removes retained module resources only after exact ownership proof.
 
-Safety: tailnet-router, litellm, and streamdeck are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership.
+Safety: tailnet-router, litellm, streamdeck, and printer are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership.
 
-Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules tailnet-router plan --site ./my-boetticher`
+Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules printer plan --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
@@ -718,7 +719,7 @@ Options: --live reads parent usb_device identities from Proxmox; --confirm is re
 
 Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
 
-Examples: `boetticher hardware usb bind streamdeck display 1-2.3 --confirm --site ./my-boetticher`
+Examples: `boetticher hardware usb bind printer serial 1-2.4 --confirm --site ./my-boetticher`
 
 Related commands: module, deploy, preflight
 
@@ -734,7 +735,7 @@ Options: --live reads parent usb_device identities from Proxmox; --confirm is re
 
 Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
 
-Examples: `boetticher hardware usb bind streamdeck display 1-2.3 --confirm --site ./my-boetticher`
+Examples: `boetticher hardware usb bind printer serial 1-2.4 --confirm --site ./my-boetticher`
 
 Related commands: module, deploy, preflight
 
@@ -750,7 +751,7 @@ Options: --live reads parent usb_device identities from Proxmox; --confirm is re
 
 Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
 
-Examples: `boetticher hardware usb bind streamdeck display 1-2.3 --confirm --site ./my-boetticher`
+Examples: `boetticher hardware usb bind printer serial 1-2.4 --confirm --site ./my-boetticher`
 
 Related commands: module, deploy, preflight
 
@@ -766,7 +767,7 @@ Options: --live reads parent usb_device identities from Proxmox; --confirm is re
 
 Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
 
-Examples: `boetticher hardware usb bind streamdeck display 1-2.3 --confirm --site ./my-boetticher`
+Examples: `boetticher hardware usb bind printer serial 1-2.4 --confirm --site ./my-boetticher`
 
 Related commands: module, deploy, preflight
 
@@ -876,9 +877,9 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; purge requires --confirm and removes retained module resources only after exact ownership proof.
 
-Safety: tailnet-router, litellm, and streamdeck are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership.
+Safety: tailnet-router, litellm, streamdeck, and printer are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership.
 
-Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules tailnet-router plan --site ./my-boetticher`
+Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules printer plan --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 

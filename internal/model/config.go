@@ -42,6 +42,7 @@ type ModulesConfig struct {
 	TailnetRouter *ToggleModuleConfig     `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
 	LiteLLM       *LiteLLMModuleConfig    `yaml:"litellm,omitempty" json:"litellm,omitempty"`
 	StreamDeck    *StreamDeckModuleConfig `yaml:"streamdeck,omitempty" json:"streamdeck,omitempty"`
+	Printer       *ToggleModuleConfig     `yaml:"printer,omitempty" json:"printer,omitempty"`
 }
 
 type DNSModuleConfig struct {
@@ -112,6 +113,9 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 		c := normalizedStreamDeckConfig(*m.StreamDeck)
 		result["streamdeck"] = ModuleConfig{Enabled: cloneBool(c.Enabled), Brightness: c.Brightness, RefreshSeconds: c.RefreshSeconds, RequestTimeoutSeconds: c.RequestTimeoutSeconds, DefaultPage: c.DefaultPage, PinnedGuests: append([]string(nil), c.PinnedGuests...), StorageWarningPercent: c.StorageWarningPercent, StorageCriticalPercent: c.StorageCriticalPercent}
 	}
+	if m.Printer != nil {
+		result["printer"] = ModuleConfig{Enabled: cloneBool(m.Printer.Enabled)}
+	}
 	return result
 }
 
@@ -137,6 +141,9 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 	}
 	if config, ok := input["streamdeck"]; ok {
 		result.StreamDeck = &StreamDeckModuleConfig{Enabled: cloneBool(config.Enabled), Brightness: config.Brightness, RefreshSeconds: config.RefreshSeconds, RequestTimeoutSeconds: config.RequestTimeoutSeconds, DefaultPage: config.DefaultPage, PinnedGuests: append([]string(nil), config.PinnedGuests...), StorageWarningPercent: config.StorageWarningPercent, StorageCriticalPercent: config.StorageCriticalPercent}
+	}
+	if config, ok := input["printer"]; ok {
+		result.Printer = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	}
 	return result
 }
@@ -195,6 +202,8 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 		}
 		current.Enabled = cloneBool(config.Enabled)
 		m.StreamDeck = &current
+	case "printer":
+		m.Printer = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	default:
 		return fmt.Errorf("modules.%s: unknown first-party module", name)
 	}

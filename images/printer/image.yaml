@@ -1,0 +1,15 @@
+name: boetticher-printer
+version: 1.0.0
+kind: lxc
+base: boetticher-base
+base_version: 0.3.33
+architecture: amd64
+runtime:
+  python: 3.13.5-1
+  octoprint: 1.11.8
+  nginx: 1.26.3-3+deb13u7
+  backend_bind: 127.0.0.1:5000
+  frontend_bind: 443
+  printer: Creality Ender-3 V3 SE
+  serial_baudrate: 115200
+  dependency_lock: requirements.lock

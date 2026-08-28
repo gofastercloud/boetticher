@@ -44,6 +44,7 @@ const (
 	LoggingVMID                 = 140
 	BuilderVMID                 = 190
 	StreamDeckVMID              = 220
+	PrinterVMID                 = 230
 	BuilderCores                = 4
 	BuilderMemoryMiB            = 8192
 	BuilderDiskGiB              = 32
@@ -262,6 +263,7 @@ type USBExportBinding struct {
 type USBRequirement struct {
 	Name              string        `json:"name"`
 	Guest             string        `json:"guest"`
+	DeviceType        string        `json:"device_type"`
 	Access            string        `json:"access"`
 	Required          bool          `json:"required"`
 	AllowedIdentities []USBIdentity `json:"allowed_identities"`
@@ -591,7 +593,7 @@ func (s Site) validateUSBExports() error {
 	for _, declaration := range s.Declarations {
 		for _, requirement := range declaration.USBRequirements {
 			k := key{declaration.Module, requirement.Name}
-			if requirement.Name == "" || requirement.Guest == "" || requirement.Access != "rw" || len(requirement.AllowedIdentities) == 0 {
+			if requirement.Name == "" || requirement.Guest == "" || (requirement.DeviceType != "raw-usb" && requirement.DeviceType != "serial") || requirement.Access != "rw" || len(requirement.AllowedIdentities) == 0 {
 				return fmt.Errorf("module %s has invalid USB requirement %q", declaration.Module, requirement.Name)
 			}
 			if _, exists := requirements[k]; exists {
