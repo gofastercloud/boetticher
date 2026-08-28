@@ -150,8 +150,11 @@ func TestMonitorFrontendKeepsMTLSExceptForScopedAgentRoutes(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "ssl_verify_client on") || !strings.Contains(text, "ssl_verify_client off") {
+	if !strings.Contains(text, "ssl_verify_client optional") || !strings.Contains(text, "if ($ssl_client_verify != SUCCESS) { return 403; }") {
 		t.Fatal("monitor frontend does not distinguish mTLS UI and token-authenticated agent routes")
+	}
+	if strings.Contains(text, "ssl_verify_client off") {
+		t.Fatal("monitor frontend uses an invalid location-scoped client verification directive")
 	}
 	if !strings.Contains(text, "location ^~ /api/agents/") {
 		t.Fatal("monitor frontend does not proxy the supported Pulse agent routes")
@@ -502,7 +505,7 @@ func TestMonitoringRoleUsesExistingTLSBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(tasks) + string(template)
-	for _, expected := range []string{"monitor_server_cert_pem", "client_ca_pem", "ssl_verify_client on", "proxy_pass http://127.0.0.1:7655"} {
+	for _, expected := range []string{"monitor_server_cert_pem", "client_ca_pem", "ssl_verify_client optional", "if ($ssl_client_verify != SUCCESS) { return 403; }", "proxy_pass http://127.0.0.1:7655"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("monitoring role missing TLS/frontend contract %q", expected)
 		}
