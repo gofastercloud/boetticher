@@ -43,20 +43,22 @@ non-login `octoprint` user under a closed systemd device policy.
 
 The appliance contains pinned OctoPrint dependencies and cannot replace its
 application or install plugins at runtime. Nginx is the only network listener;
-it uses an endpoint-local key and a controller-signed certificate, while the
+it uses an endpoint-local key, a controller-signed certificate, and the normal
+Boetticher client CA with mandatory client-certificate verification. The
 OctoPrint backend listens only on `127.0.0.1:5000`.
 
-On first access, complete OctoPrint's first-run wizard and create the local
-administrator account. Configure the printer profile as Ender-3 V3 SE,
-rectangular 220 x 220 x 250 mm with a heated bed, and select 115200 baud. Leave
-the serial port on automatic selection: the LXC receives only the declared
-printer tty.
+On first access with an issued Boetticher client certificate, complete
+OctoPrint's first-run wizard and create the local administrator account.
+Configure the printer profile as Ender-3 V3 SE, rectangular 220 x 220 x 250 mm
+with a heated bed, and select 115200 baud. Leave the serial port on automatic
+selection: the LXC receives only the declared printer tty. OctoPrint accounts
+remain native product state; Core does not generate or deliver an application
+password.
 
-Before that wizard creates the administrator, the setup page is claimable by
-another client already admitted to TRUSTED. Do not publish the service beyond
-that zone, complete onboarding immediately after deploy, and keep the live
-acceptance gate at `HOLD` until authenticated access and an unauthenticated
-negative path have both been verified.
+Convergence probes the mTLS negative path and fails unless a request without a
+client certificate is rejected before OctoPrint. Keep the live acceptance gate
+at `HOLD` until that deployed result, a valid-client wizard journey, and
+subsequent native-account authentication are independently verified.
 
 OctoPrint configuration, local account hashes, uploads, and job history live
 on the backed-up sensitive `/var/lib/octoprint` volume. TLS and SSH identities
@@ -65,15 +67,16 @@ volumes; purge requires the normal exact ownership proof and confirmation.
 
 ## Network and acceptance
 
-TRUSTED clients reach only the HTTPS frontend. The module declares DNS, NTP,
-central logging, and no general Internet egress, so OctoPrint update and plugin
-downloads are not runtime paths. Application changes require a newly built,
-smoke-tested, Trivy-qualified appliance.
+Authorised clients reach only the mTLS HTTPS frontend. The module declares DNS,
+NTP, central logging, and no general Internet egress, so OctoPrint update and
+plugin downloads are not runtime paths. Application changes require a newly
+built, smoke-tested, Trivy-qualified appliance.
 
 Source tests and `make image-check` do not qualify a printer. Acceptance needs
 the real Proxmox host and Ender: observe the exact identity, bind and hotplug
 the cable, verify stable tty remapping after re-enumeration, complete the
-authenticated first-run journey, connect at 115200, query temperatures, home
-safely, upload a known G-code file, complete a supervised test print, and
-verify restart plus backup/restore behavior. Until exercised, these gates are
-`NOT TESTED`.
+verify a request without a client certificate is rejected before OctoPrint,
+complete the first-run journey with a valid client certificate, authenticate
+with the native account, connect at 115200, query temperatures, home safely,
+upload a known G-code file, complete a supervised test print, and verify restart
+plus backup/restore behavior. Until exercised, these gates are `NOT TESTED`.

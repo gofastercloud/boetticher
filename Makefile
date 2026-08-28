@@ -14,6 +14,9 @@ fmt-check:
 test:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./...
 
+usb-export-test:
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ansible/roles/usb-export-host/tests -p 'test_*.py' -v
+
 vet:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go vet ./...
 
@@ -64,4 +67,4 @@ vuln-check:
 
 security-check: naming-check actionlint vuln-check
 
-ci: fmt-check image-check schema-check command-docs-check test vet build ansible-check security-check diff-check
+ci: fmt-check image-check schema-check command-docs-check test usb-export-test vet build ansible-check security-check diff-check

@@ -18,7 +18,9 @@ import time
 MANIFEST_DIR = Path("/etc/boetticher/usb-exports")
 STATE_DIR = Path("/var/lib/boetticher/usb-export")
 SYS_USB = Path("/sys/bus/usb/devices")
+DEV_ROOT = Path("/dev")
 DEV_USB = Path("/dev/bus/usb")
+LOCK_DIR = Path("/run/lock")
 MAX_BYTES = 1024 * 1024
 
 class Hold(RuntimeError): pass
@@ -54,18 +56,19 @@ def checked_character_device(path, root):
     except FileNotFoundError:
         return None
     resolved = path.resolve()
-    if (root != resolved and root not in resolved.parents) or not stat.S_ISCHR(st.st_mode):
+    resolved_root = root.resolve()
+    if (resolved_root != resolved and resolved_root not in resolved.parents) or not stat.S_ISCHR(st.st_mode):
         raise Hold(f"resolved device is not a character device below {root}")
     return str(path)
 
 def serial_device(parent):
     for _ in range(26):
         names = sorted({candidate.name for candidate in parent.glob("**/tty*") if candidate.name.startswith(("ttyUSB", "ttyACM")) and candidate.name[6:].isdigit()})
-        devices = [Path("/dev") / name for name in names if (Path("/dev") / name).exists()]
+        devices = [DEV_ROOT / name for name in names if (DEV_ROOT / name).exists()]
         if len(devices) > 1:
             raise Hold(f"multiple serial devices found below USB port {parent.name}")
         if devices:
-            return checked_character_device(devices[0], Path("/dev"))
+            return checked_character_device(devices[0], DEV_ROOT)
         time.sleep(0.2)
     return None
 
@@ -119,7 +122,7 @@ def atomic_state(vmid, values):
 
 def reconcile(manifest_path):
     manifest = load_json(manifest_path); vmid = int(manifest["vmid"])
-    lock_path = Path(f"/run/lock/boetticher-usb-export-{vmid}.lock")
+    lock_path = LOCK_DIR / f"boetticher-usb-export-{vmid}.lock"
     with lock_path.open("a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         current = pct_config(vmid); validate_guest(manifest, current)
