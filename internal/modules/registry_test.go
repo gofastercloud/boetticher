@@ -50,6 +50,9 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if agentToken.Consumer != "pulse-agent" || agentToken.Delivery != "systemd-credential" || agentToken.Generation != "ephemeral" {
 		t.Fatalf("Pulse agent credential contract is incomplete: %#v", agentToken)
 	}
+	if len(monitoring.NetworkIntents) != 1 || monitoring.NetworkIntents[0].Source != "lab-monitor-01" || monitoring.NetworkIntents[0].Destination != model.LogicalProxmoxIdentity || monitoring.NetworkIntents[0].Protocol != "tcp" || strings.Join(monitoring.NetworkIntents[0].Ports, ",") != "8006" {
+		t.Fatalf("Pulse Proxmox API network intent is incomplete: %#v", monitoring.NetworkIntents)
+	}
 	for _, declaration := range site.Declarations {
 		for _, guest := range declaration.Guests {
 			if guest.Module != declaration.Module || !containsTag(guest.Tags, model.TagModule) || !containsTag(guest.Tags, "module-"+declaration.Module) {
