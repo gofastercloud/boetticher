@@ -1,0 +1,34 @@
+---
+- name: Require an immutable AIOps appliance artifact
+  ansible.builtin.assert:
+    that:
+      - boetticher_appliance_artifact | default(false) | bool
+      - module_configs.aiops is defined
+      - module_configs.aiops.model_alias | length > 0
+    fail_msg: "AIOps requires a qualified appliance and declared AI Router alias"
+
+- name: Create the protected AIOps state directory
+  ansible.builtin.file:
+    path: /var/lib/boetticher/aiops
+    state: directory
+    owner: boetticher-aiops
+    group: boetticher-aiops
+    mode: '0700'
+
+- name: Pin the selected provider-neutral model alias
+  ansible.builtin.copy:
+    dest: /etc/boetticher-aiops/runtime.env
+    content: "AIOPS_MODEL_ALIAS={{ module_configs.aiops.model_alias }}\n"
+    owner: root
+    group: boetticher-aiops
+    mode: '0640'
+
+- name: Enable AIOps only after runtime credentials and endpoint identity exist
+  ansible.builtin.service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: [holmes, boetticher-aiops.socket, boetticher-aiops]
+  when:
+    - aiops_runtime_credentials_ready | default(false) | bool
+    - aiops_server_identity_ready | default(false) | bool
