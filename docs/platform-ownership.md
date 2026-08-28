@@ -6,6 +6,9 @@ boetticher manages only declared platform resources: the Proxmox host, managed
 gateway when selected, DNS/NTP guests, monitor, portal, owned bridge/VLAN
 configuration, firewall policy, Kea, PKI, SOPS state, SSH bastion policy,
 Pulse monitoring state, platform backups, and generated platform state.
+The firewall telemetry database is part of the managed firewall's declared
+platform state; its API is a read-only consumer boundary for Pulse and future
+internal AIOps tooling.
 
 Arbitrary user VMs and LXCs remain outside the model, OpenTofu state, Ansible
 inventory, boetticher monitoring ownership, backup guarantee, and deletion logic. Pulse may

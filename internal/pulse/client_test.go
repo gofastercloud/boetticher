@@ -52,12 +52,24 @@ func TestPlanPreservesCoreMonitoringIdentityAndGenericProjection(t *testing.T) {
 	if monitor.VMID != model.MonitorVMID || monitor.Address != "10.10.10.20" || !monitor.ProductOwned {
 		t.Fatalf("monitoring ownership/network identity changed: %#v", monitor)
 	}
-	if len(plan.AvailabilityChecks) != 2 || plan.AvailabilityChecks[0].Name != "dns01-authoritative" || plan.AvailabilityChecks[1].Name != "dns02-authoritative" {
+	if len(plan.AvailabilityChecks) != 3 || plan.AvailabilityChecks[0].Name != "dns01-authoritative" || plan.AvailabilityChecks[1].Name != "dns02-authoritative" || plan.AvailabilityChecks[2].Name != "firewall-telemetry" {
 		t.Fatalf("unexpected bounded availability projection: %#v", plan.AvailabilityChecks)
 	}
 	for _, check := range plan.AvailabilityChecks {
 		if check.Name == "portal" || check.Name == "monitoring" {
 			t.Fatalf("mTLS endpoint availability check was projected: %#v", check)
+		}
+	}
+}
+
+func TestExternalGatewayDoesNotProjectManagedFirewallTelemetryCheck(t *testing.T) {
+	plan, err := PlanFromSite(model.NewSite("installation", "age1example", model.GatewayModeExternal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range plan.AvailabilityChecks {
+		if check.Name == "firewall-telemetry" {
+			t.Fatal("external gateway projected a managed firewall telemetry check")
 		}
 	}
 }

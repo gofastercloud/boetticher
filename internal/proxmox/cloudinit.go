@@ -129,7 +129,7 @@ func renderFirewallCloudInit(guest GuestPlan, operatorPublicKey string) (CloudIn
 	userData += "ssh_pwauth: false\ndisable_root: " + strconv.FormatBool(operatorPublicKey == "") + "\n"
 	fsSetup := strings.Builder{}
 	mounts := strings.Builder{}
-	for _, name := range []string{"ssh-identity", "kea-leases"} {
+	for _, name := range []string{"ssh-identity", "kea-leases", "firewall-telemetry"} {
 		volume, index, ok := guestVolume(guest, name)
 		if !ok {
 			continue

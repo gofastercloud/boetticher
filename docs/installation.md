@@ -93,6 +93,11 @@ declared managed component.
 The external path configures the boetticher-owned platform and leaves the
 firewall appliance alone.
 
+The managed firewall appliance also starts the fixed telemetry service and
+snapshot timer. Pulse reaches its health endpoint only over INFRA at
+`http://10.10.10.1:9765/healthz`; the API is not published through the HOME or
+WAN interface.
+
 See [the external firewall contract](networking/external-firewall.md),
 [storage](storage/dedicated-data-disk.md), and the recovery guides for
 the detailed operational paths.

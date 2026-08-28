@@ -19,6 +19,11 @@ monitoring has no VM 120 in the active backup set. Each managed guest also
 receives a canonical Proxmox tag set, including the backup contract where
 applicable.
 
+The firewall guest backup includes its declared telemetry volume at
+`/var/lib/boetticher/firewall-telemetry` as well as the Kea lease and SSH
+identity volumes. The telemetry volume is platform state, not an external
+database or a user workload.
+
 The logging guest is included in the platform backup set. Its bounded central
 journal volume at `/var/log/journal/remote` is explicitly `backup=false`
 because endpoint journals remain available for recovery and the central copy

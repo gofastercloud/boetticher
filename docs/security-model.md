@@ -129,6 +129,13 @@ The managed gateway permits only `lab-monitor-01` to reach the Proxmox API on
 TCP/8006. This is the explicit network intent required for Pulse inventory and
 does not grant general INFRA-to-MGMT access.
 
+The same source-only boundary applies to the managed firewall telemetry API:
+`lab-monitor-01` may reach TCP/9765 on `10.10.10.1` for `GET /healthz` and the
+bounded `/api/v1` evidence paths. The nft input rule is fixed and WAN has no
+route to the listener. The daemon is non-root and cannot execute `nft`; a
+separate root-owned oneshot helper may only publish the bounded read-only
+ruleset snapshot.
+
 If a later deployment needs to modify an already-converged guest, Core may
 re-arm that same temporary key through the authenticated Proxmox host boundary
 for the exact owned guest, and removes it again after convergence.

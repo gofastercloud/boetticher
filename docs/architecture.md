@@ -64,6 +64,15 @@ input is `debian-13-genericcloud-amd64-20260327-2429`; the input SHA-512 is
 recorded in the model and verified during firewall image construction.
 IPv4 forwarding stays disabled until a validated ruleset is installed.
 
+The managed gateway also runs the fixed `boetticher-firewall-telemetry`
+service. A root-owned helper publishes a bounded `nft -j list ruleset`
+snapshot; the non-root daemon parses only commented Boetticher counter rules
+and stores seven days of samples in SQLite at
+`/var/lib/boetticher/firewall-telemetry/telemetry.db`. Its read-only API binds
+to `10.10.10.1:9765` and the firewall permits only `lab-monitor-01`
+(`10.10.10.20`) to reach it. It is not exposed on `wan0` and does not provide
+SSH, shell, database, or nftables access.
+
 ## External gateway
 
 External mode removes `lab-fw-01` from the platform. A second physical NIC is

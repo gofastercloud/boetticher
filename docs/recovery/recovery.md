@@ -18,7 +18,9 @@ and their checksums remain valid.
 In managed mode, a lost gateway is rebuilt as VM 100 from the qualified
 boetticher firewall appliance artifact and deployed from the model: network
 interfaces, nftables, Kea, SANDBOX DNS/NTP, SSH, and monitoring. Its declared
-Kea lease and endpoint-identity volumes are preserved when available.
+Kea lease, firewall telemetry, and endpoint-identity volumes are preserved
+when available. Telemetry history is therefore retained across a rootfs
+replacement when the declared persistent volume or backup is recovered.
 Platform backups can shorten the path but are not required to recreate the
 desired configuration.
 

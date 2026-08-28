@@ -521,6 +521,8 @@ build_firewall() {
   printf '%s  %s\n' 09559ec27d263997827dd8cddf76e97ea8e0f1803380aa501ea7eaa4b4968cd76ffef4ec7eb07ef1a9ccbeb0925a5020492ea9ed53eb167d62f3a2285039912c "$input" | sha512sum --check --status
   image="$destination/boetticher-firewall-1.0.0-amd64.qcow2"
   artifact_identity="$work_root/firewall-artifact.json"
+  telemetry_binary="$work_root/boetticher-firewall-telemetry"
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$telemetry_binary" ./cmd/boetticher-firewall-telemetry
   go run ./cmd/artifact-identity -module firewall > "$artifact_identity"
   cp "$input" "$image"
   virt-customize -a "$image" \
@@ -534,6 +536,7 @@ build_firewall() {
     --mkdir /etc/boetticher \
     --mkdir /usr/lib/boetticher \
     --mkdir /var/lib/boetticher/identity/ssh \
+    --mkdir /var/lib/boetticher/firewall-telemetry \
     --mkdir /tmp/boetticher-ansible \
     --mkdir /etc/ssh/sshd_config.d \
     --mkdir /etc/systemd/journald.conf.d \
@@ -548,6 +551,11 @@ build_firewall() {
     --upload images/base/runtime/sshd-host-key.conf:/etc/ssh/sshd_config.d/boetticher-host-key.conf \
     --upload images/firewall/runtime/boetticher.sudoers:/etc/sudoers.d/boetticher-firewall \
     --upload images/firewall/runtime/inspect-firewall.sh:/usr/lib/boetticher/inspect-firewall \
+    --upload "$telemetry_binary:/usr/lib/boetticher/boetticher-firewall-telemetry" \
+    --upload images/firewall/runtime/snapshot-firewall.sh:/usr/lib/boetticher/snapshot-firewall \
+    --upload images/firewall/runtime/boetticher-firewall-snapshot.service:/etc/systemd/system/boetticher-firewall-snapshot.service \
+    --upload images/firewall/runtime/boetticher-firewall-snapshot.timer:/etc/systemd/system/boetticher-firewall-snapshot.timer \
+    --upload images/firewall/runtime/boetticher-firewall-telemetry.service:/etc/systemd/system/boetticher-firewall-telemetry.service \
     --upload "$artifact_identity:/usr/lib/boetticher/artifact.json" \
     --upload images/firewall/runtime/forwarding.conf:/etc/sysctl.d/boetticher-forwarding.conf \
     --run-command 'useradd --create-home --shell /bin/bash labadmin' \
@@ -555,11 +563,16 @@ build_firewall() {
     --run-command 'chown labadmin:labadmin /tmp/boetticher-ansible && chmod 0700 /tmp/boetticher-ansible' \
     --run-command 'chown root:root /etc/sudoers.d/boetticher-firewall; chmod 0440 /etc/sudoers.d/boetticher-firewall' \
     --run-command 'chown root:root /usr/lib/boetticher/inspect-firewall; chmod 0755 /usr/lib/boetticher/inspect-firewall' \
+    --run-command 'groupadd --system boetticher-telemetry; useradd --system --gid boetticher-telemetry --home-dir /var/lib/boetticher/firewall-telemetry --shell /usr/sbin/nologin boetticher-telemetry' \
+    --run-command 'chown boetticher-telemetry:boetticher-telemetry /var/lib/boetticher/firewall-telemetry; chmod 0750 /var/lib/boetticher/firewall-telemetry' \
+    --run-command 'chown root:root /usr/lib/boetticher/boetticher-firewall-telemetry /usr/lib/boetticher/snapshot-firewall; chmod 0755 /usr/lib/boetticher/boetticher-firewall-telemetry /usr/lib/boetticher/snapshot-firewall' \
+    --run-command 'chmod 0644 /etc/systemd/system/boetticher-firewall-snapshot.service /etc/systemd/system/boetticher-firewall-snapshot.timer /etc/systemd/system/boetticher-firewall-telemetry.service' \
     --run-command 'rm -f /etc/ssh/ssh_host_* /root/.ssh/authorized_keys /home/labadmin/.ssh/authorized_keys' \
     --run-command 'rm -f /etc/ssl/private/ssl-cert-snakeoil.key' \
     --run-command 'visudo -cf /etc/sudoers' \
     --run-command "dpkg-query -W -f='\${binary:Package}\\t\${Version}\\n' | sort > /var/lib/boetticher/package-manifest.txt" \
     --run-command 'systemctl enable boetticher-first-boot.service' \
+    --run-command 'systemctl enable boetticher-firewall-telemetry.service boetticher-firewall-snapshot.timer' \
     --run-command 'if systemctl list-unit-files systemd-networkd-wait-online.service >/dev/null 2>&1; then systemctl disable systemd-networkd-wait-online.service; fi'
   sha256sum "$image" > "$destination/content.sha256"
   virt-cat -a "$image" /var/lib/boetticher/package-manifest.txt > "$destination/package-manifest.txt"

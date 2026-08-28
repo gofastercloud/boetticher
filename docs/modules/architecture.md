@@ -11,7 +11,7 @@ The built-in modules are:
 | `logging` | mandatory | central systemd journal |
 | `dns` | mandatory | DNS and NTP |
 | `monitoring` | default-on | Pulse Proxmox API monitoring and tagged-host hardware telemetry |
-| `firewall` | default-on | managed gateway |
+| `firewall` | default-on | managed gateway and bounded firewall telemetry API |
 
 External-firewall mode supplies the gateway capability outside the registry
 and explicitly disables the managed firewall module.

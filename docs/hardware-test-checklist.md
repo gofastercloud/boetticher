@@ -24,9 +24,20 @@ these journeys.
    telemetry, alerts, availability checks, and backup freshness.
 8. Prove portal TLS/mTLS and reject an unauthenticated client.
 9. Exercise the positive and negative firewall journeys, especially SANDBOX.
-10. Attach a clean second NIC with `boetticher network trunk attach IFACE` and
+10. On `lab-monitor-01`, health-check `http://10.10.10.1:9765/healthz` and
+    confirm an unauthorized internal source cannot connect.
+11. Generate allowed traffic and confirm the expected `boetticher:allow:<id>`
+    counter and bounded API activity increase; generate denied traffic and do
+    the same for `boetticher:deny:<id>` or `boetticher:drop:<id>`.
+12. Reload or reset the firewall, confirm no negative deltas are reported, and
+    make a structural ruleset change that produces a ruleset-change event.
+13. Reboot the firewall and confirm the telemetry database retains its prior
+    rule metadata, epochs, samples within retention, and events.
+14. Verify the telemetry process is non-root and cannot mutate nftables; this
+    service must not provide SSH, shell, database, or WAN access.
+15. Attach a clean second NIC with `boetticher network trunk attach IFACE` and
    prove physical VLAN access through a managed switch.
-11. Reboot, rerun critical journeys, rerun deploy, and require no unexpected
+16. Reboot, rerun critical journeys, rerun deploy, and require no unexpected
    changes.
 
 ## External mode

@@ -36,6 +36,51 @@ func TestManagedPlanUsesOneUntaggedFirewallInterfacePerZone(t *testing.T) {
 	}
 }
 
+func TestManagedFirewallTelemetryContractAndSemanticCounterComments(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Telemetry.Enabled || plan.Telemetry.ListenAddress != TelemetryListenAddress || plan.Telemetry.Port != TelemetryPort || len(plan.Telemetry.AllowedSources) != 1 || plan.Telemetry.AllowedSources[0] != TelemetryPulseSource {
+		t.Fatalf("unexpected managed firewall telemetry contract: %#v", plan.Telemetry)
+	}
+	if err := plan.Telemetry.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	ruleset, err := RenderNFT(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ruleset, `iifname "infra0" ip saddr 10.10.10.20 tcp dport 9765 counter accept comment "boetticher:allow:input-firewall-telemetry"`) {
+		t.Fatal("managed firewall telemetry API exposure is not exact")
+	}
+	for _, line := range strings.Split(ruleset, "\n") {
+		if strings.Contains(line, " counter ") && !strings.Contains(line, `comment "boetticher:allow:`) && !strings.Contains(line, `comment "boetticher:deny:`) && !strings.Contains(line, `comment "boetticher:drop:`) {
+			t.Fatalf("counter rule lacks a semantic Boetticher comment: %s", line)
+		}
+	}
+}
+
+func TestExternalFirewallTelemetryContractIsDisabled(t *testing.T) {
+	plan, err := PlanFromSite(model.NewSite("installation", "age1example", model.GatewayModeExternal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Telemetry.Enabled || len(plan.Telemetry.AllowedSources) != 0 {
+		t.Fatalf("external gateway unexpectedly owns firewall telemetry: %#v", plan.Telemetry)
+	}
+}
+
+func TestDynamicFirewallTelemetryIDsUseSafeStableTokens(t *testing.T) {
+	got := safeRuleToken(`module "drop"/../unsafe value`)
+	if got != "module__drop_____unsafe_value" || len(got) > 128 {
+		t.Fatalf("unsafe dynamic rule token = %q", got)
+	}
+	if _, err := SemanticCounterComment("allow", got); err != nil {
+		t.Fatalf("sanitized dynamic rule token is not a valid semantic ID: %v", err)
+	}
+}
+
 func TestServersDHCPIsReservationOnly(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	site.DHCPReservations = []model.DHCPReservation{{Zone: "SERVERS", Hostname: "app-01", Address: "10.10.20.61", MAC: "02:00:00:00:02:61"}}
@@ -77,7 +122,7 @@ func TestManagedGatewayAllowsDiagnosticICMPEchoFromInternalZones(t *testing.T) {
 	if err := ValidateNFT(ruleset); err != nil {
 		t.Fatalf("rendered ruleset is invalid: %v", err)
 	}
-	want := "iifname { \"infra0\", \"trusted0\", \"servers0\", \"sandbox0\", \"mgmt0\" } ip protocol icmp icmp type echo-request counter accept comment \"boetticher:input-diagnostic-icmp\""
+	want := "iifname { \"infra0\", \"trusted0\", \"servers0\", \"sandbox0\", \"mgmt0\" } ip protocol icmp icmp type echo-request counter accept comment \"boetticher:allow:input-diagnostic-icmp\""
 	if !strings.Contains(ruleset, want) {
 		t.Fatalf("managed firewall does not permit diagnostic ICMP echo requests from internal zones:\n%s", ruleset)
 	}
@@ -120,7 +165,7 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 		"set module_guest_sources { type ipv4_addr; elements = {",
 		"10.10.10.20, 10.10.20.60, 10.10.5.10",
 		"iifname \"servers0\" ip saddr != @module_guest_sources oifname \"wan0\"",
-		"arbitrary-egress-drop",
+		"arbitrary-egress",
 	} {
 		if !strings.Contains(ruleset, expected) {
 			t.Errorf("managed module policy missing %q:\n%s", expected, ruleset)

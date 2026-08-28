@@ -43,3 +43,24 @@ successful platform commands and can be refreshed from non-secret status
 metadata. It does not poll guests or reproduce graphs. Pulse owns metrics,
 dashboards, synthetic checks, certificates, events, alerting, and
 notifications.
+
+## Managed firewall telemetry
+
+The managed firewall publishes a bounded, read-only evidence API for Pulse
+and future internal AIOps consumers at `http://10.10.10.1:9765`:
+
+- `GET /healthz` reports collector health and sample age.
+- `GET /api/v1/summary` reports fixed 5-minute, 1-hour, and 24-hour deltas,
+  collector health, the last structural change, and active deny/drop rules.
+- `GET /api/v1/rules` and `GET /api/v1/rules/{id}` expose bounded rule metadata
+  and current counters.
+- `GET /api/v1/rules/{id}/activity?window=...` accepts only `1m`, `5m`, `15m`,
+  `1h`, `6h`, `24h`, or `7d`, with at most 256 samples.
+- `GET /api/v1/events?since=...` is limited to the last seven days and 200
+  events.
+
+The service accepts only GET requests and only from `10.10.10.20`. It ignores
+non-Boetticher rules, treats counter decreases as a new epoch with zero delta,
+and records a deterministic owned-ruleset fingerprint change. The SQLite
+database is persistent firewall state and raw samples are retained for seven
+days.

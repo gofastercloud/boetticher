@@ -1,0 +1,36 @@
+[Unit]
+Description=Boetticher managed firewall telemetry API
+After=network-online.target nftables.service local-fs.target
+Wants=network-online.target boetticher-firewall-snapshot.timer
+RequiresMountsFor=/var/lib/boetticher/firewall-telemetry
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/boetticher/boetticher-firewall-telemetry
+User=boetticher-telemetry
+Group=boetticher-telemetry
+RuntimeDirectory=boetticher
+RuntimeDirectoryMode=0750
+Restart=on-failure
+RestartSec=5s
+UMask=0027
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=10.10.10.20/32
+ReadOnlyPaths=/run/boetticher
+ReadWritePaths=/var/lib/boetticher/firewall-telemetry
+LockPersonality=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+SystemCallFilter=@system-service
+
+[Install]
+WantedBy=multi-user.target

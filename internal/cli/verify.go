@@ -462,6 +462,15 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 			if err != nil {
 				return err
 			}
+			if err := plan.Telemetry.Validate(); err != nil {
+				return err
+			}
+			if s.Gateway.Mode == model.GatewayModeManaged && !plan.Telemetry.Enabled {
+				return errors.New("managed firewall telemetry is disabled")
+			}
+			if s.Gateway.Mode == model.GatewayModeExternal && plan.Telemetry.Enabled {
+				return errors.New("external firewall must not own telemetry")
+			}
 			if !plan.IPv4Only || len(plan.Rules) == 0 {
 				return errors.New("IPv4-only firewall policy is incomplete")
 			}

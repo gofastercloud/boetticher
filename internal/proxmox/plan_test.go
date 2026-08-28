@@ -201,6 +201,39 @@ func TestComposedDNSGuestsReceiveOnlyTheirOwnPersistentVolumes(t *testing.T) {
 	}
 }
 
+func TestComposedFirewallGuestCarriesTelemetryStateAcrossRootfsReplacement(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, guest := range plan.Guests {
+		if guest.Name != "lab-fw-01" {
+			continue
+		}
+		foundState, foundVolume := false, false
+		for _, state := range guest.Persistent {
+			if state.Name == "firewall-telemetry" && state.Path == "/var/lib/boetticher/firewall-telemetry" && state.Backup && state.Replacement == "retain-across-rootfs-replacement" {
+				foundState = true
+			}
+		}
+		for _, volume := range guest.Volumes {
+			if volume.Name == "firewall-telemetry" && volume.MountPath == "/var/lib/boetticher/firewall-telemetry" && volume.SizeGiB == 2 && volume.Backup {
+				foundVolume = true
+			}
+		}
+		if !foundState || !foundVolume {
+			t.Fatalf("firewall telemetry persistence is incomplete: %#v", guest)
+		}
+		return
+	}
+	t.Fatal("managed firewall guest is missing")
+}
+
 func TestComposedPlanRejectsMissingModuleDeclaration(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	site, _, err := modules.Compose(config)

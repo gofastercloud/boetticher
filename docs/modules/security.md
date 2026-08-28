@@ -24,3 +24,11 @@ temporary root SSH transport for qualified convergence. Ansible connects as
 root without `become`; successful convergence removes the temporary root
 access. Bootstrap and operator break-glass root access remain separate
 recovery authorities.
+
+Firewall telemetry is a separate non-root service account. It reads one
+root-owned, group-readable snapshot produced by the fixed
+`boetticher-firewall-snapshot.service` and writes only its owned SQLite state
+directory. The snapshot unit has the only `nft` inspection authority; neither
+unit has a mutation command or a general sudo path. The HTTP API is bound to
+the firewall INFRA address, has a fixed allow-list containing only Pulse, and
+is blocked from the upstream/WAN interface.
