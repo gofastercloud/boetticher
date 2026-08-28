@@ -55,7 +55,7 @@ The fixed networks are VLAN 5 TRANSIT (`10.10.5.0/24`), VLAN 10 INFRA
 (`10.10.10.0/24`), VLAN 20 SERVERS (`10.10.20.0/24`), VLAN 30 TRUSTED
 (`10.10.30.0/24`), VLAN 40 SANDBOX (`10.10.40.0/24`), and VLAN 99 MGMT
 (`10.10.99.0/24`). Every gateway owns `.1`; managed Proxmox uses
-`10.10.99.250` on MGMT. v0.3 remains IPv4-only.
+`10.10.99.5` on MGMT. v0.3 remains IPv4-only.
 
 The platform resolves to Core plus the mandatory DNS/NTP module and the
 default-on monitoring and managed firewall modules. Modules are built into the

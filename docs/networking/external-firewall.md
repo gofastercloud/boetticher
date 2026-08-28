@@ -24,7 +24,7 @@ and implement the policy shown by `boetticher firewall show` and
 all six subnets. TRUSTED and SANDBOX use dynamic DHCP with DDNS; SERVERS uses
 reservation-only DHCP with DDNS; TRANSIT, INFRA, and MGMT use static
 assignments only. SANDBOX must use its gateway for public DNS/NTP without
-being given the broad internal namespace. Proxmox uses `10.10.99.250` on MGMT.
+being given the broad internal namespace. Proxmox uses `10.10.99.5` on MGMT.
 
 For dynamic DNS, the external DHCP service may send authenticated RFC2136
 updates to `10.10.10.10:5353`. Use the generated SERVERS, TRUSTED, and SANDBOX

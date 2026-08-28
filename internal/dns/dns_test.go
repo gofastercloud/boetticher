@@ -33,7 +33,7 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	if len(plan.AdGuardForwardZones) != 4 || len(plan.AdGuardReverseZones) != 3 {
 		t.Fatalf("AdGuard did not receive static and dynamic forwarding zones: %#v", plan.AdGuardForwardZones)
 	}
-	if !hasRecord(plan.StaticRecords, "proxmox.lab.home.arpa", "10.10.99.250") {
+	if !hasRecord(plan.StaticRecords, "proxmox.lab.home.arpa", "10.10.99.5") {
 		t.Fatal("Proxmox component URL hostname was not added to the static DNS projection")
 	}
 	for _, component := range site.PlatformComponents() {
@@ -149,7 +149,7 @@ func TestUserDNSRecordNamespaceAndPendingDeletionBoundaries(t *testing.T) {
 	}
 	for _, invalid := range []model.UserDNSRecord{
 		{Name: "app.servers.lab.home.arpa", Type: "A", Value: "10.10.20.61"},
-		{Name: "proxmox.lab.home.arpa", Type: "A", Value: "10.10.99.250"},
+		{Name: "proxmox.lab.home.arpa", Type: "A", Value: "10.10.99.5"},
 	} {
 		candidate := model.NewDefaultSite("installation", "age1example")
 		candidate.DNSRecords = []model.UserDNSRecord{invalid}

@@ -24,7 +24,7 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 		t.Fatal("inventory was not deterministic")
 	}
 	for _, expected := range []string{
-		"lab-proxmox-01 ansible_host=10.10.99.250",
+		"lab-proxmox-01 ansible_host=10.10.99.5",
 		"lab-dns-01 ansible_host=10.10.10.10",
 		"ansible_remote_tmp=/tmp/boetticher-ansible",
 		"[managed:children]",
@@ -50,7 +50,7 @@ func TestInventoryUsesBootstrapAddressForProxmoxTransport(t *testing.T) {
 	if !strings.Contains(inventory, "lab-proxmox-01 ansible_host=192.0.2.5") {
 		t.Fatalf("Proxmox inventory did not use bootstrap address:\n%s", inventory)
 	}
-	if strings.Contains(inventory, "lab-proxmox-01 ansible_host=10.10.99.250") {
+	if strings.Contains(inventory, "lab-proxmox-01 ansible_host=10.10.99.5") {
 		t.Fatal("Proxmox inventory used the internal management address for controller transport")
 	}
 }
