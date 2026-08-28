@@ -5,6 +5,9 @@ the forwarding-only `lab-jump` identity to reach modelled internal hosts.
 Internal hosts use fixed IP addresses and canonical `HostKeyAlias` values, so
 the path does not depend on internal DNS.
 
+Controller-side Pulse reconciliation uses a temporary loopback SSH forward
+through Proxmox; it does not add a controller route into the internal VLANs.
+
 The managed gateway is an ordinary permitted host:
 
 ```text

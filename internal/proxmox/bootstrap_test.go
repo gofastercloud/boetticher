@@ -123,6 +123,20 @@ func TestSSHRunnerHostAliasStillSelectsApplianceConfigHost(t *testing.T) {
 	}
 }
 
+func TestSSHRunnerLocalForwardUsesLoopbackAndBoundedTarget(t *testing.T) {
+	runner := SSHRunner{ConfigFile: "/tmp/boetticher.conf", StrictHostKey: "accept-new", HostAlias: "lab-proxmox-01"}
+	args, err := runner.forwardArgs("192.0.2.10", "root", 43123, "10.10.10.20", 443)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(args, "-N") || !containsString(args, "-L") || !containsString(args, "127.0.0.1:43123:10.10.10.20:443") {
+		t.Fatalf("local forward is not loopback-only or target-bounded: %#v", args)
+	}
+	if !containsString(args, "BatchMode=yes") || !containsString(args, "ExitOnForwardFailure=yes") || !containsString(args, "root@lab-proxmox-01") {
+		t.Fatalf("local forward does not use non-interactive Proxmox SSH: %#v", args)
+	}
+}
+
 func TestConfigureManagementNetworkValidatesUnchangedHOMEAndVLANState(t *testing.T) {
 	runner := &fakeRunner{responses: map[string][]byte{
 		"sudo -n /usr/sbin/ip -4 -j addr show dev vmbr0":  []byte(`[{"addr":"192.0.2.10/24"}]`),

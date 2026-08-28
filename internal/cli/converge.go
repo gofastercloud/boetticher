@@ -381,13 +381,24 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err := ansible.Run(context.Background(), ansiblePlaybook, inventoryPath, variables); err != nil {
 		return fmt.Errorf("install endpoint-signed certificates: %w", err)
 	}
+	var pulseForward *proxmox.SSHLocalForward
+	defer func() {
+		if pulseForward != nil {
+			_ = pulseForward.Close()
+		}
+	}()
 	if monitoringEnabled {
+		pulseForward, err = rootRunner.StartLocalForward(context.Background(), s.BootstrapAddress, "root", "10.10.10.20", 443)
+		if err != nil {
+			return fmt.Errorf("open Pulse API tunnel through Proxmox bastion: %w", err)
+		}
+		pulseBaseURL := "https://" + pulseForward.Address()
 		clientCertificate, issueErr := pki.IssueClient(authority, "boetticher-reconciler", s.Network.Domain, time.Now().UTC())
 		if issueErr != nil {
 			return fmt.Errorf("issue runtime Pulse reconciliation certificate: %w", issueErr)
 		}
 		pulseAdmin, clientErr := pulse.NewAdminClient(pulse.ClientConfig{
-			BaseURL: "https://monitor." + s.Network.Domain, AdminUser: "admin", AdminPassword: pulseAdminPassword,
+			BaseURL: pulseBaseURL, AdminUser: "admin", AdminPassword: pulseAdminPassword,
 			CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
 			ServerName: "monitor." + s.Network.Domain,
 		})
@@ -415,7 +426,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			return fmt.Errorf("load encrypted Pulse read token: %w", tokenErr)
 		}
 		pulseRead, clientErr := pulse.NewReadClient(pulse.ClientConfig{
-			BaseURL: "https://monitor." + s.Network.Domain, APIToken: readToken,
+			BaseURL: pulseBaseURL, APIToken: readToken,
 			CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
 			ServerName: "monitor." + s.Network.Domain,
 		})
@@ -498,6 +509,12 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 				}
 			}
 		}
+	}
+	if pulseForward != nil {
+		if err := pulseForward.Close(); err != nil {
+			return fmt.Errorf("close Pulse API tunnel: %w", err)
+		}
+		pulseForward = nil
 	}
 	if err := proxmoxClient.ApplyBackupJob(context.Background(), node, proxmox.BackupJob{
 		JobName: backupPlan.JobName, ModelRevision: backupPlan.ModelRevision, StorageTarget: backupPlan.StorageTarget,
