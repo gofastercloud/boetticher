@@ -435,15 +435,6 @@ func moduleGuestSources(plan Plan) []string {
 			seen[address] = true
 		}
 	}
-	for _, rule := range plan.Rules {
-		if !strings.HasPrefix(rule.Name, "module ") || rule.SourceCIDR == "" {
-			continue
-		}
-		address := strings.TrimSuffix(rule.SourceCIDR, "/32")
-		if net.ParseIP(address) != nil {
-			seen[address] = true
-		}
-	}
 	result := make([]string, 0, len(seen))
 	for address := range seen {
 		result = append(result, address)
