@@ -53,7 +53,7 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 			break
 		}
 	}
-	if agentToken.Consumer != "pulse-agent" || agentToken.Delivery != "systemd-credential" || agentToken.Generation != "ephemeral" {
+	if agentToken.Consumer != "pulse-agent" || agentToken.Delivery != "systemd-credential" || agentToken.Generation != "ephemeral" || agentToken.Lifecycle != model.SecretLifecycleRuntime {
 		t.Fatalf("Pulse agent credential contract is incomplete: %#v", agentToken)
 	}
 	for _, declaration := range site.Declarations {
