@@ -589,6 +589,9 @@ const (
 	PulseMonitoringUser  = "pulse-monitor@pve"
 	PulseMonitoringToken = "boetticher-monitoring"
 	PulseMonitoringRole  = "PVEAuditor"
+	// Proxmox marks built-in roles as special; the exact read-only set remains
+	// the safety boundary for the Pulse identity.
+	pulseMonitoringPrivileges = "Datastore.Audit Mapping.Audit Pool.Audit SDN.Audit Sys.Audit VM.Audit VM.GuestAgent.Audit"
 )
 
 // CreatePulseMonitoringCredentials creates the API-only identity used by the
@@ -603,7 +606,7 @@ func CreatePulseMonitoringCredentials(ctx context.Context, runner CommandRunner,
 	if err != nil {
 		return "", fmt.Errorf("HOLD: inspect Proxmox monitoring roles: %w", err)
 	}
-	if err := requireBuiltInRole(rolesOutput, PulseMonitoringRole); err != nil {
+	if err := requireBuiltInRole(rolesOutput, PulseMonitoringRole, pulseMonitoringPrivileges); err != nil {
 		return "", fmt.Errorf("HOLD: Proxmox monitoring role %q is unavailable: %w", PulseMonitoringRole, err)
 	}
 	usersOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users --output-format json"))
@@ -669,7 +672,7 @@ func CreatePulseMonitoringCredentials(ctx context.Context, runner CommandRunner,
 	return response.Value, nil
 }
 
-func requireBuiltInRole(output []byte, wanted string) error {
+func requireBuiltInRole(output []byte, wanted, wantedPrivileges string) error {
 	var document any
 	if err := json.Unmarshal(output, &document); err != nil {
 		return fmt.Errorf("decode role listing: %w", err)
@@ -682,8 +685,8 @@ func requireBuiltInRole(output []byte, wanted string) error {
 		if entry.RoleID != wanted {
 			continue
 		}
-		if roleHasSpecialPrivileges(entry.Special) {
-			return errors.New("role has special privileges")
+		if canonicalPrivileges(entry.Privileges) != canonicalPrivileges(wantedPrivileges) {
+			return fmt.Errorf("privileges %q do not match required set %q", entry.Privileges, wantedPrivileges)
 		}
 		return nil
 	}
