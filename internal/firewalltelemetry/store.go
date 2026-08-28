@@ -77,7 +77,8 @@ func (s *Store) initialize() error {
 			last_byte_delta TEXT NOT NULL,
 			last_reset INTEGER NOT NULL DEFAULT 0,
 			epoch INTEGER NOT NULL DEFAULT 0,
-			last_sample_at INTEGER NOT NULL
+			last_sample_at INTEGER NOT NULL,
+			active INTEGER NOT NULL DEFAULT 1
 		)`,
 		`CREATE TABLE IF NOT EXISTS samples (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -118,6 +119,35 @@ func (s *Store) initialize() error {
 	} {
 		if _, err := s.db.Exec(statement); err != nil {
 			return fmt.Errorf("initialize telemetry database: %w", err)
+		}
+	}
+	rows, err := s.db.Query(`PRAGMA table_info(rules)`)
+	if err != nil {
+		return fmt.Errorf("inspect telemetry rules schema: %w", err)
+	}
+	activeColumn := false
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var name, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan telemetry rules schema: %w", err)
+		}
+		if name == "active" {
+			activeColumn = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("read telemetry rules schema: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close telemetry rules schema: %w", err)
+	}
+	if !activeColumn {
+		if _, err := s.db.Exec(`ALTER TABLE rules ADD COLUMN active INTEGER NOT NULL DEFAULT 1`); err != nil {
+			return fmt.Errorf("migrate telemetry rules schema: %w", err)
 		}
 	}
 	return nil
@@ -166,7 +196,14 @@ func (s *Store) RecordSnapshot(at time.Time, snapshot firewall.NFTSnapshot) erro
 		epoch := int64(0)
 		if previous.exists {
 			epoch = previous.epoch
-			if counter.Packets < previous.packets || counter.Bytes < previous.bytes {
+			if !previous.active {
+				packetDelta, byteDelta = 0, 0
+				reset = 1
+				epoch++
+				if _, err := tx.Exec(`INSERT INTO epochs (rule_id, epoch, started_at, reason, previous_packets, previous_bytes) VALUES (?, ?, ?, 'rule_reappeared', ?, ?)`, counter.ID, epoch, now, decimal(previous.packets), decimal(previous.bytes)); err != nil {
+					return rollback(fmt.Errorf("record reappeared rule epoch for %q: %w", counter.ID, err))
+				}
+			} else if counter.Packets < previous.packets || counter.Bytes < previous.bytes {
 				packetDelta, byteDelta = 0, 0
 				reset = 1
 				epoch++
@@ -185,6 +222,9 @@ func (s *Store) RecordSnapshot(at time.Time, snapshot firewall.NFTSnapshot) erro
 			return rollback(fmt.Errorf("record counter sample for %q: %w", counter.ID, err))
 		}
 	}
+	if err := s.retireMissingRulesTx(tx, seen); err != nil {
+		return rollback(err)
+	}
 	for key, value := range map[string]string{
 		"status":           "healthy",
 		"last_attempt_at":  strconv.FormatInt(now, 10),
@@ -201,6 +241,37 @@ func (s *Store) RecordSnapshot(at time.Time, snapshot firewall.NFTSnapshot) erro
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit telemetry sample: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) retireMissingRulesTx(tx *sql.Tx, seen map[string]struct{}) error {
+	rows, err := tx.Query(`SELECT id FROM rules WHERE active = 1`)
+	if err != nil {
+		return fmt.Errorf("list active telemetry rules: %w", err)
+	}
+	missing := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan active telemetry rule: %w", err)
+		}
+		if _, exists := seen[id]; !exists {
+			missing = append(missing, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("read active telemetry rules: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close active telemetry rules: %w", err)
+	}
+	for _, id := range missing {
+		if _, err := tx.Exec(`UPDATE rules SET active = 0 WHERE id = ?`, id); err != nil {
+			return fmt.Errorf("retire telemetry rule %q: %w", id, err)
+		}
 	}
 	return nil
 }
@@ -236,6 +307,7 @@ func (s *Store) RecordHealthError(at time.Time, collectorErr error) error {
 
 type previousRule struct {
 	exists  bool
+	active  bool
 	comment string
 	packets uint64
 	bytes   uint64
@@ -245,7 +317,8 @@ type previousRule struct {
 func (s *Store) previousRuleTx(tx *sql.Tx, id string) (previousRule, error) {
 	var previous previousRule
 	var packets, bytes string
-	err := tx.QueryRow(`SELECT comment, last_packets, last_bytes, epoch FROM rules WHERE id = ?`, id).Scan(&previous.comment, &packets, &bytes, &previous.epoch)
+	var active int
+	err := tx.QueryRow(`SELECT comment, last_packets, last_bytes, epoch, active FROM rules WHERE id = ?`, id).Scan(&previous.comment, &packets, &bytes, &previous.epoch, &active)
 	if errors.Is(err, sql.ErrNoRows) {
 		return previousRule{}, nil
 	}
@@ -253,6 +326,7 @@ func (s *Store) previousRuleTx(tx *sql.Tx, id string) (previousRule, error) {
 		return previousRule{}, fmt.Errorf("read previous telemetry sample for %q: %w", id, err)
 	}
 	previous.exists = true
+	previous.active = active != 0
 	var parseErr error
 	previous.packets, parseErr = parseDecimal(packets)
 	if parseErr != nil {
@@ -267,13 +341,13 @@ func (s *Store) previousRuleTx(tx *sql.Tx, id string) (previousRule, error) {
 
 func (s *Store) upsertRuleTx(tx *sql.Tx, counter firewall.Counter, at int64, packetDelta, byteDelta uint64, reset int, epoch int64, exists bool) error {
 	if exists {
-		_, err := tx.Exec(`UPDATE rules SET kind = ?, family = ?, table_name = ?, chain_name = ?, last_seen_at = ?, last_packets = ?, last_bytes = ?, last_packet_delta = ?, last_byte_delta = ?, last_reset = ?, epoch = ?, last_sample_at = ? WHERE id = ?`, counter.Kind, counter.Family, counter.Table, counter.Chain, at, decimal(counter.Packets), decimal(counter.Bytes), decimal(packetDelta), decimal(byteDelta), reset, epoch, at, counter.ID)
+		_, err := tx.Exec(`UPDATE rules SET kind = ?, comment = ?, family = ?, table_name = ?, chain_name = ?, last_seen_at = ?, last_packets = ?, last_bytes = ?, last_packet_delta = ?, last_byte_delta = ?, last_reset = ?, epoch = ?, last_sample_at = ?, active = 1 WHERE id = ?`, counter.Kind, counter.Rule, counter.Family, counter.Table, counter.Chain, at, decimal(counter.Packets), decimal(counter.Bytes), decimal(packetDelta), decimal(byteDelta), reset, epoch, at, counter.ID)
 		if err != nil {
 			return fmt.Errorf("update telemetry rule %q: %w", counter.ID, err)
 		}
 		return nil
 	}
-	_, err := tx.Exec(`INSERT INTO rules (id, kind, comment, family, table_name, chain_name, first_seen_at, last_seen_at, last_packets, last_bytes, last_packet_delta, last_byte_delta, last_reset, epoch, last_sample_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, counter.ID, counter.Kind, counter.Rule, counter.Family, counter.Table, counter.Chain, at, at, decimal(counter.Packets), decimal(counter.Bytes), decimal(packetDelta), decimal(byteDelta), reset, epoch, at)
+	_, err := tx.Exec(`INSERT INTO rules (id, kind, comment, family, table_name, chain_name, first_seen_at, last_seen_at, last_packets, last_bytes, last_packet_delta, last_byte_delta, last_reset, epoch, last_sample_at, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`, counter.ID, counter.Kind, counter.Rule, counter.Family, counter.Table, counter.Chain, at, at, decimal(counter.Packets), decimal(counter.Bytes), decimal(packetDelta), decimal(byteDelta), reset, epoch, at)
 	if err != nil {
 		return fmt.Errorf("insert telemetry rule %q: %w", counter.ID, err)
 	}
@@ -398,11 +472,12 @@ type RuleView struct {
 	LastByteDelta   uint64    `json:"last_byte_delta"`
 	LastReset       bool      `json:"last_reset"`
 	Epoch           int64     `json:"epoch"`
+	Active          bool      `json:"active"`
 }
 
 func (s *Store) Rules(limit int) ([]RuleView, error) {
 	limit = boundLimit(limit, MaxRuleResults)
-	rows, err := s.db.Query(`SELECT id, kind, comment, family, table_name, chain_name, first_seen_at, last_seen_at, last_packets, last_bytes, last_packet_delta, last_byte_delta, last_reset, epoch FROM rules ORDER BY id LIMIT ?`, limit)
+	rows, err := s.db.Query(`SELECT id, kind, comment, family, table_name, chain_name, first_seen_at, last_seen_at, last_packets, last_bytes, last_packet_delta, last_byte_delta, last_reset, epoch, active FROM rules ORDER BY id LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("read telemetry rules: %w", err)
 	}
@@ -419,7 +494,7 @@ func (s *Store) Rules(limit int) ([]RuleView, error) {
 }
 
 func (s *Store) Rule(id string) (RuleView, error) {
-	row := s.db.QueryRow(`SELECT id, kind, comment, family, table_name, chain_name, first_seen_at, last_seen_at, last_packets, last_bytes, last_packet_delta, last_byte_delta, last_reset, epoch FROM rules WHERE id = ?`, id)
+	row := s.db.QueryRow(`SELECT id, kind, comment, family, table_name, chain_name, first_seen_at, last_seen_at, last_packets, last_bytes, last_packet_delta, last_byte_delta, last_reset, epoch, active FROM rules WHERE id = ?`, id)
 	view, err := scanRule(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RuleView{}, os.ErrNotExist
@@ -433,8 +508,8 @@ func scanRule(row rowScanner) (RuleView, error) {
 	var view RuleView
 	var first, last int64
 	var packets, bytes, packetDelta, byteDelta string
-	var reset int
-	if err := row.Scan(&view.ID, &view.Kind, &view.Comment, &view.Family, &view.Table, &view.Chain, &first, &last, &packets, &bytes, &packetDelta, &byteDelta, &reset, &view.Epoch); err != nil {
+	var reset, active int
+	if err := row.Scan(&view.ID, &view.Kind, &view.Comment, &view.Family, &view.Table, &view.Chain, &first, &last, &packets, &bytes, &packetDelta, &byteDelta, &reset, &view.Epoch, &active); err != nil {
 		return RuleView{}, err
 	}
 	view.FirstSeenAt = time.Unix(0, first).UTC()
@@ -453,6 +528,7 @@ func scanRule(row rowScanner) (RuleView, error) {
 		return RuleView{}, fmt.Errorf("decode rule byte delta: %w", err)
 	}
 	view.LastReset = reset != 0
+	view.Active = active != 0
 	return view, nil
 }
 

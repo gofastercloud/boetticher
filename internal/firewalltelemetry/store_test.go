@@ -87,6 +87,37 @@ func TestStoreRetentionRemovesOldRawSamplesButKeepsCurrentRuleMetadata(t *testin
 	}
 }
 
+func TestStoreRetiresMissingRulesAndResetsReappearingCounters(t *testing.T) {
+	store := openTestStore(t)
+	base := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	counter := firewall.Counter{Rule: "boetticher:allow:forward-test", ID: "forward-test", Kind: "allow", Family: "inet", Table: firewall.FilterTable, Chain: "forward", Packets: 10, Bytes: 100}
+	if err := store.RecordSnapshot(base, firewall.NFTSnapshot{Fingerprint: "fingerprint-a", Counters: []firewall.Counter{counter}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordSnapshot(base.Add(time.Minute), firewall.NFTSnapshot{Fingerprint: "fingerprint-b"}); err != nil {
+		t.Fatal(err)
+	}
+	view, err := store.Rule("forward-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Active {
+		t.Fatalf("missing rule remained active: %#v", view)
+	}
+	counter.Packets = 3
+	counter.Bytes = 30
+	if err := store.RecordSnapshot(base.Add(2*time.Minute), firewall.NFTSnapshot{Fingerprint: "fingerprint-c", Counters: []firewall.Counter{counter}}); err != nil {
+		t.Fatal(err)
+	}
+	view, err = store.Rule("forward-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !view.Active || view.LastPacketDelta != 0 || view.LastByteDelta != 0 || !view.LastReset || view.Epoch != 1 {
+		t.Fatalf("reappearing rule was not treated as a new counter epoch: %#v", view)
+	}
+}
+
 func TestStoreHealthErrorIsBoundedAndDoesNotEraseLastSuccess(t *testing.T) {
 	store := openTestStore(t)
 	base := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)

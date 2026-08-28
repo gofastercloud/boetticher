@@ -91,10 +91,23 @@ func TestDeploymentRearmsCleanedGuestRootTransportThroughHost(t *testing.T) {
 	}
 }
 
+func TestDeploymentRetriesTransientGuestRootRearmFailure(t *testing.T) {
+	hostRunner := &deploymentRootTestRunner{hostOutputs: [][]byte{[]byte("guest agent is not ready"), []byte("{\"exitcode\":0,\"exited\":1}")}}
+	guestRunner := &deploymentRootTestRunner{guestErr: errors.New("permission denied"), guestSuccessAfter: 1}
+	guest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
+	if err := waitForDeploymentRoot(context.Background(), hostRunner, "192.0.2.10", guestRunner, guest, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator"); err != nil {
+		t.Fatal(err)
+	}
+	if hostRunner.calls != 2 || guestRunner.calls != 2 {
+		t.Fatalf("transient deployment root re-arm calls = host:%d guest:%d", hostRunner.calls, guestRunner.calls)
+	}
+}
+
 type deploymentRootTestRunner struct {
 	calls             int
 	lastCommand       string
 	hostOutput        []byte
+	hostOutputs       [][]byte
 	guestErr          error
 	guestSuccessAfter int
 }
@@ -102,6 +115,13 @@ type deploymentRootTestRunner struct {
 func (r *deploymentRootTestRunner) Run(_ context.Context, _ string, _ string, command string) ([]byte, error) {
 	r.calls++
 	r.lastCommand = command
+	if len(r.hostOutputs) > 0 {
+		index := r.calls - 1
+		if index >= len(r.hostOutputs) {
+			index = len(r.hostOutputs) - 1
+		}
+		return r.hostOutputs[index], nil
+	}
 	if r.hostOutput != nil {
 		return r.hostOutput, nil
 	}
