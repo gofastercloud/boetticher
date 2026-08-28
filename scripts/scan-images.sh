@@ -121,7 +121,7 @@ scan_one() {
   # Keep unfixed findings in the report. Policy evaluation is performed by the
   # qualification command after this raw, machine-readable scan completes.
   trivy_started=$(timing_now_ms)
-  if ! trivy fs --scanners vuln,secret --format json --list-all-pkgs --output "$report" "$scan_root"; then
+  if ! trivy fs --scanners vuln,secret --skip-db-update --format json --list-all-pkgs --output "$report" "$scan_root"; then
     exit 2
   fi
   if ! trivy convert --scanners vuln,secret --format table --output "$summary" "$report"; then
@@ -212,6 +212,13 @@ run_selected_scans() {
   scan_all_started=$(timing_now_ms)
   timing_log="$root/scan-timings.log"
   : > "$timing_log"
+  scan_db_started=$(timing_now_ms)
+  if ! trivy fs --download-db-only; then
+    echo "HOLD: Trivy vulnerability database could not be prepared" >&2
+    return 1
+  fi
+  scan_db_finished=$(timing_now_ms)
+  timing_emit "artifact_trivy_db_update" "$((scan_db_finished - scan_db_started))"
   scan_log_root=${BOETTICHER_SCAN_LOG_ROOT:-$(dirname "$root")/scan-logs}
   mkdir -p "$scan_log_root"
   failed=0

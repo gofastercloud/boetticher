@@ -663,13 +663,13 @@ func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *tes
 	if !strings.Contains(buildText, "zstd_level=${BOETTICHER_ZSTD_LEVEL:-19}") || !strings.Contains(buildText, `zstd -T0 "-$zstd_level"`) || !strings.Contains(buildText, `measurement_emit "artifact_compression"`) {
 		t.Fatal("artifact compression does not expose bounded measurement levels with the existing default")
 	}
-	if strings.Count(scanText, "trivy fs --scanners vuln,secret") != 1 {
+	if strings.Count(scanText, "trivy fs --scanners vuln,secret") != 1 || !strings.Contains(scanText, "trivy fs --download-db-only") || !strings.Contains(scanText, "--skip-db-update") {
 		t.Fatalf("qualification performs more than one full Trivy filesystem scan: %d", strings.Count(scanText, "trivy fs --scanners vuln,secret"))
 	}
 	if strings.Count(scanText, "trivy convert") != 2 || !strings.Contains(scanText, "--list-all-pkgs") {
 		t.Fatal("qualification does not derive table and SBOM evidence from the canonical scan")
 	}
-	if !strings.Contains(scanText, `timing_emit "artifact_trivy_scan"`) || !strings.Contains(scanText, `timing_emit "artifact_qualification_all"`) {
+	if !strings.Contains(scanText, `timing_emit "artifact_trivy_db_update"`) || !strings.Contains(scanText, `timing_emit "artifact_trivy_scan"`) || !strings.Contains(scanText, `timing_emit "artifact_qualification_all"`) {
 		t.Fatal("qualification timing output is incomplete")
 	}
 	if !strings.Contains(scanText, "timing_artifact=${3:-}") || strings.Contains(scanText, "timing_emit() {\n  stage=$1\n  duration_ms=$2\n  artifact=${3:-}") {
