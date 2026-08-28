@@ -712,6 +712,14 @@ func TestFirewallTelemetryHasFixedReadOnlyPrivilegeAndNetworkContract(t *testing
 			t.Fatalf("firewall telemetry unit missing %q", expected)
 		}
 	}
+	snapshotUnitPath := filepath.Join("..", "..", "images", "firewall", "runtime", "boetticher-firewall-snapshot.service")
+	snapshotUnitData, err := os.ReadFile(snapshotUnitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(snapshotUnitData), "User=root\nGroup=boetticher-telemetry\n") {
+		t.Fatal("firewall telemetry snapshot unit cannot write its group-owned runtime directory")
+	}
 	snapshotPath := filepath.Join("..", "..", "images", "firewall", "runtime", "snapshot-firewall.sh")
 	snapshotData, err := os.ReadFile(snapshotPath)
 	if err != nil {
