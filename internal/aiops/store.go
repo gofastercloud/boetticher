@@ -499,9 +499,6 @@ func recordTransition(ctx context.Context, tx *sql.Tx, incidentID string, state 
 }
 
 func (s *Store) Prune(ctx context.Context, now time.Time) error {
-	if err := s.checkCapacity(); err != nil {
-		return err
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -516,7 +513,11 @@ func (s *Store) Prune(ctx context.Context, now time.Time) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM incidents WHERE state='resolved' AND resolved_at<?`, cutoff); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`)
+	return err
 }
 
 func (s *Store) checkCapacity() error {

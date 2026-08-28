@@ -148,7 +148,7 @@ func run() error {
 		listener net.Listener
 	}{
 		{"evidence broker", boundedServer(broker.EvidenceHandler()), evidenceListener},
-		{"model broker", boundedServer(broker.RouterHandler()), routerListener},
+		{"model broker", modelBrokerServer(broker.RouterHandler()), routerListener},
 		{"AIOps listener", externalServer, tls.NewListener(externalListener, &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}})},
 	}
 	serveErrors := make(chan error, len(servers))
@@ -169,6 +169,10 @@ func run() error {
 
 func boundedServer(handler http.Handler) *http.Server {
 	return &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 * 1024}
+}
+
+func modelBrokerServer(handler http.Handler) *http.Server {
+	return &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: aiops.MaxInvestigationTime + time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 * 1024}
 }
 
 func runPulseOperations(store *aiops.Store, worker *aiops.Worker, pulse aiops.PulseClient) {

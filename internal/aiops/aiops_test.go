@@ -53,6 +53,24 @@ func TestAdmissionFailsClosedAtDatabaseCapacity(t *testing.T) {
 	}
 }
 
+func TestPruneCanRecoverFromDatabaseCapacity(t *testing.T) {
+	path := t.TempDir() + "/incidents.db"
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if err := os.Truncate(path+"-wal", MaxDatabaseBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Prune(context.Background(), time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("Prune() rejected an over-capacity database before retention recovery: %v", err)
+	}
+	if info, err := os.Stat(path + "-wal"); err == nil && info.Size() > MaxDatabaseBytes {
+		t.Fatalf("Prune() left WAL over capacity at %d bytes", info.Size())
+	}
+}
+
 func TestResolvedWebhookCancelsActiveInvestigation(t *testing.T) {
 	store, err := OpenStore(t.TempDir() + "/incidents.db")
 	if err != nil {
