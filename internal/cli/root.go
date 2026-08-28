@@ -60,6 +60,8 @@ func Run(args []string, out, errOut interface{ Write([]byte) (int, error) }) err
 		return runDeploy(args[1:], out)
 	case "logs":
 		return runLogs(args[1:], out)
+	case "aiops":
+		return runAIOps(args[1:], out)
 	case "upgrade":
 		return runIntegrationGate(args[0], args[1:], out)
 	}
