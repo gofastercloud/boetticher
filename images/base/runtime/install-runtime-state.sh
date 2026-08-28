@@ -6,11 +6,13 @@ case "${1:-}" in
     directory=/etc/boetticher
     target=$directory/module.yaml
     mode=0640
+    directory_mode=0750
     ;;
   artifact-identity)
     directory=/usr/lib/boetticher
     target=$directory/artifact.json
     mode=0644
+    directory_mode=0755
     ;;
   *)
     echo "unsupported boetticher runtime state" >&2
@@ -18,7 +20,7 @@ case "${1:-}" in
     ;;
 esac
 
-install -d -m 0750 "$directory"
+install -d -m "$directory_mode" "$directory"
 temporary=$(mktemp "$directory/.runtime-state.XXXXXX")
 trap 'rm -f "$temporary"' EXIT
 install -m "$mode" /dev/stdin "$temporary"

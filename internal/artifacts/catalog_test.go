@@ -796,6 +796,12 @@ func TestApplianceBootstrapInputsContainNoOperatorKeyOrSiteState(t *testing.T) {
 	if !strings.Contains(string(runtimeState), "module-config") || !strings.Contains(string(runtimeState), "artifact-identity") || strings.Contains(string(runtimeState), "eval ") {
 		t.Fatalf("runtime state helper is not bounded: %s", runtimeState)
 	}
+	runtimeStateText := string(runtimeState)
+	for _, required := range []string{"directory_mode=0750", "directory_mode=0755", `install -d -m "$directory_mode" "$directory"`} {
+		if !strings.Contains(runtimeStateText, required) {
+			t.Fatalf("runtime state helper is missing directory permission contract %q", required)
+		}
+	}
 	for _, relative := range []string{"firewall/nocloud/meta-data", "firewall/nocloud/network-config", "firewall/nocloud/user-data"} {
 		data, err := os.ReadFile(filepath.Join(root, relative))
 		if err != nil {
