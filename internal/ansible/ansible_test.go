@@ -173,6 +173,18 @@ func TestUSBExportRoleCreatesInstallRootAndPreservesStaticSlots(t *testing.T) {
 	}
 }
 
+func TestAIOpsServiceAllowsDeclaredDNSResolvers(t *testing.T) {
+	service, err := os.ReadFile(filepath.Join("..", "..", "images", "aiops", "runtime", "boetticher-aiops.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"IPAddressAllow=10.10.10.10", "IPAddressAllow=10.10.10.11"} {
+		if !strings.Contains(string(service), expected) {
+			t.Fatalf("AIOps service missing %q", expected)
+		}
+	}
+}
+
 func TestMonitorFrontendKeepsMTLSExceptForScopedAgentRoutes(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "pulse-loopback.conf.j2"))
 	if err != nil {
