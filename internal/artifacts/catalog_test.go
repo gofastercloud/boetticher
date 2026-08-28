@@ -672,6 +672,9 @@ func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *tes
 	if !strings.Contains(scanText, `timing_emit "artifact_trivy_scan"`) || !strings.Contains(scanText, `timing_emit "artifact_qualification_all"`) {
 		t.Fatal("qualification timing output is incomplete")
 	}
+	if !strings.Contains(scanText, "timing_artifact=${3:-}") || strings.Contains(scanText, "timing_emit() {\n  stage=$1\n  duration_ms=$2\n  artifact=${3:-}") {
+		t.Fatal("qualification timing helper must not overwrite the artifact path")
+	}
 	if strings.Contains(buildText, "build_dns_blocky() {\n  printf '%s\\n' 'boetticher build stage: dns blocky'\n  rootfs=$(prepare_rootfs boetticher-dns-blocky)\n  install_powerdns \"$rootfs\"\n  install_packages \"$rootfs\" chrony") {
 		t.Fatal("DNS construction still performs a redundant package-index transaction")
 	}

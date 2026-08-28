@@ -66,10 +66,10 @@ timing_now_ms() {
 timing_emit() {
   stage=$1
   duration_ms=$2
-  artifact=${3:-}
+  timing_artifact=${3:-}
   line="timing stage=$stage duration_ms=$duration_ms"
-  if [ -n "$artifact" ]; then
-    line="$line artifact=$artifact"
+  if [ -n "$timing_artifact" ]; then
+    line="$line artifact=$timing_artifact"
   fi
   printf '%s\n' "$line"
   if [ -n "${timing_log:-}" ]; then
