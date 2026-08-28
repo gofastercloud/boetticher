@@ -28,6 +28,8 @@
       when: inventory_hostname in groups.get('streamdeck', [])
     - role: printer
       when: inventory_hostname in groups.get('printer', [])
+    - role: aiops
+      when: inventory_hostname in groups.get('aiops', [])
 
 - name: Reconcile Core-owned USB exports after appliance configuration
   hosts: proxmox

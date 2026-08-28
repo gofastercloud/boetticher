@@ -137,3 +137,35 @@
   when:
     - inventory_hostname == logging_plan.collector
     - logging_collector_certificate | default('') | length > 0
+
+- name: Install the bounded AIOps journal query policy
+  ansible.builtin.file:
+    path: /etc/boetticher-log-query
+    state: directory
+    owner: root
+    group: boetticher-log-query
+    mode: '0750'
+  when:
+    - inventory_hostname == logging_plan.collector
+    - module_configs.aiops is defined
+
+- name: Render the bounded AIOps journal query policy
+  ansible.builtin.copy:
+    dest: /etc/boetticher-log-query/policy.json
+    owner: root
+    group: boetticher-log-query
+    mode: '0640'
+    content: "{{ {'hosts': {'lab-fw-01': ['kea-dhcp4.service', 'nftables.service'], 'lab-dns-01': ['blocky.service', 'pdns.service', 'chrony.service'], 'lab-dns-02': ['blocky.service', 'pdns.service', 'chrony.service'], 'lab-monitor-01': ['pulse.service'], 'lab-log-01': ['systemd-journal-remote.service'], 'lab-litellm-01': ['litellm.service', 'nginx.service'], 'lab-aiops-01': ['boetticher-aiops.service', 'holmes.service']}} | to_nice_json }}"
+  when:
+    - inventory_hostname == logging_plan.collector
+    - module_configs.aiops is defined
+
+- name: Keep journal query disabled until its dedicated certificate is installed
+  ansible.builtin.service:
+    name: boetticher-log-query
+    enabled: false
+    state: stopped
+  when:
+    - inventory_hostname == logging_plan.collector
+    - module_configs.aiops is defined
+    - not (log_query_identity_ready | default(false) | bool)

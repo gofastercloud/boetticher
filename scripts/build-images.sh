@@ -7,11 +7,11 @@ set -eu
 target=${1:-images}
 shift || true
 case "$target" in
-  image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-streamdeck|image-printer|images) ;;
+  image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-streamdeck|image-printer|images) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
-default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-litellm image-streamdeck image-printer image-firewall"
+default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-litellm image-aiops image-streamdeck image-printer image-firewall"
 if [ "$target" = images ]; then
   selected_image_targets="$*"
   if [ -z "$selected_image_targets" ]; then
@@ -19,7 +19,7 @@ if [ "$target" = images ]; then
   fi
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
-      image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-streamdeck|image-printer) ;;
+      image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-streamdeck|image-printer) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac
   done
@@ -422,6 +422,9 @@ build_logging() {
   printf '%s\n' 'boetticher build stage: logging'
   rootfs=$(prepare_rootfs boetticher-logging)
   install_packages "$rootfs" systemd-journal-remote
+  CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/libexec/boetticher-log-query" ./cmd/boetticher-log-query
+  install -D -m 0644 images/logging/runtime/boetticher-log-query.service "$rootfs/etc/systemd/system/boetticher-log-query.service"
+  chroot "$rootfs" useradd --system --no-create-home --shell /usr/sbin/nologin boetticher-log-query
   write_artifact_identity "$rootfs" logging
   package_lxc boetticher-logging
 }
@@ -538,6 +541,29 @@ build_printer() {
   rm -f "$rootfs/tmp/octoprint-requirements.lock" "$rootfs/etc/nginx/sites-enabled/default"
   write_artifact_identity "$rootfs" printer
   package_lxc boetticher-printer
+}
+
+build_aiops() {
+  printf '%s\n' 'boetticher build stage: aiops'
+  rootfs=$(prepare_rootfs boetticher-aiops)
+  install_packages "$rootfs" \
+    "python3=$litellm_python_package_version" \
+    "python3-venv=$litellm_python_venv_package_version" \
+    "python3-pip=$litellm_pip_package_version"
+  chroot "$rootfs" python3 -m venv /opt/holmes
+  install -D -m 0644 images/aiops/runtime/requirements.lock "$rootfs/tmp/aiops-requirements.lock"
+  chroot "$rootfs" /opt/holmes/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/aiops-requirements.lock
+  chroot "$rootfs" /opt/holmes/bin/python -c 'import importlib.metadata; assert importlib.metadata.version("holmesgpt") == "0.40.0"'
+  rm -f "$rootfs/tmp/aiops-requirements.lock"
+  CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/libexec/boetticher-aiops" ./cmd/boetticher-aiops
+  chroot "$rootfs" useradd --system --home-dir /var/lib/boetticher/aiops --shell /usr/sbin/nologin boetticher-aiops
+  chroot "$rootfs" useradd --system --no-create-home --shell /usr/sbin/nologin holmes
+  install -D -m 0644 images/aiops/runtime/boetticher-aiops.service "$rootfs/etc/systemd/system/boetticher-aiops.service"
+  install -D -m 0644 images/aiops/runtime/boetticher-aiops.socket "$rootfs/etc/systemd/system/boetticher-aiops.socket"
+  install -D -m 0644 images/aiops/runtime/holmes.service "$rootfs/etc/systemd/system/holmes.service"
+  install -D -m 0644 images/aiops/runtime/holmes.yaml "$rootfs/etc/boetticher-aiops/holmes.yaml"
+  write_artifact_identity "$rootfs" aiops
+  package_lxc boetticher-aiops
 }
 
 build_firewall() {
@@ -809,6 +835,11 @@ build_printer_target() {
   build_printer
 }
 
+build_aiops_target() {
+  [ -f "$(artifact_for boetticher-base)" ] || build_base
+  build_aiops
+}
+
 case "$target" in
   image-base) run_timed_image_target "$target" build_base ;;
   image-dns-blocky) run_timed_image_target "$target" build_dns_blocky_target ;;
@@ -817,6 +848,7 @@ case "$target" in
   image-portal) run_timed_image_target "$target" build_portal_target ;;
   image-tailnet-router) run_timed_image_target "$target" build_tailnet_router_target ;;
   image-litellm) run_timed_image_target "$target" build_litellm_target ;;
+  image-aiops) run_timed_image_target "$target" build_aiops_target ;;
   image-streamdeck) run_timed_image_target "$target" build_streamdeck_target ;;
   image-printer) run_timed_image_target "$target" build_printer_target ;;
   image-dns-adguard) echo "HOLD: AdGuard provider qualification is outside the default Blocky readiness tranche" >&2; exit 2 ;;

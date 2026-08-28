@@ -65,6 +65,16 @@ func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, erro
 			})
 		}
 	}
+	if modules.IsEnabled(site, "aiops") {
+		for _, binding := range []struct{ key, name string }{
+			{key: "aiops_webhook_secret", name: "webhook-secret"},
+			{key: "aiops_pulse_read_token", name: "pulse-read-token"},
+			{key: "aiops_pulse_note_token", name: "pulse-note-token"},
+			{key: "aiops_loopback_secret", name: "loopback-secret"},
+		} {
+			bindings = append(bindings, deploymentCredential{Guest: "lab-aiops-01", Address: "10.10.20.70", SecretKey: binding.key, Spec: secrets.CredentialSpec{Name: binding.name, Unit: "boetticher-aiops.service", StorePath: "/var/lib/boetticher/credentials/aiops-" + binding.name + ".cred", RuntimeRef: "/run/credentials/boetticher-aiops.service/" + binding.name}})
+		}
+	}
 	items := make([]secrets.CredentialSpec, 0, len(bindings))
 	for _, binding := range bindings {
 		items = append(items, binding.Spec)
