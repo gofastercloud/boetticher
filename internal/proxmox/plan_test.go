@@ -86,6 +86,52 @@ func TestEnsureVirtualBridgeOmitsInvalidNonePort(t *testing.T) {
 	}
 }
 
+func TestAttachTrunkSendsRequiredBridgeType(t *testing.T) {
+	networkReads := 0
+	networkReloads := 0
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/proxmox/network" {
+			networkReads++
+			if networkReads == 2 {
+				return response([]byte(`{"data":[
+  {"iface":"vmbr0","type":"bridge","address":"192.0.2.73/24","gateway":"192.0.2.1","bridge_ports":"eno1"},
+  {"iface":"vmbr1","type":"bridge","bridge_ports":"enxa0cec8a2b210","bridge_vlan_aware":true},
+  {"iface":"eno1","type":"eth","hwaddr":"00:11:22:33:44:55","active":true},
+  {"iface":"enxa0cec8a2b210","type":"eth","hwaddr":"00:aa:bb:cc:dd:ee","active":false}
+]}`))
+			}
+			return response([]byte(`{"data":[
+  {"iface":"vmbr0","type":"bridge","address":"192.0.2.73/24","gateway":"192.0.2.1","bridge_ports":"eno1"},
+  {"iface":"vmbr1","type":"bridge","bridge_ports":"none","bridge_vlan_aware":true},
+  {"iface":"eno1","type":"eth","hwaddr":"00:11:22:33:44:55","active":true},
+  {"iface":"enxa0cec8a2b210","type":"eth","hwaddr":"00:aa:bb:cc:dd:ee","active":false}
+]}`))
+		}
+		if r.Method == http.MethodPut && r.URL.Path == "/api2/json/nodes/proxmox/network/vmbr1" {
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if r.Form.Get("type") != "bridge" || r.Form.Get("bridge_ports") != "enxa0cec8a2b210" || r.Form.Get("bridge_vlan_aware") != "1" {
+				t.Fatalf("unexpected trunk attach form: %v", r.Form)
+			}
+			return response([]byte(`{"data":null}`))
+		}
+		if r.Method == http.MethodPut && r.URL.Path == "/api2/json/nodes/proxmox/network" {
+			networkReloads++
+			return response([]byte(`{"data":null}`))
+		}
+		t.Fatalf("unexpected network request: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := AttachTrunk(context.Background(), client, "proxmox", "enxa0cec8a2b210", "192.0.2.73"); err != nil {
+		t.Fatal(err)
+	}
+	if networkReloads != 1 {
+		t.Fatalf("network reloads = %d, want 1", networkReloads)
+	}
+}
+
 func TestFoundationPlanUsesGatewayFirstDeploymentOrder(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {

@@ -437,7 +437,7 @@ func TestValidateScopedRoleJSONRequiresExactPrivileges(t *testing.T) {
 func TestConfigureIdentitiesInstallsTemporaryRootAccessWithoutLabadminSudo(t *testing.T) {
 	runner := &fakeRunner{}
 	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator"
-	if err := ConfigureIdentities(context.Background(), runner, "192.0.2.10", "root", key, []string{"lab-fw-01:22"}); err != nil {
+	if err := ConfigureIdentities(context.Background(), runner, "192.0.2.10", "root", key, []string{"10.10.99.1:22", "10.10.10.20:443"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, required := range []string{"passwd --lock labadmin", "/root/.ssh/authorized_keys", "rm -f /etc/sudoers.d/boetticher-labadmin", "visudo -cf /etc/sudoers", "chown lab-jump:lab-jump /home/lab-jump.authorized_keys", "AllowUsers root labadmin lab-jump", "Match User lab-jump"} {
@@ -565,7 +565,7 @@ func TestDiscoverPhysicalNetworkViaSSHHoldsWhenNonRootSudoIsUnavailable(t *testi
 func TestConfigureIdentitiesUsesNonInteractiveSudoForNonRoot(t *testing.T) {
 	runner := &fakeRunner{}
 	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator"
-	if err := ConfigureIdentities(context.Background(), runner, "192.0.2.10", "dave", key, []string{"lab-fw-01:22"}); err != nil {
+	if err := ConfigureIdentities(context.Background(), runner, "192.0.2.10", "dave", key, []string{"10.10.99.1:22"}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(runner.command, "sudo -n sh -c ") {

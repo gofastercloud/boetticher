@@ -10,5 +10,10 @@ over HTTPS/mTLS to `logs.lab.home.arpa:19532`. Upload failure does not stop an
 application, DNS, routing, or local journald. The collector does not upload its
 own journal recursively. Use `boetticher logs` for bounded read-only access.
 
+The Proxmox host uses the same endpoint-local upload path. Deployment pins the
+collector hostname to the managed collector in `/etc/hosts` and permits only
+the exact collector TCP port through the managed gateway; the HOME resolver
+path is not changed.
+
 The endpoint client certificate and key are endpoint-local. The boetticher CA
 and recovery authority remain on the controller.

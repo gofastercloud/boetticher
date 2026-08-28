@@ -66,10 +66,14 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 			{Name: "pulse_api_token", Purpose: "read-only Pulse monitoring API integration", Consumer: "deployment-controller", Generation: "ephemeral", Rotation: "replaceable", Delivery: "controller-memory", Lifecycle: model.SecretLifecycleRuntime},
 			{Name: "pulse_agent_token", Purpose: "read-only Pulse host-agent report authentication", Consumer: "pulse-agent", Generation: "ephemeral", Rotation: "replaceable", Delivery: "systemd-credential", Lifecycle: model.SecretLifecycleRuntime},
 		}
+		declaration.NetworkIntents = []model.NetworkIntent{{Source: "lab-monitor-01", Destination: model.LogicalProxmoxIdentity, Protocol: "tcp", Ports: []string{"8006"}, Direction: "egress", Purpose: "Proxmox API monitoring"}}
 	case "firewall":
 		declaration.Secrets = []model.SecretDeclaration{{Name: "ddns_tsig_secret", Purpose: "authenticated DHCP DNS updates", Consumer: "kea-dhcp-ddns-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file", Lifecycle: model.SecretLifecycleRuntime}}
 	case "logging":
-		declaration.NetworkIntents = []model.NetworkIntent{{Source: "boetticher-managed-endpoints", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"}}
+		declaration.NetworkIntents = []model.NetworkIntent{
+			{Source: "boetticher-managed-endpoints", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"},
+			{Source: model.LogicalProxmoxIdentity, Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native Proxmox journal upload"},
+		}
 		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "logs." + site.Network.Domain, SANs: []string{"logs." + site.Network.Domain}, Consumer: "systemd-journal-remote"})
 		if IsEnabled(site, "aiops") {
 			declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "log-query." + site.Network.Domain, SANs: []string{"logs." + site.Network.Domain, "lab-log-01." + site.Network.Domain}, Consumer: "boetticher-log-query"})

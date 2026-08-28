@@ -28,7 +28,7 @@ func RenderExternalContract(s model.Site, plan Plan) (string, error) {
 		fmt.Fprintf(&b, "| %d | %s | `%s` | `%s` | `%s` |\n", zone.VLAN, zone.Name, zone.Type, zone.Network, zone.Gateway)
 	}
 	b.WriteString("\n## Required routes\n\n")
-	b.WriteString("The operator must route each fixed site CIDR through its listed gateway and provide the TRANSIT gateway as the routed edge for any enabled module advertisements. Do not infer routes from VMID range or module enablement. Proxmox management is `10.10.99.250` on MGMT; the external gateway owns `.1` in every listed subnet.\n\n")
+	b.WriteString("The operator must route each fixed site CIDR through its listed gateway and provide the TRANSIT gateway as the routed edge for any enabled module advertisements. Do not infer routes from VMID range or module enablement. Proxmox management is `10.10.99.5` on MGMT; the external gateway owns `.1` in every listed subnet.\n\n")
 	for _, zone := range s.Normalize().Network.Zones {
 		fmt.Fprintf(&b, "- `%s` via `%s` on VLAN %d (`%s`, semantic type `%s`).\n", zone.Network, zone.Gateway, zone.VLAN, zone.Name, zone.Type)
 	}

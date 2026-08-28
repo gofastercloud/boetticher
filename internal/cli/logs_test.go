@@ -16,6 +16,13 @@ func TestLogsRejectsMultipleHostsBeforeLoadingSite(t *testing.T) {
 	}
 }
 
+func TestLogsAcceptsHostBeforeFlags(t *testing.T) {
+	args := []string{"lab-dns-01", "--site", "/tmp/site", "--unit", "blocky", "--limit", "20"}
+	if got := normalizeLogsArgs(args); !reflect.DeepEqual(got, []string{"--site", "/tmp/site", "--unit", "blocky", "--limit", "20", "lab-dns-01"}) {
+		t.Fatalf("logs arguments reordered to %#v", got)
+	}
+}
+
 func TestNormalizeJournalUnitAcceptsBoundedServiceShorthand(t *testing.T) {
 	if got, err := normalizeJournalUnit("blocky"); err != nil || got != "blocky.service" {
 		t.Fatalf("bare service unit normalized to %q, %v", got, err)

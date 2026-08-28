@@ -24,7 +24,7 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 		t.Fatal("inventory was not deterministic")
 	}
 	for _, expected := range []string{
-		"lab-proxmox-01 ansible_host=10.10.99.250",
+		"lab-proxmox-01 ansible_host=10.10.99.5",
 		"lab-dns-01 ansible_host=10.10.10.10",
 		"ansible_remote_tmp=/tmp/boetticher-ansible",
 		"[managed:children]",
@@ -50,7 +50,7 @@ func TestInventoryUsesBootstrapAddressForProxmoxTransport(t *testing.T) {
 	if !strings.Contains(inventory, "lab-proxmox-01 ansible_host=192.0.2.5") {
 		t.Fatalf("Proxmox inventory did not use bootstrap address:\n%s", inventory)
 	}
-	if strings.Contains(inventory, "lab-proxmox-01 ansible_host=10.10.99.250") {
+	if strings.Contains(inventory, "lab-proxmox-01 ansible_host=10.10.99.5") {
 		t.Fatal("Proxmox inventory used the internal management address for controller transport")
 	}
 }
@@ -99,6 +99,7 @@ func TestAnsibleVariablesPinPulseHostAgentAndExposeNoSecret(t *testing.T) {
 	}
 	text := string(data)
 	for _, expected := range []string{
+		`"proxmox_management_address": "10.10.99.5"`,
 		"\"pulse_agent_targets\": [\n    \"lab-proxmox-01\"",
 		`"pulse_agent_version": "6.1.2"`,
 		`"pulse_agent_release_url": "https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-agent-linux-amd64"`,
@@ -245,6 +246,36 @@ func TestMonitoringApplianceUsesImageProvidedPulseRuntime(t *testing.T) {
 	}
 }
 
+func TestPulseRestartsAfterCredentialProjectionOrUnhealthyStart(t *testing.T) {
+	basePath := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	baseData, err := os.ReadFile(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseText := string(baseData)
+	if !strings.Contains(baseText, "register: boetticher_credential_dropin_install") {
+		t.Fatal("credential drop-in installation does not expose its change state")
+	}
+
+	monitorPath := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
+	monitorData, err := os.ReadFile(monitorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	monitorText := string(monitorData)
+	for _, required := range []string{
+		"systemctl show pulse --property=ActiveState --property=SubState --value",
+		"boetticher_credential_dropin_install is changed",
+		"pulse_service_state.stdout_lines | default([]) != ['active', 'running']",
+		"state: restarted",
+		"daemon_reload: true",
+	} {
+		if !strings.Contains(monitorText, required) {
+			t.Fatalf("Pulse recovery contract is missing %q", required)
+		}
+	}
+}
+
 func TestMonitoringFrontendHandlersFlushBeforeReconciliation(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
@@ -327,6 +358,46 @@ func TestJournalUploadRetriesAfterDependencyStartup(t *testing.T) {
 	text := string(data)
 	if !strings.Contains(text, "path: /etc/systemd/system/systemd-journal-upload.service.d\n") || !strings.Contains(text, "systemd-journal-upload.service.d/boetticher.conf") || !strings.Contains(text, "RestartSec=15s") || !strings.Contains(text, "Reload systemd after installing journal-upload policy") {
 		t.Fatal("journal upload has no bounded retry policy for DNS-dependent startup")
+	}
+}
+
+func TestProxmoxJournalUploadPinsTheCollectorWithoutChangingHomeDNS(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"Pin the Proxmox collector hostname to the managed logging appliance",
+		"path: /etc/hosts",
+		"{{ logging_plan.collector_address | regex_escape }}",
+		"line: \"{{ logging_plan.collector_address }} logs.{{ domain }}\"",
+		"inventory_hostname in groups.get('proxmox', [])",
+		"inventory_hostname in logging_upload_configs",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("Proxmox journal upload is missing %q", expected)
+		}
+	}
+}
+
+func TestMonitorPinsTheProxmoxCertificateHostname(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"Pin the Proxmox API certificate hostname for Pulse",
+		"{{ proxmox_management_address | regex_escape }}",
+		"line: \"{{ proxmox_management_address }} proxmox\"",
+		"inventory_hostname == 'lab-monitor-01'",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("Pulse Proxmox certificate hostname mapping is missing %q", expected)
+		}
 	}
 }
 
@@ -432,7 +503,7 @@ func TestFirewallDHCPTemplateProjectsExplicitReservations(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, expected := range []string{"subnet.get('reservations'", "hw-address", "ip-address", "hostname"} {
+	for _, expected := range []string{"\"dhcp-ddns\": {", "\"enable-updates\": true", "\"server-ip\": \"127.0.0.1\"", "\"server-port\": 53001", "subnet.get('reservations'", "hw-address", "ip-address", "hostname"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("Kea template does not project reservation field %q", expected)
 		}

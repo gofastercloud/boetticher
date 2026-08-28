@@ -12,6 +12,10 @@ policies are drop; stateful established/related traffic and documented service
 paths are allowed explicitly. Internal traffic is not NATed. Intended internal
 networks are masqueraded only when leaving `wan0`.
 
+Diagnostic IPv4 echo requests from internal non-TRANSIT zones to the managed
+gateway are allowed. WAN-sourced ICMP and inter-zone ICMP remain denied unless
+an explicit policy path permits them.
+
 Proxmox performs VLAN classification by attaching separate firewall vNICs to
 `vmbr1` with tags 5, 10, 20, 30, 40, and 99. The firewall sees ordinary interfaces
 named `wan0`, `transit0`, `infra0`, `servers0`, `trusted0`, `sandbox0`, and
@@ -120,6 +124,10 @@ to the Pulse host agent through an encrypted systemd credential. The generic
 target, and VM/LXC guests do not receive an agent. The monitor UI retains the
 HTTPS/mTLS boundary, while the supported token-authenticated agent routes carry
 host reports without a client certificate.
+
+The managed gateway permits only `lab-monitor-01` to reach the Proxmox API on
+TCP/8006. This is the explicit network intent required for Pulse inventory and
+does not grant general INFRA-to-MGMT access.
 
 The DNS module is mandatory. Blocky is the default recursive/filtering
 implementation and AdGuard is a typed alternative; PowerDNS remains

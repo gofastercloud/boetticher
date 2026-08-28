@@ -56,6 +56,23 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if agentToken.Consumer != "pulse-agent" || agentToken.Delivery != "systemd-credential" || agentToken.Generation != "ephemeral" || agentToken.Lifecycle != model.SecretLifecycleRuntime {
 		t.Fatalf("Pulse agent credential contract is incomplete: %#v", agentToken)
 	}
+	if len(monitoring.NetworkIntents) != 1 || monitoring.NetworkIntents[0].Source != "lab-monitor-01" || monitoring.NetworkIntents[0].Destination != model.LogicalProxmoxIdentity || monitoring.NetworkIntents[0].Protocol != "tcp" || strings.Join(monitoring.NetworkIntents[0].Ports, ",") != "8006" {
+		t.Fatalf("Pulse Proxmox API network intent is incomplete: %#v", monitoring.NetworkIntents)
+	}
+	logging, ok := findDeclaration(site, "logging")
+	if !ok {
+		t.Fatal("logging declaration is missing")
+	}
+	var proxmoxLoggingIntent model.NetworkIntent
+	for _, intent := range logging.NetworkIntents {
+		if intent.Source == model.LogicalProxmoxIdentity {
+			proxmoxLoggingIntent = intent
+			break
+		}
+	}
+	if proxmoxLoggingIntent.Destination != "logs.lab.home.arpa" || proxmoxLoggingIntent.Protocol != "tcp" || strings.Join(proxmoxLoggingIntent.Ports, ",") != "19532" || proxmoxLoggingIntent.Purpose != "native Proxmox journal upload" {
+		t.Fatalf("Proxmox journal upload network intent is incomplete: %#v", proxmoxLoggingIntent)
+	}
 	for _, declaration := range site.Declarations {
 		for _, guest := range declaration.Guests {
 			if guest.Module != declaration.Module || !containsTag(guest.Tags, model.TagModule) || !containsTag(guest.Tags, "module-"+declaration.Module) {

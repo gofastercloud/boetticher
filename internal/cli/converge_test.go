@@ -78,6 +78,54 @@ func TestPulseCredentialBootstrapUsesTemporaryRootAuthority(t *testing.T) {
 	}
 }
 
+func TestPulseReconciliationForwardUsesRestrictedBastion(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{`HostAlias:     "lab-bastion"`, `StartLocalForward(context.Background(), s.BootstrapAddress, "lab-jump", "10.10.10.20", 443)`} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Pulse reconciliation does not use the restricted bastion contract %q", required)
+		}
+	}
+	if strings.Contains(text, `StartLocalForward(context.Background(), s.BootstrapAddress, "root", "10.10.10.20", 443)`) {
+		t.Fatal("Pulse reconciliation still uses the deployment-only root forwarding path")
+	}
+}
+
+func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		"readTokenRefreshed := false",
+		"pulse.IsUnauthorized(err)",
+		"pulseAdmin.CreateReadToken(context.Background(), \"boetticher monitoring read\")",
+		"site.StorePlatformSecret(*siteDir, s, *ageIdentity, \"pulse_api_token\", readToken)",
+		"verify Pulse state summary after read-token refresh",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Pulse read-token recovery is missing %q", required)
+		}
+	}
+}
+
+func TestPulseUsesTheProxmoxCertificateHostname(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `Name: model.LogicalProxmoxIdentity, Host: "https://proxmox:8006"`) {
+		t.Fatal("Pulse reconciliation does not use the hostname covered by the default Proxmox certificate")
+	}
+	if !strings.Contains(string(data), `PreviousHost: "https://proxmox." + s.Network.Domain + ":8006"`) {
+		t.Fatal("Pulse reconciliation does not constrain the endpoint migration to the previous canonical hostname")
+	}
+}
+
 func TestRuntimeBoundaryAcceptsRelativeSiteDirectory(t *testing.T) {
 	site := model.NewDefaultSite("trial", "age1trial")
 	if err := checkRuntimeBoundary("relative-site", site); err != nil {

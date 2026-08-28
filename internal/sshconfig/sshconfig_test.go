@@ -76,7 +76,7 @@ func TestRenderComposedSiteIncludesDeclaredModuleGuests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, destination := range []string{"10.10.99.1:22", "10.10.10.10:22", "10.10.10.40:22"} {
+	for _, destination := range []string{"10.10.99.1:22", "10.10.10.10:22", "10.10.10.20:22", "10.10.10.20:443", "10.10.10.40:22"} {
 		if !strings.Contains(policy, destination) {
 			t.Errorf("composed bastion policy missing module destination %q", destination)
 		}

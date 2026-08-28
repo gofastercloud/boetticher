@@ -22,7 +22,7 @@ func TestLegacyProjectIdentifiersDoNotReappear(t *testing.T) {
 		if path == filepath.Join(root, ".git") {
 			// Linked worktrees expose .git as a pointer file containing the
 			// checkout path, which may retain the pre-rename directory name.
-			return nil
+			return filepath.SkipDir
 		}
 		if entry.IsDir() {
 			if path != root && isIgnoredDirectory(entry.Name()) {

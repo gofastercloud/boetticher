@@ -59,7 +59,7 @@ const (
 	InfraVLAN                   = 10
 	InfraNetwork                = "10.10.10.0/24"
 	InfraGateway                = "10.10.10.1"
-	ProxmoxManagementAddress    = "10.10.99.250"
+	ProxmoxManagementAddress    = "10.10.99.5"
 	PlatformGuestIDMin          = 100
 	PlatformGuestIDMax          = 199
 	ModuleGuestIDMin            = 200

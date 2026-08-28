@@ -439,7 +439,13 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 	}()
 	if monitoringEnabled {
-		pulseForward, err = rootRunner.StartLocalForward(context.Background(), s.BootstrapAddress, "root", "10.10.10.20", 443)
+		pulseRunner := proxmox.SSHRunner{
+			IdentityFile:  operatorIdentityFile(s),
+			ConfigFile:    filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"),
+			StrictHostKey: "accept-new",
+			HostAlias:     "lab-bastion",
+		}
+		pulseForward, err = pulseRunner.StartLocalForward(context.Background(), s.BootstrapAddress, "lab-jump", "10.10.10.20", 443)
 		if err != nil {
 			return fmt.Errorf("open Pulse API tunnel through Proxmox bastion: %w", err)
 		}
@@ -462,8 +468,9 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			}
 		}
 		if err := pulseAdmin.ConfigureProxmox(context.Background(), pulse.PVEConfig{
-			Name: model.LogicalProxmoxIdentity, Host: "https://proxmox." + s.Network.Domain + ":8006",
-			TokenID: proxmox.PulseMonitoringUser + "!" + proxmox.PulseMonitoringToken, TokenSecret: pulseProxmoxToken,
+			Name: model.LogicalProxmoxIdentity, Host: "https://proxmox:8006",
+			PreviousHost: "https://proxmox." + s.Network.Domain + ":8006",
+			TokenID:      proxmox.PulseMonitoringUser + "!" + proxmox.PulseMonitoringToken, TokenSecret: pulseProxmoxToken,
 			VerifySSL: true, MonitorVMs: true, MonitorContainers: true, MonitorStorage: true, MonitorBackups: true,
 			MonitorPhysicalDisks: false, MonitorTemperatures: false,
 		}); err != nil {
@@ -489,6 +496,29 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		if clientErr != nil {
 			return clientErr
 		}
+		readTokenRefreshed := false
+		refreshPulseReadToken := func() error {
+			if readTokenRefreshed {
+				return errors.New("Pulse read token was already refreshed during this deployment")
+			}
+			readToken, tokenErr = pulseAdmin.CreateReadToken(context.Background(), "boetticher monitoring read")
+			if tokenErr != nil {
+				return tokenErr
+			}
+			if err := site.StorePlatformSecret(*siteDir, s, *ageIdentity, "pulse_api_token", readToken); err != nil {
+				return fmt.Errorf("store encrypted Pulse read token: %w", err)
+			}
+			pulseRead, clientErr = pulse.NewReadClient(pulse.ClientConfig{
+				BaseURL: pulseBaseURL, APIToken: readToken,
+				CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
+				ServerName: "monitor." + s.Network.Domain,
+			})
+			if clientErr != nil {
+				return clientErr
+			}
+			readTokenRefreshed = true
+			return nil
+		}
 		health, err := pulseRead.Health(context.Background())
 		if err != nil || !strings.EqualFold(health.Status, "healthy") {
 			if err != nil {
@@ -497,10 +527,26 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			return fmt.Errorf("verify Pulse health: unexpected status %q", health.Status)
 		}
 		if _, err := pulseRead.StateSummary(context.Background()); err != nil {
-			return fmt.Errorf("verify Pulse state summary: %w", err)
+			if !pulse.IsUnauthorized(err) {
+				return fmt.Errorf("verify Pulse state summary: %w", err)
+			}
+			if refreshErr := refreshPulseReadToken(); refreshErr != nil {
+				return fmt.Errorf("refresh Pulse read token after unauthorized response: %w", refreshErr)
+			}
+			if _, retryErr := pulseRead.StateSummary(context.Background()); retryErr != nil {
+				return fmt.Errorf("verify Pulse state summary after read-token refresh: %w", retryErr)
+			}
 		}
 		if _, err := pulseRead.Resources(context.Background()); err != nil {
-			return fmt.Errorf("verify Pulse resources: %w", err)
+			if !pulse.IsUnauthorized(err) || readTokenRefreshed {
+				return fmt.Errorf("verify Pulse resources: %w", err)
+			}
+			if refreshErr := refreshPulseReadToken(); refreshErr != nil {
+				return fmt.Errorf("refresh Pulse read token after unauthorized response: %w", refreshErr)
+			}
+			if _, retryErr := pulseRead.Resources(context.Background()); retryErr != nil {
+				return fmt.Errorf("verify Pulse resources after read-token refresh: %w", retryErr)
+			}
 		}
 
 		agentBindings, bindingErr := monitoringAgentCredentialBindings(s)

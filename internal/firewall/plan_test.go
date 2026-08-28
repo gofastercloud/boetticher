@@ -60,6 +60,33 @@ func TestServersDHCPIsReservationOnly(t *testing.T) {
 	if !strings.Contains(ruleset, `iifname { "trusted0", "servers0", "sandbox0" } udp dport 67`) {
 		t.Fatal("managed firewall does not permit SERVERS DHCP requests")
 	}
+	if !strings.Contains(ruleset, `iifname "infra0" oifname "wan0" ip saddr @infra_net udp dport { 53, 123, 853 }`) {
+		t.Fatal("managed firewall does not permit INFRA NTP egress")
+	}
+}
+
+func TestManagedGatewayAllowsDiagnosticICMPEchoFromInternalZones(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleset, err := RenderNFT(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateNFT(ruleset); err != nil {
+		t.Fatalf("rendered ruleset is invalid: %v", err)
+	}
+	want := "iifname { \"infra0\", \"trusted0\", \"servers0\", \"sandbox0\", \"mgmt0\" } ip protocol icmp icmp type echo-request counter accept comment \"boetticher:input-diagnostic-icmp\""
+	if !strings.Contains(ruleset, want) {
+		t.Fatalf("managed firewall does not permit diagnostic ICMP echo requests from internal zones:\n%s", ruleset)
+	}
+	if strings.Contains(ruleset, "iifname \"wan0\" ip protocol icmp") {
+		t.Fatal("managed firewall permits WAN-sourced ICMP input")
+	}
+	if strings.Contains(ruleset, "iifname \"sandbox0\" oifname \"trusted0\" ip protocol icmp") {
+		t.Fatal("managed firewall added an inter-zone ICMP allow")
+	}
 }
 
 func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
@@ -87,9 +114,11 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 		"10.10.5.10/32 ip daddr 10.10.20.60/32 tcp dport 443",
 		"10.10.5.10/32 ip daddr 10.10.10.30/32 tcp dport 443",
 		"10.10.5.10/32 ip daddr 10.10.10.20/32 tcp dport 443",
+		"10.10.10.20/32 ip daddr 10.10.99.5/32 tcp dport 8006",
+		"10.10.99.5/32 ip daddr 10.10.10.40/32 tcp dport 19532",
 		"10.10.20.60/32 ip daddr openrouter.ai tcp dport 443",
 		"set module_guest_sources { type ipv4_addr; elements = {",
-		"10.10.20.60, 10.10.5.10",
+		"10.10.10.20, 10.10.20.60, 10.10.5.10",
 		"iifname \"servers0\" ip saddr != @module_guest_sources oifname \"wan0\"",
 		"arbitrary-egress-drop",
 	} {
@@ -178,7 +207,7 @@ func TestQualifiedModuleLoggingIntentResolvesCollector(t *testing.T) {
 	}
 }
 
-func TestCoreModuleGuestsRetainBaselinePolicyWithoutSourceIntents(t *testing.T) {
+func TestCoreModuleGuestsRetainBaselinePolicy(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	site, _, err := modules.Compose(config)
 	if err != nil {
@@ -188,17 +217,17 @@ func TestCoreModuleGuestsRetainBaselinePolicyWithoutSourceIntents(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.ModuleSources) != 0 {
-		t.Fatalf("Core-only module guests unexpectedly isolated from baseline policy: %v", plan.ModuleSources)
+	if !reflect.DeepEqual(plan.ModuleSources, []string{"10.10.10.20/32"}) {
+		t.Fatalf("Pulse source-specific policy is incomplete: %v", plan.ModuleSources)
 	}
 	ruleset, err := RenderNFT(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(ruleset, "module_guest_sources") {
-		t.Fatal("Core-only composition unexpectedly emitted a module source isolation set")
+	if !strings.Contains(ruleset, "set module_guest_sources { type ipv4_addr; elements = { 10.10.10.20 }") {
+		t.Fatal("Pulse source-specific policy did not emit its source isolation set")
 	}
-	if !strings.Contains(ruleset, `iifname "servers0" oifname "wan0" ip saddr @servers_net tcp dport { 53, 80, 443, 853 } counter accept`) {
+	if !strings.Contains(ruleset, `iifname "servers0" ip saddr != @module_guest_sources oifname "wan0" ip saddr @servers_net tcp dport { 53, 80, 443, 853 } counter accept`) {
 		t.Fatal("existing SERVERS baseline Internet policy was removed")
 	}
 }
@@ -220,7 +249,7 @@ func TestModuleGuestSourcesRequireSourceSpecificIntent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"10.10.20.60/32", "10.10.5.10/32"}
+	want := []string{"10.10.10.20/32", "10.10.20.60/32", "10.10.5.10/32"}
 	if !reflect.DeepEqual(plan.ModuleSources, want) {
 		t.Fatalf("module guest sources = %v, want only source-intent guests %v", plan.ModuleSources, want)
 	}

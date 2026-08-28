@@ -75,6 +75,28 @@
     mode: '0644'
   when: inventory_hostname not in groups.get('proxmox', [])
 
+- name: Pin the Proxmox API certificate hostname for Pulse
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^\s*{{ proxmox_management_address | regex_escape }}\s+proxmox(\s|$)'
+    line: "{{ proxmox_management_address }} proxmox"
+    state: present
+    create: true
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - proxmox_management_address is defined
+
+- name: Pin the Proxmox collector hostname to the managed logging appliance
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^\s*{{ logging_plan.collector_address | regex_escape }}\s+'
+    line: "{{ logging_plan.collector_address }} logs.{{ domain }}"
+    state: present
+    create: true
+  when:
+    - inventory_hostname in groups.get('proxmox', [])
+    - inventory_hostname in logging_upload_configs
+
 - name: Install bounded local journald configuration
   ansible.builtin.file:
     path: /etc/systemd/journald.conf.d
@@ -215,6 +237,7 @@
   loop: "{{ (credential_dropins[inventory_hostname] | default({})) | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
+  register: boetticher_credential_dropin_install
   notify: reload systemd
 
 - name: Install Pulse host-agent hardware collection dependencies
