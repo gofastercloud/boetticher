@@ -25,6 +25,13 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if !IsEnabled(site, "dns") || !IsEnabled(site, "monitoring") || !IsEnabled(site, "firewall") {
 		t.Fatalf("default modules were not enabled: %#v", site.Modules)
 	}
+	firewallDeclaration, ok := findDeclaration(site, "firewall")
+	if !ok {
+		t.Fatal("firewall declaration is missing")
+	}
+	if !hasPersistentState(firewallDeclaration.Persistent, "firewall-telemetry", "/var/lib/boetticher/firewall-telemetry") || !hasPersistentVolume(firewallDeclaration.Volumes, "firewall-telemetry", "/var/lib/boetticher/firewall-telemetry") {
+		t.Fatalf("firewall telemetry persistence contract is incomplete: persistent=%#v volumes=%#v", firewallDeclaration.Persistent, firewallDeclaration.Volumes)
+	}
 	for _, module := range modules {
 		if !module.Enabled {
 			continue
@@ -187,6 +194,24 @@ func findDeclaration(site model.Site, name string) (model.ModuleDeclaration, boo
 func containsTag(tags []string, wanted string) bool {
 	for _, tag := range tags {
 		if tag == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPersistentState(states []model.PersistentState, name, path string) bool {
+	for _, state := range states {
+		if state.Name == name && state.Path == path && state.Backup && state.Replacement == "retain-across-rootfs-replacement" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPersistentVolume(volumes []model.PersistentVolumeDeclaration, name, path string) bool {
+	for _, volume := range volumes {
+		if volume.Name == name && volume.MountPath == path && volume.Backup {
 			return true
 		}
 	}

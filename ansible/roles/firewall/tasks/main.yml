@@ -36,6 +36,19 @@
     argv: [sh, -c, "command -v nft && command -v kea-dhcp4 && command -v kea-dhcp-ddns && command -v dnsmasq"]
   changed_when: false
 
+- name: Require the firewall telemetry appliance contract
+  ansible.builtin.command:
+    argv: [sh, -c, "id boetticher-telemetry && test -x /usr/lib/boetticher/boetticher-firewall-telemetry && test -x /usr/lib/boetticher/snapshot-firewall && test -f /etc/systemd/system/boetticher-firewall-telemetry.service && test -f /etc/systemd/system/boetticher-firewall-snapshot.timer"]
+  changed_when: false
+
+- name: Create the firewall telemetry state directory
+  ansible.builtin.file:
+    path: /var/lib/boetticher/firewall-telemetry
+    state: directory
+    owner: boetticher-telemetry
+    group: boetticher-telemetry
+    mode: '0750'
+
 - name: Disable forwarding before gateway convergence
   ansible.builtin.copy:
     content: |
@@ -175,6 +188,19 @@
     - kea-dhcp4-server
     - kea-dhcp-ddns-server
     - dnsmasq
+
+- name: Enable the firewall telemetry snapshot timer
+  ansible.builtin.systemd_service:
+    name: boetticher-firewall-snapshot.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Enable the firewall telemetry API
+  ansible.builtin.systemd_service:
+    name: boetticher-firewall-telemetry.service
+    enabled: true
+    state: started
 
 - name: Flush gateway handlers before enabling forwarding
   ansible.builtin.meta: flush_handlers

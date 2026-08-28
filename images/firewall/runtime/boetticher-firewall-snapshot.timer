@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh the Boetticher nftables telemetry snapshot
+
+[Timer]
+OnBootSec=5s
+OnUnitActiveSec=15s
+AccuracySec=1s
+Persistent=true
+Unit=boetticher-firewall-snapshot.service
+
+[Install]
+WantedBy=timers.target

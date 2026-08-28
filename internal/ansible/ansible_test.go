@@ -644,6 +644,63 @@ func TestFirewallRoleCreatesNftablesConfigurationDirectory(t *testing.T) {
 	}
 }
 
+func TestFirewallTelemetryHasFixedReadOnlyPrivilegeAndNetworkContract(t *testing.T) {
+	unitPath := filepath.Join("..", "..", "images", "firewall", "runtime", "boetticher-firewall-telemetry.service")
+	unitData, err := os.ReadFile(unitPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := string(unitData)
+	for _, expected := range []string{
+		"ExecStart=/usr/lib/boetticher/boetticher-firewall-telemetry",
+		"User=boetticher-telemetry",
+		"Group=boetticher-telemetry",
+		"NoNewPrivileges=yes",
+		"CapabilityBoundingSet=",
+		"ProtectSystem=strict",
+		"ReadWritePaths=/var/lib/boetticher/firewall-telemetry",
+		"IPAddressDeny=any",
+		"IPAddressAllow=10.10.10.20/32",
+	} {
+		if !strings.Contains(unit, expected) {
+			t.Fatalf("firewall telemetry unit missing %q", expected)
+		}
+	}
+	snapshotPath := filepath.Join("..", "..", "images", "firewall", "runtime", "snapshot-firewall.sh")
+	snapshotData, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := string(snapshotData)
+	if !strings.Contains(snapshot, "/usr/sbin/nft --json list ruleset") || strings.Contains(snapshot, "nft -f") || strings.Contains(snapshot, "nft add") || strings.Contains(snapshot, "nft delete") {
+		t.Fatalf("snapshot helper does not preserve the fixed read-only nft boundary: %s", snapshot)
+	}
+	tasksPath := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
+	tasksData, err := os.ReadFile(tasksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"boetticher-firewall-snapshot.timer", "boetticher-firewall-telemetry.service", "path: /var/lib/boetticher/firewall-telemetry", "owner: boetticher-telemetry"} {
+		if !strings.Contains(string(tasksData), expected) {
+			t.Fatalf("firewall role missing telemetry contract %q", expected)
+		}
+	}
+	buildData, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"go build -trimpath -o \"$telemetry_binary\" ./cmd/boetticher-firewall-telemetry",
+		"--upload \"$telemetry_binary:/usr/lib/boetticher/boetticher-firewall-telemetry\"",
+		"groupadd --system boetticher-telemetry",
+		"systemctl enable boetticher-firewall-telemetry.service boetticher-firewall-snapshot.timer",
+	} {
+		if !strings.Contains(string(buildData), expected) {
+			t.Fatalf("firewall image build is missing telemetry contract %q", expected)
+		}
+	}
+}
+
 func TestFirewallRolePersistsForwardingReadinessGate(t *testing.T) {
 	tasksPath := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
 	tasksData, err := os.ReadFile(tasksPath)

@@ -18,3 +18,4 @@ runtime_config: /etc/boetticher/module.yaml
 persistent:
   - /var/lib/kea
   - /var/lib/boetticher/identity/ssh
+  - /var/lib/boetticher/firewall-telemetry

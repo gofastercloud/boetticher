@@ -124,6 +124,7 @@ func TestFirewallCloudInitMountsDeclaredVolumesByStableDiskIdentity(t *testing.T
 		Volumes: []model.PersistentVolumeDeclaration{
 			{Name: "ssh-identity", Module: "firewall", Guest: "lab-fw-01", MountPath: "/var/lib/boetticher/identity/ssh"},
 			{Name: "kea-leases", Module: "firewall", Guest: "lab-fw-01", MountPath: "/var/lib/kea"},
+			{Name: "firewall-telemetry", Module: "firewall", Guest: "lab-fw-01", MountPath: "/var/lib/boetticher/firewall-telemetry"},
 		},
 	}
 	files, err := RenderFirewallCloudInit(guest)
@@ -144,10 +145,10 @@ func TestFirewallCloudInitMountsDeclaredVolumesByStableDiskIdentity(t *testing.T
 	if err := yaml.Unmarshal([]byte(files.UserData), &document); err != nil {
 		t.Fatalf("firewall cloud-init is not valid YAML: %v", err)
 	}
-	if len(document.FSSetup) != 2 || len(document.Mounts) != 2 {
+	if len(document.FSSetup) != 3 || len(document.Mounts) != 3 {
 		t.Fatalf("unexpected persistent volume bootstrap: %#v", document)
 	}
-	if document.FSSetup[0].Label != "boetticher-ssh-identity" || document.FSSetup[1].Label != "boetticher-kea-leases" {
+	if document.FSSetup[0].Label != "boetticher-ssh-identity" || document.FSSetup[1].Label != "boetticher-kea-leases" || document.FSSetup[2].Label != "boetticher-firewall-telemetry" {
 		t.Fatalf("unexpected persistent volume labels: %#v", document.FSSetup)
 	}
 	if document.FSSetup[0].Device != "/dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1" {
@@ -155,6 +156,9 @@ func TestFirewallCloudInitMountsDeclaredVolumesByStableDiskIdentity(t *testing.T
 	}
 	if document.Mounts[1][1] != "/var/lib/kea" || document.Mounts[1][3] != "defaults,nofail" {
 		t.Fatalf("Kea volume mount is not explicit: %#v", document.Mounts[1])
+	}
+	if document.Mounts[2][1] != "/var/lib/boetticher/firewall-telemetry" || document.Mounts[2][3] != "defaults,nofail" {
+		t.Fatalf("telemetry volume mount is not explicit: %#v", document.Mounts[2])
 	}
 }
 

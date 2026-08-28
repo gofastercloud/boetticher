@@ -12,7 +12,8 @@ replacement:
 - DNS01 and DNS02: PowerDNS database and stable SSH host identity;
 - monitoring: Pulse persistent state and stable SSH host identity; tagged
   host-agent identity and buffered report state at `/var/lib/boetticher/pulse-agent`;
-- firewall: Kea lease state and stable SSH host identity.
+- firewall: Kea lease state, stable SSH host identity, and the bounded
+  firewall telemetry database at `/var/lib/boetticher/firewall-telemetry`.
 - logging: bounded remote journal volume with `backup: false`, plus stable SSH
   host identity.
 

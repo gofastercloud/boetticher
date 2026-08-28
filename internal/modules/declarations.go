@@ -136,7 +136,11 @@ func persistentFor(module, guest string) []model.PersistentState {
 	case "monitoring":
 		return []model.PersistentState{identity, {Name: "pulse-state", Guest: guest, Path: "/var/lib/pulse", Kind: "monitoring-state", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	case "firewall":
-		return []model.PersistentState{identity, {Name: "kea-leases", Guest: guest, Path: "/var/lib/kea", Kind: "lease-state", Backup: true, Sensitive: false, Replacement: "retain-across-rootfs-replacement"}}
+		return []model.PersistentState{
+			identity,
+			{Name: "kea-leases", Guest: guest, Path: "/var/lib/kea", Kind: "lease-state", Backup: true, Sensitive: false, Replacement: "retain-across-rootfs-replacement"},
+			{Name: "firewall-telemetry", Guest: guest, Path: "/var/lib/boetticher/firewall-telemetry", Kind: "firewall-telemetry-database", Backup: true, Sensitive: false, Replacement: "retain-across-rootfs-replacement"},
+		}
 	case "tailnet-router":
 		return []model.PersistentState{identity, {Name: "tailscale-state", Guest: guest, Path: "/var/lib/tailscale", Kind: "node-identity", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	case "litellm":
@@ -157,7 +161,7 @@ func volumesFor(module, guest string) []model.PersistentVolumeDeclaration {
 	case "monitoring":
 		return []model.PersistentVolumeDeclaration{identity, volume("pulse-state", "/var/lib/pulse", 8, true)}
 	case "firewall":
-		return []model.PersistentVolumeDeclaration{identity, volume("kea-leases", "/var/lib/kea", 4, true)}
+		return []model.PersistentVolumeDeclaration{identity, volume("kea-leases", "/var/lib/kea", 4, true), volume("firewall-telemetry", "/var/lib/boetticher/firewall-telemetry", 2, true)}
 	case "tailnet-router":
 		return []model.PersistentVolumeDeclaration{identity, volume("tailscale-state", "/var/lib/tailscale", 4, true)}
 	case "litellm":

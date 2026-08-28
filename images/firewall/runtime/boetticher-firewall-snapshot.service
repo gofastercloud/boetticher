@@ -1,0 +1,23 @@
+[Unit]
+Description=Publish a bounded read-only nftables snapshot for Boetticher telemetry
+After=nftables.service
+Requires=nftables.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/boetticher/snapshot-firewall
+User=root
+Group=root
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_NETLINK
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_CHOWN
+AmbientCapabilities=CAP_NET_ADMIN CAP_CHOWN
+ReadWritePaths=/run/boetticher
+LimitFSIZE=4M
+SystemCallFilter=@system-service @network-io

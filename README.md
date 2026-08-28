@@ -72,6 +72,9 @@ interface and six fixed internal interfaces, renders the nftables policy, and
 runs Kea, DDNS, and the SANDBOX DNS/NTP services. SERVERS uses reservation-only
 DHCP with DDNS; TRUSTED and SANDBOX use their existing DHCP/DDNS modes. The
 gateway owns `.1` in TRANSIT, INFRA, SERVERS, TRUSTED, SANDBOX, and MGMT.
+It also runs the non-root `boetticher-firewall-telemetry` collector. Pulse can
+read its bounded API at `10.10.10.1:9765`; the firewall allows that API only
+from `lab-monitor-01` on INFRA and never from WAN.
 
 `external` is bring-your-own firewall mode. boetticher creates no firewall VM,
 does not manage the appliance, and publishes a deterministic contract for the

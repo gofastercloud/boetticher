@@ -3,6 +3,7 @@ package pulse
 import (
 	"fmt"
 
+	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
 )
 
@@ -41,15 +42,22 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		PlatformOnly:        true,
 		PersistentStatePath: "/var/lib/pulse",
 		Components:          s.PlatformComponents(),
-		AvailabilityChecks:  platformAvailabilityChecks(s.Network.Domain),
+		AvailabilityChecks:  platformAvailabilityChecks(s.Gateway.Mode == model.GatewayModeManaged),
 	}, nil
 }
 
-func platformAvailabilityChecks(domain string) []AvailabilityCheck {
-	return []AvailabilityCheck{
+func platformAvailabilityChecks(managedFirewall bool) []AvailabilityCheck {
+	checks := []AvailabilityCheck{
 		{Name: "dns01-authoritative", URL: "tcp://10.10.10.10:5353", Protocol: "tcp", Description: "Primary authoritative DNS listener availability"},
 		{Name: "dns02-authoritative", URL: "tcp://10.10.10.11:5353", Protocol: "tcp", Description: "Secondary authoritative DNS listener availability"},
 	}
+	if managedFirewall {
+		checks = append(checks, AvailabilityCheck{
+			Name: "firewall-telemetry", URL: fmt.Sprintf("http://%s:%d/healthz", firewall.TelemetryListenAddress, firewall.TelemetryPort), Protocol: "http",
+			Description: "Managed firewall telemetry collector health",
+		})
+	}
+	return checks
 }
 
 func (p Plan) Validate() error {

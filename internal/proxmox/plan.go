@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/artifacts"
+	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 	"github.com/gofastercloud/boetticher/internal/storage"
@@ -546,6 +547,9 @@ func fixturePersistent(module, guest string) []model.PersistentState {
 	result := []model.PersistentState{identity}
 	if state != nil {
 		result = append(result, *state)
+	}
+	if module == "firewall" {
+		result = append(result, model.PersistentState{Name: "firewall-telemetry", Guest: guest, Path: firewall.TelemetryStatePath, Kind: "firewall-telemetry-database", Backup: true, Sensitive: false, Replacement: "retain-across-rootfs-replacement"})
 	}
 	return result
 }
