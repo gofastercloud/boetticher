@@ -25,6 +25,7 @@ type GuestManifest struct {
 	OwnershipTag string   `json:"ownership_tag"`
 	Unprivileged bool     `json:"unprivileged"`
 	Exports      []Export `json:"exports"`
+	StaticSlots  []string `json:"static_slots,omitempty"`
 	ManagedSlots []string `json:"managed_slots"`
 }
 
@@ -95,7 +96,11 @@ func PlanFromSite(site model.Site) ([]GuestManifest, error) {
 			}
 			sort.Slice(exports, func(i, j int) bool { return exports[i].Requirement < exports[j].Requirement })
 			managedSlots := managedByGuest[guestName]
-			manifests = append(manifests, GuestManifest{VMID: guest.VMID, Hostname: guest.Hostname, OwnershipTag: model.ModuleOwnershipTag(definition.Name), Unprivileged: true, Exports: exports, ManagedSlots: managedSlots})
+			staticSlots := make([]string, 0, definition.StaticDeviceSlots)
+			for index := 0; index < definition.StaticDeviceSlots; index++ {
+				staticSlots = append(staticSlots, fmt.Sprintf("dev%d", index))
+			}
+			manifests = append(manifests, GuestManifest{VMID: guest.VMID, Hostname: guest.Hostname, OwnershipTag: model.ModuleOwnershipTag(definition.Name), Unprivileged: true, Exports: exports, StaticSlots: staticSlots, ManagedSlots: managedSlots})
 		}
 	}
 	sort.Slice(manifests, func(i, j int) bool { return manifests[i].VMID < manifests[j].VMID })

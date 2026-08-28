@@ -145,6 +145,34 @@ func TestBaseRoleInstallsPulseAgentOnlyForEnabledTaggedTargets(t *testing.T) {
 	}
 }
 
+func TestUSBExportRoleCreatesInstallRootAndPreservesStaticSlots(t *testing.T) {
+	tasks, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "usb-export-host", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciler, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "usb-export-host", "files", "boetticher-usb-export"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"Create Core USB install directory",
+		"path: /usr/lib/boetticher",
+	} {
+		if !strings.Contains(string(tasks), expected) {
+			t.Fatalf("USB export role missing %q", expected)
+		}
+	}
+	for _, expected := range []string{
+		"static_slots",
+		"if argv == [\"--all\"] and not paths: return",
+		"if slot not in managed_slots and slot not in static_slots",
+	} {
+		if !strings.Contains(string(reconciler), expected) {
+			t.Fatalf("USB export reconciler missing %q", expected)
+		}
+	}
+}
+
 func TestMonitorFrontendKeepsMTLSExceptForScopedAgentRoutes(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "pulse-loopback.conf.j2"))
 	if err != nil {

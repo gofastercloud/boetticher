@@ -103,12 +103,14 @@ def reconcile(manifest_path):
         state_path = STATE_DIR / f"{vmid}.json"
         recorded = load_json(state_path).get("managed", {}) if state_path.exists() else {}
         managed_slots = set(manifest["managed_slots"])
+        static_slots = set(manifest.get("static_slots", []))
+        if managed_slots & static_slots: raise Hold("USB manifest overlaps static and managed device slots")
         for slot, value in existing.items():
             if slot in managed_slots and slot not in recorded and value != desired.get(slot):
                 raise Hold(f"occupied {slot} cannot be proven Core-managed")
             if slot not in managed_slots and slot in recorded:
                 raise Hold(f"recorded managed slot {slot} is outside the current manifest")
-            if slot not in managed_slots:
+            if slot not in managed_slots and slot not in static_slots:
                 raise Hold(f"occupied {slot} is not declared by the complete Core USB manifest")
         changed = {slot: value for slot, value in existing.items() if slot in managed_slots} != desired
         if changed:
@@ -126,6 +128,7 @@ def reconcile(manifest_path):
 
 def main(argv):
     paths = sorted(MANIFEST_DIR.glob("*.json")) if argv == ["--all"] else [MANIFEST_DIR / f"{int(argv[0])}.json"] if len(argv) == 1 else []
+    if argv == ["--all"] and not paths: return
     if not paths: raise Hold("usage: boetticher-usb-export VMID | --all")
     for path in paths:
         if not path.is_file(): raise Hold(f"missing USB export manifest: {path}")

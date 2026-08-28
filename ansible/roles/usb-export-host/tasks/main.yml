@@ -1,4 +1,12 @@
 ---
+- name: Create Core USB install directory
+  ansible.builtin.file:
+    path: /usr/lib/boetticher
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Install Core USB export reconciler
   ansible.builtin.copy:
     src: boetticher-usb-export
