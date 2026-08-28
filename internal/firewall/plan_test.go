@@ -60,6 +60,9 @@ func TestServersDHCPIsReservationOnly(t *testing.T) {
 	if !strings.Contains(ruleset, `iifname { "trusted0", "servers0", "sandbox0" } udp dport 67`) {
 		t.Fatal("managed firewall does not permit SERVERS DHCP requests")
 	}
+	if !strings.Contains(ruleset, `iifname "infra0" oifname "wan0" ip saddr @infra_net udp dport { 53, 123, 853 }`) {
+		t.Fatal("managed firewall does not permit INFRA NTP egress")
+	}
 }
 
 func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
