@@ -322,17 +322,17 @@ Related commands: config validate, deploy, doctor
 
 ### modules
 
-Purpose: Inspect or change first-party module intent through the shared registry and deploy engine.
+Purpose: Inspect or change first-party module intent and manage declared operator secrets through the shared registry and deploy engine.
 
-Usage: `boetticher modules list|MODULE show|plan|enable|disable|status|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+Usage: `boetticher modules list|MODULE show|plan|enable|disable|status|secrets|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
 
-Arguments: MODULE is a registered first-party module. list retains the generic module inventory; lifecycle commands are resolved by the same generic implementation.
+Arguments: MODULE is a registered first-party module. list retains the generic module inventory; lifecycle and secret commands are resolved by the same generic implementation.
 
-Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; purge requires --confirm and removes retained module resources only after exact ownership proof.
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; --age-identity selects the external Age identity for secret inspection.
 
-Safety: Both tailnet-router and litellm are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership.
+Safety: tailnet-router and litellm are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership. Secret values are never displayed or accepted as command arguments.
 
-Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules tailnet-router plan --site ./my-boetticher`
+Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules litellm secrets set openrouter_api_key --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
@@ -754,6 +754,22 @@ Examples: `boetticher module list --site ./my-boetticher`; `boetticher module di
 
 Related commands: config validate, deploy, doctor
 
+### module secrets
+
+Purpose: Inspect or change first-party module intent through the shared deploy engine.
+
+Usage: `boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+
+Arguments: NAME is required for show, plan, enable, disable, and optional for status.
+
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; --purge requires --confirm and explicitly removes retained module resources.
+
+Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive.
+
+Examples: `boetticher module list --site ./my-boetticher`; `boetticher module disable monitoring --confirm --site ./my-boetticher`
+
+Related commands: config validate, deploy, doctor
+
 ### module show
 
 Purpose: Inspect or change first-party module intent through the shared deploy engine.
@@ -786,19 +802,35 @@ Examples: `boetticher module list --site ./my-boetticher`; `boetticher module di
 
 Related commands: config validate, deploy, doctor
 
+### modules MODULE secrets
+
+Purpose: Inspect or change first-party module intent and manage declared operator secrets through the shared registry and deploy engine.
+
+Usage: `boetticher modules list|MODULE show|plan|enable|disable|status|secrets|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+
+Arguments: MODULE is a registered first-party module. list retains the generic module inventory; lifecycle and secret commands are resolved by the same generic implementation.
+
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; --age-identity selects the external Age identity for secret inspection.
+
+Safety: tailnet-router and litellm are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership. Secret values are never displayed or accepted as command arguments.
+
+Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules litellm secrets set openrouter_api_key --site ./my-boetticher`
+
+Related commands: config validate, deploy, doctor
+
 ### modules list
 
-Purpose: Inspect or change first-party module intent through the shared registry and deploy engine.
+Purpose: Inspect or change first-party module intent and manage declared operator secrets through the shared registry and deploy engine.
 
-Usage: `boetticher modules list|MODULE show|plan|enable|disable|status|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+Usage: `boetticher modules list|MODULE show|plan|enable|disable|status|secrets|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
 
-Arguments: MODULE is a registered first-party module. list retains the generic module inventory; lifecycle commands are resolved by the same generic implementation.
+Arguments: MODULE is a registered first-party module. list retains the generic module inventory; lifecycle and secret commands are resolved by the same generic implementation.
 
-Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; purge requires --confirm and removes retained module resources only after exact ownership proof.
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; --age-identity selects the external Age identity for secret inspection.
 
-Safety: Both tailnet-router and litellm are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership.
+Safety: tailnet-router and litellm are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership. Secret values are never displayed or accepted as command arguments.
 
-Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules tailnet-router plan --site ./my-boetticher`
+Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules litellm secrets set openrouter_api_key --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
