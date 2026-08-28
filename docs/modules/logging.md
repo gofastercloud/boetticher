@@ -15,5 +15,9 @@ collector hostname to the managed collector in `/etc/hosts` and permits only
 the exact collector TCP port through the managed gateway; the HOME resolver
 path is not changed.
 
+Core also pins the platform DNS pair in each LXC's Proxmox network contract so
+guest reboot does not restore the HOME resolver before the appliance can upload
+logs.
+
 The endpoint client certificate and key are endpoint-local. The boetticher CA
 and recovery authority remain on the controller.
