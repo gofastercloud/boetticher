@@ -102,6 +102,7 @@ func validateModuleConfigShape(data []byte) error {
 			// Logging is mandatory and has no persisted lifecycle fields.
 		case "tailnet-router":
 			allowed["enabled"] = true
+			allowed["exit_node"] = true
 		case "litellm":
 			allowed["enabled"] = true
 			allowed["upstreams"] = true
@@ -130,6 +131,9 @@ func validateModuleConfigShape(data []byte) error {
 			}
 			if field == "enabled" && fieldValue.Tag != "!!bool" && fieldValue.Tag != "!!null" {
 				return fmt.Errorf("site.yml: modules.%s.enabled: expected a boolean", name)
+			}
+			if field == "exit_node" && fieldValue.Tag != "!!bool" && fieldValue.Tag != "!!null" {
+				return fmt.Errorf("site.yml: modules.%s.exit_node: expected a boolean", name)
 			}
 			if field == "provider" && fieldValue.Tag != "!!str" && fieldValue.Tag != "!!null" {
 				return fmt.Errorf("site.yml: modules.dns.provider: expected one of: blocky, adguard")

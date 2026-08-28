@@ -166,7 +166,7 @@
           "$ref": "#/$defs/StreamDeckModuleConfig"
         },
         "tailnet-router": {
-          "$ref": "#/$defs/ToggleModuleConfig"
+          "$ref": "#/$defs/TailnetRouterModuleConfig"
         }
       },
       "type": "object"
@@ -362,6 +362,19 @@
           "maximum": 99,
           "minimum": 1,
           "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "TailnetRouterModuleConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "exit_node": {
+          "default": false,
+          "type": "boolean"
         }
       },
       "type": "object"

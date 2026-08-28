@@ -70,16 +70,17 @@ type DHCPReservation struct {
 }
 
 type Plan struct {
-	ModelRevision string       `json:"model_revision"`
-	Mode          string       `json:"mode"`
-	Engine        string       `json:"engine"`
-	IPv4Only      bool         `json:"ipv4_only"`
-	Forwarding    bool         `json:"forwarding_after_policy"`
-	Interfaces    []Interface  `json:"interfaces"`
-	Rules         []PolicyRule `json:"rules"`
-	ModuleSources []string     `json:"module_source_cidrs,omitempty"`
-	DHCP          []DHCPSubnet `json:"dhcp_subnets"`
-	DDNS          dns.DDNSPlan `json:"ddns"`
+	ModelRevision   string       `json:"model_revision"`
+	Mode            string       `json:"mode"`
+	Engine          string       `json:"engine"`
+	IPv4Only        bool         `json:"ipv4_only"`
+	Forwarding      bool         `json:"forwarding_after_policy"`
+	TailnetExitNode bool         `json:"tailnet_exit_node,omitempty"`
+	Interfaces      []Interface  `json:"interfaces"`
+	Rules           []PolicyRule `json:"rules"`
+	ModuleSources   []string     `json:"module_source_cidrs,omitempty"`
+	DHCP            []DHCPSubnet `json:"dhcp_subnets"`
+	DDNS            dns.DDNSPlan `json:"ddns"`
 }
 
 func PlanFromSite(s model.Site) (Plan, error) {
@@ -99,15 +100,16 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		engine = "operator-managed external firewall"
 	}
 	plan := Plan{
-		ModelRevision: revision,
-		Mode:          s.Gateway.Mode,
-		Engine:        engine,
-		IPv4Only:      true,
-		Forwarding:    s.Gateway.Mode == model.GatewayModeManaged,
-		Rules:         policyRules(s),
-		ModuleSources: moduleSourceCIDRs(s),
-		DHCP:          dhcpSubnets(s),
-		DDNS:          dnsPlan.DDNS,
+		ModelRevision:   revision,
+		Mode:            s.Gateway.Mode,
+		Engine:          engine,
+		IPv4Only:        true,
+		Forwarding:      s.Gateway.Mode == model.GatewayModeManaged,
+		TailnetExitNode: tailnetExitNodeEnabled(s),
+		Rules:           policyRules(s),
+		ModuleSources:   moduleSourceCIDRs(s),
+		DHCP:            dhcpSubnets(s),
+		DDNS:            dnsPlan.DDNS,
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		plan.Interfaces = gatewayInterfaces(s)
@@ -258,6 +260,13 @@ func policyRules(s model.Site) []PolicyRule {
 		add("TRANSIT to "+destination+" deny", "TRANSIT", destination, "deny", "any", nil, true, false)
 	}
 	add("any to TRANSIT deny", "any", "TRANSIT", "deny", "any", nil, true, false)
+	if tailnetExitNodeEnabled(s) {
+		rules = append(rules, PolicyRule{
+			Sequence: len(rules) + 1, Name: "tailnet-router Internet exit egress", From: "TRANSIT", To: "WAN", Action: "allow", Protocol: "any",
+			Counter: "boetticher_tailnet_router_internet_exit_egress", NAT: true,
+			Description: "tailnet-router opt-in Internet exit-node egress", SourceCIDR: "10.10.5.10/32", DestinationCIDR: "0.0.0.0/0",
+		})
+	}
 	for _, declaration := range s.Declarations {
 		for _, intent := range declaration.NetworkIntents {
 			rule := policyRuleForIntent(s, declaration.Module, intent)
@@ -268,6 +277,15 @@ func policyRules(s model.Site) []PolicyRule {
 		}
 	}
 	return rules
+}
+
+func tailnetExitNodeEnabled(s model.Site) bool {
+	for _, declaration := range s.Declarations {
+		if declaration.Module == "tailnet-router" {
+			return declaration.ExitNode
+		}
+	}
+	return false
 }
 
 func policyRuleForIntent(s model.Site, module string, intent model.NetworkIntent) PolicyRule {
@@ -384,7 +402,7 @@ func RenderNFT(plan Plan) (string, error) {
 		}
 	}
 	for _, rule := range plan.Rules {
-		if rule.Action == "allow" && rule.To == "WAN" && rule.SourceCIDR != "" {
+		if rule.Action == "allow" && rule.To == "WAN" && rule.SourceCIDR != "" && rule.DestinationCIDR != "0.0.0.0/0" {
 			fmt.Fprintf(&b, "    iifname \"%s\" oifname \"wan0\" ip saddr %s counter drop comment \"boetticher:module-%s-arbitrary-egress-drop\"\n", strings.ToLower(rule.From)+"0", rule.SourceCIDR, safeRuleToken(rule.Name))
 		}
 	}
@@ -423,7 +441,13 @@ func RenderNFT(plan Plan) (string, error) {
 	b.WriteString("    iifname \"infra0\" " + moduleSourceCondition + "oifname \"wan0\" ip saddr @infra_net udp dport { 53, 853 } counter accept comment \"boetticher:forward-infra-internet-udp\"\n")
 	b.WriteString("    iifname \"mgmt0\" " + moduleSourceCondition + "oifname \"wan0\" ip saddr @mgmt_net tcp dport 443 counter accept comment \"boetticher:forward-mgmt-internet\"\n")
 	b.WriteString("  }\n  chain output { type filter hook output priority filter; policy accept; }\n}\n\n")
-	b.WriteString("table ip " + NATTable + " {\n  chain postrouting {\n    type nat hook postrouting priority srcnat; policy accept;\n    oifname \"wan0\" ip saddr " + networkFor(plan, "TRUSTED") + " masquerade comment \"boetticher:nat-trusted\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SERVERS") + " masquerade comment \"boetticher:nat-servers\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "INFRA") + " masquerade comment \"boetticher:nat-infra\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SANDBOX") + " masquerade comment \"boetticher:nat-sandbox\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "MGMT") + " masquerade comment \"boetticher:nat-mgmt\"\n  }\n}\n")
+	b.WriteString("table ip " + NATTable + " {\n  chain postrouting {\n    type nat hook postrouting priority srcnat; policy accept;\n    oifname \"wan0\" ip saddr " + networkFor(plan, "TRUSTED") + " masquerade comment \"boetticher:nat-trusted\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SERVERS") + " masquerade comment \"boetticher:nat-servers\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "INFRA") + " masquerade comment \"boetticher:nat-infra\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SANDBOX") + " masquerade comment \"boetticher:nat-sandbox\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "MGMT") + " masquerade comment \"boetticher:nat-mgmt\"\n")
+	if plan.TailnetExitNode {
+		// The gateway NAT is required for the exit node's TRANSIT address to
+		// leave the site through the upstream router.
+		b.WriteString("    oifname \"wan0\" ip saddr 10.10.5.10/32 masquerade comment \"boetticher:nat-tailnet-exit\"\n")
+	}
+	b.WriteString("  }\n}\n")
 	return b.String(), nil
 }
 

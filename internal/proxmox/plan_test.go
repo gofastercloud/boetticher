@@ -925,7 +925,7 @@ func TestPlatformGuestPlanCarriesTagsForBackupAndVisibility(t *testing.T) {
 func TestTailnetRouterPlanCarriesUnprivilegedExactTUNContract(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	enabled := true
-	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.TailnetRouter = &model.TailnetRouterModuleConfig{Enabled: &enabled}
 	site, _, err := modules.Compose(config)
 	if err != nil {
 		t.Fatal(err)

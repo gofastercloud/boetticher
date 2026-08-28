@@ -76,9 +76,14 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		}
 		declaration.Portal = []model.PortalEntry{{Name: "logging", Description: "Central systemd journal collection", Docs: []string{"docs/operations/logs.md"}}}
 	case "tailnet-router":
+		exitNode := site.ModuleConfig[name].ExitNode
 		declaration.Secrets = []model.SecretDeclaration{{Name: "tailscale_auth_key", Purpose: "initial Tailscale registration or re-registration", Consumer: "tailscaled", Generation: "operator-supplied", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file", Lifecycle: model.SecretLifecycleBootstrap}}
 		declaration.AdvertisedRoutes = []string{"10.10.0.0/16"}
 		declaration.ReturnRouting = []string{"Tailnet return traffic for 10.10.0.0/16 must use the TRANSIT gateway 10.10.5.1"}
+		declaration.ExitNode = exitNode
+		if exitNode {
+			declaration.ReturnRouting = append(declaration.ReturnRouting, "Internet exit traffic from 10.10.5.10 must use the managed gateway's TRANSIT-to-WAN path and exact guest NAT")
+		}
 		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true, Devices: []model.DeviceRequirement{{Name: "tun", Path: "/dev/net/tun", Type: "c", Major: 10, Minor: 200, Access: "rwm"}}}
 		declaration.NetworkIntents = []model.NetworkIntent{
 			{Source: "lab-tailnet-01", Destination: "litellm", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "routed LiteLLM HTTPS access"},
@@ -92,8 +97,16 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		if IsEnabled(site, "logging") {
 			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-tailnet-01", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"})
 		}
-		declaration.Monitoring = append(declaration.Monitoring, model.MonitoringDeclaration{Name: "tailscaled", Kind: "service", Target: "lab-tailnet-01", Checks: []string{"tailscaled", "route-advertisement"}, Description: "Tailscale daemon and advertised subnet route health"})
-		declaration.Portal = []model.PortalEntry{{Name: "tailnet-router", Description: "Tailscale subnet router; Internet exit-node behavior is not enabled", Docs: []string{"docs/modules/tailnet-router.md"}}}
+		checks := []string{"tailscaled", "route-advertisement"}
+		if exitNode {
+			checks = append(checks, "exit-node-advertisement")
+		}
+		declaration.Monitoring = append(declaration.Monitoring, model.MonitoringDeclaration{Name: "tailscaled", Kind: "service", Target: "lab-tailnet-01", Checks: checks, Description: "Tailscale daemon and advertised subnet route health"})
+		description := "Tailscale subnet router; Internet exit-node behavior is not enabled"
+		if exitNode {
+			description = "Tailscale subnet router with opt-in Internet exit-node behavior"
+		}
+		declaration.Portal = []model.PortalEntry{{Name: "tailnet-router", Description: description, Docs: []string{"docs/modules/tailnet-router.md"}}}
 	case "litellm":
 		config := site.ModuleConfig[name]
 		for _, upstream := range config.Upstreams {

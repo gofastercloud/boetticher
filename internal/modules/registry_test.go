@@ -209,7 +209,7 @@ func TestRegistryRejectsUnsupportedUSBDeviceType(t *testing.T) {
 func TestTailnetAndLiteLLMComposeTypedDeclarations(t *testing.T) {
 	config := testConfig(model.GatewayModeManaged)
 	tailnetEnabled, litellmEnabled := true, true
-	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
+	config.Modules.TailnetRouter = &model.TailnetRouterModuleConfig{Enabled: &tailnetEnabled}
 	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
 		Enabled:   &litellmEnabled,
 		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
@@ -226,12 +226,35 @@ func TestTailnetAndLiteLLMComposeTypedDeclarations(t *testing.T) {
 	if tailnet.Guests[0].Zone != "TRANSIT" || tailnet.Guests[0].Address != "10.10.5.10" || !tailnet.Security.Unprivileged || tailnet.Security.Devices[0].Path != "/dev/net/tun" || tailnet.AdvertisedRoutes[0] != "10.10.0.0/16" {
 		t.Fatalf("tailnet-router declaration is incomplete: %#v", tailnet)
 	}
+	if tailnet.ExitNode {
+		t.Fatal("tailnet-router subnet-only default unexpectedly enabled exit-node capability")
+	}
 	litellm, ok := findDeclaration(site, "litellm")
 	if !ok {
 		t.Fatal("litellm declaration is missing")
 	}
 	if litellm.Guests[0].Address != "10.10.20.60" || !litellm.Guests[0].MTLS || len(litellm.Secrets) != 1 || litellm.Secrets[0].Name != "openrouter_api_key" {
 		t.Fatalf("litellm declaration is incomplete: %#v", litellm)
+	}
+}
+
+func TestTailnetRouterCanOptIntoExitNodeCapability(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	enabled := true
+	config.Modules.TailnetRouter = &model.TailnetRouterModuleConfig{Enabled: &enabled, ExitNode: true}
+	site, _, err := Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tailnet, ok := findDeclaration(site, "tailnet-router")
+	if !ok {
+		t.Fatal("tailnet-router declaration is missing")
+	}
+	if !tailnet.ExitNode || len(tailnet.AdvertisedRoutes) != 1 || tailnet.AdvertisedRoutes[0] != "10.10.0.0/16" {
+		t.Fatalf("tailnet-router exit-node declaration is incomplete: %#v", tailnet)
+	}
+	if !strings.Contains(tailnet.Portal[0].Description, "opt-in Internet exit-node") {
+		t.Fatalf("tailnet-router portal description does not expose opt-in capability: %#v", tailnet.Portal)
 	}
 }
 

@@ -65,7 +65,7 @@ func TestServersDHCPIsReservationOnly(t *testing.T) {
 func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	tailnetEnabled, litellmEnabled := true, true
-	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
+	config.Modules.TailnetRouter = &model.TailnetRouterModuleConfig{Enabled: &tailnetEnabled}
 	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
 		Enabled:   &litellmEnabled,
 		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
@@ -111,6 +111,64 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 	}
 }
 
+func TestTailnetExitNodeAddsOnlyExactGuestInternetEgress(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	enabled := true
+	config.Modules.TailnetRouter = &model.TailnetRouterModuleConfig{Enabled: &enabled, ExitNode: true}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.TailnetExitNode {
+		t.Fatal("exit-node capability did not reach the managed firewall plan")
+	}
+	var exitRule *PolicyRule
+	for index := range plan.Rules {
+		if plan.Rules[index].Name == "tailnet-router Internet exit egress" {
+			exitRule = &plan.Rules[index]
+			break
+		}
+	}
+	if exitRule == nil || exitRule.From != "TRANSIT" || exitRule.To != "WAN" || exitRule.SourceCIDR != "10.10.5.10/32" || exitRule.DestinationCIDR != "0.0.0.0/0" || !exitRule.NAT {
+		t.Fatalf("exit-node policy is not exact: %#v", exitRule)
+	}
+	ruleset, err := RenderNFT(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allow := `iifname "transit0" oifname "wan0" ip saddr 10.10.5.10/32 ip daddr 0.0.0.0/0 counter accept comment "boetticher:module-tailnet_router_internet_exit_egress"`
+	if !strings.Contains(ruleset, allow) {
+		t.Fatalf("managed ruleset is missing exact exit-node allow:\n%s", ruleset)
+	}
+	if !strings.Contains(ruleset, `oifname "wan0" ip saddr 10.10.5.10/32 masquerade comment "boetticher:nat-tailnet-exit"`) {
+		t.Fatal("managed ruleset is missing exact exit-node NAT")
+	}
+	if strings.Index(ruleset, allow) > strings.Index(ruleset, "TRANSIT-INTERNET-DROP") {
+		t.Fatal("exit-node allow occurs after the TRANSIT Internet deny")
+	}
+
+	config.Modules.TailnetRouter.ExitNode = false
+	subnetOnly, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultPlan, err := PlanFromSite(subnetOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultRuleset, err := RenderNFT(defaultPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultPlan.TailnetExitNode || strings.Contains(defaultRuleset, "nat-tailnet-exit") || strings.Contains(defaultRuleset, "tailnet_router_internet_exit") {
+		t.Fatal("subnet-only tailnet-router retained exit-node firewall policy")
+	}
+}
+
 func TestQualifiedModuleLoggingIntentResolvesCollector(t *testing.T) {
 	rule := policyRuleForIntent(model.NewDefaultSite("installation", "age1example"), "logging", model.NetworkIntent{
 		Source: "lab-portal-01", Destination: "logs.lab.home.arpa", Protocol: "tcp", Ports: []string{"19532"}, Purpose: "native journal upload",
@@ -148,7 +206,7 @@ func TestCoreModuleGuestsRetainBaselinePolicyWithoutSourceIntents(t *testing.T) 
 func TestModuleGuestSourcesRequireSourceSpecificIntent(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	tailnetEnabled, litellmEnabled := true, true
-	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
+	config.Modules.TailnetRouter = &model.TailnetRouterModuleConfig{Enabled: &tailnetEnabled}
 	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
 		Enabled:   &litellmEnabled,
 		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
@@ -172,7 +230,7 @@ func TestExternalComposedContractCarriesModuleRouteAndOperatorBoundary(t *testin
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeExternal))
 	firewallDisabled, tailnetEnabled, litellmEnabled := false, true, true
 	config.Modules.Firewall = &model.ToggleModuleConfig{Enabled: &firewallDisabled}
-	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
+	config.Modules.TailnetRouter = &model.TailnetRouterModuleConfig{Enabled: &tailnetEnabled}
 	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
 		Enabled:   &litellmEnabled,
 		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
@@ -193,6 +251,30 @@ func TestExternalComposedContractCarriesModuleRouteAndOperatorBoundary(t *testin
 	for _, expected := range []string{"10.10.0.0/16", "10.10.5.10", "10.10.5.0/24", "10.10.5.1", "subnet-route", "route approval", "accept-dns=false", "LiteLLM HTTPS", "portal HTTPS", "monitoring HTTPS", "openrouter.ai", "required return routing", "Proxmox API", "SSH", "enforcement is NOT ACTIVE", "operator implementation responsibility"} {
 		if !strings.Contains(strings.ToLower(contract), strings.ToLower(expected)) {
 			t.Errorf("external module contract missing %q", expected)
+		}
+	}
+}
+
+func TestExternalComposedContractCarriesOptInExitNodeBoundary(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeExternal))
+	firewallDisabled, tailnetEnabled := false, true
+	config.Modules.Firewall = &model.ToggleModuleConfig{Enabled: &firewallDisabled}
+	config.Modules.TailnetRouter = &model.TailnetRouterModuleConfig{Enabled: &tailnetEnabled, ExitNode: true}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract, err := RenderExternalContract(site, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"Exit-node capability: enabled", "default-route egress", "10.10.5.10", "source-NAT", "exit-node Internet egress is the sole additional capability"} {
+		if !strings.Contains(contract, expected) {
+			t.Errorf("external exit-node contract missing %q", expected)
 		}
 	}
 }

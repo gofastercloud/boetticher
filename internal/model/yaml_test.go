@@ -158,6 +158,38 @@ func TestDNSProviderIsTypedAndStrict(t *testing.T) {
 	}
 }
 
+func TestTailnetRouterExitNodeIsExplicitlyOptIn(t *testing.T) {
+	config, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  tailnet-router:\n    enabled: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Modules.TailnetRouter == nil || config.Modules.TailnetRouter.ExitNode {
+		t.Fatalf("tailnet-router exit node defaulted on: %#v", config.Modules.TailnetRouter)
+	}
+
+	config, err = ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  tailnet-router:\n    enabled: true\n    exit_node: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Modules.TailnetRouter == nil || !config.Modules.TailnetRouter.ExitNode {
+		t.Fatalf("tailnet-router exit node opt-in was not retained: %#v", config.Modules.TailnetRouter)
+	}
+	if config.BaseSite().ModuleConfig["tailnet-router"].ExitNode != true {
+		t.Fatal("tailnet-router exit node did not reach the internal module projection")
+	}
+	disabled := false
+	if err := config.Modules.Set("tailnet-router", ModuleConfig{Enabled: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+	if config.Modules.TailnetRouter == nil || !config.Modules.TailnetRouter.ExitNode {
+		t.Fatal("tailnet-router lifecycle update discarded the exit-node option")
+	}
+
+	if _, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  tailnet-router:\n    exit_node: enabled\n")); err == nil || !strings.Contains(err.Error(), "modules.tailnet-router.exit_node: expected a boolean") {
+		t.Fatalf("non-boolean tailnet-router exit_node was accepted: %v", err)
+	}
+}
+
 func TestParseSiteConfigRejectsUnknownModuleName(t *testing.T) {
 	_, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  monitroing:\n    enabled: true\n"))
 	if err == nil || !strings.Contains(err.Error(), "modules.monitroing") {

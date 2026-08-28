@@ -14,6 +14,7 @@ modules:
     enabled: false
   tailnet-router:
     enabled: false
+    exit_node: false
   litellm:
     enabled: false
     upstreams:
@@ -60,7 +61,8 @@ Use `boetticher config validate` before deployment, `boetticher config show`
 to inspect normalized non-secret configuration, and `boetticher config schema`
 to print the shipped generated JSON Schema. Unknown fields and unknown module names
 are errors with a configuration path. `tailnet-router`, `litellm`, `streamdeck`, and `printer` are
-default-off; LiteLLM exposes only the explicitly declared aliases and keeps
+default-off. `tailnet-router.exit_node` is also false unless explicitly set to
+true. LiteLLM exposes only the explicitly declared aliases and keeps
 the referenced provider credentials in SOPS-managed secret state. `aiops` is
 also default-off and accepts only `enabled` plus a declared `model_alias`;
 provider, model, tool, and SSH fields are rejected. USB exports

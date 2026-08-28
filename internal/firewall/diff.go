@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 )
@@ -95,13 +96,13 @@ func CompareNFT(plan Plan, live []byte) (NFTDiff, error) {
 			diff.MissingChains = append(diff.MissingChains, chain)
 		}
 	}
-	for _, rule := range expectedRuleComments() {
+	for _, rule := range expectedRuleComments(plan) {
 		if !observedRules[rule] {
 			diff.MissingRules = append(diff.MissingRules, rule)
 		}
 	}
 	for rule := range observedRules {
-		if !expectedRuleCommentSet()[rule] {
+		if !expectedRuleCommentSet(plan)[rule] {
 			diff.UnexpectedRules = append(diff.UnexpectedRules, rule)
 		}
 	}
@@ -133,8 +134,8 @@ func expectedChains() []string {
 	}
 }
 
-func expectedRuleComments() []string {
-	return []string{
+func expectedRuleComments(plans ...Plan) []string {
+	comments := []string{
 		"boetticher:input-loopback",
 		"boetticher:input-established",
 		"boetticher:input-wan-dhcp",
@@ -166,11 +167,28 @@ func expectedRuleComments() []string {
 		"boetticher:nat-sandbox",
 		"boetticher:nat-mgmt",
 	}
+	if len(plans) == 0 {
+		return comments
+	}
+	plan := plans[0]
+	for _, rule := range plan.Rules {
+		if !strings.HasPrefix(rule.Name, "module ") || rule.Action != "allow" || rule.SourceCIDR == "" || rule.From == "" || rule.To == "" || (rule.DestinationCIDR == "" && rule.DestinationHost == "") {
+			continue
+		}
+		comments = append(comments, "boetticher:module-"+safeRuleToken(rule.Name))
+		if rule.To == "WAN" && rule.DestinationCIDR != "0.0.0.0/0" {
+			comments = append(comments, "boetticher:module-"+safeRuleToken(rule.Name)+"-arbitrary-egress-drop")
+		}
+	}
+	if plan.TailnetExitNode {
+		comments = append(comments, "boetticher:module-tailnet_router_internet_exit_egress", "boetticher:nat-tailnet-exit")
+	}
+	return comments
 }
 
-func expectedRuleCommentSet() map[string]bool {
-	set := make(map[string]bool, len(expectedRuleComments()))
-	for _, value := range expectedRuleComments() {
+func expectedRuleCommentSet(plans ...Plan) map[string]bool {
+	set := make(map[string]bool, len(expectedRuleComments(plans...)))
+	for _, value := range expectedRuleComments(plans...) {
 		set[value] = true
 	}
 	return set

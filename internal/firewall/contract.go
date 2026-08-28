@@ -57,7 +57,13 @@ func RenderExternalContract(s model.Site, plan Plan) (string, error) {
 	for _, declaration := range s.Declarations {
 		switch declaration.Module {
 		case "tailnet-router":
-			b.WriteString("### tailnet-router\n\n- Address: `10.10.5.10` on TRANSIT (`10.10.5.0/24`, gateway `10.10.5.1`).\n- Advertised route: `10.10.0.0/16`; Tailscale route approval is an operator action.\n- Subnet-route SNAT: enabled.\n- Tailscale runtime: `accept-dns=false`.\n- Permitted internal destinations: LiteLLM HTTPS, portal HTTPS, and monitoring HTTPS only, plus DNS/NTP and required Tailscale control/DERP egress.\n- Explicit deny expectations: TRUSTED, SANDBOX, MGMT, Proxmox API, SSH, arbitrary SERVERS workloads, and Internet exit-node behavior remain denied.\n- Required return routing: Tailnet traffic for `10.10.0.0/16` returns through the TRANSIT gateway.\n\n")
+			b.WriteString("### tailnet-router\n\n- Address: `10.10.5.10` on TRANSIT (`10.10.5.0/24`, gateway `10.10.5.1`).\n- Advertised route: `10.10.0.0/16`; Tailscale route approval is an operator action.\n- Subnet-route SNAT: enabled.\n- Tailscale runtime: `accept-dns=false`.\n- Permitted internal destinations: LiteLLM HTTPS, portal HTTPS, and monitoring HTTPS only, plus DNS/NTP and required Tailscale control/DERP egress.\n")
+			if declaration.ExitNode {
+				b.WriteString("- Exit-node capability: enabled; the external gateway must permit IPv4 default-route egress from `10.10.5.10` and source-NAT it before upstream delivery.\n- Explicit deny expectations: TRUSTED, SANDBOX, MGMT, Proxmox API, SSH, and arbitrary SERVERS workloads remain denied; exit-node Internet egress is the sole additional capability.\n")
+			} else {
+				b.WriteString("- Exit-node capability: disabled; Internet exit-node behavior remains denied.\n- Explicit deny expectations: TRUSTED, SANDBOX, MGMT, Proxmox API, SSH, arbitrary SERVERS workloads, and Internet exit-node behavior remain denied.\n")
+			}
+			b.WriteString("- Required return routing: Tailnet traffic for `10.10.0.0/16` returns through the TRANSIT gateway.\n\n")
 		case "litellm":
 			b.WriteString("### litellm\n\n- Address: `10.10.20.60` in SERVERS.\n- Frontend: HTTPS on `443` with required client certificate; no plaintext listener.\n- Backend: loopback-only `127.0.0.1:4000`.\n- Outbound: only the configured upstream HTTPS endpoint(s), plus DNS/NTP as required; unknown Internet destinations remain denied.\n\n")
 		}

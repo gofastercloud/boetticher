@@ -52,6 +52,13 @@ func TestEmbeddedSchemaProjectsTypedModuleConstraints(t *testing.T) {
 	if _, ok := dns.Properties["enabled"]; ok {
 		t.Fatal("DNS module schema exposes forbidden enabled field")
 	}
+	tailnet, ok := document.Definitions["TailnetRouterModuleConfig"]
+	if !ok {
+		t.Fatal("tailnet-router module definition is absent from schema")
+	}
+	if _, ok := tailnet.Properties["exit_node"]; !ok {
+		t.Fatal("tailnet-router schema omitted exit_node")
+	}
 	for _, name := range []string{"DNSModuleConfig", "MandatoryModuleConfig"} {
 		definition, ok := document.Definitions[name]
 		if !ok {

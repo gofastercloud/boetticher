@@ -75,7 +75,7 @@ func TestDeploymentCredentialProjectionContainsOnlyEncryptedPaths(t *testing.T) 
 func TestFirstPartyModuleCredentialsUseEphemeralSystemdPaths(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	tailnetEnabled, litellmEnabled := true, true
-	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
+	config.Modules.TailnetRouter = &model.TailnetRouterModuleConfig{Enabled: &tailnetEnabled}
 	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
 		Enabled:   &litellmEnabled,
 		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},

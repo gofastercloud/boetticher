@@ -35,15 +35,15 @@ type SiteConfig struct {
 // keeps a small internal projection for providers that only need lookup by
 // module name.
 type ModulesConfig struct {
-	DNS           *DNSModuleConfig        `yaml:"dns,omitempty" json:"dns,omitempty"`
-	Monitoring    *ToggleModuleConfig     `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
-	Firewall      *ToggleModuleConfig     `yaml:"firewall,omitempty" json:"firewall,omitempty"`
-	Logging       *MandatoryModuleConfig  `yaml:"logging,omitempty" json:"logging,omitempty"`
-	TailnetRouter *ToggleModuleConfig     `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
-	LiteLLM       *LiteLLMModuleConfig    `yaml:"litellm,omitempty" json:"litellm,omitempty"`
-	StreamDeck    *StreamDeckModuleConfig `yaml:"streamdeck,omitempty" json:"streamdeck,omitempty"`
-	Printer       *ToggleModuleConfig     `yaml:"printer,omitempty" json:"printer,omitempty"`
-	AIOps         *AIOpsModuleConfig      `yaml:"aiops,omitempty" json:"aiops,omitempty"`
+	DNS           *DNSModuleConfig           `yaml:"dns,omitempty" json:"dns,omitempty"`
+	Monitoring    *ToggleModuleConfig        `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
+	Firewall      *ToggleModuleConfig        `yaml:"firewall,omitempty" json:"firewall,omitempty"`
+	Logging       *MandatoryModuleConfig     `yaml:"logging,omitempty" json:"logging,omitempty"`
+	TailnetRouter *TailnetRouterModuleConfig `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
+	LiteLLM       *LiteLLMModuleConfig       `yaml:"litellm,omitempty" json:"litellm,omitempty"`
+	StreamDeck    *StreamDeckModuleConfig    `yaml:"streamdeck,omitempty" json:"streamdeck,omitempty"`
+	Printer       *ToggleModuleConfig        `yaml:"printer,omitempty" json:"printer,omitempty"`
+	AIOps         *AIOpsModuleConfig         `yaml:"aiops,omitempty" json:"aiops,omitempty"`
 }
 
 type DNSModuleConfig struct {
@@ -57,6 +57,11 @@ type MandatoryModuleConfig struct{}
 
 type ToggleModuleConfig struct {
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+type TailnetRouterModuleConfig struct {
+	Enabled  *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	ExitNode bool  `yaml:"exit_node,omitempty" json:"exit_node,omitempty" jsonschema:"default=false"`
 }
 
 type LiteLLMModuleConfig struct {
@@ -110,7 +115,7 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 		result["logging"] = ModuleConfig{}
 	}
 	if m.TailnetRouter != nil {
-		result["tailnet-router"] = ModuleConfig{Enabled: cloneBool(m.TailnetRouter.Enabled)}
+		result["tailnet-router"] = ModuleConfig{Enabled: cloneBool(m.TailnetRouter.Enabled), ExitNode: m.TailnetRouter.ExitNode}
 	}
 	if m.LiteLLM != nil {
 		result["litellm"] = ModuleConfig{Enabled: cloneBool(m.LiteLLM.Enabled), Upstreams: cloneLiteLLMUpstreams(m.LiteLLM.Upstreams), Models: cloneLiteLLMModels(m.LiteLLM.Models)}
@@ -143,7 +148,7 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 		result.Logging = &MandatoryModuleConfig{}
 	}
 	if config, ok := input["tailnet-router"]; ok {
-		result.TailnetRouter = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		result.TailnetRouter = &TailnetRouterModuleConfig{Enabled: cloneBool(config.Enabled), ExitNode: config.ExitNode}
 	}
 	if config, ok := input["litellm"]; ok {
 		result.LiteLLM = &LiteLLMModuleConfig{Enabled: cloneBool(config.Enabled), Upstreams: cloneLiteLLMUpstreams(config.Upstreams), Models: cloneLiteLLMModels(config.Models)}
@@ -177,7 +182,11 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 		}
 		m.Logging = &MandatoryModuleConfig{}
 	case "tailnet-router":
-		m.TailnetRouter = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		exitNode := false
+		if m.TailnetRouter != nil {
+			exitNode = m.TailnetRouter.ExitNode
+		}
+		m.TailnetRouter = &TailnetRouterModuleConfig{Enabled: cloneBool(config.Enabled), ExitNode: exitNode}
 	case "litellm":
 		upstreams := config.Upstreams
 		models := config.Models
@@ -478,7 +487,7 @@ func cloneModuleConfig(input map[string]ModuleConfig) map[string]ModuleConfig {
 	}
 	output := make(map[string]ModuleConfig, len(input))
 	for name, config := range input {
-		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), Provider: config.Provider, ModelAlias: config.ModelAlias, Upstreams: cloneLiteLLMUpstreams(config.Upstreams), Models: cloneLiteLLMModels(config.Models), Brightness: config.Brightness, RefreshSeconds: config.RefreshSeconds, RequestTimeoutSeconds: config.RequestTimeoutSeconds, DefaultPage: config.DefaultPage, PinnedGuests: append([]string(nil), config.PinnedGuests...), StorageWarningPercent: config.StorageWarningPercent, StorageCriticalPercent: config.StorageCriticalPercent}
+		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), ExitNode: config.ExitNode, Provider: config.Provider, ModelAlias: config.ModelAlias, Upstreams: cloneLiteLLMUpstreams(config.Upstreams), Models: cloneLiteLLMModels(config.Models), Brightness: config.Brightness, RefreshSeconds: config.RefreshSeconds, RequestTimeoutSeconds: config.RequestTimeoutSeconds, DefaultPage: config.DefaultPage, PinnedGuests: append([]string(nil), config.PinnedGuests...), StorageWarningPercent: config.StorageWarningPercent, StorageCriticalPercent: config.StorageCriticalPercent}
 	}
 	return output
 }

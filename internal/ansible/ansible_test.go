@@ -772,8 +772,11 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 				"--accept-dns=false",
 				"--advertise-routes=10.10.0.0/16",
 				"--snat-subnet-routes=true",
+				"--advertise-exit-node=false",
+				"tailscale up",
+				"net.ipv4.ip_forward=1",
 			},
-			forbidden: []string{"advertise-exit-node", "privileged: true", "ansible.builtin.apt:"},
+			forbidden: []string{"privileged: true", "ansible.builtin.apt:"},
 		},
 		{
 			role: "litellm",

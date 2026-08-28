@@ -239,6 +239,7 @@ type Component struct {
 
 type ModuleConfig struct {
 	Enabled                *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	ExitNode               bool                    `yaml:"exit_node,omitempty" json:"exit_node,omitempty"`
 	Provider               string                  `yaml:"provider,omitempty" json:"provider,omitempty"`
 	ModelAlias             string                  `yaml:"model_alias,omitempty" json:"model_alias,omitempty"`
 	Upstreams              []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
@@ -452,6 +453,7 @@ type ModuleDeclaration struct {
 	Security         GuestSecurityDeclaration      `json:"security,omitempty"`
 	USBRequirements  []USBRequirement              `json:"usb_requirements,omitempty"`
 	AdvertisedRoutes []string                      `json:"advertised_routes,omitempty"`
+	ExitNode         bool                          `json:"exit_node,omitempty"`
 	ReturnRouting    []string                      `json:"return_routing,omitempty"`
 }
 
