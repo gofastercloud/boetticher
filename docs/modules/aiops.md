@@ -68,6 +68,12 @@ limits defer an already persisted incident; they never discard admission.
 Use `boetticher aiops status` for desired state and `--live` for bounded
 loopback appliance state, including lifecycle counts, queue/running age, last
 terminal result, 24-hour token totals and note delivery state. The status path
-is not exposed on the external webhook listener. Live integration, negative
-network tests, reboot recovery, backup/restore and lifecycle journeys remain
-`NOT TESTED` until executed on supported infrastructure.
+is not exposed on the external webhook listener. `doctor --live` additionally
+uses a separate loopback-only diagnostic route to read and validate Pulse's
+active-alert response, authenticate to the journal-query health path, and run
+the bounded two-request tool/schema canary through the configured AI Router
+alias. The AI Router check invokes the selected provider and may incur its
+normal small request charge. Diagnostic responses expose only `PASS` or `FAIL`,
+not upstream error or credential material. Live integration, negative network
+tests, reboot recovery, backup/restore and lifecycle journeys remain `NOT
+TESTED` until executed on supported infrastructure.

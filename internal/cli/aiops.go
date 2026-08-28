@@ -75,3 +75,20 @@ func runAIOps(args []string, out interface{ Write([]byte) (int, error) }) error 
 	}
 	return nil
 }
+
+func readAIOpsReadiness(siteDir string, s model.Site) (aiops.ReadinessStatus, error) {
+	component, ok := findManagedEndpoint(s, "lab-aiops-01")
+	if !ok {
+		return aiops.ReadinessStatus{}, errors.New("aiops appliance is absent from the model")
+	}
+	runner := proxmox.SSHRunner{ConfigFile: filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"), HostAlias: component.Name, StrictHostKey: "accept-new"}
+	data, err := runner.RunArgs(context.Background(), component.Address, model.DefaultAdminSSHUser, []string{"/usr/local/libexec/boetticher-aiops", "doctor"})
+	if err != nil {
+		return aiops.ReadinessStatus{}, fmt.Errorf("run AIOps readiness checks: %w", err)
+	}
+	var status aiops.ReadinessStatus
+	if err := json.Unmarshal(data, &status); err != nil {
+		return aiops.ReadinessStatus{}, fmt.Errorf("decode AIOps readiness: %w", err)
+	}
+	return status, nil
+}
