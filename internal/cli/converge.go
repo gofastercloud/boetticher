@@ -234,12 +234,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if monitoringEnabled {
 		pulseProxmoxToken, err = site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_proxmox_token")
 		if errors.Is(err, site.ErrPlatformSecretMissing) {
-			proxmoxRunner := proxmox.SSHRunner{
-				IdentityFile:  operatorIdentityFile(s),
-				ConfigFile:    filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"),
-				StrictHostKey: "accept-new", HostKeyAlias: model.LogicalProxmoxIdentity,
-			}
-			pulseProxmoxToken, err = proxmox.CreatePulseMonitoringCredentials(context.Background(), proxmoxRunner, s.BootstrapAddress, model.DefaultAdminSSHUser)
+			pulseProxmoxToken, err = proxmox.CreatePulseMonitoringCredentials(context.Background(), rootRunner, s.BootstrapAddress, "root")
 			if err != nil {
 				return err
 			}
