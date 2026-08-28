@@ -106,7 +106,7 @@ func FirstPartyRegistry() Registry {
 			Name: "printer", Description: "OctoPrint management for one USB-connected Ender-3 V3 SE", Version: "1.0.0", Policy: DefaultOff,
 			Requires: []Capability{CapabilityDNS}, GuestIDs: []int{model.PrinterVMID}, ReservedVMIDStart: 230, ReservedVMIDEnd: 239,
 			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
-				{Name: "lab-printer-01", VMID: model.PrinterVMID, Hostname: "lab-printer-01", Address: "10.10.20.80", Role: "OctoPrint for Ender-3 V3 SE", DNSAliases: []string{"octoprint", "printer"}, URL: "https://octoprint." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+				{Name: "lab-printer-01", VMID: model.PrinterVMID, Hostname: "lab-printer-01", Address: "10.10.20.80", Role: "OctoPrint for Ender-3 V3 SE", DNSAliases: []string{"octoprint", "printer"}, URL: "https://octoprint." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 			USBRequirements: []model.USBRequirement{{Name: "serial", Guest: "lab-printer-01", DeviceType: "serial", Access: "rw", Required: true, AllowedIdentities: []model.USBIdentity{{VendorID: "1a86", ProductID: "7523"}}}},
 		},

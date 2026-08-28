@@ -144,7 +144,7 @@ func TestPrinterComposesMinimalOctoPrintDeclaration(t *testing.T) {
 	if !ok {
 		t.Fatal("printer declaration is missing")
 	}
-	if len(printer.Guests) != 1 || printer.Guests[0].Address != "10.10.20.80" || printer.Guests[0].URL != "https://octoprint."+site.Network.Domain {
+	if len(printer.Guests) != 1 || printer.Guests[0].Address != "10.10.20.80" || printer.Guests[0].URL != "https://octoprint."+site.Network.Domain || !printer.Guests[0].MTLS {
 		t.Fatalf("printer guest contract is incomplete: %#v", printer.Guests)
 	}
 	if !printer.Security.Unprivileged || len(printer.USBRequirements) != 1 || printer.USBRequirements[0].DeviceType != "serial" {
