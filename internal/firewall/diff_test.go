@@ -3,6 +3,7 @@ package firewall
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -26,7 +27,7 @@ func TestCompareNFTIgnoresUnrelatedTablesAndFindsOwnedDrift(t *testing.T) {
 	} {
 		objects = append(objects, map[string]any{"chain": map[string]any{"family": chain.family, "table": chain.table, "name": chain.name}})
 	}
-	for _, comment := range expectedRuleComments() {
+	for _, comment := range mustExpectedRuleComments(t, plan) {
 		objects = append(objects, map[string]any{"rule": map[string]any{"family": "inet", "table": FilterTable, "chain": "forward", "comment": comment}})
 	}
 	objects = append(objects, map[string]any{"rule": map[string]any{"family": "inet", "table": "operator_state", "chain": "input", "comment": "operator-owned"}})
@@ -66,7 +67,34 @@ func TestCompareNFTReportsMissingOwnedObjects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(diff.MissingTables) != 1 || len(diff.MissingChains) != 4 || len(diff.MissingRules) != len(expectedRuleComments()) {
+	if len(diff.MissingTables) != 1 || len(diff.MissingChains) != 4 || len(diff.MissingRules) != len(mustExpectedRuleComments(t, plan)) {
 		t.Fatalf("missing owned objects were not reported completely: %#v", diff)
 	}
+}
+
+func TestCompareNFTMatchesTheCurrentRenderedRuleset(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleset, err := RenderNFT(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ruleset, "forward-servers-monitoring") {
+		t.Fatal("obsolete monitoring rule remains in the rendered ruleset")
+	}
+	comments := mustExpectedRuleComments(t, plan)
+	if len(comments) < 40 {
+		t.Fatalf("rendered ruleset exposed only %d owned comments", len(comments))
+	}
+}
+
+func mustExpectedRuleComments(t *testing.T, plan Plan) []string {
+	t.Helper()
+	comments, err := expectedRuleComments(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return comments
 }
