@@ -613,7 +613,8 @@ func ConfigureIdentities(ctx context.Context, runner CommandRunner, address, ini
 		return errors.New("at least one bastion destination is required")
 	}
 	for _, destination := range allowedDestinations {
-		if !strings.Contains(destination, ":22") || strings.ContainsAny(destination, "'\n\r") {
+		host, port, splitErr := net.SplitHostPort(destination)
+		if splitErr != nil || net.ParseIP(host) == nil || (port != "22" && port != "443") || strings.ContainsAny(destination, "'\n\r") {
 			return fmt.Errorf("invalid bastion destination %q", destination)
 		}
 	}

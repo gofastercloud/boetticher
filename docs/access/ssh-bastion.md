@@ -6,7 +6,9 @@ Internal hosts use fixed IP addresses and canonical `HostKeyAlias` values, so
 the path does not depend on internal DNS.
 
 Controller-side Pulse reconciliation uses a temporary loopback SSH forward
-through Proxmox; it does not add a controller route into the internal VLANs.
+through Proxmox as `lab-jump`, constrained to the monitor HTTPS endpoint; it does
+not add a controller route into the internal VLANs. Other bastion forwarding is
+limited to the modelled SSH destinations.
 
 The managed gateway is an ordinary permitted host:
 
