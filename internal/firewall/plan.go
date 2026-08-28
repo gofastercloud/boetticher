@@ -69,18 +69,36 @@ type DHCPReservation struct {
 	MAC      string `json:"mac"`
 }
 
+type UpstreamObservation struct {
+	Interface string `json:"interface"`
+	MAC       string `json:"mac"`
+	Address   string `json:"address"`
+	Gateway   string `json:"gateway"`
+}
+
+type PublishedService struct {
+	Service          string `json:"service"`
+	Protocol         string `json:"protocol"`
+	Port             int    `json:"port"`
+	Destination      string `json:"destination"`
+	DestinationCIDR  string `json:"destination_cidr"`
+	DestinationIface string `json:"destination_interface"`
+}
+
 type Plan struct {
-	ModelRevision string        `json:"model_revision"`
-	Mode          string        `json:"mode"`
-	Engine        string        `json:"engine"`
-	IPv4Only      bool          `json:"ipv4_only"`
-	Forwarding    bool          `json:"forwarding_after_policy"`
-	Telemetry     TelemetryPlan `json:"telemetry"`
-	Interfaces    []Interface   `json:"interfaces"`
-	Rules         []PolicyRule  `json:"rules"`
-	ModuleSources []string      `json:"module_source_cidrs,omitempty"`
-	DHCP          []DHCPSubnet  `json:"dhcp_subnets"`
-	DDNS          dns.DDNSPlan  `json:"ddns"`
+	ModelRevision string               `json:"model_revision"`
+	Mode          string               `json:"mode"`
+	Engine        string               `json:"engine"`
+	IPv4Only      bool                 `json:"ipv4_only"`
+	Forwarding    bool                 `json:"forwarding_after_policy"`
+	Interfaces    []Interface          `json:"interfaces"`
+	Rules         []PolicyRule         `json:"rules"`
+	ModuleSources []string             `json:"module_source_cidrs,omitempty"`
+	DHCP          []DHCPSubnet         `json:"dhcp_subnets"`
+	DDNS          dns.DDNSPlan         `json:"ddns"`
+	Publications  []PublishedService   `json:"publications,omitempty"`
+	Upstream      *UpstreamObservation `json:"upstream,omitempty"`
+	Telemetry     TelemetryPlan        `json:"telemetry"`
 }
 
 func PlanFromSite(s model.Site) (Plan, error) {
@@ -114,7 +132,73 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		plan.Interfaces = gatewayInterfaces(s)
 	}
+	plan.Publications = publishedServices(s)
 	return plan, nil
+}
+
+func PlanFromSiteWithUpstream(s model.Site, upstream UpstreamObservation) (Plan, error) {
+	plan, err := PlanFromSite(s)
+	if err != nil {
+		return Plan{}, err
+	}
+	if err := ValidateUpstreamObservation(plan, upstream); err != nil {
+		return Plan{}, err
+	}
+	plan.Upstream = &upstream
+	return plan, nil
+}
+
+func publishedServices(s model.Site) []PublishedService {
+	services := make([]PublishedService, 0, len(s.Gateway.Publish)*2)
+	for _, publication := range s.Gateway.Publish {
+		if publication.Service != "dns" {
+			continue
+		}
+		for _, protocol := range []string{"tcp", "udp"} {
+			services = append(services, PublishedService{
+				Service: publication.Service, Protocol: protocol, Port: 53,
+				Destination: "lab-dns-01", DestinationCIDR: "10.10.10.10/32", DestinationIface: "infra0",
+			})
+		}
+	}
+	return services
+}
+
+func ValidateUpstreamObservation(plan Plan, upstream UpstreamObservation) error {
+	if upstream.Interface != "wan0" {
+		return fmt.Errorf("upstream observation must identify wan0")
+	}
+	if len(plan.Interfaces) == 0 || plan.Interfaces[0].Name != "wan0" {
+		return errors.New("managed gateway plan is missing wan0")
+	}
+	if !strings.EqualFold(upstream.MAC, plan.Interfaces[0].MAC) {
+		return fmt.Errorf("upstream observation MAC %q does not match configured wan0 MAC", upstream.MAC)
+	}
+	if err := model.ValidateGatewayUpstreamMAC(upstream.MAC); err != nil {
+		return err
+	}
+	address := net.ParseIP(strings.TrimSpace(strings.Split(upstream.Address, "/")[0])).To4()
+	_, network, err := net.ParseCIDR(upstream.Address)
+	if err != nil || address == nil || network == nil || network.IP.To4() == nil {
+		return fmt.Errorf("upstream observation address %q is not an IPv4 CIDR", upstream.Address)
+	}
+	if address.String() != strings.Split(upstream.Address, "/")[0] {
+		return fmt.Errorf("upstream observation address %q is not canonical IPv4", upstream.Address)
+	}
+	gateway := net.ParseIP(strings.TrimSpace(upstream.Gateway)).To4()
+	if gateway == nil || !network.Contains(gateway) || gateway.Equal(address) {
+		return fmt.Errorf("upstream observation gateway %q is not a distinct address on %s", upstream.Gateway, network.String())
+	}
+	for _, iface := range plan.Interfaces {
+		if iface.Name == "wan0" {
+			continue
+		}
+		_, internal, parseErr := net.ParseCIDR(iface.Address)
+		if parseErr == nil && (internal.Contains(address) || network.Contains(internal.IP)) {
+			return fmt.Errorf("upstream network %s overlaps internal interface %s", network.String(), iface.Name)
+		}
+	}
+	return nil
 }
 
 func moduleSourceCIDRs(s model.Site) []string {
@@ -143,7 +227,7 @@ func moduleSourceCIDRs(s model.Site) []string {
 }
 
 func gatewayInterfaces(s model.Site) []Interface {
-	interfaces := []Interface{{Role: "WAN", Name: "wan0", MAC: "02:00:00:00:01:01", Bridge: "vmbr0", Address: "dhcp", Method: "dhcp"}}
+	interfaces := []Interface{{Role: "WAN", Name: "wan0", MAC: s.Gateway.Upstream.MAC, Bridge: "vmbr0", Address: "dhcp", Method: "dhcp"}}
 	// Keep the established interface/MAC identities stable. TRANSIT and INFRA
 	// are permanent platform interfaces appended after the existing identities,
 	// not module-created vNICs whose presence changes them.
@@ -153,7 +237,7 @@ func gatewayInterfaces(s model.Site) []Interface {
 			continue
 		}
 		interfaces = append(interfaces, Interface{
-			Role: zone.Name, Name: strings.ToLower(zone.Name) + "0", MAC: fmt.Sprintf("02:00:00:00:01:%02x", len(interfaces)+1), Bridge: "vmbr1", VLAN: zone.VLAN,
+			Role: zone.Name, Name: strings.ToLower(zone.Name) + "0", MAC: model.GatewayInterfaceMAC(len(interfaces) + 1), Bridge: "vmbr1", VLAN: zone.VLAN,
 			Address: zone.Gateway + "/24", Method: "static",
 		})
 	}
@@ -350,6 +434,16 @@ func nftPortSet(ports []string) string {
 	return "{ " + strings.Join(ports, ", ") + " }"
 }
 
+// RenderSafeNFT emits the base policy while an optional publication remains
+// inactive until a current upstream DHCP observation is available. This is
+// used for projections and the first convergence pass; it never opens a
+// broader forwarding path as a substitute for the observed lease.
+func RenderSafeNFT(plan Plan) (string, error) {
+	plan.Publications = nil
+	plan.Upstream = nil
+	return RenderNFT(plan)
+}
+
 func RenderNFT(plan Plan) (string, error) {
 	if plan.Mode != model.GatewayModeManaged {
 		return "", errors.New("nftables is only rendered for managed gateway mode")
@@ -362,6 +456,14 @@ func RenderNFT(plan Plan) (string, error) {
 	}
 	if !plan.Telemetry.Enabled {
 		return "", errors.New("managed firewall telemetry is disabled")
+	}
+	if len(plan.Publications) > 0 {
+		if plan.Upstream == nil {
+			return "", errors.New("HOLD: published services require a current upstream DHCP observation")
+		}
+		if err := ValidateUpstreamObservation(plan, *plan.Upstream); err != nil {
+			return "", fmt.Errorf("HOLD: validate upstream DHCP observation: %w", err)
+		}
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Generated by boetticher. Model revision: %s\n", plan.ModelRevision)
@@ -377,6 +479,11 @@ func RenderNFT(plan Plan) (string, error) {
 	telemetrySource := strings.TrimSuffix(plan.Telemetry.AllowedSources[0], "/32")
 	b.WriteString("  chain input {\n    type filter hook input priority filter; policy drop;\n    iifname \"lo\" accept comment \"boetticher:input-loopback\"\n    ct state established,related accept comment \"boetticher:input-established\"\n    iifname \"wan0\" udp sport 67 udp dport 68 accept comment \"boetticher:input-wan-dhcp\"\n    iifname { \"infra0\", \"trusted0\", \"servers0\", \"sandbox0\", \"mgmt0\" } ip protocol icmp icmp type echo-request counter accept comment \"boetticher:allow:input-diagnostic-icmp\"\n    iifname { \"trusted0\", \"servers0\", \"sandbox0\" } udp dport 67 counter accept comment \"boetticher:allow:input-zone-dhcp\"\n    iifname \"sandbox0\" udp dport 53 counter accept comment \"boetticher:allow:input-sandbox-dns-udp\"\n    iifname \"sandbox0\" tcp dport 53 counter accept comment \"boetticher:allow:input-sandbox-dns-tcp\"\n    iifname \"sandbox0\" udp dport 123 counter accept comment \"boetticher:allow:input-sandbox-ntp\"\n    iifname \"mgmt0\" tcp dport 22 counter accept comment \"boetticher:allow:input-mgmt-ssh\"\n    iifname \"infra0\" ip saddr " + telemetrySource + " tcp dport 9765 counter accept comment \"boetticher:allow:input-firewall-telemetry\"\n  }\n")
 	b.WriteString("  chain forward {\n    type filter hook forward priority filter; policy drop;\n    ct state established,related accept comment \"boetticher:forward-established\"\n")
+	if plan.Upstream != nil {
+		for _, publication := range plan.Publications {
+			fmt.Fprintf(&b, "    iifname \"wan0\" oifname \"%s\" ip saddr %s ip daddr %s %s dport %d counter accept comment \"boetticher:publish-%s-%s\"\n", publication.DestinationIface, upstreamSourceCIDR(*plan.Upstream), publication.DestinationCIDR, publication.Protocol, publication.Port, safeRuleToken(publication.Service), publication.Protocol)
+		}
+	}
 	for _, rule := range plan.Rules {
 		if rule.Action != "allow" || rule.SourceCIDR == "" || (rule.DestinationCIDR == "" && rule.DestinationHost == "") || rule.From == "" || rule.To == "" {
 			continue
@@ -452,8 +559,28 @@ func RenderNFT(plan Plan) (string, error) {
 	b.WriteString("    iifname \"infra0\" " + moduleSourceCondition + "oifname \"wan0\" ip saddr @infra_net udp dport { 53, 123, 853 } counter accept comment \"boetticher:allow:forward-infra-internet-udp\"\n")
 	b.WriteString("    iifname \"mgmt0\" " + moduleSourceCondition + "oifname \"wan0\" ip saddr @mgmt_net tcp dport 443 counter accept comment \"boetticher:allow:forward-mgmt-internet\"\n")
 	b.WriteString("  }\n  chain output { type filter hook output priority filter; policy accept; }\n}\n\n")
-	b.WriteString("table ip " + NATTable + " {\n  chain postrouting {\n    type nat hook postrouting priority srcnat; policy accept;\n    oifname \"wan0\" ip saddr " + networkFor(plan, "TRUSTED") + " masquerade comment \"boetticher:nat-trusted\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SERVERS") + " masquerade comment \"boetticher:nat-servers\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "INFRA") + " masquerade comment \"boetticher:nat-infra\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SANDBOX") + " masquerade comment \"boetticher:nat-sandbox\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "MGMT") + " masquerade comment \"boetticher:nat-mgmt\"\n  }\n}\n")
+	b.WriteString("table ip " + NATTable + " {\n")
+	if plan.Upstream != nil {
+		b.WriteString("  chain prerouting {\n    type nat hook prerouting priority dstnat; policy accept;\n")
+		for _, publication := range plan.Publications {
+			fmt.Fprintf(&b, "    iifname \"wan0\" ip saddr %s ip daddr %s %s dport %d dnat to %s:%d comment \"boetticher:publish-%s-%s-dnat\"\n", upstreamSourceCIDR(*plan.Upstream), upstreamAddress(*plan.Upstream), publication.Protocol, publication.Port, strings.TrimSuffix(publication.DestinationCIDR, "/32"), publication.Port, safeRuleToken(publication.Service), publication.Protocol)
+		}
+		b.WriteString("  }\n")
+	}
+	b.WriteString("  chain postrouting {\n    type nat hook postrouting priority srcnat; policy accept;\n    oifname \"wan0\" ip saddr " + networkFor(plan, "TRUSTED") + " masquerade comment \"boetticher:nat-trusted\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SERVERS") + " masquerade comment \"boetticher:nat-servers\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "INFRA") + " masquerade comment \"boetticher:nat-infra\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SANDBOX") + " masquerade comment \"boetticher:nat-sandbox\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "MGMT") + " masquerade comment \"boetticher:nat-mgmt\"\n  }\n}\n")
 	return b.String(), nil
+}
+
+func upstreamAddress(upstream UpstreamObservation) string {
+	return strings.Split(upstream.Address, "/")[0]
+}
+
+func upstreamSourceCIDR(upstream UpstreamObservation) string {
+	_, network, err := net.ParseCIDR(upstream.Address)
+	if err != nil || network == nil {
+		return "0.0.0.0/32"
+	}
+	return network.String()
 }
 
 func moduleGuestSources(plan Plan) []string {

@@ -41,6 +41,7 @@ func runInit(args []string, out interface{ Write([]byte) (int, error) }) error {
 	fmt.Fprintf(out, "Age identity: %s (outside Git)\n", model.ExpandUserPath(*ageIdentity))
 	fmt.Fprintf(out, "Model revision: %s\n", revision)
 	fmt.Fprintf(out, "Gateway mode: %s\n", created.Gateway.Mode)
+	fmt.Fprintf(out, "Gateway upstream MAC: %s (create the matching upstream DHCP reservation)\n", created.Gateway.Upstream.MAC)
 	if created.Gateway.Mode == model.GatewayModeExternal {
 		fmt.Fprintln(out, "External mode: a distinct physical vmbr1 trunk is required before bootstrap")
 	}
@@ -71,6 +72,7 @@ func runPreflight(args []string, out interface{ Write([]byte) (int, error) }) er
 		return errors.New("boetticher V1 must run from a separate controller; run it from macOS or Linux, not on the target Proxmox host")
 	}
 	fmt.Fprintf(out, "Controller: PASS %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Fprintf(out, "Gateway upstream MAC: %s (create the matching upstream DHCP reservation)\n", s.Gateway.Upstream.MAC)
 	allPass := true
 	for _, tool := range []string{"git", "ssh", "ssh-keyscan", "age-keygen", "sops", "ansible", "ansible-playbook"} {
 		path, err := exec.LookPath(tool)

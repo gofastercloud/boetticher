@@ -98,6 +98,11 @@ func Init(dir, ageIdentityPath string, externalFirewall bool) (model.Site, error
 		gatewayMode = model.GatewayModeExternal
 	}
 	s := model.NewSite(installationID, recipient, gatewayMode)
+	upstreamMAC, err := model.GenerateGatewayUpstreamMAC()
+	if err != nil {
+		return model.Site{}, err
+	}
+	s.Gateway.Upstream.MAC = upstreamMAC
 	if externalFirewall {
 		falseValue := false
 		s.ModuleConfig = map[string]model.ModuleConfig{"firewall": {Enabled: &falseValue}}

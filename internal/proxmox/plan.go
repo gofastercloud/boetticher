@@ -580,13 +580,13 @@ func fixtureVolumes(module, guest string) []model.PersistentVolumeDeclaration {
 }
 
 func gatewayNICs(s model.Site) []GuestNIC {
-	nics := []GuestNIC{{Name: "wan0", Bridge: "vmbr0", Method: "dhcp", MAC: "02:00:00:00:01:01"}}
+	nics := []GuestNIC{{Name: "wan0", Bridge: "vmbr0", Method: "dhcp", MAC: s.Gateway.Upstream.MAC}}
 	for _, zoneType := range []model.ZoneType{model.ZoneTypeTrusted, model.ZoneTypeServers, model.ZoneTypeSandbox, model.ZoneTypeManagement, model.ZoneTypeTransit, model.ZoneTypeInfrastructure} {
 		zone, err := s.ZoneForType(zoneType)
 		if err != nil {
 			continue
 		}
-		nics = append(nics, GuestNIC{Name: strings.ToLower(zone.Name) + "0", Bridge: "vmbr1", VLAN: zone.VLAN, Address: zone.Gateway, Method: "static", MAC: fmt.Sprintf("02:00:00:00:01:%02x", len(nics)+1)})
+		nics = append(nics, GuestNIC{Name: strings.ToLower(zone.Name) + "0", Bridge: "vmbr1", VLAN: zone.VLAN, Address: zone.Gateway, Method: "static", MAC: model.GatewayInterfaceMAC(len(nics) + 1)})
 	}
 	return nics
 }

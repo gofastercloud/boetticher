@@ -140,7 +140,7 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	}
 	if *dryRun {
 		fmt.Fprintf(out, "Bootstrap plan: PASS model %s\n", plan.ModelRevision)
-		fmt.Fprintf(out, "  Proxmox endpoint: %s\n  Gateway mode: %s\n  Gateway image: %s\n", s.BootstrapAddress, s.Gateway.Mode, model.QualifiedGatewayImage)
+		fmt.Fprintf(out, "  Proxmox endpoint: %s\n  Gateway mode: %s\n  Gateway upstream MAC: %s\n  Gateway image: %s\n", s.BootstrapAddress, s.Gateway.Mode, s.Gateway.Upstream.MAC, model.QualifiedGatewayImage)
 		fmt.Fprintf(out, "  Storage: %s\n", s.StorageProfile)
 		fmt.Fprintln(out, "  Trust transition: initial administrator → temporary root deployment SSH → scoped API token → durable labadmin")
 		builder := artifacts.Builder()
@@ -369,6 +369,7 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	fmt.Fprintf(out, "Proxmox bootstrap: PASS authenticated with scoped identity on %s\n", version)
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		fmt.Fprintln(out, "Managed gateway VM: deferred to boetticher deploy")
+		fmt.Fprintf(out, "Managed gateway upstream MAC: %s (create the matching upstream DHCP reservation)\n", s.Gateway.Upstream.MAC)
 	} else {
 		fmt.Fprintln(out, "External gateway: PASS physical VLAN trunk recorded; appliance remains operator-managed")
 	}

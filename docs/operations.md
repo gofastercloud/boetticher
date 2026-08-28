@@ -9,6 +9,14 @@ init → preflight → bootstrap → deploy → verify → doctor
 
 Use `bootstrap-endpoint` to record the known HOME-side Proxmox address, `preflight --live` to discover and classify physical NICs, `ssh-config` to render operator access, `network trunk` for the guarded physical-trunk transition, and `pki` for client certificates and trust export. The dedicated-data-disk layout is initialized as part of guarded `bootstrap`; `doctor --live` reports its Proxmox registrations and capacity. `upgrade` remains an explicit compatibility gate until schema and live migration qualification exists.
 
+Managed `init`, `preflight`, and `bootstrap --dry-run` display the persisted
+`wan0` MAC. Reserve it in the existing upstream DHCP service before deploying.
+When DNS publication is configured, `deploy` performs a safe gateway/DNS
+readiness pass, observes the current upstream address/prefix/default gateway,
+and then activates the bounded DNAT policy. `verify --live`, `doctor --live`,
+and `firewall status --live` report that effective observation; no live lease
+is promoted into canonical desired state.
+
 ## How checks are reported
 
 `boetticher verify` keeps generated SSH configuration, network reachability,

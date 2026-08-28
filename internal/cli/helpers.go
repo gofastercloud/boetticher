@@ -82,7 +82,7 @@ func writeModelProjections(dir string, s model.Site) error {
 		return err
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		ruleset, renderErr := firewall.RenderNFT(firewallPlan)
+		ruleset, renderErr := renderDeploymentNFT(firewallPlan)
 		if renderErr != nil {
 			return renderErr
 		}
@@ -182,6 +182,13 @@ func writeModelProjections(dir string, s model.Site) error {
 		return err
 	}
 	return writePhysicalDiscovery(dir, s, loadPhysicalDiscovery(dir, s))
+}
+
+func renderDeploymentNFT(plan firewall.Plan) (string, error) {
+	if len(plan.Publications) > 0 && plan.Upstream == nil {
+		return firewall.RenderSafeNFT(plan)
+	}
+	return firewall.RenderNFT(plan)
 }
 
 func physicalDiscoveryFromSite(s model.Site) networkmodel.Discovery {

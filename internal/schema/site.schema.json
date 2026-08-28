@@ -50,10 +50,54 @@
             "external"
           ],
           "type": "string"
+        },
+        "publish": {
+          "items": {
+            "$ref": "#/$defs/GatewayPublication"
+          },
+          "type": "array"
+        },
+        "upstream": {
+          "$ref": "#/$defs/GatewayUpstream"
         }
       },
       "required": [
-        "mode"
+        "mode",
+        "upstream"
+      ],
+      "type": "object"
+    },
+    "GatewayPublication": {
+      "additionalProperties": false,
+      "properties": {
+        "service": {
+          "enum": [
+            "dns"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "service"
+      ],
+      "type": "object"
+    },
+    "GatewayUpstream": {
+      "additionalProperties": false,
+      "properties": {
+        "mac": {
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "dhcp"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "mac"
       ],
       "type": "object"
     },

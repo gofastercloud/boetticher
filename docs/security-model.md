@@ -37,6 +37,17 @@ reservation-only DHCP plus DDNS. TRANSIT, INFRA, and MGMT are static-only.
 MGMT is intentionally small and administrative; it is not a general
 "important servers" VLAN.
 
+The HOME/upstream network is not a trusted fifth zone. The existing `wan0`
+vNIC receives a generated locally administered unicast MAC, which the operator
+reserves in upstream DHCP. Optional DNS publication is activated only after a
+current lease, directly connected prefix, default gateway, and matching MAC
+are observed. Its rules match `wan0`, that exact observed gateway address, the
+connected source prefix, and TCP or UDP port 53 before DNAT to
+`lab-dns-01`/`10.10.10.10`; established/related traffic is stateful and all
+other upstream-to-internal forwarding remains dropped. Client source addresses
+are preserved and the existing outbound SNAT rules do not apply to inbound
+publication.
+
 ## External gateway
 
 External mode is bring-your-own-firewall. boetticher owns the Proxmox-side
