@@ -44,6 +44,9 @@ func TestFoundationPlanIsDeterministic(t *testing.T) {
 	if first.GatewayImageURL != model.QualifiedGatewayImageURL || first.GatewaySHA512 != model.QualifiedGatewayImageSHA512 {
 		t.Fatalf("gateway image pin is incomplete: %#v", first)
 	}
+	if !reflect.DeepEqual(first.Nameservers, []string{"10.10.10.10", "10.10.10.11"}) {
+		t.Fatalf("platform nameservers = %#v, want the INFRA DNS pair", first.Nameservers)
+	}
 }
 
 func TestWaitForQEMUIPv4UsesRoutableGuestAgentAddress(t *testing.T) {
@@ -575,6 +578,42 @@ func TestEnsureLXCRequiresConfirmationToReplaceOwnedArtifact(t *testing.T) {
 	err := ensureLXC(context.Background(), client, Plan{Node: "node"}, guest)
 	if err == nil || !strings.Contains(err.Error(), "requires --confirm") {
 		t.Fatalf("artifact replacement without confirmation = %v", err)
+	}
+}
+
+func TestExistingLXCReconcilesPlatformNameservers(t *testing.T) {
+	plan := Plan{Node: "node", Nameservers: []string{"10.10.10.10", "10.10.10.11"}}
+	guest := GuestPlan{
+		VMID: 110, Name: "test-dns", Hostname: "test-dns", Owner: "boetticher/module/dns",
+		Tags: []string{"boetticher-module-dns"},
+	}
+	updated := false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/110/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
+			return response([]byte(`{"data":{"name":"test-dns","hostname":"test-dns","tags":"boetticher-module-dns"}}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if got := r.Form.Get("nameserver"); got != "10.10.10.10 10.10.10.11" {
+				t.Fatalf("nameserver update = %q", got)
+			}
+			updated = true
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected existing LXC request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := ensureLXC(context.Background(), client, plan, guest); err != nil {
+		t.Fatal(err)
+	}
+	if !updated {
+		t.Fatal("existing LXC nameserver was not reconciled")
 	}
 }
 

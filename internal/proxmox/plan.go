@@ -61,10 +61,15 @@ type GuestNIC struct {
 }
 
 type Plan struct {
-	ModelRevision   string      `json:"model_revision"`
-	ManagedBy       string      `json:"managed_by"`
-	Node            string      `json:"node"`
-	Storage         string      `json:"storage"`
+	ModelRevision string `json:"model_revision"`
+	ManagedBy     string `json:"managed_by"`
+	Node          string `json:"node"`
+	Storage       string `json:"storage"`
+	// Nameservers is the platform resolver pair applied to every LXC's
+	// Proxmox network contract. It is runtime planning data rather than a
+	// canonical model projection; pinning it prevents PVE from restoring its
+	// HOME resolver into /etc/resolv.conf after a guest reboot.
+	Nameservers     []string    `json:"-"`
 	GatewayImage    string      `json:"gateway_image"`
 	GatewayImageURL string      `json:"gateway_image_url"`
 	GatewaySHA512   string      `json:"gateway_sha512"`
@@ -347,6 +352,10 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
+	infraZone, err := s.ZoneForType(model.ZoneTypeInfrastructure)
+	if err != nil {
+		return Plan{}, err
+	}
 	revision, err := s.Revision()
 	if err != nil {
 		return Plan{}, err
@@ -455,7 +464,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	// Node is a runtime binding. Static plans retain the logical identity only
 	// as a placeholder for projections; every live caller must bind the node
 	// returned by Client.SingleNode before using a node-scoped operation.
-	return Plan{ModelRevision: revision, ManagedBy: "boetticher", Node: s.LogicalProxmoxIdentity, Storage: guestStorage, GatewayImage: model.QualifiedGatewayImage, GatewayImageURL: model.QualifiedGatewayImageURL, GatewaySHA512: model.QualifiedGatewayImageSHA512, Guests: guests, ArtifactFiles: map[string]string{}}, nil
+	return Plan{ModelRevision: revision, ManagedBy: "boetticher", Node: s.LogicalProxmoxIdentity, Storage: guestStorage, Nameservers: append([]string(nil), infraZone.DNSAddresses...), GatewayImage: model.QualifiedGatewayImage, GatewayImageURL: model.QualifiedGatewayImageURL, GatewaySHA512: model.QualifiedGatewayImageSHA512, Guests: guests, ArtifactFiles: map[string]string{}}, nil
 }
 
 // deploymentOrder follows the resolved module graph carried by Site. This
@@ -1363,6 +1372,9 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		if err := validateExistingGuestIdentity(current, guest); err != nil {
 			return err
 		}
+		if err := ensureExistingLXCNameserver(ctx, client, plan, guest, current); err != nil {
+			return err
+		}
 		return ensureExistingGuestTags(ctx, client, plan, guest, current)
 	}
 	if !IsNotFound(err) {
@@ -1391,6 +1403,9 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		"rootfs":       {fmt.Sprintf("%s:%d", plan.Storage, guest.DiskGiB)},
 		"tags":         {strings.Join(guest.Tags, ";")},
 		"net0":         {fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,ip=%s/24,gw=%s", guest.VLAN, guest.Address, gatewayFor(guest.Zone))},
+	}
+	if len(plan.Nameservers) > 0 {
+		params.Set("nameserver", strings.Join(plan.Nameservers, " "))
 	}
 	if guest.Security.Unprivileged {
 		params.Set("unprivileged", "1")
@@ -1892,6 +1907,21 @@ func ensureExistingGuestTags(ctx context.Context, client *Client, plan Plan, gue
 	}
 	if err != nil {
 		return fmt.Errorf("apply boetticher tags to %s: %w", guest.Name, err)
+	}
+	return nil
+}
+
+func ensureExistingLXCNameserver(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) error {
+	if len(plan.Nameservers) == 0 {
+		return nil
+	}
+	want := strings.Join(plan.Nameservers, " ")
+	got, _ := current["nameserver"].(string)
+	if strings.Join(strings.Fields(got), " ") == strings.Join(strings.Fields(want), " ") {
+		return nil
+	}
+	if err := client.SetLXCConfig(ctx, plan.Node, guest.VMID, url.Values{"nameserver": {want}}); err != nil {
+		return fmt.Errorf("apply platform nameservers to %s: %w", guest.Name, err)
 	}
 	return nil
 }
