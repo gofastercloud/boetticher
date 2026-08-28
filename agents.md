@@ -9,9 +9,9 @@ states the engineering guardrails that keep those contracts intact.
 boetticher is an opinionated v0.3 Proxmox distribution, not a generic homelab
 framework. The canonical model is deterministic for a fixed platform version,
 site configuration, enabled official modules, and relevant secret metadata. Core
-composes first-party module declarations and its model revision drives
-OpenTofu, Ansible, gateway policy, Pulse, SSH, portal, inventory, and
-verification projections.
+composes first-party module declarations and its model revision drives guarded
+Proxmox provisioning, Ansible, gateway policy, Pulse, SSH, portal, inventory,
+and verification projections.
 
 boetticher owns only its declared platform resources and generated platform
 state. Observation or discovery never creates ownership. Proxmox owns user
@@ -26,7 +26,7 @@ for deletion or import.
   40 SANDBOX, and 99 MGMT.
 - Proxmox is the normal bootstrap/recovery SSH bastion. The managed gateway is reached through that path.
 - Physical NIC identity uses observed hardware evidence; interface enumeration order is never architecture.
-- Secrets are SOPS-encrypted. The Age private identity, OpenTofu state, plans, caches, and temporary credentials stay outside Git.
+- Secrets are SOPS-encrypted. The Age private identity, caches, and temporary credentials stay outside Git.
 - The portal is passive generated static documentation. Pulse owns live monitoring state and alerts.
 - Dynamic DNS is lease publication, not workload ownership.
 - DNS/NTP is mandatory; monitoring and the managed firewall are default-on.
@@ -140,7 +140,7 @@ Additional rules:
 ## Testing
 
 Run `make ci` before handoff. It covers Go formatting, tests, vet, build,
-OpenTofu formatting/validation, Ansible syntax, and whitespace. Add focused
+Ansible syntax, and whitespace. Add focused
 regression tests for ownership boundaries, negative security paths, deterministic
 revisions, secret handling, and NIC/bootstrap safety.
 

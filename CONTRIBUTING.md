@@ -20,10 +20,9 @@ gofmt -w cmd internal
 make ci
 ```
 
-The repository targets the Go version in `go.mod`. Keep OpenTofu provider locks
-and generated contracts deterministic. Do not commit secrets, Age private
-identities, OpenTofu state, plans, caches, bootstrap credentials, or live
-installation state.
+The repository targets the Go version in `go.mod`. Keep generated contracts
+deterministic. Do not commit secrets, Age private identities, caches, bootstrap
+credentials, or live installation state.
 
 ## Pull requests
 

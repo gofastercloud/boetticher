@@ -1,4 +1,4 @@
-.PHONY: ci test build vet fmt fmt-check tofu-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-dns-adguard image-logging image-monitoring image-firewall image-portal image-tailnet-router image-litellm images scan-images scan-base scan-dns-blocky scan-dns-adguard scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-litellm command-docs command-docs-check
+.PHONY: ci test build vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-dns-adguard image-logging image-monitoring image-firewall image-portal image-tailnet-router image-litellm images scan-images scan-base scan-dns-blocky scan-dns-adguard scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-litellm command-docs command-docs-check
 
 GOCACHE ?= /tmp/boetticher-gocache
 GOMODCACHE ?= /tmp/boetticher-gomodcache
@@ -19,10 +19,6 @@ vet:
 
 build:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go build -o bin/boetticher ./cmd/boetticher
-
-tofu-check:
-	tofu fmt -check infra/tofu
-	cd infra/tofu && tofu init -backend=false -input=false && tofu validate
 
 ansible-check:
 	mkdir -p "$(ANSIBLE_LOCAL_TEMP)" "$(ANSIBLE_REMOTE_TEMP)"
@@ -68,4 +64,4 @@ vuln-check:
 
 security-check: naming-check actionlint vuln-check
 
-ci: fmt-check image-check schema-check command-docs-check test vet build tofu-check ansible-check security-check diff-check
+ci: fmt-check image-check schema-check command-docs-check test vet build ansible-check security-check diff-check

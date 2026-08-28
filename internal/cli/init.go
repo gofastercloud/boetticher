@@ -72,7 +72,7 @@ func runPreflight(args []string, out interface{ Write([]byte) (int, error) }) er
 	}
 	fmt.Fprintf(out, "Controller: PASS %s/%s\n", runtime.GOOS, runtime.GOARCH)
 	allPass := true
-	for _, tool := range []string{"git", "ssh", "ssh-keyscan", "age-keygen", "sops", "tofu", "ansible", "ansible-playbook"} {
+	for _, tool := range []string{"git", "ssh", "ssh-keyscan", "age-keygen", "sops", "ansible", "ansible-playbook"} {
 		path, err := exec.LookPath(tool)
 		if err != nil {
 			allPass = false

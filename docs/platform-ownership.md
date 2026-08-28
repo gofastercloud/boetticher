@@ -10,8 +10,9 @@ The firewall telemetry database is part of the managed firewall's declared
 platform state; its API is a read-only consumer boundary for Pulse and future
 internal AIOps tooling.
 
-Arbitrary user VMs and LXCs remain outside the model, OpenTofu state, Ansible
-inventory, boetticher monitoring ownership, backup guarantee, and deletion logic. Pulse may
+Arbitrary user VMs and LXCs remain outside the model, Boetticher's guarded
+Proxmox provisioning plan, Ansible inventory, monitoring ownership, backup
+guarantee, and deletion logic. Pulse may
 display them when the Proxmox API exposes them, but they may use
 the provided network simply by attaching a NIC to `vmbr1` and selecting a VLAN:
 

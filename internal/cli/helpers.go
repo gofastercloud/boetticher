@@ -352,10 +352,6 @@ func validateToolVersion(tool, version string) error {
 		if !strings.HasPrefix(version, "sops ") {
 			return fmt.Errorf("unrecognized SOPS version")
 		}
-	case "tofu":
-		if !strings.HasPrefix(version, "OpenTofu v") {
-			return fmt.Errorf("OpenTofu is required")
-		}
 	case "ansible":
 		if !strings.HasPrefix(version, "ansible [core ") {
 			return fmt.Errorf("Ansible Core is required")

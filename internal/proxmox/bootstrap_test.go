@@ -80,7 +80,7 @@ func TestSSHRunnerPreservesJournalArgumentsWithoutShellInterpolation(t *testing.
 	}
 }
 
-func TestSSHRunnerUsesBoundedTOFUForFreshApplianceHostKeys(t *testing.T) {
+func TestSSHRunnerUsesBoundedTrustOnFirstUseForFreshApplianceHostKeys(t *testing.T) {
 	runner := SSHRunner{StrictHostKey: "accept-new", HostAlias: "lab-dns-01"}
 	args, err := runner.commandArgs("10.10.10.10", "labadmin", []string{"true"})
 	if err != nil {

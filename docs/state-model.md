@@ -20,6 +20,6 @@ The repository must not contain the Age private identity. Keep it under the oper
 
 ## Runtime state
 
-OpenTofu state, plans, provider/plugin caches, Ansible caches, bootstrap state, temporary generated credentials, API responses containing secrets, and endpoint private keys live outside Git and are treated as potentially sensitive. The portal consumes only generated non-secret artifacts and status outputs; it has no control-plane credentials.
+Ansible caches, bootstrap state, temporary generated credentials, API responses containing secrets, and endpoint private keys live outside Git and are treated as potentially sensitive. The portal consumes only generated non-secret artifacts and status outputs; it has no control-plane credentials.
 
 `boetticher doctor` checks projections as `ABSENT`, `CURRENT`, or `INCONSISTENT` against the current revision. A current projection proves only model consistency, not deployment or authenticated service behavior.

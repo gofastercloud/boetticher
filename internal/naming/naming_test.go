@@ -148,7 +148,7 @@ func repositoryRoot(t *testing.T) string {
 
 func isIgnoredDirectory(name string) bool {
 	switch name {
-	case ".git", ".terraform", ".cache", ".venv", ".runtime", "bin":
+	case ".git", ".cache", ".venv", ".runtime", "bin":
 		return true
 	default:
 		return false
