@@ -22,6 +22,7 @@ import (
 const (
 	maxBrokerRequestBytes  = 512 * 1024
 	maxBrokerResponseBytes = 256 * 1024
+	modelEnvelopeReserve   = 1024
 )
 
 type EvidenceSource interface {
@@ -295,7 +296,7 @@ func (b *Broker) routeCompletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request completionRequest
-	if r.Header.Get("Content-Type") != "application/json" || strictDecode(http.MaxBytesReader(w, r.Body, maxBrokerRequestBytes), &request) != nil || len(request.Messages) == 0 || request.Stream {
+	if r.Header.Get("Content-Type") != "application/json" || strictDecode(http.MaxBytesReader(w, r.Body, maxBrokerRequestBytes), &request) != nil || len(request.Messages) == 0 || request.Stream || modelInputUpperBound(request) > MaxPromptTokens {
 		http.Error(w, "invalid completion request", http.StatusBadRequest)
 		return
 	}
@@ -331,6 +332,14 @@ func (b *Broker) routeCompletion(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
+}
+
+// AIOps aliases can target different provider tokenizers. Serialized UTF-8
+// bytes are therefore used as a conservative, provider-neutral upper bound:
+// no tokenizer can produce more input tokens than there are serialized bytes.
+// The fixed reserve covers the rewritten model and request envelope.
+func modelInputUpperBound(request completionRequest) int {
+	return modelEnvelopeReserve + len(request.Messages) + len(request.Tools) + len(request.ToolChoice) + len(request.ResponseFormat)
 }
 
 func (b *Broker) Validate() error {

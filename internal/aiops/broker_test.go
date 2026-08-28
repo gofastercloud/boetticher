@@ -1,8 +1,10 @@
 package aiops
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -117,5 +119,33 @@ func TestRouterBrokerOverwritesModelAndOutputBudget(t *testing.T) {
 	}
 	if forwarded.Model != "operations-investigator" || forwarded.MaxTokens != MaxOutputTokens {
 		t.Fatalf("forwarded request retained caller authority: %#v", forwarded)
+	}
+}
+
+func TestRouterBrokerRejectsInputAboveConservativeTokenBudget(t *testing.T) {
+	routerCalls := 0
+	router := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		routerCalls++
+		return nil, errors.New("unexpected router call")
+	})
+	now := time.Now().UTC()
+	registry := NewCapabilityRegistry()
+	if _, err := registry.Issue(EvidencePolicy{IncidentID: "incident-1"}, now); err != nil {
+		t.Fatal(err)
+	}
+	identity := "boetticher-holmes-active-investigation"
+	broker := &Broker{Capabilities: registry, Router: NewBoundedHTTPClient(router), RouterURL: "https://router.example/v1/chat/completions", ModelAlias: "operations-investigator", RouterIdentity: identity, Now: func() time.Time { return now }}
+	body, err := json.Marshal(map[string]any{"model": "operations-investigator", "messages": []map[string]string{{"role": "user", "content": strings.Repeat("x", MaxPromptTokens)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/v1/chat/completions", bytes.NewReader(body))
+	request.RemoteAddr = "127.0.0.1:1234"
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer "+identity)
+	response := httptest.NewRecorder()
+	broker.RouterHandler().ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest || routerCalls != 0 {
+		t.Fatalf("oversized model input status=%d router calls=%d", response.Code, routerCalls)
 	}
 }
