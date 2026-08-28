@@ -110,6 +110,17 @@
   no_log: true
   when: inventory_hostname == 'lab-monitor-01'
 
+- name: Install the platform CA for exact AIOps webhook TLS verification
+  ansible.builtin.copy:
+    content: "{{ client_ca_pem }}"
+    dest: /usr/local/share/ca-certificates/boetticher-platform.crt
+    owner: root
+    group: root
+    mode: '0644'
+  notify: update CA certificates
+  no_log: true
+  when: inventory_hostname == 'lab-monitor-01'
+
 - name: Check the installed Pulse release
   ansible.builtin.command: /opt/pulse/bin/pulse --version
   register: pulse_version
