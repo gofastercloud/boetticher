@@ -116,6 +116,30 @@ func TestBuilderArtifactReturnCommandKeepsGzipDefaultAndSupportsPlainBenchmark(t
 	}
 }
 
+func TestProxmoxCredentialsExistDistinguishesRetryState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "secrets", "proxmox.sops.yaml")
+	exists, err := proxmoxCredentialsExist(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exists {
+		t.Fatal("missing Proxmox credentials were treated as present")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("encrypted credentials"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exists, err = proxmoxCredentialsExist(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists {
+		t.Fatal("stored Proxmox credentials were treated as missing")
+	}
+}
+
 type diagnosticRunner struct {
 	output []byte
 }

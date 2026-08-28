@@ -159,7 +159,21 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err != nil {
 		return err
 	}
-	if err := proxmox.CheckScopedCredentialAvailability(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
+	credentialsPath := filepath.Join(*siteDir, site.ProxmoxSecretsPath)
+	credentialsExist, err := proxmoxCredentialsExist(credentialsPath)
+	if err != nil {
+		return fmt.Errorf("inspect existing Proxmox API credentials: %w", err)
+	}
+	var credentials site.ProxmoxCredentials
+	if credentialsExist {
+		credentials, err = site.LoadProxmoxCredentials(*siteDir, s, *ageIdentity)
+		if err != nil {
+			return fmt.Errorf("load existing Proxmox API credentials: %w", err)
+		}
+		if credentials.APIUser != "labadmin@pve" || credentials.TokenID != "boetticher" {
+			return fmt.Errorf("HOLD: encrypted Proxmox credentials identify %s!%s, expected labadmin@pve!boetticher", credentials.APIUser, credentials.TokenID)
+		}
+	} else if err := proxmox.CheckScopedCredentialAvailability(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
 		return err
 	}
 	if err := proxmox.InstallOperatorKey(ctx, runner, s.BootstrapAddress, *initialUser, publicKey); err != nil {
@@ -183,21 +197,12 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err := trustClient.CheckTLS(ctx); err != nil {
 		return fmt.Errorf("verify Proxmox API TLS before credential creation: %w", err)
 	}
-	var credentials site.ProxmoxCredentials
-	credentialsPath := filepath.Join(*siteDir, site.ProxmoxSecretsPath)
-	if _, statErr := os.Stat(credentialsPath); statErr == nil {
-		credentials, err = site.LoadProxmoxCredentials(*siteDir, s, *ageIdentity)
-		if err != nil {
-			return fmt.Errorf("load existing Proxmox API credentials: %w", err)
-		}
-		if credentials.APIUser != "labadmin@pve" || credentials.TokenID != "boetticher" {
-			return fmt.Errorf("HOLD: encrypted Proxmox credentials identify %s!%s, expected labadmin@pve!boetticher", credentials.APIUser, credentials.TokenID)
-		}
+	if credentialsExist {
 		if err := proxmox.EnsureScopedCredentialACL(ctx, runner, s.BootstrapAddress, *initialUser, credentials.APIUser, credentials.TokenID, "BoetticherProvisioner"); err != nil {
 			return fmt.Errorf("reconcile scoped Proxmox API credentials: %w", err)
 		}
 		fmt.Fprintln(out, "Existing encrypted Proxmox API credentials: PASS (reuse)")
-	} else if errors.Is(statErr, os.ErrNotExist) {
+	} else {
 		tokenSecret, createErr := proxmox.CreateScopedCredentialsWithRole(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner")
 		if createErr != nil {
 			return fmt.Errorf("create scoped Proxmox API credentials: %w", createErr)
@@ -206,8 +211,6 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 		if err := site.StoreProxmoxCredentials(*siteDir, s, credentials); err != nil {
 			return fmt.Errorf("store Proxmox credentials in SOPS: %w", err)
 		}
-	} else {
-		return fmt.Errorf("inspect existing Proxmox API credentials: %w", statErr)
 	}
 	client, err := proxmox.NewClient(proxmox.Config{
 		BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", User: credentials.APIUser,
@@ -371,6 +374,17 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	}
 	fmt.Fprintln(out, "Initial root/bootstrap authentication: no longer required for routine boetticher access")
 	return nil
+}
+
+func proxmoxCredentialsExist(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
 }
 
 func emitTiming(out interface{ Write([]byte) (int, error) }, stage string, started time.Time) {
