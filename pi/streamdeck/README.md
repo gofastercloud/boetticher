@@ -13,9 +13,11 @@ look for, create, or accept a Pulse token in this mode.
 
 Live statistics are a separate, explicit gate. To enable them later, install
 the controller-issued client certificate and CA plus a dedicated read-only
-Pulse token through systemd credentials, set `screensaver_only` to `false`,
-and configure the real Pulse URL. No token, private key, or certificate value
-belongs in this repository or in command-line arguments.
+Pulse token at the Pi-local `/etc/boetticher/pi/pulse-token` source path
+(root-owned and mode `0600`). The shipped systemd unit exposes that file only
+through `LoadCredential=`. Set `screensaver_only` to `false` and configure the
+real Pulse URL. No token, private key, or certificate value belongs in this
+repository or in command-line arguments.
 
 The currently attached device was identified before deployment as:
 

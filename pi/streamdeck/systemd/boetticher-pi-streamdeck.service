@@ -10,6 +10,7 @@ Group=streamdeck
 WorkingDirectory=/opt/boetticher-pi-streamdeck
 Environment=PYTHONPATH=/opt/boetticher-pi-streamdeck/src
 Environment=PYTHONUNBUFFERED=1
+LoadCredential=pulse-token:/etc/boetticher/pi/pulse-token
 ExecStart=/opt/boetticher-pi-streamdeck/.venv/bin/python -m boetticher_pi_streamdeck.app
 Restart=on-failure
 RestartSec=3s

@@ -17,7 +17,7 @@ class PulseClient:
         self.base_url = base_url.rstrip("/")
         self.total_timeout = timeout
         self.client = httpx.Client(
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"X-API-Token": token},
             cert=cert,
             verify=ca,
             follow_redirects=False,
@@ -40,6 +40,11 @@ class PulseClient:
         return json.loads(b"".join(chunks))
 
     def fetch(self) -> PulseState:
+        health = self._json("/api/health")
+        if not isinstance(health, dict):
+            raise ValueError("Pulse health is not an object")
+        status = str(health.get("status", "unknown"))
+
         summary = self._json("/api/state/summary")
         if not isinstance(summary, dict):
             raise ValueError("Pulse summary is not an object")
@@ -70,8 +75,8 @@ class PulseClient:
             offset += 100
 
         return PulseState(
-            str(summary.get("status", "unknown")),
-            int(summary.get("alerts", summary.get("alertCount", 0))),
+            status,
+            int(summary.get("activeAlerts", 0)),
             tuple(resources),
             datetime.now(timezone.utc),
         )
