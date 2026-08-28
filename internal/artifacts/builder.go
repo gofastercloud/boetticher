@@ -57,6 +57,7 @@ var PublicBuildInputs = []string{
 	"go.mod",
 	"go.sum",
 	"cmd/artifact-identity",
+	"cmd/boetticher-aiops",
 	"cmd/boetticher-firewall-telemetry",
 	"cmd/qualify-artifact",
 	"cmd/render-blocky-config",
