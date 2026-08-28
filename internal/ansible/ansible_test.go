@@ -477,7 +477,7 @@ func TestFirewallDHCPTemplateProjectsExplicitReservations(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, expected := range []string{"subnet.get('reservations'", "hw-address", "ip-address", "hostname"} {
+	for _, expected := range []string{"\"dhcp-ddns\": {", "\"enable-updates\": true", "\"server-ip\": \"127.0.0.1\"", "\"server-port\": 53001", "subnet.get('reservations'", "hw-address", "ip-address", "hostname"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("Kea template does not project reservation field %q", expected)
 		}
