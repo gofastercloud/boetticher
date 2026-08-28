@@ -237,7 +237,7 @@ Options: --live reads parent usb_device identities from Proxmox; --confirm is re
 
 Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
 
-Examples: `boetticher hardware usb list --site ./my-boetticher`
+Examples: `boetticher hardware usb bind printer serial 1-2.4 --confirm --site ./my-boetticher`
 
 Related commands: module, deploy, preflight
 
@@ -347,9 +347,9 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; --age-identity selects the external Age identity for secret inspection.
 
-Safety: tailnet-router and litellm are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, litellm, and printer are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership. Secret values are never displayed or accepted as command arguments.
 
-Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules litellm secrets set openrouter_api_key --site ./my-boetticher`
+Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules printer plan --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
@@ -719,7 +719,7 @@ Options: --live reads parent usb_device identities from Proxmox; --confirm is re
 
 Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
 
-Examples: `boetticher hardware usb list --site ./my-boetticher`
+Examples: `boetticher hardware usb bind printer serial 1-2.4 --confirm --site ./my-boetticher`
 
 Related commands: module, deploy, preflight
 
@@ -735,7 +735,7 @@ Options: --live reads parent usb_device identities from Proxmox; --confirm is re
 
 Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
 
-Examples: `boetticher hardware usb list --site ./my-boetticher`
+Examples: `boetticher hardware usb bind printer serial 1-2.4 --confirm --site ./my-boetticher`
 
 Related commands: module, deploy, preflight
 
@@ -751,7 +751,7 @@ Options: --live reads parent usb_device identities from Proxmox; --confirm is re
 
 Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
 
-Examples: `boetticher hardware usb list --site ./my-boetticher`
+Examples: `boetticher hardware usb bind printer serial 1-2.4 --confirm --site ./my-boetticher`
 
 Related commands: module, deploy, preflight
 
@@ -767,7 +767,7 @@ Options: --live reads parent usb_device identities from Proxmox; --confirm is re
 
 Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
 
-Examples: `boetticher hardware usb list --site ./my-boetticher`
+Examples: `boetticher hardware usb bind printer serial 1-2.4 --confirm --site ./my-boetticher`
 
 Related commands: module, deploy, preflight
 
@@ -893,9 +893,9 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; --age-identity selects the external Age identity for secret inspection.
 
-Safety: tailnet-router and litellm are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, litellm, and printer are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership. Secret values are never displayed or accepted as command arguments.
 
-Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules litellm secrets set openrouter_api_key --site ./my-boetticher`
+Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules printer plan --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
@@ -909,9 +909,9 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; --age-identity selects the external Age identity for secret inspection.
 
-Safety: tailnet-router and litellm are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, litellm, and printer are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership. Secret values are never displayed or accepted as command arguments.
 
-Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules litellm secrets set openrouter_api_key --site ./my-boetticher`
+Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules printer plan --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 

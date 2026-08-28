@@ -97,6 +97,12 @@ func Inventory(s model.Site) (string, error) {
 			writeHost(&b, component, true)
 		}
 	}
+	b.WriteString("\n[printer]\n")
+	for _, component := range components {
+		if component.Module == "printer" {
+			writeHost(&b, component, true)
+		}
+	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		b.WriteString("\n[firewall]\n")
 		for _, component := range components {
@@ -105,7 +111,7 @@ func Inventory(s model.Site) (string, error) {
 			}
 		}
 	}
-	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\ntailnet-router\nlitellm\n")
+	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\ntailnet-router\nlitellm\nprinter\n")
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		b.WriteString("firewall\n")
 	}

@@ -41,6 +41,7 @@ type ModulesConfig struct {
 	Logging       *MandatoryModuleConfig `yaml:"logging,omitempty" json:"logging,omitempty"`
 	TailnetRouter *ToggleModuleConfig    `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
 	LiteLLM       *LiteLLMModuleConfig   `yaml:"litellm,omitempty" json:"litellm,omitempty"`
+	Printer       *ToggleModuleConfig    `yaml:"printer,omitempty" json:"printer,omitempty"`
 }
 
 type DNSModuleConfig struct {
@@ -96,6 +97,9 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 	if m.LiteLLM != nil {
 		result["litellm"] = ModuleConfig{Enabled: cloneBool(m.LiteLLM.Enabled), Upstreams: cloneLiteLLMUpstreams(m.LiteLLM.Upstreams), Models: cloneLiteLLMModels(m.LiteLLM.Models)}
 	}
+	if m.Printer != nil {
+		result["printer"] = ModuleConfig{Enabled: cloneBool(m.Printer.Enabled)}
+	}
 	return result
 }
 
@@ -118,6 +122,9 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 	}
 	if config, ok := input["litellm"]; ok {
 		result.LiteLLM = &LiteLLMModuleConfig{Enabled: cloneBool(config.Enabled), Upstreams: cloneLiteLLMUpstreams(config.Upstreams), Models: cloneLiteLLMModels(config.Models)}
+	}
+	if config, ok := input["printer"]; ok {
+		result.Printer = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	}
 	return result
 }
@@ -148,6 +155,8 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 			models = m.LiteLLM.Models
 		}
 		m.LiteLLM = &LiteLLMModuleConfig{Enabled: cloneBool(config.Enabled), Upstreams: cloneLiteLLMUpstreams(upstreams), Models: cloneLiteLLMModels(models)}
+	case "printer":
+		m.Printer = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	default:
 		return fmt.Errorf("modules.%s: unknown first-party module", name)
 	}
