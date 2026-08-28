@@ -239,6 +239,36 @@ func TestMonitoringApplianceUsesImageProvidedPulseRuntime(t *testing.T) {
 	}
 }
 
+func TestPulseRestartsAfterCredentialProjectionOrUnhealthyStart(t *testing.T) {
+	basePath := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	baseData, err := os.ReadFile(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseText := string(baseData)
+	if !strings.Contains(baseText, "register: boetticher_credential_dropin_install") {
+		t.Fatal("credential drop-in installation does not expose its change state")
+	}
+
+	monitorPath := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
+	monitorData, err := os.ReadFile(monitorPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	monitorText := string(monitorData)
+	for _, required := range []string{
+		"systemctl show pulse --property=ActiveState --property=SubState --value",
+		"boetticher_credential_dropin_install is changed",
+		"pulse_service_state.stdout_lines | default([]) != ['active', 'running']",
+		"state: restarted",
+		"daemon_reload: true",
+	} {
+		if !strings.Contains(monitorText, required) {
+			t.Fatalf("Pulse recovery contract is missing %q", required)
+		}
+	}
+}
+
 func TestMonitoringFrontendHandlersFlushBeforeReconciliation(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
