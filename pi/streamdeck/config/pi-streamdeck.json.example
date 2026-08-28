@@ -1,0 +1,14 @@
+{
+  "screensaver_only": true,
+  "screensaver_frame_seconds": 0.25,
+  "pulse_url": "",
+  "brightness": 40,
+  "refresh_seconds": 5,
+  "request_timeout_seconds": 3,
+  "default_page": "overview",
+  "pinned_guests": [],
+  "serial": "",
+  "client_certificate": "/var/lib/boetticher/identity/tls/streamdeck.crt.pem",
+  "client_key": "/var/lib/boetticher/identity/tls/streamdeck.key.pem",
+  "ca_certificate": "/var/lib/boetticher/identity/tls/ca.pem"
+}

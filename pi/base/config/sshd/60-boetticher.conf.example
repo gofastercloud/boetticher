@@ -1,0 +1,6 @@
+# Install only after a verified non-root administrative key and recovery path.
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin prohibit-password
+UsePAM yes

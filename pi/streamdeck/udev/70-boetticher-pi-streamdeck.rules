@@ -1,0 +1,3 @@
+# Exact device identity observed on lab-display-01: 0fd9:006d / AL33J2C14717.
+SUBSYSTEM=="usb", ATTR{idVendor}=="0fd9", ATTR{idProduct}=="006d", ATTR{serial}=="AL33J2C14717", GROUP="streamdeck", MODE="0660"
+KERNEL=="hidraw*", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="006d", ATTRS{serial}=="AL33J2C14717", GROUP="streamdeck", MODE="0660"
