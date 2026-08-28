@@ -340,33 +340,33 @@ Related commands: bootstrap, deploy, doctor
 
 ### module
 
-Purpose: Inspect or change first-party module intent through the shared deploy engine.
+Purpose: Inspect or change first-party module intent and manage declared operator secrets through the shared deploy engine.
 
-Usage: `boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+Usage: `boetticher module list|show|plan|enable|disable|status|secrets [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
 
-Arguments: NAME is required for show, plan, enable, disable, and optional for status.
+Arguments: NAME is required for show, plan, enable, disable, and secrets, and optional for status.
 
-Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; --purge requires --confirm and explicitly removes retained module resources.
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes and secret removal; --age-identity selects the external Age identity for secret inspection.
 
-Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive.
+Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive. Secret values are read from hidden TTY input or explicit set-command stdin and are never displayed.
 
-Examples: `boetticher module list --site ./my-boetticher`; `boetticher module disable monitoring --confirm --site ./my-boetticher`
+Examples: `boetticher module secrets litellm list --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
 ### modules
 
-Purpose: Inspect or change first-party module intent through the shared registry and deploy engine.
+Purpose: Inspect or change first-party module intent and manage declared operator secrets through the shared registry and deploy engine.
 
-Usage: `boetticher modules list|MODULE show|plan|enable|disable|status|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+Usage: `boetticher modules list|MODULE show|plan|enable|disable|status|secrets|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
 
-Arguments: MODULE is a registered first-party module. list retains the generic module inventory; lifecycle commands are resolved by the same generic implementation.
+Arguments: MODULE is a registered first-party module. list retains the generic module inventory; lifecycle and secret commands are resolved by the same generic implementation.
 
-Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; purge requires --confirm and removes retained module resources only after exact ownership proof.
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; --age-identity selects the external Age identity for secret inspection.
 
-Safety: tailnet-router, litellm, streamdeck, and printer are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership.
+Safety: tailnet-router, litellm, streamdeck, and printer are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership. Secret values are never displayed or accepted as command arguments.
 
-Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules printer plan --site ./my-boetticher`
+Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules litellm secrets set openrouter_api_key --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
@@ -806,113 +806,145 @@ Related commands: module, deploy, preflight
 
 ### module disable
 
-Purpose: Inspect or change first-party module intent through the shared deploy engine.
+Purpose: Inspect or change first-party module intent and manage declared operator secrets through the shared deploy engine.
 
-Usage: `boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+Usage: `boetticher module list|show|plan|enable|disable|status|secrets [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
 
-Arguments: NAME is required for show, plan, enable, disable, and optional for status.
+Arguments: NAME is required for show, plan, enable, disable, and secrets, and optional for status.
 
-Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; --purge requires --confirm and explicitly removes retained module resources.
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes and secret removal; --age-identity selects the external Age identity for secret inspection.
 
-Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive.
+Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive. Secret values are read from hidden TTY input or explicit set-command stdin and are never displayed.
 
-Examples: `boetticher module list --site ./my-boetticher`; `boetticher module disable monitoring --confirm --site ./my-boetticher`
+Examples: `boetticher module secrets litellm list --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
 ### module enable
 
-Purpose: Inspect or change first-party module intent through the shared deploy engine.
+Purpose: Inspect or change first-party module intent and manage declared operator secrets through the shared deploy engine.
 
-Usage: `boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+Usage: `boetticher module list|show|plan|enable|disable|status|secrets [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
 
-Arguments: NAME is required for show, plan, enable, disable, and optional for status.
+Arguments: NAME is required for show, plan, enable, disable, and secrets, and optional for status.
 
-Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; --purge requires --confirm and explicitly removes retained module resources.
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes and secret removal; --age-identity selects the external Age identity for secret inspection.
 
-Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive.
+Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive. Secret values are read from hidden TTY input or explicit set-command stdin and are never displayed.
 
-Examples: `boetticher module list --site ./my-boetticher`; `boetticher module disable monitoring --confirm --site ./my-boetticher`
+Examples: `boetticher module secrets litellm list --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
 ### module list
 
-Purpose: Inspect or change first-party module intent through the shared deploy engine.
+Purpose: Inspect or change first-party module intent and manage declared operator secrets through the shared deploy engine.
 
-Usage: `boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+Usage: `boetticher module list|show|plan|enable|disable|status|secrets [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
 
-Arguments: NAME is required for show, plan, enable, disable, and optional for status.
+Arguments: NAME is required for show, plan, enable, disable, and secrets, and optional for status.
 
-Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; --purge requires --confirm and explicitly removes retained module resources.
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes and secret removal; --age-identity selects the external Age identity for secret inspection.
 
-Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive.
+Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive. Secret values are read from hidden TTY input or explicit set-command stdin and are never displayed.
 
-Examples: `boetticher module list --site ./my-boetticher`; `boetticher module disable monitoring --confirm --site ./my-boetticher`
+Examples: `boetticher module secrets litellm list --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
 ### module plan
 
-Purpose: Inspect or change first-party module intent through the shared deploy engine.
+Purpose: Inspect or change first-party module intent and manage declared operator secrets through the shared deploy engine.
 
-Usage: `boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+Usage: `boetticher module list|show|plan|enable|disable|status|secrets [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
 
-Arguments: NAME is required for show, plan, enable, disable, and optional for status.
+Arguments: NAME is required for show, plan, enable, disable, and secrets, and optional for status.
 
-Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; --purge requires --confirm and explicitly removes retained module resources.
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes and secret removal; --age-identity selects the external Age identity for secret inspection.
 
-Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive.
+Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive. Secret values are read from hidden TTY input or explicit set-command stdin and are never displayed.
 
-Examples: `boetticher module list --site ./my-boetticher`; `boetticher module disable monitoring --confirm --site ./my-boetticher`
+Examples: `boetticher module secrets litellm list --site ./my-boetticher`
+
+Related commands: config validate, deploy, doctor
+
+### module secrets
+
+Purpose: Inspect or change first-party module intent and manage declared operator secrets through the shared deploy engine.
+
+Usage: `boetticher module list|show|plan|enable|disable|status|secrets [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+
+Arguments: NAME is required for show, plan, enable, disable, and secrets, and optional for status.
+
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes and secret removal; --age-identity selects the external Age identity for secret inspection.
+
+Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive. Secret values are read from hidden TTY input or explicit set-command stdin and are never displayed.
+
+Examples: `boetticher module secrets litellm list --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
 ### module show
 
-Purpose: Inspect or change first-party module intent through the shared deploy engine.
+Purpose: Inspect or change first-party module intent and manage declared operator secrets through the shared deploy engine.
 
-Usage: `boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+Usage: `boetticher module list|show|plan|enable|disable|status|secrets [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
 
-Arguments: NAME is required for show, plan, enable, disable, and optional for status.
+Arguments: NAME is required for show, plan, enable, disable, and secrets, and optional for status.
 
-Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; --purge requires --confirm and explicitly removes retained module resources.
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes and secret removal; --age-identity selects the external Age identity for secret inspection.
 
-Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive.
+Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive. Secret values are read from hidden TTY input or explicit set-command stdin and are never displayed.
 
-Examples: `boetticher module list --site ./my-boetticher`; `boetticher module disable monitoring --confirm --site ./my-boetticher`
+Examples: `boetticher module secrets litellm list --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
 ### module status
 
-Purpose: Inspect or change first-party module intent through the shared deploy engine.
+Purpose: Inspect or change first-party module intent and manage declared operator secrets through the shared deploy engine.
 
-Usage: `boetticher module list|show|plan|enable|disable|status [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+Usage: `boetticher module list|show|plan|enable|disable|status|secrets [NAME] [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
 
-Arguments: NAME is required for show, plan, enable, disable, and optional for status.
+Arguments: NAME is required for show, plan, enable, disable, and secrets, and optional for status.
 
-Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; --purge requires --confirm and explicitly removes retained module resources.
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes and secret removal; --age-identity selects the external Age identity for secret inspection.
 
-Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive.
+Safety: DNS and logging are mandatory. Ordinary disable retains owned guests and persistent data; purge is destructive. Secret values are read from hidden TTY input or explicit set-command stdin and are never displayed.
 
-Examples: `boetticher module list --site ./my-boetticher`; `boetticher module disable monitoring --confirm --site ./my-boetticher`
+Examples: `boetticher module secrets litellm list --site ./my-boetticher`
+
+Related commands: config validate, deploy, doctor
+
+### modules MODULE secrets
+
+Purpose: Inspect or change first-party module intent and manage declared operator secrets through the shared registry and deploy engine.
+
+Usage: `boetticher modules list|MODULE show|plan|enable|disable|status|secrets|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+
+Arguments: MODULE is a registered first-party module. list retains the generic module inventory; lifecycle and secret commands are resolved by the same generic implementation.
+
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; --age-identity selects the external Age identity for secret inspection.
+
+Safety: tailnet-router, litellm, streamdeck, and printer are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership. Secret values are never displayed or accepted as command arguments.
+
+Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules litellm secrets set openrouter_api_key --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
 ### modules list
 
-Purpose: Inspect or change first-party module intent through the shared registry and deploy engine.
+Purpose: Inspect or change first-party module intent and manage declared operator secrets through the shared registry and deploy engine.
 
-Usage: `boetticher modules list|MODULE show|plan|enable|disable|status|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+Usage: `boetticher modules list|MODULE show|plan|enable|disable|status|secrets|purge [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
 
-Arguments: MODULE is a registered first-party module. list retains the generic module inventory; lifecycle commands are resolved by the same generic implementation.
+Arguments: MODULE is a registered first-party module. list retains the generic module inventory; lifecycle and secret commands are resolved by the same generic implementation.
 
-Options: --dry-run shows the resolved effect; --confirm authorizes configuration or destructive lifecycle changes; purge requires --confirm and removes retained module resources only after exact ownership proof.
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; --age-identity selects the external Age identity for secret inspection.
 
-Safety: tailnet-router, litellm, streamdeck, and printer are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership.
+Safety: tailnet-router, litellm, streamdeck, and printer are default-off. Ordinary disable retains owned guests and persistent data; purge is destructive and never treats VMID range membership as ownership. Secret values are never displayed or accepted as command arguments.
 
-Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules printer plan --site ./my-boetticher`
+Examples: `boetticher modules list --site ./my-boetticher`; `boetticher modules litellm secrets set openrouter_api_key --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
