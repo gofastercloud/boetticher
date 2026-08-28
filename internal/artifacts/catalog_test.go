@@ -638,6 +638,15 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	if strings.Contains(buildText+smokeText, "litellm.__version__") || !strings.Contains(buildText, "from importlib.metadata import version") || !strings.Contains(buildText, `version("litellm")`) || !strings.Contains(smokeText, `version("litellm")`) {
 		t.Fatal("LiteLLM qualification does not use stable distribution metadata for version verification")
 	}
+	capabilityReader, err := os.ReadFile(filepath.Join(root, "litellm", "runtime", "model-capabilities.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"LITELLM_LOCAL_MODEL_COST_MAP", "supports_function_calling", "supports_response_schema", "max_input_tokens", "max_output_tokens"} {
+		if !strings.Contains(string(capabilityReader), required) {
+			t.Fatalf("LiteLLM capability reader is missing fail-closed field %q", required)
+		}
+	}
 	if !strings.Contains(buildText, "build_tailnet_router") || !strings.Contains(buildText, "build_litellm") || !strings.Contains(buildText, "--require-hashes") || !strings.Contains(buildText, "rm -f \"$rootfs/etc/nginx/sites-enabled/default\"") {
 		t.Fatal("first-party appliance build paths are incomplete or do not enforce the dependency lock")
 	}

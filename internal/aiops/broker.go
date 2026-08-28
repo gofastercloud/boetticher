@@ -151,13 +151,28 @@ type Broker struct {
 	RouterURL      string
 	ModelAlias     string
 	RouterIdentity string
+	Store          *Store
 	Now            func() time.Time
 }
 
 func (b *Broker) EvidenceHandler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/status", b.status)
 	mux.HandleFunc("POST /v1/evidence/query", b.queryEvidence)
 	return loopbackOnly(mux)
+}
+
+func (b *Broker) status(w http.ResponseWriter, r *http.Request) {
+	if b.Store == nil {
+		http.Error(w, "status unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	status, err := b.Store.Status(r.Context(), b.now())
+	if err != nil {
+		http.Error(w, "status unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
 }
 
 func (b *Broker) RouterHandler() http.Handler {
