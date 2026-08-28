@@ -1,6 +1,8 @@
 name: boetticher-aiops
-version: 0.3.33
+version: 1.0.0
+kind: lxc
 base: boetticher-base
+base_version: 0.3.33
 architecture: amd64
 runtime:
   adapter: boetticher-aiops
@@ -13,6 +15,10 @@ runtime:
     - tcp://127.0.0.1:8090
   persistent_state: /var/lib/boetticher/aiops
   transient_evidence: /run/boetticher-aiops
+sources:
+  holmes_server:
+    url: https://github.com/HolmesGPT/holmesgpt/archive/refs/tags/0.40.0.tar.gz
+    sha256: 3465cd634b0e478f058b026b37caa3b8f10651f7aa9058dc73368b5403f0fb3d
 security:
   internet_toolset: disabled
   bash_toolset: disabled

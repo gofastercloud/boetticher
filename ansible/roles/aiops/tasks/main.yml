@@ -15,6 +15,104 @@
     group: boetticher-aiops
     mode: '0700'
 
+- name: Create the adapter-owned endpoint identity directory
+  ansible.builtin.file:
+    path: /var/lib/boetticher/identity/tls
+    state: directory
+    owner: root
+    group: boetticher-aiops
+    mode: '0750'
+
+- name: Generate AIOps endpoint private keys locally
+  ansible.builtin.command:
+    argv: [openssl, genpkey, -algorithm, EC, -pkeyopt, ec_paramgen_curve:P-256, -out, "/var/lib/boetticher/identity/tls/{{ item.file }}.key.pem"]
+  args:
+    creates: "/var/lib/boetticher/identity/tls/{{ item.file }}.key.pem"
+  loop:
+    - {file: aiops, identity: "aiops.{{ domain }}"}
+    - {file: pulse-read, identity: aiops-pulse-read}
+    - {file: pulse-note, identity: aiops-pulse-note}
+    - {file: log-query-client, identity: aiops-log-read}
+    - {file: ai-router-client, identity: aiops-router-client}
+
+- name: Restrict AIOps endpoint private keys to the adapter
+  ansible.builtin.file:
+    path: "/var/lib/boetticher/identity/tls/{{ item }}.key.pem"
+    owner: root
+    group: boetticher-aiops
+    mode: '0640'
+  loop: [aiops, pulse-read, pulse-note, log-query-client, ai-router-client]
+
+- name: Generate AIOps endpoint CSRs locally
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - req
+      - -new
+      - -sha256
+      - -key
+      - "/var/lib/boetticher/identity/tls/{{ item.file }}.key.pem"
+      - -subj
+      - "/CN={{ item.identity }}"
+      - -addext
+      - "subjectAltName=DNS:{{ item.san }}"
+      - -out
+      - "/var/lib/boetticher/identity/tls/{{ item.file }}.csr.pem"
+  args:
+    creates: "/var/lib/boetticher/identity/tls/{{ item.file }}.csr.pem"
+  loop:
+    - {file: aiops, identity: "aiops.{{ domain }}", san: "aiops.{{ domain }},DNS:lab-aiops-01.{{ domain }}"}
+    - {file: pulse-read, identity: aiops-pulse-read, san: "aiops-pulse-read.{{ domain }}"}
+    - {file: pulse-note, identity: aiops-pulse-note, san: "aiops-pulse-note.{{ domain }}"}
+    - {file: log-query-client, identity: aiops-log-read, san: "aiops-log-read.{{ domain }}"}
+    - {file: ai-router-client, identity: aiops-router-client, san: "aiops-router-client.{{ domain }}"}
+
+- name: Fetch AIOps CSRs during PKI bootstrap
+  ansible.builtin.fetch:
+    src: "/var/lib/boetticher/identity/tls/{{ item }}.csr.pem"
+    dest: "{{ pki_csr_output_dir }}/{{ item }}.csr.pem"
+    flat: true
+  loop: [aiops, pulse-read, pulse-note, log-query-client, ai-router-client]
+  when: pki_bootstrap_phase | default(false) | bool
+
+- name: Require controller-issued AIOps certificates and platform CA
+  ansible.builtin.assert:
+    that:
+      - client_ca_pem is defined
+      - (pki_bootstrap_phase | default(false) | bool) or (aiops_server_cert_pem | default('') | length > 0)
+      - (pki_bootstrap_phase | default(false) | bool) or (aiops_pulse_read_cert_pem | default('') | length > 0)
+      - (pki_bootstrap_phase | default(false) | bool) or (aiops_pulse_note_cert_pem | default('') | length > 0)
+      - (pki_bootstrap_phase | default(false) | bool) or (aiops_log_read_cert_pem | default('') | length > 0)
+      - (pki_bootstrap_phase | default(false) | bool) or (aiops_router_client_cert_pem | default('') | length > 0)
+    fail_msg: "AIOps requires all five controller-signed endpoint identities before activation"
+  no_log: true
+
+- name: Install controller-issued AIOps certificates and platform CA
+  ansible.builtin.copy:
+    dest: "/var/lib/boetticher/identity/tls/{{ item.file }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: boetticher-aiops
+    mode: '0640'
+  loop:
+    - {file: aiops.crt.pem, content: "{{ aiops_server_cert_pem | default('') }}"}
+    - {file: pulse-read.crt.pem, content: "{{ aiops_pulse_read_cert_pem | default('') }}"}
+    - {file: pulse-note.crt.pem, content: "{{ aiops_pulse_note_cert_pem | default('') }}"}
+    - {file: log-query-client.crt.pem, content: "{{ aiops_log_read_cert_pem | default('') }}"}
+    - {file: ai-router-client.crt.pem, content: "{{ aiops_router_client_cert_pem | default('') }}"}
+    - {file: ca.crt.pem, content: "{{ client_ca_pem | default('') }}"}
+  no_log: true
+  when:
+    - aiops_server_cert_pem | default('') | length > 0
+    - aiops_pulse_read_cert_pem | default('') | length > 0
+    - aiops_pulse_note_cert_pem | default('') | length > 0
+    - aiops_log_read_cert_pem | default('') | length > 0
+    - aiops_router_client_cert_pem | default('') | length > 0
+
+- name: Record that all AIOps endpoint identities are installed
+  ansible.builtin.set_fact:
+    aiops_server_identity_ready: "{{ aiops_server_cert_pem | default('') | length > 0 and aiops_pulse_read_cert_pem | default('') | length > 0 and aiops_pulse_note_cert_pem | default('') | length > 0 and aiops_log_read_cert_pem | default('') | length > 0 and aiops_router_client_cert_pem | default('') | length > 0 }}"
+
 - name: Pin the selected provider-neutral model alias
   ansible.builtin.copy:
     dest: /etc/boetticher-aiops/runtime.env
@@ -26,6 +124,14 @@
     owner: root
     group: boetticher-aiops
     mode: '0640'
+
+- name: Render the compiled read-only evidence catalog
+  ansible.builtin.copy:
+    dest: /etc/boetticher-aiops/evidence-policy.json
+    owner: root
+    group: boetticher-aiops
+    mode: '0640'
+    content: "{{ {'hosts': {'lab-fw-01': ['kea-dhcp4.service', 'nftables.service'], 'lab-dns-01': ['blocky.service', 'pdns.service', 'chrony.service'], 'lab-dns-02': ['blocky.service', 'pdns.service', 'chrony.service'], 'lab-monitor-01': ['pulse.service'], 'lab-log-01': ['systemd-journal-remote.service', 'boetticher-log-query.service'], 'lab-litellm-01': ['litellm.service', 'nginx.service'], 'lab-aiops-01': ['boetticher-aiops.service', 'holmes.service']}} | to_nice_json }}"
 
 - name: Enable AIOps only after runtime credentials and endpoint identity exist
   ansible.builtin.service:

@@ -24,14 +24,26 @@ type RemoteEvidence struct {
 func (e RemoteEvidence) Query(ctx context.Context, request EvidenceRequest, policy EvidencePolicy) (json.RawMessage, error) {
 	switch request.Operation {
 	case OperationAlert:
-		return e.pulseGET(ctx, "/api/alerts/events", url.Values{"alert_id": []string{policy.PulseAlertID}})
+		return e.pulseGET(ctx, "/api/alerts/incidents", url.Values{"alertIdentifier": []string{policy.PulseAlertID}})
 	case OperationResource:
 		return e.pulseGET(ctx, "/api/resources/"+url.PathEscape(request.ResourceID), nil)
 	case OperationMetric:
+		resource, err := e.pulseGET(ctx, "/api/resources/"+url.PathEscape(request.ResourceID), nil)
+		if err != nil {
+			return nil, err
+		}
+		var identity struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(resource, &identity); err != nil || !safeToken(identity.Type) {
+			return nil, errors.New("Pulse resource did not provide a bounded type")
+		}
 		return e.pulseGET(ctx, "/api/metrics-store/history", url.Values{
-			"resource_id": []string{request.ResourceID},
-			"metric":      []string{request.Metric},
-			"minutes":     []string{strconv.Itoa(request.SinceMinutes)},
+			"resourceType": []string{identity.Type},
+			"resourceId":   []string{request.ResourceID},
+			"metric":       []string{request.Metric},
+			"range":        []string{strconv.Itoa(request.SinceMinutes) + "m"},
+			"maxPoints":    []string{"200"},
 		})
 	case OperationJournal:
 		body, err := json.Marshal(struct {

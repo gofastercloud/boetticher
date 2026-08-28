@@ -1,3 +1,5 @@
+model: openai/boetticher-broker
+max_steps: 12
 toolsets:
   internet:
     enabled: false
@@ -9,7 +11,13 @@ toolsets:
     type: http
     enabled: true
     config:
-      hosts:
-        - http://127.0.0.1:8443
-      paths:
-        - /v1/evidence/query
+      extra_headers:
+        Authorization: "Bearer {{ request_context.headers['X-Boetticher-Capability'] }}"
+      endpoints:
+        - hosts:
+            - http://127.0.0.1:8443
+          paths:
+            - /v1/evidence/query
+          methods:
+            - POST
+      timeout_seconds: 10
