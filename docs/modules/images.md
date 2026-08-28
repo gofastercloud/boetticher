@@ -62,11 +62,14 @@ they are not additional desired-state authorities, independent deployment
 authorities, or recovery authority. Builder provenance is optional and does
 not block an otherwise valid artifact.
 
-The pinned Trivy version performs one full filesystem scan per artifact with
-vulnerability and secret scanners enabled; its JSON result is converted into
-the human-readable summary and CycloneDX SBOM without rescanning the root
-filesystem. DNS package installation coalesces PowerDNS, SQLite, and Chrony
-into one repository transaction.
+The pinned Trivy version prepares its vulnerability database once, then
+performs one full filesystem scan per artifact with vulnerability and secret
+scanners enabled; parallel workers skip database updates so they cannot race
+on the shared cache. Its JSON result is converted into the human-readable
+summary and CycloneDX SBOM without rescanning the root filesystem. The timing
+output records the one-time database preparation separately. DNS package
+installation coalesces PowerDNS, SQLite, and Chrony into one repository
+transaction.
 
 Build timestamps, tool versions, and content hashes are not canonical
 desired-state inputs. The current `zstd -T0 -19` artifact compression and gzip
