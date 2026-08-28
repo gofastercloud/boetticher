@@ -152,14 +152,46 @@ type Broker struct {
 	ModelAlias     string
 	RouterIdentity string
 	Store          *Store
+	Readiness      ReadinessSource
 	Now            func() time.Time
 }
 
 func (b *Broker) EvidenceHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/status", b.status)
+	mux.HandleFunc("GET /v1/doctor", b.doctor)
 	mux.HandleFunc("POST /v1/evidence/query", b.queryEvidence)
 	return loopbackOnly(mux)
+}
+
+func (b *Broker) doctor(w http.ResponseWriter, r *http.Request) {
+	result := ReadinessStatus{
+		CheckedAt: b.now().Format(time.RFC3339Nano), ModelAlias: b.ModelAlias,
+		Checks: map[string]string{ReadinessAIOps: "PASS", ReadinessPulse: "FAIL", ReadinessJournal: "FAIL", ReadinessRouter: "FAIL"},
+	}
+	if b.Readiness == nil || b.Router == nil {
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	type checkResult struct {
+		name string
+		err  error
+	}
+	results := make(chan checkResult, 3)
+	go func() { results <- checkResult{ReadinessPulse, b.Readiness.CheckPulse(ctx)} }()
+	go func() { results <- checkResult{ReadinessJournal, b.Readiness.CheckJournal(ctx)} }()
+	go func() {
+		results <- checkResult{ReadinessRouter, QualifyModelAlias(ctx, b.Router, b.RouterURL, b.ModelAlias)}
+	}()
+	for range 3 {
+		check := <-results
+		if check.err == nil {
+			result.Checks[check.name] = "PASS"
+		}
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (b *Broker) status(w http.ResponseWriter, r *http.Request) {
