@@ -90,9 +90,10 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 		"10.10.5.10/32 ip daddr 10.10.20.60/32 tcp dport 443",
 		"10.10.5.10/32 ip daddr 10.10.10.30/32 tcp dport 443",
 		"10.10.5.10/32 ip daddr 10.10.10.20/32 tcp dport 443",
+		"10.10.10.20/32 ip daddr 10.10.99.250/32 tcp dport 8006",
 		"10.10.20.60/32 ip daddr openrouter.ai tcp dport 443",
 		"set module_guest_sources { type ipv4_addr; elements = {",
-		"10.10.20.60, 10.10.5.10",
+		"10.10.10.20, 10.10.20.60, 10.10.5.10",
 		"iifname \"servers0\" ip saddr != @module_guest_sources oifname \"wan0\"",
 		"arbitrary-egress-drop",
 	} {
@@ -123,7 +124,7 @@ func TestQualifiedModuleLoggingIntentResolvesCollector(t *testing.T) {
 	}
 }
 
-func TestCoreModuleGuestsRetainBaselinePolicyWithoutSourceIntents(t *testing.T) {
+func TestCoreModuleGuestsRetainBaselinePolicy(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	site, _, err := modules.Compose(config)
 	if err != nil {
@@ -133,17 +134,17 @@ func TestCoreModuleGuestsRetainBaselinePolicyWithoutSourceIntents(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.ModuleSources) != 0 {
-		t.Fatalf("Core-only module guests unexpectedly isolated from baseline policy: %v", plan.ModuleSources)
+	if !reflect.DeepEqual(plan.ModuleSources, []string{"10.10.10.20/32"}) {
+		t.Fatalf("Pulse source-specific policy is incomplete: %v", plan.ModuleSources)
 	}
 	ruleset, err := RenderNFT(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(ruleset, "module_guest_sources") {
-		t.Fatal("Core-only composition unexpectedly emitted a module source isolation set")
+	if !strings.Contains(ruleset, "set module_guest_sources { type ipv4_addr; elements = { 10.10.10.20 }") {
+		t.Fatal("Pulse source-specific policy did not emit its source isolation set")
 	}
-	if !strings.Contains(ruleset, `iifname "servers0" oifname "wan0" ip saddr @servers_net tcp dport { 53, 80, 443, 853 } counter accept`) {
+	if !strings.Contains(ruleset, `iifname "servers0" ip saddr != @module_guest_sources oifname "wan0" ip saddr @servers_net tcp dport { 53, 80, 443, 853 } counter accept`) {
 		t.Fatal("existing SERVERS baseline Internet policy was removed")
 	}
 }
@@ -165,7 +166,7 @@ func TestModuleGuestSourcesRequireSourceSpecificIntent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"10.10.20.60/32", "10.10.5.10/32"}
+	want := []string{"10.10.10.20/32", "10.10.20.60/32", "10.10.5.10/32"}
 	if !reflect.DeepEqual(plan.ModuleSources, want) {
 		t.Fatalf("module guest sources = %v, want only source-intent guests %v", plan.ModuleSources, want)
 	}
