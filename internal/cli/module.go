@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -16,8 +17,12 @@ import (
 )
 
 func runModule(args []string, out interface{ Write([]byte) (int, error) }) error {
+	return runModuleWithInput(args, os.Stdin, out, os.Stderr)
+}
+
+func runModuleWithInput(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }) error {
 	if len(args) == 0 {
-		return errors.New("usage: boetticher module list|show|plan|enable|disable|status")
+		return errors.New("usage: boetticher module list|show|plan|enable|disable|status|secrets")
 	}
 	switch args[0] {
 	case "list":
@@ -27,11 +32,13 @@ func runModule(args []string, out interface{ Write([]byte) (int, error) }) error
 	case "plan":
 		return runModulePlan(args[1:], out)
 	case "enable":
-		return runModuleChange(args[1:], out, true)
+		return runModuleChangeWithInput(args[1:], input, out, errOut, true)
 	case "disable":
-		return runModuleChange(args[1:], out, false)
+		return runModuleChangeWithInput(args[1:], input, out, errOut, false)
 	case "status":
-		return runModuleStatus(args[1:], out)
+		return runModuleStatusWithInput(args[1:], input, out, errOut)
+	case "secrets":
+		return runModuleSecrets(args[1:], input, out, errOut)
 	default:
 		return fmt.Errorf("unknown module command %q", args[0])
 	}
@@ -42,14 +49,18 @@ func runModule(args []string, out interface{ Write([]byte) (int, error) }) error
 // module path so module-specific commands cannot acquire a second deploy
 // engine or different ownership semantics.
 func runModules(args []string, out interface{ Write([]byte) (int, error) }) error {
+	return runModulesWithInput(args, os.Stdin, out, os.Stderr)
+}
+
+func runModulesWithInput(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }) error {
 	if len(args) == 0 {
-		return errors.New("usage: boetticher modules list|MODULE show|plan|enable|disable|status|purge")
+		return errors.New("usage: boetticher modules list|MODULE show|plan|enable|disable|status|secrets|purge")
 	}
 	if args[0] == "list" {
 		return runModuleList(args[1:], out)
 	}
 	if len(args) < 2 {
-		return errors.New("usage: boetticher modules MODULE show|plan|enable|disable|status|purge")
+		return errors.New("usage: boetticher modules MODULE show|plan|enable|disable|status|secrets|purge")
 	}
 	name, command := args[0], args[1]
 	forward := append([]string{name}, args[2:]...)
@@ -59,11 +70,13 @@ func runModules(args []string, out interface{ Write([]byte) (int, error) }) erro
 	case "plan":
 		return runModulePlan(forward, out)
 	case "enable":
-		return runModuleChange(forward, out, true)
+		return runModuleChangeWithInput(forward, input, out, errOut, true)
 	case "disable":
-		return runModuleChange(forward, out, false)
+		return runModuleChangeWithInput(forward, input, out, errOut, false)
 	case "status":
-		return runModuleStatus(forward, out)
+		return runModuleStatusWithInput(forward, input, out, errOut)
+	case "secrets":
+		return runModuleSecretsForName(forward[1:], input, out, errOut, name)
 	case "purge":
 		return runModuleChange(append(forward, "--purge"), out, false)
 	default:
@@ -188,15 +201,32 @@ func runModulePlan(args []string, out interface{ Write([]byte) (int, error) }) e
 }
 
 func runModuleStatus(args []string, out interface{ Write([]byte) (int, error) }) error {
+	return runModuleStatusWithInput(args, os.Stdin, out, os.Stderr)
+}
+
+func runModuleStatusWithInput(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }) error {
 	name := ""
 	remaining := args
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		name = args[0]
 		remaining = args[1:]
 	}
-	siteDir, _, _, _, err := moduleSite(remaining, "module status")
-	if err != nil {
-		return err
+	siteDir := "."
+	ageIdentity := model.DefaultAgeIdentity
+	if name != "" {
+		fs := flag.NewFlagSet("module status", flag.ContinueOnError)
+		fs.SetOutput(os.Stderr)
+		fs.StringVar(&siteDir, "site", ".", "private site repository directory")
+		fs.StringVar(&ageIdentity, "age-identity", model.DefaultAgeIdentity, "external Age identity path")
+		if err := fs.Parse(remaining); err != nil {
+			return err
+		}
+	} else {
+		var err error
+		siteDir, _, _, _, err = moduleSite(remaining, "module status")
+		if err != nil {
+			return err
+		}
 	}
 	s, err := site.Load(siteDir)
 	if err != nil {
@@ -207,13 +237,43 @@ func runModuleStatus(args []string, out interface{ Write([]byte) (int, error) })
 		if !ok {
 			return fmt.Errorf("unknown module %q", name)
 		}
-		fmt.Fprintf(out, "%s: %s (%s, %s)\n", module.Name, module.State, yesNo(module.Enabled), module.Reason)
+		config, err := site.LoadConfig(siteDir)
+		if err != nil {
+			return err
+		}
+		declarations, err := modules.SecretDeclarations(config, name)
+		if err != nil {
+			return err
+		}
+		keys := secretNamesOnly(declarations)
+		presence, err := site.PlatformSecretPresence(siteDir, s, ageIdentity, keys)
+		if err != nil {
+			return fmt.Errorf("inspect encrypted platform secrets: %w", err)
+		}
+		fmt.Fprintf(out, "Module %s\n\nConfiguration\n  State       %s\n  Enabled     %s\n  Reason      %s\n", module.Name, module.State, yesNo(module.Enabled), module.Reason)
+		if name == "litellm" {
+			litellm := config.Modules.Map()[name]
+			fmt.Fprintf(out, "  Upstreams   %d\n  Model aliases %d\n", len(litellm.Upstreams), len(litellm.Models))
+		}
+		fmt.Fprintln(out, "\nSecrets\nNAME\tLIFECYCLE\tMANAGEMENT\tSTATUS")
+		for _, declaration := range declarations {
+			status := "missing"
+			if presence[declaration.Name] {
+				status = "present"
+			}
+			fmt.Fprintf(out, "%s\t%s\t%s\t%s\n", declaration.Name, lifecycleName(declaration), declaration.Generation, status)
+		}
+		fmt.Fprintln(out, "\nRuntime\n  NOT TESTED (use boetticher doctor --live or verify for runtime evidence)")
 		return nil
 	}
 	return runModuleList(remaining, out)
 }
 
 func runModuleChange(args []string, out interface{ Write([]byte) (int, error) }, enable bool) error {
+	return runModuleChangeWithInput(args, os.Stdin, out, os.Stderr, enable)
+}
+
+func runModuleChangeWithInput(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }, enable bool) error {
 	if len(args) == 0 {
 		return errors.New("usage: boetticher module enable|disable NAME [--site DIR] [--dry-run] [--confirm]")
 	}
@@ -260,11 +320,21 @@ func runModuleChange(args []string, out interface{ Write([]byte) (int, error) },
 		fmt.Fprintln(out, "  Persistent resources: retained by default")
 	}
 	if *dryRun {
+		if enable {
+			if err := ensureModuleSecrets(*siteDir, resolved, config, name, *ageIdentity, input, out, errOut, true); err != nil {
+				return err
+			}
+		}
 		fmt.Fprintln(out, "  Site mutation: NOT RUN (dry-run)")
 		return nil
 	}
 	if !*confirm {
 		return errors.New("module changes require --confirm; use --dry-run to inspect the plan")
+	}
+	if enable {
+		if err := ensureModuleSecrets(*siteDir, resolved, config, name, *ageIdentity, input, out, errOut, *dryRun); err != nil {
+			return err
+		}
 	}
 	oldSite, err := site.Load(*siteDir)
 	if err != nil {

@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"strings"
 )
 
@@ -9,6 +11,16 @@ import (
 // Command implementations live in focused files; this file owns only the
 // public entry point and top-level help.
 func Run(args []string, out, errOut interface{ Write([]byte) (int, error) }) error {
+	return RunWithInput(args, os.Stdin, out, errOut)
+}
+
+// RunWithInput is the testable/operator-facing dispatcher variant used by
+// secret prompts. The input stream is never passed as a command argument.
+func RunWithInput(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }) error {
+	return run(args, input, out, errOut)
+}
+
+func run(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		usage(out)
 		return nil
@@ -43,9 +55,9 @@ func Run(args []string, out, errOut interface{ Write([]byte) (int, error) }) err
 	case "storage":
 		return runStorage(args[1:], out)
 	case "module":
-		return runModule(args[1:], out)
+		return runModuleWithInput(args[1:], input, out, errOut)
 	case "modules":
-		return runModules(args[1:], out)
+		return runModulesWithInput(args[1:], input, out, errOut)
 	case "config":
 		return runConfig(args[1:], out)
 	case "network":
