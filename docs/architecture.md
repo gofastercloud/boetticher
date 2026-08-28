@@ -57,6 +57,12 @@ and no VLAN subinterface inside `lab-fw-01`. Proxmox performs the VLAN
 classification on the guest attachments. The guest is a routed firewall, not
 a bridge.
 
+`wan0` keeps a generated locally administered unicast MAC across bootstrap,
+deploy, retry, and replacement. The operator reserves that MAC in the existing
+HOME/upstream DHCP service; the resulting IPv4 lease, prefix, and default
+gateway are observed runtime state rather than desired state. Optional service
+publication uses this existing `wan0` only and never adds a vNIC.
+
 The gateway is deliberately small: a qualified Debian 13 boetticher appliance
 containing nftables, Kea DHCPv4/D2, minimal SANDBOX DNS/NTP services, SSH,
 Chrony where needed. Its pinned Debian 13 GenericCloud
@@ -72,6 +78,12 @@ and stores seven days of samples in SQLite at
 to `10.10.10.1:9765` and the firewall permits only `lab-monitor-01`
 (`10.10.10.20`) to reach it. It is not exposed on `wan0` and does not provide
 SSH, shell, database, or nftables access.
+
+When `gateway.publish` declares `dns`, Core permits only directly connected
+upstream clients to reach the observed gateway address on TCP and UDP port 53,
+DNATing to `lab-dns-01` at `10.10.10.10`. The forward chain remains default
+drop, preserves client source addresses, and does not create a general port
+forward or SNAT path. Missing or unsafe DHCP observation is fail-closed.
 
 ## External gateway
 

@@ -121,6 +121,45 @@ func TestExternalGatewayOmitsManagedFirewall(t *testing.T) {
 	}
 }
 
+func TestGatewayUpstreamMACIsLocallyAdministeredUnicastAndDoesNotCollide(t *testing.T) {
+	seen := map[string]struct{}{}
+	for i := 0; i < 32; i++ {
+		mac, err := GenerateGatewayUpstreamMAC()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := ValidateGatewayUpstreamMAC(mac); err != nil {
+			t.Fatalf("generated MAC %s is invalid: %v", mac, err)
+		}
+		if _, exists := seen[mac]; exists {
+			t.Fatalf("generated MAC repeated: %s", mac)
+		}
+		seen[mac] = struct{}{}
+	}
+	for _, invalid := range []string{"02:00:00:00:01:02", "03:00:00:00:10:20", "00:00:00:00:10:20"} {
+		if err := ValidateGatewayUpstreamMAC(invalid); err == nil {
+			t.Fatalf("invalid upstream MAC %s was accepted", invalid)
+		}
+	}
+}
+
+func TestGatewayPublicationIsTypedAndManagedOnly(t *testing.T) {
+	site := NewSite("installation", "age1example", GatewayModeManaged)
+	site.Gateway.Publish = []GatewayPublication{{Service: "dns"}}
+	if err := site.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	site.Gateway.Publish = []GatewayPublication{{Service: "ssh"}}
+	if err := site.Validate(); err == nil {
+		t.Fatal("unsupported gateway publication was accepted")
+	}
+	site = NewSite("installation", "age1example", GatewayModeExternal)
+	site.Gateway.Publish = []GatewayPublication{{Service: "dns"}}
+	if err := site.Validate(); err == nil {
+		t.Fatal("external gateway publication was accepted")
+	}
+}
+
 func TestTransitIsFixedCoreNetworkAndSemanticPlacement(t *testing.T) {
 	site := NewSite("installation", "age1example", GatewayModeManaged)
 	transit, err := site.ZoneForType(ZoneTypeTransit)

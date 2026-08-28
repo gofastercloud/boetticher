@@ -81,6 +81,65 @@ func TestDynamicFirewallTelemetryIDsUseSafeStableTokens(t *testing.T) {
 	}
 }
 
+func TestPublishedDNSIsBoundedToObservedUpstreamPrefixAndAddress(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	site.Gateway.Publish = []model.GatewayPublication{{Service: "dns"}}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Publications) != 2 || plan.Publications[0].Destination != "lab-dns-01" || plan.Publications[0].DestinationCIDR != "10.10.10.10/32" {
+		t.Fatalf("unexpected publication plan: %#v", plan.Publications)
+	}
+	if _, err := RenderNFT(plan); err == nil {
+		t.Fatal("publication rendered without an observed upstream lease")
+	}
+	safeRuleset, err := RenderSafeNFT(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(safeRuleset, "dnat to") || strings.Contains(safeRuleset, "boetticher:publish") {
+		t.Fatal("safe publication ruleset unexpectedly contains an inactive DNAT rule")
+	}
+	plan, err = PlanFromSiteWithUpstream(site, UpstreamObservation{Interface: "wan0", MAC: plan.Interfaces[0].MAC, Address: "192.168.4.3/24", Gateway: "192.168.4.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleset, err := RenderNFT(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		`iifname "wan0" oifname "infra0" ip saddr 192.168.4.0/24 ip daddr 10.10.10.10/32 tcp dport 53 counter accept`,
+		`iifname "wan0" oifname "infra0" ip saddr 192.168.4.0/24 ip daddr 10.10.10.10/32 udp dport 53 counter accept`,
+		`iifname "wan0" ip saddr 192.168.4.0/24 ip daddr 192.168.4.3 tcp dport 53 dnat to 10.10.10.10:53`,
+		`iifname "wan0" ip saddr 192.168.4.0/24 ip daddr 192.168.4.3 udp dport 53 dnat to 10.10.10.10:53`,
+	} {
+		if !strings.Contains(ruleset, expected) {
+			t.Fatalf("published DNS policy missing %q:\n%s", expected, ruleset)
+		}
+	}
+	if strings.Contains(ruleset, "192.168.4.0/24 masquerade") || strings.Contains(ruleset, "publish-dns-any") {
+		t.Fatal("published DNS policy introduced an upstream SNAT or arbitrary rule")
+	}
+}
+
+func TestUpstreamObservationRejectsInternalOverlapAndWrongMAC(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, observation := range map[string]UpstreamObservation{
+		"internal overlap": {Interface: "wan0", MAC: plan.Interfaces[0].MAC, Address: "10.10.10.3/24", Gateway: "10.10.10.1"},
+		"wrong MAC":        {Interface: "wan0", MAC: "02:00:00:00:01:02", Address: "192.168.4.3/24", Gateway: "192.168.4.1"},
+	} {
+		if err := ValidateUpstreamObservation(plan, observation); err == nil {
+			t.Fatalf("%s observation was accepted", name)
+		}
+	}
+}
+
 func TestServersDHCPIsReservationOnly(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	site.DHCPReservations = []model.DHCPReservation{{Zone: "SERVERS", Hostname: "app-01", Address: "10.10.20.61", MAC: "02:00:00:00:02:61"}}

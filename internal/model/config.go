@@ -231,7 +231,7 @@ func ConfigFromSite(s Site) SiteConfig {
 	return SiteConfig{
 		APIVersion: s.APIVersion, PlatformVersion: s.PlatformVersion,
 		SchemaVersion: s.SchemaVersion, StorageProfile: s.StorageProfile,
-		StorageDevice: s.StorageDevice, Gateway: s.Gateway,
+		StorageDevice: s.StorageDevice, Gateway: Gateway{Mode: s.Gateway.Mode, Upstream: s.Gateway.Upstream, Publish: append([]GatewayPublication(nil), s.Gateway.Publish...)},
 		BootstrapAddress: s.BootstrapAddress,
 		SSHIdentityFile:  s.SSHIdentityFile, PhysicalNetwork: s.PhysicalNetwork,
 		TestedVersions: s.TestedVersions, Network: s.Network, PKI: s.PKI,
@@ -247,6 +247,15 @@ func (c SiteConfig) BaseSite() Site {
 		mode = GatewayModeManaged
 	}
 	s := NewSite(c.SecretMetadata.InstallationID, c.SecretMetadata.AgeRecipient, mode)
+	if c.Gateway.Upstream.Mode != "" {
+		s.Gateway.Upstream.Mode = c.Gateway.Upstream.Mode
+	}
+	if c.Gateway.Upstream.MAC != "" {
+		s.Gateway.Upstream.MAC = c.Gateway.Upstream.MAC
+	}
+	if len(c.Gateway.Publish) > 0 {
+		s.Gateway.Publish = append([]GatewayPublication(nil), c.Gateway.Publish...)
+	}
 	if c.APIVersion != "" {
 		s.APIVersion = c.APIVersion
 	}

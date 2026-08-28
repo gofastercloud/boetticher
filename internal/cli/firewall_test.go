@@ -8,11 +8,11 @@ import (
 )
 
 func TestParseGatewayStatus(t *testing.T) {
-	status, err := parseGatewayStatus("forwarding=1\nservice.nftables=active\nservice.kea-dhcp4-server=active\nservice.kea-dhcp-ddns-server=active\nservice.dnsmasq=active\niface.wan0=wan0 UP 192.0.2.10/24\niface.trusted0=trusted0 UP 10.10.30.1/24\niface.servers0=servers0 UP 10.10.20.1/24\niface.sandbox0=sandbox0 UP 10.10.40.1/24\niface.mgmt0=mgmt0 UP 10.10.99.1/24\niface.transit0=transit0 UP 10.10.5.1/24\niface.infra0=infra0 UP 10.10.10.1/24\n")
+	status, err := parseGatewayStatus("forwarding=1\nservice.nftables=active\nservice.kea-dhcp4-server=active\nservice.kea-dhcp-ddns-server=active\nservice.dnsmasq=active\niface.wan0=wan0 UP 192.0.2.10/24\niface.trusted0=trusted0 UP 10.10.30.1/24\niface.servers0=servers0 UP 10.10.20.1/24\niface.sandbox0=sandbox0 UP 10.10.40.1/24\niface.mgmt0=mgmt0 UP 10.10.99.1/24\niface.transit0=transit0 UP 10.10.5.1/24\niface.infra0=infra0 UP 10.10.10.1/24\nupstream.interface=wan0\nupstream.mac=02:00:00:00:01:01\nupstream.address=192.0.2.10/24\nupstream.gateway=192.0.2.1\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Forwarding != "1" || status.Services["nftables"] != "active" || status.Interfaces["mgmt0"] != "mgmt0 UP 10.10.99.1/24" {
+	if status.Forwarding != "1" || status.Services["nftables"] != "active" || status.Interfaces["mgmt0"] != "mgmt0 UP 10.10.99.1/24" || status.Upstream.Address != "192.0.2.10/24" || status.Upstream.Gateway != "192.0.2.1" {
 		t.Fatalf("unexpected gateway status: %#v", status)
 	}
 }

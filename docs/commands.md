@@ -10,7 +10,7 @@ boetticher preflight [--site DIR] [--live] [--bootstrap-address ADDRESS] [--init
 boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]
 boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]
 boetticher logs [HOST] [--site DIR] [--unit UNIT] [--since DURATION] [--priority LEVEL] [--limit N]
-boetticher verify [--site DIR] [--ssh-config PATH] [--ssh-journey]
+boetticher verify [--site DIR] [--ssh-config PATH] [--ssh-journey] [--live]
 boetticher doctor [--site DIR] [--ssh-config PATH] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher upgrade [--site DIR] [--age-identity PATH] [--recovery-confirmed]
 boetticher ssh-config [--site DIR] [--output PATH| -] [--force] [--check] [--identity-file PATH] [--install-include]
@@ -116,11 +116,11 @@ Related commands: doctor, verify
 
 Purpose: Verify the resolved model, ownership, artifacts, declarations, and supported live evidence.
 
-Usage: `boetticher verify [--site DIR] [--ssh-config PATH] [--ssh-journey]`
+Usage: `boetticher verify [--site DIR] [--ssh-config PATH] [--ssh-journey] [--live]`
 
 Arguments: No positional arguments.
 
-Options: --ssh-journey runs a bounded authenticated bastion journey; --ssh-config selects the generated SSH configuration.
+Options: --ssh-journey runs a bounded authenticated bastion journey; --ssh-config selects the generated SSH configuration; --live queries the managed gateway upstream lease and publication mapping.
 
 Safety: Static checks are distinct from live evidence. Unsupported live checks remain NOT TESTED.
 

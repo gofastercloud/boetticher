@@ -104,6 +104,42 @@ func TestParseSiteConfigAppliesV3Defaults(t *testing.T) {
 	}
 }
 
+func TestGatewayPublicationConfigRoundTrips(t *testing.T) {
+	config, err := ParseSiteConfig([]byte(`api_version: boetticher/v3
+gateway:
+  mode: managed
+  upstream:
+    mode: dhcp
+    mac: 02:8f:4c:91:a7:32
+  publish:
+    - service: dns
+modules: {}
+secret_metadata:
+  installation_id: test
+  age_recipient: age1test
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Gateway.Upstream.Mode != "dhcp" || config.Gateway.Upstream.MAC != "02:8f:4c:91:a7:32" || len(config.Gateway.Publish) != 1 || config.Gateway.Publish[0].Service != "dns" {
+		t.Fatalf("unexpected gateway publication config: %#v", config.Gateway)
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := RenderSiteConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTrip, err := ParseSiteConfig(rendered)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if roundTrip.Gateway.Upstream.MAC != config.Gateway.Upstream.MAC || len(roundTrip.Gateway.Publish) != 1 {
+		t.Fatalf("gateway publication config did not round-trip: %s", rendered)
+	}
+}
+
 func TestParseSiteConfigRetainsReservationsAndUserDNSValues(t *testing.T) {
 	config, err := ParseSiteConfig([]byte(`api_version: boetticher/v3
 secret_metadata:

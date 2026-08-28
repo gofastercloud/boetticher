@@ -76,6 +76,9 @@ func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, json
 		if parseErr != nil {
 			return parseErr
 		}
+		if err := firewall.ValidateUpstreamObservation(plan, liveStatus.Upstream); err != nil {
+			return fmt.Errorf("managed gateway upstream DHCP is not safe: %w", err)
+		}
 		status["live"] = liveStatus
 	} else if live {
 		status["live"] = "external firewall state is outside boetticher"
@@ -97,8 +100,16 @@ func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, json
 			forwarding = "enabled"
 		}
 		fmt.Fprintf(out, "  Forwarding  %s\n  Ruleset     queried\n", forwarding)
+		fmt.Fprintf(out, "  Upstream    PASS DHCP MAC=%s address=%s gateway=%s\n", liveStatus.Upstream.MAC, liveStatus.Upstream.Address, liveStatus.Upstream.Gateway)
+		for _, publication := range plan.Publications {
+			fmt.Fprintf(out, "  Published   PASS %s %s:%d/%s -> %s\n", strings.ToUpper(publication.Service), strings.Split(liveStatus.Upstream.Address, "/")[0], publication.Port, publication.Protocol, publication.Destination)
+		}
 	} else {
 		fmt.Fprintf(out, "  Forwarding  enabled after policy deployment\n  Ruleset     generated\n")
+		fmt.Fprintln(out, "  Upstream    NOT TESTED DHCP lease/address (use --live)")
+		for _, publication := range plan.Publications {
+			fmt.Fprintf(out, "  Published   NOT TESTED %s :%d/%s -> %s (use --live)\n", strings.ToUpper(publication.Service), publication.Port, publication.Protocol, publication.Destination)
+		}
 	}
 	fmt.Fprintln(out, "Interfaces")
 	for _, iface := range plan.Interfaces {
@@ -132,9 +143,10 @@ func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, json
 const gatewayStatusScript = "/usr/lib/boetticher/inspect-firewall"
 
 type gatewayLiveStatus struct {
-	Forwarding string            `json:"forwarding"`
-	Services   map[string]string `json:"services"`
-	Interfaces map[string]string `json:"interfaces"`
+	Forwarding string                       `json:"forwarding"`
+	Services   map[string]string            `json:"services"`
+	Interfaces map[string]string            `json:"interfaces"`
+	Upstream   firewall.UpstreamObservation `json:"upstream"`
 }
 
 func parseGatewayStatus(output string) (gatewayLiveStatus, error) {
@@ -155,11 +167,19 @@ func parseGatewayStatus(output string) (gatewayLiveStatus, error) {
 			status.Services[strings.TrimPrefix(key, "service.")] = value
 		case strings.HasPrefix(key, "iface."):
 			status.Interfaces[strings.TrimPrefix(key, "iface.")] = value
+		case key == "upstream.interface":
+			status.Upstream.Interface = value
+		case key == "upstream.mac":
+			status.Upstream.MAC = value
+		case key == "upstream.address":
+			status.Upstream.Address = value
+		case key == "upstream.gateway":
+			status.Upstream.Gateway = value
 		default:
 			return gatewayLiveStatus{}, fmt.Errorf("managed gateway status contains unknown field %q", key)
 		}
 	}
-	if status.Forwarding == "" || len(status.Services) != 4 || len(status.Interfaces) != 7 {
+	if status.Forwarding == "" || len(status.Services) != 4 || len(status.Interfaces) != 7 || status.Upstream.Interface == "" || status.Upstream.MAC == "" || status.Upstream.Address == "" || status.Upstream.Gateway == "" {
 		return gatewayLiveStatus{}, errors.New("managed gateway status is incomplete")
 	}
 	return status, nil
@@ -173,7 +193,7 @@ func firewallShow(s model.Site, plan firewall.Plan, format string, jsonOutput bo
 		if s.Gateway.Mode != model.GatewayModeManaged {
 			return errors.New("nftables output is unavailable in external gateway mode")
 		}
-		ruleset, err := firewall.RenderNFT(plan)
+		ruleset, err := renderDeploymentNFT(plan)
 		if err != nil {
 			return err
 		}
@@ -213,7 +233,22 @@ func firewallDiff(siteDir string, s model.Site, plan firewall.Plan, live, jsonOu
 		fmt.Fprintln(out, "External firewall configuration is outside boetticher; use firewall show for the contract.")
 		return nil
 	}
-	ruleset, err := firewall.RenderNFT(plan)
+	var err error
+	if live && len(plan.Publications) > 0 {
+		data, commandErr := gatewayCommand(siteDir, s, "sudo", gatewayStatusScript, "status")
+		if commandErr != nil {
+			return commandErr
+		}
+		liveStatus, parseErr := parseGatewayStatus(string(data))
+		if parseErr != nil {
+			return parseErr
+		}
+		plan, err = firewall.PlanFromSiteWithUpstream(s, liveStatus.Upstream)
+		if err != nil {
+			return err
+		}
+	}
+	ruleset, err := renderDeploymentNFT(plan)
 	if err != nil {
 		return err
 	}
@@ -306,7 +341,22 @@ func firewallCounters(siteDir string, s model.Site, live, jsonOutput bool, out i
 func firewallVerify(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
 	results := map[string]string{}
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		ruleset, err := firewall.RenderNFT(plan)
+		if live && len(plan.Publications) > 0 {
+			data, commandErr := gatewayCommand(siteDir, s, "sudo", gatewayStatusScript, "status")
+			if commandErr != nil {
+				return commandErr
+			}
+			liveStatus, parseErr := parseGatewayStatus(string(data))
+			if parseErr != nil {
+				return parseErr
+			}
+			var planErr error
+			plan, planErr = firewall.PlanFromSiteWithUpstream(s, liveStatus.Upstream)
+			if planErr != nil {
+				return planErr
+			}
+		}
+		ruleset, err := renderDeploymentNFT(plan)
 		if err != nil {
 			return err
 		}

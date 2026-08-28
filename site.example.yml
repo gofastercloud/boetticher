@@ -4,6 +4,9 @@ schema_version: 3
 storage_profile: single-disk
 gateway:
   mode: managed
+  upstream:
+    mode: dhcp
+    mac: 02:00:00:00:01:01
 modules: {}
 physical_network:
   mode: virtual-only

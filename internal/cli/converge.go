@@ -50,7 +50,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		fmt.Fprintf(out, "Deployment plan: PASS model %s\n", firewallPlan.ModelRevision)
 		fmt.Fprintf(out, "  Mode: %s\n  Engine: %s\n  DHCP subnets: %d\n  Policy rules: %d\n", firewallPlan.Mode, firewallPlan.Engine, len(firewallPlan.DHCP), len(firewallPlan.Rules))
 		if s.Gateway.Mode == model.GatewayModeManaged {
-			ruleset, renderErr := firewall.RenderNFT(firewallPlan)
+			ruleset, renderErr := renderDeploymentNFT(firewallPlan)
 			if renderErr != nil {
 				return renderErr
 			}
@@ -139,7 +139,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		secretValues["firewall-ddns-tsig"] = ddnsTSIG
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		ruleset, renderErr := firewall.RenderNFT(firewallPlan)
+		ruleset, renderErr := renderDeploymentNFT(firewallPlan)
 		if renderErr != nil {
 			return renderErr
 		}
@@ -264,8 +264,9 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			return fmt.Errorf("start managed gateway appliance: %w", err)
 		}
 	}
+	var firewallRunner proxmox.CommandRunner
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		firewallRunner := applianceSSHRunner(s, *siteDir, "lab-fw-01")
+		firewallRunner = applianceSSHRunner(s, *siteDir, "lab-fw-01")
 		firewallGuest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
 		if err := waitForDeploymentRoot(context.Background(), rootRunner, s.BootstrapAddress, firewallRunner, firewallGuest, operatorPublicKey); err != nil {
 			return fmt.Errorf("HOLD: managed gateway is not reachable before dependent appliances: %w", err)
@@ -323,6 +324,42 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 				}
 			}
 		}
+	}
+	if s.Gateway.Mode == model.GatewayModeManaged && len(firewallPlan.Publications) > 0 {
+		upstream, observeErr := observeGatewayUpstream(context.Background(), firewallRunner, firewallPlan)
+		if observeErr != nil {
+			return fmt.Errorf("HOLD: published services require a safe current upstream DHCP lease: %w", observeErr)
+		}
+		finalFirewallPlan, planErr := firewall.PlanFromSiteWithUpstream(s, upstream)
+		if planErr != nil {
+			return fmt.Errorf("HOLD: resolve published service policy from upstream lease: %w", planErr)
+		}
+		finalRuleset, renderErr := firewall.RenderNFT(finalFirewallPlan)
+		if renderErr != nil {
+			return fmt.Errorf("HOLD: render published service policy: %w", renderErr)
+		}
+		finalVariables, variablesErr := ansible.VariablesWithUpstream(s, upstream)
+		if variablesErr != nil {
+			return fmt.Errorf("HOLD: render published service Ansible variables: %w", variablesErr)
+		}
+		var finalVariableDocument map[string]any
+		if err := json.Unmarshal(finalVariables, &finalVariableDocument); err != nil {
+			return fmt.Errorf("HOLD: decode published service Ansible variables: %w", err)
+		}
+		runtimeVariables["firewall_plan"] = finalVariableDocument["firewall_plan"]
+		runtimeVariables["firewall_ruleset"] = finalRuleset
+		variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
+		if err != nil {
+			return fmt.Errorf("HOLD: encode published service Ansible variables: %w", err)
+		}
+		variables = append(variables, '\n')
+		if err := ansible.RunLimited(context.Background(), ansiblePlaybook, inventoryPath, variables, "lab-fw-01"); err != nil {
+			return fmt.Errorf("HOLD: activate published services on managed gateway: %w", err)
+		}
+		if err := verifyGatewayReadiness(context.Background(), firewallRunner, "10.10.99.1"); err != nil {
+			return fmt.Errorf("HOLD: managed gateway did not pass publication readiness: %w", err)
+		}
+		firewallPlan = finalFirewallPlan
 	}
 	if err := ansible.Run(context.Background(), ansiblePlaybook, inventoryPath, variables); err != nil {
 		return err
@@ -671,11 +708,29 @@ func verifyGatewayReadiness(ctx context.Context, runner proxmox.CommandRunner, a
 	if runner == nil {
 		return errors.New("gateway readiness runner is required")
 	}
-	command := "set -eu; nft -c -f /etc/nftables.conf; systemctl is-active nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony; test \"$(sysctl -n net.ipv4.ip_forward)\" = 1"
+	command := "set -eu; nft -c -f /etc/nftables.conf; test -n \"$(ip -4 -o addr show dev wan0 scope global)\"; ip -4 route show default dev wan0 | grep -Fq default; systemctl is-active nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony; test \"$(sysctl -n net.ipv4.ip_forward)\" = 1"
 	if _, err := runner.Run(ctx, address, "root", command); err != nil {
 		return fmt.Errorf("gateway policy, DHCP, NTP, and forwarding checks failed: %w", err)
 	}
 	return nil
+}
+
+func observeGatewayUpstream(ctx context.Context, runner proxmox.CommandRunner, plan firewall.Plan) (firewall.UpstreamObservation, error) {
+	if runner == nil {
+		return firewall.UpstreamObservation{}, errors.New("gateway observation runner is required")
+	}
+	data, err := runner.Run(ctx, "10.10.99.1", "root", "/usr/lib/boetticher/inspect-firewall status")
+	if err != nil {
+		return firewall.UpstreamObservation{}, err
+	}
+	status, err := parseGatewayStatus(string(data))
+	if err != nil {
+		return firewall.UpstreamObservation{}, err
+	}
+	if err := firewall.ValidateUpstreamObservation(plan, status.Upstream); err != nil {
+		return firewall.UpstreamObservation{}, err
+	}
+	return status.Upstream, nil
 }
 
 func verifyFirewallBootstrapNetwork(ctx context.Context, runner proxmox.CommandRunner) error {

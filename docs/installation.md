@@ -24,6 +24,10 @@ the explicit path supplied to `init`). Keep an independent recovery copy before
 running a destructive bootstrap. `init` reuses an existing identity after
 validating its public recipient and never overwrites it; it creates one only
 when the configured path is absent.
+For managed mode, `init` also prints and persists the generated `wan0` MAC.
+Create the matching reservation in the existing HOME/upstream DHCP service
+before deployment; the DHCP-assigned address is intentionally not part of
+`site.yml`.
 
 ## Bootstrap
 
@@ -97,6 +101,14 @@ The managed firewall appliance also starts the fixed telemetry service and
 snapshot timer. Pulse reaches its health endpoint only over INFRA at
 `http://10.10.10.1:9765/healthz`; the API is not published through the HOME or
 WAN interface.
+
+To publish the optional bounded DNS service, add `gateway.publish: [{service:
+dns}]` to `site.yml`. Deployment observes the live upstream lease after
+`lab-dns-01` passes readiness, then applies only TCP/UDP port 53 forwarding
+from the directly connected upstream prefix to `10.10.10.10`. Verify the
+effective address and mapping with `boetticher verify --live` or
+`boetticher doctor --live`; an unavailable or ambiguous lease is a hold and
+does not open forwarding.
 
 See [the external firewall contract](networking/external-firewall.md),
 [storage](storage/dedicated-data-disk.md), and the recovery guides for

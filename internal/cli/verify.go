@@ -30,6 +30,7 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 	siteDir := fs.String("site", ".", "private site repository directory")
 	sshPath := fs.String("ssh-config", sshconfig.DefaultPath(), "generated SSH configuration to inspect")
 	sshJourney := fs.Bool("ssh-journey", false, "run an authenticated internal SSH journey through the bastion")
+	live := fs.Bool("live", false, "inspect the managed gateway over the generated SSH path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -82,6 +83,38 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 		portal.CheckResult{Name: "latest VM/LXC backup", Status: "NOT TESTED", Detail: "requires current backup evidence"},
 		portal.CheckResult{Name: "Age recovery fixture", Status: "NOT TESTED", Detail: "requires independent recovery copy"},
 	)
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		upstreamResult := portal.CheckResult{Name: "managed gateway upstream DHCP", Status: "NOT TESTED", Detail: "use --live to query wan0 lease, prefix, gateway, and MAC"}
+		publicationResult := portal.CheckResult{Name: "published service mapping", Status: "NOT TESTED", Detail: "use --live to verify the effective upstream address and DNAT mapping"}
+		if *live {
+			plan, planErr := firewall.PlanFromSite(s)
+			if planErr != nil {
+				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "FAIL", Detail: planErr.Error()}
+				publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "FAIL", Detail: planErr.Error()}
+			} else if data, commandErr := gatewayCommand(*siteDir, s, "sudo", gatewayStatusScript, "status"); commandErr != nil {
+				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "NOT TESTED", Detail: commandErr.Error()}
+				publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "NOT TESTED", Detail: commandErr.Error()}
+			} else if liveStatus, parseErr := parseGatewayStatus(string(data)); parseErr != nil {
+				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "FAIL", Detail: parseErr.Error()}
+				publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "FAIL", Detail: parseErr.Error()}
+			} else if observationErr := firewall.ValidateUpstreamObservation(plan, liveStatus.Upstream); observationErr != nil {
+				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "FAIL", Detail: observationErr.Error()}
+				publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "FAIL", Detail: "upstream observation is not safe for publication"}
+			} else {
+				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "PASS", Detail: fmt.Sprintf("MAC %s address %s gateway %s", liveStatus.Upstream.MAC, liveStatus.Upstream.Address, liveStatus.Upstream.Gateway)}
+				if len(plan.Publications) == 0 {
+					publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "STATIC PASS", Detail: "no upstream publication is configured"}
+				} else {
+					parts := make([]string, 0, len(plan.Publications))
+					for _, publication := range plan.Publications {
+						parts = append(parts, fmt.Sprintf("%s:%d/%s -> %s", strings.Split(liveStatus.Upstream.Address, "/")[0], publication.Port, publication.Protocol, publication.Destination))
+					}
+					publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "PASS", Detail: strings.Join(parts, ", ")}
+				}
+			}
+		}
+		results = append(results, upstreamResult, publicationResult)
+	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		results = append(results,
 			portal.CheckResult{Name: "managed gateway services", Status: "NOT TESTED", Detail: "requires deployed managed gateway evidence"},
@@ -277,7 +310,27 @@ func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error
 		fmt.Fprintln(out)
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		fmt.Fprintln(out, "Managed gateway        NOT TESTED live Debian/nftables qualification requires deployment")
+		if !*live {
+			fmt.Fprintln(out, "Managed gateway        NOT TESTED live Debian/nftables qualification requires deployment")
+		} else if plan, planErr := firewall.PlanFromSite(s); planErr != nil {
+			failed = true
+			fmt.Fprintf(out, "Managed gateway        FAIL %v\n", planErr)
+		} else if data, commandErr := gatewayCommand(*siteDir, s, "sudo", gatewayStatusScript, "status"); commandErr != nil {
+			failed = true
+			fmt.Fprintf(out, "Managed gateway        FAIL %v\n", commandErr)
+		} else if liveStatus, parseErr := parseGatewayStatus(string(data)); parseErr != nil {
+			failed = true
+			fmt.Fprintf(out, "Managed gateway        FAIL %v\n", parseErr)
+		} else if observationErr := firewall.ValidateUpstreamObservation(plan, liveStatus.Upstream); observationErr != nil {
+			failed = true
+			fmt.Fprintf(out, "Upstream DHCP         HOLD %v\n", observationErr)
+		} else {
+			fmt.Fprintf(out, "Upstream DHCP         PASS MAC=%s address=%s gateway=%s\n", liveStatus.Upstream.MAC, liveStatus.Upstream.Address, liveStatus.Upstream.Gateway)
+			for _, publication := range plan.Publications {
+				fmt.Fprintf(out, "Published %s          PASS %s:%d/%s -> %s\n", strings.ToUpper(publication.Service), strings.Split(liveStatus.Upstream.Address, "/")[0], publication.Port, publication.Protocol, publication.Destination)
+			}
+			fmt.Fprintln(out, "Managed gateway        PASS live status and upstream identity verified")
+		}
 	} else {
 		fmt.Fprintln(out, "External gateway       CONFIGURED appliance contract is outside boetticher management")
 	}
@@ -475,7 +528,7 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 				return errors.New("IPv4-only firewall policy is incomplete")
 			}
 			if s.Gateway.Mode == model.GatewayModeManaged {
-				ruleset, renderErr := firewall.RenderNFT(plan)
+				ruleset, renderErr := renderDeploymentNFT(plan)
 				if renderErr != nil {
 					return renderErr
 				}

@@ -125,6 +125,14 @@ func writeHostAt(b *strings.Builder, component model.Component, address string, 
 }
 
 func Variables(s model.Site) ([]byte, error) {
+	return variables(s, nil)
+}
+
+func VariablesWithUpstream(s model.Site, upstream firewall.UpstreamObservation) ([]byte, error) {
+	return variables(s, &upstream)
+}
+
+func variables(s model.Site, upstream *firewall.UpstreamObservation) ([]byte, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
@@ -140,7 +148,12 @@ func Variables(s model.Site) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	firewallPlan, err := firewall.PlanFromSite(s)
+	var firewallPlan firewall.Plan
+	if upstream == nil {
+		firewallPlan, err = firewall.PlanFromSite(s)
+	} else {
+		firewallPlan, err = firewall.PlanFromSiteWithUpstream(s, *upstream)
+	}
 	if err != nil {
 		return nil, err
 	}

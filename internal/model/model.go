@@ -1,6 +1,7 @@
 package model
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -48,6 +49,7 @@ const (
 	BuilderDiskGiB              = 32
 	BuilderMinimumFreeGiB       = 20
 	BuilderMAC                  = "02:00:00:00:01:90"
+	DefaultGatewayUpstreamMAC   = "02:00:00:00:01:01"
 	BuilderGoVersion            = "1.26.5"
 	BuilderGoURL                = "https://go.dev/dl/go1.26.5.linux-amd64.tar.gz"
 	BuilderGoSHA256             = "5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053"
@@ -100,6 +102,71 @@ func ModuleOwnershipTag(module string) string {
 	return "boetticher-module-" + module
 }
 
+// GenerateGatewayUpstreamMAC creates the durable identity used by the
+// managed gateway's upstream NIC. It is generated once during init and then
+// persisted in site.yml; retries only happen for the vanishingly unlikely
+// case of a collision with another fixed boetticher NIC identity.
+func GenerateGatewayUpstreamMAC() (string, error) {
+	for attempt := 0; attempt < 16; attempt++ {
+		var value [6]byte
+		if _, err := rand.Read(value[:]); err != nil {
+			return "", fmt.Errorf("generate gateway upstream MAC: %w", err)
+		}
+		value[0] &= 0xfe // unicast
+		value[0] |= 0x02 // locally administered
+		mac := net.HardwareAddr(value[:]).String()
+		if !GatewayUpstreamMACConflicts(mac) {
+			return mac, nil
+		}
+	}
+	return "", errors.New("generate gateway upstream MAC: repeated collision with a managed NIC identity")
+}
+
+// GatewayInterfaceMAC returns the fixed MAC for one of the gateway's seven
+// logical NIC positions. Position 1 is the historical default only for
+// in-memory fixtures; initialized sites replace it with the generated
+// upstream identity.
+func GatewayInterfaceMAC(position int) string {
+	if position < 1 || position > 7 {
+		return ""
+	}
+	if position == 1 {
+		return DefaultGatewayUpstreamMAC
+	}
+	return fmt.Sprintf("02:00:00:00:01:%02x", position)
+}
+
+func GatewayUpstreamMACConflicts(value string) bool {
+	parsed, err := net.ParseMAC(value)
+	if err != nil || len(parsed) != 6 {
+		return true
+	}
+	canonical := strings.ToLower(parsed.String())
+	for position := 2; position <= 7; position++ {
+		if canonical == GatewayInterfaceMAC(position) {
+			return true
+		}
+	}
+	return canonical == strings.ToLower(BuilderMAC)
+}
+
+func ValidateGatewayUpstreamMAC(value string) error {
+	parsed, err := net.ParseMAC(value)
+	if err != nil || len(parsed) != 6 {
+		return fmt.Errorf("gateway.upstream.mac must be an Ethernet MAC")
+	}
+	if parsed[0]&0x01 != 0 {
+		return errors.New("gateway.upstream.mac must be unicast")
+	}
+	if parsed[0]&0x02 == 0 {
+		return errors.New("gateway.upstream.mac must be locally administered")
+	}
+	if GatewayUpstreamMACConflicts(value) {
+		return errors.New("gateway.upstream.mac collides with another boetticher-managed NIC")
+	}
+	return nil
+}
+
 type Site struct {
 	APIVersion      string  `json:"api_version"`
 	PlatformVersion string  `json:"platform_version"`
@@ -135,7 +202,18 @@ type TestedVersions struct {
 }
 
 type Gateway struct {
-	Mode string `yaml:"mode" json:"mode" jsonschema:"enum=managed,enum=external"`
+	Mode     string               `yaml:"mode" json:"mode" jsonschema:"enum=managed,enum=external"`
+	Upstream GatewayUpstream      `yaml:"upstream" json:"upstream"`
+	Publish  []GatewayPublication `yaml:"publish,omitempty" json:"publish,omitempty"`
+}
+
+type GatewayUpstream struct {
+	Mode string `yaml:"mode" json:"mode" jsonschema:"enum=dhcp"`
+	MAC  string `yaml:"mac" json:"mac"`
+}
+
+type GatewayPublication struct {
+	Service string `yaml:"service" json:"service" jsonschema:"enum=dns"`
 }
 
 type Network struct {
@@ -446,7 +524,7 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 		PlatformVersion:        PlatformVersion,
 		SchemaVersion:          SchemaVersion,
 		StorageProfile:         "single-disk",
-		Gateway:                Gateway{Mode: gatewayMode},
+		Gateway:                Gateway{Mode: gatewayMode, Upstream: GatewayUpstream{Mode: "dhcp", MAC: DefaultGatewayUpstreamMAC}},
 		LogicalProxmoxIdentity: LogicalProxmoxIdentity,
 		TestedVersions: TestedVersions{
 			Gateway: QualifiedGatewayImage,
@@ -482,6 +560,7 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 func (s Site) Normalize() Site {
 	copySite := s
 	copySite.Network.Zones = append([]Zone(nil), s.Network.Zones...)
+	copySite.Gateway.Publish = append([]GatewayPublication(nil), s.Gateway.Publish...)
 	copySite.Components = append([]Component(nil), s.Components...)
 	copySite.Modules = append([]ResolvedModule(nil), s.Modules...)
 	copySite.ModuleConfig = cloneModuleConfig(s.ModuleConfig)
@@ -506,6 +585,9 @@ func (s Site) Normalize() Site {
 			return copySite.DNSRecords[i].Name < copySite.DNSRecords[j].Name
 		}
 		return copySite.DNSRecords[i].Type < copySite.DNSRecords[j].Type
+	})
+	sort.Slice(copySite.Gateway.Publish, func(i, j int) bool {
+		return copySite.Gateway.Publish[i].Service < copySite.Gateway.Publish[j].Service
 	})
 	sort.Slice(copySite.PendingDNSDeletions, func(i, j int) bool {
 		if copySite.PendingDNSDeletions[i].Name != copySite.PendingDNSDeletions[j].Name {
@@ -558,6 +640,9 @@ func (s Site) Validate() error {
 	}
 	if s.Gateway.Mode != GatewayModeManaged && s.Gateway.Mode != GatewayModeExternal {
 		return fmt.Errorf("gateway.mode must be managed or external")
+	}
+	if err := validateGatewayConfiguration(s); err != nil {
+		return err
 	}
 	if s.Network.Domain != DefaultDomain {
 		return fmt.Errorf("network.domain must be %s", DefaultDomain)
@@ -808,6 +893,29 @@ func (s Site) Validate() error {
 	}
 	if err := validateDeclarations(s); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateGatewayConfiguration(s Site) error {
+	if s.Gateway.Upstream.Mode != "dhcp" {
+		return fmt.Errorf("gateway.upstream.mode must be dhcp")
+	}
+	if err := ValidateGatewayUpstreamMAC(s.Gateway.Upstream.MAC); err != nil {
+		return err
+	}
+	if s.Gateway.Mode == GatewayModeExternal && len(s.Gateway.Publish) > 0 {
+		return errors.New("gateway.publish requires managed gateway mode")
+	}
+	seen := map[string]struct{}{}
+	for _, publication := range s.Gateway.Publish {
+		if publication.Service != "dns" {
+			return fmt.Errorf("gateway.publish.service %q is not supported; only dns is available", publication.Service)
+		}
+		if _, exists := seen[publication.Service]; exists {
+			return fmt.Errorf("gateway.publish contains duplicate service %q", publication.Service)
+		}
+		seen[publication.Service] = struct{}{}
 	}
 	return nil
 }
