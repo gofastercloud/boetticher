@@ -60,6 +60,22 @@ func TestJournalQueryUsesCollectorRemoteStoreAndStableHostMatch(t *testing.T) {
 	}
 }
 
+func TestJournalQueryUsesNativeProxmoxHostnameForLogicalHost(t *testing.T) {
+	component := model.Component{Name: model.LogicalProxmoxIdentity, Hostname: model.LogicalProxmoxIdentity, Address: "192.168.4.5"}
+	collector := model.Component{Name: "lab-log-01", Hostname: "lab-log-01", Address: "10.10.10.40"}
+	got, source := journalQuery(component, collector, 25, "", "", "")
+	want := []string{
+		"journalctl", "--no-pager", "--output=short-iso", "--lines=25",
+		"--directory=/var/log/journal/remote", "_HOSTNAME=proxmox",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Proxmox remote journal query = %#v, want %#v", got, want)
+	}
+	if source != "collected journal for lab-proxmox-01" {
+		t.Fatalf("Proxmox remote journal source = %q", source)
+	}
+}
+
 func TestJournalQueryUsesCollectorLocalJournalForCollector(t *testing.T) {
 	collector := model.Component{Name: "lab-log-01", Hostname: "lab-log-01", Address: "10.10.10.40"}
 	got, source := journalQuery(collector, collector, 10, "", "", "")

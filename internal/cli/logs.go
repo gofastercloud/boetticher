@@ -148,7 +148,13 @@ func journalQuery(component, collector model.Component, limit int, unit, since, 
 		args = append(args, "--directory=/var/log/journal/remote")
 		source = "collected journal for " + component.Hostname
 	}
-	args = append(args, "_HOSTNAME="+component.Hostname)
+	journalHostname := component.Hostname
+	if component.Name == model.LogicalProxmoxIdentity {
+		// Proxmox retains its native hostname while the model exposes the
+		// stable logical identity used by the rest of boetticher.
+		journalHostname = "proxmox"
+	}
+	args = append(args, "_HOSTNAME="+journalHostname)
 	if unit != "" {
 		args = append(args, "_SYSTEMD_UNIT="+unit)
 	}
