@@ -300,7 +300,7 @@ func TestEnsureScopedCredentialACLRepairsBackingUserAndToken(t *testing.T) {
 func TestCreatePulseMonitoringCredentialsUsesBoundedAPIOnlyIdentity(t *testing.T) {
 	runner := &fakeRunner{
 		responses: map[string][]byte{
-			"pvesh get /access/roles --output-format json":                                                                  []byte(`[{"roleid":"PVEAuditor","privs":"Sys.Audit","special":0}]`),
+			"pvesh get /access/roles --output-format json":                                                                  []byte(`[{"roleid":"PVEAuditor","privs":"Datastore.Audit Mapping.Audit Pool.Audit SDN.Audit Sys.Audit VM.Audit VM.GuestAgent.Audit","special":1}]`),
 			"pvesh get /access/users --output-format json":                                                                  []byte(`[]`),
 			"pvesh get /access/users/'pulse-monitor@pve'/token --output-format json":                                        []byte(`[]`),
 			"pvesh create /access/users/'pulse-monitor@pve'/token/'boetticher-monitoring' --privsep 1 --output-format json": []byte(`{"value":"opaque-monitoring-secret"}`),
@@ -338,6 +338,18 @@ func TestCreatePulseMonitoringCredentialsFailsClosedWhenAuditorRoleIsMissing(t *
 	}}
 	if _, err := CreatePulseMonitoringCredentials(context.Background(), runner, "192.0.2.10", "root"); err == nil || !strings.Contains(err.Error(), "PVEAuditor") {
 		t.Fatalf("missing auditor role was not rejected: %v", err)
+	}
+	if len(runner.commands) != 1 {
+		t.Fatalf("role failure continued into mutation: %#v", runner.commands)
+	}
+}
+
+func TestCreatePulseMonitoringCredentialsRejectsExpandedAuditorRole(t *testing.T) {
+	runner := &fakeRunner{responses: map[string][]byte{
+		"pvesh get /access/roles --output-format json": []byte(`[{"roleid":"PVEAuditor","privs":"Datastore.Audit Mapping.Audit Pool.Audit SDN.Audit Sys.Audit VM.Audit VM.GuestAgent.Audit VM.Allocate","special":1}]`),
+	}}
+	if _, err := CreatePulseMonitoringCredentials(context.Background(), runner, "192.0.2.10", "root"); err == nil || !strings.Contains(err.Error(), "privileges") {
+		t.Fatalf("expanded auditor role was not rejected: %v", err)
 	}
 	if len(runner.commands) != 1 {
 		t.Fatalf("role failure continued into mutation: %#v", runner.commands)
