@@ -498,6 +498,7 @@ build_litellm() {
   rm -f "$rootfs/etc/nginx/sites-enabled/default" "$rootfs/etc/nginx/sites-available/default" "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
   install -D -m 0644 images/litellm/runtime/requirements.lock "$rootfs/tmp/litellm-requirements.lock"
   install -D -m 0644 images/litellm/runtime/litellm.service "$rootfs/etc/systemd/system/litellm.service"
+  install -D -m 0755 images/litellm/runtime/model-capabilities.py "$rootfs/usr/local/libexec/boetticher-litellm-model-capabilities"
   chroot "$rootfs" /opt/litellm/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/litellm-requirements.lock
   installed_version=$(chroot "$rootfs" /opt/litellm/bin/python -c 'from importlib.metadata import version; print(version("litellm"))')
   if [ "$installed_version" != "$litellm_version" ]; then
