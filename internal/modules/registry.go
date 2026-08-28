@@ -44,6 +44,8 @@ type ModuleDefinition struct {
 	ReservedVMIDEnd   int
 	Placement         PlacementRequirement
 	Guests            []model.Component
+	USBRequirements   []model.USBRequirement
+	StaticDeviceSlots int
 }
 
 type Registry struct {
@@ -89,7 +91,7 @@ func FirstPartyRegistry() Registry {
 		"tailnet-router": {
 			Name: "tailnet-router", Description: "Tailscale subnet router for the TRANSIT security edge", Version: "1.0.0", Policy: DefaultOff,
 			Requires: []Capability{CapabilityGateway, CapabilityDNS}, Provides: []Capability{CapabilityTailnetAccess}, GuestIDs: []int{200}, ReservedVMIDStart: 200, ReservedVMIDEnd: 209,
-			Placement: PlacementRequirement{ZoneType: model.ZoneTypeTransit}, Guests: []model.Component{
+			StaticDeviceSlots: 1, Placement: PlacementRequirement{ZoneType: model.ZoneTypeTransit}, Guests: []model.Component{
 				{Name: "lab-tailnet-01", VMID: 200, Hostname: "lab-tailnet-01", Address: "10.10.5.10", Role: "Tailnet subnet router", DNSAliases: []string{"tailnet-router", "tailnet"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
@@ -99,6 +101,14 @@ func FirstPartyRegistry() Registry {
 			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
 				{Name: "lab-litellm-01", VMID: 210, Hostname: "lab-litellm-01", Address: "10.10.20.60", Role: "LiteLLM AI API router", DNSAliases: []string{"litellm", "ai"}, URL: "https://litellm." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
+		},
+		"streamdeck": {
+			Name: "streamdeck", Description: "USB StreamDeck display backed exclusively by Pulse", Version: "1.0.0", Policy: DefaultOff,
+			DependsOn: []string{"monitoring"}, Requires: []Capability{CapabilityDNS, CapabilityMonitoring}, GuestIDs: []int{model.StreamDeckVMID}, ReservedVMIDStart: 220, ReservedVMIDEnd: 229,
+			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
+				{Name: "lab-streamdeck-01", VMID: model.StreamDeckVMID, Hostname: "lab-streamdeck-01", Address: "10.10.20.70", Role: "Pulse StreamDeck status display", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			},
+			USBRequirements: []model.USBRequirement{{Name: "display", Guest: "lab-streamdeck-01", Access: "rw", Required: true, AllowedIdentities: []model.USBIdentity{{VendorID: "0fd9", ProductID: "006d"}}}},
 		},
 	}}
 }
@@ -128,7 +138,66 @@ func (r Registry) Resolve(config model.SiteConfig) ([]ResolvedModule, error) {
 	if err := r.Validate(); err != nil {
 		return nil, err
 	}
-	return r.resolve(config, config.Modules.Map())
+	resolved, err := r.resolve(config, config.Modules.Map())
+	if err != nil {
+		return nil, err
+	}
+	if err := r.validateUSBBindings(config, resolved); err != nil {
+		return nil, err
+	}
+	return resolved, nil
+}
+
+func (r Registry) validateUSBBindings(config model.SiteConfig, resolved []ResolvedModule) error {
+	type key struct{ module, requirement string }
+	requirements := map[key]model.USBRequirement{}
+	enabled := map[string]bool{}
+	for _, definition := range r.Definitions() {
+		for _, requirement := range definition.USBRequirements {
+			requirements[key{definition.Name, requirement.Name}] = requirement
+		}
+	}
+	for _, module := range resolved {
+		enabled[module.Definition.Name] = module.Enabled
+	}
+	bound := map[key]bool{}
+	ports, serialIdentities := map[string]bool{}, map[string]bool{}
+	for _, binding := range config.USBExports {
+		k := key{binding.Module, binding.Requirement}
+		requirement, ok := requirements[k]
+		if !ok {
+			return fmt.Errorf("usb_exports binding %s/%s does not name a compiled-in module requirement", binding.Module, binding.Requirement)
+		}
+		allowed := false
+		for _, identity := range requirement.AllowedIdentities {
+			if identity.VendorID == binding.VendorID && identity.ProductID == binding.ProductID {
+				allowed = true
+			}
+		}
+		if !allowed {
+			return fmt.Errorf("usb_exports identity %s:%s is not allowed for %s/%s", binding.VendorID, binding.ProductID, binding.Module, binding.Requirement)
+		}
+		if bound[k] {
+			return fmt.Errorf("duplicate USB binding %s/%s", binding.Module, binding.Requirement)
+		}
+		if ports[binding.Port] {
+			return fmt.Errorf("duplicate USB physical port %s", binding.Port)
+		}
+		if binding.Serial != "" {
+			identity := binding.VendorID + ":" + binding.ProductID + ":" + binding.Serial
+			if serialIdentities[identity] {
+				return fmt.Errorf("duplicate USB physical identity %s", identity)
+			}
+			serialIdentities[identity] = true
+		}
+		bound[k], ports[binding.Port] = true, true
+	}
+	for k, requirement := range requirements {
+		if enabled[k.module] && requirement.Required && !bound[k] {
+			return fmt.Errorf("modules.%s requires usb_exports binding %s/%s", k.module, k.module, k.requirement)
+		}
+	}
+	return nil
 }
 
 func (r Registry) Validate() error {
@@ -213,6 +282,11 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 		}
 		if name == "litellm" && (moduleConfig.Enabled != nil && *moduleConfig.Enabled || len(moduleConfig.Upstreams) > 0 || len(moduleConfig.Models) > 0) {
 			if err := model.ValidateLiteLLMConfig(moduleConfig); err != nil {
+				return nil, err
+			}
+		}
+		if name == "streamdeck" {
+			if err := model.ValidateStreamDeckConfig(moduleConfig); err != nil {
 				return nil, err
 			}
 		}

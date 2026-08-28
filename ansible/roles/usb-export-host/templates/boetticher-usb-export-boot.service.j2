@@ -1,0 +1,17 @@
+[Unit]
+Description=Reconcile boetticher managed USB exports
+After=pve-cluster.service
+Before=pve-guests.service
+Requires=pve-cluster.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/boetticher/boetticher-usb-export --all
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/run/lock /var/lib/boetticher/usb-export /etc/pve
+
+[Install]
+WantedBy=multi-user.target

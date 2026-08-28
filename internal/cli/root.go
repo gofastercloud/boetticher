@@ -50,6 +50,8 @@ func Run(args []string, out, errOut interface{ Write([]byte) (int, error) }) err
 		return runConfig(args[1:], out)
 	case "network":
 		return runNetwork(args[1:], out)
+	case "hardware":
+		return runHardware(args[1:], out)
 	case "verify":
 		return runVerify(args[1:], out)
 	case "doctor":
