@@ -75,6 +75,17 @@
     mode: '0644'
   when: inventory_hostname not in groups.get('proxmox', [])
 
+- name: Pin the Proxmox collector hostname to the managed logging appliance
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^\s*{{ logging_plan.collector_address | regex_escape }}\s+'
+    line: "{{ logging_plan.collector_address }} logs.{{ domain }}"
+    state: present
+    create: true
+  when:
+    - inventory_hostname in groups.get('proxmox', [])
+    - inventory_hostname in logging_upload_configs
+
 - name: Install bounded local journald configuration
   ansible.builtin.file:
     path: /etc/systemd/journald.conf.d

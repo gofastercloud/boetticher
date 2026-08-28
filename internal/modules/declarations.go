@@ -69,7 +69,10 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 	case "firewall":
 		declaration.Secrets = []model.SecretDeclaration{{Name: "ddns_tsig_secret", Purpose: "authenticated DHCP DNS updates", Consumer: "kea-dhcp-ddns-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file"}}
 	case "logging":
-		declaration.NetworkIntents = []model.NetworkIntent{{Source: "boetticher-managed-endpoints", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"}}
+		declaration.NetworkIntents = []model.NetworkIntent{
+			{Source: "boetticher-managed-endpoints", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"},
+			{Source: model.LogicalProxmoxIdentity, Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native Proxmox journal upload"},
+		}
 		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "logs." + site.Network.Domain, SANs: []string{"logs." + site.Network.Domain}, Consumer: "systemd-journal-remote"})
 		declaration.Portal = []model.PortalEntry{{Name: "logging", Description: "Central systemd journal collection", Docs: []string{"docs/operations/logs.md"}}}
 	case "tailnet-router":

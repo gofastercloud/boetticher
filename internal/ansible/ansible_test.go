@@ -354,6 +354,27 @@ func TestJournalUploadRetriesAfterDependencyStartup(t *testing.T) {
 	}
 }
 
+func TestProxmoxJournalUploadPinsTheCollectorWithoutChangingHomeDNS(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"Pin the Proxmox collector hostname to the managed logging appliance",
+		"path: /etc/hosts",
+		"{{ logging_plan.collector_address | regex_escape }}",
+		"line: \"{{ logging_plan.collector_address }} logs.{{ domain }}\"",
+		"inventory_hostname in groups.get('proxmox', [])",
+		"inventory_hostname in logging_upload_configs",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("Proxmox journal upload is missing %q", expected)
+		}
+	}
+}
+
 func TestApplianceResolverUsesPlatformDNSPair(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
