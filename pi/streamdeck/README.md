@@ -1,9 +1,10 @@
 # Raspberry Pi StreamDeck monitor
 
-This is the Pi-hosted companion to the existing Boetticher StreamDeck module.
-It reuses the module's read-only Pulse data shape, bounded HTTP client, exact
-StreamDeck hardware selection, and mTLS credential contract, but runs directly
-on the ARM64 Pi instead of inside a Proxmox guest.
+This is the external Pi-hosted StreamDeck companion for Boetticher. It uses a
+read-only Pulse data shape, bounded HTTP client, exact StreamDeck hardware
+selection, and mTLS credential contract, and runs directly on the ARM64 Pi.
+The physical StreamDeck is owned by this companion; Boetticher does not deploy
+a second StreamDeck appliance or LXC guest.
 
 The default configuration is intentionally `screensaver_only: true`. It
 renders an animated circuit-board/Matrix-style display using the same dark
@@ -36,10 +37,9 @@ From the repository root:
 uv run --project pi/streamdeck --with pytest --with Pillow --with httpx pytest pi/streamdeck/tests
 ```
 
-The source package is deliberately standalone because the current checkout's
-qualification branch does not yet compose the optional Proxmox StreamDeck
-module. The Pi adapter must not be mistaken for proof of the ARM64 PBS or
-Proxmox appliance path.
+The source package is deliberately standalone because this companion is
+external to the Proxmox cluster. The Pi adapter must not be mistaken for proof
+of the ARM64 PBS or Proxmox appliance path.
 
 ## Pi deployment outline
 
