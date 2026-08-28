@@ -18,7 +18,11 @@
 - name: Pin the selected provider-neutral model alias
   ansible.builtin.copy:
     dest: /etc/boetticher-aiops/runtime.env
-    content: "AIOPS_MODEL_ALIAS={{ module_configs.aiops.model_alias }}\n"
+    content: |
+      AIOPS_MODEL_ALIAS={{ module_configs.aiops.model_alias }}
+      AIOPS_PULSE_URL=https://monitor.{{ domain }}
+      AIOPS_JOURNAL_URL=https://logs.{{ domain }}:19533/v1/query
+      AIOPS_ROUTER_URL=https://ai.{{ domain }}/v1/chat/completions
     owner: root
     group: boetticher-aiops
     mode: '0640'

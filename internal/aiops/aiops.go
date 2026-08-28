@@ -3,6 +3,7 @@ package aiops
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -103,10 +104,19 @@ type EvidenceRequest struct {
 	Limit        int       `json:"limit,omitempty"`
 }
 
+type Evidence struct {
+	Reference   string          `json:"reference"`
+	Source      Operation       `json:"source"`
+	CollectedAt time.Time       `json:"collected_at"`
+	SHA256      string          `json:"sha256"`
+	Data        json.RawMessage `json:"data"`
+}
+
 type EvidencePolicy struct {
-	IncidentID  string
-	ResourceIDs map[string]bool
-	Hosts       map[string]map[string]bool
+	IncidentID   string
+	PulseAlertID string
+	ResourceIDs  map[string]bool
+	Hosts        map[string]map[string]bool
 }
 
 var metrics = map[string]bool{"cpu": true, "memory": true, "disk": true, "availability": true}
