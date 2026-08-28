@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 )
@@ -28,6 +29,10 @@ func (d NFTDiff) Current() bool {
 func CompareNFT(plan Plan, live []byte) (NFTDiff, error) {
 	if plan.Mode != model.GatewayModeManaged {
 		return NFTDiff{}, fmt.Errorf("nftables comparison is only available in managed gateway mode")
+	}
+	expectedRules, err := expectedRuleComments(plan)
+	if err != nil {
+		return NFTDiff{}, err
 	}
 	var document struct {
 		NFTables []map[string]json.RawMessage `json:"nftables"`
@@ -95,13 +100,17 @@ func CompareNFT(plan Plan, live []byte) (NFTDiff, error) {
 			diff.MissingChains = append(diff.MissingChains, chain)
 		}
 	}
-	for _, rule := range expectedRuleComments() {
+	for _, rule := range expectedRules {
 		if !observedRules[rule] {
 			diff.MissingRules = append(diff.MissingRules, rule)
 		}
 	}
+	expectedRuleSet := make(map[string]bool, len(expectedRules))
+	for _, rule := range expectedRules {
+		expectedRuleSet[rule] = true
+	}
 	for rule := range observedRules {
-		if !expectedRuleCommentSet()[rule] {
+		if !expectedRuleSet[rule] {
 			diff.UnexpectedRules = append(diff.UnexpectedRules, rule)
 		}
 	}
@@ -133,45 +142,29 @@ func expectedChains() []string {
 	}
 }
 
-func expectedRuleComments() []string {
-	return []string{
-		"boetticher:input-loopback",
-		"boetticher:input-established",
-		"boetticher:input-wan-dhcp",
-		"boetticher:input-zone-dhcp",
-		"boetticher:input-sandbox-dns-udp",
-		"boetticher:input-sandbox-dns-tcp",
-		"boetticher:input-sandbox-ntp",
-		"boetticher:input-mgmt-ssh",
-		"boetticher:forward-established",
-		"boetticher:forward-sandbox-trusted-drop",
-		"boetticher:forward-sandbox-servers-drop",
-		"boetticher:forward-sandbox-mgmt-drop",
-		"boetticher:forward-trusted-servers-tcp",
-		"boetticher:forward-trusted-servers-udp",
-		"boetticher:forward-trusted-mgmt",
-		"boetticher:forward-servers-dns-tcp",
-		"boetticher:forward-servers-dns-udp",
-		"boetticher:forward-servers-monitoring",
-		"boetticher:forward-mgmt-servers-tcp",
-		"boetticher:forward-mgmt-servers-udp",
-		"boetticher:forward-mgmt-trusted-icmp",
-		"boetticher:forward-sandbox-internet",
-		"boetticher:forward-trusted-internet",
-		"boetticher:forward-servers-internet-tcp",
-		"boetticher:forward-servers-internet-udp",
-		"boetticher:forward-mgmt-internet",
-		"boetticher:nat-trusted",
-		"boetticher:nat-servers",
-		"boetticher:nat-sandbox",
-		"boetticher:nat-mgmt",
+func expectedRuleComments(plan Plan) ([]string, error) {
+	ruleset, err := RenderNFT(plan)
+	if err != nil {
+		return nil, fmt.Errorf("render expected nftables rules: %w", err)
 	}
-}
-
-func expectedRuleCommentSet() map[string]bool {
-	set := make(map[string]bool, len(expectedRuleComments()))
-	for _, value := range expectedRuleComments() {
-		set[value] = true
+	const marker = `comment "`
+	seen := map[string]bool{}
+	for _, line := range strings.Split(ruleset, "\n") {
+		start := strings.Index(line, marker)
+		if start < 0 {
+			continue
+		}
+		valueStart := start + len(marker)
+		end := strings.IndexByte(line[valueStart:], '"')
+		if end < 0 {
+			return nil, fmt.Errorf("rendered nftables rule comment is unterminated")
+		}
+		seen[line[valueStart:valueStart+end]] = true
 	}
-	return set
+	comments := make([]string, 0, len(seen))
+	for comment := range seen {
+		comments = append(comments, comment)
+	}
+	sort.Strings(comments)
+	return comments, nil
 }
