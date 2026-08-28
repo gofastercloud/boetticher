@@ -1,6 +1,7 @@
 package sshconfig
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -54,6 +55,25 @@ func TestRenderWithKnownHostsUsesSiteScopedTrustFile(t *testing.T) {
 	}
 	if strings.Contains(content, "StrictHostKeyChecking no") || strings.Contains(content, "UserKnownHostsFile /dev/null") {
 		t.Fatal("site-scoped SSH configuration weakened host-key verification")
+	}
+}
+
+func TestRemoveHostKeyRemovesOnlyTheExactGeneratedAlias(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	content := "# generated\nlab-dns-01.lab.home.arpa ssh-ed25519 AAAAold\nlab-dns-02.lab.home.arpa ssh-ed25519 AAAAkeep\n"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveHostKey(path, "lab-dns-01.lab.home.arpa"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Contains(text, "lab-dns-01.lab.home.arpa") || !strings.Contains(text, "lab-dns-02.lab.home.arpa") || !strings.Contains(text, "# generated") {
+		t.Fatalf("known-hosts content after exact removal = %q", text)
 	}
 }
 

@@ -28,6 +28,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/site"
+	"github.com/gofastercloud/boetticher/internal/sshconfig"
 	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
@@ -269,8 +270,24 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return fmt.Errorf("ensure single-disk Proxmox storage: %w", err)
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
+		firewallGuest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
+		for _, candidate := range proxmoxPlan.Guests {
+			if candidate.Kind == proxmox.KindQEMU {
+				firewallGuest = candidate
+				break
+			}
+		}
+		firewallReplaced, replacementErr := proxmox.GuestArtifactNeedsReplacement(context.Background(), proxmoxClient, proxmoxPlan.Node, firewallGuest)
+		if replacementErr != nil {
+			return replacementErr
+		}
 		if err := proxmox.EnsureFirewallVM(context.Background(), proxmoxClient, proxmoxPlan); err != nil {
 			return fmt.Errorf("create managed gateway appliance: %w", err)
+		}
+		if firewallReplaced {
+			if err := retireReplacedHostKey(*siteDir, s, firewallGuest); err != nil {
+				return fmt.Errorf("retire replaced gateway host key: %w", err)
+			}
 		}
 		if err := proxmoxClient.EnsureVMRunning(context.Background(), proxmoxPlan.Node, model.ProxmoxVMID); err != nil {
 			return fmt.Errorf("start managed gateway appliance: %w", err)
@@ -304,8 +321,30 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		if !modules.IsEnabled(s, module) && module != "portal" {
 			continue
 		}
+		replacedGuests := make([]proxmox.GuestPlan, 0)
+		for _, candidate := range proxmoxPlan.Guests {
+			matches := candidate.Owner == "boetticher/module/"+module
+			if module == "portal" {
+				matches = candidate.Name == "lab-portal-01"
+			}
+			if !matches || candidate.Kind != proxmox.KindLXC {
+				continue
+			}
+			replacement, replacementErr := proxmox.GuestArtifactNeedsReplacement(context.Background(), proxmoxClient, proxmoxPlan.Node, candidate)
+			if replacementErr != nil {
+				return replacementErr
+			}
+			if replacement {
+				replacedGuests = append(replacedGuests, candidate)
+			}
+		}
 		if err := proxmox.ProvisionModule(context.Background(), proxmoxClient, proxmoxPlan, module); err != nil {
 			return fmt.Errorf("deploy %s appliances: %w", module, err)
+		}
+		for _, guest := range replacedGuests {
+			if err := retireReplacedHostKey(*siteDir, s, guest); err != nil {
+				return fmt.Errorf("retire replaced %s host key: %w", guest.Name, err)
+			}
 		}
 		for _, guest := range proxmoxPlan.Guests {
 			matches := guest.Owner == "boetticher/module/"+module
@@ -1161,6 +1200,13 @@ func proxmoxRootSSHRunner(s model.Site, siteDir string) proxmox.SSHRunner {
 
 func deploymentKnownHosts(siteDir string) string {
 	return filepath.Join(siteDir, "generated", "ssh", "known_hosts")
+}
+
+func retireReplacedHostKey(siteDir string, s model.Site, guest proxmox.GuestPlan) error {
+	if guest.Hostname == "" {
+		return fmt.Errorf("guest %s has no host-key identity", guest.Name)
+	}
+	return sshconfig.RemoveHostKey(deploymentKnownHosts(siteDir), guest.Hostname+"."+s.Network.Domain)
 }
 
 func operatorIdentityFile(s model.Site) string {
