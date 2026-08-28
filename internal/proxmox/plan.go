@@ -992,18 +992,18 @@ func AttachTrunk(ctx context.Context, client *Client, node, physicalInterface, b
 	if bridge.BridgePorts != "" && bridge.BridgePorts != "none" && bridge.BridgePorts != physicalInterface {
 		return fmt.Errorf("vmbr1 already has bridge ports %q", bridge.BridgePorts)
 	}
-	if err := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge_ports": {physicalInterface}, "bridge_vlan_aware": {"1"}}); err != nil {
+	if err := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"type": {"bridge"}, "bridge_ports": {physicalInterface}, "bridge_vlan_aware": {"1"}}); err != nil {
 		return fmt.Errorf("attach %s to vmbr1: %w", physicalInterface, err)
 	}
 	var after []NetworkInterface
 	if err := client.NodeNetwork(ctx, node, &after); err != nil {
-		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge_ports": {"none"}, "bridge_vlan_aware": {"1"}}); rollbackErr != nil {
+		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"type": {"bridge"}, "bridge_ports": {"none"}, "bridge_vlan_aware": {"1"}}); rollbackErr != nil {
 			return fmt.Errorf("HOLD: trunk attach verification failed and rollback failed: %v; verification: %w", rollbackErr, err)
 		}
 		return fmt.Errorf("trunk attach verification failed; rollback completed: %w", err)
 	}
 	if !bridgeHasPort(after, "vmbr1", physicalInterface) {
-		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge_ports": {"none"}, "bridge_vlan_aware": {"1"}}); rollbackErr != nil {
+		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"type": {"bridge"}, "bridge_ports": {"none"}, "bridge_vlan_aware": {"1"}}); rollbackErr != nil {
 			return fmt.Errorf("HOLD: trunk attach was not observed and rollback failed: %v", rollbackErr)
 		}
 		return fmt.Errorf("trunk attach was not observed after mutation; rollback completed")
@@ -1038,18 +1038,18 @@ func DetachTrunk(ctx context.Context, client *Client, node, physicalInterface, b
 	if bridge == nil || bridge.Type != "bridge" || !bridge.BridgeVLANAware || !containsBridgePort(bridge.BridgePorts, physicalInterface) {
 		return fmt.Errorf("refusing to detach %s: it is not the current vmbr1 physical member", physicalInterface)
 	}
-	if err := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge_ports": {"none"}, "bridge_vlan_aware": {"1"}}); err != nil {
+	if err := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"type": {"bridge"}, "bridge_ports": {"none"}, "bridge_vlan_aware": {"1"}}); err != nil {
 		return fmt.Errorf("detach %s from vmbr1: %w", physicalInterface, err)
 	}
 	var after []NetworkInterface
 	if err := client.NodeNetwork(ctx, node, &after); err != nil {
-		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge_ports": {physicalInterface}, "bridge_vlan_aware": {"1"}}); rollbackErr != nil {
+		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"type": {"bridge"}, "bridge_ports": {physicalInterface}, "bridge_vlan_aware": {"1"}}); rollbackErr != nil {
 			return fmt.Errorf("HOLD: trunk detach verification failed and rollback failed: %v; verification: %w", rollbackErr, err)
 		}
 		return fmt.Errorf("trunk detach verification failed; rollback completed: %w", err)
 	}
 	if bridgeHasPort(after, "vmbr1", physicalInterface) {
-		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"bridge_ports": {physicalInterface}, "bridge_vlan_aware": {"1"}}); rollbackErr != nil {
+		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"type": {"bridge"}, "bridge_ports": {physicalInterface}, "bridge_vlan_aware": {"1"}}); rollbackErr != nil {
 			return fmt.Errorf("HOLD: trunk detach was not observed and rollback failed: %v", rollbackErr)
 		}
 		return fmt.Errorf("trunk detach was not observed after mutation; rollback completed")
