@@ -591,15 +591,29 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 func waitForDeploymentRoot(ctx context.Context, hostRunner proxmox.CommandRunner, hostAddress string, guestRunner proxmox.CommandRunner, guest proxmox.GuestPlan, publicKey string) error {
 	if err := proxmox.WaitForSSH(ctx, guestRunner, guest.Address, "root", 1, 0); err == nil {
 		return nil
-	} else {
-		if restoreErr := proxmox.RestoreTemporaryRootAccess(ctx, hostRunner, hostAddress, "root", guest.Kind, guest.VMID, publicKey); restoreErr != nil {
-			return fmt.Errorf("initial root transport failed and guest re-arm failed: %w", restoreErr)
+	}
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			timer := time.NewTimer(2 * time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return fmt.Errorf("initial root transport failed and guest re-arm cancelled: %w", ctx.Err())
+			case <-timer.C:
+			}
 		}
-		if retryErr := proxmox.WaitForSSH(ctx, guestRunner, guest.Address, "root", 30, 2*time.Second); retryErr != nil {
-			return retryErr
+		if restoreErr := proxmox.RestoreTemporaryRootAccess(ctx, hostRunner, hostAddress, "root", guest.Kind, guest.VMID, publicKey); restoreErr != nil {
+			lastErr = restoreErr
+			continue
+		}
+		if retryErr := proxmox.WaitForSSH(ctx, guestRunner, guest.Address, "root", 30, 2*time.Second); retryErr == nil {
+			return nil
+		} else {
+			lastErr = retryErr
 		}
 	}
-	return nil
+	return fmt.Errorf("initial root transport failed after bounded guest re-arm attempts: %w", lastErr)
 }
 
 func absolutePortalSourceDir(siteDir string) (string, error) {

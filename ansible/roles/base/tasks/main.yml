@@ -34,7 +34,9 @@
     state: directory
     owner: root
     group: systemd-journal
-    mode: '0750'
+    # Child service directories remain separately protected. Execute access
+    # for other users permits traversal without directory listing or reads.
+    mode: '0751'
   when: inventory_hostname in logging_upload_configs
 
 - name: Allow endpoint services to traverse the boetticher identity path

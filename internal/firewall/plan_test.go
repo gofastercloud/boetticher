@@ -185,6 +185,43 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 	}
 }
 
+func TestDistinctLiteLLMUpstreamsHaveDistinctSemanticCounterIDs(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	litellmEnabled := true
+	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+		Enabled: &litellmEnabled,
+		Upstreams: []model.LiteLLMUpstreamConfig{
+			{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"},
+			{Name: "anthropic", BaseURL: "https://api.anthropic.com/v1", APIKeySecret: "anthropic_api_key"},
+		},
+		Models: []model.LiteLLMModelConfig{
+			{Alias: "openrouter-model", Upstream: "openrouter", Model: "openrouter/model"},
+			{Alias: "anthropic-model", Upstream: "anthropic", Model: "anthropic/model"},
+		},
+	}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleset, err := RenderNFT(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var upstreamRules []string
+	for _, line := range strings.Split(ruleset, "\n") {
+		if strings.Contains(line, "boetticher:allow:module-module_litellm_configured_litellm_upstream_https_access_") {
+			upstreamRules = append(upstreamRules, line)
+		}
+	}
+	if len(upstreamRules) != 2 || upstreamRules[0] == upstreamRules[1] {
+		t.Fatalf("LiteLLM upstream semantic counter rules = %v", upstreamRules)
+	}
+}
+
 func TestQualifiedModuleLoggingIntentResolvesCollector(t *testing.T) {
 	rule := policyRuleForIntent(model.NewDefaultSite("installation", "age1example"), "logging", model.NetworkIntent{
 		Source: "lab-portal-01", Destination: "logs.lab.home.arpa", Protocol: "tcp", Ports: []string{"19532"}, Purpose: "native journal upload",

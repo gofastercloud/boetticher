@@ -287,12 +287,14 @@ func policyRuleForIntent(s model.Site, module string, intent model.NetworkIntent
 	if destination, ok := componentReference(s, intent.Destination); ok {
 		rule.To = destination.Zone
 		rule.DestinationCIDR = destination.Address + "/32"
+		rule.Name += " " + intent.Destination
 	} else if intent.Endpoint != "" {
 		parsed, err := url.Parse(intent.Endpoint)
 		if err != nil || parsed.Hostname() == "" {
 			return PolicyRule{}
 		}
 		rule.DestinationHost = parsed.Hostname()
+		rule.Name += " " + intent.Destination
 	} else {
 		return PolicyRule{}
 	}
