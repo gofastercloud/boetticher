@@ -355,6 +355,8 @@ func TestLoggingUploadServiceCanTraverseRuntimeStateParent(t *testing.T) {
 		"path: /var/lib/boetticher",
 		"group: systemd-journal",
 		"mode: '0750'",
+		"Allow endpoint services to traverse the boetticher identity path",
+		"path: /var/lib/boetticher/identity",
 		"when: inventory_hostname in logging_upload_configs",
 	} {
 		if !strings.Contains(text, expected) {

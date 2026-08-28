@@ -37,6 +37,15 @@
     mode: '0750'
   when: inventory_hostname in logging_upload_configs
 
+- name: Allow endpoint services to traverse the boetticher identity path
+  ansible.builtin.file:
+    path: /var/lib/boetticher/identity
+    state: directory
+    owner: root
+    group: systemd-journal
+    mode: '0750'
+  when: inventory_hostname in logging_upload_configs
+
 - name: Configure Chrony for unprivileged appliances
   ansible.builtin.copy:
     content: "DAEMON_OPTS=\"-x\"\n"
