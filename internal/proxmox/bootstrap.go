@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
@@ -312,6 +313,102 @@ func (r SSHRunner) RunArgsStream(ctx context.Context, address, user string, comm
 	return r.runArgsStream(ctx, address, user, commandArgs, os.Stdin, stdout)
 }
 
+// SSHLocalForward is a bounded, loopback-only SSH port forward used for a
+// controller API that is reachable only through the Proxmox management path.
+// It is intentionally short-lived and has no public listener.
+type SSHLocalForward struct {
+	localAddress string
+	cancel       context.CancelFunc
+	done         chan error
+	closeOnce    sync.Once
+}
+
+func (f *SSHLocalForward) Address() string {
+	if f == nil {
+		return ""
+	}
+	return f.localAddress
+}
+
+func (f *SSHLocalForward) Close() error {
+	if f == nil {
+		return nil
+	}
+	f.closeOnce.Do(func() {
+		f.cancel()
+		<-f.done
+	})
+	return nil
+}
+
+// StartLocalForward starts a local loopback forward to targetAddress:targetPort
+// through the configured SSH endpoint. The caller must close the returned
+// forward when the bounded operation is complete.
+func (r SSHRunner) StartLocalForward(ctx context.Context, address, user, targetAddress string, targetPort int) (*SSHLocalForward, error) {
+	if ctx == nil {
+		return nil, errors.New("SSH local forward context is required")
+	}
+	localListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, fmt.Errorf("reserve SSH local-forward port: %w", err)
+	}
+	localPort := localListener.Addr().(*net.TCPAddr).Port
+	if err := localListener.Close(); err != nil {
+		return nil, fmt.Errorf("release SSH local-forward port: %w", err)
+	}
+	args, err := r.forwardArgs(address, user, localPort, targetAddress, targetPort)
+	if err != nil {
+		return nil, err
+	}
+	forwardContext, cancel := context.WithCancel(ctx)
+	command := exec.CommandContext(forwardContext, "ssh", args...)
+	command.Stdin = nil
+	command.Stdout = io.Discard
+	stderr := &boundedOutput{limit: 64 << 10}
+	command.Stderr = stderr
+	if err := command.Start(); err != nil {
+		cancel()
+		return nil, fmt.Errorf("start SSH local forward: %w", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
+	forward := &SSHLocalForward{localAddress: fmt.Sprintf("127.0.0.1:%d", localPort), cancel: cancel, done: done}
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.NewTimer(10 * time.Second)
+	defer timeout.Stop()
+	for {
+		select {
+		case err := <-done:
+			cancel()
+			if err == nil {
+				return nil, errors.New("SSH local forward exited before readiness")
+			}
+			message := strings.TrimSpace(stderr.String())
+			if message != "" {
+				return nil, fmt.Errorf("SSH local forward exited before readiness: %w: %s", err, message)
+			}
+			return nil, fmt.Errorf("SSH local forward exited before readiness: %w", err)
+		case <-ctx.Done():
+			_ = forward.Close()
+			return nil, fmt.Errorf("start SSH local forward: %w", ctx.Err())
+		case <-ticker.C:
+			connection, dialErr := net.DialTimeout("tcp", forward.localAddress, 250*time.Millisecond)
+			if dialErr == nil {
+				_ = connection.Close()
+				return forward, nil
+			}
+		case <-timeout.C:
+			_ = forward.Close()
+			message := strings.TrimSpace(stderr.String())
+			if message != "" {
+				return nil, fmt.Errorf("SSH local forward did not become ready: %s", message)
+			}
+			return nil, errors.New("SSH local forward did not become ready")
+		}
+	}
+}
+
 const managementInterfaceConfig = `auto vmbr1.99
 iface vmbr1.99 inet static
     address 10.10.99.5/24
@@ -430,16 +527,42 @@ func (b *boundedOutput) String() string {
 }
 
 func (r SSHRunner) commandArgs(address, user string, commandArgs []string) ([]string, error) {
-	if net.ParseIP(address) == nil {
-		return nil, fmt.Errorf("Proxmox bootstrap address must be an IP address")
-	}
-	if user == "" {
-		return nil, errors.New("bootstrap SSH user is required")
-	}
 	if len(commandArgs) == 0 || commandArgs[0] == "" {
 		return nil, errors.New("SSH remote command is required")
 	}
-	args := []string{"-o", "BatchMode=no", "-o", "ForwardAgent=no", "-o", "ForwardX11=no"}
+	args, target, err := r.connectionArgs(address, user, "no")
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, target)
+	args = append(args, commandArgs...)
+	return args, nil
+}
+
+func (r SSHRunner) forwardArgs(address, user string, localPort int, targetAddress string, targetPort int) ([]string, error) {
+	if localPort < 1 || localPort > 65535 {
+		return nil, errors.New("SSH local-forward port is invalid")
+	}
+	if net.ParseIP(targetAddress) == nil || targetPort < 1 || targetPort > 65535 {
+		return nil, errors.New("SSH local-forward target is invalid")
+	}
+	args, target, err := r.connectionArgs(address, user, "yes")
+	if err != nil {
+		return nil, err
+	}
+	forward := fmt.Sprintf("127.0.0.1:%d:%s:%d", localPort, targetAddress, targetPort)
+	args = append(args, "-o", "ExitOnForwardFailure=yes")
+	return append(args, "-N", "-L", forward, target), nil
+}
+
+func (r SSHRunner) connectionArgs(address, user, batchMode string) ([]string, string, error) {
+	if net.ParseIP(address) == nil {
+		return nil, "", fmt.Errorf("Proxmox bootstrap address must be an IP address")
+	}
+	if user == "" {
+		return nil, "", errors.New("bootstrap SSH user is required")
+	}
+	args := []string{"-o", "BatchMode=" + batchMode, "-o", "ForwardAgent=no", "-o", "ForwardX11=no"}
 	strictHostKey := r.StrictHostKey
 	if strictHostKey == "" {
 		strictHostKey = "ask"
@@ -459,20 +582,18 @@ func (r SSHRunner) commandArgs(address, user string, commandArgs []string) ([]st
 	}
 	if r.HostKeyAlias != "" {
 		if !safeNodeID(r.HostKeyAlias) {
-			return nil, errors.New("SSH host-key alias is not a safe identifier")
+			return nil, "", errors.New("SSH host-key alias is not a safe identifier")
 		}
 		args = append(args, "-o", "HostKeyAlias="+r.HostKeyAlias)
 	}
 	target := address
 	if r.HostAlias != "" {
 		if !safeID(r.HostAlias) {
-			return nil, errors.New("SSH host alias is not a safe identifier")
+			return nil, "", errors.New("SSH host alias is not a safe identifier")
 		}
 		target = r.HostAlias
 	}
-	args = append(args, user+"@"+target)
-	args = append(args, commandArgs...)
-	return args, nil
+	return args, user + "@" + target, nil
 }
 
 func InstallOperatorKey(ctx context.Context, runner CommandRunner, address, initialUser, publicKey string) error {
