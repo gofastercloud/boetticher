@@ -170,7 +170,7 @@ func writeModelProjections(dir string, s model.Site) error {
 	}
 	sshContent := "# Managed by boetticher. Do not edit.\n# boetticher-model-revision: " + revision + "\n# Bootstrap endpoint is not configured; run boetticher bootstrap-endpoint set ADDRESS.\n"
 	if s.BootstrapAddress != "" {
-		sshContent, err = sshconfig.Render(s, time.Now().UTC())
+		sshContent, err = sshconfig.RenderWithKnownHosts(s, time.Now().UTC(), filepath.Join(dir, "generated", "ssh", "known_hosts"))
 		if err != nil {
 			return err
 		}

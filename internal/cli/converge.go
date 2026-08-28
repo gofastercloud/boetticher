@@ -465,6 +465,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		pulseRunner := proxmox.SSHRunner{
 			IdentityFile:  operatorIdentityFile(s),
 			ConfigFile:    filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"),
+			KnownHosts:    deploymentKnownHosts(*siteDir),
 			StrictHostKey: "accept-new",
 			HostAlias:     "lab-bastion",
 		}
@@ -1086,6 +1087,7 @@ func applianceSSHRunner(s model.Site, siteDir, hostAlias string) proxmox.SSHRunn
 	return proxmox.SSHRunner{
 		IdentityFile:  operatorIdentityFile(s),
 		ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),
+		KnownHosts:    deploymentKnownHosts(siteDir),
 		StrictHostKey: "accept-new",
 		HostAlias:     hostAlias,
 	}
@@ -1151,9 +1153,14 @@ func proxmoxRootSSHRunner(s model.Site, siteDir string) proxmox.SSHRunner {
 	return proxmox.SSHRunner{
 		IdentityFile:  operatorIdentityFile(s),
 		ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),
+		KnownHosts:    deploymentKnownHosts(siteDir),
 		StrictHostKey: "accept-new",
 		HostAlias:     model.LogicalProxmoxIdentity,
 	}
+}
+
+func deploymentKnownHosts(siteDir string) string {
+	return filepath.Join(siteDir, "generated", "ssh", "known_hosts")
 }
 
 func operatorIdentityFile(s model.Site) string {
