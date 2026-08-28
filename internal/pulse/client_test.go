@@ -219,6 +219,54 @@ func TestAdminConfiguresPVEThroughAuthenticatedAPIAndCreatesReadToken(t *testing
 	}
 }
 
+func TestAdminUpdatesExactPreviousPVEEndpoint(t *testing.T) {
+	updated := false
+	transport := fakeTransport(func(r *http.Request) (*http.Response, error) {
+		switch r.URL.Path {
+		case "/api/login":
+			return fakeResponse(r, http.StatusOK, `{}`, map[string]string{"Set-Cookie": "pulse_csrf=csrf; Path=/"}), nil
+		case "/api/config/nodes":
+			if r.Method != http.MethodGet {
+				return fakeResponse(r, http.StatusMethodNotAllowed, "unexpected method", nil), nil
+			}
+			host := "https://proxmox.lab.home.arpa:8006"
+			if updated {
+				host = "https://proxmox:8006"
+			}
+			return fakeResponse(r, http.StatusOK, `[{"id":"pve-0","type":"pve","name":"lab-proxmox-01","host":"`+host+`","verifySSL":true,"monitorPhysicalDisks":false,"temperatureMonitoringEnabled":false}]`, nil), nil
+		case "/api/config/nodes/pve-0":
+			if r.Method != http.MethodPut || r.Header.Get("X-CSRF-Token") != "csrf" {
+				return fakeResponse(r, http.StatusForbidden, "missing update authorization", nil), nil
+			}
+			var request map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				return fakeResponse(r, http.StatusBadRequest, "bad body", nil), nil
+			}
+			if request["type"] != "pve" || request["name"] != "lab-proxmox-01" || request["host"] != "https://proxmox:8006" || request["tokenId"] != "pulse-monitor@pve!boetticher-monitoring" || request["tokenSecret"] != "proxmox-token" || request["verifySSL"] != true || request["temperatureMonitoringEnabled"] != false {
+				return fakeResponse(r, http.StatusBadRequest, "unexpected update", nil), nil
+			}
+			updated = true
+			return fakeResponse(r, http.StatusOK, `{}`, nil), nil
+		default:
+			return fakeResponse(r, http.StatusNotFound, "not found", nil), nil
+		}
+	})
+	client, err := NewAdminClient(ClientConfig{BaseURL: "https://monitor.example.test", AdminUser: "admin", AdminPassword: "admin-pass", HTTP: &http.Client{Transport: transport}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.ConfigureProxmox(context.Background(), PVEConfig{
+		Name: "lab-proxmox-01", Host: "https://proxmox:8006", PreviousHost: "https://proxmox.lab.home.arpa:8006",
+		TokenID: "pulse-monitor@pve!boetticher-monitoring", TokenSecret: "proxmox-token", VerifySSL: true,
+		MonitorVMs: true, MonitorContainers: true, MonitorStorage: true, MonitorBackups: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !updated {
+		t.Fatal("exact previous Proxmox endpoint was not updated")
+	}
+}
+
 func TestAdminRefusesWrongExistingPVEEndpoint(t *testing.T) {
 	client, err := NewAdminClient(ClientConfig{
 		BaseURL: "https://monitor.example.test", AdminUser: "admin", AdminPassword: "admin-pass",

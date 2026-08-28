@@ -121,6 +121,9 @@ func TestPulseUsesTheProxmoxCertificateHostname(t *testing.T) {
 	if !strings.Contains(string(data), `Name: model.LogicalProxmoxIdentity, Host: "https://proxmox:8006"`) {
 		t.Fatal("Pulse reconciliation does not use the hostname covered by the default Proxmox certificate")
 	}
+	if !strings.Contains(string(data), `PreviousHost: "https://proxmox." + s.Network.Domain + ":8006"`) {
+		t.Fatal("Pulse reconciliation does not constrain the endpoint migration to the previous canonical hostname")
+	}
 }
 
 func TestRuntimeBoundaryAcceptsRelativeSiteDirectory(t *testing.T) {

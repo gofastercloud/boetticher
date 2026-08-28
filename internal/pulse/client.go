@@ -50,8 +50,11 @@ type Client struct {
 }
 
 type PVEConfig struct {
-	Name                 string
-	Host                 string
+	Name string
+	Host string
+	// PreviousHost permits one exact, product-known endpoint migration while
+	// retaining the refusal for arbitrary same-name Pulse nodes.
+	PreviousHost         string
 	TokenID              string
 	TokenSecret          string
 	VerifySSL            bool
@@ -262,29 +265,13 @@ func (c *Client) ConfigureProxmox(ctx context.Context, config PVEConfig) error {
 		return errors.New("Pulse Proxmox configuration requires an HTTPS API endpoint")
 	}
 	var nodes []struct {
+		ID                           string `json:"id"`
 		Type                         string `json:"type"`
 		Name                         string `json:"name"`
 		Host                         string `json:"host"`
 		VerifySSL                    bool   `json:"verifySSL"`
 		MonitorPhysicalDisks         *bool  `json:"monitorPhysicalDisks"`
 		TemperatureMonitoringEnabled *bool  `json:"temperatureMonitoringEnabled"`
-	}
-	if err := c.adminJSON(ctx, http.MethodGet, "/config/nodes", nil, &nodes); err != nil {
-		return fmt.Errorf("inspect Pulse Proxmox connections: %w", err)
-	}
-	for _, node := range nodes {
-		if node.Name == config.Name && (node.Host != config.Host || node.Type != "pve") {
-			return fmt.Errorf("refusing to reuse Pulse node name %q for a different Proxmox endpoint", config.Name)
-		}
-		if node.Type == "pve" && node.Name == config.Name && node.Host == config.Host && !node.VerifySSL {
-			return errors.New("Pulse Proxmox connection is not configured for verified TLS")
-		}
-		if node.Type == "pve" && node.Name == config.Name && node.Host == config.Host {
-			if node.MonitorPhysicalDisks == nil || *node.MonitorPhysicalDisks || node.TemperatureMonitoringEnabled == nil || *node.TemperatureMonitoringEnabled {
-				return errors.New("Pulse Proxmox connection does not prove physical-disk and SSH temperature monitoring are disabled")
-			}
-			return nil
-		}
 	}
 	request := map[string]any{
 		"type":                         "pve",
@@ -300,9 +287,37 @@ func (c *Client) ConfigureProxmox(ctx context.Context, config PVEConfig) error {
 		"monitorPhysicalDisks":         config.MonitorPhysicalDisks,
 		"temperatureMonitoringEnabled": config.MonitorTemperatures,
 	}
-	var response json.RawMessage
-	if err := c.adminJSON(ctx, http.MethodPost, "/config/nodes", request, &response); err != nil {
-		return fmt.Errorf("configure Pulse Proxmox connection: %w", err)
+	updatedExisting := false
+	if err := c.adminJSON(ctx, http.MethodGet, "/config/nodes", nil, &nodes); err != nil {
+		return fmt.Errorf("inspect Pulse Proxmox connections: %w", err)
+	}
+	for _, node := range nodes {
+		if node.Name == config.Name && (node.Host != config.Host || node.Type != "pve") {
+			if node.Type != "pve" || config.PreviousHost == "" || node.Host != config.PreviousHost || node.ID == "" {
+				return fmt.Errorf("refusing to reuse Pulse node name %q for a different Proxmox endpoint", config.Name)
+			}
+			var response json.RawMessage
+			if err := c.adminJSON(ctx, http.MethodPut, "/config/nodes/"+url.PathEscape(node.ID), request, &response); err != nil {
+				return fmt.Errorf("update Pulse Proxmox connection: %w", err)
+			}
+			updatedExisting = true
+			break
+		}
+		if node.Type == "pve" && node.Name == config.Name && node.Host == config.Host && !node.VerifySSL {
+			return errors.New("Pulse Proxmox connection is not configured for verified TLS")
+		}
+		if node.Type == "pve" && node.Name == config.Name && node.Host == config.Host {
+			if node.MonitorPhysicalDisks == nil || *node.MonitorPhysicalDisks || node.TemperatureMonitoringEnabled == nil || *node.TemperatureMonitoringEnabled {
+				return errors.New("Pulse Proxmox connection does not prove physical-disk and SSH temperature monitoring are disabled")
+			}
+			return nil
+		}
+	}
+	if !updatedExisting {
+		var response json.RawMessage
+		if err := c.adminJSON(ctx, http.MethodPost, "/config/nodes", request, &response); err != nil {
+			return fmt.Errorf("configure Pulse Proxmox connection: %w", err)
+		}
 	}
 	var configured []struct {
 		Type                         string `json:"type"`
