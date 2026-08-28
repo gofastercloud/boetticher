@@ -42,7 +42,7 @@ func runSSHConfig(args []string, out interface{ Write([]byte) (int, error) }) er
 		fmt.Fprintln(out, "SSH configuration: PASS current and model-consistent")
 		return nil
 	}
-	content, err := sshconfig.Render(s, time.Now())
+	content, err := sshconfig.RenderWithKnownHosts(s, time.Now(), filepath.Join(*siteDir, "generated", "ssh", "known_hosts"))
 	if err != nil {
 		return err
 	}

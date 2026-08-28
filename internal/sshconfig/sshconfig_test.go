@@ -1,6 +1,7 @@
 package sshconfig
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +36,24 @@ func TestRenderUsesBastionAndCanonicalHostKey(t *testing.T) {
 	}
 	if strings.Contains(content, "StrictHostKeyChecking no") {
 		t.Error("generated SSH config weakened host-key verification")
+	}
+}
+
+func TestRenderWithKnownHostsUsesSiteScopedTrustFile(t *testing.T) {
+	s := model.NewDefaultSite("installation", "age1example")
+	s.TestedVersions.Gateway = model.QualifiedGatewayImage
+	s.BootstrapAddress = "192.0.2.10"
+	knownHosts := filepath.Join(t.TempDir(), "generated", "ssh", "known_hosts")
+	content, err := RenderWithKnownHosts(s, time.Unix(0, 0), knownHosts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := "UserKnownHostsFile " + knownHosts
+	if !strings.Contains(content, expected) {
+		t.Fatalf("site-scoped SSH trust file missing %q: %s", expected, content)
+	}
+	if strings.Contains(content, "StrictHostKeyChecking no") || strings.Contains(content, "UserKnownHostsFile /dev/null") {
+		t.Fatal("site-scoped SSH configuration weakened host-key verification")
 	}
 }
 

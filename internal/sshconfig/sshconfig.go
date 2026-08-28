@@ -16,6 +16,26 @@ import (
 )
 
 func Render(s model.Site, generatedAt time.Time) (string, error) {
+	return render(s, generatedAt, "")
+}
+
+// RenderWithKnownHosts renders an SSH projection using a site-scoped trust
+// file. Keeping appliance host keys out of the controller's global known-hosts
+// file allows a fresh site to enroll its new identities without weakening
+// changed-key protection for an existing site.
+func RenderWithKnownHosts(s model.Site, generatedAt time.Time, knownHosts string) (string, error) {
+	knownHosts = model.ExpandUserPath(knownHosts)
+	if knownHosts != "" {
+		absolute, err := filepath.Abs(knownHosts)
+		if err != nil {
+			return "", fmt.Errorf("resolve SSH known-hosts path: %w", err)
+		}
+		knownHosts = absolute
+	}
+	return render(s, generatedAt, knownHosts)
+}
+
+func render(s model.Site, generatedAt time.Time, knownHosts string) (string, error) {
 	if err := s.Validate(); err != nil {
 		return "", err
 	}
@@ -31,8 +51,8 @@ func Render(s model.Site, generatedAt time.Time) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Managed by boetticher. Do not edit.\n# boetticher-model-revision: %s\n# generated-at: %s\n# Configure ~/.ssh/config with: Include ~/.ssh/config.d/*\n\n", revision, generatedAt.UTC().Format(time.RFC3339))
 
-	writeHost(&b, []string{"lab-proxmox-01", "proxmox"}, endpoint, "labadmin", "lab-proxmox-01", identity, false, false)
-	writeHost(&b, []string{"lab-bastion"}, endpoint, "lab-jump", "lab-proxmox-01", identity, false, true)
+	writeHost(&b, []string{"lab-proxmox-01", "proxmox"}, endpoint, "labadmin", "lab-proxmox-01", identity, knownHosts, false, false)
+	writeHost(&b, []string{"lab-bastion"}, endpoint, "lab-jump", "lab-proxmox-01", identity, knownHosts, false, true)
 
 	components := s.PlatformComponents()
 	sort.Slice(components, func(i, j int) bool { return components[i].Name < components[j].Name })
@@ -44,7 +64,7 @@ func Render(s model.Site, generatedAt time.Time) (string, error) {
 		if m.Name == "lab-fw-01" {
 			aliases = append(aliases, "firewall")
 		}
-		writeHost(&b, uniqueStrings(aliases), m.Address, m.SSHUser, m.Hostname+"."+s.Network.Domain, identity, true, false)
+		writeHost(&b, uniqueStrings(aliases), m.Address, m.SSHUser, m.Hostname+"."+s.Network.Domain, identity, knownHosts, true, false)
 	}
 	return b.String(), nil
 }
@@ -186,7 +206,7 @@ func ScanHostKey(ctx context.Context, address string) (string, error) {
 	return strings.Join(lines, "\n"), nil
 }
 
-func writeHost(b *strings.Builder, aliases []string, hostName, user, hostKeyAlias, identity string, throughBastion, bastion bool) {
+func writeHost(b *strings.Builder, aliases []string, hostName, user, hostKeyAlias, identity, knownHosts string, throughBastion, bastion bool) {
 	aliases = uniqueStrings(append(append([]string{}, aliases...), hostName))
 	fmt.Fprintf(b, "Host %s\n", strings.Join(aliases, " "))
 	fmt.Fprintf(b, "    HostName %s\n", hostName)
@@ -198,6 +218,9 @@ func writeHost(b *strings.Builder, aliases []string, hostName, user, hostKeyAlia
 	}
 	if identity != "" {
 		fmt.Fprintf(b, "    IdentityFile %s\n    IdentitiesOnly yes\n", identity)
+	}
+	if knownHosts != "" {
+		fmt.Fprintf(b, "    UserKnownHostsFile %s\n", knownHosts)
 	}
 	if bastion {
 		b.WriteString("    RequestTTY no\n    ForwardAgent no\n    ForwardX11 no\n")
