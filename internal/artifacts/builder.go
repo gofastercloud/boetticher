@@ -59,6 +59,7 @@ var PublicBuildInputs = []string{
 	"cmd/artifact-identity",
 	"cmd/boetticher-aiops",
 	"cmd/boetticher-firewall-telemetry",
+	"cmd/boetticher-log-query",
 	"cmd/qualify-artifact",
 	"cmd/render-blocky-config",
 	"internal/artifacts",
