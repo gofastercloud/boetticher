@@ -20,7 +20,7 @@ The internal namespace is `lab.home.arpa`. The platform identities are:
 
 | Host | Address | Function |
 | --- | --- | --- |
-| `lab-proxmox-01` | `10.10.99.250` | Proxmox host |
+| `lab-proxmox-01` | `10.10.99.5` | Proxmox host |
 | `lab-fw-01` | `.1` in all six zones | managed Debian gateway |
 | `lab-dns-01` | `10.10.10.10` | PowerDNS, Blocky by default, Chrony |
 | `lab-dns-02` | `10.10.10.11` | PowerDNS, Blocky by default, Chrony |
