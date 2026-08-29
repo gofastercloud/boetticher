@@ -429,6 +429,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	var monitorCertificate pki.ServerCertificate
 	var litellmCertificate pki.ServerCertificate
 	var octoprintCertificate pki.ServerCertificate
+	var gatusCertificate pki.ServerCertificate
 	var aiopsCertificates map[string]string
 	if monitoringEnabled {
 		monitorCSR, readErr := os.ReadFile(filepath.Join(csrDir, "monitor.csr.pem"))
@@ -466,6 +467,16 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			return fmt.Errorf("sign AIOps endpoint certificates: %w", err)
 		}
 	}
+	if modules.IsEnabled(s, "gatus") {
+		csr, readErr := os.ReadFile(filepath.Join(csrDir, "gatus.csr.pem"))
+		if readErr != nil {
+			return fmt.Errorf("read endpoint-generated Gatus CSR: %w", readErr)
+		}
+		gatusCertificate, err = pki.SignServerCSR(authority, string(csr), "gatus", s.Network.Domain, []string{"lab-gatus-01." + s.Network.Domain}, time.Now().UTC())
+		if err != nil {
+			return fmt.Errorf("sign Gatus endpoint CSR: %w", err)
+		}
+	}
 	portalCertificate, err := pki.SignServerCSR(authority, string(portalCSR), "portal", s.Network.Domain, []string{"lab-portal-01." + s.Network.Domain}, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("sign portal endpoint CSR: %w", err)
@@ -479,6 +490,9 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	if modules.IsEnabled(s, "printer") {
 		runtimeVariables["octoprint_server_cert_pem"] = octoprintCertificate.ChainPEM
+	}
+	if modules.IsEnabled(s, "gatus") {
+		runtimeVariables["gatus_server_cert_pem"] = gatusCertificate.ChainPEM
 	}
 	for name, certificate := range aiopsCertificates {
 		runtimeVariables[name] = certificate

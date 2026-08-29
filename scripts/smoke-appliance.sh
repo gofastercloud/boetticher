@@ -140,6 +140,13 @@ case "$name" in
       exit 1
     fi
     ;;
+  boetticher-gatus)
+    run /usr/local/bin/gatus version
+    test -x "$rootfs/usr/local/bin/gatus"
+    test -f "$rootfs/etc/systemd/system/gatus.service"
+    grep -Fq -- 'User=gatus' "$rootfs/etc/systemd/system/gatus.service"
+    test ! -e "$rootfs/etc/boetticher/gatus/config.yaml"
+    ;;
   *)
     echo "unknown smoke target: $name" >&2
     exit 2

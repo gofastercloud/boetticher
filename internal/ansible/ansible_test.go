@@ -10,6 +10,20 @@ import (
 	"github.com/gofastercloud/boetticher/internal/model"
 )
 
+func TestGatusRolePreparesConfigDirectoryAndReloadsNginx(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "gatus", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	if !strings.Contains(text, "path: /etc/boetticher/gatus, state: directory") {
+		t.Fatal("Gatus role does not create its configuration directory before copying config")
+	}
+	if !strings.Contains(text, "dest: /etc/nginx/sites-enabled/gatus.conf, state: link") || !strings.Contains(text, "notify: reload nginx") {
+		t.Fatal("Gatus role does not notify nginx after enabling its site")
+	}
+}
+
 func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	first, err := Inventory(site)

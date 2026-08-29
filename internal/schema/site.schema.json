@@ -194,6 +194,9 @@
         "firewall": {
           "$ref": "#/$defs/ToggleModuleConfig"
         },
+        "gatus": {
+          "$ref": "#/$defs/ToggleModuleConfig"
+        },
         "litellm": {
           "$ref": "#/$defs/LiteLLMModuleConfig"
         },
@@ -430,6 +433,36 @@
       ],
       "type": "object"
     },
+    "UserFirewallRule": {
+      "additionalProperties": false,
+      "properties": {
+        "destination": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "ports": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "source",
+        "destination",
+        "protocol"
+      ],
+      "type": "object"
+    },
     "Zone": {
       "additionalProperties": false,
       "properties": {
@@ -505,6 +538,12 @@
     "dns_records": {
       "items": {
         "$ref": "#/$defs/UserDNSRecord"
+      },
+      "type": "array"
+    },
+    "firewall_rules": {
+      "items": {
+        "$ref": "#/$defs/UserFirewallRule"
       },
       "type": "array"
     },

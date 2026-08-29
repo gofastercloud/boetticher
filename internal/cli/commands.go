@@ -38,7 +38,7 @@ var commandSpecs = []commandSpec{
 	{Usage: "boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm]"},
 	{Usage: "boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]"},
 	{Usage: "boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]"},
-	{Usage: "boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]"},
+	{Usage: "boetticher firewall status|show|diff|counters|logs|verify|rule add|list|remove [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N] [--source SOURCE] [--destination DESTINATION] [--vmid VMID] [--protocol PROTOCOL] [--ports PORTS] [--id ID] [--dry-run] [--confirm]"},
 	{Usage: "boetticher dhcp status|leases [--site DIR] [--live] [--json]"},
 	{Usage: "boetticher dhcp reservation add|list|remove [--site DIR] [--hostname NAME] [--address ADDRESS] [--mac MAC] [--vmid VMID] [--json]"},
 	{Usage: "boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME] [--value VALUE] [--json]"},
@@ -84,7 +84,7 @@ var helpSpecs = map[string]helpSpec{
 		Usage: "boetticher ssh-config [--site DIR] [--output PATH| -] [--force] [--check] [--identity-file PATH] [--install-include]", Purpose: "Render or validate the generated bastion-aware SSH configuration.", Arguments: "No positional arguments.", Options: "--check validates an existing file; --output selects a file or -; --force permits replacing the generated file; --install-include installs the user SSH include.", Safety: "Writes only the selected SSH projection; inspect paths before using --force.", Examples: "boetticher ssh-config --site ./my-boetticher --check", Related: "access, logs, verify",
 	},
 	"access": {
-		Usage: "boetticher access [--site DIR]", Purpose: "List operator access paths for enabled platform capabilities.", Arguments: "No positional arguments.", Options: "--site selects the private site repository.", Safety: "Read-only and non-secret. Logging is accessed with boetticher logs; it has no web UI.", Examples: "boetticher access --site ./my-boetticher", Related: "logs, portal, ssh-config",
+		Usage: "boetticher access [--site DIR]", Purpose: "List supported operator interfaces and explicit break-glass access for enabled platform capabilities.", Arguments: "No positional arguments.", Options: "--site selects the private site repository.", Safety: "Read-only and non-secret. Routine SSH and hand mutation of Core-managed appliances are unsupported; the external firewall remains operator-managed; SSH/Ansible is an internal controller transport. Logging is accessed with boetticher logs; it has no web UI.", Examples: "boetticher access --site ./my-boetticher", Related: "logs, portal, ssh-config",
 	},
 	"bootstrap-endpoint": {
 		Usage: "boetticher bootstrap-endpoint show|set ADDRESS [--site DIR]", Purpose: "Inspect or record the HOME-side Proxmox bootstrap address.", Arguments: "set requires an IPv4 ADDRESS; show has no positional argument.", Options: "--site selects the private site repository.", Safety: "set changes local site configuration only; it does not connect or mutate Proxmox.", Examples: "boetticher bootstrap-endpoint set 192.0.2.73 --site ./my-boetticher", Related: "preflight, bootstrap",
@@ -146,6 +146,9 @@ var nestedHelpSpecs = map[string]helpSpec{
 	"firewall counters":        helpSpecs["firewall"],
 	"firewall logs":            helpSpecs["firewall"],
 	"firewall verify":          helpSpecs["firewall"],
+	"firewall rule add":        helpSpecs["firewall"],
+	"firewall rule list":       helpSpecs["firewall"],
+	"firewall rule remove":     helpSpecs["firewall"],
 	"dhcp status":              helpSpecs["dhcp"],
 	"dhcp leases":              helpSpecs["dhcp"],
 	"dhcp reservation add":     helpSpecs["dhcp"],

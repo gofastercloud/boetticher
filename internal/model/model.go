@@ -12,6 +12,7 @@ import (
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -41,6 +42,7 @@ const (
 	DNS01VMID                   = 110
 	DNS02VMID                   = 111
 	MonitorVMID                 = 120
+	GatusVMID                   = 250
 	PortalVMID                  = 130
 	LoggingVMID                 = 140
 	BuilderVMID                 = 190
@@ -197,6 +199,7 @@ type Site struct {
 	RetainedModules        []RetainedModule        `json:"retained_modules,omitempty"`
 	DHCPReservations       []DHCPReservation       `json:"dhcp_reservations,omitempty"`
 	DNSRecords             []UserDNSRecord         `json:"dns_records,omitempty"`
+	UserFirewallRules      []UserFirewallRule      `json:"firewall_rules,omitempty"`
 	PendingDNSDeletions    []DNSDeletion           `json:"-"`
 }
 
@@ -473,6 +476,16 @@ type UserDNSRecord struct {
 	Value string `yaml:"value" json:"value"`
 }
 
+// UserFirewallRule is an additive allow exception. A VMID is intentionally
+// not persisted: it is only a read-only convenience lookup by the CLI.
+type UserFirewallRule struct {
+	ID          string   `yaml:"id" json:"id"`
+	Source      string   `yaml:"source" json:"source"`
+	Destination string   `yaml:"destination" json:"destination"`
+	Protocol    string   `yaml:"protocol" json:"protocol"`
+	Ports       []string `yaml:"ports,omitempty" json:"ports,omitempty"`
+}
+
 // DNSDeletion is runtime reconciliation state for an explicitly removed user
 // record. It is intentionally excluded from the canonical model revision.
 type DNSDeletion struct {
@@ -605,6 +618,14 @@ func (s Site) Normalize() Site {
 	copySite.RetainedModules = append([]RetainedModule(nil), s.RetainedModules...)
 	copySite.DHCPReservations = append([]DHCPReservation(nil), s.DHCPReservations...)
 	copySite.DNSRecords = append([]UserDNSRecord(nil), s.DNSRecords...)
+	copySite.UserFirewallRules = append([]UserFirewallRule(nil), s.UserFirewallRules...)
+	for i := range copySite.UserFirewallRules {
+		rule := &copySite.UserFirewallRules[i]
+		rule.Source, _ = validateFirewallSelector(rule.Source)
+		rule.Destination, _ = validateFirewallSelector(rule.Destination)
+		rule.Protocol = strings.ToLower(strings.TrimSpace(rule.Protocol))
+		rule.Ports, _ = validateFirewallPorts(rule.Ports, rule.Protocol)
+	}
 	copySite.PendingDNSDeletions = append([]DNSDeletion(nil), s.PendingDNSDeletions...)
 	sort.Slice(copySite.Network.Zones, func(i, j int) bool { return copySite.Network.Zones[i].VLAN < copySite.Network.Zones[j].VLAN })
 	sort.Slice(copySite.Components, func(i, j int) bool { return copySite.Components[i].Name < copySite.Components[j].Name })
@@ -629,6 +650,7 @@ func (s Site) Normalize() Site {
 		}
 		return copySite.DNSRecords[i].Type < copySite.DNSRecords[j].Type
 	})
+	sort.Slice(copySite.UserFirewallRules, func(i, j int) bool { return copySite.UserFirewallRules[i].ID < copySite.UserFirewallRules[j].ID })
 	sort.Slice(copySite.Gateway.Publish, func(i, j int) bool {
 		return copySite.Gateway.Publish[i].Service < copySite.Gateway.Publish[j].Service
 	})
@@ -933,6 +955,9 @@ func (s Site) Validate() error {
 		return err
 	}
 	if err := validateUserDNSRecords(s); err != nil {
+		return err
+	}
+	if err := validateUserFirewallRules(s); err != nil {
 		return err
 	}
 	requiredComponents := map[string]struct {
@@ -1258,6 +1283,146 @@ func validateUserDNSRecords(s Site) error {
 		}
 	}
 	return nil
+}
+
+const maxUserFirewallRules = 64
+
+func validateUserFirewallRules(s Site) error {
+	if len(s.UserFirewallRules) > maxUserFirewallRules {
+		return fmt.Errorf("firewall_rules must contain at most %d rules", maxUserFirewallRules)
+	}
+	ids, semantics := map[string]struct{}{}, map[string]struct{}{}
+	for _, rule := range s.UserFirewallRules {
+		if !strings.HasPrefix(rule.ID, "ufr-") || !modelTokenPattern.MatchString(rule.ID) {
+			return fmt.Errorf("firewall rule ID %q is not a stable ufr- identifier", rule.ID)
+		}
+		if _, ok := ids[rule.ID]; ok {
+			return fmt.Errorf("duplicate firewall rule ID %q", rule.ID)
+		}
+		ids[rule.ID] = struct{}{}
+		source, err := validateFirewallSelector(rule.Source)
+		if err != nil {
+			return fmt.Errorf("firewall rule %s source: %w", rule.ID, err)
+		}
+		destination, err := validateFirewallSelector(rule.Destination)
+		if err != nil {
+			return fmt.Errorf("firewall rule %s destination: %w", rule.ID, err)
+		}
+		protocol := strings.ToLower(strings.TrimSpace(rule.Protocol))
+		if protocol != "tcp" && protocol != "udp" && protocol != "icmp" {
+			return fmt.Errorf("firewall rule %s protocol %q is not tcp, udp, or icmp", rule.ID, rule.Protocol)
+		}
+		ports, err := validateFirewallPorts(rule.Ports, protocol)
+		if err != nil {
+			return fmt.Errorf("firewall rule %s: %w", rule.ID, err)
+		}
+		if firewallSelectorProtected(s, source) || firewallSelectorProtected(s, destination) {
+			return fmt.Errorf("firewall rule %s crosses a protected Core boundary", rule.ID)
+		}
+		key := source + "|" + destination + "|" + protocol + "|" + strings.Join(ports, ",")
+		if _, ok := semantics[key]; ok {
+			return fmt.Errorf("firewall rule %s duplicates an equivalent rule", rule.ID)
+		}
+		semantics[key] = struct{}{}
+	}
+	return nil
+}
+
+func validateFirewallSelector(value string) (string, error) {
+	value = strings.ToUpper(strings.TrimSpace(value))
+	for _, zone := range []string{"SERVERS", "TRUSTED", "SANDBOX"} {
+		if value == zone {
+			return value, nil
+		}
+	}
+	ip, network, err := net.ParseCIDR(value)
+	if err != nil || ip.To4() == nil || network.IP.To4() == nil || ip.String() != strings.Split(value, "/")[0] {
+		return "", fmt.Errorf("%q is not a supported zone or canonical IPv4/CIDR selector", value)
+	}
+	return network.String(), nil
+}
+
+func validateFirewallPorts(values []string, protocol string) ([]string, error) {
+	if len(values) > 16 {
+		return nil, errors.New("firewall rule may contain at most 16 ports or ranges")
+	}
+	result, seen := []string{}, map[string]struct{}{}
+	for _, raw := range values {
+		parts := strings.Split(strings.TrimSpace(raw), "-")
+		if len(parts) > 2 || len(parts) == 0 {
+			return nil, fmt.Errorf("invalid port range %q", raw)
+		}
+		start, err := strconv.Atoi(parts[0])
+		if err != nil || start < 1 || start > 65535 {
+			return nil, fmt.Errorf("invalid port %q", raw)
+		}
+		end := start
+		if len(parts) == 2 {
+			end, err = strconv.Atoi(parts[1])
+			if err != nil || end < start || end > 65535 {
+				return nil, fmt.Errorf("invalid port range %q", raw)
+			}
+		}
+		if end-start+1 > 1024 {
+			return nil, fmt.Errorf("port range %q exceeds 1024 ports", raw)
+		}
+		if protocol == "icmp" {
+			return nil, errors.New("ICMP does not accept ports")
+		}
+		canonical := strconv.Itoa(start)
+		if end != start {
+			canonical += "-" + strconv.Itoa(end)
+		}
+		if _, ok := seen[canonical]; ok {
+			return nil, fmt.Errorf("duplicate port or range %q", raw)
+		}
+		seen[canonical] = struct{}{}
+		result = append(result, canonical)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func firewallSelectorProtected(s Site, selector string) bool {
+	selector = strings.ToUpper(strings.TrimSpace(selector))
+	for _, zone := range s.Network.Zones {
+		if selector != zone.Name {
+			continue
+		}
+		if zone.Type != ZoneTypeServers && zone.Type != ZoneTypeTrusted && zone.Type != ZoneTypeSandbox {
+			return true
+		}
+		_, network, err := net.ParseCIDR(zone.Network)
+		if err != nil {
+			return true
+		}
+		for _, component := range s.PlatformComponents() {
+			if component.ProductOwned {
+				if ip := net.ParseIP(component.Address).To4(); ip != nil && network.Contains(ip) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	_, network, err := net.ParseCIDR(selector)
+	if err != nil {
+		return false
+	}
+	for _, component := range s.PlatformComponents() {
+		if ip := net.ParseIP(component.Address).To4(); ip != nil && network.Contains(ip) {
+			return true
+		}
+	}
+	for _, zone := range s.Network.Zones {
+		if zone.Type == ZoneTypeInfrastructure || zone.Type == ZoneTypeManagement || zone.Type == ZoneTypeTransit {
+			_, protected, e := net.ParseCIDR(zone.Network)
+			if e == nil && (network.Contains(protected.IP) || protected.Contains(network.IP)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func privateDNSName(raw, domain string) (string, error) {

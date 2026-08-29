@@ -43,6 +43,7 @@ type PolicyRule struct {
 	SourceCIDR      string   `json:"source_cidr,omitempty"`
 	DestinationCIDR string   `json:"destination_cidr,omitempty"`
 	DestinationHost string   `json:"destination_host,omitempty"`
+	UserRuleID      string   `json:"user_rule_id,omitempty"`
 }
 
 type DHCPSubnet struct {
@@ -105,6 +106,15 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	if err := s.Validate(); err != nil {
 		return Plan{}, err
 	}
+	s = s.Normalize()
+	for _, userRule := range s.UserFirewallRules {
+		if _, _, ok := userSelector(s, userRule.Source); !ok {
+			return Plan{}, fmt.Errorf("HOLD: user firewall rule %s source %q cannot be rendered", userRule.ID, userRule.Source)
+		}
+		if _, _, ok := userSelector(s, userRule.Destination); !ok {
+			return Plan{}, fmt.Errorf("HOLD: user firewall rule %s destination %q cannot be rendered", userRule.ID, userRule.Destination)
+		}
+	}
 	revision, err := s.Revision()
 	if err != nil {
 		return Plan{}, err
@@ -117,6 +127,16 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	if s.Gateway.Mode == model.GatewayModeExternal {
 		engine = "operator-managed external firewall"
 	}
+	rules := policyRules(s)
+	userRuleCount := 0
+	for _, rule := range rules {
+		if rule.UserRuleID != "" {
+			userRuleCount++
+		}
+	}
+	if userRuleCount != len(s.UserFirewallRules) {
+		return Plan{}, fmt.Errorf("HOLD: %d persisted user firewall rule(s) cannot be rendered", len(s.UserFirewallRules)-userRuleCount)
+	}
 	plan := Plan{
 		ModelRevision: revision,
 		Mode:          s.Gateway.Mode,
@@ -124,7 +144,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		IPv4Only:      true,
 		Forwarding:    s.Gateway.Mode == model.GatewayModeManaged,
 		Telemetry:     DefaultTelemetryPlan(s.Gateway.Mode == model.GatewayModeManaged),
-		Rules:         policyRules(s),
+		Rules:         rules,
 		ModuleSources: moduleSourceCIDRs(s),
 		DHCP:          dhcpSubnets(s),
 		DDNS:          dnsPlan.DDNS,
@@ -353,7 +373,43 @@ func policyRules(s model.Site) []PolicyRule {
 			}
 		}
 	}
+	userRules := append([]model.UserFirewallRule(nil), s.UserFirewallRules...)
+	sort.Slice(userRules, func(i, j int) bool { return userRules[i].ID < userRules[j].ID })
+	for _, user := range userRules {
+		sourceZone, sourceCIDR, sourceOK := userSelector(s, user.Source)
+		destinationZone, destinationCIDR, destinationOK := userSelector(s, user.Destination)
+		if !sourceOK || !destinationOK {
+			continue
+		}
+		rules = append(rules, PolicyRule{Sequence: len(rules) + 1, Name: "user-rule-" + user.ID, From: sourceZone, To: destinationZone, Action: "allow", Protocol: strings.ToLower(user.Protocol), Ports: append([]string(nil), user.Ports...), Counter: "boetticher_user_" + safeRuleToken(user.ID), Description: "user firewall rule " + user.ID, SourceCIDR: sourceCIDR, DestinationCIDR: destinationCIDR, UserRuleID: user.ID})
+	}
 	return rules
+}
+
+func userSelector(s model.Site, selector string) (string, string, bool) {
+	selector = strings.ToUpper(strings.TrimSpace(selector))
+	for _, zone := range s.Network.Zones {
+		if selector == zone.Name {
+			if zone.Type == model.ZoneTypeServers || zone.Type == model.ZoneTypeTrusted || zone.Type == model.ZoneTypeSandbox {
+				return zone.Name, zone.Network, true
+			}
+			return "", "", false
+		}
+	}
+	_, network, err := net.ParseCIDR(selector)
+	if err != nil || network.IP.To4() == nil {
+		return "", "", false
+	}
+	for _, zone := range s.Network.Zones {
+		if zone.Type != model.ZoneTypeServers && zone.Type != model.ZoneTypeTrusted && zone.Type != model.ZoneTypeSandbox {
+			continue
+		}
+		_, zoneNetwork, e := net.ParseCIDR(zone.Network)
+		if e == nil && zoneNetwork.Contains(network.IP) {
+			return zone.Name, network.String(), true
+		}
+	}
+	return "", "", false
 }
 
 func policyRuleForIntent(s model.Site, module string, intent model.NetworkIntent) PolicyRule {
@@ -516,7 +572,11 @@ func RenderNFT(plan Plan) (string, error) {
 			case "icmp":
 				protocolText = " ip protocol icmp"
 			}
-			fmt.Fprintf(&b, "    iifname \"%s\" oifname \"%s\" ip saddr %s ip daddr %s%s counter accept comment \"boetticher:allow:module-%s-%s\"\n", sourceIface, destinationIface, rule.SourceCIDR, destination, protocolText, safeRuleToken(rule.Name), protocol)
+			comment := "boetticher:allow:module-" + safeRuleToken(rule.Name) + "-" + protocol
+			if rule.UserRuleID != "" {
+				comment = "boetticher:user-rule:" + rule.UserRuleID + ":" + protocol
+			}
+			fmt.Fprintf(&b, "    iifname \"%s\" oifname \"%s\" ip saddr %s ip daddr %s%s counter accept comment \"%s\"\n", sourceIface, destinationIface, rule.SourceCIDR, destination, protocolText, comment)
 		}
 	}
 	for _, rule := range plan.Rules {

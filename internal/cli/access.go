@@ -27,10 +27,14 @@ func runAccess(args []string, out interface{ Write([]byte) (int, error) }) error
 	} else {
 		fmt.Fprintf(out, "  Proxmox       ssh proxmox\n                https://%s:8006\n", s.BootstrapAddress)
 	}
-	fmt.Fprintln(out, "Internal SSH")
-	for _, m := range sortedSSHComponents(s) {
-		alias := preferredAccessAlias(m)
-		fmt.Fprintf(out, "  %-13s ssh %s\n", m.Role, alias)
+	fmt.Fprintln(out, "Supported operator access")
+	fmt.Fprintln(out, "  Platform      boetticher CLI and generated portal/status surfaces")
+	fmt.Fprintln(out, "  Web           native product UI/API where provided")
+	fmt.Fprintln(out, "  Break-glass   Proxmox console/exec for explicit recovery")
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		fmt.Fprintln(out, "  Core SSH      internal controller transport only")
+	} else {
+		fmt.Fprintln(out, "  External      operator-managed appliance and recovery")
 	}
 	fmt.Fprintln(out, "Web")
 	for _, m := range s.PlatformComponents() {
@@ -39,13 +43,14 @@ func runAccess(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 	}
 	fmt.Fprintln(out, "Logging\n  boetticher logs")
-	fmt.Fprintln(out, "Access path")
-	fmt.Fprintln(out, "  Internal SSH  via Proxmox bastion")
+	fmt.Fprintln(out, "Access boundary")
 	fmt.Fprintf(out, "Gateway\n  Mode        %s\n", s.Gateway.Mode)
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		fmt.Fprintln(out, "  Firewall    ssh firewall")
+		fmt.Fprintln(out, "  Core         routine SSH and hand mutation are unsupported")
+		fmt.Fprintln(out, "  Firewall    managed through boetticher deploy")
 		fmt.Fprintln(out, "  Engine      nftables")
 	} else {
+		fmt.Fprintln(out, "  External     configure and recover through the operator's appliance")
 		fmt.Fprintln(out, "  Appliance   operator managed")
 		fmt.Fprintln(out, "  Trunk       physical VLAN trunk")
 	}

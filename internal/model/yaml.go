@@ -106,9 +106,11 @@ func validateModuleConfigShape(data []byte) error {
 			allowed["enabled"] = true
 			allowed["upstreams"] = true
 			allowed["models"] = true
-		case "aiops":
+		case "aiops", "gatus":
 			allowed["enabled"] = true
-			allowed["model_alias"] = true
+			if name == "aiops" {
+				allowed["model_alias"] = true
+			}
 		default:
 			return fmt.Errorf("site.yml: modules.%s: unknown first-party module", name)
 		}
