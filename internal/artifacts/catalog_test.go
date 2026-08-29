@@ -809,6 +809,28 @@ func TestAIOpsArtifactPinsUnmodifiedHolmesAndIsolation(t *testing.T) {
 	}
 }
 
+func TestGatusArtifactSmokeContractUsesSupportedChecks(t *testing.T) {
+	smoke, err := os.ReadFile(filepath.Join("..", "..", "scripts", "smoke-appliance.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(smoke)
+	for _, required := range []string{
+		"boetticher-gatus)",
+		"test -x \"$rootfs/usr/local/bin/gatus\"",
+		"test -f \"$rootfs/etc/systemd/system/gatus.service\"",
+		"User=gatus",
+		"test ! -e \"$rootfs/etc/boetticher/gatus/config.yaml\"",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Gatus smoke contract is missing %q", required)
+		}
+	}
+	if strings.Contains(text, "run /usr/local/bin/gatus version") {
+		t.Fatal("Gatus smoke contract invokes an unsupported version subcommand")
+	}
+}
+
 func TestApplianceBuildEmbedsDefinitionIdentityWithoutContentEvidence(t *testing.T) {
 	buildScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
 	if err != nil {

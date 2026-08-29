@@ -153,7 +153,7 @@ case "$name" in
     test ! -e "$rootfs/etc/boetticher-aiops/runtime.env"
     ;;
   boetticher-gatus)
-    run /usr/local/bin/gatus version
+    printf '%s\n' 'boetticher smoke check: Gatus executable'
     test -x "$rootfs/usr/local/bin/gatus"
     test -f "$rootfs/etc/systemd/system/gatus.service"
     grep -Fq -- 'User=gatus' "$rootfs/etc/systemd/system/gatus.service"
