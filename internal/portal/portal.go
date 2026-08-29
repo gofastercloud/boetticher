@@ -144,7 +144,7 @@ func home(s model.Site, revision string, evidence Evidence, now time.Time) strin
 	if semantic.OverallState != statusmodel.Healthy {
 		action = "Action required: open the <a href=\"/security.html\">Security page</a> for the reason and suggested next step."
 	}
-	return fmt.Sprintf("<p>This is a snapshot of your Boetticher platform. Use the links above for services, recovery, and detailed runbooks.</p><p>Model revision: <code>%s</code></p><h2>Platform health: %s</h2><p>Gateway: %s · observed: %s</p><p>%s</p>%s<h2>Important links</h2><p><a href=\"%s\">Proxmox</a> · <a href=\"https://monitor.%s\">Pulse monitoring</a> · <a href=\"https://portal.%s\">Portal</a> · <a href=\"https://dns.%s\">DNS</a></p>", html.EscapeString(revision), html.EscapeString(string(semantic.OverallState)), html.EscapeString(gateway), now.UTC().Format(time.RFC3339), action, moduleTable.String(), html.EscapeString("https://proxmox."+s.Network.Domain+":8006"), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain))
+	return fmt.Sprintf("<p>This is a snapshot of your Boetticher platform. Use the links above for services, recovery, and detailed runbooks.</p><p>Model revision: <code>%s</code></p><h2>Platform result: %s</h2><p>Gateway: %s · observed: %s</p><p>%s</p>%s<h2>Important links</h2><p><a href=\"%s\">Proxmox</a> · <a href=\"https://monitor.%s\">Pulse monitoring</a> · <a href=\"https://portal.%s\">Portal</a> · <a href=\"https://dns.%s\">DNS</a></p>", html.EscapeString(revision), html.EscapeString(humanOverallResult(semantic.OverallState)), html.EscapeString(gateway), now.UTC().Format(time.RFC3339), action, moduleTable.String(), html.EscapeString("https://proxmox."+s.Network.Domain+":8006"), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain))
 }
 
 func loggingSummary(s model.Site, evidence Evidence) string {
@@ -163,10 +163,10 @@ func loggingSummary(s model.Site, evidence Evidence) string {
 			expectedSources++
 		}
 	}
-	observed := "NOT TESTED"
+	observed := "FAIL"
 	for _, result := range evidence.Results {
 		if strings.Contains(strings.ToLower(result.Name), "logging") {
-			observed = result.Status
+			observed = humanResult(result.Status)
 			break
 		}
 	}
@@ -282,14 +282,30 @@ func security(revision string, evidence Evidence) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Expected security properties and latest available conformance evidence. Live telemetry belongs to the Pulse monitoring appliance.</p><table><tr><th>Property</th><th>Status</th><th>Detail</th></tr>", html.EscapeString(revision))
 	for _, result := range evidence.Results {
-		class := strings.ToLower(result.Status)
-		fmt.Fprintf(&b, "<tr><td>%s</td><td class=\"%s\">%s</td><td>%s</td></tr>", html.EscapeString(result.Name), html.EscapeString(class), html.EscapeString(result.Status), html.EscapeString(result.Detail))
+		resultStatus := humanResult(result.Status)
+		class := strings.ToLower(resultStatus)
+		fmt.Fprintf(&b, "<tr><td>%s</td><td class=\"%s\">%s</td><td>%s</td></tr>", html.EscapeString(result.Name), html.EscapeString(class), html.EscapeString(resultStatus), html.EscapeString(result.Detail))
 	}
 	if len(evidence.Results) == 0 {
-		b.WriteString("<tr><td colspan=\"3\">NOT TESTED — no verification evidence has been generated.</td></tr>")
+		b.WriteString("<tr><td colspan=\"3\">FAIL — no verification evidence has been generated; run boetticher verify.</td></tr>")
 	}
 	b.WriteString("</table>")
 	return b.String()
+}
+
+func humanResult(value string) string {
+	value = strings.TrimSpace(strings.ToUpper(value))
+	if value == "PASS" || value == "STATIC PASS" {
+		return "PASS"
+	}
+	return "FAIL"
+}
+
+func humanOverallResult(value statusmodel.OperatorState) string {
+	if value == statusmodel.Healthy {
+		return "PASS"
+	}
+	return "FAIL"
 }
 
 func pki(s model.Site, revision string) string {

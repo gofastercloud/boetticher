@@ -40,7 +40,7 @@ func runAIOps(args []string, out io.Writer) error {
 		if *asJSON {
 			return json.NewEncoder(out).Encode(value)
 		}
-		fmt.Fprintf(out, "AIOps enabled\nModel alias %s\nLive status NOT TESTED (use --live)\n", s.ModuleConfig["aiops"].ModelAlias)
+		fmt.Fprintf(out, "AIOps enabled\nModel alias %s\nLive status: use --live for bounded appliance status\n", s.ModuleConfig["aiops"].ModelAlias)
 		return nil
 	}
 	component, ok := findManagedEndpoint(s, "lab-aiops-01")

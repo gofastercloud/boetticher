@@ -96,7 +96,7 @@ Arguments: No positional arguments.
 
 Options: --dry-run plans without mutation; --confirm authorizes destructive operations supported by the active providers, including replacement of an owned appliance rootfs when its declared persistent volumes can be retained; connection options select the Proxmox trust path.
 
-Safety: This is the sole public platform-application operation. It requires the temporary root SSH access established by bootstrap, uses the scoped Proxmox API token for lifecycle operations, and removes temporary root access after successful convergence. Review the plan before applying it; unowned occupants, invalid persistent-volume identities, and unsupported replacement conditions remain HOLD.
+Safety: This is the sole public platform-application operation. It requires the temporary root SSH access established by bootstrap, uses the scoped Proxmox API token for lifecycle operations, and removes temporary root access after successful convergence. Review the plan before applying it; unowned occupants, invalid persistent-volume identities, and unsupported replacement conditions fail with recovery guidance.
 
 Examples: `boetticher deploy --site ./my-boetticher --dry-run`; `boetticher deploy --site ./my-boetticher --confirm`
 

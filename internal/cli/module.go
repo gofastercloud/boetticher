@@ -250,13 +250,13 @@ func runModuleStatusWithInput(args []string, input io.Reader, out, errOut io.Wri
 		}
 		fmt.Fprintln(out, "\nSecrets\nNAME\tLIFECYCLE\tMANAGEMENT\tSTATUS")
 		for _, declaration := range declarations {
-			status := "missing"
+			status := "FAIL missing"
 			if presence[declaration.Name] {
-				status = "present"
+				status = "PASS present"
 			}
 			fmt.Fprintf(out, "%s\t%s\t%s\t%s\n", declaration.Name, lifecycleName(declaration), declaration.Generation, status)
 		}
-		fmt.Fprintln(out, "\nRuntime\n  NOT TESTED (use boetticher doctor --live or verify for runtime evidence)")
+		fmt.Fprintln(out, "\nRuntime\n  use boetticher doctor --live for the runtime assertion")
 		return nil
 	}
 	return runModuleList(remaining, out)
@@ -318,7 +318,7 @@ func runModuleChangeWithInput(args []string, input io.Reader, out, errOut io.Wri
 				return err
 			}
 		}
-		fmt.Fprintln(out, "  Site mutation: NOT RUN (dry-run)")
+		fmt.Fprintln(out, "  Site mutation: not applied (dry-run)")
 		return nil
 	}
 	if !*confirm {

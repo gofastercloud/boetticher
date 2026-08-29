@@ -47,7 +47,7 @@ func TestPortalHomeUsesCanonicalSemanticStatus(t *testing.T) {
 		Results:     []CheckResult{{Name: "legacy evidence", Status: "FAIL", Detail: "stale presentation"}},
 		Status:      &canonical,
 	}, time.Unix(0, 0))
-	if !strings.Contains(content, "Platform health: HEALTHY") {
+	if !strings.Contains(content, "Platform result: PASS") {
 		t.Fatalf("portal did not use canonical semantic status: %s", content)
 	}
 	if !strings.Contains(content, "Model revision: <code>revision</code>") {
@@ -216,7 +216,7 @@ func TestPortalPublishesModuleArtifactAndLoggingSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := string(data)
-	for _, want := range []string{"Enabled modules", "ACTION REQUIRED", "Important links"} {
+	for _, want := range []string{"Enabled modules", "Action required:", "Important links"} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("portal omitted %q", want)
 		}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -352,6 +353,13 @@ func dynamicZoneNames(zones []dns.DynamicZone) []string {
 // file. The playbook itself must obtain any future secret material through an
 // approved runtime mechanism.
 func Run(ctx context.Context, playbook, inventory string, variables []byte) error {
+	_, err := run(ctx, playbook, inventory, variables, "")
+	return err
+}
+
+// RunWithMutation reports only whether the bounded Ansible recap contained a
+// non-zero changed count. It is intentionally not a per-resource audit log.
+func RunWithMutation(ctx context.Context, playbook, inventory string, variables []byte) (bool, error) {
 	return run(ctx, playbook, inventory, variables, "")
 }
 
@@ -359,22 +367,29 @@ func Run(ctx context.Context, playbook, inventory string, variables []byte) erro
 // identity. The limit is validated before it becomes an Ansible argument so a
 // readiness stage cannot turn into an arbitrary command or host selector.
 func RunLimited(ctx context.Context, playbook, inventory string, variables []byte, limit string) error {
+	_, err := RunLimitedWithMutation(ctx, playbook, inventory, variables, limit)
+	return err
+}
+
+// RunLimitedWithMutation is RunLimited with the same coarse changed signal as
+// RunWithMutation.
+func RunLimitedWithMutation(ctx context.Context, playbook, inventory string, variables []byte, limit string) (bool, error) {
 	if !safeInventoryIdentity(limit) {
-		return errors.New("Ansible limit must be one safe inventory identity")
+		return false, errors.New("Ansible limit must be one safe inventory identity")
 	}
 	return run(ctx, playbook, inventory, variables, limit)
 }
 
-func run(ctx context.Context, playbook, inventory string, variables []byte, limit string) error {
+func run(ctx context.Context, playbook, inventory string, variables []byte, limit string) (bool, error) {
 	if playbook == "" || inventory == "" {
-		return errors.New("Ansible playbook and inventory are required")
+		return false, errors.New("Ansible playbook and inventory are required")
 	}
 	if err := sshconfig.ValidateExecutionConfig(generatedSSHConfigPath(inventory)); err != nil {
-		return fmt.Errorf("validate Ansible SSH configuration: %w", err)
+		return false, fmt.Errorf("validate Ansible SSH configuration: %w", err)
 	}
 	executable, err := exec.LookPath("ansible-playbook")
 	if err != nil {
-		return fmt.Errorf("ansible-playbook is required: %w", err)
+		return false, fmt.Errorf("ansible-playbook is required: %w", err)
 	}
 	args := []string{"-i", inventory, "--user", "root", playbook, "--extra-vars", "@/dev/stdin", "--ssh-common-args", "-F " + generatedSSHConfigPath(inventory)}
 	if limit != "" {
@@ -387,14 +402,26 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	command.Stdout = &output
 	command.Stderr = &output
 	err = command.Run()
+	changed := ansibleOutputChanged(output.Bytes())
 	if err != nil {
 		diagnostic := failureDiagnosticWithSupplement(output.Bytes(), output.DiagnosticBytes())
 		if diagnostic == "" {
-			return fmt.Errorf("ansible-playbook failed: %w", err)
+			return changed, fmt.Errorf("ansible-playbook failed: %w", err)
 		}
-		return fmt.Errorf("ansible-playbook failed: %w: %s", err, diagnostic)
+		return changed, fmt.Errorf("ansible-playbook failed: %w: %s", err, diagnostic)
 	}
-	return nil
+	return changed, nil
+}
+
+var ansibleChangedPattern = regexp.MustCompile(`changed=([0-9]+)`)
+
+func ansibleOutputChanged(output []byte) bool {
+	for _, match := range ansibleChangedPattern.FindAllSubmatch(output, -1) {
+		if len(match) == 2 && string(match[1]) != "0" {
+			return true
+		}
+	}
+	return false
 }
 
 func failureDiagnostic(output []byte) string {

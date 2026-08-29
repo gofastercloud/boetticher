@@ -111,7 +111,7 @@ func TestModuleSecretCLIListSetAndRemoveNeverPrintsValue(t *testing.T) {
 	if err := Run([]string{"module", "status", "litellm", "--site", siteDir, "--age-identity", identityPath}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "openrouter_api_key\truntime\toperator-supplied\tpresent") || strings.Contains(output.String(), secret) {
+	if !strings.Contains(output.String(), "openrouter_api_key\truntime\toperator-supplied\tPASS present") || strings.Contains(output.String(), secret) {
 		t.Fatalf("status did not report redacted secret presence: %q", output.String())
 	}
 	output.Reset()

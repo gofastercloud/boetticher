@@ -32,7 +32,8 @@ module-owned guest, attached volumes, and persistent data before removal.
 
 `module list`, `module show`, and `module status` report desired module state
 as `Enabled` or `Disabled`. A named module status also reports non-secret
-configuration and the presence of declared secrets; its runtime section is
-`NOT TESTED`. Live readiness is established separately through `verify`,
-`doctor`, and service-specific live checks. Disabled optional modules are
-intentional, not failures.
+configuration and the presence of declared secrets; runtime readiness is
+established separately through `verify`, `doctor`, and service-specific live
+checks. A requested runtime check that cannot establish success fails with a
+next action. Disabled optional modules are intentional and are not asserted
+as unhealthy.

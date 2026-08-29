@@ -70,7 +70,17 @@ func runFirewall(args []string, out io.Writer) error {
 }
 
 func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out io.Writer) error {
-	status := map[string]any{"mode": plan.Mode, "engine": plan.Engine, "model_revision": plan.ModelRevision, "ipv4_only": plan.IPv4Only, "forwarding_after_policy": plan.Forwarding, "interfaces": plan.Interfaces}
+	status := map[string]any{"mode": plan.Mode, "engine": plan.Engine, "model_revision": plan.ModelRevision, "ipv4_only": plan.IPv4Only, "forwarding_after_policy": plan.Forwarding, "interfaces": plan.Interfaces, "status": "PASS", "detail": "generated firewall contract and module network intents are valid"}
+	if err := firewall.ValidateNetworkIntentCoverage(s, plan); err != nil {
+		status["status"] = "FAIL"
+		status["reason"] = err.Error()
+		status["next_action"] = "Correct the generated network policy before deployment"
+		if jsonOutput {
+			_ = writeCLIJSON(out, status)
+		}
+		return fmt.Errorf("firewall network contract failed: %w", err)
+	}
+	var liveErr error
 	if live && s.Gateway.Mode == model.GatewayModeManaged {
 		data, err := gatewayCommand(siteDir, s, "sudo", gatewayStatusScript, "status")
 		if err != nil {
@@ -83,16 +93,28 @@ func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, json
 		if err := firewall.ValidateUpstreamObservation(plan, liveStatus.Upstream); err != nil {
 			return fmt.Errorf("managed gateway upstream DHCP is not safe: %w", err)
 		}
+		if liveErr = validateManagedGatewayServices(liveStatus); liveErr != nil {
+			status["status"] = "FAIL"
+			status["reason"] = liveErr.Error()
+			status["next_action"] = "Restore the named managed-gateway service and rerun firewall status --live"
+		}
 		status["live"] = liveStatus
 	} else if live {
 		status["live"] = "external firewall state is outside boetticher"
 	}
 	if jsonOutput {
-		return writeCLIJSON(out, status)
+		if err := writeCLIJSON(out, status); err != nil {
+			return err
+		}
+		if liveErr != nil {
+			return fmt.Errorf("firewall status failed: %w", liveErr)
+		}
+		return nil
 	}
 	fmt.Fprintln(out, "Firewall")
 	fmt.Fprintf(out, "  Mode        %s\n  Engine      %s\n  Model       %s\n", plan.Mode, plan.Engine, plan.ModelRevision)
 	if s.Gateway.Mode == model.GatewayModeExternal {
+		fmt.Fprintln(out, "  Result      PASS external firewall contract generated")
 		fmt.Fprintln(out, "  Management  outside boetticher")
 		fmt.Fprintln(out, "  Trunk       VLANs 5, 10, 20, 30, 40, 99")
 		return nil
@@ -110,9 +132,10 @@ func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, json
 		}
 	} else {
 		fmt.Fprintf(out, "  Forwarding  enabled after policy deployment\n  Ruleset     generated\n")
-		fmt.Fprintln(out, "  Upstream    NOT TESTED DHCP lease/address (use --live)")
+		fmt.Fprintln(out, "  Result      PASS generated firewall contract available")
+		fmt.Fprintln(out, "  Upstream    use --live to query DHCP lease/address")
 		for _, publication := range plan.Publications {
-			fmt.Fprintf(out, "  Published   NOT TESTED %s :%d/%s -> %s (use --live)\n", strings.ToUpper(publication.Service), publication.Port, publication.Protocol, publication.Destination)
+			fmt.Fprintf(out, "  Published   use --live to verify %s :%d/%s -> %s\n", strings.ToUpper(publication.Service), publication.Port, publication.Protocol, publication.Destination)
 		}
 	}
 	fmt.Fprintln(out, "Interfaces")
@@ -133,13 +156,38 @@ func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, json
 		liveStatus := status["live"].(gatewayLiveStatus)
 		fmt.Fprintln(out, "Services")
 		for _, service := range []string{"nftables", "kea-dhcp4-server", "kea-dhcp-ddns-server", "dnsmasq"} {
-			fmt.Fprintf(out, "  %-18s %s\n", service, liveStatus.Services[service])
+			fmt.Fprintf(out, "  %-18s %s\n", service, humanServiceResult(liveStatus.Services[service]))
 		}
 	}
 	if live {
-		fmt.Fprintln(out, "Live state    PASS (managed gateway queried)")
+		if liveErr == nil {
+			fmt.Fprintln(out, "Live state    PASS (managed gateway queried)")
+		} else {
+			fmt.Fprintf(out, "Live state    FAIL %s\n", status["reason"])
+			return fmt.Errorf("firewall status failed: %w", liveErr)
+		}
 	} else {
-		fmt.Fprintln(out, "Live state    NOT TESTED (use --live)")
+		fmt.Fprintln(out, "Live state    use --live to compare managed gateway state")
+	}
+	return nil
+}
+
+func humanServiceResult(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), "active") {
+		return "PASS"
+	}
+	return "FAIL"
+}
+
+func validateManagedGatewayServices(liveStatus gatewayLiveStatus) error {
+	for _, service := range []string{"nftables", "kea-dhcp4-server", "kea-dhcp-ddns-server", "dnsmasq"} {
+		state, ok := liveStatus.Services[service]
+		if !ok || strings.TrimSpace(state) == "" {
+			return fmt.Errorf("managed gateway service %s state is missing", service)
+		}
+		if !strings.EqualFold(strings.TrimSpace(state), "active") {
+			return fmt.Errorf("managed gateway service %s is %q, expected active", service, state)
+		}
 	}
 	return nil
 }
@@ -235,11 +283,17 @@ func firewallShow(s model.Site, plan firewall.Plan, format string, jsonOutput bo
 }
 
 func firewallDiff(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out io.Writer) error {
+	if err := firewall.ValidateNetworkIntentCoverage(s, plan); err != nil {
+		if !jsonOutput {
+			fmt.Fprintf(out, "Firewall diff: FAIL %v\n", err)
+		}
+		return fmt.Errorf("firewall network contract failed: %w", err)
+	}
 	if s.Gateway.Mode == model.GatewayModeExternal {
 		if jsonOutput {
-			return writeCLIJSON(out, map[string]string{"mode": "external", "status": "outside boetticher management"})
+			return writeCLIJSON(out, map[string]string{"mode": "external", "status": "PASS", "detail": "external firewall contract generated; enforcement is outside boetticher management"})
 		}
-		fmt.Fprintln(out, "External firewall configuration is outside boetticher; use firewall show for the contract.")
+		fmt.Fprintln(out, "External firewall contract: PASS generated; enforcement is outside boetticher. Use firewall show for the contract.")
 		return nil
 	}
 	var err error
@@ -263,6 +317,9 @@ func firewallDiff(siteDir string, s model.Site, plan firewall.Plan, live, jsonOu
 	}
 	if err := firewall.ValidateNFT(ruleset); err != nil {
 		return err
+	}
+	if !jsonOutput {
+		fmt.Fprintln(out, "Firewall diff: PASS generated policy is valid")
 	}
 	result := map[string]any{"model_revision": plan.ModelRevision, "desired": true, "live_checked": live, "status": "NOT TESTED", "detail": "live boetticher-owned nftables state was not queried"}
 	if live {
@@ -290,12 +347,15 @@ func firewallDiff(siteDir string, s model.Site, plan firewall.Plan, live, jsonOu
 		if result["status"] == "PASS" {
 			fmt.Fprintf(out, "Firewall rules match the current boetticher model (model %s).\n", plan.ModelRevision)
 		} else {
-			fmt.Fprintf(out, "Firewall rules differ from the current boetticher model (model %s).\n", plan.ModelRevision)
+			fmt.Fprintf(out, "Firewall diff: FAIL rules differ from the current boetticher model (model %s).\n", plan.ModelRevision)
 			printNFTDiff(out, result["diff"].(firewall.NFTDiff))
 		}
 	} else {
 		fmt.Fprintf(out, "Firewall rules are configured in the current model projection (model %s).\n", plan.ModelRevision)
-		fmt.Fprintln(out, "Live state NOT TESTED; use --live to compare boetticher-owned nftables tables and rules.")
+		fmt.Fprintln(out, "Live comparison: run with --live to compare boetticher-owned nftables tables and rules.")
+	}
+	if live && result["status"] != "PASS" {
+		return errors.New("firewall diff failed: installed rules differ from the current model; correct the drift and rerun")
 	}
 	return nil
 }
@@ -317,12 +377,20 @@ func printNFTDiff(out io.Writer, diff firewall.NFTDiff) {
 
 func firewallCounters(siteDir string, s model.Site, live, jsonOutput bool, out io.Writer) error {
 	if s.Gateway.Mode == model.GatewayModeExternal {
-		fmt.Fprintln(out, "Firewall counters belong to the operator-managed external appliance.")
-		return nil
+		if jsonOutput {
+			_ = writeCLIJSON(out, map[string]string{"status": "FAIL", "reason": "firewall counters belong to the operator-managed external appliance", "next_action": "Inspect counters using the external firewall interface"})
+		} else {
+			fmt.Fprintln(out, "Firewall counters: FAIL live counters are outside boetticher management; inspect the external firewall")
+		}
+		return errors.New("firewall counters failed: external firewall counters are not inspectable by boetticher")
 	}
 	if !live {
-		fmt.Fprintln(out, "Firewall counters are live nftables state. Use --live to query lab-fw-01.")
-		return nil
+		if jsonOutput {
+			_ = writeCLIJSON(out, map[string]string{"status": "FAIL", "reason": "live nftables counters were not requested", "next_action": "Run boetticher firewall counters --live"})
+		} else {
+			fmt.Fprintln(out, "Firewall counters: FAIL live nftables counters were not requested; run boetticher firewall counters --live")
+		}
+		return errors.New("firewall counters failed: --live is required")
 	}
 	data, err := gatewayCommand(siteDir, s, "sudo", "/usr/lib/boetticher/inspect-firewall", "ruleset")
 	if err != nil {
@@ -349,6 +417,12 @@ func firewallCounters(siteDir string, s model.Site, live, jsonOutput bool, out i
 
 func firewallVerify(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out io.Writer) error {
 	results := map[string]string{}
+	if err := firewall.ValidateNetworkIntentCoverage(s, plan); err != nil {
+		if !jsonOutput {
+			fmt.Fprintf(out, "Firewall verification: FAIL %v\n", err)
+		}
+		return fmt.Errorf("firewall network contract failed: %w", err)
+	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		if live && len(plan.Publications) > 0 {
 			data, commandErr := gatewayCommand(siteDir, s, "sudo", gatewayStatusScript, "status")
@@ -401,6 +475,9 @@ func firewallVerify(siteDir string, s model.Site, plan firewall.Plan, live, json
 	}
 	fmt.Fprintln(out, "Firewall verification")
 	for key, value := range results {
+		if value == "NOT TESTED" {
+			continue
+		}
 		fmt.Fprintf(out, "  %-20s %s\n", key, value)
 	}
 	return nil
@@ -408,12 +485,20 @@ func firewallVerify(siteDir string, s model.Site, plan firewall.Plan, live, json
 
 func firewallLiveRead(siteDir string, s model.Site, command []string, live, jsonOutput bool, out io.Writer, detail string) error {
 	if s.Gateway.Mode == model.GatewayModeExternal {
-		fmt.Fprintln(out, "Live firewall state belongs to the operator-managed external appliance.")
-		return nil
+		if jsonOutput {
+			_ = writeCLIJSON(out, map[string]string{"status": "FAIL", "reason": "live firewall state belongs to the operator-managed external appliance", "next_action": "Use the external firewall interface"})
+		} else {
+			fmt.Fprintln(out, "Firewall read: FAIL live state belongs to the operator-managed external appliance")
+		}
+		return errors.New("firewall read failed: external firewall state is not inspectable by boetticher")
 	}
 	if !live {
-		fmt.Fprintln(out, detail+" Use --live to query lab-fw-01.")
-		return nil
+		if jsonOutput {
+			_ = writeCLIJSON(out, map[string]string{"status": "FAIL", "reason": detail + " was not requested", "next_action": "Repeat the command with --live"})
+		} else {
+			fmt.Fprintln(out, detail+": FAIL live inspection requires --live; repeat the command with --live")
+		}
+		return errors.New("firewall read failed: --live is required")
 	}
 	data, err := gatewayCommand(siteDir, s, command...)
 	if err != nil {

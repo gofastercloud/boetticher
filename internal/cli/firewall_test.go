@@ -23,6 +23,33 @@ func TestParseGatewayStatusRejectsIncompleteOutput(t *testing.T) {
 	}
 }
 
+func TestHumanServiceResultIsBinary(t *testing.T) {
+	if got := humanServiceResult("active"); got != "PASS" {
+		t.Fatalf("active service result = %q, want PASS", got)
+	}
+	for _, value := range []string{"inactive", "failed", "", "unknown"} {
+		if got := humanServiceResult(value); got != "FAIL" {
+			t.Fatalf("service result for %q = %q, want FAIL", value, got)
+		}
+	}
+}
+
+func TestValidateManagedGatewayServicesRequiresAllServicesActive(t *testing.T) {
+	valid := gatewayLiveStatus{Services: map[string]string{
+		"nftables":             "active",
+		"kea-dhcp4-server":     "active",
+		"kea-dhcp-ddns-server": "active",
+		"dnsmasq":              "active",
+	}}
+	if err := validateManagedGatewayServices(valid); err != nil {
+		t.Fatal(err)
+	}
+	valid.Services["dnsmasq"] = "inactive"
+	if err := validateManagedGatewayServices(valid); err == nil {
+		t.Fatal("inactive managed-gateway service was accepted")
+	}
+}
+
 func TestGatewayStatusScriptDoesNotDependOnInterfaceEnumeration(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "images", "firewall", "runtime", "inspect-firewall.sh"))
 	if err != nil {

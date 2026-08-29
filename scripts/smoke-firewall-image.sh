@@ -1,9 +1,20 @@
 #!/bin/sh
 set -eu
 
+finish() {
+  status=$?
+  if [ "$status" -eq 0 ]; then
+    printf '%s\n' "Smoke: PASS"
+  else
+    printf '%s\n' "Smoke: FAIL (exit $status)" >&2
+  fi
+  exit "$status"
+}
+trap finish EXIT
+
 image=${1:?firewall image is required}
 for tool in virt-cat virt-ls; do
-  command -v "$tool" >/dev/null 2>&1 || { echo "HOLD: $tool is required for firewall image smoke tests" >&2; exit 2; }
+  command -v "$tool" >/dev/null 2>&1 || { echo "FAIL: $tool is required for firewall image smoke tests" >&2; exit 2; }
 done
 packages=$(virt-cat -a "$image" /var/lib/dpkg/status)
 for package in nftables kea-dhcp4-server kea-dhcp-ddns-server chrony openssh-server cloud-init systemd-journal-remote; do

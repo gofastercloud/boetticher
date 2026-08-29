@@ -38,8 +38,9 @@ PKI, backup ownership, or recovery, explain the failure mode being prevented.
 
 - Keep changes narrow and describe the user-visible contract.
 - Include tests and documentation for new behavior.
-- Keep `PASS`, `HOLD`, `FAIL`, `NOT TESTED`, and `INCONCLUSIVE` meaningful; do
-  not claim live Proxmox, DNS, network, or recovery acceptance from local tests.
+- Preserve rich evidence and failure semantics internally; human-facing
+  asserted checks and operations are binary `PASS` or `FAIL`. Do not claim
+  live Proxmox, DNS, network, or recovery acceptance from local tests.
 - Do not add generic VM/LXC lifecycle management or adopt user guests.
 - Do not weaken host-key verification or bypass ownership checks to make a
   test pass.

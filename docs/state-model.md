@@ -22,4 +22,8 @@ The repository must not contain the Age private identity. Keep it under the oper
 
 Ansible caches, bootstrap state, temporary generated credentials, API responses containing secrets, and endpoint private keys live outside Git and are treated as potentially sensitive. The portal consumes only generated non-secret artifacts and status outputs; it has no control-plane credentials.
 
-`boetticher doctor` checks projections as `ABSENT`, `CURRENT`, or `INCONSISTENT` against the current revision. A current projection proves only model consistency, not deployment or authenticated service behavior.
+`boetticher doctor` renders each asserted projection check as `PASS` or
+`FAIL`, with the reason identifying absent, stale, malformed, or unsafe
+inputs. The underlying JSON/evidence model retains those distinctions. A
+passing projection proves only model consistency, not deployment or
+authenticated service behavior.
