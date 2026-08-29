@@ -16,7 +16,7 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantOrder := []string{"firewall", "dns", "logging", "monitoring", "aiops", "litellm", "printer", "tailnet-router"}
+	wantOrder := []string{"firewall", "dns", "logging", "monitoring", "aiops", "gatus", "litellm", "printer", "tailnet-router"}
 	if len(modules) != len(wantOrder) {
 		t.Fatalf("unexpected module resolution: %#v", modules)
 	}
@@ -111,7 +111,7 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	if err := registry.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"tailnet-router", "litellm", "printer", "aiops"} {
+	for _, name := range []string{"tailnet-router", "litellm", "printer", "aiops", "gatus"} {
 		definition, ok := registry.Definition(name)
 		if !ok || definition.Policy != DefaultOff {
 			t.Fatalf("%s is not a default-off first-party module: %#v", name, definition)

@@ -1,0 +1,16 @@
+[Unit]
+Description=Boetticher Gatus generated service status
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=gatus
+Group=gatus
+ExecStart=/usr/local/bin/gatus --config-path /etc/boetticher/gatus/config.yaml
+Restart=on-failure
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/gatus
+[Install]
+WantedBy=multi-user.target

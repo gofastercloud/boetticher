@@ -28,6 +28,8 @@
       when: inventory_hostname in groups.get('printer', [])
     - role: aiops
       when: inventory_hostname in groups.get('aiops', [])
+    - role: gatus
+      when: inventory_hostname in groups.get('gatus', [])
 
 - name: Reconcile Core-owned USB exports after appliance configuration
   hosts: proxmox
