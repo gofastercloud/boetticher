@@ -45,6 +45,11 @@ type CapabilityRegistry struct {
 	caps map[string]*Capability
 }
 
+type evidenceClaim struct {
+	Policy EvidencePolicy
+	Call   int
+}
+
 func NewCapabilityRegistry() *CapabilityRegistry {
 	return &CapabilityRegistry{caps: make(map[string]*Capability)}
 }
@@ -60,7 +65,7 @@ func (r *CapabilityRegistry) Issue(policy EvidencePolicy, now time.Time) (string
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.caps[token] = &Capability{Token: token, IncidentID: policy.IncidentID, ExpiresAt: now.UTC().Add(MaxInvestigationTime), Policy: policy, Issued: map[string]EvidenceReference{}}
+	r.caps[token] = &Capability{Token: token, IncidentID: policy.IncidentID, ExpiresAt: now.UTC().Add(MaxInvestigationTime), Policy: cloneEvidencePolicy(policy), Issued: map[string]EvidenceReference{}}
 	return token, nil
 }
 
@@ -70,29 +75,22 @@ func (r *CapabilityRegistry) Revoke(token string) {
 	delete(r.caps, token)
 }
 
-func (r *CapabilityRegistry) use(token string, now time.Time, evidence bool) (*Capability, error) {
+func (r *CapabilityRegistry) reserveEvidenceCall(token string, now time.Time) (evidenceClaim, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	capability, ok := r.caps[token]
 	if !ok || now.After(capability.ExpiresAt) {
 		delete(r.caps, token)
-		return nil, errors.New("invalid or expired capability")
+		return evidenceClaim{}, errors.New("invalid or expired capability")
 	}
-	if evidence {
-		if capability.EvidenceCalls >= MaxEvidenceCalls {
-			return nil, errors.New("evidence call budget exhausted")
-		}
-		capability.EvidenceCalls++
-	} else {
-		capability.RouterRequests++
-		if capability.RouterRequests > MaxHolmesSteps {
-			return nil, errors.New("Holmes step budget exhausted")
-		}
+	if capability.EvidenceCalls >= MaxEvidenceCalls {
+		return evidenceClaim{}, errors.New("evidence call budget exhausted")
 	}
-	return capability, nil
+	capability.EvidenceCalls++
+	return evidenceClaim{Policy: cloneEvidencePolicy(capability.Policy), Call: capability.EvidenceCalls}, nil
 }
 
-func (r *CapabilityRegistry) useActive(now time.Time) (*Capability, error) {
+func (r *CapabilityRegistry) useActive(now time.Time) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var active *Capability
@@ -102,18 +100,38 @@ func (r *CapabilityRegistry) useActive(now time.Time) (*Capability, error) {
 			continue
 		}
 		if active != nil {
-			return nil, errors.New("ambiguous active investigation")
+			return errors.New("ambiguous active investigation")
 		}
 		active = capability
 	}
 	if active == nil {
-		return nil, errors.New("no active investigation")
+		return errors.New("no active investigation")
 	}
 	active.RouterRequests++
 	if active.RouterRequests > MaxHolmesSteps {
-		return nil, errors.New("Holmes step budget exhausted")
+		return errors.New("Holmes step budget exhausted")
 	}
-	return active, nil
+	return nil
+}
+
+func cloneEvidencePolicy(policy EvidencePolicy) EvidencePolicy {
+	clone := EvidencePolicy{IncidentID: policy.IncidentID, PulseAlertID: policy.PulseAlertID}
+	if policy.ResourceIDs != nil {
+		clone.ResourceIDs = make(map[string]bool, len(policy.ResourceIDs))
+		for resourceID, allowed := range policy.ResourceIDs {
+			clone.ResourceIDs[resourceID] = allowed
+		}
+	}
+	if policy.Hosts != nil {
+		clone.Hosts = make(map[string]map[string]bool, len(policy.Hosts))
+		for host, units := range policy.Hosts {
+			clone.Hosts[host] = make(map[string]bool, len(units))
+			for unit, allowed := range units {
+				clone.Hosts[host][unit] = allowed
+			}
+		}
+	}
+	return clone
 }
 
 func (r *CapabilityRegistry) record(token string, evidence EvidenceReference) error {
@@ -236,7 +254,7 @@ func (b *Broker) queryEvidence(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	capability, err := b.Capabilities.use(token, b.now(), true)
+	claim, err := b.Capabilities.reserveEvidenceCall(token, b.now())
 	if err != nil {
 		http.Error(w, "capability denied", http.StatusForbidden)
 		return
@@ -246,11 +264,11 @@ func (b *Broker) queryEvidence(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid evidence request", http.StatusBadRequest)
 		return
 	}
-	if err := capability.Policy.Validate(request); err != nil {
+	if err := claim.Policy.Validate(request); err != nil {
 		http.Error(w, "evidence authority denied", http.StatusForbidden)
 		return
 	}
-	data, err := b.Evidence.Query(r.Context(), request, capability.Policy)
+	data, err := b.Evidence.Query(r.Context(), request, claim.Policy)
 	if err != nil {
 		http.Error(w, "evidence unavailable", http.StatusBadGateway)
 		return
@@ -260,7 +278,7 @@ func (b *Broker) queryEvidence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	digest := sha256.Sum256(data)
-	reference := request.IncidentID + ":" + fmt.Sprint(capability.EvidenceCalls)
+	reference := request.IncidentID + ":" + fmt.Sprint(claim.Call)
 	metadata := EvidenceReference{Reference: reference, Source: request.Operation, SHA256: hex.EncodeToString(digest[:]), Bytes: len(data), CollectedAt: b.now()}
 	if err := b.Capabilities.record(token, metadata); err != nil {
 		http.Error(w, "evidence budget exhausted", http.StatusTooManyRequests)
@@ -291,7 +309,7 @@ func (b *Broker) routeCompletion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "capability denied", http.StatusForbidden)
 		return
 	}
-	if _, err := b.Capabilities.useActive(b.now()); err != nil {
+	if err := b.Capabilities.useActive(b.now()); err != nil {
 		http.Error(w, "capability denied", http.StatusForbidden)
 		return
 	}

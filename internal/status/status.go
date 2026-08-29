@@ -57,9 +57,13 @@ type Report struct {
 // LegacyCheck is the small internal bridge used while existing verification
 // evidence is presented through the v1 semantic status model.
 type LegacyCheck struct {
-	Name   string
-	Status string
-	Detail string
+	Name       string
+	Status     string
+	Detail     string
+	Tier       EvidenceTier
+	ObservedAt string
+	Reason     string
+	NextAction string
 }
 
 func FromLegacy(modelRevision, observedAt string, checks []LegacyCheck) Report {
@@ -77,14 +81,30 @@ func FromLegacy(modelRevision, observedAt string, checks []LegacyCheck) Report {
 		if evidence != PASS && evidence != FAIL && evidence != HOLD && evidence != NOTTESTED && evidence != INCONCLUSIVE {
 			evidence = INCONCLUSIVE
 		}
+		tier := check.Tier
+		if tier == "" {
+			tier = TierLocal
+		}
+		observed := check.ObservedAt
+		if observed == "" {
+			observed = observedAt
+		}
+		reason := check.Reason
+		if reason == "" {
+			reason = check.Detail
+		}
+		next := check.NextAction
+		if next == "" {
+			next = nextAction(evidence)
+		}
 		result.Checks = append(result.Checks, Check{
 			Component:  check.Name,
 			State:      operatorState(evidence),
 			Evidence:   evidence,
-			Tier:       tierFor(evidence, check.Detail),
-			ObservedAt: observedAt,
-			Reason:     check.Detail,
-			NextAction: nextAction(evidence),
+			Tier:       tier,
+			ObservedAt: observed,
+			Reason:     reason,
+			NextAction: next,
 		})
 	}
 	result.OverallState = Overall(result.Checks)
@@ -127,17 +147,6 @@ func operatorState(evidence EvidenceStatus) OperatorState {
 	default:
 		return Degraded
 	}
-}
-
-func tierFor(evidence EvidenceStatus, detail string) EvidenceTier {
-	lower := strings.ToLower(detail)
-	if strings.Contains(lower, "journey") || strings.Contains(lower, "authenticated") {
-		return TierJourney
-	}
-	if strings.Contains(lower, "deployed") || strings.Contains(lower, "gateway") {
-		return TierDeployed
-	}
-	return TierLocal
 }
 
 func nextAction(evidence EvidenceStatus) string {

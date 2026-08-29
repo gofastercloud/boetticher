@@ -1,6 +1,7 @@
 package ansible
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -272,6 +273,20 @@ func TestFailureDiagnosticKeepsOnlyBoundedErrorLines(t *testing.T) {
 	}
 	if strings.Contains(got, "secret task") || strings.Contains(got, "changed:") {
 		t.Fatalf("diagnostic included non-error task output: %q", got)
+	}
+}
+
+func TestBoundedOutputRetainsOnlyBoundedPrefixAndSuffix(t *testing.T) {
+	var output boundedOutput
+	if _, err := output.Write(bytes.Repeat([]byte{'x'}, maxAnsibleOutputBytes*3)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := output.Write([]byte("fatal: retained suffix")); err != nil {
+		t.Fatal(err)
+	}
+	data := output.Bytes()
+	if len(data) > maxAnsibleOutputBytes+len("\n[output truncated]\n") || !bytes.Contains(data, []byte("fatal: retained suffix")) {
+		t.Fatalf("bounded output was not retained safely: len=%d", len(data))
 	}
 }
 

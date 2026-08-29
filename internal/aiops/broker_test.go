@@ -55,6 +55,42 @@ func TestEvidenceBrokerEnforcesIncidentAuthorityAndBudgets(t *testing.T) {
 	}
 }
 
+func TestCapabilityRegistryAllocatesEvidenceCallsAtomically(t *testing.T) {
+	now := time.Now().UTC()
+	registry := NewCapabilityRegistry()
+	token, err := registry.Issue(EvidencePolicy{IncidentID: "incident-1"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		call int
+		err  error
+	}
+	results := make(chan result, MaxEvidenceCalls+1)
+	for i := 0; i < MaxEvidenceCalls+1; i++ {
+		go func() {
+			claim, claimErr := registry.reserveEvidenceCall(token, now)
+			results <- result{call: claim.Call, err: claimErr}
+		}()
+	}
+	calls := make(map[int]bool)
+	errorsSeen := 0
+	for i := 0; i < MaxEvidenceCalls+1; i++ {
+		value := <-results
+		if value.err != nil {
+			errorsSeen++
+			continue
+		}
+		if value.call < 1 || value.call > MaxEvidenceCalls || calls[value.call] {
+			t.Fatalf("duplicate or out-of-range evidence call: %d", value.call)
+		}
+		calls[value.call] = true
+	}
+	if len(calls) != MaxEvidenceCalls || errorsSeen != 1 {
+		t.Fatalf("atomic evidence allocation calls=%v errors=%d", calls, errorsSeen)
+	}
+}
+
 func TestEvidenceBrokerRejectsSchemaAndNetworkEscalation(t *testing.T) {
 	now := time.Now().UTC()
 	registry := NewCapabilityRegistry()

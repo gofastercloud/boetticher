@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/model"
-	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
@@ -39,14 +38,10 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	proxmoxPlan, err := proxmox.PlanFromSite(s)
-	if err != nil {
-		return Plan{}, err
-	}
-	ids := make([]int, 0, len(proxmoxPlan.Guests))
-	for _, guest := range proxmoxPlan.Guests {
-		if guest.Backup && hasTag(guest.Tags, model.TagBackup) {
-			ids = append(ids, guest.VMID)
+	ids := make([]int, 0, len(s.PlatformComponents()))
+	for _, component := range s.PlatformComponents() {
+		if component.ProductOwned && component.Backup && hasTag(component.Tags, model.TagBackup) {
+			ids = append(ids, component.VMID)
 		}
 	}
 	if len(ids) == 0 {

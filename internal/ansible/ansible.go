@@ -21,6 +21,75 @@ import (
 	"github.com/gofastercloud/boetticher/internal/usbexport"
 )
 
+const maxAnsibleOutputBytes = 64 * 1024
+
+type boundedOutput struct {
+	data      []byte
+	prefix    []byte
+	suffix    []byte
+	truncated bool
+}
+
+func (b *boundedOutput) Write(data []byte) (int, error) {
+	if !b.truncated && len(b.data)+len(data) <= maxAnsibleOutputBytes {
+		b.data = append(b.data, data...)
+		return len(data), nil
+	}
+	if !b.truncated {
+		prefixLimit := maxAnsibleOutputBytes / 2
+		b.prefix = append(b.prefix, b.data[:minInt(len(b.data), prefixLimit)]...)
+		b.suffix = retainSuffix(b.suffix, b.data, maxAnsibleOutputBytes-prefixLimit)
+		b.data = nil
+		b.truncated = true
+	}
+	prefixLimit := maxAnsibleOutputBytes / 2
+	if len(b.prefix) < prefixLimit {
+		keep := prefixLimit - len(b.prefix)
+		if keep > len(data) {
+			keep = len(data)
+		}
+		b.prefix = append(b.prefix, data[:keep]...)
+	}
+	suffixLimit := maxAnsibleOutputBytes - prefixLimit
+	b.suffix = retainSuffix(b.suffix, data, suffixLimit)
+	return len(data), nil
+}
+
+func (b boundedOutput) Bytes() []byte {
+	if !b.truncated {
+		return append([]byte(nil), b.data...)
+	}
+	if len(b.prefix) == 0 {
+		return append([]byte(nil), b.suffix...)
+	}
+	if len(b.suffix) == 0 {
+		return append([]byte(nil), b.prefix...)
+	}
+	output := make([]byte, 0, len(b.prefix)+len(b.suffix)+len("\n[output truncated]\n"))
+	output = append(output, b.prefix...)
+	output = append(output, []byte("\n[output truncated]\n")...)
+	output = append(output, b.suffix...)
+	return output
+}
+
+func minInt(left, right int) int {
+	if left < right {
+		return left
+	}
+	return right
+}
+
+func retainSuffix(current, data []byte, limit int) []byte {
+	if len(data) >= limit {
+		return append([]byte(nil), data[len(data)-limit:]...)
+	}
+	combined := append(append([]byte(nil), current...), data...)
+	if len(combined) > limit {
+		combined = combined[len(combined)-limit:]
+	}
+	return combined
+}
+
 // MonitoringAgentTargets derives host-agent installation targets from the
 // generic component tag. Monitoring is the only module that owns this
 // projection; an untagged guest is never selected implicitly.
@@ -266,9 +335,12 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	command := exec.CommandContext(ctx, executable, args...)
 	command.Stdin = strings.NewReader(string(variables))
 	command.Env = append(os.Environ(), "ANSIBLE_HOST_KEY_CHECKING=True")
-	output, err := command.CombinedOutput()
+	var output boundedOutput
+	command.Stdout = &output
+	command.Stderr = &output
+	err = command.Run()
 	if err != nil {
-		diagnostic := failureDiagnostic(output)
+		diagnostic := failureDiagnostic(output.Bytes())
 		if diagnostic == "" {
 			return fmt.Errorf("ansible-playbook failed: %w", err)
 		}
