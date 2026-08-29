@@ -31,11 +31,19 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	crlPEM, err := os.ReadFile("/etc/boetticher/pki/client-ca.crl.pem")
+	if err != nil {
+		return err
+	}
+	crl, err := loggingmodel.ParseVerifiedCRL(string(crlPEM), string(ca), time.Now().UTC())
+	if err != nil {
+		return err
+	}
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(ca) {
 		return fmt.Errorf("client CA is invalid")
 	}
-	server := &http.Server{Addr: ":19533", Handler: (loggingmodel.QueryServer{Policy: policy, Runner: loggingmodel.ExecRunner{}}).Handler(), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: roots, VerifyConnection: loggingmodel.VerifyQueryClient}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 * 1024}
+	server := &http.Server{Addr: ":19533", Handler: (loggingmodel.QueryServer{Policy: policy, Runner: loggingmodel.ExecRunner{}}).Handler(), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: roots, VerifyConnection: func(state tls.ConnectionState) error { return loggingmodel.VerifyQueryClientWithCRL(state, crl) }}, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 * 1024}
 	listener, err := tls.Listen("tcp", server.Addr, server.TLSConfig)
 	if err != nil {
 		return err

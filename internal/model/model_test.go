@@ -231,6 +231,19 @@ func TestCoreInfrastructureUsesInfraAddresses(t *testing.T) {
 	}
 }
 
+func TestValidateStableDeviceRequiresOneDirectByIDEntry(t *testing.T) {
+	for _, device := range []string{"/dev/disk/by-id/../sda", "/dev/disk/by-id/foo/bar", "/dev/disk/by-id/foo/", "/dev/disk/by-id/foo\\bar", "/dev/sda"} {
+		if err := ValidateStableDevice(device); err == nil {
+			t.Fatalf("unsafe stable device %q was accepted", device)
+		}
+	}
+	for _, device := range []string{"/dev/disk/by-id/ata-example", "/dev/disk/by-id/nvme-eui.1234", "/dev/disk/by-id/usb-Generic_Flash"} {
+		if err := ValidateStableDevice(device); err != nil {
+			t.Fatalf("valid stable device %q was rejected: %v", device, err)
+		}
+	}
+}
+
 func TestUserNetworkIntentValidatesReservationsAndDNSOwnership(t *testing.T) {
 	site := NewDefaultSite("installation", "age1example")
 	site.DHCPReservations = []DHCPReservation{{Zone: "SERVERS", Hostname: "app-01", Address: "10.10.20.61", MAC: "02:00:00:00:02:61", VMID: 550}}

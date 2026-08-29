@@ -321,6 +321,21 @@ modules:
 	}
 }
 
+func TestLiteLLMConfigRejectsCredentialProjectionCollisions(t *testing.T) {
+	for _, pair := range [][2]string{{"provider_key", "provider-key"}, {"provider.key", "provider-key"}, {"Provider_key", "provider-key"}} {
+		config := ModuleConfig{
+			Upstreams: []LiteLLMUpstreamConfig{
+				{Name: "one", BaseURL: "https://one.example.test/api", APIKeySecret: pair[0]},
+				{Name: "two", BaseURL: "https://two.example.test/api", APIKeySecret: pair[1]},
+			},
+			Models: []LiteLLMModelConfig{{Alias: "one", Upstream: "one", Model: "provider/model"}},
+		}
+		if err := ValidateLiteLLMConfig(config); err == nil {
+			t.Fatalf("colliding LiteLLM references %q and %q were accepted", pair[0], pair[1])
+		}
+	}
+}
+
 func TestDisabledLiteLLMMayOmitRuntimeConfiguration(t *testing.T) {
 	config, err := ParseSiteConfig([]byte(`api_version: boetticher/v3
 modules:

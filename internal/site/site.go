@@ -16,6 +16,7 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
+	"github.com/gofastercloud/boetticher/internal/pathguard"
 	"github.com/gofastercloud/boetticher/internal/pki"
 )
 
@@ -46,7 +47,7 @@ func Load(dir string) (model.Site, error) {
 }
 
 func LoadConfig(dir string) (model.SiteConfig, error) {
-	data, err := os.ReadFile(filepath.Join(dir, "site.yml"))
+	data, err := pathguard.ReadFile(filepath.Join(dir, "site.yml"))
 	if err != nil {
 		return model.SiteConfig{}, fmt.Errorf("read site.yml: %w", err)
 	}
@@ -74,8 +75,11 @@ func ApplyConfigAndPlatformSecrets(dir string, config model.SiteConfig, s model.
 		return atomicWrite(filepath.Join(dir, "site.yml"), configData, 0600)
 	}
 
-	secretPath := filepath.Join(dir, "secrets", "boetticher.sops.yaml")
-	oldSecret, err := os.ReadFile(secretPath)
+	secretPath, err := safeSitePath(dir, filepath.Join("secrets", "boetticher.sops.yaml"))
+	if err != nil {
+		return err
+	}
+	oldSecret, err := pathguard.ReadFile(secretPath)
 	if err != nil {
 		return fmt.Errorf("read encrypted platform secrets for atomic update: %w", err)
 	}
@@ -309,9 +313,14 @@ func LoadEncryptedDocument(dir, ageIdentityPath, relativePath string) (map[strin
 	if identity == "" {
 		return nil, errors.New("Age identity path is required")
 	}
-	command := exec.Command("sops", "--decrypt", "--input-type", "yaml", "--output-type", "yaml", path)
+	encrypted, err := pathguard.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read encrypted document: %w", err)
+	}
+	command := exec.Command("sops", "--decrypt", "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
 	command.Env = envWithout("SOPS_AGE_KEY_FILE")
 	command.Env = append(command.Env, "SOPS_AGE_KEY_FILE="+identity)
+	command.Stdin = strings.NewReader(string(encrypted))
 	plaintext, err := command.Output()
 	if err != nil {
 		return nil, fmt.Errorf("decrypt encrypted document with SOPS: %w", err)
@@ -335,35 +344,18 @@ func safeSitePath(dir, relativePath string) (string, error) {
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return "", errors.New("encrypted document path escapes the site repository")
 	}
-	return filepath.Join(dir, clean), nil
+	path := filepath.Join(dir, clean)
+	if err := pathguard.ValidateNoSymlinkComponents(path); err != nil {
+		return "", fmt.Errorf("unsafe site path %s: %w", relativePath, err)
+	}
+	return path, nil
 }
 
 func atomicWrite(path string, data []byte, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := pathguard.ValidateNoSymlinkComponents(path); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".boetticher-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if err := tmp.Chmod(mode); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
+	return pathguard.WriteFile(path, data, mode)
 }
 
 func createAgeIdentity(path string) (string, error) {

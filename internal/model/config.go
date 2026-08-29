@@ -249,6 +249,7 @@ func ValidateLiteLLMConfig(config ModuleConfig) error {
 		return errors.New("modules.litellm.models must contain at most 32 model aliases")
 	}
 	upstreams := make(map[string]struct{}, len(config.Upstreams))
+	secretReferences := make(map[string]string, len(config.Upstreams))
 	for _, upstream := range config.Upstreams {
 		if !modelTokenPattern.MatchString(upstream.Name) {
 			return fmt.Errorf("modules.litellm.upstreams.name %q is not a safe token", upstream.Name)
@@ -261,9 +262,14 @@ func ValidateLiteLLMConfig(config ModuleConfig) error {
 		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 			return fmt.Errorf("modules.litellm upstream %s requires a valid HTTPS base_url", upstream.Name)
 		}
-		if !secretReferencePattern.MatchString(upstream.APIKeySecret) {
+		if !liteLLMSecretReferencePattern.MatchString(upstream.APIKeySecret) {
 			return fmt.Errorf("modules.litellm upstream %s has an invalid api_key_secret reference", upstream.Name)
 		}
+		secretID := LiteLLMSecretReferenceID(upstream.APIKeySecret)
+		if previous, exists := secretReferences[secretID]; exists && previous != upstream.APIKeySecret {
+			return fmt.Errorf("modules.litellm upstreams %q and %q have colliding api_key_secret references", previous, upstream.APIKeySecret)
+		}
+		secretReferences[secretID] = upstream.APIKeySecret
 	}
 	aliases := make(map[string]struct{}, len(config.Models))
 	for _, model := range config.Models {

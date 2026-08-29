@@ -12,7 +12,7 @@ func TestPlanProjectsMandatoryCollectorAndManagedSources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Collector != CollectorName || plan.CollectorPort != 19532 || plan.RemoteJournalPath != RemoteJournalPath || !plan.MTLS {
+	if plan.Collector != CollectorName || plan.CollectorPort != 19532 || plan.CollectorBackendPort != 19534 || plan.RemoteJournalPath != RemoteJournalPath || !plan.MTLS {
 		t.Fatalf("incomplete logging plan: %#v", plan)
 	}
 	if len(plan.Sources) != 6 || plan.SourceUnitsOptional == false {
@@ -21,7 +21,7 @@ func TestPlanProjectsMandatoryCollectorAndManagedSources(t *testing.T) {
 	if strings.Contains(CollectorConfiguration(plan), "Requires=") {
 		t.Fatal("collector availability became an application startup dependency")
 	}
-	for _, expected := range []string{"[Remote]", "SplitMode=host", "MaxUse=8G", "KeepFree=1G", "TrustedCertificateFile="} {
+	for _, expected := range []string{"[Remote]", "SplitMode=host", "MaxUse=8G", "KeepFree=1G"} {
 		if !strings.Contains(CollectorConfiguration(plan), expected) {
 			t.Fatalf("collector configuration omitted %q", expected)
 		}
@@ -29,14 +29,17 @@ func TestPlanProjectsMandatoryCollectorAndManagedSources(t *testing.T) {
 	if strings.Contains(CollectorConfiguration(plan), "[Journal]") || strings.Contains(CollectorConfiguration(plan), "SystemMaxUse=") {
 		t.Fatal("collector retention was emitted using journald-only configuration keys")
 	}
-	if !strings.Contains(CollectorServiceOverride(plan), "LogsDirectory=") || !strings.Contains(CollectorServiceOverride(plan), "ReadWritePaths="+RemoteJournalPath) || !strings.Contains(CollectorServiceOverride(plan), "--listen-https=-3") || !strings.Contains(CollectorServiceOverride(plan), RemoteJournalPath) {
+	if !strings.Contains(CollectorServiceOverride(plan), "LogsDirectory=") || !strings.Contains(CollectorServiceOverride(plan), "ReadWritePaths="+RemoteJournalPath) || !strings.Contains(CollectorServiceOverride(plan), "--listen-http=127.0.0.1:19534") || !strings.Contains(CollectorServiceOverride(plan), RemoteJournalPath) {
 		t.Fatal("collector service override does not bind HTTPS journal transport and persistent output")
 	}
-	if !strings.Contains(CollectorServiceOverride(plan), "ExecStart=/usr/lib/systemd/systemd-journal-remote --listen-https=-3 --output="+RemoteJournalPath) {
-		t.Fatal("collector service override does not use Debian's journal-remote executable path")
+	if !strings.Contains(CollectorServiceOverride(plan), "ExecStart=/usr/lib/systemd/systemd-journal-remote --listen-http=127.0.0.1:19534 --output="+RemoteJournalPath) {
+		t.Fatal("collector service override does not use the loopback HTTP journal backend")
 	}
-	if strings.Contains(CollectorServiceOverride(plan), "ExecStart=/lib/systemd/systemd-journal-remote") {
-		t.Fatal("collector service override uses the non-canonical journal-remote executable path")
+	if strings.Contains(CollectorServiceOverride(plan), "--listen-https") {
+		t.Fatal("collector backend still exposes an unrevocable TLS listener")
+	}
+	if strings.Contains(CollectorConfiguration(plan), "TrustedCertificateFile=") {
+		t.Fatal("collector backend configuration still implies direct TLS termination")
 	}
 	upload := UploadConfiguration(plan, "lab-dns-01")
 	if !strings.Contains(upload, "https://logs.lab.home.arpa:19532") {

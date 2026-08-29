@@ -17,6 +17,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/logging"
 	"github.com/gofastercloud/boetticher/internal/model"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
+	"github.com/gofastercloud/boetticher/internal/pathguard"
 	"github.com/gofastercloud/boetticher/internal/portal"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/pulse"
@@ -43,6 +44,9 @@ func writeModelProjection(dir string, s model.Site) error {
 }
 
 func writeModelProjections(dir string, s model.Site) error {
+	if err := pathguard.ValidateNoSymlinkComponents(filepath.Join(dir, "generated")); err != nil {
+		return fmt.Errorf("refuse generated projection path: %w", err)
+	}
 	if err := writeModelProjection(dir, s); err != nil {
 		return err
 	}
@@ -66,7 +70,10 @@ func writeModelProjections(dir string, s model.Site) error {
 		return err
 	}
 	moduleRoot := filepath.Join(dir, "generated", "modules")
-	if err := os.RemoveAll(moduleRoot); err != nil {
+	if err := pathguard.ValidateNoSymlinkComponents(moduleRoot); err != nil {
+		return fmt.Errorf("refuse generated module projection path: %w", err)
+	}
+	if err := pathguard.RemoveAll(moduleRoot); err != nil {
 		return fmt.Errorf("clear generated module projections: %w", err)
 	}
 	for _, declaration := range normalized.Declarations {
@@ -419,29 +426,8 @@ func writePublic(path string, data []byte) error {
 }
 
 func writeFile(path string, data []byte, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	if err := pathguard.ValidateNoSymlinkComponents(path); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".boetticher-output-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if err := tmp.Chmod(mode); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
+	return pathguard.WriteFile(path, data, mode)
 }

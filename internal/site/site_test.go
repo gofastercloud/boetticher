@@ -19,6 +19,34 @@ func TestSafeSitePathRejectsEscapes(t *testing.T) {
 	}
 }
 
+func TestSafeSitePathRejectsSymlinkedSecretComponents(t *testing.T) {
+	dir := t.TempDir()
+	external := t.TempDir()
+	if err := os.Symlink(external, filepath.Join(dir, "secrets")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := safeSitePath(dir, "secrets/boetticher.sops.yaml"); err == nil {
+		t.Fatal("symlinked secrets directory was accepted")
+	}
+}
+
+func TestSafeSitePathRejectsSymlinkedSecretFile(t *testing.T) {
+	dir := t.TempDir()
+	external := filepath.Join(t.TempDir(), "outside.sops.yaml")
+	if err := os.Mkdir(filepath.Join(dir, "secrets"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(external, []byte("outside"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(dir, "secrets", "boetticher.sops.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := safeSitePath(dir, "secrets/boetticher.sops.yaml"); err == nil {
+		t.Fatal("symlinked secret file was accepted")
+	}
+}
+
 func TestInitialSiteGitignoreExcludesArtifactRuntime(t *testing.T) {
 	for _, entry := range []string{"generated/artifacts/", "generated/runtime/", "*.tar.zst", "*.qcow2", ".trivy/"} {
 		if !strings.Contains(initialSiteGitignore, entry) {

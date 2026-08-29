@@ -6,7 +6,8 @@ with `systemd-journal-remote` and stores a bounded host-split journal at
 volume is explicitly `backup: false`.
 
 Managed Linux endpoints retain bounded local journals and asynchronously upload
-over HTTPS/mTLS to `logs.lab.home.arpa:19532`. Upload failure does not stop an
+over HTTPS/mTLS through the collector's CRL-enforcing TLS proxy to
+`logs.lab.home.arpa:19532`. Upload failure does not stop an
 application, DNS, routing, or local journald. The collector does not upload its
 own journal recursively. Use `boetticher logs` for bounded read-only access.
 

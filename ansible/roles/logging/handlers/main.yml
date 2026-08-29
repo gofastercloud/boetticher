@@ -2,3 +2,8 @@
 - name: reload logging systemd
   ansible.builtin.systemd:
     daemon_reload: true
+
+- name: restart journal query
+  ansible.builtin.service:
+    name: boetticher-log-query
+    state: restarted

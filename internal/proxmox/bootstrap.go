@@ -283,7 +283,7 @@ func (r SSHRunner) Run(ctx context.Context, address, user, command string) ([]by
 // receives the executable and arguments separately; no local shell fragment
 // is constructed from caller input.
 func (r SSHRunner) RunArgs(ctx context.Context, address, user string, commandArgs []string) ([]byte, error) {
-	return r.runArgs(ctx, address, user, commandArgs, os.Stdin)
+	return r.runArgs(ctx, address, user, quoteRemoteArgs(commandArgs), os.Stdin)
 }
 
 // RunWithStdin executes one validated remote command while streaming the
@@ -311,7 +311,15 @@ func (r SSHRunner) RunArgsStream(ctx context.Context, address, user string, comm
 	if stdout == nil {
 		return errors.New("SSH stdout destination is required")
 	}
-	return r.runArgsStream(ctx, address, user, commandArgs, os.Stdin, stdout)
+	return r.runArgsStream(ctx, address, user, quoteRemoteArgs(commandArgs), os.Stdin, stdout)
+}
+
+func quoteRemoteArgs(args []string) []string {
+	quoted := make([]string, len(args))
+	for i, arg := range args {
+		quoted[i] = shellQuote(arg)
+	}
+	return quoted
 }
 
 // SSHLocalForward is a bounded, loopback-only SSH port forward used for a

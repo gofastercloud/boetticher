@@ -43,7 +43,10 @@ func TestNormalizeJournalUnitRejectsShellAndPathSyntax(t *testing.T) {
 func TestJournalQueryUsesCollectorRemoteStoreAndStableHostMatch(t *testing.T) {
 	component := model.Component{Name: "lab-dns-01", Hostname: "lab-dns-01", Address: "10.10.10.10"}
 	collector := model.Component{Name: "lab-log-01", Hostname: "lab-log-01", Address: "10.10.10.40"}
-	got, source := journalQuery(component, collector, 25, "blocky.service", "2026-08-27T00:00:00Z", "warning")
+	got, source, err := journalQuery(component, collector, 25, "blocky.service", "2026-08-27T00:00:00Z", "warning")
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := []string{
 		"journalctl", "--no-pager", "--output=short-iso", "--lines=25",
 		"--directory=/var/log/journal/remote", "_HOSTNAME=lab-dns-01",
@@ -63,7 +66,10 @@ func TestJournalQueryUsesCollectorRemoteStoreAndStableHostMatch(t *testing.T) {
 func TestJournalQueryUsesNativeProxmoxHostnameForLogicalHost(t *testing.T) {
 	component := model.Component{Name: model.LogicalProxmoxIdentity, Hostname: model.LogicalProxmoxIdentity, Address: "192.168.4.5"}
 	collector := model.Component{Name: "lab-log-01", Hostname: "lab-log-01", Address: "10.10.10.40"}
-	got, source := journalQuery(component, collector, 25, "", "", "")
+	got, source, err := journalQuery(component, collector, 25, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := []string{
 		"journalctl", "--no-pager", "--output=short-iso", "--lines=25",
 		"--directory=/var/log/journal/remote", "_HOSTNAME=proxmox",
@@ -78,7 +84,10 @@ func TestJournalQueryUsesNativeProxmoxHostnameForLogicalHost(t *testing.T) {
 
 func TestJournalQueryUsesCollectorLocalJournalForCollector(t *testing.T) {
 	collector := model.Component{Name: "lab-log-01", Hostname: "lab-log-01", Address: "10.10.10.40"}
-	got, source := journalQuery(collector, collector, 10, "", "", "")
+	got, source, err := journalQuery(collector, collector, 10, "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	want := []string{"journalctl", "--no-pager", "--output=short-iso", "--lines=10", "_HOSTNAME=lab-log-01"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("collector-local journal query = %#v, want %#v", got, want)
@@ -98,5 +107,13 @@ func TestFindManagedEndpointIncludesRetainedModuleGuest(t *testing.T) {
 	got, ok := findManagedEndpoint(site, "lab-monitor-01")
 	if !ok || got.Name != retained.Name || got.Address != retained.Address {
 		t.Fatalf("retained endpoint lookup = %#v, %t", got, ok)
+	}
+}
+
+func TestJournalQueryRejectsUnsafeRetainedHostname(t *testing.T) {
+	component := model.Component{Name: "retained", Hostname: "retained;id", Address: "10.10.10.20"}
+	collector := model.Component{Name: "lab-log-01", Hostname: "lab-log-01", Address: "10.10.10.40"}
+	if _, _, err := journalQuery(component, collector, 10, "", "", ""); err == nil {
+		t.Fatal("unsafe retained hostname was used in a journal query")
 	}
 }

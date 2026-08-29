@@ -62,7 +62,7 @@ func runPKI(args []string, out interface{ Write([]byte) (int, error) }) error {
 		if err := writePublic(filepath.Join(runtimeDir, "chain.crt.pem"), []byte(certificate.ChainPEM)); err != nil {
 			return err
 		}
-		metadata := fmt.Sprintf("name: %s\nfingerprint: %s\ncreated_at: %s\n", name, certificate.Fingerprint, time.Now().UTC().Format(time.RFC3339))
+		metadata := fmt.Sprintf("name: %s\nfingerprint: %s\nserial: %s\ncreated_at: %s\n", name, certificate.Fingerprint, certificate.Serial, time.Now().UTC().Format(time.RFC3339))
 		if err := writePublic(filepath.Join(*siteDir, "generated", "pki", name+".yaml"), []byte(metadata)); err != nil {
 			return err
 		}
@@ -76,7 +76,7 @@ func runPKI(args []string, out interface{ Write([]byte) (int, error) }) error {
 	case "export":
 		return exportClient(runtimeDir, *output, out)
 	case "revoke":
-		return revokeClient(*siteDir, name, out)
+		return revokeClient(*siteDir, runtimeDir, name, out)
 	default:
 		return fmt.Errorf("unknown pki client command %q", command)
 	}
@@ -104,11 +104,19 @@ func exportClient(runtimeDir, output string, out interface{ Write([]byte) (int, 
 	return nil
 }
 
-func revokeClient(siteDir, name string, out interface{ Write([]byte) (int, error) }) error {
+func revokeClient(siteDir, runtimeDir, name string, out interface{ Write([]byte) (int, error) }) error {
 	if err := pki.ValidateClientName(name); err != nil {
 		return err
 	}
-	revocation := fmt.Sprintf("name: %s\nstatus: revoked\nrevoked_at: %s\n", name, time.Now().UTC().Format(time.RFC3339))
+	certPEM, err := os.ReadFile(filepath.Join(runtimeDir, "client.crt.pem"))
+	if err != nil {
+		return fmt.Errorf("read issued client certificate for revocation: %w", err)
+	}
+	serial, err := pki.CertificateSerial(string(certPEM))
+	if err != nil {
+		return fmt.Errorf("identify issued client certificate for revocation: %w", err)
+	}
+	revocation := fmt.Sprintf("name: %s\nserial: %s\nstatus: revoked\nrevoked_at: %s\n", name, serial, time.Now().UTC().Format(time.RFC3339))
 	path := filepath.Join(siteDir, "generated", "pki", "revoked", name+".yaml")
 	if err := writePublic(path, []byte(revocation)); err != nil {
 		return err
