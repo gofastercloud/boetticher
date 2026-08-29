@@ -101,6 +101,7 @@
     group: root
     mode: '0644'
   no_log: true
+  notify: reload nginx
   when: inventory_hostname == logging_plan.collector
 
 - name: Install the journal-remote configuration contract

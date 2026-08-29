@@ -140,7 +140,8 @@ func TestGenerateCRLRevokesExactCertificateSerial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	crlPEM, err := GenerateCRL(authority, []Revocation{{Name: first.Name, Serial: first.Serial, RevokedAt: time.Unix(60, 0)}}, time.Unix(120, 0))
+	now := time.Unix(120, 0)
+	crlPEM, err := GenerateCRL(authority, []Revocation{{Name: first.Name, Serial: first.Serial, RevokedAt: time.Unix(60, 0)}}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,6 +159,9 @@ func TestGenerateCRLRevokesExactCertificateSerial(t *testing.T) {
 	}
 	if err := crl.CheckSignatureFrom(issuer); err != nil {
 		t.Fatalf("CRL signature did not verify: %v", err)
+	}
+	if !crl.NextUpdate.After(now.AddDate(9, 0, 0)) {
+		t.Fatalf("CRL validity is too short: next update %s", crl.NextUpdate)
 	}
 	if len(crl.RevokedCertificateEntries) != 1 || crl.RevokedCertificateEntries[0].SerialNumber.Text(16) != first.Serial {
 		t.Fatalf("unexpected revoked entries: %#v", crl.RevokedCertificateEntries)

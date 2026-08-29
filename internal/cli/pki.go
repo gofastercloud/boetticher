@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -8,9 +9,16 @@ import (
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/pathguard"
 	"github.com/gofastercloud/boetticher/internal/pki"
 	"github.com/gofastercloud/boetticher/internal/site"
+	"gopkg.in/yaml.v3"
 )
+
+type clientCertificateMetadata struct {
+	Name   string `yaml:"name"`
+	Serial string `yaml:"serial"`
+}
 
 func runPKI(args []string, out interface{ Write([]byte) (int, error) }) error {
 	if len(args) < 2 {
@@ -108,13 +116,19 @@ func revokeClient(siteDir, runtimeDir, name string, out interface{ Write([]byte)
 	if err := pki.ValidateClientName(name); err != nil {
 		return err
 	}
-	certPEM, err := os.ReadFile(filepath.Join(runtimeDir, "client.crt.pem"))
+	serial, err := loadClientMetadataSerial(siteDir, name)
 	if err != nil {
-		return fmt.Errorf("read issued client certificate for revocation: %w", err)
+		return err
 	}
-	serial, err := pki.CertificateSerial(string(certPEM))
-	if err != nil {
-		return fmt.Errorf("identify issued client certificate for revocation: %w", err)
+	if serial == "" {
+		certPEM, readErr := pathguard.ReadFile(filepath.Join(runtimeDir, "client.crt.pem"))
+		if readErr != nil {
+			return fmt.Errorf("read issued client certificate for revocation: %w", readErr)
+		}
+		serial, err = pki.CertificateSerial(string(certPEM))
+		if err != nil {
+			return fmt.Errorf("identify issued client certificate for revocation: %w", err)
+		}
 	}
 	revocation := fmt.Sprintf("name: %s\nserial: %s\nstatus: revoked\nrevoked_at: %s\n", name, serial, time.Now().UTC().Format(time.RFC3339))
 	path := filepath.Join(siteDir, "generated", "pki", "revoked", name+".yaml")
@@ -128,6 +142,32 @@ func revokeClient(siteDir, runtimeDir, name string, out interface{ Write([]byte)
 	}
 	fmt.Fprintf(out, "Recorded client revocation: %s\n", name)
 	return nil
+}
+
+func loadClientMetadataSerial(siteDir, name string) (string, error) {
+	path := filepath.Join(siteDir, "generated", "pki", name+".yaml")
+	data, err := pathguard.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read client certificate metadata: %w", err)
+	}
+	var metadata clientCertificateMetadata
+	if err := yaml.Unmarshal(data, &metadata); err != nil {
+		return "", fmt.Errorf("parse client certificate metadata: %w", err)
+	}
+	if metadata.Name != name {
+		return "", fmt.Errorf("client certificate metadata name %q does not match %q", metadata.Name, name)
+	}
+	if metadata.Serial == "" {
+		return "", nil
+	}
+	serial, err := pki.ParseSerial(metadata.Serial)
+	if err != nil {
+		return "", fmt.Errorf("client certificate metadata serial: %w", err)
+	}
+	return serial.Text(16), nil
 }
 
 func runPKITrust(args []string, out interface{ Write([]byte) (int, error) }) error {
