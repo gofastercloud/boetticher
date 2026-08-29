@@ -145,7 +145,7 @@ func TestGenerateCRLRevokesExactCertificateSerial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	block, _ := pem.Decode([]byte(crlPEM))
+	block, rest := pem.Decode([]byte(crlPEM))
 	if block == nil || block.Type != "X509 CRL" {
 		t.Fatalf("CRL PEM block = %#v", block)
 	}
@@ -168,6 +168,24 @@ func TestGenerateCRLRevokesExactCertificateSerial(t *testing.T) {
 	}
 	if crl.RevokedCertificateEntries[0].SerialNumber.Text(16) == second.Serial {
 		t.Fatal("CRL revoked an unrelated certificate")
+	}
+	remainingBlock, _ := pem.Decode(rest)
+	if remainingBlock == nil || remainingBlock.Type != "X509 CRL" {
+		t.Fatalf("root CRL PEM block = %#v", remainingBlock)
+	}
+	rootCRL, err := x509.ParseRevocationList(remainingBlock.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := parseCert(authority.RootCertPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rootCRL.CheckSignatureFrom(root); err != nil {
+		t.Fatalf("root CRL signature did not verify: %v", err)
+	}
+	if len(rootCRL.RevokedCertificateEntries) != 0 {
+		t.Fatalf("root CRL unexpectedly revoked certificates: %#v", rootCRL.RevokedCertificateEntries)
 	}
 }
 
