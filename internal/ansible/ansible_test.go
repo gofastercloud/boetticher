@@ -956,6 +956,14 @@ func TestDNSRoleDoesNotPlaceTSIGSecretsInProcessArguments(t *testing.T) {
 	if !strings.Contains(keaText, `"forward-ddns": {`) || !strings.Contains(keaText, `"reverse-ddns": {`) || !strings.Contains(keaText, `"ddns-domains":`) || !strings.Contains(keaText, `"key-name": "{{ zone.tsig_key_name }}"`) {
 		t.Fatal("Kea D2 does not use the qualified domain catalogs and TSIG key references")
 	}
+	for _, expected := range []string{
+		`"name": "{{ zone.forward_zone }}."`,
+		`"name": "{{ zone.reverse_zone }}."`,
+	} {
+		if !strings.Contains(keaText, expected) {
+			t.Errorf("Kea D2 domain catalog does not use a fully qualified zone name: %s", expected)
+		}
+	}
 }
 
 func TestPowerDNSBindsEachDNSGuestAddressAlongsideLoopback(t *testing.T) {
