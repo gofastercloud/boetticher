@@ -53,6 +53,7 @@ func runPreflight(args []string, out interface{ Write([]byte) (int, error) }) er
 	fs := flag.NewFlagSet("preflight", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
+	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
 	live := fs.Bool("live", false, "inspect the fresh Proxmox host over the recorded bootstrap path")
 	bootstrapAddress := fs.String("bootstrap-address", "", "fresh Proxmox HOME-side address when it is not yet recorded")
 	initialUser := fs.String("initial-user", "root", "initial SSH user on the fresh Proxmox host")
@@ -110,7 +111,23 @@ func runPreflight(args []string, out interface{ Write([]byte) (int, error) }) er
 	}
 	discovery := discovered.Discovery
 	discovery = honorRequestedPhysicalMode(discovery, s.PhysicalNetwork.Mode, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
-	if err := proxmox.CheckScopedCredentialAvailability(context.Background(), runner, address, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
+	credentialsPath := filepath.Join(*siteDir, site.ProxmoxSecretsPath)
+	credentialsExist, err := proxmoxCredentialsExist(credentialsPath)
+	if err != nil {
+		return fmt.Errorf("inspect existing Proxmox API credentials: %w", err)
+	}
+	if credentialsExist {
+		credentials, err := site.LoadProxmoxCredentials(*siteDir, s, *ageIdentity)
+		if err != nil {
+			return fmt.Errorf("HOLD: load existing Proxmox API credentials: %w", err)
+		}
+		if credentials.APIUser != "labadmin@pve" || credentials.TokenID != "boetticher" {
+			return fmt.Errorf("HOLD: encrypted Proxmox credentials identify %s!%s, expected labadmin@pve!boetticher", credentials.APIUser, credentials.TokenID)
+		}
+		if err := proxmox.CheckScopedCredentialReuse(context.Background(), runner, address, *initialUser, credentials.APIUser, credentials.TokenID, "BoetticherProvisioner"); err != nil {
+			return err
+		}
+	} else if err := proxmox.CheckScopedCredentialAvailability(context.Background(), runner, address, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "Proxmox node: PASS %s (discovered from /nodes)\n", discovered.Node)
