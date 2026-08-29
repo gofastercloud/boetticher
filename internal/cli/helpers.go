@@ -221,6 +221,42 @@ func writeAccessProjection(dir string, s model.Site) error {
 	return writePublic(filepath.Join(dir, "generated", "ssh", "lab-jump.conf"), []byte(policy))
 }
 
+// temporarySSHConfig creates a fresh, restrictive projection for a read-only
+// operation. Persisted generated files are outputs and must not be treated as
+// executable OpenSSH configuration because local users can modify them.
+func temporarySSHConfig(s model.Site, siteDir string) (string, func(), error) {
+	content, err := sshconfig.RenderWithKnownHosts(s, time.Now().UTC(), deploymentKnownHosts(siteDir))
+	if err != nil {
+		return "", func() {}, err
+	}
+	file, err := os.CreateTemp("", ".boetticher-ssh-read-*")
+	if err != nil {
+		return "", func() {}, fmt.Errorf("create temporary SSH configuration: %w", err)
+	}
+	path := file.Name()
+	cleanup := func() { _ = os.Remove(path) }
+	if err := file.Chmod(0600); err != nil {
+		_ = file.Close()
+		cleanup()
+		return "", func() {}, fmt.Errorf("restrict temporary SSH configuration: %w", err)
+	}
+	if _, err := file.WriteString(content); err != nil {
+		_ = file.Close()
+		cleanup()
+		return "", func() {}, fmt.Errorf("write temporary SSH configuration: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		cleanup()
+		return "", func() {}, fmt.Errorf("sync temporary SSH configuration: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		cleanup()
+		return "", func() {}, fmt.Errorf("close temporary SSH configuration: %w", err)
+	}
+	return path, cleanup, nil
+}
+
 func rebuildPortal(dir string, s model.Site) error {
 	revision, err := s.Revision()
 	if err != nil {

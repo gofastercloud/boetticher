@@ -17,6 +17,7 @@ import (
 	"time"
 
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
+	"github.com/gofastercloud/boetticher/internal/sshconfig"
 )
 
 type CommandRunner interface {
@@ -348,6 +349,9 @@ func (r SSHRunner) StartLocalForward(ctx context.Context, address, user, targetA
 	if ctx == nil {
 		return nil, errors.New("SSH local forward context is required")
 	}
+	if err := r.validateConfig(); err != nil {
+		return nil, err
+	}
 	localListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("reserve SSH local-forward port: %w", err)
@@ -485,6 +489,9 @@ func (r SSHRunner) runArgs(ctx context.Context, address, user string, commandArg
 }
 
 func (r SSHRunner) runArgsStream(ctx context.Context, address, user string, commandArgs []string, stdin io.Reader, stdout io.Writer) error {
+	if err := r.validateConfig(); err != nil {
+		return err
+	}
 	args, err := r.commandArgs(address, user, commandArgs)
 	if err != nil {
 		return err
@@ -501,6 +508,16 @@ func (r SSHRunner) runArgsStream(ctx context.Context, address, user string, comm
 			return fmt.Errorf("SSH bootstrap command failed: %w: %s", err, message)
 		}
 		return fmt.Errorf("SSH bootstrap command failed: %w", err)
+	}
+	return nil
+}
+
+func (r SSHRunner) validateConfig() error {
+	if r.ConfigFile == "" {
+		return nil
+	}
+	if err := sshconfig.ValidateExecutionConfig(r.ConfigFile); err != nil {
+		return fmt.Errorf("validate SSH execution configuration: %w", err)
 	}
 	return nil
 }
@@ -685,6 +702,70 @@ func RestoreTemporaryRootAccess(ctx context.Context, runner CommandRunner, addre
 		}
 	}
 	return nil
+}
+
+const guestHostPublicKeyPath = "/var/lib/boetticher/identity/ssh/ssh_host_ed25519_key.pub"
+
+// ReadGuestHostKey obtains the appliance's generated host key through the
+// already-authenticated Proxmox host boundary. It is intentionally separate
+// from ssh-keyscan: network observations cannot establish the identity used
+// for the subsequent root or credential-bearing connection.
+func ReadGuestHostKey(ctx context.Context, runner CommandRunner, address, user string, kind GuestKind, vmid int) (string, error) {
+	if runner == nil {
+		return "", errors.New("guest host-key reader is required")
+	}
+	if user != "root" {
+		return "", errors.New("guest host-key read requires the root transport")
+	}
+	if vmid <= 0 {
+		return "", errors.New("guest host-key read requires a positive guest VMID")
+	}
+	var command string
+	switch kind {
+	case KindQEMU:
+		command = fmt.Sprintf("/usr/sbin/qm guest exec %d -- /bin/cat %s", vmid, guestHostPublicKeyPath)
+	case KindLXC:
+		command = fmt.Sprintf("/usr/sbin/pct exec %d -- /bin/cat %s", vmid, guestHostPublicKeyPath)
+	default:
+		return "", fmt.Errorf("guest host-key read does not support guest kind %q", kind)
+	}
+	output, err := runner.Run(ctx, address, user, command)
+	if err != nil {
+		return "", fmt.Errorf("read guest host key through Proxmox: %w", err)
+	}
+	if kind == KindQEMU {
+		var result map[string]json.RawMessage
+		if err := json.Unmarshal(bytes.TrimSpace(output), &result); err != nil {
+			return "", fmt.Errorf("decode guest-agent host-key result: %w", err)
+		}
+		var exited, exitCode int
+		if err := json.Unmarshal(result["exited"], &exited); err != nil || exited != 1 {
+			return "", errors.New("guest-agent host-key read did not finish")
+		}
+		if err := json.Unmarshal(result["exitcode"], &exitCode); err != nil {
+			return "", fmt.Errorf("decode guest-agent host-key exit code: %w", err)
+		}
+		if exitCode != 0 {
+			return "", fmt.Errorf("guest-agent host-key read exited %d", exitCode)
+		}
+		var outData string
+		if err := json.Unmarshal(result["out-data"], &outData); err != nil {
+			return "", fmt.Errorf("decode guest-agent host-key output: %w", err)
+		}
+		output = []byte(outData)
+	}
+	return normalizeGuestHostKey(string(output))
+}
+
+func normalizeGuestHostKey(value string) (string, error) {
+	fields := strings.Fields(strings.TrimSpace(value))
+	if len(fields) < 2 || len(fields) > 3 || fields[0] != "ssh-ed25519" {
+		return "", errors.New("guest host key is not one ssh-ed25519 public-key line")
+	}
+	if err := ValidatePublicKey(strings.Join(fields[:2], " ")); err != nil {
+		return "", fmt.Errorf("guest host key is malformed: %w", err)
+	}
+	return strings.Join(fields[:2], " "), nil
 }
 
 // RevokeTemporaryRootAccess removes the deployment-only root SSH identity

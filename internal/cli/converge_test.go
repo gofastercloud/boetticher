@@ -93,26 +93,43 @@ func TestPulseCredentialBootstrapUsesTemporaryRootAuthority(t *testing.T) {
 }
 
 func TestDeploymentRearmsCleanedGuestRootTransportThroughHost(t *testing.T) {
-	hostRunner := &deploymentRootTestRunner{hostOutput: []byte("{\"exitcode\":0,\"exited\":1}")}
+	hostRunner := &deploymentRootTestRunner{hostOutput: []byte("{\"exitcode\":0,\"exited\":1,\"out-data\":\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\\n\"}")}
 	guestRunner := &deploymentRootTestRunner{guestErr: errors.New("permission denied"), guestSuccessAfter: 1}
-	guest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
-	if err := waitForDeploymentRoot(context.Background(), hostRunner, "192.0.2.10", guestRunner, guest, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator"); err != nil {
+	guest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
+	if err := waitForDeploymentRoot(context.Background(), hostRunner, "192.0.2.10", guestRunner, guest, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA operator", filepath.Join(t.TempDir(), "known_hosts"), "lab-fw-01.lab.home.arpa"); err != nil {
 		t.Fatal(err)
 	}
-	if hostRunner.calls != 1 || guestRunner.calls != 2 || !strings.Contains(hostRunner.lastCommand, "/usr/sbin/qm guest exec 100") {
+	if hostRunner.calls != 2 || guestRunner.calls != 2 || !strings.Contains(hostRunner.lastCommand, "/usr/sbin/qm guest exec 100") {
 		t.Fatalf("deployment root re-arm calls = host:%d guest:%d command:%q", hostRunner.calls, guestRunner.calls, hostRunner.lastCommand)
 	}
 }
 
 func TestDeploymentRetriesTransientGuestRootRearmFailure(t *testing.T) {
-	hostRunner := &deploymentRootTestRunner{hostOutputs: [][]byte{[]byte("guest agent is not ready"), []byte("{\"exitcode\":0,\"exited\":1}")}}
+	hostRunner := &deploymentRootTestRunner{hostOutputs: [][]byte{[]byte("guest agent is not ready"), []byte("{\"exitcode\":0,\"exited\":1,\"out-data\":\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\\n\"}")}}
 	guestRunner := &deploymentRootTestRunner{guestErr: errors.New("permission denied"), guestSuccessAfter: 1}
-	guest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
-	if err := waitForDeploymentRoot(context.Background(), hostRunner, "192.0.2.10", guestRunner, guest, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator"); err != nil {
+	guest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
+	if err := waitForDeploymentRoot(context.Background(), hostRunner, "192.0.2.10", guestRunner, guest, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA operator", filepath.Join(t.TempDir(), "known_hosts"), "lab-fw-01.lab.home.arpa"); err != nil {
 		t.Fatal(err)
 	}
-	if hostRunner.calls != 2 || guestRunner.calls != 2 {
+	if hostRunner.calls != 3 || guestRunner.calls != 2 {
 		t.Fatalf("transient deployment root re-arm calls = host:%d guest:%d", hostRunner.calls, guestRunner.calls)
+	}
+}
+
+func TestDeploymentWaitsForGuestHostKeyThroughBootWindow(t *testing.T) {
+	hostRunner := &deploymentRootTestRunner{hostOutputs: [][]byte{
+		[]byte("guest agent is not ready"),
+		[]byte("guest agent is not ready"),
+		[]byte("guest agent is not ready"),
+		[]byte("{\"exitcode\":0,\"exited\":1,\"out-data\":\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\\n\"}"),
+	}}
+	guestRunner := &deploymentRootTestRunner{}
+	guest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
+	if err := waitForDeploymentRoot(context.Background(), hostRunner, "192.0.2.10", guestRunner, guest, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA operator", filepath.Join(t.TempDir(), "known_hosts"), "lab-fw-01.lab.home.arpa"); err != nil {
+		t.Fatal(err)
+	}
+	if hostRunner.calls != 4 {
+		t.Fatalf("guest host-key boot window stopped after %d attempts, want 4", hostRunner.calls)
 	}
 }
 

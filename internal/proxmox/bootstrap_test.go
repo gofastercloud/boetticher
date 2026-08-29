@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -81,17 +82,49 @@ func TestSSHRunnerPreservesJournalArgumentsWithoutShellInterpolation(t *testing.
 }
 
 func TestSSHRunnerUsesBoundedTrustOnFirstUseForFreshApplianceHostKeys(t *testing.T) {
-	runner := SSHRunner{StrictHostKey: "accept-new", HostAlias: "lab-dns-01"}
+	runner := SSHRunner{StrictHostKey: "yes", HostAlias: "lab-dns-01"}
 	args, err := runner.commandArgs("10.10.10.10", "labadmin", []string{"true"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	joined := strings.Join(args, " ")
-	if !strings.Contains(joined, "StrictHostKeyChecking=accept-new") {
-		t.Fatalf("fresh appliance probe does not enroll a new host key safely: %#v", args)
+	if !strings.Contains(joined, "StrictHostKeyChecking=yes") {
+		t.Fatalf("fresh appliance probe does not require a pinned host key: %#v", args)
 	}
 	if strings.Contains(joined, "StrictHostKeyChecking=no") {
 		t.Fatalf("fresh appliance probe disables host-key verification: %#v", args)
+	}
+}
+
+func TestReadGuestHostKeyUsesAuthenticatedProxmoxBoundary(t *testing.T) {
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA guest\n"
+	for _, test := range []struct {
+		kind   GuestKind
+		output []byte
+		want   string
+	}{
+		{kind: KindQEMU, output: []byte(`{"exited":1,"exitcode":0,"out-data":"` + key[:len(key)-1] + `\n"}`), want: strings.TrimSpace(strings.TrimSuffix(key, " guest\n"))},
+		{kind: KindLXC, output: []byte(key), want: strings.TrimSpace(strings.TrimSuffix(key, " guest\n"))},
+	} {
+		runner := &fakeRunner{output: test.output}
+		got, err := ReadGuestHostKey(context.Background(), runner, "192.0.2.10", "root", test.kind, 100)
+		if err != nil {
+			t.Fatalf("ReadGuestHostKey(%s) = %v", test.kind, err)
+		}
+		if got != test.want || !strings.Contains(runner.command, "/bin/cat /var/lib/boetticher/identity/ssh/ssh_host_ed25519_key.pub") {
+			t.Fatalf("ReadGuestHostKey(%s) = %q, command %q", test.kind, got, runner.command)
+		}
+	}
+}
+
+func TestSSHRunnerRejectsExecutableConfigBeforeStartingSSH(t *testing.T) {
+	path := t.TempDir() + "/boetticher.conf"
+	if err := os.WriteFile(path, []byte("Host lab-dns-01\n    LocalCommand id\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runner := SSHRunner{ConfigFile: path}
+	if err := runner.validateConfig(); err == nil {
+		t.Fatal("executable SSH directive was not rejected")
 	}
 }
 
