@@ -189,8 +189,10 @@ func runWithContext(ctx context.Context) error {
 	}()
 
 	var runErr error
+	firstServeResultReceived := false
 	select {
 	case result := <-serveResults:
+		firstServeResultReceived = true
 		if result.err == nil {
 			runErr = fmt.Errorf("%s stopped unexpectedly", result.name)
 		} else {
@@ -206,7 +208,7 @@ func runWithContext(ctx context.Context) error {
 			runErr = fmt.Errorf("shutdown %s: %w", configured.name, err)
 		}
 	}
-	for range servers {
+	for range remainingServeResults(len(servers), firstServeResultReceived) {
 		result := <-serveResults
 		if result.err != nil && runErr == nil {
 			runErr = result.err
@@ -218,6 +220,16 @@ func runWithContext(ctx context.Context) error {
 		return nil
 	}
 	return runErr
+}
+
+func remainingServeResults(serverCount int, firstResultReceived bool) int {
+	if firstResultReceived {
+		serverCount--
+	}
+	if serverCount < 0 {
+		return 0
+	}
+	return serverCount
 }
 
 func boundedServer(handler http.Handler) *http.Server {
