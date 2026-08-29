@@ -249,6 +249,9 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 		}
 	}
 	rootRunner := proxmoxRootSSHRunner(s, *siteDir)
+	proxmoxPlan.PrivilegedRunner = rootRunner
+	proxmoxPlan.PrivilegedAddress = s.BootstrapAddress
+	proxmoxPlan.PrivilegedUser = "root"
 	cleanupTemporaryRoot := true
 	defer func() {
 		if !cleanupTemporaryRoot {

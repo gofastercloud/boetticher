@@ -84,6 +84,14 @@ type Plan struct {
 	OperatorPublicKey    string            `json:"-"`
 	CloudInitFiles       CloudInitFiles    `json:"-"`
 	DestructiveConfirmed bool              `json:"-"`
+	// PrivilegedRunner is the already-authorized, bounded root bootstrap path.
+	// Proxmox rejects /dev/net/tun on the scoped API identity, so device-bearing
+	// LXC creation applies the exact device setting through this path after the
+	// unprivileged container has been created. It is runtime-only and never part
+	// of serialized plan or evidence output.
+	PrivilegedRunner  ArgsCommandRunner `json:"-"`
+	PrivilegedAddress string            `json:"-"`
+	PrivilegedUser    string            `json:"-"`
 }
 
 type NetworkInterface struct {
@@ -1359,6 +1367,9 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 	if guest.Artifact.ContentSHA256 == "" {
 		return fmt.Errorf("NOT BUILT: guest %s artifact %s has no qualified content checksum", guest.Name, guest.Artifact.Name)
 	}
+	if err := validateLXCPrivilegedDeviceAuthority(plan, guest); err != nil {
+		return err
+	}
 	filename := guest.Artifact.Name + "-" + guest.Artifact.Version + "-" + guest.Artifact.Architecture + ".tar.zst"
 	if err := ensureArtifactInStorage(ctx, client, plan.Node, "local", "vztmpl", filename, guest.Artifact.ContentSHA256, plan.ArtifactFiles[artifactKey(guest.Artifact)]); err != nil {
 		return fmt.Errorf("prepare appliance template for %s: %w", guest.Name, err)
@@ -1383,9 +1394,6 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 	if guest.Security.Unprivileged {
 		params.Set("unprivileged", "1")
 	}
-	for index, device := range guest.Security.Devices {
-		params.Set(fmt.Sprintf("dev%d", index), lxcDeviceParam(device))
-	}
 	bootstrapParams, err := lxcBootstrapKeyParams(plan.OperatorPublicKey)
 	if err != nil {
 		return fmt.Errorf("validate appliance bootstrap key for %s: %w", guest.Name, err)
@@ -1404,6 +1412,9 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 	}
 	if err := client.CreateLXC(ctx, plan.Node, guest.VMID, params); err != nil {
 		return fmt.Errorf("create container %s: %w", guest.Name, err)
+	}
+	if err := configureLXCDevices(ctx, plan, guest); err != nil {
+		return fmt.Errorf("HOLD: configure created container %s security contract: %w", guest.Name, err)
 	}
 	// Creation is not sufficient evidence that Proxmox applied the security
 	// contract. Inspect the resulting object before ProvisionModule/Provision
@@ -1440,10 +1451,36 @@ func validateLXCDeviceContract(guest GuestPlan) error {
 	return nil
 }
 
+func validateLXCPrivilegedDeviceAuthority(plan Plan, guest GuestPlan) error {
+	if len(guest.Security.Devices) == 0 {
+		return nil
+	}
+	if plan.PrivilegedRunner == nil || net.ParseIP(plan.PrivilegedAddress) == nil || plan.PrivilegedUser != "root" {
+		return fmt.Errorf("HOLD: guest %s requires the authorized root bootstrap path to configure its exact device contract", guest.Name)
+	}
+	return nil
+}
+
+// configureLXCDevices applies the narrow device contract through the host's
+// root bootstrap path. The scoped Proxmox API identity cannot pass device
+// passthrough parameters to /lxc; using pct here preserves that provider
+// boundary without granting the API token root-equivalent permissions.
+func configureLXCDevices(ctx context.Context, plan Plan, guest GuestPlan) error {
+	if err := validateLXCPrivilegedDeviceAuthority(plan, guest); err != nil {
+		return err
+	}
+	for index, device := range guest.Security.Devices {
+		args := []string{"/usr/sbin/pct", "set", strconv.Itoa(guest.VMID), fmt.Sprintf("--dev%d", index), lxcDeviceParam(device)}
+		if _, err := plan.PrivilegedRunner.RunArgs(ctx, plan.PrivilegedAddress, plan.PrivilegedUser, args); err != nil {
+			return fmt.Errorf("apply exact device %s through Proxmox host: %w", device.Path, err)
+		}
+	}
+	return nil
+}
+
 // lxcDeviceParam is the only Core-owned translation of the bounded TUN
-// contract into a Proxmox LXC device setting. Proxmox applies the matching
-// host character device and cgroup rule atomically with container creation;
-// no broad device wildcard or Linux capability is requested.
+// contract into a Proxmox LXC device setting. No broad device wildcard or
+// Linux capability is requested.
 func lxcDeviceParam(device model.DeviceRequirement) string {
 	return fmt.Sprintf("path=%s,mode=0666", device.Path)
 }
