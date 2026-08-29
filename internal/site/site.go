@@ -29,7 +29,7 @@ var platformSecretName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
 
 const externalCommandTimeout = 30 * time.Second
 
-const maxEncryptedDocumentBytes = 1 << 20
+const MaxEncryptedDocumentBytes = 1 << 20
 
 var errCommandOutputLimit = errors.New("command output exceeds the permitted size")
 
@@ -115,7 +115,7 @@ func ApplyConfigAndPlatformSecrets(dir string, config model.SiteConfig, s model.
 	if err != nil {
 		return err
 	}
-	oldSecret, err := pathguard.ReadFile(secretPath)
+	oldSecret, err := pathguard.ReadFileLimited(secretPath, MaxEncryptedDocumentBytes)
 	if err != nil {
 		return fmt.Errorf("read encrypted platform secrets for atomic update: %w", err)
 	}
@@ -325,10 +325,10 @@ func StoreEncryptedDocument(dir, recipient, relativePath string, document any) e
 	command := exec.CommandContext(ctx, "sops", "--encrypt", "--age", recipient, "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
 	command.Stdin = strings.NewReader(string(plaintext))
 	var encryptedOutput boundedCommandOutput
-	encryptedOutput.limit = maxEncryptedDocumentBytes
+	encryptedOutput.limit = MaxEncryptedDocumentBytes
 	command.Stdout = &encryptedOutput
 	err = command.Run()
-	if encryptedOutput.exceeded || encryptedOutput.Len() >= encryptedOutput.limit {
+	if encryptedOutput.exceeded || encryptedOutput.Len() > encryptedOutput.limit {
 		return errors.New("encrypt document with SOPS: output exceeds the permitted size")
 	}
 	if err != nil {
@@ -352,7 +352,7 @@ func LoadEncryptedDocument(dir, ageIdentityPath, relativePath string) (map[strin
 	if identity == "" {
 		return nil, errors.New("Age identity path is required")
 	}
-	encrypted, err := pathguard.ReadFileLimited(path, maxEncryptedDocumentBytes)
+	encrypted, err := pathguard.ReadFileLimited(path, MaxEncryptedDocumentBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read encrypted document: %w", err)
 	}
@@ -363,10 +363,10 @@ func LoadEncryptedDocument(dir, ageIdentityPath, relativePath string) (map[strin
 	command.Env = append(command.Env, "SOPS_AGE_KEY_FILE="+identity)
 	command.Stdin = strings.NewReader(string(encrypted))
 	var plaintextOutput boundedCommandOutput
-	plaintextOutput.limit = maxEncryptedDocumentBytes
+	plaintextOutput.limit = MaxEncryptedDocumentBytes
 	command.Stdout = &plaintextOutput
 	err = command.Run()
-	if plaintextOutput.exceeded || plaintextOutput.Len() >= plaintextOutput.limit {
+	if plaintextOutput.exceeded || plaintextOutput.Len() > plaintextOutput.limit {
 		return nil, errors.New("decrypt encrypted document: output exceeds the permitted size")
 	}
 	if err != nil {

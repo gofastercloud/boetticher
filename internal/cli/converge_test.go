@@ -68,6 +68,15 @@ func TestPortalSourceDirectoryIsAbsoluteForAnsible(t *testing.T) {
 	}
 }
 
+func TestLoadProxmoxClientRejectsInvalidBootstrapBeforeCredentials(t *testing.T) {
+	s := model.NewDefaultSite("installation", "age1example")
+	s.BootstrapAddress = "proxmox.example"
+	_, _, err := loadProxmoxClientWithSnippetUser(t.TempDir(), s, "/missing/age-identity", "", false, "root")
+	if err == nil || !strings.Contains(err.Error(), "IPv4") {
+		t.Fatalf("invalid bootstrap address was not rejected before credential loading: %v", err)
+	}
+}
+
 func TestProjectionCleanupRejectsSymlinkedGeneratedRoot(t *testing.T) {
 	dir := t.TempDir()
 	external := t.TempDir()

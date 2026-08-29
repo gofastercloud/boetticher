@@ -63,7 +63,7 @@ func TestLoadEncryptedDocumentBoundsEncryptedAndDecryptedInputs(t *testing.T) {
 		script     string
 		want       string
 	}{
-		{name: "encrypted input", ciphertext: []byte(strings.Repeat("x", maxEncryptedDocumentBytes+1)), script: "cat", want: "exceeds maximum"},
+		{name: "encrypted input", ciphertext: []byte(strings.Repeat("x", MaxEncryptedDocumentBytes+1)), script: "cat", want: "exceeds maximum"},
 		{name: "decrypted output", ciphertext: []byte("ciphertext\n"), script: "dd if=/dev/zero bs=1048576 count=2 2>/dev/null", want: "output exceeds"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -85,6 +85,19 @@ func TestLoadEncryptedDocumentBoundsEncryptedAndDecryptedInputs(t *testing.T) {
 				t.Fatalf("LoadEncryptedDocument() error = %v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestBoundedCommandOutputAllowsExactLimit(t *testing.T) {
+	writer := &boundedCommandOutput{limit: 4}
+	if _, err := writer.Write([]byte("1234")); err != nil {
+		t.Fatalf("exact output limit was rejected: %v", err)
+	}
+	if writer.exceeded || writer.String() != "1234" {
+		t.Fatalf("exact output limit changed writer state: exceeded=%t output=%q", writer.exceeded, writer.String())
+	}
+	if _, err := writer.Write([]byte("5")); err == nil {
+		t.Fatal("output beyond the exact limit was accepted")
 	}
 }
 

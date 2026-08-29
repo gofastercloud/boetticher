@@ -411,8 +411,11 @@ func Check(path string, s model.Site) error {
 }
 
 func ValidateBootstrapAddress(address string) error {
-	ip := net.ParseIP(strings.TrimSpace(address))
-	if ip == nil || ip.To4() == nil {
+	if strings.TrimSpace(address) != address {
+		return fmt.Errorf("bootstrap endpoint must be a canonical IPv4 address")
+	}
+	ip := net.ParseIP(address)
+	if ip == nil || ip.To4() == nil || ip.To4().String() != address {
 		return fmt.Errorf("bootstrap endpoint must be an IPv4 address")
 	}
 	return nil

@@ -1239,6 +1239,9 @@ func loadProxmoxClientWithSnippetUser(siteDir string, s model.Site, ageIdentity,
 	if s.BootstrapAddress == "" {
 		return nil, site.ProxmoxCredentials{}, errors.New("bootstrap endpoint is not configured")
 	}
+	if err := sshconfig.ValidateBootstrapAddress(s.BootstrapAddress); err != nil {
+		return nil, site.ProxmoxCredentials{}, err
+	}
 	credentials, err := site.LoadProxmoxCredentials(siteDir, s, ageIdentity)
 	if err != nil {
 		return nil, site.ProxmoxCredentials{}, fmt.Errorf("load encrypted Proxmox API credentials: %w", err)
