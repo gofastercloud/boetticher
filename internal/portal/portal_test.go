@@ -50,6 +50,9 @@ func TestPortalHomeUsesCanonicalSemanticStatus(t *testing.T) {
 	if !strings.Contains(content, "Platform health: HEALTHY") {
 		t.Fatalf("portal did not use canonical semantic status: %s", content)
 	}
+	if !strings.Contains(content, "Model revision: <code>revision</code>") {
+		t.Fatalf("portal home omitted the model revision: %s", content)
+	}
 }
 
 func TestPortalRejectsSymlinkedOutputParentBeforePublication(t *testing.T) {
