@@ -10,12 +10,12 @@ boetticher module plan monitoring
 boetticher module enable monitoring --dry-run
 boetticher module disable monitoring --dry-run
 
-boetticher modules list
-boetticher modules tailnet-router show
-boetticher modules tailnet-router plan
-boetticher modules litellm status
-boetticher modules litellm secrets list
-boetticher modules litellm secrets set openrouter_api_key
+boetticher module list
+boetticher module show tailnet-router
+boetticher module plan tailnet-router
+boetticher module status litellm
+boetticher module secrets litellm list
+boetticher module secrets litellm set openrouter_api_key
 ```
 
 Enable and disable changes require `--confirm` when they persist configuration.

@@ -56,6 +56,38 @@ func TestUpdatePlatformSecretsRejectsUnsafeKeysAndValues(t *testing.T) {
 	}
 }
 
+func TestLoadEncryptedDocumentBoundsEncryptedAndDecryptedInputs(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		ciphertext []byte
+		script     string
+		want       string
+	}{
+		{name: "encrypted input", ciphertext: []byte(strings.Repeat("x", maxEncryptedDocumentBytes+1)), script: "cat", want: "exceeds maximum"},
+		{name: "decrypted output", ciphertext: []byte("ciphertext\n"), script: "dd if=/dev/zero bs=1048576 count=2 2>/dev/null", want: "output exceeds"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			siteDir := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(siteDir, "secrets"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(siteDir, "secrets", "document.sops.yaml"), test.ciphertext, 0600); err != nil {
+				t.Fatal(err)
+			}
+			fakeBin := t.TempDir()
+			script := "#!/bin/sh\nif [ \"$1\" = \"--decrypt\" ]; then " + test.script + "; else cat; fi\n"
+			if err := os.WriteFile(filepath.Join(fakeBin, "sops"), []byte(script), 0755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+			_, err := LoadEncryptedDocument(siteDir, "identity", "secrets/document.sops.yaml")
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("LoadEncryptedDocument() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestApplyConfigAndPlatformSecretsRollsBackSecretWhenConfigReplacementFails(t *testing.T) {
 	siteDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(siteDir, "secrets"), 0700); err != nil {

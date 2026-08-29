@@ -10,9 +10,9 @@ normal environment variable or public configuration file.
 Operators manage declared operator-supplied values through the shared CLI:
 
 ```text
-boetticher modules litellm secrets list --site ./my-boetticher
-boetticher modules litellm secrets set openrouter_api_key --site ./my-boetticher
-boetticher modules litellm secrets remove openrouter_api_key --confirm --site ./my-boetticher
+boetticher module secrets litellm list --site ./my-boetticher
+boetticher module secrets litellm set openrouter_api_key --site ./my-boetticher
+boetticher module secrets litellm remove openrouter_api_key --confirm --site ./my-boetticher
 ```
 
 `set` reads from a hidden TTY prompt when interactive. When deliberately

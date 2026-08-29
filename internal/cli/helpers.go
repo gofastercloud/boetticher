@@ -348,12 +348,6 @@ func sortedSSHComponents(s model.Site) []model.Component {
 }
 
 func toolVersion(tool string) string {
-	if tool == "ssh-keyscan" {
-		// ssh-keyscan does not expose a version flag. It is shipped with the
-		// OpenSSH client, which is checked separately and provides the
-		// authoritative version for this required helper.
-		return toolVersion("ssh")
-	}
 	args := []string{"--version"}
 	if tool == "ssh" {
 		args = []string{"-V"}
@@ -387,10 +381,6 @@ func validateToolVersion(tool, version string) error {
 	case "ssh":
 		if !strings.Contains(version, "OpenSSH") {
 			return fmt.Errorf("unrecognized OpenSSH version")
-		}
-	case "ssh-keyscan":
-		if !strings.Contains(version, "OpenSSH") {
-			return fmt.Errorf("ssh-keyscan is not paired with a recognized OpenSSH version")
 		}
 	case "age-keygen":
 		if !strings.HasPrefix(version, "v") {

@@ -95,13 +95,16 @@ func runBootstrap(args []string, out io.Writer) error {
 	storageConfirmed := fs.Bool("storage-confirmed", false, "confirm initialization of the configured dedicated data disk")
 	operatorKey := fs.String("operator-key", "", "operator SSH public key path")
 	initialUser := fs.String("initial-user", "root", "initial SSH user on the fresh Proxmox host")
-	knownHosts := fs.String("known-hosts", "", "optional SSH known-hosts file for bootstrap")
+	knownHosts := fs.String("known-hosts", "", "SSH known-hosts file for bootstrap; defaults to the site trust file")
 	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
 	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS during bootstrap")
 	trunkInterface := fs.String("trunk-interface", "", "explicit physical trunk interface when discovery finds multiple candidates")
 	dryRun := fs.Bool("dry-run", false, "render and validate the bootstrap plan without connecting")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *knownHosts == "" {
+		*knownHosts = deploymentKnownHosts(*siteDir)
 	}
 	s, err := site.Load(*siteDir)
 	if err != nil {
@@ -330,9 +333,17 @@ func runBootstrap(args []string, out io.Writer) error {
 	if err := rebuildPortal(*siteDir, s); err != nil {
 		return fmt.Errorf("HOLD: bootstrap network binding was persisted but portal could not be regenerated: %w", err)
 	}
-	hostKey, err := sshconfig.ScanHostKey(ctx, s.BootstrapAddress)
+	trustedKnownHosts := deploymentKnownHosts(*siteDir)
+	operatorVerifiedKey, err := sshconfig.ReadHostKey(*knownHosts, model.LogicalProxmoxIdentity)
 	if err != nil {
-		return fmt.Errorf("record Proxmox SSH host identity: %w", err)
+		return fmt.Errorf("HOLD: bootstrap did not leave an operator-verified Proxmox host key in %s: %w", *knownHosts, err)
+	}
+	if err := sshconfig.AddKnownHostKey(trustedKnownHosts, model.LogicalProxmoxIdentity, operatorVerifiedKey); err != nil {
+		return fmt.Errorf("HOLD: enroll operator-verified Proxmox host key: %w", err)
+	}
+	hostKey, err := sshconfig.ReadHostKey(trustedKnownHosts, model.LogicalProxmoxIdentity)
+	if err != nil {
+		return fmt.Errorf("HOLD: read enrolled Proxmox SSH host identity: %w", err)
 	}
 	if err := site.Save(*siteDir, s); err != nil {
 		return fmt.Errorf("HOLD: bootstrap completed network mutation but physical binding could not be persisted: %w", err)

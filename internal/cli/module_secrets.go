@@ -42,7 +42,7 @@ func runModuleSecrets(args []string, input io.Reader, out, errOut io.Writer) err
 
 func runModuleSecretsForName(args []string, input io.Reader, out, errOut io.Writer, name string) error {
 	if len(args) == 0 {
-		return errors.New("usage: boetticher modules MODULE secrets list|set|remove")
+		return errors.New("usage: boetticher module secrets MODULE list|set|remove")
 	}
 	switch args[0] {
 	case "list":
@@ -119,7 +119,7 @@ func runModuleSecretList(name string, args []string, out io.Writer) error {
 
 func runModuleSecretSet(name string, args []string, input io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return errors.New("usage: boetticher modules MODULE secrets set NAME [--site DIR] [--age-identity PATH]")
+		return errors.New("usage: boetticher module secrets MODULE set NAME [--site DIR] [--age-identity PATH]")
 	}
 	key := args[0]
 	flags, err := parseModuleSecretFlags(args[1:], "module secrets set")
@@ -153,7 +153,7 @@ func runModuleSecretSet(name string, args []string, input io.Reader, out, errOut
 
 func runModuleSecretRemove(name string, args []string, out io.Writer) error {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return errors.New("usage: boetticher modules MODULE secrets remove NAME --confirm [--site DIR] [--age-identity PATH]")
+		return errors.New("usage: boetticher module secrets MODULE remove NAME --confirm [--site DIR] [--age-identity PATH]")
 	}
 	key := args[0]
 	flags, err := parseModuleSecretFlags(args[1:], "module secrets remove")

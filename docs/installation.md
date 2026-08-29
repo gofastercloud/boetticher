@@ -52,6 +52,14 @@ before deployment; the DHCP-assigned address is intentionally not part of
    Dedicated storage also requires `--storage-confirmed` after reviewing the
    stable `/dev/disk/by-id/...` device.
 
+The first bootstrap SSH connection uses the site-scoped
+`generated/ssh/known_hosts` file by default and `StrictHostKeyChecking=ask`.
+Verify the Proxmox host fingerprint at that prompt, or provide
+`--known-hosts` with an independently enrolled entry for the logical
+`lab-proxmox-01` identity. Subsequent API, deployment, bastion, and recovery
+SSH paths require that enrolled key and use strict host-key checking; an
+`ssh-keyscan` result is never used as trust evidence.
+
 Managed mode prepares the host and artifact substrate during bootstrap. The
 first `deploy` creates VM 100, `lab-fw-01`, as the qualified boetticher Debian
 firewall appliance with one ordinary vNIC for WAN and one Proxmox-tagged vNIC

@@ -29,6 +29,7 @@ boetticher dhcp reservation add|list|remove [--site DIR] [--hostname NAME] [--ad
 boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME] [--value VALUE] [--json]
 boetticher storage status|initialize [--site DIR] [--live] [--storage-confirmed]
 boetticher module list|show|plan|configure|enable|disable|status [NAME] [--site DIR] [--dry-run] [--json] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
+boetticher module secrets MODULE list|set|remove [--site DIR] [--age-identity PATH] [--confirm]
 boetticher modules list|MODULE show|plan|configure|enable|disable|status|purge [--site DIR] [--dry-run] [--json] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher config validate|show|schema [--site DIR]
 boetticher portal build [--site DIR] [--output DIR] [--docs DIR]
@@ -76,9 +77,9 @@ Usage: `boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-conf
 
 Arguments: No positional arguments.
 
-Options: --dry-run renders only; --recovery-confirmed confirms the independent Age recovery copy; --storage-confirmed confirms explicit dedicated-storage initialization.
+Options: --dry-run renders only; --recovery-confirmed confirms the independent Age recovery copy; --storage-confirmed confirms explicit dedicated-storage initialization; --known-hosts selects an independently enrolled SSH trust file and defaults to the site-scoped trust file.
 
-Safety: May change Proxmox bootstrap infrastructure and creates a temporary builder. Review the plan and recovery prerequisites before applying.
+Safety: May change Proxmox bootstrap infrastructure and creates a temporary builder. Verify the first SSH host fingerprint at the explicit ask prompt; subsequent privileged paths require the enrolled key.
 
 Examples: `boetticher bootstrap --site ./my-boetticher --recovery-confirmed`
 
@@ -968,19 +969,19 @@ Related commands: config validate, deploy, doctor
 
 ### module secrets
 
-Purpose: Inspect or change first-party module intent through the shared deploy engine, or configure desired state with the declaration-driven wizard.
+Purpose: Inspect and manage declared operator-supplied secrets for a first-party module.
 
-Usage: `boetticher module list|show|plan|configure|enable|disable|status [NAME] [--site DIR] [--dry-run] [--json] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+Usage: `boetticher module secrets MODULE list|set|remove [--site DIR] [--age-identity PATH] [--confirm]`
 
-Arguments: NAME is required for show, plan, configure, enable, disable, and optional for status.
+Arguments: MODULE is a registered first-party module; list, set, and remove select the secret operation, with NAME required for set and remove.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --site selects the private site repository; --age-identity selects the external Age identity; --confirm is required for secret removal.
 
-Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Ordinary disable retains owned guests; purge remains destructive.
+Safety: Secret values are read from a hidden prompt or stdin and are never accepted as arguments, displayed, logged, or written to generated output. The command changes encrypted desired state only; it never deploys.
 
-Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure aiops --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher`
+Examples: `boetticher module secrets litellm list --site ./my-boetticher`; `boetticher module secrets litellm set openrouter_api_key --site ./my-boetticher`; `boetticher module secrets litellm remove openrouter_api_key --confirm --site ./my-boetticher`
 
-Related commands: config validate, deploy, doctor
+Related commands: module configure, deploy, config validate
 
 ### module show
 

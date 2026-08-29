@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -66,6 +67,9 @@ func NewClient(config Config) (*Client, error) {
 	parsed, err := url.Parse(strings.TrimRight(config.BaseURL, "/"))
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
 		return nil, errors.New("Proxmox API base URL must be an https URL")
+	}
+	if parsed.User != nil || net.ParseIP(parsed.Hostname()) == nil || net.ParseIP(parsed.Hostname()).To4() == nil {
+		return nil, errors.New("Proxmox API base URL host must be an IPv4 address without credentials")
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: config.Insecure} // #nosec G402 -- only enabled by explicit operator choice.

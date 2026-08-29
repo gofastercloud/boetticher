@@ -585,6 +585,9 @@ func (r SSHRunner) connectionArgs(address, user, batchMode string) ([]string, st
 	if strictHostKey == "" {
 		strictHostKey = "ask"
 	}
+	if strictHostKey == "no" || strictHostKey == "accept-new" {
+		return nil, "", errors.New("weak SSH host-key verification mode is not supported")
+	}
 	args = append(args, "-o", "StrictHostKeyChecking="+strictHostKey)
 	if r.KnownHosts != "" {
 		args = append(args, "-o", "UserKnownHostsFile="+r.KnownHosts)

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/pathguard"
 )
 
 const pendingDNSDeletionsFile = "dns/pending-deletions.json"
@@ -20,7 +21,10 @@ const pendingDNSDeletionsFile = "dns/pending-deletions.json"
 // canonical model revision.
 func LoadPendingDNSDeletions(dir string, s model.Site) ([]model.DNSDeletion, error) {
 	path := filepath.Join(modelRuntimeDir(s), pendingDNSDeletionsFile)
-	data, err := os.ReadFile(path)
+	if err := pathguard.ValidateNoSymlinkComponents(path); err != nil {
+		return nil, fmt.Errorf("validate pending DNS deletion path: %w", err)
+	}
+	data, err := pathguard.ReadFileLimited(path, 1<<20)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}

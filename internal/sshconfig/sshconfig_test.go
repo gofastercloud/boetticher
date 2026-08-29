@@ -116,6 +116,25 @@ func TestAddHostKeyPinsIndependentIdentityAndRejectsChanges(t *testing.T) {
 	}
 }
 
+func TestReadAndCopyKnownHostKeyBindsBootstrapAlias(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "source-known-hosts")
+	target := filepath.Join(t.TempDir(), "generated", "known_hosts")
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	if err := os.WriteFile(source, []byte("lab-proxmox-01 "+key+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadHostKey(source, "lab-proxmox-01")
+	if err != nil || got != key {
+		t.Fatalf("ReadHostKey() = %q, %v", got, err)
+	}
+	if err := AddKnownHostKey(target, "lab-proxmox-01", got); err != nil {
+		t.Fatal(err)
+	}
+	if copied, err := ReadHostKey(target, "lab-proxmox-01"); err != nil || copied != key {
+		t.Fatalf("copied host key = %q, %v", copied, err)
+	}
+}
+
 func TestValidateExecutionConfigRejectsCommandDirectives(t *testing.T) {
 	for _, directive := range []string{"ProxyCommand", `"ProxyCommand"`} {
 		path := filepath.Join(t.TempDir(), "boetticher.conf")
