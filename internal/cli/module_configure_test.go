@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,6 +115,55 @@ func TestConfigureAIOpsNonInteractiveHoldsForMissingAlias(t *testing.T) {
 	err := Run([]string{"module", "configure", "aiops", "--site", dir, "--enabled", "true", "--json"}, &output, &output)
 	if err == nil || !strings.Contains(err.Error(), "required module configuration model_alias") {
 		t.Fatalf("missing AIOps alias was not held: %v; output=%s", err, output.String())
+	}
+}
+
+func TestConfigureRejectsObjectListAboveSchemaMaximum(t *testing.T) {
+	cases := []struct {
+		name  string
+		field string
+		value any
+		want  string
+	}{
+		{
+			name:  "upstreams",
+			field: "upstreams",
+			value: func() []model.LiteLLMUpstreamConfig {
+				values := make([]model.LiteLLMUpstreamConfig, 17)
+				for index := range values {
+					values[index] = model.LiteLLMUpstreamConfig{Name: fmt.Sprintf("provider-%d", index), BaseURL: "https://provider.example/v1", APIKeySecret: "provider_key"}
+				}
+				return values
+			}(),
+			want: "upstreams requires between 1 and 16 entries",
+		},
+		{
+			name:  "models",
+			field: "models",
+			value: func() []model.LiteLLMModelConfig {
+				values := make([]model.LiteLLMModelConfig, 33)
+				for index := range values {
+					values[index] = model.LiteLLMModelConfig{Alias: fmt.Sprintf("model-%d", index), Upstream: "provider", Model: "provider/model"}
+				}
+				return values
+			}(),
+			want: "models requires between 1 and 32 entries",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeConfigureSite(t, dir, model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged)))
+			value, err := json.Marshal(tc.value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output bytes.Buffer
+			err = Run([]string{"module", "configure", "litellm", "--site", dir, "--enabled", "true", "--set", tc.field + "=" + string(value), "--json"}, &output, &output)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("oversized %s was accepted: %v; output=%s", tc.field, err, output.String())
+			}
+		})
 	}
 }
 
@@ -245,8 +295,42 @@ func TestConfigureRejectsPlatformOwnedSecretReference(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = configureSecrets(t.TempDir(), proposed, proposed, "identity", strings.NewReader(""), &bytes.Buffer{}, true, nil)
+	_, _, err = configureSecrets(t.TempDir(), proposed, proposed, "identity", "litellm", nil, strings.NewReader(""), &bytes.Buffer{}, true, nil)
 	if err == nil || !strings.Contains(err.Error(), "platform-owned") {
 		t.Fatalf("platform-owned secret reference was accepted: %v", err)
+	}
+}
+
+func TestConfigureSecretsIgnoreUnrelatedModuleSecrets(t *testing.T) {
+	dir := t.TempDir()
+	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
+	enabled := true
+	config.Modules.Monitoring = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+		Enabled:   &enabled,
+		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_key"}},
+		Models:    []model.LiteLLMModelConfig{{Alias: "operations", Upstream: "provider", Model: "provider/model"}},
+	}
+	current, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "secrets"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "secrets", "boetticher.sops.yaml"), []byte("unrelated: keep\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fakeBin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fakeBin, "sops"), []byte("#!/bin/sh\nlast=\"\"\nfor arg do last=\"$arg\"; done\nif [ \"$1\" = \"--decrypt\" ]; then cat \"$last\"; else cat; fi\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	updates, missing, err := configureSecrets(dir, current, current, "identity", "monitoring", nil, strings.NewReader(""), &bytes.Buffer{}, true, nil)
+	if err != nil {
+		t.Fatalf("unrelated LiteLLM secret blocked monitoring configure: %v", err)
+	}
+	if len(updates) != 0 || len(missing) != 0 {
+		t.Fatalf("unrelated module secret was included: updates=%v missing=%v", updates, missing)
 	}
 }
