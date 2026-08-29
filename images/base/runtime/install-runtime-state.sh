@@ -6,7 +6,7 @@ case "${1:-}" in
     directory=/etc/boetticher
     target=$directory/module.yaml
     mode=0640
-    directory_mode=0750
+    directory_mode=0751
     ;;
   artifact-identity)
     directory=/usr/lib/boetticher

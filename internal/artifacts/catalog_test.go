@@ -920,7 +920,7 @@ func TestApplianceBootstrapInputsContainNoOperatorKeyOrSiteState(t *testing.T) {
 		t.Fatalf("runtime state helper is not bounded: %s", runtimeState)
 	}
 	runtimeStateText := string(runtimeState)
-	for _, required := range []string{"directory_mode=0750", "directory_mode=0755", `install -d -m "$directory_mode" "$directory"`} {
+	for _, required := range []string{"directory_mode=0751", "directory_mode=0755", `install -d -m "$directory_mode" "$directory"`} {
 		if !strings.Contains(runtimeStateText, required) {
 			t.Fatalf("runtime state helper is missing directory permission contract %q", required)
 		}
