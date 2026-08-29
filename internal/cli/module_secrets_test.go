@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/site"
 )
 
 func TestModuleSecretMutationRejectsPlatformAndSharedNames(t *testing.T) {
@@ -69,7 +70,8 @@ func TestReadOperatorSecretDoesNotWritePipedValueToPromptOutput(t *testing.T) {
 
 func TestModuleSecretCLIListSetAndRemoveNeverPrintsValue(t *testing.T) {
 	siteDir := t.TempDir()
-	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
+	identityPath, recipient := writeTestAgeIdentity(t)
+	config := model.ConfigFromSite(model.NewSite("installation", recipient, model.GatewayModeManaged))
 	falseValue := false
 	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
 		Enabled:   &falseValue,
@@ -86,17 +88,12 @@ func TestModuleSecretCLIListSetAndRemoveNeverPrintsValue(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(siteDir, "secrets"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(siteDir, "secrets", "boetticher.sops.yaml"), []byte("unrelated: keep\n"), 0600); err != nil {
+	if err := site.StoreEncryptedDocument(siteDir, recipient, "secrets/boetticher.sops.yaml", map[string]string{"unrelated": "keep"}); err != nil {
 		t.Fatal(err)
 	}
-	fakeBin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(fakeBin, "sops"), []byte("#!/bin/sh\nlast=\"\"\nfor arg do last=\"$arg\"; done\nif [ \"$1\" = \"--decrypt\" ]; then cat \"$last\"; else cat; fi\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	var output bytes.Buffer
-	if err := Run([]string{"module", "secrets", "litellm", "list", "--site", siteDir, "--age-identity", "identity"}, &output, &output); err != nil {
+	if err := Run([]string{"module", "secrets", "litellm", "list", "--site", siteDir, "--age-identity", identityPath}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(output.String(), "openrouter_api_key\t runtime") && !strings.Contains(output.String(), "openrouter_api_key\truntime") {
@@ -104,21 +101,21 @@ func TestModuleSecretCLIListSetAndRemoveNeverPrintsValue(t *testing.T) {
 	}
 	output.Reset()
 	secret := "super-secret-value"
-	if err := RunWithInput([]string{"module", "secrets", "litellm", "set", "openrouter_api_key", "--site", siteDir, "--age-identity", "identity"}, strings.NewReader(secret+"\n"), &output, &output); err != nil {
+	if err := RunWithInput([]string{"module", "secrets", "litellm", "set", "openrouter_api_key", "--site", siteDir, "--age-identity", identityPath}, strings.NewReader(secret+"\n"), &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(output.String(), secret) {
 		t.Fatalf("secret value leaked from set output: %q", output.String())
 	}
 	output.Reset()
-	if err := Run([]string{"module", "status", "litellm", "--site", siteDir, "--age-identity", "identity"}, &output, &output); err != nil {
+	if err := Run([]string{"module", "status", "litellm", "--site", siteDir, "--age-identity", identityPath}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(output.String(), "openrouter_api_key\truntime\toperator-supplied\tpresent") || strings.Contains(output.String(), secret) {
 		t.Fatalf("status did not report redacted secret presence: %q", output.String())
 	}
 	output.Reset()
-	if err := Run([]string{"module", "secrets", "litellm", "remove", "openrouter_api_key", "--confirm", "--site", siteDir, "--age-identity", "identity"}, &output, &output); err != nil {
+	if err := Run([]string{"module", "secrets", "litellm", "remove", "openrouter_api_key", "--confirm", "--site", siteDir, "--age-identity", identityPath}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(output.String(), secret) {

@@ -45,7 +45,7 @@ Usage: `boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firew
 
 Arguments: No positional arguments.
 
-Options: --site-dir selects the site directory; --age-identity selects the external Age identity; --external-firewall selects the operator-owned gateway contract.
+Options: --site-dir selects the site directory; --age-identity selects the operator-owned private Age identity; --external-firewall selects the operator-owned gateway contract.
 
 Safety: Creates local site and recovery files; it does not mutate Proxmox.
 
@@ -61,7 +61,7 @@ Usage: `boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--reco
 
 Arguments: No positional arguments.
 
-Options: --live performs bounded target checks; --record explicitly persists approved physical discovery and requires --live; --site selects the private site; --age-identity selects the external Age identity needed to validate encrypted credential reuse; bootstrap and SSH options identify the target.
+Options: --live performs bounded target checks; --record explicitly persists approved physical discovery and requires --live; --site selects the private site; --age-identity selects the operator-owned private Age identity needed to validate encrypted credential reuse; bootstrap and SSH options identify the target.
 
 Safety: Read-only unless --live --record is explicit. A live inspection without --record never mutates site state.
 
@@ -975,7 +975,7 @@ Usage: `boetticher module secrets MODULE list|set|remove [--site DIR] [--age-ide
 
 Arguments: MODULE is a registered first-party module; list, set, and remove select the secret operation, with NAME required for set and remove.
 
-Options: --site selects the private site repository; --age-identity selects the external Age identity; --confirm is required for secret removal.
+Options: --site selects the private site repository; --age-identity selects the operator-owned private Age identity; --confirm is required for secret removal.
 
 Safety: Secret values are read from a hidden prompt or stdin and are never accepted as arguments, displayed, logged, or written to generated output. The command changes encrypted desired state only; it never deploys.
 

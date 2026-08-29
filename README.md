@@ -90,8 +90,9 @@ renumber live hosts or guests.
 ## Requirements
 
 - A fresh supported Proxmox VE installation on amd64 hardware.
-- A supported macOS or Linux controller with the Boetticher binary, SSH, Age,
-  SOPS, and Ansible Core. Boetticher Core owns guarded Proxmox guest provisioning; Ansible owns
+- A supported macOS or Linux controller with the Boetticher binary, SSH, and
+  Ansible Core. SOPS 3.13.3 and age 1.3.1 are bundled in the controller;
+  Boetticher Core owns guarded Proxmox guest provisioning and Ansible owns
   appliance configuration.
 - One physical Ethernet NIC is enough for managed virtual-only operation. A
   second NIC and managed VLAN switch are needed for a physical trunk; they are

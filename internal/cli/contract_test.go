@@ -36,23 +36,8 @@ func TestQuickstartCommandsMatchPublicCLI(t *testing.T) {
 }
 
 func TestQuickstartOfflineCommandsExecute(t *testing.T) {
-	// Keep the executable fixture strictly source-only. It covers the
-	// controller-local portion of the documented workflow; commands that
-	// require a Proxmox host or mutate infrastructure remain outside local CI.
-	toolDir := t.TempDir()
-	writeExecutableFixture(t, filepath.Join(toolDir, "age-keygen"), `#!/bin/sh
-if [ "$1" = "-y" ]; then
-    printf '%s\n' age1fixture
-    exit 0
-fi
-printf '%s\n' '# public key: age1fixture'
-printf '%s\n' AGE-SECRET-KEY-1-FIXTURE
-`)
-	writeExecutableFixture(t, filepath.Join(toolDir, "sops"), `#!/bin/sh
-cat
-`)
-	t.Setenv("PATH", toolDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
+	// Commands that require a Proxmox host or mutate infrastructure remain
+	// outside local CI; init and its secret path use the bundled implementation.
 	siteDir := filepath.Join(t.TempDir(), "my-boetticher")
 	identity := filepath.Join(t.TempDir(), "age-identity.txt")
 	run := func(args ...string) string {
@@ -76,13 +61,6 @@ cat
 	}
 	if !strings.Contains(statusOutput.String(), "Platform ACTION REQUIRED") {
 		t.Fatalf("status did not preserve the pre-deployment action boundary: %s", statusOutput.String())
-	}
-}
-
-func writeExecutableFixture(t *testing.T, path, content string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
-		t.Fatal(err)
 	}
 }
 

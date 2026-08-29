@@ -2,8 +2,9 @@
 
 boetticher runs from a separate macOS or Linux controller and builds a small
 platform on a fresh Proxmox host. The controller holds the private site
-repository, Age identity, SOPS access, CA signing authority, and runtime state;
-the Proxmox host is a target, not the controller.
+repository, Age identity, CA signing authority, and runtime state. The pinned
+SOPS 3.13.3 and age 1.3.1 implementations are bundled in the Boetticher
+binary. The Proxmox host is a target, not the controller.
 
 Supported controllers are macOS arm64/amd64 and Linux arm64/amd64. Native
 Windows is outside the v0.4 contract. One physical NIC is enough for managed

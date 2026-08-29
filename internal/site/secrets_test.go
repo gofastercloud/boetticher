@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"filippo.io/age"
 	"github.com/gofastercloud/boetticher/internal/model"
 )
 
@@ -14,36 +15,31 @@ func TestPlatformSecretUpdatePresenceAndRemoval(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(siteDir, "secrets"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(siteDir, "secrets", "boetticher.sops.yaml"), []byte("openrouter_api_key: old-value\nunrelated: keep\n"), 0600); err != nil {
+	identityPath, recipient := writeTestAgeIdentity(t)
+	if err := StoreEncryptedDocument(siteDir, recipient, "secrets/boetticher.sops.yaml", map[string]string{"openrouter_api_key": "old-value", "unrelated": "keep"}); err != nil {
 		t.Fatal(err)
 	}
-	fakeBin := t.TempDir()
-	fakeSOPS := filepath.Join(fakeBin, "sops")
-	if err := os.WriteFile(fakeSOPS, []byte("#!/bin/sh\nlast=\"\"\nfor arg do last=\"$arg\"; done\nif [ \"$1\" = \"--decrypt\" ]; then cat \"$last\"; else cat; fi\n"), 0755); err != nil {
+	s := model.Site{SecretMetadata: model.SecretMetadata{AgeRecipient: recipient}}
+	if err := UpdatePlatformSecrets(siteDir, s, identityPath, map[string]string{"openrouter_api_key": "new-value"}); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	s := model.Site{SecretMetadata: model.SecretMetadata{AgeRecipient: "age1test"}}
-	if err := UpdatePlatformSecrets(siteDir, s, "identity", map[string]string{"openrouter_api_key": "new-value"}); err != nil {
-		t.Fatal(err)
-	}
-	presence, err := PlatformSecretPresence(siteDir, s, "identity", []string{"openrouter_api_key", "missing_key"})
+	presence, err := PlatformSecretPresence(siteDir, s, identityPath, []string{"openrouter_api_key", "missing_key"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !presence["openrouter_api_key"] || presence["missing_key"] {
 		t.Fatalf("unexpected secret presence: %#v", presence)
 	}
-	changed, err := RemovePlatformSecrets(siteDir, s, "identity", []string{"openrouter_api_key"})
+	changed, err := RemovePlatformSecrets(siteDir, s, identityPath, []string{"openrouter_api_key"})
 	if err != nil || !changed {
 		t.Fatalf("RemovePlatformSecrets() = %v, %v", changed, err)
 	}
-	data, err := os.ReadFile(filepath.Join(siteDir, "secrets", "boetticher.sops.yaml"))
+	values, err := LoadEncryptedDocument(siteDir, identityPath, "secrets/boetticher.sops.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(data), "openrouter_api_key") || !strings.Contains(string(data), "unrelated") || !strings.Contains(string(data), "keep") {
-		t.Fatalf("secret removal changed the wrong document content: %s", data)
+	if _, exists := values["openrouter_api_key"]; exists || values["unrelated"] != "keep" {
+		t.Fatalf("secret removal changed the wrong document content: %#v", values)
 	}
 }
 
@@ -56,48 +52,20 @@ func TestUpdatePlatformSecretsRejectsUnsafeKeysAndValues(t *testing.T) {
 	}
 }
 
-func TestLoadEncryptedDocumentBoundsEncryptedAndDecryptedInputs(t *testing.T) {
-	for _, test := range []struct {
-		name       string
-		ciphertext []byte
-		script     string
-		want       string
-	}{
-		{name: "encrypted input", ciphertext: []byte(strings.Repeat("x", MaxEncryptedDocumentBytes+1)), script: "cat", want: "exceeds maximum"},
-		{name: "decrypted output", ciphertext: []byte("ciphertext\n"), script: "dd if=/dev/zero bs=1048576 count=2 2>/dev/null", want: "output exceeds"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			siteDir := t.TempDir()
-			if err := os.MkdirAll(filepath.Join(siteDir, "secrets"), 0700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(siteDir, "secrets", "document.sops.yaml"), test.ciphertext, 0600); err != nil {
-				t.Fatal(err)
-			}
-			fakeBin := t.TempDir()
-			script := "#!/bin/sh\nif [ \"$1\" = \"--decrypt\" ]; then " + test.script + "; else cat; fi\n"
-			if err := os.WriteFile(filepath.Join(fakeBin, "sops"), []byte(script), 0755); err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
-			_, err := LoadEncryptedDocument(siteDir, "identity", "secrets/document.sops.yaml")
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("LoadEncryptedDocument() error = %v, want %q", err, test.want)
-			}
-		})
+func TestEncryptedDocumentBoundsInputs(t *testing.T) {
+	siteDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(siteDir, "secrets"), 0700); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestBoundedCommandOutputAllowsExactLimit(t *testing.T) {
-	writer := &boundedCommandOutput{limit: 4}
-	if _, err := writer.Write([]byte("1234")); err != nil {
-		t.Fatalf("exact output limit was rejected: %v", err)
+	identityPath, recipient := writeTestAgeIdentity(t)
+	if err := os.WriteFile(filepath.Join(siteDir, "secrets", "document.sops.yaml"), []byte(strings.Repeat("x", MaxEncryptedDocumentBytes+1)), 0600); err != nil {
+		t.Fatal(err)
 	}
-	if writer.exceeded || writer.String() != "1234" {
-		t.Fatalf("exact output limit changed writer state: exceeded=%t output=%q", writer.exceeded, writer.String())
+	if _, err := LoadEncryptedDocument(siteDir, identityPath, "secrets/document.sops.yaml"); err == nil || !strings.Contains(err.Error(), "exceeds maximum") {
+		t.Fatalf("oversized encrypted input was accepted: %v", err)
 	}
-	if _, err := writer.Write([]byte("5")); err == nil {
-		t.Fatal("output beyond the exact limit was accepted")
+	if err := StoreEncryptedDocument(siteDir, recipient, "secrets/document.sops.yaml", map[string]string{"large": strings.Repeat("x", MaxEncryptedDocumentBytes)}); err == nil || !strings.Contains(err.Error(), "input exceeds") {
+		t.Fatalf("oversized plaintext input was accepted: %v", err)
 	}
 }
 
@@ -107,21 +75,21 @@ func TestApplyConfigAndPlatformSecretsRollsBackSecretWhenConfigReplacementFails(
 		t.Fatal(err)
 	}
 	secretPath := filepath.Join(siteDir, "secrets", "boetticher.sops.yaml")
-	originalSecret := []byte("existing: encrypted\n")
-	if err := os.WriteFile(secretPath, originalSecret, 0600); err != nil {
+	identityPath, recipient := writeTestAgeIdentity(t)
+	if err := StoreEncryptedDocument(siteDir, recipient, "secrets/boetticher.sops.yaml", map[string]string{"existing": "encrypted"}); err != nil {
+		t.Fatal(err)
+	}
+	originalSecret, err := os.ReadFile(secretPath)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Mkdir(filepath.Join(siteDir, "site.yml"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	fakeBin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(fakeBin, "sops"), []byte("#!/bin/sh\nlast=\"\"\nfor arg do last=\"$arg\"; done\nif [ \"$1\" = \"--decrypt\" ]; then cat \"$last\"; else cat; fi\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	s := model.Site{SecretMetadata: model.SecretMetadata{AgeRecipient: "age1test"}}
 	config := model.SiteConfig{APIVersion: model.APIVersion}
-	if err := ApplyConfigAndPlatformSecrets(siteDir, config, s, "identity", map[string]string{"operator_key": "value"}); err == nil {
+	s.SecretMetadata.AgeRecipient = recipient
+	if err := ApplyConfigAndPlatformSecrets(siteDir, config, s, identityPath, map[string]string{"operator_key": "value"}); err == nil {
 		t.Fatal("atomic configure unexpectedly succeeded with an unwritable site.yml target")
 	}
 	restored, err := os.ReadFile(secretPath)
@@ -131,6 +99,19 @@ func TestApplyConfigAndPlatformSecretsRollsBackSecretWhenConfigReplacementFails(
 	if string(restored) != string(originalSecret) {
 		t.Fatalf("secret document was not rolled back: %s", restored)
 	}
+}
+
+func writeTestAgeIdentity(t *testing.T) (string, string) {
+	t.Helper()
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "identity.txt")
+	if err := os.WriteFile(path, []byte(identity.String()+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path, identity.Recipient().String()
 }
 
 func TestPurgeModuleSecretValuesRemovesOnlyDeclaredNames(t *testing.T) {

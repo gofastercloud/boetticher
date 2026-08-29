@@ -1,8 +1,6 @@
 package site
 
 import (
-	"bytes"
-	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -10,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -27,25 +24,7 @@ var ErrPlatformSecretMissing = errors.New("encrypted platform secret is missing"
 
 var platformSecretName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
 
-const externalCommandTimeout = 30 * time.Second
-
 const MaxEncryptedDocumentBytes = 1 << 20
-
-var errCommandOutputLimit = errors.New("command output exceeds the permitted size")
-
-type boundedCommandOutput struct {
-	bytes.Buffer
-	limit    int
-	exceeded bool
-}
-
-func (b *boundedCommandOutput) Write(data []byte) (int, error) {
-	if len(data) > b.limit-b.Len() {
-		b.exceeded = true
-		return 0, errCommandOutputLimit
-	}
-	return b.Buffer.Write(data)
-}
 
 func Load(dir string) (model.Site, error) {
 	config, err := LoadConfig(dir)
@@ -136,11 +115,6 @@ func Save(dir string, s model.Site) error {
 }
 
 func Init(dir, ageIdentityPath string, externalFirewall bool) (model.Site, error) {
-	for _, tool := range []string{"age-keygen", "sops"} {
-		if _, err := exec.LookPath(tool); err != nil {
-			return model.Site{}, fmt.Errorf("%s is required to initialize the site: %w", tool, err)
-		}
-	}
 	if _, err := os.Stat(dir); err == nil {
 		entries, readErr := os.ReadDir(dir)
 		if readErr != nil {
@@ -300,10 +274,10 @@ func LoadAuthority(dir string, s model.Site, ageIdentityPath string) (pki.Author
 	return pki.Authority{RootKeyPEM: rootKey, RootCertPEM: rootCert, IssuingKeyPEM: issuingKey, IssuingCertPEM: issuingCert}, nil
 }
 
-// StoreEncryptedDocument streams a secret document to SOPS. The document is
-// never written as a plaintext intermediate. relativePath is constrained to
-// the site directory so callers cannot accidentally place encrypted state
-// outside the private repository.
+// StoreEncryptedDocument encrypts a secret document with the pinned in-process
+// SOPS/Age implementation. The document is never written as a plaintext
+// intermediate. relativePath is constrained to the site directory so callers
+// cannot accidentally place encrypted state outside the private repository.
 func StoreEncryptedDocument(dir, recipient, relativePath string, document any) error {
 	if recipient == "" {
 		return errors.New("Age recipient is required")
@@ -312,41 +286,28 @@ func StoreEncryptedDocument(dir, recipient, relativePath string, document any) e
 	if err != nil {
 		return err
 	}
-	if _, err := exec.LookPath("sops"); err != nil {
-		return fmt.Errorf("sops is required to write encrypted secrets: %w", err)
-	}
 	plaintext, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode encrypted document: %w", err)
 	}
 	plaintext = append(plaintext, '\n')
-	ctx, cancel := context.WithTimeout(context.Background(), externalCommandTimeout)
-	defer cancel()
-	command := exec.CommandContext(ctx, "sops", "--encrypt", "--age", recipient, "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
-	command.Stdin = strings.NewReader(string(plaintext))
-	var encryptedOutput boundedCommandOutput
-	encryptedOutput.limit = MaxEncryptedDocumentBytes
-	command.Stdout = &encryptedOutput
-	err = command.Run()
-	if encryptedOutput.exceeded || encryptedOutput.Len() > encryptedOutput.limit {
-		return errors.New("encrypt document with SOPS: output exceeds the permitted size")
+	if len(plaintext) > MaxEncryptedDocumentBytes {
+		return errors.New("encrypt document with SOPS: input exceeds the permitted size")
 	}
+	encrypted, err := encryptSOPSYAML(plaintext, recipient)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return errors.New("encrypt document with SOPS: command timed out")
-		}
 		return fmt.Errorf("encrypt document with SOPS: %w", err)
 	}
-	return atomicWrite(path, encryptedOutput.Bytes(), 0600)
+	if len(encrypted) > MaxEncryptedDocumentBytes {
+		return errors.New("encrypt document with SOPS: output exceeds the permitted size")
+	}
+	return atomicWrite(path, encrypted, 0600)
 }
 
 func LoadEncryptedDocument(dir, ageIdentityPath, relativePath string) (map[string]any, error) {
 	path, err := safeSitePath(dir, relativePath)
 	if err != nil {
 		return nil, err
-	}
-	if _, err := exec.LookPath("sops"); err != nil {
-		return nil, fmt.Errorf("sops is required to read encrypted platform secrets: %w", err)
 	}
 	identity := model.ExpandUserPath(ageIdentityPath)
 	if identity == "" {
@@ -356,26 +317,18 @@ func LoadEncryptedDocument(dir, ageIdentityPath, relativePath string) (map[strin
 	if err != nil {
 		return nil, fmt.Errorf("read encrypted document: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), externalCommandTimeout)
-	defer cancel()
-	command := exec.CommandContext(ctx, "sops", "--decrypt", "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
-	command.Env = envWithout("SOPS_AGE_KEY_FILE")
-	command.Env = append(command.Env, "SOPS_AGE_KEY_FILE="+identity)
-	command.Stdin = strings.NewReader(string(encrypted))
-	var plaintextOutput boundedCommandOutput
-	plaintextOutput.limit = MaxEncryptedDocumentBytes
-	command.Stdout = &plaintextOutput
-	err = command.Run()
-	if plaintextOutput.exceeded || plaintextOutput.Len() > plaintextOutput.limit {
-		return nil, errors.New("decrypt encrypted document: output exceeds the permitted size")
-	}
+	identityData, err := readAgeIdentity(identity)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, errors.New("decrypt encrypted document with SOPS: command timed out")
-		}
+		return nil, fmt.Errorf("read Age identity: %w", err)
+	}
+	plaintext, err := decryptSOPSYAML(encrypted, identityData)
+	if err != nil {
 		return nil, fmt.Errorf("decrypt encrypted document with SOPS: %w", err)
 	}
-	document, err := model.ParseDocument(plaintextOutput.Bytes())
+	if len(plaintext) > MaxEncryptedDocumentBytes {
+		return nil, errors.New("decrypt encrypted document: output exceeds the permitted size")
+	}
+	document, err := model.ParseDocument(plaintext)
 	if err != nil {
 		return nil, fmt.Errorf("parse decrypted document: %w", err)
 	}
@@ -406,58 +359,6 @@ func atomicWrite(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	return pathguard.WriteFile(path, data, mode)
-}
-
-func createAgeIdentity(path string) (string, error) {
-	path = model.ExpandUserPath(path)
-	if path == "" {
-		return "", fmt.Errorf("Age identity path is required")
-	}
-	ageKeygen, err := exec.LookPath("age-keygen")
-	if err != nil {
-		return "", fmt.Errorf("age-keygen is required to initialize secrets: %w", err)
-	}
-	if _, err := os.Stat(path); err == nil {
-		ctx, cancel := context.WithTimeout(context.Background(), externalCommandTimeout)
-		defer cancel()
-		output, err := exec.CommandContext(ctx, ageKeygen, "-y", path).Output()
-		if err != nil {
-			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return "", errors.New("read existing Age identity: command timed out")
-			}
-			return "", fmt.Errorf("read existing Age identity: %w", err)
-		}
-		recipient := strings.TrimSpace(string(output))
-		if recipient == "" {
-			return "", fmt.Errorf("existing Age identity at %s did not contain a public recipient", path)
-		}
-		return recipient, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), externalCommandTimeout)
-	defer cancel()
-	command := exec.CommandContext(ctx, ageKeygen)
-	output, err := command.Output()
-	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return "", errors.New("generate Age identity: command timed out")
-		}
-		return "", fmt.Errorf("generate Age identity: %w", err)
-	}
-	recipient := ""
-	for _, line := range strings.Split(string(output), "\n") {
-		if strings.HasPrefix(line, "# public key: ") {
-			recipient = strings.TrimSpace(strings.TrimPrefix(line, "# public key: "))
-		}
-	}
-	if recipient == "" {
-		return "", fmt.Errorf("age-keygen output did not contain a public recipient")
-	}
-	if err := atomicWrite(path, output, 0600); err != nil {
-		return "", fmt.Errorf("write Age identity: %w", err)
-	}
-	return recipient, nil
 }
 
 func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) error {
@@ -656,15 +557,4 @@ func randomSecret() (string, error) {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(data[:]), nil
-}
-
-func envWithout(name string) []string {
-	prefix := name + "="
-	env := make([]string, 0, len(os.Environ())+1)
-	for _, value := range os.Environ() {
-		if !strings.HasPrefix(value, prefix) {
-			env = append(env, value)
-		}
-	}
-	return env
 }
