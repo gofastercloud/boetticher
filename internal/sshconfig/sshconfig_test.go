@@ -27,7 +27,7 @@ func TestRenderUsesBastionAndCanonicalHostKey(t *testing.T) {
 		"HostName 10.10.10.10",
 		"ProxyJump lab-bastion",
 		"HostKeyAlias lab-dns-01.lab.home.arpa",
-		"StrictHostKeyChecking accept-new",
+		"StrictHostKeyChecking yes",
 		"IdentityFile ",
 		"IdentitiesOnly yes",
 	} {
@@ -74,6 +74,31 @@ func TestRemoveHostKeyRemovesOnlyTheExactGeneratedAlias(t *testing.T) {
 	text := string(data)
 	if strings.Contains(text, "lab-dns-01.lab.home.arpa") || !strings.Contains(text, "lab-dns-02.lab.home.arpa") || !strings.Contains(text, "# generated") {
 		t.Fatalf("known-hosts content after exact removal = %q", text)
+	}
+}
+
+func TestAddHostKeyPinsIndependentIdentityAndRejectsChanges(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_hosts")
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	if err := AddHostKey(path, "lab-dns-01.lab.home.arpa", key); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddHostKey(path, "lab-dns-01.lab.home.arpa", key+" comment"); err != nil {
+		t.Fatalf("same host key was not idempotent: %v", err)
+	}
+	changed := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	if err := AddHostKey(path, "lab-dns-01.lab.home.arpa", changed); err == nil {
+		t.Fatal("changed host key was accepted")
+	}
+}
+
+func TestValidateExecutionConfigRejectsCommandDirectives(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "boetticher.conf")
+	if err := os.WriteFile(path, []byte("Host lab-dns-01\n    ProxyCommand sh -c id\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateExecutionConfig(path); err == nil {
+		t.Fatal("ProxyCommand was accepted in an execution configuration")
 	}
 }
 

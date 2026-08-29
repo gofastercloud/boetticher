@@ -75,6 +75,9 @@ func runSSHConfig(args []string, out interface{ Write([]byte) (int, error) }) er
 }
 
 func runSSHJourney(configPath string) error {
+	if err := sshconfig.ValidateExecutionConfig(configPath); err != nil {
+		return fmt.Errorf("validate SSH journey configuration: %w", err)
+	}
 	command := exec.Command("ssh", "-F", model.ExpandUserPath(configPath), "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no", "dns01", "true")
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("authenticated SSH journey failed: %w", err)

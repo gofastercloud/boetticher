@@ -1,7 +1,9 @@
 package sshconfig
 
 import (
+	"bufio"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -202,7 +204,105 @@ func RemoveHostKey(path, host string) error {
 	return Write(path, []byte(strings.Join(kept, "")), true)
 }
 
+// AddHostKey records a host key obtained through an independently
+// authenticated management path. Existing entries for the exact alias must
+// agree; a changed key is never silently replaced.
+func AddHostKey(path, host, publicKey string) error {
+	path = model.ExpandUserPath(path)
+	if path == "" || host == "" || strings.ContainsAny(host, " \t\r\n,|*?!") {
+		return errors.New("known-hosts path and exact host are required")
+	}
+	canonicalKey, err := normalizePublicKey(publicKey)
+	if err != nil {
+		return fmt.Errorf("validate independently observed host key: %w", err)
+	}
+	content, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		content = nil
+	} else if err != nil {
+		return fmt.Errorf("read SSH known-hosts file: %w", err)
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || strings.HasPrefix(fields[0], "#") || strings.HasPrefix(fields[0], "|") {
+			continue
+		}
+		for _, alias := range strings.Split(fields[0], ",") {
+			if alias != host {
+				continue
+			}
+			observed := fields[1] + " " + fields[2]
+			if observed != canonicalKey {
+				return fmt.Errorf("existing host key for %s does not match independently observed key", host)
+			}
+			return nil
+		}
+	}
+	separator := ""
+	if len(content) > 0 && !strings.HasSuffix(string(content), "\n") {
+		separator = "\n"
+	}
+	return Write(path, append(append(append([]byte{}, content...), []byte(separator)...), []byte(host+" "+canonicalKey+"\n")...), true)
+}
+
+func normalizePublicKey(publicKey string) (string, error) {
+	fields := strings.Fields(strings.TrimSpace(publicKey))
+	if len(fields) < 2 || len(fields) > 3 || fields[0] != "ssh-ed25519" {
+		return "", errors.New("expected one ssh-ed25519 public key")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(fields[1])
+	if err != nil {
+		decoded, err = base64.RawStdEncoding.DecodeString(fields[1])
+	}
+	if err != nil || len(decoded) == 0 {
+		return "", errors.New("public key data is not valid base64")
+	}
+	if len(decoded) != 51 || string(decoded[4:15]) != "ssh-ed25519" || decoded[0] != 0 || decoded[1] != 0 || decoded[2] != 0 || decoded[3] != 11 || decoded[15] != 0 || decoded[16] != 0 || decoded[17] != 0 || decoded[18] != 32 {
+		return "", errors.New("public key data is not a valid ssh-ed25519 key")
+	}
+	return fields[0] + " " + fields[1], nil
+}
+
+// ValidateExecutionConfig rejects OpenSSH directives that can execute local
+// commands or redirect a read-only operation. It is a defense-in-depth check;
+// callers handling untrusted projections should still render a fresh config
+// from the validated model.
+func ValidateExecutionConfig(path string) error {
+	file, err := os.Open(model.ExpandUserPath(path))
+	if err != nil {
+		return fmt.Errorf("open SSH configuration: %w", err)
+	}
+	defer file.Close()
+	dangerous := map[string]bool{
+		"include": true, "proxycommand": true, "localcommand": true,
+		"permitlocalcommand": true, "match": true, "match exec": true,
+		"knownhostscommand": true, "remotecommand": true,
+	}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		directive := strings.ToLower(strings.TrimSpace(strings.SplitN(fields[0], "=", 2)[0]))
+		if dangerous[directive] {
+			return fmt.Errorf("SSH configuration contains forbidden directive %q", fields[0])
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read SSH configuration: %w", err)
+	}
+	return nil
+}
+
 func Check(path string, s model.Site) error {
+	if err := ValidateExecutionConfig(path); err != nil {
+		return err
+	}
 	content, err := os.ReadFile(model.ExpandUserPath(path))
 	if err != nil {
 		return fmt.Errorf("read SSH configuration: %w", err)
@@ -220,7 +320,7 @@ func Check(path string, s model.Site) error {
 			return fmt.Errorf("SSH configuration is missing required directive %q", required)
 		}
 	}
-	if strings.Contains(text, "StrictHostKeyChecking no") || strings.Contains(text, "UserKnownHostsFile /dev/null") {
+	if strings.Contains(text, "StrictHostKeyChecking no") || strings.Contains(text, "StrictHostKeyChecking accept-new") || strings.Contains(text, "UserKnownHostsFile /dev/null") {
 		return fmt.Errorf("SSH configuration weakens host-key verification")
 	}
 	if s.BootstrapAddress == "" {
@@ -282,7 +382,7 @@ func writeHost(b *strings.Builder, aliases []string, hostName, user, hostKeyAlia
 	if bastion {
 		b.WriteString("    RequestTTY no\n    ForwardAgent no\n    ForwardX11 no\n")
 	} else if throughBastion {
-		b.WriteString("    ProxyJump lab-bastion\n    StrictHostKeyChecking accept-new\n")
+		b.WriteString("    ProxyJump lab-bastion\n    StrictHostKeyChecking yes\n")
 	}
 	b.WriteString("\n")
 }

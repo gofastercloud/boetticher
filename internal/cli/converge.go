@@ -270,7 +270,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return fmt.Errorf("ensure single-disk Proxmox storage: %w", err)
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		firewallGuest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
+		firewallGuest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
 		for _, candidate := range proxmoxPlan.Guests {
 			if candidate.Kind == proxmox.KindQEMU {
 				firewallGuest = candidate
@@ -296,8 +296,8 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	var firewallRunner proxmox.CommandRunner
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		firewallRunner = applianceSSHRunner(s, *siteDir, "lab-fw-01")
-		firewallGuest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
-		if err := waitForDeploymentRoot(context.Background(), rootRunner, s.BootstrapAddress, firewallRunner, firewallGuest, operatorPublicKey); err != nil {
+		firewallGuest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
+		if err := waitForDeploymentRoot(context.Background(), rootRunner, s.BootstrapAddress, firewallRunner, firewallGuest, operatorPublicKey, deploymentKnownHosts(*siteDir), firewallGuest.Hostname+"."+s.Network.Domain); err != nil {
 			return fmt.Errorf("HOLD: managed gateway is not reachable before dependent appliances: %w", err)
 		}
 		if err := verifyFirewallBootstrapNetwork(context.Background(), firewallRunner); err != nil {
@@ -355,7 +355,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 				continue
 			}
 			guestRunner := applianceSSHRunner(s, *siteDir, guest.Name)
-			if err := waitForDeploymentRoot(context.Background(), rootRunner, s.BootstrapAddress, guestRunner, guest, operatorPublicKey); err != nil {
+			if err := waitForDeploymentRoot(context.Background(), rootRunner, s.BootstrapAddress, guestRunner, guest, operatorPublicKey, deploymentKnownHosts(*siteDir), guest.Hostname+"."+s.Network.Domain); err != nil {
 				return fmt.Errorf("HOLD: %s guest %s is not reachable after first boot: %w", module, guest.Name, err)
 			}
 			if err := installCredentialsForGuest(context.Background(), guestRunner, guest.Name, credentialBindings, secretValues); err != nil {
@@ -720,7 +720,33 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	return nil
 }
 
-func waitForDeploymentRoot(ctx context.Context, hostRunner proxmox.CommandRunner, hostAddress string, guestRunner proxmox.CommandRunner, guest proxmox.GuestPlan, publicKey string) error {
+func waitForDeploymentRoot(ctx context.Context, hostRunner proxmox.CommandRunner, hostAddress string, guestRunner proxmox.CommandRunner, guest proxmox.GuestPlan, publicKey, knownHosts, hostKeyAlias string) error {
+	if guest.Hostname == "" || hostKeyAlias == "" {
+		return errors.New("guest host-key identity is incomplete")
+	}
+	var hostKey string
+	var pinErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		hostKey, pinErr = proxmox.ReadGuestHostKey(ctx, hostRunner, hostAddress, "root", guest.Kind, guest.VMID)
+		if pinErr == nil {
+			break
+		}
+		if attempt+1 < 3 {
+			timer := time.NewTimer(2 * time.Second)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return fmt.Errorf("guest host-key pinning cancelled: %w", ctx.Err())
+			case <-timer.C:
+			}
+		}
+	}
+	if pinErr != nil {
+		return fmt.Errorf("HOLD: independently read guest host key through Proxmox: %w", pinErr)
+	}
+	if err := sshconfig.AddHostKey(knownHosts, hostKeyAlias, hostKey); err != nil {
+		return fmt.Errorf("HOLD: pin guest host key: %w", err)
+	}
 	if err := proxmox.WaitForSSH(ctx, guestRunner, guest.Address, "root", 1, 0); err == nil {
 		return nil
 	}
@@ -1141,7 +1167,7 @@ func applianceSSHRunner(s model.Site, siteDir, hostAlias string) proxmox.SSHRunn
 		IdentityFile:  operatorIdentityFile(s),
 		ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),
 		KnownHosts:    deploymentKnownHosts(siteDir),
-		StrictHostKey: "accept-new",
+		StrictHostKey: "yes",
 		HostAlias:     hostAlias,
 	}
 }
@@ -1192,6 +1218,7 @@ func loadProxmoxClientWithSnippetUser(siteDir string, s model.Site, ageIdentity,
 		SnippetRunner: proxmox.SSHRunner{
 			IdentityFile:  operatorIdentityFile(s),
 			ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),
+			KnownHosts:    deploymentKnownHosts(siteDir),
 			StrictHostKey: "accept-new", HostKeyAlias: model.LogicalProxmoxIdentity,
 		},
 		SnippetAddress: s.BootstrapAddress, SnippetUser: snippetUser,
