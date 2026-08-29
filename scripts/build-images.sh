@@ -7,7 +7,7 @@ set -eu
 target=${1:-images}
 shift || true
 case "$target" in
-  image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-gatus|images) ;;
+  image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-gatus|images) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
@@ -19,7 +19,7 @@ if [ "$target" = images ]; then
   fi
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
-      image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-gatus) ;;
+      image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-gatus) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac
   done
@@ -153,7 +153,7 @@ write_builder_provenance() {
     --arg libguestfs "$(version_or_unavailable guestfish)" \
     --arg qemu_img "$(version_or_unavailable qemu-img)" \
     --arg architecture amd64 \
-    --arg boetticher_version 0.3.34 \
+    --arg boetticher_version 0.4.0 \
     '{platform:$platform,input_image:$input_image,kernel:$kernel,go:$go,trivy:$trivy,mmdebstrap:$mmdebstrap,libguestfs:$libguestfs,qemu_img:$qemu_img,architecture:$architecture,boetticher_version:$boetticher_version}' \
     > "$provenance_path"
   chmod 0644 "$provenance_path"
@@ -184,7 +184,7 @@ artifact_for() {
 	name=$1
 	version=1.0.0
 	if [ "$name" = boetticher-base ]; then
-		version=0.3.34
+		version=0.4.0
 	fi
 	printf '%s/%s/%s-%s-amd64.tar.zst' "$output_root" "$name" "$name" "$version"
 }
@@ -226,12 +226,7 @@ create_base_rootfs() {
 write_artifact_identity() {
   rootfs=$1
   module=$2
-  provider=${3:-}
-  if [ -n "$provider" ]; then
-    go run ./cmd/artifact-identity -module "$module" -provider "$provider" > "$rootfs/usr/lib/boetticher/artifact.json"
-  else
-    go run ./cmd/artifact-identity -module "$module" > "$rootfs/usr/lib/boetticher/artifact.json"
-  fi
+  go run ./cmd/artifact-identity -module "$module" > "$rootfs/usr/lib/boetticher/artifact.json"
   chmod 0644 "$rootfs/usr/lib/boetticher/artifact.json"
 }
 
@@ -418,7 +413,7 @@ CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 WantedBy=multi-user.target
 EOF
   mkdir -p "$rootfs/etc/blocky"
-  write_artifact_identity "$rootfs" dns blocky
+  write_artifact_identity "$rootfs" dns
   package_lxc boetticher-dns-blocky
 }
 
@@ -871,7 +866,6 @@ case "$target" in
   image-printer) run_timed_image_target "$target" build_printer_target ;;
   image-aiops) run_timed_image_target "$target" build_aiops_target ;;
   image-gatus) run_timed_image_target "$target" build_gatus_target ;;
-  image-dns-adguard) echo "HOLD: AdGuard provider qualification is outside the default Blocky readiness tranche" >&2; exit 2 ;;
   image-firewall) run_timed_image_target "$target" build_firewall ;;
   images) build_selected_images ;;
 esac

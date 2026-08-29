@@ -18,7 +18,6 @@ used by this repository’s V1 design.
 | [age](https://github.com/FiloSottile/age) | age contributors | [BSD 3-Clause](https://github.com/FiloSottile/age/blob/main/LICENSE) | Operator identity and encrypted-secret recipient model |
 | [PowerDNS Authoritative Server](https://www.powerdns.com/auth.html) | PowerDNS contributors | See the [PowerDNS source license notices](https://github.com/PowerDNS/pdns) for the exact release | Authenticated RFC2136 target for Kea-driven dynamic DNS |
 | [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) | The Sqlite Authors and modernc.org contributors | BSD 3-Clause; bundled SQLite portions are public domain; retain the module's `LICENSE` and `LICENSE-SQLITE` notices | Pure-Go SQLite driver for the managed firewall telemetry database |
-| [AdGuard Home](https://github.com/AdguardTeam/AdGuardHome) | AdGuard and contributors | [GPLv3](https://github.com/AdguardTeam/AdGuardHome/blob/master/LICENSE.txt) | Client-facing recursive/filtering DNS service |
 
 ## Trademarks and compatibility
 

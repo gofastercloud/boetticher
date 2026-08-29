@@ -563,6 +563,9 @@ func TestDownloadURLRejectsUnpinnedOrUnsafeInputs(t *testing.T) {
 	if _, err := client.DownloadURL(context.Background(), "node", "local", "../image.qcow2", "https://images.example/image.qcow2", strings.Repeat("a", 128)); err == nil {
 		t.Fatal("unsafe image filename was accepted")
 	}
+	if _, err := client.DownloadURL(context.Background(), "node", "local", "image.qcow2", "http://images.example/image.qcow2", strings.Repeat("a", 128)); err == nil {
+		t.Fatal("HTTP image URL was accepted")
+	}
 	if _, err := client.DownloadURL(context.Background(), "node", "local", "image.qcow2", "https://images.example/image.qcow2", "not-a-sha512"); err == nil {
 		t.Fatal("unverified image checksum was accepted")
 	}

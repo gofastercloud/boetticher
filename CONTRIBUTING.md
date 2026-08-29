@@ -48,7 +48,7 @@ credentials, or live installation state.
 - Modules declare persistent volumes and placement policy; Core owns physical
   disks, PVs, VGs, filesystems, and destructive storage operations.
 - Logging is mandatory and inherited from the common appliance base. DNS is
-  one mandatory module with typed Blocky/AdGuard provider selection.
+  one mandatory module implemented by Blocky.
 - Keep current-architecture prose direct in docs, help, and comments. Use
   release or migration material for historical wording. A T580 or other live
   hardware journey remains `NOT TESTED` until it is actually run.

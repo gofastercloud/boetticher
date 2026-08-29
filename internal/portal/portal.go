@@ -14,6 +14,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/model"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 	"github.com/gofastercloud/boetticher/internal/pathguard"
+	statusmodel "github.com/gofastercloud/boetticher/internal/status"
 )
 
 type Evidence struct {
@@ -108,55 +109,30 @@ func page(title, body string) string {
 }
 
 func home(s model.Site, revision string, evidence Evidence, now time.Time) string {
-	status := "NOT TESTED"
-	if len(evidence.Results) > 0 {
-		status = "PARTIAL"
-		for _, result := range evidence.Results {
-			if result.Status == "FAIL" {
-				status = "FAIL"
-				break
-			}
-		}
+	checks := make([]statusmodel.LegacyCheck, 0, len(evidence.Results))
+	for _, result := range evidence.Results {
+		checks = append(checks, statusmodel.LegacyCheck{Name: result.Name, Status: result.Status, Detail: result.Detail})
 	}
+	semantic := statusmodel.FromLegacy(revision, evidence.GeneratedAt, checks)
 	gateway := "external firewall"
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		gateway = "managed Debian firewall"
 	}
 	var moduleTable strings.Builder
-	moduleTable.WriteString("<h2>Platform modules</h2><table><tr><th>Name</th><th>Policy</th><th>Implementation</th><th>Version</th><th>Artifact</th><th>Definition</th><th>State</th><th>Reason</th></tr>")
+	moduleTable.WriteString("<h2>Enabled modules</h2><table><tr><th>Name</th><th>Policy</th><th>State</th><th>Reason</th></tr>")
 	for _, module := range s.Modules {
-		implementation := map[string]string{"dns": "Blocky", "logging": "systemd journal", "monitoring": "Pulse Community", "firewall": "Debian/nftables", "printer": "OctoPrint / Ender-3 V3 SE", "gatus": "Gatus (declared services only)"}[module.Name]
-		if module.Name == "dns" && s.ModuleConfig["dns"].Provider == string(model.DNSProviderAdGuard) {
-			implementation = "AdGuard"
-		}
-		if implementation == "" {
-			for _, declaration := range s.Declarations {
-				if declaration.Module != module.Name || len(declaration.Portal) == 0 {
-					continue
-				}
-				implementation = declaration.Portal[0].Description
-				break
-			}
-		}
-		version, artifact, definition := moduleArtifactDetails(s, module.Name, module.Version)
-		fmt.Fprintf(&moduleTable, "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><code>%s</code></td><td><code>%s</code></td><td>%s</td><td>%s</td></tr>", html.EscapeString(module.Name), html.EscapeString(module.Policy), html.EscapeString(implementation), html.EscapeString(version), html.EscapeString(artifact), html.EscapeString(definition), html.EscapeString(module.State), html.EscapeString(module.Reason))
-	}
-	moduleTable.WriteString("</table>")
-	return fmt.Sprintf("<p>Generated platform view; not a wiki or monitoring dashboard.</p><table><tr><th>Platform version</th><td>%s</td></tr><tr><th>Schema</th><td>%d</td></tr><tr><th>Gateway</th><td>%s</td></tr><tr><th>Model revision</th><td><code>%s</code></td></tr><tr><th>Portal generated</th><td>%s</td></tr><tr><th>Latest verification</th><td>%s</td></tr></table>%s%s<h2>Quick links</h2><p><a href=\"%s\">Proxmox</a> · <a href=\"https://monitor.%s\">Pulse monitoring</a> · <a href=\"https://portal.%s\">Portal</a> · <a href=\"https://dns.%s\">DNS</a></p>", html.EscapeString(s.PlatformVersion), s.SchemaVersion, html.EscapeString(gateway), html.EscapeString(revision), now.UTC().Format(time.RFC3339), html.EscapeString(status), moduleTable.String(), loggingSummary(s, evidence), html.EscapeString("https://proxmox."+s.Network.Domain+":8006"), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain))
-}
-
-func moduleArtifactDetails(s model.Site, name, fallbackVersion string) (version, artifact, definition string) {
-	version = fallbackVersion
-	for _, declaration := range s.Declarations {
-		if declaration.Module != name {
+		if !module.Enabled {
 			continue
 		}
-		version = declaration.Artifact.Version
-		artifact = declaration.Artifact.Name
-		definition = declaration.Artifact.DefinitionSHA256
-		return
+		state := module.State
+		fmt.Fprintf(&moduleTable, "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>", html.EscapeString(module.Name), html.EscapeString(module.Policy), html.EscapeString(state), html.EscapeString(module.Reason))
 	}
-	return
+	moduleTable.WriteString("</table>")
+	action := "No action required."
+	if semantic.OverallState != statusmodel.Healthy {
+		action = "Action required: review <a href=\"/security.html\">security and evidence</a> for the exact reason and safe next action."
+	}
+	return fmt.Sprintf("<p>Generated operator summary. Revisions, hashes, schema, artifacts, and qualification details are on secondary evidence pages.</p><h2>Platform health: %s</h2><p>Gateway: %s · observed: %s</p><p>%s</p>%s<h2>Important links</h2><p><a href=\"%s\">Proxmox</a> · <a href=\"https://monitor.%s\">Pulse monitoring</a> · <a href=\"https://portal.%s\">Portal</a> · <a href=\"https://dns.%s\">DNS</a></p>", html.EscapeString(string(semantic.OverallState)), html.EscapeString(gateway), now.UTC().Format(time.RFC3339), action, moduleTable.String(), html.EscapeString("https://proxmox."+s.Network.Domain+":8006"), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain))
 }
 
 func loggingSummary(s model.Site, evidence Evidence) string {

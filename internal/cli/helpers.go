@@ -139,14 +139,12 @@ func writeModelProjections(dir string, s model.Site) error {
 	if err := writePublic(filepath.Join(dir, "generated", "logging", "journal-remote.service.d", "boetticher.conf"), []byte(logging.CollectorServiceOverride(loggingPlan))); err != nil {
 		return err
 	}
-	if dnsPlan.RecursiveProvider == string(model.DNSProviderBlocky) {
-		blockyConfig, renderErr := dns.RenderBlockyConfig(dnsPlan)
-		if renderErr != nil {
-			return renderErr
-		}
-		if err := writePublic(filepath.Join(dir, "generated", "dns", "blocky.yml"), blockyConfig); err != nil {
-			return err
-		}
+	blockyConfig, renderErr := dns.RenderBlockyConfig(dnsPlan)
+	if renderErr != nil {
+		return renderErr
+	}
+	if err := writePublic(filepath.Join(dir, "generated", "dns", "blocky.yml"), blockyConfig); err != nil {
+		return err
 	}
 	if err := writeProjection(filepath.Join(dir, "generated", "proxmox", "desired-state.json"), proxmoxPlan); err != nil {
 		return err
@@ -158,7 +156,7 @@ func writeModelProjections(dir string, s model.Site) error {
 	if err := writeProjection(filepath.Join(dir, "generated", "monitoring", "desired-state.json"), monitoringPlan); err != nil {
 		return err
 	}
-	if err := writeCurrentStatus(dir, revision); err != nil {
+	if err := writeCurrentStatus(dir, s); err != nil {
 		return err
 	}
 	inventory, err := ansible.Inventory(s)
@@ -322,25 +320,13 @@ func loadEvidence(dir, expectedRevision string) portal.Evidence {
 	return portal.Evidence{}
 }
 
-func writeCurrentStatus(dir, revision string) error {
-	status := "NOT TESTED"
-	data, err := os.ReadFile(filepath.Join(dir, "generated", "status.json"))
-	if err == nil {
-		var current struct {
-			ModelRevision string `json:"model_revision"`
-			Status        string `json:"status"`
-		}
-		if json.Unmarshal(data, &current) == nil && current.ModelRevision == revision && current.Status != "" {
-			status = current.Status
-		} else if current.Status != "" {
-			status = "STALE"
-		}
+func writeCurrentStatus(dir string, s model.Site) error {
+	revision, err := s.Revision()
+	if err != nil {
+		return err
 	}
-	return writeProjection(filepath.Join(dir, "generated", "status.json"), struct {
-		ModelRevision string `json:"model_revision"`
-		Status        string `json:"status"`
-		GeneratedAt   string `json:"generated_at"`
-	}{revision, status, time.Now().UTC().Format(time.RFC3339)})
+	report := desiredStatusReport(s, revision)
+	return writeProjection(filepath.Join(dir, "generated", "status.json"), report)
 }
 
 func sortedSSHComponents(s model.Site) []model.Component {

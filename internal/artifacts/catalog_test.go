@@ -410,7 +410,7 @@ func completeQualificationEvidence(t *testing.T, evidence Evidence) Evidence {
 		evidence.Builder = BuilderProvenance{
 			Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429",
 			Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3",
-			MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.34",
+			MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.4.0",
 		}
 		return evidence
 	}
@@ -418,7 +418,7 @@ func completeQualificationEvidence(t *testing.T, evidence Evidence) Evidence {
 		"package-manifest.txt":    "package: boetticher-test\n",
 		"sbom.json":               `{"bomFormat":"CycloneDX","specVersion":"1.5"}` + "\n",
 		"trivy.json":              `{"Results":[]}` + "\n",
-		"builder-provenance.json": `{"platform":"debian-13-amd64","input_image":"debian-13-genericcloud-amd64-20260327-2429","kernel":"6.1.0","go":"go version go1.26.5 linux/amd64","trivy":"Version: 0.69.3","mmdebstrap":"mmdebstrap 1.5.0","architecture":"amd64","boetticher_version":"0.3.34"}` + "\n",
+		"builder-provenance.json": `{"platform":"debian-13-amd64","input_image":"debian-13-genericcloud-amd64-20260327-2429","kernel":"6.1.0","go":"go version go1.26.5 linux/amd64","trivy":"Version: 0.69.3","mmdebstrap":"mmdebstrap 1.5.0","architecture":"amd64","boetticher_version":"0.4.0"}` + "\n",
 	}
 	for filename, content := range inputs {
 		if err := os.WriteFile(filepath.Join(filepath.Dir(evidence.ArtifactPath), filename), []byte(content), 0o600); err != nil {
@@ -432,7 +432,7 @@ func completeQualificationEvidence(t *testing.T, evidence Evidence) Evidence {
 	evidence.Builder = BuilderProvenance{
 		Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429",
 		Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3",
-		MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.34",
+		MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.4.0",
 	}
 	return evidence
 }
@@ -469,7 +469,7 @@ func TestArtifactIdentityIsDeterministic(t *testing.T) {
 func TestArtifactDefinitionDigestBindsBuildInputs(t *testing.T) {
 	definition, ok := func() (Definition, bool) {
 		for _, candidate := range Definitions() {
-			if candidate.Name == "dns" && candidate.Provider == "blocky" {
+			if candidate.Name == "dns" && candidate.ArtifactName == "boetticher-dns-blocky" {
 				return candidate, true
 			}
 		}
@@ -500,7 +500,7 @@ func TestArtifactDefinitionDigestBindsBuildInputs(t *testing.T) {
 
 func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	root := filepath.Join("..", "..", "images")
-	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "dns/adguard/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "portal/image.yaml", "tailnet-router/image.yaml", "litellm/image.yaml", "aiops/image.yaml"}
+	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "portal/image.yaml", "tailnet-router/image.yaml", "litellm/image.yaml", "aiops/image.yaml"}
 	for _, relative := range paths {
 		data, err := os.ReadFile(filepath.Join(root, relative))
 		if err != nil {
@@ -518,7 +518,7 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(blocky), "provider_sha256: 17b03f892346a160e9faf974ce68baae85fa4f2a94d7bf8ea52592a94be5eeb4") {
+	if !strings.Contains(string(blocky), "implementation_sha256: 17b03f892346a160e9faf974ce68baae85fa4f2a94d7bf8ea52592a94be5eeb4") {
 		t.Fatal("Blocky release checksum is not pinned")
 	}
 	dnsCommon, err := os.ReadFile(filepath.Join(root, "dns", "image.yaml"))
@@ -808,7 +808,7 @@ func TestApplianceBuildEmbedsDefinitionIdentityWithoutContentEvidence(t *testing
 	text := string(buildScript)
 	for _, required := range []string{
 		"write_artifact_identity \"$rootfs\" base",
-		"write_artifact_identity \"$rootfs\" dns blocky",
+		"write_artifact_identity \"$rootfs\" dns",
 		"write_artifact_identity \"$rootfs\" logging",
 		"write_artifact_identity \"$rootfs\" monitoring",
 		"write_artifact_identity \"$rootfs\" portal",

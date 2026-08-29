@@ -38,9 +38,7 @@ type Plan struct {
 	StaticRecords                []StaticRecord      `json:"static_records"`
 	PendingDeletions             []model.DNSDeletion `json:"pending_deletions,omitempty"`
 	DDNS                         DDNSPlan            `json:"ddns"`
-	AdGuardForwardZones          []string            `json:"adguard_forward_zones"`
-	AdGuardReverseZones          []string            `json:"adguard_reverse_zones"`
-	RecursiveProvider            string              `json:"recursive_provider"`
+	RecursiveImplementation      string              `json:"recursive_implementation"`
 	RecursiveUpstreams           []string            `json:"recursive_upstreams"`
 	AuthoritativeForwardZones    []string            `json:"authoritative_forward_zones"`
 	AuthoritativeReverseZones    []string            `json:"authoritative_reverse_zones"`
@@ -151,10 +149,6 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		ddns.UpdateSources = nil
 		ddns.LeaseFailurePolicy = "external DHCP may omit automatic workload registration"
 	}
-	provider := s.ModuleConfig["dns"].Provider
-	if provider == "" {
-		provider = string(model.DNSProviderBlocky)
-	}
 	authoritativeForwardZones := append([]string{s.Network.Domain}, dynamicZoneNames(dynamic)...)
 	authoritativeReverseZones := reverseZoneNames(reverse)
 	return Plan{
@@ -162,9 +156,8 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		AuthoritativeListenAddresses: listenAddresses, AuthoritativeForwardTarget: listenAddresses[0] + ":" + AuthoritativePort,
 		StaticZone: s.Network.Domain, Nameservers: []string{"10.10.10.10", "10.10.10.11"},
 		DynamicZones: dynamic, ReverseZones: reverse, StaticRecords: static, PendingDeletions: pendingDeletions(s, static),
-		DDNS:                ddns,
-		AdGuardForwardZones: authoritativeForwardZones, AdGuardReverseZones: authoritativeReverseZones,
-		RecursiveProvider: provider, RecursiveUpstreams: append([]string(nil), PublicUpstreams...),
+		DDNS:                    ddns,
+		RecursiveImplementation: "blocky", RecursiveUpstreams: append([]string(nil), PublicUpstreams...),
 		AuthoritativeForwardZones: authoritativeForwardZones, AuthoritativeReverseZones: authoritativeReverseZones,
 		AuthoritativeNXDOMAINNoLeak: true,
 	}, nil

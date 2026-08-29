@@ -139,13 +139,6 @@ func runModuleShow(args []string, out interface{ Write([]byte) (int, error) }) e
 	if !ok {
 		return fmt.Errorf("module %q is not resolved", name)
 	}
-	if name == "dns" {
-		provider := s.ModuleConfig["dns"].Provider
-		if provider == "" {
-			provider = string(model.DNSProviderBlocky)
-		}
-		fmt.Fprintf(out, "  Provider     %s\n", provider)
-	}
 	fmt.Fprintf(out, "Module %s\n  Description  %s\n  Version      %s\n  Policy       %s\n  Enabled      %s\n  Reason       %s\n  State        %s\n  Depends on   %s\n  Requires     %s\n  Provides     %s\n  Guest IDs    %s\n", definition.Name, definition.Description, definition.Version, definition.Policy, yesNo(resolved.Enabled), resolved.Reason, resolved.State, strings.Join(definition.DependsOn, ", "), strings.Join(capabilityNames(definition.Requires), ", "), strings.Join(capabilityNames(definition.Provides), ", "), ints(definition.GuestIDs))
 	for _, declaration := range s.Declarations {
 		if declaration.Module != name {

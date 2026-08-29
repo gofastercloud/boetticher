@@ -6,7 +6,7 @@ repository, Age identity, SOPS access, CA signing authority, and runtime state;
 the Proxmox host is a target, not the controller.
 
 Supported controllers are macOS arm64/amd64 and Linux arm64/amd64. Native
-Windows is outside the v0.3 contract. One physical NIC is enough for managed
+Windows is outside the v0.4 contract. One physical NIC is enough for managed
 mode; a second NIC and managed VLAN switch provide physical access to the
 internal zones. External-firewall mode requires both NICs.
 

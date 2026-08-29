@@ -96,12 +96,12 @@ appliance’s configuration.
 
 ## Platform services
 
-DNS and NTP remain dual-host services. Blocky is the default client-facing
-recursive/filtering provider and AdGuard Home is a supported typed alternative.
+DNS and NTP remain dual-host services. Blocky is the client-facing
+recursive/filtering implementation.
 Kea-driven dynamic DNS updates travel to the PowerDNS authoritative primary
 through authenticated RFC2136 and replicate to the secondary. TRUSTED and
 SANDBOX use dynamic DHCP/DDNS modes, while SERVERS uses reservation-only
-DHCP/DDNS. TRANSIT, INFRA, and MGMT use static assignments. The selected provider serves the fixed DNS/NTP
+DHCP/DDNS. TRANSIT, INFRA, and MGMT use static assignments. Blocky serves the fixed DNS/NTP
 addresses from INFRA, while SANDBOX uses the gateway resolver and does not
 receive the broad internal namespace.
 

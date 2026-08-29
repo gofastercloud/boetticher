@@ -1,6 +1,6 @@
 # boetticher
 
-**Status: pre-alpha.** boetticher v0.3.34 has a typed module model and offline
+**Status: pre-alpha.** boetticher v0.4.0 has a typed module model and offline
 contracts, but the appliance build and live installation still need
 qualification. Do not use boetticher on a system you cannot recover.
 
@@ -37,8 +37,8 @@ HOME / upstream
 The platform services are:
 
 ```text
-lab-dns-01       10.10.10.10  PowerDNS, Blocky (AdGuard alternative), Chrony
-lab-dns-02       10.10.10.11  PowerDNS, Blocky (AdGuard alternative), Chrony
+lab-dns-01       10.10.10.10  PowerDNS, Blocky, Chrony
+lab-dns-02       10.10.10.11  PowerDNS, Blocky, Chrony
 lab-monitor-01   10.10.10.20  Pulse Community monitoring
 lab-log-01       10.10.10.40  Central systemd journal collector
 lab-portal-01    10.10.10.30  generated static documentation
@@ -55,15 +55,14 @@ The fixed networks are VLAN 5 TRANSIT (`10.10.5.0/24`), VLAN 10 INFRA
 (`10.10.10.0/24`), VLAN 20 SERVERS (`10.10.20.0/24`), VLAN 30 TRUSTED
 (`10.10.30.0/24`), VLAN 40 SANDBOX (`10.10.40.0/24`), and VLAN 99 MGMT
 (`10.10.99.0/24`). Every gateway owns `.1`; managed Proxmox uses
-`10.10.99.5` on MGMT. v0.3 remains IPv4-only.
+`10.10.99.5` on MGMT. v0.4 remains IPv4-only.
 
 The platform resolves to Core plus the mandatory DNS/NTP module and the
 default-on monitoring and managed firewall modules. Modules are built into the
 boetticher release and emit declarations; Core owns privileged infrastructure
 changes. There is no background controller or third-party module runtime.
 Central logging is mandatory and uses bounded journald plus asynchronous mTLS
-upload to `lab-log-01`. The default DNS provider is Blocky; set
-`modules.dns.provider: adguard` to select the supported alternative.
+upload to `lab-log-01`. DNS is implemented by Blocky.
 
 ## Two gateway modes
 
@@ -84,21 +83,21 @@ each subnet, and bootstrap never silently selects even a sole eligible NIC.
 See
 [`docs/networking/external-firewall.md`](docs/networking/external-firewall.md).
 
-This network layout is for the next clean deployment/rebuild. Existing
-installations require an operator-planned rebuild or migration; this tranche
-does not automatically renumber live hosts or guests.
+This network layout is for a clean deployment/rebuild. Live migration is not
+part of the 0.4 qualification campaign, and boetticher does not automatically
+renumber live hosts or guests.
 
 ## Requirements
 
 - A fresh supported Proxmox VE installation on amd64 hardware.
-- A separate macOS or Linux controller with Go, SSH, Age, SOPS, and Ansible
-  Core. Boetticher Core owns guarded Proxmox guest provisioning; Ansible owns
+- A supported macOS or Linux controller with the Boetticher binary, SSH, Age,
+  SOPS, and Ansible Core. Boetticher Core owns guarded Proxmox guest provisioning; Ansible owns
   appliance configuration.
 - One physical Ethernet NIC is enough for managed virtual-only operation. A
   second NIC and managed VLAN switch are needed for a physical trunk; they are
   mandatory in external-firewall mode.
 - Either the single-disk or dedicated-data-disk storage profile.
-- Pulse Community 6.1.2 and the pinned Debian 13 appliance definitions are the v0.3
+- Pulse Community 6.1.2 and the pinned Debian 13 appliance definitions are the v0.4
   qualification targets (`debian-13-genericcloud-amd64-20260327-2429`).
 
 ## Quickstart
@@ -112,6 +111,7 @@ boetticher preflight --site my-boetticher --live
 boetticher bootstrap --site my-boetticher --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem
 boetticher deploy --site my-boetticher --dry-run --proxmox-ca /path/to/pve-root-ca.pem
 boetticher deploy --site my-boetticher --proxmox-ca /path/to/pve-root-ca.pem
+boetticher status --site my-boetticher
 boetticher ssh-config --site my-boetticher --install-include
 boetticher verify --site my-boetticher --proxmox-ca /path/to/pve-root-ca.pem
 boetticher doctor --site my-boetticher --live --proxmox-ca /path/to/pve-root-ca.pem
@@ -160,7 +160,7 @@ documentation.
 
 ## Limitations
 
-v0.3 is a single-node, pre-alpha platform. It is not HA, does not support
+v0.4 is a single-node, pre-alpha platform. It is not HA, does not support
 IPv6, multi-node Proxmox, generic VM/LXC lifecycle management, managed VPN or
 remote-access products, arbitrary storage or network layouts, or managed
 external firewall vendors. Local backups are useful for recovery but are not

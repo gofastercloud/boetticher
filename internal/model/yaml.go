@@ -33,7 +33,7 @@ func ParseSite(data []byte) (Site, error) {
 	return site, nil
 }
 
-// ParseSiteConfig is the strict v0.3 site.yml decoder. The version probe gives
+// ParseSiteConfig is the strict v0.4 site.yml decoder. The version probe gives
 // operators a concise recreate-site message before strict decoding reports
 // fields that are not part of the v3 configuration.
 func ParseSiteConfig(data []byte) (SiteConfig, error) {
@@ -48,7 +48,7 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 		return SiteConfig{}, fmt.Errorf("site.yml: api_version is required and must be boetticher/v3")
 	}
 	if probe.APIVersion != APIVersion {
-		return SiteConfig{}, fmt.Errorf("site schema %q is not supported by boetticher v0.3; recreate the site with boetticher init", probe.APIVersion)
+		return SiteConfig{}, fmt.Errorf("site schema %q is not supported by boetticher v0.4; recreate the site with boetticher init", probe.APIVersion)
 	}
 	if err := validateModuleConfigShape(data); err != nil {
 		return SiteConfig{}, err
@@ -59,15 +59,9 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 	if err := decoder.Decode(&config); err != nil {
 		return SiteConfig{}, fmt.Errorf("decode site.yml: %w", err)
 	}
-	for name, module := range config.Modules.Map() {
+	for name := range config.Modules.Map() {
 		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "litellm" && name != "printer" && name != "aiops" {
 			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s is not a registered first-party module", name)
-		}
-		if name != "dns" && module.Provider != "" {
-			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s.provider is not supported", name)
-		}
-		if name == "dns" && module.Provider != "" && module.Provider != string(DNSProviderBlocky) && module.Provider != string(DNSProviderAdGuard) {
-			return SiteConfig{}, fmt.Errorf("site.yml: modules.dns.provider expected one of: blocky, adguard")
 		}
 	}
 	return config, nil
@@ -95,7 +89,6 @@ func validateModuleConfigShape(data []byte) error {
 		allowed := map[string]bool{}
 		switch name {
 		case "dns":
-			allowed["provider"] = true
 		case "monitoring", "firewall", "printer":
 			allowed["enabled"] = true
 		case "logging":
@@ -128,9 +121,6 @@ func validateModuleConfigShape(data []byte) error {
 			}
 			if field == "enabled" && fieldValue.Tag != "!!bool" && fieldValue.Tag != "!!null" {
 				return fmt.Errorf("site.yml: modules.%s.enabled: expected a boolean", name)
-			}
-			if field == "provider" && fieldValue.Tag != "!!str" && fieldValue.Tag != "!!null" {
-				return fmt.Errorf("site.yml: modules.dns.provider: expected one of: blocky, adguard")
 			}
 			if name == "litellm" && (field == "upstreams" || field == "models") && fieldValue.Kind != yaml.SequenceNode {
 				return fmt.Errorf("site.yml: modules.litellm.%s: expected a list", field)

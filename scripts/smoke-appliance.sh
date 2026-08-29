@@ -54,11 +54,10 @@ case "$name" in
     printf '%s\n' 'boetticher smoke check: PowerDNS and Chrony binaries'
     run pdns_server --version
     run chronyd --version
-    printf '%s\n' 'boetticher smoke check: Blocky files and provider separation'
+    printf '%s\n' 'boetticher smoke check: Blocky files and authoritative separation'
     test -x "$rootfs/usr/local/bin/blocky"
     test -f "$rootfs/etc/boetticher/dns/filtering/boetticher.hosts"
     test -f "$rootfs/etc/systemd/system/blocky.service"
-    test ! -e "$rootfs/opt/AdGuardHome/AdGuardHome"
     ;;
   boetticher-logging)
     run /usr/lib/systemd/systemd-journal-remote --version

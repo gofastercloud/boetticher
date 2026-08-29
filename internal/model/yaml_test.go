@@ -178,10 +178,9 @@ dns_records:
 	}
 }
 
-func TestDNSProviderIsTypedAndStrict(t *testing.T) {
-	config, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  dns:\n    provider: adguard\n"))
-	if err != nil || config.Modules.DNS == nil || config.Modules.DNS.Provider != DNSProviderAdGuard {
-		t.Fatalf("adguard provider was not accepted: %#v %v", config, err)
+func TestDNSHasNoProviderSelection(t *testing.T) {
+	if _, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  dns:\n    provider: legacy\n")); err == nil || !strings.Contains(err.Error(), "provider") {
+		t.Fatalf("DNS provider selection was accepted: %v", err)
 	}
 	if _, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  monitoring:\n    provider: blocky\n")); err == nil || !strings.Contains(err.Error(), "modules.monitoring.provider") {
 		t.Fatalf("irrelevant provider was accepted: %v", err)

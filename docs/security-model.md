@@ -28,7 +28,7 @@ Forwarding is disabled while the gateway is being prepared. boetticher renders
 one namespaced ruleset, validates it with `nft -c`, retains the previous known-
 good file, applies the replacement transactionally, and enables IPv4 forwarding
 only after the policy and services are ready. IPv6 forwarding is disabled in
-v0.3.
+v0.4.
 
 SANDBOX may use the gateway for DHCP, public DNS, and NTP, but cannot reach the
 TRUSTED, SERVERS, INFRA, or MGMT networks. The deny rules precede Internet
@@ -65,7 +65,7 @@ side; endpoint private keys are generated on managed hosts where practical.
 The Proxmox SSH bastion is the normal path to internal hosts. The portal is
 static generated documentation; live monitoring state belongs in Pulse.
 
-The platform is IPv4-only in v0.3. Dynamic DHCP DNS registration publishes a
+The platform is IPv4-only in v0.4. Dynamic DHCP DNS registration publishes a
 lease-derived name; it never makes that workload boetticher-managed.
 
 ## Core and module boundary
@@ -151,8 +151,8 @@ If a later deployment needs to modify an already-converged guest, Core may
 re-arm that same temporary key through the authenticated Proxmox host boundary
 for the exact owned guest, and removes it again after convergence.
 
-The DNS module is mandatory. Blocky is the default recursive/filtering
-implementation and AdGuard is a typed alternative; PowerDNS remains
+The DNS module is mandatory. Blocky is the recursive/filtering
+implementation; PowerDNS remains
 authoritative in both modes, and internal negative answers never leak to public
 upstreams. Malformed configuration, duplicate DNS identities, fixed VMID
 collisions, conflicting network declarations, artifact checksum mismatches,

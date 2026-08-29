@@ -52,14 +52,22 @@ func TestRootShortHelpListsCurrentCommands(t *testing.T) {
 	if err := Run([]string{"-h"}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "boetticher deploy") {
-		t.Fatalf("root short help omitted deploy: %s", output.String())
+	text := output.String()
+	for _, command := range []string{"boetticher init", "boetticher deploy", "boetticher status", "boetticher module", "boetticher doctor", "boetticher update", "boetticher help --advanced"} {
+		if !strings.Contains(text, command) {
+			t.Errorf("root short help omitted %s: %s", command, text)
+		}
+	}
+	for _, hidden := range []string{"boetticher preflight", "boetticher modules"} {
+		if strings.Contains(text, hidden) {
+			t.Errorf("root short help exposed advanced command %s: %s", hidden, text)
+		}
 	}
 }
 
 func TestPublicHelpPathsDoNotFail(t *testing.T) {
 	for _, args := range [][]string{
-		{"init", "--help"}, {"preflight", "-h"}, {"bootstrap", "--help"}, {"deploy", "--help"},
+		{"init", "--help"}, {"preflight", "-h"}, {"bootstrap", "--help"}, {"deploy", "--help"}, {"status", "--help"}, {"update", "--help"},
 		{"verify", "--help"}, {"doctor", "--help"}, {"network", "--help"}, {"firewall", "--help"},
 		{"dhcp", "--help"}, {"dns", "--help"}, {"pki", "--help"}, {"access", "--help"}, {"portal", "--help"},
 		{"module", "--help"}, {"modules", "--help"}, {"config", "--help"}, {"logs", "--help"}, {"aiops", "--help"}, {"upgrade", "--help"},
@@ -165,7 +173,7 @@ func TestCommandReferenceContainsCLIUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, spec := range commandSpecs {
+	for _, spec := range advancedCommandSpecs {
 		if !strings.Contains(string(document), spec.Usage) {
 			t.Errorf("docs/commands.md is missing command form %q", spec.Usage)
 		}
@@ -180,9 +188,11 @@ func validateCommandForm(t *testing.T, fields []string) {
 	known := map[string]map[string]bool{
 		"init":               {"--site-dir": true, "--age-identity": true, "--external-firewall": true},
 		"bootstrap-endpoint": {"--site": true},
-		"preflight":          {"--site": true, "--live": true, "--bootstrap-address": true, "--trunk-interface": true},
+		"preflight":          {"--site": true, "--live": true, "--record": true, "--bootstrap-address": true, "--trunk-interface": true},
 		"bootstrap":          {"--site": true, "--recovery-confirmed": true, "--trunk-interface": true, "--dry-run": true, "--proxmox-ca": true, "--insecure": true},
 		"deploy":             {"--site": true, "--dry-run": true, "--confirm": true, "--proxmox-ca": true, "--insecure": true},
+		"status":             {"--site": true, "--live": true, "--verbose": true, "--json": true},
+		"update":             {"--site": true, "--dry-run": true, "--confirm": true},
 		"logs":               {"--site": true, "--unit": true, "--since": true, "--priority": true, "--limit": true},
 		"ssh-config":         {"--site": true, "--output": true, "--force": true, "--check": true, "--install-include": true},
 		"verify":             {"--site": true, "--proxmox-ca": true, "--insecure": true},

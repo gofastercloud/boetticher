@@ -21,7 +21,6 @@ var builderArtifactTargetsInOrder = []struct {
 }{
 	{artifact: "boetticher-base", target: "image-base", scan: "boetticher-base"},
 	{artifact: "boetticher-dns-blocky", target: "image-dns-blocky", scan: "boetticher-dns-blocky"},
-	{artifact: "boetticher-dns-adguard", target: "image-dns-adguard", scan: "boetticher-dns-adguard"},
 	{artifact: "boetticher-logging", target: "image-logging", scan: "boetticher-logging"},
 	{artifact: "boetticher-monitoring", target: "image-monitoring", scan: "boetticher-monitoring"},
 	{artifact: "boetticher-firewall", target: "image-firewall", scan: "boetticher-firewall"},
@@ -268,7 +267,7 @@ runcmd:
   - [touch, /run/boetticher-builder-ready]
 `
 	return CloudInitFiles{
-		MetaData: "instance-id: boetticher-builder-0.3.34\nlocal-hostname: lab-builder-01\n",
+		MetaData: "instance-id: boetticher-builder-0.4.0\nlocal-hostname: lab-builder-01\n",
 		UserData: userData,
 		NetworkConfig: fmt.Sprintf(`version: 2
 ethernets:

@@ -6,7 +6,7 @@ states the engineering guardrails that keep those contracts intact.
 
 ## Design
 
-boetticher is an opinionated v0.3 Proxmox distribution, not a generic homelab
+boetticher is an opinionated v0.4 Proxmox distribution, not a generic homelab
 framework. The canonical model is deterministic for a fixed platform version,
 site configuration, enabled official modules, and relevant secret metadata. Core
 composes first-party module declarations and its model revision drives guarded
@@ -62,8 +62,9 @@ for deletion or import.
 - Central logging is a mandatory platform service. Managed Linux endpoints
   inherit bounded journald and asynchronous mTLS journal upload from the
   common base; modules do not invent transports.
-- DNS is one mandatory module with typed `blocky`/`adguard` provider selection.
-  Both providers share PowerDNS/Chrony and the common DNS conformance contract.
+- DNS is one mandatory module implemented by Blocky; provider selection is not
+  part of the site model.
+  Blocky shares PowerDNS/Chrony and the common DNS conformance contract.
 - Monitoring is Core infrastructure in INFRA at `10.10.10.20`; MGMT is not a
   generic application placement zone.
 - Official artifacts have a deterministic definition identity and a verified

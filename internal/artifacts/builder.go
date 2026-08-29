@@ -18,6 +18,7 @@ import (
 
 	buildbundle "github.com/gofastercloud/boetticher"
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/pathguard"
 )
 
 // BuilderPlan describes the ephemeral Core build environment. It receives
@@ -334,11 +335,11 @@ func ExtractBuildArchiveReader(reader io.Reader, root string) error {
 		target := filepath.Join(root, filepath.FromSlash(clean))
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o700); err != nil {
+			if err := pathguard.MkdirAll(target, 0o700); err != nil {
 				return err
 			}
 		case tar.TypeReg, tar.TypeRegA:
-			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			if err := pathguard.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 				return err
 			}
 			temporary, err := os.CreateTemp(filepath.Dir(target), ".builder-artifact-")

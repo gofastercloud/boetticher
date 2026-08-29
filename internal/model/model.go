@@ -19,7 +19,7 @@ import (
 const (
 	APIVersion                  = "boetticher/v3"
 	SchemaVersion               = 3
-	PlatformVersion             = "0.3.34"
+	PlatformVersion             = "0.4.0"
 	QualifiedGatewayImage       = "debian-13-genericcloud-amd64-20260327-2429"
 	QualifiedGatewayImageURL    = "https://cloud.debian.org/images/cloud/trixie/20260327-2429/debian-13-genericcloud-amd64-20260327-2429.qcow2"
 	QualifiedGatewayImageSHA512 = "09559ec27d263997827dd8cddf76e97ea8e0f1803380aa501ea7eaa4b4968cd76ffef4ec7eb07ef1a9ccbeb0925a5020492ea9ed53eb167d62f3a2285039912c"
@@ -350,7 +350,6 @@ type Component struct {
 
 type ModuleConfig struct {
 	Enabled    *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Provider   string                  `yaml:"provider,omitempty" json:"provider,omitempty"`
 	ModelAlias string                  `yaml:"model_alias,omitempty" json:"model_alias,omitempty"`
 	Upstreams  []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
 	Models     []LiteLLMModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
@@ -379,13 +378,6 @@ type USBIdentity struct {
 	ProductID string `json:"product_id"`
 }
 
-type DNSProvider string
-
-const (
-	DNSProviderBlocky  DNSProvider = "blocky"
-	DNSProviderAdGuard DNSProvider = "adguard"
-)
-
 // ResolvedModule is generated state, not an operator-maintained module list.
 // It records why a first-party module is active and which contracts it
 // participates in after composition.
@@ -404,7 +396,6 @@ type ResolvedModule struct {
 type Artifact struct {
 	Name             string `json:"name"`
 	Version          string `json:"version"`
-	Provider         string `json:"provider,omitempty"`
 	Architecture     string `json:"architecture"`
 	Kind             string `json:"kind"`
 	DefinitionSHA256 string `json:"definition_sha256"`
@@ -580,8 +571,8 @@ type RetainedModule struct {
 func NewDefaultSite(installationID, ageRecipient string) Site {
 	site := NewSite(installationID, ageRecipient, GatewayModeManaged)
 	// NewDefaultSite is also the in-memory fixture constructor used by core
-	// provider tests. The persisted SiteConfig path is composed by modules;
-	// this fixture keeps the provider tests useful without making those
+	// projection tests. The persisted SiteConfig path is composed by modules;
+	// this fixture keeps the projection tests useful without making those
 	// components part of NewSite's Core-owned canonical seed.
 	for _, component := range []Component{
 		{Name: "lab-fw-01", VMID: ProxmoxVMID, Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "Debian firewall", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "firewall"},
@@ -785,7 +776,7 @@ func (s Site) validateUSBExports() error {
 
 func (s Site) Validate() error {
 	if s.APIVersion != APIVersion || s.SchemaVersion != SchemaVersion {
-		return fmt.Errorf("site schema %q/%d is not supported by boetticher v0.3; recreate the site with boetticher init", s.APIVersion, s.SchemaVersion)
+		return fmt.Errorf("site schema %q/%d is not supported by boetticher v0.4; recreate the site with boetticher init", s.APIVersion, s.SchemaVersion)
 	}
 	if s.PlatformVersion == "" {
 		return errors.New("platform_version is required")

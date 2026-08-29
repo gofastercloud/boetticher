@@ -22,7 +22,7 @@ handling, bootstrap transitions, ownership checks, SSH bastion policy, and
 security-relevant portal or verification output.
 
 Upstream vulnerabilities in Proxmox, Debian, nftables, Kea, Pulse, Ansible,
-SOPS, age, PowerDNS, AdGuard Home, or the operating system should also be
+SOPS, age, PowerDNS, or the operating system should also be
 reported to those projects. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 for upstream links.
 

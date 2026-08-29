@@ -11,13 +11,12 @@ import (
 
 func main() {
 	module := flag.String("module", "", "built-in artifact module name")
-	provider := flag.String("provider", "", "optional typed module provider")
 	flag.Parse()
 	if *module == "" || flag.NArg() != 0 {
-		fmt.Fprintln(os.Stderr, "usage: artifact-identity -module NAME [-provider NAME]")
+		fmt.Fprintln(os.Stderr, "usage: artifact-identity -module NAME")
 		os.Exit(2)
 	}
-	artifact, err := artifacts.ArtifactFor(*module, *provider)
+	artifact, err := artifacts.ArtifactFor(*module)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

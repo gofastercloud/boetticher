@@ -4,6 +4,13 @@
 
 - Use Proxmox API monitoring and tagged-host hardware telemetry through the Core Pulse appliance.
 
+## [0.4.0] - 2026-08-29
+
+- Make Blocky the sole built-in DNS implementation and remove provider selection.
+- Add atomic desired-state `update` and semantic `status` workflows.
+- Simplify normal CLI help and remove Git/Go controller runtime prerequisites.
+- Make live DHCP status read-only and require explicit managed-gateway evidence.
+
 All notable boetticher changes are recorded here. This is a playful pre-alpha
 project, so releases can make clean breaks while the design is settling.
 

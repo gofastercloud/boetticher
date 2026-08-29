@@ -18,20 +18,14 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	if plan.Implementation != "PowerDNS Authoritative" || plan.PackageVersion != "4.9.17-1pdns.trixie" || len(plan.DynamicZones) != 3 || len(plan.ReverseZones) != 3 {
 		t.Fatalf("unexpected DNS plan: %#v", plan)
 	}
-	if plan.RecursiveProvider != "blocky" || !plan.AuthoritativeNXDOMAINNoLeak || len(plan.RecursiveUpstreams) < 2 {
+	if plan.RecursiveImplementation != "blocky" || !plan.AuthoritativeNXDOMAINNoLeak || len(plan.RecursiveUpstreams) < 2 {
 		t.Fatalf("default recursive DNS contract is incomplete: %#v", plan)
-	}
-	if len(plan.AuthoritativeForwardZones) != len(plan.AdGuardForwardZones) || len(plan.AuthoritativeReverseZones) != len(plan.AdGuardReverseZones) {
-		t.Fatalf("provider-neutral authoritative zones diverged: %#v", plan)
 	}
 	if got := plan.AuthoritativeForwardTarget; got != "127.0.0.1:5353" || len(plan.AuthoritativeListenAddresses) != 2 {
 		t.Fatalf("incompatible authoritative listener contract: %#v", plan)
 	}
 	if plan.DDNS.Source != "Kea D2 on lab-fw-01" || len(plan.DDNS.UpdateSources) != 1 || plan.DDNS.UpdateSources[0] != "10.10.99.1" || plan.DDNS.LeaseFailurePolicy != "lease-continues-without-DNS-registration" {
 		t.Fatalf("unexpected DDNS boundary: %#v", plan.DDNS)
-	}
-	if len(plan.AdGuardForwardZones) != 4 || len(plan.AdGuardReverseZones) != 3 {
-		t.Fatalf("AdGuard did not receive static and dynamic forwarding zones: %#v", plan.AdGuardForwardZones)
 	}
 	if !hasRecord(plan.StaticRecords, "proxmox.lab.home.arpa", "10.10.99.5") {
 		t.Fatal("Proxmox component URL hostname was not added to the static DNS projection")
@@ -74,15 +68,14 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	}
 }
 
-func TestRecursiveProviderSelectionIsTypedAndProviderNeutral(t *testing.T) {
+func TestRecursiveImplementationIsFixedToBlocky(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
-	site.ModuleConfig = map[string]model.ModuleConfig{"dns": {Provider: string(model.DNSProviderAdGuard)}}
 	plan, err := PlanFromSite(site)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.RecursiveProvider != "adguard" || !plan.AuthoritativeNXDOMAINNoLeak {
-		t.Fatalf("explicit provider did not preserve common DNS contract: %#v", plan)
+	if plan.RecursiveImplementation != "blocky" || !plan.AuthoritativeNXDOMAINNoLeak {
+		t.Fatalf("fixed implementation did not preserve common DNS contract: %#v", plan)
 	}
 	for _, upstream := range plan.RecursiveUpstreams {
 		if strings.Contains(upstream, "lab.home.arpa") {
@@ -205,14 +198,14 @@ func TestRenderBlockyConfigPinsAuthoritativeZonesWithoutPublicFallback(t *testin
 	}
 }
 
-func TestRenderBlockyConfigRejectsOtherProvider(t *testing.T) {
+func TestRenderBlockyConfigRequiresFixedImplementation(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan.RecursiveProvider = string(model.DNSProviderAdGuard)
+	plan.RecursiveImplementation = ""
 	if _, err := RenderBlockyConfig(plan); err == nil {
-		t.Fatal("Blocky renderer accepted AdGuard provider")
+		t.Fatal("Blocky renderer accepted an unspecified implementation")
 	}
 }
 

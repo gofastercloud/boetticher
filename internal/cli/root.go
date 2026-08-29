@@ -22,7 +22,11 @@ func RunWithInput(args []string, input io.Reader, out, errOut interface{ Write([
 
 func run(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		usage(out)
+		if len(args) > 1 && args[0] == "help" && args[1] == "--advanced" {
+			advancedUsage(out)
+		} else {
+			usage(out)
+		}
 		return nil
 	}
 	if helpRequested(args) {
@@ -72,6 +76,10 @@ func run(args []string, input io.Reader, out, errOut interface{ Write([]byte) (i
 		return runBootstrap(args[1:], out)
 	case "deploy":
 		return runDeploy(args[1:], out)
+	case "status":
+		return runStatus(args[1:], out)
+	case "update":
+		return runUpdate(args[1:], out)
 	case "logs":
 		return runLogs(args[1:], out)
 	case "aiops":
@@ -118,6 +126,13 @@ func commandHelp(args []string, out interface{ Write([]byte) (int, error) }) {
 func usage(out interface{ Write([]byte) (int, error) }) {
 	fmt.Fprintln(out, "boetticher operator CLI\n\nUsage:")
 	for _, spec := range commandSpecs {
+		fmt.Fprintln(out, "  "+spec.Usage)
+	}
+}
+
+func advancedUsage(out interface{ Write([]byte) (int, error) }) {
+	fmt.Fprintln(out, "boetticher advanced CLI\n\nUsage:")
+	for _, spec := range advancedCommandSpecs {
 		fmt.Fprintln(out, "  "+spec.Usage)
 	}
 }

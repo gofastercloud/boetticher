@@ -12,7 +12,6 @@ default_scan_names="boetticher-base boetticher-dns-blocky boetticher-logging boe
 case "$target" in
   scan-base) names="boetticher-base" ;;
   scan-dns-blocky) names="boetticher-dns-blocky" ;;
-  scan-dns-adguard) names="boetticher-dns-adguard" ;;
   scan-logging) names="boetticher-logging" ;;
   scan-monitoring) names="boetticher-monitoring" ;;
   scan-firewall) names="boetticher-firewall" ;;
@@ -31,7 +30,7 @@ case "$target" in
 esac
 for name in $names; do
   case "$name" in
-    boetticher-base|boetticher-dns-blocky|boetticher-dns-adguard|boetticher-logging|boetticher-monitoring|boetticher-firewall|boetticher-portal|boetticher-tailnet-router|boetticher-litellm|boetticher-printer|boetticher-aiops) ;;
+    boetticher-base|boetticher-dns-blocky|boetticher-logging|boetticher-monitoring|boetticher-firewall|boetticher-portal|boetticher-tailnet-router|boetticher-litellm|boetticher-printer|boetticher-aiops) ;;
     *) echo "unknown selected scan artifact: $name" >&2; exit 2 ;;
   esac
 done
@@ -57,7 +56,7 @@ artifact_filename() {
   name=$1
   version=1.0.0
   if [ "$name" = boetticher-base ]; then
-    version=0.3.34
+    version=0.4.0
   fi
   printf '%s-%s-amd64.tar.zst' "$name" "$version"
 }
@@ -144,10 +143,8 @@ scan_one() {
   fi
   cleanup_scan_root
   module=$name
-  provider=""
   case "$name" in
-    boetticher-dns-blocky) module=dns; provider=blocky ;;
-    boetticher-dns-adguard) module=dns; provider=adguard ;;
+    boetticher-dns-blocky) module=dns ;;
     boetticher-base) module=base ;;
     boetticher-logging) module=logging ;;
     boetticher-monitoring) module=monitoring ;;
@@ -158,11 +155,11 @@ scan_one() {
     boetticher-printer) module=printer ;;
     boetticher-aiops) module=aiops ;;
   esac
-  if [ -n "$provider" ]; then
+  if [ "$module" = dns ]; then
     GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact \
       -artifact "$artifact" -report "$report" -manifest "$manifest" -sbom "$sbom" \
       $provenance_arg \
-      -evidence-root "$evidence_root" -module "$module" -provider "$provider"
+      -evidence-root "$evidence_root" -module "$module"
   else
     GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact \
       -artifact "$artifact" -report "$report" -manifest "$manifest" -sbom "$sbom" \

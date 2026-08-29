@@ -23,9 +23,21 @@ type helpSpec struct {
 
 var commandSpecs = []commandSpec{
 	{Usage: "boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall]"},
-	{Usage: "boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]"},
+	{Usage: "boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]"},
+	{Usage: "boetticher status [--site DIR] [--live] [--verbose] [--json]"},
+	{Usage: "boetticher module list|configure NAME|disable NAME [--site DIR] [--dry-run] [--json] [--confirm]"},
+	{Usage: "boetticher doctor [--site DIR] [--ssh-config PATH] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
+	{Usage: "boetticher update [--site DIR] [--dry-run] [--confirm]"},
+	{Usage: "boetticher help --advanced"},
+}
+
+var advancedCommandSpecs = []commandSpec{
+	{Usage: "boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall]"},
+	{Usage: "boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--record] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]"},
 	{Usage: "boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]"},
 	{Usage: "boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]"},
+	{Usage: "boetticher status [--site DIR] [--live] [--verbose] [--json]"},
+	{Usage: "boetticher update [--site DIR] [--dry-run] [--confirm]"},
 	{Usage: "boetticher logs [HOST] [--site DIR] [--unit UNIT] [--since DURATION] [--priority LEVEL] [--limit N]"},
 	{Usage: "boetticher aiops status [--site DIR] [--live] [--json]"},
 	{Usage: "boetticher verify [--site DIR] [--ssh-config PATH] [--ssh-journey] [--live]"},
@@ -57,13 +69,19 @@ var helpSpecs = map[string]helpSpec{
 		Usage: "boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall]", Purpose: "Create a concise v3 site repository, SOPS/Age metadata, and recovery state.", Arguments: "No positional arguments.", Options: "--site-dir selects the site directory; --age-identity selects the external Age identity; --external-firewall selects the operator-owned gateway contract.", Safety: "Creates local site and recovery files; it does not mutate Proxmox.", Examples: "boetticher init --site-dir ./my-boetticher", Related: "config validate, preflight, bootstrap",
 	},
 	"preflight": {
-		Usage: "boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]", Purpose: "Validate controller, Proxmox, hardware, configuration, and deployment safety prerequisites.", Arguments: "No positional arguments.", Options: "--live performs bounded target checks; --site selects the private site; --age-identity selects the external Age identity needed to validate encrypted credential reuse; bootstrap and SSH options identify the target.", Safety: "Read-only. Preflight performs no platform mutation.", Examples: "boetticher preflight --site ./my-boetticher --live", Related: "bootstrap, deploy --dry-run",
+		Usage: "boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--record] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]", Purpose: "Validate controller, Proxmox, hardware, configuration, and deployment safety prerequisites.", Arguments: "No positional arguments.", Options: "--live performs bounded target checks; --record explicitly persists approved physical discovery and requires --live; --site selects the private site; --age-identity selects the external Age identity needed to validate encrypted credential reuse; bootstrap and SSH options identify the target.", Safety: "Read-only unless --live --record is explicit. A live inspection without --record never mutates site state.", Examples: "boetticher preflight --site ./my-boetticher --live; boetticher preflight --site ./my-boetticher --live --record", Related: "bootstrap, deploy --dry-run",
 	},
 	"bootstrap": {
 		Usage: "boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]", Purpose: "Prepare Proxmox trust, bridges, storage, the temporary Linux builder, and qualified appliance artifacts.", Arguments: "No positional arguments.", Options: "--dry-run renders only; --recovery-confirmed confirms the independent Age recovery copy; --storage-confirmed confirms explicit dedicated-storage initialization.", Safety: "May change Proxmox bootstrap infrastructure and creates a temporary builder. Review the plan and recovery prerequisites before applying.", Examples: "boetticher bootstrap --site ./my-boetticher --recovery-confirmed", Related: "preflight, deploy, verify",
 	},
 	"deploy": {
 		Usage: "boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]", Purpose: "Make boetticher-owned platform resources match the complete resolved desired model.", Arguments: "No positional arguments.", Options: "--dry-run plans without mutation; --confirm authorizes destructive operations supported by the active providers, including replacement of an owned appliance rootfs when its declared persistent volumes can be retained; connection options select the Proxmox trust path.", Safety: "This is the sole public platform-application operation. It requires the temporary root SSH access established by bootstrap, uses the scoped Proxmox API token for lifecycle operations, and removes temporary root access after successful convergence. Review the plan before applying it; unowned occupants, invalid persistent-volume identities, and unsupported replacement conditions remain HOLD.", Examples: "boetticher deploy --site ./my-boetticher --dry-run; boetticher deploy --site ./my-boetticher --confirm", Related: "preflight, verify, doctor",
+	},
+	"status": {
+		Usage: "boetticher status [--site DIR] [--live] [--verbose] [--json]", Purpose: "Present the versioned semantic platform and module status model.", Arguments: "No positional arguments.", Options: "--live performs bounded read-only gateway evidence; --verbose includes detailed reasons and next actions; --json emits the versioned status model. Exit status is zero only for HEALTHY; FAILED, DEGRADED, and ACTION REQUIRED return non-zero. Disabled optional modules are excluded from the overall result.", Safety: "Read-only. Live transport and malformed evidence fail non-zero and are never reported as PASS.", Examples: "boetticher status --site ./my-boetticher; boetticher status --site ./my-boetticher --live --json", Related: "deploy, doctor, verify, dhcp",
+	},
+	"update": {
+		Usage: "boetticher update [--site DIR] [--dry-run] [--confirm]", Purpose: "Plan or atomically update compatible v3 desired state to platform 0.4.0 without deploying it.", Arguments: "No positional arguments.", Options: "--dry-run validates and prints the update without writing; --confirm authorizes the desired-state and projection update.", Safety: "Update never deploys. Failed projection refresh restores the original site.yml.", Examples: "boetticher update --site ./my-boetticher --dry-run; boetticher update --site ./my-boetticher --confirm", Related: "deploy, status, config validate",
 	},
 	"logs": {
 		Usage: "boetticher logs [HOST] [--site DIR] [--unit UNIT] [--since DURATION] [--priority LEVEL] [--limit N]", Purpose: "Read a bounded journal view through the central collector using the normal Proxmox bastion path.", Arguments: "HOST is a known boetticher-managed or retained endpoint; omitted HOST reads the collector-local journal.", Options: "--site selects the private site repository; --unit accepts a bounded systemd unit name such as blocky or blocky.service; --since accepts a positive duration up to 168h; --priority accepts a fixed journal priority; --limit is 1-500 and defaults to 100.", Safety: "Read-only. Output is bounded; there is no follow mode, TUI, arbitrary journal path, or query language. Central logging is asynchronous and not an availability dependency.", Examples: "boetticher logs lab-dns-01 --site ./my-boetticher --unit blocky --since 1h; boetticher logs lab-fw-01 --priority warning --limit 100", Related: "doctor, verify",
@@ -117,7 +135,7 @@ var helpSpecs = map[string]helpSpec{
 		Usage: "boetticher modules list|MODULE show|plan|configure|enable|disable|status|secrets|purge [--site DIR] [--dry-run] [--json] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]", Purpose: "Inspect or change first-party module intent and manage declared operator secrets through the shared registry and deploy engine.", Arguments: "MODULE is a registered first-party module. list retains the generic module inventory; lifecycle, configure, and secret commands use the same generic implementation.", Options: "--dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).", Safety: "tailnet-router, litellm, and printer are default-off. Configure changes desired state only and never deploys. Secret values are never displayed or accepted as command arguments.", Examples: "boetticher modules printer configure --site ./my-boetticher; boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher", Related: "config validate, deploy, doctor",
 	},
 	"config": {
-		Usage: "boetticher config validate|show|schema [--site DIR]", Purpose: "Validate, display, or locate the typed non-secret SiteConfig schema and resolved model.", Arguments: "validate, show, and schema select the read-only operation.", Options: "--site selects the private site repository; schema does not require a site directory.", Safety: "Read-only. Unknown fields, invalid providers, and mandatory-module disable attempts fail before infrastructure mutation.", Examples: "boetticher config validate --site ./my-boetticher; boetticher config schema", Related: "preflight, module list, deploy --dry-run",
+		Usage: "boetticher config validate|show|schema [--site DIR]", Purpose: "Validate, display, or locate the typed non-secret SiteConfig schema and resolved model.", Arguments: "validate, show, and schema select the read-only operation.", Options: "--site selects the private site repository; schema does not require a site directory.", Safety: "Read-only. Unknown fields, invalid configuration, and mandatory-module disable attempts fail before infrastructure mutation.", Examples: "boetticher config validate --site ./my-boetticher; boetticher config schema", Related: "preflight, module list, deploy --dry-run",
 	},
 	"portal": {
 		Usage: "boetticher portal build [--site DIR] [--output DIR] [--docs DIR]", Purpose: "Build the passive, non-secret generated portal from the resolved model and evidence.", Arguments: "build is the only portal operation.", Options: "--output selects the generated portal directory; --docs selects product documentation.", Safety: "Writes generated static content only; it does not provide executable module content or expose secrets.", Examples: "boetticher portal build --site ./my-boetticher", Related: "access, verify, doctor",
@@ -185,14 +203,14 @@ func CommandReferenceMarkdown() string {
 	document.WriteString("# Command reference\n\n")
 	document.WriteString("This reference is generated from the CLI command metadata. `deploy` is the only public platform-application command; inspection and planning commands are read-oriented unless they explicitly request confirmation.\n\n")
 	document.WriteString("## Usage\n\n```text\n")
-	for _, spec := range commandSpecs {
+	for _, spec := range advancedCommandSpecs {
 		document.WriteString(spec.Usage + "\n")
 	}
 	document.WriteString("```\n\n")
 
 	document.WriteString("## Command details\n\n")
 	writtenDetails := map[string]struct{}{}
-	for _, spec := range commandSpecs {
+	for _, spec := range advancedCommandSpecs {
 		path := commandPath(spec.Usage)
 		if _, written := writtenDetails[path]; written {
 			continue

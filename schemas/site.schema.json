@@ -44,16 +44,7 @@
     },
     "DNSModuleConfig": {
       "additionalProperties": false,
-      "properties": {
-        "provider": {
-          "default": "blocky",
-          "enum": [
-            "blocky",
-            "adguard"
-          ],
-          "type": "string"
-        }
-      },
+      "properties": {},
       "type": "object"
     },
     "Gateway": {
@@ -566,7 +557,7 @@
       "$ref": "#/$defs/PKIMetadata"
     },
     "platform_version": {
-      "const": "0.3.34",
+      "const": "0.4.0",
       "type": "string"
     },
     "schema_version": {

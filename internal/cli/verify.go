@@ -23,6 +23,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
+	statusmodel "github.com/gofastercloud/boetticher/internal/status"
 	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
@@ -152,10 +153,16 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 		fmt.Fprintln(out, "Logging                EXPECTED mandatory collector and asynchronous upload")
 	}
 	evidence := portal.Evidence{GeneratedAt: time.Now().UTC().Format(time.RFC3339), Results: results}
+	semanticChecks := make([]statusmodel.LegacyCheck, 0, len(results))
+	for _, result := range results {
+		semanticChecks = append(semanticChecks, statusmodel.LegacyCheck{Name: result.Name, Status: result.Status, Detail: result.Detail})
+	}
+	semantic := statusmodel.FromLegacy(revision, evidence.GeneratedAt, semanticChecks)
 	document := struct {
-		ModelRevision string          `json:"model_revision"`
-		Evidence      portal.Evidence `json:"evidence"`
-	}{ModelRevision: revision, Evidence: evidence}
+		ModelRevision string             `json:"model_revision"`
+		Evidence      portal.Evidence    `json:"evidence"`
+		Status        statusmodel.Report `json:"status"`
+	}{ModelRevision: revision, Evidence: evidence, Status: semantic}
 	data, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {
 		return err
@@ -163,21 +170,7 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err := writePublic(filepath.Join(*siteDir, "generated", "verification.json"), append(data, '\n')); err != nil {
 		return err
 	}
-	overall := "HEALTHY"
-	for _, result := range evidence.Results {
-		if result.Status == "FAIL" {
-			overall = "FAIL"
-			break
-		}
-		if result.Status == "NOT TESTED" || result.Status == "HOLD" || result.Status == "INCONCLUSIVE" {
-			overall = "PARTIAL"
-		}
-	}
-	if err := writeProjection(filepath.Join(*siteDir, "generated", "status.json"), struct {
-		ModelRevision string `json:"model_revision"`
-		Status        string `json:"status"`
-		GeneratedAt   string `json:"generated_at"`
-	}{revision, overall, evidence.GeneratedAt}); err != nil {
+	if err := writeProjection(filepath.Join(*siteDir, "generated", "status.json"), semantic); err != nil {
 		return err
 	}
 	if s.BootstrapAddress != "" {

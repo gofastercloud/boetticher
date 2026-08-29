@@ -421,14 +421,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 				return Plan{}, fmt.Errorf("HOLD: composed module guest %s has no declaration for module %s", component.Name, component.Module)
 			}
 			if guest.Artifact.Name == "" {
-				provider := ""
-				if component.Module == "dns" {
-					provider = s.ModuleConfig["dns"].Provider
-					if provider == "" {
-						provider = string(model.DNSProviderBlocky)
-					}
-				}
-				if artifact, artifactErr := artifacts.ArtifactFor(component.Module, provider); artifactErr == nil {
+				if artifact, artifactErr := artifacts.ArtifactFor(component.Module); artifactErr == nil {
 					guest.Artifact = artifact
 				}
 			}
@@ -524,7 +517,7 @@ func deploymentOrder(s model.Site, guest GuestPlan) int {
 }
 
 func artifactKey(artifact model.Artifact) string {
-	return strings.Join([]string{artifact.Name, artifact.Version, artifact.Provider, artifact.Architecture, artifact.Kind, artifact.DefinitionSHA256, artifact.ContentSHA256}, "|")
+	return strings.Join([]string{artifact.Name, artifact.Version, artifact.Architecture, artifact.Kind, artifact.DefinitionSHA256, artifact.ContentSHA256}, "|")
 }
 
 // ResolveQualifiedArtifacts binds every appliance in a Proxmox plan to

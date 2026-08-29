@@ -1,13 +1,20 @@
 # Operations
 
-The CLI owns the product lifecycle:
+The normal guided lifecycle is:
+
+```text
+init → deploy → status
+```
+
+The guarded bootstrap and inspection phases remain available for first setup,
+recovery, and qualification:
 
 ```text
 init → preflight → bootstrap → deploy → verify → doctor
                                       ↘ portal build
 ```
 
-Use `bootstrap-endpoint` to record the known HOME-side Proxmox address, `preflight --live` to discover and classify physical NICs, `ssh-config` to render the controller's internal deployment transport, `network trunk` for the guarded physical-trunk transition, and `pki` for client certificates and trust export. Routine administration of Core-managed appliances uses the Boetticher CLI, native product UI/API where appropriate, and generated portal/status surfaces; explicit Proxmox console/exec is the break-glass recovery path. The external firewall remains operator-managed through its own interface. The dedicated-data-disk layout is initialized as part of guarded `bootstrap`; `doctor --live` reports its Proxmox registrations and capacity. `upgrade` remains an explicit compatibility gate until schema and live migration qualification exists.
+Use `bootstrap-endpoint` to record the known HOME-side Proxmox address, `preflight --live` to discover and classify physical NICs, `ssh-config` to render the controller's internal deployment transport, `network trunk` for the guarded physical-trunk transition, and `pki` for client certificates and trust export. Routine administration of Core-managed appliances uses the Boetticher CLI, native product UI/API where appropriate, and generated portal/status surfaces; explicit Proxmox console/exec is the break-glass recovery path. The external firewall remains operator-managed through its own interface. The dedicated-data-disk layout is initialized as part of guarded `bootstrap`; `doctor --live` reports its Proxmox registrations and capacity. `update` is the desired-state planning path; `upgrade` remains a hidden compatibility gate where required.
 
 Managed `init`, `preflight`, and `bootstrap --dry-run` display the persisted
 `wan0` MAC. Reserve it in the existing upstream DHCP service before deploying.

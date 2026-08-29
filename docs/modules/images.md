@@ -29,7 +29,7 @@ content hash avoids creating the builder. Missing, stale, or mismatched build
 records require a fresh construction.
 
 The builder receives an artifact target list derived from the resolved plan.
-The base, enabled provider/module appliances, and managed firewall are built
+The base, enabled module appliances, and managed firewall are built
 and qualified; disabled optional modules such as Tailnet Router and LiteLLM
 are not constructed during the default workflow. The memory-heavy base and
 firewall stages run sequentially on the bounded builder; after they complete,
@@ -51,7 +51,7 @@ state and are ignored by initialized site repositories.
 ## Artifact build gate
 
 Definition SHA-256 identifies the deterministic recipe: module, version,
-provider, architecture, guest kind, base identity, and pinned build inputs.
+architecture, guest kind, base identity, and pinned build inputs.
 Content SHA-256 is the independently verified checksum of the actual built
 bytes. Deployment requires the expected definition identity, that verified
 content checksum, successful build smoke checks, a completed Trivy scan, and
