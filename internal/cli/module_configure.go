@@ -200,7 +200,8 @@ func runModuleConfigure(args []string, input io.Reader, out, errOut interface{ W
 		return fail(err)
 	}
 
-	updates, missing, err := configureSecrets(opts.siteDir, resolvedSite, proposedSite, opts.ageIdentity, input, errOut, opts.nonInteractive, opts.secrets)
+	dependencies := newlyEnabledDependencies(resolvedSite, proposedSite, name)
+	updates, missing, err := configureSecrets(opts.siteDir, resolvedSite, proposedSite, opts.ageIdentity, name, dependencies, input, errOut, opts.nonInteractive, opts.secrets)
 	if err != nil {
 		return fail(err)
 	}
@@ -208,7 +209,7 @@ func runModuleConfigure(args []string, input io.Reader, out, errOut interface{ W
 	if len(missing) > 0 {
 		return fail(fmt.Errorf("HOLD: required operator secrets are missing: %s", strings.Join(missing, ", ")))
 	}
-	report.Dependencies = newlyEnabledDependencies(resolvedSite, proposedSite, name)
+	report.Dependencies = dependencies
 	report.Changes = configureChanges(name, config, working, resolvedSite, proposedSite, fields, updates)
 	if len(report.Changes) == 0 {
 		report.Status = "NO_CHANGES"
@@ -526,11 +527,17 @@ func applyConfigurationField(config *model.SiteConfig, name string, field model.
 		if err := decodeObjectList(value, &values); err != nil {
 			return fmt.Errorf("%s must be a valid typed list", field.Key)
 		}
+		if err := validateObjectListCount(field, len(values)); err != nil {
+			return err
+		}
 		moduleConfig.Upstreams = values
 	case "models":
 		var values []model.LiteLLMModelConfig
 		if err := decodeObjectList(value, &values); err != nil {
 			return fmt.Errorf("%s must be a valid typed list", field.Key)
+		}
+		if err := validateObjectListCount(field, len(values)); err != nil {
+			return err
 		}
 		moduleConfig.Models = values
 	default:
@@ -563,6 +570,13 @@ func decodeObjectList(value string, target any) error {
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
 		return errors.New("object-list contains trailing values")
+	}
+	return nil
+}
+
+func validateObjectListCount(field model.ModuleConfigField, count int) error {
+	if count < field.MinItems || count > field.MaxItems {
+		return fmt.Errorf("%s requires between %d and %d entries", field.Key, field.MinItems, field.MaxItems)
 	}
 	return nil
 }
@@ -921,9 +935,16 @@ type configureOperatorSecret struct {
 	module      string
 }
 
-func configureSecrets(siteDir string, current, proposed model.Site, ageIdentity string, input io.Reader, errOut io.Writer, nonInteractive bool, supplied []string) (map[string]string, []string, error) {
+func configureSecrets(siteDir string, current, proposed model.Site, ageIdentity, module string, dependencies []string, input io.Reader, errOut io.Writer, nonInteractive bool, supplied []string) (map[string]string, []string, error) {
+	allowedModules := map[string]bool{module: true}
+	for _, dependency := range dependencies {
+		allowedModules[dependency] = true
+	}
 	operator := make(map[string]configureOperatorSecret)
 	for _, declaration := range proposed.Declarations {
+		if !allowedModules[declaration.Module] {
+			continue
+		}
 		for _, secret := range declaration.Secrets {
 			if secret.Generation == "operator-supplied" {
 				if existing, exists := operator[secret.Name]; exists && existing.module != declaration.Module {

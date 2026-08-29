@@ -229,8 +229,14 @@ func ValidateLiteLLMConfig(config ModuleConfig) error {
 	if len(config.Upstreams) == 0 {
 		return errors.New("modules.litellm.upstreams must contain at least one upstream")
 	}
+	if len(config.Upstreams) > 16 {
+		return errors.New("modules.litellm.upstreams must contain at most 16 upstreams")
+	}
 	if len(config.Models) == 0 {
 		return errors.New("modules.litellm.models must contain at least one explicit model alias")
+	}
+	if len(config.Models) > 32 {
+		return errors.New("modules.litellm.models must contain at most 32 model aliases")
 	}
 	upstreams := make(map[string]struct{}, len(config.Upstreams))
 	for _, upstream := range config.Upstreams {
