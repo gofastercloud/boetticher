@@ -44,6 +44,7 @@ type ModulesConfig struct {
 	LiteLLM       *LiteLLMModuleConfig   `yaml:"litellm,omitempty" json:"litellm,omitempty"`
 	Printer       *ToggleModuleConfig    `yaml:"printer,omitempty" json:"printer,omitempty"`
 	AIOps         *AIOpsModuleConfig     `yaml:"aiops,omitempty" json:"aiops,omitempty"`
+	Gatus         *ToggleModuleConfig    `yaml:"gatus,omitempty" json:"gatus,omitempty"`
 }
 
 // ModuleConfigField describes one operator-facing decision in a first-party
@@ -138,6 +139,9 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 	if m.AIOps != nil {
 		result["aiops"] = ModuleConfig{Enabled: cloneBool(m.AIOps.Enabled), ModelAlias: m.AIOps.ModelAlias}
 	}
+	if m.Gatus != nil {
+		result["gatus"] = ModuleConfig{Enabled: cloneBool(m.Gatus.Enabled)}
+	}
 	return result
 }
 
@@ -166,6 +170,9 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 	}
 	if config, ok := input["aiops"]; ok {
 		result.AIOps = &AIOpsModuleConfig{Enabled: cloneBool(config.Enabled), ModelAlias: config.ModelAlias}
+	}
+	if config, ok := input["gatus"]; ok {
+		result.Gatus = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	}
 	return result
 }
@@ -204,6 +211,8 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 			alias = m.AIOps.ModelAlias
 		}
 		m.AIOps = &AIOpsModuleConfig{Enabled: cloneBool(config.Enabled), ModelAlias: alias}
+	case "gatus":
+		m.Gatus = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	default:
 		return fmt.Errorf("modules.%s: unknown first-party module", name)
 	}

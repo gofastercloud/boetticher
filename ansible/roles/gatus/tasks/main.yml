@@ -1,0 +1,25 @@
+- name: Require qualified Gatus artifact
+  ansible.builtin.assert: {that: boetticher_appliance_artifact | default(false) | bool, fail_msg: "Gatus requires a qualified immutable appliance artifact"}
+- name: Install generated Gatus configuration
+  ansible.builtin.copy: {dest: /etc/boetticher/gatus/config.yaml, content: "{{ gatus_config }}", owner: root, group: gatus, mode: '0640'}
+  notify: restart gatus
+- name: Generate Gatus endpoint key and CSR
+  ansible.builtin.shell: "set -eu; install -d -m 0700 /var/lib/boetticher/identity/tls; test -e /var/lib/boetticher/identity/tls/gatus.key.pem || openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out /var/lib/boetticher/identity/tls/gatus.key.pem; test -e /var/lib/boetticher/identity/tls/gatus.csr.pem || openssl req -new -sha256 -key /var/lib/boetticher/identity/tls/gatus.key.pem -subj '/CN=gatus.{{ domain }}' -addext 'subjectAltName=DNS:gatus.{{ domain }},DNS:lab-gatus-01.{{ domain }}' -out /var/lib/boetticher/identity/tls/gatus.csr.pem"
+  args: {executable: /bin/sh}
+- name: Fetch Gatus CSR during PKI bootstrap
+  ansible.builtin.fetch: {src: /var/lib/boetticher/identity/tls/gatus.csr.pem, dest: "{{ pki_csr_output_dir }}/gatus.csr.pem", flat: true}
+  when: pki_bootstrap_phase | default(false) | bool
+- name: Require and install controller-issued Gatus certificate
+  ansible.builtin.copy: {dest: /var/lib/boetticher/identity/tls/gatus.crt.pem, content: "{{ gatus_server_cert_pem }}", owner: root, group: root, mode: '0644'}
+  when: gatus_server_cert_pem is defined and gatus_server_cert_pem | length > 0
+  no_log: true
+- name: Configure Gatus HTTPS frontend
+  ansible.builtin.copy: {dest: /etc/nginx/sites-available/gatus.conf, content: "server { listen 10.10.20.100:443 ssl; server_name gatus.{{ domain }} lab-gatus-01.{{ domain }}; ssl_certificate /var/lib/boetticher/identity/tls/gatus.crt.pem; ssl_certificate_key /var/lib/boetticher/identity/tls/gatus.key.pem; location / { proxy_pass http://127.0.0.1:8080; } }"}
+  when: gatus_server_cert_pem is defined and gatus_server_cert_pem | length > 0
+- name: Enable Gatus nginx site and services
+  ansible.builtin.file: {src: /etc/nginx/sites-available/gatus.conf, dest: /etc/nginx/sites-enabled/gatus.conf, state: link}
+  when: gatus_server_cert_pem is defined and gatus_server_cert_pem | length > 0
+- name: Enable Gatus and nginx
+  ansible.builtin.service: {name: "{{ item }}", enabled: true, state: started}
+  loop: [gatus, nginx]
+  when: gatus_server_cert_pem is defined and gatus_server_cert_pem | length > 0

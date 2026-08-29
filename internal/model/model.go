@@ -42,6 +42,7 @@ const (
 	DNS01VMID                   = 110
 	DNS02VMID                   = 111
 	MonitorVMID                 = 120
+	GatusVMID                   = 250
 	PortalVMID                  = 130
 	LoggingVMID                 = 140
 	BuilderVMID                 = 190
