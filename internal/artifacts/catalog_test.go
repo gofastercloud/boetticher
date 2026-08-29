@@ -1078,7 +1078,7 @@ func TestBuildSourceArchiveContainsBlockyRendererDependencies(t *testing.T) {
 		}
 		entries[header.Name] = true
 	}
-	for _, relative := range []string{"cmd/render-blocky-config/main.go", "internal/dns/recursive.go", "internal/dns/dns.go", "internal/modules/compose.go"} {
+	for _, relative := range []string{"cmd/render-blocky-config/main.go", "internal/dns/recursive.go", "internal/dns/dns.go", "internal/modules/compose.go", "internal/pathguard/pathguard.go"} {
 		if !entries[relative] {
 			t.Fatalf("transferred builder source is missing %s", relative)
 		}

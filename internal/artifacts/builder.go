@@ -72,6 +72,7 @@ var PublicBuildInputs = []string{
 	"internal/logging",
 	"internal/model",
 	"internal/modules",
+	"internal/pathguard",
 	"internal/usbexport",
 	"images",
 	"scripts/build-images.sh",
