@@ -27,7 +27,7 @@ boetticher firewall status|show|diff|counters|logs|verify|rule add|list|remove [
 boetticher dhcp status|leases [--site DIR] [--live] [--json]
 boetticher dhcp reservation add|list|remove [--site DIR] [--hostname NAME] [--address ADDRESS] [--mac MAC] [--vmid VMID] [--json]
 boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME] [--value VALUE] [--json]
-boetticher storage status|initialize [--site DIR] [--live] [--confirmed]
+boetticher storage status|initialize [--site DIR] [--live] [--storage-confirmed]
 boetticher module list|show|plan|configure|enable|disable|status [NAME] [--site DIR] [--dry-run] [--json] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher modules list|MODULE show|plan|configure|enable|disable|status|purge [--site DIR] [--dry-run] [--json] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher config validate|show|schema [--site DIR]
@@ -360,11 +360,11 @@ Related commands: dhcp, config validate, deploy
 
 Purpose: Inspect the Core-owned storage substrate or perform its explicitly confirmed initialization.
 
-Usage: `boetticher storage status|initialize [--site DIR] [--live] [--confirmed]`
+Usage: `boetticher storage status|initialize [--site DIR] [--live] [--storage-confirmed]`
 
 Arguments: status inspects; initialize prepares the configured dedicated data profile.
 
-Options: --live reads the Proxmox host; --confirmed authorizes fixed-device initialization.
+Options: --live reads the Proxmox host; --storage-confirmed authorizes fixed-device initialization.
 
 Safety: initialize can format the explicitly configured device. Modules cannot select disks or create VGs.
 
@@ -1194,11 +1194,11 @@ Related commands: access, verify, doctor
 
 Purpose: Inspect the Core-owned storage substrate or perform its explicitly confirmed initialization.
 
-Usage: `boetticher storage status|initialize [--site DIR] [--live] [--confirmed]`
+Usage: `boetticher storage status|initialize [--site DIR] [--live] [--storage-confirmed]`
 
 Arguments: status inspects; initialize prepares the configured dedicated data profile.
 
-Options: --live reads the Proxmox host; --confirmed authorizes fixed-device initialization.
+Options: --live reads the Proxmox host; --storage-confirmed authorizes fixed-device initialization.
 
 Safety: initialize can format the explicitly configured device. Modules cannot select disks or create VGs.
 
@@ -1210,11 +1210,11 @@ Related commands: bootstrap, deploy, doctor
 
 Purpose: Inspect the Core-owned storage substrate or perform its explicitly confirmed initialization.
 
-Usage: `boetticher storage status|initialize [--site DIR] [--live] [--confirmed]`
+Usage: `boetticher storage status|initialize [--site DIR] [--live] [--storage-confirmed]`
 
 Arguments: status inspects; initialize prepares the configured dedicated data profile.
 
-Options: --live reads the Proxmox host; --confirmed authorizes fixed-device initialization.
+Options: --live reads the Proxmox host; --storage-confirmed authorizes fixed-device initialization.
 
 Safety: initialize can format the explicitly configured device. Modules cannot select disks or create VGs.
 
