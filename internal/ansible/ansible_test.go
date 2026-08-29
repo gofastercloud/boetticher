@@ -411,6 +411,7 @@ func TestLoggingCollectorEnforcesClientRevocationAtTLSProxy(t *testing.T) {
 		"ssl_crl /var/lib/boetticher/identity/logging/client-ca.crl.pem;",
 		"ssl_verify_client on;",
 		"proxy_pass http://127.0.0.1:{{ logging_plan.collector_backend_port }};",
+		"notify: reload nginx",
 		"notify: restart journal query",
 		"Disable the socket-activated collector listener",
 	} {

@@ -103,7 +103,7 @@ func GenerateCRL(authority Authority, revocations []Revocation, now time.Time) (
 		RevokedCertificateEntries: entries,
 		Number:                    number,
 		ThisUpdate:                now,
-		NextUpdate:                now.Add(24 * time.Hour),
+		NextUpdate:                now.AddDate(10, 0, 0),
 	}, &issuer, issuingKey)
 	if err != nil {
 		return "", fmt.Errorf("create client certificate CRL: %w", err)
