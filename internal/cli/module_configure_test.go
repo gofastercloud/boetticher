@@ -169,7 +169,8 @@ func TestConfigureRejectsObjectListAboveSchemaMaximum(t *testing.T) {
 
 func TestConfigureAIOpsUsesOnlyDeclaredRouterAlias(t *testing.T) {
 	dir := t.TempDir()
-	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
+	identityPath, recipient := writeTestAgeIdentity(t)
+	config := model.ConfigFromSite(model.NewSite("installation", recipient, model.GatewayModeManaged))
 	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
 		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_key"}},
 		Models:    []model.LiteLLMModelConfig{{Alias: "operations", Upstream: "provider", Model: "provider/model"}},
@@ -178,16 +179,11 @@ func TestConfigureAIOpsUsesOnlyDeclaredRouterAlias(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "secrets"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "secrets", "boetticher.sops.yaml"), []byte("provider_key: present\n"), 0600); err != nil {
+	if err := site.StoreEncryptedDocument(dir, recipient, "secrets/boetticher.sops.yaml", map[string]string{"provider_key": "present"}); err != nil {
 		t.Fatal(err)
 	}
-	fakeBin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(fakeBin, "sops"), []byte("#!/bin/sh\nlast=\"\"\nfor arg do last=\"$arg\"; done\nif [ \"$1\" = \"--decrypt\" ]; then cat \"$last\"; else cat; fi\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	var output bytes.Buffer
-	if err := Run([]string{"module", "configure", "aiops", "--site", dir, "--enabled", "true", "--set", "model_alias=operations", "--json", "--age-identity", "identity"}, &output, &output); err != nil {
+	if err := Run([]string{"module", "configure", "aiops", "--site", dir, "--enabled", "true", "--set", "model_alias=operations", "--json", "--age-identity", identityPath}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	var report moduleConfigureReport
@@ -303,7 +299,8 @@ func TestConfigureRejectsPlatformOwnedSecretReference(t *testing.T) {
 
 func TestConfigureSecretsIgnoreUnrelatedModuleSecrets(t *testing.T) {
 	dir := t.TempDir()
-	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
+	identityPath, recipient := writeTestAgeIdentity(t)
+	config := model.ConfigFromSite(model.NewSite("installation", recipient, model.GatewayModeManaged))
 	enabled := true
 	config.Modules.Monitoring = &model.ToggleModuleConfig{Enabled: &enabled}
 	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
@@ -318,15 +315,10 @@ func TestConfigureSecretsIgnoreUnrelatedModuleSecrets(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "secrets"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "secrets", "boetticher.sops.yaml"), []byte("unrelated: keep\n"), 0600); err != nil {
+	if err := site.StoreEncryptedDocument(dir, recipient, "secrets/boetticher.sops.yaml", map[string]string{"unrelated": "keep"}); err != nil {
 		t.Fatal(err)
 	}
-	fakeBin := t.TempDir()
-	if err := os.WriteFile(filepath.Join(fakeBin, "sops"), []byte("#!/bin/sh\nlast=\"\"\nfor arg do last=\"$arg\"; done\nif [ \"$1\" = \"--decrypt\" ]; then cat \"$last\"; else cat; fi\n"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	updates, missing, err := configureSecrets(dir, current, current, "identity", "monitoring", nil, strings.NewReader(""), &bytes.Buffer{}, true, nil)
+	updates, missing, err := configureSecrets(dir, current, current, identityPath, "monitoring", nil, strings.NewReader(""), &bytes.Buffer{}, true, nil)
 	if err != nil {
 		t.Fatalf("unrelated LiteLLM secret blocked monitoring configure: %v", err)
 	}

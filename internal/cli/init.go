@@ -78,9 +78,11 @@ func runPreflight(args []string, out io.Writer) error {
 		return errors.New("boetticher V1 must run from a separate controller; run it from macOS or Linux, not on the target Proxmox host")
 	}
 	fmt.Fprintf(out, "Controller: PASS %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	sopsVersion, ageVersion := site.BundledEncryptionVersions()
+	fmt.Fprintf(out, "Encryption: PASS bundled SOPS %s / age %s\n", sopsVersion, ageVersion)
 	fmt.Fprintf(out, "Gateway upstream MAC: %s (create the matching upstream DHCP reservation)\n", s.Gateway.Upstream.MAC)
 	allPass := true
-	for _, tool := range []string{"ssh", "age-keygen", "sops", "ansible", "ansible-playbook"} {
+	for _, tool := range []string{"ssh", "ansible", "ansible-playbook"} {
 		path, err := exec.LookPath(tool)
 		if err != nil {
 			allPass = false

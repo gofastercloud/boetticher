@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"filippo.io/age"
 )
 
 func TestSafeSitePathRejectsEscapes(t *testing.T) {
@@ -56,16 +58,12 @@ func TestInitialSiteGitignoreExcludesArtifactRuntime(t *testing.T) {
 }
 
 func TestCreateAgeIdentityReusesExistingIdentity(t *testing.T) {
-	toolDir := t.TempDir()
-	toolPath := filepath.Join(toolDir, "age-keygen")
-	tool := "#!/bin/sh\n[ \"$1\" = \"-y\" ] || exit 1\nprintf '%s\\n' age1existingrecipient\n"
-	if err := os.WriteFile(toolPath, []byte(tool), 0o755); err != nil {
+	identityPath := filepath.Join(t.TempDir(), "identity.txt")
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", toolDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-
-	identityPath := filepath.Join(t.TempDir(), "identity.txt")
-	original := []byte("existing identity")
+	original := []byte(identity.String() + "\n")
 	if err := os.WriteFile(identityPath, original, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +72,7 @@ func TestCreateAgeIdentityReusesExistingIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reuse existing Age identity: %v", err)
 	}
-	if recipient != "age1existingrecipient" {
+	if recipient != identity.Recipient().String() {
 		t.Fatalf("recipient = %q, want existing identity recipient", recipient)
 	}
 	got, err := os.ReadFile(identityPath)

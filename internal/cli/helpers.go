@@ -382,14 +382,6 @@ func validateToolVersion(tool, version string) error {
 		if !strings.Contains(version, "OpenSSH") {
 			return fmt.Errorf("unrecognized OpenSSH version")
 		}
-	case "age-keygen":
-		if !strings.HasPrefix(version, "v") {
-			return fmt.Errorf("unrecognized Age version")
-		}
-	case "sops":
-		if !strings.HasPrefix(version, "sops ") {
-			return fmt.Errorf("unrecognized SOPS version")
-		}
 	case "ansible":
 		if !strings.HasPrefix(version, "ansible [core ") {
 			return fmt.Errorf("Ansible Core is required")
