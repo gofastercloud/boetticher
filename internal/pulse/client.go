@@ -154,6 +154,9 @@ func newClient(config ClientConfig) (*Client, error) {
 	if parsedBaseURL.Scheme != "https" && config.HTTP == nil {
 		return nil, errors.New("Pulse production client requires an HTTPS base URL")
 	}
+	if config.HTTP != nil && (config.CAFile != "" || config.CAPEM != "" || config.ClientCertPEM != "" || config.ClientKeyPEM != "" || config.ServerName != "") {
+		return nil, errors.New("custom Pulse HTTP client cannot be combined with explicit TLS configuration")
+	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{
 		MinVersion: tls.VersionTLS12,

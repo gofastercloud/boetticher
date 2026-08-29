@@ -129,6 +129,22 @@ func TestReadAPIRejectsMissingTokenAndMalformedResponses(t *testing.T) {
 	}
 }
 
+func TestCustomHTTPClientCannotOverrideExplicitTLSConfiguration(t *testing.T) {
+	for _, config := range []ClientConfig{
+		{CAPEM: "custom-ca", HTTP: &http.Client{}},
+		{CAFile: "/tmp/custom-ca.pem", HTTP: &http.Client{}},
+		{ClientCertPEM: "custom-cert", HTTP: &http.Client{}},
+		{ClientKeyPEM: "custom-key", HTTP: &http.Client{}},
+		{ServerName: "pulse.example.test", HTTP: &http.Client{}},
+	} {
+		config.BaseURL = "https://monitor.example.test"
+		config.APIToken = "read-token"
+		if _, err := NewReadClient(config); err == nil || !strings.Contains(err.Error(), "custom Pulse HTTP client") {
+			t.Fatalf("TLS configuration was accepted with a custom client: %v", err)
+		}
+	}
+}
+
 func TestAPIErrorDoesNotEchoConfiguredToken(t *testing.T) {
 	client, err := NewReadClient(ClientConfig{
 		BaseURL: "https://monitor.example.test", APIToken: "read-token",

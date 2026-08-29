@@ -4,8 +4,8 @@ import "testing"
 
 func TestFromLegacyUsesExactEvidenceAndOperatorVocabulary(t *testing.T) {
 	report := FromLegacy("revision", "2026-08-29T00:00:00Z", []LegacyCheck{
-		{Name: "static model", Status: "STATIC PASS", Detail: "source check"},
-		{Name: "live gateway", Status: "NOT TESTED", Detail: "requires deployed journey"},
+		{Name: "static model", Status: "STATIC PASS", Detail: "source check", Tier: TierLocal},
+		{Name: "live gateway", Status: "NOT TESTED", Detail: "requires deployed journey", Tier: TierJourney},
 	})
 	if report.StatusModelVersion != ModelVersion || report.OverallState != ActionRequired {
 		t.Fatalf("unexpected report metadata: %#v", report)
@@ -15,6 +15,13 @@ func TestFromLegacyUsesExactEvidenceAndOperatorVocabulary(t *testing.T) {
 	}
 	if report.Checks[1].Evidence != NOTTESTED || report.Checks[1].State != ActionRequired || report.Checks[1].Tier != TierJourney {
 		t.Fatalf("not-tested journey was not represented safely: %#v", report.Checks[1])
+	}
+}
+
+func TestFromLegacyDoesNotInferEvidenceTierFromDetail(t *testing.T) {
+	report := FromLegacy("revision", "now", []LegacyCheck{{Name: "gateway", Status: "NOT TESTED", Detail: "requires deployed journey"}})
+	if report.Checks[0].Tier != TierLocal {
+		t.Fatalf("evidence tier was inferred from prose: %#v", report.Checks[0])
 	}
 }
 

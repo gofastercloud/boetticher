@@ -637,14 +637,14 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 
 func (s Site) Normalize() Site {
 	copySite := s
-	copySite.Network.Zones = append([]Zone(nil), s.Network.Zones...)
+	copySite.Network.Zones = cloneZones(s.Network.Zones)
 	copySite.Gateway.Publish = append([]GatewayPublication(nil), s.Gateway.Publish...)
-	copySite.Components = append([]Component(nil), s.Components...)
-	copySite.Modules = append([]ResolvedModule(nil), s.Modules...)
+	copySite.Components = cloneComponents(s.Components)
+	copySite.Modules = cloneResolvedModules(s.Modules)
 	copySite.ModuleConfig = cloneModuleConfig(s.ModuleConfig)
-	copySite.Declarations = append([]ModuleDeclaration(nil), s.Declarations...)
+	copySite.Declarations = cloneModuleDeclarations(s.Declarations)
 	copySite.USBExports = append([]USBExportBinding(nil), s.USBExports...)
-	copySite.RetainedModules = append([]RetainedModule(nil), s.RetainedModules...)
+	copySite.RetainedModules = cloneRetainedModules(s.RetainedModules)
 	copySite.DHCPReservations = append([]DHCPReservation(nil), s.DHCPReservations...)
 	copySite.DNSRecords = append([]UserDNSRecord(nil), s.DNSRecords...)
 	copySite.UserFirewallRules = append([]UserFirewallRule(nil), s.UserFirewallRules...)
@@ -713,6 +713,82 @@ func (s Site) Normalize() Site {
 		})
 	}
 	return copySite
+}
+
+func cloneZones(input []Zone) []Zone {
+	output := append([]Zone(nil), input...)
+	for i := range output {
+		output[i].DNSAddresses = append([]string(nil), input[i].DNSAddresses...)
+		output[i].NTPAddresses = append([]string(nil), input[i].NTPAddresses...)
+	}
+	return output
+}
+
+func cloneComponents(input []Component) []Component {
+	output := append([]Component(nil), input...)
+	for i := range output {
+		output[i].DNSAliases = append([]string(nil), input[i].DNSAliases...)
+		output[i].Tags = append([]string(nil), input[i].Tags...)
+	}
+	return output
+}
+
+func cloneResolvedModules(input []ResolvedModule) []ResolvedModule {
+	output := append([]ResolvedModule(nil), input...)
+	for i := range output {
+		output[i].DependsOn = append([]string(nil), input[i].DependsOn...)
+		output[i].Requires = append([]string(nil), input[i].Requires...)
+		output[i].Provides = append([]string(nil), input[i].Provides...)
+	}
+	return output
+}
+
+func cloneModuleDeclarations(input []ModuleDeclaration) []ModuleDeclaration {
+	output := append([]ModuleDeclaration(nil), input...)
+	for i := range output {
+		declaration := &output[i]
+		declaration.Guests = cloneComponents(input[i].Guests)
+		declaration.Persistent = append([]PersistentState(nil), input[i].Persistent...)
+		declaration.Volumes = append([]PersistentVolumeDeclaration(nil), input[i].Volumes...)
+		declaration.Secrets = append([]SecretDeclaration(nil), input[i].Secrets...)
+		declaration.NetworkIntents = append([]NetworkIntent(nil), input[i].NetworkIntents...)
+		for j := range declaration.NetworkIntents {
+			declaration.NetworkIntents[j].Ports = append([]string(nil), input[i].NetworkIntents[j].Ports...)
+		}
+		declaration.DNSRecords = append([]DNSRecord(nil), input[i].DNSRecords...)
+		declaration.Certificates = append([]CertificateRequest(nil), input[i].Certificates...)
+		for j := range declaration.Certificates {
+			declaration.Certificates[j].SANs = append([]string(nil), input[i].Certificates[j].SANs...)
+		}
+		declaration.Monitoring = append([]MonitoringDeclaration(nil), input[i].Monitoring...)
+		for j := range declaration.Monitoring {
+			declaration.Monitoring[j].Checks = append([]string(nil), input[i].Monitoring[j].Checks...)
+		}
+		declaration.Backups = append([]BackupDeclaration(nil), input[i].Backups...)
+		declaration.Portal = append([]PortalEntry(nil), input[i].Portal...)
+		for j := range declaration.Portal {
+			declaration.Portal[j].URLs = append([]string(nil), input[i].Portal[j].URLs...)
+			declaration.Portal[j].Docs = append([]string(nil), input[i].Portal[j].Docs...)
+		}
+		declaration.Security.Devices = append([]DeviceRequirement(nil), input[i].Security.Devices...)
+		declaration.Security.Capabilities = append([]string(nil), input[i].Security.Capabilities...)
+		declaration.USBRequirements = append([]USBRequirement(nil), input[i].USBRequirements...)
+		for j := range declaration.USBRequirements {
+			declaration.USBRequirements[j].AllowedIdentities = append([]USBIdentity(nil), input[i].USBRequirements[j].AllowedIdentities...)
+		}
+		declaration.AdvertisedRoutes = append([]string(nil), input[i].AdvertisedRoutes...)
+		declaration.ReturnRouting = append([]string(nil), input[i].ReturnRouting...)
+	}
+	return output
+}
+
+func cloneRetainedModules(input []RetainedModule) []RetainedModule {
+	output := append([]RetainedModule(nil), input...)
+	for i := range output {
+		output[i].Guests = cloneComponents(input[i].Guests)
+		output[i].Persistent = append([]PersistentState(nil), input[i].Persistent...)
+	}
+	return output
 }
 
 func (s Site) validateUSBExports() error {

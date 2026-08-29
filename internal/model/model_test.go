@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -23,6 +24,37 @@ func TestRevisionIsIndependentOfComponentOrder(t *testing.T) {
 	}
 	if a != b {
 		t.Fatalf("revisions differ for equivalent component sets: %s != %s", a, b)
+	}
+}
+
+func TestNormalizeDoesNotMutateNestedInputSlices(t *testing.T) {
+	site := NewDefaultSite("installation", "age1example")
+	site.Network.Zones[1].DNSAddresses = []string{"10.10.10.11", "10.10.10.10"}
+	site.Components[0].DNSAliases = []string{"z-alias", "a-alias"}
+	site.Components[0].Tags = []string{"z-tag", "a-tag"}
+	site.Modules = []ResolvedModule{{Name: "module", DependsOn: []string{"z", "a"}, Requires: []string{"r"}, Provides: []string{"p"}}}
+	site.Declarations = []ModuleDeclaration{{
+		Module:          "module",
+		Guests:          []Component{{Name: "guest", DNSAliases: []string{"z", "a"}}},
+		NetworkIntents:  []NetworkIntent{{Ports: []string{"443", "80"}}},
+		Certificates:    []CertificateRequest{{SANs: []string{"z.example", "a.example"}}},
+		Portal:          []PortalEntry{{URLs: []string{"https://z.example", "https://a.example"}, Docs: []string{"z.md", "a.md"}}},
+		Security:        GuestSecurityDeclaration{Devices: []DeviceRequirement{{Name: "device"}}, Capabilities: []string{"CAP_B", "CAP_A"}},
+		USBRequirements: []USBRequirement{{AllowedIdentities: []USBIdentity{{VendorID: "0002", ProductID: "0002"}}}},
+	}}
+	site.RetainedModules = []RetainedModule{{Guests: []Component{{DNSAliases: []string{"retained"}}}}}
+	site.UserFirewallRules = []UserFirewallRule{{ID: "rule", Protocol: "TCP", Ports: []string{"443", "80"}}}
+	before, err := json.Marshal(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = site.Normalize()
+	after, err := json.Marshal(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("Normalize mutated its input: before=%s after=%s", before, after)
 	}
 }
 
