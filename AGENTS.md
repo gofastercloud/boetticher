@@ -41,8 +41,10 @@ unsafe or generic control-plane changes.
 ## Security and lifecycle
 
 - Fail closed on trust, ownership, destructive, ambiguous, malformed, and
-  incomplete states. Preserve `PASS`, `FAIL`, `HOLD`, `NOT TESTED`, and
-  `INCONCLUSIVE` as evidence semantics.
+  incomplete states. Preserve rich evidence and failure semantics internally.
+  Human-facing asserted checks and operations are binary: `PASS` or `FAIL`; do
+  not expose `HOLD`, `NOT TESTED`, `INCONCLUSIVE`, `PARTIAL`, `UNKNOWN`, or
+  equivalent evidence states as operator results.
 - Preserve strict SSH host identity and authenticated bootstrap enrollment.
   Preserve SOPS/Age ownership; secrets never enter argv, logs, JSON, portal
   output, generated public docs, or plaintext temporary files.
@@ -63,6 +65,9 @@ unsafe or generic control-plane changes.
   generic managers, providers, plugin frameworks, and stringly typed state
   without a concrete current need. Propagate contexts through I/O and process
   boundaries and execute direct argv.
+- Fix defects at the narrowest existing ownership boundary. Do not introduce a
+  generalized abstraction solely to solve one qualification finding; generalize
+  only when multiple concrete current consumers require it.
 - Add focused regression tests for behavior or security fixes. Use strict fakes
   at external boundaries and preserve negative and lifecycle coverage.
 - Run `make ci` before handoff. Report local, remote, deployed, journey, and
