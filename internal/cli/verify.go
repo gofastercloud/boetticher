@@ -19,6 +19,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
+	"github.com/gofastercloud/boetticher/internal/pathguard"
 	"github.com/gofastercloud/boetticher/internal/portal"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/pulse"
@@ -751,7 +752,7 @@ func checkAgeIdentity(path string) error {
 }
 
 func checkSOPSBoundary(siteDir string, s model.Site) error {
-	config, err := os.ReadFile(filepath.Join(siteDir, ".sops.yaml"))
+	config, err := pathguard.ReadFileLimited(filepath.Join(siteDir, ".sops.yaml"), site.MaxEncryptedDocumentBytes)
 	if err != nil {
 		return err
 	}
@@ -759,7 +760,7 @@ func checkSOPSBoundary(siteDir string, s model.Site) error {
 		return errors.New(".sops.yaml must contain only the public Age recipient")
 	}
 	secretDir := filepath.Join(siteDir, "secrets")
-	entries, err := os.ReadDir(secretDir)
+	entries, err := pathguard.ReadDir(secretDir)
 	if err != nil {
 		return err
 	}
@@ -769,7 +770,7 @@ func checkSOPSBoundary(siteDir string, s model.Site) error {
 			continue
 		}
 		found = true
-		data, err := os.ReadFile(filepath.Join(secretDir, entry.Name()))
+		data, err := pathguard.ReadFileLimited(filepath.Join(secretDir, entry.Name()), site.MaxEncryptedDocumentBytes)
 		if err != nil {
 			return err
 		}

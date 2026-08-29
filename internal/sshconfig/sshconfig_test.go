@@ -135,6 +135,17 @@ func TestReadAndCopyKnownHostKeyBindsBootstrapAlias(t *testing.T) {
 	}
 }
 
+func TestValidateBootstrapAddressRequiresCanonicalIPv4(t *testing.T) {
+	for _, address := range []string{"proxmox.example", "192.0.2.10:8006", " 192.0.2.10", "2001:db8::10", "192.0.2.010"} {
+		if err := ValidateBootstrapAddress(address); err == nil {
+			t.Fatalf("non-canonical bootstrap address %q was accepted", address)
+		}
+	}
+	if err := ValidateBootstrapAddress("192.0.2.10"); err != nil {
+		t.Fatalf("canonical bootstrap address was rejected: %v", err)
+	}
+}
+
 func TestValidateExecutionConfigRejectsCommandDirectives(t *testing.T) {
 	for _, directive := range []string{"ProxyCommand", `"ProxyCommand"`} {
 		path := filepath.Join(t.TempDir(), "boetticher.conf")
