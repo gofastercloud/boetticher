@@ -57,6 +57,13 @@ func PurgeModule(ctx context.Context, client *Client, plan Plan, module string) 
 		if purgeErr != nil {
 			return fmt.Errorf("purge module guest %s: %w", guest.Name, purgeErr)
 		}
+		kind, _, verifyErr := client.GuestConfig(ctx, plan.Node, guest.VMID)
+		if verifyErr == nil {
+			return fmt.Errorf("HOLD: module guest %s still exists after purge as %s", guest.Name, kind)
+		}
+		if !IsNotFound(verifyErr) {
+			return fmt.Errorf("HOLD: verify module guest %s was removed: %w", guest.Name, verifyErr)
+		}
 	}
 	return nil
 }

@@ -1,6 +1,7 @@
 package site
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
@@ -24,6 +25,8 @@ import (
 var ErrPlatformSecretMissing = errors.New("encrypted platform secret is missing")
 
 var platformSecretName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
+
+const externalCommandTimeout = 30 * time.Second
 
 func Load(dir string) (model.Site, error) {
 	config, err := LoadConfig(dir)
@@ -298,10 +301,15 @@ func StoreEncryptedDocument(dir, recipient, relativePath string, document any) e
 		return fmt.Errorf("encode encrypted document: %w", err)
 	}
 	plaintext = append(plaintext, '\n')
-	command := exec.Command("sops", "--encrypt", "--age", recipient, "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
+	ctx, cancel := context.WithTimeout(context.Background(), externalCommandTimeout)
+	defer cancel()
+	command := exec.CommandContext(ctx, "sops", "--encrypt", "--age", recipient, "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
 	command.Stdin = strings.NewReader(string(plaintext))
 	encrypted, err := command.Output()
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return errors.New("encrypt document with SOPS: command timed out")
+		}
 		return fmt.Errorf("encrypt document with SOPS: %w", err)
 	}
 	return atomicWrite(path, encrypted, 0600)
@@ -323,12 +331,17 @@ func LoadEncryptedDocument(dir, ageIdentityPath, relativePath string) (map[strin
 	if err != nil {
 		return nil, fmt.Errorf("read encrypted document: %w", err)
 	}
-	command := exec.Command("sops", "--decrypt", "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
+	ctx, cancel := context.WithTimeout(context.Background(), externalCommandTimeout)
+	defer cancel()
+	command := exec.CommandContext(ctx, "sops", "--decrypt", "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
 	command.Env = envWithout("SOPS_AGE_KEY_FILE")
 	command.Env = append(command.Env, "SOPS_AGE_KEY_FILE="+identity)
 	command.Stdin = strings.NewReader(string(encrypted))
 	plaintext, err := command.Output()
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, errors.New("decrypt encrypted document with SOPS: command timed out")
+		}
 		return nil, fmt.Errorf("decrypt encrypted document with SOPS: %w", err)
 	}
 	document, err := model.ParseDocument(plaintext)
@@ -374,8 +387,13 @@ func createAgeIdentity(path string) (string, error) {
 		return "", fmt.Errorf("age-keygen is required to initialize secrets: %w", err)
 	}
 	if _, err := os.Stat(path); err == nil {
-		output, err := exec.Command(ageKeygen, "-y", path).Output()
+		ctx, cancel := context.WithTimeout(context.Background(), externalCommandTimeout)
+		defer cancel()
+		output, err := exec.CommandContext(ctx, ageKeygen, "-y", path).Output()
 		if err != nil {
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return "", errors.New("read existing Age identity: command timed out")
+			}
 			return "", fmt.Errorf("read existing Age identity: %w", err)
 		}
 		recipient := strings.TrimSpace(string(output))
@@ -386,9 +404,14 @@ func createAgeIdentity(path string) (string, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
-	command := exec.Command(ageKeygen)
+	ctx, cancel := context.WithTimeout(context.Background(), externalCommandTimeout)
+	defer cancel()
+	command := exec.CommandContext(ctx, ageKeygen)
 	output, err := command.Output()
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", errors.New("generate Age identity: command timed out")
+		}
 		return "", fmt.Errorf("generate Age identity: %w", err)
 	}
 	recipient := ""

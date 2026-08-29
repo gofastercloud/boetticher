@@ -201,6 +201,16 @@ func TestRegistryRejectsMalformedConfigurationField(t *testing.T) {
 	}
 }
 
+func TestRegistryRejectsDuplicateModuleDefinitions(t *testing.T) {
+	registry := NewRegistry([]ModuleDefinition{
+		{Name: "duplicate", Version: "1", Policy: DefaultOff},
+		{Name: "duplicate", Version: "2", Policy: DefaultOff},
+	})
+	if err := registry.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate module definition") {
+		t.Fatalf("duplicate module definitions were accepted: %v", err)
+	}
+}
+
 func TestAIOpsRequiresDeclaredLiteLLMAliasAndComposesReadOnlyBoundary(t *testing.T) {
 	config := testConfig(model.GatewayModeManaged)
 	enabled := true

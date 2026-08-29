@@ -4,13 +4,16 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/aiops"
@@ -52,6 +55,12 @@ func main() {
 }
 
 func run() error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runWithContext(ctx)
+}
+
+func runWithContext(ctx context.Context) error {
 	credentials := os.Getenv("CREDENTIALS_DIRECTORY")
 	webhook, err := aiops.ReadCredential(credentials, "webhook-secret")
 	if err != nil {
@@ -151,20 +160,64 @@ func run() error {
 		{"model broker", modelBrokerServer(broker.RouterHandler()), routerListener},
 		{"AIOps listener", externalServer, tls.NewListener(externalListener, &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{certificate}})},
 	}
-	serveErrors := make(chan error, len(servers))
+	type serveResult struct {
+		name string
+		err  error
+	}
+	serveResults := make(chan serveResult, len(servers))
 	for _, configured := range servers {
+		configured := configured
 		go func() {
 			err := configured.server.Serve(configured.listener)
-			if err == nil || err == http.ErrServerClosed {
-				serveErrors <- fmt.Errorf("%s stopped unexpectedly", configured.name)
-				return
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				err = fmt.Errorf("%s failed: %w", configured.name, err)
 			}
-			serveErrors <- fmt.Errorf("%s failed: %w", configured.name, err)
+			serveResults <- serveResult{name: configured.name, err: err}
 		}()
 	}
-	go runWorker(worker)
-	go runPulseOperations(store, worker, pulse)
-	return <-serveErrors
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		runWorker(runCtx, worker)
+	}()
+	pulseDone := make(chan struct{})
+	go func() {
+		defer close(pulseDone)
+		runPulseOperations(runCtx, store, worker, pulse)
+	}()
+
+	var runErr error
+	select {
+	case result := <-serveResults:
+		if result.err == nil {
+			runErr = fmt.Errorf("%s stopped unexpectedly", result.name)
+		} else {
+			runErr = result.err
+		}
+	case <-ctx.Done():
+	}
+	cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	for _, configured := range servers {
+		if err := configured.server.Shutdown(shutdownCtx); err != nil && runErr == nil {
+			runErr = fmt.Errorf("shutdown %s: %w", configured.name, err)
+		}
+	}
+	for range servers {
+		result := <-serveResults
+		if result.err != nil && runErr == nil {
+			runErr = result.err
+		}
+	}
+	<-workerDone
+	<-pulseDone
+	if errors.Is(runErr, context.Canceled) {
+		return nil
+	}
+	return runErr
 }
 
 func boundedServer(handler http.Handler) *http.Server {
@@ -175,18 +228,20 @@ func modelBrokerServer(handler http.Handler) *http.Server {
 	return &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: aiops.MaxInvestigationTime + time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 * 1024}
 }
 
-func runPulseOperations(store *aiops.Store, worker *aiops.Worker, pulse aiops.PulseClient) {
+func runPulseOperations(ctx context.Context, store *aiops.Store, worker *aiops.Worker, pulse aiops.PulseClient) {
 	poll := time.NewTicker(60 * time.Second)
 	notes := time.NewTicker(time.Second)
 	defer poll.Stop()
 	defer notes.Stop()
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case now := <-poll.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-			alerts, err := pulse.ActiveAlerts(ctx)
+			operationCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			alerts, err := pulse.ActiveAlerts(operationCtx)
 			if err == nil {
-				resolved, reconcileErr := store.Reconcile(ctx, alerts, now)
+				resolved, reconcileErr := store.Reconcile(operationCtx, alerts, now)
 				if reconcileErr == nil {
 					for _, incidentID := range resolved {
 						worker.Cancel(incidentID)
@@ -195,34 +250,36 @@ func runPulseOperations(store *aiops.Store, worker *aiops.Worker, pulse aiops.Pu
 			}
 			cancel()
 		case <-notes.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			note, ok, err := store.NextPendingNote(ctx)
+			operationCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			note, ok, err := store.NextPendingNote(operationCtx)
 			if err == nil && ok {
-				delivered := pulse.WriteNote(ctx, note) == nil
+				delivered := pulse.WriteNote(operationCtx, note) == nil
 				errorCode := ""
 				if !delivered {
 					errorCode = "delivery_failed"
 				}
-				_ = store.RecordNoteAttempt(ctx, note, delivered, errorCode)
+				_ = store.RecordNoteAttempt(operationCtx, note, delivered, errorCode)
 			}
 			cancel()
 		}
 	}
 }
 
-func runWorker(worker *aiops.Worker) {
+func runWorker(ctx context.Context, worker *aiops.Worker) {
 	ticker := time.NewTicker(time.Second)
 	prune := time.NewTicker(24 * time.Hour)
 	defer ticker.Stop()
 	defer prune.Stop()
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case <-ticker.C:
-			if _, err := worker.RunOnce(context.Background()); err != nil {
+			if _, err := worker.RunOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				fmt.Fprintln(os.Stderr, "AIOps worker transition failed")
 			}
 		case now := <-prune.C:
-			if err := worker.Store.Prune(context.Background(), now); err != nil {
+			if err := worker.Store.Prune(ctx, now); err != nil && !errors.Is(err, context.Canceled) {
 				fmt.Fprintln(os.Stderr, "AIOps retention prune failed")
 			}
 		}
