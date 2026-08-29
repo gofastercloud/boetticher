@@ -14,8 +14,10 @@ these journeys.
    artifacts and firewall-first order, then apply `deploy`. Supply
    `--confirm` only when the plan identifies a supported destructive action
    that explicitly requires confirmation.
-4. Prove `ssh firewall`, `ssh dns01`, `ssh monitor`, and `ssh portal` through
-   the Proxmox bastion.
+4. Confirm the supported operator boundary: use the Boetticher CLI and native
+   product interfaces for routine administration; reserve explicit Proxmox
+   console/exec for break-glass recovery. Internal deployment SSH remains an
+   implementation transport and is not an operator administration gate.
 5. Confirm VM 100 has WAN plus six tagged zone vNICs and that it is the
    qualified boetticher firewall appliance.
 6. Prove Kea leases, PowerDNS DDNS, secondary replication, and both DNS/NTP
