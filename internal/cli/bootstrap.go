@@ -118,8 +118,8 @@ func runBootstrap(args []string, out io.Writer) error {
 		return errors.New("bootstrap endpoint is not configured; use boetticher bootstrap-endpoint set ADDRESS first")
 	}
 	if !*dryRun {
-		if _, err := os.Stat(model.ExpandUserPath(*ageIdentity)); err != nil {
-			return fmt.Errorf("Age identity is not available at %s: %w", model.ExpandUserPath(*ageIdentity), err)
+		if err := site.ValidateAgeIdentity(*ageIdentity, s.SecretMetadata.AgeRecipient); err != nil {
+			return fmt.Errorf("HOLD: Age identity is not usable for this site: %w", err)
 		}
 		if !*recoveryConfirmed {
 			return errors.New("destructive bootstrap requires --recovery-confirmed after an independent Age recovery copy is secured")
@@ -218,7 +218,7 @@ func runBootstrap(args []string, out io.Writer) error {
 			return fmt.Errorf("create scoped Proxmox API credentials: %w", createErr)
 		}
 		credentials = site.ProxmoxCredentials{APIUser: "labadmin@pve", TokenID: "boetticher", TokenSecret: tokenSecret}
-		if err := site.StoreProxmoxCredentials(*siteDir, s, credentials); err != nil {
+		if err := site.StoreProxmoxCredentials(*siteDir, s, *ageIdentity, credentials); err != nil {
 			return fmt.Errorf("store Proxmox credentials in SOPS: %w", err)
 		}
 	}

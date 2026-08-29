@@ -424,6 +424,10 @@ func UpdatePlatformSecrets(dir string, s model.Site, ageIdentityPath string, upd
 			return fmt.Errorf("platform secret %s has an empty or invalid value", key)
 		}
 	}
+	recipient, err := validatedAgeRecipient(ageIdentityPath, s.SecretMetadata.AgeRecipient)
+	if err != nil {
+		return fmt.Errorf("validate Age identity for encrypted platform secret update: %w", err)
+	}
 	values, err := LoadEncryptedDocument(dir, ageIdentityPath, filepath.Join("secrets", "boetticher.sops.yaml"))
 	if err != nil {
 		return fmt.Errorf("load encrypted platform secrets: %w", err)
@@ -431,7 +435,7 @@ func UpdatePlatformSecrets(dir string, s model.Site, ageIdentityPath string, upd
 	for key, value := range updates {
 		values[key] = value
 	}
-	return StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), values)
+	return StoreEncryptedDocument(dir, recipient, filepath.Join("secrets", "boetticher.sops.yaml"), values)
 }
 
 // PlatformSecretPresence reports only whether each requested key has a
@@ -458,6 +462,10 @@ func RemovePlatformSecrets(dir string, s model.Site, ageIdentityPath string, key
 	if len(keys) == 0 {
 		return false, errors.New("at least one platform secret is required")
 	}
+	recipient, err := validatedAgeRecipient(ageIdentityPath, s.SecretMetadata.AgeRecipient)
+	if err != nil {
+		return false, fmt.Errorf("validate Age identity for encrypted platform secret removal: %w", err)
+	}
 	values, err := LoadEncryptedDocument(dir, ageIdentityPath, filepath.Join("secrets", "boetticher.sops.yaml"))
 	if err != nil {
 		return false, err
@@ -475,7 +483,7 @@ func RemovePlatformSecrets(dir string, s model.Site, ageIdentityPath string, key
 	if !changed {
 		return false, nil
 	}
-	if err := StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), values); err != nil {
+	if err := StoreEncryptedDocument(dir, recipient, filepath.Join("secrets", "boetticher.sops.yaml"), values); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -490,6 +498,10 @@ func PurgeModuleSecrets(dir string, s model.Site, ageIdentityPath string, module
 	if err != nil || len(owned) == 0 {
 		return err
 	}
+	recipient, err := validatedAgeRecipient(ageIdentityPath, s.SecretMetadata.AgeRecipient)
+	if err != nil {
+		return fmt.Errorf("validate Age identity for encrypted module secret purge: %w", err)
+	}
 	values, err := LoadEncryptedDocument(dir, ageIdentityPath, filepath.Join("secrets", "boetticher.sops.yaml"))
 	if err != nil {
 		return fmt.Errorf("load encrypted platform secrets for module %s purge: %w", module, err)
@@ -498,7 +510,7 @@ func PurgeModuleSecrets(dir string, s model.Site, ageIdentityPath string, module
 	if !changed {
 		return nil
 	}
-	if err := StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), values); err != nil {
+	if err := StoreEncryptedDocument(dir, recipient, filepath.Join("secrets", "boetticher.sops.yaml"), values); err != nil {
 		return fmt.Errorf("store encrypted platform secrets after module %s purge: %w", module, err)
 	}
 	return nil
