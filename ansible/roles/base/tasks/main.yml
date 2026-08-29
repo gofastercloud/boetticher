@@ -80,6 +80,13 @@
   ansible.builtin.meta: flush_handlers
   when: inventory_hostname not in groups.get('proxmox', [])
 
+- name: Disable the restricted Chrony service in appliances
+  ansible.builtin.service:
+    name: chronyd-restricted.service
+    enabled: false
+    state: stopped
+  when: inventory_hostname not in groups.get('proxmox', [])
+
 - name: Enable chrony
   ansible.builtin.service:
     name: chrony

@@ -518,6 +518,10 @@ func TestBaseRoleRunsChronyWithoutKernelClockControlInAppliances(t *testing.T) {
 		"content: \"[Unit]\\nAfter=network-online.target\\nWants=network-online.target\\nConditionCapability=\\n\"",
 		"dest: /etc/systemd/system/chrony.service.d/boetticher.conf",
 		"notify: reload systemd",
+		"- name: Disable the restricted Chrony service in appliances",
+		"name: chronyd-restricted.service",
+		"enabled: false",
+		"state: stopped",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("base role missing %q", expected)
