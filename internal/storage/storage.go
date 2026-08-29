@@ -194,10 +194,7 @@ func InitializationCommand(device string, confirmed bool) (string, error) {
 }
 
 func validateDevice(device string) error {
-	if !strings.HasPrefix(device, "/dev/disk/by-id/") || strings.ContainsAny(device, "\r\n'\" \t") {
-		return errors.New("dedicated storage requires a stable /dev/disk/by-id device identity")
-	}
-	return nil
+	return model.ValidateStableDevice(device)
 }
 
 func shellQuote(value string) string {

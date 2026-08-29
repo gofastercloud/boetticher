@@ -399,6 +399,30 @@ func TestLoggingCollectorKeyIsReadableByItsServiceUser(t *testing.T) {
 	}
 }
 
+func TestLoggingCollectorEnforcesClientRevocationAtTLSProxy(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "logging", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"client-ca.crl.pem",
+		"ssl_crl /var/lib/boetticher/identity/logging/client-ca.crl.pem;",
+		"ssl_verify_client on;",
+		"proxy_pass http://127.0.0.1:{{ logging_plan.collector_backend_port }};",
+		"notify: restart journal query",
+		"Disable the socket-activated collector listener",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("logging collector TLS revocation boundary is missing %q", expected)
+		}
+	}
+	if strings.Contains(text, "Enable the socket-activated collector listener") || strings.Contains(text, "--listen-https=-3") {
+		t.Fatal("logging collector still exposes the direct socket-activated TLS listener")
+	}
+}
+
 func TestLoggingUploadKeyIsReadableByItsServiceGroup(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
@@ -684,7 +708,7 @@ func TestMonitoringRoleUsesExistingTLSBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(tasks) + string(template)
-	for _, expected := range []string{"monitor_server_cert_pem", "client_ca_pem", "ssl_verify_client optional", "if ($ssl_client_verify != SUCCESS) { return 403; }", "proxy_pass http://127.0.0.1:7655"} {
+	for _, expected := range []string{"monitor_server_cert_pem", "client_ca_pem", "client_crl_pem", "ssl_crl /etc/boetticher/tls/client-ca.crl.pem", "ssl_verify_client optional", "if ($ssl_client_verify != SUCCESS) { return 403; }", "proxy_pass http://127.0.0.1:7655"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("monitoring role missing TLS/frontend contract %q", expected)
 		}

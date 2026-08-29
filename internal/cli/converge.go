@@ -157,6 +157,15 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if err != nil {
 		return fmt.Errorf("load platform CA chain: %w", err)
 	}
+	revocations, err := site.LoadClientRevocations(*siteDir)
+	if err != nil {
+		return fmt.Errorf("HOLD: load client revocations: %w", err)
+	}
+	clientCRL, err := pki.GenerateCRL(authority, revocations, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("HOLD: generate enforceable client revocation list: %w", err)
+	}
+	runtimeVariables["client_crl_pem"] = clientCRL
 	var pulseAdminPassword string
 	if monitoringEnabled {
 		var loadErr error

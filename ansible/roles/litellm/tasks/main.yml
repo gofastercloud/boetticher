@@ -109,6 +109,8 @@
   ansible.builtin.assert:
     that:
       - client_ca_pem is defined
+      - client_crl_pem is defined
+      - client_crl_pem | length > 0
       - (pki_bootstrap_phase | default(false) | bool) or (litellm_server_cert_pem is defined and litellm_server_cert_pem | length > 0)
     fail_msg: "LiteLLM nginx requires the existing Boetticher PKI server certificate and client CA"
   no_log: true
@@ -127,6 +129,17 @@
   when: litellm_server_cert_pem | default('') | length > 0
   notify: reload nginx
 
+- name: Install the current client certificate revocation list for LiteLLM mTLS
+  ansible.builtin.copy:
+    dest: /var/lib/boetticher/identity/tls/client-ca.crl.pem
+    content: "{{ client_crl_pem }}"
+    owner: root
+    group: root
+    mode: '0644'
+  no_log: true
+  notify: reload nginx
+  when: litellm_server_cert_pem | default('') | length > 0
+
 - name: Configure nginx as the only LiteLLM listener
   ansible.builtin.copy:
     dest: /etc/nginx/sites-available/litellm.conf
@@ -140,6 +153,7 @@
           ssl_certificate /var/lib/boetticher/identity/tls/litellm.crt.pem;
           ssl_certificate_key /var/lib/boetticher/identity/tls/litellm.key.pem;
           ssl_client_certificate /var/lib/boetticher/identity/tls/client-ca.pem;
+          ssl_crl /var/lib/boetticher/identity/tls/client-ca.crl.pem;
           ssl_verify_client on;
           ssl_protocols TLSv1.2 TLSv1.3;
           location = /v1/chat/completions {

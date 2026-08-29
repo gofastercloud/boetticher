@@ -29,6 +29,7 @@ type ClientCertificate struct {
 	CertPEM     string
 	ChainPEM    string
 	Fingerprint string
+	Serial      string
 }
 
 type ServerCertificate struct {
@@ -141,6 +142,7 @@ func signClientCSR(authority Authority, csrPEM, name, wanted string, now time.Ti
 	return ClientCertificate{
 		Name: name, CertPEM: marshalCert(der), ChainPEM: marshalCert(der) + authority.IssuingCertPEM,
 		Fingerprint: fmt.Sprintf("sha256:%x", fingerprint[:]),
+		Serial:      template.SerialNumber.Text(16),
 	}, nil
 }
 
@@ -186,6 +188,7 @@ func GenerateAuthority(now time.Time, domain string) (Authority, error) {
 		return Authority{}, err
 	}
 	rootTemplate.MaxPathLen = 1
+	rootTemplate.SubjectKeyId = publicKeyIdentifier(&rootKey.PublicKey)
 	rootCert, err := x509.CreateCertificate(rand.Reader, rootTemplate, rootTemplate, &rootKey.PublicKey, rootKey)
 	if err != nil {
 		return Authority{}, err
@@ -200,6 +203,7 @@ func GenerateAuthority(now time.Time, domain string) (Authority, error) {
 		return Authority{}, err
 	}
 	issuingTemplate.Issuer = rootTemplate.Subject
+	issuingTemplate.SubjectKeyId = publicKeyIdentifier(&issuingKey.PublicKey)
 	issuingCert, err := x509.CreateCertificate(rand.Reader, issuingTemplate, rootTemplate, &issuingKey.PublicKey, rootKey)
 	if err != nil {
 		return Authority{}, err
@@ -245,6 +249,7 @@ func IssueClient(authority Authority, name, domain string, now time.Time) (Clien
 		CertPEM:     marshalCert(der),
 		ChainPEM:    marshalCert(der) + authority.IssuingCertPEM,
 		Fingerprint: fmt.Sprintf("sha256:%x", fingerprint[:]),
+		Serial:      template.SerialNumber.Text(16),
 	}, nil
 }
 
@@ -274,6 +279,15 @@ func Encode(value string) string { return base64.StdEncoding.EncodeToString([]by
 func Decode(value string) (string, error) {
 	data, err := base64.StdEncoding.DecodeString(value)
 	return string(data), err
+}
+
+func publicKeyIdentifier(key any) []byte {
+	der, err := x509.MarshalPKIXPublicKey(key)
+	if err != nil {
+		return nil
+	}
+	hash := sha256.Sum256(der)
+	return append([]byte(nil), hash[:20]...)
 }
 
 func certificateTemplate(commonName string, now time.Time, isCA bool) (*x509.Certificate, error) {

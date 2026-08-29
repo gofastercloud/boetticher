@@ -5,8 +5,12 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"math/big"
 	"reflect"
 	"testing"
+	"time"
+
+	"github.com/gofastercloud/boetticher/internal/pki"
 )
 
 func TestVerifyQueryClientRequiresExactAIOpsIdentity(t *testing.T) {
@@ -17,6 +21,37 @@ func TestVerifyQueryClientRequiresExactAIOpsIdentity(t *testing.T) {
 		if err := VerifyQueryClient(tls.ConnectionState{PeerCertificates: []*x509.Certificate{{Subject: pkix.Name{CommonName: identity}}}}); err == nil {
 			t.Fatalf("identity %q was accepted", identity)
 		}
+	}
+}
+
+func TestVerifyQueryClientWithCRLRejectsOnlyRevokedSerial(t *testing.T) {
+	crl := &x509.RevocationList{RevokedCertificateEntries: []x509.RevocationListEntry{{SerialNumber: big.NewInt(7)}}}
+	valid := tls.ConnectionState{PeerCertificates: []*x509.Certificate{{SerialNumber: big.NewInt(8), Subject: pkix.Name{CommonName: AIOpsLogClientIdentity}}}}
+	if err := VerifyQueryClientWithCRL(valid, crl); err != nil {
+		t.Fatal(err)
+	}
+	revoked := valid
+	revoked.PeerCertificates = []*x509.Certificate{{SerialNumber: big.NewInt(7), Subject: pkix.Name{CommonName: AIOpsLogClientIdentity}}}
+	if err := VerifyQueryClientWithCRL(revoked, crl); err == nil {
+		t.Fatal("revoked journal query certificate was accepted")
+	}
+}
+
+func TestParseVerifiedCRLRequiresTrustedCurrentCRL(t *testing.T) {
+	now := time.Date(2026, time.August, 29, 0, 0, 0, 0, time.UTC)
+	authority, err := pki.GenerateAuthority(now, "lab.home.arpa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	crlPEM, err := pki.GenerateCRL(authority, nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseVerifiedCRL(crlPEM, authority.RootCertPEM+authority.IssuingCertPEM, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseVerifiedCRL(crlPEM, authority.RootCertPEM, now.Add(time.Minute)); err == nil {
+		t.Fatal("CRL signed by the issuing CA was accepted without the issuing CA")
 	}
 }
 

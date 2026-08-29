@@ -131,15 +131,7 @@ func monitoringAgentCredentialBindings(site model.Site) ([]deploymentCredential,
 }
 
 func credentialName(reference string) string {
-	var b strings.Builder
-	for _, character := range strings.ToLower(reference) {
-		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
-			b.WriteRune(character)
-		} else {
-			b.WriteByte('-')
-		}
-	}
-	return b.String()
+	return model.LiteLLMSecretReferenceID(reference)
 }
 
 // credentialDropIns returns non-secret systemd projections grouped by

@@ -93,9 +93,40 @@ const (
 var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
 var networkPortPattern = regexp.MustCompile(`^[0-9]{1,5}(?:-[0-9]{1,5})?$`)
 var providerModelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$`)
-var secretReferencePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
 var usbPortPattern = regexp.MustCompile(`^[0-9]+-[0-9]+(?:\.[0-9]+)*$`)
 var usbIDPattern = regexp.MustCompile(`^[0-9a-f]{4}$`)
+
+var liteLLMSecretReferencePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
+
+// ValidateStableDevice accepts only one direct stable-device entry. Keeping
+// the suffix to a single path component prevents lexical dot segments or
+// repeated separators from resolving to a transient /dev device.
+func ValidateStableDevice(device string) error {
+	const prefix = "/dev/disk/by-id/"
+	if !strings.HasPrefix(device, prefix) {
+		return errors.New("dedicated storage requires a stable /dev/disk/by-id device identity")
+	}
+	suffix := strings.TrimPrefix(device, prefix)
+	if suffix == "" || strings.ContainsAny(suffix, "/\\\r\n'\" \t") || suffix == "." || suffix == ".." {
+		return errors.New("dedicated storage requires a direct stable /dev/disk/by-id device identity")
+	}
+	return nil
+}
+
+// LiteLLMSecretReferenceID is the one credential identity used by the
+// controller-side credential path and the Ansible environment projection.
+// Validation rejects distinct source references that share this identity.
+func LiteLLMSecretReferenceID(reference string) string {
+	var b strings.Builder
+	for _, character := range strings.ToLower(reference) {
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
+			b.WriteRune(character)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	return b.String()
+}
 
 // ModuleOwnershipTag returns the single Proxmox-safe ownership proof used for
 // every first-party module guest. Invalid names return an empty tag so callers
@@ -763,8 +794,8 @@ func (s Site) Validate() error {
 		return fmt.Errorf("unsupported storage_profile %q", s.StorageProfile)
 	}
 	if s.StorageProfile == "dedicated-data-disk" {
-		if !strings.HasPrefix(s.StorageDevice, "/dev/disk/by-id/") || strings.ContainsAny(s.StorageDevice, "\r\n'\" \t") {
-			return errors.New("dedicated-data-disk requires a stable /dev/disk/by-id device identity")
+		if err := ValidateStableDevice(s.StorageDevice); err != nil {
+			return err
 		}
 	} else if s.StorageDevice != "" {
 		return errors.New("storage_device is only valid for dedicated-data-disk")
@@ -889,41 +920,8 @@ func (s Site) Validate() error {
 	seenComponents := map[string]bool{}
 	seenVMIDs := map[int]string{}
 	for _, m := range s.Components {
-		if m.Name == "" || m.Hostname == "" || m.Address == "" || m.Zone == "" {
-			return fmt.Errorf("component %q is missing name, hostname, zone, or address", m.Name)
-		}
-		for field, value := range map[string]string{"name": m.Name, "hostname": m.Hostname, "zone": m.Zone, "ssh_user": m.SSHUser} {
-			if value != "" && !modelTokenPattern.MatchString(value) {
-				return fmt.Errorf("component %s has unsafe %s", m.Name, field)
-			}
-		}
-		for _, alias := range m.DNSAliases {
-			if !modelTokenPattern.MatchString(alias) {
-				return fmt.Errorf("component %s has unsafe DNS alias %q", m.Name, alias)
-			}
-		}
-		seenTags := map[string]bool{}
-		for _, tag := range m.Tags {
-			if !modelTokenPattern.MatchString(tag) || tag != strings.ToLower(tag) {
-				return fmt.Errorf("component %s has unsafe tag %q", m.Name, tag)
-			}
-			if seenTags[tag] {
-				return fmt.Errorf("component %s has duplicate tag %q", m.Name, tag)
-			}
-			seenTags[tag] = true
-		}
-		if m.ProductOwned {
-			for _, requiredTag := range []string{TagBoetticher, TagManaged} {
-				if !seenTags[requiredTag] {
-					return fmt.Errorf("platform component %s is missing required tag %q", m.Name, requiredTag)
-				}
-			}
-			if m.VMID != 0 && m.Backup && !seenTags[TagBackup] {
-				return fmt.Errorf("platform guest %s is marked for backup but is missing required tag %q", m.Name, TagBackup)
-			}
-		}
-		if strings.ContainsAny(m.Role+m.URL, "\r\n") {
-			return fmt.Errorf("component %s contains a newline in generated metadata", m.Name)
+		if err := m.Validate(); err != nil {
+			return err
 		}
 		if seenComponents[m.Name] {
 			return fmt.Errorf("duplicate component %q", m.Name)
@@ -1030,6 +1028,49 @@ func (s Site) Validate() error {
 	}
 	if err := validateDeclarations(s); err != nil {
 		return err
+	}
+	return nil
+}
+
+// Validate checks component fields that are safe to reuse in projections,
+// diagnostics, and remote command arguments. Site.Validate adds collection-
+// level ownership, address, VMID, and collision checks.
+func (m Component) Validate() error {
+	if m.Name == "" || m.Hostname == "" || m.Address == "" || m.Zone == "" {
+		return fmt.Errorf("component %q is missing name, hostname, zone, or address", m.Name)
+	}
+	for field, value := range map[string]string{"name": m.Name, "hostname": m.Hostname, "zone": m.Zone, "ssh_user": m.SSHUser} {
+		if value != "" && !modelTokenPattern.MatchString(value) {
+			return fmt.Errorf("component %s has unsafe %s", m.Name, field)
+		}
+	}
+	for _, alias := range m.DNSAliases {
+		if !modelTokenPattern.MatchString(alias) {
+			return fmt.Errorf("component %s has unsafe DNS alias %q", m.Name, alias)
+		}
+	}
+	seenTags := map[string]bool{}
+	for _, tag := range m.Tags {
+		if !modelTokenPattern.MatchString(tag) || tag != strings.ToLower(tag) {
+			return fmt.Errorf("component %s has unsafe tag %q", m.Name, tag)
+		}
+		if seenTags[tag] {
+			return fmt.Errorf("component %s has duplicate tag %q", m.Name, tag)
+		}
+		seenTags[tag] = true
+	}
+	if m.ProductOwned {
+		for _, requiredTag := range []string{TagBoetticher, TagManaged} {
+			if !seenTags[requiredTag] {
+				return fmt.Errorf("platform component %s is missing required tag %q", m.Name, requiredTag)
+			}
+		}
+		if m.VMID != 0 && m.Backup && !seenTags[TagBackup] {
+			return fmt.Errorf("platform guest %s is marked for backup but is missing required tag %q", m.Name, TagBackup)
+		}
+	}
+	if strings.ContainsAny(m.Role+m.URL, "\r\n") {
+		return fmt.Errorf("component %s contains a newline in generated metadata", m.Name)
 	}
 	return nil
 }

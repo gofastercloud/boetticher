@@ -18,6 +18,8 @@
   ansible.builtin.assert:
     that:
       - client_ca_pem is defined
+      - client_crl_pem is defined
+      - client_crl_pem | length > 0
       - (pki_bootstrap_phase | default(false) | bool) or (monitor_server_cert_pem is defined and monitor_server_cert_pem | length > 0)
     fail_msg: "Pulse mTLS requires controller-issued server and client-CA material"
   no_log: true
@@ -103,6 +105,17 @@
   ansible.builtin.copy:
     content: "{{ client_ca_pem }}"
     dest: /etc/boetticher/tls/client-ca.pem
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload nginx
+  no_log: true
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Install the current client certificate revocation list for Pulse mTLS
+  ansible.builtin.copy:
+    content: "{{ client_crl_pem }}"
+    dest: /etc/boetticher/tls/client-ca.crl.pem
     owner: root
     group: root
     mode: '0644'

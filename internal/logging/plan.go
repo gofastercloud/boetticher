@@ -3,36 +3,39 @@ package logging
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 const (
-	CollectorName      = "lab-log-01"
-	CollectorAddress   = "10.10.10.40"
-	CollectorPort      = 19532
-	RemoteJournalPath  = "/var/log/journal/remote"
-	CollectorVolumeGiB = 10
-	CollectorMaxUse    = "8G"
-	CollectorKeepFree  = "1G"
-	LocalJournalMaxUse = "256M"
+	CollectorName        = "lab-log-01"
+	CollectorAddress     = "10.10.10.40"
+	CollectorPort        = 19532
+	CollectorBackendPort = 19534
+	RemoteJournalPath    = "/var/log/journal/remote"
+	CollectorVolumeGiB   = 10
+	CollectorMaxUse      = "8G"
+	CollectorKeepFree    = "1G"
+	LocalJournalMaxUse   = "256M"
 )
 
 type Plan struct {
-	ModelRevision       string   `json:"model_revision"`
-	Collector           string   `json:"collector"`
-	CollectorAddress    string   `json:"collector_address"`
-	CollectorURL        string   `json:"collector_url"`
-	CollectorPort       int      `json:"collector_port"`
-	RemoteJournalPath   string   `json:"remote_journal_path"`
-	SplitMode           string   `json:"split_mode"`
-	MaxUse              string   `json:"max_use"`
-	KeepFree            string   `json:"keep_free"`
-	LocalJournalMaxUse  string   `json:"local_journal_max_use"`
-	Sources             []string `json:"sources"`
-	SourceUnitsOptional bool     `json:"source_units_optional"`
-	MTLS                bool     `json:"mtls"`
+	ModelRevision        string   `json:"model_revision"`
+	Collector            string   `json:"collector"`
+	CollectorAddress     string   `json:"collector_address"`
+	CollectorURL         string   `json:"collector_url"`
+	CollectorPort        int      `json:"collector_port"`
+	CollectorBackendPort int      `json:"collector_backend_port"`
+	RemoteJournalPath    string   `json:"remote_journal_path"`
+	SplitMode            string   `json:"split_mode"`
+	MaxUse               string   `json:"max_use"`
+	KeepFree             string   `json:"keep_free"`
+	LocalJournalMaxUse   string   `json:"local_journal_max_use"`
+	Sources              []string `json:"sources"`
+	SourceUnitsOptional  bool     `json:"source_units_optional"`
+	MTLS                 bool     `json:"mtls"`
 }
 
 func PlanFromSite(s model.Site) (Plan, error) {
@@ -59,7 +62,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	sort.Strings(sources)
 	return Plan{
 		ModelRevision: revision, Collector: CollectorName, CollectorAddress: CollectorAddress,
-		CollectorURL: "https://logs." + s.Network.Domain + ":19532", CollectorPort: CollectorPort,
+		CollectorURL: "https://logs." + s.Network.Domain + ":19532", CollectorPort: CollectorPort, CollectorBackendPort: CollectorBackendPort,
 		RemoteJournalPath: RemoteJournalPath, SplitMode: "host", MaxUse: CollectorMaxUse,
 		KeepFree: CollectorKeepFree, LocalJournalMaxUse: LocalJournalMaxUse, Sources: sources,
 		SourceUnitsOptional: true, MTLS: true,
@@ -69,16 +72,13 @@ func PlanFromSite(s model.Site) (Plan, error) {
 func CollectorConfiguration(plan Plan) string {
 	return strings.Join([]string{
 		"[Remote]", "Seal=true", "SplitMode=" + plan.SplitMode,
-		"ServerKeyFile=/var/lib/boetticher/identity/logging/collector.key",
-		"ServerCertificateFile=/var/lib/boetticher/identity/logging/collector.crt",
-		"TrustedCertificateFile=/var/lib/boetticher/identity/logging/ca.crt",
 		"MaxUse=" + plan.MaxUse, "KeepFree=" + plan.KeepFree,
 	}, "\n") + "\n"
 }
 
 func CollectorServiceOverride(plan Plan) string {
 	return strings.Join([]string{
-		"[Service]", "LogsDirectory=", "ReadWritePaths=" + plan.RemoteJournalPath, "ExecStart=", "ExecStart=/usr/lib/systemd/systemd-journal-remote --listen-https=-3 --output=" + plan.RemoteJournalPath,
+		"[Service]", "LogsDirectory=", "ReadWritePaths=" + plan.RemoteJournalPath, "ExecStart=", "ExecStart=/usr/lib/systemd/systemd-journal-remote --listen-http=127.0.0.1:" + strconv.Itoa(plan.CollectorBackendPort) + " --output=" + plan.RemoteJournalPath,
 	}, "\n") + "\n"
 }
 

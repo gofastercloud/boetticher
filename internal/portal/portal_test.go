@@ -33,6 +33,67 @@ func TestExternalPortalDoesNotPublishManagedGatewayOrBackupID(t *testing.T) {
 	}
 }
 
+func TestPortalRejectsSymlinkedOutputParentBeforePublication(t *testing.T) {
+	dir := t.TempDir()
+	external := t.TempDir()
+	sentinel := filepath.Join(external, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(dir, "generated")); err != nil {
+		t.Fatal(err)
+	}
+	err := Build(model.NewDefaultSite("installation", "age1example"), filepath.Join(dir, "generated", "portal"), "", Evidence{}, networkmodel.Discovery{Mode: model.ModeVirtualOnly}, time.Unix(0, 0))
+	if err == nil {
+		t.Fatal("portal accepted a symlinked output parent")
+	}
+	got, readErr := os.ReadFile(sentinel)
+	if readErr != nil || string(got) != "keep" {
+		t.Fatalf("external portal sentinel changed: %q, %v", got, readErr)
+	}
+}
+
+func TestPortalRejectsSymlinkedPreviousTree(t *testing.T) {
+	dir := t.TempDir()
+	output := filepath.Join(dir, "portal")
+	if err := Build(model.NewDefaultSite("installation", "age1example"), output, "", Evidence{}, networkmodel.Discovery{Mode: model.ModeVirtualOnly}, time.Unix(0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	external := t.TempDir()
+	sentinel := filepath.Join(external, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, output+".previous"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Build(model.NewDefaultSite("installation", "age1example"), output, "", Evidence{}, networkmodel.Discovery{Mode: model.ModeVirtualOnly}, time.Unix(0, 0)); err == nil {
+		t.Fatal("portal accepted a symlinked previous tree")
+	}
+	got, readErr := os.ReadFile(sentinel)
+	if readErr != nil || string(got) != "keep" {
+		t.Fatalf("external previous sentinel changed: %q, %v", got, readErr)
+	}
+}
+
+func TestPortalRejectsSymlinkedSourceDocument(t *testing.T) {
+	dir := t.TempDir()
+	docs := filepath.Join(dir, "docs")
+	if err := os.Mkdir(docs, 0700); err != nil {
+		t.Fatal(err)
+	}
+	external := filepath.Join(t.TempDir(), "outside.md")
+	if err := os.WriteFile(external, []byte("outside"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(docs, "runbook.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Build(model.NewDefaultSite("installation", "age1example"), filepath.Join(dir, "portal"), docs, Evidence{}, networkmodel.Discovery{Mode: model.ModeVirtualOnly}, time.Unix(0, 0)); err == nil {
+		t.Fatal("portal accepted a symlinked source document")
+	}
+}
+
 func TestManagedPortalPublishesGatewayDetails(t *testing.T) {
 	dir := t.TempDir()
 	site := model.NewDefaultSite("installation", "age1example")
