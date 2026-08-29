@@ -1,6 +1,9 @@
 package firewall
 
 import (
+	"errors"
+	"fmt"
+	"net"
 	"reflect"
 	"strings"
 	"testing"
@@ -210,7 +213,18 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ruleset, err := RenderNFT(plan)
+	ruleset, err := renderNFTWithResolver(plan, func(host string) ([]net.IP, error) {
+		if host == "openrouter.ai" {
+			return []net.IP{net.ParseIP("198.51.100.11"), net.ParseIP("198.51.100.10")}, nil
+		}
+		if host == "controlplane.tailscale.com" {
+			return []net.IP{net.ParseIP("198.51.100.30")}, nil
+		}
+		if host == "derp.tailscale.com" {
+			return []net.IP{net.ParseIP("198.51.100.31")}, nil
+		}
+		return nil, fmt.Errorf("unexpected endpoint %s", host)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +234,8 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 		"10.10.5.10/32 ip daddr 10.10.10.20/32 tcp dport 443",
 		"10.10.10.20/32 ip daddr 10.10.99.5/32 tcp dport 8006",
 		"10.10.99.5/32 ip daddr 10.10.10.40/32 tcp dport 19532",
-		"10.10.20.60/32 ip daddr openrouter.ai tcp dport 443",
+		"set boetticher_endpoint_2 { type ipv4_addr; elements = { 198.51.100.10, 198.51.100.11 } }",
+		"10.10.20.60/32 ip daddr @boetticher_endpoint_2 tcp dport 443",
 		"set module_guest_sources { type ipv4_addr; elements = {",
 		"10.10.10.20, 10.10.20.60, 10.10.5.10",
 		"iifname \"servers0\" ip saddr != @module_guest_sources oifname \"wan0\"",
@@ -266,7 +281,15 @@ func TestDistinctLiteLLMUpstreamsHaveDistinctSemanticCounterIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ruleset, err := RenderNFT(plan)
+	ruleset, err := renderNFTWithResolver(plan, func(host string) ([]net.IP, error) {
+		if host == "openrouter.ai" {
+			return []net.IP{net.ParseIP("198.51.100.10")}, nil
+		}
+		if host == "api.anthropic.com" {
+			return []net.IP{net.ParseIP("198.51.100.20")}, nil
+		}
+		return nil, fmt.Errorf("unexpected endpoint %s", host)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,6 +301,30 @@ func TestDistinctLiteLLMUpstreamsHaveDistinctSemanticCounterIDs(t *testing.T) {
 	}
 	if len(upstreamRules) != 2 || upstreamRules[0] == upstreamRules[1] {
 		t.Fatalf("LiteLLM upstream semantic counter rules = %v", upstreamRules)
+	}
+}
+
+func TestEndpointResolutionFailsClosed(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	litellmEnabled := true
+	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+		Enabled:   &litellmEnabled,
+		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
+		Models:    []model.LiteLLMModelConfig{{Alias: "selected-alias", Upstream: "openrouter", Model: "selected/openrouter-model"}},
+	}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = renderNFTWithResolver(plan, func(string) ([]net.IP, error) {
+		return nil, errors.New("temporary resolver failure")
+	})
+	if err == nil || !strings.Contains(err.Error(), "HOLD: resolve endpoint openrouter.ai") {
+		t.Fatalf("endpoint resolver failure was not preserved as a HOLD: %v", err)
 	}
 }
 
