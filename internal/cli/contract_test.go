@@ -35,6 +35,57 @@ func TestQuickstartCommandsMatchPublicCLI(t *testing.T) {
 	}
 }
 
+func TestQuickstartOfflineCommandsExecute(t *testing.T) {
+	// Keep the executable fixture strictly source-only. It covers the
+	// controller-local portion of the documented workflow; commands that
+	// require a Proxmox host or mutate infrastructure remain outside local CI.
+	toolDir := t.TempDir()
+	writeExecutableFixture(t, filepath.Join(toolDir, "age-keygen"), `#!/bin/sh
+if [ "$1" = "-y" ]; then
+    printf '%s\n' age1fixture
+    exit 0
+fi
+printf '%s\n' '# public key: age1fixture'
+printf '%s\n' AGE-SECRET-KEY-1-FIXTURE
+`)
+	writeExecutableFixture(t, filepath.Join(toolDir, "sops"), `#!/bin/sh
+cat
+`)
+	t.Setenv("PATH", toolDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	siteDir := filepath.Join(t.TempDir(), "my-boetticher")
+	identity := filepath.Join(t.TempDir(), "age-identity.txt")
+	run := func(args ...string) string {
+		t.Helper()
+		var output bytes.Buffer
+		if err := Run(args, &output, &output); err != nil {
+			t.Fatalf("%v failed: %v\n%s", args, err, output.String())
+		}
+		return output.String()
+	}
+
+	run("init", "--site-dir", siteDir, "--age-identity", identity)
+	run("bootstrap-endpoint", "set", "192.0.2.10", "--site", siteDir)
+	run("config", "validate", "--site", siteDir)
+	run("module", "list", "--site", siteDir)
+	run("deploy", "--site", siteDir, "--dry-run")
+
+	var statusOutput bytes.Buffer
+	if err := Run([]string{"status", "--site", siteDir}, &statusOutput, &statusOutput); err == nil {
+		t.Fatal("status unexpectedly passed before live deployment evidence")
+	}
+	if !strings.Contains(statusOutput.String(), "Platform ACTION REQUIRED") {
+		t.Fatalf("status did not preserve the pre-deployment action boundary: %s", statusOutput.String())
+	}
+}
+
+func writeExecutableFixture(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestUsageIsGeneratedFromCommandMetadata(t *testing.T) {
 	var output bytes.Buffer
 	if err := Run([]string{"--help"}, &output, &output); err != nil {
