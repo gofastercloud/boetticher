@@ -93,12 +93,14 @@ func TestAddHostKeyPinsIndependentIdentityAndRejectsChanges(t *testing.T) {
 }
 
 func TestValidateExecutionConfigRejectsCommandDirectives(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "boetticher.conf")
-	if err := os.WriteFile(path, []byte("Host lab-dns-01\n    ProxyCommand sh -c id\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := ValidateExecutionConfig(path); err == nil {
-		t.Fatal("ProxyCommand was accepted in an execution configuration")
+	for _, directive := range []string{"ProxyCommand", `"ProxyCommand"`} {
+		path := filepath.Join(t.TempDir(), "boetticher.conf")
+		if err := os.WriteFile(path, []byte("Host lab-dns-01\n    "+directive+" sh -c id\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := ValidateExecutionConfig(path); err == nil {
+			t.Fatalf("%s was accepted in an execution configuration", directive)
+		}
 	}
 }
 

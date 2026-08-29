@@ -726,12 +726,12 @@ func waitForDeploymentRoot(ctx context.Context, hostRunner proxmox.CommandRunner
 	}
 	var hostKey string
 	var pinErr error
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < 30; attempt++ {
 		hostKey, pinErr = proxmox.ReadGuestHostKey(ctx, hostRunner, hostAddress, "root", guest.Kind, guest.VMID)
 		if pinErr == nil {
 			break
 		}
-		if attempt+1 < 3 {
+		if attempt+1 < 30 {
 			timer := time.NewTimer(2 * time.Second)
 			select {
 			case <-ctx.Done():
