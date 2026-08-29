@@ -439,6 +439,26 @@ func TestLoggingCollectorEnforcesClientRevocationAtTLSProxy(t *testing.T) {
 	}
 }
 
+func TestLoggingRoleStopsOptionalAIOpsJournalQueryWhenDisabled(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "logging", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"Keep the optional AIOps journal query stopped when AIOps is disabled",
+		"name: boetticher-log-query",
+		"enabled: false",
+		"state: stopped",
+		"not (module_configs.aiops is defined and module_configs.aiops.enabled | default(false) | bool)",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("logging role does not disable the optional journal query when AIOps is disabled: missing %q", expected)
+		}
+	}
+}
+
 func TestLoggingUploadKeyIsReadableByItsServiceGroup(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
 	data, err := os.ReadFile(path)

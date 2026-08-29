@@ -207,6 +207,15 @@
     - inventory_hostname == logging_plan.collector
     - logging_collector_certificate | default('') | length > 0
 
+- name: Keep the optional AIOps journal query stopped when AIOps is disabled
+  ansible.builtin.service:
+    name: boetticher-log-query
+    enabled: false
+    state: stopped
+  when:
+    - inventory_hostname == logging_plan.collector
+    - not (module_configs.aiops is defined and module_configs.aiops.enabled | default(false) | bool)
+
 - name: Install the bounded AIOps journal query policy
   ansible.builtin.file:
     path: /etc/boetticher-log-query
