@@ -444,6 +444,26 @@ func TestProxmoxJournalUploadPinsTheCollectorWithoutChangingHomeDNS(t *testing.T
 	}
 }
 
+func TestPulseAgentPinsTheMonitoringHostnameForTaggedTargets(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"Pin the Pulse monitoring hostname for host agents",
+		"monitoring_plan.components",
+		"map(attribute='address')",
+		"monitor.{{ domain }}",
+		"inventory_hostname in (pulse_agent_targets | default([]))",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("Pulse host-agent monitoring mapping is missing %q", expected)
+		}
+	}
+}
+
 func TestMonitorPinsTheProxmoxCertificateHostname(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
 	data, err := os.ReadFile(path)

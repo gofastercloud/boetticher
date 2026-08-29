@@ -124,6 +124,17 @@
     - inventory_hostname in groups.get('proxmox', [])
     - inventory_hostname in logging_upload_configs
 
+- name: Pin the Pulse monitoring hostname for host agents
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^\s*\S+\s+monitor\.{{ domain | regex_escape }}(\s|$)'
+    line: "{{ (monitoring_plan.components | selectattr('name', 'equalto', 'lab-monitor-01') | map(attribute='address') | first) }} monitor.{{ domain }}"
+    state: present
+    create: true
+  when:
+    - inventory_hostname in (pulse_agent_targets | default([]))
+    - monitoring_plan.components | selectattr('name', 'equalto', 'lab-monitor-01') | list | length == 1
+
 - name: Install bounded local journald configuration
   ansible.builtin.file:
     path: /etc/systemd/journald.conf.d
