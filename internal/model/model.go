@@ -1383,6 +1383,27 @@ func validateFirewallPorts(values []string, protocol string) ([]string, error) {
 }
 
 func firewallSelectorProtected(s Site, selector string) bool {
+	selector = strings.ToUpper(strings.TrimSpace(selector))
+	for _, zone := range s.Network.Zones {
+		if selector != zone.Name {
+			continue
+		}
+		if zone.Type != ZoneTypeServers && zone.Type != ZoneTypeTrusted && zone.Type != ZoneTypeSandbox {
+			return true
+		}
+		_, network, err := net.ParseCIDR(zone.Network)
+		if err != nil {
+			return true
+		}
+		for _, component := range s.PlatformComponents() {
+			if component.ProductOwned {
+				if ip := net.ParseIP(component.Address).To4(); ip != nil && network.Contains(ip) {
+					return true
+				}
+			}
+		}
+		return false
+	}
 	_, network, err := net.ParseCIDR(selector)
 	if err != nil {
 		return false

@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"net"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/site"
 )
@@ -42,7 +44,7 @@ func runFirewallRules(args []string, out interface{ Write([]byte) (int, error) }
 	if fs.NArg() != 0 {
 		return errors.New("firewall rule does not accept positional arguments")
 	}
-	config, resolved, err := loadComposedConfig(*siteDir)
+	config, err := site.LoadConfig(*siteDir)
 	if err != nil {
 		return err
 	}
@@ -58,6 +60,10 @@ func runFirewallRules(args []string, out interface{ Write([]byte) (int, error) }
 		}
 		return nil
 	case "add":
+		resolved, _, composeErr := modules.Compose(config)
+		if composeErr != nil {
+			return composeErr
+		}
 		if *source == "" || *protocol == "" {
 			return errors.New("firewall rule add requires --source and --protocol")
 		}
@@ -78,7 +84,7 @@ func runFirewallRules(args []string, out interface{ Write([]byte) (int, error) }
 		if err != nil {
 			return err
 		}
-		if err := addFirewallRule(*siteDir, config, rule, *dryRun, *confirm, *jsonOutput, out); err != nil {
+		if err := addFirewallRule(*siteDir, config, resolved, rule, *dryRun, *confirm, *jsonOutput, out); err != nil {
 			return err
 		}
 		return nil
@@ -108,9 +114,10 @@ func newFirewallRule(source, destination, protocol, rawPorts, id string) (model.
 	return rule, nil
 }
 
-func addFirewallRule(siteDir string, config model.SiteConfig, rule model.UserFirewallRule, dryRun, confirm, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
+func addFirewallRule(siteDir string, config model.SiteConfig, resolved model.Site, rule model.UserFirewallRule, dryRun, confirm, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
 	config.UserFirewallRules = append(config.UserFirewallRules, rule)
-	if err := config.Validate(); err != nil {
+	resolved.UserFirewallRules = append(resolved.UserFirewallRules, rule)
+	if err := resolved.Validate(); err != nil {
 		return err
 	}
 	if !dryRun && !confirm {
@@ -148,9 +155,6 @@ func removeFirewallRule(siteDir string, config model.SiteConfig, id string, dryR
 	}
 	removed := config.UserFirewallRules[index]
 	config.UserFirewallRules = append(config.UserFirewallRules[:index], config.UserFirewallRules[index+1:]...)
-	if err := config.Validate(); err != nil {
-		return err
-	}
 	if !dryRun && !confirm {
 		return errors.New("firewall rule changes require --confirm; use --dry-run to inspect the plan")
 	}
@@ -184,7 +188,7 @@ func resolveFirewallVMID(siteDir string, resolved model.Site, vmid int, ageIdent
 	if err != nil {
 		return "", fmt.Errorf("HOLD: read VMID %d guest identity: %w", vmid, err)
 	}
-	if err := validateGuestIdentity(config, vmid); err != nil {
+	if err := validateGuestIdentity(config, kind, vmid); err != nil {
 		return "", fmt.Errorf("HOLD: VMID %d identity: %w", vmid, err)
 	}
 	addresses := []string{}
@@ -216,10 +220,14 @@ func resolveFirewallVMID(siteDir string, resolved model.Site, vmid int, ageIdent
 	return unique[0] + "/32", nil
 }
 
-func validateGuestIdentity(config map[string]any, vmid int) error {
-	name, ok := config["name"].(string)
+func validateGuestIdentity(config map[string]any, kind proxmox.GuestKind, vmid int) error {
+	identityKey := "name"
+	if kind == proxmox.KindLXC {
+		identityKey = "hostname"
+	}
+	name, ok := config[identityKey].(string)
 	if !ok || strings.TrimSpace(name) == "" || strings.ContainsAny(name, "\r\n") {
-		return errors.New("current guest name is missing or invalid")
+		return fmt.Errorf("current guest %s identity is missing or invalid", identityKey)
 	}
 	if value, ok := config["vmid"]; ok {
 		number, valid := value.(float64)
@@ -233,7 +241,10 @@ func validateGuestIdentity(config map[string]any, vmid int) error {
 func addressesFromLXCConfig(config map[string]any) []string {
 	var result []string
 	for key, value := range config {
-		if !strings.HasPrefix(key, "ipconfig") {
+		if !strings.HasPrefix(key, "net") {
+			continue
+		}
+		if _, err := strconv.Atoi(strings.TrimPrefix(key, "net")); err != nil {
 			continue
 		}
 		text, ok := value.(string)
@@ -241,10 +252,13 @@ func addressesFromLXCConfig(config map[string]any) []string {
 			continue
 		}
 		for _, field := range strings.Split(text, ",") {
-			if strings.HasPrefix(strings.TrimSpace(field), "ip=") {
-				if ip := net.ParseIP(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(field), "ip="), "/32")).To4(); ip != nil && ip.IsPrivate() {
-					result = append(result, ip.String())
-				}
+			keyValue := strings.SplitN(strings.TrimSpace(field), "=", 2)
+			if len(keyValue) != 2 || keyValue[0] != "ip" {
+				continue
+			}
+			ip, network, err := net.ParseCIDR(keyValue[1])
+			if err == nil && ip.To4() != nil && network.IP.To4() != nil && ip.IsPrivate() {
+				result = append(result, ip.To4().String())
 			}
 		}
 	}

@@ -107,6 +107,14 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		return Plan{}, err
 	}
 	s = s.Normalize()
+	for _, userRule := range s.UserFirewallRules {
+		if _, _, ok := userSelector(s, userRule.Source); !ok {
+			return Plan{}, fmt.Errorf("HOLD: user firewall rule %s source %q cannot be rendered", userRule.ID, userRule.Source)
+		}
+		if _, _, ok := userSelector(s, userRule.Destination); !ok {
+			return Plan{}, fmt.Errorf("HOLD: user firewall rule %s destination %q cannot be rendered", userRule.ID, userRule.Destination)
+		}
+	}
 	revision, err := s.Revision()
 	if err != nil {
 		return Plan{}, err
@@ -119,6 +127,16 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	if s.Gateway.Mode == model.GatewayModeExternal {
 		engine = "operator-managed external firewall"
 	}
+	rules := policyRules(s)
+	userRuleCount := 0
+	for _, rule := range rules {
+		if rule.UserRuleID != "" {
+			userRuleCount++
+		}
+	}
+	if userRuleCount != len(s.UserFirewallRules) {
+		return Plan{}, fmt.Errorf("HOLD: %d persisted user firewall rule(s) cannot be rendered", len(s.UserFirewallRules)-userRuleCount)
+	}
 	plan := Plan{
 		ModelRevision: revision,
 		Mode:          s.Gateway.Mode,
@@ -126,7 +144,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		IPv4Only:      true,
 		Forwarding:    s.Gateway.Mode == model.GatewayModeManaged,
 		Telemetry:     DefaultTelemetryPlan(s.Gateway.Mode == model.GatewayModeManaged),
-		Rules:         policyRules(s),
+		Rules:         rules,
 		ModuleSources: moduleSourceCIDRs(s),
 		DHCP:          dhcpSubnets(s),
 		DDNS:          dnsPlan.DDNS,

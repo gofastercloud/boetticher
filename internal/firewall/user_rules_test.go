@@ -55,3 +55,11 @@ func TestExternalContractIncludesUserFirewallIntentWithoutMutation(t *testing.T)
 		t.Fatalf("external contract did not render intent-only user rule: %s", contract)
 	}
 }
+
+func TestPlanRejectsPersistedUserRuleWithInvalidSelector(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	site.UserFirewallRules = []model.UserFirewallRule{{ID: "ufr-unrenderable", Source: "10.10.20.61", Destination: "10.10.20.62/32", Protocol: "tcp", Ports: []string{"443"}}}
+	if _, err := PlanFromSite(site); err == nil {
+		t.Fatal("invalid persisted selector was silently dropped")
+	}
+}

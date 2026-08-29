@@ -4,11 +4,13 @@ import "testing"
 
 func TestUserFirewallRuleValidationIsBoundedAndCoreSafe(t *testing.T) {
 	site := NewDefaultSite("installation", "age1example")
+	site.Components = append(site.Components, Component{Name: "core-service", Hostname: "core-service", VMID: 201, Zone: "SERVERS", Address: "10.10.20.60", Role: "Core service", ProductOwned: true, Tags: []string{TagBoetticher, TagManaged}})
 	site.UserFirewallRules = []UserFirewallRule{{ID: "ufr-example", Source: "TRUSTED", Destination: "10.10.20.61/32", Protocol: "tcp", Ports: []string{"443", "8000-8002"}}}
 	if err := site.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	for _, rule := range []UserFirewallRule{
+		{ID: "ufr-zone", Source: "TRUSTED", Destination: "SERVERS", Protocol: "tcp", Ports: []string{"443"}},
 		{ID: "ufr-bad", Source: "TRUSTED", Destination: "10.10.99.5/32", Protocol: "tcp", Ports: []string{"22"}},
 		{ID: "ufr-bad", Source: "TRUSTED", Destination: "10.10.20.61/32", Protocol: "tcp", Ports: []string{"1-1025"}},
 	} {
