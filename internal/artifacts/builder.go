@@ -67,6 +67,7 @@ var PublicBuildInputs = []string{
 	"internal/dns",
 	"internal/firewall",
 	"internal/firewalltelemetry",
+	"internal/gatus",
 	"internal/logging",
 	"internal/model",
 	"internal/modules",
