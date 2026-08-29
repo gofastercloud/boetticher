@@ -383,7 +383,7 @@ Arguments: NAME is required for show, plan, configure, enable, disable, and opti
 
 Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Ordinary disable retains owned guests; purge remains destructive.
+Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. Confirmed enable and disable changes desired state and immediately invoke deploy; --dry-run does not. DNS and logging are mandatory. Ordinary disable retains owned guests; purge remains destructive.
 
 Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure aiops --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher`
 
@@ -397,9 +397,9 @@ Usage: `boetticher modules list|MODULE show|plan|configure|enable|disable|status
 
 Arguments: MODULE is a registered first-party module. list retains the generic module inventory; lifecycle, configure, and secret commands use the same generic implementation.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, litellm, and printer are default-off. Configure changes desired state only and never deploys. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, litellm, and printer are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 
@@ -905,15 +905,15 @@ Related commands: module show, deploy, module secrets
 
 ### module disable
 
-Purpose: Disable one optional built-in module.
+Purpose: Disable one optional built-in module and apply the resulting platform change.
 
-Usage: `boetticher module disable NAME [--site DIR] [--confirm] [--purge]`
+Usage: `boetticher module disable NAME [--site DIR] [--dry-run] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
 
 Arguments: NAME is a registered optional module.
 
-Options: --confirm applies the local change; --purge requests removal of owned resources where supported; --site selects the private site repository.
+Options: --dry-run validates and displays the plan without changing the site; --confirm applies the desired-state change and invokes deploy; --purge requests removal of owned resources; connection options select the target trust path.
 
-Safety: Disable retains owned resources by default. Purge is destructive and requires exact ownership proof and confirmation; neither operation applies the platform until deploy.
+Safety: A confirmed disable changes desired state and immediately invokes deploy. It retains owned resources by default. Purge is destructive and requires exact ownership proof and confirmation; --dry-run does not mutate or deploy.
 
 Examples: `boetticher module disable printer --confirm --site ./my-boetticher`
 
@@ -921,15 +921,15 @@ Related commands: module status, deploy, recovery
 
 ### module enable
 
-Purpose: Enable one optional built-in module in desired state.
+Purpose: Enable one optional built-in module and apply the resulting platform change.
 
-Usage: `boetticher module enable NAME [--site DIR] [--confirm]`
+Usage: `boetticher module enable NAME [--site DIR] [--dry-run] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
 
 Arguments: NAME is a registered optional module.
 
-Options: --confirm applies the local change; --site selects the private site repository.
+Options: --dry-run validates and displays the plan without changing the site; --confirm applies the desired-state change and invokes deploy; connection options select the target trust path.
 
-Safety: Changes desired state only and never deploys. Use deploy after reviewing the module's requirements.
+Safety: A confirmed enable changes desired state and immediately invokes deploy. Review the plan first; --dry-run does not mutate or deploy.
 
 Examples: `boetticher module enable monitoring --confirm --site ./my-boetticher`
 
@@ -1003,13 +1003,13 @@ Related commands: module configure, module list
 
 Purpose: Show desired and available status for built-in modules.
 
-Usage: `boetticher module status [NAME] [--site DIR] [--live]`
+Usage: `boetticher module status [NAME] [--site DIR] [--age-identity PATH]`
 
 Arguments: NAME optionally limits the view to one registered module.
 
-Options: --live performs bounded live checks where supported; --site selects the private site repository.
+Options: --site selects the private site repository; --age-identity selects the operator-owned private Age identity when inspecting named-module secrets.
 
-Safety: Read-only. A local status result does not prove a deployed service journey.
+Safety: Read-only. A local status result does not prove a deployed service journey; use top-level status, doctor, or verify for supported live evidence.
 
 Examples: `boetticher module status printer --site ./my-boetticher`
 
@@ -1023,9 +1023,9 @@ Usage: `boetticher modules list|MODULE show|plan|configure|enable|disable|status
 
 Arguments: MODULE is a registered first-party module. list retains the generic module inventory; lifecycle, configure, and secret commands use the same generic implementation.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, litellm, and printer are default-off. Configure changes desired state only and never deploys. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, litellm, and printer are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 
@@ -1039,9 +1039,9 @@ Usage: `boetticher modules list|MODULE show|plan|configure|enable|disable|status
 
 Arguments: MODULE is a registered first-party module. list retains the generic module inventory; lifecycle, configure, and secret commands use the same generic implementation.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, litellm, and printer are default-off. Configure changes desired state only and never deploys. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, litellm, and printer are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 
@@ -1055,9 +1055,9 @@ Usage: `boetticher modules list|MODULE show|plan|configure|enable|disable|status
 
 Arguments: MODULE is a registered first-party module. list retains the generic module inventory; lifecycle, configure, and secret commands use the same generic implementation.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, litellm, and printer are default-off. Configure changes desired state only and never deploys. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, litellm, and printer are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 
