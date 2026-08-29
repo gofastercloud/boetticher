@@ -16,7 +16,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
-func runDHCP(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runDHCP(args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("usage: boetticher dhcp status|leases|reservation add|list|remove")
 	}
@@ -244,7 +244,7 @@ func parseKeaLeaseCSV(data []byte, plan firewall.Plan) ([]dhcpLease, error) {
 	return leases, nil
 }
 
-func printDHCPLeases(out interface{ Write([]byte) (int, error) }, leases []dhcpLease) {
+func printDHCPLeases(out io.Writer, leases []dhcpLease) {
 	if len(leases) == 0 {
 		fmt.Fprintln(out, "DHCP leases: none active")
 		return

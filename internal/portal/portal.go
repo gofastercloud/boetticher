@@ -24,9 +24,13 @@ type Evidence struct {
 }
 
 type CheckResult struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
-	Detail string `json:"detail,omitempty"`
+	Name       string                   `json:"name"`
+	Status     string                   `json:"status"`
+	Detail     string                   `json:"detail,omitempty"`
+	Tier       statusmodel.EvidenceTier `json:"evidence_tier,omitempty"`
+	ObservedAt string                   `json:"observed_at,omitempty"`
+	Reason     string                   `json:"reason,omitempty"`
+	NextAction string                   `json:"next_action,omitempty"`
 }
 
 func Build(s model.Site, outputDir, docsDir string, evidence Evidence, physical networkmodel.Discovery, now time.Time) error {
@@ -112,7 +116,11 @@ func page(title, body string) string {
 func home(s model.Site, revision string, evidence Evidence, now time.Time) string {
 	checks := make([]statusmodel.LegacyCheck, 0, len(evidence.Results))
 	for _, result := range evidence.Results {
-		checks = append(checks, statusmodel.LegacyCheck{Name: result.Name, Status: result.Status, Detail: result.Detail})
+		checks = append(checks, statusmodel.LegacyCheck{
+			Name: result.Name, Status: result.Status, Detail: result.Detail,
+			Tier: result.Tier, ObservedAt: result.ObservedAt,
+			Reason: result.Reason, NextAction: result.NextAction,
+		})
 	}
 	semantic := statusmodel.FromLegacy(revision, evidence.GeneratedAt, checks)
 	if evidence.Status != nil && evidence.Status.StatusModelVersion == statusmodel.ModelVersion && evidence.Status.ModelRevision == revision {

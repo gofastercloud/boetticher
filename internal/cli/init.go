@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +18,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
-func runInit(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runInit(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site-dir", model.DefaultSiteDir, "private site repository directory")
@@ -49,7 +50,7 @@ func runInit(args []string, out interface{ Write([]byte) (int, error) }) error {
 	return nil
 }
 
-func runPreflight(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runPreflight(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("preflight", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")

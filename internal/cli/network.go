@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -14,7 +15,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
-func runNetwork(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runNetwork(args []string, out io.Writer) error {
 	if len(args) < 2 || args[0] != "trunk" {
 		return fmt.Errorf("usage: boetticher network trunk status|attach|detach [--site DIR]")
 	}
@@ -185,7 +186,7 @@ func rollbackDetachedTrunkChange(ctx context.Context, client *proxmox.Client, no
 	return fmt.Errorf("%s; rollback completed: %w", message, cause)
 }
 
-func printPhysicalDiscovery(out interface{ Write([]byte) (int, error) }, discovery networkmodel.Discovery) {
+func printPhysicalDiscovery(out io.Writer, discovery networkmodel.Discovery) {
 	fmt.Fprintf(out, "Detected network topology\nUpstream/bootstrap\n  %s\n  address: %s\n  model: %s\n  permanent MAC: %s\n  PCI: %s\n  driver: %s\n  speed: %s\n  carrier: %t\n", discovery.Upstream.Name, valueOrUnknown(discovery.BootstrapAddress), valueOrUnknown(discovery.Upstream.Model), valueOrUnknown(discovery.Upstream.PermanentMAC), valueOrUnknown(discovery.Upstream.PCIAddress), valueOrUnknown(discovery.Upstream.Driver), speedText(discovery.Upstream.SpeedMbps), discovery.Upstream.Carrier)
 	if discovery.Mode == networkmodel.ModeSelectionNeeded {
 		fmt.Fprintln(out, "Eligible internal trunk interfaces")

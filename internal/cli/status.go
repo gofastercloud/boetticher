@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,7 +17,7 @@ import (
 	statusmodel "github.com/gofastercloud/boetticher/internal/status"
 )
 
-func runStatus(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runStatus(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
@@ -146,7 +147,7 @@ func replaceStatusCheck(report statusmodel.Report, replacement statusmodel.Check
 	return report
 }
 
-func printStatus(out interface{ Write([]byte) (int, error) }, report statusmodel.Report, verbose bool) {
+func printStatus(out io.Writer, report statusmodel.Report, verbose bool) {
 	fmt.Fprintf(out, "Platform %s\n", report.OverallState)
 	fmt.Fprintf(out, "Observed: %s\n", report.ObservedAt)
 	for _, check := range report.Checks {

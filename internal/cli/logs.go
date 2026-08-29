@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strconv"
@@ -19,7 +20,7 @@ import (
 var safeUnit = regexp.MustCompile(`^[A-Za-z0-9_.@:%+-]+$`)
 var safeJournalHostname = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
 
-func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runLogs(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -34,13 +35,13 @@ import (
 	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
-func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runDeploy(args []string, out io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return runDeployWithContext(ctx, args, out)
 }
 
-func runDeployWithContext(ctx context.Context, args []string, out interface{ Write([]byte) (int, error) }) (err error) {
+func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (err error) {
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")

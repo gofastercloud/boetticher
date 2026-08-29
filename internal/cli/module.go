@@ -17,7 +17,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
-func runModuleWithInput(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }) error {
+func runModuleWithInput(args []string, input io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("usage: boetticher module list|show|plan|configure|enable|disable|status|secrets")
 	}
@@ -43,7 +43,7 @@ func runModuleWithInput(args []string, input io.Reader, out, errOut interface{ W
 	}
 }
 
-func runModulesWithInput(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }) error {
+func runModulesWithInput(args []string, input io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("usage: boetticher modules list|MODULE show|plan|configure|enable|disable|status|secrets|purge")
 	}
@@ -90,7 +90,7 @@ func moduleSite(args []string, name string) (string, *flag.FlagSet, *bool, *bool
 	return *siteDir, fs, dryRun, confirm, nil
 }
 
-func runModuleList(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runModuleList(args []string, out io.Writer) error {
 	siteDir, _, _, _, err := moduleSite(args, "module list")
 	if err != nil {
 		return err
@@ -106,7 +106,7 @@ func runModuleList(args []string, out interface{ Write([]byte) (int, error) }) e
 	return nil
 }
 
-func runModuleShow(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runModuleShow(args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("usage: boetticher module show NAME [--site DIR]")
 	}
@@ -147,7 +147,7 @@ func volumeNames(volumes []model.PersistentVolumeDeclaration) string {
 	return strings.Join(parts, ", ")
 }
 
-func runModulePlan(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runModulePlan(args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("usage: boetticher module plan NAME [--site DIR]")
 	}
@@ -186,11 +186,11 @@ func runModulePlan(args []string, out interface{ Write([]byte) (int, error) }) e
 	return nil
 }
 
-func runModuleStatus(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runModuleStatus(args []string, out io.Writer) error {
 	return runModuleStatusWithInput(args, os.Stdin, out, os.Stderr)
 }
 
-func runModuleStatusWithInput(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }) error {
+func runModuleStatusWithInput(args []string, input io.Reader, out, errOut io.Writer) error {
 	name := ""
 	remaining := args
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -262,11 +262,11 @@ func runModuleStatusWithInput(args []string, input io.Reader, out, errOut interf
 	return runModuleList(remaining, out)
 }
 
-func runModuleChange(args []string, out interface{ Write([]byte) (int, error) }, enable bool) error {
+func runModuleChange(args []string, out io.Writer, enable bool) error {
 	return runModuleChangeWithInput(args, os.Stdin, out, os.Stderr, enable)
 }
 
-func runModuleChangeWithInput(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }, enable bool) error {
+func runModuleChangeWithInput(args []string, input io.Reader, out, errOut io.Writer, enable bool) error {
 	if len(args) == 0 {
 		return errors.New("usage: boetticher module enable|disable NAME [--site DIR] [--dry-run] [--confirm]")
 	}

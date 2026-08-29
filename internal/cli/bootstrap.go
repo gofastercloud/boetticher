@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -22,7 +23,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
-func runBootstrapEndpoint(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runBootstrapEndpoint(args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: boetticher bootstrap-endpoint show|set ADDRESS [--site DIR]")
 	}
@@ -76,7 +77,7 @@ func runBootstrapEndpoint(args []string, out interface{ Write([]byte) (int, erro
 	return nil
 }
 
-func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runBootstrap(args []string, out io.Writer) error {
 	totalStarted := time.Now()
 	defer func() { emitTiming(out, "bootstrap_total", totalStarted) }()
 	networkStarted := time.Now()
@@ -388,7 +389,7 @@ func proxmoxCredentialsExist(path string) (bool, error) {
 	return false, err
 }
 
-func emitTiming(out interface{ Write([]byte) (int, error) }, stage string, started time.Time) {
+func emitTiming(out io.Writer, stage string, started time.Time) {
 	if out == nil || stage == "" || started.IsZero() {
 		return
 	}
@@ -420,7 +421,7 @@ func honorRequestedPhysicalMode(discovery networkmodel.Discovery, desiredMode, c
 	return discovery
 }
 
-func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan proxmox.Plan, siteDir, publicKey, _ string, identityFile string, hostRunner proxmox.CommandRunner, hostAddress, hostUser string, out interface{ Write([]byte) (int, error) }) (returnErr error) {
+func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan proxmox.Plan, siteDir, publicKey, _ string, identityFile string, hostRunner proxmox.CommandRunner, hostAddress, hostUser string, out io.Writer) (returnErr error) {
 	cacheStarted := time.Now()
 	base, err := artifacts.ArtifactFor("base")
 	if err != nil {
@@ -697,7 +698,7 @@ func (b *boundedBuilderOutput) Write(data []byte) (int, error) {
 }
 
 type boundedBuilderArchive struct {
-	writer  interface{ Write([]byte) (int, error) }
+	writer  io.Writer
 	limit   int64
 	written int64
 }

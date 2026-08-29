@@ -10,17 +10,17 @@ import (
 // Run dispatches the small, intentionally explicit operator command surface.
 // Command implementations live in focused files; this file owns only the
 // public entry point and top-level help.
-func Run(args []string, out, errOut interface{ Write([]byte) (int, error) }) error {
+func Run(args []string, out, errOut io.Writer) error {
 	return RunWithInput(args, os.Stdin, out, errOut)
 }
 
 // RunWithInput is the testable/operator-facing dispatcher variant used by
 // secret prompts. The input stream is never passed as a command argument.
-func RunWithInput(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }) error {
+func RunWithInput(args []string, input io.Reader, out, errOut io.Writer) error {
 	return run(args, input, out, errOut)
 }
 
-func run(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }) error {
+func run(args []string, input io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		if len(args) > 1 && args[0] == "help" && args[1] == "--advanced" {
 			advancedUsage(out)
@@ -100,7 +100,7 @@ func helpRequested(args []string) bool {
 	return false
 }
 
-func commandHelp(args []string, out interface{ Write([]byte) (int, error) }) {
+func commandHelp(args []string, out io.Writer) {
 	pathParts := make([]string, 0, len(args))
 	for _, arg := range args {
 		if strings.HasPrefix(arg, "-") {
@@ -123,14 +123,14 @@ func commandHelp(args []string, out interface{ Write([]byte) (int, error) }) {
 	fmt.Fprintf(out, "Purpose:\n  %s\n\nUsage:\n  %s\n\nArguments:\n  %s\n\nOptions:\n  %s\n\nSafety:\n  %s\n\nExamples:\n  %s\n\nRelated commands:\n  %s\n", spec.Purpose, spec.Usage, spec.Arguments, spec.Options, spec.Safety, spec.Examples, spec.Related)
 }
 
-func usage(out interface{ Write([]byte) (int, error) }) {
+func usage(out io.Writer) {
 	fmt.Fprintln(out, "boetticher operator CLI\n\nUsage:")
 	for _, spec := range commandSpecs {
 		fmt.Fprintln(out, "  "+spec.Usage)
 	}
 }
 
-func advancedUsage(out interface{ Write([]byte) (int, error) }) {
+func advancedUsage(out io.Writer) {
 	fmt.Fprintln(out, "boetticher advanced CLI\n\nUsage:")
 	for _, spec := range advancedCommandSpecs {
 		fmt.Fprintln(out, "  "+spec.Usage)

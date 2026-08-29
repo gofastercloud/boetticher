@@ -3,6 +3,7 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -11,7 +12,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
-func runPortalBuild(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runPortalBuild(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("portal build", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")

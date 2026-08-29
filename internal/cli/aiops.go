@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/gofastercloud/boetticher/internal/aiops"
@@ -15,7 +16,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
-func runAIOps(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runAIOps(args []string, out io.Writer) error {
 	if len(args) == 0 || args[0] != "status" {
 		return errors.New("usage: boetticher aiops status [--site DIR] [--live] [--json]")
 	}

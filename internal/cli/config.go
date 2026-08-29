@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -12,7 +13,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
-func runConfig(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runConfig(args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("usage: boetticher config validate|show|schema")
 	}

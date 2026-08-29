@@ -33,14 +33,14 @@ var platformOwnedSecretNames = map[string]struct{}{
 	"pulse_agent_token":    {},
 }
 
-func runModuleSecrets(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }) error {
+func runModuleSecrets(args []string, input io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("usage: boetticher module secrets MODULE list|set|remove")
 	}
 	return runModuleSecretsForName(args[1:], input, out, errOut, args[0])
 }
 
-func runModuleSecretsForName(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }, name string) error {
+func runModuleSecretsForName(args []string, input io.Reader, out, errOut io.Writer, name string) error {
 	if len(args) == 0 {
 		return errors.New("usage: boetticher modules MODULE secrets list|set|remove")
 	}
@@ -91,7 +91,7 @@ func loadModuleSecretContract(flags moduleSecretFlags, name string) (model.Site,
 	return resolved, config, declarations, nil
 }
 
-func runModuleSecretList(name string, args []string, out interface{ Write([]byte) (int, error) }) error {
+func runModuleSecretList(name string, args []string, out io.Writer) error {
 	flags, err := parseModuleSecretFlags(args, "module secrets list")
 	if err != nil {
 		return err
@@ -117,7 +117,7 @@ func runModuleSecretList(name string, args []string, out interface{ Write([]byte
 	return nil
 }
 
-func runModuleSecretSet(name string, args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }) error {
+func runModuleSecretSet(name string, args []string, input io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return errors.New("usage: boetticher modules MODULE secrets set NAME [--site DIR] [--age-identity PATH]")
 	}
@@ -151,7 +151,7 @@ func runModuleSecretSet(name string, args []string, input io.Reader, out, errOut
 	return nil
 }
 
-func runModuleSecretRemove(name string, args []string, out interface{ Write([]byte) (int, error) }) error {
+func runModuleSecretRemove(name string, args []string, out io.Writer) error {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return errors.New("usage: boetticher modules MODULE secrets remove NAME --confirm [--site DIR] [--age-identity PATH]")
 	}
@@ -189,7 +189,7 @@ func runModuleSecretRemove(name string, args []string, out interface{ Write([]by
 	return nil
 }
 
-func readOperatorSecret(input io.Reader, errOut interface{ Write([]byte) (int, error) }, name string) (string, error) {
+func readOperatorSecret(input io.Reader, errOut io.Writer, name string) (string, error) {
 	if file, ok := input.(*os.File); ok && term.IsTerminal(int(file.Fd())) {
 		fmt.Fprintf(errOut, "Provide secret %s: ", name)
 		value, err := term.ReadPassword(int(file.Fd()))
@@ -279,7 +279,7 @@ func lifecycleName(declaration model.SecretDeclaration) string {
 // ensureModuleSecrets prepares missing operator-supplied values before an
 // enable mutation. Dry-runs only report the gap; confirmed interactive runs
 // collect all values before performing one encrypted document update.
-func ensureModuleSecrets(siteDir string, s model.Site, config model.SiteConfig, module, ageIdentity string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }, dryRun bool) error {
+func ensureModuleSecrets(siteDir string, s model.Site, config model.SiteConfig, module, ageIdentity string, input io.Reader, out, errOut io.Writer, dryRun bool) error {
 	declarations, err := modules.SecretDeclarations(config, module)
 	if err != nil {
 		return err

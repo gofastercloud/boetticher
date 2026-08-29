@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"sort"
@@ -13,7 +14,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
-func runDNS(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runDNS(args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("usage: boetticher dns record add|list|remove")
 	}
@@ -66,7 +67,7 @@ func runDNS(args []string, out interface{ Write([]byte) (int, error) }) error {
 	}
 }
 
-func addDNSRecord(siteDir string, config model.SiteConfig, resolved model.Site, name, recordType, value string, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
+func addDNSRecord(siteDir string, config model.SiteConfig, resolved model.Site, name, recordType, value string, jsonOutput bool, out io.Writer) error {
 	record, err := normalizeUserDNSRecord(name, recordType, value)
 	if err != nil {
 		return err
@@ -105,7 +106,7 @@ func withoutDNSDeletion(deletions []model.DNSDeletion, name, recordType string) 
 	return result
 }
 
-func removeDNSRecord(siteDir string, config model.SiteConfig, resolved model.Site, name, recordType string, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
+func removeDNSRecord(siteDir string, config model.SiteConfig, resolved model.Site, name, recordType string, jsonOutput bool, out io.Writer) error {
 	name = normalizeDNSName(name)
 	recordType = strings.ToUpper(strings.TrimSpace(recordType))
 	if name == "" || (recordType != "A" && recordType != "CNAME") {

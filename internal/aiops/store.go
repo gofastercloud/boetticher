@@ -114,7 +114,9 @@ func (s *Store) Status(ctx context.Context, now time.Time) (Status, error) {
 		}
 	}
 	var terminalResult sql.NullString
-	_ = s.db.QueryRowContext(ctx, `SELECT state,outcome,coalesce(resolved_at,completed_at) FROM incidents WHERE state IN ('completed','inconclusive','failed','resolved') ORDER BY coalesce(resolved_at,completed_at) DESC LIMIT 1`).Scan(&terminalState, &terminalResult, &terminalAt)
+	if err := s.db.QueryRowContext(ctx, `SELECT state,outcome,coalesce(resolved_at,completed_at) FROM incidents WHERE state IN ('completed','inconclusive','failed','resolved') ORDER BY coalesce(resolved_at,completed_at) DESC LIMIT 1`).Scan(&terminalState, &terminalResult, &terminalAt); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return result, fmt.Errorf("read latest terminal investigation: %w", err)
+	}
 	if terminalState.Valid {
 		result.LastTerminalState = State(terminalState.String)
 		result.LastTerminalResult = Outcome(terminalResult.String)

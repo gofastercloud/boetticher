@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/portal"
+	statusmodel "github.com/gofastercloud/boetticher/internal/status"
 )
 
 func TestCheckPlatformOwnershipIncludesComposedLoggingGuest(t *testing.T) {
@@ -30,4 +32,22 @@ func TestOfflineVerificationAcceptsAllManagedDynamicDNSZones(t *testing.T) {
 		}
 	}
 	t.Fatal("DNS/DDNS projection result is missing")
+}
+
+func TestVerificationEvidenceUsesExplicitTiers(t *testing.T) {
+	results := annotateVerificationEvidence([]portal.CheckResult{
+		{Name: "canonical platform model validates", Status: "PASS", Detail: "journey evidence in prose must not change this"},
+		{Name: "authenticated SSH journey via Proxmox bastion", Status: "NOT TESTED", Detail: "local wording"},
+		{Name: "managed gateway upstream DHCP", Status: "NOT TESTED", Detail: "requires a live query"},
+		{Name: "unrecognized check", Status: "NOT TESTED", Detail: "journey evidence"},
+	}, "2026-08-29T00:00:00Z")
+	want := []statusmodel.EvidenceTier{statusmodel.TierLocal, statusmodel.TierJourney, statusmodel.TierDeployed, statusmodel.TierLocal}
+	for index, result := range results {
+		if result.Tier != want[index] {
+			t.Fatalf("result %q received tier %q, want %q", result.Name, result.Tier, want[index])
+		}
+		if result.ObservedAt != "2026-08-29T00:00:00Z" {
+			t.Fatalf("result %q observed at %q", result.Name, result.ObservedAt)
+		}
+	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +18,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
 )
 
-func runSSHConfig(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runSSHConfig(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("ssh-config", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")

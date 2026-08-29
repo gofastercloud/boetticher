@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +28,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
-func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runVerify(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
@@ -62,14 +63,14 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 	} else if !errors.Is(err, os.ErrNotExist) && !strings.Contains(err.Error(), "no such file") {
 		sshResult = portal.CheckResult{Name: "generated SSH configuration", Status: "FAIL", Detail: err.Error()}
 	}
-	sshJourneyResult := portal.CheckResult{Name: "authenticated SSH journey via Proxmox bastion", Status: "NOT TESTED", Detail: "use --ssh-journey to exercise an internal host"}
+	sshJourneyResult := portal.CheckResult{Name: "authenticated SSH journey via Proxmox bastion", Status: "NOT TESTED", Detail: "use --ssh-journey to exercise an internal host", Tier: statusmodel.TierJourney}
 	if *sshJourney {
 		if sshResult.Status != "PASS" {
 			sshJourneyResult.Detail = "generated SSH configuration is not current"
 		} else if err := runSSHJourney(*sshPath); err != nil {
-			sshJourneyResult = portal.CheckResult{Name: "authenticated SSH journey via Proxmox bastion", Status: "FAIL", Detail: err.Error()}
+			sshJourneyResult = portal.CheckResult{Name: "authenticated SSH journey via Proxmox bastion", Status: "FAIL", Detail: err.Error(), Tier: statusmodel.TierJourney}
 		} else {
-			sshJourneyResult = portal.CheckResult{Name: "authenticated SSH journey via Proxmox bastion", Status: "PASS", Detail: "authenticated command completed through ProxyJump"}
+			sshJourneyResult = portal.CheckResult{Name: "authenticated SSH journey via Proxmox bastion", Status: "PASS", Detail: "authenticated command completed through ProxyJump", Tier: statusmodel.TierJourney}
 		}
 	}
 
@@ -141,6 +142,8 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 	} else {
 		results = append(results, portal.CheckResult{Name: "external gateway contract", Status: "STATIC PASS", Detail: "required VLAN, gateway, DHCP, DNS, NTP, and policy intent is generated"})
 	}
+	verificationObservedAt := time.Now().UTC().Format(time.RFC3339)
+	results = annotateVerificationEvidence(results, verificationObservedAt)
 	fmt.Fprintln(out, "Modules")
 	for _, module := range s.Modules {
 		if module.Enabled {
@@ -152,10 +155,14 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 	if modules.IsEnabled(s, "logging") {
 		fmt.Fprintln(out, "Logging                EXPECTED mandatory collector and asynchronous upload")
 	}
-	evidence := portal.Evidence{GeneratedAt: time.Now().UTC().Format(time.RFC3339), Results: results}
+	evidence := portal.Evidence{GeneratedAt: verificationObservedAt, Results: results}
 	semanticChecks := make([]statusmodel.LegacyCheck, 0, len(results))
 	for _, result := range results {
-		semanticChecks = append(semanticChecks, statusmodel.LegacyCheck{Name: result.Name, Status: result.Status, Detail: result.Detail})
+		semanticChecks = append(semanticChecks, statusmodel.LegacyCheck{
+			Name: result.Name, Status: result.Status, Detail: result.Detail,
+			Tier: result.Tier, ObservedAt: result.ObservedAt,
+			Reason: result.Reason, NextAction: result.NextAction,
+		})
 	}
 	semantic := statusmodel.FromLegacy(revision, evidence.GeneratedAt, semanticChecks)
 	document := struct {
@@ -189,7 +196,52 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 	return nil
 }
 
-func runDoctor(args []string, out interface{ Write([]byte) (int, error) }) error {
+// annotateVerificationEvidence assigns tiers from the verification contract,
+// not from human-readable detail text. The map is deliberately explicit so a
+// renamed or newly introduced check cannot inherit a stronger evidence claim.
+func annotateVerificationEvidence(results []portal.CheckResult, observedAt string) []portal.CheckResult {
+	tiers := map[string]statusmodel.EvidenceTier{
+		"canonical platform model validates":                              statusmodel.TierLocal,
+		"firewall policy projection":                                      statusmodel.TierLocal,
+		"DNS/DDNS projection":                                             statusmodel.TierLocal,
+		"Pulse monitoring projection":                                     statusmodel.TierLocal,
+		"platform backup projection":                                      statusmodel.TierLocal,
+		"storage projection":                                              statusmodel.TierLocal,
+		"qualified appliance evidence":                                    statusmodel.TierLocal,
+		"SSH bastion allow-list":                                          statusmodel.TierLocal,
+		"portal artifact":                                                 statusmodel.TierLocal,
+		"generated SSH configuration":                                     statusmodel.TierLocal,
+		"authenticated SSH journey via Proxmox bastion":                   statusmodel.TierJourney,
+		"DNS01/DNS02 reachable":                                           statusmodel.TierJourney,
+		"NTP01/NTP02 synchronized":                                        statusmodel.TierDeployed,
+		"Proxmox API least privilege":                                     statusmodel.TierDeployed,
+		"internal CA available":                                           statusmodel.TierLocal,
+		"portal requires client certificate":                              statusmodel.TierJourney,
+		"Pulse requires client certificate":                               statusmodel.TierJourney,
+		"latest VM/LXC backup":                                            statusmodel.TierDeployed,
+		"Age recovery fixture":                                            statusmodel.TierProduct,
+		"managed gateway upstream DHCP":                                   statusmodel.TierDeployed,
+		"published service mapping":                                       statusmodel.TierDeployed,
+		"managed gateway services":                                        statusmodel.TierDeployed,
+		"SANDBOX cannot access TRUSTED":                                   statusmodel.TierJourney,
+		"SANDBOX cannot access SERVERS":                                   statusmodel.TierJourney,
+		"SANDBOX cannot access MGMT":                                      statusmodel.TierJourney,
+		"TRANSIT/INFRA/MGMT are static-only; SERVERS is reservation-only": statusmodel.TierDeployed,
+		"external gateway contract":                                       statusmodel.TierLocal,
+	}
+	for index := range results {
+		results[index].Tier = statusmodel.TierLocal
+		if tier, ok := tiers[results[index].Name]; ok {
+			results[index].Tier = tier
+		}
+		if results[index].ObservedAt == "" {
+			results[index].ObservedAt = observedAt
+		}
+	}
+	return results
+}
+
+func runDoctor(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
@@ -489,7 +541,7 @@ func bindPlanToLiveNode(ctx context.Context, client *proxmox.Client, plan proxmo
 	return plan, nil
 }
 
-func reportDedicatedStorageHost(ctx context.Context, s model.Site, plan storage.Plan, out interface{ Write([]byte) (int, error) }) error {
+func reportDedicatedStorageHost(ctx context.Context, s model.Site, plan storage.Plan, out io.Writer) error {
 	command, err := storage.StatusCommand(plan.Device)
 	if err != nil {
 		return err
