@@ -660,8 +660,19 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 			t.Fatalf("LiteLLM capability reader is missing fail-closed field %q", required)
 		}
 	}
-	if !strings.Contains(buildText, "build_tailnet_router") || !strings.Contains(buildText, "build_litellm") || !strings.Contains(buildText, "--require-hashes") || !strings.Contains(buildText, "rm -f \"$rootfs/etc/nginx/sites-enabled/default\"") {
-		t.Fatal("first-party appliance build paths are incomplete or do not enforce the dependency lock")
+	for _, required := range []string{
+		"build_tailnet_router",
+		"build_litellm",
+		"--require-hashes",
+		"rm -f \"$rootfs/etc/nginx/sites-enabled/default\"",
+		"find \"$rootfs/opt/litellm\" -type f \\(",
+		"-name '*.log' -o -name '*.pyc'",
+		"-name __pycache__ -prune -exec rm -rf -- {} +",
+		`sed -i -E 's#https://hooks\.slack\.com/services/[A-Za-z0-9/_-]+#https://example.invalid/slack-webhook#g'`,
+	} {
+		if !strings.Contains(buildText, required) {
+			t.Fatalf("LiteLLM build hygiene is missing %q", required)
+		}
 	}
 }
 

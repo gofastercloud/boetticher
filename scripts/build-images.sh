@@ -502,6 +502,13 @@ build_litellm() {
     echo "HOLD: unexpected LiteLLM version: $installed_version" >&2
     return 2
   fi
+  # The wheel ships an example log and precompiled bytecode, and its schema
+  # metadata contains a sample Slack webhook that secret scanners correctly
+  # treat as credential-shaped content. Runtime configuration is supplied
+  # separately, so remove build residue and neutralize only that static sample.
+  find "$rootfs/opt/litellm" -type f \( -name '*.log' -o -name '*.pyc' \) -delete
+  find "$rootfs/opt/litellm" -type d -name __pycache__ -prune -exec rm -rf -- {} +
+  find "$rootfs/opt/litellm" -type f -name '*.py' -exec sed -i -E 's#https://hooks\.slack\.com/services/[A-Za-z0-9/_-]+#https://example.invalid/slack-webhook#g' {} +
   rm -f "$rootfs/tmp/litellm-requirements.lock"
   write_artifact_identity "$rootfs" litellm
   package_lxc boetticher-litellm
