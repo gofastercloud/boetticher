@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,49 @@ import (
 
 type dnsReadinessRunner struct {
 	commands []string
+}
+
+type endpointArgsRunner struct {
+	output []byte
+	err    error
+	args   [][]string
+}
+
+func (r *endpointArgsRunner) RunArgs(_ context.Context, _ string, _ string, args []string) ([]byte, error) {
+	r.args = append(r.args, args)
+	return r.output, r.err
+}
+
+func TestRemoteEndpointResolverParsesOnlyUniqueIPv4Addresses(t *testing.T) {
+	runner := &endpointArgsRunner{output: []byte("192.0.2.20 STREAM example\n192.0.2.20 DGRAM example\n2001:db8::20 STREAM example\n")}
+	addresses, err := remoteEndpointResolver(context.Background(), runner, "192.0.2.10", "root")("example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(addresses) != 1 || addresses[0].String() != "192.0.2.20" {
+		t.Fatalf("remote endpoint addresses = %v, want one unique IPv4 address", addresses)
+	}
+	if len(runner.args) != 1 || strings.Join(runner.args[0], " ") != "getent ahostsv4 example.test" {
+		t.Fatalf("remote resolver args = %v", runner.args)
+	}
+}
+
+func TestEndpointLookupWithFallbackUsesProxmoxOnlyAfterControllerFailure(t *testing.T) {
+	primaryCalls, fallbackCalls := 0, 0
+	lookup := endpointLookupWithFallback(func(string) ([]net.IP, error) {
+		primaryCalls++
+		return nil, errors.New("controller DNS unavailable")
+	}, func(string) ([]net.IP, error) {
+		fallbackCalls++
+		return []net.IP{net.ParseIP("192.0.2.20")}, nil
+	})
+	addresses, err := lookup("example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(addresses) != 1 || addresses[0].String() != "192.0.2.20" || primaryCalls != 1 || fallbackCalls != 1 {
+		t.Fatalf("fallback lookup = %v, primary calls=%d, fallback calls=%d", addresses, primaryCalls, fallbackCalls)
+	}
 }
 
 func (r *dnsReadinessRunner) Run(_ context.Context, _ string, _ string, command string) ([]byte, error) {

@@ -102,7 +102,15 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 		return fmt.Errorf("resolve Ansible playbook source: %w", err)
 	}
 	ansiblePlaybook := filepath.Join(ansibleRoot, "ansible", "site.yml")
-	if err := writeModelProjections(*siteDir, s); err != nil {
+	endpointLookup := net.LookupIP
+	rootRunner := proxmoxRootSSHRunner(s, *siteDir)
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		if err := proxmox.WaitForSSH(ctx, rootRunner, s.BootstrapAddress, "root", 1, 0); err != nil {
+			return fmt.Errorf("HOLD: temporary root deployment authority is unavailable; rerun bootstrap or recovery: %w", err)
+		}
+		endpointLookup = endpointLookupWithFallback(net.LookupIP, remoteEndpointResolver(ctx, rootRunner, s.BootstrapAddress, "root"))
+	}
+	if err := writeModelProjectionsWithResolver(*siteDir, s, endpointLookup); err != nil {
 		return err
 	}
 	backupPlan, err := backup.PlanFromSite(s)
@@ -157,7 +165,7 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 		secretValues["firewall-ddns-tsig"] = ddnsTSIG
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		ruleset, renderErr := renderDeploymentNFT(firewallPlan)
+		ruleset, renderErr := renderDeploymentNFTWithResolver(firewallPlan, endpointLookup)
 		if renderErr != nil {
 			return renderErr
 		}
@@ -249,7 +257,6 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 			break
 		}
 	}
-	rootRunner := proxmoxRootSSHRunner(s, *siteDir)
 	proxmoxPlan.PrivilegedRunner = rootRunner
 	proxmoxPlan.PrivilegedAddress = s.BootstrapAddress
 	proxmoxPlan.PrivilegedUser = "root"
@@ -1292,6 +1299,62 @@ func proxmoxRootSSHRunner(s model.Site, siteDir string) proxmox.SSHRunner {
 		KnownHosts:    deploymentKnownHosts(siteDir),
 		StrictHostKey: "yes",
 		HostAlias:     model.LogicalProxmoxIdentity,
+	}
+}
+
+func remoteEndpointResolver(ctx context.Context, runner proxmox.ArgsCommandRunner, address, user string) func(string) ([]net.IP, error) {
+	return func(host string) ([]net.IP, error) {
+		if strings.TrimSpace(host) != host || host == "" || strings.ContainsAny(host, " \t\r\n/") {
+			return nil, errors.New("endpoint hostname is invalid")
+		}
+		output, err := runner.RunArgs(ctx, address, user, []string{"getent", "ahostsv4", host})
+		if err != nil {
+			return nil, err
+		}
+		seen := map[string]struct{}{}
+		addresses := make([]net.IP, 0)
+		for _, line := range strings.Split(string(output), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 0 {
+				continue
+			}
+			ip := net.ParseIP(fields[0])
+			if ip == nil || ip.To4() == nil {
+				continue
+			}
+			ip = ip.To4()
+			if _, ok := seen[ip.String()]; ok {
+				continue
+			}
+			seen[ip.String()] = struct{}{}
+			addresses = append(addresses, ip)
+		}
+		if len(addresses) == 0 {
+			return nil, fmt.Errorf("remote resolver returned no IPv4 addresses for %s", host)
+		}
+		return addresses, nil
+	}
+}
+
+func endpointLookupWithFallback(primary, fallback func(string) ([]net.IP, error)) func(string) ([]net.IP, error) {
+	return func(host string) ([]net.IP, error) {
+		addresses, primaryErr := primary(host)
+		for _, address := range addresses {
+			if address != nil && address.To4() != nil {
+				return addresses, nil
+			}
+		}
+		if fallback == nil {
+			return nil, primaryErr
+		}
+		fallbackAddresses, fallbackErr := fallback(host)
+		if fallbackErr != nil {
+			if primaryErr != nil {
+				return nil, fmt.Errorf("controller resolver: %v; Proxmox resolver: %w", primaryErr, fallbackErr)
+			}
+			return nil, fallbackErr
+		}
+		return fallbackAddresses, nil
 	}
 }
 

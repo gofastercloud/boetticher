@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,6 +48,10 @@ func writeModelProjection(dir string, s model.Site) error {
 }
 
 func writeModelProjections(dir string, s model.Site) error {
+	return writeModelProjectionsWithResolver(dir, s, net.LookupIP)
+}
+
+func writeModelProjectionsWithResolver(dir string, s model.Site, endpointLookup func(string) ([]net.IP, error)) error {
 	if err := pathguard.ValidateNoSymlinkComponents(filepath.Join(dir, "generated")); err != nil {
 		return fmt.Errorf("refuse generated projection path: %w", err)
 	}
@@ -92,7 +97,7 @@ func writeModelProjections(dir string, s model.Site) error {
 		return err
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		ruleset, renderErr := renderDeploymentNFT(firewallPlan)
+		ruleset, renderErr := renderDeploymentNFTWithResolver(firewallPlan, endpointLookup)
 		if renderErr != nil {
 			return renderErr
 		}
@@ -193,10 +198,14 @@ func writeModelProjections(dir string, s model.Site) error {
 }
 
 func renderDeploymentNFT(plan firewall.Plan) (string, error) {
+	return renderDeploymentNFTWithResolver(plan, net.LookupIP)
+}
+
+func renderDeploymentNFTWithResolver(plan firewall.Plan, endpointLookup func(string) ([]net.IP, error)) (string, error) {
 	if len(plan.Publications) > 0 && plan.Upstream == nil {
-		return firewall.RenderSafeNFT(plan)
+		return firewall.RenderSafeNFTWithResolver(plan, endpointLookup)
 	}
-	return firewall.RenderNFT(plan)
+	return firewall.RenderNFTWithResolver(plan, endpointLookup)
 }
 
 func physicalDiscoveryFromSite(s model.Site) networkmodel.Discovery {

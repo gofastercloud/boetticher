@@ -523,6 +523,26 @@ func RenderNFT(plan Plan) (string, error) {
 	return renderNFTWithResolver(plan, net.LookupIP)
 }
 
+// RenderNFTWithResolver renders the managed policy using the supplied
+// endpoint resolver. Deployment uses this to keep endpoint resolution inside
+// an already-authenticated management path when the controller has no DNS
+// configuration of its own.
+func RenderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (string, error) {
+	if lookup == nil {
+		return "", errors.New("nftables endpoint resolver is required")
+	}
+	return renderNFTWithResolver(plan, lookup)
+}
+
+// RenderSafeNFTWithResolver emits the base policy while an optional
+// publication remains inactive until a current upstream DHCP observation is
+// available, using the supplied endpoint resolver.
+func RenderSafeNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (string, error) {
+	plan.Publications = nil
+	plan.Upstream = nil
+	return RenderNFTWithResolver(plan, lookup)
+}
+
 type destinationHostSet struct {
 	host      string
 	setName   string
