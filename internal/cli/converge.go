@@ -1106,7 +1106,7 @@ func selectedAIOpsModel(s model.Site) (model.LiteLLMModelConfig, error) {
 }
 
 func controllerMTLSClient(authority pki.Authority, certificate pki.ClientCertificate, forwardAddress string) (*http.Client, error) {
-	identity, err := tls.X509KeyPair([]byte(certificate.CertPEM), []byte(certificate.KeyPEM))
+	identity, err := tls.X509KeyPair([]byte(certificate.ChainPEM), []byte(certificate.KeyPEM))
 	if err != nil {
 		return nil, fmt.Errorf("load controller AIOps canary identity: %w", err)
 	}

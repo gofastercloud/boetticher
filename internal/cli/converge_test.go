@@ -173,6 +173,16 @@ func TestEndpointClientTrustProjectionIncludesRootAndIssuingCAs(t *testing.T) {
 	}
 }
 
+func TestAIOpsCanaryUsesCompleteControllerCertificateChain(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "tls.X509KeyPair([]byte(certificate.ChainPEM), []byte(certificate.KeyPEM))") {
+		t.Fatal("AIOps canary does not send the complete controller certificate chain")
+	}
+}
+
 func TestPulseCredentialBootstrapUsesTemporaryRootAuthority(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
 	if err != nil {
