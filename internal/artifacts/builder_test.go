@@ -102,6 +102,35 @@ func TestExtractBuildArchiveReaderAcceptsPlainTarTransport(t *testing.T) {
 	}
 }
 
+func TestExtractBuildArchiveReaderRejectsDestinationSymlink(t *testing.T) {
+	var archive bytes.Buffer
+	tarWriter := tar.NewWriter(&archive)
+	content := []byte("must stay out")
+	if err := tarWriter.WriteHeader(&tar.Header{Name: "generated/artifacts/redirect/payload", Mode: 0o600, Size: int64(len(content))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tarWriter.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	destination := t.TempDir()
+	external := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(destination, "generated", "artifacts"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(destination, "generated", "artifacts", "redirect")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ExtractBuildArchiveReader(bytes.NewReader(archive.Bytes()), destination); err == nil {
+		t.Fatal("archive extraction followed a destination symlink")
+	}
+	if _, err := os.Stat(filepath.Join(external, "payload")); !os.IsNotExist(err) {
+		t.Fatalf("archive wrote through destination symlink: %v", err)
+	}
+}
+
 func TestBuildSourceArchiveExcludesSiteSecrets(t *testing.T) {
 	root := t.TempDir()
 	for _, relative := range PublicBuildInputs {

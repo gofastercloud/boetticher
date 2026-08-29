@@ -65,7 +65,7 @@ func FirstPartyRegistry() Registry {
 	return Registry{definitions: map[string]ModuleDefinition{
 		"dns": {
 			Name: "dns", Description: "Mandatory DNS and NTP platform capability", Version: "1.0.0", Policy: Mandatory,
-			Configuration: []model.ModuleConfigField{{Key: "provider", Type: model.ModuleConfigEnum, Prompt: "DNS provider", Description: "Recursive DNS provider used by the platform", Required: true, Default: string(model.DNSProviderBlocky), AllowedValues: []string{string(model.DNSProviderBlocky), string(model.DNSProviderAdGuard)}}},
+			Configuration: nil,
 
 			Requires: []Capability{CapabilityGateway}, Provides: []Capability{CapabilityDNS, CapabilityNTP}, GuestIDs: []int{model.DNS01VMID, model.DNS02VMID}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeInfrastructure}, Guests: []model.Component{
 				{Name: "lab-dns-01", VMID: model.DNS01VMID, Hostname: "lab-dns-01", Zone: "INFRA", Address: "10.10.10.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
@@ -418,9 +418,6 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 		return nil, err
 	}
 	for name, moduleConfig := range configs {
-		if moduleConfig.Provider != "" && name != "dns" {
-			return nil, fmt.Errorf("modules.%s.provider: provider selection is only supported by dns", name)
-		}
 		if name == "litellm" && (moduleConfig.Enabled != nil && *moduleConfig.Enabled || len(moduleConfig.Upstreams) > 0 || len(moduleConfig.Models) > 0) {
 			if err := model.ValidateLiteLLMConfig(moduleConfig); err != nil {
 				return nil, err
@@ -437,9 +434,6 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 			if _, err := model.ResolveLiteLLMAlias(litellm, moduleConfig.ModelAlias); err != nil {
 				return nil, fmt.Errorf("modules.aiops.model_alias: %w", err)
 			}
-		}
-		if name == "dns" && moduleConfig.Provider != "" && moduleConfig.Provider != string(model.DNSProviderBlocky) && moduleConfig.Provider != string(model.DNSProviderAdGuard) {
-			return nil, fmt.Errorf("modules.dns.provider: expected one of: blocky, adguard")
 		}
 	}
 	active := map[string]bool{}

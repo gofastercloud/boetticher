@@ -17,9 +17,8 @@ The built-in modules are:
 External-firewall mode supplies the gateway capability outside the registry
 and explicitly disables the managed firewall module.
 
-DNS is one module with `blocky` as the default client-facing resolver/filter
-and `adguard` as a supported typed alternative. PowerDNS Authoritative and
-Chrony are common to both. Core shared infrastructure, including monitoring,
+DNS is one module with Blocky as the client-facing resolver/filter. PowerDNS
+Authoritative and Chrony provide the authoritative and time services. Core shared infrastructure, including monitoring,
 uses INFRA; `lab-monitor-01` is at `10.10.10.20`. Ordinary platform
 applications remain in SERVERS and do not use MGMT placement.
 

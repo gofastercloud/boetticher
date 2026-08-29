@@ -379,7 +379,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 						return fmt.Errorf("install PowerDNS TSIG state on %s: %w", guest.Name, err)
 					}
 				}
-				if err := verifyDNSReadiness(context.Background(), guestRunner, guest.Address, dnsPlan.RecursiveProvider); err != nil {
+				if err := verifyDNSReadiness(context.Background(), guestRunner, guest.Address); err != nil {
 					return fmt.Errorf("HOLD: DNS guest %s did not pass runtime readiness before dependent appliances: %w", guest.Name, err)
 				}
 			}
@@ -874,22 +874,13 @@ func verifyFirewallBootstrapNetwork(ctx context.Context, runner proxmox.CommandR
 	return nil
 }
 
-func verifyDNSReadiness(ctx context.Context, runner proxmox.CommandRunner, address, provider string) error {
+func verifyDNSReadiness(ctx context.Context, runner proxmox.CommandRunner, address string) error {
 	if runner == nil {
 		return errors.New("DNS readiness runner is required")
 	}
-	service := "blocky"
-	config := "/etc/blocky/config.yml"
-	checks := ""
-	if provider == string(model.DNSProviderAdGuard) {
-		service = "adguardhome"
-		config = "/opt/AdGuardHome/AdGuardHome.yaml"
-	} else if provider == string(model.DNSProviderBlocky) {
-		checks = "; test ! -e /opt/AdGuardHome/AdGuardHome; blocky version | grep -Fq '0.34.0'; blocky validate --config /etc/blocky/config.yml"
-	}
-	command := fmt.Sprintf("set -eu; systemctl is-active pdns chrony %s; test -s /etc/powerdns/pdns.conf; test -s %s%s", service, config, checks)
+	command := "set -eu; systemctl is-active pdns chrony blocky; test -s /etc/powerdns/pdns.conf; test -s /etc/blocky/config.yml; blocky version | grep -Fq '0.34.0'; blocky validate --config /etc/blocky/config.yml"
 	if _, err := runner.Run(ctx, address, "root", command); err != nil {
-		return fmt.Errorf("authoritative, NTP, and %s resolver checks failed: %w", provider, err)
+		return fmt.Errorf("authoritative, NTP, and Blocky resolver checks failed: %w", err)
 	}
 	return nil
 }

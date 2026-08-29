@@ -785,8 +785,8 @@ func (c *Client) DownloadURL(ctx context.Context, node, storage, filename, image
 		return "", errors.New("node, storage, filename, image URL, and checksum are required")
 	}
 	parsed, err := url.Parse(imageURL)
-	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
-		return "", errors.New("gateway image URL must be an HTTP(S) URL")
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return "", errors.New("gateway image URL must be an HTTPS URL")
 	}
 	if strings.ContainsAny(filename, "/\\\r\n") || len(checksum) != 128 || !isHex(checksum) {
 		return "", errors.New("gateway image filename or SHA-512 checksum is invalid")

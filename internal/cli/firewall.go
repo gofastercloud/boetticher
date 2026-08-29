@@ -153,6 +153,7 @@ type gatewayLiveStatus struct {
 
 func parseGatewayStatus(output string) (gatewayLiveStatus, error) {
 	status := gatewayLiveStatus{Services: map[string]string{}, Interfaces: map[string]string{}}
+	seenKeys := map[string]struct{}{}
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -162,6 +163,10 @@ func parseGatewayStatus(output string) (gatewayLiveStatus, error) {
 		if !ok || value == "" {
 			return gatewayLiveStatus{}, fmt.Errorf("managed gateway status contains malformed line %q", line)
 		}
+		if _, exists := seenKeys[key]; exists {
+			return gatewayLiveStatus{}, fmt.Errorf("managed gateway status contains duplicate field %q", key)
+		}
+		seenKeys[key] = struct{}{}
 		switch {
 		case key == "forwarding":
 			status.Forwarding = value

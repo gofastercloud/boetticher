@@ -67,7 +67,7 @@ func TestInstallRuntimeConfigUsesFixedCommandAndStdin(t *testing.T) {
 
 func TestInstallArtifactIdentityContainsQualifiedMetadataOnly(t *testing.T) {
 	runner := &runtimeRunner{}
-	artifact := model.Artifact{Name: "boetticher-dns-blocky", Version: "1.0.0", Provider: "blocky", Architecture: "amd64", Kind: "lxc", DefinitionSHA256: "definition", ContentSHA256: "content"}
+	artifact := model.Artifact{Name: "boetticher-dns-blocky", Version: "1.0.0", Architecture: "amd64", Kind: "lxc", DefinitionSHA256: "definition", ContentSHA256: "content"}
 	if err := InstallArtifactIdentity(context.Background(), runner, "10.10.10.10", "labadmin", artifact); err != nil {
 		t.Fatal(err)
 	}

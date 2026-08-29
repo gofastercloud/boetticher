@@ -23,7 +23,7 @@ import (
 // is published.
 type Definition struct {
 	Name         string
-	Provider     string
+	ArtifactName string
 	Version      string
 	Kind         string
 	Architecture string
@@ -253,7 +253,7 @@ func validateQualificationDigests(evidence Evidence) error {
 
 const (
 	BaseName      = "boetticher-base"
-	BaseVersion   = "0.3.34"
+	BaseVersion   = "0.4.0"
 	Architecture  = "amd64"
 	DebianRelease = "13"
 	ModuleVersion = "1.0.0"
@@ -268,9 +268,8 @@ var commonDefinitionInputs = []string{
 
 func Definitions() []Definition {
 	return []Definition{
-		{Name: "base", Version: BaseVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append([]string(nil), commonDefinitionInputs...)},
-		{Name: "dns", Provider: "blocky", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/dns", "internal/dns", "internal/model", "internal/modules", "cmd/render-blocky-config")},
-		{Name: "dns", Provider: "adguard", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/dns")},
+		{Name: "base", ArtifactName: BaseName, Version: BaseVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append([]string(nil), commonDefinitionInputs...)},
+		{Name: "dns", ArtifactName: "boetticher-dns-blocky", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/dns", "internal/dns", "internal/model", "internal/modules", "cmd/render-blocky-config")},
 		{Name: "logging", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/logging", "internal/logging", "cmd/boetticher-log-query")},
 		{Name: "monitoring", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/monitoring")},
 		{Name: "firewall", Version: ModuleVersion, Kind: "qemu", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/firewall", "scripts/smoke-firewall-image.sh")},
@@ -292,38 +291,29 @@ func Lookup(module string) (Definition, bool) {
 	return Definition{}, false
 }
 
-func ArtifactFor(module string, provider ...string) (model.Artifact, error) {
-	selectedProvider := ""
-	if len(provider) > 0 {
-		selectedProvider = provider[0]
-	}
+func ArtifactFor(module string) (model.Artifact, error) {
 	var definition Definition
 	var ok bool
 	for _, candidate := range Definitions() {
-		if candidate.Name == module && candidate.Provider == selectedProvider {
+		if candidate.Name == module {
 			definition, ok = candidate, true
 			break
 		}
 	}
-	if !ok && selectedProvider == "" {
-		definition, ok = Lookup(module)
-	}
 	if !ok {
-		return model.Artifact{}, fmt.Errorf("no built-in artifact definition for module %q provider %q", module, selectedProvider)
+		return model.Artifact{}, fmt.Errorf("no built-in artifact definition for module %q", module)
 	}
 	definitionDigest, err := definitionSHA256(definition)
 	if err != nil {
 		return model.Artifact{}, fmt.Errorf("hash artifact definition %s: %w", definition.Name, err)
 	}
+	artifactName := definition.ArtifactName
+	if artifactName == "" {
+		artifactName = "boetticher-" + module
+	}
 	return model.Artifact{
-		Name: "boetticher-" + module + func() string {
-			if definition.Provider != "" {
-				return "-" + definition.Provider
-			}
-			return ""
-		}(),
+		Name:             artifactName,
 		Version:          definition.Version,
-		Provider:         definition.Provider,
 		Architecture:     definition.Architecture,
 		Kind:             definition.Kind,
 		DefinitionSHA256: definitionDigest,
@@ -349,7 +339,11 @@ func ValidateDefinitions() error {
 // build definitions and pinned public inputs that produce it. It is a recipe
 // identity, not a claim about the bytes emitted by a particular build.
 func definitionSHA256(definition Definition) (string, error) {
-	identity := fmt.Sprintf("%s/%s/%s/%s/%s/%s/%s", definition.Base, definition.BaseVersion, definition.Name, definition.Provider, definition.Version, definition.Architecture, definition.Kind)
+	artifactName := definition.ArtifactName
+	if artifactName == "" {
+		artifactName = "boetticher-" + definition.Name
+	}
+	identity := fmt.Sprintf("%s/%s/%s/%s/%s/%s", definition.Base, definition.BaseVersion, artifactName, definition.Version, definition.Architecture, definition.Kind)
 	hash := sha256.New()
 	if _, err := io.WriteString(hash, identity+"\x00"); err != nil {
 		return "", err

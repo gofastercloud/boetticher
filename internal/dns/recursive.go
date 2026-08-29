@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gofastercloud/boetticher/internal/model"
 	"gopkg.in/yaml.v3"
 )
 
@@ -53,12 +52,12 @@ const (
 	FilteringPolicyFile     = "/etc/boetticher/dns/filtering/boetticher.hosts"
 )
 
-// RenderBlockyConfig renders only provider configuration. It contains no
+// RenderBlockyConfig renders only Blocky configuration. It contains no
 // credentials or mutable site secrets and is regenerated from the canonical
 // DNS plan for every deployment.
 func RenderBlockyConfig(plan Plan) ([]byte, error) {
-	if plan.RecursiveProvider != string(model.DNSProviderBlocky) {
-		return nil, fmt.Errorf("Blocky renderer cannot render provider %q", plan.RecursiveProvider)
+	if plan.RecursiveImplementation != "blocky" {
+		return nil, fmt.Errorf("Blocky renderer cannot render implementation %q", plan.RecursiveImplementation)
 	}
 	if !plan.AuthoritativeNXDOMAINNoLeak {
 		return nil, fmt.Errorf("Blocky authoritative mappings must reject public fallback")

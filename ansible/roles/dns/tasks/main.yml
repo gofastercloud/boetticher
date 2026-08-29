@@ -12,7 +12,7 @@
       - dns_plan.authoritative_implementation == 'PowerDNS Authoritative'
       - dns_plan.authoritative_version == '4.9.17'
       - dns_plan.authoritative_port == '5353'
-    fail_msg: "DNS deployment requires the generated PowerDNS, recursive-provider, and DDNS contract"
+    fail_msg: "DNS deployment requires the generated PowerDNS, Blocky, and DDNS contract"
   no_log: true
   when: inventory_hostname in groups.get('dns', [])
 
@@ -174,47 +174,12 @@
     - inventory_hostname == 'lab-dns-02'
     - item not in secondary_zones.stdout
 
-- name: Require the qualified AdGuard binary in an appliance
-  ansible.builtin.command: /opt/AdGuardHome/AdGuardHome --version
-  changed_when: false
-  when:
-    - inventory_hostname in groups.get('dns', [])
-    - dns_plan.recursive_provider == 'adguard'
-    - boetticher_appliance_artifact | default(false) | bool
-
-- name: Configure AdGuard Home as the client-facing resolver
-  ansible.builtin.template:
-    src: AdGuardHome.yaml.j2
-    dest: /opt/AdGuardHome/AdGuardHome.yaml
-    owner: root
-    group: root
-    mode: '0600'
-  notify: restart adguardhome
-  when:
-    - inventory_hostname in groups.get('dns', [])
-    - dns_plan.recursive_provider == 'adguard'
-
-- name: Install AdGuard Home systemd unit
-  ansible.builtin.template:
-    src: adguardhome.service.j2
-    dest: /etc/systemd/system/adguardhome.service
-    owner: root
-    group: root
-    mode: '0644'
-  notify:
-    - reload systemd
-    - restart adguardhome
-  when:
-    - inventory_hostname in groups.get('dns', [])
-    - dns_plan.recursive_provider == 'adguard'
-
 - name: Assert the qualified Blocky binary is present
   ansible.builtin.command: blocky version
   register: blocky_version
   changed_when: false
   when:
     - inventory_hostname in groups.get('dns', [])
-    - dns_plan.recursive_provider == 'blocky'
 
 - name: Allow Blocky to traverse its non-secret filtering policy path
   ansible.builtin.file:
@@ -225,7 +190,6 @@
     mode: '0755'
   when:
     - inventory_hostname in groups.get('dns', [])
-    - dns_plan.recursive_provider == 'blocky'
 
 - name: Refuse an unsupported Blocky release
   ansible.builtin.assert:
@@ -233,7 +197,6 @@
     fail_msg: "The installed Blocky resolver is not the qualified 0.34.0 release"
   when:
     - inventory_hostname in groups.get('dns', [])
-    - dns_plan.recursive_provider == 'blocky'
 
 - name: Install the canonical Blocky configuration
   ansible.builtin.copy:
@@ -245,31 +208,12 @@
   notify: restart blocky
   when:
     - inventory_hostname in groups.get('dns', [])
-    - dns_plan.recursive_provider == 'blocky'
 
 - name: Validate the canonical Blocky configuration with the installed binary
   ansible.builtin.command: blocky validate --config /etc/blocky/config.yml
   changed_when: false
   when:
     - inventory_hostname in groups.get('dns', [])
-    - dns_plan.recursive_provider == 'blocky'
-
-- name: Check for an active AdGuard service on a Blocky appliance
-  ansible.builtin.command: systemctl is-active --quiet adguardhome
-  register: adguard_service_state
-  changed_when: false
-  failed_when: false
-  when:
-    - inventory_hostname in groups.get('dns', [])
-    - dns_plan.recursive_provider == 'blocky'
-
-- name: Refuse an active unselected AdGuard resolver
-  ansible.builtin.assert:
-    that: adguard_service_state.rc != 0
-    fail_msg: "AdGuard Home is active while Blocky is the selected DNS provider"
-  when:
-    - inventory_hostname in groups.get('dns', [])
-    - dns_plan.recursive_provider == 'blocky'
 
 - name: Enable the qualified Blocky service
   ansible.builtin.service:
@@ -278,7 +222,6 @@
     state: started
   when:
     - inventory_hostname in groups.get('dns', [])
-    - dns_plan.recursive_provider == 'blocky'
 
 - name: Enable DNS services
   ansible.builtin.service:
@@ -288,12 +231,3 @@
   loop:
     - pdns
   when: inventory_hostname in groups.get('dns', [])
-
-- name: Enable AdGuard Home when selected
-  ansible.builtin.service:
-    name: adguardhome
-    enabled: true
-    state: started
-  when:
-    - inventory_hostname in groups.get('dns', [])
-    - dns_plan.recursive_provider == 'adguard'

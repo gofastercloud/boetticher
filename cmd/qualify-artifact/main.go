@@ -39,7 +39,6 @@ func main() {
 	provenancePath := flag.String("provenance", "", "builder provenance evidence")
 	evidenceRoot := flag.String("evidence-root", "generated/artifacts", "evidence output directory")
 	module := flag.String("module", "", "built-in module name")
-	provider := flag.String("provider", "", "built-in provider")
 	flag.Parse()
 	for name, value := range map[string]string{"artifact": *artifactPath, "report": *reportPath, "module": *module} {
 		if value == "" {
@@ -54,7 +53,7 @@ func main() {
 	if err != nil {
 		fatalf("decode Trivy report: %v", err)
 	}
-	artifact, err := artifacts.ArtifactFor(*module, *provider)
+	artifact, err := artifacts.ArtifactFor(*module)
 	if err != nil {
 		fatalf("resolve artifact definition: %v", err)
 	}

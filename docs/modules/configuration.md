@@ -13,8 +13,6 @@ gateway:
   publish:
     - service: dns
 modules:
-  dns:
-    provider: blocky
   monitoring:
     enabled: false
   tailnet-router:
@@ -44,7 +42,8 @@ usb_exports:
 
 An omitted module map uses the defaults: DNS is mandatory, monitoring is
 enabled, the managed firewall is enabled, and logging is mandatory. DNS has no
-disable switch and accepts only `blocky` or `adguard` as its provider.
+disable switch or provider-selection field; its built-in implementation is
+Blocky.
 
 Use `boetticher config validate` before deployment, `boetticher config show`
 to inspect normalized non-secret configuration, and `boetticher config schema`

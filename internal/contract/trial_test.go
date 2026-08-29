@@ -85,7 +85,7 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(dnsTasks), "blocky validate --config /etc/blocky/config.yml") || !strings.Contains(string(dnsTasks), "dns_plan.recursive_provider == 'blocky'") {
+	if !strings.Contains(string(dnsTasks), "blocky validate --config /etc/blocky/config.yml") || strings.Contains(string(dnsTasks), "recursive_provider") {
 		t.Fatal("default DNS path does not validate and configure the qualified Blocky appliance")
 	}
 	site, _, err := modules.Compose(model.ConfigFromSite(base))
@@ -112,7 +112,7 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		evidence.ArtifactPath = artifactPath
-		for filename, content := range map[string]string{"package-manifest.txt": "package: trial\n", "sbom.json": "{}\n", "trivy.json": "{\"Results\":[]}\n", "builder-provenance.json": "{\"platform\":\"debian-13-amd64\",\"input_image\":\"debian-13-genericcloud-amd64-20260327-2429\",\"kernel\":\"6.1.0\",\"go\":\"go version go1.26.5 linux/amd64\",\"trivy\":\"Version: 0.69.3\",\"mmdebstrap\":\"mmdebstrap 1.5.0\",\"architecture\":\"amd64\",\"boetticher_version\":\"0.3.34\"}\n"} {
+		for filename, content := range map[string]string{"package-manifest.txt": "package: trial\n", "sbom.json": "{}\n", "trivy.json": "{\"Results\":[]}\n", "builder-provenance.json": "{\"platform\":\"debian-13-amd64\",\"input_image\":\"debian-13-genericcloud-amd64-20260327-2429\",\"kernel\":\"6.1.0\",\"go\":\"go version go1.26.5 linux/amd64\",\"trivy\":\"Version: 0.69.3\",\"mmdebstrap\":\"mmdebstrap 1.5.0\",\"architecture\":\"amd64\",\"boetticher_version\":\"0.4.0\"}\n"} {
 			if err := os.WriteFile(filepath.Join(filepath.Dir(artifactPath), filename), []byte(content), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -121,7 +121,7 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 		evidence.SBOMSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactPath), "sbom.json"), "SBOM")
 		evidence.TrivyReportSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactPath), "trivy.json"), "Trivy report")
 		evidence.BuilderProvenanceSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactPath), "builder-provenance.json"), "builder provenance")
-		evidence.Builder = artifacts.BuilderProvenance{Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429", Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3", MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.3.34"}
+		evidence.Builder = artifacts.BuilderProvenance{Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429", Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3", MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.4.0"}
 		evidence, err = artifacts.QualifyEvidence(evidence, artifacts.ScanSummary{Completed: true})
 		if err != nil {
 			t.Fatal(err)
@@ -177,8 +177,8 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	if _, err := proxmox.RenderFirewallCloudInitWithKey(plan.Guests[0], "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator"); err != nil {
 		t.Fatalf("firewall first-boot SSH contract is not renderable: %v", err)
 	}
-	if dnsDeclaration.Artifact.Provider != string(model.DNSProviderBlocky) {
-		t.Fatalf("default DNS provider is not Blocky: %#v", dnsDeclaration.Artifact)
+	if dnsDeclaration.Artifact.Name != "boetticher-dns-blocky" {
+		t.Fatalf("default DNS artifact is not Blocky: %#v", dnsDeclaration.Artifact)
 	}
 	externalConfig := model.ConfigFromSite(model.NewSite("trial-external", "age1trial", model.GatewayModeExternal))
 	disabled := false

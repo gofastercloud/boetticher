@@ -665,7 +665,7 @@ func TestDNSRoleAllowsBlockyToTraverseFilteringPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, required := range []string{"Allow Blocky to traverse its non-secret filtering policy path", "path: /etc/boetticher", "mode: '0755'", "dns_plan.recursive_provider == 'blocky'"} {
+	for _, required := range []string{"Allow Blocky to traverse its non-secret filtering policy path", "path: /etc/boetticher", "mode: '0755'"} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("DNS role is missing Blocky filtering traversal contract %q", required)
 		}
@@ -929,21 +929,6 @@ func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
 	}
 }
 
-func TestVariablesDoNotRenderBlockyForAdGuardSites(t *testing.T) {
-	site := model.NewDefaultSite("installation", "age1example")
-	site.ModuleConfig = map[string]model.ModuleConfig{"dns": {Provider: string(model.DNSProviderAdGuard)}}
-	variables, err := Variables(site)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(variables), "upstreams:\n") {
-		t.Fatal("AdGuard variables unexpectedly contain Blocky configuration")
-	}
-	if !strings.Contains(string(variables), `"recursive_provider": "adguard"`) {
-		t.Fatal("AdGuard provider was not retained in the generated DNS plan")
-	}
-}
-
 func TestDNSAppliancePathCannotInstallAResolver(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
@@ -951,13 +936,13 @@ func TestDNSAppliancePathCannotInstallAResolver(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, forbidden := range []string{"ansible.builtin.get_url:", "ansible.builtin.unarchive:", "AdGuardHome_linux_amd64.tar.gz"} {
+	for _, forbidden := range []string{"ansible.builtin.get_url:", "ansible.builtin.unarchive:"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("DNS role retains software installation path %q", forbidden)
 		}
 	}
-	if !strings.Contains(text, "Require the qualified AdGuard binary in an appliance") || !strings.Contains(text, "/opt/AdGuardHome/AdGuardHome --version") {
-		t.Fatal("AdGuard appliance path does not assert that the selected binary is image-provided")
+	if !strings.Contains(text, "Assert the qualified Blocky binary is present") || !strings.Contains(text, "ansible.builtin.command: blocky version") {
+		t.Fatal("DNS appliance path does not assert that the selected binary is image-provided")
 	}
 }
 

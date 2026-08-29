@@ -6,9 +6,11 @@ This reference is generated from the CLI command metadata. `deploy` is the only 
 
 ```text
 boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall]
-boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]
+boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--record] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]
 boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]
 boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]
+boetticher status [--site DIR] [--live] [--verbose] [--json]
+boetticher update [--site DIR] [--dry-run] [--confirm]
 boetticher logs [HOST] [--site DIR] [--unit UNIT] [--since DURATION] [--priority LEVEL] [--limit N]
 boetticher aiops status [--site DIR] [--live] [--json]
 boetticher verify [--site DIR] [--ssh-config PATH] [--ssh-journey] [--live]
@@ -54,15 +56,15 @@ Related commands: config validate, preflight, bootstrap
 
 Purpose: Validate controller, Proxmox, hardware, configuration, and deployment safety prerequisites.
 
-Usage: `boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]`
+Usage: `boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--record] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]`
 
 Arguments: No positional arguments.
 
-Options: --live performs bounded target checks; --site selects the private site; --age-identity selects the external Age identity needed to validate encrypted credential reuse; bootstrap and SSH options identify the target.
+Options: --live performs bounded target checks; --record explicitly persists approved physical discovery and requires --live; --site selects the private site; --age-identity selects the external Age identity needed to validate encrypted credential reuse; bootstrap and SSH options identify the target.
 
-Safety: Read-only. Preflight performs no platform mutation.
+Safety: Read-only unless --live --record is explicit. A live inspection without --record never mutates site state.
 
-Examples: `boetticher preflight --site ./my-boetticher --live`
+Examples: `boetticher preflight --site ./my-boetticher --live`; `boetticher preflight --site ./my-boetticher --live --record`
 
 Related commands: bootstrap, deploy --dry-run
 
@@ -97,6 +99,38 @@ Safety: This is the sole public platform-application operation. It requires the 
 Examples: `boetticher deploy --site ./my-boetticher --dry-run`; `boetticher deploy --site ./my-boetticher --confirm`
 
 Related commands: preflight, verify, doctor
+
+### status
+
+Purpose: Present the versioned semantic platform and module status model.
+
+Usage: `boetticher status [--site DIR] [--live] [--verbose] [--json]`
+
+Arguments: No positional arguments.
+
+Options: --live performs bounded read-only gateway evidence; --verbose includes detailed reasons and next actions; --json emits the versioned status model. Exit status is zero only for HEALTHY; FAILED, DEGRADED, and ACTION REQUIRED return non-zero. Disabled optional modules are excluded from the overall result.
+
+Safety: Read-only. Live transport and malformed evidence fail non-zero and are never reported as PASS.
+
+Examples: `boetticher status --site ./my-boetticher`; `boetticher status --site ./my-boetticher --live --json`
+
+Related commands: deploy, doctor, verify, dhcp
+
+### update
+
+Purpose: Plan or atomically update compatible v3 desired state to platform 0.4.0 without deploying it.
+
+Usage: `boetticher update [--site DIR] [--dry-run] [--confirm]`
+
+Arguments: No positional arguments.
+
+Options: --dry-run validates and prints the update without writing; --confirm authorizes the desired-state and projection update.
+
+Safety: Update never deploys. Failed projection refresh restores the original site.yml.
+
+Examples: `boetticher update --site ./my-boetticher --dry-run`; `boetticher update --site ./my-boetticher --confirm`
+
+Related commands: deploy, status, config validate
 
 ### logs
 
@@ -380,7 +414,7 @@ Arguments: validate, show, and schema select the read-only operation.
 
 Options: --site selects the private site repository; schema does not require a site directory.
 
-Safety: Read-only. Unknown fields, invalid providers, and mandatory-module disable attempts fail before infrastructure mutation.
+Safety: Read-only. Unknown fields, invalid configuration, and mandatory-module disable attempts fail before infrastructure mutation.
 
 Examples: `boetticher config validate --site ./my-boetticher`; `boetticher config schema`
 
@@ -462,7 +496,7 @@ Arguments: validate, show, and schema select the read-only operation.
 
 Options: --site selects the private site repository; schema does not require a site directory.
 
-Safety: Read-only. Unknown fields, invalid providers, and mandatory-module disable attempts fail before infrastructure mutation.
+Safety: Read-only. Unknown fields, invalid configuration, and mandatory-module disable attempts fail before infrastructure mutation.
 
 Examples: `boetticher config validate --site ./my-boetticher`; `boetticher config schema`
 
@@ -478,7 +512,7 @@ Arguments: validate, show, and schema select the read-only operation.
 
 Options: --site selects the private site repository; schema does not require a site directory.
 
-Safety: Read-only. Unknown fields, invalid providers, and mandatory-module disable attempts fail before infrastructure mutation.
+Safety: Read-only. Unknown fields, invalid configuration, and mandatory-module disable attempts fail before infrastructure mutation.
 
 Examples: `boetticher config validate --site ./my-boetticher`; `boetticher config schema`
 
@@ -494,7 +528,7 @@ Arguments: validate, show, and schema select the read-only operation.
 
 Options: --site selects the private site repository; schema does not require a site directory.
 
-Safety: Read-only. Unknown fields, invalid providers, and mandatory-module disable attempts fail before infrastructure mutation.
+Safety: Read-only. Unknown fields, invalid configuration, and mandatory-module disable attempts fail before infrastructure mutation.
 
 Examples: `boetticher config validate --site ./my-boetticher`; `boetticher config schema`
 

@@ -55,12 +55,16 @@ func runPreflight(args []string, out interface{ Write([]byte) (int, error) }) er
 	siteDir := fs.String("site", ".", "private site repository directory")
 	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
 	live := fs.Bool("live", false, "inspect the fresh Proxmox host over the recorded bootstrap path")
+	record := fs.Bool("record", false, "persist approved physical discovery from --live")
 	bootstrapAddress := fs.String("bootstrap-address", "", "fresh Proxmox HOME-side address when it is not yet recorded")
 	initialUser := fs.String("initial-user", "root", "initial SSH user on the fresh Proxmox host")
 	knownHosts := fs.String("known-hosts", "", "optional SSH known-hosts file for discovery")
 	trunkInterface := fs.String("trunk-interface", "", "explicit trunk selection when multiple eligible NICs exist")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *record && !*live {
+		return errors.New("--record requires --live; inspection is read-only without explicit recording")
 	}
 	s, err := site.Load(*siteDir)
 	if err != nil {
@@ -75,7 +79,7 @@ func runPreflight(args []string, out interface{ Write([]byte) (int, error) }) er
 	fmt.Fprintf(out, "Controller: PASS %s/%s\n", runtime.GOOS, runtime.GOARCH)
 	fmt.Fprintf(out, "Gateway upstream MAC: %s (create the matching upstream DHCP reservation)\n", s.Gateway.Upstream.MAC)
 	allPass := true
-	for _, tool := range []string{"git", "ssh", "ssh-keyscan", "age-keygen", "sops", "ansible", "ansible-playbook"} {
+	for _, tool := range []string{"ssh", "ssh-keyscan", "age-keygen", "sops", "ansible", "ansible-playbook"} {
 		path, err := exec.LookPath(tool)
 		if err != nil {
 			allPass = false
@@ -133,19 +137,23 @@ func runPreflight(args []string, out interface{ Write([]byte) (int, error) }) er
 	fmt.Fprintf(out, "Proxmox node: PASS %s (discovered from /nodes)\n", discovered.Node)
 	printPhysicalDiscovery(out, discovery)
 	fmt.Fprintln(out, "Proxmox credential reservation: PASS")
-	if err := writePhysicalDiscovery(*siteDir, s, discovery); err != nil {
-		return err
-	}
-	if err := rebuildPortal(*siteDir, s); err != nil {
-		return err
-	}
 	if discovery.Mode == networkmodel.ModeSelectionNeeded {
 		return errors.New("HOLD: multiple eligible trunk interfaces require explicit selection")
 	}
 	if s.Gateway.Mode == model.GatewayModeExternal && discovery.Mode != networkmodel.ModePhysicalTrunk {
 		return errors.New("external gateway mode requires a distinct physical vmbr1 trunk")
 	}
-	fmt.Fprintf(out, "Physical discovery: PASS %s\n", discovery.Mode)
+	if *record {
+		if err := writePhysicalDiscovery(*siteDir, s, discovery); err != nil {
+			return err
+		}
+		if err := rebuildPortal(*siteDir, s); err != nil {
+			return err
+		}
+		fmt.Fprintln(out, "Physical discovery: recorded with --live --record")
+	} else {
+		fmt.Fprintln(out, "Physical discovery: PASS (not persisted; use --live --record to approve recording)")
+	}
 	return nil
 }
 

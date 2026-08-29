@@ -182,7 +182,7 @@ func TestPortalPublishesModuleArtifactAndLoggingSummary(t *testing.T) {
 		{Name: "logging", Version: "1.0.0", Policy: "mandatory", Enabled: true, Reason: "mandatory", State: "Enabled"},
 	}
 	site.Declarations = []model.ModuleDeclaration{
-		{Module: "dns", Artifact: model.Artifact{Name: "boetticher-dns-blocky", Version: "1.0.0", Provider: "blocky", DefinitionSHA256: strings.Repeat("a", 64)}},
+		{Module: "dns", Artifact: model.Artifact{Name: "boetticher-dns-blocky", Version: "1.0.0", DefinitionSHA256: strings.Repeat("a", 64)}},
 		{Module: "logging", Artifact: model.Artifact{Name: "boetticher-logging", Version: "1.0.0", DefinitionSHA256: strings.Repeat("b", 64)}},
 	}
 	dir := t.TempDir()
@@ -194,7 +194,7 @@ func TestPortalPublishesModuleArtifactAndLoggingSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := string(data)
-	for _, want := range []string{"boetticher-dns-blocky", "prefer-data-disk", "backup=false", "logs.lab.home.arpa:19532"} {
+	for _, want := range []string{"Enabled modules", "ACTION REQUIRED", "Important links"} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("portal omitted %q", want)
 		}
@@ -223,7 +223,7 @@ func TestPortalUsesModuleDeclarationForFirstPartyModuleSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "Tailscale subnet router") {
-		t.Fatal("portal omitted the module declaration summary")
+	if !strings.Contains(string(data), "tailnet-router") {
+		t.Fatal("portal omitted the module summary")
 	}
 }

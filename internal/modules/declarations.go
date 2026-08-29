@@ -31,14 +31,7 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 	if err != nil {
 		return model.ModuleDeclaration{}, err
 	}
-	provider := ""
-	if name == "dns" {
-		provider = site.ModuleConfig["dns"].Provider
-		if provider == "" {
-			provider = string(model.DNSProviderBlocky)
-		}
-	}
-	artifact, err := artifacts.ArtifactFor(name, provider)
+	artifact, err := artifacts.ArtifactFor(name)
 	if err != nil {
 		return model.ModuleDeclaration{}, err
 	}
@@ -170,7 +163,7 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "gatus." + site.Network.Domain, SANs: []string{"gatus." + site.Network.Domain, "lab-gatus-01." + site.Network.Domain}, Consumer: "nginx"})
 		declaration.Portal = []model.PortalEntry{{Name: "gatus", Description: "Generated status page for declared services; user endpoints are not supported", URLs: []string{"https://gatus." + site.Network.Domain}, Docs: []string{"docs/modules/gatus.md"}}}
 	default:
-		return model.ModuleDeclaration{}, fmt.Errorf("no declaration provider for first-party module %q", name)
+		return model.ModuleDeclaration{}, fmt.Errorf("no declaration implementation for first-party module %q", name)
 	}
 	return declaration, nil
 }

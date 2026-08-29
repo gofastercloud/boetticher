@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -39,18 +40,54 @@ func runDHCP(args []string, out interface{ Write([]byte) (int, error) }) error {
 	if err != nil {
 		return err
 	}
-	if s.Gateway.Mode == model.GatewayModeExternal {
-		if *jsonOutput {
-			return writeCLIJSON(out, map[string]string{"mode": "external", "status": "DHCP is managed by the external firewall"})
-		}
-		fmt.Fprintln(out, "DHCP is managed by the operator-owned external firewall.")
-		return nil
-	}
 	if command != "status" && command != "leases" {
 		return fmt.Errorf("unknown dhcp command %q", command)
 	}
+	if s.Gateway.Mode == model.GatewayModeExternal {
+		result := map[string]any{
+			"mode":            "external",
+			"status":          "NOT TESTED",
+			"operator_state":  "ACTION REQUIRED",
+			"reason":          "DHCP is managed by the external firewall",
+			"next_action":     "Inspect DHCP and DDNS using the external firewall's supported interface",
+			"evidence_status": "NOT TESTED",
+		}
+		if *jsonOutput {
+			if err := writeCLIJSON(out, result); err != nil {
+				return err
+			}
+		} else {
+			fmt.Fprintln(out, "DHCP: ACTION REQUIRED")
+			fmt.Fprintln(out, "  DHCP is managed by the operator-owned external firewall; Boetticher cannot inspect it.")
+		}
+		if *live {
+			return errors.New("ACTION REQUIRED: live DHCP inspection is unavailable in external-firewall mode")
+		}
+		return nil
+	}
 	if command == "status" {
-		value := map[string]any{"mode": plan.Mode, "service": "kea-dhcp4", "ddns_service": "kea-dhcp-ddns", "subnets": plan.DHCP, "live": false}
+		value := map[string]any{
+			"mode": plan.Mode, "service": "kea-dhcp4", "ddns_service": "kea-dhcp-ddns", "subnets": plan.DHCP,
+			"status": "NOT TESTED", "evidence_status": "NOT TESTED", "operator_state": "ACTION REQUIRED",
+			"reason":      "desired DHCP configuration has not been checked on the gateway",
+			"next_action": "Run boetticher dhcp status --live",
+		}
+		if *live {
+			liveStatus, observedAt, err := inspectManagedDHCP(*siteDir, s)
+			if err != nil {
+				return err
+			}
+			value["status"] = "PASS"
+			value["evidence_status"] = "PASS"
+			value["operator_state"] = "HEALTHY"
+			value["observed_at"] = observedAt
+			value["services"] = map[string]string{
+				"kea-dhcp4-server":     liveStatus.Services["kea-dhcp4-server"],
+				"kea-dhcp-ddns-server": liveStatus.Services["kea-dhcp-ddns-server"],
+			}
+			value["reason"] = "Kea DHCP and Kea DDNS are active on the managed gateway"
+			value["next_action"] = "No action required"
+		}
 		if *jsonOutput {
 			return writeCLIJSON(out, value)
 		}
@@ -65,11 +102,19 @@ func runDHCP(args []string, out interface{ Write([]byte) (int, error) }) error {
 			fmt.Fprintf(out, "  %-9s %-18s gateway=%s allocation=%s\n", subnet.Zone, subnet.Network, subnet.Gateway, allocation)
 		}
 		if *live {
-			fmt.Fprintln(out, "  Live state    NOT TESTED (use firewall status --live for gateway service state)")
+			liveStatus := value["services"].(map[string]string)
+			fmt.Fprintf(out, "  Live state    PASS observed=%s\n", value["observed_at"])
+			fmt.Fprintf(out, "  Kea DHCP      %s\n  Kea DDNS      %s\n", liveStatus["kea-dhcp4-server"], liveStatus["kea-dhcp-ddns-server"])
+		} else {
+			fmt.Fprintln(out, "  Evidence      NOT TESTED (run boetticher dhcp status --live)")
 		}
 		return nil
 	}
 	if *live {
+		liveStatus, observedAt, err := inspectManagedDHCP(*siteDir, s)
+		if err != nil {
+			return err
+		}
 		data, err := gatewayCommand(*siteDir, s, "sudo", "/usr/lib/boetticher/inspect-firewall", "leases")
 		if err != nil {
 			return err
@@ -79,7 +124,10 @@ func runDHCP(args []string, out interface{ Write([]byte) (int, error) }) error {
 			return err
 		}
 		if *jsonOutput {
-			return writeCLIJSON(out, map[string]any{"mode": plan.Mode, "leases": leases, "status": "PASS"})
+			return writeCLIJSON(out, map[string]any{
+				"mode": plan.Mode, "leases": leases, "status": "PASS", "evidence_status": "PASS", "observed_at": observedAt,
+				"services": map[string]string{"kea-dhcp4-server": liveStatus.Services["kea-dhcp4-server"], "kea-dhcp-ddns-server": liveStatus.Services["kea-dhcp-ddns-server"]},
+			})
 		}
 		printDHCPLeases(out, leases)
 		return nil
@@ -95,6 +143,34 @@ func runDHCP(args []string, out interface{ Write([]byte) (int, error) }) error {
 		}
 		return names
 	}(), ", "))
+	return nil
+}
+
+func inspectManagedDHCP(siteDir string, s model.Site) (gatewayLiveStatus, string, error) {
+	data, err := gatewayCommand(siteDir, s, "sudo", gatewayStatusScript, "status")
+	if err != nil {
+		return gatewayLiveStatus{}, "", fmt.Errorf("live DHCP inspection failed: %w", err)
+	}
+	liveStatus, err := parseGatewayStatus(string(data))
+	if err != nil {
+		return gatewayLiveStatus{}, "", fmt.Errorf("live DHCP inspection returned malformed gateway status: %w", err)
+	}
+	if err := validateDHCPServices(liveStatus); err != nil {
+		return gatewayLiveStatus{}, "", err
+	}
+	return liveStatus, time.Now().UTC().Format(time.RFC3339), nil
+}
+
+func validateDHCPServices(liveStatus gatewayLiveStatus) error {
+	for _, service := range []string{"kea-dhcp4-server", "kea-dhcp-ddns-server"} {
+		state, ok := liveStatus.Services[service]
+		if !ok || strings.TrimSpace(state) == "" {
+			return fmt.Errorf("live DHCP inspection is incomplete: %s state is missing", service)
+		}
+		if strings.TrimSpace(state) != "active" {
+			return fmt.Errorf("live DHCP inspection failed: %s is %q, expected active", service, state)
+		}
+	}
 	return nil
 }
 

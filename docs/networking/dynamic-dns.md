@@ -1,9 +1,9 @@
 # Dynamic DNS
 
 PowerDNS Authoritative on `lab-dns-01` is the primary update target and
-`lab-dns-02` is the secondary. The qualified v0.3 target is PowerDNS
-Authoritative 4.9.17. The selected recursive provider forwards the static and
-dynamic zones to the local/redundant authoritative service.
+`lab-dns-02` is the secondary. The qualified v0.4 target is PowerDNS
+Authoritative 4.9.17. Blocky forwards the static and dynamic zones to the
+local/redundant authoritative service.
 
 Managed mode uses Kea D2 on `lab-fw-01` to send authenticated RFC2136 updates.
 External mode can provide the same feature only if the operator's DHCP service

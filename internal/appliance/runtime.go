@@ -23,13 +23,12 @@ type RuntimeConfig struct {
 	APIVersion  string                  `yaml:"api_version"`
 	Module      string                  `yaml:"module"`
 	Version     string                  `yaml:"module_version"`
-	Provider    string                  `yaml:"provider,omitempty"`
 	Guest       model.Component         `yaml:"guest"`
 	Artifact    model.Artifact          `yaml:"artifact"`
 	Declaration model.ModuleDeclaration `yaml:"declaration"`
 }
 
-func RenderRuntimeConfig(site model.Site, guest model.Component, declaration model.ModuleDeclaration) ([]byte, error) {
+func RenderRuntimeConfig(_ model.Site, guest model.Component, declaration model.ModuleDeclaration) ([]byte, error) {
 	if guest.Module == "" || guest.Name == "" || guest.Address == "" {
 		return nil, fmt.Errorf("runtime config requires a module guest identity")
 	}
@@ -39,15 +38,10 @@ func RenderRuntimeConfig(site model.Site, guest model.Component, declaration mod
 	if declaration.Module != guest.Module || declaration.Artifact.Name == "" {
 		return nil, fmt.Errorf("runtime config declaration does not match guest %s", guest.Name)
 	}
-	provider := ""
-	if guest.Module == "dns" {
-		provider = site.ModuleConfig["dns"].Provider
-	}
 	data, err := yaml.Marshal(RuntimeConfig{
-		APIVersion:  site.APIVersion,
+		APIVersion:  model.APIVersion,
 		Module:      guest.Module,
 		Version:     declaration.Artifact.Version,
-		Provider:    provider,
 		Guest:       guest,
 		Artifact:    declaration.Artifact,
 		Declaration: declaration,

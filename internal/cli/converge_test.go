@@ -331,7 +331,7 @@ func TestRuntimeDeclarationRejectsUnqualifiedGuestArtifact(t *testing.T) {
 
 func TestVerifyDNSReadinessChecksTheQualifiedBlockyRuntime(t *testing.T) {
 	runner := &dnsReadinessRunner{}
-	if err := verifyDNSReadiness(context.Background(), runner, "10.10.10.10", string(model.DNSProviderBlocky)); err != nil {
+	if err := verifyDNSReadiness(context.Background(), runner, "10.10.10.10"); err != nil {
 		t.Fatal(err)
 	}
 	if len(runner.commands) != 1 {
@@ -340,7 +340,6 @@ func TestVerifyDNSReadinessChecksTheQualifiedBlockyRuntime(t *testing.T) {
 	command := runner.commands[0]
 	for _, required := range []string{
 		"systemctl is-active pdns chrony blocky",
-		"test ! -e /opt/AdGuardHome/AdGuardHome",
 		"blocky version | grep -Fq '0.34.0'",
 		"blocky validate --config /etc/blocky/config.yml",
 	} {

@@ -31,7 +31,7 @@ func TestEmbeddedSchemaProjectsTypedModuleConstraints(t *testing.T) {
 	}
 	for field, want := range map[string]any{
 		"api_version":      "boetticher/v3",
-		"platform_version": "0.3.34",
+		"platform_version": "0.4.0",
 		"schema_version":   float64(3),
 	} {
 		if got := document.Properties[field].Const; got != want {
@@ -46,8 +46,8 @@ func TestEmbeddedSchemaProjectsTypedModuleConstraints(t *testing.T) {
 	if !ok {
 		t.Fatal("DNS module definition is absent from schema")
 	}
-	if _, ok := dns.Properties["provider"]; !ok {
-		t.Fatal("DNS module schema omitted provider")
+	if len(dns.Properties) != 0 {
+		t.Fatalf("DNS module schema exposes non-default settings: %#v", dns.Properties)
 	}
 	if _, ok := dns.Properties["enabled"]; ok {
 		t.Fatal("DNS module schema exposes forbidden enabled field")

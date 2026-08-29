@@ -1,4 +1,4 @@
-.PHONY: ci test build vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-dns-adguard image-logging image-monitoring image-firewall image-portal image-tailnet-router image-litellm image-printer image-aiops image-gatus images scan-images scan-base scan-dns-blocky scan-dns-adguard scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-litellm scan-printer scan-aiops scan-gatus command-docs command-docs-check
+.PHONY: ci test build vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-portal image-tailnet-router image-litellm image-printer image-aiops image-gatus images scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-litellm scan-printer scan-aiops scan-gatus command-docs command-docs-check
 
 GOCACHE ?= /tmp/boetticher-gocache
 GOMODCACHE ?= /tmp/boetticher-gomodcache
@@ -50,10 +50,10 @@ image-check:
 	sh -n scripts/build-images.sh scripts/scan-images.sh scripts/smoke-appliance.sh scripts/smoke-firewall-image.sh images/base/first-boot/boetticher-first-boot.sh images/base/runtime/install-runtime-state.sh
 	@test -z "$$(rg -n 'BOETTICHER_IMAGE_BUILD_COMMAND|exec sh -c' scripts || true)"
 
-image-base image-dns-blocky image-dns-adguard image-logging image-monitoring image-firewall image-portal image-tailnet-router image-litellm image-printer image-aiops image-gatus images:
+image-base image-dns-blocky image-logging image-monitoring image-firewall image-portal image-tailnet-router image-litellm image-printer image-aiops image-gatus images:
 	./scripts/build-images.sh $@
 
-scan-base scan-dns-blocky scan-dns-adguard scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-litellm scan-printer scan-aiops scan-gatus scan-images:
+scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-litellm scan-printer scan-aiops scan-gatus scan-images:
 	./scripts/scan-images.sh $@
 
 naming-check:

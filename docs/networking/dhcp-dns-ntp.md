@@ -12,7 +12,7 @@ static DNS/NTP addresses. SANDBOX receives `10.10.40.1` for both, keeping it
 independent of the INFRA guests. TRANSIT, INFRA, and MGMT are static-only zones
 and do not receive DHCP scopes or DDNS updates. The DNS guests run PowerDNS
 Authoritative and Chrony with Blocky as the default client-facing
-recursive/filtering provider. AdGuard Home is a supported typed alternative.
+recursive/filtering implementation.
 PowerDNS receives authenticated Kea D2 RFC2136 updates from SERVERS, TRUSTED,
 and SANDBOX only.
 

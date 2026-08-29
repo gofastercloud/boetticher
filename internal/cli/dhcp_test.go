@@ -2,41 +2,44 @@ package cli
 
 import (
 	"testing"
-
-	"github.com/gofastercloud/boetticher/internal/firewall"
-	"github.com/gofastercloud/boetticher/internal/model"
 )
 
-func TestParseKeaLeaseCSVQualifiesActiveNamesByZone(t *testing.T) {
-	plan, err := firewall.PlanFromSite(model.NewDefaultSite("installation", "age1example"))
-	if err != nil {
+func TestValidateDHCPServicesRequiresBothActiveKeaServices(t *testing.T) {
+	valid := gatewayLiveStatus{Services: map[string]string{
+		"kea-dhcp4-server":     "active",
+		"kea-dhcp-ddns-server": "active",
+	}}
+	if err := validateDHCPServices(valid); err != nil {
 		t.Fatal(err)
 	}
-	data := []byte("address,hwaddr,client_id,valid_lifetime,expire,subnet_id,fqdn_fwd,fqdn_rev,hostname,state,user_context\n" +
-		"10.10.30.104,aa:bb,,86400,0,2,1,1,laptop,0,\n" +
-		"10.10.40.112,aa:cc,,86400,0,3,1,1,kali.sandbox.lab.home.arpa.,0,\n" +
-		"10.10.30.123,aa:dd,,86400,0,2,1,1,expired,2,\n")
-	leases, err := parseKeaLeaseCSV(data, plan)
-	if err != nil {
-		t.Fatal(err)
+	cases := []gatewayLiveStatus{
+		{Services: map[string]string{"kea-dhcp4-server": "active"}},
+		{Services: map[string]string{"kea-dhcp4-server": "inactive", "kea-dhcp-ddns-server": "active"}},
+		{Services: map[string]string{"kea-dhcp4-server": "active", "kea-dhcp-ddns-server": "failed"}},
 	}
-	if len(leases) != 2 {
-		t.Fatalf("got %d active leases, want 2: %#v", len(leases), leases)
-	}
-	if leases[0].Zone != "TRUSTED" || leases[0].FQDN != "laptop.trusted.lab.home.arpa" {
-		t.Fatalf("simple hostname was not qualified by zone: %#v", leases[0])
-	}
-	if leases[1].Zone != "SANDBOX" || leases[1].FQDN != "kali.sandbox.lab.home.arpa" {
-		t.Fatalf("qualified hostname was not normalized: %#v", leases[1])
+	for _, value := range cases {
+		if err := validateDHCPServices(value); err == nil {
+			t.Fatalf("invalid service state was accepted: %#v", value)
+		}
 	}
 }
 
-func TestParseKeaLeaseCSVRejectsMissingContractColumns(t *testing.T) {
-	plan, err := firewall.PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+func TestDHCPStatusParserKeepsGatewayServiceEvidence(t *testing.T) {
+	status, err := parseGatewayStatus("forwarding=1\nservice.nftables=active\nservice.kea-dhcp4-server=active\nservice.kea-dhcp-ddns-server=active\nservice.dnsmasq=inactive\niface.wan0=wan0 UP 192.0.2.10/24\niface.trusted0=trusted0 UP 10.10.30.1/24\niface.servers0=servers0 UP 10.10.20.1/24\niface.sandbox0=sandbox0 UP 10.10.40.1/24\niface.mgmt0=mgmt0 UP 10.10.99.1/24\niface.transit0=transit0 UP 10.10.5.1/24\niface.infra0=infra0 UP 10.10.10.1/24\nupstream.interface=wan0\nupstream.mac=02:00:00:00:01:01\nupstream.address=192.0.2.10/24\nupstream.gateway=192.0.2.1\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parseKeaLeaseCSV([]byte("address,hostname\n10.10.30.1,test\n"), plan); err == nil {
-		t.Fatal("lease parser accepted an incomplete Kea CSV header")
+	if err := validateDHCPServices(status); err != nil {
+		t.Fatal(err)
+	}
+	if status.Services["kea-dhcp-ddns-server"] != "active" || status.Upstream.Address == "" {
+		t.Fatalf("live gateway evidence was incomplete: %#v", status)
+	}
+}
+
+func TestDHCPStatusParserRejectsDuplicateEvidence(t *testing.T) {
+	_, err := parseGatewayStatus("forwarding=1\nforwarding=1\n")
+	if err == nil {
+		t.Fatal("duplicate gateway evidence was accepted")
 	}
 }

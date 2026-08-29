@@ -18,6 +18,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/pathguard"
 	"github.com/gofastercloud/boetticher/internal/pki"
+	statusmodel "github.com/gofastercloud/boetticher/internal/status"
 )
 
 var ErrPlatformSecretMissing = errors.New("encrypted platform secret is missing")
@@ -29,6 +30,13 @@ func Load(dir string) (model.Site, error) {
 	if err != nil {
 		return model.Site{}, err
 	}
+	return ComposeConfig(dir, config)
+}
+
+// ComposeConfig resolves a validated operator configuration and retained
+// generated state without rereading site.yml. The update planner uses this to
+// validate the updated desired configuration before it is persisted.
+func ComposeConfig(dir string, config model.SiteConfig) (model.Site, error) {
 	s, _, err := modules.Compose(config)
 	if err != nil {
 		return model.Site{}, err
@@ -59,6 +67,12 @@ func SaveConfig(dir string, config model.SiteConfig) error {
 	if err != nil {
 		return err
 	}
+	return atomicWrite(filepath.Join(dir, "site.yml"), data, 0600)
+}
+
+// SaveConfigBytes is used only by guarded update rollback. It keeps the
+// authoritative source bytes intact if derived projection generation fails.
+func SaveConfigBytes(dir string, data []byte) error {
 	return atomicWrite(filepath.Join(dir, "site.yml"), data, 0600)
 }
 
@@ -100,7 +114,7 @@ func Save(dir string, s model.Site) error {
 }
 
 func Init(dir, ageIdentityPath string, externalFirewall bool) (model.Site, error) {
-	for _, tool := range []string{"age-keygen", "sops", "git"} {
+	for _, tool := range []string{"age-keygen", "sops"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			return model.Site{}, fmt.Errorf("%s is required to initialize the site: %w", tool, err)
 		}
@@ -118,10 +132,6 @@ func Init(dir, ageIdentityPath string, externalFirewall bool) (model.Site, error
 	} else if err := os.MkdirAll(dir, 0700); err != nil {
 		return model.Site{}, err
 	}
-	if err := exec.Command("git", "init", "--initial-branch=main", dir).Run(); err != nil {
-		return model.Site{}, fmt.Errorf("initialize private site repository: %w", err)
-	}
-
 	recipient, err := createAgeIdentity(ageIdentityPath)
 	if err != nil {
 		return model.Site{}, err
@@ -219,11 +229,7 @@ func writeInitialGenerated(dir string, s model.Site) error {
 	if err := atomicWrite(filepath.Join(dir, "generated", "model.json"), append(modelData, '\n'), 0644); err != nil {
 		return err
 	}
-	statusData, err := json.MarshalIndent(struct {
-		ModelRevision string `json:"model_revision"`
-		Status        string `json:"status"`
-		GeneratedAt   string `json:"generated_at"`
-	}{revision, "NOT TESTED", time.Now().UTC().Format(time.RFC3339)}, "", "  ")
+	statusData, err := json.MarshalIndent(statusmodel.FromLegacy(revision, time.Now().UTC().Format(time.RFC3339), nil), "", "  ")
 	if err != nil {
 		return err
 	}
