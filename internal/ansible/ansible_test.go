@@ -701,6 +701,7 @@ func TestFirewallTelemetryHasFixedReadOnlyPrivilegeAndNetworkContract(t *testing
 		"ExecStart=/usr/lib/boetticher/boetticher-firewall-telemetry",
 		"User=boetticher-telemetry",
 		"Group=boetticher-telemetry",
+		"RuntimeDirectoryMode=0770",
 		"NoNewPrivileges=yes",
 		"CapabilityBoundingSet=",
 		"ProtectSystem=strict",
