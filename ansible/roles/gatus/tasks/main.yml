@@ -1,5 +1,7 @@
 - name: Require qualified Gatus artifact
   ansible.builtin.assert: {that: boetticher_appliance_artifact | default(false) | bool, fail_msg: "Gatus requires a qualified immutable appliance artifact"}
+- name: Create Gatus configuration directory
+  ansible.builtin.file: {path: /etc/boetticher/gatus, state: directory, owner: root, group: gatus, mode: '0750'}
 - name: Install generated Gatus configuration
   ansible.builtin.copy: {dest: /etc/boetticher/gatus/config.yaml, content: "{{ gatus_config }}", owner: root, group: gatus, mode: '0640'}
   notify: restart gatus
@@ -18,6 +20,7 @@
   when: gatus_server_cert_pem is defined and gatus_server_cert_pem | length > 0
 - name: Enable Gatus nginx site and services
   ansible.builtin.file: {src: /etc/nginx/sites-available/gatus.conf, dest: /etc/nginx/sites-enabled/gatus.conf, state: link}
+  notify: reload nginx
   when: gatus_server_cert_pem is defined and gatus_server_cert_pem | length > 0
 - name: Enable Gatus and nginx
   ansible.builtin.service: {name: "{{ item }}", enabled: true, state: started}

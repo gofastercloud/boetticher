@@ -2,6 +2,7 @@ package modules
 
 import (
 	"fmt"
+	"net/url"
 	"sort"
 
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -43,10 +44,75 @@ func Compose(config model.SiteConfig) (model.Site, []ResolvedModule, error) {
 			DependsOn: append([]string(nil), definition.DependsOn...), Requires: requires, Provides: provides,
 		})
 	}
+	addGatusEndpointIntents(&site)
 	if err := site.Validate(); err != nil {
 		return model.Site{}, nil, fmt.Errorf("compose canonical site: %w", err)
 	}
 	return site, resolved, nil
+}
+
+// addGatusEndpointIntents derives the firewall contract from the same
+// product-owned service metadata that feeds Gatus. It does not introduce a
+// second endpoint configuration surface or grant Gatus access to same-zone
+// services that do not cross the firewall boundary.
+func addGatusEndpointIntents(site *model.Site) {
+	if !IsEnabled(*site, "gatus") {
+		return
+	}
+	var gatus *model.ModuleDeclaration
+	for index := range site.Declarations {
+		if site.Declarations[index].Module == "gatus" {
+			gatus = &site.Declarations[index]
+			break
+		}
+	}
+	if gatus == nil {
+		return
+	}
+	gatusGuest, ok := moduleComponentReference(*site, "lab-gatus-01")
+	if !ok {
+		return
+	}
+	seen := map[string]bool{}
+	for _, declaration := range site.Declarations {
+		if declaration.Module == "gatus" {
+			continue
+		}
+		for _, guest := range declaration.Guests {
+			if guest.URL == "" || !guest.ProductOwned || guest.Module == "" || guest.Zone == gatusGuest.Zone {
+				continue
+			}
+			parsed, err := url.Parse(guest.URL)
+			if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
+				continue
+			}
+			key := guest.Name + "\x00" + parsed.Hostname()
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			gatus.NetworkIntents = append(gatus.NetworkIntents, model.NetworkIntent{
+				Source: "lab-gatus-01", Destination: guest.Hostname, Endpoint: guest.URL,
+				Protocol: "tcp", Ports: []string{"443"}, Direction: "egress",
+				Purpose: "Gatus HTTPS check for " + guest.Name,
+			})
+		}
+	}
+	sort.SliceStable(gatus.NetworkIntents, func(i, j int) bool {
+		if gatus.NetworkIntents[i].Destination != gatus.NetworkIntents[j].Destination {
+			return gatus.NetworkIntents[i].Destination < gatus.NetworkIntents[j].Destination
+		}
+		return gatus.NetworkIntents[i].Purpose < gatus.NetworkIntents[j].Purpose
+	})
+}
+
+func moduleComponentReference(site model.Site, name string) (model.Component, bool) {
+	for _, component := range site.PlatformComponents() {
+		if component.Name == name {
+			return component, true
+		}
+	}
+	return model.Component{}, false
 }
 
 func composeComponents(base []model.Component, resolved []ResolvedModule, site model.Site) ([]model.Component, error) {
