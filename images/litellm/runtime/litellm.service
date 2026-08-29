@@ -5,11 +5,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=litellm
-Group=litellm
+User=root
+Group=root
 ExecStart=/usr/lib/boetticher/litellm-start --config /etc/boetticher/litellm/config.yaml --host 127.0.0.1 --port 4000
 Restart=on-failure
 NoNewPrivileges=yes
+CapabilityBoundingSet=
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=yes

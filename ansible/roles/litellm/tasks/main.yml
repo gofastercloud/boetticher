@@ -55,7 +55,7 @@
       {% for upstream in module_configs.litellm.upstreams %}
       export LITELLM_SECRET_{{ upstream.api_key_secret | upper | replace('-', '_') | replace('.', '_') }}="$(cat /run/credentials/litellm.service/{{ upstream.api_key_secret | lower | replace('_', '-') | replace('.', '-') }})"
       {% endfor %}
-      exec /opt/litellm/bin/litellm "$@"
+      exec /usr/bin/setpriv --reuid=litellm --regid=litellm --init-groups /opt/litellm/bin/litellm "$@"
   no_log: true
   notify: restart litellm
 

@@ -664,6 +664,8 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 		"build_tailnet_router",
 		"build_litellm",
 		"--require-hashes",
+		"test -x \"$rootfs/usr/bin/setpriv\"",
+		"grep -Fq -- 'User=root' \"$rootfs/etc/systemd/system/litellm.service\"",
 		"rm -f \"$rootfs/etc/nginx/sites-enabled/default\"",
 		"find \"$rootfs/opt/litellm\" -type f \\(",
 		"-name '*.log' -o -name '*.pyc'",
