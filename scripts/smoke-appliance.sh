@@ -112,7 +112,7 @@ case "$name" in
     test -f "$rootfs/etc/systemd/system/litellm.service"
     grep -Fq -- '--host 127.0.0.1' "$rootfs/etc/systemd/system/litellm.service"
     grep -Fq -- 'User=root' "$rootfs/etc/systemd/system/litellm.service"
-    grep -Fq -- 'CapabilityBoundingSet=' "$rootfs/etc/systemd/system/litellm.service"
+    grep -Fq -- 'CapabilityBoundingSet=CAP_SETUID CAP_SETGID' "$rootfs/etc/systemd/system/litellm.service"
     test -x "$rootfs/usr/bin/setpriv"
     test ! -e "$rootfs/etc/boetticher/litellm/config.yaml"
     test ! -e "$rootfs/etc/nginx/sites-enabled/default"

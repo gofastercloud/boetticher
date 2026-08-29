@@ -498,7 +498,7 @@ build_litellm() {
   install -D -m 0755 images/litellm/runtime/model-capabilities.py "$rootfs/usr/local/libexec/boetticher-litellm-model-capabilities"
   test -x "$rootfs/usr/bin/setpriv"
   grep -Fq -- 'User=root' "$rootfs/etc/systemd/system/litellm.service"
-  grep -Fq -- 'CapabilityBoundingSet=' "$rootfs/etc/systemd/system/litellm.service"
+  grep -Fq -- 'CapabilityBoundingSet=CAP_SETUID CAP_SETGID' "$rootfs/etc/systemd/system/litellm.service"
   chroot "$rootfs" /opt/litellm/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/litellm-requirements.lock
   installed_version=$(chroot "$rootfs" /opt/litellm/bin/python -c 'from importlib.metadata import version; print(version("litellm"))')
   if [ "$installed_version" != "$litellm_version" ]; then

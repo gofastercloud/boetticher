@@ -666,6 +666,7 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 		"--require-hashes",
 		"test -x \"$rootfs/usr/bin/setpriv\"",
 		"grep -Fq -- 'User=root' \"$rootfs/etc/systemd/system/litellm.service\"",
+		"grep -Fq -- 'CapabilityBoundingSet=CAP_SETUID CAP_SETGID' \"$rootfs/etc/systemd/system/litellm.service\"",
 		"rm -f \"$rootfs/etc/nginx/sites-enabled/default\"",
 		"find \"$rootfs/opt/litellm\" -type f \\(",
 		"-name '*.log' -o -name '*.pyc'",
