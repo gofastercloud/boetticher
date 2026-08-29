@@ -783,7 +783,7 @@ func TestAIOpsArtifactPinsUnmodifiedHolmesAndIsolation(t *testing.T) {
 		want []string
 	}{
 		{"definition", string(definition), []string{"holmesgpt: 0.40.0", "https://github.com/HolmesGPT/holmesgpt/archive/refs/tags/0.40.0.tar.gz", "3465cd634b0e478f058b026b37caa3b8f10651f7aa9058dc73368b5403f0fb3d", "holmes_network: loopback-only"}},
-		{"lock", string(lock), []string{"holmesgpt==0.40.0", "--hash=sha256:"}},
+		{"lock", string(lock), []string{"holmesgpt==0.40.0", "greenlet==3.5.5", "--hash=sha256:2eabb980975cba5b93a95f6f69287d05fc05ac955bfd6a320a7c083eeb52c0b0"}},
 		{"service", string(service), []string{"/opt/holmes/bin/python -u /opt/holmes/server.py", "HOLMES_HOST=127.0.0.1", "HOLMES_TOOL_RESULT_STORAGE_ENABLED=false", "OVERRIDE_MAX_OUTPUT_TOKEN=1200", "IPAddressDeny=any", "IPAddressAllow=localhost"}},
 		{"config", string(config), []string{"max_steps: 12", "internet:\n    enabled: false", "http://127.0.0.1:8443", "/v1/evidence/query", "methods:\n            - POST"}},
 		{"build", string(build), []string{"holmes_source_sha256=3465cd634b0e478f058b026b37caa3b8f10651f7aa9058dc73368b5403f0fb3d", "sha256sum --check --status", "holmesgpt-0.40.0/server.py"}},
