@@ -68,7 +68,7 @@
 
 - name: Install Chrony startup override
   ansible.builtin.copy:
-    content: "[Unit]\nConditionCapability=\n"
+    content: "[Unit]\nAfter=network-online.target\nWants=network-online.target\nConditionCapability=\n"
     dest: /etc/systemd/system/chrony.service.d/boetticher.conf
     owner: root
     group: root
@@ -78,6 +78,13 @@
 
 - name: Flush systemd after installing the Chrony override
   ansible.builtin.meta: flush_handlers
+  when: inventory_hostname not in groups.get('proxmox', [])
+
+- name: Disable the restricted Chrony service in appliances
+  ansible.builtin.service:
+    name: chronyd-restricted.service
+    enabled: false
+    state: stopped
   when: inventory_hostname not in groups.get('proxmox', [])
 
 - name: Enable chrony

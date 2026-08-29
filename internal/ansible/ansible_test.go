@@ -515,9 +515,13 @@ func TestBaseRoleRunsChronyWithoutKernelClockControlInAppliances(t *testing.T) {
 		"path: /etc/systemd/system/chrony.service.d",
 		"state: directory",
 		"- name: Install Chrony startup override",
-		"content: \"[Unit]\\nConditionCapability=\\n\"",
+		"content: \"[Unit]\\nAfter=network-online.target\\nWants=network-online.target\\nConditionCapability=\\n\"",
 		"dest: /etc/systemd/system/chrony.service.d/boetticher.conf",
 		"notify: reload systemd",
+		"- name: Disable the restricted Chrony service in appliances",
+		"name: chronyd-restricted.service",
+		"enabled: false",
+		"state: stopped",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("base role missing %q", expected)
@@ -951,6 +955,14 @@ func TestDNSRoleDoesNotPlaceTSIGSecretsInProcessArguments(t *testing.T) {
 	keaText := string(kea)
 	if !strings.Contains(keaText, `"forward-ddns": {`) || !strings.Contains(keaText, `"reverse-ddns": {`) || !strings.Contains(keaText, `"ddns-domains":`) || !strings.Contains(keaText, `"key-name": "{{ zone.tsig_key_name }}"`) {
 		t.Fatal("Kea D2 does not use the qualified domain catalogs and TSIG key references")
+	}
+	for _, expected := range []string{
+		`"name": "{{ zone.forward_zone }}."`,
+		`"name": "{{ zone.reverse_zone }}."`,
+	} {
+		if !strings.Contains(keaText, expected) {
+			t.Errorf("Kea D2 domain catalog does not use a fully qualified zone name: %s", expected)
+		}
 	}
 }
 
