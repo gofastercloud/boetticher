@@ -24,7 +24,7 @@ func runStorage(args []string, out io.Writer) error {
 	initialUser := fs.String("initial-user", "root", "initial Proxmox SSH user")
 	knownHosts := fs.String("known-hosts", "", "optional SSH known-hosts file")
 	live := fs.Bool("live", false, "inspect the configured storage over the Proxmox SSH path")
-	confirmed := fs.Bool("confirmed", false, "confirm the fixed dedicated-disk initialization")
+	confirmed := fs.Bool("storage-confirmed", false, "confirm the fixed dedicated-disk initialization")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -74,7 +74,7 @@ func runStorage(args []string, out io.Writer) error {
 		return errors.New("bootstrap endpoint is not configured")
 	}
 	if !*confirmed {
-		return errors.New("dedicated storage initialization is destructive; repeat with --confirmed after reviewing the stable device")
+		return errors.New("dedicated storage initialization is destructive; repeat with --storage-confirmed after reviewing the stable device")
 	}
 	runner := proxmox.SSHRunner{KnownHosts: *knownHosts}
 	if err := storage.Initialize(context.Background(), runner, s.BootstrapAddress, *initialUser, plan.Device, true); err != nil {
