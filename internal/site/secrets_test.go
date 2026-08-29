@@ -56,6 +56,38 @@ func TestUpdatePlatformSecretsRejectsUnsafeKeysAndValues(t *testing.T) {
 	}
 }
 
+func TestApplyConfigAndPlatformSecretsRollsBackSecretWhenConfigReplacementFails(t *testing.T) {
+	siteDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(siteDir, "secrets"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	secretPath := filepath.Join(siteDir, "secrets", "boetticher.sops.yaml")
+	originalSecret := []byte("existing: encrypted\n")
+	if err := os.WriteFile(secretPath, originalSecret, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(siteDir, "site.yml"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	fakeBin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(fakeBin, "sops"), []byte("#!/bin/sh\nlast=\"\"\nfor arg do last=\"$arg\"; done\nif [ \"$1\" = \"--decrypt\" ]; then cat \"$last\"; else cat; fi\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	s := model.Site{SecretMetadata: model.SecretMetadata{AgeRecipient: "age1test"}}
+	config := model.SiteConfig{APIVersion: model.APIVersion}
+	if err := ApplyConfigAndPlatformSecrets(siteDir, config, s, "identity", map[string]string{"operator_key": "value"}); err == nil {
+		t.Fatal("atomic configure unexpectedly succeeded with an unwritable site.yml target")
+	}
+	restored, err := os.ReadFile(secretPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(restored) != string(originalSecret) {
+		t.Fatalf("secret document was not rolled back: %s", restored)
+	}
+}
+
 func TestPurgeModuleSecretValuesRemovesOnlyDeclaredNames(t *testing.T) {
 	values := map[string]any{"tailscale_auth_key": "redacted", "unrelated": "retained"}
 	owned := map[string]struct{}{"tailscale_auth_key": {}}

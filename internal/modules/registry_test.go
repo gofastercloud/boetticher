@@ -135,6 +135,48 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	}
 }
 
+func TestFirstPartyConfigurationFieldsAreTypedAndResolvedFromDeclarations(t *testing.T) {
+	registry := FirstPartyRegistry()
+	config := testConfig(model.GatewayModeManaged)
+	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_key"}},
+		Models:    []model.LiteLLMModelConfig{{Alias: "operations", Upstream: "provider", Model: "provider/model"}},
+	}
+	fields, err := registry.ConfigurationFields("aiops", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 1 || fields[0].Type != model.ModuleConfigModelAlias || len(fields[0].AllowedValues) != 1 || fields[0].AllowedValues[0] != "operations" {
+		t.Fatalf("unexpected AIOps configuration schema: %#v", fields)
+	}
+	litellm, err := registry.ConfigurationFields("litellm", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(litellm) != 2 || litellm[0].Type != model.ModuleConfigObjectList || litellm[1].Type != model.ModuleConfigObjectList {
+		t.Fatalf("unexpected LiteLLM configuration schema: %#v", litellm)
+	}
+	secretField := model.ModuleConfigField{}
+	for _, field := range litellm[0].ItemFields {
+		if field.Key == "api_key_secret" {
+			secretField = field
+		}
+	}
+	if !secretField.Sensitive {
+		t.Fatalf("LiteLLM secret reference is not structurally classified: %#v", litellm[0])
+	}
+}
+
+func TestRegistryRejectsMalformedConfigurationField(t *testing.T) {
+	registry := NewRegistry([]ModuleDefinition{{
+		Name: "bad", Version: "1", Policy: DefaultOff,
+		Configuration: []model.ModuleConfigField{{Key: "choice", Type: model.ModuleConfigEnum, Prompt: "Choice"}},
+	}})
+	if err := registry.Validate(); err == nil || !strings.Contains(err.Error(), "enum has no allowed values") {
+		t.Fatalf("malformed configuration schema was accepted: %v", err)
+	}
+}
+
 func TestAIOpsRequiresDeclaredLiteLLMAliasAndComposesReadOnlyBoundary(t *testing.T) {
 	config := testConfig(model.GatewayModeManaged)
 	enabled := true
