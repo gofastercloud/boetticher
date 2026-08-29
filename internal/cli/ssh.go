@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -78,8 +79,13 @@ func runSSHJourney(configPath string) error {
 	if err := sshconfig.ValidateExecutionConfig(configPath); err != nil {
 		return fmt.Errorf("validate SSH journey configuration: %w", err)
 	}
-	command := exec.Command("ssh", "-F", model.ExpandUserPath(configPath), "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no", "dns01", "true")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "ssh", "-F", model.ExpandUserPath(configPath), "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no", "dns01", "true")
 	if err := command.Run(); err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return errors.New("authenticated SSH journey timed out")
+		}
 		return fmt.Errorf("authenticated SSH journey failed: %w", err)
 	}
 	return nil

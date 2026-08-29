@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"strings"
 	"testing"
+
+	"github.com/gofastercloud/boetticher/internal/firewall"
 )
 
 func TestValidateDHCPServicesRequiresBothActiveKeaServices(t *testing.T) {
@@ -41,5 +44,36 @@ func TestDHCPStatusParserRejectsDuplicateEvidence(t *testing.T) {
 	_, err := parseGatewayStatus("forwarding=1\nforwarding=1\n")
 	if err == nil {
 		t.Fatal("duplicate gateway evidence was accepted")
+	}
+}
+
+func TestKeaLeaseParserFiltersInactiveAndUnknownLeases(t *testing.T) {
+	plan := firewall.Plan{DHCP: []firewall.DHCPSubnet{{ID: 10, Zone: "TRUSTED"}}}
+	data := strings.Join([]string{
+		"address,subnet_id,hostname,state,client_id",
+		"10.10.30.50,10,Printer,0,client-a",
+		"10.10.30.51,10,Expired,1,client-b",
+		"10.10.40.50,99,Unknown,0,client-c",
+	}, "\n")
+	leases, err := parseKeaLeaseCSV([]byte(data), plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 || leases[0].Zone != "TRUSTED" || leases[0].IP != "10.10.30.50" || leases[0].FQDN != "printer.trusted.lab.home.arpa" {
+		t.Fatalf("unexpected active Kea leases: %#v", leases)
+	}
+}
+
+func TestKeaLeaseParserRejectsMalformedRowsAndColumns(t *testing.T) {
+	plan := firewall.Plan{DHCP: []firewall.DHCPSubnet{{ID: 10, Zone: "TRUSTED"}}}
+	for _, data := range []string{
+		"address,subnet_id,hostname\n10.10.30.50,10,host",
+		"address,subnet_id,hostname,state\n10.10.30.50,10",
+		"address,subnet_id,hostname,state\n10.10.30.50,10,host,active",
+		"address,subnet_id,hostname,state\n10.10.30.50,unknown,host,0",
+	} {
+		if _, err := parseKeaLeaseCSV([]byte(data), plan); err == nil {
+			t.Fatalf("malformed Kea lease data was accepted: %q", data)
+		}
 	}
 }

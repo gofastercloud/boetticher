@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -447,7 +448,13 @@ func gatewayCommand(siteDir string, s model.Site, command ...string) ([]byte, er
 		StrictHostKey: "yes",
 		HostAlias:     "firewall",
 	}
-	return runner.Run(context.Background(), component.Address, component.SSHUser, strings.Join(quoted, " "))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	output, err := runner.Run(ctx, component.Address, component.SSHUser, strings.Join(quoted, " "))
+	if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return nil, errors.New("live gateway inspection timed out")
+	}
+	return output, err
 }
 
 // OpenSSH passes the remote command through the account shell. Quote each

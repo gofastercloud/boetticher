@@ -42,7 +42,7 @@ func TestPublishedServicesActivateAtTheEndOfDNSModule(t *testing.T) {
 	}
 	text := string(data)
 	publicationActivation := strings.Index(text, `if module == "dns" && s.Gateway.Mode == model.GatewayModeManaged && len(firewallPlan.Publications) > 0`)
-	allHostsConvergence := strings.Index(text, `if err := ansible.Run(context.Background(), ansiblePlaybook, inventoryPath, variables); err != nil`)
+	allHostsConvergence := strings.Index(text, `if err := ansible.Run(ctx, ansiblePlaybook, inventoryPath, variables); err != nil`)
 	if publicationActivation < 0 || allHostsConvergence < 0 || publicationActivation > allHostsConvergence {
 		t.Fatal("published services are not activated immediately after the DNS module")
 	}
@@ -126,7 +126,7 @@ func TestPulseCredentialBootstrapUsesTemporaryRootAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, `CreatePulseMonitoringCredentials(context.Background(), rootRunner, s.BootstrapAddress, "root")`) {
+	if !strings.Contains(text, `CreatePulseMonitoringCredentials(ctx, rootRunner, s.BootstrapAddress, "root")`) {
 		t.Fatal("Pulse Proxmox credential bootstrap does not use the temporary root authority")
 	}
 	if strings.Contains(text, `CreatePulseMonitoringCredentials(context.Background(), proxmoxRunner, s.BootstrapAddress, model.DefaultAdminSSHUser)`) {
@@ -209,7 +209,7 @@ func TestPulseReconciliationForwardUsesRestrictedBastion(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, required := range []string{`HostAlias:     "lab-bastion"`, `StartLocalForward(context.Background(), s.BootstrapAddress, "lab-jump", "10.10.10.20", 443)`} {
+	for _, required := range []string{`HostAlias:     "lab-bastion"`, `StartLocalForward(ctx, s.BootstrapAddress, "lab-jump", "10.10.10.20", 443)`} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("Pulse reconciliation does not use the restricted bastion contract %q", required)
 		}
@@ -228,7 +228,7 @@ func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 	for _, required := range []string{
 		"readTokenRefreshed := false",
 		"pulse.IsUnauthorized(err)",
-		"pulseAdmin.CreateReadToken(context.Background(), \"boetticher monitoring read\")",
+		"pulseAdmin.CreateReadToken(ctx, \"boetticher monitoring read\")",
 		"site.StorePlatformSecret(*siteDir, s, *ageIdentity, \"pulse_api_token\", readToken)",
 		"verify Pulse state summary after read-token refresh",
 	} {

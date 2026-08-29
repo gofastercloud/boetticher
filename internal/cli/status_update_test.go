@@ -91,6 +91,27 @@ func TestUpdateDryRunDoesNotMutateAndConfirmRefreshesDesiredState(t *testing.T) 
 	}
 }
 
+func TestUpdateRestoresDesiredStateWhenProjectionRefreshFails(t *testing.T) {
+	dir := t.TempDir()
+	config := model.ConfigFromSite(model.NewSite("update-failure", "age1failure", model.GatewayModeManaged))
+	config.PlatformVersion = "0.3.34"
+	original := writeTestSiteConfig(t, dir, config)
+	if err := os.MkdirAll(filepath.Join(dir, "generated"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	external := t.TempDir()
+	if err := os.Symlink(external, filepath.Join(dir, "generated", "modules")); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := runUpdate([]string{"--site", dir, "--confirm"}, &output); err == nil || !strings.Contains(err.Error(), "desired configuration was restored") {
+		t.Fatalf("projection failure was not reported as a guarded rollback: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "site.yml")); err != nil || !bytes.Equal(got, original) {
+		t.Fatalf("projection failure changed authoritative configuration: %v", err)
+	}
+}
+
 func TestPreflightRecordRequiresLive(t *testing.T) {
 	var output bytes.Buffer
 	if err := runPreflight([]string{"--record"}, &output); err == nil || !strings.Contains(err.Error(), "requires --live") {

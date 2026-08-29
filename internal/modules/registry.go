@@ -50,12 +50,16 @@ type ModuleDefinition struct {
 }
 
 type Registry struct {
-	definitions map[string]ModuleDefinition
+	definitions    map[string]ModuleDefinition
+	duplicateNames []string
 }
 
 func NewRegistry(definitions []ModuleDefinition) Registry {
 	result := Registry{definitions: make(map[string]ModuleDefinition, len(definitions))}
 	for _, definition := range definitions {
+		if _, exists := result.definitions[definition.Name]; exists {
+			result.duplicateNames = append(result.duplicateNames, definition.Name)
+		}
 		result.definitions[definition.Name] = definition
 	}
 	return result
@@ -263,6 +267,11 @@ func (r Registry) validateUSBBindings(config model.SiteConfig, resolved []Resolv
 }
 
 func (r Registry) Validate() error {
+	if len(r.duplicateNames) > 0 {
+		names := append([]string(nil), r.duplicateNames...)
+		sort.Strings(names)
+		return fmt.Errorf("duplicate module definition %q", names[0])
+	}
 	reserved := make(map[int]string)
 	guestVMIDs := make(map[int]string)
 	guestAddresses := make(map[string]string)

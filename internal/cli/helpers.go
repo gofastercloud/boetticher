@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -356,7 +358,9 @@ func toolVersion(tool string) string {
 	if tool == "ssh" {
 		args = []string{"-V"}
 	}
-	command := exec.Command(tool, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, tool, args...)
 	if tool == "ansible" || tool == "ansible-playbook" {
 		preflightTemp := filepath.Join(os.TempDir(), "boetticher-ansible-preflight")
 		_ = os.MkdirAll(preflightTemp, 0700)
@@ -364,6 +368,9 @@ func toolVersion(tool string) string {
 	}
 	data, err := command.CombinedOutput()
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "version unavailable"
+		}
 		if len(data) == 0 {
 			return "version unavailable"
 		}

@@ -12,8 +12,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	aiopsmodel "github.com/gofastercloud/boetticher/internal/aiops"
@@ -33,6 +35,12 @@ import (
 )
 
 func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runDeployWithContext(ctx, args, out)
+}
+
+func runDeployWithContext(ctx context.Context, args []string, out interface{ Write([]byte) (int, error) }) (err error) {
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
@@ -240,14 +248,29 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 	}
 	rootRunner := proxmoxRootSSHRunner(s, *siteDir)
-	if err := proxmox.WaitForSSH(context.Background(), rootRunner, s.BootstrapAddress, "root", 1, 0); err != nil {
+	cleanupTemporaryRoot := true
+	defer func() {
+		if !cleanupTemporaryRoot {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if cleanupErr := revokeTemporaryRootAccess(cleanupCtx, s, *siteDir, proxmoxPlan, operatorPublicKey); cleanupErr != nil {
+			if err == nil {
+				err = fmt.Errorf("HOLD: temporary root access cleanup failed: %w", cleanupErr)
+				return
+			}
+			err = fmt.Errorf("%v; HOLD: temporary root access cleanup failed: %w", err, cleanupErr)
+		}
+	}()
+	if err := proxmox.WaitForSSH(ctx, rootRunner, s.BootstrapAddress, "root", 1, 0); err != nil {
 		return fmt.Errorf("HOLD: temporary root deployment authority is unavailable; rerun bootstrap or recovery: %w", err)
 	}
 	proxmoxClient, _, err := loadProxmoxClientWithSnippetUser(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure, "root")
 	if err != nil {
 		return fmt.Errorf("load Proxmox client for platform deployment: %w", err)
 	}
-	node, err := proxmoxClient.SingleNode(context.Background())
+	node, err := proxmoxClient.SingleNode(ctx)
 	if err != nil {
 		return fmt.Errorf("resolve live Proxmox node: %w", err)
 	}
@@ -256,7 +279,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if monitoringEnabled {
 		pulseProxmoxToken, err = site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_proxmox_token")
 		if errors.Is(err, site.ErrPlatformSecretMissing) {
-			pulseProxmoxToken, err = proxmox.CreatePulseMonitoringCredentials(context.Background(), rootRunner, s.BootstrapAddress, "root")
+			pulseProxmoxToken, err = proxmox.CreatePulseMonitoringCredentials(ctx, rootRunner, s.BootstrapAddress, "root")
 			if err != nil {
 				return err
 			}
@@ -269,10 +292,10 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	proxmoxPlan.DestructiveConfirmed = *confirm
 	if backupPlan.StorageTarget == backup.DedicatedStorageID {
-		if err := proxmoxClient.EnsureLVMThinStorage(context.Background(), storage.GuestStorageID, storage.VolumeGroup, storage.ThinPool); err != nil {
+		if err := proxmoxClient.EnsureLVMThinStorage(ctx, storage.GuestStorageID, storage.VolumeGroup, storage.ThinPool); err != nil {
 			return fmt.Errorf("ensure dedicated guest storage: %w", err)
 		}
-		if err := proxmoxClient.EnsureDirectoryStorage(context.Background(), backup.DedicatedStorageID, backup.DedicatedStoragePath); err != nil {
+		if err := proxmoxClient.EnsureDirectoryStorage(ctx, backup.DedicatedStorageID, backup.DedicatedStoragePath); err != nil {
 			return fmt.Errorf("ensure dedicated backup storage: %w", err)
 		}
 	} else {
@@ -280,7 +303,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		if contentErr != nil {
 			return contentErr
 		}
-		if err := proxmoxClient.EnsureDirectoryStorageContent(context.Background(), "local", "/var/lib/vz", localContent); err != nil {
+		if err := proxmoxClient.EnsureDirectoryStorageContent(ctx, "local", "/var/lib/vz", localContent); err != nil {
 			return fmt.Errorf("ensure local Proxmox storage: %w", err)
 		}
 	}
@@ -292,11 +315,11 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 				break
 			}
 		}
-		firewallReplaced, replacementErr := proxmox.GuestArtifactNeedsReplacement(context.Background(), proxmoxClient, proxmoxPlan.Node, firewallGuest)
+		firewallReplaced, replacementErr := proxmox.GuestArtifactNeedsReplacement(ctx, proxmoxClient, proxmoxPlan.Node, firewallGuest)
 		if replacementErr != nil {
 			return replacementErr
 		}
-		if err := proxmox.EnsureFirewallVM(context.Background(), proxmoxClient, proxmoxPlan); err != nil {
+		if err := proxmox.EnsureFirewallVM(ctx, proxmoxClient, proxmoxPlan); err != nil {
 			return fmt.Errorf("create managed gateway appliance: %w", err)
 		}
 		if firewallReplaced {
@@ -304,7 +327,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 				return fmt.Errorf("retire replaced gateway host key: %w", err)
 			}
 		}
-		if err := proxmoxClient.EnsureVMRunning(context.Background(), proxmoxPlan.Node, model.ProxmoxVMID); err != nil {
+		if err := proxmoxClient.EnsureVMRunning(ctx, proxmoxPlan.Node, model.ProxmoxVMID); err != nil {
 			return fmt.Errorf("start managed gateway appliance: %w", err)
 		}
 	}
@@ -312,19 +335,19 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		firewallRunner = applianceSSHRunner(s, *siteDir, "lab-fw-01")
 		firewallGuest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
-		if err := waitForDeploymentRoot(context.Background(), rootRunner, s.BootstrapAddress, firewallRunner, firewallGuest, operatorPublicKey, deploymentKnownHosts(*siteDir), firewallGuest.Hostname+"."+s.Network.Domain); err != nil {
+		if err := waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, firewallRunner, firewallGuest, operatorPublicKey, deploymentKnownHosts(*siteDir), firewallGuest.Hostname+"."+s.Network.Domain); err != nil {
 			return fmt.Errorf("HOLD: managed gateway is not reachable before dependent appliances: %w", err)
 		}
-		if err := verifyFirewallBootstrapNetwork(context.Background(), firewallRunner); err != nil {
+		if err := verifyFirewallBootstrapNetwork(ctx, firewallRunner); err != nil {
 			return fmt.Errorf("HOLD: managed gateway bootstrap network is not ready before runtime configuration: %w", err)
 		}
-		if err := installCredentialsForGuest(context.Background(), firewallRunner, "lab-fw-01", credentialBindings, secretValues); err != nil {
+		if err := installCredentialsForGuest(ctx, firewallRunner, "lab-fw-01", credentialBindings, secretValues); err != nil {
 			return fmt.Errorf("install managed gateway credentials: %w", err)
 		}
-		if err := ansible.RunLimited(context.Background(), ansiblePlaybook, inventoryPath, variables, "lab-fw-01"); err != nil {
+		if err := ansible.RunLimited(ctx, ansiblePlaybook, inventoryPath, variables, "lab-fw-01"); err != nil {
 			return fmt.Errorf("HOLD: configure managed gateway before dependent appliances: %w", err)
 		}
-		if err := verifyGatewayReadiness(context.Background(), firewallRunner, "10.10.99.1"); err != nil {
+		if err := verifyGatewayReadiness(ctx, firewallRunner, "10.10.99.1"); err != nil {
 			return fmt.Errorf("HOLD: managed gateway did not pass runtime readiness before dependent appliances: %w", err)
 		}
 	}
@@ -345,7 +368,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			if !matches || candidate.Kind != proxmox.KindLXC {
 				continue
 			}
-			replacement, replacementErr := proxmox.GuestArtifactNeedsReplacement(context.Background(), proxmoxClient, proxmoxPlan.Node, candidate)
+			replacement, replacementErr := proxmox.GuestArtifactNeedsReplacement(ctx, proxmoxClient, proxmoxPlan.Node, candidate)
 			if replacementErr != nil {
 				return replacementErr
 			}
@@ -353,7 +376,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 				replacedGuests = append(replacedGuests, candidate)
 			}
 		}
-		if err := proxmox.ProvisionModule(context.Background(), proxmoxClient, proxmoxPlan, module); err != nil {
+		if err := proxmox.ProvisionModule(ctx, proxmoxClient, proxmoxPlan, module); err != nil {
 			return fmt.Errorf("deploy %s appliances: %w", module, err)
 		}
 		for _, guest := range replacedGuests {
@@ -370,28 +393,28 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 				continue
 			}
 			guestRunner := applianceSSHRunner(s, *siteDir, guest.Name)
-			if err := waitForDeploymentRoot(context.Background(), rootRunner, s.BootstrapAddress, guestRunner, guest, operatorPublicKey, deploymentKnownHosts(*siteDir), guest.Hostname+"."+s.Network.Domain); err != nil {
+			if err := waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, guestRunner, guest, operatorPublicKey, deploymentKnownHosts(*siteDir), guest.Hostname+"."+s.Network.Domain); err != nil {
 				return fmt.Errorf("HOLD: %s guest %s is not reachable after first boot: %w", module, guest.Name, err)
 			}
-			if err := installCredentialsForGuest(context.Background(), guestRunner, guest.Name, credentialBindings, secretValues); err != nil {
+			if err := installCredentialsForGuest(ctx, guestRunner, guest.Name, credentialBindings, secretValues); err != nil {
 				return fmt.Errorf("install %s credentials: %w", guest.Name, err)
 			}
 			if module == "dns" {
-				if err := ansible.RunLimited(context.Background(), ansiblePlaybook, inventoryPath, variables, guest.Name); err != nil {
+				if err := ansible.RunLimited(ctx, ansiblePlaybook, inventoryPath, variables, guest.Name); err != nil {
 					return fmt.Errorf("HOLD: configure DNS guest %s before dependent appliances: %w", guest.Name, err)
 				}
 				if guest.Name == "lab-dns-01" && s.Gateway.Mode == model.GatewayModeManaged {
-					if err := installPowerDNSTSIG(context.Background(), guestRunner, guest.Address, dnsPlan, secretValues["firewall-ddns-tsig"]); err != nil {
+					if err := installPowerDNSTSIG(ctx, guestRunner, guest.Address, dnsPlan, secretValues["firewall-ddns-tsig"]); err != nil {
 						return fmt.Errorf("install PowerDNS TSIG state on %s: %w", guest.Name, err)
 					}
 				}
-				if err := verifyDNSReadiness(context.Background(), guestRunner, guest.Address); err != nil {
+				if err := verifyDNSReadiness(ctx, guestRunner, guest.Address); err != nil {
 					return fmt.Errorf("HOLD: DNS guest %s did not pass runtime readiness before dependent appliances: %w", guest.Name, err)
 				}
 			}
 		}
 		if module == "dns" && s.Gateway.Mode == model.GatewayModeManaged && len(firewallPlan.Publications) > 0 {
-			upstream, observeErr := observeGatewayUpstream(context.Background(), firewallRunner, firewallPlan)
+			upstream, observeErr := observeGatewayUpstream(ctx, firewallRunner, firewallPlan)
 			if observeErr != nil {
 				return fmt.Errorf("HOLD: published services require a safe current upstream DHCP lease: %w", observeErr)
 			}
@@ -418,23 +441,23 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 				return fmt.Errorf("HOLD: encode published service Ansible variables: %w", err)
 			}
 			variables = append(variables, '\n')
-			if err := ansible.RunLimited(context.Background(), ansiblePlaybook, inventoryPath, variables, "lab-fw-01"); err != nil {
+			if err := ansible.RunLimited(ctx, ansiblePlaybook, inventoryPath, variables, "lab-fw-01"); err != nil {
 				return fmt.Errorf("HOLD: activate published services on managed gateway: %w", err)
 			}
-			if err := verifyGatewayReadiness(context.Background(), firewallRunner, "10.10.99.1"); err != nil {
+			if err := verifyGatewayReadiness(ctx, firewallRunner, "10.10.99.1"); err != nil {
 				return fmt.Errorf("HOLD: managed gateway did not pass publication readiness: %w", err)
 			}
 			firewallPlan = finalFirewallPlan
 		}
 	}
-	if err := ansible.Run(context.Background(), ansiblePlaybook, inventoryPath, variables); err != nil {
+	if err := ansible.Run(ctx, ansiblePlaybook, inventoryPath, variables); err != nil {
 		return err
 	}
 	loggingClientCertificates, loggingCollectorCertificate, err := signLoggingCertificates(authority, s, csrDir)
 	if err != nil {
 		return fmt.Errorf("sign logging transport certificates: %w", err)
 	}
-	if err := installModuleRuntimeConfigs(context.Background(), *siteDir, s, proxmoxPlan); err != nil {
+	if err := installModuleRuntimeConfigs(ctx, *siteDir, s, proxmoxPlan); err != nil {
 		return err
 	}
 	portalCSR, err := os.ReadFile(filepath.Join(csrDir, "portal.csr.pem"))
@@ -520,7 +543,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		return err
 	}
 	variables = append(variables, '\n')
-	if err := ansible.Run(context.Background(), ansiblePlaybook, inventoryPath, variables); err != nil {
+	if err := ansible.Run(ctx, ansiblePlaybook, inventoryPath, variables); err != nil {
 		return fmt.Errorf("install endpoint-signed certificates: %w", err)
 	}
 	var pulseForward *proxmox.SSHLocalForward
@@ -537,7 +560,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			StrictHostKey: "accept-new",
 			HostAlias:     "lab-bastion",
 		}
-		pulseForward, err = pulseRunner.StartLocalForward(context.Background(), s.BootstrapAddress, "lab-jump", "10.10.10.20", 443)
+		pulseForward, err = pulseRunner.StartLocalForward(ctx, s.BootstrapAddress, "lab-jump", "10.10.10.20", 443)
 		if err != nil {
 			return fmt.Errorf("open Pulse API tunnel through Proxmox bastion: %w", err)
 		}
@@ -555,11 +578,11 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			return clientErr
 		}
 		if aiopsEnabled {
-			if err := qualifyAndConfigureAIOps(context.Background(), *siteDir, *ageIdentity, s, authority, clientCertificate, pulseAdmin, runtimeVariables, ansiblePlaybook, inventoryPath); err != nil {
+			if err := qualifyAndConfigureAIOps(ctx, *siteDir, *ageIdentity, s, authority, clientCertificate, pulseAdmin, runtimeVariables, ansiblePlaybook, inventoryPath); err != nil {
 				return fmt.Errorf("HOLD: AIOps qualification failed: %w", err)
 			}
 		}
-		if err := pulseAdmin.ConfigureProxmox(context.Background(), pulse.PVEConfig{
+		if err := pulseAdmin.ConfigureProxmox(ctx, pulse.PVEConfig{
 			Name: model.LogicalProxmoxIdentity, Host: "https://proxmox:8006",
 			PreviousHost: "https://proxmox." + s.Network.Domain + ":8006",
 			TokenID:      proxmox.PulseMonitoringUser + "!" + proxmox.PulseMonitoringToken, TokenSecret: pulseProxmoxToken,
@@ -570,7 +593,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 		readToken, tokenErr := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_api_token")
 		if errors.Is(tokenErr, site.ErrPlatformSecretMissing) {
-			readToken, tokenErr = pulseAdmin.CreateReadToken(context.Background(), "boetticher monitoring read")
+			readToken, tokenErr = pulseAdmin.CreateReadToken(ctx, "boetticher monitoring read")
 			if tokenErr != nil {
 				return tokenErr
 			}
@@ -593,7 +616,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			if readTokenRefreshed {
 				return errors.New("Pulse read token was already refreshed during this deployment")
 			}
-			readToken, tokenErr = pulseAdmin.CreateReadToken(context.Background(), "boetticher monitoring read")
+			readToken, tokenErr = pulseAdmin.CreateReadToken(ctx, "boetticher monitoring read")
 			if tokenErr != nil {
 				return tokenErr
 			}
@@ -611,32 +634,32 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			readTokenRefreshed = true
 			return nil
 		}
-		health, err := pulseRead.Health(context.Background())
+		health, err := pulseRead.Health(ctx)
 		if err != nil || !strings.EqualFold(health.Status, "healthy") {
 			if err != nil {
 				return fmt.Errorf("verify Pulse health: %w", err)
 			}
 			return fmt.Errorf("verify Pulse health: unexpected status %q", health.Status)
 		}
-		if _, err := pulseRead.StateSummary(context.Background()); err != nil {
+		if _, err := pulseRead.StateSummary(ctx); err != nil {
 			if !pulse.IsUnauthorized(err) {
 				return fmt.Errorf("verify Pulse state summary: %w", err)
 			}
 			if refreshErr := refreshPulseReadToken(); refreshErr != nil {
 				return fmt.Errorf("refresh Pulse read token after unauthorized response: %w", refreshErr)
 			}
-			if _, retryErr := pulseRead.StateSummary(context.Background()); retryErr != nil {
+			if _, retryErr := pulseRead.StateSummary(ctx); retryErr != nil {
 				return fmt.Errorf("verify Pulse state summary after read-token refresh: %w", retryErr)
 			}
 		}
-		if _, err := pulseRead.Resources(context.Background()); err != nil {
+		if _, err := pulseRead.Resources(ctx); err != nil {
 			if !pulse.IsUnauthorized(err) || readTokenRefreshed {
 				return fmt.Errorf("verify Pulse resources: %w", err)
 			}
 			if refreshErr := refreshPulseReadToken(); refreshErr != nil {
 				return fmt.Errorf("refresh Pulse read token after unauthorized response: %w", refreshErr)
 			}
-			if _, retryErr := pulseRead.Resources(context.Background()); retryErr != nil {
+			if _, retryErr := pulseRead.Resources(ctx); retryErr != nil {
 				return fmt.Errorf("verify Pulse resources after read-token refresh: %w", retryErr)
 			}
 		}
@@ -648,7 +671,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		if len(agentBindings) > 0 {
 			agentToken, agentTokenErr := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_agent_token")
 			if errors.Is(agentTokenErr, site.ErrPlatformSecretMissing) {
-				agentToken, agentTokenErr = pulseAdmin.CreateAgentReportToken(context.Background(), "boetticher monitoring agent")
+				agentToken, agentTokenErr = pulseAdmin.CreateAgentReportToken(ctx, "boetticher monitoring agent")
 				if agentTokenErr != nil {
 					return agentTokenErr
 				}
@@ -670,7 +693,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 				} else {
 					agentRunner = applianceSSHRunner(s, *siteDir, target)
 				}
-				if err := installCredentialsForGuest(context.Background(), agentRunner, target, agentBindings, map[string]string{"pulse_agent_token": agentToken}); err != nil {
+				if err := installCredentialsForGuest(ctx, agentRunner, target, agentBindings, map[string]string{"pulse_agent_token": agentToken}); err != nil {
 					return fmt.Errorf("install Pulse agent credential on %s: %w", target, err)
 				}
 			}
@@ -698,7 +721,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 			}
 			agentVariables = append(agentVariables, '\n')
 			for _, target := range ansible.MonitoringAgentTargets(s) {
-				if err := ansible.RunLimited(context.Background(), ansiblePlaybook, inventoryPath, agentVariables, target); err != nil {
+				if err := ansible.RunLimited(ctx, ansiblePlaybook, inventoryPath, agentVariables, target); err != nil {
 					return fmt.Errorf("install Pulse agent on %s: %w", target, err)
 				}
 			}
@@ -710,15 +733,16 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 		pulseForward = nil
 	}
-	if err := proxmoxClient.ApplyBackupJob(context.Background(), node, proxmox.BackupJob{
+	if err := proxmoxClient.ApplyBackupJob(ctx, node, proxmox.BackupJob{
 		JobName: backupPlan.JobName, ModelRevision: backupPlan.ModelRevision, StorageTarget: backupPlan.StorageTarget,
 		Schedule: backupPlan.Schedule, VMIDList: backupPlan.VMIDList(), Retention: backupPlan.Retention,
 	}); err != nil {
 		return err
 	}
-	if err := revokeTemporaryRootAccess(context.Background(), s, *siteDir, proxmoxPlan, operatorPublicKey); err != nil {
+	if err := revokeTemporaryRootAccess(ctx, s, *siteDir, proxmoxPlan, operatorPublicKey); err != nil {
 		return fmt.Errorf("HOLD: deployment converged but temporary root access cleanup failed: %w", err)
 	}
+	cleanupTemporaryRoot = false
 	if len(s.PendingDNSDeletions) > 0 {
 		if err := site.SavePendingDNSDeletions(*siteDir, s, nil); err != nil {
 			return fmt.Errorf("clear reconciled DNS deletion state: %w", err)

@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
@@ -332,6 +333,20 @@ func runModuleChangeWithInput(args []string, input io.Reader, out, errOut interf
 	if err != nil {
 		return err
 	}
+	retained := append([]model.RetainedModule(nil), oldSite.RetainedModules...)
+	if enable || *purge {
+		filtered := retained[:0]
+		for _, item := range retained {
+			if item.Module != name {
+				filtered = append(filtered, item)
+			}
+		}
+		retained = filtered
+	} else {
+		if declaration, ok := findDeclaration(oldSite, name); ok {
+			retained = append(retained, model.RetainedModule{Module: name, Disposition: "retained", Guests: declaration.Guests, Persistent: declaration.Persistent})
+		}
+	}
 	if *purge {
 		purgeSite, err := modulePurgeSite(oldSite, name)
 		if err != nil {
@@ -348,6 +363,8 @@ func runModuleChangeWithInput(args []string, input io.Reader, out, errOut interf
 		if err != nil {
 			return fmt.Errorf("load Proxmox client for module purge: %w", err)
 		}
+		purgeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
 		oldPlan, err := proxmox.PlanFromSite(purgeSite)
 		if err != nil {
 			return err
@@ -356,37 +373,50 @@ func runModuleChangeWithInput(args []string, input io.Reader, out, errOut interf
 		if err != nil {
 			return fmt.Errorf("resolve qualified artifacts for module purge: %w", err)
 		}
-		node, err := client.SingleNode(context.Background())
+		node, err := client.SingleNode(purgeCtx)
 		if err != nil {
 			return fmt.Errorf("resolve live Proxmox node for module purge: %w", err)
 		}
 		oldPlan.Node = node
-		if err := proxmox.PurgeModule(context.Background(), client, oldPlan, name); err != nil {
-			return err
+		intent := purgeIntentForPlan(oldPlan, name)
+		if existing, found, intentErr := site.LoadPurgeIntent(*siteDir); intentErr != nil {
+			return purgeHold(*siteDir, name, intentErr)
+		} else if found {
+			if existing.Module != name || !purgeIntentMatches(existing, intent) {
+				return purgeHold(*siteDir, name, errors.New("the persisted purge intent does not match the current module plan; inspect it before retrying"))
+			}
+		} else if intentErr := site.SavePurgeIntent(*siteDir, intent); intentErr != nil {
+			return purgeHold(*siteDir, name, intentErr)
+		}
+		if err := site.SaveConfig(*siteDir, model.ConfigFromSite(resolved)); err != nil {
+			return purgeHold(*siteDir, name, fmt.Errorf("save disabled desired configuration: %w", err))
+		}
+		if err := site.SaveRetainedModules(*siteDir, retained); err != nil {
+			return purgeHold(*siteDir, name, fmt.Errorf("save retained-state update: %w", err))
+		}
+		if err := proxmox.PurgeModule(purgeCtx, client, oldPlan, name); err != nil {
+			return purgeHold(*siteDir, name, err)
 		}
 		if err := site.PurgeModuleSecrets(*siteDir, purgeSite, *ageIdentity, name, declaration); err != nil {
-			return err
-		}
-	}
-	retained := append([]model.RetainedModule(nil), oldSite.RetainedModules...)
-	if enable || *purge {
-		filtered := retained[:0]
-		for _, item := range retained {
-			if item.Module != name {
-				filtered = append(filtered, item)
-			}
-		}
-		retained = filtered
-	} else if !*purge {
-		if declaration, ok := findDeclaration(oldSite, name); ok {
-			retained = append(retained, model.RetainedModule{Module: name, Disposition: "retained", Guests: declaration.Guests, Persistent: declaration.Persistent})
+			return purgeHold(*siteDir, name, fmt.Errorf("remove module secrets: %w", err))
 		}
 	}
 	if err := site.SaveConfig(*siteDir, model.ConfigFromSite(resolved)); err != nil {
+		if *purge {
+			return purgeHold(*siteDir, name, err)
+		}
 		return err
 	}
 	if err := site.SaveRetainedModules(*siteDir, retained); err != nil {
+		if *purge {
+			return purgeHold(*siteDir, name, err)
+		}
 		return err
+	}
+	if *purge {
+		if err := site.ClearPurgeIntent(*siteDir); err != nil {
+			return purgeHold(*siteDir, name, err)
+		}
 	}
 	fmt.Fprintf(out, "  Configuration: saved (model %s)\n", mustRevision(resolved))
 	deployArgs := []string{"--site", *siteDir, "--age-identity", *ageIdentity}
@@ -403,6 +433,39 @@ func runModuleChangeWithInput(args []string, input io.Reader, out, errOut interf
 		return fmt.Errorf("deploy module change: %w", err)
 	}
 	return nil
+}
+
+func purgeIntentForPlan(plan proxmox.Plan, module string) site.PurgeIntent {
+	intent := site.PurgeIntent{Module: module, ModelRevision: plan.ModelRevision, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	owner := "boetticher/module/" + module
+	for _, guest := range plan.Guests {
+		if guest.Owner != owner {
+			continue
+		}
+		intent.Guests = append(intent.Guests, site.PurgeGuest{VMID: guest.VMID, Name: guest.Name, Kind: string(guest.Kind), Owner: guest.Owner})
+	}
+	site.SortPurgeGuests(intent.Guests)
+	return intent
+}
+
+func purgeIntentMatches(existing, current site.PurgeIntent) bool {
+	if existing.ModelRevision != current.ModelRevision || len(existing.Guests) != len(current.Guests) {
+		return false
+	}
+	existingGuests := append([]site.PurgeGuest(nil), existing.Guests...)
+	currentGuests := append([]site.PurgeGuest(nil), current.Guests...)
+	site.SortPurgeGuests(existingGuests)
+	site.SortPurgeGuests(currentGuests)
+	for index := range existingGuests {
+		if existingGuests[index] != currentGuests[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func purgeHold(siteDir, module string, err error) error {
+	return fmt.Errorf("HOLD: module %s purge incomplete; recoverable intent at %s: %w", module, site.PurgeIntentPath(siteDir), err)
 }
 
 // modulePurgeSite reconstructs the disabled module's declaration in memory so
