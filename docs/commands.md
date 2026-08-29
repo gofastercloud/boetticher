@@ -204,7 +204,7 @@ Arguments: No positional arguments.
 
 Options: --site selects the private site repository.
 
-Safety: Read-only and non-secret. Routine appliance SSH and hand mutation are unsupported; SSH/Ansible is an internal controller transport. Logging is accessed with boetticher logs; it has no web UI.
+Safety: Read-only and non-secret. Routine SSH and hand mutation of Core-managed appliances are unsupported; the external firewall remains operator-managed; SSH/Ansible is an internal controller transport. Logging is accessed with boetticher logs; it has no web UI.
 
 Examples: `boetticher access --site ./my-boetticher`
 

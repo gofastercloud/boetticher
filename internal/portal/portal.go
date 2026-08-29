@@ -225,7 +225,11 @@ func services(s model.Site, revision string) string {
 
 func access(s model.Site, revision string, physical networkmodel.Discovery) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><h2>Supported operator access</h2><ul><li>Use the Boetticher CLI for platform-owned configuration, lifecycle, logs, and verification.</li><li>Use the native product UI/API where a platform service provides one.</li><li>Use generated portal/status surfaces for platform state and evidence.</li><li>Use explicit Proxmox console/exec access as the break-glass path for recovery.</li></ul><p>Routine operator SSH and hand mutation of Core appliances are unsupported. SSH/Ansible remains an internal controller transport during deployment.</p>", html.EscapeString(revision))
+	boundary := "<p>Routine operator SSH and hand mutation of Core-managed appliances are unsupported. SSH/Ansible remains an internal controller transport during deployment.</p>"
+	if s.Gateway.Mode == model.GatewayModeExternal {
+		boundary = "<p>The external firewall appliance is operator-managed. Configure, administer, and recover it through its own supported interface; Boetticher publishes the contract and does not manage that appliance.</p>"
+	}
+	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><h2>Supported operator access</h2><ul><li>Use the Boetticher CLI for platform-owned configuration, lifecycle, logs, and verification.</li><li>Use the native product UI/API where a platform service provides one.</li><li>Use generated portal/status surfaces for platform state and evidence.</li><li>Use explicit Proxmox console/exec access as the break-glass path for recovery.</li></ul>%s", html.EscapeString(revision), boundary)
 	if s.BootstrapAddress == "" {
 		b.WriteString("<p class=\"notice\">Break-glass Proxmox endpoint: not configured.</p>")
 	} else {

@@ -65,7 +65,7 @@ func TestPortalPublishesSupportedApplianceManagementBoundary(t *testing.T) {
 		"native product UI/API",
 		"generated portal/status surfaces",
 		"Proxmox console/exec",
-		"Routine operator SSH and hand mutation of Core appliances are unsupported",
+		"Routine operator SSH and hand mutation of Core-managed appliances are unsupported",
 		"internal controller",
 	} {
 		if !strings.Contains(page, want) {
@@ -74,6 +74,25 @@ func TestPortalPublishesSupportedApplianceManagementBoundary(t *testing.T) {
 	}
 	if strings.Contains(page, "ProxyJump lab-bastion") || strings.Contains(page, "ssh lab-bastion") {
 		t.Fatalf("portal access page presents routine appliance SSH: %s", page)
+	}
+}
+
+func TestExternalPortalKeepsExternalApplianceOperatorManaged(t *testing.T) {
+	dir := t.TempDir()
+	site := model.NewSite("installation", "age1example", model.GatewayModeExternal)
+	if err := Build(site, filepath.Join(dir, "portal"), "", Evidence{}, networkmodel.Discovery{Mode: "virtual-only"}, time.Unix(0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "portal", "access.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(data)
+	if !strings.Contains(page, "external firewall appliance is operator-managed") || !strings.Contains(page, "does not manage that appliance") {
+		t.Fatalf("external portal omitted operator-managed appliance boundary: %s", page)
+	}
+	if strings.Contains(page, "hand mutation of Core-managed appliances are unsupported") {
+		t.Fatalf("external portal applied Core-only prohibition to external appliance: %s", page)
 	}
 }
 

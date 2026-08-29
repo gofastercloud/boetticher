@@ -74,7 +74,7 @@ When a later deployment needs to change an already-converged guest, Core may
 re-arm the same temporary key through the authenticated Proxmox host boundary
 for that exact owned guest, then removes it again during cleanup.
 
-Routine operator administration is not performed by SSH. Use the Boetticher
+Routine operator administration of Core-managed appliances is not performed by SSH. Use the Boetticher
 CLI, native product UI/API where appropriate, generated portal/status surfaces,
 or explicit Proxmox console/exec break-glass access for recovery.
 

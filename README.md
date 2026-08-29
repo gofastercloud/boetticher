@@ -141,7 +141,7 @@ boetticher model.
 Supported operator administration uses the Boetticher CLI, native product
 UI/API where appropriate, generated portal/status surfaces, and explicit
 Proxmox console/exec access as break-glass recovery. Routine operator SSH and
-hand mutation of Core appliances are unsupported. SSH/Ansible remains an
+hand mutation of Core-managed appliances are unsupported. SSH/Ansible remains an
 internal controller transport for deployment; the generated SSH projection is
 not a routine appliance administration interface.
 

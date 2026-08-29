@@ -24,8 +24,8 @@ func TestAccessDescribesSupportedApplianceManagementBoundary(t *testing.T) {
 		"generated portal/status surfaces",
 		"native product UI/API",
 		"Proxmox console/exec",
-		"internal controller transport only",
-		"Routine appliance SSH and hand mutation are unsupported",
+		"Core SSH      internal controller transport only",
+		"Core         routine SSH and hand mutation are unsupported",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("access output missing %q: %s", want, text)
@@ -33,6 +33,29 @@ func TestAccessDescribesSupportedApplianceManagementBoundary(t *testing.T) {
 	}
 	if strings.Contains(text, "ssh firewall") || strings.Contains(text, "ssh dns") || strings.Contains(text, "ssh monitor") || strings.Contains(text, "ssh portal") {
 		t.Fatalf("access output presents routine appliance SSH: %s", text)
+	}
+}
+
+func TestAccessKeepsExternalFirewallOperatorManaged(t *testing.T) {
+	siteDir := t.TempDir()
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeExternal))
+	disabled := false
+	config.Modules.Firewall = &model.ToggleModuleConfig{Enabled: &disabled}
+	if err := site.SaveConfig(siteDir, config); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := runAccess([]string{"--site", siteDir}, &output); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	for _, want := range []string{"External      operator-managed appliance and recovery", "External     configure and recover through the operator's appliance", "Appliance   operator managed"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("external access output missing %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "routine SSH and hand mutation are unsupported") {
+		t.Fatalf("external access output applies Core-only prohibition to operator appliance: %s", text)
 	}
 }
 
