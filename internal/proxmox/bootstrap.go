@@ -768,6 +768,46 @@ func CheckScopedCredentialAvailability(ctx context.Context, runner CommandRunner
 	return nil
 }
 
+// CheckScopedCredentialReuse verifies that an encrypted, previously-created
+// provisioning identity still exists with the expected bounded role. It is
+// read-only and permits safe retry/bootstrap qualification without treating
+// the exact owned token as an unrelated collision.
+func CheckScopedCredentialReuse(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID, role string) error {
+	if !safeID(userID) || !safeID(tokenID) || !safeID(role) {
+		return errors.New("Proxmox identity and token IDs must be simple identifiers")
+	}
+	roleOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/roles --output-format json"))
+	if err != nil {
+		return fmt.Errorf("HOLD: inspect Proxmox role %q: %w", role, err)
+	}
+	if _, err := validateScopedRoleJSON(roleOutput, role, ScopedProvisionerPrivileges()); err != nil {
+		return fmt.Errorf("HOLD: Proxmox role %q is not the expected bounded role: %w", role, err)
+	}
+	usersOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users --output-format json"))
+	if err != nil {
+		return fmt.Errorf("HOLD: inspect Proxmox users: %w", err)
+	}
+	users, err := accessIDs(usersOutput, "userid", "id")
+	if err != nil {
+		return fmt.Errorf("HOLD: decode Proxmox users: %w", err)
+	}
+	if !users[userID] {
+		return fmt.Errorf("HOLD: encrypted Proxmox credentials reference missing user %s", userID)
+	}
+	tokensOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users/"+shellQuote(userID)+"/token --output-format json"))
+	if err != nil {
+		return fmt.Errorf("HOLD: inspect Proxmox tokens for %s: %w", userID, err)
+	}
+	tokens, err := accessIDs(tokensOutput, "tokenid", "id")
+	if err != nil {
+		return fmt.Errorf("HOLD: decode Proxmox tokens: %w", err)
+	}
+	if !tokens[tokenID] {
+		return fmt.Errorf("HOLD: encrypted Proxmox credentials reference missing token %s!%s", userID, tokenID)
+	}
+	return nil
+}
+
 const (
 	PulseMonitoringUser  = "pulse-monitor@pve"
 	PulseMonitoringToken = "boetticher-monitoring"

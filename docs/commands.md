@@ -6,7 +6,7 @@ This reference is generated from the CLI command metadata. `deploy` is the only 
 
 ```text
 boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall]
-boetticher preflight [--site DIR] [--live] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]
+boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]
 boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]
 boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]
 boetticher logs [HOST] [--site DIR] [--unit UNIT] [--since DURATION] [--priority LEVEL] [--limit N]
@@ -54,11 +54,11 @@ Related commands: config validate, preflight, bootstrap
 
 Purpose: Validate controller, Proxmox, hardware, configuration, and deployment safety prerequisites.
 
-Usage: `boetticher preflight [--site DIR] [--live] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]`
+Usage: `boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]`
 
 Arguments: No positional arguments.
 
-Options: --live performs bounded target checks; --site selects the private site; bootstrap and SSH options identify the target.
+Options: --live performs bounded target checks; --site selects the private site; --age-identity selects the external Age identity needed to validate encrypted credential reuse; bootstrap and SSH options identify the target.
 
 Safety: Read-only. Preflight performs no platform mutation.
 

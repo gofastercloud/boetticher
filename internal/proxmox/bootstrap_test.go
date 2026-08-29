@@ -266,6 +266,22 @@ func TestCheckScopedCredentialAvailabilityHoldsExistingToken(t *testing.T) {
 	}
 }
 
+func TestCheckScopedCredentialReuseAcceptsExistingBoundedToken(t *testing.T) {
+	runner := &fakeRunner{responses: map[string][]byte{
+		"pvesh get /access/roles --output-format json":                      []byte(`[{"roleid":"BoetticherProvisioner","privs":"VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options VM.GuestAgent.Audit VM.PowerMgmt Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit SDN.Audit SDN.Use Sys.AccessNetwork Sys.Audit Sys.Modify","special":0}]`),
+		"pvesh get /access/users --output-format json":                      []byte(`[{"userid":"labadmin@pve"}]`),
+		"pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[{"tokenid":"boetticher"}]`),
+	}}
+	if err := CheckScopedCredentialReuse(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
+		t.Fatalf("existing bounded token was not accepted for encrypted-credential reuse: %v", err)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, " create ") || strings.Contains(command, " set ") || strings.Contains(command, " delete ") {
+			t.Fatalf("credential reuse check mutated Proxmox: %s", command)
+		}
+	}
+}
+
 func TestCreateScopedCredentialsCreatesRoleAtCollectionEndpoint(t *testing.T) {
 	runner := &fakeRunner{
 		output: []byte(`{"value":"opaque-token-secret"}`),
