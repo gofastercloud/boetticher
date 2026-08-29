@@ -216,6 +216,14 @@
     - inventory_hostname == logging_plan.collector
     - not (module_configs.aiops is defined and module_configs.aiops.enabled | default(false) | bool)
 
+- name: Clear stale failure state for the disabled AIOps journal query
+  ansible.builtin.command:
+    argv: [systemctl, reset-failed, boetticher-log-query]
+  changed_when: false
+  when:
+    - inventory_hostname == logging_plan.collector
+    - not (module_configs.aiops is defined and module_configs.aiops.enabled | default(false) | bool)
+
 - name: Install the bounded AIOps journal query policy
   ansible.builtin.file:
     path: /etc/boetticher-log-query

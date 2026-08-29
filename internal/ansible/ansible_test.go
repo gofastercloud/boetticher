@@ -448,9 +448,11 @@ func TestLoggingRoleStopsOptionalAIOpsJournalQueryWhenDisabled(t *testing.T) {
 	text := string(data)
 	for _, expected := range []string{
 		"Keep the optional AIOps journal query stopped when AIOps is disabled",
+		"Clear stale failure state for the disabled AIOps journal query",
 		"name: boetticher-log-query",
 		"enabled: false",
 		"state: stopped",
+		"argv: [systemctl, reset-failed, boetticher-log-query]",
 		"not (module_configs.aiops is defined and module_configs.aiops.enabled | default(false) | bool)",
 	} {
 		if !strings.Contains(text, expected) {
