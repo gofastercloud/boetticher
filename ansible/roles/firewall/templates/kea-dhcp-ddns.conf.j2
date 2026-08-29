@@ -14,14 +14,14 @@
     "forward-ddns": {
       "ddns-domains": [
 {% for zone in firewall_plan.ddns.zones %}
-      {"name": "{{ zone.forward_zone }}", "key-name": "{{ zone.tsig_key_name }}", "dns-servers": [{"ip-address": "10.10.10.10", "port": 5353}]}{% if not loop.last %},{% endif %}
+      {"name": "{{ zone.forward_zone }}.", "key-name": "{{ zone.tsig_key_name }}", "dns-servers": [{"ip-address": "10.10.10.10", "port": 5353}]}{% if not loop.last %},{% endif %}
 {% endfor %}
       ]
     },
     "reverse-ddns": {
       "ddns-domains": [
 {% for zone in firewall_plan.ddns.zones %}
-      {"name": "{{ zone.reverse_zone }}", "key-name": "{{ zone.tsig_key_name }}", "dns-servers": [{"ip-address": "10.10.10.10", "port": 5353}]}{% if not loop.last %},{% endif %}
+      {"name": "{{ zone.reverse_zone }}.", "key-name": "{{ zone.tsig_key_name }}", "dns-servers": [{"ip-address": "10.10.10.10", "port": 5353}]}{% if not loop.last %},{% endif %}
 {% endfor %}
       ]
     }
