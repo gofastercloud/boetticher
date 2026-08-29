@@ -569,13 +569,8 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 		}
 	}()
 	if monitoringEnabled {
-		pulseRunner := proxmox.SSHRunner{
-			IdentityFile:  operatorIdentityFile(s),
-			ConfigFile:    filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"),
-			KnownHosts:    deploymentKnownHosts(*siteDir),
-			StrictHostKey: "yes",
-			HostAlias:     "lab-bastion",
-		}
+		bastionRunner := proxmoxBastionSSHRunner(s, *siteDir)
+		pulseRunner := bastionRunner
 		pulseForward, err = pulseRunner.StartLocalForward(ctx, s.BootstrapAddress, "lab-jump", "10.10.10.20", 443)
 		if err != nil {
 			return fmt.Errorf("open Pulse API tunnel through Proxmox bastion: %w", err)
@@ -594,9 +589,9 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 			return clientErr
 		}
 		if aiopsEnabled {
-			aiRouterForward, err = rootRunner.StartLocalForward(ctx, s.BootstrapAddress, "root", "10.10.20.60", 443)
+			aiRouterForward, err = bastionRunner.StartLocalForward(ctx, s.BootstrapAddress, "lab-jump", "10.10.20.60", 443)
 			if err != nil {
-				return fmt.Errorf("open AI Router canary tunnel through Proxmox host: %w", err)
+				return fmt.Errorf("open AI Router canary tunnel through Proxmox bastion: %w", err)
 			}
 			if err := qualifyAndConfigureAIOps(ctx, *siteDir, *ageIdentity, s, authority, clientCertificate, pulseAdmin, aiRouterForward.Address(), runtimeVariables, ansiblePlaybook, inventoryPath); err != nil {
 				return fmt.Errorf("HOLD: AIOps qualification failed: %w", err)
@@ -1299,6 +1294,16 @@ func proxmoxRootSSHRunner(s model.Site, siteDir string) proxmox.SSHRunner {
 		KnownHosts:    deploymentKnownHosts(siteDir),
 		StrictHostKey: "yes",
 		HostAlias:     model.LogicalProxmoxIdentity,
+	}
+}
+
+func proxmoxBastionSSHRunner(s model.Site, siteDir string) proxmox.SSHRunner {
+	return proxmox.SSHRunner{
+		IdentityFile:  operatorIdentityFile(s),
+		ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),
+		KnownHosts:    deploymentKnownHosts(siteDir),
+		StrictHostKey: "yes",
+		HostAlias:     "lab-bastion",
 	}
 }
 

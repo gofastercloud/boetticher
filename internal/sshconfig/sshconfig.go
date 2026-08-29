@@ -111,6 +111,9 @@ func RenderBastionPolicy(s model.Site) (string, error) {
 			if m.Name == "lab-monitor-01" {
 				destinations = append(destinations, fmt.Sprintf("%s:443", m.Address))
 			}
+			if m.Name == "lab-litellm-01" {
+				destinations = append(destinations, fmt.Sprintf("%s:443", m.Address))
+			}
 		}
 	}
 	sort.Strings(destinations)

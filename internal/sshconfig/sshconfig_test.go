@@ -202,3 +202,26 @@ func TestRenderComposedSiteIncludesDeclaredModuleGuests(t *testing.T) {
 		}
 	}
 }
+
+func TestBastionPolicyAllowsLiteLLMHTTPSForControllerCanary(t *testing.T) {
+	enabled := true
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+		Enabled: &enabled,
+		Upstreams: []model.LiteLLMUpstreamConfig{{
+			Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key",
+		}},
+		Models: []model.LiteLLMModelConfig{{Alias: "operations", Upstream: "provider", Model: "provider/model"}},
+	}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := RenderBastionPolicy(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(policy, "10.10.20.60:443") {
+		t.Fatalf("LiteLLM HTTPS endpoint is missing from the restricted bastion policy: %s", policy)
+	}
+}
