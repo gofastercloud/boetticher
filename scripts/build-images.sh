@@ -425,7 +425,7 @@ EOF
 build_logging() {
   printf '%s\n' 'boetticher build stage: logging'
   rootfs=$(prepare_rootfs boetticher-logging)
-  install_packages "$rootfs" systemd-journal-remote
+  install_packages "$rootfs" systemd-journal-remote nginx
   CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/libexec/boetticher-log-query" ./cmd/boetticher-log-query
   install -D -m 0644 images/logging/runtime/boetticher-log-query.service "$rootfs/etc/systemd/system/boetticher-log-query.service"
   chroot "$rootfs" useradd --system --user-group --no-create-home --shell /usr/sbin/nologin boetticher-log-query
