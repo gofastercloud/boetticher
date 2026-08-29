@@ -61,6 +61,36 @@ func SaveConfig(dir string, config model.SiteConfig) error {
 	return atomicWrite(filepath.Join(dir, "site.yml"), data, 0600)
 }
 
+// ApplyConfigAndPlatformSecrets commits the two desired-state files as one
+// configure operation. Each replacement is atomic; if the second replacement
+// fails, the encrypted document is restored before the error is returned.
+// Secret values are accepted only in memory and are never part of an error.
+func ApplyConfigAndPlatformSecrets(dir string, config model.SiteConfig, s model.Site, ageIdentityPath string, updates map[string]string) error {
+	configData, err := model.RenderSiteConfig(config)
+	if err != nil {
+		return err
+	}
+	if len(updates) == 0 {
+		return atomicWrite(filepath.Join(dir, "site.yml"), configData, 0600)
+	}
+
+	secretPath := filepath.Join(dir, "secrets", "boetticher.sops.yaml")
+	oldSecret, err := os.ReadFile(secretPath)
+	if err != nil {
+		return fmt.Errorf("read encrypted platform secrets for atomic update: %w", err)
+	}
+	if err := UpdatePlatformSecrets(dir, s, ageIdentityPath, updates); err != nil {
+		return err
+	}
+	if err := atomicWrite(filepath.Join(dir, "site.yml"), configData, 0600); err != nil {
+		if restoreErr := atomicWrite(secretPath, oldSecret, 0600); restoreErr != nil {
+			return fmt.Errorf("save site configuration: %v; restore encrypted platform secrets: %v", err, restoreErr)
+		}
+		return fmt.Errorf("save site configuration: %w", err)
+	}
+	return nil
+}
+
 func Save(dir string, s model.Site) error {
 	return SaveConfig(dir, model.ConfigFromSite(s))
 }

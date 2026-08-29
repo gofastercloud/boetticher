@@ -45,6 +45,7 @@ type ModuleDefinition struct {
 	Placement         PlacementRequirement
 	Guests            []model.Component
 	USBRequirements   []model.USBRequirement
+	Configuration     []model.ModuleConfigField
 	StaticDeviceSlots int
 }
 
@@ -64,6 +65,7 @@ func FirstPartyRegistry() Registry {
 	return Registry{definitions: map[string]ModuleDefinition{
 		"dns": {
 			Name: "dns", Description: "Mandatory DNS and NTP platform capability", Version: "1.0.0", Policy: Mandatory,
+			Configuration: []model.ModuleConfigField{{Key: "provider", Type: model.ModuleConfigEnum, Prompt: "DNS provider", Description: "Recursive DNS provider used by the platform", Required: true, Default: string(model.DNSProviderBlocky), AllowedValues: []string{string(model.DNSProviderBlocky), string(model.DNSProviderAdGuard)}}},
 
 			Requires: []Capability{CapabilityGateway}, Provides: []Capability{CapabilityDNS, CapabilityNTP}, GuestIDs: []int{model.DNS01VMID, model.DNS02VMID}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeInfrastructure}, Guests: []model.Component{
 				{Name: "lab-dns-01", VMID: model.DNS01VMID, Hostname: "lab-dns-01", Zone: "INFRA", Address: "10.10.10.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
@@ -97,6 +99,18 @@ func FirstPartyRegistry() Registry {
 		},
 		"litellm": {
 			Name: "litellm", Description: "mTLS-protected LiteLLM AI API router", Version: "1.0.0", Policy: DefaultOff,
+			Configuration: []model.ModuleConfigField{
+				{Key: "upstreams", Type: model.ModuleConfigObjectList, Prompt: "AI Router upstreams", Description: "HTTPS provider endpoints and their SOPS secret references", Required: true, MinItems: 1, MaxItems: 16, ItemFields: []model.ModuleConfigField{
+					{Key: "name", Type: model.ModuleConfigString, Prompt: "Upstream name", Required: true},
+					{Key: "base_url", Type: model.ModuleConfigString, Prompt: "HTTPS base URL", Required: true},
+					{Key: "api_key_secret", Type: model.ModuleConfigString, Prompt: "SOPS secret name", Description: "Name of the existing SOPS-managed provider credential; the credential value is collected separately", Required: true, Sensitive: true},
+				}},
+				{Key: "models", Type: model.ModuleConfigObjectList, Prompt: "AI Router model aliases", Description: "Provider-neutral aliases exposed to dependent modules", Required: true, MinItems: 1, MaxItems: 32, ItemFields: []model.ModuleConfigField{
+					{Key: "alias", Type: model.ModuleConfigString, Prompt: "Public alias", Required: true},
+					{Key: "upstream", Type: model.ModuleConfigEnum, Prompt: "Upstream", Required: true, Resolver: "litellm-upstream-name"},
+					{Key: "model", Type: model.ModuleConfigString, Prompt: "Provider model identifier", Required: true},
+				}},
+			},
 			Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityAIAPI}, GuestIDs: []int{210}, ReservedVMIDStart: 210, ReservedVMIDEnd: 219,
 			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
 				{Name: "lab-litellm-01", VMID: 210, Hostname: "lab-litellm-01", Address: "10.10.20.60", Role: "LiteLLM AI API router", DNSAliases: []string{"litellm", "ai"}, URL: "https://litellm." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
@@ -112,7 +126,8 @@ func FirstPartyRegistry() Registry {
 		},
 		"aiops": {
 			Name: "aiops", Description: "Read-only HolmesGPT incident investigation", Version: "1.0.0", Policy: DefaultOff,
-			DependsOn: []string{"monitoring", "logging", "litellm"}, Requires: []Capability{CapabilityMonitoring, CapabilityLogging, CapabilityAIAPI, CapabilityDNS, CapabilityNTP}, GuestIDs: []int{240}, ReservedVMIDStart: 240, ReservedVMIDEnd: 249,
+			Configuration: []model.ModuleConfigField{{Key: "model_alias", Type: model.ModuleConfigModelAlias, Prompt: "AI Router model alias", Description: "An alias explicitly declared by the LiteLLM module", Required: true, Resolver: "litellm-model-alias"}},
+			DependsOn:     []string{"monitoring", "logging", "litellm"}, Requires: []Capability{CapabilityMonitoring, CapabilityLogging, CapabilityAIAPI, CapabilityDNS, CapabilityNTP}, GuestIDs: []int{240}, ReservedVMIDStart: 240, ReservedVMIDEnd: 249,
 			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
 				{Name: "lab-aiops-01", VMID: 240, Hostname: "lab-aiops-01", Zone: "SERVERS", Address: "10.10.20.90", Role: "HolmesGPT AIOps investigation", DNSAliases: []string{"aiops"}, URL: "https://aiops." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
@@ -132,6 +147,45 @@ func (r Registry) Definitions() []ModuleDefinition {
 func (r Registry) Definition(name string) (ModuleDefinition, bool) {
 	definition, ok := r.definitions[name]
 	return definition, ok
+}
+
+// ConfigurationFields returns the operator schema for a module. Resolver
+// results are derived from the same typed site configuration used by Compose;
+// they are never an additional source of allowed values.
+func (r Registry) ConfigurationFields(name string, config model.SiteConfig) ([]model.ModuleConfigField, error) {
+	definition, ok := r.Definition(name)
+	if !ok {
+		return nil, fmt.Errorf("unknown first-party module %q", name)
+	}
+	fields := cloneConfigurationFields(definition.Configuration)
+	var resolve func([]model.ModuleConfigField)
+	resolve = func(values []model.ModuleConfigField) {
+		for index := range values {
+			switch values[index].Resolver {
+			case "litellm-model-alias":
+				for _, item := range config.Modules.Map()["litellm"].Models {
+					values[index].AllowedValues = append(values[index].AllowedValues, item.Alias)
+				}
+			case "litellm-upstream-name":
+				for _, item := range config.Modules.Map()["litellm"].Upstreams {
+					values[index].AllowedValues = append(values[index].AllowedValues, item.Name)
+				}
+			}
+			resolve(values[index].ItemFields)
+		}
+	}
+	resolve(fields)
+	return fields, nil
+}
+
+func cloneConfigurationFields(values []model.ModuleConfigField) []model.ModuleConfigField {
+	result := make([]model.ModuleConfigField, len(values))
+	for index, value := range values {
+		result[index] = value
+		result[index].AllowedValues = append([]string(nil), value.AllowedValues...)
+		result[index].ItemFields = cloneConfigurationFields(value.ItemFields)
+	}
+	return result
 }
 
 type ResolvedModule struct {
@@ -229,6 +283,9 @@ func (r Registry) Validate() error {
 		if definition.Placement.ZoneType != "" && !supportedPlacementZoneType(definition.Placement.ZoneType) {
 			return fmt.Errorf("module %s has unknown placement zone type %q", definition.Name, definition.Placement.ZoneType)
 		}
+		if err := validateConfigurationFields(definition.Name, definition.Configuration); err != nil {
+			return err
+		}
 		guestNames := make(map[string]bool, len(definition.Guests))
 		for _, guest := range definition.Guests {
 			guestNames[guest.Name] = true
@@ -268,6 +325,70 @@ func (r Registry) Validate() error {
 		}
 	}
 	return nil
+}
+
+func validateConfigurationFields(module string, fields []model.ModuleConfigField) error {
+	seen := make(map[string]bool, len(fields))
+	for _, field := range fields {
+		if field.Key == "" || !modelConfigurationToken(field.Key) || seen[field.Key] {
+			return fmt.Errorf("module %s has invalid or duplicate configuration field %q", module, field.Key)
+		}
+		seen[field.Key] = true
+		if field.Prompt == "" {
+			return fmt.Errorf("module %s configuration field %s has no prompt", module, field.Key)
+		}
+		switch field.Type {
+		case model.ModuleConfigBool, model.ModuleConfigString, model.ModuleConfigEnum, model.ModuleConfigModelAlias, model.ModuleConfigObjectList:
+		default:
+			return fmt.Errorf("module %s configuration field %s has unsupported type %q", module, field.Key, field.Type)
+		}
+		if field.Resolver != "" {
+			if field.Type != model.ModuleConfigEnum && field.Type != model.ModuleConfigModelAlias {
+				return fmt.Errorf("module %s configuration field %s has a resolver for a non-choice type", module, field.Key)
+			}
+			switch field.Resolver {
+			case "litellm-model-alias", "litellm-upstream-name":
+			default:
+				return fmt.Errorf("module %s configuration field %s has unknown resolver %q", module, field.Key, field.Resolver)
+			}
+		}
+		if field.Type == model.ModuleConfigEnum && len(field.AllowedValues) == 0 && field.Resolver == "" {
+			return fmt.Errorf("module %s configuration field %s enum has no allowed values", module, field.Key)
+		}
+		if field.Type == model.ModuleConfigObjectList {
+			if field.MinItems < 0 || field.MaxItems < field.MinItems || field.MaxItems == 0 || len(field.ItemFields) == 0 {
+				return fmt.Errorf("module %s configuration field %s has invalid object-list bounds", module, field.Key)
+			}
+			if err := validateConfigurationFields(module+"."+field.Key, field.ItemFields); err != nil {
+				return err
+			}
+		}
+		if field.Default != "" && field.Type == model.ModuleConfigEnum && !containsString(field.AllowedValues, field.Default) {
+			return fmt.Errorf("module %s configuration field %s default is not allowed", module, field.Key)
+		}
+	}
+	return nil
+}
+
+func modelConfigurationToken(value string) bool {
+	if len(value) > 64 {
+		return false
+	}
+	for _, character := range value {
+		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '_' || character == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func supportedPlacementZoneType(value model.ZoneType) bool {

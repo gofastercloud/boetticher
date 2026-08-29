@@ -74,3 +74,48 @@ The Core-owned USB export framework binds compiled-in named requirements to
 stable physical ports; bindings cannot name device paths, VMIDs, or user
 workloads. Core resolves raw USB or serial character devices according to the
 compiled requirement.
+
+## Module configuration workflow
+
+First-party module authors declare operator-facing fields once on the module
+definition, alongside dependencies, USB requirements, and secret declarations.
+The field metadata supplies the key, typed input kind, prompt, bounds,
+required/default status, allowed values or resolver, and sensitive
+classification. Core uses that declaration to generate the generic
+`boetticher module configure MODULE` workflow; modules do not implement
+individual wizards. The typed `ModulesConfig` structs remain the persisted
+configuration authority.
+
+`module configure` changes desired state only. It does not deploy guests,
+reconcile USB devices in live infrastructure, or run a module. Review its
+redacted plan and run `boetticher deploy` separately. Optional-module
+dependencies are resolved by the existing registry and are shown in the plan.
+Disabling retains owned resources unless the established, separately confirmed
+purge operation is used.
+
+Use the interactive workflow for normal operation:
+
+```text
+boetticher module configure printer
+boetticher module configure aiops
+```
+
+`--dry-run` performs validation and prints a plan without writing. `--json`
+emits a redacted machine-readable plan and never prompts; use `--enabled`,
+repeatable typed `--set KEY=VALUE`, and `--usb REQUIREMENT=PORT` for safe
+automation. A non-interactive apply requires `--confirm`. Missing required
+fields, model aliases, or USB bindings are `HOLD`, never guessed.
+
+Operator credentials are never accepted as arguments. Declared
+operator-supplied secrets are read from a terminal without echo or from stdin,
+then written through the existing SOPS/platform-secret machinery. Secret
+values are structurally excluded from plans, JSON, logs, generated portal
+content, and errors. Configuration and secret updates use atomic file
+replacement with rollback if the second replacement fails.
+
+For a declared USB requirement, configure discovers compatible parent devices
+using the existing physical-port and VID/PID identity model and presents
+numbered choices. Ambiguous or incompatible identities are rejected. The
+selected device is stored in the existing `usb_exports` representation, which
+the normal USB reconciler consumes; no device path or second USB configuration
+is introduced.

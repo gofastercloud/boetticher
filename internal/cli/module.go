@@ -22,7 +22,7 @@ func runModule(args []string, out interface{ Write([]byte) (int, error) }) error
 
 func runModuleWithInput(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }) error {
 	if len(args) == 0 {
-		return errors.New("usage: boetticher module list|show|plan|enable|disable|status|secrets")
+		return errors.New("usage: boetticher module list|show|plan|configure|enable|disable|status|secrets")
 	}
 	switch args[0] {
 	case "list":
@@ -31,6 +31,8 @@ func runModuleWithInput(args []string, input io.Reader, out, errOut interface{ W
 		return runModuleShow(args[1:], out)
 	case "plan":
 		return runModulePlan(args[1:], out)
+	case "configure":
+		return runModuleConfigure(args[1:], input, out, errOut)
 	case "enable":
 		return runModuleChangeWithInput(args[1:], input, out, errOut, true)
 	case "disable":
@@ -54,13 +56,13 @@ func runModules(args []string, out interface{ Write([]byte) (int, error) }) erro
 
 func runModulesWithInput(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }) error {
 	if len(args) == 0 {
-		return errors.New("usage: boetticher modules list|MODULE show|plan|enable|disable|status|secrets|purge")
+		return errors.New("usage: boetticher modules list|MODULE show|plan|configure|enable|disable|status|secrets|purge")
 	}
 	if args[0] == "list" {
 		return runModuleList(args[1:], out)
 	}
 	if len(args) < 2 {
-		return errors.New("usage: boetticher modules MODULE show|plan|enable|disable|status|secrets|purge")
+		return errors.New("usage: boetticher modules MODULE show|plan|configure|enable|disable|status|secrets|purge")
 	}
 	name, command := args[0], args[1]
 	forward := append([]string{name}, args[2:]...)
@@ -69,6 +71,8 @@ func runModulesWithInput(args []string, input io.Reader, out, errOut interface{ 
 		return runModuleShow(forward, out)
 	case "plan":
 		return runModulePlan(forward, out)
+	case "configure":
+		return runModuleConfigure(forward, input, out, errOut)
 	case "enable":
 		return runModuleChangeWithInput(forward, input, out, errOut, true)
 	case "disable":
