@@ -29,6 +29,20 @@ Create the matching reservation in the existing HOME/upstream DHCP service
 before deployment; the DHCP-assigned address is intentionally not part of
 `site.yml`.
 
+The managed firewall defaults to the VM backend. If the deployment is an
+explicitly accepted lower-risk development or homelab use case, select the
+unprivileged LXC backend before bootstrap:
+
+```text
+boetticher module configure firewall --set backend=lxc --confirm --site my-boetticher
+```
+
+This uses the existing generic typed configuration workflow and persists the
+choice in `site.yml`; it does not add a firewall-specific wizard. LXC shares
+the Proxmox kernel and is reduced isolation, so VM remains the recommended and
+production-qualified choice. Privileged LXC is unsupported and there is no
+automatic fallback if the LXC security or service contract cannot be met.
+
 ## Bootstrap
 
 1. Install a supported fresh Proxmox host and connect to its HOME-side DHCP
@@ -54,9 +68,11 @@ before deployment; the DHCP-assigned address is intentionally not part of
 
 Managed mode prepares the host and artifact substrate during bootstrap. The
 first `deploy` creates VM 100, `lab-fw-01`, as the qualified boetticher Debian
-firewall appliance with one ordinary vNIC for WAN and one Proxmox-tagged vNIC
-for each internal zone. The managed gateway receives no 802.1Q trunk and has
-no VLAN subinterfaces.
+firewall appliance by default. With `backend=lxc`, the same fixed guest
+identity and network topology are packaged as an unprivileged LXC appliance.
+Both variants use one ordinary vNIC for WAN and one Proxmox-tagged vNIC for
+each internal zone. The managed gateway receives no 802.1Q trunk and has no
+VLAN subinterfaces.
 
 Bootstrap also establishes a temporary root SSH deployment window for the
 controller on the

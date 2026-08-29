@@ -60,11 +60,19 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 		return SiteConfig{}, fmt.Errorf("decode site.yml: %w", err)
 	}
 	for name, module := range config.Modules.Map() {
-		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "litellm" && name != "printer" && name != "aiops" {
+		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "litellm" && name != "printer" && name != "aiops" && name != "gatus" {
 			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s is not a registered first-party module", name)
 		}
 		if name != "dns" && module.Provider != "" {
 			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s.provider is not supported", name)
+		}
+		if name != "firewall" && module.Backend != "" {
+			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s.backend is not supported", name)
+		}
+		if name == "firewall" {
+			if err := ValidateFirewallBackend(module.Backend); err != nil {
+				return SiteConfig{}, err
+			}
 		}
 		if name == "dns" && module.Provider != "" && module.Provider != string(DNSProviderBlocky) && module.Provider != string(DNSProviderAdGuard) {
 			return SiteConfig{}, fmt.Errorf("site.yml: modules.dns.provider expected one of: blocky, adguard")
@@ -96,8 +104,11 @@ func validateModuleConfigShape(data []byte) error {
 		switch name {
 		case "dns":
 			allowed["provider"] = true
-		case "monitoring", "firewall", "printer":
+		case "monitoring", "printer":
 			allowed["enabled"] = true
+		case "firewall":
+			allowed["enabled"] = true
+			allowed["backend"] = true
 		case "logging":
 			// Logging is mandatory and has no persisted lifecycle fields.
 		case "tailnet-router":
@@ -131,6 +142,9 @@ func validateModuleConfigShape(data []byte) error {
 			}
 			if field == "provider" && fieldValue.Tag != "!!str" && fieldValue.Tag != "!!null" {
 				return fmt.Errorf("site.yml: modules.dns.provider: expected one of: blocky, adguard")
+			}
+			if name == "firewall" && field == "backend" && fieldValue.Tag != "!!str" && fieldValue.Tag != "!!null" {
+				return fmt.Errorf("site.yml: modules.firewall.backend: expected one of: vm, lxc")
 			}
 			if name == "litellm" && (field == "upstreams" || field == "models") && fieldValue.Kind != yaml.SequenceNode {
 				return fmt.Errorf("site.yml: modules.litellm.%s: expected a list", field)

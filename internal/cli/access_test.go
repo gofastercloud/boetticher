@@ -40,7 +40,7 @@ func TestAccessKeepsExternalFirewallOperatorManaged(t *testing.T) {
 	siteDir := t.TempDir()
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeExternal))
 	disabled := false
-	config.Modules.Firewall = &model.ToggleModuleConfig{Enabled: &disabled}
+	config.Modules.Firewall = &model.FirewallModuleConfig{Enabled: &disabled}
 	if err := site.SaveConfig(siteDir, config); err != nil {
 		t.Fatal(err)
 	}

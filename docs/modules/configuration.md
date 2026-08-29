@@ -13,6 +13,8 @@ gateway:
   publish:
     - service: dns
 modules:
+  firewall:
+    backend: vm # typed vm (default/recommended) or lxc (reduced isolation)
   dns:
     provider: blocky
   monitoring:
@@ -45,6 +47,9 @@ usb_exports:
 An omitted module map uses the defaults: DNS is mandatory, monitoring is
 enabled, the managed firewall is enabled, and logging is mandatory. DNS has no
 disable switch and accepts only `blocky` or `adguard` as its provider.
+An omitted `modules.firewall.backend` resolves deterministically to `vm` for
+backward compatibility. `lxc` is only an unprivileged, reduced-isolation
+backend; it never selects a privileged container or falls back to one.
 
 Use `boetticher config validate` before deployment, `boetticher config show`
 to inspect normalized non-secret configuration, and `boetticher config schema`
@@ -98,6 +103,7 @@ Use the interactive workflow for normal operation:
 ```text
 boetticher module configure printer
 boetticher module configure aiops
+boetticher module configure firewall --set backend=lxc --confirm --site ./my-boetticher
 ```
 
 `--dry-run` performs validation and prints a plan without writing. `--json`
@@ -105,6 +111,12 @@ emits a redacted machine-readable plan and never prompts; use `--enabled`,
 repeatable typed `--set KEY=VALUE`, and `--usb REQUIREMENT=PORT` for safe
 automation. A non-interactive apply requires `--confirm`. Missing required
 fields, model aliases, or USB bindings are `HOLD`, never guessed.
+
+Firewall backend selection is available through this same generic workflow and
+must be persisted before bootstrap or deployment. Managed gateway mode always
+requires a firewall; `backend=lxc` changes its packaging and guest kind, not
+Core ownership or lifecycle. External gateway mode remains the explicit
+firewall opt-out.
 
 Operator credentials are never accepted as arguments. Declared
 operator-supplied secrets are read from a terminal without echo or from stdin,

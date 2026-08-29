@@ -17,6 +17,11 @@ The default gateway is a small Debian VM running nftables and Kea. Proxmox
 does the VLAN tagging, so the gateway receives ordinary interfaces rather than
 an 802.1Q trunk.
 
+The managed firewall also has an optional typed `lxc` backend for development,
+nested-router, and lower-risk homelab deployments. VM remains the default,
+recommended, and production-qualified backend; LXC is unprivileged only,
+shares the Proxmox kernel, and is not an equivalent isolation boundary.
+
 ```text
 HOME / upstream
        |
@@ -83,6 +88,17 @@ carrying VLANs 5, 10, 20, 30, 40, and 99; the operator firewall owns `.1` in
 each subnet, and bootstrap never silently selects even a sole eligible NIC.
 See
 [`docs/networking/external-firewall.md`](docs/networking/external-firewall.md).
+
+Select the managed firewall backend before bootstrap through the generic
+configuration workflow:
+
+```sh
+boetticher module configure firewall --set backend=vm --confirm --site my-boetticher
+```
+
+Use `backend=lxc` only where the reduced shared-kernel isolation is explicitly
+accepted. There is no privileged-LXC fallback. See
+[`docs/modules/firewall.md`](docs/modules/firewall.md).
 
 This network layout is for the next clean deployment/rebuild. Existing
 installations require an operator-planned rebuild or migration; this tranche
@@ -163,8 +179,10 @@ documentation.
 v0.3 is a single-node, pre-alpha platform. It is not HA, does not support
 IPv6, multi-node Proxmox, generic VM/LXC lifecycle management, managed VPN or
 remote-access products, arbitrary storage or network layouts, or managed
-external firewall vendors. Local backups are useful for recovery but are not
-independent disaster recovery.
+external firewall vendors. VM is the current production-qualified gateway
+backend. The optional LXC backend is held for the 0.5 development and
+qualification window and is not part of the 0.4 acceptance baseline. Local
+backups are useful for recovery but are not independent disaster recovery.
 
 ## License and acknowledgements
 

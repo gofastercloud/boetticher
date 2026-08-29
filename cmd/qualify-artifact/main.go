@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/gofastercloud/boetticher/internal/artifacts"
+	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 type trivyReport struct {
@@ -40,6 +41,7 @@ func main() {
 	evidenceRoot := flag.String("evidence-root", "generated/artifacts", "evidence output directory")
 	module := flag.String("module", "", "built-in module name")
 	provider := flag.String("provider", "", "built-in provider")
+	backend := flag.String("backend", "vm", "built-in firewall backend: vm or lxc")
 	flag.Parse()
 	for name, value := range map[string]string{"artifact": *artifactPath, "report": *reportPath, "module": *module} {
 		if value == "" {
@@ -54,7 +56,7 @@ func main() {
 	if err != nil {
 		fatalf("decode Trivy report: %v", err)
 	}
-	artifact, err := artifacts.ArtifactFor(*module, *provider)
+	artifact, err := artifacts.ArtifactForBackend(*module, model.FirewallBackend(*backend), *provider)
 	if err != nil {
 		fatalf("resolve artifact definition: %v", err)
 	}

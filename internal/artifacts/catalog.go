@@ -24,6 +24,7 @@ import (
 type Definition struct {
 	Name         string
 	Provider     string
+	Backend      string
 	Version      string
 	Kind         string
 	Architecture string
@@ -274,6 +275,7 @@ func Definitions() []Definition {
 		{Name: "logging", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/logging", "internal/logging", "cmd/boetticher-log-query")},
 		{Name: "monitoring", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/monitoring")},
 		{Name: "firewall", Version: ModuleVersion, Kind: "qemu", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/firewall", "scripts/smoke-firewall-image.sh")},
+		{Name: "firewall", Backend: model.FirewallBackendLXC, Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/firewall", "images/firewall-lxc", "scripts/smoke-firewall-lxc.sh")},
 		{Name: "portal", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/portal")},
 		{Name: "tailnet-router", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/tailnet-router", "internal/model", "internal/modules")},
 		{Name: "litellm", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/litellm", "internal/model", "internal/modules")},
@@ -293,14 +295,33 @@ func Lookup(module string) (Definition, bool) {
 }
 
 func ArtifactFor(module string, provider ...string) (model.Artifact, error) {
+	return ArtifactForBackend(module, model.FirewallBackendVM, provider...)
+}
+
+// ArtifactForBackend resolves the one firewall capability to its backend
+// packaging definition. Non-firewall modules retain their existing artifact
+// selection and reject a non-default backend.
+func ArtifactForBackend(module string, backend model.FirewallBackend, provider ...string) (model.Artifact, error) {
+	if err := model.ValidateFirewallBackend(backend); err != nil && module == "firewall" {
+		return model.Artifact{}, err
+	}
 	selectedProvider := ""
 	if len(provider) > 0 {
 		selectedProvider = provider[0]
 	}
 	var definition Definition
 	var ok bool
+	selectedBackend := ""
+	if module == "firewall" {
+		selectedBackend = string(model.ResolveFirewallBackend(backend))
+		if selectedBackend == string(model.FirewallBackendVM) {
+			selectedBackend = ""
+		}
+	} else if backend != "" && backend != model.FirewallBackendVM {
+		return model.Artifact{}, fmt.Errorf("module %q does not support backend %q", module, backend)
+	}
 	for _, candidate := range Definitions() {
-		if candidate.Name == module && candidate.Provider == selectedProvider {
+		if candidate.Name == module && candidate.Provider == selectedProvider && candidate.Backend == selectedBackend {
 			definition, ok = candidate, true
 			break
 		}
@@ -315,13 +336,17 @@ func ArtifactFor(module string, provider ...string) (model.Artifact, error) {
 	if err != nil {
 		return model.Artifact{}, fmt.Errorf("hash artifact definition %s: %w", definition.Name, err)
 	}
+	artifactName := "boetticher-" + module + func() string {
+		if definition.Provider != "" {
+			return "-" + definition.Provider
+		}
+		return ""
+	}()
+	if definition.Backend == string(model.FirewallBackendLXC) {
+		artifactName += "-lxc"
+	}
 	return model.Artifact{
-		Name: "boetticher-" + module + func() string {
-			if definition.Provider != "" {
-				return "-" + definition.Provider
-			}
-			return ""
-		}(),
+		Name:             artifactName,
 		Version:          definition.Version,
 		Provider:         definition.Provider,
 		Architecture:     definition.Architecture,
@@ -349,7 +374,7 @@ func ValidateDefinitions() error {
 // build definitions and pinned public inputs that produce it. It is a recipe
 // identity, not a claim about the bytes emitted by a particular build.
 func definitionSHA256(definition Definition) (string, error) {
-	identity := fmt.Sprintf("%s/%s/%s/%s/%s/%s/%s", definition.Base, definition.BaseVersion, definition.Name, definition.Provider, definition.Version, definition.Architecture, definition.Kind)
+	identity := fmt.Sprintf("%s/%s/%s/%s/%s/%s/%s/%s", definition.Base, definition.BaseVersion, definition.Name, definition.Provider, definition.Backend, definition.Version, definition.Architecture, definition.Kind)
 	hash := sha256.New()
 	if _, err := io.WriteString(hash, identity+"\x00"); err != nil {
 		return "", err

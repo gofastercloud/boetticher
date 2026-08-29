@@ -76,6 +76,7 @@ var PublicBuildInputs = []string{
 	"scripts/scan-images.sh",
 	"scripts/smoke-appliance.sh",
 	"scripts/smoke-firewall-image.sh",
+	"scripts/smoke-firewall-lxc.sh",
 }
 
 // BuildSourceArchive returns a deterministic gzip-compressed tar stream of

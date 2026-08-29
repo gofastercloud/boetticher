@@ -491,6 +491,8 @@ func configurationFieldValue(config model.ModuleConfig, key string) string {
 	switch key {
 	case "provider":
 		return config.Provider
+	case "backend":
+		return string(config.Backend)
 	case "model_alias":
 		return config.ModelAlias
 	case "upstreams":
@@ -520,6 +522,8 @@ func applyConfigurationField(config *model.SiteConfig, name string, field model.
 	switch field.Key {
 	case "provider":
 		moduleConfig.Provider = value
+	case "backend":
+		moduleConfig.Backend = model.FirewallBackend(value)
 	case "model_alias":
 		moduleConfig.ModelAlias = value
 	case "upstreams":

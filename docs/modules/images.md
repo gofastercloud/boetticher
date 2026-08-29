@@ -31,8 +31,11 @@ records require a fresh construction.
 The builder receives an artifact target list derived from the resolved plan.
 The base, enabled provider/module appliances, and managed firewall are built
 and qualified; disabled optional modules such as Tailnet Router and LiteLLM
-are not constructed during the default workflow. The memory-heavy base and
-firewall stages run sequentially on the bounded builder; after they complete,
+are not constructed during the default workflow. VM is the default firewall
+artifact. An explicitly selected LXC firewall adds the pinned
+`boetticher-firewall-lxc` Debian 13 rootfs artifact to the same build and scan
+pipeline; it is never selected by default. The memory-heavy base and firewall
+stages run sequentially on the bounded builder; after they complete,
 independent LXC workers use bounded concurrency of two. Each worker has its
 own root filesystem, temporary build directory, log, and cleanup trap; a
 failed worker fails the complete build.
@@ -51,7 +54,7 @@ state and are ignored by initialized site repositories.
 ## Artifact build gate
 
 Definition SHA-256 identifies the deterministic recipe: module, version,
-provider, architecture, guest kind, base identity, and pinned build inputs.
+provider, backend, architecture, guest kind, base identity, and pinned build inputs.
 Content SHA-256 is the independently verified checksum of the actual built
 bytes. Deployment requires the expected definition identity, that verified
 content checksum, successful build smoke checks, a completed Trivy scan, and
@@ -90,3 +93,10 @@ extraction as gzip.
 
 Root filesystems are immutable and replaceable; declared persistent volumes are
 attached independently and are not included in the artifact binary.
+
+The LXC firewall definition is subject to the same pinned-input, checksum,
+SBOM, Trivy, smoke-test, catalog, and deterministic-revision gates as the VM
+artifact. Source and CI implementation may complete during 0.4 stabilisation,
+but this backend is intentionally held for the 0.5 development and
+qualification window. It does not add LXC coverage to the 0.4 acceptance
+baseline.

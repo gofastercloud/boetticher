@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	buildbundle "github.com/gofastercloud/boetticher"
+	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 func TestEvidenceUsesActualArtifactBytes(t *testing.T) {
@@ -466,6 +467,37 @@ func TestArtifactIdentityIsDeterministic(t *testing.T) {
 	}
 }
 
+func TestFirewallArtifactBackendSelectionIsTypedAndDistinct(t *testing.T) {
+	vm, err := ArtifactForBackend("firewall", model.FirewallBackendVM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lxc, err := ArtifactForBackend("firewall", model.FirewallBackendLXC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vm.Kind != "qemu" || vm.Name != "boetticher-firewall" || lxc.Kind != "lxc" || lxc.Name != "boetticher-firewall-lxc" || vm.DefinitionSHA256 == lxc.DefinitionSHA256 {
+		t.Fatalf("backend artifacts are not distinct qualified identities: VM=%#v LXC=%#v", vm, lxc)
+	}
+	if _, err := ArtifactForBackend("firewall", model.FirewallBackend("privileged-lxc")); err == nil {
+		t.Fatal("invalid firewall backend was accepted")
+	}
+	for _, definition := range Definitions() {
+		if definition.Name == "firewall" && definition.Backend == string(model.FirewallBackendLXC) && !contains(definition.Inputs, "images/firewall-lxc") {
+			t.Fatalf("LXC firewall definition lacks its pinned image definition: %#v", definition)
+		}
+	}
+}
+
+func contains(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}
+
 func TestArtifactDefinitionDigestBindsBuildInputs(t *testing.T) {
 	definition, ok := func() (Definition, bool) {
 		for _, candidate := range Definitions() {
@@ -500,7 +532,7 @@ func TestArtifactDefinitionDigestBindsBuildInputs(t *testing.T) {
 
 func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	root := filepath.Join("..", "..", "images")
-	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "dns/adguard/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "portal/image.yaml", "tailnet-router/image.yaml", "litellm/image.yaml", "aiops/image.yaml"}
+	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "dns/adguard/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "firewall-lxc/image.yaml", "portal/image.yaml", "tailnet-router/image.yaml", "litellm/image.yaml", "aiops/image.yaml"}
 	for _, relative := range paths {
 		data, err := os.ReadFile(filepath.Join(root, relative))
 		if err != nil {
@@ -512,6 +544,24 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 		}
 		if relative != "base/debian.yaml" && !strings.Contains(text, "base: "+BaseName) {
 			t.Errorf("%s does not consume %s", relative, BaseName)
+		}
+	}
+	lxcFirewall, err := os.ReadFile(filepath.Join(root, "firewall-lxc", "image.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"kind: lxc",
+		"unprivileged: true",
+		"features: fuse=0,keyctl=0,mknod=0,nesting=0",
+		"capabilities:",
+		"- CAP_CHOWN",
+		"- CAP_NET_ADMIN",
+		"- CAP_NET_BIND_SERVICE",
+		"- CAP_NET_RAW",
+	} {
+		if !strings.Contains(string(lxcFirewall), required) {
+			t.Fatalf("LXC firewall image definition is missing %q", required)
 		}
 	}
 	blocky, err := os.ReadFile(filepath.Join(root, "dns", "blocky", "image.yaml"))

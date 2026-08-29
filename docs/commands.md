@@ -346,11 +346,11 @@ Usage: `boetticher module list|show|plan|configure|enable|disable|status [NAME] 
 
 Arguments: NAME is required for show, plan, configure, enable, disable, and optional for status.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin). Firewall backend is a typed vm|lxc choice and should be persisted before bootstrap.
 
-Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Ordinary disable retains owned guests; purge remains destructive.
+Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Managed gateway mode requires a firewall; external mode is the explicit opt-out. Ordinary disable retains owned guests; purge remains destructive.
 
-Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure aiops --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher`
+Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure firewall --set backend=lxc --confirm --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
@@ -860,11 +860,11 @@ Usage: `boetticher module list|show|plan|configure|enable|disable|status [NAME] 
 
 Arguments: NAME is required for show, plan, configure, enable, disable, and optional for status.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin). Firewall backend is a typed vm|lxc choice and should be persisted before bootstrap.
 
-Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Ordinary disable retains owned guests; purge remains destructive.
+Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Managed gateway mode requires a firewall; external mode is the explicit opt-out. Ordinary disable retains owned guests; purge remains destructive.
 
-Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure aiops --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher`
+Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure firewall --set backend=lxc --confirm --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
@@ -876,11 +876,11 @@ Usage: `boetticher module list|show|plan|configure|enable|disable|status [NAME] 
 
 Arguments: NAME is required for show, plan, configure, enable, disable, and optional for status.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin). Firewall backend is a typed vm|lxc choice and should be persisted before bootstrap.
 
-Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Ordinary disable retains owned guests; purge remains destructive.
+Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Managed gateway mode requires a firewall; external mode is the explicit opt-out. Ordinary disable retains owned guests; purge remains destructive.
 
-Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure aiops --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher`
+Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure firewall --set backend=lxc --confirm --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
@@ -892,11 +892,11 @@ Usage: `boetticher module list|show|plan|configure|enable|disable|status [NAME] 
 
 Arguments: NAME is required for show, plan, configure, enable, disable, and optional for status.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin). Firewall backend is a typed vm|lxc choice and should be persisted before bootstrap.
 
-Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Ordinary disable retains owned guests; purge remains destructive.
+Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Managed gateway mode requires a firewall; external mode is the explicit opt-out. Ordinary disable retains owned guests; purge remains destructive.
 
-Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure aiops --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher`
+Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure firewall --set backend=lxc --confirm --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
@@ -908,11 +908,11 @@ Usage: `boetticher module list|show|plan|configure|enable|disable|status [NAME] 
 
 Arguments: NAME is required for show, plan, configure, enable, disable, and optional for status.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin). Firewall backend is a typed vm|lxc choice and should be persisted before bootstrap.
 
-Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Ordinary disable retains owned guests; purge remains destructive.
+Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Managed gateway mode requires a firewall; external mode is the explicit opt-out. Ordinary disable retains owned guests; purge remains destructive.
 
-Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure aiops --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher`
+Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure firewall --set backend=lxc --confirm --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
@@ -924,11 +924,11 @@ Usage: `boetticher module list|show|plan|configure|enable|disable|status [NAME] 
 
 Arguments: NAME is required for show, plan, configure, enable, disable, and optional for status.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin). Firewall backend is a typed vm|lxc choice and should be persisted before bootstrap.
 
-Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Ordinary disable retains owned guests; purge remains destructive.
+Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Managed gateway mode requires a firewall; external mode is the explicit opt-out. Ordinary disable retains owned guests; purge remains destructive.
 
-Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure aiops --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher`
+Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure firewall --set backend=lxc --confirm --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
@@ -940,11 +940,11 @@ Usage: `boetticher module list|show|plan|configure|enable|disable|status [NAME] 
 
 Arguments: NAME is required for show, plan, configure, enable, disable, and optional for status.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin). Firewall backend is a typed vm|lxc choice and should be persisted before bootstrap.
 
-Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Ordinary disable retains owned guests; purge remains destructive.
+Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Managed gateway mode requires a firewall; external mode is the explicit opt-out. Ordinary disable retains owned guests; purge remains destructive.
 
-Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure aiops --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher`
+Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure firewall --set backend=lxc --confirm --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
@@ -956,11 +956,11 @@ Usage: `boetticher module list|show|plan|configure|enable|disable|status [NAME] 
 
 Arguments: NAME is required for show, plan, configure, enable, disable, and optional for status.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin). Firewall backend is a typed vm|lxc choice and should be persisted before bootstrap.
 
-Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Ordinary disable retains owned guests; purge remains destructive.
+Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Managed gateway mode requires a firewall; external mode is the explicit opt-out. Ordinary disable retains owned guests; purge remains destructive.
 
-Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure aiops --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher`
+Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure firewall --set backend=lxc --confirm --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 
@@ -972,11 +972,11 @@ Usage: `boetticher module list|show|plan|configure|enable|disable|status [NAME] 
 
 Arguments: NAME is required for show, plan, configure, enable, disable, and optional for status.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin). Firewall backend is a typed vm|lxc choice and should be persisted before bootstrap.
 
-Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Ordinary disable retains owned guests; purge remains destructive.
+Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Managed gateway mode requires a firewall; external mode is the explicit opt-out. Ordinary disable retains owned guests; purge remains destructive.
 
-Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure aiops --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher`
+Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure firewall --set backend=lxc --confirm --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
 

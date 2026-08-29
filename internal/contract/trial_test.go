@@ -182,7 +182,7 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	}
 	externalConfig := model.ConfigFromSite(model.NewSite("trial-external", "age1trial", model.GatewayModeExternal))
 	disabled := false
-	externalConfig.Modules.Firewall = &model.ToggleModuleConfig{Enabled: &disabled}
+	externalConfig.Modules.Firewall = &model.FirewallModuleConfig{Enabled: &disabled}
 	external, _, err := modules.Compose(externalConfig)
 	if err != nil {
 		t.Fatal(err)

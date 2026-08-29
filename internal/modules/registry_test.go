@@ -189,6 +189,63 @@ func TestFirstPartyConfigurationFieldsAreTypedAndResolvedFromDeclarations(t *tes
 	if !secretField.Sensitive {
 		t.Fatalf("LiteLLM secret reference is not structurally classified: %#v", litellm[0])
 	}
+	firewallFields, err := registry.ConfigurationFields("firewall", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(firewallFields) != 1 || firewallFields[0].Key != "backend" || firewallFields[0].Type != model.ModuleConfigEnum || strings.Join(firewallFields[0].AllowedValues, ",") != "vm,lxc" || firewallFields[0].Default != "vm" {
+		t.Fatalf("unexpected firewall configuration schema: %#v", firewallFields)
+	}
+}
+
+func TestFirewallBackendComposesOneCapabilityWithTwoGuestKinds(t *testing.T) {
+	vmSite, _, err := Compose(testConfig(model.GatewayModeManaged))
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmFirewall, ok := findDeclaration(vmSite, "firewall")
+	if !ok || vmFirewall.Artifact.Kind != "qemu" || vmFirewall.Artifact.Name != "boetticher-firewall" || len(vmFirewall.Security.Capabilities) != 0 {
+		t.Fatalf("unexpected default VM firewall declaration: %#v", vmFirewall)
+	}
+
+	lxcConfig := testConfig(model.GatewayModeManaged)
+	lxcConfig.Modules.Firewall = &model.FirewallModuleConfig{Backend: model.FirewallBackendLXC}
+	lxcSite, _, err := Compose(lxcConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lxcFirewall, ok := findDeclaration(lxcSite, "firewall")
+	if !ok || lxcFirewall.Artifact.Kind != "lxc" || lxcFirewall.Artifact.Name != "boetticher-firewall-lxc" || !lxcFirewall.Security.Unprivileged || !sameStringSet(lxcFirewall.Security.Capabilities, model.FirewallLXCCapabilities()) {
+		t.Fatalf("unexpected LXC firewall declaration: %#v", lxcFirewall)
+	}
+	if len(vmFirewall.NetworkIntents) != len(lxcFirewall.NetworkIntents) || len(vmFirewall.Secrets) != len(lxcFirewall.Secrets) {
+		t.Fatalf("backend selection forked common firewall declarations: VM=%#v LXC=%#v", vmFirewall, lxcFirewall)
+	}
+}
+
+func TestManagedGatewayCannotDisableFirewall(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	disabled := false
+	config.Modules.Firewall = &model.FirewallModuleConfig{Enabled: &disabled, Backend: model.FirewallBackendLXC}
+	if _, _, err := Compose(config); err == nil || !strings.Contains(err.Error(), "required capability gateway is unavailable") {
+		t.Fatalf("managed gateway allowed firewall disable: %v", err)
+	}
+}
+
+func sameStringSet(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	seen := make(map[string]bool, len(left))
+	for _, value := range left {
+		seen[value] = true
+	}
+	for _, value := range right {
+		if !seen[value] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestRegistryRejectsMalformedConfigurationField(t *testing.T) {
@@ -437,7 +494,7 @@ func TestExternalGatewayRequiresExplicitManagedFirewallDisable(t *testing.T) {
 		t.Fatalf("external mode without explicit firewall disable was accepted: %v", err)
 	}
 	disabled := false
-	config.Modules.Firewall = &model.ToggleModuleConfig{Enabled: &disabled}
+	config.Modules.Firewall = &model.FirewallModuleConfig{Enabled: &disabled}
 	site, _, err := Compose(config)
 	if err != nil {
 		t.Fatal(err)

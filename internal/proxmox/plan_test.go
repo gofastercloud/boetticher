@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/artifacts"
+	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
 )
@@ -255,6 +256,7 @@ func TestComposedFirewallKindComesFromDeclaredArtifact(t *testing.T) {
 	for index := range site.Declarations {
 		if site.Declarations[index].Module == "firewall" {
 			site.Declarations[index].Artifact.Kind = string(KindLXC)
+			site.Declarations[index].Security = model.GuestSecurityDeclaration{Unprivileged: true, Capabilities: model.FirewallLXCCapabilities()}
 		}
 	}
 	plan, err := PlanFromSite(site)
@@ -265,6 +267,124 @@ func TestComposedFirewallKindComesFromDeclaredArtifact(t *testing.T) {
 		if guest.Name == "lab-fw-01" && guest.Kind != KindLXC {
 			t.Fatalf("firewall kind was inferred from its name instead of its artifact: %#v", guest)
 		}
+	}
+}
+
+func TestComposedFirewallLXCUsesSharedTopologyAndBoundedSecurity(t *testing.T) {
+	vmConfig := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	vmSite, _, err := modules.Compose(vmConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lxcConfig := vmConfig
+	lxcConfig.Modules.Firewall = &model.FirewallModuleConfig{Backend: model.FirewallBackendLXC}
+	lxcSite, _, err := modules.Compose(lxcConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmPlan, err := PlanFromSite(vmSite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(lxcSite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmGuest, err := FirewallGuest(vmPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guest, err := FirewallGuest(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if guest.Kind != KindLXC || guest.Artifact.Name != "boetticher-firewall-lxc" || guest.Artifact.Kind != string(KindLXC) {
+		t.Fatalf("unexpected LXC firewall identity: %#v", guest)
+	}
+	if !guest.Security.Unprivileged || !sameStringSet(guest.Security.Capabilities, model.FirewallLXCCapabilities()) {
+		t.Fatalf("unexpected LXC firewall security: %#v", guest.Security)
+	}
+	if len(guest.NICs) != 7 || guest.NICs[0].Name != "wan0" || guest.NICs[6].Name != "infra0" {
+		t.Fatalf("LXC firewall changed the shared NIC topology: %#v", guest.NICs)
+	}
+	if !reflect.DeepEqual(vmGuest.NICs, guest.NICs) {
+		t.Fatalf("VM and LXC firewall NIC topology differs:\nVM=%#v\nLXC=%#v", vmGuest.NICs, guest.NICs)
+	}
+	if got := lxcFirewallFeatures(guest); got != "fuse=0,keyctl=0,mknod=0,nesting=0" {
+		t.Fatalf("LXC firewall features = %q", got)
+	}
+	param, err := lxcNetworkParamForNIC(guest.NICs[1])
+	if err != nil || !strings.Contains(param, "name=trusted0") || !strings.Contains(param, "tag=30") || !strings.Contains(param, "ip=10.10.30.1/24") {
+		t.Fatalf("unexpected stable LXC NIC parameter %q: %v", param, err)
+	}
+}
+
+func TestFirewallBackendsProduceEquivalentNormalizedPolicy(t *testing.T) {
+	vmConfig := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	vmConfig.DHCPReservations = []model.DHCPReservation{{Zone: "SERVERS", Hostname: "app-01", Address: "10.10.20.61", MAC: "02:00:00:00:02:61"}}
+	vmConfig.UserFirewallRules = []model.UserFirewallRule{{ID: "ufr-equivalence", Source: "TRUSTED", Destination: "10.10.20.61/32", Protocol: "tcp", Ports: []string{"443"}}}
+	vmSite, _, err := modules.Compose(vmConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lxcConfig := vmConfig
+	lxcConfig.Modules.Firewall = &model.FirewallModuleConfig{Backend: model.FirewallBackendLXC}
+	lxcSite, _, err := modules.Compose(lxcConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmPolicy, err := firewall.PlanFromSite(vmSite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lxcPolicy, err := firewall.PlanFromSite(lxcSite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmPolicy.ModelRevision, lxcPolicy.ModelRevision = "", ""
+	if !reflect.DeepEqual(vmPolicy, lxcPolicy) {
+		t.Fatalf("VM and LXC firewall policies differ after normalization:\nVM=%#v\nLXC=%#v", vmPolicy, lxcPolicy)
+	}
+	vmRuleset, err := firewall.RenderNFT(vmPolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lxcRuleset, err := firewall.RenderNFT(lxcPolicy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vmRuleset != lxcRuleset {
+		t.Fatal("VM and LXC backends rendered different common nftables policy")
+	}
+}
+
+func TestLXCFirewallRejectsIncompleteOrPrivilegedSecurity(t *testing.T) {
+	guest := GuestPlan{Name: "lab-fw-01", Owner: "boetticher/module/firewall", Artifact: model.Artifact{Kind: string(KindLXC)}}
+	if err := validateLXCDeviceContract(guest); err == nil || !strings.Contains(err.Error(), "exact unprivileged firewall capability contract") {
+		t.Fatalf("incomplete LXC firewall security was accepted: %v", err)
+	}
+	guest.Security = model.GuestSecurityDeclaration{Unprivileged: true, Capabilities: model.FirewallLXCCapabilities()}
+	if err := validateLXCDeviceContract(guest); err != nil {
+		t.Fatal(err)
+	}
+	guest.Security.Unprivileged = false
+	if err := validateLXCDeviceContract(guest); err == nil {
+		t.Fatal("privileged LXC firewall security was accepted")
+	}
+}
+
+func TestExistingLXCFirewallRequiresExactIsolationFeatures(t *testing.T) {
+	guest := GuestPlan{Name: "lab-fw-01", Owner: "boetticher/module/firewall", Artifact: model.Artifact{Kind: string(KindLXC)}, NICs: []GuestNIC{{Name: "wan0", Bridge: "vmbr0", Method: "dhcp", MAC: "02:00:00:00:01:01"}}}
+	if err := validateExistingLXCIsolation(map[string]any{}, guest); err == nil || !strings.Contains(err.Error(), "features") {
+		t.Fatalf("missing LXC firewall features were accepted: %v", err)
+	}
+	valid := map[string]any{"features": "fuse=0,keyctl=0,mknod=0,nesting=0", "net0": "name=wan0,bridge=vmbr0,firewall=1,ip=dhcp,hwaddr=02:00:00:00:01:01"}
+	if err := validateExistingLXCIsolation(valid, guest); err != nil {
+		t.Fatal(err)
+	}
+	valid["hookscript"] = "local:snippets/hook"
+	if err := validateExistingLXCIsolation(valid, guest); err == nil {
+		t.Fatal("custom LXC hookscript was accepted")
 	}
 }
 

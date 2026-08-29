@@ -16,6 +16,7 @@ case "$target" in
   scan-logging) names="boetticher-logging" ;;
   scan-monitoring) names="boetticher-monitoring" ;;
   scan-firewall) names="boetticher-firewall" ;;
+  scan-firewall-lxc) names="boetticher-firewall-lxc" ;;
   scan-portal) names="boetticher-portal" ;;
   scan-tailnet-router) names="boetticher-tailnet-router" ;;
   scan-litellm) names="boetticher-litellm" ;;
@@ -31,7 +32,7 @@ case "$target" in
 esac
 for name in $names; do
   case "$name" in
-    boetticher-base|boetticher-dns-blocky|boetticher-dns-adguard|boetticher-logging|boetticher-monitoring|boetticher-firewall|boetticher-portal|boetticher-tailnet-router|boetticher-litellm|boetticher-printer|boetticher-aiops) ;;
+    boetticher-base|boetticher-dns-blocky|boetticher-dns-adguard|boetticher-logging|boetticher-monitoring|boetticher-firewall|boetticher-firewall-lxc|boetticher-portal|boetticher-tailnet-router|boetticher-litellm|boetticher-printer|boetticher-aiops) ;;
     *) echo "unknown selected scan artifact: $name" >&2; exit 2 ;;
   esac
 done
@@ -145,6 +146,7 @@ scan_one() {
   cleanup_scan_root
   module=$name
   provider=""
+  backend="vm"
   case "$name" in
     boetticher-dns-blocky) module=dns; provider=blocky ;;
     boetticher-dns-adguard) module=dns; provider=adguard ;;
@@ -152,6 +154,7 @@ scan_one() {
     boetticher-logging) module=logging ;;
     boetticher-monitoring) module=monitoring ;;
     boetticher-firewall) module=firewall ;;
+    boetticher-firewall-lxc) module=firewall; backend=lxc ;;
     boetticher-portal) module=portal ;;
     boetticher-tailnet-router) module=tailnet-router ;;
     boetticher-litellm) module=litellm ;;
@@ -162,12 +165,12 @@ scan_one() {
     GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact \
       -artifact "$artifact" -report "$report" -manifest "$manifest" -sbom "$sbom" \
       $provenance_arg \
-      -evidence-root "$evidence_root" -module "$module" -provider "$provider"
+      -evidence-root "$evidence_root" -module "$module" -provider "$provider" -backend "$backend"
   else
     GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact \
       -artifact "$artifact" -report "$report" -manifest "$manifest" -sbom "$sbom" \
       $provenance_arg \
-      -evidence-root "$evidence_root" -module "$module"
+      -evidence-root "$evidence_root" -module "$module" -backend "$backend"
   fi
   scan_finished=$(timing_now_ms)
   timing_emit "artifact_qualification" "$((scan_finished - scan_started))" "$name"

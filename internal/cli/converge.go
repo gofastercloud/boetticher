@@ -269,19 +269,17 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	} else if err := proxmoxClient.EnsureDirectoryStorageContent(context.Background(), "local", "/var/lib/vz", []string{"backup", "images", "rootdir", "vztmpl", "snippets"}); err != nil {
 		return fmt.Errorf("ensure single-disk Proxmox storage: %w", err)
 	}
+	var firewallGuest proxmox.GuestPlan
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		firewallGuest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
-		for _, candidate := range proxmoxPlan.Guests {
-			if candidate.Kind == proxmox.KindQEMU {
-				firewallGuest = candidate
-				break
-			}
+		firewallGuest, err = proxmox.FirewallGuest(proxmoxPlan)
+		if err != nil {
+			return err
 		}
 		firewallReplaced, replacementErr := proxmox.GuestArtifactNeedsReplacement(context.Background(), proxmoxClient, proxmoxPlan.Node, firewallGuest)
 		if replacementErr != nil {
 			return replacementErr
 		}
-		if err := proxmox.EnsureFirewallVM(context.Background(), proxmoxClient, proxmoxPlan); err != nil {
+		if err := proxmox.EnsureFirewall(context.Background(), proxmoxClient, proxmoxPlan); err != nil {
 			return fmt.Errorf("create managed gateway appliance: %w", err)
 		}
 		if firewallReplaced {
@@ -289,14 +287,21 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 				return fmt.Errorf("retire replaced gateway host key: %w", err)
 			}
 		}
-		if err := proxmoxClient.EnsureVMRunning(context.Background(), proxmoxPlan.Node, model.ProxmoxVMID); err != nil {
-			return fmt.Errorf("start managed gateway appliance: %w", err)
+		if firewallGuest.Kind == proxmox.KindQEMU {
+			if err := proxmoxClient.EnsureVMRunning(context.Background(), proxmoxPlan.Node, firewallGuest.VMID); err != nil {
+				return fmt.Errorf("start managed gateway appliance: %w", err)
+			}
+		} else if firewallGuest.Kind == proxmox.KindLXC {
+			if err := proxmoxClient.EnsureLXCRunning(context.Background(), proxmoxPlan.Node, firewallGuest.VMID); err != nil {
+				return fmt.Errorf("start managed gateway appliance: %w", err)
+			}
+		} else {
+			return fmt.Errorf("HOLD: managed gateway appliance has unsupported guest kind %q", firewallGuest.Kind)
 		}
 	}
 	var firewallRunner proxmox.CommandRunner
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		firewallRunner = applianceSSHRunner(s, *siteDir, "lab-fw-01")
-		firewallGuest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
 		if err := waitForDeploymentRoot(context.Background(), rootRunner, s.BootstrapAddress, firewallRunner, firewallGuest, operatorPublicKey, deploymentKnownHosts(*siteDir), firewallGuest.Hostname+"."+s.Network.Domain); err != nil {
 			return fmt.Errorf("HOLD: managed gateway is not reachable before dependent appliances: %w", err)
 		}
@@ -311,6 +316,11 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		}
 		if err := verifyGatewayReadiness(context.Background(), firewallRunner, "10.10.99.1"); err != nil {
 			return fmt.Errorf("HOLD: managed gateway did not pass runtime readiness before dependent appliances: %w", err)
+		}
+		if firewallGuest.Kind == proxmox.KindLXC {
+			if err := verifyFirewallLXCSecurity(context.Background(), firewallRunner); err != nil {
+				return fmt.Errorf("HOLD: managed gateway LXC security contract is not active: %w", err)
+			}
 		}
 	}
 	dnsPlan, err := dns.PlanFromSite(s)
@@ -832,6 +842,37 @@ func verifyGatewayReadiness(ctx context.Context, runner proxmox.CommandRunner, a
 	command := "set -eu; nft -c -f /etc/nftables.conf; test -n \"$(ip -4 -o addr show dev wan0 scope global)\"; ip -4 route show default dev wan0 | grep -Fq default; systemctl is-active nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony; test \"$(sysctl -n net.ipv4.ip_forward)\" = 1"
 	if _, err := runner.Run(ctx, address, "root", command); err != nil {
 		return fmt.Errorf("gateway policy, DHCP, NTP, and forwarding checks failed: %w", err)
+	}
+	return nil
+}
+
+func verifyFirewallLXCSecurity(ctx context.Context, runner proxmox.CommandRunner) error {
+	if runner == nil {
+		return errors.New("firewall LXC security runner is required")
+	}
+	command := `set -eu
+normalize_caps() {
+  printf '%s\n' "$1" | tr ' ' '\n' | tr '[:upper:]' '[:lower:]' | awk 'NF { values[++count] = $0 } END { for (i = 1; i <= count; i++) for (j = i + 1; j <= count; j++) if (values[j] < values[i]) { tmp = values[i]; values[i] = values[j]; values[j] = tmp } for (i = 1; i <= count; i++) { if (i > 1) printf ","; printf "%s", values[i] } printf "\n" }'
+}
+check_unit() {
+  unit=$1
+  expected=$2
+  actual=$(normalize_caps "$(systemctl show -p CapabilityBoundingSet --value "$unit")")
+  ambient=$(normalize_caps "$(systemctl show -p AmbientCapabilities --value "$unit")")
+  test "$actual" = "$expected"
+  test "$ambient" = "$expected"
+  test "$(systemctl show -p NoNewPrivileges --value "$unit")" = yes
+}
+systemctl is-active nftables.service kea-dhcp4-server.service kea-dhcp-ddns-server.service dnsmasq.service boetticher-firewall-telemetry.service
+check_unit nftables.service cap_net_admin
+check_unit kea-dhcp4-server.service cap_net_admin,cap_net_bind_service,cap_net_raw
+check_unit kea-dhcp-ddns-server.service cap_net_bind_service
+check_unit dnsmasq.service cap_net_admin,cap_net_bind_service,cap_net_raw
+check_unit boetticher-firewall-snapshot.service cap_chown,cap_net_admin
+check_unit boetticher-forwarding.service cap_net_admin
+check_unit boetticher-firewall-telemetry.service ""`
+	if _, err := runner.Run(ctx, "10.10.99.1", "root", command); err != nil {
+		return fmt.Errorf("bounded LXC service capabilities are not active: %w", err)
 	}
 	return nil
 }

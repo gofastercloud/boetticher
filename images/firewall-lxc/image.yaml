@@ -1,0 +1,29 @@
+name: boetticher-firewall-lxc
+version: 1.0.0
+kind: lxc
+base: boetticher-base
+base_version: 0.3.34
+architecture: amd64
+base_input:
+  name: boetticher-base
+  source: checked-in boetticher-base definition
+security:
+  unprivileged: true
+  features: fuse=0,keyctl=0,mknod=0,nesting=0
+  capabilities:
+    - CAP_CHOWN
+    - CAP_NET_ADMIN
+    - CAP_NET_BIND_SERVICE
+    - CAP_NET_RAW
+services:
+  - nftables
+  - kea-dhcp4
+  - kea-dhcp-ddns
+  - chrony
+logging: inherited-from-base
+runtime_inputs: images/firewall/runtime
+runtime_config: /etc/boetticher/module.yaml
+persistent:
+  - /var/lib/kea
+  - /var/lib/boetticher/identity/ssh
+  - /var/lib/boetticher/firewall-telemetry

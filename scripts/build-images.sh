@@ -7,7 +7,7 @@ set -eu
 target=${1:-images}
 shift || true
 case "$target" in
-  image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-gatus|images) ;;
+  image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-firewall-lxc|image-tailnet-router|image-litellm|image-aiops|image-printer|image-gatus|images) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
@@ -19,7 +19,7 @@ if [ "$target" = images ]; then
   fi
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
-      image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-gatus) ;;
+      image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-firewall-lxc|image-tailnet-router|image-litellm|image-aiops|image-printer|image-gatus) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac
   done
@@ -351,7 +351,11 @@ package_lxc() {
   printf '%s\n' "boetticher package stage: $name smoke"
   destination="$output_root/$name"
   mkdir -p "$destination"
-  ./scripts/smoke-appliance.sh "$name" "$rootfs"
+  if [ "$name" = boetticher-firewall-lxc ]; then
+    sh ./scripts/smoke-firewall-lxc.sh "$rootfs"
+  else
+    ./scripts/smoke-appliance.sh "$name" "$rootfs"
+  fi
   printf '%s\n' "boetticher package stage: $name manifest"
   chroot "$rootfs" dpkg-query -W -f='${binary:Package}\t${Version}\n' | sort > "$destination/package-manifest.txt"
   printf '%s\n' "boetticher package stage: $name archive"
@@ -636,6 +640,39 @@ build_firewall() {
   ./scripts/smoke-firewall-image.sh "$image"
 }
 
+build_firewall_lxc() {
+  printf '%s\n' 'boetticher build stage: firewall LXC'
+  rootfs=$(prepare_rootfs boetticher-firewall-lxc)
+  install_packages "$rootfs" nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony openssh-server sudo systemd-journal-remote curl jq openssl
+  mkdir -p "$rootfs/etc/boetticher" "$rootfs/usr/lib/boetticher" "$rootfs/var/lib/boetticher/firewall-telemetry" "$rootfs/etc/ssh/sshd_config.d" "$rootfs/etc/systemd/journald.conf.d" "$rootfs/etc/sysctl.d"
+  telemetry_binary="$work_root/boetticher-firewall-telemetry-lxc"
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$telemetry_binary" ./cmd/boetticher-firewall-telemetry
+  go run ./cmd/artifact-identity -module firewall -backend lxc > "$rootfs/usr/lib/boetticher/artifact.json"
+  install -D -m 0644 images/base/runtime/journald.conf "$rootfs/etc/systemd/journald.conf.d/boetticher.conf"
+  install -D -m 0644 images/base/runtime/journal-upload.conf "$rootfs/etc/systemd/journal-upload.conf"
+  install -D -m 0644 images/base/runtime/sshd.conf "$rootfs/etc/ssh/sshd_config.d/boetticher.conf"
+  install -D -m 0644 images/base/runtime/sshd-host-key.conf "$rootfs/etc/ssh/sshd_config.d/boetticher-host-key.conf"
+  install -D -m 0644 images/firewall/runtime/boetticher.sudoers "$rootfs/etc/sudoers.d/boetticher-firewall"
+  install -D -m 0755 images/firewall/runtime/inspect-firewall.sh "$rootfs/usr/lib/boetticher/inspect-firewall"
+  install -D -m 0755 "$telemetry_binary" "$rootfs/usr/lib/boetticher/boetticher-firewall-telemetry"
+  install -D -m 0755 images/firewall/runtime/snapshot-firewall.sh "$rootfs/usr/lib/boetticher/snapshot-firewall"
+  install -D -m 0644 images/firewall/runtime/boetticher-firewall-snapshot.service "$rootfs/etc/systemd/system/boetticher-firewall-snapshot.service"
+  install -D -m 0644 images/firewall/runtime/boetticher-firewall-snapshot.timer "$rootfs/etc/systemd/system/boetticher-firewall-snapshot.timer"
+  install -D -m 0644 images/firewall/runtime/boetticher-firewall-telemetry.service "$rootfs/etc/systemd/system/boetticher-firewall-telemetry.service"
+  install -D -m 0644 images/firewall/runtime/forwarding.conf "$rootfs/etc/sysctl.d/boetticher-forwarding.conf"
+  chroot "$rootfs" useradd --create-home --shell /bin/bash labadmin 2>/dev/null || true
+  chroot "$rootfs" passwd --lock labadmin
+  chroot "$rootfs" groupadd --system boetticher-telemetry 2>/dev/null || true
+  chroot "$rootfs" useradd --system --gid boetticher-telemetry --home-dir /var/lib/boetticher/firewall-telemetry --shell /usr/sbin/nologin boetticher-telemetry 2>/dev/null || true
+  chroot "$rootfs" chown root:root /etc/sudoers.d/boetticher-firewall
+  chmod 0440 "$rootfs/etc/sudoers.d/boetticher-firewall"
+  chroot "$rootfs" chown boetticher-telemetry:boetticher-telemetry /var/lib/boetticher/firewall-telemetry
+  chmod 0750 "$rootfs/var/lib/boetticher/firewall-telemetry"
+  chroot "$rootfs" visudo -cf /etc/sudoers
+  chroot "$rootfs" systemctl enable boetticher-first-boot.service boetticher-firewall-telemetry.service boetticher-firewall-snapshot.timer
+  package_lxc boetticher-firewall-lxc
+}
+
 image_artifact_name() {
   printf 'boetticher-%s\n' "${1#image-}"
 }
@@ -706,7 +743,7 @@ build_selected_images() {
   selected_image_targets=$(printf '%s\n' "$normalized_image_targets" | sed 's/^ *//')
   need_base=0
   for selected_target in $selected_image_targets; do
-    if [ "$selected_target" != image-base ] && [ "$selected_target" != image-firewall ]; then
+    if [ "$selected_target" != image-base ] && [ "$selected_target" != image-firewall ] && [ "$selected_target" != image-firewall-lxc ]; then
       need_base=1
     fi
   done
@@ -735,6 +772,13 @@ build_selected_images() {
       failed=1
     fi
   fi
+
+  if [ "$failed" -eq 0 ] && contains_image_target image-firewall-lxc; then
+    launch_image_worker image-firewall-lxc
+    if ! wait_image_worker "$worker_pid" "${worker_root##*/}" "$worker_root" "$worker_log"; then
+      failed=1
+    fi
+  fi
   if [ -n "$pid_b" ]; then
     if ! wait_image_worker "$pid_b" "${root_b##*/}" "$root_b" "$log_b"; then
       failed=1
@@ -749,7 +793,7 @@ build_selected_images() {
 
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
-      image-base|image-firewall) continue ;;
+      image-base|image-firewall|image-firewall-lxc) continue ;;
     esac
     if [ -n "$pid_a" ] && [ -n "$pid_b" ]; then
       if ! wait_image_worker "$pid_a" "${root_a##*/}" "$root_a" "$log_a"; then
@@ -873,5 +917,6 @@ case "$target" in
   image-gatus) run_timed_image_target "$target" build_gatus_target ;;
   image-dns-adguard) echo "HOLD: AdGuard provider qualification is outside the default Blocky readiness tranche" >&2; exit 2 ;;
   image-firewall) run_timed_image_target "$target" build_firewall ;;
+  image-firewall-lxc) run_timed_image_target "$target" build_firewall_lxc ;;
   images) build_selected_images ;;
 esac

@@ -341,7 +341,7 @@ func TestModuleGuestSourcesRequireSourceSpecificIntent(t *testing.T) {
 func TestExternalComposedContractCarriesModuleRouteAndOperatorBoundary(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeExternal))
 	firewallDisabled, tailnetEnabled, litellmEnabled := false, true, true
-	config.Modules.Firewall = &model.ToggleModuleConfig{Enabled: &firewallDisabled}
+	config.Modules.Firewall = &model.FirewallModuleConfig{Enabled: &firewallDisabled}
 	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
 	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
 		Enabled:   &litellmEnabled,

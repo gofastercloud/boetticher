@@ -13,6 +13,87 @@
       - firewall_ruleset | length > 0
   no_log: true
 
+- name: Require a supported firewall backend
+  ansible.builtin.assert:
+    that:
+      - firewall_backend | default('vm') in ['vm', 'lxc']
+      - firewall_backend | default('vm') == 'vm' or firewall_lxc_capabilities | default([]) | sort == ['CAP_CHOWN', 'CAP_NET_ADMIN', 'CAP_NET_BIND_SERVICE', 'CAP_NET_RAW']
+    fail_msg: "The firewall backend or its bounded LXC capability contract is unsupported"
+
+- name: Install bounded firewall service capabilities for LXC
+  when: firewall_backend | default('vm') == 'lxc'
+  block:
+    - name: Create firewall service drop-in directories
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item.name }}.d"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - {name: nftables}
+        - {name: kea-dhcp4-server}
+        - {name: kea-dhcp-ddns-server}
+        - {name: dnsmasq}
+        - {name: boetticher-firewall-snapshot}
+        - {name: boetticher-forwarding}
+        - {name: boetticher-firewall-telemetry}
+
+    - name: Bound nftables capability
+      ansible.builtin.copy:
+        content: "[Service]\nCapabilityBoundingSet=CAP_NET_ADMIN\nAmbientCapabilities=CAP_NET_ADMIN\nNoNewPrivileges=yes\n"
+        dest: /etc/systemd/system/nftables.service.d/boetticher-lxc.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Bound DHCP capabilities
+      ansible.builtin.copy:
+        content: "[Service]\nCapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW\nAmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW\nNoNewPrivileges=yes\n"
+        dest: "/etc/systemd/system/{{ item }}.service.d/boetticher-lxc.conf"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - kea-dhcp4-server
+        - dnsmasq
+
+    - name: Bound DHCP-DDNS capability
+      ansible.builtin.copy:
+        content: "[Service]\nCapabilityBoundingSet=CAP_NET_BIND_SERVICE\nAmbientCapabilities=CAP_NET_BIND_SERVICE\nNoNewPrivileges=yes\n"
+        dest: /etc/systemd/system/kea-dhcp-ddns-server.service.d/boetticher-lxc.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Bound read-only firewall snapshot capabilities
+      ansible.builtin.copy:
+        content: "[Service]\nCapabilityBoundingSet=CAP_CHOWN CAP_NET_ADMIN\nAmbientCapabilities=CAP_CHOWN CAP_NET_ADMIN\nNoNewPrivileges=yes\n"
+        dest: /etc/systemd/system/boetticher-firewall-snapshot.service.d/boetticher-lxc.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Bound forwarding capability
+      ansible.builtin.copy:
+        content: "[Service]\nCapabilityBoundingSet=CAP_NET_ADMIN\nAmbientCapabilities=CAP_NET_ADMIN\nNoNewPrivileges=yes\n"
+        dest: /etc/systemd/system/boetticher-forwarding.service.d/boetticher-lxc.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Bound firewall telemetry with no capabilities
+      ansible.builtin.copy:
+        content: "[Service]\nCapabilityBoundingSet=\nAmbientCapabilities=\nNoNewPrivileges=yes\n"
+        dest: /etc/systemd/system/boetticher-firewall-telemetry.service.d/boetticher-lxc.conf
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Reload systemd after LXC capability hardening
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
 - name: Allow Kea DDNS to read its systemd credential
   ansible.builtin.copy:
     content: "/run/credentials/kea-dhcp-ddns-server.service/kea-ddns-tsig r,\n"

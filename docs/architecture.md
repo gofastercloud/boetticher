@@ -34,6 +34,12 @@ The main service URLs are `https://monitor.lab.home.arpa` and
 
 ## Managed gateway
 
+`backend=vm` is the default and production-qualified execution backend. The
+firewall capability has one planner, policy model, nftables renderer, Ansible
+role, telemetry contract, verification path, and gateway lifecycle. The
+backend only selects VM/QEMU or unprivileged LXC packaging for the same runtime
+inputs.
+
 ```text
 controller
     |
@@ -69,6 +75,15 @@ Chrony where needed. Its pinned Debian 13 GenericCloud
 input is `debian-13-genericcloud-amd64-20260327-2429`; the input SHA-512 is
 recorded in the model and verified during firewall image construction.
 IPv4 forwarding stays disabled until a validated ruleset is installed.
+
+The optional `backend=lxc` variant keeps the same `lab-fw-01` identity, seven
+NIC topology, VLAN mapping, upstream observation, routing/NAT policy, DHCP,
+DNS publication, telemetry, backups, and replacement semantics. It is an
+unprivileged LXC with `nesting=0`, `fuse=0`, `keyctl=0`, and `mknod=0`, no host
+mounts, hooks, arbitrary devices, or broad feature flags, and only the
+explicitly bounded capability contract. It shares the Proxmox kernel and is a
+reduced-isolation option for development, nested-router, and lower-risk
+homelabs; it is not security-equivalent to the VM.
 
 The managed gateway also runs the fixed `boetticher-firewall-telemetry`
 service. A root-owned helper publishes a bounded `nft -j list ruleset`

@@ -87,6 +87,42 @@ func TestConfigureJSONApplyIsDesiredStateOnlyAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestConfigureFirewallBackendPersistsBeforeBootstrap(t *testing.T) {
+	dir := t.TempDir()
+	writeConfigureSite(t, dir, model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged)))
+	var output bytes.Buffer
+	if err := Run([]string{"module", "configure", "firewall", "--site", dir, "--enabled", "true", "--set", "backend=lxc", "--json", "--confirm"}, &output, &output); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := site.LoadConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Modules.Firewall == nil || loaded.Modules.Firewall.Backend != model.FirewallBackendLXC {
+		t.Fatalf("pre-bootstrap configure did not persist typed LXC backend: %#v", loaded.Modules.Firewall)
+	}
+	if !strings.Contains(output.String(), `"status":"APPLIED"`) {
+		t.Fatalf("unexpected configure result: %s", output.String())
+	}
+}
+
+func TestConfigureFirewallRejectsUnvalidatedBackend(t *testing.T) {
+	dir := t.TempDir()
+	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
+	writeConfigureSite(t, dir, config)
+	var output bytes.Buffer
+	if err := Run([]string{"module", "configure", "firewall", "--site", dir, "--enabled", "true", "--set", "backend=privileged-lxc", "--json"}, &output, &output); err == nil || !strings.Contains(err.Error(), "allowed values") {
+		t.Fatalf("invalid backend was accepted: %v; output=%s", err, output.String())
+	}
+	loaded, err := site.LoadConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Modules.Firewall != nil && loaded.Modules.Firewall.Backend != "" {
+		t.Fatalf("invalid backend changed desired state: %#v", loaded.Modules.Firewall)
+	}
+}
+
 func TestConfigureNonInteractiveHoldsForMissingUSB(t *testing.T) {
 	dir := t.TempDir()
 	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))

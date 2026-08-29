@@ -56,6 +56,23 @@
       },
       "type": "object"
     },
+    "FirewallModuleConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "default": "vm",
+          "enum": [
+            "vm",
+            "lxc"
+          ],
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "Gateway": {
       "additionalProperties": false,
       "properties": {
@@ -192,7 +209,7 @@
           "$ref": "#/$defs/DNSModuleConfig"
         },
         "firewall": {
-          "$ref": "#/$defs/ToggleModuleConfig"
+          "$ref": "#/$defs/FirewallModuleConfig"
         },
         "gatus": {
           "$ref": "#/$defs/ToggleModuleConfig"

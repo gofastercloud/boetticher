@@ -73,6 +73,8 @@ const (
 	ModePhysicalTrunk           = "physical-trunk"
 	GatewayModeManaged          = "managed"
 	GatewayModeExternal         = "external"
+	FirewallBackendVM           = "vm"
+	FirewallBackendLXC          = "lxc"
 	TagBoetticher               = "boetticher"
 	TagManaged                  = "managed"
 	TagModule                   = "module"
@@ -96,6 +98,33 @@ var providerModelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,25
 var secretReferencePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
 var usbPortPattern = regexp.MustCompile(`^[0-9]+-[0-9]+(?:\.[0-9]+)*$`)
 var usbIDPattern = regexp.MustCompile(`^[0-9a-f]{4}$`)
+
+// FirewallBackend is the implementation selected for the managed gateway.
+// VM is the compatibility and production-qualified default; LXC is an
+// explicitly reduced-isolation option and is never a privileged container.
+type FirewallBackend string
+
+func ValidateFirewallBackend(backend FirewallBackend) error {
+	if backend == "" || backend == FirewallBackendVM || backend == FirewallBackendLXC {
+		return nil
+	}
+	return fmt.Errorf("modules.firewall.backend must be one of: vm, lxc")
+}
+
+func ResolveFirewallBackend(backend FirewallBackend) FirewallBackend {
+	if backend == "" {
+		return FirewallBackendVM
+	}
+	return backend
+}
+
+// FirewallLXCCapabilities is the intentionally small capability contract for
+// the experimental unprivileged firewall container. The values describe the
+// runtime operations that must be proven during qualification; they are not a
+// request to create a privileged container or to grant host capabilities.
+func FirewallLXCCapabilities() []string {
+	return []string{"CAP_CHOWN", "CAP_NET_ADMIN", "CAP_NET_BIND_SERVICE", "CAP_NET_RAW"}
+}
 
 // ModuleOwnershipTag returns the single Proxmox-safe ownership proof used for
 // every first-party module guest. Invalid names return an empty tag so callers
@@ -320,6 +349,7 @@ type Component struct {
 type ModuleConfig struct {
 	Enabled    *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Provider   string                  `yaml:"provider,omitempty" json:"provider,omitempty"`
+	Backend    FirewallBackend         `yaml:"backend,omitempty" json:"backend,omitempty"`
 	ModelAlias string                  `yaml:"model_alias,omitempty" json:"model_alias,omitempty"`
 	Upstreams  []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
 	Models     []LiteLLMModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
@@ -818,6 +848,11 @@ func (s Site) Validate() error {
 	if s.SecretMetadata.InstallationID == "" || s.SecretMetadata.AgeRecipient == "" {
 		return fmt.Errorf("secret_metadata must contain installation_id and public age_recipient")
 	}
+	if firewall, ok := s.ModuleConfig["firewall"]; ok {
+		if err := ValidateFirewallBackend(firewall.Backend); err != nil {
+			return err
+		}
+	}
 	if litellm, ok := s.ModuleConfig["litellm"]; ok && (litellm.Enabled != nil && *litellm.Enabled || len(litellm.Upstreams) > 0 || len(litellm.Models) > 0) {
 		if err := ValidateLiteLLMConfig(litellm); err != nil {
 			return err
@@ -1115,8 +1150,14 @@ func validateDeclarations(s Site) error {
 		if !declaration.Security.Unprivileged && len(declaration.Security.Devices) != 0 {
 			return fmt.Errorf("module %s declares devices without an unprivileged security contract", declaration.Module)
 		}
-		if len(declaration.Security.Capabilities) != 0 {
-			return fmt.Errorf("module %s requests unrelated Linux capabilities", declaration.Module)
+		if declaration.Module == "firewall" && declaration.Artifact.Kind == "lxc" {
+			if !declaration.Security.Unprivileged || !sameStringSet(declaration.Security.Capabilities, FirewallLXCCapabilities()) {
+				return fmt.Errorf("module %s has an incomplete unprivileged firewall capability contract", declaration.Module)
+			}
+		} else if len(declaration.Security.Capabilities) != 0 {
+			if declaration.Module != "firewall" || declaration.Artifact.Kind != "lxc" || !sameStringSet(declaration.Security.Capabilities, FirewallLXCCapabilities()) {
+				return fmt.Errorf("module %s requests an unsupported Linux capability contract", declaration.Module)
+			}
 		}
 		if declaration.Security.Unprivileged {
 			deviceNames := map[string]bool{}
@@ -1381,6 +1422,21 @@ func validateFirewallPorts(values []string, protocol string) ([]string, error) {
 	}
 	sort.Strings(result)
 	return result, nil
+}
+
+func sameStringSet(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	leftCopy, rightCopy := append([]string(nil), left...), append([]string(nil), right...)
+	sort.Strings(leftCopy)
+	sort.Strings(rightCopy)
+	for index := range leftCopy {
+		if leftCopy[index] != rightCopy[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func firewallSelectorProtected(s Site, selector string) bool {

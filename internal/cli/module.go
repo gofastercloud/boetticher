@@ -317,7 +317,11 @@ func runModuleChangeWithInput(args []string, input io.Reader, out, errOut interf
 		return errors.New("--purge requires --confirm and is valid only when disabling a module")
 	}
 	value := enable
-	if err := config.Modules.Set(name, model.ModuleConfig{Enabled: &value}); err != nil {
+	moduleConfig := model.ModuleConfig{Enabled: &value}
+	if name == "firewall" && config.Modules.Firewall != nil {
+		moduleConfig.Backend = config.Modules.Firewall.Backend
+	}
+	if err := config.Modules.Set(name, moduleConfig); err != nil {
 		return err
 	}
 	resolved, _, err := modules.Compose(config)
@@ -431,7 +435,11 @@ func runModuleChangeWithInput(args []string, input io.Reader, out, errOut interf
 func modulePurgeSite(s model.Site, name string) (model.Site, error) {
 	config := model.ConfigFromSite(s)
 	enabled := true
-	if err := config.Modules.Set(name, model.ModuleConfig{Enabled: &enabled}); err != nil {
+	moduleConfig := model.ModuleConfig{Enabled: &enabled}
+	if name == "firewall" && config.Modules.Firewall != nil {
+		moduleConfig.Backend = config.Modules.Firewall.Backend
+	}
+	if err := config.Modules.Set(name, moduleConfig); err != nil {
 		return model.Site{}, err
 	}
 	purgeSite, _, err := modules.Compose(config)

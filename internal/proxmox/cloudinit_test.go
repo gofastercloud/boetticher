@@ -331,6 +331,21 @@ func TestBuilderArtifactTargetsFollowResolvedPlan(t *testing.T) {
 	}
 }
 
+func TestBuilderArtifactTargetsSelectLXCFirewallOnlyWhenRequested(t *testing.T) {
+	plan := Plan{Guests: []GuestPlan{{Artifact: model.Artifact{Name: "boetticher-firewall-lxc"}}}}
+	targets, err := builderArtifactTargets(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(targets, ",") != "image-base,image-firewall-lxc" {
+		t.Fatalf("LXC firewall builder targets = %#v", targets)
+	}
+	scans, err := builderScanTargets(targets)
+	if err != nil || strings.Join(scans, ",") != "boetticher-base,boetticher-firewall-lxc" {
+		t.Fatalf("LXC firewall builder scans = %#v: %v", scans, err)
+	}
+}
+
 func TestRenderBuilderCloudInitWithKeyAndTargetsUsesRequestedArtifacts(t *testing.T) {
 	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator #1"
 	files, err := RenderBuilderCloudInitWithKeyAndTargets(key, []string{"image-base", "image-dns-blocky"})

@@ -68,7 +68,14 @@ func runFirewall(args []string, out interface{ Write([]byte) (int, error) }) err
 }
 
 func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
-	status := map[string]any{"mode": plan.Mode, "engine": plan.Engine, "model_revision": plan.ModelRevision, "ipv4_only": plan.IPv4Only, "forwarding_after_policy": plan.Forwarding, "interfaces": plan.Interfaces}
+	backend, guest, err := firewallBackendForSite(s)
+	if err != nil {
+		return err
+	}
+	status := map[string]any{"mode": plan.Mode, "engine": plan.Engine, "backend": backend, "model_revision": plan.ModelRevision, "ipv4_only": plan.IPv4Only, "forwarding_after_policy": plan.Forwarding, "interfaces": plan.Interfaces}
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		status["guest_kind"] = guest.Kind
+	}
 	if live && s.Gateway.Mode == model.GatewayModeManaged {
 		data, err := gatewayCommand(siteDir, s, "sudo", gatewayStatusScript, "status")
 		if err != nil {
@@ -89,7 +96,7 @@ func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, json
 		return writeCLIJSON(out, status)
 	}
 	fmt.Fprintln(out, "Firewall")
-	fmt.Fprintf(out, "  Mode        %s\n  Engine      %s\n  Model       %s\n", plan.Mode, plan.Engine, plan.ModelRevision)
+	fmt.Fprintf(out, "  Mode        %s\n  Engine      %s\n  Backend     %s\n  Model       %s\n", plan.Mode, plan.Engine, backend, plan.ModelRevision)
 	if s.Gateway.Mode == model.GatewayModeExternal {
 		fmt.Fprintln(out, "  Management  outside boetticher")
 		fmt.Fprintln(out, "  Trunk       VLANs 5, 10, 20, 30, 40, 99")
@@ -343,6 +350,25 @@ func firewallCounters(siteDir string, s model.Site, live, jsonOutput bool, out i
 func firewallVerify(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
 	results := map[string]string{}
 	if s.Gateway.Mode == model.GatewayModeManaged {
+		backend, guest, err := firewallBackendForSite(s)
+		if err != nil {
+			return err
+		}
+		results["backend"] = string(backend)
+		results["guest_kind"] = string(guest.Kind)
+		if backend == model.FirewallBackendLXC {
+			results["security_profile"] = "PASS"
+			if live {
+				if err := verifyFirewallLXCSecurity(context.Background(), applianceSSHRunner(s, siteDir, guest.Name)); err != nil {
+					return err
+				}
+				results["live_security_profile"] = "PASS"
+			} else {
+				results["live_security_profile"] = "NOT TESTED"
+			}
+		} else {
+			results["security_profile"] = "PASS"
+		}
 		if live && len(plan.Publications) > 0 {
 			data, commandErr := gatewayCommand(siteDir, s, "sudo", gatewayStatusScript, "status")
 			if commandErr != nil {
@@ -397,6 +423,36 @@ func firewallVerify(siteDir string, s model.Site, plan firewall.Plan, live, json
 		fmt.Fprintf(out, "  %-20s %s\n", key, value)
 	}
 	return nil
+}
+
+// firewallBackendForSite binds the typed backend setting to the Core-owned
+// gateway guest in the generated plan. Live Proxmox state is checked by the
+// convergence path; this check prevents verify and firewall commands from
+// silently reporting a backend different from the desired guest kind.
+func firewallBackendForSite(s model.Site) (model.FirewallBackend, proxmox.GuestPlan, error) {
+	backend := model.ResolveFirewallBackend(s.ModuleConfig["firewall"].Backend)
+	if err := model.ValidateFirewallBackend(backend); err != nil {
+		return "", proxmox.GuestPlan{}, err
+	}
+	if s.Gateway.Mode == model.GatewayModeExternal {
+		return backend, proxmox.GuestPlan{}, nil
+	}
+	plan, err := proxmox.PlanFromSite(s)
+	if err != nil {
+		return "", proxmox.GuestPlan{}, err
+	}
+	guest, err := proxmox.FirewallGuest(plan)
+	if err != nil {
+		return "", proxmox.GuestPlan{}, err
+	}
+	expectedKind := proxmox.KindQEMU
+	if backend == model.FirewallBackendLXC {
+		expectedKind = proxmox.KindLXC
+	}
+	if guest.Kind != expectedKind || guest.Artifact.Kind != string(expectedKind) {
+		return "", proxmox.GuestPlan{}, fmt.Errorf("HOLD: firewall backend %q requires %s guest, planned guest is %s/%s", backend, expectedKind, guest.Kind, guest.Artifact.Kind)
+	}
+	return backend, guest, nil
 }
 
 func firewallLiveRead(siteDir string, s model.Site, command []string, live, jsonOutput bool, out interface{ Write([]byte) (int, error) }, detail string) error {

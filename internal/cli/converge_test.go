@@ -219,7 +219,7 @@ func TestRuntimeBoundaryAcceptsRelativeSiteDirectory(t *testing.T) {
 func TestDeploymentModuleNamesFollowResolvedExternalGraph(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("trial", "age1trial", model.GatewayModeExternal))
 	disabled := false
-	config.Modules.Firewall = &model.ToggleModuleConfig{Enabled: &disabled}
+	config.Modules.Firewall = &model.FirewallModuleConfig{Enabled: &disabled}
 	resolved, _, err := modules.Compose(config)
 	if err != nil {
 		t.Fatal(err)
@@ -324,6 +324,32 @@ func TestVerifyGatewayReadinessChecksAllGatewayServices(t *testing.T) {
 	} {
 		if !strings.Contains(command, required) {
 			t.Fatalf("gateway readiness command omitted %q: %s", required, command)
+		}
+	}
+}
+
+func TestVerifyFirewallLXCSecurityChecksExactServiceBounds(t *testing.T) {
+	runner := &dnsReadinessRunner{}
+	if err := verifyFirewallLXCSecurity(context.Background(), runner); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 1 {
+		t.Fatalf("LXC security commands = %d, want 1", len(runner.commands))
+	}
+	command := runner.commands[0]
+	for _, required := range []string{
+		"systemctl is-active nftables.service kea-dhcp4-server.service kea-dhcp-ddns-server.service dnsmasq.service boetticher-firewall-telemetry.service",
+		"check_unit nftables.service cap_net_admin",
+		"check_unit kea-dhcp4-server.service cap_net_admin,cap_net_bind_service,cap_net_raw",
+		"check_unit kea-dhcp-ddns-server.service cap_net_bind_service",
+		"check_unit dnsmasq.service cap_net_admin,cap_net_bind_service,cap_net_raw",
+		"check_unit boetticher-firewall-snapshot.service cap_chown,cap_net_admin",
+		"check_unit boetticher-forwarding.service cap_net_admin",
+		"check_unit boetticher-firewall-telemetry.service \"\"",
+		"NoNewPrivileges --value",
+	} {
+		if !strings.Contains(command, required) {
+			t.Fatalf("LXC security verification omitted %q: %s", required, command)
 		}
 	}
 }

@@ -109,6 +109,33 @@ func TestUnqualifiedGatewayImageIsRejected(t *testing.T) {
 	}
 }
 
+func TestFirewallBackendDefaultsToVMAndRejectsUnknownValues(t *testing.T) {
+	if got := ResolveFirewallBackend(""); got != FirewallBackendVM {
+		t.Fatalf("omitted firewall backend = %q, want %q", got, FirewallBackendVM)
+	}
+	if err := ValidateFirewallBackend(FirewallBackendVM); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateFirewallBackend(FirewallBackendLXC); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateFirewallBackend(FirewallBackend("privileged-lxc")); err == nil {
+		t.Fatal("unsupported firewall backend was accepted")
+	}
+}
+
+func TestSiteValidationChecksTypedFirewallBackend(t *testing.T) {
+	site := NewSite("installation", "age1example", GatewayModeManaged)
+	site.ModuleConfig = map[string]ModuleConfig{"firewall": {Backend: FirewallBackend("not-a-backend")}}
+	if err := site.Validate(); err == nil || !strings.Contains(err.Error(), "modules.firewall.backend") {
+		t.Fatalf("invalid firewall backend passed site validation: %v", err)
+	}
+	site.ModuleConfig["firewall"] = ModuleConfig{Backend: FirewallBackendLXC}
+	if err := site.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestExternalGatewayOmitsManagedFirewall(t *testing.T) {
 	site := NewSite("installation", "age1example", GatewayModeExternal)
 	if err := site.Validate(); err != nil {

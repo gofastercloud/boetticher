@@ -1,10 +1,16 @@
 package cli
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gofastercloud/boetticher/internal/firewall"
+	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/modules"
+	"github.com/gofastercloud/boetticher/internal/proxmox"
 )
 
 func TestParseGatewayStatus(t *testing.T) {
@@ -65,6 +71,47 @@ func TestRemoteShellQuoteKeepsFirewallFiltersData(t *testing.T) {
 func TestGatewayStatusScriptUsesReadOnlyTransport(t *testing.T) {
 	if containsString(gatewayStatusScript, "sudo") {
 		t.Fatal("read-only gateway status script unexpectedly requires sudo")
+	}
+}
+
+func TestFirewallVerificationBindsTypedBackendToGuestKind(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("verification", "age1verification", model.GatewayModeManaged))
+	config.Modules.Firewall = &model.FirewallModuleConfig{Backend: model.FirewallBackendLXC}
+	s, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backend, guest, err := firewallBackendForSite(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backend != model.FirewallBackendLXC || guest.Kind != proxmox.KindLXC || !guest.Security.Unprivileged {
+		t.Fatalf("typed LXC backend resolved to %q/%#v", backend, guest)
+	}
+
+	s.ModuleConfig["firewall"] = model.ModuleConfig{Backend: model.FirewallBackendVM}
+	if _, _, err := firewallBackendForSite(s); err == nil || !strings.Contains(err.Error(), "requires qemu guest") {
+		t.Fatalf("backend/guest-kind mismatch was not rejected: %v", err)
+	}
+}
+
+func TestFirewallStatusReportsSelectedBackend(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("status", "age1status", model.GatewayModeManaged))
+	config.Modules.Firewall = &model.FirewallModuleConfig{Backend: model.FirewallBackendLXC}
+	s, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := firewall.PlanFromSite(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := firewallStatus("", s, plan, false, false, &output); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "Backend     lxc") {
+		t.Fatalf("firewall status omitted selected backend: %s", output.String())
 	}
 }
 

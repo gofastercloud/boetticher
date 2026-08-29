@@ -48,6 +48,24 @@ func TestManagedPortalPublishesGatewayDetails(t *testing.T) {
 	}
 }
 
+func TestManagedPortalIdentifiesLXCFirewallBackend(t *testing.T) {
+	dir := t.TempDir()
+	site := model.NewDefaultSite("installation", "age1example")
+	site.ModuleConfig = map[string]model.ModuleConfig{"firewall": {Backend: model.FirewallBackendLXC}}
+	if err := Build(site, filepath.Join(dir, "portal"), "", Evidence{}, networkmodel.Discovery{Mode: model.ModeVirtualOnly}, time.Unix(0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"index.html", "network.html"} {
+		data, err := os.ReadFile(filepath.Join(dir, "portal", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), "lxc") {
+			t.Fatalf("managed LXC portal page %s omitted the active backend", name)
+		}
+	}
+}
+
 func TestPortalPublishesSupportedApplianceManagementBoundary(t *testing.T) {
 	dir := t.TempDir()
 	site := model.NewDefaultSite("installation", "age1example")

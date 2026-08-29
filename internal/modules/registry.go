@@ -79,8 +79,9 @@ func FirstPartyRegistry() Registry {
 			},
 		},
 		"firewall": {
-			Name: "firewall", Description: "Managed Debian gateway, nftables, and Kea capability", Version: "1.0.0", Policy: DefaultOn,
-			Provides: []Capability{CapabilityGateway}, GuestIDs: []int{model.ProxmoxVMID}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeManagement}, Guests: []model.Component{
+			Name: "firewall", Description: "Managed Debian gateway, nftables, and Kea capability (VM default; optional unprivileged LXC backend)", Version: "1.0.0", Policy: DefaultOn,
+			Configuration: []model.ModuleConfigField{{Key: "backend", Type: model.ModuleConfigEnum, Prompt: "Firewall backend", Description: "VM is the recommended production-qualified backend; LXC shares the Proxmox kernel and is reduced isolation", Required: false, Default: string(model.FirewallBackendVM), AllowedValues: []string{string(model.FirewallBackendVM), string(model.FirewallBackendLXC)}}},
+			Provides:      []Capability{CapabilityGateway}, GuestIDs: []int{model.ProxmoxVMID}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeManagement}, Guests: []model.Component{
 				{Name: "lab-fw-01", VMID: model.ProxmoxVMID, Hostname: "lab-fw-01", Address: "10.10.99.1", Role: "Debian firewall", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
@@ -420,6 +421,14 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 	for name, moduleConfig := range configs {
 		if moduleConfig.Provider != "" && name != "dns" {
 			return nil, fmt.Errorf("modules.%s.provider: provider selection is only supported by dns", name)
+		}
+		if moduleConfig.Backend != "" && name != "firewall" {
+			return nil, fmt.Errorf("modules.%s.backend: backend selection is only supported by firewall", name)
+		}
+		if name == "firewall" {
+			if err := model.ValidateFirewallBackend(moduleConfig.Backend); err != nil {
+				return nil, err
+			}
 		}
 		if name == "litellm" && (moduleConfig.Enabled != nil && *moduleConfig.Enabled || len(moduleConfig.Upstreams) > 0 || len(moduleConfig.Models) > 0) {
 			if err := model.ValidateLiteLLMConfig(moduleConfig); err != nil {

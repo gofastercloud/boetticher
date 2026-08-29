@@ -428,7 +428,11 @@ func PlanFromSite(s model.Site) (Plan, error) {
 						provider = string(model.DNSProviderBlocky)
 					}
 				}
-				if artifact, artifactErr := artifacts.ArtifactFor(component.Module, provider); artifactErr == nil {
+				backend := model.FirewallBackend(model.FirewallBackendVM)
+				if component.Module == "firewall" {
+					backend = model.ResolveFirewallBackend(s.ModuleConfig[component.Module].Backend)
+				}
+				if artifact, artifactErr := artifacts.ArtifactForBackend(component.Module, backend, provider); artifactErr == nil {
 					guest.Artifact = artifact
 				}
 			}
@@ -710,16 +714,56 @@ func ProvisionModule(ctx context.Context, client *Client, plan Plan, module stri
 	return nil
 }
 
-func EnsureFirewallVM(ctx context.Context, client *Client, plan Plan) error {
+// FirewallGuest returns the single Core-owned managed gateway guest. The
+// backend is carried by its qualified artifact and therefore cannot be
+// selected by a name or by a live guest kind.
+func FirewallGuest(plan Plan) (GuestPlan, error) {
+	for _, guest := range plan.Guests {
+		if guest.Name == "lab-fw-01" && guest.Owner == "boetticher/module/firewall" {
+			return guest, nil
+		}
+	}
+	for _, guest := range plan.Guests {
+		// NewDefaultSite provider fixtures predate composed ownership metadata.
+		if guest.Name == "lab-fw-01" {
+			return guest, nil
+		}
+	}
+	return GuestPlan{}, errors.New("foundation plan has no managed firewall guest")
+}
+
+// EnsureFirewall creates or verifies the selected managed gateway backend
+// using the same ownership, artifact, and replacement gates for VM and LXC.
+func EnsureFirewall(ctx context.Context, client *Client, plan Plan) error {
 	if client == nil {
 		return errors.New("Proxmox client is required")
 	}
-	for _, guest := range plan.Guests {
-		if guest.Kind == KindQEMU {
-			return ensureQEMU(ctx, client, plan, guest)
-		}
+	guest, err := FirewallGuest(plan)
+	if err != nil {
+		return err
 	}
-	return errors.New("foundation plan has no firewall VM")
+	switch guest.Kind {
+	case KindQEMU:
+		return ensureQEMU(ctx, client, plan, guest)
+	case KindLXC:
+		return ensureLXC(ctx, client, plan, guest)
+	default:
+		return fmt.Errorf("HOLD: managed firewall %s declares unsupported guest kind %q", guest.Name, guest.Kind)
+	}
+}
+
+// EnsureFirewallVM is retained for callers and tests that explicitly require
+// the production VM backend. It does not permit an LXC plan to masquerade as
+// a VM.
+func EnsureFirewallVM(ctx context.Context, client *Client, plan Plan) error {
+	guest, err := FirewallGuest(plan)
+	if err != nil {
+		return err
+	}
+	if guest.Kind != KindQEMU {
+		return fmt.Errorf("HOLD: managed firewall backend is %s, expected VM", guest.Kind)
+	}
+	return ensureQEMU(ctx, client, plan, guest)
 }
 
 const builderOwnerTag = "boetticher-builder"
@@ -1424,10 +1468,20 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		"cores":        {strconv.Itoa(guest.Cores)},
 		"unprivileged": {"1"},
 		"onboot":       {"1"},
-		"features":     {"nesting=0"},
+		"features":     {lxcFirewallFeatures(guest)},
 		"rootfs":       {fmt.Sprintf("%s:%d", plan.Storage, guest.DiskGiB)},
 		"tags":         {strings.Join(guest.Tags, ";")},
-		"net0":         {fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,ip=%s/24,gw=%s", guest.VLAN, guest.Address, gatewayFor(guest.Zone))},
+	}
+	if len(guest.NICs) == 0 {
+		params.Set("net0", lxcNetworkParam(GuestNIC{Name: "eth0", Bridge: "vmbr1", VLAN: guest.VLAN, Address: guest.Address, Method: "static", MAC: ""}, guest))
+	} else {
+		for index, nic := range guest.NICs {
+			value, err := lxcNetworkParamForNIC(nic)
+			if err != nil {
+				return fmt.Errorf("validate network interface %s for %s: %w", nic.Name, guest.Name, err)
+			}
+			params.Set(fmt.Sprintf("net%d", index), value)
+		}
 	}
 	if len(plan.Nameservers) > 0 {
 		params.Set("nameserver", strings.Join(plan.Nameservers, " "))
@@ -1478,7 +1532,11 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 }
 
 func validateLXCDeviceContract(guest GuestPlan) error {
-	if len(guest.Security.Capabilities) != 0 {
+	if guest.Artifact.Kind == string(KindLXC) && guest.Owner == "boetticher/module/firewall" {
+		if !guest.Security.Unprivileged || !sameStringSet(guest.Security.Capabilities, model.FirewallLXCCapabilities()) {
+			return fmt.Errorf("HOLD: guest %s lacks the exact unprivileged firewall capability contract", guest.Name)
+		}
+	} else if len(guest.Security.Capabilities) != 0 {
 		return fmt.Errorf("HOLD: guest %s requests unrelated Linux capabilities", guest.Name)
 	}
 	if !guest.Security.Unprivileged && len(guest.Security.Devices) != 0 {
@@ -1490,6 +1548,66 @@ func validateLXCDeviceContract(guest GuestPlan) error {
 		}
 	}
 	return nil
+}
+
+func sameStringSet(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	leftCopy, rightCopy := append([]string(nil), left...), append([]string(nil), right...)
+	sort.Strings(leftCopy)
+	sort.Strings(rightCopy)
+	for index := range leftCopy {
+		if leftCopy[index] != rightCopy[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func lxcNetworkParam(nic GuestNIC, guest GuestPlan) string {
+	value, err := lxcNetworkParamForNIC(nic)
+	if err != nil {
+		// The fallback is generated entirely from Core-owned plan data. Invalid
+		// fixture data will be rejected by the normal guest validation path.
+		return fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,ip=%s/24", guest.VLAN, guest.Address)
+	}
+	return value
+}
+
+func lxcNetworkParamForNIC(nic GuestNIC) (string, error) {
+	if !safeInterfaceName(nic.Name) || !safeInterfaceName(nic.Bridge) || nic.MAC == "" && nic.Name != "eth0" {
+		return "", errors.New("interface name, bridge, and stable MAC are required")
+	}
+	value := fmt.Sprintf("name=%s,bridge=%s,firewall=1", nic.Name, nic.Bridge)
+	if nic.VLAN != 0 {
+		value += fmt.Sprintf(",tag=%d", nic.VLAN)
+	}
+	switch nic.Method {
+	case "dhcp":
+		value += ",ip=dhcp"
+	case "static":
+		if net.ParseIP(nic.Address) == nil || net.ParseIP(nic.Address).To4() == nil {
+			return "", fmt.Errorf("static interface has invalid IPv4 address %q", nic.Address)
+		}
+		value += ",ip=" + nic.Address + "/24"
+	default:
+		return "", fmt.Errorf("unsupported address method %q", nic.Method)
+	}
+	if nic.Gateway != "" {
+		gateway := net.ParseIP(nic.Gateway)
+		if gateway == nil || gateway.To4() == nil {
+			return "", fmt.Errorf("invalid IPv4 gateway %q", nic.Gateway)
+		}
+		value += ",gw=" + nic.Gateway
+	}
+	if nic.MAC != "" {
+		if parsed, err := net.ParseMAC(nic.MAC); err != nil || len(parsed) != 6 {
+			return "", fmt.Errorf("invalid MAC %q", nic.MAC)
+		}
+		value += ",hwaddr=" + strings.ToLower(nic.MAC)
+	}
+	return value, nil
 }
 
 // lxcDeviceParam is the only Core-owned translation of the bounded TUN
@@ -1818,6 +1936,11 @@ func validateExistingGuestIdentityFields(current map[string]any, expected GuestP
 			}
 		}
 	}
+	if expected.Kind == KindLXC {
+		if err := validateExistingLXCIsolation(current, expected); err != nil {
+			return err
+		}
+	}
 	if expected.Owner == "boetticher/core/portal" {
 		if !hasOwnerTag(currentTags(current), model.TagCorePortal) {
 			return fmt.Errorf("HOLD: guest %s lacks canonical ownership proof %q", expected.Name, model.TagCorePortal)
@@ -1830,6 +1953,83 @@ func validateExistingGuestIdentityFields(current map[string]any, expected GuestP
 		}
 	}
 	return nil
+}
+
+func validateExistingLXCIsolation(current map[string]any, expected GuestPlan) error {
+	features, _ := current["features"].(string)
+	isFirewall := expected.Owner == "boetticher/module/firewall" && expected.Artifact.Kind == string(KindLXC)
+	if isFirewall && !validLXCFeatures(features, expected) {
+		return fmt.Errorf("HOLD: guest %s has unsupported or missing LXC features %q", expected.Name, features)
+	}
+	if !isFirewall && features != "" && !validLXCFeatures(features, expected) {
+		return fmt.Errorf("HOLD: guest %s has unsupported LXC features %q", expected.Name, features)
+	}
+	if hookscript, _ := current["hookscript"].(string); hookscript != "" {
+		return fmt.Errorf("HOLD: guest %s has an unsupported LXC hookscript", expected.Name)
+	}
+	for key, value := range current {
+		if strings.HasPrefix(key, "lxc.") && value != nil && fmt.Sprint(value) != "" {
+			return fmt.Errorf("HOLD: guest %s has unsupported custom LXC setting %s", expected.Name, key)
+		}
+	}
+	if len(expected.NICs) == 0 {
+		return nil
+	}
+	for index, nic := range expected.NICs {
+		wanted, err := lxcNetworkParamForNIC(nic)
+		if err != nil {
+			return err
+		}
+		observed, _ := current[fmt.Sprintf("net%d", index)].(string)
+		if observed != wanted {
+			return fmt.Errorf("HOLD: guest %s has network net%d=%q, expected %q", expected.Name, index, observed, wanted)
+		}
+	}
+	for key := range current {
+		if !strings.HasPrefix(key, "net") || len(key) <= 3 || key[3] < '0' || key[3] > '9' {
+			continue
+		}
+		index := int(key[3] - '0')
+		if index >= len(expected.NICs) {
+			return fmt.Errorf("HOLD: guest %s has an undeclared network interface %s", expected.Name, key)
+		}
+	}
+	return nil
+}
+
+func lxcFirewallFeatures(guest GuestPlan) string {
+	if guest.Owner == "boetticher/module/firewall" && guest.Artifact.Kind == string(KindLXC) {
+		return "fuse=0,keyctl=0,mknod=0,nesting=0"
+	}
+	return "nesting=0"
+}
+
+func validLXCFeatures(value string, guest GuestPlan) bool {
+	parts := strings.Split(value, ",")
+	wanted := map[string]string{"nesting": "0"}
+	if guest.Owner == "boetticher/module/firewall" && guest.Artifact.Kind == string(KindLXC) {
+		wanted = map[string]string{"fuse": "0", "keyctl": "0", "mknod": "0", "nesting": "0"}
+	}
+	observed := make(map[string]string, len(parts))
+	for _, part := range parts {
+		name, value, ok := strings.Cut(part, "=")
+		if !ok || name == "" || value == "" {
+			return false
+		}
+		if _, exists := observed[name]; exists {
+			return false
+		}
+		observed[name] = value
+	}
+	if len(observed) != len(wanted) {
+		return false
+	}
+	for name, value := range wanted {
+		if observed[name] != value {
+			return false
+		}
+	}
+	return true
 }
 
 func stringIn(values []string, wanted string) bool {

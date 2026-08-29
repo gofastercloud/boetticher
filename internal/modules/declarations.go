@@ -38,7 +38,12 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 			provider = string(model.DNSProviderBlocky)
 		}
 	}
-	artifact, err := artifacts.ArtifactFor(name, provider)
+	var artifact model.Artifact
+	if name == "firewall" {
+		artifact, err = artifacts.ArtifactForBackend(name, model.ResolveFirewallBackend(site.ModuleConfig[name].Backend), provider)
+	} else {
+		artifact, err = artifacts.ArtifactFor(name, provider)
+	}
 	if err != nil {
 		return model.ModuleDeclaration{}, err
 	}
@@ -69,6 +74,9 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		declaration.NetworkIntents = []model.NetworkIntent{{Source: "lab-monitor-01", Destination: model.LogicalProxmoxIdentity, Protocol: "tcp", Ports: []string{"8006"}, Direction: "egress", Purpose: "Proxmox API monitoring"}}
 	case "firewall":
 		declaration.Secrets = []model.SecretDeclaration{{Name: "ddns_tsig_secret", Purpose: "authenticated DHCP DNS updates", Consumer: "kea-dhcp-ddns-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file", Lifecycle: model.SecretLifecycleRuntime}}
+		if model.ResolveFirewallBackend(site.ModuleConfig[name].Backend) == model.FirewallBackendLXC {
+			declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true, Capabilities: model.FirewallLXCCapabilities()}
+		}
 	case "logging":
 		declaration.NetworkIntents = []model.NetworkIntent{
 			{Source: "boetticher-managed-endpoints", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"},

@@ -5,12 +5,20 @@ explicit and testable, but it is not an audited production appliance.
 
 ## Managed gateway
 
-In managed mode, `lab-fw-01` is a small Debian QEMU/KVM VM with its own guest
-kernel. It runs nftables, Kea, and the small services needed by SANDBOX. It is
-the inter-zone routing and filtering boundary. The default input and forward
-policies are drop; stateful established/related traffic and documented service
-paths are allowed explicitly. Internal traffic is not NATed. Intended internal
-networks are masqueraded only when leaving `wan0`.
+In managed mode, `backend=vm` is the default, recommended, and current
+production-qualified backend. `lab-fw-01` is a small Debian QEMU/KVM VM with
+its own guest kernel. It runs nftables, Kea, and the small services needed by
+SANDBOX. It is the inter-zone routing and filtering boundary. The default
+input and forward policies are drop; stateful established/related traffic and
+documented service paths are allowed explicitly. Internal traffic is not NATed.
+Intended internal networks are masqueraded only when leaving `wan0`.
+
+`backend=lxc` is optional and explicitly reduced isolation: it is an
+unprivileged container sharing the Proxmox kernel, intended for development,
+nested-router/double-NAT, and lower-risk homelabs. It is not equivalent to the
+VM isolation barrier and is not qualified for direct Internet-facing gateway
+use. There is no privileged-LXC mode and no fallback to one; unsupported or
+altered LXC configuration holds deployment closed.
 
 Diagnostic IPv4 echo requests from internal non-TRANSIT zones to the managed
 gateway are allowed. WAN-sourced ICMP and inter-zone ICMP remain denied unless
@@ -29,6 +37,15 @@ one namespaced ruleset, validates it with `nft -c`, retains the previous known-
 good file, applies the replacement transactionally, and enables IPv4 forwarding
 only after the policy and services are ready. IPv6 forwarding is disabled in
 v0.3.
+
+The LXC security profile retains default Proxmox isolation and requires
+`unprivileged=1`, `nesting=0`, `fuse=0`, `keyctl=0`, and `mknod=0`. It permits
+no host mounts, host networking, custom hooks, arbitrary device passthrough,
+broad feature flags, host-global sysctl or netfilter namespace mutation, or
+arbitrary cgroup/device access. The only declared capability set is
+`CAP_CHOWN`, `CAP_NET_ADMIN`, `CAP_NET_BIND_SERVICE`, and `CAP_NET_RAW`; service
+systemd units further bound each operation and require `NoNewPrivileges=yes`.
+The effective set is checked during deployment and unexpected settings hold.
 
 SANDBOX may use the gateway for DHCP, public DNS, and NTP, but cannot reach the
 TRUSTED, SERVERS, INFRA, or MGMT networks. The deny rules precede Internet
@@ -150,6 +167,11 @@ ruleset snapshot.
 If a later deployment needs to modify an already-converged guest, Core may
 re-arm that same temporary key through the authenticated Proxmox host boundary
 for the exact owned guest, and removes it again after convergence.
+
+Managed gateway ownership and lifecycle do not depend on the backend. External
+gateway mode is the existing explicit opt-out; disabling the firewall module in
+managed mode is rejected, and changing `backend` uses the normal owned-appliance
+replacement contract.
 
 The DNS module is mandatory. Blocky is the default recursive/filtering
 implementation and AdGuard is a typed alternative; PowerDNS remains

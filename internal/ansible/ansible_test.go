@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/modules"
 )
 
 func TestGatusRolePreparesConfigDirectoryAndReloadsNginx(t *testing.T) {
@@ -114,6 +115,7 @@ func TestAnsibleVariablesPinPulseHostAgentAndExposeNoSecret(t *testing.T) {
 	text := string(data)
 	for _, expected := range []string{
 		`"proxmox_management_address": "10.10.99.5"`,
+		`"firewall_backend": "vm"`,
 		"\"pulse_agent_targets\": [\n    \"lab-proxmox-01\"",
 		`"pulse_agent_version": "6.1.2"`,
 		`"pulse_agent_release_url": "https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-agent-linux-amd64"`,
@@ -125,6 +127,28 @@ func TestAnsibleVariablesPinPulseHostAgentAndExposeNoSecret(t *testing.T) {
 	}
 	if strings.Contains(text, "agent-token") || strings.Contains(text, "pulse_agent_token") {
 		t.Fatal("Ansible variables contain a Pulse agent credential")
+	}
+}
+
+func TestAnsibleVariablesExposeLXCBackendOnlyWhenSelected(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	config.Modules.Firewall = &model.FirewallModuleConfig{Backend: model.FirewallBackendLXC}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	variables, err := Variables(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(variables)
+	if !strings.Contains(text, `"firewall_backend": "lxc"`) || !strings.Contains(text, `"firewall_lxc_capabilities": [`) {
+		t.Fatalf("LXC backend variables are incomplete: %s", text)
+	}
+	for _, capability := range model.FirewallLXCCapabilities() {
+		if !strings.Contains(text, `"`+capability+`"`) {
+			t.Fatalf("LXC capability %s is missing from variables", capability)
+		}
 	}
 }
 
@@ -712,6 +736,28 @@ func TestFirewallRoleCreatesNftablesConfigurationDirectory(t *testing.T) {
 	for _, expected := range []string{"- name: Create nftables configuration directory", "path: /etc/nftables.d", "state: directory"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("firewall role missing %q", expected)
+		}
+	}
+}
+
+func TestFirewallRoleDefinesTheBoundedLXCCapabilityContract(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"firewall_backend | default('vm') in ['vm', 'lxc']",
+		"firewall_lxc_capabilities | default([]) | sort == ['CAP_CHOWN', 'CAP_NET_ADMIN', 'CAP_NET_BIND_SERVICE', 'CAP_NET_RAW']",
+		"CapabilityBoundingSet=CAP_NET_ADMIN",
+		"CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE CAP_NET_RAW",
+		"CapabilityBoundingSet=CAP_CHOWN CAP_NET_ADMIN",
+		"AmbientCapabilities=CAP_NET_BIND_SERVICE",
+		"NoNewPrivileges=yes",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("firewall role is missing LXC security contract %q", expected)
 		}
 	}
 }

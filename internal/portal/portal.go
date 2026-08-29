@@ -111,12 +111,15 @@ func home(s model.Site, revision string, evidence Evidence, now time.Time) strin
 	}
 	gateway := "external firewall"
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		gateway = "managed Debian firewall"
+		gateway = "managed Debian firewall (" + string(model.ResolveFirewallBackend(s.ModuleConfig["firewall"].Backend)) + ")"
 	}
 	var moduleTable strings.Builder
 	moduleTable.WriteString("<h2>Platform modules</h2><table><tr><th>Name</th><th>Policy</th><th>Implementation</th><th>Version</th><th>Artifact</th><th>Definition</th><th>State</th><th>Reason</th></tr>")
 	for _, module := range s.Modules {
 		implementation := map[string]string{"dns": "Blocky", "logging": "systemd journal", "monitoring": "Pulse Community", "firewall": "Debian/nftables", "printer": "OctoPrint / Ender-3 V3 SE", "gatus": "Gatus (declared services only)"}[module.Name]
+		if module.Name == "firewall" {
+			implementation += " (" + string(model.ResolveFirewallBackend(s.ModuleConfig["firewall"].Backend)) + ")"
+		}
 		if module.Name == "dns" && s.ModuleConfig["dns"].Provider == string(model.DNSProviderAdGuard) {
 			implementation = "AdGuard"
 		}
@@ -195,7 +198,7 @@ func network(s model.Site, revision string) string {
 	gateway := "external firewall contract"
 	diagram := "HOME / upstream\n  |\nProxmox (MGMT 10.10.99.5)\n  `-- vmbr1 (VLAN-aware physical trunk)\n      +-- TRANSIT VLAN 5\n      +-- INFRA VLAN 10\n      +-- SERVERS VLAN 20\n      +-- TRUSTED VLAN 30\n      +-- SANDBOX VLAN 40\n      `-- MGMT VLAN 99"
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		gateway = "Debian lab-fw-01 (nftables + Kea)"
+		gateway = "Debian lab-fw-01 (nftables + Kea, " + string(model.ResolveFirewallBackend(s.ModuleConfig["firewall"].Backend)) + ")"
 		diagram = "HOME / upstream\n  |\nProxmox (MGMT 10.10.99.5)\n  +-- managed gateway vNICs: WAN, TRANSIT, INFRA, SERVERS, TRUSTED, SANDBOX, MGMT\n  `-- vmbr1 (VLAN-aware internal bridge)\n      +-- TRANSIT VLAN 5\n      +-- INFRA VLAN 10\n      +-- SERVERS VLAN 20\n      +-- TRUSTED VLAN 30\n      +-- SANDBOX VLAN 40\n      `-- MGMT VLAN 99"
 	}
 	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Gateway: <strong>%s</strong>.</p><pre>%s</pre><table><tr><th>Zone</th><th>VLAN</th><th>Network</th><th>Gateway</th><th>DHCP mode</th></tr>", html.EscapeString(revision), html.EscapeString(gateway), html.EscapeString(diagram))

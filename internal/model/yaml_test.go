@@ -194,6 +194,30 @@ func TestDNSProviderIsTypedAndStrict(t *testing.T) {
 	}
 }
 
+func TestFirewallBackendIsTypedAndRoundTripsThroughGenericConfiguration(t *testing.T) {
+	config, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  firewall:\n    backend: lxc\nsecret_metadata:\n  installation_id: test\n  age_recipient: age1test\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Modules.Firewall == nil || config.Modules.Firewall.Backend != FirewallBackendLXC {
+		t.Fatalf("unexpected typed firewall backend: %#v", config.Modules.Firewall)
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := RenderSiteConfig(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTrip, err := ParseSiteConfig(rendered)
+	if err != nil || roundTrip.Modules.Firewall == nil || roundTrip.Modules.Firewall.Backend != FirewallBackendLXC {
+		t.Fatalf("firewall backend did not round-trip: %v %s", err, rendered)
+	}
+	if _, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  firewall:\n    backend: privileged-lxc\n")); err == nil || !strings.Contains(err.Error(), "modules.firewall.backend") {
+		t.Fatalf("invalid firewall backend was accepted: %v", err)
+	}
+}
+
 func TestParseSiteConfigRejectsUnknownModuleName(t *testing.T) {
 	_, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  monitroing:\n    enabled: true\n"))
 	if err == nil || !strings.Contains(err.Error(), "modules.monitroing") {

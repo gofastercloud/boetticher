@@ -25,6 +25,7 @@ var builderArtifactTargetsInOrder = []struct {
 	{artifact: "boetticher-logging", target: "image-logging", scan: "boetticher-logging"},
 	{artifact: "boetticher-monitoring", target: "image-monitoring", scan: "boetticher-monitoring"},
 	{artifact: "boetticher-firewall", target: "image-firewall", scan: "boetticher-firewall"},
+	{artifact: "boetticher-firewall-lxc", target: "image-firewall-lxc", scan: "boetticher-firewall-lxc"},
 	{artifact: "boetticher-portal", target: "image-portal", scan: "boetticher-portal"},
 	{artifact: "boetticher-tailnet-router", target: "image-tailnet-router", scan: "boetticher-tailnet-router"},
 	{artifact: "boetticher-litellm", target: "image-litellm", scan: "boetticher-litellm"},

@@ -7,7 +7,9 @@ gateway:
   upstream:
     mode: dhcp
     mac: 02:00:00:00:01:01
-modules: {}
+modules:
+  firewall:
+    backend: vm
 physical_network:
   mode: virtual-only
 tested_versions:

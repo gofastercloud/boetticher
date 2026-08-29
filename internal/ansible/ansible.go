@@ -182,6 +182,11 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation) ([]byte, er
 	if err != nil {
 		return nil, err
 	}
+	firewallBackend := model.ResolveFirewallBackend(s.ModuleConfig["firewall"].Backend)
+	var firewallCapabilities []string
+	if firewallBackend == model.FirewallBackendLXC {
+		firewallCapabilities = model.FirewallLXCCapabilities()
+	}
 	loggingPlan, err := logging.PlanFromSite(s)
 	if err != nil {
 		return nil, err
@@ -216,6 +221,8 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation) ([]byte, er
 		AdGuardForwardZones         []string                      `json:"adguard_forward_zones"`
 		DNSPlan                     dns.Plan                      `json:"dns_plan"`
 		FirewallPlan                firewall.Plan                 `json:"firewall_plan"`
+		FirewallBackend             string                        `json:"firewall_backend"`
+		FirewallLXCCapabilities     []string                      `json:"firewall_lxc_capabilities,omitempty"`
 		MonitoringPlan              pulse.Plan                    `json:"monitoring_plan"`
 		PulseAgentTargets           []string                      `json:"pulse_agent_targets"`
 		PulseAgentVersion           string                        `json:"pulse_agent_version"`
@@ -232,7 +239,7 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation) ([]byte, er
 		ModuleDeclarations          []model.ModuleDeclaration     `json:"module_declarations"`
 		GatusConfig                 string                        `json:"gatus_config"`
 		USBExportManifests          []usbexport.GuestManifest     `json:"usb_export_manifests"`
-	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), loggingUploads, map[string]string{}, "", s.ModuleConfig, s.Declarations, string(gatusConfig), usbPlan}
+	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, string(firewallBackend), firewallCapabilities, monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), loggingUploads, map[string]string{}, "", s.ModuleConfig, s.Declarations, string(gatusConfig), usbPlan}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err

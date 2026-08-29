@@ -38,7 +38,7 @@ type SiteConfig struct {
 type ModulesConfig struct {
 	DNS           *DNSModuleConfig       `yaml:"dns,omitempty" json:"dns,omitempty"`
 	Monitoring    *ToggleModuleConfig    `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
-	Firewall      *ToggleModuleConfig    `yaml:"firewall,omitempty" json:"firewall,omitempty"`
+	Firewall      *FirewallModuleConfig  `yaml:"firewall,omitempty" json:"firewall,omitempty"`
 	Logging       *MandatoryModuleConfig `yaml:"logging,omitempty" json:"logging,omitempty"`
 	TailnetRouter *ToggleModuleConfig    `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
 	LiteLLM       *LiteLLMModuleConfig   `yaml:"litellm,omitempty" json:"litellm,omitempty"`
@@ -88,6 +88,14 @@ type ToggleModuleConfig struct {
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 }
 
+// FirewallModuleConfig is the only module configuration shape that carries a
+// backend selector. Backend is typed and validated against compiled-in values;
+// it is not a generic passthrough field.
+type FirewallModuleConfig struct {
+	Enabled *bool           `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Backend FirewallBackend `yaml:"backend,omitempty" json:"backend,omitempty" jsonschema:"enum=vm,enum=lxc,default=vm"`
+}
+
 type LiteLLMModuleConfig struct {
 	Enabled   *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	Upstreams []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
@@ -122,7 +130,7 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 		result["monitoring"] = ModuleConfig{Enabled: cloneBool(m.Monitoring.Enabled)}
 	}
 	if m.Firewall != nil {
-		result["firewall"] = ModuleConfig{Enabled: cloneBool(m.Firewall.Enabled)}
+		result["firewall"] = ModuleConfig{Enabled: cloneBool(m.Firewall.Enabled), Backend: m.Firewall.Backend}
 	}
 	if m.Logging != nil {
 		result["logging"] = ModuleConfig{}
@@ -154,7 +162,7 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 		result.Monitoring = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	}
 	if config, ok := input["firewall"]; ok {
-		result.Firewall = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		result.Firewall = &FirewallModuleConfig{Enabled: cloneBool(config.Enabled), Backend: config.Backend}
 	}
 	if _, ok := input["logging"]; ok {
 		result.Logging = &MandatoryModuleConfig{}
@@ -187,7 +195,10 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 	case "monitoring":
 		m.Monitoring = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	case "firewall":
-		m.Firewall = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		if err := ValidateFirewallBackend(config.Backend); err != nil {
+			return err
+		}
+		m.Firewall = &FirewallModuleConfig{Enabled: cloneBool(config.Enabled), Backend: config.Backend}
 	case "logging":
 		if config.Enabled != nil {
 			return errors.New("modules.logging.enabled: mandatory module cannot be disabled")
@@ -435,7 +446,7 @@ func cloneModuleConfig(input map[string]ModuleConfig) map[string]ModuleConfig {
 	}
 	output := make(map[string]ModuleConfig, len(input))
 	for name, config := range input {
-		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), Provider: config.Provider, ModelAlias: config.ModelAlias, Upstreams: cloneLiteLLMUpstreams(config.Upstreams), Models: cloneLiteLLMModels(config.Models)}
+		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), Provider: config.Provider, Backend: config.Backend, ModelAlias: config.ModelAlias, Upstreams: cloneLiteLLMUpstreams(config.Upstreams), Models: cloneLiteLLMModels(config.Models)}
 	}
 	return output
 }

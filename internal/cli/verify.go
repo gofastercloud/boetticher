@@ -86,6 +86,29 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 		portal.CheckResult{Name: "Age recovery fixture", Status: "NOT TESTED", Detail: "requires independent recovery copy"},
 	)
 	if s.Gateway.Mode == model.GatewayModeManaged {
+		backendResult := portal.CheckResult{Name: "managed gateway backend", Status: "FAIL", Detail: "backend could not be resolved"}
+		securityResult := portal.CheckResult{Name: "managed gateway LXC security profile", Status: "NOT TESTED", Detail: "only applicable to the LXC backend"}
+		backend, guest, backendErr := firewallBackendForSite(s)
+		if backendErr != nil {
+			backendResult.Detail = backendErr.Error()
+			securityResult.Status = "FAIL"
+			securityResult.Detail = "firewall backend plan is invalid"
+		} else {
+			backendResult = portal.CheckResult{Name: "managed gateway backend", Status: "STATIC PASS", Detail: fmt.Sprintf("%s backend / %s guest", backend, guest.Kind)}
+			if backend == model.FirewallBackendLXC {
+				securityResult = portal.CheckResult{Name: securityResult.Name, Status: "STATIC PASS", Detail: "planned guest is unprivileged with the exact bounded capability profile and disabled LXC features"}
+				if *live {
+					if err := verifyFirewallLXCSecurity(context.Background(), applianceSSHRunner(s, *siteDir, guest.Name)); err != nil {
+						securityResult = portal.CheckResult{Name: securityResult.Name, Status: "FAIL", Detail: err.Error()}
+					} else {
+						securityResult = portal.CheckResult{Name: securityResult.Name, Status: "PASS", Detail: "live service capability bounds and NoNewPrivileges checks passed"}
+					}
+				} else {
+					securityResult.Detail += "; live service checks require --live"
+				}
+			}
+		}
+		results = append(results, backendResult, securityResult)
 		upstreamResult := portal.CheckResult{Name: "managed gateway upstream DHCP", Status: "NOT TESTED", Detail: "use --live to query wan0 lease, prefix, gateway, and MAC"}
 		publicationResult := portal.CheckResult{Name: "published service mapping", Status: "NOT TESTED", Detail: "use --live to verify the effective upstream address and DNAT mapping"}
 		if *live {
@@ -138,6 +161,12 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 			portal.CheckResult{Name: "TRANSIT/INFRA/MGMT are static-only; SERVERS is reservation-only", Status: "NOT TESTED", Detail: "requires deployed static-address, reservation, and Kea evidence"},
 		)
 	} else {
+		backend, _, backendErr := firewallBackendForSite(s)
+		if backendErr != nil {
+			results = append(results, portal.CheckResult{Name: "external gateway backend", Status: "FAIL", Detail: backendErr.Error()})
+		} else {
+			results = append(results, portal.CheckResult{Name: "external gateway backend", Status: "STATIC PASS", Detail: fmt.Sprintf("%s contract-only backend selection", backend)})
+		}
 		results = append(results, portal.CheckResult{Name: "external gateway contract", Status: "STATIC PASS", Detail: "required VLAN, gateway, DHCP, DNS, NTP, and policy intent is generated"})
 	}
 	fmt.Fprintln(out, "Modules")
