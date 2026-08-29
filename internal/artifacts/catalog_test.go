@@ -705,6 +705,17 @@ func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *tes
 	}
 }
 
+func TestLoggingBuildInstallsDeclaredServices(t *testing.T) {
+	buildScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildText := string(buildScript)
+	if !strings.Contains(buildText, "build_logging()") || !strings.Contains(buildText, "install_packages \"$rootfs\" systemd-journal-remote nginx") {
+		t.Fatal("logging image build does not install both declared runtime services")
+	}
+}
+
 func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "images", "base", "debian.yaml"))
 	if err != nil {
