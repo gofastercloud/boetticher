@@ -112,6 +112,43 @@ func TestUpdateRestoresDesiredStateWhenProjectionRefreshFails(t *testing.T) {
 	}
 }
 
+func TestProjectionRefreshPreservesSameRevisionStatusEvidence(t *testing.T) {
+	dir := t.TempDir()
+	s := model.NewDefaultSite("status-preserve", "age1statuspreserve")
+	revision, err := s.Revision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	existing := statusmodel.Report{
+		StatusModelVersion: statusmodel.ModelVersion,
+		ModelRevision:      revision,
+		ObservedAt:         "2026-08-29T12:00:00Z",
+		OverallState:       statusmodel.Failed,
+		Checks: []statusmodel.Check{{
+			Component:  "managed gateway DHCP/DDNS",
+			State:      statusmodel.Failed,
+			Evidence:   statusmodel.FAIL,
+			Tier:       statusmodel.TierJourney,
+			ObservedAt: "2026-08-29T11:59:00Z",
+			Reason:     "gateway evidence was unavailable",
+			NextAction: "Restore the gateway and repeat the check",
+		}},
+	}
+	if err := writeProjection(filepath.Join(dir, "generated", "status.json"), existing); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeModelProjections(dir, s); err != nil {
+		t.Fatal(err)
+	}
+	got := loadStatusReport(dir, revision)
+	if len(got.Checks) != 1 || got.Checks[0].Evidence != statusmodel.FAIL || got.Checks[0].Tier != statusmodel.TierJourney {
+		t.Fatalf("projection refresh replaced same-revision live evidence: %#v", got)
+	}
+	if got.Checks[0].ObservedAt != existing.Checks[0].ObservedAt || got.ObservedAt != existing.ObservedAt {
+		t.Fatalf("projection refresh changed evidence timestamps: %#v", got)
+	}
+}
+
 func TestPreflightRecordRequiresLive(t *testing.T) {
 	var output bytes.Buffer
 	if err := runPreflight([]string{"--record"}, &output); err == nil || !strings.Contains(err.Error(), "requires --live") {

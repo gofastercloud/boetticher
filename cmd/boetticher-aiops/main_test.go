@@ -43,3 +43,24 @@ func TestAIOpsBackgroundLoopsHonorCancellation(t *testing.T) {
 		t.Fatal("AIOps Pulse loop did not stop after cancellation")
 	}
 }
+
+func TestRemainingServeResults(t *testing.T) {
+	tests := []struct {
+		name          string
+		serverCount   int
+		firstReceived bool
+		want          int
+	}{
+		{name: "context shutdown", serverCount: 3, want: 3},
+		{name: "one result already received", serverCount: 3, firstReceived: true, want: 2},
+		{name: "empty server set", serverCount: 0, want: 0},
+		{name: "received result from empty set", serverCount: 0, firstReceived: true, want: 0},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := remainingServeResults(test.serverCount, test.firstReceived); got != test.want {
+				t.Fatalf("remainingServeResults(%d, %t) = %d, want %d", test.serverCount, test.firstReceived, got, test.want)
+			}
+		})
+	}
+}

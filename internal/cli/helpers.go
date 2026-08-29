@@ -332,6 +332,9 @@ func writeCurrentStatus(dir string, s model.Site) error {
 	if err != nil {
 		return err
 	}
+	if existing := loadStatusReport(dir, revision); len(existing.Checks) > 0 {
+		return nil
+	}
 	report := desiredStatusReport(s, revision)
 	return writeProjection(filepath.Join(dir, "generated", "status.json"), report)
 }

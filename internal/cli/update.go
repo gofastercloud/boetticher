@@ -34,6 +34,10 @@ func runUpdate(args []string, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("Problem: validate update: %w", err)
 	}
+	originalSite, err := site.ComposeConfig(*siteDir, config)
+	if err != nil {
+		return fmt.Errorf("Problem: compose existing desired state: %w", err)
+	}
 	fromVersion := config.PlatformVersion
 	if fromVersion == "" {
 		fromVersion = "current configuration"
@@ -62,15 +66,26 @@ func runUpdate(args []string, out io.Writer) error {
 		return fmt.Errorf("Problem: save updated desired configuration: %w", err)
 	}
 	if err := writeModelProjections(*siteDir, resolved); err != nil {
-		_ = site.SaveConfigBytes(*siteDir, original)
-		return fmt.Errorf("Problem: refresh generated projections: %w; desired configuration was restored", err)
+		return rollbackUpdate(*siteDir, original, originalSite, fmt.Errorf("refresh generated projections: %w", err))
 	}
 	if err := rebuildPortal(*siteDir, resolved); err != nil {
-		_ = site.SaveConfigBytes(*siteDir, original)
-		return fmt.Errorf("Problem: refresh portal projection: %w; desired configuration was restored", err)
+		return rollbackUpdate(*siteDir, original, originalSite, fmt.Errorf("refresh portal projection: %w", err))
 	}
 	fmt.Fprintln(out, "Updated desired configuration atomically. No deployment was performed; run boetticher deploy, then boetticher status.")
 	return nil
+}
+
+func rollbackUpdate(dir string, originalConfig []byte, originalSite model.Site, cause error) error {
+	if err := site.SaveConfigBytes(dir, originalConfig); err != nil {
+		return fmt.Errorf("Problem: %w; restore desired configuration: %v", cause, err)
+	}
+	if err := writeModelProjections(dir, originalSite); err != nil {
+		return fmt.Errorf("Problem: %w; desired configuration was restored but generated projections could not be restored: %v", cause, err)
+	}
+	if err := rebuildPortal(dir, originalSite); err != nil {
+		return fmt.Errorf("Problem: %w; desired configuration and model projections were restored but portal could not be restored: %v", cause, err)
+	}
+	return fmt.Errorf("Problem: %w; desired configuration and generated projections were restored", cause)
 }
 
 func updateRevision(s model.Site) string {
