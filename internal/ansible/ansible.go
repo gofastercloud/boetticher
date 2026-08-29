@@ -13,6 +13,7 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/firewall"
+	"github.com/gofastercloud/boetticher/internal/gatus"
 	"github.com/gofastercloud/boetticher/internal/logging"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/pulse"
@@ -118,7 +119,13 @@ func Inventory(s model.Site) (string, error) {
 			}
 		}
 	}
-	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\ntailnet-router\nlitellm\nprinter\naiops\n")
+	b.WriteString("\n[gatus]\n")
+	for _, component := range components {
+		if component.Module == "gatus" {
+			writeHost(&b, component, true)
+		}
+	}
+	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\ntailnet-router\nlitellm\nprinter\naiops\ngatus\n")
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		b.WriteString("firewall\n")
 	}
@@ -151,6 +158,10 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation) ([]byte, er
 		return nil, err
 	}
 	revision, err := s.Revision()
+	if err != nil {
+		return nil, err
+	}
+	gatusConfig, err := gatus.RenderConfiguration(s)
 	if err != nil {
 		return nil, err
 	}
@@ -219,8 +230,9 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation) ([]byte, er
 		LoggingCollectorCertificate string                        `json:"logging_collector_certificate"`
 		ModuleConfigs               map[string]model.ModuleConfig `json:"module_configs"`
 		ModuleDeclarations          []model.ModuleDeclaration     `json:"module_declarations"`
+		GatusConfig                 string                        `json:"gatus_config"`
 		USBExportManifests          []usbexport.GuestManifest     `json:"usb_export_manifests"`
-	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), loggingUploads, map[string]string{}, "", s.ModuleConfig, s.Declarations, usbPlan}
+	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan.AdGuardForwardZones, dnsPlan, firewallPlan, monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), loggingUploads, map[string]string{}, "", s.ModuleConfig, s.Declarations, string(gatusConfig), usbPlan}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err

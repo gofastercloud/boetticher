@@ -1,0 +1,4 @@
+- name: restart gatus
+  ansible.builtin.service: {name: gatus, state: restarted}
+- name: reload nginx
+  ansible.builtin.service: {name: nginx, state: reloaded}

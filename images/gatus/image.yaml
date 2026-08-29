@@ -1,0 +1,14 @@
+name: boetticher-gatus
+version: 1.0.0
+kind: lxc
+base: boetticher-base
+base_version: 0.3.34
+architecture: amd64
+runtime:
+  gatus: 5.36.0
+  source_url: https://github.com/TwiN/gatus/archive/refs/tags/v5.36.0.tar.gz
+  source_sha256: b5543af591e602281406049ee2f822a6529a8f14be0cd54df5a31c210520159a
+  backend_bind: 127.0.0.1:8080
+  frontend_bind: 443
+  storage: memory
+logging: inherited-from-base

@@ -132,6 +132,7 @@ func FirstPartyRegistry() Registry {
 				{Name: "lab-aiops-01", VMID: 240, Hostname: "lab-aiops-01", Zone: "SERVERS", Address: "10.10.20.90", Role: "HolmesGPT AIOps investigation", DNSAliases: []string{"aiops"}, URL: "https://aiops." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
+		"gatus": {Name: "gatus", Description: "Generated status page for declared services", Version: "1.0.0", Policy: DefaultOff, DependsOn: []string{"monitoring"}, Requires: []Capability{CapabilityDNS}, GuestIDs: []int{model.GatusVMID}, ReservedVMIDStart: 250, ReservedVMIDEnd: 259, Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{{Name: "lab-gatus-01", VMID: model.GatusVMID, Hostname: "lab-gatus-01", Address: "10.10.20.100", Role: "Gatus status page", DNSAliases: []string{"gatus"}, URL: "https://gatus." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true}}},
 	}}
 }
 

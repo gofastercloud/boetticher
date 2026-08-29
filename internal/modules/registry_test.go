@@ -16,7 +16,7 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantOrder := []string{"firewall", "dns", "logging", "monitoring", "aiops", "litellm", "printer", "tailnet-router"}
+	wantOrder := []string{"firewall", "dns", "logging", "monitoring", "aiops", "gatus", "litellm", "printer", "tailnet-router"}
 	if len(modules) != len(wantOrder) {
 		t.Fatalf("unexpected module resolution: %#v", modules)
 	}
@@ -106,12 +106,36 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	}
 }
 
+func TestGatusCrossZoneHTTPSIntentsFollowManagedServiceMetadata(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	enabled := true
+	config.Modules.Gatus = &model.ToggleModuleConfig{Enabled: &enabled}
+	site, _, err := Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gatus, ok := findDeclaration(site, "gatus")
+	if !ok {
+		t.Fatal("Gatus declaration is missing")
+	}
+	var gatusMonitorIntent model.NetworkIntent
+	for _, intent := range gatus.NetworkIntents {
+		if intent.Destination == "lab-monitor-01" {
+			gatusMonitorIntent = intent
+			break
+		}
+	}
+	if gatusMonitorIntent.Source != "lab-gatus-01" || gatusMonitorIntent.Protocol != "tcp" || strings.Join(gatusMonitorIntent.Ports, ",") != "443" || gatusMonitorIntent.Endpoint != "https://monitor.lab.home.arpa" {
+		t.Fatalf("Gatus cross-zone HTTPS intent is incomplete: %#v", gatus.NetworkIntents)
+	}
+}
+
 func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *testing.T) {
 	registry := FirstPartyRegistry()
 	if err := registry.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"tailnet-router", "litellm", "printer", "aiops"} {
+	for _, name := range []string{"tailnet-router", "litellm", "printer", "aiops", "gatus"} {
 		definition, ok := registry.Definition(name)
 		if !ok || definition.Policy != DefaultOff {
 			t.Fatalf("%s is not a default-off first-party module: %#v", name, definition)
