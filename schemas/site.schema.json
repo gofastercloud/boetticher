@@ -433,13 +433,31 @@
     "UserFirewallRule": {
       "additionalProperties": false,
       "properties": {
-        "destination": { "type": "string" },
-        "id": { "type": "string" },
-        "ports": { "items": { "type": "string" }, "type": "array" },
-        "protocol": { "type": "string" },
-        "source": { "type": "string" }
+        "destination": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "ports": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "protocol": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
       },
-      "required": ["id", "source", "destination", "protocol"],
+      "required": [
+        "id",
+        "source",
+        "destination",
+        "protocol"
+      ],
       "type": "object"
     },
     "Zone": {
@@ -521,7 +539,9 @@
       "type": "array"
     },
     "firewall_rules": {
-      "items": { "$ref": "#/$defs/UserFirewallRule" },
+      "items": {
+        "$ref": "#/$defs/UserFirewallRule"
+      },
       "type": "array"
     },
     "gateway": {
