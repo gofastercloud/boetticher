@@ -109,7 +109,7 @@ func TestRemovedApplianceIdentifiersStayOutsideTheExampleGuide(t *testing.T) {
 
 func TestDeployIsTheOnlyPublicPlatformApplicationCommand(t *testing.T) {
 	root := repositoryRoot(t)
-	paths := []string{"README.md", "docs", "agents.md", "internal/cli", "schemas"}
+	paths := []string{"README.md", "docs", "AGENTS.md", "internal/cli", "schemas"}
 	for _, relative := range paths {
 		path := filepath.Join(root, relative)
 		err := filepath.WalkDir(path, func(file string, entry os.DirEntry, walkErr error) error {
