@@ -288,7 +288,11 @@ func ValidateExecutionConfig(path string) error {
 		if len(fields) == 0 {
 			continue
 		}
-		directive := strings.ToLower(strings.TrimSpace(strings.SplitN(fields[0], "=", 2)[0]))
+		rawDirective := strings.TrimSpace(strings.SplitN(fields[0], "=", 2)[0])
+		if strings.HasPrefix(rawDirective, "\"") || strings.HasPrefix(rawDirective, "'") {
+			return fmt.Errorf("SSH configuration contains forbidden quoted directive %q", fields[0])
+		}
+		directive := strings.ToLower(rawDirective)
 		if dangerous[directive] {
 			return fmt.Errorf("SSH configuration contains forbidden directive %q", fields[0])
 		}

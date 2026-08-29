@@ -116,6 +116,23 @@ func TestDeploymentRetriesTransientGuestRootRearmFailure(t *testing.T) {
 	}
 }
 
+func TestDeploymentWaitsForGuestHostKeyThroughBootWindow(t *testing.T) {
+	hostRunner := &deploymentRootTestRunner{hostOutputs: [][]byte{
+		[]byte("guest agent is not ready"),
+		[]byte("guest agent is not ready"),
+		[]byte("guest agent is not ready"),
+		[]byte("{\"exitcode\":0,\"exited\":1,\"out-data\":\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\\n\"}"),
+	}}
+	guestRunner := &deploymentRootTestRunner{}
+	guest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
+	if err := waitForDeploymentRoot(context.Background(), hostRunner, "192.0.2.10", guestRunner, guest, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA operator", filepath.Join(t.TempDir(), "known_hosts"), "lab-fw-01.lab.home.arpa"); err != nil {
+		t.Fatal(err)
+	}
+	if hostRunner.calls != 4 {
+		t.Fatalf("guest host-key boot window stopped after %d attempts, want 4", hostRunner.calls)
+	}
+}
+
 type deploymentRootTestRunner struct {
 	calls             int
 	lastCommand       string
