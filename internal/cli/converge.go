@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -551,9 +552,13 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 		return fmt.Errorf("install endpoint-signed certificates: %w", err)
 	}
 	var pulseForward *proxmox.SSHLocalForward
+	var aiRouterForward *proxmox.SSHLocalForward
 	defer func() {
 		if pulseForward != nil {
 			_ = pulseForward.Close()
+		}
+		if aiRouterForward != nil {
+			_ = aiRouterForward.Close()
 		}
 	}()
 	if monitoringEnabled {
@@ -582,7 +587,11 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 			return clientErr
 		}
 		if aiopsEnabled {
-			if err := qualifyAndConfigureAIOps(ctx, *siteDir, *ageIdentity, s, authority, clientCertificate, pulseAdmin, runtimeVariables, ansiblePlaybook, inventoryPath); err != nil {
+			aiRouterForward, err = rootRunner.StartLocalForward(ctx, s.BootstrapAddress, "root", "10.10.20.60", 443)
+			if err != nil {
+				return fmt.Errorf("open AI Router canary tunnel through Proxmox host: %w", err)
+			}
+			if err := qualifyAndConfigureAIOps(ctx, *siteDir, *ageIdentity, s, authority, clientCertificate, pulseAdmin, aiRouterForward.Address(), runtimeVariables, ansiblePlaybook, inventoryPath); err != nil {
 				return fmt.Errorf("HOLD: AIOps qualification failed: %w", err)
 			}
 		}
@@ -994,7 +1003,7 @@ func signAIOpsCertificates(authority pki.Authority, s model.Site, csrDir string)
 	return result, nil
 }
 
-func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, s model.Site, authority pki.Authority, controllerCertificate pki.ClientCertificate, pulseAdmin *pulse.Client, runtimeVariables map[string]any, ansiblePlaybook, inventoryPath string) error {
+func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, s model.Site, authority pki.Authority, controllerCertificate pki.ClientCertificate, pulseAdmin *pulse.Client, routerForwardAddress string, runtimeVariables map[string]any, ansiblePlaybook, inventoryPath string) error {
 	modelConfig, err := selectedAIOpsModel(s)
 	if err != nil {
 		return err
@@ -1007,7 +1016,7 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 	if _, err := aiopsmodel.DecodeModelCapabilities(metadata); err != nil {
 		return err
 	}
-	routerClient, err := controllerMTLSClient(authority, controllerCertificate)
+	routerClient, err := controllerMTLSClient(authority, controllerCertificate, routerForwardAddress)
 	if err != nil {
 		return err
 	}
@@ -1089,7 +1098,7 @@ func selectedAIOpsModel(s model.Site) (model.LiteLLMModelConfig, error) {
 	return selected, nil
 }
 
-func controllerMTLSClient(authority pki.Authority, certificate pki.ClientCertificate) (*http.Client, error) {
+func controllerMTLSClient(authority pki.Authority, certificate pki.ClientCertificate, forwardAddress string) (*http.Client, error) {
 	identity, err := tls.X509KeyPair([]byte(certificate.CertPEM), []byte(certificate.KeyPEM))
 	if err != nil {
 		return nil, fmt.Errorf("load controller AIOps canary identity: %w", err)
@@ -1098,7 +1107,17 @@ func controllerMTLSClient(authority pki.Authority, certificate pki.ClientCertifi
 	if !roots.AppendCertsFromPEM([]byte(authority.RootCertPEM + authority.IssuingCertPEM)) {
 		return nil, errors.New("platform CA contains no certificates")
 	}
-	transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, Certificates: []tls.Certificate{identity}}, DisableCompression: true, ResponseHeaderTimeout: 30 * time.Second}
+	forwardHost, forwardPort, err := net.SplitHostPort(forwardAddress)
+	if err != nil || forwardHost != "127.0.0.1" || forwardPort == "" {
+		return nil, errors.New("AI Router canary requires a loopback SSH forward")
+	}
+	dialer := &net.Dialer{Timeout: 30 * time.Second}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return dialer.DialContext(ctx, network, net.JoinHostPort(forwardHost, forwardPort))
+		},
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, Certificates: []tls.Certificate{identity}}, DisableCompression: true, ResponseHeaderTimeout: 30 * time.Second,
+	}
 	return &http.Client{Transport: transport, Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("AI Router redirects are forbidden") }}, nil
 }
 

@@ -226,6 +226,9 @@ func TestPulseReconciliationForwardUsesRestrictedBastion(t *testing.T) {
 	if strings.Contains(text, `StartLocalForward(context.Background(), s.BootstrapAddress, "root", "10.10.10.20", 443)`) {
 		t.Fatal("Pulse reconciliation still uses the deployment-only root forwarding path")
 	}
+	if !strings.Contains(text, `StartLocalForward(ctx, s.BootstrapAddress, "root", "10.10.20.60", 443)`) {
+		t.Fatal("AIOps canary does not use a bounded Proxmox-host tunnel to the internal AI Router")
+	}
 }
 
 func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
