@@ -219,7 +219,9 @@
 - name: Clear stale failure state for the disabled AIOps journal query
   ansible.builtin.command:
     argv: [systemctl, reset-failed, boetticher-log-query]
+  register: boetticher_log_query_reset
   changed_when: false
+  failed_when: boetticher_log_query_reset.rc != 0 and 'Unit boetticher-log-query.service not loaded.' not in boetticher_log_query_reset.stderr
   when:
     - inventory_hostname == logging_plan.collector
     - not (module_configs.aiops is defined and module_configs.aiops.enabled | default(false) | bool)

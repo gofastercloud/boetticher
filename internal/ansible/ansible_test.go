@@ -453,6 +453,7 @@ func TestLoggingRoleStopsOptionalAIOpsJournalQueryWhenDisabled(t *testing.T) {
 		"enabled: false",
 		"state: stopped",
 		"argv: [systemctl, reset-failed, boetticher-log-query]",
+		"failed_when: boetticher_log_query_reset.rc != 0 and 'Unit boetticher-log-query.service not loaded.' not in boetticher_log_query_reset.stderr",
 		"not (module_configs.aiops is defined and module_configs.aiops.enabled | default(false) | bool)",
 	} {
 		if !strings.Contains(text, expected) {
