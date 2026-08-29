@@ -178,6 +178,17 @@ func TestSSHRunnerHostAliasStillSelectsApplianceConfigHost(t *testing.T) {
 	}
 }
 
+func TestSSHRunnerRestrictsAuthenticationToConfiguredIdentity(t *testing.T) {
+	runner := SSHRunner{IdentityFile: "/tmp/operator", StrictHostKey: "yes"}
+	args, err := runner.commandArgs("192.0.2.10", "root", []string{"true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(args, "IdentitiesOnly=yes") || !containsString(args, "-i") || !containsString(args, "/tmp/operator") {
+		t.Fatalf("SSH runner did not restrict authentication to the configured identity: %#v", args)
+	}
+}
+
 func TestSSHRunnerLocalForwardUsesLoopbackAndBoundedTarget(t *testing.T) {
 	runner := SSHRunner{ConfigFile: "/tmp/boetticher.conf", StrictHostKey: "yes", HostAlias: "lab-proxmox-01"}
 	args, err := runner.forwardArgs("192.0.2.10", "root", 43123, "10.10.10.20", 443)

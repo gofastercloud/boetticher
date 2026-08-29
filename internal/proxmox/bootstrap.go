@@ -599,7 +599,10 @@ func (r SSHRunner) connectionArgs(address, user, batchMode string) ([]string, st
 		args = append(args, "-p", fmt.Sprint(r.Port))
 	}
 	if r.IdentityFile != "" {
-		args = append(args, "-i", r.IdentityFile)
+		// The generated deployment path supplies one enrolled operator key. Do
+		// not let an unrelated local agent identity consume the server's
+		// authentication budget before that key is tried.
+		args = append(args, "-o", "IdentitiesOnly=yes", "-i", r.IdentityFile)
 	}
 	if r.HostKeyAlias != "" {
 		if !safeNodeID(r.HostKeyAlias) {
