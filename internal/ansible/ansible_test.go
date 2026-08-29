@@ -1098,6 +1098,8 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 				"no_log: true",
 				"dest: /usr/lib/boetticher/litellm-start",
 				"group: litellm",
+				"path: /etc/boetticher/litellm",
+				"mode: '0751'",
 				"exec /usr/bin/setpriv --reuid=litellm --regid=litellm --init-groups /opt/litellm/bin/litellm \"$@\"",
 				"ssl_verify_client on;",
 				"proxy_pass http://127.0.0.1:4000;",

@@ -19,7 +19,10 @@
     state: directory
     owner: root
     group: root
-    mode: '0750'
+    # The backend drops to litellm after the root-only credential load. It
+    # needs execute-only traversal here; the config remains root-owned and
+    # group-readable by litellm.
+    mode: '0751'
 
 - name: Render only declared provider-neutral model aliases
   ansible.builtin.copy:
