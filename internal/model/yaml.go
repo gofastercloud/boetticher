@@ -39,7 +39,7 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 		return SiteConfig{}, fmt.Errorf("decode site.yml: %w", err)
 	}
 	for name := range config.Modules.Map() {
-		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "litellm" && name != "printer" && name != "aiops" {
+		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "litellm" && name != "printer" && name != "aiops" && name != "gatus" {
 			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s is not a registered first-party module", name)
 		}
 	}
