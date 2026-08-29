@@ -90,41 +90,34 @@ func BuildSourceArchive(root string) ([]byte, error) {
 	}
 	paths := append([]string(nil), PublicBuildInputs...)
 	sort.Strings(paths)
-	var archive bytes.Buffer
-	gzipWriter := gzip.NewWriter(&archive)
-	tarWriter := tar.NewWriter(gzipWriter)
-	for _, relative := range paths {
-		if relative == "go.sum" {
-			if _, err := os.Stat(filepath.Join(root, relative)); os.IsNotExist(err) {
-				continue
+	return deterministicArchive(func(tarWriter *tar.Writer) error {
+		for _, relative := range paths {
+			if relative == "go.sum" {
+				if _, err := os.Stat(filepath.Join(root, relative)); os.IsNotExist(err) {
+					continue
+				}
+			}
+			path := filepath.Join(root, relative)
+			info, err := os.Lstat(path)
+			if err != nil {
+				return fmt.Errorf("inspect public build input %s: %w", relative, err)
+			}
+			if info.IsDir() {
+				err = filepath.WalkDir(path, func(filePath string, entry fs.DirEntry, walkErr error) error {
+					if walkErr != nil {
+						return walkErr
+					}
+					return addArchiveFile(root, filePath, entry, tarWriter)
+				})
+			} else {
+				err = addArchiveFile(root, path, infoToDirEntry{info}, tarWriter)
+			}
+			if err != nil {
+				return fmt.Errorf("archive public build input %s: %w", relative, err)
 			}
 		}
-		path := filepath.Join(root, relative)
-		info, err := os.Lstat(path)
-		if err != nil {
-			return nil, fmt.Errorf("inspect public build input %s: %w", relative, err)
-		}
-		if info.IsDir() {
-			err = filepath.WalkDir(path, func(filePath string, entry fs.DirEntry, walkErr error) error {
-				if walkErr != nil {
-					return walkErr
-				}
-				return addArchiveFile(root, filePath, entry, tarWriter)
-			})
-		} else {
-			err = addArchiveFile(root, path, infoToDirEntry{info}, tarWriter)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("archive public build input %s: %w", relative, err)
-		}
-	}
-	if err := tarWriter.Close(); err != nil {
-		return nil, fmt.Errorf("close build source archive: %w", err)
-	}
-	if err := gzipWriter.Close(); err != nil {
-		return nil, fmt.Errorf("close build source compression: %w", err)
-	}
-	return archive.Bytes(), nil
+		return nil
+	})
 }
 
 // BuildEmbeddedSourceArchive returns the same public build input archive used
@@ -134,33 +127,44 @@ func BuildSourceArchive(root string) ([]byte, error) {
 func BuildEmbeddedSourceArchive() ([]byte, error) {
 	paths := append([]string(nil), PublicBuildInputs...)
 	sort.Strings(paths)
+	return deterministicArchive(func(tarWriter *tar.Writer) error {
+		for _, relative := range paths {
+			info, err := fs.Stat(buildbundle.FS, relative)
+			if err != nil {
+				return fmt.Errorf("inspect embedded public build input %s: %w", relative, err)
+			}
+			if info.IsDir() {
+				err = fs.WalkDir(buildbundle.FS, relative, func(filePath string, entry fs.DirEntry, walkErr error) error {
+					if walkErr != nil {
+						return walkErr
+					}
+					return addEmbeddedArchiveFile(filePath, entry, tarWriter)
+				})
+			} else {
+				err = addEmbeddedArchiveFile(relative, infoToDirEntry{info}, tarWriter)
+			}
+			if err != nil {
+				return fmt.Errorf("archive embedded public build input %s: %w", relative, err)
+			}
+		}
+		return nil
+	})
+}
+
+func deterministicArchive(populate func(*tar.Writer) error) ([]byte, error) {
 	var archive bytes.Buffer
 	gzipWriter := gzip.NewWriter(&archive)
 	tarWriter := tar.NewWriter(gzipWriter)
-	for _, relative := range paths {
-		info, err := fs.Stat(buildbundle.FS, relative)
-		if err != nil {
-			return nil, fmt.Errorf("inspect embedded public build input %s: %w", relative, err)
-		}
-		if info.IsDir() {
-			err = fs.WalkDir(buildbundle.FS, relative, func(filePath string, entry fs.DirEntry, walkErr error) error {
-				if walkErr != nil {
-					return walkErr
-				}
-				return addEmbeddedArchiveFile(filePath, entry, tarWriter)
-			})
-		} else {
-			err = addEmbeddedArchiveFile(relative, infoToDirEntry{info}, tarWriter)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("archive embedded public build input %s: %w", relative, err)
-		}
+	if err := populate(tarWriter); err != nil {
+		_ = tarWriter.Close()
+		_ = gzipWriter.Close()
+		return nil, err
 	}
 	if err := tarWriter.Close(); err != nil {
-		return nil, fmt.Errorf("close embedded build source archive: %w", err)
+		return nil, fmt.Errorf("close build source archive: %w", err)
 	}
 	if err := gzipWriter.Close(); err != nil {
-		return nil, fmt.Errorf("close embedded build source compression: %w", err)
+		return nil, fmt.Errorf("close build source compression: %w", err)
 	}
 	return archive.Bytes(), nil
 }
@@ -249,16 +253,6 @@ func addEmbeddedArchiveFile(relative string, entry fs.DirEntry, writer *tar.Writ
 	return err
 }
 
-// ExtractBuildArchive accepts only the generated artifact tree returned by a
-// successful builder run. Extraction rejects links and traversal so a remote
-// builder cannot write outside the controller's generated evidence directory.
-func ExtractBuildArchive(data []byte, root string) error {
-	if len(data) == 0 || root == "" {
-		return fmt.Errorf("builder artifact archive and destination root are required")
-	}
-	return ExtractBuildArchiveReader(bytes.NewReader(data), root)
-}
-
 // ExtractBuildArchiveFile streams a builder archive from a controller-side
 // temporary file. The complete archive is never held in memory.
 func ExtractBuildArchiveFile(archivePath, root string) error {
@@ -288,8 +282,9 @@ func ExtractBuildArchiveReader(reader io.Reader, root string) error {
 		return fmt.Errorf("builder artifact archive and destination root are required")
 	}
 	const (
-		maxEntries = 8192
-		maxBytes   = int64(64 << 30)
+		maxEntries          = 8192
+		maxBytes            = int64(64 << 30)
+		maxArchiveEntrySize = int64(16 << 30)
 	)
 	buffered := bufio.NewReader(reader)
 	var tarReader *tar.Reader
@@ -324,7 +319,7 @@ func ExtractBuildArchiveReader(reader io.Reader, root string) error {
 		if entries > maxEntries {
 			return fmt.Errorf("builder artifact archive contains too many entries")
 		}
-		if header.Size < 0 || header.Size > maxBytes-totalBytes {
+		if header.Size < 0 || header.Size > maxBytes-totalBytes || header.Size > maxArchiveEntrySize {
 			return fmt.Errorf("builder artifact archive exceeds bounded output size")
 		}
 		totalBytes += header.Size
@@ -342,36 +337,36 @@ func ExtractBuildArchiveReader(reader io.Reader, root string) error {
 			if err := pathguard.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 				return err
 			}
-			temporary, err := os.CreateTemp(filepath.Dir(target), ".builder-artifact-")
-			if err != nil {
-				return err
-			}
-			temporaryName := temporary.Name()
-			if err := temporary.Chmod(0o600); err != nil {
-				_ = temporary.Close()
-				_ = os.Remove(temporaryName)
-				return err
-			}
-			written, copyErr := io.Copy(temporary, tarReader)
-			closeErr := temporary.Close()
-			if copyErr != nil || closeErr != nil {
-				_ = os.Remove(temporaryName)
-				if copyErr != nil {
-					return copyErr
-				}
-				return closeErr
+			written, copyErr := pathguard.WriteFileFrom(target, &exactReader{reader: tarReader, remaining: header.Size}, 0o600, maxArchiveEntrySize)
+			if copyErr != nil {
+				return copyErr
 			}
 			if written != header.Size {
-				_ = os.Remove(temporaryName)
 				return fmt.Errorf("builder artifact archive entry %q ended early", header.Name)
-			}
-			if err := os.Rename(temporaryName, target); err != nil {
-				_ = os.Remove(temporaryName)
-				return err
 			}
 		default:
 			return fmt.Errorf("builder artifact archive contains unsupported entry %q", header.Name)
 		}
 	}
 	return nil
+}
+
+type exactReader struct {
+	reader    io.Reader
+	remaining int64
+}
+
+func (r *exactReader) Read(p []byte) (int, error) {
+	if r.remaining == 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > r.remaining {
+		p = p[:int(r.remaining)]
+	}
+	n, err := r.reader.Read(p)
+	r.remaining -= int64(n)
+	if err == io.EOF && r.remaining > 0 {
+		return n, io.ErrUnexpectedEOF
+	}
+	return n, err
 }

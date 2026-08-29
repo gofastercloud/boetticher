@@ -6,7 +6,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/gofastercloud/boetticher/internal/pathguard"
 )
+
+const maxEvidenceJSONBytes int64 = 1 << 20
 
 func validateEvidenceName(name string) error {
 	if name == "" || name == "." || name == ".." || filepath.Base(name) != name || strings.ContainsAny(name, `/\\`) {
@@ -104,7 +108,7 @@ func RebindEvidencePaths(root string) error {
 		if err := validateEvidenceEntry(path); err != nil {
 			return fmt.Errorf("inspect transferred evidence %s: %w", entry.Name(), err)
 		}
-		data, err := os.ReadFile(path)
+		data, err := pathguard.ReadFileLimited(path, maxEvidenceJSONBytes)
 		if err != nil {
 			return err
 		}

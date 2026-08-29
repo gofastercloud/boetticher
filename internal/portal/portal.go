@@ -18,8 +18,9 @@ import (
 )
 
 type Evidence struct {
-	GeneratedAt string        `json:"generated_at"`
-	Results     []CheckResult `json:"results"`
+	GeneratedAt string              `json:"generated_at"`
+	Results     []CheckResult       `json:"results"`
+	Status      *statusmodel.Report `json:"-"`
 }
 
 type CheckResult struct {
@@ -114,6 +115,9 @@ func home(s model.Site, revision string, evidence Evidence, now time.Time) strin
 		checks = append(checks, statusmodel.LegacyCheck{Name: result.Name, Status: result.Status, Detail: result.Detail})
 	}
 	semantic := statusmodel.FromLegacy(revision, evidence.GeneratedAt, checks)
+	if evidence.Status != nil && evidence.Status.StatusModelVersion == statusmodel.ModelVersion && evidence.Status.ModelRevision == revision {
+		semantic = *evidence.Status
+	}
 	gateway := "external firewall"
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		gateway = "managed Debian firewall"

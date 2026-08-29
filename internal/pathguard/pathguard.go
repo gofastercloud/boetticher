@@ -53,6 +53,16 @@ func ValidateNoSymlinkComponents(path string) error {
 // directory and the final file are opened with O_NOFOLLOW, so a path swap
 // after validation cannot redirect the read through a symlink.
 func ReadFile(path string) ([]byte, error) {
+	return ReadFileLimited(path, 0)
+}
+
+// ReadFileLimited reads a descriptor-walked file while enforcing an optional
+// maximum size. A limit prevents untrusted generated inputs from being
+// materialised without bound.
+func ReadFileLimited(path string, maxBytes int64) ([]byte, error) {
+	if maxBytes < 0 {
+		return nil, errors.New("maximum file size cannot be negative")
+	}
 	parent, _, name, err := openParent(path, false, 0)
 	if err != nil {
 		return nil, err
@@ -68,9 +78,16 @@ func ReadFile(path string) ([]byte, error) {
 		return nil, errors.New("open file descriptor failed")
 	}
 	defer file.Close()
-	data, err := io.ReadAll(file)
+	reader := io.Reader(file)
+	if maxBytes > 0 {
+		reader = io.LimitReader(file, maxBytes+1)
+	}
+	data, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, &os.PathError{Op: "read", Path: path, Err: err}
+	}
+	if maxBytes > 0 && int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("file %s exceeds maximum size of %d bytes", path, maxBytes)
 	}
 	return data, nil
 }
@@ -147,6 +164,66 @@ func WriteFileWithParentMode(path string, data []byte, mode, parentMode os.FileM
 	}
 	temporary.name = ""
 	return nil
+}
+
+// WriteFileFrom atomically streams a bounded file beneath a descriptor-walked
+// parent. The parent descriptor remains open through temporary creation and
+// rename, closing the validation-to-use race present in string-path writes.
+func WriteFileFrom(path string, reader io.Reader, mode os.FileMode, maxBytes int64) (int64, error) {
+	if reader == nil {
+		return 0, errors.New("file source is required")
+	}
+	if maxBytes <= 0 {
+		return 0, errors.New("maximum file size must be positive")
+	}
+	parent, _, name, err := openParent(path, false, 0)
+	if err != nil {
+		return 0, err
+	}
+	defer unix.Close(parent)
+	temporary, err := temporaryEntry(parent, ".boetticher-")
+	if err != nil {
+		return 0, &os.PathError{Op: "create", Path: path, Err: err}
+	}
+	removeTemporary := true
+	defer func() {
+		if removeTemporary {
+			_ = unix.Unlinkat(parent, temporary.name, 0)
+		}
+	}()
+	file := os.NewFile(uintptr(temporary.fd), path)
+	if file == nil {
+		_ = unix.Close(temporary.fd)
+		return 0, errors.New("create file descriptor failed")
+	}
+	if err := file.Chmod(mode); err != nil {
+		_ = file.Close()
+		return 0, &os.PathError{Op: "chmod", Path: path, Err: err}
+	}
+	written, err := io.Copy(file, io.LimitReader(reader, maxBytes+1))
+	if err != nil {
+		_ = file.Close()
+		return written, &os.PathError{Op: "write", Path: path, Err: err}
+	}
+	if written > maxBytes {
+		_ = file.Close()
+		return written, fmt.Errorf("file %s exceeds maximum size of %d bytes", path, maxBytes)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return written, &os.PathError{Op: "sync", Path: path, Err: err}
+	}
+	if err := file.Close(); err != nil {
+		return written, &os.PathError{Op: "close", Path: path, Err: err}
+	}
+	if err := rejectSymlinkAt(parent, name); err != nil {
+		return written, err
+	}
+	if err := unix.Renameat(parent, temporary.name, parent, name); err != nil {
+		return written, &os.PathError{Op: "rename", Path: path, Err: err}
+	}
+	removeTemporary = false
+	return written, nil
 }
 
 // MkdirAll creates a path by opening each component relative to the previous

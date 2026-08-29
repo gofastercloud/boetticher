@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 const (
@@ -111,6 +112,12 @@ func ValidateStableDevice(device string) error {
 		return errors.New("dedicated storage requires a direct stable /dev/disk/by-id device identity")
 	}
 	return nil
+}
+
+// IsDNSLabel is the shared narrow hostname-label predicate used by desired
+// state and runtime lease/deletion validation.
+func IsDNSLabel(value string) bool {
+	return dnsLabelPattern.MatchString(strings.ToLower(value))
 }
 
 // LiteLLMSecretReferenceID is the one credential identity used by the
@@ -781,6 +788,9 @@ func (s Site) Validate() error {
 	if s.PlatformVersion == "" {
 		return errors.New("platform_version is required")
 	}
+	if strings.IndexFunc(s.SSHIdentityFile, unicode.IsControl) >= 0 {
+		return errors.New("ssh_identity_file contains control characters")
+	}
 	if s.StorageProfile != "single-disk" && s.StorageProfile != "dedicated-data-disk" {
 		return fmt.Errorf("unsupported storage_profile %q", s.StorageProfile)
 	}
@@ -1201,7 +1211,7 @@ func validateDHCPReservations(s Site) error {
 		if reservation.Zone != "SERVERS" {
 			return fmt.Errorf("DHCP reservation %q must use the fixed SERVERS zone", reservation.Hostname)
 		}
-		if !dnsLabelPattern.MatchString(strings.ToLower(reservation.Hostname)) {
+		if !IsDNSLabel(reservation.Hostname) {
 			return fmt.Errorf("DHCP reservation hostname %q must be one DNS label", reservation.Hostname)
 		}
 		address := net.ParseIP(reservation.Address)
@@ -1463,7 +1473,7 @@ func privateDNSName(raw, domain string) (string, error) {
 		return "", fmt.Errorf("name must be inside %s", domain)
 	}
 	for _, label := range strings.Split(name, ".") {
-		if !dnsLabelPattern.MatchString(label) {
+		if !IsDNSLabel(label) {
 			return "", fmt.Errorf("name %q contains an unsafe label", raw)
 		}
 	}

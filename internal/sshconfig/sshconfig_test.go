@@ -49,12 +49,36 @@ func TestRenderWithKnownHostsUsesSiteScopedTrustFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := "UserKnownHostsFile " + knownHosts
+	expected := `UserKnownHostsFile "` + knownHosts + `"`
 	if !strings.Contains(content, expected) {
 		t.Fatalf("site-scoped SSH trust file missing %q: %s", expected, content)
 	}
 	if strings.Contains(content, "StrictHostKeyChecking no") || strings.Contains(content, "UserKnownHostsFile /dev/null") {
 		t.Fatal("site-scoped SSH configuration weakened host-key verification")
+	}
+}
+
+func TestRenderQuotesSSHPathsAndRejectsControlCharacters(t *testing.T) {
+	s := model.NewDefaultSite("installation", "age1example")
+	s.TestedVersions.Gateway = model.QualifiedGatewayImage
+	s.BootstrapAddress = "192.0.2.10"
+	s.SSHIdentityFile = "/tmp/operator key"
+	content, err := RenderWithKnownHosts(s, time.Unix(0, 0), "/tmp/site known_hosts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, `IdentityFile "/tmp/operator key"`) || !strings.Contains(content, `UserKnownHostsFile "/tmp/site known_hosts"`) {
+		t.Fatalf("SSH paths were not quoted: %s", content)
+	}
+	s.SSHIdentityFile = "/tmp/key\nProxyCommand sh -c id"
+	if _, err := Render(s, time.Unix(0, 0)); err == nil || !strings.Contains(err.Error(), "control characters") {
+		t.Fatalf("control-character identity path was accepted: %v", err)
+	}
+	unsafeKnownHostsSite := model.NewDefaultSite("installation", "age1example")
+	unsafeKnownHostsSite.TestedVersions.Gateway = model.QualifiedGatewayImage
+	unsafeKnownHostsSite.BootstrapAddress = "192.0.2.10"
+	if _, err := RenderWithKnownHosts(unsafeKnownHostsSite, time.Unix(0, 0), "/tmp/known\nHost *\n  ProxyCommand sh -c id"); err == nil || !strings.Contains(err.Error(), "control characters") {
+		t.Fatalf("control-character known-hosts path was accepted: %v", err)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/model"
 )
 
@@ -14,23 +15,16 @@ type CloudInitFiles struct {
 	NetworkConfig string
 }
 
-var builderArtifactTargetsInOrder = []struct {
-	artifact string
-	target   string
-	scan     string
-}{
-	{artifact: "boetticher-base", target: "image-base", scan: "boetticher-base"},
-	{artifact: "boetticher-dns-blocky", target: "image-dns-blocky", scan: "boetticher-dns-blocky"},
-	{artifact: "boetticher-logging", target: "image-logging", scan: "boetticher-logging"},
-	{artifact: "boetticher-monitoring", target: "image-monitoring", scan: "boetticher-monitoring"},
-	{artifact: "boetticher-firewall", target: "image-firewall", scan: "boetticher-firewall"},
-	{artifact: "boetticher-portal", target: "image-portal", scan: "boetticher-portal"},
-	{artifact: "boetticher-tailnet-router", target: "image-tailnet-router", scan: "boetticher-tailnet-router"},
-	{artifact: "boetticher-litellm", target: "image-litellm", scan: "boetticher-litellm"},
-}
-
 func defaultBuilderArtifactTargets() []string {
-	return []string{"image-base", "image-dns-blocky", "image-logging", "image-monitoring", "image-portal", "image-firewall"}
+	targets := make([]string, 0, 6)
+	for _, name := range []string{"base", "dns", "logging", "monitoring", "portal", "firewall"} {
+		definition, ok := artifacts.Lookup(name)
+		if !ok {
+			continue
+		}
+		targets = append(targets, definition.BuildTarget)
+	}
+	return targets
 }
 
 // builderArtifactTargets derives the public builder workload from the
@@ -39,27 +33,21 @@ func defaultBuilderArtifactTargets() []string {
 // LXC derivative; the firewall image is independent but is still selected
 // only when the managed firewall is in the plan.
 func builderArtifactTargets(plan Plan) ([]string, error) {
-	selected := map[string]bool{"boetticher-base": true}
+	selected := map[string]bool{artifacts.BaseName: true}
 	for _, guest := range plan.Guests {
 		if guest.Artifact.Name == "" {
 			continue
 		}
-		found := false
-		for _, target := range builderArtifactTargetsInOrder {
-			if guest.Artifact.Name == target.artifact {
-				selected[target.artifact] = true
-				found = true
-				break
-			}
-		}
-		if !found {
+		if _, ok := artifacts.DefinitionForArtifact(guest.Artifact.Name); !ok {
 			return nil, fmt.Errorf("unsupported builder artifact %q for guest %s", guest.Artifact.Name, guest.Name)
 		}
+		selected[guest.Artifact.Name] = true
 	}
 	targets := make([]string, 0, len(selected))
-	for _, target := range builderArtifactTargetsInOrder {
-		if selected[target.artifact] {
-			targets = append(targets, target.target)
+	for _, name := range []string{"base", "dns", "logging", "monitoring", "firewall", "portal", "tailnet-router", "litellm", "printer", "aiops", "gatus"} {
+		definition, ok := artifacts.Lookup(name)
+		if ok && selected[definition.ArtifactName] {
+			targets = append(targets, definition.BuildTarget)
 		}
 	}
 	return targets, nil
@@ -69,9 +57,9 @@ func builderScanTargets(buildTargets []string) ([]string, error) {
 	scans := make([]string, 0, len(buildTargets))
 	for _, buildTarget := range buildTargets {
 		found := false
-		for _, target := range builderArtifactTargetsInOrder {
-			if buildTarget == target.target {
-				scans = append(scans, target.scan)
+		for _, definition := range artifacts.Definitions() {
+			if buildTarget == definition.BuildTarget {
+				scans = append(scans, definition.ScanTarget)
 				found = true
 				break
 			}
@@ -261,6 +249,7 @@ users:
       touch /home/labadmin/build/.qualification-complete
 runcmd:
   - [sh, -c, "set -eu; rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; apt-get -o Acquire::Check-Valid-Until=false update; DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends ca-certificates curl jq libguestfs-tools mmdebstrap openssh-server qemu-guest-agent qemu-utils sudo tar zstd"]
+  - [sh, -c, "set -eu; ssh-keygen -A"]
   - [systemctl, enable, --now, qemu-guest-agent]
   - [sh, -c, "set -eu; archive=/tmp/go1.26.5.linux-amd64.tar.gz; curl --fail --location --silent --show-error --output $archive https://go.dev/dl/go1.26.5.linux-amd64.tar.gz; printf '%s  %s\\n' 5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053 $archive | sha256sum --check --status; rm -rf /usr/local/go; tar -C /usr/local -xzf $archive; printf '%s\\n' 'export PATH=/usr/local/go/bin:$PATH' > /etc/profile.d/boetticher-go.sh; test \"$(/usr/local/go/bin/go version)\" = \"go version go1.26.5 linux/amd64\"; rm -f $archive"]
   - [sh, -c, "set -eu; archive=/tmp/trivy_0.69.3_Linux-64bit.tar.gz; curl --fail --location --silent --show-error --output $archive https://github.com/aquasecurity/trivy/releases/download/v0.69.3/trivy_0.69.3_Linux-64bit.tar.gz; printf '%s  %s\\n' 1816b632dfe529869c740c0913e36bd1629cb7688bd5634f4a858c1d57c88b75 $archive | sha256sum --check --status; tar -xzf $archive -C /usr/local/bin trivy; chmod 0755 /usr/local/bin/trivy; rm -f $archive"]

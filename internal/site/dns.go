@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -15,8 +14,6 @@ import (
 )
 
 const pendingDNSDeletionsFile = "dns/pending-deletions.json"
-
-var runtimeDNSLabelPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // LoadPendingDNSDeletions reads controller-local DNS deletion work that is
 // deliberately separate from site.yml and therefore does not affect the
@@ -99,7 +96,7 @@ func normalizeDNSDeletions(input []model.DNSDeletion, s model.Site) ([]model.DNS
 			return nil, fmt.Errorf("deletion name %q is outside %s", deletion.Name, domain)
 		}
 		for _, label := range strings.Split(deletion.Name, ".") {
-			if !runtimeDNSLabelPattern.MatchString(label) {
+			if !model.IsDNSLabel(label) {
 				return nil, fmt.Errorf("deletion name %q contains an unsafe label", deletion.Name)
 			}
 		}

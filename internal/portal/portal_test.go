@@ -9,6 +9,7 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/model"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
+	statusmodel "github.com/gofastercloud/boetticher/internal/status"
 )
 
 func TestExternalPortalDoesNotPublishManagedGatewayOrBackupID(t *testing.T) {
@@ -30,6 +31,24 @@ func TestExternalPortalDoesNotPublishManagedGatewayOrBackupID(t *testing.T) {
 	}
 	if strings.Contains(string(recoveryPage), "100, 110") {
 		t.Fatal("external portal published the absent firewall VMID")
+	}
+}
+
+func TestPortalHomeUsesCanonicalSemanticStatus(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	canonical := statusmodel.Report{
+		StatusModelVersion: statusmodel.ModelVersion,
+		ModelRevision:      "revision",
+		ObservedAt:         "2026-08-29T00:00:00Z",
+		OverallState:       statusmodel.Healthy,
+	}
+	content := home(site, "revision", Evidence{
+		GeneratedAt: "2026-08-29T00:00:00Z",
+		Results:     []CheckResult{{Name: "legacy evidence", Status: "FAIL", Detail: "stale presentation"}},
+		Status:      &canonical,
+	}, time.Unix(0, 0))
+	if !strings.Contains(content, "Platform health: HEALTHY") {
+		t.Fatalf("portal did not use canonical semantic status: %s", content)
 	}
 }
 

@@ -208,16 +208,15 @@ func AuditGuests(ctx context.Context, client *Client, plan Plan) ([]GuestAudit, 
 		if audits[i].Ownership != PlatformOwnership || audits[i].Result != "PASS" {
 			continue
 		}
-		var config map[string]any
-		var configErr error
-		if audits[i].Kind == KindQEMU {
-			configErr = client.QEMUConfig(ctx, plan.Node, audits[i].VMID, &config)
-		} else {
-			configErr = client.LXCConfig(ctx, plan.Node, audits[i].VMID, &config)
-		}
+		kind, config, configErr := client.GuestConfig(ctx, plan.Node, audits[i].VMID)
 		if configErr != nil {
 			audits[i].Result = "DRIFT"
 			audits[i].Detail = fmt.Sprintf("owned guest configuration could not be inspected: %v", configErr)
+			continue
+		}
+		if kind != audits[i].Kind {
+			audits[i].Result = "DRIFT"
+			audits[i].Detail = fmt.Sprintf("kind is %s; expected %s", kind, audits[i].Kind)
 			continue
 		}
 		for _, expected := range plan.Guests {

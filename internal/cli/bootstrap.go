@@ -251,12 +251,12 @@ func runBootstrap(args []string, out interface{ Write([]byte) (int, error) }) er
 	if err := proxmox.ConfigureManagementNetwork(ctx, runner, s.BootstrapAddress, *initialUser); err != nil {
 		return err
 	}
-	if s.StorageProfile == "single-disk" {
-		if err := client.EnsureDirectoryStorageContent(ctx, "local", "/var/lib/vz", []string{"backup", "images", "rootdir", "snippets", "vztmpl"}); err != nil {
-			return fmt.Errorf("ensure single-disk Proxmox storage: %w", err)
-		}
-	} else if err := client.EnsureDirectoryStorageContent(ctx, "local", "/var/lib/vz", []string{"images", "rootdir", "vztmpl", "snippets"}); err != nil {
-		return fmt.Errorf("ensure local Proxmox artifact storage: %w", err)
+	localContent, err := storage.LocalStorageContent(s.StorageProfile)
+	if err != nil {
+		return err
+	}
+	if err := client.EnsureDirectoryStorageContent(ctx, "local", "/var/lib/vz", localContent); err != nil {
+		return fmt.Errorf("ensure local Proxmox storage: %w", err)
 	}
 	trunkChanged := false
 	if discovery.Trunk != nil && discovery.Trunk.Bridge != "vmbr1" {
@@ -461,7 +461,7 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	builderCreated, err := proxmox.EnsureBuilderVM(ctx, client, plan, publicKey)
 	emitTiming(out, "builder_vm_provisioning", provisionStarted)
 	builderAddress := ""
-	builderRunner := proxmox.SSHRunner{KnownHosts: builderKnownHosts, StrictHostKey: "accept-new", IdentityFile: identityFile}
+	builderRunner := proxmox.SSHRunner{KnownHosts: builderKnownHosts, StrictHostKey: "yes", IdentityFile: identityFile}
 	builderSSHUser := "root"
 	buildSucceeded := false
 	builderOutput := ""
@@ -505,6 +505,13 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	builderAddress, err = proxmox.WaitForQEMUIPv4(ctx, client, plan.Node, model.BuilderVMID, 60, 5*time.Second)
 	if err != nil {
 		return err
+	}
+	builderHostKey, err := waitForBuilderHostKey(ctx, hostRunner, hostAddress, hostUser, model.BuilderVMID, 60, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("HOLD: temporary appliance builder host-key enrollment failed: %w", err)
+	}
+	if err := sshconfig.AddHostKey(builderKnownHosts, builderAddress, builderHostKey); err != nil {
+		return fmt.Errorf("enroll temporary appliance builder host key: %w", err)
 	}
 	if err := proxmox.WaitForSSH(ctx, builderRunner, builderAddress, builderSSHUser, 60, 5*time.Second); err != nil {
 		return fmt.Errorf("HOLD: temporary appliance builder SSH is not ready: %w", err)
@@ -552,7 +559,8 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 		return fmt.Errorf("protect temporary artifact archive: %w", err)
 	}
 	returnStarted := time.Now()
-	if err := builderRunner.RunStream(ctx, builderAddress, builderSSHUser, returnCommand, archiveFile); err != nil {
+	boundedArchive := &boundedBuilderArchive{writer: archiveFile, limit: maxBuilderArchiveBytes}
+	if err := builderRunner.RunStream(ctx, builderAddress, builderSSHUser, returnCommand, boundedArchive); err != nil {
 		_ = archiveFile.Close()
 		return fmt.Errorf("retrieve qualified appliance evidence: %w", err)
 	}
@@ -577,6 +585,39 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	return nil
 }
 
+func waitForBuilderHostKey(ctx context.Context, runner proxmox.CommandRunner, address, user string, vmid, attempts int, interval time.Duration) (string, error) {
+	if runner == nil {
+		return "", errors.New("authenticated Proxmox host runner is required")
+	}
+	if address == "" || user == "" || vmid <= 0 || attempts < 1 {
+		return "", errors.New("builder host-key enrollment identity is invalid")
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", fmt.Errorf("builder host-key enrollment cancelled: %w", err)
+		}
+		key, err := proxmox.ReadBuilderHostKey(ctx, runner, address, user, vmid)
+		if err == nil {
+			return key, nil
+		}
+		lastErr = err
+		if attempt+1 < attempts {
+			timer := time.NewTimer(interval)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return "", fmt.Errorf("builder host-key enrollment cancelled: %w", ctx.Err())
+			case <-timer.C:
+			}
+		}
+	}
+	return "", fmt.Errorf("builder host key was not available after %d attempts: %w", attempts, lastErr)
+}
+
 func createBuilderKnownHosts() (string, error) {
 	file, err := os.CreateTemp("", "boetticher-builder-known-hosts-")
 	if err != nil {
@@ -596,6 +637,7 @@ func createBuilderKnownHosts() (string, error) {
 }
 
 const maxBuilderDiagnosticOutput = 32 << 10
+const maxBuilderArchiveBytes int64 = 8 << 30
 
 func persistBuilderDiagnostics(ctx context.Context, runner proxmox.CommandRunner, address, user, siteDir string) error {
 	return persistBuilderDiagnosticsWithOutput(ctx, runner, address, user, siteDir, "")
@@ -652,6 +694,21 @@ func (b *boundedBuilderOutput) Write(data []byte) (int, error) {
 		}
 	}
 	return len(data), nil
+}
+
+type boundedBuilderArchive struct {
+	writer  interface{ Write([]byte) (int, error) }
+	limit   int64
+	written int64
+}
+
+func (b *boundedBuilderArchive) Write(data []byte) (int, error) {
+	if int64(len(data)) > b.limit-b.written {
+		return 0, fmt.Errorf("builder artifact archive exceeds maximum size of %d bytes", b.limit)
+	}
+	written, err := b.writer.Write(data)
+	b.written += int64(written)
+	return written, err
 }
 
 func (b *boundedBuilderOutput) String() string { return b.buffer.String() }

@@ -61,3 +61,26 @@ func TestDescriptorOperationsRejectSymlinkSwaps(t *testing.T) {
 		t.Fatalf("external sentinel changed: %q, %v", got, err)
 	}
 }
+
+func TestWriteFileFromStreamsAtomicallyAndEnforcesLimit(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "output")
+	if err := os.WriteFile(target, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	written, err := WriteFileFrom(target, strings.NewReader("new content"), 0600, 32)
+	if err != nil || written != int64(len("new content")) {
+		t.Fatalf("bounded stream write = %d, %v", written, err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil || string(data) != "new content" {
+		t.Fatalf("streamed content = %q, %v", data, err)
+	}
+	if _, err := WriteFileFrom(target, strings.NewReader("too large"), 0600, 4); err == nil {
+		t.Fatal("oversized stream was accepted")
+	}
+	data, err = os.ReadFile(target)
+	if err != nil || string(data) != "new content" {
+		t.Fatalf("oversized stream changed destination = %q, %v", data, err)
+	}
+}

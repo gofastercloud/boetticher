@@ -55,7 +55,7 @@ func ComposeConfig(dir string, config model.SiteConfig) (model.Site, error) {
 }
 
 func LoadConfig(dir string) (model.SiteConfig, error) {
-	data, err := pathguard.ReadFile(filepath.Join(dir, "site.yml"))
+	data, err := pathguard.ReadFileLimited(filepath.Join(dir, "site.yml"), 1<<20)
 	if err != nil {
 		return model.SiteConfig{}, fmt.Errorf("read site.yml: %w", err)
 	}

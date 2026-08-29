@@ -53,78 +53,60 @@ func Inventory(s model.Site) (string, error) {
 		return "", err
 	}
 	b.WriteString(revision + "\n\n")
-	b.WriteString("[proxmox]\n")
+	groups := map[string][]model.Component{
+		"dns": {}, "monitor": {}, "portal": {}, "logging": {},
+		"tailnet-router": {}, "litellm": {}, "printer": {}, "aiops": {}, "gatus": {},
+	}
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		groups["firewall"] = nil
+	}
+	var proxmoxComponent *model.Component
 	for _, component := range components {
 		if component.Name == "lab-proxmox-01" {
-			address := component.Address
-			if s.BootstrapAddress != "" {
-				address = s.BootstrapAddress
-			}
-			writeHostAt(&b, component, address, false)
+			copy := component
+			proxmoxComponent = &copy
 		}
-	}
-	b.WriteString("\n[dns]\n")
-	for _, component := range components {
 		if component.Role == "DNS/NTP" {
-			writeHost(&b, component, true)
+			groups["dns"] = append(groups["dns"], component)
 		}
-	}
-	b.WriteString("\n[monitor]\n")
-	for _, component := range components {
 		if component.Name == "lab-monitor-01" {
-			writeHost(&b, component, true)
+			groups["monitor"] = append(groups["monitor"], component)
 		}
-	}
-	b.WriteString("\n[portal]\n")
-	for _, component := range components {
 		if component.Name == "lab-portal-01" {
-			writeHost(&b, component, true)
+			groups["portal"] = append(groups["portal"], component)
 		}
-	}
-	b.WriteString("\n[logging]\n")
-	for _, component := range components {
 		if component.Name == "lab-log-01" {
-			writeHost(&b, component, true)
+			groups["logging"] = append(groups["logging"], component)
 		}
-	}
-	b.WriteString("\n[tailnet-router]\n")
-	for _, component := range components {
-		if component.Module == "tailnet-router" {
-			writeHost(&b, component, true)
-		}
-	}
-	b.WriteString("\n[litellm]\n")
-	for _, component := range components {
-		if component.Module == "litellm" {
-			writeHost(&b, component, true)
-		}
-	}
-	b.WriteString("\n[printer]\n")
-	for _, component := range components {
-		if component.Module == "printer" {
-			writeHost(&b, component, true)
-		}
-	}
-	b.WriteString("\n[aiops]\n")
-	for _, component := range components {
-		if component.Module == "aiops" {
-			writeHost(&b, component, true)
+		switch component.Module {
+		case "tailnet-router", "litellm", "printer", "aiops", "gatus":
+			groups[component.Module] = append(groups[component.Module], component)
 		}
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		b.WriteString("\n[firewall]\n")
 		for _, component := range components {
 			if component.Name == "lab-fw-01" {
-				writeHost(&b, component, true)
+				groups["firewall"] = append(groups["firewall"], component)
+				break
 			}
 		}
 	}
-	b.WriteString("\n[gatus]\n")
-	for _, component := range components {
-		if component.Module == "gatus" {
-			writeHost(&b, component, true)
-		}
+	if proxmoxComponent == nil {
+		return "", errors.New("Proxmox component is missing from the model")
 	}
+	b.WriteString("[proxmox]\n")
+	address := proxmoxComponent.Address
+	if s.BootstrapAddress != "" {
+		address = s.BootstrapAddress
+	}
+	writeHostAt(&b, *proxmoxComponent, address)
+	for _, group := range []string{"dns", "monitor", "portal", "logging", "tailnet-router", "litellm", "printer", "aiops"} {
+		writeInventoryGroup(&b, group, groups[group])
+	}
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		writeInventoryGroup(&b, "firewall", groups["firewall"])
+	}
+	writeInventoryGroup(&b, "gatus", groups["gatus"])
 	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\ntailnet-router\nlitellm\nprinter\naiops\ngatus\n")
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		b.WriteString("firewall\n")
@@ -134,11 +116,14 @@ func Inventory(s model.Site) (string, error) {
 	return b.String(), nil
 }
 
-func writeHost(b *strings.Builder, component model.Component, throughBastion bool) {
-	writeHostAt(b, component, component.Address, throughBastion)
+func writeInventoryGroup(b *strings.Builder, name string, components []model.Component) {
+	fmt.Fprintf(b, "\n[%s]\n", name)
+	for _, component := range components {
+		writeHostAt(b, component, component.Address)
+	}
 }
 
-func writeHostAt(b *strings.Builder, component model.Component, address string, throughBastion bool) {
+func writeHostAt(b *strings.Builder, component model.Component, address string) {
 	// The generated deployment inventory is used only during the temporary
 	// root-SSH convergence window. Durable labadmin has no become boundary.
 	fmt.Fprintf(b, "%s ansible_host=%s ansible_user=root", component.Name, address)
