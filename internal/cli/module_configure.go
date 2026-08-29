@@ -631,12 +631,6 @@ func configureUSB(input io.Reader, out, errOut io.Writer, opts moduleConfigureOp
 			setUSBBinding(config, name, requirement.Name, candidate)
 			continue
 		}
-		if !enabled && !requirement.Required {
-			continue
-		}
-		if !enabled && !found {
-			continue
-		}
 		if !enabled {
 			continue
 		}

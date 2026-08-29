@@ -45,11 +45,11 @@ func main() {
 			fatalf("-%s is required", name)
 		}
 	}
-	data, err := os.ReadFile(*reportPath)
+	data, err := artifacts.ReadQualificationInput(*reportPath, "Trivy report")
 	if err != nil {
 		fatalf("read Trivy report: %v", err)
 	}
-	summary, err := summarizeTrivyReport(data)
+	summary, fixableFindings, secretFindings, err := analyzeTrivyReport(data)
 	if err != nil {
 		fatalf("decode Trivy report: %v", err)
 	}
@@ -70,7 +70,7 @@ func main() {
 	}
 	evidence.TrivyReportSHA256 = hashBytes(data)
 	if *provenancePath != "" {
-		provenanceData, readErr := os.ReadFile(*provenancePath)
+		provenanceData, readErr := artifacts.ReadQualificationInput(*provenancePath, "builder provenance")
 		if readErr != nil {
 			fatalf("read builder provenance: %v", readErr)
 		}
@@ -84,10 +84,10 @@ func main() {
 	evidence, err = artifacts.QualifyEvidence(evidence, summary)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "qualify artifact: %v\n", err)
-		for _, finding := range fixableCriticalFindings(data) {
+		for _, finding := range fixableFindings {
 			fmt.Fprintf(os.Stderr, "Trivy fixable CRITICAL: %s package=%s installed=%s fixed=%s\n", finding.id, finding.packageName, finding.installed, finding.fixed)
 		}
-		for _, finding := range secretFindings(data) {
+		for _, finding := range secretFindings {
 			fmt.Fprintf(os.Stderr, "Trivy secret: target=%s rule=%s category=%s title=%s lines=%d-%d\n", finding.target, finding.ruleID, finding.category, finding.title, finding.startLine, finding.endLine)
 		}
 		os.Exit(1)
@@ -107,53 +107,18 @@ type secretFinding struct {
 	startLine, endLine              int
 }
 
-func fixableCriticalFindings(data []byte) []fixableCriticalFinding {
+func analyzeTrivyReport(data []byte) (artifacts.ScanSummary, []fixableCriticalFinding, []secretFinding, error) {
 	var report trivyReport
 	if err := json.Unmarshal(data, &report); err != nil {
-		return nil
-	}
-	findings := make([]fixableCriticalFinding, 0)
-	for _, result := range report.Results {
-		for _, vulnerability := range result.Vulnerabilities {
-			if vulnerability.Severity == "CRITICAL" && vulnerability.FixedVersion != "" {
-				findings = append(findings, fixableCriticalFinding{
-					id: vulnerability.VulnerabilityID, packageName: vulnerability.PkgName,
-					installed: vulnerability.InstalledVersion, fixed: vulnerability.FixedVersion,
-				})
-			}
-		}
-	}
-	return findings
-}
-
-func secretFindings(data []byte) []secretFinding {
-	var report trivyReport
-	if err := json.Unmarshal(data, &report); err != nil {
-		return nil
-	}
-	findings := make([]secretFinding, 0)
-	for _, result := range report.Results {
-		for _, secret := range result.Secrets {
-			findings = append(findings, secretFinding{
-				target: result.Target, ruleID: secret.RuleID, category: secret.Category,
-				title: secret.Title, startLine: secret.StartLine, endLine: secret.EndLine,
-			})
-		}
-	}
-	return findings
-}
-
-func summarizeTrivyReport(data []byte) (artifacts.ScanSummary, error) {
-	var report trivyReport
-	if err := json.Unmarshal(data, &report); err != nil {
-		return artifacts.ScanSummary{}, err
+		return artifacts.ScanSummary{}, nil, nil, err
 	}
 	if report.Results == nil {
-		return artifacts.ScanSummary{}, fmt.Errorf("Results is missing")
+		return artifacts.ScanSummary{}, nil, nil, fmt.Errorf("Results is missing")
 	}
 	summary := artifacts.ScanSummary{Completed: true}
+	fixable := make([]fixableCriticalFinding, 0)
+	secrets := make([]secretFinding, 0)
 	for _, result := range report.Results {
-		summary.Secrets += len(result.Secrets)
 		for _, vulnerability := range result.Vulnerabilities {
 			switch vulnerability.Severity {
 			case "CRITICAL":
@@ -161,13 +126,24 @@ func summarizeTrivyReport(data []byte) (artifacts.ScanSummary, error) {
 					summary.UnfixedCritical++
 				} else {
 					summary.FixableCritical++
+					fixable = append(fixable, fixableCriticalFinding{
+						id: vulnerability.VulnerabilityID, packageName: vulnerability.PkgName,
+						installed: vulnerability.InstalledVersion, fixed: vulnerability.FixedVersion,
+					})
 				}
 			case "HIGH":
 				summary.High++
 			}
 		}
+		summary.Secrets += len(result.Secrets)
+		for _, secret := range result.Secrets {
+			secrets = append(secrets, secretFinding{
+				target: result.Target, ruleID: secret.RuleID, category: secret.Category,
+				title: secret.Title, startLine: secret.StartLine, endLine: secret.EndLine,
+			})
+		}
 	}
-	return summary, nil
+	return summary, fixable, secrets, nil
 }
 
 func hashFile(path, name string) string {

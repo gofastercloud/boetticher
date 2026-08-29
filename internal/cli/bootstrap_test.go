@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -85,6 +86,20 @@ func TestPersistBuilderDiagnosticsIsBoundedAndPrivate(t *testing.T) {
 	info, err := os.Stat(path)
 	if err != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("builder diagnostic permissions = %v %o", err, info.Mode().Perm())
+	}
+}
+
+func TestBoundedBuilderArchiveRejectsOversizedReturn(t *testing.T) {
+	var buffer bytes.Buffer
+	writer := &boundedBuilderArchive{writer: &buffer, limit: 4}
+	if _, err := writer.Write([]byte("1234")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write([]byte("5")); err == nil {
+		t.Fatal("oversized builder archive return was accepted")
+	}
+	if buffer.String() != "1234" {
+		t.Fatalf("oversized builder archive changed output: %q", buffer.String())
 	}
 }
 

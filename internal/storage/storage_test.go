@@ -110,6 +110,20 @@ func TestSingleDiskPlanDoesNotRequireDevice(t *testing.T) {
 	}
 }
 
+func TestLocalStorageContentIsProfileSpecificAndDeterministic(t *testing.T) {
+	single, err := LocalStorageContent("single-disk")
+	if err != nil || strings.Join(single, ",") != "backup,images,rootdir,snippets,vztmpl" {
+		t.Fatalf("single-disk local content = %v, %v", single, err)
+	}
+	dedicated, err := LocalStorageContent("dedicated-data-disk")
+	if err != nil || strings.Join(dedicated, ",") != "images,rootdir,snippets,vztmpl" {
+		t.Fatalf("dedicated-data-disk local content = %v, %v", dedicated, err)
+	}
+	if _, err := LocalStorageContent("unknown"); err == nil {
+		t.Fatal("unknown storage profile was accepted")
+	}
+}
+
 func TestStatusCommandAndParserUseFixedReadOnlyFields(t *testing.T) {
 	command, err := StatusCommand("/dev/disk/by-id/ata-example-data")
 	if err != nil {

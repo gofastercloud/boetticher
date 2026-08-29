@@ -124,6 +124,21 @@ func TestReadGuestHostKeyUsesAuthenticatedProxmoxBoundary(t *testing.T) {
 	}
 }
 
+func TestReadBuilderHostKeyUsesAuthenticatedHostBoundaryForNonRoot(t *testing.T) {
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA builder\n"
+	runner := &fakeRunner{output: []byte(`{"exited":1,"exitcode":0,"out-data":"` + strings.TrimSuffix(key, " builder\n") + `\n"}`)}
+	got, err := ReadBuilderHostKey(context.Background(), runner, "192.0.2.10", "labadmin", 190)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != strings.TrimSuffix(key, " builder\n") {
+		t.Fatalf("ReadBuilderHostKey() = %q", got)
+	}
+	if !strings.Contains(runner.command, "sudo -n /usr/sbin/qm guest exec 190 -- /bin/cat /etc/ssh/ssh_host_ed25519_key.pub") {
+		t.Fatalf("builder host key was not read through the authenticated host boundary: %q", runner.command)
+	}
+}
+
 func TestSSHRunnerRejectsExecutableConfigBeforeStartingSSH(t *testing.T) {
 	path := t.TempDir() + "/boetticher.conf"
 	if err := os.WriteFile(path, []byte("Host lab-dns-01\n    LocalCommand id\n"), 0600); err != nil {

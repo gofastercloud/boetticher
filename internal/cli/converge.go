@@ -140,7 +140,7 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 	aiopsEnabled := modules.IsEnabled(s, "aiops")
 	secretValues := map[string]string{}
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		ddnsTSIG, loadErr := site.LoadDDNSTSIG(*siteDir, s, *ageIdentity)
+		ddnsTSIG, loadErr := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "ddns_tsig_secret")
 		if loadErr != nil {
 			return fmt.Errorf("load encrypted DDNS TSIG material: %w", loadErr)
 		}
@@ -275,8 +275,14 @@ func runDeploy(args []string, out interface{ Write([]byte) (int, error) }) error
 		if err := proxmoxClient.EnsureDirectoryStorage(context.Background(), backup.DedicatedStorageID, backup.DedicatedStoragePath); err != nil {
 			return fmt.Errorf("ensure dedicated backup storage: %w", err)
 		}
-	} else if err := proxmoxClient.EnsureDirectoryStorageContent(context.Background(), "local", "/var/lib/vz", []string{"backup", "images", "rootdir", "vztmpl", "snippets"}); err != nil {
-		return fmt.Errorf("ensure single-disk Proxmox storage: %w", err)
+	} else {
+		localContent, contentErr := storage.LocalStorageContent(s.StorageProfile)
+		if contentErr != nil {
+			return contentErr
+		}
+		if err := proxmoxClient.EnsureDirectoryStorageContent(context.Background(), "local", "/var/lib/vz", localContent); err != nil {
+			return fmt.Errorf("ensure local Proxmox storage: %w", err)
+		}
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		firewallGuest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}

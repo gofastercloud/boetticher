@@ -24,13 +24,6 @@ type CommandRunner interface {
 	Run(ctx context.Context, address, user, command string) ([]byte, error)
 }
 
-// StreamCommandRunner exposes remote stdout without materialising it in a
-// byte slice. It is used for artifact-sized builder output.
-type StreamCommandRunner interface {
-	RunStream(ctx context.Context, address, user, command string, stdout io.Writer) error
-	RunArgsStream(ctx context.Context, address, user string, commandArgs []string, stdout io.Writer) error
-}
-
 // CheckBuilderCapacity verifies the disposable builder has enough free space
 // for the full appliance construction before any build work starts.
 func CheckBuilderCapacity(ctx context.Context, runner CommandRunner, address, user string, minimumFreeGiB int) error {
@@ -713,16 +706,29 @@ func RestoreTemporaryRootAccess(ctx context.Context, runner CommandRunner, addre
 }
 
 const guestHostPublicKeyPath = "/var/lib/boetticher/identity/ssh/ssh_host_ed25519_key.pub"
+const builderHostPublicKeyPath = "/etc/ssh/ssh_host_ed25519_key.pub"
 
 // ReadGuestHostKey obtains the appliance's generated host key through the
 // already-authenticated Proxmox host boundary. It is intentionally separate
 // from ssh-keyscan: network observations cannot establish the identity used
 // for the subsequent root or credential-bearing connection.
 func ReadGuestHostKey(ctx context.Context, runner CommandRunner, address, user string, kind GuestKind, vmid int) (string, error) {
+	return readGuestHostKey(ctx, runner, address, user, kind, vmid, guestHostPublicKeyPath, true)
+}
+
+// ReadBuilderHostKey obtains the temporary builder's host key through the
+// already-authenticated Proxmox host boundary. The key is enrolled before the
+// builder's first network SSH connection; ssh-keyscan is deliberately not a
+// trust source.
+func ReadBuilderHostKey(ctx context.Context, runner CommandRunner, address, user string, vmid int) (string, error) {
+	return readGuestHostKey(ctx, runner, address, user, KindQEMU, vmid, builderHostPublicKeyPath, false)
+}
+
+func readGuestHostKey(ctx context.Context, runner CommandRunner, address, user string, kind GuestKind, vmid int, publicKeyPath string, rootOnly bool) (string, error) {
 	if runner == nil {
 		return "", errors.New("guest host-key reader is required")
 	}
-	if user != "root" {
+	if rootOnly && user != "root" {
 		return "", errors.New("guest host-key read requires the root transport")
 	}
 	if vmid <= 0 {
@@ -731,12 +737,13 @@ func ReadGuestHostKey(ctx context.Context, runner CommandRunner, address, user s
 	var command string
 	switch kind {
 	case KindQEMU:
-		command = fmt.Sprintf("/usr/sbin/qm guest exec %d -- /bin/cat %s", vmid, guestHostPublicKeyPath)
+		command = fmt.Sprintf("/usr/sbin/qm guest exec %d -- /bin/cat %s", vmid, publicKeyPath)
 	case KindLXC:
-		command = fmt.Sprintf("/usr/sbin/pct exec %d -- /bin/cat %s", vmid, guestHostPublicKeyPath)
+		command = fmt.Sprintf("/usr/sbin/pct exec %d -- /bin/cat %s", vmid, publicKeyPath)
 	default:
 		return "", fmt.Errorf("guest host-key read does not support guest kind %q", kind)
 	}
+	command = privilegedCommand(user, command)
 	output, err := runner.Run(ctx, address, user, command)
 	if err != nil {
 		return "", fmt.Errorf("read guest host key through Proxmox: %w", err)

@@ -16,10 +16,6 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
-func runModule(args []string, out interface{ Write([]byte) (int, error) }) error {
-	return runModuleWithInput(args, os.Stdin, out, os.Stderr)
-}
-
 func runModuleWithInput(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }) error {
 	if len(args) == 0 {
 		return errors.New("usage: boetticher module list|show|plan|configure|enable|disable|status|secrets")
@@ -44,14 +40,6 @@ func runModuleWithInput(args []string, input io.Reader, out, errOut interface{ W
 	default:
 		return fmt.Errorf("unknown module command %q", args[0])
 	}
-}
-
-// runModules is the registry-driven plural namespace for first-party module
-// operations. The lifecycle implementation remains the established generic
-// module path so module-specific commands cannot acquire a second deploy
-// engine or different ownership semantics.
-func runModules(args []string, out interface{ Write([]byte) (int, error) }) error {
-	return runModulesWithInput(args, os.Stdin, out, os.Stderr)
 }
 
 func runModulesWithInput(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }) error {

@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 )
@@ -46,6 +47,18 @@ func render(s model.Site, generatedAt time.Time, knownHosts string) (string, err
 		return "", err
 	}
 	identity := model.ExpandUserPath(s.SSHIdentityFile)
+	if identity != "" {
+		identity, err = quoteOpenSSHPath("SSH identity file", identity)
+		if err != nil {
+			return "", err
+		}
+	}
+	if knownHosts != "" {
+		knownHosts, err = quoteOpenSSHPath("SSH known-hosts file", knownHosts)
+		if err != nil {
+			return "", err
+		}
+	}
 	endpoint := s.BootstrapAddress
 	if endpoint == "" {
 		return "", errors.New("bootstrap endpoint is not configured; record the upstream Proxmox address before generating SSH configuration")
@@ -69,6 +82,16 @@ func render(s model.Site, generatedAt time.Time, knownHosts string) (string, err
 		writeHost(&b, uniqueStrings(aliases), m.Address, m.SSHUser, m.Hostname+"."+s.Network.Domain, identity, knownHosts, true, false)
 	}
 	return b.String(), nil
+}
+
+func quoteOpenSSHPath(label, value string) (string, error) {
+	if value == "" {
+		return "", fmt.Errorf("%s path is empty", label)
+	}
+	if strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		return "", fmt.Errorf("%s path contains control characters", label)
+	}
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(value) + `"`, nil
 }
 
 func RenderBastionPolicy(s model.Site) (string, error) {

@@ -12,27 +12,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The site contract intentionally uses a small, deterministic YAML subset.
-// JSON is also accepted because JSON is valid YAML and is useful for tooling.
-func ParseSite(data []byte) (Site, error) {
-	var site Site
-	if err := json.Unmarshal(data, &site); err == nil {
-		return site, nil
-	}
-	value, err := parseYAML(data)
-	if err != nil {
-		return Site{}, err
-	}
-	normalized, err := json.Marshal(value)
-	if err != nil {
-		return Site{}, err
-	}
-	if err := json.Unmarshal(normalized, &site); err != nil {
-		return Site{}, fmt.Errorf("decode site.yml: %w", err)
-	}
-	return site, nil
-}
-
 // ParseSiteConfig is the strict v0.4 site.yml decoder. The version probe gives
 // operators a concise recreate-site message before strict decoding reports
 // fields that are not part of the v3 configuration.
@@ -161,14 +140,6 @@ func ParseDocument(data []byte) (any, error) {
 		return value, nil
 	}
 	return parseYAML(data)
-}
-
-func RenderSite(s Site) ([]byte, error) {
-	data, err := json.MarshalIndent(s.Normalize(), "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	return append(data, '\n'), nil
 }
 
 type yamlLine struct {

@@ -159,10 +159,9 @@ func runVerify(args []string, out interface{ Write([]byte) (int, error) }) error
 	}
 	semantic := statusmodel.FromLegacy(revision, evidence.GeneratedAt, semanticChecks)
 	document := struct {
-		ModelRevision string             `json:"model_revision"`
-		Evidence      portal.Evidence    `json:"evidence"`
-		Status        statusmodel.Report `json:"status"`
-	}{ModelRevision: revision, Evidence: evidence, Status: semantic}
+		ModelRevision string          `json:"model_revision"`
+		Evidence      portal.Evidence `json:"evidence"`
+	}{ModelRevision: revision, Evidence: evidence}
 	data, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {
 		return err

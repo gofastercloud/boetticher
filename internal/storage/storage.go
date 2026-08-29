@@ -22,6 +22,20 @@ const (
 	BackupLVPercent  = "20%VG"
 )
 
+// LocalStorageContent is the fixed content contract for Proxmox's built-in
+// directory storage. Dedicated data storage owns backups separately, so local
+// backup content is required only by the single-disk profile.
+func LocalStorageContent(profile string) ([]string, error) {
+	switch profile {
+	case "single-disk":
+		return []string{"backup", "images", "rootdir", "snippets", "vztmpl"}, nil
+	case "dedicated-data-disk":
+		return []string{"images", "rootdir", "snippets", "vztmpl"}, nil
+	default:
+		return nil, fmt.Errorf("unsupported storage profile %q", profile)
+	}
+}
+
 // Plan is the complete, fixed V1 storage contract. It describes only
 // boetticher-owned storage and deliberately has no knobs for arbitrary LVM
 // layouts or additional storage backends.

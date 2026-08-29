@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"regexp"
 	"sort"
 	"strings"
 
@@ -20,8 +19,6 @@ const (
 )
 
 var PublicUpstreams = []string{"https://cloudflare-dns.com/dns-query", "https://dns.google/dns-query"}
-
-var hostnameLabel = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
 
 type Plan struct {
 	ModelRevision                string              `json:"model_revision"`
@@ -318,7 +315,7 @@ func clientLabel(raw string) (string, error) {
 	}
 	parts := strings.Split(value, ".")
 	for _, part := range parts {
-		if !hostnameLabel.MatchString(part) {
+		if !model.IsDNSLabel(part) {
 			return "", fmt.Errorf("DHCP hostname %q contains an unsafe label", raw)
 		}
 	}

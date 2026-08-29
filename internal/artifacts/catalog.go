@@ -15,6 +15,7 @@ import (
 
 	buildbundle "github.com/gofastercloud/boetticher"
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/pathguard"
 )
 
 // Definition describes the checked-in build contract for an official
@@ -24,6 +25,8 @@ import (
 type Definition struct {
 	Name         string
 	ArtifactName string
+	BuildTarget  string
+	ScanTarget   string
 	Version      string
 	Kind         string
 	Architecture string
@@ -119,7 +122,7 @@ func LoadEvidence(root, name string) (Evidence, error) {
 	if err := validateEvidenceEntry(path); err != nil {
 		return Evidence{}, fmt.Errorf("inspect artifact evidence %s: %w", name, err)
 	}
-	data, err := os.ReadFile(path)
+	data, err := pathguard.ReadFileLimited(path, maxEvidenceJSONBytes)
 	if err != nil {
 		return Evidence{}, fmt.Errorf("read artifact evidence %s: %w", name, err)
 	}
@@ -268,23 +271,39 @@ var commonDefinitionInputs = []string{
 
 func Definitions() []Definition {
 	return []Definition{
-		{Name: "base", ArtifactName: BaseName, Version: BaseVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append([]string(nil), commonDefinitionInputs...)},
-		{Name: "dns", ArtifactName: "boetticher-dns-blocky", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/dns", "internal/dns", "internal/model", "internal/modules", "cmd/render-blocky-config")},
-		{Name: "logging", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/logging", "internal/logging", "cmd/boetticher-log-query")},
-		{Name: "monitoring", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/monitoring")},
-		{Name: "firewall", Version: ModuleVersion, Kind: "qemu", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/firewall", "scripts/smoke-firewall-image.sh")},
-		{Name: "portal", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/portal")},
-		{Name: "tailnet-router", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/tailnet-router", "internal/model", "internal/modules")},
-		{Name: "litellm", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/litellm", "internal/model", "internal/modules")},
-		{Name: "printer", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/printer", "internal/model", "internal/modules", "internal/usbexport")},
-		{Name: "aiops", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/aiops", "internal/aiops", "internal/model", "internal/modules", "cmd/boetticher-aiops")},
-		{Name: "gatus", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/gatus", "internal/model", "internal/modules", "internal/gatus")},
+		{Name: "base", ArtifactName: BaseName, BuildTarget: "image-base", ScanTarget: BaseName, Version: BaseVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append([]string(nil), commonDefinitionInputs...)},
+		{Name: "dns", ArtifactName: "boetticher-dns-blocky", BuildTarget: "image-dns-blocky", ScanTarget: "boetticher-dns-blocky", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/dns", "internal/dns", "internal/model", "internal/modules", "cmd/render-blocky-config")},
+		{Name: "logging", ArtifactName: "boetticher-logging", BuildTarget: "image-logging", ScanTarget: "boetticher-logging", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/logging", "internal/logging", "cmd/boetticher-log-query")},
+		{Name: "monitoring", ArtifactName: "boetticher-monitoring", BuildTarget: "image-monitoring", ScanTarget: "boetticher-monitoring", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/monitoring")},
+		{Name: "portal", ArtifactName: "boetticher-portal", BuildTarget: "image-portal", ScanTarget: "boetticher-portal", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/portal")},
+		{Name: "firewall", ArtifactName: "boetticher-firewall", BuildTarget: "image-firewall", ScanTarget: "boetticher-firewall", Version: ModuleVersion, Kind: "qemu", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/firewall", "scripts/smoke-firewall-image.sh")},
+		{Name: "tailnet-router", ArtifactName: "boetticher-tailnet-router", BuildTarget: "image-tailnet-router", ScanTarget: "boetticher-tailnet-router", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/tailnet-router", "internal/model", "internal/modules")},
+		{Name: "litellm", ArtifactName: "boetticher-litellm", BuildTarget: "image-litellm", ScanTarget: "boetticher-litellm", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/litellm", "internal/model", "internal/modules")},
+		{Name: "printer", ArtifactName: "boetticher-printer", BuildTarget: "image-printer", ScanTarget: "boetticher-printer", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/printer", "internal/model", "internal/modules", "internal/usbexport")},
+		{Name: "aiops", ArtifactName: "boetticher-aiops", BuildTarget: "image-aiops", ScanTarget: "boetticher-aiops", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/aiops", "internal/aiops", "internal/model", "internal/modules", "cmd/boetticher-aiops")},
+		{Name: "gatus", ArtifactName: "boetticher-gatus", BuildTarget: "image-gatus", ScanTarget: "boetticher-gatus", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/gatus", "internal/model", "internal/modules", "internal/gatus")},
 	}
 }
 
 func Lookup(module string) (Definition, bool) {
 	for _, definition := range Definitions() {
 		if definition.Name == module {
+			return definition, true
+		}
+	}
+	return Definition{}, false
+}
+
+// DefinitionForArtifact resolves the one build/scan mapping for a concrete
+// artifact identity. Consumers use this instead of maintaining a second
+// target table.
+func DefinitionForArtifact(name string) (Definition, bool) {
+	for _, definition := range Definitions() {
+		artifactName := definition.ArtifactName
+		if artifactName == "" {
+			artifactName = "boetticher-" + definition.Name
+		}
+		if artifactName == name {
 			return definition, true
 		}
 	}
@@ -325,7 +344,7 @@ func ValidateDefinitions() error {
 		if definition.Base != BaseName || definition.BaseVersion != BaseVersion {
 			return fmt.Errorf("artifact %s does not consume the pinned %s base", definition.Name, BaseName)
 		}
-		if definition.Architecture != Architecture || definition.Version == "" || definition.Kind == "" || len(definition.Inputs) == 0 {
+		if definition.Architecture != Architecture || definition.Version == "" || definition.Kind == "" || definition.BuildTarget == "" || definition.ScanTarget == "" || len(definition.Inputs) == 0 {
 			return fmt.Errorf("artifact %s has incomplete identity", definition.Name)
 		}
 		if _, err := definitionSHA256(definition); err != nil {
@@ -428,11 +447,45 @@ func QualificationInputSHA256(path, name string) (string, error) {
 	if info.Size() == 0 {
 		return "", fmt.Errorf("%s qualification input must be a non-empty regular file", name)
 	}
+	if info.Size() > MaxQualificationInputBytes {
+		return "", fmt.Errorf("%s qualification input exceeds maximum size of %d bytes", name, MaxQualificationInputBytes)
+	}
 	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
+	written, err := io.Copy(hash, io.LimitReader(file, MaxQualificationInputBytes+1))
+	if err != nil {
 		return "", fmt.Errorf("hash %s qualification input: %w", name, err)
 	}
+	if written > MaxQualificationInputBytes {
+		return "", fmt.Errorf("%s qualification input exceeds maximum size of %d bytes", name, MaxQualificationInputBytes)
+	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// MaxQualificationInputBytes bounds reports and metadata transferred into the
+// qualification evaluator before JSON parsing or hashing.
+const MaxQualificationInputBytes int64 = 128 << 20
+
+// ReadQualificationInput reads one bounded, regular qualification input.
+func ReadQualificationInput(path, name string) ([]byte, error) {
+	file, info, err := openEvidenceFile(path, name+" qualification input")
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	if info.Size() == 0 {
+		return nil, fmt.Errorf("%s qualification input must be a non-empty regular file", name)
+	}
+	if info.Size() > MaxQualificationInputBytes {
+		return nil, fmt.Errorf("%s qualification input exceeds maximum size of %d bytes", name, MaxQualificationInputBytes)
+	}
+	data, err := io.ReadAll(io.LimitReader(file, MaxQualificationInputBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read %s qualification input: %w", name, err)
+	}
+	if int64(len(data)) > MaxQualificationInputBytes {
+		return nil, fmt.Errorf("%s qualification input exceeds maximum size of %d bytes", name, MaxQualificationInputBytes)
+	}
+	return data, nil
 }
 
 func openEvidenceFile(path, description string) (*os.File, os.FileInfo, error) {

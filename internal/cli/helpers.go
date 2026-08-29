@@ -22,6 +22,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
+	statusmodel "github.com/gofastercloud/boetticher/internal/status"
 	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
@@ -315,6 +316,10 @@ func loadEvidence(dir, expectedRevision string) portal.Evidence {
 		Evidence      portal.Evidence `json:"evidence"`
 	}
 	if json.Unmarshal(data, &document) == nil && document.ModelRevision == expectedRevision {
+		report := loadStatusReport(dir, expectedRevision)
+		if report.StatusModelVersion == statusmodel.ModelVersion && report.ModelRevision == expectedRevision {
+			document.Evidence.Status = &report
+		}
 		return document.Evidence
 	}
 	return portal.Evidence{}

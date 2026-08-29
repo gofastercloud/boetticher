@@ -172,7 +172,7 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 			t.Fatalf("builder %s cloud-init contains secret authority material", name)
 		}
 	}
-	if !strings.Contains(files.UserData, "boetticher-build") || !strings.Contains(files.UserData, "scripts/scan-images.sh scan-images") || !strings.Contains(files.UserData, "boetticher-builder-ready") {
+	if !strings.Contains(files.UserData, "boetticher-build") || !strings.Contains(files.UserData, "scripts/scan-images.sh scan-images") || !strings.Contains(files.UserData, "boetticher-builder-ready") || !strings.Contains(files.UserData, "ssh-keygen -A") {
 		t.Fatal("builder cloud-init does not invoke the first-party build and qualification path")
 	}
 	if !strings.Contains(files.UserData, "./scripts/build-images.sh images image-base image-dns-blocky image-logging image-monitoring image-portal image-firewall") || !strings.Contains(files.UserData, "./scripts/scan-images.sh scan-images boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-portal boetticher-firewall") {

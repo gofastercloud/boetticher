@@ -625,51 +625,6 @@ func componentTags(s model.Site, name string) []string {
 	return nil
 }
 
-func componentMonitoring(s model.Site, name string) bool {
-	for _, component := range s.PlatformComponents() {
-		if component.Name == name {
-			return component.Monitoring
-		}
-	}
-	return false
-}
-
-func componentBackup(s model.Site, name string) bool {
-	for _, component := range s.PlatformComponents() {
-		if component.Name == name {
-			return component.Backup
-		}
-	}
-	return false
-}
-
-// Provision creates the declared foundation guests and is safe to re-run. It
-// never removes an object or changes an existing guest's disk/network shape;
-// drift is returned to the caller for an explicit remediation decision.
-func Provision(ctx context.Context, client *Client, plan Plan, _ ...string) error {
-	if client == nil {
-		return errors.New("Proxmox client is required")
-	}
-	for _, guest := range plan.Guests {
-		switch guest.Kind {
-		case KindQEMU:
-			// The gateway is handled by the staged deploy path so its
-			// reachability and policy gates run before dependent guests.
-			continue
-		case KindLXC:
-			if err := ensureLXC(ctx, client, plan, guest); err != nil {
-				return err
-			}
-			if err := client.EnsureLXCRunning(ctx, plan.Node, guest.VMID); err != nil {
-				return fmt.Errorf("start container %s: %w", guest.Name, err)
-			}
-		default:
-			return fmt.Errorf("unsupported guest kind %q", guest.Kind)
-		}
-	}
-	return nil
-}
-
 // ProvisionModule creates and starts only one declared module's guests. Core
 // uses this bounded operation to place readiness gates between dependency
 // stages; it does not create an alternate deployment path.
