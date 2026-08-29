@@ -4,7 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
   "streamdeck @ https://github.com/abcminiuser/python-elgato-streamdeck/archive/5537d6991e651d0d293000fa61ee330d6209c8e5.tar.gz",
-  "Pillow==11.3.0",
+  "Pillow==12.3.0",
   "httpx==0.28.1",
 ]
 
