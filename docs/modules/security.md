@@ -27,7 +27,8 @@ systemd sandbox where supported. Proxmox/root is a trusted host boundary, and a
 root compromise inside a guest is not treated as a controller compromise.
 
 The durable `labadmin` identity has no general sudo authority on Proxmox or
-appliances; the managed firewall exposes only fixed, read-only inspection
+appliances; it is an internal controller transport identity, not a supported
+routine operator administration path. The managed firewall exposes only fixed, read-only inspection
 helpers. Core uses the scoped Proxmox API token for lifecycle operations and a
 temporary root SSH transport for qualified convergence. Ansible connects as
 root without `become`; successful convergence removes the temporary root

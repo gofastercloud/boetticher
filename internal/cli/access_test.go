@@ -1,10 +1,40 @@
 package cli
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/site"
 )
+
+func TestAccessDescribesSupportedApplianceManagementBoundary(t *testing.T) {
+	siteDir := t.TempDir()
+	if err := site.SaveConfig(siteDir, model.ConfigFromSite(model.NewDefaultSite("installation", "age1example"))); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := runAccess([]string{"--site", siteDir}, &output); err != nil {
+		t.Fatal(err)
+	}
+	text := output.String()
+	for _, want := range []string{
+		"boetticher CLI",
+		"generated portal/status surfaces",
+		"native product UI/API",
+		"Proxmox console/exec",
+		"internal controller transport only",
+		"Routine appliance SSH and hand mutation are unsupported",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("access output missing %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "ssh firewall") || strings.Contains(text, "ssh dns") || strings.Contains(text, "ssh monitor") || strings.Contains(text, "ssh portal") {
+		t.Fatalf("access output presents routine appliance SSH: %s", text)
+	}
+}
 
 func TestPreferredAccessAliasUsesCanonicalNumberedDNSAlias(t *testing.T) {
 	component := model.Component{Name: "lab-dns-01", DNSAliases: []string{"dns", "dns01"}}

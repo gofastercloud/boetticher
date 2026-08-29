@@ -41,7 +41,8 @@ before deployment; the DHCP-assigned address is intentionally not part of
    unclaimed until the operator explicitly attaches a selected trunk. External
    mode requires an explicitly selected physical trunk, even when only one
    eligible NIC is discovered; use `--trunk-interface` for that selection.
-4. Run `boetticher ssh-config --site my-boetticher --force --install-include`.
+4. For the controller's internal deployment transport, run
+   `boetticher ssh-config --site my-boetticher --force --install-include`.
 5. Supply the Proxmox cluster CA PEM (for example, a securely copied
    `/etc/pve/pve-root-ca.pem` from the target) and run
    `boetticher bootstrap --site my-boetticher --recovery-confirmed
@@ -57,7 +58,8 @@ firewall appliance with one ordinary vNIC for WAN and one Proxmox-tagged vNIC
 for each internal zone. The managed gateway receives no 802.1Q trunk and has
 no VLAN subinterfaces.
 
-Bootstrap also establishes a temporary root SSH deployment window on the
+Bootstrap also establishes a temporary root SSH deployment window for the
+controller on the
 Proxmox host. Managed guest first boot preserves the injected root key for the
 same window and installs the `labadmin` key without granting general `labadmin`
 sudo authority; the managed firewall image retains only fixed, read-only
@@ -71,6 +73,10 @@ recovery authority.
 When a later deployment needs to change an already-converged guest, Core may
 re-arm the same temporary key through the authenticated Proxmox host boundary
 for that exact owned guest, then removes it again during cleanup.
+
+Routine operator administration is not performed by SSH. Use the Boetticher
+CLI, native product UI/API where appropriate, generated portal/status surfaces,
+or explicit Proxmox console/exec break-glass access for recovery.
 
 External mode does not create VM 100. It requires a distinct physical vmbr1
 trunk and publishes `generated/network/external-firewall-contract.md`. The

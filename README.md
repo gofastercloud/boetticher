@@ -138,10 +138,12 @@ managed and are never imported, changed, deleted, or backed up by boetticher.
 Pulse may display API-visible user guests without adopting them into the
 boetticher model.
 
-Proxmox is the normal SSH bastion. The controller reaches Proxmox over the
-HOME network, then uses the forwarding-only `lab-bastion` path to reach
-managed internal hosts. Generated SSH configuration keeps host-key checking
-and canonical host identities intact.
+Supported operator administration uses the Boetticher CLI, native product
+UI/API where appropriate, generated portal/status surfaces, and explicit
+Proxmox console/exec access as break-glass recovery. Routine operator SSH and
+hand mutation of Core appliances are unsupported. SSH/Ansible remains an
+internal controller transport for deployment; the generated SSH projection is
+not a routine appliance administration interface.
 
 Useful commands include `boetticher module list`, `boetticher module plan
 monitoring`, `boetticher config validate`, `boetticher firewall show`,

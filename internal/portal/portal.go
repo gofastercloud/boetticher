@@ -208,7 +208,7 @@ func network(s model.Site, revision string) string {
 
 func services(s model.Site, revision string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><table><tr><th>Service</th><th>URL</th><th>SSH</th><th>mTLS</th></tr>", html.EscapeString(revision))
+	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Core appliances are administered through Boetticher and their native product interfaces. Appliance SSH is an internal controller transport, not a supported routine operator interface.</p><table><tr><th>Service</th><th>URL</th><th>mTLS</th></tr>", html.EscapeString(revision))
 	for _, m := range sortedComponents(s) {
 		if !m.ProductOwned || (m.URL == "" && !m.SSHManaged) {
 			continue
@@ -217,11 +217,7 @@ func services(s model.Site, revision string) string {
 		if url == "" {
 			url = "—"
 		}
-		ssh := "—"
-		if m.SSHManaged {
-			ssh = "managed via lab-bastion"
-		}
-		fmt.Fprintf(&b, "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>", html.EscapeString(m.Role), html.EscapeString(url), html.EscapeString(ssh), checkMark(m.MTLS))
+		fmt.Fprintf(&b, "<tr><td>%s</td><td>%s</td><td>%s</td></tr>", html.EscapeString(m.Role), html.EscapeString(url), checkMark(m.MTLS))
 	}
 	b.WriteString("</table>")
 	return b.String()
@@ -229,29 +225,12 @@ func services(s model.Site, revision string) string {
 
 func access(s model.Site, revision string, physical networkmodel.Discovery) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Internal SSH uses fixed IPs and the Proxmox forwarding-only bastion. Internal DNS is not required for the SSH journey.</p>", html.EscapeString(revision))
+	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><h2>Supported operator access</h2><ul><li>Use the Boetticher CLI for platform-owned configuration, lifecycle, logs, and verification.</li><li>Use the native product UI/API where a platform service provides one.</li><li>Use generated portal/status surfaces for platform state and evidence.</li><li>Use explicit Proxmox console/exec access as the break-glass path for recovery.</li></ul><p>Routine operator SSH and hand mutation of Core appliances are unsupported. SSH/Ansible remains an internal controller transport during deployment.</p>", html.EscapeString(revision))
 	if s.BootstrapAddress == "" {
-		b.WriteString("<p class=\"notice\">Bootstrap endpoint: not configured.</p>")
+		b.WriteString("<p class=\"notice\">Break-glass Proxmox endpoint: not configured.</p>")
 	} else {
-		fmt.Fprintf(&b, "<p>Bootstrap endpoint: <code>%s</code> · <code>ssh proxmox</code> · <code>ssh lab-bastion</code></p>", html.EscapeString(s.BootstrapAddress))
+		fmt.Fprintf(&b, "<p>Break-glass Proxmox endpoint: <code>%s</code> · use the Proxmox console/exec path.</p>", html.EscapeString(s.BootstrapAddress))
 	}
-	b.WriteString("<table><tr><th>Canonical host</th><th>Aliases</th><th>Fixed address</th><th>User</th><th>Path</th></tr>")
-	for _, m := range sortedComponents(s) {
-		if !m.ProductOwned || !m.SSHManaged {
-			continue
-		}
-		aliases := append([]string{m.Name, m.Hostname + "." + s.Network.Domain}, m.DNSAliases...)
-		user := m.SSHUser
-		if user == "" {
-			user = model.DefaultAdminSSHUser
-		}
-		path := "direct"
-		if m.JumpAllowed {
-			path = "ProxyJump lab-bastion"
-		}
-		fmt.Fprintf(&b, "<tr><td><code>%s</code></td><td><code>%s</code></td><td>%s</td><td>%s</td><td>%s</td></tr>", html.EscapeString(m.Hostname+"."+s.Network.Domain), html.EscapeString(strings.Join(unique(aliases), ", ")), html.EscapeString(m.Address), html.EscapeString(user), html.EscapeString(path))
-	}
-	b.WriteString("</table>")
 	physicalMode := s.PhysicalNetwork.Mode
 	if physical.Status != "MODEL" && physical.Mode != "" {
 		physicalMode = physical.Mode

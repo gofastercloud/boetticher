@@ -196,7 +196,7 @@ Related commands: access, logs, verify
 
 ### access
 
-Purpose: List operator access paths for enabled platform capabilities.
+Purpose: List supported operator interfaces and explicit break-glass access for enabled platform capabilities.
 
 Usage: `boetticher access [--site DIR]`
 
@@ -204,7 +204,7 @@ Arguments: No positional arguments.
 
 Options: --site selects the private site repository.
 
-Safety: Read-only and non-secret. Logging is accessed with boetticher logs; it has no web UI.
+Safety: Read-only and non-secret. Routine appliance SSH and hand mutation are unsupported; SSH/Ansible is an internal controller transport. Logging is accessed with boetticher logs; it has no web UI.
 
 Examples: `boetticher access --site ./my-boetticher`
 
