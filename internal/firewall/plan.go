@@ -43,6 +43,7 @@ type PolicyRule struct {
 	SourceCIDR      string   `json:"source_cidr,omitempty"`
 	DestinationCIDR string   `json:"destination_cidr,omitempty"`
 	DestinationHost string   `json:"destination_host,omitempty"`
+	UserRuleID      string   `json:"user_rule_id,omitempty"`
 }
 
 type DHCPSubnet struct {
@@ -105,6 +106,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	if err := s.Validate(); err != nil {
 		return Plan{}, err
 	}
+	s = s.Normalize()
 	revision, err := s.Revision()
 	if err != nil {
 		return Plan{}, err
@@ -353,7 +355,43 @@ func policyRules(s model.Site) []PolicyRule {
 			}
 		}
 	}
+	userRules := append([]model.UserFirewallRule(nil), s.UserFirewallRules...)
+	sort.Slice(userRules, func(i, j int) bool { return userRules[i].ID < userRules[j].ID })
+	for _, user := range userRules {
+		sourceZone, sourceCIDR, sourceOK := userSelector(s, user.Source)
+		destinationZone, destinationCIDR, destinationOK := userSelector(s, user.Destination)
+		if !sourceOK || !destinationOK {
+			continue
+		}
+		rules = append(rules, PolicyRule{Sequence: len(rules) + 1, Name: "user-rule-" + user.ID, From: sourceZone, To: destinationZone, Action: "allow", Protocol: strings.ToLower(user.Protocol), Ports: append([]string(nil), user.Ports...), Counter: "boetticher_user_" + safeRuleToken(user.ID), Description: "user firewall rule " + user.ID, SourceCIDR: sourceCIDR, DestinationCIDR: destinationCIDR, UserRuleID: user.ID})
+	}
 	return rules
+}
+
+func userSelector(s model.Site, selector string) (string, string, bool) {
+	selector = strings.ToUpper(strings.TrimSpace(selector))
+	for _, zone := range s.Network.Zones {
+		if selector == zone.Name {
+			if zone.Type == model.ZoneTypeServers || zone.Type == model.ZoneTypeTrusted || zone.Type == model.ZoneTypeSandbox {
+				return zone.Name, zone.Network, true
+			}
+			return "", "", false
+		}
+	}
+	_, network, err := net.ParseCIDR(selector)
+	if err != nil || network.IP.To4() == nil {
+		return "", "", false
+	}
+	for _, zone := range s.Network.Zones {
+		if zone.Type != model.ZoneTypeServers && zone.Type != model.ZoneTypeTrusted && zone.Type != model.ZoneTypeSandbox {
+			continue
+		}
+		_, zoneNetwork, e := net.ParseCIDR(zone.Network)
+		if e == nil && zoneNetwork.Contains(network.IP) {
+			return zone.Name, network.String(), true
+		}
+	}
+	return "", "", false
 }
 
 func policyRuleForIntent(s model.Site, module string, intent model.NetworkIntent) PolicyRule {
@@ -516,7 +554,11 @@ func RenderNFT(plan Plan) (string, error) {
 			case "icmp":
 				protocolText = " ip protocol icmp"
 			}
-			fmt.Fprintf(&b, "    iifname \"%s\" oifname \"%s\" ip saddr %s ip daddr %s%s counter accept comment \"boetticher:allow:module-%s-%s\"\n", sourceIface, destinationIface, rule.SourceCIDR, destination, protocolText, safeRuleToken(rule.Name), protocol)
+			comment := "boetticher:allow:module-" + safeRuleToken(rule.Name) + "-" + protocol
+			if rule.UserRuleID != "" {
+				comment = "boetticher:user-rule:" + rule.UserRuleID + ":" + protocol
+			}
+			fmt.Fprintf(&b, "    iifname \"%s\" oifname \"%s\" ip saddr %s ip daddr %s%s counter accept comment \"%s\"\n", sourceIface, destinationIface, rule.SourceCIDR, destination, protocolText, comment)
 		}
 	}
 	for _, rule := range plan.Rules {
