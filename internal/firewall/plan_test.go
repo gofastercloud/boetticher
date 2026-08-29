@@ -234,6 +234,7 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 		"10.10.5.10/32 ip daddr 10.10.10.20/32 tcp dport 443",
 		"10.10.10.20/32 ip daddr 10.10.99.5/32 tcp dport 8006",
 		"10.10.99.5/32 ip daddr 10.10.10.40/32 tcp dport 19532",
+		"10.10.99.5/32 ip daddr 10.10.5.10/32 tcp dport 22",
 		"set boetticher_endpoint_2 { type ipv4_addr; elements = { 198.51.100.10, 198.51.100.11 } }",
 		"10.10.20.60/32 ip daddr @boetticher_endpoint_2 tcp dport 443",
 		"set module_guest_sources { type ipv4_addr; elements = {",
@@ -250,6 +251,9 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 	}
 	if strings.Contains(ruleset, `iifname "transit0" ip daddr @servers_net accept`) {
 		t.Fatal("managed module policy contains a broad TRANSIT-to-SERVERS allow")
+	}
+	if strings.Index(ruleset, "10.10.99.5/32 ip daddr 10.10.5.10/32 tcp dport 22") > strings.Index(ruleset, "TO-TRANSIT-DROP") {
+		t.Fatal("narrow Proxmox jump path occurs after the TRANSIT default deny")
 	}
 	if strings.Contains(ruleset, "10051") {
 		t.Fatal("Pulse-based monitoring policy retains the removed Zabbix port")

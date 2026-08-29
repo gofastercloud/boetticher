@@ -364,6 +364,25 @@ func policyRules(s model.Site) []PolicyRule {
 		add("TRANSIT to "+destination+" deny", "TRANSIT", destination, "deny", "any", nil, true, false)
 	}
 	add("any to TRANSIT deny", "any", "TRANSIT", "deny", "any", nil, true, false)
+	// The Proxmox host is the controlled SSH jump point for the isolated
+	// TRANSIT appliance. Keep this management path narrower than the ordinary
+	// MGMT rules: only the host's fixed management address may reach the
+	// module's SSH port, and only while the module is declared.
+	if tailnet, ok := componentReference(s, "lab-tailnet-01"); ok {
+		rules = append(rules, PolicyRule{
+			Sequence:        len(rules) + 1,
+			Name:            "MGMT administration to tailnet-router",
+			From:            "MGMT",
+			To:              "TRANSIT",
+			Action:          "allow",
+			Protocol:        "tcp",
+			Ports:           []string{"22"},
+			Counter:         "boetticher_mgmt_administration_to_tailnet_router",
+			Description:     "boetticher MGMT administration to tailnet-router",
+			SourceCIDR:      model.ProxmoxManagementAddress + "/32",
+			DestinationCIDR: tailnet.Address + "/32",
+		})
+	}
 	for _, declaration := range s.Declarations {
 		for _, intent := range declaration.NetworkIntents {
 			rule := policyRuleForIntent(s, declaration.Module, intent)
