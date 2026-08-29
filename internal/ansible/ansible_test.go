@@ -515,7 +515,7 @@ func TestBaseRoleRunsChronyWithoutKernelClockControlInAppliances(t *testing.T) {
 		"path: /etc/systemd/system/chrony.service.d",
 		"state: directory",
 		"- name: Install Chrony startup override",
-		"content: \"[Unit]\\nConditionCapability=\\n\"",
+		"content: \"[Unit]\\nAfter=network-online.target\\nWants=network-online.target\\nConditionCapability=\\n\"",
 		"dest: /etc/systemd/system/chrony.service.d/boetticher.conf",
 		"notify: reload systemd",
 	} {
