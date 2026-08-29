@@ -1,5 +1,9 @@
 # Boetticher
 
+<p align="center">
+  <img src="docs/images/boetticher-cover.jpg" alt="Boetticher automated homelab builder" width="480">
+</p>
+
 Boetticher is an opinionated way to turn a small Proxmox host into a useful,
 secure homelab without spending your weekend designing the platform underneath
 it.
