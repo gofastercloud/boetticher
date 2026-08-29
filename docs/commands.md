@@ -21,7 +21,7 @@ boetticher network trunk status|attach|detach [INTERFACE] [--site DIR] [--confir
 boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm]
 boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]
 boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]
-boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]
+boetticher firewall status|show|diff|counters|logs|verify|rule add|list|remove [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N] [--source SOURCE] [--destination DESTINATION] [--vmid VMID] [--protocol PROTOCOL] [--ports PORTS] [--id ID] [--dry-run] [--confirm]
 boetticher dhcp status|leases [--site DIR] [--live] [--json]
 boetticher dhcp reservation add|list|remove [--site DIR] [--hostname NAME] [--address ADDRESS] [--mac MAC] [--vmid VMID] [--json]
 boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME] [--value VALUE] [--json]
@@ -677,6 +677,54 @@ Examples: `boetticher firewall diff --site ./my-boetticher --live`
 Related commands: dhcp, network, logs, verify
 
 ### firewall logs
+
+Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
+
+Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
+
+Arguments: Subcommands select the read-only view; firewall logs may accept a zone and limit.
+
+Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
+
+Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
+
+Examples: `boetticher firewall diff --site ./my-boetticher --live`
+
+Related commands: dhcp, network, logs, verify
+
+### firewall rule add
+
+Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
+
+Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
+
+Arguments: Subcommands select the read-only view; firewall logs may accept a zone and limit.
+
+Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
+
+Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
+
+Examples: `boetticher firewall diff --site ./my-boetticher --live`
+
+Related commands: dhcp, network, logs, verify
+
+### firewall rule list
+
+Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
+
+Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
+
+Arguments: Subcommands select the read-only view; firewall logs may accept a zone and limit.
+
+Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
+
+Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
+
+Examples: `boetticher firewall diff --site ./my-boetticher --live`
+
+Related commands: dhcp, network, logs, verify
+
+### firewall rule remove
 
 Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
 
