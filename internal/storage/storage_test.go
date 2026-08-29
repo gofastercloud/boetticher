@@ -68,9 +68,17 @@ func TestInitializationCommandIsStableAndGuarded(t *testing.T) {
 }
 
 func TestInitializationRejectsTransientOrUnsafeDevice(t *testing.T) {
-	for _, device := range []string{"/dev/sdb", "/dev/disk/by-id/foo bar", "/dev/disk/by-id/foo\nbar", ""} {
+	for _, device := range []string{"/dev/sdb", "/dev/disk/by-id/foo bar", "/dev/disk/by-id/foo\nbar", "/dev/disk/by-id/../sdb", "/dev/disk/by-id/foo/../../sdb", "/dev/disk/by-id/foo/", "/dev/disk/by-id/foo\\bar", ""} {
 		if _, err := InitializationCommand(device, true); err == nil {
 			t.Fatalf("unsafe storage device %q was accepted", device)
+		}
+	}
+}
+
+func TestInitializationAcceptsDirectStableDeviceNames(t *testing.T) {
+	for _, device := range []string{"/dev/disk/by-id/ata-Samsung_SSD_870", "/dev/disk/by-id/usb-Generic_Flash", "/dev/disk/by-id/nvme-eui.1234"} {
+		if _, err := InitializationCommand(device, true); err != nil {
+			t.Fatalf("valid stable device %q was rejected: %v", device, err)
 		}
 	}
 }

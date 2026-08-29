@@ -17,6 +17,7 @@ import (
 )
 
 var safeUnit = regexp.MustCompile(`^[A-Za-z0-9_.@:%+-]+$`)
+var safeJournalHostname = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
 
 func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 	fs := flag.NewFlagSet("logs", flag.ContinueOnError)
@@ -71,7 +72,10 @@ func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 	if !collectorOK {
 		return fmt.Errorf("mandatory logging collector lab-log-01 is not present in the desired model")
 	}
-	argsForJournal, source := journalQuery(component, collector, *limit, *unit, sinceArg, *priority)
+	argsForJournal, source, err := journalQuery(component, collector, *limit, *unit, sinceArg, *priority)
+	if err != nil {
+		return err
+	}
 	if component.Name == collector.Name && fs.NArg() == 0 {
 		fmt.Fprintln(out, "Source: collector-local journal")
 	} else {
@@ -145,7 +149,7 @@ func managedEndpointComponents(s model.Site) []model.Component {
 	return components
 }
 
-func journalQuery(component, collector model.Component, limit int, unit, since, priority string) ([]string, string) {
+func journalQuery(component, collector model.Component, limit int, unit, since, priority string) ([]string, string, error) {
 	args := []string{"journalctl", "--no-pager", "--output=short-iso", "--lines=" + strconv.Itoa(limit)}
 	source := "collector-local journal"
 	if component.Name != collector.Name {
@@ -158,6 +162,9 @@ func journalQuery(component, collector model.Component, limit int, unit, since, 
 		// stable logical identity used by the rest of boetticher.
 		journalHostname = "proxmox"
 	}
+	if !safeJournalHostname.MatchString(journalHostname) {
+		return nil, "", fmt.Errorf("endpoint %s has an unsafe journal hostname", component.Name)
+	}
 	args = append(args, "_HOSTNAME="+journalHostname)
 	if unit != "" {
 		args = append(args, "_SYSTEMD_UNIT="+unit)
@@ -168,7 +175,7 @@ func journalQuery(component, collector model.Component, limit int, unit, since, 
 	if priority != "" {
 		args = append(args, "-p", priority)
 	}
-	return args, source
+	return args, source, nil
 }
 
 func normalizeJournalUnit(value string) (string, error) {

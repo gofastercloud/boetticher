@@ -81,6 +81,13 @@ func TestSSHRunnerPreservesJournalArgumentsWithoutShellInterpolation(t *testing.
 	}
 }
 
+func TestQuoteRemoteArgsPreventsSecondRemoteCommand(t *testing.T) {
+	quoted := quoteRemoteArgs([]string{"journalctl", "_HOSTNAME=retained;id"})
+	if len(quoted) != 2 || quoted[1] != "'_HOSTNAME=retained;id'" {
+		t.Fatalf("remote arguments were not shell-quoted: %#v", quoted)
+	}
+}
+
 func TestSSHRunnerUsesBoundedTrustOnFirstUseForFreshApplianceHostKeys(t *testing.T) {
 	runner := SSHRunner{StrictHostKey: "yes", HostAlias: "lab-dns-01"}
 	args, err := runner.commandArgs("10.10.10.10", "labadmin", []string{"true"})

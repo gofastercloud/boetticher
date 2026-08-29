@@ -5,6 +5,17 @@
     fail_msg: "Logging runtime configuration requires a qualified boetticher appliance artifact"
   when: inventory_hostname == logging_plan.collector
 
+- name: Require current client revocation material for the logging boundary
+  ansible.builtin.assert:
+    that:
+      - client_ca_pem is defined
+      - client_ca_pem | length > 0
+      - client_crl_pem is defined
+      - client_crl_pem | length > 0
+    fail_msg: "Logging mTLS requires the controller-issued client CA and CRL"
+  no_log: true
+  when: inventory_hostname == logging_plan.collector
+
 - name: Install the bounded collector journal directory
   ansible.builtin.file:
     path: "{{ logging_plan.remote_journal_path }}"
@@ -82,6 +93,17 @@
     - inventory_hostname == logging_plan.collector
     - logging_collector_certificate | default('') | length > 0
 
+- name: Install the current client certificate revocation list for journal upload
+  ansible.builtin.copy:
+    content: "{{ client_crl_pem }}"
+    dest: /var/lib/boetticher/identity/logging/client-ca.crl.pem
+    owner: root
+    group: root
+    mode: '0644'
+  no_log: true
+  notify: reload nginx
+  when: inventory_hostname == logging_plan.collector
+
 - name: Install the journal-remote configuration contract
   ansible.builtin.copy:
     content: "{{ logging_collector_config }}"
@@ -111,6 +133,13 @@
   notify: reload logging systemd
   when: inventory_hostname == logging_plan.collector
 
+- name: Disable the socket-activated collector listener
+  ansible.builtin.service:
+    name: systemd-journal-remote.socket
+    enabled: false
+    state: stopped
+  when: inventory_hostname == logging_plan.collector
+
 - name: Keep the collector stopped until its server certificate is installed
   ansible.builtin.service:
     name: systemd-journal-remote
@@ -129,9 +158,49 @@
     - inventory_hostname == logging_plan.collector
     - logging_collector_certificate | default('') | length > 0
 
-- name: Enable the socket-activated collector listener after certificate installation
+- name: Install the revocation-enforcing journal mTLS proxy
+  ansible.builtin.copy:
+    dest: /etc/nginx/sites-available/boetticher-journal.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      server {
+          listen {{ logging_plan.collector_address }}:{{ logging_plan.collector_port }} ssl;
+          server_name logs.{{ domain }};
+          ssl_certificate /var/lib/boetticher/identity/logging/collector.crt;
+          ssl_certificate_key /var/lib/boetticher/identity/logging/collector.key;
+          ssl_client_certificate /var/lib/boetticher/identity/logging/ca.crt;
+          ssl_crl /var/lib/boetticher/identity/logging/client-ca.crl.pem;
+          ssl_verify_client on;
+          ssl_protocols TLSv1.2 TLSv1.3;
+          location = /upload {
+              proxy_pass http://127.0.0.1:{{ logging_plan.collector_backend_port }};
+              proxy_pass_request_headers on;
+              proxy_set_header Host $host;
+          }
+          location / { return 404; }
+      }
+  no_log: true
+  notify: reload nginx
+  when:
+    - inventory_hostname == logging_plan.collector
+    - logging_collector_certificate | default('') | length > 0
+
+- name: Enable the revocation-enforcing journal mTLS proxy
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/boetticher-journal.conf
+    dest: /etc/nginx/sites-enabled/boetticher-journal.conf
+    state: link
+    force: true
+  notify: reload nginx
+  when:
+    - inventory_hostname == logging_plan.collector
+    - logging_collector_certificate | default('') | length > 0
+
+- name: Enable the journal mTLS proxy after certificate installation
   ansible.builtin.service:
-    name: systemd-journal-remote.socket
+    name: nginx
     enabled: true
     state: started
   when:
@@ -225,8 +294,10 @@
     mode: '0640'
   loop:
     - {dest: /var/lib/boetticher/identity/tls/log-query.crt, content: "{{ log_query_server_cert_pem | default('') }}", group: boetticher-log-query}
-    - {dest: /etc/boetticher/pki/client-ca.crt, content: "{{ client_ca_pem | default('') }}", group: root}
+    - {dest: /etc/boetticher/pki/client-ca.crt, content: "{{ client_ca_pem | default('') }}", group: boetticher-log-query}
+    - {dest: /etc/boetticher/pki/client-ca.crl.pem, content: "{{ client_crl_pem | default('') }}", group: boetticher-log-query}
   no_log: true
+  notify: restart journal query
   when:
     - inventory_hostname == logging_plan.collector
     - module_configs.aiops is defined

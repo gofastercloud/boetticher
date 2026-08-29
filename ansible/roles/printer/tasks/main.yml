@@ -67,6 +67,7 @@
   ansible.builtin.assert:
     that:
       - client_ca_pem | default('') | length > 0
+      - client_crl_pem | default('') | length > 0
       - (pki_bootstrap_phase | default(false) | bool) or (octoprint_server_cert_pem is defined and octoprint_server_cert_pem | length > 0)
     fail_msg: Printer nginx requires the existing Boetticher PKI server certificate and client CA
   no_log: true
@@ -85,6 +86,17 @@
   when: octoprint_server_cert_pem | default('') | length > 0
   notify: reload printer nginx
 
+- name: Install the current client certificate revocation list for printer mTLS
+  ansible.builtin.copy:
+    dest: /var/lib/boetticher/identity/tls/client-ca.crl.pem
+    content: "{{ client_crl_pem }}"
+    owner: root
+    group: root
+    mode: '0644'
+  no_log: true
+  notify: reload printer nginx
+  when: octoprint_server_cert_pem | default('') | length > 0
+
 - name: Configure nginx as the only network listener for OctoPrint
   ansible.builtin.copy:
     dest: /etc/nginx/sites-available/octoprint.conf
@@ -102,6 +114,7 @@
           ssl_certificate /var/lib/boetticher/identity/tls/octoprint.crt.pem;
           ssl_certificate_key /var/lib/boetticher/identity/tls/octoprint.key.pem;
           ssl_client_certificate /var/lib/boetticher/identity/tls/client-ca.pem;
+          ssl_crl /var/lib/boetticher/identity/tls/client-ca.crl.pem;
           ssl_verify_client on;
           ssl_protocols TLSv1.2 TLSv1.3;
           client_max_body_size 1G;

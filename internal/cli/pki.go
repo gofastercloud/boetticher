@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -8,9 +9,16 @@ import (
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/pathguard"
 	"github.com/gofastercloud/boetticher/internal/pki"
 	"github.com/gofastercloud/boetticher/internal/site"
+	"gopkg.in/yaml.v3"
 )
+
+type clientCertificateMetadata struct {
+	Name   string `yaml:"name"`
+	Serial string `yaml:"serial"`
+}
 
 func runPKI(args []string, out interface{ Write([]byte) (int, error) }) error {
 	if len(args) < 2 {
@@ -62,7 +70,7 @@ func runPKI(args []string, out interface{ Write([]byte) (int, error) }) error {
 		if err := writePublic(filepath.Join(runtimeDir, "chain.crt.pem"), []byte(certificate.ChainPEM)); err != nil {
 			return err
 		}
-		metadata := fmt.Sprintf("name: %s\nfingerprint: %s\ncreated_at: %s\n", name, certificate.Fingerprint, time.Now().UTC().Format(time.RFC3339))
+		metadata := fmt.Sprintf("name: %s\nfingerprint: %s\nserial: %s\ncreated_at: %s\n", name, certificate.Fingerprint, certificate.Serial, time.Now().UTC().Format(time.RFC3339))
 		if err := writePublic(filepath.Join(*siteDir, "generated", "pki", name+".yaml"), []byte(metadata)); err != nil {
 			return err
 		}
@@ -76,7 +84,7 @@ func runPKI(args []string, out interface{ Write([]byte) (int, error) }) error {
 	case "export":
 		return exportClient(runtimeDir, *output, out)
 	case "revoke":
-		return revokeClient(*siteDir, name, out)
+		return revokeClient(*siteDir, runtimeDir, name, out)
 	default:
 		return fmt.Errorf("unknown pki client command %q", command)
 	}
@@ -104,11 +112,25 @@ func exportClient(runtimeDir, output string, out interface{ Write([]byte) (int, 
 	return nil
 }
 
-func revokeClient(siteDir, name string, out interface{ Write([]byte) (int, error) }) error {
+func revokeClient(siteDir, runtimeDir, name string, out interface{ Write([]byte) (int, error) }) error {
 	if err := pki.ValidateClientName(name); err != nil {
 		return err
 	}
-	revocation := fmt.Sprintf("name: %s\nstatus: revoked\nrevoked_at: %s\n", name, time.Now().UTC().Format(time.RFC3339))
+	serial, err := loadClientMetadataSerial(siteDir, name)
+	if err != nil {
+		return err
+	}
+	if serial == "" {
+		certPEM, readErr := pathguard.ReadFile(filepath.Join(runtimeDir, "client.crt.pem"))
+		if readErr != nil {
+			return fmt.Errorf("read issued client certificate for revocation: %w", readErr)
+		}
+		serial, err = pki.CertificateSerial(string(certPEM))
+		if err != nil {
+			return fmt.Errorf("identify issued client certificate for revocation: %w", err)
+		}
+	}
+	revocation := fmt.Sprintf("name: %s\nserial: %s\nstatus: revoked\nrevoked_at: %s\n", name, serial, time.Now().UTC().Format(time.RFC3339))
 	path := filepath.Join(siteDir, "generated", "pki", "revoked", name+".yaml")
 	if err := writePublic(path, []byte(revocation)); err != nil {
 		return err
@@ -120,6 +142,32 @@ func revokeClient(siteDir, name string, out interface{ Write([]byte) (int, error
 	}
 	fmt.Fprintf(out, "Recorded client revocation: %s\n", name)
 	return nil
+}
+
+func loadClientMetadataSerial(siteDir, name string) (string, error) {
+	path := filepath.Join(siteDir, "generated", "pki", name+".yaml")
+	data, err := pathguard.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read client certificate metadata: %w", err)
+	}
+	var metadata clientCertificateMetadata
+	if err := yaml.Unmarshal(data, &metadata); err != nil {
+		return "", fmt.Errorf("parse client certificate metadata: %w", err)
+	}
+	if metadata.Name != name {
+		return "", fmt.Errorf("client certificate metadata name %q does not match %q", metadata.Name, name)
+	}
+	if metadata.Serial == "" {
+		return "", nil
+	}
+	serial, err := pki.ParseSerial(metadata.Serial)
+	if err != nil {
+		return "", fmt.Errorf("client certificate metadata serial: %w", err)
+	}
+	return serial.Text(16), nil
 }
 
 func runPKITrust(args []string, out interface{ Write([]byte) (int, error) }) error {

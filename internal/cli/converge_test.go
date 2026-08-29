@@ -68,6 +68,48 @@ func TestPortalSourceDirectoryIsAbsoluteForAnsible(t *testing.T) {
 	}
 }
 
+func TestProjectionCleanupRejectsSymlinkedGeneratedRoot(t *testing.T) {
+	dir := t.TempDir()
+	external := t.TempDir()
+	sentinel := filepath.Join(external, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(dir, "generated")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeModelProjections(dir, model.NewDefaultSite("installation", "age1example")); err == nil {
+		t.Fatal("projection cleanup accepted a symlinked generated root")
+	}
+	got, readErr := os.ReadFile(sentinel)
+	if readErr != nil || string(got) != "keep" {
+		t.Fatalf("external projection sentinel changed: %q, %v", got, readErr)
+	}
+}
+
+func TestProjectionCleanupRejectsSymlinkedModuleRoot(t *testing.T) {
+	dir := t.TempDir()
+	moduleRootParent := filepath.Join(dir, "generated")
+	if err := os.MkdirAll(moduleRootParent, 0700); err != nil {
+		t.Fatal(err)
+	}
+	external := t.TempDir()
+	sentinel := filepath.Join(external, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(moduleRootParent, "modules")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeModelProjections(dir, model.NewDefaultSite("installation", "age1example")); err == nil {
+		t.Fatal("projection cleanup accepted a symlinked module root")
+	}
+	got, readErr := os.ReadFile(sentinel)
+	if readErr != nil || string(got) != "keep" {
+		t.Fatalf("external module projection sentinel changed: %q, %v", got, readErr)
+	}
+}
+
 func TestEndpointClientTrustProjectionIncludesRootAndIssuingCAs(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
 	if err != nil {

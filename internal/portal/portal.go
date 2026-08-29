@@ -13,6 +13,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/logging"
 	"github.com/gofastercloud/boetticher/internal/model"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
+	"github.com/gofastercloud/boetticher/internal/pathguard"
 )
 
 type Evidence struct {
@@ -35,14 +36,17 @@ func Build(s model.Site, outputDir, docsDir string, evidence Evidence, physical 
 		return err
 	}
 	parent := filepath.Dir(outputDir)
-	if err := os.MkdirAll(parent, 0755); err != nil {
+	if err := pathguard.ValidateNoSymlinkComponents(outputDir); err != nil {
+		return fmt.Errorf("refuse portal output path: %w", err)
+	}
+	if err := pathguard.MkdirAll(parent, 0755); err != nil {
 		return err
 	}
-	stage, err := os.MkdirTemp(parent, ".boetticher-portal-stage-")
+	stage, err := pathguard.MkdirTemp(parent, ".boetticher-portal-stage-", 0700)
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(stage)
+	defer pathguard.RemoveAll(stage)
 	if err := writePage(filepath.Join(stage, "index.html"), page("boetticher", home(s, revision, evidence, now))); err != nil {
 		return err
 	}
@@ -74,24 +78,29 @@ func Build(s model.Site, outputDir, docsDir string, evidence Evidence, physical 
 }
 
 func publish(outputDir, stage string) error {
-	if info, err := os.Lstat(outputDir); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("refusing to replace symlink portal output %s", outputDir)
-		}
-		previous := outputDir + ".previous"
-		_ = os.RemoveAll(previous)
-		if err := os.Rename(outputDir, previous); err != nil {
+	if err := pathguard.ValidateNoSymlinkComponents(outputDir); err != nil {
+		return fmt.Errorf("refuse portal publication path: %w", err)
+	}
+	previous := outputDir + ".previous"
+	if err := pathguard.ValidateNoSymlinkComponents(previous); err != nil {
+		return fmt.Errorf("refuse portal previous path: %w", err)
+	}
+	if _, err := os.Lstat(outputDir); err == nil {
+		if err := pathguard.RemoveAll(previous); err != nil {
 			return err
 		}
-		if err := os.Rename(stage, outputDir); err != nil {
-			_ = os.Rename(previous, outputDir)
+		if err := pathguard.Rename(outputDir, previous); err != nil {
 			return err
 		}
-		return os.RemoveAll(previous)
+		if err := pathguard.Rename(stage, outputDir); err != nil {
+			_ = pathguard.Rename(previous, outputDir)
+			return err
+		}
+		return pathguard.RemoveAll(previous)
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	return os.Rename(stage, outputDir)
+	return pathguard.Rename(stage, outputDir)
 }
 
 func page(title, body string) string {
@@ -312,17 +321,22 @@ func recovery(s model.Site, revision string, evidence Evidence) string {
 
 func copyDocs(outputDir, docsDir, revision string) error {
 	destination := filepath.Join(outputDir, "docs")
-	if err := os.MkdirAll(destination, 0755); err != nil {
+	if err := pathguard.MkdirAll(destination, 0755); err != nil {
 		return err
 	}
 	entries := []string{}
 	if docsDir != "" {
-		_ = filepath.Walk(docsDir, func(path string, info os.FileInfo, err error) error {
+		if err := pathguard.ValidateNoSymlinkComponents(docsDir); err != nil {
+			return fmt.Errorf("refuse symlinked portal docs root: %w", err)
+		}
+		if err := filepath.Walk(docsDir, func(path string, info os.FileInfo, err error) error {
 			if err == nil && info != nil && !info.IsDir() && strings.HasSuffix(info.Name(), ".md") {
 				entries = append(entries, path)
 			}
 			return nil
-		})
+		}); err != nil {
+			return fmt.Errorf("walk portal docs: %w", err)
+		}
 	}
 	sort.Strings(entries)
 	var index strings.Builder
@@ -333,7 +347,10 @@ func copyDocs(outputDir, docsDir, revision string) error {
 			return err
 		}
 		name := strings.TrimSuffix(filepath.ToSlash(rel), ".md") + ".html"
-		data, err := os.ReadFile(source)
+		if err := pathguard.ValidateNoSymlinkComponents(source); err != nil {
+			return fmt.Errorf("refuse symlinked portal doc %s: %w", source, err)
+		}
+		data, err := pathguard.ReadFile(source)
 		if err != nil {
 			return err
 		}
@@ -361,29 +378,8 @@ func checkMark(value bool) string {
 }
 
 func writePage(path, content string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := pathguard.ValidateNoSymlinkComponents(path); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".boetticher-portal-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if err := tmp.Chmod(0644); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.WriteString(content); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
+	return pathguard.WriteFileWithParentMode(path, []byte(content), 0644, 0755)
 }

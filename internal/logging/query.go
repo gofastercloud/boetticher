@@ -5,7 +5,9 @@ import (
 	"context"
 	"crypto/subtle"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -29,6 +31,70 @@ func VerifyQueryClient(state tls.ConnectionState) error {
 		return errors.New("journal query client identity is not authorized")
 	}
 	return nil
+}
+
+func VerifyQueryClientWithCRL(state tls.ConnectionState, crl *x509.RevocationList) error {
+	if err := VerifyQueryClient(state); err != nil {
+		return err
+	}
+	if crl == nil {
+		return errors.New("journal query certificate revocation list is unavailable")
+	}
+	serial := state.PeerCertificates[0].SerialNumber
+	if serial == nil {
+		return errors.New("journal query client certificate has no serial number")
+	}
+	for _, entry := range crl.RevokedCertificateEntries {
+		if entry.SerialNumber != nil && entry.SerialNumber.Cmp(serial) == 0 {
+			return errors.New("journal query client certificate is revoked")
+		}
+	}
+	for _, entry := range crl.RevokedCertificates {
+		if entry.SerialNumber != nil && entry.SerialNumber.Cmp(serial) == 0 {
+			return errors.New("journal query client certificate is revoked")
+		}
+	}
+	return nil
+}
+
+// ParseVerifiedCRL parses the controller-generated CRL and verifies its
+// signature against a certificate in the configured client CA bundle before
+// the server starts accepting client certificates.
+func ParseVerifiedCRL(crlPEM, caPEM string, now time.Time) (*x509.RevocationList, error) {
+	block, _ := pem.Decode([]byte(crlPEM))
+	if block == nil || block.Type != "X509 CRL" {
+		return nil, errors.New("client certificate CRL PEM block missing")
+	}
+	crl, err := x509.ParseRevocationList(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse client certificate CRL: %w", err)
+	}
+	now = now.UTC()
+	if crl.ThisUpdate.IsZero() || crl.NextUpdate.IsZero() || now.Before(crl.ThisUpdate) || !now.Before(crl.NextUpdate) {
+		return nil, errors.New("client certificate CRL is outside its validity window")
+	}
+	remaining := []byte(caPEM)
+	for len(remaining) > 0 {
+		caBlock, rest := pem.Decode(remaining)
+		if caBlock == nil {
+			break
+		}
+		remaining = rest
+		if caBlock.Type != "CERTIFICATE" {
+			continue
+		}
+		ca, parseErr := x509.ParseCertificate(caBlock.Bytes)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse client CA certificate: %w", parseErr)
+		}
+		if len(crl.RawIssuer) == 0 || len(ca.RawSubject) == 0 || !bytes.Equal(crl.RawIssuer, ca.RawSubject) {
+			continue
+		}
+		if err := crl.CheckSignatureFrom(ca); err == nil {
+			return crl, nil
+		}
+	}
+	return nil, errors.New("client certificate CRL signature is not trusted")
 }
 
 type QueryRequest struct {

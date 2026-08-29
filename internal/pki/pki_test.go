@@ -127,6 +127,50 @@ func TestClientNameCannotEscapeRuntimeDirectory(t *testing.T) {
 	}
 }
 
+func TestGenerateCRLRevokesExactCertificateSerial(t *testing.T) {
+	authority, err := GenerateAuthority(time.Unix(0, 0), "lab.home.arpa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := IssueClient(authority, "first", "lab.home.arpa", time.Unix(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := IssueClient(authority, "second", "lab.home.arpa", time.Unix(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(120, 0)
+	crlPEM, err := GenerateCRL(authority, []Revocation{{Name: first.Name, Serial: first.Serial, RevokedAt: time.Unix(60, 0)}}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode([]byte(crlPEM))
+	if block == nil || block.Type != "X509 CRL" {
+		t.Fatalf("CRL PEM block = %#v", block)
+	}
+	crl, err := x509.ParseRevocationList(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issuer, err := parseCert(authority.IssuingCertPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := crl.CheckSignatureFrom(issuer); err != nil {
+		t.Fatalf("CRL signature did not verify: %v", err)
+	}
+	if !crl.NextUpdate.After(now.AddDate(9, 0, 0)) {
+		t.Fatalf("CRL validity is too short: next update %s", crl.NextUpdate)
+	}
+	if len(crl.RevokedCertificateEntries) != 1 || crl.RevokedCertificateEntries[0].SerialNumber.Text(16) != first.Serial {
+		t.Fatalf("unexpected revoked entries: %#v", crl.RevokedCertificateEntries)
+	}
+	if crl.RevokedCertificateEntries[0].SerialNumber.Text(16) == second.Serial {
+		t.Fatal("CRL revoked an unrelated certificate")
+	}
+}
+
 func TestSignedServerCertificateUsesServerAuthAndSANs(t *testing.T) {
 	authority, err := GenerateAuthority(time.Unix(0, 0), "lab.home.arpa")
 	if err != nil {

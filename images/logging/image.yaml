@@ -6,6 +6,7 @@ base_version: 0.3.34
 architecture: amd64
 services:
   - systemd-journal-remote
+  - nginx
 runtime_config: /etc/boetticher/module.yaml
 persistent:
   - /var/log/journal/remote
