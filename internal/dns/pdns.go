@@ -15,7 +15,7 @@ const DDNSSecretPlaceholder = "<ddns-tsig-secret>"
 
 // PrimaryCommandPlan returns the PowerDNS 4.9 command forms used to create
 // the platform zones, static records, and authenticated DDNS metadata. The
-// The Ansible role supplies the TSIG value only through command stdin while
+// Ansible role supplies the TSIG value only through command stdin while
 // the PowerDNS daemon is stopped. The database schema is the supported
 // PowerDNS 4.9 gsqlite3 TSIG store; the following metadata commands remain
 // reviewable pdnsutil invocations.

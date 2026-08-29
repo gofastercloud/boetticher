@@ -11,7 +11,7 @@ uses `10.10.10.10` and `10.10.10.11` for DNS and NTP; SERVERS uses the same
 static DNS/NTP addresses. SANDBOX receives `10.10.40.1` for both, keeping it
 independent of the INFRA guests. TRANSIT, INFRA, and MGMT are static-only zones
 and do not receive DHCP scopes or DDNS updates. The DNS guests run PowerDNS
-Authoritative and Chrony with Blocky as the default client-facing
+Authoritative and Chrony with Blocky as the sole client-facing
 recursive/filtering implementation.
 PowerDNS receives authenticated Kea D2 RFC2136 updates from SERVERS, TRUSTED,
 and SANDBOX only.

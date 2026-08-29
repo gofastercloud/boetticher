@@ -60,7 +60,7 @@ func runAccess(args []string, out io.Writer) error {
 	} else {
 		fmt.Fprintf(out, "  Physical lab  %s attached\n", s.PhysicalNetwork.Trunk.Name)
 	}
-	fmt.Fprintln(out, "  Remote access not configured")
+	fmt.Fprintln(out, "  Routine remote operator access not configured")
 	return nil
 }
 

@@ -142,9 +142,9 @@ func home(s model.Site, revision string, evidence Evidence, now time.Time) strin
 	moduleTable.WriteString("</table>")
 	action := "No action required."
 	if semantic.OverallState != statusmodel.Healthy {
-		action = "Action required: review <a href=\"/security.html\">security and evidence</a> for the exact reason and safe next action."
+		action = "Action required: open the <a href=\"/security.html\">Security page</a> for the reason and suggested next step."
 	}
-	return fmt.Sprintf("<p>Generated operator summary. Revisions, hashes, schema, artifacts, and qualification details are on secondary evidence pages.</p><h2>Platform health: %s</h2><p>Gateway: %s · observed: %s</p><p>%s</p>%s<h2>Important links</h2><p><a href=\"%s\">Proxmox</a> · <a href=\"https://monitor.%s\">Pulse monitoring</a> · <a href=\"https://portal.%s\">Portal</a> · <a href=\"https://dns.%s\">DNS</a></p>", html.EscapeString(string(semantic.OverallState)), html.EscapeString(gateway), now.UTC().Format(time.RFC3339), action, moduleTable.String(), html.EscapeString("https://proxmox."+s.Network.Domain+":8006"), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain))
+	return fmt.Sprintf("<p>This is a snapshot of your Boetticher platform. Use the links above for services, recovery, and detailed runbooks.</p><h2>Platform health: %s</h2><p>Gateway: %s · observed: %s</p><p>%s</p>%s<h2>Important links</h2><p><a href=\"%s\">Proxmox</a> · <a href=\"https://monitor.%s\">Pulse monitoring</a> · <a href=\"https://portal.%s\">Portal</a> · <a href=\"https://dns.%s\">DNS</a></p>", html.EscapeString(string(semantic.OverallState)), html.EscapeString(gateway), now.UTC().Format(time.RFC3339), action, moduleTable.String(), html.EscapeString("https://proxmox."+s.Network.Domain+":8006"), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain))
 }
 
 func loggingSummary(s model.Site, evidence Evidence) string {

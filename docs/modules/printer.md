@@ -75,7 +75,7 @@ built, smoke-tested, Trivy-qualified appliance.
 Source tests and `make image-check` do not qualify a printer. Acceptance needs
 the real Proxmox host and Ender: observe the exact identity, bind and hotplug
 the cable, verify stable tty remapping after re-enumeration, complete the
-verify a request without a client certificate is rejected before OctoPrint,
+verify that a request without a client certificate is rejected before OctoPrint,
 complete the first-run journey with a valid client certificate, authenticate
 with the native account, connect at 115200, query temperatures, home safely,
 upload a known G-code file, complete a supervised test print, and verify restart

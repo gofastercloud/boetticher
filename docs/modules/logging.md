@@ -11,6 +11,11 @@ over HTTPS/mTLS through the collector's CRL-enforcing TLS proxy to
 application, DNS, routing, or local journald. The collector does not upload its
 own journal recursively. Use `boetticher logs` for bounded read-only access.
 
+Logging is always enabled and cannot be disabled. It is useful when a service
+needs a short, central view across platform guests; it is not a replacement
+for the native logs of an application. There is no logging web UI: use
+`boetticher logs` or the [operations guide](../operations.md).
+
 The Proxmox host uses the same endpoint-local upload path. Deployment pins the
 collector hostname to the managed collector in `/etc/hosts` and permits only
 the exact collector TCP port through the managed gateway; the HOME resolver
@@ -22,3 +27,7 @@ logs.
 
 The endpoint client certificate and key are endpoint-local. The boetticher CA
 and recovery authority remain on the controller.
+
+Source checks do not prove that a deployed collector is receiving current
+logs. Use `boetticher status --live` and the live logging checks when that
+distinction matters.

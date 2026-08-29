@@ -20,17 +20,17 @@ boetticher ssh-config [--site DIR] [--output PATH| -] [--force] [--check] [--ide
 boetticher access [--site DIR]
 boetticher bootstrap-endpoint show|set ADDRESS [--site DIR]
 boetticher network trunk status|attach|detach [INTERFACE] [--site DIR] [--confirm] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
-boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm]
+boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]
 boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]
 boetticher firewall status|show|diff|counters|logs|verify|rule add|list|remove [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N] [--source SOURCE] [--destination DESTINATION] [--vmid VMID] [--protocol PROTOCOL] [--ports PORTS] [--id ID] [--dry-run] [--confirm]
 boetticher dhcp status|leases [--site DIR] [--live] [--json]
-boetticher dhcp reservation add|list|remove [--site DIR] [--hostname NAME] [--address ADDRESS] [--mac MAC] [--vmid VMID] [--json]
+boetticher dhcp reservation add|list|remove [--site DIR] [--hostname NAME] [--address ADDRESS] [--mac MAC] [--vmid VMID] [--json] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME] [--value VALUE] [--json]
-boetticher storage status|initialize [--site DIR] [--live] [--storage-confirmed]
-boetticher module list|show|plan|configure|enable|disable|status [NAME] [--site DIR] [--dry-run] [--json] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
+boetticher storage status|initialize [--site DIR] [--live] [--storage-confirmed] [--initial-user USER] [--known-hosts PATH]
+boetticher module list|show|plan|configure|enable|disable|status [NAME] [--site DIR] [--dry-run] [--json] [--confirm] [--purge] [--non-interactive] [--enabled BOOL] [--set KEY=VALUE] [--secret NAME] [--usb REQUIREMENT=PORT] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher module secrets MODULE list|set|remove [--site DIR] [--age-identity PATH] [--confirm]
-boetticher modules list|MODULE show|plan|configure|enable|disable|status|purge [--site DIR] [--dry-run] [--json] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
+boetticher modules list|MODULE show|plan|configure|enable|disable|status|secrets|purge [--site DIR] [--dry-run] [--json] [--confirm] [--non-interactive] [--enabled BOOL] [--set KEY=VALUE] [--secret NAME] [--usb REQUIREMENT=PORT] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher config validate|show|schema [--site DIR]
 boetticher portal build [--site DIR] [--output DIR] [--docs DIR]
 ```
@@ -39,7 +39,7 @@ boetticher portal build [--site DIR] [--output DIR] [--docs DIR]
 
 ### init
 
-Purpose: Create a concise v3 site repository, SOPS/Age metadata, and recovery state.
+Purpose: Create a site directory with the settings and recovery files Boetticher needs.
 
 Usage: `boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall]`
 
@@ -103,15 +103,15 @@ Related commands: preflight, verify, doctor
 
 ### status
 
-Purpose: Present the versioned semantic platform and module status model.
+Purpose: Show whether the platform and its modules need attention.
 
 Usage: `boetticher status [--site DIR] [--live] [--verbose] [--json]`
 
 Arguments: No positional arguments.
 
-Options: --live performs bounded read-only gateway evidence; --verbose includes detailed reasons and next actions; --json emits the versioned status model. Exit status is zero only for HEALTHY; FAILED, DEGRADED, and ACTION REQUIRED return non-zero. Disabled optional modules are excluded from the overall result.
+Options: --live performs bounded read-only gateway checks; --verbose includes detailed reasons and next actions; --json emits the versioned status model. Exit status is zero only for HEALTHY; FAILED, DEGRADED, and ACTION REQUIRED return non-zero. Disabled optional modules are excluded from the overall result.
 
-Safety: Read-only. Live transport and malformed evidence fail non-zero and are never reported as PASS.
+Safety: Read-only. Live transport and malformed observations fail non-zero and are never reported as PASS.
 
 Examples: `boetticher status --site ./my-boetticher`; `boetticher status --site ./my-boetticher --live --json`
 
@@ -199,7 +199,7 @@ Related commands: logs, verify, deploy
 
 ### upgrade
 
-Purpose: Run the guarded platform-version lifecycle gate.
+Purpose: Run the guarded platform-version compatibility gate.
 
 Usage: `boetticher upgrade [--site DIR] [--age-identity PATH] [--recovery-confirmed]`
 
@@ -207,7 +207,7 @@ Arguments: No positional arguments.
 
 Options: --recovery-confirmed confirms an independent recovery copy; --site and --age-identity select local state.
 
-Safety: Upgrade is a guarded lifecycle operation and is distinct from deploy.
+Safety: This advanced gate is currently blocked and does not replace deploy or update.
 
 Examples: `boetticher upgrade --site ./my-boetticher --recovery-confirmed`
 
@@ -281,11 +281,11 @@ Related commands: preflight, bootstrap, firewall
 
 Purpose: Inspect observed USB hardware and manage stable bindings for compiled-in module requirements.
 
-Usage: `boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm]`
+Usage: `boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
 
 Arguments: status optionally filters MODULE REQUIREMENT; bind requires MODULE REQUIREMENT PORT; unbind requires MODULE REQUIREMENT.
 
-Options: --live reads parent usb_device identities from Proxmox; --confirm is required to change desired state and invoke deploy.
+Options: --live reads parent usb_device identities from Proxmox; --confirm is required to change desired state and invoke deploy; connection options select the target trust path.
 
 Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
 
@@ -311,7 +311,7 @@ Related commands: access, deploy, verify
 
 ### firewall
 
-Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
+Purpose: Inspect the generated or live managed gateway policy and bounded checks.
 
 Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
 
@@ -319,7 +319,7 @@ Arguments: Subcommands select the read-only view; firewall logs may accept a zon
 
 Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
 
-Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
+Safety: These views are read-only and do not edit nftables, DHCP, or routes; an external gateway remains operator-managed. Use the separate rule commands to change user firewall intent.
 
 Examples: `boetticher firewall diff --site ./my-boetticher --live`
 
@@ -333,7 +333,7 @@ Usage: `boetticher dhcp status|leases|reservation add|list|remove [--site DIR] [
 
 Arguments: status and leases select inspection; reservation add, list, and remove manage SERVERS reservations.
 
-Options: --live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output.
+Options: --live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output; connection options select the target trust path when resolving a VMID.
 
 Safety: Reservation changes edit site.yml only and never adopt or mutate user guests; VMID lookup is read-only; deployment remains boetticher deploy. External-gateway DHCP remains outside boetticher management.
 
@@ -361,11 +361,11 @@ Related commands: dhcp, config validate, deploy
 
 Purpose: Inspect the Core-owned storage substrate or perform its explicitly confirmed initialization.
 
-Usage: `boetticher storage status|initialize [--site DIR] [--live] [--storage-confirmed]`
+Usage: `boetticher storage status|initialize [--site DIR] [--live] [--storage-confirmed] [--initial-user USER] [--known-hosts PATH]`
 
 Arguments: status inspects; initialize prepares the configured dedicated data profile.
 
-Options: --live reads the Proxmox host; --storage-confirmed authorizes fixed-device initialization.
+Options: --live reads the Proxmox host; --storage-confirmed authorizes fixed-device initialization; --initial-user and --known-hosts select the SSH path.
 
 Safety: initialize can format the explicitly configured device. Modules cannot select disks or create VGs.
 
@@ -543,7 +543,7 @@ Usage: `boetticher dhcp status|leases|reservation add|list|remove [--site DIR] [
 
 Arguments: status and leases select inspection; reservation add, list, and remove manage SERVERS reservations.
 
-Options: --live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output.
+Options: --live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output; connection options select the target trust path when resolving a VMID.
 
 Safety: Reservation changes edit site.yml only and never adopt or mutate user guests; VMID lookup is read-only; deployment remains boetticher deploy. External-gateway DHCP remains outside boetticher management.
 
@@ -559,7 +559,7 @@ Usage: `boetticher dhcp status|leases|reservation add|list|remove [--site DIR] [
 
 Arguments: status and leases select inspection; reservation add, list, and remove manage SERVERS reservations.
 
-Options: --live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output.
+Options: --live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output; connection options select the target trust path when resolving a VMID.
 
 Safety: Reservation changes edit site.yml only and never adopt or mutate user guests; VMID lookup is read-only; deployment remains boetticher deploy. External-gateway DHCP remains outside boetticher management.
 
@@ -575,7 +575,7 @@ Usage: `boetticher dhcp status|leases|reservation add|list|remove [--site DIR] [
 
 Arguments: status and leases select inspection; reservation add, list, and remove manage SERVERS reservations.
 
-Options: --live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output.
+Options: --live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output; connection options select the target trust path when resolving a VMID.
 
 Safety: Reservation changes edit site.yml only and never adopt or mutate user guests; VMID lookup is read-only; deployment remains boetticher deploy. External-gateway DHCP remains outside boetticher management.
 
@@ -591,7 +591,7 @@ Usage: `boetticher dhcp status|leases|reservation add|list|remove [--site DIR] [
 
 Arguments: status and leases select inspection; reservation add, list, and remove manage SERVERS reservations.
 
-Options: --live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output.
+Options: --live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output; connection options select the target trust path when resolving a VMID.
 
 Safety: Reservation changes edit site.yml only and never adopt or mutate user guests; VMID lookup is read-only; deployment remains boetticher deploy. External-gateway DHCP remains outside boetticher management.
 
@@ -607,7 +607,7 @@ Usage: `boetticher dhcp status|leases|reservation add|list|remove [--site DIR] [
 
 Arguments: status and leases select inspection; reservation add, list, and remove manage SERVERS reservations.
 
-Options: --live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output.
+Options: --live queries the managed gateway for leases; --mac and --vmid identify reservations; --hostname and --address define additions; --json emits machine-readable output; connection options select the target trust path when resolving a VMID.
 
 Safety: Reservation changes edit site.yml only and never adopt or mutate user guests; VMID lookup is read-only; deployment remains boetticher deploy. External-gateway DHCP remains outside boetticher management.
 
@@ -681,7 +681,7 @@ Related commands: dhcp, config validate, deploy
 
 ### firewall counters
 
-Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
+Purpose: Inspect the generated or live managed gateway policy and bounded checks.
 
 Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
 
@@ -689,7 +689,7 @@ Arguments: Subcommands select the read-only view; firewall logs may accept a zon
 
 Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
 
-Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
+Safety: These views are read-only and do not edit nftables, DHCP, or routes; an external gateway remains operator-managed. Use the separate rule commands to change user firewall intent.
 
 Examples: `boetticher firewall diff --site ./my-boetticher --live`
 
@@ -697,7 +697,7 @@ Related commands: dhcp, network, logs, verify
 
 ### firewall diff
 
-Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
+Purpose: Inspect the generated or live managed gateway policy and bounded checks.
 
 Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
 
@@ -705,7 +705,7 @@ Arguments: Subcommands select the read-only view; firewall logs may accept a zon
 
 Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
 
-Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
+Safety: These views are read-only and do not edit nftables, DHCP, or routes; an external gateway remains operator-managed. Use the separate rule commands to change user firewall intent.
 
 Examples: `boetticher firewall diff --site ./my-boetticher --live`
 
@@ -713,7 +713,7 @@ Related commands: dhcp, network, logs, verify
 
 ### firewall logs
 
-Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
+Purpose: Inspect the generated or live managed gateway policy and bounded checks.
 
 Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
 
@@ -721,7 +721,7 @@ Arguments: Subcommands select the read-only view; firewall logs may accept a zon
 
 Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
 
-Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
+Safety: These views are read-only and do not edit nftables, DHCP, or routes; an external gateway remains operator-managed. Use the separate rule commands to change user firewall intent.
 
 Examples: `boetticher firewall diff --site ./my-boetticher --live`
 
@@ -729,55 +729,55 @@ Related commands: dhcp, network, logs, verify
 
 ### firewall rule add
 
-Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
+Purpose: Add a bounded user-workload firewall rule to desired site configuration.
 
-Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
+Usage: `boetticher firewall rule add [--source SOURCE] [--destination DESTINATION|--vmid VMID] [--protocol PROTOCOL] [--ports PORTS] [--id ID] [--site DIR] [--dry-run] [--confirm] [--json]`
 
-Arguments: Subcommands select the read-only view; firewall logs may accept a zone and limit.
+Arguments: --source and --protocol are required; choose exactly one of --destination and --vmid.
 
-Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
+Options: --dry-run previews the change; --confirm writes it; --age-identity, --proxmox-ca, and --insecure apply when resolving a VMID.
 
-Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
+Safety: Changes site.yml only and never deploys. Review the rule before confirming; deployment remains boetticher deploy.
 
-Examples: `boetticher firewall diff --site ./my-boetticher --live`
+Examples: `boetticher firewall rule add --source TRUSTED --destination 10.10.20.61 --protocol tcp --ports 8080 --confirm --site ./my-boetticher`
 
-Related commands: dhcp, network, logs, verify
+Related commands: firewall diff, deploy, dhcp reservation
 
 ### firewall rule list
 
-Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
+Purpose: List user-workload firewall rules recorded in the site.
 
-Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
+Usage: `boetticher firewall rule list [--site DIR] [--json]`
 
-Arguments: Subcommands select the read-only view; firewall logs may accept a zone and limit.
+Arguments: No positional arguments.
 
-Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
+Options: --json emits machine-readable rules; --site selects local state.
 
-Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
+Safety: Read-only. It does not change firewall policy or deploy anything.
 
-Examples: `boetticher firewall diff --site ./my-boetticher --live`
+Examples: `boetticher firewall rule list --site ./my-boetticher`
 
-Related commands: dhcp, network, logs, verify
+Related commands: firewall rule add, firewall rule remove
 
 ### firewall rule remove
 
-Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
+Purpose: Remove a user-workload firewall rule from desired site configuration.
 
-Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
+Usage: `boetticher firewall rule remove --id ID [--site DIR] [--dry-run] [--confirm] [--json]`
 
-Arguments: Subcommands select the read-only view; firewall logs may accept a zone and limit.
+Arguments: --id is required.
 
-Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
+Options: --dry-run previews the change; --confirm writes it; --json emits machine-readable output.
 
-Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
+Safety: Changes site.yml only and never deploys. Review the rule before confirming; deployment remains boetticher deploy.
 
-Examples: `boetticher firewall diff --site ./my-boetticher --live`
+Examples: `boetticher firewall rule remove --id ufr-example --confirm --site ./my-boetticher`
 
-Related commands: dhcp, network, logs, verify
+Related commands: firewall rule list, deploy
 
 ### firewall show
 
-Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
+Purpose: Inspect the generated or live managed gateway policy and bounded checks.
 
 Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
 
@@ -785,7 +785,7 @@ Arguments: Subcommands select the read-only view; firewall logs may accept a zon
 
 Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
 
-Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
+Safety: These views are read-only and do not edit nftables, DHCP, or routes; an external gateway remains operator-managed. Use the separate rule commands to change user firewall intent.
 
 Examples: `boetticher firewall diff --site ./my-boetticher --live`
 
@@ -793,7 +793,7 @@ Related commands: dhcp, network, logs, verify
 
 ### firewall status
 
-Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
+Purpose: Inspect the generated or live managed gateway policy and bounded checks.
 
 Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
 
@@ -801,7 +801,7 @@ Arguments: Subcommands select the read-only view; firewall logs may accept a zon
 
 Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
 
-Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
+Safety: These views are read-only and do not edit nftables, DHCP, or routes; an external gateway remains operator-managed. Use the separate rule commands to change user firewall intent.
 
 Examples: `boetticher firewall diff --site ./my-boetticher --live`
 
@@ -809,7 +809,7 @@ Related commands: dhcp, network, logs, verify
 
 ### firewall verify
 
-Purpose: Inspect the generated or live managed gateway policy and bounded evidence.
+Purpose: Inspect the generated or live managed gateway policy and bounded checks.
 
 Usage: `boetticher firewall status|show|diff|counters|logs|verify [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N]`
 
@@ -817,7 +817,7 @@ Arguments: Subcommands select the read-only view; firewall logs may accept a zon
 
 Options: --live queries the managed firewall; --json emits machine-readable output; show accepts --format human|nft; logs accepts --zone and bounded --limit 1-1000.
 
-Safety: Inspection only. This command does not edit nftables, DHCP, or routes; an external gateway remains operator-managed.
+Safety: These views are read-only and do not edit nftables, DHCP, or routes; an external gateway remains operator-managed. Use the separate rule commands to change user firewall intent.
 
 Examples: `boetticher firewall diff --site ./my-boetticher --live`
 
@@ -827,11 +827,11 @@ Related commands: dhcp, network, logs, verify
 
 Purpose: Inspect observed USB hardware and manage stable bindings for compiled-in module requirements.
 
-Usage: `boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm]`
+Usage: `boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
 
 Arguments: status optionally filters MODULE REQUIREMENT; bind requires MODULE REQUIREMENT PORT; unbind requires MODULE REQUIREMENT.
 
-Options: --live reads parent usb_device identities from Proxmox; --confirm is required to change desired state and invoke deploy.
+Options: --live reads parent usb_device identities from Proxmox; --confirm is required to change desired state and invoke deploy; connection options select the target trust path.
 
 Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
 
@@ -843,11 +843,11 @@ Related commands: module, deploy, preflight
 
 Purpose: Inspect observed USB hardware and manage stable bindings for compiled-in module requirements.
 
-Usage: `boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm]`
+Usage: `boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
 
 Arguments: status optionally filters MODULE REQUIREMENT; bind requires MODULE REQUIREMENT PORT; unbind requires MODULE REQUIREMENT.
 
-Options: --live reads parent usb_device identities from Proxmox; --confirm is required to change desired state and invoke deploy.
+Options: --live reads parent usb_device identities from Proxmox; --confirm is required to change desired state and invoke deploy; connection options select the target trust path.
 
 Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
 
@@ -859,11 +859,11 @@ Related commands: module, deploy, preflight
 
 Purpose: Inspect observed USB hardware and manage stable bindings for compiled-in module requirements.
 
-Usage: `boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm]`
+Usage: `boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
 
 Arguments: status optionally filters MODULE REQUIREMENT; bind requires MODULE REQUIREMENT PORT; unbind requires MODULE REQUIREMENT.
 
-Options: --live reads parent usb_device identities from Proxmox; --confirm is required to change desired state and invoke deploy.
+Options: --live reads parent usb_device identities from Proxmox; --confirm is required to change desired state and invoke deploy; connection options select the target trust path.
 
 Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
 
@@ -875,11 +875,11 @@ Related commands: module, deploy, preflight
 
 Purpose: Inspect observed USB hardware and manage stable bindings for compiled-in module requirements.
 
-Usage: `boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm]`
+Usage: `boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
 
 Arguments: status optionally filters MODULE REQUIREMENT; bind requires MODULE REQUIREMENT PORT; unbind requires MODULE REQUIREMENT.
 
-Options: --live reads parent usb_device identities from Proxmox; --confirm is required to change desired state and invoke deploy.
+Options: --live reads parent usb_device identities from Proxmox; --confirm is required to change desired state and invoke deploy; connection options select the target trust path.
 
 Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.
 
@@ -889,83 +889,83 @@ Related commands: module, deploy, preflight
 
 ### module configure
 
-Purpose: Inspect or change first-party module intent through the shared deploy engine, or configure desired state with the declaration-driven wizard.
+Purpose: Configure one built-in module's desired state.
 
-Usage: `boetticher module list|show|plan|configure|enable|disable|status [NAME] [--site DIR] [--dry-run] [--json] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+Usage: `boetticher module configure MODULE [--site DIR] [--dry-run] [--json] [--non-interactive] [--enabled BOOL] [--set KEY=VALUE] [--secret NAME] [--usb REQUIREMENT=PORT] [--confirm]`
 
-Arguments: NAME is required for show, plan, configure, enable, disable, and optional for status.
+Arguments: MODULE is a registered first-party module.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: The interactive workflow asks only for fields the module needs. --set, --secret, and --usb provide repeatable typed inputs; --non-interactive suppresses prompts; --dry-run previews; --confirm applies.
 
-Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Ordinary disable retains owned guests; purge remains destructive.
+Safety: Changes local desired state only and never deploys. Secret values come from a prompt or stdin and are never accepted as arguments or shown in plans.
 
-Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure aiops --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher`
+Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure aiops --non-interactive --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher`
 
-Related commands: config validate, deploy, doctor
+Related commands: module show, deploy, module secrets
 
 ### module disable
 
-Purpose: Inspect or change first-party module intent through the shared deploy engine, or configure desired state with the declaration-driven wizard.
+Purpose: Disable one optional built-in module.
 
-Usage: `boetticher module list|show|plan|configure|enable|disable|status [NAME] [--site DIR] [--dry-run] [--json] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+Usage: `boetticher module disable NAME [--site DIR] [--confirm] [--purge]`
 
-Arguments: NAME is required for show, plan, configure, enable, disable, and optional for status.
+Arguments: NAME is a registered optional module.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --confirm applies the local change; --purge requests removal of owned resources where supported; --site selects the private site repository.
 
-Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Ordinary disable retains owned guests; purge remains destructive.
+Safety: Disable retains owned resources by default. Purge is destructive and requires exact ownership proof and confirmation; neither operation applies the platform until deploy.
 
-Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure aiops --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher`
+Examples: `boetticher module disable printer --confirm --site ./my-boetticher`
 
-Related commands: config validate, deploy, doctor
+Related commands: module status, deploy, recovery
 
 ### module enable
 
-Purpose: Inspect or change first-party module intent through the shared deploy engine, or configure desired state with the declaration-driven wizard.
+Purpose: Enable one optional built-in module in desired state.
 
-Usage: `boetticher module list|show|plan|configure|enable|disable|status [NAME] [--site DIR] [--dry-run] [--json] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+Usage: `boetticher module enable NAME [--site DIR] [--confirm]`
 
-Arguments: NAME is required for show, plan, configure, enable, disable, and optional for status.
+Arguments: NAME is a registered optional module.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --confirm applies the local change; --site selects the private site repository.
 
-Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Ordinary disable retains owned guests; purge remains destructive.
+Safety: Changes desired state only and never deploys. Use deploy after reviewing the module's requirements.
 
-Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure aiops --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher`
+Examples: `boetticher module enable monitoring --confirm --site ./my-boetticher`
 
-Related commands: config validate, deploy, doctor
+Related commands: module configure, deploy
 
 ### module list
 
-Purpose: Inspect or change first-party module intent through the shared deploy engine, or configure desired state with the declaration-driven wizard.
+Purpose: List built-in modules, their policy, and current state.
 
-Usage: `boetticher module list|show|plan|configure|enable|disable|status [NAME] [--site DIR] [--dry-run] [--json] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+Usage: `boetticher module list [--site DIR]`
 
-Arguments: NAME is required for show, plan, configure, enable, disable, and optional for status.
+Arguments: No positional arguments.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --site selects the private site repository.
 
-Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Ordinary disable retains owned guests; purge remains destructive.
+Safety: Read-only. It does not change desired state or deploy.
 
-Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure aiops --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher`
+Examples: `boetticher module list --site ./my-boetticher`
 
-Related commands: config validate, deploy, doctor
+Related commands: module show, module status
 
 ### module plan
 
-Purpose: Inspect or change first-party module intent through the shared deploy engine, or configure desired state with the declaration-driven wizard.
+Purpose: Preview the resolved changes for one built-in module.
 
-Usage: `boetticher module list|show|plan|configure|enable|disable|status [NAME] [--site DIR] [--dry-run] [--json] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+Usage: `boetticher module plan NAME [--site DIR] [--dry-run]`
 
-Arguments: NAME is required for show, plan, configure, enable, disable, and optional for status.
+Arguments: NAME is a registered first-party module.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --dry-run validates without writing; --site selects the private site repository.
 
-Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Ordinary disable retains owned guests; purge remains destructive.
+Safety: Read-only planning does not deploy or change site state.
 
-Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure aiops --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher`
+Examples: `boetticher module plan printer --site ./my-boetticher`
 
-Related commands: config validate, deploy, doctor
+Related commands: module configure, deploy
 
 ### module secrets
 
@@ -985,35 +985,35 @@ Related commands: module configure, deploy, config validate
 
 ### module show
 
-Purpose: Inspect or change first-party module intent through the shared deploy engine, or configure desired state with the declaration-driven wizard.
+Purpose: Show one built-in module's policy, dependencies, and current configuration.
 
-Usage: `boetticher module list|show|plan|configure|enable|disable|status [NAME] [--site DIR] [--dry-run] [--json] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+Usage: `boetticher module show NAME [--site DIR]`
 
-Arguments: NAME is required for show, plan, configure, enable, disable, and optional for status.
+Arguments: NAME is a registered first-party module.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --site selects the private site repository.
 
-Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Ordinary disable retains owned guests; purge remains destructive.
+Safety: Read-only. It does not change desired state or deploy.
 
-Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure aiops --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher`
+Examples: `boetticher module show printer --site ./my-boetticher`
 
-Related commands: config validate, deploy, doctor
+Related commands: module configure, module list
 
 ### module status
 
-Purpose: Inspect or change first-party module intent through the shared deploy engine, or configure desired state with the declaration-driven wizard.
+Purpose: Show desired and available status for built-in modules.
 
-Usage: `boetticher module list|show|plan|configure|enable|disable|status [NAME] [--site DIR] [--dry-run] [--json] [--confirm] [--purge] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+Usage: `boetticher module status [NAME] [--site DIR] [--live]`
 
-Arguments: NAME is required for show, plan, configure, enable, disable, and optional for status.
+Arguments: NAME optionally limits the view to one registered module.
 
-Options: --dry-run shows the resolved effect; --json emits a redacted configure plan; --confirm authorizes lifecycle or configure changes; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
+Options: --live performs bounded live checks where supported; --site selects the private site repository.
 
-Safety: Configure changes site.yml and existing SOPS secrets only; it never deploys. DNS and logging are mandatory. Ordinary disable retains owned guests; purge remains destructive.
+Safety: Read-only. A local status result does not prove a deployed service journey.
 
-Examples: `boetticher module configure printer --site ./my-boetticher`; `boetticher module configure aiops --enabled true --set model_alias=operations-investigator --confirm --site ./my-boetticher`
+Examples: `boetticher module status printer --site ./my-boetticher`
 
-Related commands: config validate, deploy, doctor
+Related commands: status, doctor, module list
 
 ### modules MODULE configure
 
@@ -1161,19 +1161,19 @@ Related commands: access, deploy, verify
 
 ### pki trust export
 
-Purpose: Manage bounded client certificates from the controller-side PKI authority.
+Purpose: Export the public Boetticher trust chain for an operator client.
 
-Usage: `boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]`
+Usage: `boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]`
 
-Arguments: NAME is a validated client identity; trust export has no client NAME.
+Arguments: No positional arguments.
 
-Options: --output selects an export path; --age-identity selects the external recovery identity; --site selects local state.
+Options: --output selects a file or - for stdout; --age-identity selects the external recovery identity; --site selects local state.
 
-Safety: Private keys are never written to stdout and certificate actions update local generated state.
+Safety: Writes public certificates only. The private CA key is never exported.
 
-Examples: `boetticher pki client create operator --site ./my-boetticher`
+Examples: `boetticher pki trust export --site ./my-boetticher --output -`
 
-Related commands: access, deploy, verify
+Related commands: pki client create, access
 
 ### portal build
 
@@ -1195,11 +1195,11 @@ Related commands: access, verify, doctor
 
 Purpose: Inspect the Core-owned storage substrate or perform its explicitly confirmed initialization.
 
-Usage: `boetticher storage status|initialize [--site DIR] [--live] [--storage-confirmed]`
+Usage: `boetticher storage status|initialize [--site DIR] [--live] [--storage-confirmed] [--initial-user USER] [--known-hosts PATH]`
 
 Arguments: status inspects; initialize prepares the configured dedicated data profile.
 
-Options: --live reads the Proxmox host; --storage-confirmed authorizes fixed-device initialization.
+Options: --live reads the Proxmox host; --storage-confirmed authorizes fixed-device initialization; --initial-user and --known-hosts select the SSH path.
 
 Safety: initialize can format the explicitly configured device. Modules cannot select disks or create VGs.
 
@@ -1211,11 +1211,11 @@ Related commands: bootstrap, deploy, doctor
 
 Purpose: Inspect the Core-owned storage substrate or perform its explicitly confirmed initialization.
 
-Usage: `boetticher storage status|initialize [--site DIR] [--live] [--storage-confirmed]`
+Usage: `boetticher storage status|initialize [--site DIR] [--live] [--storage-confirmed] [--initial-user USER] [--known-hosts PATH]`
 
 Arguments: status inspects; initialize prepares the configured dedicated data profile.
 
-Options: --live reads the Proxmox host; --storage-confirmed authorizes fixed-device initialization.
+Options: --live reads the Proxmox host; --storage-confirmed authorizes fixed-device initialization; --initial-user and --known-hosts select the SSH path.
 
 Safety: initialize can format the explicitly configured device. Modules cannot select disks or create VGs.
 

@@ -4,18 +4,26 @@ package status
 
 import "strings"
 
+// ModelVersion identifies the machine-readable status contract.
 const ModelVersion = "boetticher/status/v1"
 
+// EvidenceStatus describes the result available for one check.
 type EvidenceStatus string
 
 const (
-	PASS         EvidenceStatus = "PASS"
-	FAIL         EvidenceStatus = "FAIL"
-	HOLD         EvidenceStatus = "HOLD"
-	NOTTESTED    EvidenceStatus = "NOT TESTED"
+	// PASS means the check completed successfully at its stated evidence level.
+	PASS EvidenceStatus = "PASS"
+	// FAIL means the check ran and found a failure.
+	FAIL EvidenceStatus = "FAIL"
+	// HOLD means a prerequisite or ownership condition prevents the check.
+	HOLD EvidenceStatus = "HOLD"
+	// NOTTESTED means the corresponding check has not been run.
+	NOTTESTED EvidenceStatus = "NOT TESTED"
+	// INCONCLUSIVE means the available result cannot support a conclusion.
 	INCONCLUSIVE EvidenceStatus = "INCONCLUSIVE"
 )
 
+// OperatorState is the plain-language state shown to operators.
 type OperatorState string
 
 const (
@@ -26,6 +34,7 @@ const (
 	ActionRequired OperatorState = "ACTION REQUIRED"
 )
 
+// EvidenceTier identifies the boundary at which a check was performed.
 type EvidenceTier string
 
 const (
@@ -36,6 +45,7 @@ const (
 	TierProduct  EvidenceTier = "product"
 )
 
+// Check is one component result in a status report.
 type Check struct {
 	Component  string         `json:"component"`
 	State      OperatorState  `json:"state"`
@@ -46,6 +56,7 @@ type Check struct {
 	NextAction string         `json:"next_action"`
 }
 
+// Report is the versioned status document shared by CLI, JSON, and portal views.
 type Report struct {
 	StatusModelVersion string        `json:"status_model_version"`
 	ModelRevision      string        `json:"model_revision"`
@@ -66,6 +77,7 @@ type LegacyCheck struct {
 	NextAction string
 }
 
+// FromLegacy converts the existing verification results into the semantic status model.
 func FromLegacy(modelRevision, observedAt string, checks []LegacyCheck) Report {
 	result := Report{
 		StatusModelVersion: ModelVersion,
@@ -114,6 +126,7 @@ func FromLegacy(modelRevision, observedAt string, checks []LegacyCheck) Report {
 	return result
 }
 
+// Overall returns the most serious active operator state in checks.
 func Overall(checks []Check) OperatorState {
 	state := Healthy
 	for _, check := range checks {

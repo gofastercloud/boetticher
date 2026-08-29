@@ -51,6 +51,7 @@
       "additionalProperties": false,
       "properties": {
         "mode": {
+          "description": "Use Boetticher's managed gateway or publish a contract for an external firewall.",
           "enum": [
             "managed",
             "external"
@@ -95,6 +96,7 @@
           "type": "string"
         },
         "mode": {
+          "description": "Upstream address source; DHCP is the supported mode.",
           "enum": [
             "dhcp"
           ],
@@ -312,6 +314,7 @@
       "additionalProperties": false,
       "properties": {
         "mode": {
+          "description": "Use the safe virtual-only layout or an explicitly selected physical trunk.",
           "enum": [
             "virtual-only",
             "physical-trunk"
@@ -515,6 +518,7 @@
   "properties": {
     "api_version": {
       "const": "boetticher/v3",
+      "description": "Operator-facing configuration contract identifier.",
       "type": "string"
     },
     "bootstrap_address": {
@@ -539,29 +543,35 @@
       "type": "array"
     },
     "gateway": {
-      "$ref": "#/$defs/Gateway"
+      "$ref": "#/$defs/Gateway",
+      "description": "Gateway mode and the existing upstream connection contract."
     },
     "modules": {
-      "$ref": "#/$defs/ModulesConfig"
+      "$ref": "#/$defs/ModulesConfig",
+      "description": "Authoritative typed configuration for built-in modules."
     },
     "network": {
-      "$ref": "#/$defs/Network"
+      "$ref": "#/$defs/Network",
+      "description": "Private domain and fixed network-zone contract."
     },
     "ownership": {
       "$ref": "#/$defs/OwnershipPolicy"
     },
     "physical_network": {
-      "$ref": "#/$defs/PhysicalNetwork"
+      "$ref": "#/$defs/PhysicalNetwork",
+      "description": "Installation-specific NIC bindings; the logical VLAN architecture is fixed."
     },
     "pki": {
       "$ref": "#/$defs/PKIMetadata"
     },
     "platform_version": {
       "const": "0.4.0",
+      "description": "Boetticher platform release targeted by this site.",
       "type": "string"
     },
     "schema_version": {
       "const": 3,
+      "description": "Shape version of the operator-authored site file.",
       "type": "integer"
     },
     "secret_metadata": {
@@ -571,9 +581,11 @@
       "type": "string"
     },
     "storage_device": {
+      "description": "Stable /dev/disk/by-id identity for dedicated data storage.",
       "type": "string"
     },
     "storage_profile": {
+      "description": "Fixed storage layout: the system disk or a separate dedicated data disk.",
       "enum": [
         "single-disk",
         "dedicated-data-disk"

@@ -247,14 +247,19 @@ type TestedVersions struct {
 }
 
 type Gateway struct {
-	Mode     string               `yaml:"mode" json:"mode" jsonschema:"enum=managed,enum=external"`
-	Upstream GatewayUpstream      `yaml:"upstream" json:"upstream"`
-	Publish  []GatewayPublication `yaml:"publish,omitempty" json:"publish,omitempty"`
+	// Mode selects the managed gateway or the external-firewall contract.
+	Mode string `yaml:"mode" json:"mode" jsonschema:"enum=managed,enum=external" jsonschema_description:"Use Boetticher's managed gateway or publish a contract for an external firewall."`
+	// Upstream describes the existing HOME-side connection used by the gateway.
+	Upstream GatewayUpstream `yaml:"upstream" json:"upstream"`
+	// Publish lists the small set of platform services that may be published upstream.
+	Publish []GatewayPublication `yaml:"publish,omitempty" json:"publish,omitempty"`
 }
 
 type GatewayUpstream struct {
-	Mode string `yaml:"mode" json:"mode" jsonschema:"enum=dhcp"`
-	MAC  string `yaml:"mac" json:"mac"`
+	// Mode is DHCP; the upstream network remains operator-managed.
+	Mode string `yaml:"mode" json:"mode" jsonschema:"enum=dhcp" jsonschema_description:"Upstream address source; DHCP is the supported mode."`
+	// MAC is the stable locally administered address reserved in upstream DHCP.
+	MAC string `yaml:"mac" json:"mac"`
 }
 
 type GatewayPublication struct {
@@ -285,9 +290,12 @@ const (
 // interface names are generated evidence; stable MAC/PCI identity is the
 // reconciliation key.
 type PhysicalNetwork struct {
+	// Upstream identifies the NIC carrying the Proxmox HOME connection.
 	Upstream PhysicalNIC `yaml:"upstream" json:"upstream"`
-	Trunk    PhysicalNIC `yaml:"trunk" json:"trunk"`
-	Mode     string      `yaml:"mode" json:"mode" jsonschema:"enum=virtual-only,enum=physical-trunk"`
+	// Trunk identifies the explicitly selected internal VLAN trunk NIC.
+	Trunk PhysicalNIC `yaml:"trunk" json:"trunk"`
+	// Mode records virtual-only or explicitly selected physical-trunk setup.
+	Mode string `yaml:"mode" json:"mode" jsonschema:"enum=virtual-only,enum=physical-trunk" jsonschema_description:"Use the safe virtual-only layout or an explicitly selected physical trunk."`
 }
 
 type PhysicalNIC struct {
@@ -969,13 +977,13 @@ func (s Site) Validate() error {
 		seenVLANs[z.VLAN] = z.Name
 		expected, ok := expectedZones[z.Name]
 		if !ok {
-			return fmt.Errorf("zone %s does not match the fixed V1 network contract", z.Name)
+			return fmt.Errorf("zone %s does not match the fixed 0.4 network contract", z.Name)
 		}
 		if !validZoneType(z.Type) {
 			return fmt.Errorf("zone %s has unknown semantic type %q", z.Name, z.Type)
 		}
 		if z.Type != expected.typ || z.VLAN != expected.vlan || z.Network != expected.network || z.Gateway != expected.gateway {
-			return fmt.Errorf("zone %s does not match the fixed V1 network contract", z.Name)
+			return fmt.Errorf("zone %s does not match the fixed 0.4 network contract", z.Name)
 		}
 		if _, _, err := net.ParseCIDR(z.Network); err != nil {
 			return fmt.Errorf("zone %s has invalid network: %w", z.Name, err)
@@ -1033,7 +1041,7 @@ func (s Site) Validate() error {
 		}
 	}
 	if len(seenZones) != len(expectedZones) {
-		return fmt.Errorf("V1 requires exactly TRANSIT, INFRA, SERVERS, TRUSTED, SANDBOX, and MGMT zones")
+		return fmt.Errorf("0.4 requires exactly TRANSIT, INFRA, SERVERS, TRUSTED, SANDBOX, and MGMT zones")
 	}
 	if err := validateDHCPReservations(s); err != nil {
 		return err

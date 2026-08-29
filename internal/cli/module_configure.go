@@ -73,7 +73,7 @@ type moduleConfigureReport struct {
 
 func runModuleConfigure(args []string, input io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return errors.New("usage: boetticher module configure MODULE [--site DIR] [--dry-run] [--json] [--confirm]")
+		return errors.New("usage: boetticher module configure MODULE [--site DIR] [--dry-run] [--json] [--non-interactive] [--enabled BOOL] [--set KEY=VALUE] [--secret NAME] [--usb REQUIREMENT=PORT] [--confirm]")
 	}
 	name := args[0]
 	opts, err := parseModuleConfigureOptions(args[1:])

@@ -1,8 +1,8 @@
 # Platform ownership
 
-boetticher owns the platform. Proxmox owns the user's homelab.
+Proxmox owns the host and the user's homelab. Boetticher owns the declared platform configuration that it manages on that host.
 
-boetticher manages only declared platform resources: the Proxmox host, managed
+boetticher manages only declared platform resources on the Proxmox host: the managed
 gateway when selected, DNS/NTP guests, monitor, portal, owned bridge/VLAN
 configuration, firewall policy, Kea, PKI, SOPS state, SSH bastion policy,
 Pulse monitoring state, platform backups, and generated platform state.

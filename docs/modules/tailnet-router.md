@@ -1,4 +1,4 @@
-# tailnet-router module
+# Tailnet Router
 
 `tailnet-router` is an optional, default-off first-party appliance. It is an
 unprivileged Debian LXC at `10.10.5.10` in the Core-owned TRANSIT zone and
@@ -17,6 +17,11 @@ and Internet destinations. External gateway mode emits the equivalent
 operator contract and performs no firewall or Tailnet administration.
 
 The appliance has no embedded auth key, site configuration, host SSH keys, or
-node identity. Tailscale registration, route approval, subnet access, and
-live disable/re-enable or purge remain `NOT TESTED` until a separately
-authorized qualification.
+node identity. Configure it with `boetticher module configure tailnet-router`
+and provide the declared `tailscale_auth_key` through the secret prompt or
+stdin. Disable retains owned state; purge requires the normal explicit
+ownership and confirmation checks.
+
+Tailscale registration, route approval, subnet access, and live lifecycle
+behavior require a separate operator-approved verification. Route approval and
+Tailnet ACLs remain the operator's responsibility in the Tailnet control plane.

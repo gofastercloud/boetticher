@@ -1,107 +1,74 @@
 # Boetticher agent guide
 
 This is the concise contributor contract. Product and qualification detail
-belongs in `README.md` and `docs/`; these rules prevent unsafe or generic
-control-plane changes.
+belongs in `README.md` and `docs/`; these rules protect the small product from
+unsafe or generic control-plane changes.
 
-## Product and operator experience
+## Product
 
 - Boetticher is an opinionated Proxmox homelab appliance, not a generic
-  orchestrator.
-- Prefer fixed, safe defaults, derivation, and deletion over optionality.
-  Every operator-visible setting must explain why Boetticher cannot safely
-  choose it.
-- Keep normal operation small and obvious: `init`, `deploy`, `status`,
+  orchestrator. Keep normal operation small: `init`, `deploy`, `status`,
   `module configure`, `doctor`, and `update`.
-- Do not require routine SSH, hand-edited YAML, Proxmox CLI, Ansible, Go,
-  Git, or artifact-builder knowledge for normal operation.
-- Keep recovery, destructive, physical-network, and debug operations available
-  as advanced guarded paths, with explicit confirmation at trust and
-  destructive boundaries.
+- Prefer fixed, safe defaults, derivation, and deletion over optionality.
+  Keep recovery, physical-network, destructive, and debug paths advanced and
+  explicitly guarded.
 - Modules are bounded first-party capabilities compiled into the release, not
-  plugins, arbitrary workloads, generic ingress, or generic policy DSLs.
-- Proxmox owns user workloads. Boetticher never adopts, imports, or deletes
-  unknown guests.
+  plugins, arbitrary workloads, generic ingress, or policy DSLs. Proxmox owns
+  user workloads; Boetticher never adopts, imports, or deletes unknown guests.
 - Keep the external Pi/StreamDeck companion outside the in-cluster module
   model.
 
-## Architecture and ownership
+## Architecture and authority
 
 - `internal/model` is the canonical typed v3 contract. Desired configuration
   is authoritative; generated files, observations, and evidence are derived
   projections, never competing authorities.
 - Preserve deterministic revisions, fixed VMIDs and addresses, ownership
-  ranges, and the v3 topology: HOME `vmbr0`; VLAN-aware `vmbr1`; VLANs 5,
-  10, 20, 30, 40, and 99.
+  ranges, and the HOME `vmbr0` / VLAN-aware `vmbr1` topology with VLANs 5, 10,
+  20, 30, 40, and 99.
+- Core owns privileged mutation, platform secrets, fixed resource identities,
+  appliance artifacts, persistent storage, and replacement policy. Modules
+  declare bounded needs and placement only.
 - The managed Debian gateway owns routing, NAT, nftables, Kea DHCP/DDNS, and
   the inter-zone boundary. External mode publishes a contract only.
-- DNS is mandatory and has one built-in implementation: Blocky. Do not add
-  provider selection or generic DNS lifecycle paths.
-- Core owns privileged mutation, platform secrets, fixed resource identities,
-  appliance artifacts, persistent storage lifecycle, and replacement policy.
-  Modules declare bounded needs and placement only.
+- DNS is mandatory and has one built-in client-facing implementation: Blocky.
+  PowerDNS remains authoritative DNS and Chrony remains NTP. Do not add a DNS
+  provider selector or generic DNS lifecycle path.
 - Appliance artifacts select application software. Ansible performs bounded
   site configuration and verification; it does not replace artifact-selected
-  software.
-- Official artifacts require deterministic definitions and verified content
-  digests. `make image-check` is static validation; `make images` is real
-  construction. Metadata and provenance do not become desired-state inputs.
+  software. `make image-check` validates definitions; `make images` builds.
 
 ## Security and lifecycle
 
 - Fail closed on trust, ownership, destructive, ambiguous, malformed, and
   incomplete states. Preserve `PASS`, `FAIL`, `HOLD`, `NOT TESTED`, and
   `INCONCLUSIVE` as evidence semantics.
-- Preserve strict SSH host identity and authenticated bootstrap key enrollment;
-  never use trust-on-first-use as a deployment shortcut.
-- Preserve SOPS/Age ownership. Never put secrets in argv, logs, JSON, portal
-  output, generated public documentation, or plaintext temporary files.
+- Preserve strict SSH host identity and authenticated bootstrap enrollment.
+  Preserve SOPS/Age ownership; secrets never enter argv, logs, JSON, portal
+  output, generated public docs, or plaintext temporary files.
 - Use atomic writes and path/symlink containment for desired state, generated
-  state, archives, and sensitive files.
-- Prove exact Boetticher ownership before destructive Proxmox or storage
-  operations. Persist recovery and purge intent before live mutation, verify
-  absence, and leave recoverable explicit `HOLD` state on partial failure.
+  state, archives, and sensitive files. Prove exact Boetticher ownership before
+  destructive Proxmox or storage operations.
 - `deploy` is the sole normal live-application command. `update` changes
-  desired state only and must persist it safely before refreshing projections.
-  `preflight --live` is read-only; persistence requires `--record`.
-- Temporary privilege and root access require bounded lifetime, cancellation,
-  and guaranteed cleanup. Cleanup failure is blocking evidence.
-- Live claims require live evidence. Source tests, generated configuration,
-  screenshots, cached artifacts, and operator observation do not prove a
-  deployment, journey, or qualification gate.
+  desired state only. `preflight --live` is read-only; persistence requires
+  `--record`.
+- Temporary privilege requires bounded lifetime, cancellation, and cleanup.
+  Cleanup failure is blocking evidence. Live claims require live evidence;
+  source tests and generated configuration do not prove deployment, journey,
+  or qualification.
 
-## Go engineering
+## Engineering and delivery
 
-- Prefer concrete, boring, idiomatic Go and cohesive packages. Do not split
-  packages by file size alone.
-- Keep interfaces small, consumer-owned, and tied to a real effect boundary;
-  accept interfaces where useful and return concrete types.
-- Prefer standard-library types such as `io.Writer` over bespoke one-method
-  interfaces when semantics are identical.
-- Do not introduce DI containers, repositories, factories, generic managers,
-  providers, plugin frameworks, or broad helpers without a concrete current
-  requirement and a demonstrated reduction in complexity.
-- Avoid `map[string]any` and stringly typed state except at genuine dynamic
-  boundaries. Use typed enums and values where they clarify contracts.
-- Propagate `context.Context` through I/O and process boundaries. Bound
-  subprocess output and external waits; preserve explicit cancellation and
-  cleanup.
-- Execute direct argv, not shell interpolation. Keep ordered lifecycle work
-  ordered unless concurrency has a measured, safe benefit.
-
-## Tests, documentation, and delivery
-
-- Add a focused regression test before fixing a behavior or security defect.
-  Preserve independent negative/security/lifecycle coverage when simplifying.
-- Use strict fakes for external boundaries. Use race or fuzz tests selectively
-  at meaningful concurrency, parser, and containment boundaries.
-- Run `make ci` before handoff. Local checks prove source behavior only;
-  report remote, deployed, journey, and product evidence separately.
-- Keep normal documentation focused on operator outcomes and advanced docs
-  focused on evidence and recovery. Do not document commands or options the
+- Prefer concrete, idiomatic Go and small consumer-owned interfaces. Avoid
+  generic managers, providers, plugin frameworks, and stringly typed state
+  without a concrete current need. Propagate contexts through I/O and process
+  boundaries and execute direct argv.
+- Add focused regression tests for behavior or security fixes. Use strict fakes
+  at external boundaries and preserve negative and lifecycle coverage.
+- Run `make ci` before handoff. Report local, remote, deployed, journey, and
+  product evidence separately.
+- Keep documentation focused on operator outcomes; keep detailed evidence and
+  recovery material in advanced docs. Do not document commands or options the
   binary does not support.
-- Inspect the complete staged diff. Keep commits cohesive and imperative,
-  preserve unrelated changes, and never commit directly to `main`.
-- Do not broaden scope during a qualification fix. Make the smallest
-  source-backed change tied to observed evidence, and leave deferred work
-  deferred.
+- Keep diffs narrow, inspect the complete staged diff, preserve unrelated
+  changes, use feature branches, and never commit directly to `main`.

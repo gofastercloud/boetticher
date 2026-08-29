@@ -28,8 +28,8 @@ For later changes use:
 
 ```text
 boetticher network trunk status
-boetticher network trunk attach IFACE
-boetticher network trunk detach IFACE
+boetticher network trunk attach IFACE --confirm
+boetticher network trunk detach IFACE --confirm
 ```
 
 The same planner protects the upstream address, default route, and bastion
