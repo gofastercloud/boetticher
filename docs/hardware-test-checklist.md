@@ -42,6 +42,64 @@ these journeys.
 16. Reboot, rerun critical journeys, rerun deploy, and require no unexpected
    changes.
 
+## Qualification-only disposable network probe harness
+
+Use a separate, reusable qualification tool for network-path testing. It must
+not become a Boetticher module, desired-state field, supported appliance, or
+normal CLI command. This is a test plan only; it is not part of the 0.4 source
+workflow and has not been run.
+
+Reserve LXC VMIDs 910-919 exclusively for the harness. This range is outside
+the Boetticher platform, module, and user ownership ranges. Before every run,
+the tool must verify that each selected ID is absent or bears the exact
+qualification-harness identity. It must refuse wrong-kind, wrong-name,
+wrong-tag, or ambiguous occupants and must never allocate around a collision.
+
+Create one unprivileged, non-nested LXC per exercised zone, with one vNIC and
+an exact VLAN tag. Use DHCP for TRUSTED and SANDBOX, the declared reservation
+flow for SERVERS, and fixed addresses for TRANSIT, INFRA, and MGMT. The test
+address pool must be checked against the current model and reservations before
+creation; example addresses are not a release contract. Do not infer DHCP
+success from generated configuration: record the guest lease and the gateway's
+read-only Kea observation separately.
+
+Build the probe image from the pinned Debian base with a recorded content
+digest, package manifest, SBOM, and bounded vulnerability result. The
+qualification-only image may contain `iproute2`, `iputils-ping`, `dnsutils`,
+`iperf3`, `netcat-openbsd`, `nmap`, `curl`, `jq`, and bounded packet-capture
+tools. It must not be added to the supported 0.4 artifact catalog. Keep packet
+capture on the gateway/router to bounded `tcpdump` or `tshark` sessions and
+move pcaps to the controller for offline Wireshark analysis; do not install a
+GUI Wireshark workload on the firewall.
+
+The harness should run bounded, machine-readable cases for:
+
+1. DHCP lease allocation, renewal, expiry, and the SERVERS reservation path;
+   static-only zones report the expected non-applicable result.
+2. DDNS forward A and PTR publication, secondary visibility, and removal or
+   expiry where practical.
+3. Gateway reachability, permitted egress, and forbidden inter-zone paths.
+4. Firewall allow/deny cases using declared netcat targets and a tightly
+   allow-listed, fixed-port `nmap` scan; collect before/after telemetry
+   counters.
+5. Network performance using fixed-duration `iperf3` TCP tests and, where
+   useful, bounded UDP rate/loss tests, plus RTT and MTU evidence. Performance
+   is diagnostic evidence, not an automatic platform-health PASS.
+6. Optional bounded packet captures around DHCP, DNS/DDNS, and denied flows.
+
+Each result records the harness version, model revision, VMID, guest identity,
+zone/address, exact command or case, start/end time, observation, evidence
+tier, and bounded failure output. `PASS` requires current authenticated guest
+and gateway observations; missing or ambiguous evidence is `HOLD` or
+`INCONCLUSIVE`, never a generated-configuration PASS.
+
+Teardown runs even after a failed case. Stop and destroy only exact
+harness-owned guests, verify their absence through the Proxmox API, remove
+temporary snippets and host-key state, and retain hashed evidence separately.
+An interrupted run must resume with exact-owner cleanup or return `HOLD`; it
+must never use a broad purge. Physical trunk tests remain gated behind the
+virtual and DHCP/DDNS cases.
+
 ## External mode
 
 1. Create a fresh site with `boetticher init --external-firewall`.
