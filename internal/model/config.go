@@ -45,6 +45,34 @@ type ModulesConfig struct {
 	AIOps         *AIOpsModuleConfig     `yaml:"aiops,omitempty" json:"aiops,omitempty"`
 }
 
+// ModuleConfigField describes one operator-facing decision in a first-party
+// module contract. It is metadata for the generic configure UX; the typed
+// module structs below remain the only persisted configuration representation.
+type ModuleConfigField struct {
+	Key           string                `json:"key"`
+	Type          ModuleConfigFieldType `json:"type"`
+	Prompt        string                `json:"prompt"`
+	Description   string                `json:"description,omitempty"`
+	Required      bool                  `json:"required,omitempty"`
+	Default       string                `json:"default,omitempty"`
+	Sensitive     bool                  `json:"sensitive,omitempty"`
+	AllowedValues []string              `json:"allowed_values,omitempty"`
+	Resolver      string                `json:"resolver,omitempty"`
+	MinItems      int                   `json:"min_items,omitempty"`
+	MaxItems      int                   `json:"max_items,omitempty"`
+	ItemFields    []ModuleConfigField   `json:"item_fields,omitempty"`
+}
+
+type ModuleConfigFieldType string
+
+const (
+	ModuleConfigBool       ModuleConfigFieldType = "bool"
+	ModuleConfigString     ModuleConfigFieldType = "string"
+	ModuleConfigEnum       ModuleConfigFieldType = "enum"
+	ModuleConfigModelAlias ModuleConfigFieldType = "model-alias"
+	ModuleConfigObjectList ModuleConfigFieldType = "object-list"
+)
+
 type DNSModuleConfig struct {
 	Provider DNSProvider `yaml:"provider,omitempty" json:"provider,omitempty" jsonschema:"enum=blocky,enum=adguard,default=blocky"`
 }
@@ -201,8 +229,14 @@ func ValidateLiteLLMConfig(config ModuleConfig) error {
 	if len(config.Upstreams) == 0 {
 		return errors.New("modules.litellm.upstreams must contain at least one upstream")
 	}
+	if len(config.Upstreams) > 16 {
+		return errors.New("modules.litellm.upstreams must contain at most 16 upstreams")
+	}
 	if len(config.Models) == 0 {
 		return errors.New("modules.litellm.models must contain at least one explicit model alias")
+	}
+	if len(config.Models) > 32 {
+		return errors.New("modules.litellm.models must contain at most 32 model aliases")
 	}
 	upstreams := make(map[string]struct{}, len(config.Upstreams))
 	for _, upstream := range config.Upstreams {
