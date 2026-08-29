@@ -1,17 +1,22 @@
-# Contributing to boetticher
+# Contributing to Boetticher
 
-Thanks for helping make boetticher safer and easier to recover.
+Thanks for helping make Boetticher useful, understandable, and safe to
+recover. Start with the [project guide](AGENTS.md), [architecture](docs/architecture.md),
+[security model](docs/security-model.md), and [ownership boundary](docs/platform-ownership.md).
 
-## Before you start
+## The shape of the project
 
-Read [agents.md](agents.md), [the architecture guide](docs/architecture.md),
-[the security model](docs/security-model.md), and [the ownership boundary](docs/platform-ownership.md).
-The most important invariant is that boetticher owns the declared platform,
-while Proxmox and the operator own arbitrary user workloads.
+Boetticher is an opinionated homelab appliance, not a generic VM manager or
+infrastructure framework. Prefer a small fixed contract, a concrete Go
+implementation, and deletion over a new abstraction. Modules are bounded
+first-party capabilities; Core owns platform mutation and user workloads stay
+outside the model.
 
-For changes that affect bootstrap, credentials, routing, firewall policy,
-physical NIC assignment, PKI, backup ownership, or recovery, explain the
-failure mode being prevented and add a regression test where possible.
+Keep one authoritative representation of desired configuration. Generated
+files, observations, and test or qualification records are projections. Do
+not weaken ownership checks, SSH host verification, SOPS/Age boundaries,
+destructive confirmations, or the distinction between local checks and live
+acceptance.
 
 ## Development loop
 
@@ -20,41 +25,31 @@ gofmt -w cmd internal
 make ci
 ```
 
-The repository targets the Go version in `go.mod`. Keep generated contracts
-deterministic. Do not commit secrets, Age private identities, caches, bootstrap
-credentials, or live installation state.
+Use the Go version declared in `go.mod`. Keep generated contracts
+deterministic and regenerate command or schema references from their source.
+Do not commit secrets, Age private identities, caches, bootstrap credentials,
+or live installation state.
+
+For a behavior or security fix, add a focused regression test. For changes to
+bootstrap, credentials, routing, firewall policy, physical NIC assignment,
+PKI, backup ownership, or recovery, explain the failure mode being prevented.
 
 ## Pull requests
 
 - Keep changes narrow and describe the user-visible contract.
-- Include tests and documentation for new behaviour.
-- Preserve explicit `PASS`, `HOLD`, `FAIL`, `NOT TESTED`, and `INCONCLUSIVE` states.
-- Do not claim live Proxmox, Debian gateway, DNS, network, or recovery acceptance from local tests alone.
-- Do not add generic VM/LXC lifecycle management or silently adopt user guests.
-- Do not weaken SSH host-key verification or bypass an ownership boundary to make a test pass.
-- Use an imperative commit subject and keep commits cohesive.
-- Appliance changes must preserve the hosted-builder contract: public
-  allow-listed inputs, deterministic definition identity, independently
-  verified content SHA, successful build smoke checks, passing Trivy policy,
-  bounded failure diagnostics, safe streamed artifact transfer, and cleanup
-  of VM 190 after a required build. Package manifests, SBOMs, scanner reports,
-  and builder provenance remain useful build/release outputs, not a nested
-  deployment trust hierarchy.
-- Appliance artifacts determine module-version-determined application
-  software. Ansible may perform bounded site-specific runtime configuration,
-  service enablement, certificate/config installation, and verification, but
-  must not install or replace the application software selected by the
-  appliance artifact.
-- Modules declare persistent volumes and placement policy; Core owns physical
-  disks, PVs, VGs, filesystems, and destructive storage operations.
-- Logging is mandatory and inherited from the common appliance base. DNS is
-  one mandatory module implemented by Blocky.
-- Keep current-architecture prose direct in docs, help, and comments. Use
-  release or migration material for historical wording. A T580 or other live
-  hardware journey remains `NOT TESTED` until it is actually run.
+- Include tests and documentation for new behavior.
+- Keep `PASS`, `HOLD`, `FAIL`, `NOT TESTED`, and `INCONCLUSIVE` meaningful; do
+  not claim live Proxmox, DNS, network, or recovery acceptance from local tests.
+- Do not add generic VM/LXC lifecycle management or adopt user guests.
+- Do not weaken host-key verification or bypass ownership checks to make a
+  test pass.
+- Keep application software in deterministic appliance artifacts. Ansible
+  applies bounded site configuration and verification; it does not replace
+  artifact-selected software.
+- Modules declare bounded placement and persistent needs; Core owns physical
+  storage and destructive lifecycle operations.
 
 ## Reporting security issues
 
 Please do not open a public issue containing credentials, private keys,
-reproducible exploit details, or sensitive installation data. Follow
-[SECURITY.md](SECURITY.md) instead.
+exploit details, or sensitive installation data. Follow [SECURITY.md](SECURITY.md).

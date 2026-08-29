@@ -19,6 +19,11 @@ replacement:
 - aiops: a 1 GiB backed-up volume retaining bounded lifecycle, reports,
   evidence hashes, token usage and audit state; raw evidence and prompts are
   removed at terminal transition.
+- gatus: no persistent application volume; its runtime state is ephemeral.
+- litellm: the retained TLS identity and declared persistent service state.
+- printer: the backed-up `/var/lib/octoprint` volume, plus retained TLS and
+  SSH identities.
+- tailnet-router: the retained `/var/lib/tailscale` state.
 
 `DEPLOYMENT-DERIVED` state is regenerated from the desired model: runtime
 configuration, DNS records, monitoring declarations, firewall policy,

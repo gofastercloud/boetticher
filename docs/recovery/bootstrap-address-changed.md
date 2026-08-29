@@ -5,7 +5,7 @@ The initial Proxmox frontend address comes from the existing HOME router and may
 If it changes, use only the known new address:
 
 ```sh
-boetticher bootstrap-endpoint set 192.0.2.10 --site my-boetticher
+boetticher bootstrap-endpoint set NEW_PROXMOX_HOME_IP --site my-boetticher
 boetticher ssh-config --site my-boetticher --force
 boetticher doctor --site my-boetticher --live
 ```

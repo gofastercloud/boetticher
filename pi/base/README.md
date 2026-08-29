@@ -8,8 +8,8 @@ its rollback media while keeping host changes explicit and recoverable:
 
 - `config/gpio-fan.conf` records the kernel-managed GPIO14 fan profile: 60 C
   on and 45 C off. Verify the transistor/controller and polarity before
-  applying it. The live Pi currently has the overlay in firmware configuration
-  and a 60 C trip point.
+  applying it. The overlay and trip point are host observations; recheck them
+  on the Pi before changing its firmware.
 - `config/sshd/60-boetticher.conf.example` is the key-only SSH policy. Confirm
   a working non-root administrative key and the recovery path before enabling
   it; root access is restricted to public-key authentication.
@@ -24,10 +24,11 @@ boot. Credentials and private keys stay outside this directory.
 
 ## Live gates
 
-The Pi currently has Ethernet DHCP at `10.10.20.50` and Wi-Fi at
-`192.168.4.36`. Wi-Fi must remain available as rollback until Ethernet has
-been independently verified after reboot. VLAN 20 static addressing remains
-`HOLD` until the switch/network assignment exists.
+The recorded Pi network observation is Ethernet DHCP at `10.10.20.50` and
+Wi-Fi at `192.168.4.36`; recheck both before making a network change. Wi-Fi
+must remain available as rollback until Ethernet has been independently
+verified after reboot. VLAN 20 static addressing remains unavailable until the
+switch/network assignment exists.
 
 Before applying key-only SSH or storage-related changes, capture:
 

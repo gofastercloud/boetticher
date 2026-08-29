@@ -10,7 +10,6 @@ boetticher module plan monitoring
 boetticher module enable monitoring --dry-run
 boetticher module disable monitoring --dry-run
 
-boetticher module list
 boetticher module show tailnet-router
 boetticher module plan tailnet-router
 boetticher module status litellm

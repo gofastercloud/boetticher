@@ -14,9 +14,3 @@ generated/runtime/
 *.tar.zst
 *.qcow2
 .trivy/
-
-# Legacy OpenTofu state and provider caches may remain in existing checkouts.
-.terraform/
-*.tfstate
-*.tfstate.*
-*.tfplan

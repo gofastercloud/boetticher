@@ -1,6 +1,7 @@
 # Backup ownership
 
-boetticher guarantees backup coverage for its own platform guests through the
+boetticher defines and provisions intended backup coverage for its own
+platform guests through the
 clearly named Proxmox job `boetticher-platform`. In the default managed
 configuration, the platform backup set contains these platform VM/LXC IDs:
 
@@ -39,4 +40,4 @@ change the ownership boundary.
 
 The job is namespaced as boetticher-owned. Deployment must not overwrite or delete user-created backup jobs. User workloads remain user-owned; operators should create and maintain their own Proxmox backup policy if they need coverage. Doctor reports platform coverage without treating user workloads as drift.
 
-Local backups on the same physical data disk are not independent disaster recovery. Offsite or independent backup is a future official module, not a V1 guarantee.
+Local backups on the same physical data disk are not independent disaster recovery. Check the current backup job and its last successful run before relying on it; this document describes intended coverage, not live freshness. Offsite or independent backup is not part of the current platform contract.

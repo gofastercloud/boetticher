@@ -18,12 +18,15 @@ the declared platform resources.
 
 The internal namespace is `lab.home.arpa`. The platform identities are:
 
+The fixed VLAN contract is VLAN 5 TRANSIT, VLAN 10 INFRA, VLAN 20 SERVERS,
+VLAN 30 TRUSTED, VLAN 40 SANDBOX, and VLAN 99 MGMT.
+
 | Host | Address | Function |
 | --- | --- | --- |
 | `lab-proxmox-01` | `10.10.99.5` | Proxmox host |
 | `lab-fw-01` | `.1` in all six zones | managed Debian gateway |
-| `lab-dns-01` | `10.10.10.10` | PowerDNS, Blocky by default, Chrony |
-| `lab-dns-02` | `10.10.10.11` | PowerDNS, Blocky by default, Chrony |
+| `lab-dns-01` | `10.10.10.10` | PowerDNS authoritative, Blocky client DNS, Chrony |
+| `lab-dns-02` | `10.10.10.11` | PowerDNS authoritative, Blocky client DNS, Chrony |
 | `lab-monitor-01` | `10.10.10.20` | Pulse Community monitoring |
 | `lab-log-01` | `10.10.10.40` | Central systemd journal collector |
 | `lab-portal-01` | `10.10.10.30` | generated portal |

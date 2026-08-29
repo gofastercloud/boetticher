@@ -591,7 +591,7 @@ func expectedStorageStatus(statuses []proxmox.StorageStatus, plan storage.Plan) 
 }
 
 func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResult {
-	results := []portal.CheckResult{{Name: "canonical platform model validates", Status: "PASS", Detail: "fixed V1 topology and address contract validated locally"}}
+	results := []portal.CheckResult{{Name: "canonical platform model validates", Status: "PASS", Detail: "fixed 0.4 topology and address contract validated locally"}}
 	checks := []struct {
 		name  string
 		check func() error

@@ -1,6 +1,6 @@
 # Security model
 
-boetticher is a fun, opinionated pre-alpha project. Its security model is
+boetticher is a small, opinionated pre-alpha project. Its security model is
 explicit and testable, but it is not an audited production appliance.
 
 ## Managed gateway

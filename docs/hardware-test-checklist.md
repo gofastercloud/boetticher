@@ -37,7 +37,7 @@ these journeys.
     rule metadata, epochs, samples within retention, and events.
 14. Verify the telemetry process is non-root and cannot mutate nftables; this
     service must not provide SSH, shell, database, or WAN access.
-15. Attach a clean second NIC with `boetticher network trunk attach IFACE` and
+15. Attach a clean second NIC with `boetticher network trunk attach IFACE --confirm` and
    prove physical VLAN access through a managed switch.
 16. Reboot, rerun critical journeys, rerun deploy, and require no unexpected
    changes.

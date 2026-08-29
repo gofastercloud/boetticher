@@ -19,7 +19,7 @@ through `LoadCredential=`. Set `screensaver_only` to `false` and configure the
 real Pulse URL. No token, private key, or certificate value belongs in this
 repository or in command-line arguments.
 
-The currently attached device was identified before deployment as:
+The recorded device observation (verify it again before deployment) is:
 
 - Elgato Stream Deck original V2, USB `0fd9:006d`
 - serial `AL33J2C14717`

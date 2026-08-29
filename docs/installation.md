@@ -1,130 +1,141 @@
 # Installation
 
-boetticher runs from a separate macOS or Linux controller and builds a small
-platform on a fresh Proxmox host. The controller holds the private site
-repository, Age identity, CA signing authority, and runtime state. The pinned
-SOPS 3.13.3 and age 1.3.1 implementations are bundled in the Boetticher
-binary. The Proxmox host is a target, not the controller.
+Boetticher runs from a macOS or Linux controller and builds a small platform
+on a fresh amd64 Proxmox host. The controller keeps the private site
+repository, encrypted secrets, and recovery authority; the Proxmox host runs
+the platform.
 
-Supported controllers are macOS arm64/amd64 and Linux arm64/amd64. Native
-Windows is outside the v0.4 contract. One physical NIC is enough for managed
-mode; a second NIC and managed VLAN switch provide physical access to the
-internal zones. External-firewall mode requires both NICs.
+## Before you begin
 
-## Create the site
+You need:
+
+- a fresh supported Proxmox VE installation reachable from its HOME/upstream
+  network;
+- a macOS or Linux controller with the Boetticher binary and SSH; and
+- one Ethernet interface for the default managed setup.
+
+A second interface and a VLAN-aware switch are only needed for a physical
+trunk or external-firewall mode. Choose either the single-disk or
+dedicated-data-disk storage profile before the first deployment.
+
+If you are working from a source checkout, build the controller with
+`make build` and use `./bin/boetticher`. A release binary does not need the Go
+toolchain at runtime. Ansible Core is required on the controller; SOPS 3.13.3
+and age 1.3.1 are included in the Boetticher build.
+
+## 1. Create a site
 
 ```text
 boetticher init --site-dir my-boetticher
 ```
 
-Use `--external-firewall` to create the bring-your-own-firewall contract. The
-default is the managed Debian gateway. The site repository contains desired
-state, encrypted SOPS documents, and non-secret generated projections. The Age
-private identity is outside Git at `~/.config/boetticher/age/identity.txt` (or
-the explicit path supplied to `init`). Keep an independent recovery copy before
-running a destructive bootstrap. `init` reuses an existing identity after
-validating its public recipient and never overwrites it; it creates one only
-when the configured path is absent.
-For managed mode, `init` also prints and persists the generated `wan0` MAC.
-Create the matching reservation in the existing HOME/upstream DHCP service
-before deployment; the DHCP-assigned address is intentionally not part of
-`site.yml`.
+This creates a small `site.yml`, encrypted-secret metadata, and recovery
+state. The Age identity is kept outside the site directory by default at
+`~/.config/boetticher/age/identity.txt`. Keep an independent recovery copy
+before bootstrapping. `init` reuses an existing identity after checking that it
+belongs to the site and will not overwrite it.
 
-## Bootstrap
+For managed mode, `init` also creates the stable MAC address used by the
+gateway's upstream interface. Reserve that MAC in the existing HOME/upstream
+DHCP service before deployment; the resulting address remains upstream state,
+not site configuration.
 
-1. Install a supported fresh Proxmox host and connect to its HOME-side DHCP
-   address.
-2. Record that address with
-   `boetticher bootstrap-endpoint set ADDRESS --site my-boetticher`.
-3. Run `boetticher preflight --site my-boetticher --live`. It identifies the
-   physical upstream interface conservatively and reports safe trunk
-   candidates. Managed mode defaults to virtual-only: spare NICs remain
-   unclaimed until the operator explicitly attaches a selected trunk. External
-   mode requires an explicitly selected physical trunk, even when only one
-   eligible NIC is discovered; use `--trunk-interface` for that selection.
-4. For the controller's internal deployment transport, run
-   `boetticher ssh-config --site my-boetticher --force --install-include`.
-5. Supply the Proxmox cluster CA PEM (for example, a securely copied
-   `/etc/pve/pve-root-ca.pem` from the target) and run
-   `boetticher bootstrap --site my-boetticher --recovery-confirmed
-   --proxmox-ca /path/to/pve-root-ca.pem`. The CA is verified before
-   bootstrap creates the API token. `--insecure` is not part of the supported
-   qualification path.
-   Dedicated storage also requires `--storage-confirmed` after reviewing the
-   stable `/dev/disk/by-id/...` device.
+## 2. Prepare the fresh host
 
-The first bootstrap SSH connection uses the site-scoped
-`generated/ssh/known_hosts` file by default and `StrictHostKeyChecking=ask`.
-Verify the Proxmox host fingerprint at that prompt, or provide
-`--known-hosts` with an independently enrolled entry for the logical
-`lab-proxmox-01` identity. Subsequent API, deployment, bastion, and recovery
-SSH paths require that enrolled key and use strict host-key checking; an
-`ssh-keyscan` result is never used as trust evidence.
+Find the address Proxmox received from the existing HOME/upstream DHCP service
+and record it:
 
-Managed mode prepares the host and artifact substrate during bootstrap. The
-first `deploy` creates VM 100, `lab-fw-01`, as the qualified boetticher Debian
-firewall appliance with one ordinary vNIC for WAN and one Proxmox-tagged vNIC
-for each internal zone. The managed gateway receives no 802.1Q trunk and has
-no VLAN subinterfaces.
+```text
+boetticher bootstrap-endpoint set PROXMOX_HOME_IP --site my-boetticher
+```
 
-Bootstrap also establishes a temporary root SSH deployment window for the
-controller on the
-Proxmox host. Managed guest first boot preserves the injected root key for the
-same window and installs the `labadmin` key without granting general `labadmin`
-sudo authority; the managed firewall image retains only fixed, read-only
-inspection helpers.
-The deployment playbook connects as root without Ansible `become`. Successful
-convergence removes the root key, disables the host root SSH allowance, and
-locks the root password. If deployment fails before cleanup, retry through the
-same temporary root path; cleanup failure is a hold requiring bootstrap or
-recovery authority.
+`PROXMOX_HOME_IP` is a placeholder for the real address. Boetticher does not
+scan the network for the host.
 
-When a later deployment needs to change an already-converged guest, Core may
-re-arm the same temporary key through the authenticated Proxmox host boundary
-for that exact owned guest, then removes it again during cleanup.
+Run the read-only hardware and configuration check:
 
-Routine operator administration of Core-managed appliances is not performed by SSH. Use the Boetticher
-CLI, native product UI/API where appropriate, generated portal/status surfaces,
-or explicit Proxmox console/exec break-glass access for recovery.
+```text
+boetticher preflight --site my-boetticher --live
+```
 
-External mode does not create VM 100. It requires a distinct physical vmbr1
-trunk and publishes `generated/network/external-firewall-contract.md`. The
-external appliance, DHCP, and its own recovery remain operator-owned.
+Managed mode starts with a virtual-only internal bridge. If you want a
+physical trunk, select the interface reported by preflight and pass
+`--trunk-interface IFACE` to the guarded bootstrap. External-firewall mode
+always requires an explicitly selected physical trunk.
 
-## Deploy the platform
+## 3. Bootstrap trust and storage
+
+Copy the Proxmox cluster CA to the controller through a trusted path, then
+run:
+
+```text
+boetticher bootstrap --site my-boetticher --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem
+```
+
+At the first SSH connection, verify the displayed Proxmox host fingerprint.
+The enrolled identity is then used for later connections. Do not use a
+`ssh-keyscan` result as verification evidence, and do not use `--insecure`
+unless you are following the advanced recovery procedure.
+
+`--recovery-confirmed` means that the independent Age recovery copy is safe
+and available. If the site uses `dedicated-data-disk`, review the exact stable
+`/dev/disk/by-id/...` device and repeat with `--storage-confirmed`:
+
+```text
+boetticher bootstrap --site my-boetticher --recovery-confirmed --storage-confirmed --proxmox-ca /path/to/pve-root-ca.pem
+```
+
+Bootstrap prepares the host and deployment trust. It does not deploy the
+platform guests yet.
+
+## 4. Deploy and check the platform
+
+Review the plan first:
+
+```text
+boetticher deploy --site my-boetticher --dry-run --proxmox-ca /path/to/pve-root-ca.pem
+```
+
+Apply it:
 
 ```text
 boetticher deploy --site my-boetticher --proxmox-ca /path/to/pve-root-ca.pem
-boetticher verify --site my-boetticher --proxmox-ca /path/to/pve-root-ca.pem
-boetticher doctor --site my-boetticher --proxmox-ca /path/to/pve-root-ca.pem
+boetticher status --site my-boetticher --live
 ```
 
-`deploy` is the only public command that applies the complete desired
-platform. `bootstrap` prepares the host and build inputs; module configuration,
-guest identities, artifacts, services, backups, and shared policy are applied
-through `deploy`.
+`deploy` is the normal command that applies the complete platform. It creates
+the managed gateway when selected, brings up DNS/NTP, monitoring, logs, the
+portal, backups, and any enabled optional modules. `status` gives the normal
+operator view; use `doctor` or the [troubleshooting guide](troubleshooting.md)
+when it points to a specific problem.
 
-The managed path configures Debian networking, nftables, Kea, sandbox DNS/NTP,
-DNS/NTP guests, the Pulse monitoring appliance, the tagged Pulse host agent,
-the portal, PKI certificates, and platform backups. The default agent target is
-the Proxmox host; guest agents require an explicit `monitoring-agent` tag on a
-declared managed component.
-The external path configures the boetticher-owned platform and leaves the
-firewall appliance alone.
+The generated portal and the [operations guide](operations.md) are useful
+places to start after the first deployment. Create client certificates with
+the [access guide](access/client-certificates.md) before opening the protected
+platform UIs.
 
-The managed firewall appliance also starts the fixed telemetry service and
-snapshot timer. Pulse reaches its health endpoint only over INFRA at
-`http://10.10.10.1:9765/healthz`; the API is not published through the HOME or
-WAN interface.
+## External-firewall mode
 
-To publish the optional bounded DNS service, add `gateway.publish: [{service:
-dns}]` to `site.yml`. Deployment observes the live upstream lease after
-`lab-dns-01` passes readiness, then applies only TCP/UDP port 53 forwarding
-from the directly connected upstream prefix to `10.10.10.10`. Verify the
-effective address and mapping with `boetticher verify --live` or
-`boetticher doctor --live`; an unavailable or ambiguous lease is a hold and
-does not open forwarding.
+Choose this mode when another appliance owns routing, NAT, DHCP, and the
+network boundary:
 
-See [the external firewall contract](networking/external-firewall.md),
-[storage](storage/dedicated-data-disk.md), and the recovery guides for
-the detailed operational paths.
+```text
+boetticher init --site-dir my-boetticher --external-firewall
+```
+
+The appliance must carry VLANs 5, 10, 20, 30, 40, and 99 on a distinct
+physical trunk and provide the six fixed gateways. Boetticher publishes the
+contract and configures its own platform side; it does not configure, back up,
+or recover the external appliance. Follow the [external-firewall guide](networking/external-firewall.md)
+before bootstrap.
+
+## If something goes wrong
+
+Keep the site repository, Age identity, CA authority, and declared backups
+together as a recovery set. A failed deployment retains its bounded retry path;
+cleanup failures require the recovery instructions before you treat the host
+as settled. Local backups share the storage failure domain, so keep an
+independent copy for anything you care about.
+
+For detailed trust, storage, and rebuild procedures, see [recovery](recovery/recovery.md),
+[security](security-model.md), and [dedicated storage](storage/dedicated-data-disk.md).

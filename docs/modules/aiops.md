@@ -52,7 +52,7 @@ method/path sets. The note token has `monitoring:write` scope because that is
 Pulse 6.1.2's incident-note scope, but its certificate is rejected from every
 other route, including acknowledge, clear, activate and configuration. The
 logging endpoint accepts only the `aiops-log-read` certificate and a typed
-host/unit/time/line query. There is no SSH evidence tier in v1.
+host/unit/time/line query. There is no SSH evidence tier in the AIOps status contract.
 
 Incidents are committed before webhook acceptance. Duplicate webhooks and the
 60-second active-alert poll feed the same fingerprint transaction. Queue and

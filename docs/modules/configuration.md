@@ -32,6 +32,8 @@ modules:
     model_alias: selected-alias
   printer:
     enabled: false
+  gatus:
+    enabled: false
 usb_exports:
   - module: printer
     requirement: serial
@@ -40,10 +42,11 @@ usb_exports:
     product_id: "7523"
 ```
 
-An omitted module map uses the defaults: DNS is mandatory, monitoring is
-enabled, the managed firewall is enabled, and logging is mandatory. DNS has no
-disable switch or provider-selection field; its built-in implementation is
-Blocky.
+An omitted module map uses the defaults: DNS and logging are mandatory,
+monitoring and the managed firewall are enabled, and Gatus, LiteLLM, printer,
+AIOps, and Tailnet Router are disabled. DNS has no disable switch or
+provider-selection field; Blocky is its sole client-facing recursive/filtering
+implementation.
 
 Use `boetticher config validate` before deployment, `boetticher config show`
 to inspect normalized non-secret configuration, and `boetticher config schema`
@@ -60,7 +63,7 @@ OS CSPRNG and persists it in `site.yml`; reserve that MAC in the upstream DHCP
 server. The reserved IPv4 address remains upstream/operator state and is never
 written to desired state.
 
-`gateway.publish` is optional and currently accepts only `dns`. During deploy,
+`gateway.publish` is optional and accepts only `dns`. During deploy,
 boetticher first brings up the gateway and DNS, observes the current DHCP
 address, prefix, default gateway, and MAC, then installs only the matching TCP
 and UDP port-53 DNAT and forward rules. If the observation is absent, stale, or
@@ -100,9 +103,11 @@ boetticher module configure aiops
 ```
 
 `--dry-run` performs validation and prints a plan without writing. `--json`
-emits a redacted machine-readable plan and never prompts; use `--enabled`,
-repeatable typed `--set KEY=VALUE`, and `--usb REQUIREMENT=PORT` for safe
-automation. A non-interactive apply requires `--confirm`. Missing required
+emits a redacted machine-readable plan and never prompts; use
+`--non-interactive` for automation when you also provide every required input.
+Use `--enabled`, repeatable typed `--set KEY=VALUE`, and
+`--usb REQUIREMENT=PORT` for safe automation. A non-interactive apply requires
+`--confirm`. Missing required
 fields, model aliases, or USB bindings are `HOLD`, never guessed.
 
 Operator credentials are never accepted as arguments. Declared
