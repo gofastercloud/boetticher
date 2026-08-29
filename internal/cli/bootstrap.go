@@ -70,7 +70,7 @@ func runBootstrapEndpoint(args []string, out io.Writer) error {
 		return err
 	}
 	if s.BootstrapAddress == "" {
-		fmt.Fprintln(out, "Bootstrap endpoint: NOT CONFIGURED")
+		fmt.Fprintln(out, "Bootstrap endpoint: FAIL not configured; use boetticher bootstrap-endpoint set ADDRESS")
 	} else {
 		fmt.Fprintf(out, "Bootstrap endpoint: %s\n", s.BootstrapAddress)
 	}
@@ -150,7 +150,7 @@ func runBootstrap(args []string, out io.Writer) error {
 		builder := artifacts.Builder()
 		fmt.Fprintf(out, "  Artifact builder: temporary VMID %d (%s, %s)\n", builder.VMID, builder.Hostname, builder.Network)
 		fmt.Fprintln(out, "  Artifact qualification: base, selected appliances, SBOM, Trivy, independent content SHA-256")
-		fmt.Fprintln(out, "  Destructive actions: NOT RUN (dry-run)")
+		fmt.Fprintln(out, "  Destructive actions: not applied (dry-run)")
 		return nil
 	}
 	publicKey, err := readOperatorPublicKey(*operatorKey)

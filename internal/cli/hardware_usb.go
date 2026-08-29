@@ -54,6 +54,7 @@ func runHardware(args []string, out io.Writer) error {
 				return err
 			}
 			fmt.Fprint(out, observed)
+			fmt.Fprintln(out, "USB live observation: PASS")
 		}
 		return nil
 	}
@@ -67,7 +68,7 @@ func runHardware(args []string, out io.Writer) error {
 		})
 		for _, binding := range bindings {
 			if len(positional) == 0 || binding.Module == positional[0] && binding.Requirement == positional[1] {
-				fmt.Fprintf(out, "%s/%s port=%s identity=%s:%s serial=%s status=CONFIGURED\n", binding.Module, binding.Requirement, binding.Port, binding.VendorID, binding.ProductID, valueOrUnknown(binding.Serial))
+				fmt.Fprintf(out, "%s/%s port=%s identity=%s:%s serial=%s result=PASS configured\n", binding.Module, binding.Requirement, binding.Port, binding.VendorID, binding.ProductID, valueOrUnknown(binding.Serial))
 			}
 		}
 		if *live {
@@ -76,6 +77,7 @@ func runHardware(args []string, out io.Writer) error {
 				return err
 			}
 			fmt.Fprint(out, observed)
+			fmt.Fprintln(out, "USB live observation: PASS")
 		}
 		return nil
 	}

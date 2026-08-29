@@ -20,7 +20,7 @@ prove chat completions, function calling, response schemas, at least 32,768
 input tokens, and at least 1,200 output tokens. Core then runs a bounded live
 tool-calling and response-schema canary through the declared alias. Unknown
 metadata, an ambiguous alias, or either failed canary leaves all AIOps units
-stopped and reports `HOLD`.
+stopped and deployment fails with the failed qualification reason.
 
 ## Authority boundary
 
@@ -79,5 +79,6 @@ the bounded two-request tool/schema canary through the configured AI Router
 alias. The AI Router check invokes the selected provider and may incur its
 normal small request charge. Diagnostic responses expose only `PASS` or `FAIL`,
 not upstream error or credential material. Live integration, negative network
-tests, reboot recovery, backup/restore and lifecycle journeys remain `NOT
-TESTED` until executed on supported infrastructure.
+tests, reboot recovery, backup/restore and lifecycle journeys remain separate
+qualification gates until executed on supported infrastructure; a requested
+gate fails with its next action until then.

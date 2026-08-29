@@ -917,18 +917,28 @@ func isHex(value string) bool {
 // dedicated-data-disk profile. It refuses to accept a conflicting existing
 // definition and relies on Proxmox to reject a missing/unmounted path.
 func (c *Client) EnsureDirectoryStorage(ctx context.Context, storageID, storagePath string) error {
-	return c.EnsureDirectoryStorageContent(ctx, storageID, storagePath, []string{"backup"})
+	_, err := c.EnsureDirectoryStorageContentWithMutation(ctx, storageID, storagePath, []string{"backup"})
+	return err
 }
 
 // EnsureDirectoryStorageContent validates a named directory storage and adds
 // only the requested content types. It never changes the path or adopts a
 // different storage with the same name.
 func (c *Client) EnsureDirectoryStorageContent(ctx context.Context, storageID, storagePath string, requiredContent []string) error {
+	_, err := c.EnsureDirectoryStorageContentWithMutation(ctx, storageID, storagePath, requiredContent)
+	return err
+}
+
+// EnsureDirectoryStorageContentWithMutation is the coarse mutation-aware
+// form used by deployment reporting. A true result means a provider write was
+// required or may have been accepted before returning an error; it is not a
+// per-field audit record.
+func (c *Client) EnsureDirectoryStorageContentWithMutation(ctx context.Context, storageID, storagePath string, requiredContent []string) (bool, error) {
 	if c == nil {
-		return errors.New("Proxmox client is required")
+		return false, errors.New("Proxmox client is required")
 	}
 	if storageID == "" || storagePath == "" || len(requiredContent) == 0 {
-		return errors.New("storage ID and path are required")
+		return false, errors.New("storage ID and path are required")
 	}
 	var storages []struct {
 		Storage string `json:"storage"`
@@ -937,14 +947,14 @@ func (c *Client) EnsureDirectoryStorageContent(ctx context.Context, storageID, s
 		Content string `json:"content"`
 	}
 	if err := c.Get(ctx, "/storage", nil, &storages); err != nil {
-		return fmt.Errorf("list Proxmox storage: %w", err)
+		return false, fmt.Errorf("list Proxmox storage: %w", err)
 	}
 	for _, storage := range storages {
 		if storage.Storage != storageID {
 			continue
 		}
 		if storage.Type != "dir" || storage.Path != storagePath {
-			return fmt.Errorf("Proxmox storage %q has a conflicting definition", storageID)
+			return false, fmt.Errorf("Proxmox storage %q has a conflicting definition", storageID)
 		}
 		content := splitContent(storage.Content)
 		missing := false
@@ -961,10 +971,11 @@ func (c *Client) EnsureDirectoryStorageContent(ctx context.Context, storageID, s
 			}
 			sort.Strings(values)
 			if err := c.Put(ctx, path.Join("/storage", storageID), url.Values{"content": {strings.Join(values, ",")}}, nil); err != nil {
-				return fmt.Errorf("extend Proxmox storage %q content: %w", storageID, err)
+				return true, fmt.Errorf("extend Proxmox storage %q content: %w", storageID, err)
 			}
+			return true, nil
 		}
-		return nil
+		return false, nil
 	}
 	if err := c.Post(ctx, "/storage", url.Values{
 		"storage": {storageID},
@@ -972,9 +983,9 @@ func (c *Client) EnsureDirectoryStorageContent(ctx context.Context, storageID, s
 		"path":    {storagePath},
 		"content": {strings.Join(requiredContent, ",")},
 	}, nil); err != nil {
-		return fmt.Errorf("create Proxmox directory storage %q: %w", storageID, err)
+		return true, fmt.Errorf("create Proxmox directory storage %q: %w", storageID, err)
 	}
-	return nil
+	return true, nil
 }
 
 func splitContent(value string) map[string]bool {
@@ -991,11 +1002,19 @@ func splitContent(value string) map[string]bool {
 // dedicated-data-disk initializer. It refuses a conflicting Proxmox storage
 // definition and never discovers or adopts arbitrary user storage.
 func (c *Client) EnsureLVMThinStorage(ctx context.Context, storageID, volumeGroup, thinPool string) error {
+	_, err := c.EnsureLVMThinStorageWithMutation(ctx, storageID, volumeGroup, thinPool)
+	return err
+}
+
+// EnsureLVMThinStorageWithMutation is the coarse mutation-aware form of
+// EnsureLVMThinStorage. It reports only whether registration was required or
+// may have been accepted before a provider error.
+func (c *Client) EnsureLVMThinStorageWithMutation(ctx context.Context, storageID, volumeGroup, thinPool string) (bool, error) {
 	if c == nil {
-		return errors.New("Proxmox client is required")
+		return false, errors.New("Proxmox client is required")
 	}
 	if storageID == "" || volumeGroup == "" || thinPool == "" {
-		return errors.New("storage ID, volume group, and thin pool are required")
+		return false, errors.New("storage ID, volume group, and thin pool are required")
 	}
 	var storages []struct {
 		Storage     string `json:"storage"`
@@ -1005,23 +1024,23 @@ func (c *Client) EnsureLVMThinStorage(ctx context.Context, storageID, volumeGrou
 		Content     string `json:"content"`
 	}
 	if err := c.Get(ctx, "/storage", nil, &storages); err != nil {
-		return fmt.Errorf("list Proxmox storage: %w", err)
+		return false, fmt.Errorf("list Proxmox storage: %w", err)
 	}
 	for _, storage := range storages {
 		if storage.Storage != storageID {
 			continue
 		}
 		if storage.Type != "lvmthin" || storage.VolumeGroup != volumeGroup || storage.ThinPool != thinPool || !strings.Contains(storage.Content, "images") || !strings.Contains(storage.Content, "rootdir") {
-			return fmt.Errorf("Proxmox storage %q has a conflicting definition", storageID)
+			return false, fmt.Errorf("Proxmox storage %q has a conflicting definition", storageID)
 		}
-		return nil
+		return false, nil
 	}
 	if err := c.Post(ctx, "/storage", url.Values{
 		"storage": {storageID}, "type": {"lvmthin"}, "vgname": {volumeGroup}, "thinpool": {thinPool}, "content": {"images,rootdir"},
 	}, nil); err != nil {
-		return fmt.Errorf("create Proxmox guest storage %q: %w", storageID, err)
+		return true, fmt.Errorf("create Proxmox guest storage %q: %w", storageID, err)
 	}
-	return nil
+	return true, nil
 }
 
 func (c *Client) CreateNodeNetwork(ctx context.Context, node string, params url.Values) error {

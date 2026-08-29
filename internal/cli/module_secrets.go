@@ -108,9 +108,9 @@ func runModuleSecretList(name string, args []string, out io.Writer) error {
 	fmt.Fprintf(out, "Module %s secrets\nNAME\tLIFECYCLE\tMANAGEMENT\tSTATUS\n", name)
 	for _, declaration := range declarations {
 		management := declaration.Generation
-		status := "missing"
+		status := "FAIL missing"
 		if presence[declaration.Name] {
-			status = "present"
+			status = "PASS present"
 		}
 		fmt.Fprintf(out, "%s\t%s\t%s\t%s\n", declaration.Name, lifecycleName(declaration), management, status)
 	}

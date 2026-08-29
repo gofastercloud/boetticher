@@ -115,7 +115,7 @@ emits a redacted machine-readable plan and never prompts; use
 Use `--enabled`, repeatable typed `--set KEY=VALUE`, and
 `--usb REQUIREMENT=PORT` for safe automation. A non-interactive apply requires
 `--confirm`. Missing required
-fields, model aliases, or USB bindings are `HOLD`, never guessed.
+fields, model aliases, or USB bindings fail readiness, never guessed.
 
 Operator credentials are never accepted as arguments. Declared
 operator-supplied secrets are read from a terminal without echo or from stdin,

@@ -58,13 +58,10 @@ func runDHCP(args []string, out io.Writer) error {
 				return err
 			}
 		} else {
-			fmt.Fprintln(out, "DHCP: ACTION REQUIRED")
+			fmt.Fprintln(out, "DHCP: FAIL")
 			fmt.Fprintln(out, "  DHCP is managed by the operator-owned external firewall; Boetticher cannot inspect it.")
 		}
-		if *live {
-			return errors.New("ACTION REQUIRED: live DHCP inspection is unavailable in external-firewall mode")
-		}
-		return nil
+		return errors.New("DHCP status failed: live DHCP inspection is unavailable in external-firewall mode; inspect the external firewall")
 	}
 	if command == "status" {
 		value := map[string]any{
@@ -107,13 +104,16 @@ func runDHCP(args []string, out io.Writer) error {
 			}
 			fmt.Fprintf(out, "  %-9s %-18s gateway=%s allocation=%s\n", subnet.Zone, subnet.Network, subnet.Gateway, allocation)
 		}
+		if !*live {
+			fmt.Fprintln(out, "  Result        PASS desired DHCP/DDNS contract generated")
+		}
 		if *live {
 			liveStatus := value["services"].(map[string]string)
 			fmt.Fprintf(out, "  Live state    PASS observed=%s\n", value["observed_at"])
-			fmt.Fprintf(out, "  Kea DHCP      %s\n  Kea DDNS      %s\n", liveStatus["kea-dhcp4-server"], liveStatus["kea-dhcp-ddns-server"])
+			fmt.Fprintf(out, "  Kea DHCP      %s\n  Kea DDNS      %s\n", humanServiceResult(liveStatus["kea-dhcp4-server"]), humanServiceResult(liveStatus["kea-dhcp-ddns-server"]))
 			fmt.Fprintln(out, "  DDNS stats    queried through the fixed read-only Kea control operation")
 		} else {
-			fmt.Fprintln(out, "  Evidence      NOT TESTED (run boetticher dhcp status --live)")
+			fmt.Fprintln(out, "  Evidence      use boetticher dhcp status --live for current service state")
 		}
 		return nil
 	}
@@ -140,9 +140,10 @@ func runDHCP(args []string, out io.Writer) error {
 		return nil
 	}
 	if *jsonOutput {
-		return writeCLIJSON(out, map[string]any{"mode": plan.Mode, "leases": []any{}, "status": "NOT TESTED"})
+		_ = writeCLIJSON(out, map[string]any{"mode": plan.Mode, "leases": []any{}, "status": "FAIL", "reason": "live DHCP leases were not requested", "next_action": "Run boetticher dhcp leases --live"})
+		return errors.New("DHCP leases failed: --live is required")
 	}
-	fmt.Fprintln(out, "DHCP leases: NOT TESTED (use --live after the managed gateway is deployed)")
+	fmt.Fprintln(out, "DHCP leases: FAIL live lease inspection requires --live; run boetticher dhcp leases --live")
 	fmt.Fprintf(out, "Zones: %s\n", strings.Join(func() []string {
 		names := make([]string, 0, len(plan.DHCP))
 		for _, subnet := range plan.DHCP {
@@ -150,7 +151,7 @@ func runDHCP(args []string, out io.Writer) error {
 		}
 		return names
 	}(), ", "))
-	return nil
+	return errors.New("DHCP leases failed: --live is required")
 }
 
 func inspectManagedDHCP(siteDir string, s model.Site) (gatewayLiveStatus, string, error) {

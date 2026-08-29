@@ -324,7 +324,7 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	t.Setenv("PATH", tempDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("ANSIBLE_ARGS_FILE", argsPath)
 
-	if err := run(context.Background(), "ansible/site.yml", inventoryPath, []byte("{}"), "lab-fw-01"); err != nil {
+	if _, err := run(context.Background(), "ansible/site.yml", inventoryPath, []byte("{}"), "lab-fw-01"); err != nil {
 		t.Fatal(err)
 	}
 	args, err := os.ReadFile(argsPath)
@@ -1295,7 +1295,6 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 		}
 	}
 }
-
 func TestPulseProxyAuthMapsOnlyApprovedClientIdentities(t *testing.T) {
 	frontend, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "pulse-loopback.conf.j2"))
 	if err != nil {
@@ -1430,5 +1429,23 @@ func TestPiKioskUsesDedicatedPulseClientCertificate(t *testing.T) {
 		if strings.Contains(manifestText+scriptText, forbidden) {
 			t.Fatalf("Pi kiosk refresh extension contains forbidden capability or credential material %q", forbidden)
 		}
+	}
+}
+
+func TestAnsibleOutputChangedUsesRecapOnly(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		output  string
+		changed bool
+	}{
+		{name: "unchanged", output: "ok=4 changed=0 unreachable=0 failed=0", changed: false},
+		{name: "changed", output: "ok=4 changed=1 unreachable=0 failed=0", changed: true},
+		{name: "failure without recap", output: "fatal: guest failed", changed: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ansibleOutputChanged([]byte(test.output)); got != test.changed {
+				t.Fatalf("ansibleOutputChanged(%q) = %t, want %t", test.output, got, test.changed)
+			}
+		})
 	}
 }

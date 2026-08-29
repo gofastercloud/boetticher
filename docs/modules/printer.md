@@ -32,7 +32,8 @@ usb_exports:
 Use `boetticher hardware usb list --live` to observe the actual parent port
 and identity, then `boetticher hardware usb bind printer serial PORT --confirm`
 to record it. A missing device, identity mismatch, multiple serial descendants,
-unowned VMID 230, or occupied unmanaged LXC device slot is `HOLD`.
+unowned VMID 230, or occupied unmanaged LXC device slot causes deployment to
+fail before mutation.
 
 The host reconciler follows the physical port to its current tty descendant,
 maps only that character device as UID/GID 2200 with mode `0660`, and restarts
@@ -56,8 +57,8 @@ remain native product state; Core does not generate or deliver an application
 password.
 
 Convergence probes the mTLS negative path and fails unless a request without a
-client certificate is rejected before OctoPrint. Keep the live acceptance gate
-at `HOLD` until that deployed result, a valid-client wizard journey, and
+client certificate is rejected before OctoPrint. The live acceptance command
+fails until that deployed result, a valid-client wizard journey, and
 subsequent native-account authentication are independently verified.
 
 OctoPrint configuration, local account hashes, uploads, and job history live
@@ -79,4 +80,5 @@ verify that a request without a client certificate is rejected before OctoPrint,
 complete the first-run journey with a valid client certificate, authenticate
 with the native account, connect at 115200, query temperatures, home safely,
 upload a known G-code file, complete a supervised test print, and verify restart
-plus backup/restore behavior. Until exercised, these gates are `NOT TESTED`.
+plus backup/restore behavior. Until exercised, the live acceptance check fails
+with the exact missing journey as its next action.

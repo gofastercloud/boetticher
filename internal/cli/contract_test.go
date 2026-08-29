@@ -53,7 +53,13 @@ func TestQuickstartOfflineCommandsExecute(t *testing.T) {
 	run("bootstrap-endpoint", "set", "192.0.2.10", "--site", siteDir)
 	run("config", "validate", "--site", siteDir)
 	run("module", "list", "--site", siteDir)
-	run("deploy", "--site", siteDir, "--dry-run")
+	var deployOutput bytes.Buffer
+	if err := Run([]string{"deploy", "--site", siteDir, "--dry-run"}, &deployOutput, &deployOutput); err == nil {
+		t.Fatal("deploy dry-run unexpectedly passed without qualified artifact evidence")
+	}
+	if !strings.Contains(deployOutput.String(), "Deployment: FAIL") || !strings.Contains(deployOutput.String(), "Infrastructure changed: NO") {
+		t.Fatalf("deploy dry-run did not render its binary failure summary: %s", deployOutput.String())
+	}
 
 	var statusOutput bytes.Buffer
 	if err := Run([]string{"status", "--site", siteDir}, &statusOutput, &statusOutput); err == nil {

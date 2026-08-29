@@ -38,15 +38,17 @@ func runInit(args []string, out io.Writer) error {
 	if err := rebuildPortal(*siteDir, created); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Initialized private site repository: %s\n", *siteDir)
+	fmt.Fprintf(out, "Initialization: PASS private site repository created at %s\n", *siteDir)
 	fmt.Fprintf(out, "Age identity: %s (outside Git)\n", model.ExpandUserPath(*ageIdentity))
-	fmt.Fprintf(out, "Model revision: %s\n", revision)
-	fmt.Fprintf(out, "Gateway mode: %s\n", created.Gateway.Mode)
+	fmt.Fprintf(out, "Model: PASS revision %s\n", revision)
+	fmt.Fprintf(out, "Gateway: PASS mode %s\n", created.Gateway.Mode)
 	fmt.Fprintf(out, "Gateway upstream MAC: %s (create the matching upstream DHCP reservation)\n", created.Gateway.Upstream.MAC)
 	if created.Gateway.Mode == model.GatewayModeExternal {
-		fmt.Fprintln(out, "External mode: a distinct physical vmbr1 trunk is required before bootstrap")
+		fmt.Fprintln(out, "Physical network prerequisite: FAIL external mode requires a distinct physical vmbr1 trunk before bootstrap")
 	}
-	fmt.Fprintln(out, "Independent Age recovery copy: REQUIRED before destructive bootstrap")
+	fmt.Fprintln(out, "Readiness: FAIL")
+	fmt.Fprintln(out, "  Independent Age recovery copy: FAIL required before destructive bootstrap")
+	fmt.Fprintln(out, "Next action: secure the independent Age recovery copy, then run boetticher preflight --site <site>")
 	return nil
 }
 
@@ -100,8 +102,13 @@ func runPreflight(args []string, out io.Writer) error {
 	if !allPass {
 		return fmt.Errorf("preflight failed: required tooling is missing")
 	}
+	if err := validateConfiguredModuleReadiness(*siteDir, s, *ageIdentity); err != nil {
+		fmt.Fprintf(out, "Module readiness: FAIL %v\n", err)
+		return fmt.Errorf("preflight failed: module readiness is not satisfied: %w", err)
+	}
+	fmt.Fprintln(out, "Module readiness: PASS configured module contracts and credentials are ready")
 	if !*live {
-		fmt.Fprintln(out, "Physical discovery: NOT TESTED (use --live after recording the HOME-side Proxmox address)")
+		fmt.Fprintln(out, "Physical discovery: use --live after recording the HOME-side Proxmox address")
 		return nil
 	}
 	address := *bootstrapAddress
@@ -109,7 +116,7 @@ func runPreflight(args []string, out io.Writer) error {
 		address = s.BootstrapAddress
 	}
 	if address == "" {
-		return errors.New("HOLD: upstream interface identity is ambiguous; set bootstrap-endpoint or pass --bootstrap-address")
+		return errors.New("preflight failed: upstream interface identity is ambiguous; set bootstrap-endpoint or pass --bootstrap-address")
 	}
 	runner := proxmox.SSHRunner{KnownHosts: *knownHosts, HostKeyAlias: model.LogicalProxmoxIdentity}
 	discovered, err := proxmox.DiscoverPhysicalNetworkViaSSH(context.Background(), runner, address, *initialUser, address, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
@@ -126,10 +133,10 @@ func runPreflight(args []string, out io.Writer) error {
 	if credentialsExist {
 		credentials, err := site.LoadProxmoxCredentials(*siteDir, s, *ageIdentity)
 		if err != nil {
-			return fmt.Errorf("HOLD: load existing Proxmox API credentials: %w", err)
+			return fmt.Errorf("preflight failed: load existing Proxmox API credentials: %w", err)
 		}
 		if credentials.APIUser != "labadmin@pve" || credentials.TokenID != "boetticher" {
-			return fmt.Errorf("HOLD: encrypted Proxmox credentials identify %s!%s, expected labadmin@pve!boetticher", credentials.APIUser, credentials.TokenID)
+			return fmt.Errorf("preflight failed: encrypted Proxmox credentials identify %s!%s, expected labadmin@pve!boetticher", credentials.APIUser, credentials.TokenID)
 		}
 		if err := proxmox.CheckScopedCredentialReuse(context.Background(), runner, address, *initialUser, credentials.APIUser, credentials.TokenID, "BoetticherProvisioner"); err != nil {
 			return err
@@ -141,7 +148,7 @@ func runPreflight(args []string, out io.Writer) error {
 	printPhysicalDiscovery(out, discovery)
 	fmt.Fprintln(out, "Proxmox credential reservation: PASS")
 	if discovery.Mode == networkmodel.ModeSelectionNeeded {
-		return errors.New("HOLD: multiple eligible trunk interfaces require explicit selection")
+		return errors.New("preflight failed: multiple eligible trunk interfaces require explicit selection")
 	}
 	if s.Gateway.Mode == model.GatewayModeExternal && discovery.Mode != networkmodel.ModePhysicalTrunk {
 		return errors.New("external gateway mode requires a distinct physical vmbr1 trunk")

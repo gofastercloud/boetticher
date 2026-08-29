@@ -110,15 +110,17 @@ DHCP lease, DDNS, and firewall-counter assertions remain outside this first
 Each result records the harness version, model revision, VMID, guest identity,
 zone/address, exact command or case, start/end time, observation, evidence
 tier, and bounded failure output. `PASS` requires current authenticated guest
-and gateway observations; missing or ambiguous evidence is `HOLD` or
-`INCONCLUSIVE`, never a generated-configuration PASS.
+and gateway observations; missing or ambiguous evidence remains a rich
+qualification finding, never a generated-configuration PASS. These evidence
+labels are internal to qualification records; operator checks render PASS or
+FAIL.
 
 Teardown runs even after a failed case. Stop and destroy only exact
-harness-owned guests and verify their absence through the Proxmox API. An
-interrupted run resumes exact-owner cleanup with `--cleanup-only` or returns
-`HOLD`; it never uses a broad purge. Evidence is written below the private
-runtime directory, and physical trunk tests remain gated behind the virtual
-and DHCP/DDNS cases.
+harness-owned guests, verify their absence through the Proxmox API, remove
+temporary snippets and host-key state, and retain hashed evidence separately.
+An interrupted run must resume with exact-owner cleanup or return FAIL; it
+must never use a broad purge. Physical trunk tests remain gated behind the
+virtual and DHCP/DDNS cases.
 
 ## External mode
 
@@ -131,5 +133,5 @@ and DHCP/DDNS cases.
 
 For every item record the exact command, model revision, and relevant current
 configuration. A successful local renderer is not proof of a live journey.
-Use plain labels such as PASS, FAIL, NOT TESTED, or HOLD when writing the
-results.
+Use PASS or FAIL for operator-facing results. Qualification records may retain
+their richer evidence detail separately.

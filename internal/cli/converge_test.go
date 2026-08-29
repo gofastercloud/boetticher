@@ -86,7 +86,7 @@ func TestPublishedServicesActivateAtTheEndOfDNSModule(t *testing.T) {
 	}
 	text := string(data)
 	publicationActivation := strings.Index(text, `if module == "dns" && s.Gateway.Mode == model.GatewayModeManaged && len(firewallPlan.Publications) > 0`)
-	allHostsConvergence := strings.Index(text, `if err := ansible.Run(ctx, ansiblePlaybook, inventoryPath, variables); err != nil`)
+	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, "", report); err != nil`)
 	if publicationActivation < 0 || allHostsConvergence < 0 || publicationActivation > allHostsConvergence {
 		t.Fatal("published services are not activated immediately after the DNS module")
 	}
@@ -365,7 +365,7 @@ func TestDeploymentModuleNamesFollowResolvedExternalGraph(t *testing.T) {
 
 func TestArtifactQualificationStatusDistinguishesDefinitionAndContent(t *testing.T) {
 	artifact := model.Artifact{Name: "boetticher-dns-blocky"}
-	if got := artifactQualificationStatus(artifact); got != "NOT BUILT (qualified content evidence absent)" {
+	if got := artifactQualificationStatus(artifact); got != "FAIL (qualified content evidence absent)" {
 		t.Fatalf("unqualified artifact status = %q", got)
 	}
 	artifact.ContentSHA256 = strings.Repeat("b", 64)
@@ -385,11 +385,14 @@ func TestDeployDryRunDoesNotWriteLocalProjections(t *testing.T) {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	if err := runDeploy([]string{"--site", siteDir, "--dry-run"}, &output); err != nil {
-		t.Fatal(err)
+	if err := runDeploy([]string{"--site", siteDir, "--dry-run"}, &output); err == nil {
+		t.Fatal("dry-run unexpectedly passed without qualified artifacts")
 	}
-	if !strings.Contains(output.String(), "Artifact qualification: HOLD") {
-		t.Fatalf("dry-run omitted missing qualification hold: %s", output.String())
+	if !strings.Contains(output.String(), "Artifact qualification: FAIL") {
+		t.Fatalf("dry-run omitted failed qualification: %s", output.String())
+	}
+	if !strings.Contains(output.String(), "Deployment: FAIL") || !strings.Contains(output.String(), "Infrastructure changed: NO") {
+		t.Fatalf("dry-run omitted binary deployment summary: %s", output.String())
 	}
 	if _, err := os.Stat(filepath.Join(siteDir, "generated", "model.json")); !os.IsNotExist(err) {
 		t.Fatalf("deploy dry-run wrote a local model projection: %v", err)

@@ -17,7 +17,7 @@ func Run(args []string, out, errOut io.Writer) error {
 // RunWithInput is the testable/operator-facing dispatcher variant used by
 // secret prompts. The input stream is never passed as a command argument.
 func RunWithInput(args []string, input io.Reader, out, errOut io.Writer) error {
-	return run(args, input, out, errOut)
+	return operatorErrorForHuman(run(args, input, out, errOut))
 }
 
 func run(args []string, input io.Reader, out, errOut io.Writer) error {
