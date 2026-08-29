@@ -798,6 +798,15 @@ func TestAIOpsArtifactPinsUnmodifiedHolmesAndIsolation(t *testing.T) {
 	if strings.Contains(string(service), "holmes serve") {
 		t.Fatal("AIOps uses the nonexistent Holmes 0.40.0 wheel serve command")
 	}
+	smoke, err := os.ReadFile(filepath.Join(root, "scripts", "smoke-appliance.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"boetticher-aiops)", "/usr/local/libexec/boetticher-aiops", "holmes.service", "IPAddressDeny=any", "test ! -e \"$rootfs/etc/boetticher-aiops/runtime.env\""} {
+		if !strings.Contains(string(smoke), required) {
+			t.Fatalf("AIOps smoke contract is missing %q", required)
+		}
+	}
 }
 
 func TestApplianceBuildEmbedsDefinitionIdentityWithoutContentEvidence(t *testing.T) {

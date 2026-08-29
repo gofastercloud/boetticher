@@ -139,6 +139,19 @@ case "$name" in
       exit 1
     fi
     ;;
+  boetticher-aiops)
+    test -x "$rootfs/usr/local/libexec/boetticher-aiops"
+    test -f "$rootfs/etc/systemd/system/boetticher-aiops.service"
+    test -f "$rootfs/etc/systemd/system/boetticher-aiops.socket"
+    test -f "$rootfs/etc/systemd/system/holmes.service"
+    test -f "$rootfs/etc/boetticher-aiops/holmes.yaml"
+    grep -Fq 'HOLMES_HOST=127.0.0.1' "$rootfs/etc/systemd/system/holmes.service"
+    grep -Fq 'IPAddressDeny=any' "$rootfs/etc/systemd/system/boetticher-aiops.service"
+    grep -Fq 'IPAddressAllow=localhost' "$rootfs/etc/systemd/system/boetticher-aiops.service"
+    grep -Fq 'NoNewPrivileges=true' "$rootfs/etc/systemd/system/boetticher-aiops.service"
+    grep -Fq 'ProtectSystem=strict' "$rootfs/etc/systemd/system/boetticher-aiops.service"
+    test ! -e "$rootfs/etc/boetticher-aiops/runtime.env"
+    ;;
   boetticher-gatus)
     run /usr/local/bin/gatus version
     test -x "$rootfs/usr/local/bin/gatus"
