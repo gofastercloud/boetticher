@@ -17,11 +17,15 @@ type ProxmoxCredentials struct {
 	TokenSecret string `json:"token_secret"`
 }
 
-func StoreProxmoxCredentials(dir string, s model.Site, credentials ProxmoxCredentials) error {
+func StoreProxmoxCredentials(dir string, s model.Site, ageIdentityPath string, credentials ProxmoxCredentials) error {
 	if credentials.APIUser == "" || credentials.TokenID == "" || credentials.TokenSecret == "" {
 		return fmt.Errorf("Proxmox credentials are incomplete")
 	}
-	return StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, ProxmoxSecretsPath, credentials)
+	recipient, err := validatedAgeRecipient(ageIdentityPath, s.SecretMetadata.AgeRecipient)
+	if err != nil {
+		return fmt.Errorf("validate Age identity for Proxmox credential storage: %w", err)
+	}
+	return StoreEncryptedDocument(dir, recipient, ProxmoxSecretsPath, credentials)
 }
 
 func LoadProxmoxCredentials(dir string, s model.Site, ageIdentityPath string) (ProxmoxCredentials, error) {

@@ -69,6 +69,57 @@ func TestEncryptedDocumentBoundsInputs(t *testing.T) {
 	}
 }
 
+func TestValidateAgeIdentityRequiresSiteRecipient(t *testing.T) {
+	identityPath, recipient := writeTestAgeIdentity(t)
+	if err := ValidateAgeIdentity(identityPath, recipient); err != nil {
+		t.Fatalf("valid Age identity was rejected: %v", err)
+	}
+
+	other, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateAgeIdentity(identityPath, other.Recipient().String()); err == nil || !strings.Contains(err.Error(), "does not match site metadata") {
+		t.Fatalf("recipient mismatch was accepted: %v", err)
+	}
+}
+
+func TestEncryptedSecretRewriteRejectsMutableRecipient(t *testing.T) {
+	siteDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(siteDir, "secrets"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	identityPath, recipient := writeTestAgeIdentity(t)
+	if err := StoreEncryptedDocument(siteDir, recipient, "secrets/boetticher.sops.yaml", map[string]string{"existing": "value"}); err != nil {
+		t.Fatal(err)
+	}
+	other, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := model.Site{SecretMetadata: model.SecretMetadata{AgeRecipient: other.Recipient().String()}}
+	if err := UpdatePlatformSecrets(siteDir, s, identityPath, map[string]string{"new": "value"}); err == nil || !strings.Contains(err.Error(), "does not match site metadata") {
+		t.Fatalf("mutable recipient was accepted: %v", err)
+	}
+	values, err := LoadEncryptedDocument(siteDir, identityPath, "secrets/boetticher.sops.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := values["new"]; ok {
+		t.Fatal("rejected secret rewrite changed the encrypted document")
+	}
+}
+
+func TestValidateAgeIdentityRejectsMalformedInput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "identity.txt")
+	if err := os.WriteFile(path, []byte("not-an-age-identity\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateAgeIdentity(path, "age1placeholder"); err == nil {
+		t.Fatal("malformed Age identity was accepted")
+	}
+}
+
 func TestApplyConfigAndPlatformSecretsRollsBackSecretWhenConfigReplacementFails(t *testing.T) {
 	siteDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(siteDir, "secrets"), 0700); err != nil {

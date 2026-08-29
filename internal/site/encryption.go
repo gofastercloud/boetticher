@@ -175,6 +175,7 @@ func ageMasterKeyFromDecryptRequest(request *keyservice.DecryptRequest) (*sopsag
 }
 
 func readAgeIdentity(path string) ([]byte, error) {
+	path = model.ExpandUserPath(path)
 	if err := pathguard.ValidateNoSymlinkComponents(path); err != nil {
 		return nil, err
 	}
@@ -189,6 +190,45 @@ func readAgeIdentity(path string) ([]byte, error) {
 		return nil, fmt.Errorf("Age identity permissions are %04o; group/other access must be absent", info.Mode().Perm())
 	}
 	return pathguard.ReadFileLimited(path, MaxEncryptedDocumentBytes)
+}
+
+func ageIdentityRecipient(path string) (string, error) {
+	data, err := readAgeIdentity(path)
+	if err != nil {
+		return "", err
+	}
+	identities, err := age.ParseIdentities(bytes.NewReader(data))
+	if err != nil {
+		return "", fmt.Errorf("parse Age identity: %w", err)
+	}
+	if len(identities) != 1 {
+		return "", errors.New("Age identity must contain exactly one identity")
+	}
+	identity, ok := identities[0].(*age.X25519Identity)
+	if !ok {
+		return "", errors.New("Age identity must contain an X25519 identity")
+	}
+	return identity.Recipient().String(), nil
+}
+
+// validatedAgeRecipient verifies that the operator-supplied identity is
+// usable for this site and returns the identity-derived encryption recipient.
+func validatedAgeRecipient(path, expectedRecipient string) (string, error) {
+	recipient, err := ageIdentityRecipient(path)
+	if err != nil {
+		return "", err
+	}
+	if expectedRecipient == "" || recipient != expectedRecipient {
+		return "", errors.New("Age identity recipient does not match site metadata")
+	}
+	return recipient, nil
+}
+
+// ValidateAgeIdentity verifies that the operator-supplied identity is usable
+// for this site before a live lifecycle operation begins.
+func ValidateAgeIdentity(path, expectedRecipient string) error {
+	_, err := validatedAgeRecipient(path, expectedRecipient)
+	return err
 }
 
 func createAgeIdentity(path string) (string, error) {
