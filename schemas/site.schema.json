@@ -194,6 +194,9 @@
         "firewall": {
           "$ref": "#/$defs/ToggleModuleConfig"
         },
+        "gatus": {
+          "$ref": "#/$defs/ToggleModuleConfig"
+        },
         "litellm": {
           "$ref": "#/$defs/LiteLLMModuleConfig"
         },

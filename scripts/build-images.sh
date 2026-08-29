@@ -7,11 +7,11 @@ set -eu
 target=${1:-images}
 shift || true
 case "$target" in
-  image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|images) ;;
+  image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-gatus|images) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
-default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-litellm image-printer image-aiops image-firewall"
+default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-litellm image-printer image-aiops image-gatus image-firewall"
 if [ "$target" = images ]; then
   selected_image_targets="$*"
   if [ -z "$selected_image_targets" ]; then
@@ -19,7 +19,7 @@ if [ "$target" = images ]; then
   fi
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
-      image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer) ;;
+      image-base|image-dns-blocky|image-dns-adguard|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-gatus) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac
   done
@@ -128,6 +128,8 @@ litellm_pip_package_version=25.1.1+dfsg-1
 litellm_nginx_package_version=1.26.3-3+deb13u7
 holmes_source_url=https://github.com/HolmesGPT/holmesgpt/archive/refs/tags/0.40.0.tar.gz
 holmes_source_sha256=3465cd634b0e478f058b026b37caa3b8f10651f7aa9058dc73368b5403f0fb3d
+gatus_source_url=https://github.com/TwiN/gatus/archive/refs/tags/v5.36.0.tar.gz
+gatus_source_sha256=b5543af591e602281406049ee2f822a6529a8f14be0cd54df5a31c210520159a
 mkdir -p "$output_root" "$work_root"
 
 provenance_path="$(dirname "$output_root")/builder-provenance.json"
@@ -841,6 +843,23 @@ build_aiops_target() {
   build_aiops
 }
 
+build_gatus_target() {
+  [ -f "$(artifact_for boetticher-base)" ] || build_base
+  rootfs=$(prepare_rootfs boetticher-gatus)
+  install_packages "$rootfs" nginx ca-certificates
+  archive="$work_root/gatus-v5.36.0.tar.gz"
+  if [ ! -f "$archive" ]; then curl --fail --location --silent --show-error --output "$archive" "$gatus_source_url"; fi
+  printf '%s  %s\n' "$gatus_source_sha256" "$archive" | sha256sum --check --status
+  source_root="$work_root/gatus-source"; rm -rf "$source_root"; mkdir -p "$source_root"
+  tar -xzf "$archive" -C "$source_root" --strip-components=1
+  (cd "$source_root" && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/bin/gatus" .)
+  chmod 0755 "$rootfs/usr/local/bin/gatus"
+  chroot "$rootfs" useradd --system --home-dir /var/lib/gatus --create-home --shell /usr/sbin/nologin gatus
+  install -D -m 0644 images/gatus/runtime/gatus.service "$rootfs/etc/systemd/system/gatus.service"
+  write_artifact_identity "$rootfs" gatus
+  package_lxc boetticher-gatus
+}
+
 case "$target" in
   image-base) run_timed_image_target "$target" build_base ;;
   image-dns-blocky) run_timed_image_target "$target" build_dns_blocky_target ;;
@@ -851,6 +870,7 @@ case "$target" in
   image-litellm) run_timed_image_target "$target" build_litellm_target ;;
   image-printer) run_timed_image_target "$target" build_printer_target ;;
   image-aiops) run_timed_image_target "$target" build_aiops_target ;;
+  image-gatus) run_timed_image_target "$target" build_gatus_target ;;
   image-dns-adguard) echo "HOLD: AdGuard provider qualification is outside the default Blocky readiness tranche" >&2; exit 2 ;;
   image-firewall) run_timed_image_target "$target" build_firewall ;;
   images) build_selected_images ;;
