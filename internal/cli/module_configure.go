@@ -71,7 +71,7 @@ type moduleConfigureReport struct {
 	Error           string                    `json:"error,omitempty"`
 }
 
-func runModuleConfigure(args []string, input io.Reader, out, errOut interface{ Write([]byte) (int, error) }) error {
+func runModuleConfigure(args []string, input io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return errors.New("usage: boetticher module configure MODULE [--site DIR] [--dry-run] [--json] [--confirm]")
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"sort"
@@ -16,7 +17,7 @@ import (
 
 var usbPhysicalPort = regexp.MustCompile(`^[0-9]+-[0-9]+(?:\.[0-9]+)*$`)
 
-func runHardware(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runHardware(args []string, out io.Writer) error {
 	if len(args) < 2 || args[0] != "usb" {
 		return fmt.Errorf("usage: boetticher hardware usb list|status|bind|unbind")
 	}

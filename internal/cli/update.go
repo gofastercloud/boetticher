@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -12,7 +13,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
-func runUpdate(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runUpdate(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")

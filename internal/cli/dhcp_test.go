@@ -77,3 +77,15 @@ func TestKeaLeaseParserRejectsMalformedRowsAndColumns(t *testing.T) {
 		}
 	}
 }
+
+func FuzzParseKeaLeaseCSV(f *testing.F) {
+	plan := firewall.Plan{DHCP: []firewall.DHCPSubnet{{ID: 10, Zone: "TRUSTED"}, {ID: 40, Zone: "SANDBOX"}}}
+	f.Add([]byte("address,subnet_id,hostname,state\n10.10.30.50,10,client,0\n"))
+	f.Add([]byte("address,subnet_id,hostname,state\n"))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) > 1<<20 {
+			return
+		}
+		_, _ = parseKeaLeaseCSV(data, plan)
+	})
+}

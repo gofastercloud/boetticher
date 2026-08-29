@@ -3,6 +3,7 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -10,7 +11,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
-func runAccess(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runAccess(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("access", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"sort"
@@ -16,7 +17,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
-func runDHCPReservation(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runDHCPReservation(args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("usage: boetticher dhcp reservation add|list|remove")
 	}
@@ -72,7 +73,7 @@ func runDHCPReservation(args []string, out interface{ Write([]byte) (int, error)
 	}
 }
 
-func addDHCPReservation(siteDir string, config model.SiteConfig, resolved model.Site, hostname, address, mac string, vmid int, ageIdentity, proxmoxCA string, insecure, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
+func addDHCPReservation(siteDir string, config model.SiteConfig, resolved model.Site, hostname, address, mac string, vmid int, ageIdentity, proxmoxCA string, insecure, jsonOutput bool, out io.Writer) error {
 	hostname = strings.ToLower(strings.TrimSpace(hostname))
 	address = canonicalIPv4(address)
 	if hostname == "" || address == "" {
@@ -97,7 +98,7 @@ func addDHCPReservation(siteDir string, config model.SiteConfig, resolved model.
 	return nil
 }
 
-func removeDHCPReservation(siteDir string, config model.SiteConfig, resolved model.Site, mac string, vmid int, ageIdentity, proxmoxCA string, insecure, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
+func removeDHCPReservation(siteDir string, config model.SiteConfig, resolved model.Site, mac string, vmid int, ageIdentity, proxmoxCA string, insecure, jsonOutput bool, out io.Writer) error {
 	if mac == "" && vmid == 0 {
 		return errors.New("dhcp reservation remove requires --mac or --vmid")
 	}

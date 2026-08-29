@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -20,7 +21,7 @@ type clientCertificateMetadata struct {
 	Serial string `yaml:"serial"`
 }
 
-func runPKI(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runPKI(args []string, out io.Writer) error {
 	if len(args) < 2 {
 		return fmt.Errorf("usage: boetticher pki client create|export|revoke NAME; boetticher pki trust export")
 	}
@@ -90,7 +91,7 @@ func runPKI(args []string, out interface{ Write([]byte) (int, error) }) error {
 	}
 }
 
-func exportClient(runtimeDir, output string, out interface{ Write([]byte) (int, error) }) error {
+func exportClient(runtimeDir, output string, out io.Writer) error {
 	key, err := os.ReadFile(filepath.Join(runtimeDir, "client.key.pem"))
 	if err != nil {
 		return fmt.Errorf("read client private key: %w", err)
@@ -112,7 +113,7 @@ func exportClient(runtimeDir, output string, out interface{ Write([]byte) (int, 
 	return nil
 }
 
-func revokeClient(siteDir, runtimeDir, name string, out interface{ Write([]byte) (int, error) }) error {
+func revokeClient(siteDir, runtimeDir, name string, out io.Writer) error {
 	if err := pki.ValidateClientName(name); err != nil {
 		return err
 	}
@@ -170,7 +171,7 @@ func loadClientMetadataSerial(siteDir, name string) (string, error) {
 	return serial.Text(16), nil
 }
 
-func runPKITrust(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runPKITrust(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("pki trust export", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")

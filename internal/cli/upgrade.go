@@ -3,13 +3,14 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
-func runIntegrationGate(command string, args []string, out interface{ Write([]byte) (int, error) }) error {
+func runIntegrationGate(command string, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet(command, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")

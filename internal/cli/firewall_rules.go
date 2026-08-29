@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"sort"
 	"strconv"
@@ -18,7 +19,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
-func runFirewallRules(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runFirewallRules(args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("usage: boetticher firewall rule add|list|remove")
 	}
@@ -114,7 +115,7 @@ func newFirewallRule(source, destination, protocol, rawPorts, id string) (model.
 	return rule, nil
 }
 
-func addFirewallRule(siteDir string, config model.SiteConfig, resolved model.Site, rule model.UserFirewallRule, dryRun, confirm, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
+func addFirewallRule(siteDir string, config model.SiteConfig, resolved model.Site, rule model.UserFirewallRule, dryRun, confirm, jsonOutput bool, out io.Writer) error {
 	config.UserFirewallRules = append(config.UserFirewallRules, rule)
 	resolved.UserFirewallRules = append(resolved.UserFirewallRules, rule)
 	if err := resolved.Validate(); err != nil {
@@ -140,7 +141,7 @@ func addFirewallRule(siteDir string, config model.SiteConfig, resolved model.Sit
 	return nil
 }
 
-func removeFirewallRule(siteDir string, config model.SiteConfig, id string, dryRun, confirm, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
+func removeFirewallRule(siteDir string, config model.SiteConfig, id string, dryRun, confirm, jsonOutput bool, out io.Writer) error {
 	index := -1
 	for i, rule := range config.UserFirewallRules {
 		if rule.ID == id {

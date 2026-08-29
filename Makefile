@@ -1,9 +1,10 @@
-.PHONY: ci test build vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-portal image-tailnet-router image-litellm image-printer image-aiops image-gatus images scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-litellm scan-printer scan-aiops scan-gatus command-docs command-docs-check
+.PHONY: ci test build vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-portal image-tailnet-router image-litellm image-printer image-aiops image-gatus images scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-litellm scan-printer scan-aiops scan-gatus command-docs command-docs-check race streamdeck-check
 
 GOCACHE ?= /tmp/boetticher-gocache
 GOMODCACHE ?= /tmp/boetticher-gomodcache
 ANSIBLE_LOCAL_TEMP ?= /tmp/boetticher-ansible-tmp
 ANSIBLE_REMOTE_TEMP ?= /tmp/boetticher-ansible-tmp
+UV_CACHE_DIR ?= /tmp/boetticher-uv-cache
 
 fmt:
 	gofmt -w cmd internal
@@ -13,6 +14,12 @@ fmt-check:
 
 test:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./...
+
+race:
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -race ./internal/aiops ./cmd/boetticher-aiops
+
+streamdeck-check:
+	UV_CACHE_DIR=$(UV_CACHE_DIR) uv run --project pi/streamdeck --frozen --with pytest pytest pi/streamdeck/tests
 
 usb-export-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ansible/roles/usb-export-host/tests -p 'test_*.py' -v
@@ -67,4 +74,4 @@ vuln-check:
 
 security-check: naming-check actionlint vuln-check
 
-ci: fmt-check image-check schema-check command-docs-check test usb-export-test vet build ansible-check security-check diff-check
+ci: fmt-check image-check schema-check command-docs-check test usb-export-test race streamdeck-check vet build ansible-check security-check diff-check

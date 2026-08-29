@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/gofastercloud/boetticher/internal/proxmox"
@@ -12,7 +13,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
-func runStorage(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runStorage(args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("usage: boetticher storage status|initialize")
 	}

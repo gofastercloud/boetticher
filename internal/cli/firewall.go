@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -16,7 +17,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
-func runFirewall(args []string, out interface{ Write([]byte) (int, error) }) error {
+func runFirewall(args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("usage: boetticher firewall status|show|diff|counters|logs|verify")
 	}
@@ -68,7 +69,7 @@ func runFirewall(args []string, out interface{ Write([]byte) (int, error) }) err
 	}
 }
 
-func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
+func firewallStatus(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out io.Writer) error {
 	status := map[string]any{"mode": plan.Mode, "engine": plan.Engine, "model_revision": plan.ModelRevision, "ipv4_only": plan.IPv4Only, "forwarding_after_policy": plan.Forwarding, "interfaces": plan.Interfaces}
 	if live && s.Gateway.Mode == model.GatewayModeManaged {
 		data, err := gatewayCommand(siteDir, s, "sudo", gatewayStatusScript, "status")
@@ -193,7 +194,7 @@ func parseGatewayStatus(output string) (gatewayLiveStatus, error) {
 	return status, nil
 }
 
-func firewallShow(s model.Site, plan firewall.Plan, format string, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
+func firewallShow(s model.Site, plan firewall.Plan, format string, jsonOutput bool, out io.Writer) error {
 	if format != "human" && format != "nft" {
 		return errors.New("--format must be human or nft")
 	}
@@ -233,7 +234,7 @@ func firewallShow(s model.Site, plan firewall.Plan, format string, jsonOutput bo
 	return nil
 }
 
-func firewallDiff(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
+func firewallDiff(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out io.Writer) error {
 	if s.Gateway.Mode == model.GatewayModeExternal {
 		if jsonOutput {
 			return writeCLIJSON(out, map[string]string{"mode": "external", "status": "outside boetticher management"})
@@ -299,7 +300,7 @@ func firewallDiff(siteDir string, s model.Site, plan firewall.Plan, live, jsonOu
 	return nil
 }
 
-func printNFTDiff(out interface{ Write([]byte) (int, error) }, diff firewall.NFTDiff) {
+func printNFTDiff(out io.Writer, diff firewall.NFTDiff) {
 	for _, item := range diff.MissingTables {
 		fmt.Fprintf(out, "  missing table  %s\n", item)
 	}
@@ -314,7 +315,7 @@ func printNFTDiff(out interface{ Write([]byte) (int, error) }, diff firewall.NFT
 	}
 }
 
-func firewallCounters(siteDir string, s model.Site, live, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
+func firewallCounters(siteDir string, s model.Site, live, jsonOutput bool, out io.Writer) error {
 	if s.Gateway.Mode == model.GatewayModeExternal {
 		fmt.Fprintln(out, "Firewall counters belong to the operator-managed external appliance.")
 		return nil
@@ -346,7 +347,7 @@ func firewallCounters(siteDir string, s model.Site, live, jsonOutput bool, out i
 	return nil
 }
 
-func firewallVerify(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out interface{ Write([]byte) (int, error) }) error {
+func firewallVerify(siteDir string, s model.Site, plan firewall.Plan, live, jsonOutput bool, out io.Writer) error {
 	results := map[string]string{}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		if live && len(plan.Publications) > 0 {
@@ -405,7 +406,7 @@ func firewallVerify(siteDir string, s model.Site, plan firewall.Plan, live, json
 	return nil
 }
 
-func firewallLiveRead(siteDir string, s model.Site, command []string, live, jsonOutput bool, out interface{ Write([]byte) (int, error) }, detail string) error {
+func firewallLiveRead(siteDir string, s model.Site, command []string, live, jsonOutput bool, out io.Writer, detail string) error {
 	if s.Gateway.Mode == model.GatewayModeExternal {
 		fmt.Fprintln(out, "Live firewall state belongs to the operator-managed external appliance.")
 		return nil
@@ -463,7 +464,7 @@ func remoteShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
-func writeCLIJSON(out interface{ Write([]byte) (int, error) }, value any) error {
+func writeCLIJSON(out io.Writer, value any) error {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
