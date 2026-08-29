@@ -43,3 +43,30 @@ func TestPendingDNSDeletionsAreControllerLocalAndValidated(t *testing.T) {
 		t.Fatalf("unsafe or platform-owned pending state was retained: %#v, %v", got, err)
 	}
 }
+
+func TestLoadPendingDNSDeletionsRejectsSymlinkedRuntimeState(t *testing.T) {
+	runtimeRoot := t.TempDir()
+	t.Setenv("BOETTICHER_RUNTIME_DIR", runtimeRoot)
+	s := model.NewDefaultSite("installation", "age1example")
+	if err := SavePendingDNSDeletions(t.TempDir(), s, []model.DNSDeletion{{Name: "old.lab.home.arpa", Type: "A"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	dnsDir := filepath.Join(RuntimeDir(s), "dns")
+	if err := os.Remove(filepath.Join(dnsDir, filepath.Base(pendingDNSDeletionsFile))); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(dnsDir); err != nil {
+		t.Fatal(err)
+	}
+	external := t.TempDir()
+	if err := os.WriteFile(filepath.Join(external, "pending-deletions.json"), []byte(`[{"name":"old.lab.home.arpa","type":"A"}]`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, dnsDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadPendingDNSDeletions(t.TempDir(), s); err == nil {
+		t.Fatal("symlinked pending DNS state was followed")
+	}
+}

@@ -2,13 +2,11 @@ package sshconfig
 
 import (
 	"bufio"
-	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -227,17 +225,58 @@ func RemoveHostKey(path, host string) error {
 	return Write(path, []byte(strings.Join(kept, "")), true)
 }
 
-// AddHostKey records a host key obtained through an independently
+// ReadHostKey returns the first plain host-key entry for the exact alias.
+// Hashed entries are intentionally unsupported here because bootstrap trust
+// must be bound to the logical identity used by OpenSSH HostKeyAlias.
+func ReadHostKey(path, host string) (string, error) {
+	path = model.ExpandUserPath(path)
+	if path == "" || host == "" || strings.ContainsAny(host, " \t\r\n,|*?!") {
+		return "", errors.New("known-hosts path and exact host are required")
+	}
+	content, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("host key for %s is not enrolled: %w", host, err)
+	}
+	if err != nil {
+		return "", fmt.Errorf("read SSH known-hosts file: %w", err)
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || strings.HasPrefix(fields[0], "#") || strings.HasPrefix(fields[0], "|") {
+			continue
+		}
+		for _, alias := range strings.Split(fields[0], ",") {
+			if alias != host {
+				continue
+			}
+			return normalizeKnownHostKey(fields[1] + " " + fields[2])
+		}
+	}
+	return "", fmt.Errorf("host key for %s is not enrolled", host)
+}
+
+// AddKnownHostKey records a host key obtained through an already trusted
+// connection. Existing entries for the exact alias must agree; a changed key
+// is never silently replaced.
+func AddKnownHostKey(path, host, publicKey string) error {
+	return addHostKey(path, host, publicKey, normalizeKnownHostKey, "known host key")
+}
+
+// AddHostKey records an ed25519 host key obtained through an independently
 // authenticated management path. Existing entries for the exact alias must
 // agree; a changed key is never silently replaced.
 func AddHostKey(path, host, publicKey string) error {
+	return addHostKey(path, host, publicKey, normalizePublicKey, "independently observed host key")
+}
+
+func addHostKey(path, host, publicKey string, normalize func(string) (string, error), description string) error {
 	path = model.ExpandUserPath(path)
 	if path == "" || host == "" || strings.ContainsAny(host, " \t\r\n,|*?!") {
 		return errors.New("known-hosts path and exact host are required")
 	}
-	canonicalKey, err := normalizePublicKey(publicKey)
+	canonicalKey, err := normalize(publicKey)
 	if err != nil {
-		return fmt.Errorf("validate independently observed host key: %w", err)
+		return fmt.Errorf("validate %s: %w", description, err)
 	}
 	content, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -254,8 +293,8 @@ func AddHostKey(path, host, publicKey string) error {
 			if alias != host {
 				continue
 			}
-			observed := fields[1] + " " + fields[2]
-			if observed != canonicalKey {
+			observed, normalizeErr := normalize(fields[1] + " " + fields[2])
+			if normalizeErr != nil || observed != canonicalKey {
 				return fmt.Errorf("existing host key for %s does not match independently observed key", host)
 			}
 			return nil
@@ -266,6 +305,21 @@ func AddHostKey(path, host, publicKey string) error {
 		separator = "\n"
 	}
 	return Write(path, append(append(append([]byte{}, content...), []byte(separator)...), []byte(host+" "+canonicalKey+"\n")...), true)
+}
+
+func normalizeKnownHostKey(publicKey string) (string, error) {
+	fields := strings.Fields(strings.TrimSpace(publicKey))
+	if len(fields) != 2 || fields[0] == "" {
+		return "", errors.New("expected one known-host public key")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(fields[1])
+	if err != nil {
+		decoded, err = base64.RawStdEncoding.DecodeString(fields[1])
+	}
+	if err != nil || len(decoded) == 0 {
+		return "", errors.New("known-host public key data is not valid base64")
+	}
+	return fields[0] + " " + fields[1], nil
 }
 
 func normalizePublicKey(publicKey string) (string, error) {
@@ -362,32 +416,6 @@ func ValidateBootstrapAddress(address string) error {
 		return fmt.Errorf("bootstrap endpoint must be an IPv4 address")
 	}
 	return nil
-}
-
-// ScanHostKey obtains the public host-key lines for an address without using
-// credentials. It is used only to compare a recorded bootstrap identity; it
-// is not a trust mechanism and never replaces StrictHostKeyChecking.
-func ScanHostKey(ctx context.Context, address string) (string, error) {
-	if err := ValidateBootstrapAddress(address); err != nil {
-		return "", err
-	}
-	command := exec.CommandContext(ctx, "ssh-keyscan", "-4", "-T", "5", address)
-	data, err := command.Output()
-	if err != nil {
-		return "", fmt.Errorf("scan Proxmox SSH host key: %w", err)
-	}
-	lines := []string{}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" && !strings.HasPrefix(line, "#") {
-			lines = append(lines, line)
-		}
-	}
-	if len(lines) == 0 {
-		return "", errors.New("ssh-keyscan returned no host key")
-	}
-	sort.Strings(lines)
-	return strings.Join(lines, "\n"), nil
 }
 
 func writeHost(b *strings.Builder, aliases []string, hostName, user, hostKeyAlias, identity, knownHosts string, throughBastion, bastion bool) {

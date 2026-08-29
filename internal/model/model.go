@@ -867,6 +867,15 @@ func (s Site) Validate() error {
 	if strings.IndexFunc(s.SSHIdentityFile, unicode.IsControl) >= 0 {
 		return errors.New("ssh_identity_file contains control characters")
 	}
+	if s.BootstrapAddress != "" {
+		if strings.TrimSpace(s.BootstrapAddress) != s.BootstrapAddress {
+			return errors.New("bootstrap_address must not contain surrounding whitespace")
+		}
+		ip := net.ParseIP(s.BootstrapAddress)
+		if ip == nil || ip.To4() == nil || ip.To4().String() != s.BootstrapAddress {
+			return fmt.Errorf("bootstrap_address must be a canonical IPv4 address")
+		}
+	}
 	if s.StorageProfile != "single-disk" && s.StorageProfile != "dedicated-data-disk" {
 		return fmt.Errorf("unsupported storage_profile %q", s.StorageProfile)
 	}

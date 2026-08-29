@@ -558,7 +558,7 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 			IdentityFile:  operatorIdentityFile(s),
 			ConfigFile:    filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"),
 			KnownHosts:    deploymentKnownHosts(*siteDir),
-			StrictHostKey: "accept-new",
+			StrictHostKey: "yes",
 			HostAlias:     "lab-bastion",
 		}
 		pulseForward, err = pulseRunner.StartLocalForward(ctx, s.BootstrapAddress, "lab-jump", "10.10.10.20", 443)
@@ -689,7 +689,7 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 					agentRunner = proxmox.SSHRunner{
 						IdentityFile:  operatorIdentityFile(s),
 						ConfigFile:    filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"),
-						StrictHostKey: "accept-new", HostKeyAlias: model.LogicalProxmoxIdentity,
+						StrictHostKey: "yes", HostKeyAlias: model.LogicalProxmoxIdentity,
 					}
 				} else {
 					agentRunner = applianceSSHRunner(s, *siteDir, target)
@@ -1250,7 +1250,7 @@ func loadProxmoxClientWithSnippetUser(siteDir string, s model.Site, ageIdentity,
 			IdentityFile:  operatorIdentityFile(s),
 			ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),
 			KnownHosts:    deploymentKnownHosts(siteDir),
-			StrictHostKey: "accept-new", HostKeyAlias: model.LogicalProxmoxIdentity,
+			StrictHostKey: "yes", HostKeyAlias: model.LogicalProxmoxIdentity,
 		},
 		SnippetAddress: s.BootstrapAddress, SnippetUser: snippetUser,
 	})
@@ -1265,7 +1265,7 @@ func proxmoxRootSSHRunner(s model.Site, siteDir string) proxmox.SSHRunner {
 		IdentityFile:  operatorIdentityFile(s),
 		ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),
 		KnownHosts:    deploymentKnownHosts(siteDir),
-		StrictHostKey: "accept-new",
+		StrictHostKey: "yes",
 		HostAlias:     model.LogicalProxmoxIdentity,
 	}
 }
@@ -1310,6 +1310,13 @@ func checkBootstrapEndpoint(siteDir string, s model.Site) error {
 	}
 	if evidence.BootstrapAddress != s.BootstrapAddress {
 		return fmt.Errorf("recorded address %s is stale; use boetticher bootstrap-endpoint set ADDRESS then regenerate SSH configuration", evidence.BootstrapAddress)
+	}
+	trustedKey, err := sshconfig.ReadHostKey(deploymentKnownHosts(siteDir), model.LogicalProxmoxIdentity)
+	if err != nil {
+		return fmt.Errorf("Proxmox host key is not enrolled in the site trust file: %w", err)
+	}
+	if trustedKey != evidence.SSHHostKey {
+		return errors.New("recorded Proxmox host key does not match the enrolled site trust key")
 	}
 	return nil
 }

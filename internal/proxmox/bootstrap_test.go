@@ -151,7 +151,7 @@ func TestSSHRunnerRejectsExecutableConfigBeforeStartingSSH(t *testing.T) {
 }
 
 func TestSSHRunnerSeparatesHostKeyAliasFromNetworkTarget(t *testing.T) {
-	runner := SSHRunner{StrictHostKey: "accept-new", HostKeyAlias: "lab-proxmox-01"}
+	runner := SSHRunner{StrictHostKey: "yes", HostKeyAlias: "lab-proxmox-01"}
 	args, err := runner.commandArgs("192.0.4.5", "dave", []string{"pvesh", "get", "/nodes"})
 	if err != nil {
 		t.Fatal(err)
@@ -179,7 +179,7 @@ func TestSSHRunnerHostAliasStillSelectsApplianceConfigHost(t *testing.T) {
 }
 
 func TestSSHRunnerLocalForwardUsesLoopbackAndBoundedTarget(t *testing.T) {
-	runner := SSHRunner{ConfigFile: "/tmp/boetticher.conf", StrictHostKey: "accept-new", HostAlias: "lab-proxmox-01"}
+	runner := SSHRunner{ConfigFile: "/tmp/boetticher.conf", StrictHostKey: "yes", HostAlias: "lab-proxmox-01"}
 	args, err := runner.forwardArgs("192.0.2.10", "root", 43123, "10.10.10.20", 443)
 	if err != nil {
 		t.Fatal(err)
@@ -189,6 +189,14 @@ func TestSSHRunnerLocalForwardUsesLoopbackAndBoundedTarget(t *testing.T) {
 	}
 	if !containsString(args, "BatchMode=yes") || !containsString(args, "ExitOnForwardFailure=yes") || !containsString(args, "root@lab-proxmox-01") {
 		t.Fatalf("local forward does not use non-interactive Proxmox SSH: %#v", args)
+	}
+}
+
+func TestSSHRunnerRejectsWeakHostKeyVerificationModes(t *testing.T) {
+	for _, mode := range []string{"no", "accept-new"} {
+		if _, err := (SSHRunner{StrictHostKey: mode}).commandArgs("192.0.2.10", "root", []string{"true"}); err == nil {
+			t.Fatalf("weak SSH host-key mode %q was accepted", mode)
+		}
 	}
 }
 

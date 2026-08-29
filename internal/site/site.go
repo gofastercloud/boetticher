@@ -1,6 +1,7 @@
 package site
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -27,6 +28,24 @@ var ErrPlatformSecretMissing = errors.New("encrypted platform secret is missing"
 var platformSecretName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
 
 const externalCommandTimeout = 30 * time.Second
+
+const maxEncryptedDocumentBytes = 1 << 20
+
+var errCommandOutputLimit = errors.New("command output exceeds the permitted size")
+
+type boundedCommandOutput struct {
+	bytes.Buffer
+	limit    int
+	exceeded bool
+}
+
+func (b *boundedCommandOutput) Write(data []byte) (int, error) {
+	if len(data) > b.limit-b.Len() {
+		b.exceeded = true
+		return 0, errCommandOutputLimit
+	}
+	return b.Buffer.Write(data)
+}
 
 func Load(dir string) (model.Site, error) {
 	config, err := LoadConfig(dir)
@@ -305,14 +324,20 @@ func StoreEncryptedDocument(dir, recipient, relativePath string, document any) e
 	defer cancel()
 	command := exec.CommandContext(ctx, "sops", "--encrypt", "--age", recipient, "--input-type", "yaml", "--output-type", "yaml", "/dev/stdin")
 	command.Stdin = strings.NewReader(string(plaintext))
-	encrypted, err := command.Output()
+	var encryptedOutput boundedCommandOutput
+	encryptedOutput.limit = maxEncryptedDocumentBytes
+	command.Stdout = &encryptedOutput
+	err = command.Run()
+	if encryptedOutput.exceeded || encryptedOutput.Len() >= encryptedOutput.limit {
+		return errors.New("encrypt document with SOPS: output exceeds the permitted size")
+	}
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return errors.New("encrypt document with SOPS: command timed out")
 		}
 		return fmt.Errorf("encrypt document with SOPS: %w", err)
 	}
-	return atomicWrite(path, encrypted, 0600)
+	return atomicWrite(path, encryptedOutput.Bytes(), 0600)
 }
 
 func LoadEncryptedDocument(dir, ageIdentityPath, relativePath string) (map[string]any, error) {
@@ -327,7 +352,7 @@ func LoadEncryptedDocument(dir, ageIdentityPath, relativePath string) (map[strin
 	if identity == "" {
 		return nil, errors.New("Age identity path is required")
 	}
-	encrypted, err := pathguard.ReadFile(path)
+	encrypted, err := pathguard.ReadFileLimited(path, maxEncryptedDocumentBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read encrypted document: %w", err)
 	}
@@ -337,14 +362,20 @@ func LoadEncryptedDocument(dir, ageIdentityPath, relativePath string) (map[strin
 	command.Env = envWithout("SOPS_AGE_KEY_FILE")
 	command.Env = append(command.Env, "SOPS_AGE_KEY_FILE="+identity)
 	command.Stdin = strings.NewReader(string(encrypted))
-	plaintext, err := command.Output()
+	var plaintextOutput boundedCommandOutput
+	plaintextOutput.limit = maxEncryptedDocumentBytes
+	command.Stdout = &plaintextOutput
+	err = command.Run()
+	if plaintextOutput.exceeded || plaintextOutput.Len() >= plaintextOutput.limit {
+		return nil, errors.New("decrypt encrypted document: output exceeds the permitted size")
+	}
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return nil, errors.New("decrypt encrypted document with SOPS: command timed out")
 		}
 		return nil, fmt.Errorf("decrypt encrypted document with SOPS: %w", err)
 	}
-	document, err := model.ParseDocument(plaintext)
+	document, err := model.ParseDocument(plaintextOutput.Bytes())
 	if err != nil {
 		return nil, fmt.Errorf("parse decrypted document: %w", err)
 	}

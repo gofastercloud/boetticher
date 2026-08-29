@@ -80,7 +80,7 @@ func runPreflight(args []string, out io.Writer) error {
 	fmt.Fprintf(out, "Controller: PASS %s/%s\n", runtime.GOOS, runtime.GOARCH)
 	fmt.Fprintf(out, "Gateway upstream MAC: %s (create the matching upstream DHCP reservation)\n", s.Gateway.Upstream.MAC)
 	allPass := true
-	for _, tool := range []string{"ssh", "ssh-keyscan", "age-keygen", "sops", "ansible", "ansible-playbook"} {
+	for _, tool := range []string{"ssh", "age-keygen", "sops", "ansible", "ansible-playbook"} {
 		path, err := exec.LookPath(tool)
 		if err != nil {
 			allPass = false

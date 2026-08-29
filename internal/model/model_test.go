@@ -141,6 +141,21 @@ func TestUnqualifiedGatewayImageIsRejected(t *testing.T) {
 	}
 }
 
+func TestBootstrapAddressRequiresCanonicalIPv4(t *testing.T) {
+	for _, address := range []string{"attacker.example", "192.0.2.10:8006", "https://192.0.2.10", " 192.0.2.10", "192.0.2.10 ", "::1", "192.0.2.999"} {
+		site := NewDefaultSite("installation", "age1example")
+		site.BootstrapAddress = address
+		if err := site.Validate(); err == nil {
+			t.Fatalf("unsafe bootstrap address %q was accepted", address)
+		}
+	}
+	site := NewDefaultSite("installation", "age1example")
+	site.BootstrapAddress = "192.0.2.10"
+	if err := site.Validate(); err != nil {
+		t.Fatalf("canonical IPv4 bootstrap address was rejected: %v", err)
+	}
+}
+
 func TestExternalGatewayOmitsManagedFirewall(t *testing.T) {
 	site := NewSite("installation", "age1example", GatewayModeExternal)
 	if err := site.Validate(); err != nil {

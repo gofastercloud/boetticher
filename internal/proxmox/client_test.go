@@ -42,6 +42,17 @@ func TestClientUsesTokenAndDecodesEnvelope(t *testing.T) {
 	}
 }
 
+func TestNewClientRejectsNonIPv4APIHosts(t *testing.T) {
+	for _, baseURL := range []string{"https://pve.example:8006/api2/json", "https://user@192.0.2.10:8006/api2/json", "https://[::1]:8006/api2/json"} {
+		if _, err := NewClient(Config{BaseURL: baseURL}); err == nil {
+			t.Fatalf("unsafe Proxmox API base URL was accepted: %s", baseURL)
+		}
+	}
+	if _, err := NewClient(Config{BaseURL: "https://192.0.2.10:8006/api2/json"}); err != nil {
+		t.Fatalf("canonical IPv4 Proxmox API base URL was rejected: %v", err)
+	}
+}
+
 func TestClientIncludesStructuredProxmoxErrors(t *testing.T) {
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: roundTripFunc(func(r *http.Request) *http.Response {
 		return apiResponse(http.StatusBadRequest, `{"message":"Parameter verification failed.","errors":{"name":"invalid"},"data":null}`)

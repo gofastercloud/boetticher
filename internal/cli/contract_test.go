@@ -121,7 +121,7 @@ func TestPublicHelpPathsDoNotFail(t *testing.T) {
 		{"init", "--help"}, {"preflight", "-h"}, {"bootstrap", "--help"}, {"deploy", "--help"}, {"status", "--help"}, {"update", "--help"},
 		{"verify", "--help"}, {"doctor", "--help"}, {"network", "--help"}, {"firewall", "--help"},
 		{"dhcp", "--help"}, {"dns", "--help"}, {"pki", "--help"}, {"access", "--help"}, {"portal", "--help"},
-		{"module", "--help"}, {"modules", "--help"}, {"config", "--help"}, {"logs", "--help"}, {"aiops", "--help"}, {"upgrade", "--help"},
+		{"module", "--help"}, {"module", "secrets", "--help"}, {"modules", "--help"}, {"config", "--help"}, {"logs", "--help"}, {"aiops", "--help"}, {"upgrade", "--help"},
 	} {
 		var output bytes.Buffer
 		if err := Run(args, &output, &output); err != nil {
