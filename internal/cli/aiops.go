@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/gofastercloud/boetticher/internal/aiops"
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -47,7 +46,12 @@ func runAIOps(args []string, out interface{ Write([]byte) (int, error) }) error 
 	if !ok {
 		return errors.New("aiops appliance is absent from the model")
 	}
-	runner := proxmox.SSHRunner{ConfigFile: filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"), HostAlias: component.Name, StrictHostKey: "accept-new"}
+	configPath, cleanupConfig, err := temporarySSHConfig(s, *siteDir)
+	if err != nil {
+		return fmt.Errorf("prepare SSH configuration: %w", err)
+	}
+	defer cleanupConfig()
+	runner := proxmox.SSHRunner{ConfigFile: configPath, KnownHosts: deploymentKnownHosts(*siteDir), StrictHostKey: "yes", HostAlias: component.Name, IdentityFile: operatorIdentityFile(s)}
 	data, err := runner.RunArgs(context.Background(), component.Address, model.DefaultAdminSSHUser, []string{"/usr/local/libexec/boetticher-aiops", "status"})
 	if err != nil {
 		return fmt.Errorf("read AIOps status: %w", err)
@@ -81,7 +85,12 @@ func readAIOpsReadiness(siteDir string, s model.Site) (aiops.ReadinessStatus, er
 	if !ok {
 		return aiops.ReadinessStatus{}, errors.New("aiops appliance is absent from the model")
 	}
-	runner := proxmox.SSHRunner{ConfigFile: filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"), HostAlias: component.Name, StrictHostKey: "accept-new"}
+	configPath, cleanupConfig, err := temporarySSHConfig(s, siteDir)
+	if err != nil {
+		return aiops.ReadinessStatus{}, fmt.Errorf("prepare SSH configuration: %w", err)
+	}
+	defer cleanupConfig()
+	runner := proxmox.SSHRunner{ConfigFile: configPath, KnownHosts: deploymentKnownHosts(siteDir), StrictHostKey: "yes", HostAlias: component.Name, IdentityFile: operatorIdentityFile(s)}
 	data, err := runner.RunArgs(context.Background(), component.Address, model.DefaultAdminSSHUser, []string{"/usr/local/libexec/boetticher-aiops", "doctor"})
 	if err != nil {
 		return aiops.ReadinessStatus{}, fmt.Errorf("run AIOps readiness checks: %w", err)

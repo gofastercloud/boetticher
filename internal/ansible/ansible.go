@@ -16,6 +16,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/logging"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/pulse"
+	"github.com/gofastercloud/boetticher/internal/sshconfig"
 	"github.com/gofastercloud/boetticher/internal/usbexport"
 )
 
@@ -256,6 +257,9 @@ func RunLimited(ctx context.Context, playbook, inventory string, variables []byt
 func run(ctx context.Context, playbook, inventory string, variables []byte, limit string) error {
 	if playbook == "" || inventory == "" {
 		return errors.New("Ansible playbook and inventory are required")
+	}
+	if err := sshconfig.ValidateExecutionConfig(generatedSSHConfigPath(inventory)); err != nil {
+		return fmt.Errorf("validate Ansible SSH configuration: %w", err)
 	}
 	executable, err := exec.LookPath("ansible-playbook")
 	if err != nil {

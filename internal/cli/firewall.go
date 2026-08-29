@@ -7,12 +7,11 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
@@ -425,9 +424,22 @@ func gatewayCommand(siteDir string, s model.Site, command ...string) ([]byte, er
 	for i, argument := range command {
 		quoted[i] = remoteShellQuote(argument)
 	}
-	args := []string{"-F", filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"), "firewall", strings.Join(quoted, " ")}
-	process := exec.CommandContext(context.Background(), "ssh", args...)
-	return process.Output()
+	component, ok := findManagedEndpoint(s, "lab-fw-01")
+	if !ok {
+		return nil, errors.New("managed gateway is absent from the desired model")
+	}
+	configPath, cleanupConfig, err := temporarySSHConfig(s, siteDir)
+	if err != nil {
+		return nil, fmt.Errorf("prepare SSH configuration: %w", err)
+	}
+	defer cleanupConfig()
+	runner := proxmox.SSHRunner{
+		ConfigFile:    configPath,
+		KnownHosts:    deploymentKnownHosts(siteDir),
+		StrictHostKey: "yes",
+		HostAlias:     "firewall",
+	}
+	return runner.Run(context.Background(), component.Address, component.SSHUser, strings.Join(quoted, " "))
 }
 
 // OpenSSH passes the remote command through the account shell. Quote each

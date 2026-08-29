@@ -217,6 +217,14 @@ func TestGeneratedSSHConfigPathIsBoundToInventoryProjection(t *testing.T) {
 
 func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	tempDir := t.TempDir()
+	inventoryPath := filepath.Join(tempDir, "site", "generated", "ansible", "inventory.ini")
+	sshConfigPath := filepath.Join(tempDir, "site", "generated", "ssh", "boetticher.conf")
+	if err := os.MkdirAll(filepath.Dir(sshConfigPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sshConfigPath, []byte("Host lab-fw-01\n    HostName 192.0.2.10\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	argsPath := filepath.Join(tempDir, "args")
 	scriptPath := filepath.Join(tempDir, "ansible-playbook")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ANSIBLE_ARGS_FILE\"\ncat >/dev/null\n"
@@ -226,7 +234,7 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	t.Setenv("PATH", tempDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("ANSIBLE_ARGS_FILE", argsPath)
 
-	if err := run(context.Background(), "ansible/site.yml", "/tmp/site/generated/ansible/inventory.ini", []byte("{}"), "lab-fw-01"); err != nil {
+	if err := run(context.Background(), "ansible/site.yml", inventoryPath, []byte("{}"), "lab-fw-01"); err != nil {
 		t.Fatal(err)
 	}
 	args, err := os.ReadFile(argsPath)

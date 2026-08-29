@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -78,7 +77,12 @@ func runLogs(args []string, out interface{ Write([]byte) (int, error) }) error {
 	} else {
 		fmt.Fprintf(out, "Source: %s\n", source)
 	}
-	runner := proxmox.SSHRunner{ConfigFile: filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"), HostAlias: collector.Name, StrictHostKey: "accept-new"}
+	configPath, cleanupConfig, err := temporarySSHConfig(s, *siteDir)
+	if err != nil {
+		return fmt.Errorf("prepare SSH configuration: %w", err)
+	}
+	defer cleanupConfig()
+	runner := proxmox.SSHRunner{ConfigFile: configPath, KnownHosts: deploymentKnownHosts(*siteDir), HostAlias: collector.Name, StrictHostKey: "yes"}
 	data, err := runner.RunArgs(context.Background(), collector.Address, model.DefaultAdminSSHUser, argsForJournal)
 	if err != nil {
 		return fmt.Errorf("read journal for %s: %w", component.Hostname, err)
