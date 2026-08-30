@@ -206,6 +206,18 @@ func TestAIOpsServiceAllowsDeclaredDNSResolvers(t *testing.T) {
 	}
 }
 
+func TestPortalServiceAllowsTheCompleteClientCertificateChain(t *testing.T) {
+	service, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "portal", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"ssl_client_certificate /etc/boetticher/tls/client-ca.pem;", "ssl_crl /etc/boetticher/tls/client-ca.crl.pem;", "ssl_verify_client on;", "ssl_verify_depth 3;"} {
+		if !strings.Contains(string(service), expected) {
+			t.Fatalf("portal mTLS contract is missing %q", expected)
+		}
+	}
+}
+
 func TestHolmesServiceUsesPinnedConfigDirectoryContract(t *testing.T) {
 	service, err := os.ReadFile(filepath.Join("..", "..", "images", "aiops", "runtime", "holmes.service"))
 	if err != nil {

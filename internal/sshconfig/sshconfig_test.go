@@ -165,7 +165,7 @@ func TestBastionPolicyOnlyAllowsModelledHosts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(content, "PermitOpen 10.10.10.10:22") || strings.Contains(content, "10.10.50.") {
+	if !strings.Contains(content, "PermitOpen 10.10.10.10:22") || !strings.Contains(content, "10.10.10.30:443") || strings.Contains(content, "10.10.50.") {
 		t.Fatalf("unexpected bastion destination policy: %s", content)
 	}
 }

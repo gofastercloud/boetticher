@@ -142,6 +142,7 @@
           ssl_client_certificate /etc/boetticher/tls/client-ca.pem;
           ssl_crl /etc/boetticher/tls/client-ca.crl.pem;
           ssl_verify_client on;
+          ssl_verify_depth 3;
           ssl_protocols TLSv1.2 TLSv1.3;
 
           location / { try_files $uri $uri/ =404; }
