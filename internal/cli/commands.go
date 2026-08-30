@@ -23,6 +23,7 @@ type helpSpec struct {
 
 var commandSpecs = []commandSpec{
 	{Usage: "boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall]"},
+	{Usage: "boetticher tui [--site DIR] [--offline]"},
 	{Usage: "boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]"},
 	{Usage: "boetticher status [--site DIR] [--ssh-config PATH] [--ssh-journey] [--live] [--verbose] [--json]"},
 	{Usage: "boetticher module list|configure NAME|disable NAME [--site DIR] [--dry-run] [--json] [--confirm]"},
@@ -33,6 +34,7 @@ var commandSpecs = []commandSpec{
 
 var advancedCommandSpecs = []commandSpec{
 	{Usage: "boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall]"},
+	{Usage: "boetticher tui [--site DIR] [--offline]"},
 	{Usage: "boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--record] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]"},
 	{Usage: "boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]"},
 	{Usage: "boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]"},
@@ -63,10 +65,27 @@ var advancedCommandSpecs = []commandSpec{
 	{Usage: "boetticher portal build [--site DIR] [--output DIR] [--docs DIR]"},
 }
 
+// CommandUsages returns the complete command surface used by the interactive
+// command palette. The TUI command itself is omitted to avoid a recursive
+// palette entry.
+func CommandUsages() []string {
+	result := make([]string, 0, len(advancedCommandSpecs))
+	for _, spec := range advancedCommandSpecs {
+		if strings.HasPrefix(spec.Usage, "boetticher tui ") {
+			continue
+		}
+		result = append(result, spec.Usage)
+	}
+	return result
+}
+
 // helpSpecs is keyed by the command path before -h/--help. Keeping nested
 // paths explicit makes every help request useful without making command
 // dispatch depend on a second parser or on a recursive help hint.
 var helpSpecs = map[string]helpSpec{
+	"tui": {
+		Usage: "boetticher tui [--site DIR] [--offline]", Purpose: "Open the experimental interactive operator interface.", Arguments: "No positional arguments.", Options: "--site selects the private site repository; --offline skips live refresh and displays local projections.", Safety: "The TUI uses the existing command safety gates. Mutations still require their explicit confirmation flags; secret values are never accepted as command arguments.", Examples: "boetticher tui --site ./my-boetticher", Related: "status, doctor, deploy, module, firewall",
+	},
 	"init": {
 		Usage: "boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall]", Purpose: "Create a site directory with the settings and recovery files Boetticher needs.", Arguments: "No positional arguments.", Options: "--site-dir selects the site directory; --age-identity selects the operator-owned private Age identity; --external-firewall selects the operator-owned gateway contract.", Safety: "Creates local site and recovery files; it does not mutate Proxmox.", Examples: "boetticher init --site-dir ./my-boetticher", Related: "config validate, preflight, bootstrap",
 	},

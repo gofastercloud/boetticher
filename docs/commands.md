@@ -6,6 +6,7 @@ This reference is generated from the CLI command metadata. `deploy` is the only 
 
 ```text
 boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall]
+boetticher tui [--site DIR] [--offline]
 boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--record] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]
 boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]
 boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]
@@ -53,6 +54,22 @@ Safety: Creates local site and recovery files; it does not mutate Proxmox.
 Examples: `boetticher init --site-dir ./my-boetticher`
 
 Related commands: config validate, preflight, bootstrap
+
+### tui
+
+Purpose: Open the experimental interactive operator interface.
+
+Usage: `boetticher tui [--site DIR] [--offline]`
+
+Arguments: No positional arguments.
+
+Options: --site selects the private site repository; --offline skips live refresh and displays local projections.
+
+Safety: The TUI uses the existing command safety gates. Mutations still require their explicit confirmation flags; secret values are never accepted as command arguments.
+
+Examples: `boetticher tui --site ./my-boetticher`
+
+Related commands: status, doctor, deploy, module, firewall
 
 ### preflight
 
