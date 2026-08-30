@@ -42,7 +42,9 @@ live status, a command list, and a place to run an existing command. It is
 experimental: expect rough edges, and use the regular CLI when you need a
 repeatable automation or recovery path. The TUI does not create a new
 permission model; commands still keep their normal confirmation gates and
-secret-handling rules.
+secret-handling rules. Site-aware commands inherit the TUI's selected site
+unless you explicitly provide another `--site`. The palette is deliberately
+curated to executable command paths rather than every advanced CLI synopsis.
 
 Use `--offline` for a local view when the site has not been deployed or live
 refresh is not useful. Offline data is only a local projection, so use

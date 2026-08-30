@@ -65,18 +65,23 @@ var advancedCommandSpecs = []commandSpec{
 	{Usage: "boetticher portal build [--site DIR] [--output DIR] [--docs DIR]"},
 }
 
-// CommandUsages returns the complete command surface used by the interactive
-// command palette. The TUI command itself is omitted to avoid a recursive
-// palette entry.
+// CommandUsages returns the small set of concrete command paths shown by the
+// experimental interactive command palette. These are executable prefixes,
+// not synopsis strings containing documentation alternatives.
 func CommandUsages() []string {
-	result := make([]string, 0, len(advancedCommandSpecs))
-	for _, spec := range advancedCommandSpecs {
-		if strings.HasPrefix(spec.Usage, "boetticher tui ") {
-			continue
-		}
-		result = append(result, spec.Usage)
+	return []string{
+		"boetticher deploy",
+		"boetticher status",
+		"boetticher doctor",
+		"boetticher network test",
+		"boetticher module list",
+		"boetticher module configure",
+		"boetticher module status",
+		"boetticher logs",
+		"boetticher firewall status",
+		"boetticher dhcp leases",
+		"boetticher hardware usb list",
 	}
-	return result
 }
 
 // helpSpecs is keyed by the command path before -h/--help. Keeping nested
