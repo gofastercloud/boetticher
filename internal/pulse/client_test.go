@@ -215,6 +215,45 @@ func TestAdminReadTokenValidationSurfacesUnauthorized(t *testing.T) {
 	}
 }
 
+func TestAdminValidatesPersistedReadTokenWithoutLoggingInAsTheReadToken(t *testing.T) {
+	var receivedToken string
+	transport := fakeTransport(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/api/state/summary" {
+			return fakeResponse(r, http.StatusNotFound, "not found", nil), nil
+		}
+		receivedToken = r.Header.Get("X-API-Token")
+		return fakeResponse(r, http.StatusOK, `{"lastUpdate":"2026-08-30T00:00:00Z"}`, nil), nil
+	})
+	client, err := NewAdminClient(ClientConfig{
+		BaseURL: "https://monitor.example.test", AdminUser: "admin", AdminPassword: "admin-pass",
+		HTTP: &http.Client{Transport: transport},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.ValidateReadToken(context.Background(), "persisted-read-token"); err != nil {
+		t.Fatalf("ValidateReadToken() error = %v", err)
+	}
+	if receivedToken != "persisted-read-token" {
+		t.Fatalf("ValidateReadToken() sent token %q", receivedToken)
+	}
+}
+
+func TestAdminReadTokenValidationSurfacesUnauthorized(t *testing.T) {
+	client, err := NewAdminClient(ClientConfig{
+		BaseURL: "https://monitor.example.test", AdminUser: "admin", AdminPassword: "admin-pass",
+		HTTP: &http.Client{Transport: fakeTransport(func(r *http.Request) (*http.Response, error) {
+			return fakeResponse(r, http.StatusUnauthorized, "expired", nil), nil
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.ValidateReadToken(context.Background(), "expired-read-token"); !IsUnauthorized(err) {
+		t.Fatalf("ValidateReadToken() error = %v, want unauthorized", err)
+	}
+}
+
 func TestAdminConfiguresPVEThroughAuthenticatedAPIAndCreatesReadToken(t *testing.T) {
 	configured := false
 	transport := fakeTransport(func(r *http.Request) (*http.Response, error) {
