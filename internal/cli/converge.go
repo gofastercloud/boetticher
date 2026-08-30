@@ -154,6 +154,9 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 	// Agent installation is enabled only in the post-Pulse bootstrap pass,
 	// after the scoped report token and encrypted credential projection exist.
 	runtimeVariables["pulse_agent_install_enabled"] = false
+	// StreamDeck activation is enabled only in the post-Pulse pass, after its
+	// shared read token and encrypted credential projection exist.
+	runtimeVariables["streamdeck_runtime_credentials_ready"] = false
 	monitoringEnabled := modules.IsEnabled(s, "monitoring")
 	aiopsEnabled := modules.IsEnabled(s, "aiops")
 	secretValues := map[string]string{}
@@ -479,6 +482,7 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 	var monitorCertificate pki.ServerCertificate
 	var litellmCertificate pki.ServerCertificate
 	var octoprintCertificate pki.ServerCertificate
+	var streamDeckCertificate pki.ClientCertificate
 	var gatusCertificate pki.ServerCertificate
 	var aiopsCertificates map[string]string
 	if monitoringEnabled {
@@ -511,6 +515,16 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 			return fmt.Errorf("sign OctoPrint endpoint CSR: %w", err)
 		}
 	}
+	if modules.IsEnabled(s, "streamdeck") {
+		streamDeckCSR, readErr := os.ReadFile(filepath.Join(csrDir, "streamdeck.csr.pem"))
+		if readErr != nil {
+			return fmt.Errorf("read endpoint-generated StreamDeck CSR: %w", readErr)
+		}
+		streamDeckCertificate, err = pki.SignServiceClientCSR(authority, string(streamDeckCSR), "lab-streamdeck-01", time.Now().UTC())
+		if err != nil {
+			return fmt.Errorf("sign StreamDeck client CSR: %w", err)
+		}
+	}
 	if modules.IsEnabled(s, "aiops") {
 		aiopsCertificates, err = signAIOpsCertificates(authority, s, csrDir)
 		if err != nil {
@@ -540,6 +554,9 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 	}
 	if modules.IsEnabled(s, "printer") {
 		runtimeVariables["octoprint_server_cert_pem"] = octoprintCertificate.ChainPEM
+	}
+	if modules.IsEnabled(s, "streamdeck") {
+		runtimeVariables["streamdeck_client_cert_pem"] = streamDeckCertificate.ChainPEM
 	}
 	if modules.IsEnabled(s, "gatus") {
 		runtimeVariables["gatus_server_cert_pem"] = gatusCertificate.ChainPEM
@@ -739,6 +756,43 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 				if err := ansible.RunLimited(ctx, ansiblePlaybook, inventoryPath, agentVariables, target); err != nil {
 					return fmt.Errorf("install Pulse agent on %s: %w", target, err)
 				}
+			}
+		}
+
+		streamDeckBindings, bindingErr := streamDeckCredentialBindings(s)
+		if bindingErr != nil {
+			return bindingErr
+		}
+		if len(streamDeckBindings) > 0 {
+			streamDeckRunner := applianceSSHRunner(s, *siteDir, "lab-streamdeck-01")
+			if err := installCredentialsForGuest(ctx, streamDeckRunner, "lab-streamdeck-01", streamDeckBindings, map[string]string{"pulse_api_token": readToken}); err != nil {
+				return fmt.Errorf("install StreamDeck Pulse credential: %w", err)
+			}
+			streamDeckDropIns, dropInErr := credentialDropIns(streamDeckBindings)
+			if dropInErr != nil {
+				return dropInErr
+			}
+			existingDropIns, ok := runtimeVariables["credential_dropins"].(map[string]map[string]string)
+			if !ok {
+				existingDropIns = map[string]map[string]string{}
+			}
+			for guest, dropIns := range streamDeckDropIns {
+				if existingDropIns[guest] == nil {
+					existingDropIns[guest] = map[string]string{}
+				}
+				for unit, content := range dropIns {
+					existingDropIns[guest][unit] = content
+				}
+			}
+			runtimeVariables["credential_dropins"] = existingDropIns
+			runtimeVariables["streamdeck_runtime_credentials_ready"] = true
+			streamDeckVariables, marshalErr := json.MarshalIndent(runtimeVariables, "", "  ")
+			if marshalErr != nil {
+				return marshalErr
+			}
+			streamDeckVariables = append(streamDeckVariables, '\n')
+			if err := ansible.RunLimited(ctx, ansiblePlaybook, inventoryPath, streamDeckVariables, "lab-streamdeck-01"); err != nil {
+				return fmt.Errorf("install StreamDeck runtime: %w", err)
 			}
 		}
 	}

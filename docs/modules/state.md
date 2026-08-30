@@ -23,6 +23,8 @@ replacement:
 - litellm: the retained TLS identity and declared persistent service state.
 - printer: the backed-up `/var/lib/octoprint` volume, plus retained TLS and
   SSH identities.
+- streamdeck: the backed-up retained TLS and SSH identities; display images and
+  Pulse responses are ephemeral.
 - tailnet-router: the retained `/var/lib/tailscale` state.
 
 `DEPLOYMENT-DERIVED` state is regenerated from the desired model: runtime

@@ -39,7 +39,7 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 		return SiteConfig{}, fmt.Errorf("decode site.yml: %w", err)
 	}
 	for name := range config.Modules.Map() {
-		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "litellm" && name != "printer" && name != "aiops" && name != "gatus" {
+		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "litellm" && name != "printer" && name != "streamdeck" && name != "aiops" && name != "gatus" {
 			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s is not a registered first-party module", name)
 		}
 	}
@@ -68,7 +68,7 @@ func validateModuleConfigShape(data []byte) error {
 		allowed := map[string]bool{}
 		switch name {
 		case "dns":
-		case "monitoring", "firewall", "printer":
+		case "monitoring", "firewall", "printer", "streamdeck":
 			allowed["enabled"] = true
 		case "logging":
 			// Logging is mandatory and has no persisted lifecycle fields.

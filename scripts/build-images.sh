@@ -7,11 +7,11 @@ set -eu
 target=${1:-images}
 shift || true
 case "$target" in
-  image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-gatus|images) ;;
+  image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-streamdeck|image-gatus|images) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
-default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-litellm image-printer image-aiops image-gatus image-firewall"
+default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-litellm image-printer image-streamdeck image-aiops image-gatus image-firewall"
 if [ "$target" = images ]; then
   selected_image_targets="$*"
   if [ -z "$selected_image_targets" ]; then
@@ -19,7 +19,7 @@ if [ "$target" = images ]; then
   fi
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
-      image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-gatus) ;;
+      image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-streamdeck|image-gatus) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac
   done
@@ -536,6 +536,26 @@ build_printer() {
   package_lxc boetticher-printer
 }
 
+build_streamdeck() {
+  printf '%s\n' 'boetticher build stage: streamdeck'
+  rootfs=$(prepare_rootfs boetticher-streamdeck)
+  install_packages "$rootfs" python3=3.13.5-1 python3-venv=3.13.5-1 python3-pip=25.1.1+dfsg-1 libhidapi-libusb0 fonts-dejavu-core
+  chroot "$rootfs" groupadd --system --gid 2200 streamdeck
+  chroot "$rootfs" useradd --system --uid 2200 --gid 2200 --home-dir /var/lib/streamdeck --create-home --shell /usr/sbin/nologin streamdeck
+  chroot "$rootfs" python3 -m venv /opt/streamdeck
+  install -D -m 0644 images/streamdeck/runtime/requirements.lock "$rootfs/tmp/streamdeck-requirements.lock"
+  chroot "$rootfs" /opt/streamdeck/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/streamdeck-requirements.lock
+  install -D -m 0644 services/streamdeck/pyproject.toml "$rootfs/usr/src/boetticher-streamdeck/pyproject.toml"
+  cp -a services/streamdeck/src "$rootfs/usr/src/boetticher-streamdeck/"
+  chroot "$rootfs" /opt/streamdeck/bin/pip install --no-cache-dir --no-deps --no-build-isolation /usr/src/boetticher-streamdeck
+  chroot "$rootfs" apt-get clean
+  rm -rf "$rootfs/var/lib/apt/lists/"*
+  install -D -m 0644 images/streamdeck/runtime/streamdeck-status.service "$rootfs/etc/systemd/system/streamdeck-status.service"
+  rm -f "$rootfs/tmp/streamdeck-requirements.lock"
+  write_artifact_identity "$rootfs" streamdeck
+  package_lxc boetticher-streamdeck
+}
+
 build_aiops() {
   printf '%s\n' 'boetticher build stage: aiops'
   rootfs=$(prepare_rootfs boetticher-aiops)
@@ -844,6 +864,11 @@ build_printer_target() {
   build_printer
 }
 
+build_streamdeck_target() {
+  [ -f "$(artifact_for boetticher-base)" ] || build_base
+  build_streamdeck
+}
+
 build_aiops_target() {
   [ -f "$(artifact_for boetticher-base)" ] || build_base
   build_aiops
@@ -875,6 +900,7 @@ case "$target" in
   image-tailnet-router) run_timed_image_target "$target" build_tailnet_router_target ;;
   image-litellm) run_timed_image_target "$target" build_litellm_target ;;
   image-printer) run_timed_image_target "$target" build_printer_target ;;
+  image-streamdeck) run_timed_image_target "$target" build_streamdeck_target ;;
   image-aiops) run_timed_image_target "$target" build_aiops_target ;;
   image-gatus) run_timed_image_target "$target" build_gatus_target ;;
   image-firewall) run_timed_image_target "$target" build_firewall ;;
