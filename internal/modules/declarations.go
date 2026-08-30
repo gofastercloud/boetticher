@@ -9,6 +9,8 @@ import (
 	"github.com/gofastercloud/boetticher/internal/model"
 )
 
+const tailscaleDERPRegionCount = 28
+
 func composeDeclarations(site model.Site, resolved []ResolvedModule) ([]model.ModuleDeclaration, error) {
 	declarations := make([]model.ModuleDeclaration, 0, len(resolved))
 	for _, module := range resolved {
@@ -84,7 +86,10 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 			{Source: "lab-tailnet-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Direction: "egress", Purpose: "Tailscale router DNS resolution"},
 			{Source: "lab-tailnet-01", Destination: "dns", Protocol: "udp", Ports: []string{"123"}, Direction: "egress", Purpose: "Tailscale router time synchronisation"},
 			{Source: "lab-tailnet-01", Destination: "tailscale-control-plane", Endpoint: "https://controlplane.tailscale.com", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "Tailscale control-plane operation"},
-			{Source: "lab-tailnet-01", Destination: "tailscale-derp", Endpoint: "https://derp.tailscale.com", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "Tailscale DERP operation"},
+		}
+		for region := 1; region <= tailscaleDERPRegionCount; region++ {
+			host := fmt.Sprintf("derp%d-all.tailscale.com", region)
+			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-tailnet-01", Destination: fmt.Sprintf("tailscale-derp-%02d", region), Endpoint: "https://" + host, Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "Tailscale DERP region operation"})
 		}
 		if IsEnabled(site, "logging") {
 			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-tailnet-01", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"})

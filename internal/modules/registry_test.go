@@ -1,6 +1,7 @@
 package modules
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -328,6 +329,38 @@ func TestTailnetAndLiteLLMComposeTypedDeclarations(t *testing.T) {
 	}
 	if litellm.Guests[0].Address != "10.10.20.60" || !litellm.Guests[0].MTLS || len(litellm.Secrets) != 1 || litellm.Secrets[0].Name != "openrouter_api_key" {
 		t.Fatalf("litellm declaration is incomplete: %#v", litellm)
+	}
+}
+
+func TestTailnetDeclarationCoversTailscaleDERPRegions(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	enabled := true
+	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &enabled}
+	site, _, err := Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tailnet, ok := findDeclaration(site, "tailnet-router")
+	if !ok {
+		t.Fatal("tailnet-router declaration is missing")
+	}
+	want := make(map[string]bool, 28)
+	for region := 1; region <= 28; region++ {
+		want[fmt.Sprintf("https://derp%d-all.tailscale.com", region)] = false
+	}
+	for _, intent := range tailnet.NetworkIntents {
+		if _, ok := want[intent.Endpoint]; !ok {
+			continue
+		}
+		if intent.Source != "lab-tailnet-01" || intent.Protocol != "tcp" || strings.Join(intent.Ports, ",") != "443" || intent.Direction != "egress" {
+			t.Fatalf("DERP intent is incomplete: %#v", intent)
+		}
+		want[intent.Endpoint] = true
+	}
+	for endpoint, found := range want {
+		if !found {
+			t.Errorf("tailnet declaration is missing DERP endpoint %s", endpoint)
+		}
 	}
 }
 
