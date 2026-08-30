@@ -150,7 +150,8 @@ func TestPluralModuleNamespaceUsesGenericLifecycleAndRejectsUnknownCommands(t *t
 func TestNestedHelpPathsArePathAwareAndSubstantive(t *testing.T) {
 	paths := []string{
 		"firewall diff", "dhcp leases", "network trunk status", "pki trust export",
-		"module disable", "config schema", "portal build",
+		"module disable", "module configure printer", "modules printer configure",
+		"config schema", "portal build",
 	}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
@@ -167,6 +168,9 @@ func TestNestedHelpPathsArePathAwareAndSubstantive(t *testing.T) {
 			}
 			if strings.Contains(text, "Run boetticher "+strings.Fields(path)[0]+" with --help") {
 				t.Errorf("nested help %q contains recursive hint: %s", path, text)
+			}
+			if path == "module configure printer" && !strings.Contains(text, "The interactive workflow asks only for fields the module needs.") {
+				t.Errorf("module-specific help %q fell back to generic module help: %s", path, text)
 			}
 		})
 	}

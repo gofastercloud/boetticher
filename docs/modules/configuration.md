@@ -74,7 +74,7 @@ written to desired state.
 boetticher first brings up the gateway and DNS, observes the current DHCP
 address, prefix, default gateway, and MAC, then installs only the matching TCP
 and UDP port-53 DNAT and forward rules. If the observation is absent, stale, or
-ambiguous, publication stays inactive and the deployment is held. Use
+ambiguous, deployment fails before applying the publication policy. Use
 `boetticher verify --live` or `boetticher doctor --live` to inspect the effective
 mapping, including the source-prefix restriction to the directly connected
 upstream network.

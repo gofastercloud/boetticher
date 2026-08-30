@@ -1,7 +1,10 @@
 # Module lifecycle
 
-`boetticher deploy` applies the complete resolved platform model. Module
-commands use the same planner and composition result.
+`boetticher deploy` applies the complete resolved platform model. Preview
+module changes with `--dry-run`. `configure` changes site configuration but
+does not deploy. `enable` and `disable` apply immediately with `--confirm`.
+Disabling keeps the owned guest and persistent data; `--purge --confirm` is the
+destructive option.
 
 ```text
 boetticher module list

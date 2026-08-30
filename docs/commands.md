@@ -56,13 +56,13 @@ Related commands: config validate, preflight, bootstrap
 
 ### preflight
 
-Purpose: Validate controller, Proxmox, hardware, configuration, and deployment safety prerequisites.
+Purpose: Check local and, with --live, already-existing target prerequisites before deployment.
 
 Usage: `boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--record] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]`
 
 Arguments: No positional arguments.
 
-Options: --live performs bounded target checks; --record explicitly persists approved physical discovery and requires --live; --site selects the private site; --age-identity selects the operator-owned private Age identity needed to validate encrypted credential reuse; bootstrap and SSH options identify the target.
+Options: --live performs limited target checks; --record explicitly persists approved physical discovery and requires --live; --site selects the private site; --age-identity selects the operator-owned private Age identity needed to validate encrypted credential reuse; bootstrap and SSH options identify the target.
 
 Safety: Read-only unless --live --record is explicit. A live inspection without --record never mutates site state.
 
@@ -78,11 +78,11 @@ Usage: `boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-conf
 
 Arguments: No positional arguments.
 
-Options: --dry-run renders only; --recovery-confirmed confirms the independent Age recovery copy; --storage-confirmed confirms explicit dedicated-storage initialization; --known-hosts selects an independently enrolled SSH trust file and defaults to the site-scoped trust file.
+Options: --dry-run renders only; --recovery-confirmed confirms the independent Age recovery copy; --storage-confirmed confirms explicit dedicated-storage initialization; --age-identity selects the operator-owned private Age identity; --operator-key selects the initial operator SSH public key; --initial-user selects the initial SSH user; --known-hosts selects an independently enrolled SSH trust file and defaults to the site-scoped trust file; --proxmox-ca selects the Proxmox API CA PEM file; --insecure explicitly allows self-signed Proxmox API TLS; --trunk-interface selects the physical trunk interface.
 
 Safety: May change Proxmox bootstrap infrastructure and creates a temporary builder. Verify the first SSH host fingerprint at the explicit ask prompt; subsequent privileged paths require the enrolled key.
 
-Examples: `boetticher bootstrap --site ./my-boetticher --recovery-confirmed`
+Examples: `boetticher bootstrap --site ./my-boetticher --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem`
 
 Related commands: preflight, deploy, verify
 
@@ -94,11 +94,11 @@ Usage: `boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH]
 
 Arguments: No positional arguments.
 
-Options: --dry-run plans without mutation; --confirm authorizes destructive operations supported by the active providers, including replacement of an owned appliance rootfs when its declared persistent volumes can be retained; connection options select the Proxmox trust path.
+Options: --dry-run plans without mutation; --confirm authorizes destructive operations supported by the active providers, including replacement of an owned appliance rootfs when its declared persistent volumes can be retained; connection options select the Proxmox trust path. A normal deploy prints nine orchestration phases and one final PASS or FAIL summary with the next action on failure.
 
 Safety: This is the sole public platform-application operation. It requires the temporary root SSH access established by bootstrap, uses the scoped Proxmox API token for lifecycle operations, and removes temporary root access after successful convergence. Review the plan before applying it; unowned occupants, invalid persistent-volume identities, and unsupported replacement conditions fail with recovery guidance.
 
-Examples: `boetticher deploy --site ./my-boetticher --dry-run`; `boetticher deploy --site ./my-boetticher --confirm`
+Examples: `boetticher deploy --site ./my-boetticher --dry-run`; `boetticher deploy --site ./my-boetticher`
 
 Related commands: preflight, verify, doctor
 
@@ -208,7 +208,7 @@ Arguments: No positional arguments.
 
 Options: --recovery-confirmed confirms an independent recovery copy; --site and --age-identity select local state.
 
-Safety: This advanced gate is currently blocked and does not replace deploy or update.
+Safety: This advanced gate is not available for normal upgrades and does not replace deploy or update.
 
 Examples: `boetticher upgrade --site ./my-boetticher --recovery-confirmed`
 
@@ -892,11 +892,11 @@ Related commands: module, deploy, preflight
 
 Purpose: Configure one built-in module's desired state.
 
-Usage: `boetticher module configure MODULE [--site DIR] [--dry-run] [--json] [--non-interactive] [--enabled BOOL] [--set KEY=VALUE] [--secret NAME] [--usb REQUIREMENT=PORT] [--confirm]`
+Usage: `boetticher module configure MODULE [--site DIR] [--dry-run] [--json] [--non-interactive] [--enabled BOOL] [--set KEY=VALUE] [--secret NAME] [--usb REQUIREMENT=PORT] [--age-identity PATH] [--confirm]`
 
 Arguments: MODULE is a registered first-party module.
 
-Options: The interactive workflow asks only for fields the module needs. --set, --secret, and --usb provide repeatable typed inputs; --non-interactive suppresses prompts; --dry-run previews; --confirm applies.
+Options: The interactive workflow asks only for fields the module needs. --set provides repeatable typed values; --usb provides repeatable physical bindings; --secret names a secret read from a hidden prompt or stdin; --age-identity selects the operator-owned private Age identity; --non-interactive suppresses prompts; --dry-run previews; --confirm applies.
 
 Safety: Changes local desired state only and never deploys. Secret values come from a prompt or stdin and are never accepted as arguments or shown in plans.
 

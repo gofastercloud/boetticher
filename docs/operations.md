@@ -24,9 +24,33 @@ Use `boetticher module configure NAME` to change an optional module, then run
 logs. The [module guide](modules/architecture.md) explains what each built-in
 capability does and what it keeps.
 
-`update` changes compatible desired configuration and projections; it does not
-deploy. `upgrade` is an advanced, currently blocked compatibility gate, not a
-normal release-update command.
+`module configure` changes local configuration only. Confirmed `module enable`
+and `module disable` operations apply their change immediately; use
+`--dry-run` first when you want to inspect the plan.
+
+`update` changes compatible local configuration; it does not deploy. `upgrade`
+is an advanced command that is not available for normal release updates.
+
+## Reading a deploy result
+
+Deploy works through nine high-level phases. It prints a phase when it starts
+and `PASS` when that phase finishes; if a phase fails, later phases are simply
+not run. There is no pretend percentage to watch.
+
+The final summary is the useful bit:
+
+```text
+Deployment: FAIL
+Failed phase: Run live health gates
+Infrastructure changed: YES
+Temporary authority removed: YES
+Retry: YES — rerunning deploy is safe; already-converged resources are retained.
+Next action: Run boetticher doctor --live, correct the reported failure, then run boetticher deploy --site ./my-boetticher.
+```
+
+On success, the summary says `Deployment: PASS`. On failure, follow the one
+`Next action` it prints. If it says cleanup failed, use the recovery guide
+before retrying.
 
 ## Backups, recovery, and networking
 
@@ -50,6 +74,8 @@ journey. Checks requiring separate operator, recovery, or product-acceptance
 evidence are intentionally omitted. `doctor` remains the deeper diagnostic
 command and uses `CURRENT`, `ABSENT`, and `INCONSISTENT` to explain
 projections against the current model revision.
+Use `doctor` when something needs a next action. A local `PASS` covers local
+state only; it does not prove the host or an authenticated journey is working.
 
 For detailed firewall telemetry, appliance privilege, and portal boundaries,
 see [the architecture guide](architecture.md), [the security model](security-model.md),
