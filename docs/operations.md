@@ -82,9 +82,17 @@ writes a timestamped JSON report below `bootstrap/` in the site's private
 runtime directory. Deploy writes a timestamped JSON report below `deploy/`.
 The reports contain
 phase and suboperation start times, finish times, and durations, along with
-the coarse deployment result and mutation summary. They do not contain secret
-values or the full failure text. Keep the files private; they are useful when
-comparing a slow run or sharing a small diagnostic bundle with a maintainer.
+the coarse deployment result and mutation summary. Each suboperation has a
+phase, kind, and target, and each report includes the operation, platform
+version, and model revision so runs can be compared sensibly. They do not
+contain secret values or the full failure text. Keep the files private; they
+are useful when comparing a slow run or sharing a small diagnostic bundle with
+a maintainer.
+
+Timing is best-effort observability. If the controller cannot write the report,
+the operation still succeeds or fails on its own merits and the summary says
+`Timing report: unavailable (...)`. A missing timing file is not a reason to
+rerun a healthy deployment.
 
 The final summary is the useful bit:
 
@@ -100,7 +108,9 @@ Timing report: .../runtime/.../deploy/deploy-20260830T120000.000000000Z.json
 
 On success, the summary says `Deployment: PASS`. On failure, follow the one
 `Next action` it prints. If it says cleanup failed, use the recovery guide
-before retrying.
+before retrying. The same rules apply to bootstrap: its final result is based
+on bootstrap work and temporary-authority cleanup, never on whether timing
+could be saved.
 
 ## Backups, recovery, and networking
 

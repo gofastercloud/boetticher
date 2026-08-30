@@ -69,7 +69,8 @@ the Age identity, and review any dedicated-disk prompt before confirming it.
 Deploy prints nine useful phases with elapsed times and finishes with one
 `PASS` or `FAIL` summary. If it stops, the summary tells you what changed,
 whether temporary authority was cleaned up, the next command to run, and
-where to find a private timing report. See the
+where to find a private timing report. Timing is best-effort: a report that
+cannot be saved does not turn a successful operation into a failure. See the
 [installation guide](docs/installation.md) for the one-time details and the
 [operations guide](docs/operations.md) for the everyday workflow.
 The one-time `preflight` and `bootstrap` commands are part of the advanced

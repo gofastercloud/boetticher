@@ -37,11 +37,16 @@ independent LXC workers use bounded concurrency of two. Each worker has its
 own root filesystem, temporary build directory, log, and cleanup trap; a
 failed worker fails the complete build.
 
-Bootstrap and the builder print structured `timing stage=... duration_ms=...`
-records. Successful builder runs also return `build-timings.log` and
+Bootstrap and the builder print bounded timing lines for work that actually
+ran. Successful builder runs also return `build-timings.log` and
 `scan-timings.log` under generated artifact state, together with the builder
 CPU/memory/disk configuration, so serial and parallel qualification runs can
 be compared without treating timing as desired-state evidence.
+
+Bootstrap's private JSON report identifies artifact stages with `phase`,
+`kind`, and `target` fields. A cache hit is recorded separately from a cache
+check and a cold builder run, which makes warm and cold bootstrap comparisons
+less guessy.
 
 Builder output is streamed to the controller and artifact uploads are streamed
 to Proxmox. Extraction rejects traversal, links, unsupported entries, excess
