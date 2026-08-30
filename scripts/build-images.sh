@@ -561,7 +561,7 @@ build_aiops() {
   install -D -m 0644 images/aiops/runtime/boetticher-aiops.service "$rootfs/etc/systemd/system/boetticher-aiops.service"
   install -D -m 0644 images/aiops/runtime/boetticher-aiops.socket "$rootfs/etc/systemd/system/boetticher-aiops.socket"
   install -D -m 0644 images/aiops/runtime/holmes.service "$rootfs/etc/systemd/system/holmes.service"
-  install -D -m 0644 images/aiops/runtime/holmes.yaml "$rootfs/etc/boetticher-aiops/holmes.yaml"
+  install -D -m 0644 images/aiops/runtime/holmes.yaml "$rootfs/etc/boetticher-aiops/config.yaml"
   write_artifact_identity "$rootfs" aiops
   package_lxc boetticher-aiops
 }

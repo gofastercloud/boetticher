@@ -200,6 +200,26 @@ func TestAIOpsServiceAllowsDeclaredDNSResolvers(t *testing.T) {
 	}
 }
 
+func TestHolmesServiceUsesPinnedConfigDirectoryContract(t *testing.T) {
+	service, err := os.ReadFile(filepath.Join("..", "..", "images", "aiops", "runtime", "holmes.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(service), "HOLMES_CONFIGPATH_DIR=/etc/boetticher-aiops") {
+		t.Fatal("Holmes service does not configure the pinned HolmesGPT config directory contract")
+	}
+	if strings.Contains(string(service), "HOLMES_CONFIG_PATH=") {
+		t.Fatal("Holmes service uses an unsupported config-path variable")
+	}
+	if !strings.Contains(string(build), "images/aiops/runtime/holmes.yaml \"$rootfs/etc/boetticher-aiops/config.yaml\"") {
+		t.Fatal("AIOps image does not install its config at HolmesGPT's default filename")
+	}
+}
+
 func TestMonitorFrontendKeepsMTLSExceptForScopedAgentRoutes(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "pulse-loopback.conf.j2"))
 	if err != nil {
