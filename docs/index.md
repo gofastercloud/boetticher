@@ -15,7 +15,8 @@ Choose the smallest guide that answers your question.
 
 - [Module configuration](modules/configuration.md) explains the operator
   configuration model and the shared module commands.
-- [Module overview](modules/architecture.md) describes the built-in modules.
+- [Module overview](modules/architecture.md) describes the built-in modules,
+  including the optional [StreamDeck host display](modules/streamdeck.md).
 - [Networking](networking/dhcp-dns-ntp.md), [physical trunks](networking/physical-trunk.md),
   and [external-firewall mode](networking/external-firewall.md) cover the
   decisions that belong to the operator.
