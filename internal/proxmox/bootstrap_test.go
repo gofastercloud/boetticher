@@ -213,6 +213,7 @@ func TestSSHRunnerRejectsWeakHostKeyVerificationModes(t *testing.T) {
 
 func TestConfigureManagementNetworkValidatesUnchangedHOMEAndVLANState(t *testing.T) {
 	runner := &fakeRunner{responses: map[string][]byte{
+		"sudo -n /bin/cat /etc/network/interfaces":        []byte("auto vmbr0\niface vmbr0 inet static\n"),
 		"sudo -n /usr/sbin/ip -4 -j addr show dev vmbr0":  []byte(`[{"addr":"192.0.2.10/24"}]`),
 		"sudo -n /usr/sbin/ip -4 -j route show default":   []byte(`[{"dst":"default","gateway":"192.0.2.1"}]`),
 		"sudo -n /usr/sbin/ip -4 addr show dev vmbr1.99":  []byte("inet 10.10.99.5/24"),
@@ -223,6 +224,8 @@ func TestConfigureManagementNetworkValidatesUnchangedHOMEAndVLANState(t *testing
 		t.Fatal(err)
 	}
 	for _, required := range []string{
+		"sudo -n /bin/cat /etc/network/interfaces",
+		"sudo -n install -D -m 0644 /dev/stdin /etc/network/interfaces",
 		"sudo -n /usr/sbin/ip -4 -j addr show dev vmbr0",
 		"sudo -n /usr/sbin/ip -4 -j route show default",
 		"sudo -n /usr/sbin/ifreload -a",

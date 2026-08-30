@@ -342,6 +342,22 @@ func TestBoundedOutputRetainsOnlyBoundedPrefixAndSuffix(t *testing.T) {
 	}
 }
 
+func TestBoundedOutputRetainsDiagnosticOutsideWindow(t *testing.T) {
+	var output boundedOutput
+	if _, err := output.Write([]byte("prefix\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := output.Write(bytes.Repeat([]byte{'x'}, maxAnsibleOutputBytes*3)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := output.Write([]byte("fatal: [lab-tailnet-01]: FAILED! => {\"msg\":\"runtime failed\"}\n")); err != nil {
+		t.Fatal(err)
+	}
+	if got := failureDiagnosticWithSupplement(output.Bytes(), output.DiagnosticBytes()); !strings.Contains(got, "lab-tailnet-01") {
+		t.Fatalf("diagnostic omitted error outside bounded output window: %q", got)
+	}
+}
+
 func TestLimitedRunRejectsShellSyntaxInInventoryIdentity(t *testing.T) {
 	for _, value := range []string{"lab-fw-01", "lab_dns_01", "lab.fw"} {
 		if !safeInventoryIdentity(value) {
@@ -729,7 +745,7 @@ func TestDNSRoleUsesPowerDNS49CommandNames(t *testing.T) {
 			t.Fatalf("DNS role retains obsolete PowerDNS command namespace %q", forbidden)
 		}
 	}
-	for _, expected := range []string{"pdnsutil list-all-zones", "pdnsutil create-zone", "pdnsutil replace-rrset", "pdnsutil delete-rrset", "pdnsutil set-meta", "pdnsutil create-secondary-zone", "replace-rrset {{ item }} @ NS", "item.name | replace('.' ~ dns_plan.static_zone, '')", "item.value"} {
+	for _, expected := range []string{"pdnsutil list-all-zones", "pdnsutil create-zone", "pdnsutil set-kind {{ item }} MASTER", "pdnsutil replace-rrset", "pdnsutil delete-rrset", "pdnsutil set-meta", "NOTIFY-DNSUPDATE 1", "pdnsutil create-secondary-zone", "replace-rrset {{ item }} @ NS", "item.name | replace('.' ~ dns_plan.static_zone, '')", "item.value"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("DNS role missing qualified PowerDNS command %q", expected)
 		}
@@ -1168,13 +1184,17 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 				"Inspect Tailscale backend state after credential projection",
 				"state: restarted",
 				"daemon_reload: true",
+				"retries: 15",
+				"delay: 2",
+				"until:",
+				`regex_search('"BackendState"\s*:\s*"Running"')`,
 				"if [ -s \"$credential\" ] && tailscale up --timeout=30s --auth-key=\"file:$credential\"",
 				"tailscale up --timeout=30s",
 				"--accept-dns=false",
 				"--advertise-routes=10.10.0.0/16",
 				"--snat-subnet-routes=true",
 			},
-			forbidden: []string{"advertise-exit-node", "privileged: true", "ansible.builtin.apt:"},
+			forbidden: []string{"advertise-exit-node", "privileged: true", "ansible.builtin.apt:", `regex_search('"BackendState"[[:space:]]*`},
 		},
 		{
 			role: "litellm",

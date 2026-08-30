@@ -419,8 +419,20 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 					return fmt.Errorf("HOLD: configure DNS guest %s before dependent appliances: %w", guest.Name, err)
 				}
 				if guest.Name == "lab-dns-01" && s.Gateway.Mode == model.GatewayModeManaged {
-					if err := installPowerDNSTSIG(ctx, guestRunner, guest.Address, dnsPlan, secretValues["firewall-ddns-tsig"]); err != nil {
+					needsRestart, err := installPowerDNSTSIG(ctx, guestRunner, guest.Address, dnsPlan, secretValues["firewall-ddns-tsig"])
+					if err != nil {
 						return fmt.Errorf("install PowerDNS TSIG state on %s: %w", guest.Name, err)
+					}
+					if !needsRestart {
+						needsRestart, err = powerDNSTSIGSyncMarkerMissing(ctx, guestRunner, guest.Address)
+						if err != nil {
+							return fmt.Errorf("check PowerDNS TSIG synchronization on %s: %w", guest.Name, err)
+						}
+					}
+					if needsRestart {
+						if err := restartPowerDNSAfterTSIG(ctx, guestRunner, guest.Address); err != nil {
+							return fmt.Errorf("restart PowerDNS after TSIG state change on %s: %w", guest.Name, err)
+						}
 					}
 				}
 				if err := verifyDNSReadiness(ctx, guestRunner, guest.Address); err != nil {

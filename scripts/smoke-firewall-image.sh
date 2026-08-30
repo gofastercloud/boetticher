@@ -40,6 +40,7 @@ snapshot_helper=$(virt-cat -a "$image" /usr/lib/boetticher/snapshot-firewall)
 printf '%s\n' "$snapshot_helper" | grep -Fq '/usr/sbin/nft --json list ruleset'
 printf '%s\n' "$snapshot_helper" | grep -Fq 'firewall-ruleset.json'
 virt-cat -a "$image" /etc/sudoers.d/boetticher-firewall | grep -Fq '/usr/lib/boetticher/inspect-firewall status'
+virt-cat -a "$image" /etc/sudoers.d/boetticher-firewall | grep -Fq '/usr/lib/boetticher/inspect-firewall ddns-stats'
 virt-cat -a "$image" /etc/sudoers.d/boetticher-firewall | grep -Fq '/usr/lib/boetticher/inspect-firewall kernel-logs *'
 for setting in 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' 'PermitRootLogin prohibit-password'; do
   virt-cat -a "$image" /etc/ssh/sshd_config.d/boetticher.conf | grep -Fxq "$setting" || { echo "firewall image is missing SSH hardening setting: $setting" >&2; exit 1; }

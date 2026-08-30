@@ -422,11 +422,38 @@ iface vmbr1.99 inet static
     down ip route del 10.10.0.0/16 via 10.10.99.1 dev vmbr1.99 || true
 `
 
+const networkInterfacesSourceDirectory = "source-directory /etc/network/interfaces.d"
+
+func ensureNetworkInterfacesSource(ctx context.Context, runner StdinCommandRunner, address, user string) error {
+	content, err := runner.Run(ctx, address, user, privilegedCommand(user, "/bin/cat /etc/network/interfaces"))
+	if err != nil {
+		return fmt.Errorf("read Proxmox network interfaces configuration: %w", err)
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		if strings.TrimSpace(line) == networkInterfacesSourceDirectory {
+			return nil
+		}
+	}
+	updated := append([]byte(nil), content...)
+	if len(updated) > 0 && updated[len(updated)-1] != '\n' {
+		updated = append(updated, '\n')
+	}
+	updated = append(updated, []byte(networkInterfacesSourceDirectory+"\n")...)
+	install := privilegedCommand(user, "install -D -m 0644 /dev/stdin /etc/network/interfaces")
+	if _, err := runner.RunWithStdin(ctx, address, user, install, bytes.NewReader(updated)); err != nil {
+		return fmt.Errorf("enable Proxmox network interfaces directory: %w", err)
+	}
+	return nil
+}
+
 // ConfigureManagementNetwork establishes the fixed virtual-only Proxmox
 // management leg. It never changes vmbr0, its member, or the default route.
 func ConfigureManagementNetwork(ctx context.Context, runner StdinCommandRunner, address, user string) error {
 	if runner == nil {
 		return errors.New("management network runner is required")
+	}
+	if err := ensureNetworkInterfacesSource(ctx, runner, address, user); err != nil {
+		return err
 	}
 	install := privilegedCommand(user, "install -D -m 0644 /dev/stdin /etc/network/interfaces.d/boetticher-management")
 	if _, err := runner.RunWithStdin(ctx, address, user, install, strings.NewReader(managementInterfaceConfig)); err != nil {

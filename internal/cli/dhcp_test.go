@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -44,6 +45,25 @@ func TestDHCPStatusParserRejectsDuplicateEvidence(t *testing.T) {
 	_, err := parseGatewayStatus("forwarding=1\nforwarding=1\n")
 	if err == nil {
 		t.Fatal("duplicate gateway evidence was accepted")
+	}
+}
+
+func TestKeaDDNSStatsParserRequiresSuccessfulJSONControlResponse(t *testing.T) {
+	valid, err := parseKeaDDNSStats([]byte(`{"result":0,"arguments":{"ncr-received":1}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid(valid) {
+		t.Fatalf("returned invalid JSON: %s", valid)
+	}
+	for _, data := range [][]byte{
+		[]byte(`{"result":1}`),
+		[]byte(`{"arguments":{}}`),
+		[]byte(`not-json`),
+	} {
+		if _, err := parseKeaDDNSStats(data); err == nil {
+			t.Fatalf("invalid Kea D2 response was accepted: %s", data)
+		}
 	}
 }
 

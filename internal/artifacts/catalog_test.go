@@ -615,6 +615,9 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 			t.Fatalf("tailnet-router image definition is missing %q", required)
 		}
 	}
+	if !strings.Contains(string(buildScript), `install_packages "$rootfs" dbus "tailscale=$tailscale_package_version"`) {
+		t.Fatal("tailnet-router build does not install the system D-Bus required by its systemd lifecycle")
+	}
 	litellm, err := os.ReadFile(filepath.Join(root, "litellm", "image.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -716,6 +719,9 @@ func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *tes
 	}
 	if strings.Contains(buildText, "build_dns_blocky() {\n  printf '%s\\n' 'boetticher build stage: dns blocky'\n  rootfs=$(prepare_rootfs boetticher-dns-blocky)\n  install_powerdns \"$rootfs\"\n  install_packages \"$rootfs\" chrony") {
 		t.Fatal("DNS construction still performs a redundant package-index transaction")
+	}
+	if !strings.Contains(buildText, `install_packages "$rootfs" arping dnsutils isc-dhcp-client iperf3 netcat-openbsd nmap tcpdump`) {
+		t.Fatal("network probe image does not include the DHCP client required by dynamic zones")
 	}
 }
 
@@ -985,7 +991,7 @@ func TestFirewallInspectionContractIsRootOwnedAndFailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	policyText, helperText := string(sudoers), string(helper)
-	for _, operation := range []string{"status", "ruleset", "table", "leases", "kernel-logs"} {
+	for _, operation := range []string{"status", "ruleset", "table", "leases", "ddns-stats", "kernel-logs"} {
 		if !strings.Contains(policyText, "inspect-firewall "+operation) || !strings.Contains(helperText, operation) {
 			t.Fatalf("firewall inspection operation %q is not present in both contracts", operation)
 		}

@@ -458,7 +458,7 @@ build_tailnet_router() {
   printf '%s  %s\n' "$tailscale_key_sha256" "$key" | sha256sum --check --status
   install -D -m 0644 "$key" "$rootfs$tailscale_keyring"
   printf '%s\n' "deb [signed-by=$tailscale_keyring] https://pkgs.tailscale.com/stable/debian trixie main" > "$rootfs/etc/apt/sources.list.d/tailscale.list"
-  install_packages "$rootfs" "tailscale=$tailscale_package_version"
+  install_packages "$rootfs" dbus "tailscale=$tailscale_package_version"
   installed_version=$(chroot "$rootfs" dpkg-query -W -f='${Version}' tailscale)
   if [ "$installed_version" != "$tailscale_package_version" ]; then
     echo "HOLD: unexpected Tailscale package version: $installed_version" >&2
@@ -894,7 +894,7 @@ build_gatus_target() {
 build_network_probe_target() {
   printf '%s\n' 'boetticher build stage: network probe'
   rootfs=$(prepare_rootfs boetticher-network-probe)
-  install_packages "$rootfs" arping dnsutils iperf3 netcat-openbsd nmap tcpdump
+  install_packages "$rootfs" arping dnsutils isc-dhcp-client iperf3 netcat-openbsd nmap tcpdump
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/libexec/boetticher-network-probe" ./cmd/boetticher-network-probe
   chmod 0755 "$rootfs/usr/local/libexec/boetticher-network-probe"
   write_artifact_identity "$rootfs" network-probe

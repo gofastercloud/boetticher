@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -77,6 +78,10 @@ func runDHCP(args []string, out io.Writer) error {
 			if err != nil {
 				return err
 			}
+			ddnsStats, err := inspectManagedDDNSStats(*siteDir, s)
+			if err != nil {
+				return err
+			}
 			value["status"] = "PASS"
 			value["evidence_status"] = "PASS"
 			value["operator_state"] = "HEALTHY"
@@ -85,6 +90,7 @@ func runDHCP(args []string, out io.Writer) error {
 				"kea-dhcp4-server":     liveStatus.Services["kea-dhcp4-server"],
 				"kea-dhcp-ddns-server": liveStatus.Services["kea-dhcp-ddns-server"],
 			}
+			value["ddns_stats"] = ddnsStats
 			value["reason"] = "Kea DHCP and Kea DDNS are active on the managed gateway"
 			value["next_action"] = "No action required"
 		}
@@ -105,6 +111,7 @@ func runDHCP(args []string, out io.Writer) error {
 			liveStatus := value["services"].(map[string]string)
 			fmt.Fprintf(out, "  Live state    PASS observed=%s\n", value["observed_at"])
 			fmt.Fprintf(out, "  Kea DHCP      %s\n  Kea DDNS      %s\n", liveStatus["kea-dhcp4-server"], liveStatus["kea-dhcp-ddns-server"])
+			fmt.Fprintln(out, "  DDNS stats    queried through the fixed read-only Kea control operation")
 		} else {
 			fmt.Fprintln(out, "  Evidence      NOT TESTED (run boetticher dhcp status --live)")
 		}
@@ -159,6 +166,27 @@ func inspectManagedDHCP(siteDir string, s model.Site) (gatewayLiveStatus, string
 		return gatewayLiveStatus{}, "", err
 	}
 	return liveStatus, time.Now().UTC().Format(time.RFC3339), nil
+}
+
+func inspectManagedDDNSStats(siteDir string, s model.Site) (json.RawMessage, error) {
+	data, err := gatewayCommand(siteDir, s, "sudo", gatewayStatusScript, "ddns-stats")
+	if err != nil {
+		return nil, fmt.Errorf("live Kea DDNS statistics inspection failed: %w", err)
+	}
+	return parseKeaDDNSStats(data)
+}
+
+func parseKeaDDNSStats(data []byte) (json.RawMessage, error) {
+	var response struct {
+		Result *int `json:"result"`
+	}
+	if err := json.Unmarshal(data, &response); err != nil {
+		return nil, fmt.Errorf("live Kea DDNS statistics returned malformed JSON: %w", err)
+	}
+	if response.Result == nil || *response.Result != 0 {
+		return nil, errors.New("live Kea DDNS statistics returned an unsuccessful control result")
+	}
+	return json.RawMessage(strings.TrimSpace(string(data))), nil
 }
 
 func validateDHCPServices(liveStatus gatewayLiveStatus) error {

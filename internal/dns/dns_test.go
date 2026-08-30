@@ -24,7 +24,7 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	if got := plan.AuthoritativeForwardTarget; got != "127.0.0.1:5353" || len(plan.AuthoritativeListenAddresses) != 2 {
 		t.Fatalf("incompatible authoritative listener contract: %#v", plan)
 	}
-	if plan.DDNS.Source != "Kea D2 on lab-fw-01" || len(plan.DDNS.UpdateSources) != 1 || plan.DDNS.UpdateSources[0] != "10.10.99.1" || plan.DDNS.LeaseFailurePolicy != "lease-continues-without-DNS-registration" {
+	if plan.DDNS.Source != "Kea D2 on lab-fw-01" || len(plan.DDNS.UpdateSources) != 1 || plan.DDNS.UpdateSources[0] != "10.10.10.1" || plan.DDNS.LeaseFailurePolicy != "lease-continues-without-DNS-registration" {
 		t.Fatalf("unexpected DDNS boundary: %#v", plan.DDNS)
 	}
 	if !hasRecord(plan.StaticRecords, "proxmox.lab.home.arpa", "10.10.99.5") {
@@ -47,6 +47,9 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 		if zone.TSIGKeyName != want {
 			t.Fatalf("TSIG key for %s = %q, want %q", zone.SourceZone, zone.TSIGKeyName, want)
 		}
+		if strings.HasSuffix(zone.TSIGKeyName, ".") {
+			t.Fatalf("TSIG key for %s retains a DNS root label: %q", zone.SourceZone, zone.TSIGKeyName)
+		}
 	}
 	name, err := QualifiedName(site, "TRUSTED", "nas01")
 	if err != nil || name != "nas01.trusted.lab.home.arpa" {
@@ -65,6 +68,12 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	}
 	if name, err := QualifiedName(site, "SERVERS", "app-01"); err != nil || name != "app-01.servers.lab.home.arpa" {
 		t.Fatalf("SERVERS reservation name = %q, %v", name, err)
+	}
+}
+
+func TestTSIGKeyNameUsesPowerDNSCanonicalIdentity(t *testing.T) {
+	if got := TSIGKeyName("SERVERS.", "LAB.HOME.ARPA."); got != "servers.ddns.lab.home.arpa" {
+		t.Fatalf("TSIGKeyName() = %q, want canonical PowerDNS key identity", got)
 	}
 }
 
@@ -279,6 +288,8 @@ func TestPowerDNSCommandPlanUsesZoneRelativeSyntaxAndNeverEmbedsARealSecret(t *t
 	seenForward := false
 	seenReverse := false
 	seenZone := false
+	seenPrimaryKind := false
+	seenNotify := false
 	seenRecord := false
 	seenApex := false
 	seenRelativeRecord := false
@@ -298,9 +309,15 @@ func TestPowerDNSCommandPlanUsesZoneRelativeSyntaxAndNeverEmbedsARealSecret(t *t
 		if len(command.Args) >= 3 && command.Args[1] == "create-zone" {
 			seenZone = true
 		}
+		if len(command.Args) == 4 && command.Args[1] == "set-kind" && command.Args[3] == "MASTER" {
+			seenPrimaryKind = true
+		}
 		if len(command.Args) >= 5 && command.Args[1] == "set-meta" && command.Args[3] == "ALLOW-DNSUPDATE-FROM" {
 			seenForward = true
 			seenReverse = seenReverse || strings.Contains(command.Args[2], "in-addr.arpa")
+		}
+		if len(command.Args) == 5 && command.Args[1] == "set-meta" && command.Args[3] == "NOTIFY-DNSUPDATE" && command.Args[4] == "1" {
+			seenNotify = true
 		}
 		if len(command.Args) >= 2 && command.Args[1] == "replace-rrset" {
 			seenRecord = true
@@ -312,7 +329,7 @@ func TestPowerDNSCommandPlanUsesZoneRelativeSyntaxAndNeverEmbedsARealSecret(t *t
 			}
 		}
 	}
-	if !seenTSIG || !seenForward || !seenReverse || !seenZone || !seenRecord || !seenApex || !seenRelativeRecord {
+	if !seenTSIG || !seenForward || !seenReverse || !seenZone || !seenPrimaryKind || !seenNotify || !seenRecord || !seenApex || !seenRelativeRecord {
 		t.Fatalf("incomplete PowerDNS command plan: %#v", commands)
 	}
 }

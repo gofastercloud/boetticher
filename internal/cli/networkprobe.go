@@ -295,9 +295,12 @@ func runNetworkProbeCases(ctx context.Context, siteDir string, s model.Site, pol
 		}
 		report.Results = append(report.Results, networktest.Result{Name: name, Kind: kind, Source: source.Zone, Target: target, Status: status, Detail: responseDetail(response, err), Started: started.Format(time.RFC3339), Finished: time.Now().UTC().Format(time.RFC3339)})
 	}
-	add("gateway/"+source.Zone, "ping", source.Gateway, 0, true, map[string]any{"version": 1, "kind": "ping", "target": source.Gateway})
+	if gatewayProbeExpected(source.Zone) {
+		add("gateway/"+source.Zone, "ping", source.Gateway, 0, true, map[string]any{"version": 1, "kind": "ping", "target": source.Gateway})
+	}
+	dnsName := probeDNSName(source.Zone, s.Network.Domain)
 	for _, dnsServer := range zoneDNS(s, source.Zone) {
-		add("dns/"+source.Zone+"/"+dnsServer, "dns", dnsServer, 53, true, map[string]any{"version": 1, "kind": "dns", "target": dnsServer, "name": "portal." + s.Network.Domain, "type": "A"})
+		add("dns/"+source.Zone+"/"+dnsServer, "dns", dnsServer, 53, true, map[string]any{"version": 1, "kind": "dns", "target": dnsServer, "name": dnsName, "type": "A"})
 	}
 	for _, component := range s.PlatformComponents() {
 		if component.Address == "" || component.URL == "" {
@@ -316,14 +319,14 @@ func runNetworkProbeCases(ctx context.Context, siteDir string, s model.Site, pol
 		add("nmap/"+source.Zone+"/"+component.Name, "nmap", component.Address, port, allowed, map[string]any{"version": 1, "kind": "nmap", "target": component.Address, "port": port})
 		if component.MTLS && allowed {
 			started := time.Now().UTC()
-			negative, negativeErr := executeNetworkProbe(ctx, runner, s, *source, digest, runID, map[string]any{"version": 1, "kind": "mtls", "url": component.URL, "ca": ca})
+			negative, negativeErr := executeNetworkProbe(ctx, runner, s, *source, digest, runID, map[string]any{"version": 1, "kind": "mtls", "target": component.Address, "url": component.URL, "ca": ca})
 			negativeStatus := "PASS"
 			if negativeErr != nil || !negative.OK || !mtlsDenied(negative.Output) {
 				negativeStatus = "FAIL"
 			}
 			report.Results = append(report.Results, networktest.Result{Name: "mtls/no-client/" + component.Name, Kind: "mtls", Source: source.Zone, Target: component.Name, Status: negativeStatus, Detail: responseDetail(negative, negativeErr), Started: started.Format(time.RFC3339), Finished: time.Now().UTC().Format(time.RFC3339)})
 			started = time.Now().UTC()
-			positive, positiveErr := executeNetworkProbe(ctx, runner, s, *source, digest, runID, map[string]any{"version": 1, "kind": "mtls", "url": component.URL, "ca": ca, "cert": cert.ChainPEM, "key": cert.KeyPEM})
+			positive, positiveErr := executeNetworkProbe(ctx, runner, s, *source, digest, runID, map[string]any{"version": 1, "kind": "mtls", "target": component.Address, "url": component.URL, "ca": ca, "cert": cert.ChainPEM, "key": cert.KeyPEM})
 			positiveStatus := "PASS"
 			if positiveErr != nil || !positive.OK || strings.Contains(positive.Output, "http_code=000") {
 				positiveStatus = "FAIL"
@@ -344,6 +347,14 @@ func runNetworkProbeCases(ctx context.Context, siteDir string, s model.Site, pol
 		add("capture/"+source.Zone, "capture", source.Gateway, 0, true, map[string]any{"version": 1, "kind": "capture", "target": source.Gateway})
 	}
 	return nil
+}
+
+func gatewayProbeExpected(zone string) bool {
+	// TRANSIT is an isolated routed edge. The managed gateway intentionally
+	// does not accept diagnostic ICMP from transit0; the other client-facing
+	// zones do. The probe still validates the TRANSIT route through its
+	// modeled downstream cases.
+	return zone != "TRANSIT"
 }
 
 func iperfNetworkProbe(ctx context.Context, runner proxmox.SSHRunner, s model.Site, source, target networktest.Probe, digest, runID string, port int, protocol string, report *networktest.Report) {
@@ -412,6 +423,15 @@ func zoneDNS(s model.Site, name string) []string {
 		}
 	}
 	return nil
+}
+
+func probeDNSName(zone, domain string) string {
+	if zone == "SANDBOX" {
+		// SANDBOX intentionally cannot resolve the private platform namespace;
+		// its gateway resolver is a public forwarder with a local sandbox zone.
+		return "example.com"
+	}
+	return "portal." + domain
 }
 
 func policyAllows(policy firewall.Plan, source, target, protocol string, port int, sourceAddress, destinationAddress string) bool {

@@ -1,6 +1,7 @@
 package ansible
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,15 +23,19 @@ import (
 )
 
 const maxAnsibleOutputBytes = 64 * 1024
+const maxAnsibleDiagnosticBytes = 16 * 1024
 
 type boundedOutput struct {
-	data      []byte
-	prefix    []byte
-	suffix    []byte
-	truncated bool
+	data           []byte
+	prefix         []byte
+	suffix         []byte
+	diagnostic     []byte
+	diagnosticScan []byte
+	truncated      bool
 }
 
 func (b *boundedOutput) Write(data []byte) (int, error) {
+	b.captureDiagnostics(data)
 	if !b.truncated && len(b.data)+len(data) <= maxAnsibleOutputBytes {
 		b.data = append(b.data, data...)
 		return len(data), nil
@@ -53,6 +58,39 @@ func (b *boundedOutput) Write(data []byte) (int, error) {
 	suffixLimit := maxAnsibleOutputBytes - prefixLimit
 	b.suffix = retainSuffix(b.suffix, data, suffixLimit)
 	return len(data), nil
+}
+
+func (b *boundedOutput) captureDiagnostics(data []byte) {
+	b.diagnosticScan = append(b.diagnosticScan, data...)
+	for {
+		index := bytes.IndexByte(b.diagnosticScan, '\n')
+		if index < 0 {
+			break
+		}
+		line := b.diagnosticScan[:index]
+		b.diagnosticScan = b.diagnosticScan[index+1:]
+		if !isDiagnosticLine(line) || len(b.diagnostic) >= maxAnsibleDiagnosticBytes {
+			continue
+		}
+		remaining := maxAnsibleDiagnosticBytes - len(b.diagnostic)
+		if len(line)+1 > remaining {
+			line = line[:remaining-1]
+		}
+		b.diagnostic = append(b.diagnostic, line...)
+		b.diagnostic = append(b.diagnostic, '\n')
+	}
+	if len(b.diagnosticScan) > maxAnsibleDiagnosticBytes {
+		b.diagnosticScan = append([]byte(nil), b.diagnosticScan[len(b.diagnosticScan)-maxAnsibleDiagnosticBytes:]...)
+	}
+}
+
+func isDiagnosticLine(line []byte) bool {
+	text := string(line)
+	return strings.Contains(text, "[ERROR]:") || strings.Contains(text, "fatal:") || strings.Contains(text, "FAILED!") || strings.Contains(text, "unreachable=")
+}
+
+func (b boundedOutput) DiagnosticBytes() []byte {
+	return append([]byte(nil), b.diagnostic...)
 }
 
 func (b boundedOutput) Bytes() []byte {
@@ -349,7 +387,7 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	command.Stderr = &output
 	err = command.Run()
 	if err != nil {
-		diagnostic := failureDiagnostic(output.Bytes())
+		diagnostic := failureDiagnosticWithSupplement(output.Bytes(), output.DiagnosticBytes())
 		if diagnostic == "" {
 			return fmt.Errorf("ansible-playbook failed: %w", err)
 		}
@@ -359,7 +397,14 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 }
 
 func failureDiagnostic(output []byte) string {
+	return failureDiagnosticWithSupplement(output, nil)
+}
+
+func failureDiagnosticWithSupplement(output, supplement []byte) string {
 	lines := strings.Split(string(output), "\n")
+	if len(supplement) > 0 {
+		lines = append(lines, strings.Split(string(supplement), "\n")...)
+	}
 	selected := make([]string, 0, 3)
 	for _, line := range lines {
 		if strings.Contains(line, "[ERROR]:") || strings.Contains(line, "fatal:") || strings.Contains(line, "unreachable=") {

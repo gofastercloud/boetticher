@@ -136,7 +136,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	listenAddresses := []string{"127.0.0.1", "10.10.10.10"}
 	ddns := DDNSPlan{
 		Enabled: true, Source: "Kea D2 on lab-fw-01", UpdateTarget: "10.10.10.10:" + AuthoritativePort,
-		UpdateSources: []string{"10.10.99.1"}, TSIGSecretReference: TSIGSecretReference,
+		UpdateSources: []string{"10.10.10.1"}, TSIGSecretReference: TSIGSecretReference,
 		ConflictPolicy: ConflictPolicy, LeaseFailurePolicy: "lease-continues-without-DNS-registration", Replication: "PowerDNS AXFR/IXFR lab-dns-01 primary to lab-dns-02 secondary on port " + AuthoritativePort,
 		TSIGAlgorithm: "hmac-sha256", Zones: ddnsZones,
 	}
@@ -160,9 +160,11 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	}, nil
 }
 
-// TSIGKeyName is the single naming contract shared by Kea and PowerDNS.
+// TSIGKeyName is the single naming contract shared by Kea and PowerDNS. The
+// canonical key identity omits the DNS root label; PowerDNS's gsqlite3 TSIG
+// lookup receives the wire name in this form.
 func TSIGKeyName(sourceZone, domain string) string {
-	return strings.ToLower(strings.TrimSuffix(sourceZone, ".")) + ".ddns." + strings.ToLower(strings.TrimSuffix(domain, ".")) + "."
+	return strings.ToLower(strings.TrimSuffix(sourceZone, ".")) + ".ddns." + strings.ToLower(strings.TrimSuffix(domain, "."))
 }
 
 func staticRecords(s model.Site) ([]StaticRecord, error) {

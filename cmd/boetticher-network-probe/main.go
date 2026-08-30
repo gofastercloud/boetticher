@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/url"
@@ -85,18 +87,11 @@ func run(req request) response {
 		}
 		args = []string{"+time=2", "+tries=1", "@" + req.Target, req.Name, req.Type}
 	case "http", "mtls":
-		parsedURL, err := url.Parse(req.URL)
-		if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
-			return response{Error: "HTTP case requires a URL"}
+		var err error
+		args, err = curlArguments(req)
+		if err != nil {
+			return response{Error: err.Error()}
 		}
-		args = []string{"--silent", "--show-error", "--max-time", "5", "--connect-timeout", "2", "--output", "/dev/null", "--write-out", "http_code=%{http_code} time=%{time_total}"}
-		if req.CA != "" {
-			args = append(args, "--cacert", "/run/boetticher-ca.pem")
-		}
-		if req.Cert != "" && req.Key != "" {
-			args = append(args, "--cert", "/run/boetticher-client.pem", "--key", "/run/boetticher-client-key.pem")
-		}
-		args = append(args, req.URL)
 	case "nmap":
 		if req.Target == "" || !validPort(req.Port) {
 			return response{Error: "nmap case requires a valid port"}
@@ -124,17 +119,19 @@ func run(req request) response {
 		if req.Target == "" {
 			return response{Error: "ARP probe requires a target"}
 		}
-		args = []string{"-D", "-I", "eth0", "-c", "2", "-w", "3", req.Target}
+		args = []string{"-D", "-I", "eth0", "-S", "0.0.0.0", "-c", "2", "-w", "3", req.Target}
 	case "configure":
-		if net.ParseIP(req.Target) == nil {
-			return response{Error: "interface configuration requires an address"}
+		var err error
+		args, err = networkConfigurationArguments(req.Kind, req.Target)
+		if err != nil {
+			return response{Error: err.Error()}
 		}
-		args = []string{"addr", "add", req.Target + "/24", "dev", "eth0"}
 	case "route":
-		if net.ParseIP(req.Target) == nil {
-			return response{Error: "route configuration requires a gateway"}
+		var err error
+		args, err = networkConfigurationArguments(req.Kind, req.Target)
+		if err != nil {
+			return response{Error: err.Error()}
 		}
-		args = []string{"route", "add", "default", "via", req.Target}
 	default:
 		return response{Error: "unsupported probe case"}
 	}
@@ -174,11 +171,103 @@ func run(req request) response {
 	if command.ProcessState != nil {
 		exitCode = command.ProcessState.ExitCode()
 	}
-	result := response{OK: err == nil, Output: string(output), ExitCode: exitCode}
-	if err != nil {
+	ok := commandSucceeded(req.Kind, exitCode, output, err)
+	result := response{OK: ok, Output: string(output), ExitCode: exitCode}
+	if err != nil && !ok {
 		result.Error = err.Error()
 	}
+	if !ok && err == nil {
+		switch req.Kind {
+		case "arping":
+			result.Error = "duplicate address detected"
+		case "nmap":
+			result.Error = "nmap target port is not open"
+		case "dns":
+			result.Error = "DNS query returned no answer"
+		}
+	}
 	return result
+}
+
+func curlArguments(req request) ([]string, error) {
+	parsedURL, err := url.Parse(req.URL)
+	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+		return nil, errors.New("HTTP case requires a URL")
+	}
+	args := []string{"--silent", "--show-error", "--max-time", "5", "--connect-timeout", "2", "--output", "/dev/null", "--write-out", "http_code=%{http_code} time=%{time_total}"}
+	if req.CA != "" {
+		args = append(args, "--cacert", "/run/boetticher-ca.pem")
+	}
+	if req.Cert != "" && req.Key != "" {
+		args = append(args, "--cert", "/run/boetticher-client.pem", "--key", "/run/boetticher-client-key.pem")
+	}
+	if req.Target != "" {
+		port := parsedURL.Port()
+		if port == "" {
+			port = map[string]string{"http": "80", "https": "443"}[parsedURL.Scheme]
+		}
+		args = append(args, "--resolve", fmt.Sprintf("%s:%s:%s", parsedURL.Hostname(), port, req.Target))
+	}
+	return append(args, req.URL), nil
+}
+
+func networkConfigurationArguments(kind, target string) ([]string, error) {
+	if net.ParseIP(target) == nil {
+		if kind == "configure" {
+			return nil, errors.New("interface configuration requires an address")
+		}
+		return nil, errors.New("route configuration requires a gateway")
+	}
+	if kind == "configure" {
+		return []string{"addr", "replace", target + "/24", "dev", "eth0"}, nil
+	}
+	if kind == "route" {
+		return []string{"route", "replace", "default", "via", target}, nil
+	}
+	return nil, errors.New("unsupported network configuration")
+}
+
+func commandSucceeded(kind string, exitCode int, output []byte, err error) bool {
+	if kind == "arping" {
+		// arping -D returns 1 when no peer answers, which is the successful
+		// duplicate-address check result for a candidate address. A reply
+		// returns 0 and must fail the check.
+		return err != nil && exitCode == 1 && strings.Contains(string(output), "100% packet loss")
+	}
+	if kind == "nmap" {
+		if err != nil {
+			return false
+		}
+		for _, line := range strings.Split(string(output), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[1] == "open" {
+				return true
+			}
+		}
+		return false
+	}
+	if kind == "dns" {
+		return err == nil && dnsAnswerSucceeded(output)
+	}
+	return err == nil
+}
+
+func dnsAnswerSucceeded(output []byte) bool {
+	statusOK := false
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.Contains(line, "status: NOERROR") {
+			statusOK = true
+		}
+		fields := strings.Fields(line)
+		for index, field := range fields {
+			if field != "ANSWER:" || index+1 >= len(fields) {
+				continue
+			}
+			answers, parseErr := strconv.Atoi(strings.TrimSuffix(fields[index+1], ","))
+			return statusOK && parseErr == nil && answers > 0
+		}
+	}
+	return false
 }
 
 func safeTarget(value string) bool {

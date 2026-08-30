@@ -23,6 +23,26 @@ func TestProbeAddressModeUsesDHCPOnlyForDynamicZones(t *testing.T) {
 	}
 }
 
+func TestGatewayProbeSkipsManagedTRANSITDiagnosticICMP(t *testing.T) {
+	if gatewayProbeExpected("TRANSIT") {
+		t.Fatal("TRANSIT gateway ICMP was treated as an expected allow")
+	}
+	for _, zone := range []string{"INFRA", "SERVERS", "TRUSTED", "SANDBOX", "MGMT"} {
+		if !gatewayProbeExpected(zone) {
+			t.Fatalf("%s gateway ICMP was not treated as an expected allow", zone)
+		}
+	}
+}
+
+func TestProbeDNSNameRespectsSANDBOXNamespaceIsolation(t *testing.T) {
+	if got := probeDNSName("SANDBOX", "lab.home.arpa"); got != "example.com" {
+		t.Fatalf("SANDBOX DNS probe name = %q, want example.com", got)
+	}
+	if got := probeDNSName("TRUSTED", "lab.home.arpa"); got != "portal.lab.home.arpa" {
+		t.Fatalf("private-zone DNS probe name = %q, want portal.lab.home.arpa", got)
+	}
+}
+
 func TestPolicyAllowsHonorsSourceAndDestinationCIDRs(t *testing.T) {
 	policy := firewall.Plan{Rules: []firewall.PolicyRule{{
 		From: "TRUSTED", To: "INFRA", Action: "allow", Protocol: "tcp", Ports: []string{"443"},

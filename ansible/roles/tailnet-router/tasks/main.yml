@@ -92,12 +92,17 @@
     state: restarted
     daemon_reload: true
   when:
-    - tailscale_backend_state.rc != 0 or (tailscale_backend_state.stdout | regex_search('"BackendState"[[:space:]]*:[[:space:]]*"Running"')) is none
+    - tailscale_backend_state.rc != 0 or (tailscale_backend_state.stdout | regex_search('"BackendState"\s*:\s*"Running"')) is none
 
 - name: Require a registered Tailscale backend
   ansible.builtin.command: tailscale status --json
   register: tailscale_registered_state
   changed_when: false
+  retries: 15
+  delay: 2
+  until: >-
+    tailscale_registered_state.rc == 0 and
+    (tailscale_registered_state.stdout | regex_search('"BackendState"\s*:\s*"Running"')) is not none
   failed_when: >-
     tailscale_registered_state.rc != 0 or
-    (tailscale_registered_state.stdout | regex_search('"BackendState"[[:space:]]*:[[:space:]]*"Running"')) is none
+    (tailscale_registered_state.stdout | regex_search('"BackendState"\s*:\s*"Running"')) is none

@@ -12,15 +12,17 @@ import (
 )
 
 type credentialDeploymentRunner struct {
-	commands []string
-	users    []string
-	values   []string
+	commands  []string
+	users     []string
+	values    []string
+	output    []byte
+	runOutput []byte
 }
 
 func (r *credentialDeploymentRunner) Run(_ context.Context, _ string, user string, command string) ([]byte, error) {
 	r.commands = append(r.commands, command)
 	r.users = append(r.users, user)
-	return nil, nil
+	return r.runOutput, nil
 }
 
 func (r *credentialDeploymentRunner) RunWithStdin(_ context.Context, _ string, user string, command string, stdin io.Reader) ([]byte, error) {
@@ -30,7 +32,7 @@ func (r *credentialDeploymentRunner) RunWithStdin(_ context.Context, _ string, u
 	if err == nil {
 		r.values = append(r.values, string(data))
 	}
-	return nil, err
+	return r.output, err
 }
 
 func TestDeploymentCredentialProjectionContainsOnlyEncryptedPaths(t *testing.T) {
@@ -183,10 +185,14 @@ func TestPowerDNSExceptionStreamsProtectedBackendSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &credentialDeploymentRunner{}
+	runner := &credentialDeploymentRunner{output: []byte("1\n")}
 	secret := "synthetic-powerdns-secret"
-	if err := installPowerDNSTSIG(context.Background(), runner, "10.10.10.10", plan, secret); err != nil {
+	needsRestart, err := installPowerDNSTSIG(context.Background(), runner, "10.10.10.10", plan, secret)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !needsRestart {
+		t.Fatal("new PowerDNS TSIG state did not request a restart")
 	}
 	if len(runner.values) != 1 || !strings.Contains(runner.values[0], secret) {
 		t.Fatalf("PowerDNS secret did not use protected stdin: %#v", runner.values)
@@ -196,5 +202,51 @@ func TestPowerDNSExceptionStreamsProtectedBackendSQL(t *testing.T) {
 	}
 	if runner.users[0] != "root" || strings.Contains(runner.commands[0], "sudo") {
 		t.Fatalf("PowerDNS exception did not use the temporary root transport: users=%v commands=%v", runner.users, runner.commands)
+	}
+}
+
+func TestPowerDNSTSIGChangeMarkerControlsRestart(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		output      string
+		wantRestart bool
+	}{
+		{name: "changed", output: "1\n", wantRestart: true},
+		{name: "unchanged", output: "0\n", wantRestart: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parsePowerDNSTSIGChange([]byte(test.output))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.wantRestart {
+				t.Fatalf("restart decision = %v, want %v", got, test.wantRestart)
+			}
+		})
+	}
+}
+
+func TestPowerDNSTSIGSyncMarkerState(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		output  string
+		missing bool
+	}{
+		{name: "present", output: "present\n", missing: false},
+		{name: "absent", output: "absent\n", missing: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runner := &credentialDeploymentRunner{runOutput: []byte(test.output)}
+			got, err := powerDNSTSIGSyncMarkerMissing(context.Background(), runner, "10.10.10.10")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.missing {
+				t.Fatalf("marker missing = %v, want %v", got, test.missing)
+			}
+			if len(runner.commands) != 1 || !strings.Contains(runner.commands[0], powerDNSTSIGSyncMarker) {
+				t.Fatalf("marker check command = %v", runner.commands)
+			}
+		})
 	}
 }
