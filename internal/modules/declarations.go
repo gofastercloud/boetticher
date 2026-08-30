@@ -134,8 +134,6 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 	case "streamdeck":
 		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true}
 		declaration.Secrets = []model.SecretDeclaration{{Name: "pulse_api_token", Purpose: "read-only Pulse monitoring API integration", Consumer: "streamdeck-status", Generation: "dependency", Rotation: "replaceable", Delivery: "systemd-credential", Lifecycle: model.SecretLifecycleRuntime}}
-		declaration.Persistent = append(declaration.Persistent, model.PersistentState{Name: "tls-identity", Guest: "lab-streamdeck-01", Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"})
-		declaration.Volumes = append(declaration.Volumes, model.PersistentVolumeDeclaration{Name: "tls-identity", Module: name, Guest: "lab-streamdeck-01", SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/tls", Placement: model.StorageDefault, Backup: true})
 		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "lab-streamdeck-01", SANs: []string{"lab-streamdeck-01." + site.Network.Domain}, Consumer: "streamdeck-status"})
 		declaration.NetworkIntents = append(declaration.NetworkIntents,
 			model.NetworkIntent{Source: "lab-streamdeck-01", Destination: "monitor." + site.Network.Domain, Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "read-only Pulse Proxmox host status polling"},

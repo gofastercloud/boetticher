@@ -326,6 +326,9 @@ func TestStreamDeckComposesReadOnlyPulseDisplayDeclaration(t *testing.T) {
 	if !hasPersistentState(streamDeck.Persistent, "tls-identity", "/var/lib/boetticher/identity/tls") || !hasPersistentVolume(streamDeck.Volumes, "tls-identity", "/var/lib/boetticher/identity/tls") {
 		t.Fatalf("StreamDeck TLS persistence contract is incomplete: persistent=%#v volumes=%#v", streamDeck.Persistent, streamDeck.Volumes)
 	}
+	if len(streamDeck.Persistent) != 2 || len(streamDeck.Volumes) != 2 {
+		t.Fatalf("StreamDeck persistence contract contains unexpected entries: persistent=%#v volumes=%#v", streamDeck.Persistent, streamDeck.Volumes)
+	}
 	if len(streamDeck.Certificates) != 2 || streamDeck.Certificates[1].Identity != "lab-streamdeck-01" || len(streamDeck.NetworkIntents) != 3 {
 		t.Fatalf("StreamDeck mTLS/network declaration is incomplete: certificates=%#v intents=%#v", streamDeck.Certificates, streamDeck.NetworkIntents)
 	}
