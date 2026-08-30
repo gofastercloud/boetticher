@@ -1146,6 +1146,7 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 				"tailscale status --json",
 				"BackendState",
 				"Running",
+				"if [ -s \"$credential\" ] && tailscale up --auth-key=\"file:$credential\"",
 				"--accept-dns=false",
 				"--advertise-routes=10.10.0.0/16",
 				"--snat-subnet-routes=true",

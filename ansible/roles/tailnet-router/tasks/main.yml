@@ -34,10 +34,13 @@
       if tailscale status --json 2>/dev/null | grep -Eq '"BackendState"[[:space:]]*:[[:space:]]*"Running"'; then
           exit 0
       fi
+      credential="${CREDENTIALS_DIRECTORY:-}/tailscale-auth-key"
+      if [ -s "$credential" ] && tailscale up --auth-key="file:$credential" --accept-dns=false --advertise-routes=10.10.0.0/16 --snat-subnet-routes=true >/dev/null 2>&1; then
+          exit 0
+      fi
       if [ -s /var/lib/tailscale/tailscaled.state ] && tailscale up --accept-dns=false --advertise-routes=10.10.0.0/16 --snat-subnet-routes=true >/dev/null 2>&1; then
           exit 0
       fi
-      credential="${CREDENTIALS_DIRECTORY:-}/tailscale-auth-key"
       test -s "$credential"
       tailscale up --auth-key="file:$credential" --accept-dns=false --advertise-routes=10.10.0.0/16 --snat-subnet-routes=true >/dev/null 2>&1
 
