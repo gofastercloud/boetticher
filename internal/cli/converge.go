@@ -133,7 +133,7 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 	if err != nil {
 		return err
 	}
-	variables, err := ansible.Variables(s)
+	variables, err := ansible.VariablesWithOperatorKey(s, operatorPublicKey)
 	if err != nil {
 		return err
 	}
@@ -441,7 +441,7 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 			if renderErr != nil {
 				return fmt.Errorf("HOLD: render published service policy: %w", renderErr)
 			}
-			finalVariables, variablesErr := ansible.VariablesWithUpstream(s, upstream)
+			finalVariables, variablesErr := ansible.VariablesWithOperatorKeyAndUpstream(s, upstream, operatorPublicKey)
 			if variablesErr != nil {
 				return fmt.Errorf("HOLD: render published service Ansible variables: %w", variablesErr)
 			}

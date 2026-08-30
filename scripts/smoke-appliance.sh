@@ -174,6 +174,13 @@ case "$name" in
     grep -Fq -- 'User=gatus' "$rootfs/etc/systemd/system/gatus.service"
     test ! -e "$rootfs/etc/boetticher/gatus/config.yaml"
     ;;
+  boetticher-network-probe)
+    for path in /usr/sbin/arping /usr/bin/dig /usr/bin/iperf3 /usr/bin/nc /usr/bin/nmap /usr/bin/tcpdump /usr/bin/curl /usr/bin/openssl /usr/bin/jq; do
+      test -x "$rootfs$path"
+    done
+    test -x "$rootfs/usr/local/libexec/boetticher-network-probe"
+    test ! -e "$rootfs/etc/systemd/system/boetticher-network-probe.service"
+    ;;
   *)
     echo "unknown smoke target: $name" >&2
     exit 2

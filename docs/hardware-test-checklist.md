@@ -20,17 +20,40 @@ these journeys.
    implementation transport and is not an operator administration gate.
 5. Confirm VM 100 has WAN plus six tagged zone vNICs and that it is the
    qualified boetticher firewall appliance.
-6. Prove Kea leases, PowerDNS DDNS, secondary replication, and both DNS/NTP
-   paths.
-7. Prove Pulse Proxmox API inventory, tagged Proxmox-host agent hardware
-   telemetry, alerts, availability checks, and backup freshness.
-8. Prove portal TLS/mTLS and reject an unauthenticated client.
-9. Exercise the positive and negative firewall journeys, especially SANDBOX.
-10. On `lab-monitor-01`, health-check `http://10.10.10.1:9765/healthz` and
-    confirm an unauthorized internal source cannot connect.
-11. Generate allowed traffic and confirm the expected `boetticher:allow:<id>`
-    counter and bounded API activity increase; generate denied traffic and do
-    the same for `boetticher:deny:<id>` or `boetticher:drop:<id>`.
+6. Run the all-zone network and firewall probe from the controller after the
+   first deploy:
+
+   ```text
+   ./bin/boetticher network test --site ./qualification-site \
+     --age-identity /secure/qualification-age \
+     --proxmox-ca /secure/proxmox-ca.pem --json
+   ```
+
+   Require `overall=PASS`, `cleanup=PASS`, current evidence for every
+   selected zone, and a report model revision matching the deployed model.
+   During iteration, use `--zones SANDBOX,TRUSTED` or another narrow selection;
+   the final qualification run must exercise all six zones. Use `--capture`
+   only for bounded troubleshooting and keep its output private.
+7. Use the probe report as the network-path gate: require gateway reachability,
+   DNS lookups, modeled allow/deny TCP and fixed-port scan results, and the
+   positive and negative mTLS cases to be `PASS`. Then independently prove
+   Kea leases, PowerDNS DDNS, secondary replication, and both DNS/NTP paths;
+   the probe does not infer those results from generated configuration.
+8. Prove Pulse Proxmox API inventory, tagged Proxmox-host agent hardware
+   telemetry, alerts, availability checks, and backup freshness. The probe's
+   modeled HTTPS and mTLS results are supporting transport evidence, not a
+   substitute for these product checks.
+9. Correlate the probe's allowed and denied cases with live firewall telemetry:
+   capture `boetticher firewall counters --site ./qualification-site --live --json`
+   before and after the run, and require the expected
+   `boetticher:allow:<id>` and `boetticher:deny:<id>` or `boetticher:drop:<id>`
+   counters to move. Counter movement is a separate live assertion; the probe
+   never treats a modeled rule as proof that nftables enforced it.
+10. Prove portal TLS/mTLS and reject an unauthenticated client, using the
+    probe's mTLS negative and positive cases as the initial network-path check.
+11. On `lab-monitor-01`, health-check `http://10.10.10.1:9765/healthz` and
+    confirm an unauthorized internal source cannot connect; retain this as a
+    host-local negative-path check alongside the disposable probes.
 12. Reload or reset the firewall, confirm no negative deltas are reported, and
     make a structural ruleset change that produces a ruleset-change event.
 13. Reboot the firewall and confirm the telemetry database retains its prior
@@ -42,12 +65,12 @@ these journeys.
 16. Reboot, rerun critical journeys, rerun deploy, and require no unexpected
    changes.
 
-## Qualification-only disposable network probe harness
+## Disposable network probe harness
 
-Use a separate, reusable qualification tool for network-path testing. It must
-not become a Boetticher module, desired-state field, supported appliance, or
-normal CLI command. This is a test plan only; it is not part of the 0.4 source
-workflow and has not been run.
+`boetticher network test` is an advanced supported diagnostic command for
+network-path testing. It is not a module or desired-state component. Bootstrap
+qualifies its small Debian LXC image; each invocation creates temporary probes,
+runs bounded checks, records private evidence, and removes the probes.
 
 Reserve LXC VMIDs 910-919 exclusively for the harness. This range is outside
 the Boetticher platform, module, and user ownership ranges. Before every run,
@@ -56,36 +79,33 @@ qualification-harness identity. It must refuse wrong-kind, wrong-name,
 wrong-tag, or ambiguous occupants and must never allocate around a collision.
 
 Create one unprivileged, non-nested LXC per exercised zone, with one vNIC and
-an exact VLAN tag. Use DHCP for TRUSTED and SANDBOX, the declared reservation
-flow for SERVERS, and fixed addresses for TRANSIT, INFRA, and MGMT. The test
-address pool must be checked against the current model and reservations before
-creation; example addresses are not a release contract. Do not infer DHCP
-success from generated configuration: record the guest lease and the gateway's
-read-only Kea observation separately.
+an exact VLAN tag. Use DHCP for TRUSTED and SANDBOX and collision-checked
+temporary static addresses for TRANSIT, INFRA, SERVERS, and MGMT. The command
+does not add reservations or firewall rules. SERVERS reservation coverage is
+`NOT TESTED` unless a matching reservation already exists.
 
-Build the probe image from the pinned Debian base with a recorded content
-digest, package manifest, SBOM, and bounded vulnerability result. The
-qualification-only image may contain `iproute2`, `iputils-ping`, `dnsutils`,
-`iperf3`, `netcat-openbsd`, `nmap`, `curl`, `jq`, and bounded packet-capture
-tools. It must not be added to the supported 0.4 artifact catalog. Keep packet
-capture on the gateway/router to bounded `tcpdump` or `tshark` sessions and
-move pcaps to the controller for offline Wireshark analysis; do not install a
-GUI Wireshark workload on the firewall.
+The qualified probe image contains `iproute2`, `iputils-ping`, `arping`,
+`dnsutils`, `iperf3`, `netcat-openbsd`, `nmap`, `curl`, `openssl`, `chrony`,
+`jq`, and bounded `tcpdump`. Its host-side executor is a root-owned,
+forced-command SSH boundary that accepts only the probe protocol; it cannot
+run arbitrary commands or change firewall state.
 
-The harness should run bounded, machine-readable cases for:
+The current harness runs bounded, machine-readable cases for:
 
-1. DHCP lease allocation, renewal, expiry, and the SERVERS reservation path;
-   static-only zones report the expected non-applicable result.
-2. DDNS forward A and PTR publication, secondary visibility, and removal or
-   expiry where practical.
-3. Gateway reachability, permitted egress, and forbidden inter-zone paths.
-4. Firewall allow/deny cases using declared netcat targets and a tightly
-   allow-listed, fixed-port `nmap` scan; collect before/after telemetry
-   counters.
-5. Network performance using fixed-duration `iperf3` TCP tests and, where
-   useful, bounded UDP rate/loss tests, plus RTT and MTU evidence. Performance
-   is diagnostic evidence, not an automatic platform-health PASS.
-6. Optional bounded packet captures around DHCP, DNS/DDNS, and denied flows.
+1. Gateway reachability and DNS A lookups against each resolver declared for
+   the selected zone.
+2. Modeled allow/deny endpoint checks using `netcat` and a tightly bounded,
+   fixed-port `nmap` scan.
+3. mTLS negative and positive handshakes against every enabled modeled mTLS
+   HTTPS endpoint, including Pulse where enabled.
+4. Fixed-duration `iperf3` TCP tests and bounded UDP tests only over already-
+   modeled allowed paths. Performance is diagnostic evidence, not an
+   automatic platform-health PASS.
+5. Optional bounded packet captures from the probe's own interface.
+
+DHCP lease, DDNS, and firewall-counter assertions remain outside this first
+   implementation; their results are not inferred from generated
+   configuration.
 
 Each result records the harness version, model revision, VMID, guest identity,
 zone/address, exact command or case, start/end time, observation, evidence
@@ -94,11 +114,11 @@ and gateway observations; missing or ambiguous evidence is `HOLD` or
 `INCONCLUSIVE`, never a generated-configuration PASS.
 
 Teardown runs even after a failed case. Stop and destroy only exact
-harness-owned guests, verify their absence through the Proxmox API, remove
-temporary snippets and host-key state, and retain hashed evidence separately.
-An interrupted run must resume with exact-owner cleanup or return `HOLD`; it
-must never use a broad purge. Physical trunk tests remain gated behind the
-virtual and DHCP/DDNS cases.
+harness-owned guests and verify their absence through the Proxmox API. An
+interrupted run resumes exact-owner cleanup with `--cleanup-only` or returns
+`HOLD`; it never uses a broad purge. Evidence is written below the private
+runtime directory, and physical trunk tests remain gated behind the virtual
+and DHCP/DDNS cases.
 
 ## External mode
 

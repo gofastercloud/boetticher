@@ -1,0 +1,5 @@
+name: boetticher-network-probe
+version: 1.0.0
+purpose: bounded operator network diagnostics
+runtime: on-demand
+privileges: unprivileged-lxc
