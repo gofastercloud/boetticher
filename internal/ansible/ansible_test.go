@@ -1197,6 +1197,18 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 			forbidden: []string{"advertise-exit-node", "privileged: true", "ansible.builtin.apt:", `regex_search('"BackendState"[[:space:]]*`},
 		},
 		{
+			role: "logging",
+			required: []string{
+				"logging_collector_socket_override",
+				"systemd-journal-remote.socket.d",
+				"content: \"{{ logging_collector_socket_override }}\"",
+				"Reload logging systemd units after collector override installation",
+				"Reload nginx after enabling the journal mTLS proxy",
+				"state: reloaded",
+			},
+			forbidden: []string{"ListenStream=19532"},
+		},
+		{
 			role: "litellm",
 			required: []string{
 				"boetticher_appliance_artifact",

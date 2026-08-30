@@ -133,6 +133,30 @@
   notify: reload logging systemd
   when: inventory_hostname == logging_plan.collector
 
+- name: Install the journal-remote socket override
+  ansible.builtin.file:
+    path: /etc/systemd/system/systemd-journal-remote.socket.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: inventory_hostname == logging_plan.collector
+
+- name: Install the journal-remote socket override file
+  ansible.builtin.copy:
+    content: "{{ logging_collector_socket_override }}"
+    dest: /etc/systemd/system/systemd-journal-remote.socket.d/boetticher.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload logging systemd
+  when: inventory_hostname == logging_plan.collector
+
+- name: Reload logging systemd units after collector override installation
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: inventory_hostname == logging_plan.collector
+
 - name: Disable the socket-activated collector listener
   ansible.builtin.service:
     name: systemd-journal-remote.socket
@@ -203,6 +227,14 @@
     name: nginx
     enabled: true
     state: started
+  when:
+    - inventory_hostname == logging_plan.collector
+    - logging_collector_certificate | default('') | length > 0
+
+- name: Reload nginx after enabling the journal mTLS proxy
+  ansible.builtin.systemd_service:
+    name: nginx
+    state: reloaded
   when:
     - inventory_hostname == logging_plan.collector
     - logging_collector_certificate | default('') | length > 0

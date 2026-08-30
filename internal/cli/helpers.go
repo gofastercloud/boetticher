@@ -147,6 +147,9 @@ func writeModelProjectionsWithResolver(dir string, s model.Site, endpointLookup 
 	if err := writePublic(filepath.Join(dir, "generated", "logging", "journal-remote.service.d", "boetticher.conf"), []byte(logging.CollectorServiceOverride(loggingPlan))); err != nil {
 		return err
 	}
+	if err := writePublic(filepath.Join(dir, "generated", "logging", "journal-remote.socket.d", "boetticher.conf"), []byte(logging.CollectorSocketOverride(loggingPlan))); err != nil {
+		return err
+	}
 	blockyConfig, renderErr := dns.RenderBlockyConfig(dnsPlan)
 	if renderErr != nil {
 		return renderErr
