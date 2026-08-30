@@ -36,6 +36,8 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 	switch args[0] {
 	case "init":
 		return runInit(args[1:], out)
+	case "tui":
+		return runTUI(args[1:], input, out, errOut)
 	case "preflight":
 		return runPreflight(args[1:], out)
 	case "ssh-config":
