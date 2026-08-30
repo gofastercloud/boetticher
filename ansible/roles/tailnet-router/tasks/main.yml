@@ -65,6 +65,10 @@
     group: root
     mode: '0644'
     content: |
+      [Unit]
+      After=network-online.target
+      Wants=network-online.target
+
       [Service]
       ExecStartPost=/usr/lib/boetticher/tailscale-router-bootstrap
   notify: reload systemd

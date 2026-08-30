@@ -1160,6 +1160,8 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 				"/etc/sysctl.d/99-boetticher-tailnet-router.conf",
 				"net.ipv4.ip_forward=1",
 				"argv: [sysctl, -w, net.ipv4.ip_forward=1]",
+				"After=network-online.target",
+				"Wants=network-online.target",
 				"tailscale status --json",
 				"BackendState",
 				"Running",
