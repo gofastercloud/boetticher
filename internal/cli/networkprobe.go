@@ -53,77 +53,120 @@ func runNetworkTest(args []string, out io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	progressTotal := 6
+	if *cleanupOnly {
+		progressTotal = 2
+	}
+	progress := newNetworkTestProgress(out, progressTotal)
+	progress.start("Validate site and select zones")
 	s, err := site.Load(*siteDir)
 	if err != nil {
+		progress.fail(err)
 		return err
 	}
 	if err := s.Validate(); err != nil {
+		progress.fail(err)
 		return err
 	}
 	modelRevision, err := s.Revision()
 	if err != nil {
+		progress.fail(err)
 		return err
 	}
 	if !*cleanupOnly && s.Gateway.Mode == model.GatewayModeExternal && s.PhysicalNetwork.Mode == model.ModeVirtualOnly {
-		return errors.New("HOLD: external-firewall network tests require the declared physical VLAN trunk")
+		progress.fail(errors.New("network test requires the declared physical VLAN trunk in external-firewall mode"))
+		return errors.New("network test requires the declared physical VLAN trunk in external-firewall mode")
 	}
 	selectedZones, err := networktest.SelectZones(s, *zones)
 	if err != nil {
+		progress.fail(err)
 		return err
 	}
+	progress.complete()
 	runID := networkTestRunID()
 	if *cleanupOnly {
+		progress.start("Remove stale exact-owned probes")
 		client, _, clientErr := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
 		if clientErr != nil {
+			progress.fail(clientErr)
 			return clientErr
 		}
 		node, nodeErr := client.SingleNode(context.Background())
 		if nodeErr != nil {
+			progress.fail(nodeErr)
 			return nodeErr
 		}
-		return cleanupNetworkProbes(context.Background(), client, node, s, nil)
+		cleanupErr := cleanupNetworkProbes(context.Background(), client, node, s, nil)
+		if cleanupErr != nil {
+			progress.fail(cleanupErr)
+		} else {
+			progress.complete()
+		}
+		if cleanupErr != nil {
+			return networkTestOperatorError{cause: cleanupErr}
+		}
+		fmt.Fprintln(out, "Network cleanup: PASS")
+		return nil
 	}
+	progress.start("Resolve qualified probe artifact")
 	probes, err := networktest.Plans(s, selectedZones, runID)
 	if err != nil {
+		progress.fail(err)
 		return err
 	}
 	definition, ok := artifacts.Lookup("network-probe")
 	if !ok {
-		return errors.New("network probe artifact definition is unavailable")
+		err := errors.New("network probe artifact definition is unavailable")
+		progress.fail(err)
+		return err
 	}
 	wantedArtifact, err := artifacts.ArtifactFor("network-probe")
 	if err != nil {
+		progress.fail(err)
 		return err
 	}
 	artifact, evidence, err := artifacts.ResolveArtifactEvidence(*siteDir, wantedArtifact)
 	if err != nil {
-		return fmt.Errorf("HOLD: network probe artifact is not qualified: %w", err)
+		err = fmt.Errorf("network probe artifact is not qualified: %w", err)
+		progress.fail(err)
+		return err
 	}
+	progress.complete()
+	progress.start("Prepare Proxmox probe environment")
 	client, _, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
 	if err != nil {
+		progress.fail(err)
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	node, err := client.SingleNode(ctx)
 	if err != nil {
+		progress.fail(err)
 		return err
 	}
 	if err := cleanupNetworkProbes(ctx, client, node, s, probes); err != nil {
+		progress.fail(err)
 		return err
 	}
 	if err := ensureNetworkProbeArtifact(ctx, client, node, evidence.ArtifactPath, artifact); err != nil {
+		progress.fail(err)
 		return err
 	}
 	policy, err := firewall.PlanFromSite(s)
 	if err != nil {
-		return fmt.Errorf("plan network test policy: %w", err)
+		err = fmt.Errorf("plan network test policy: %w", err)
+		progress.fail(err)
+		return err
 	}
 	storagePlan, err := storage.PlanFromSite(s)
 	if err != nil {
+		progress.fail(err)
 		return err
 	}
+	progress.complete()
 	report := networktest.Report{Version: definition.Version, RunID: runID, ModelRevision: modelRevision, Mode: string(s.Gateway.Mode), Probes: probes, Cleanup: "PENDING", Overall: "HOLD", EvidencePath: filepath.Join(site.RuntimeDir(s), "network-tests", runID, "report.json")}
+	progress.start("Create and start temporary probes")
 	created := make([]networktest.Probe, 0, len(probes))
 	var runErr error
 	for index := range probes {
@@ -133,12 +176,21 @@ func runNetworkTest(args []string, out io.Writer) error {
 			runErr = err
 			break
 		}
+		fmt.Fprintf(out, "      PASS probe/%s created\n", probe.Zone)
 		created = append(created, *probe)
 		if err := startNetworkProbe(ctx, client, node, *siteDir, s, probe, artifact.ContentSHA256, runID); err != nil {
 			runErr = err
 			break
 		}
 		created[index] = *probe
+	}
+	if runErr != nil {
+		progress.fail(runErr)
+	} else {
+		progress.complete()
+	}
+	if runErr == nil {
+		progress.start("Run bounded path checks")
 	}
 	if runErr == nil {
 		authority, authorityErr := site.LoadAuthority(*siteDir, s, *ageIdentity)
@@ -150,20 +202,35 @@ func runNetworkTest(args []string, out io.Writer) error {
 				runErr = fmt.Errorf("issue short-lived network-test client: %w", certErr)
 			} else {
 				for index := range created {
+					before := len(report.Results)
 					if err := runNetworkProbeCases(ctx, *siteDir, s, policy, &created[index], created, artifact.ContentSHA256, runID, authority.RootCertPEM+authority.IssuingCertPEM, cert, *capture, &report); err != nil {
 						runErr = err
 						break
 					}
+					zoneResults := report.Results[before:]
+					fmt.Fprintf(out, "      %s %s (%d cases)\n", operatorNetworkTestStatus(networkTestOverall(zoneResults, nil)), created[index].Zone, len(zoneResults))
 				}
 			}
 		}
 	}
+	if runErr != nil && progress.active {
+		progress.fail(runErr)
+	} else if progress.active {
+		if networkTestOverall(report.Results, nil) == "PASS" {
+			progress.complete()
+		} else {
+			progress.fail(errors.New("one or more bounded path checks failed; review the case details"))
+		}
+	}
 	report.Probes = created
+	progress.start("Remove temporary probes")
 	cleanupErr := cleanupNetworkProbes(context.Background(), client, node, s, probes)
 	if cleanupErr != nil {
 		report.Cleanup = "HOLD: " + cleanupErr.Error()
+		progress.fail(cleanupErr)
 	} else {
 		report.Cleanup = "PASS"
+		progress.complete()
 	}
 	report.Overall = networkTestOverall(report.Results, cleanupErr)
 	if runErr != nil && report.Overall == "PASS" {
@@ -198,7 +265,7 @@ func ensureNetworkProbeArtifact(ctx context.Context, client *proxmox.Client, nod
 			continue
 		}
 		if !strings.EqualFold(content.Checksum, artifact.ContentSHA256) {
-			return fmt.Errorf("HOLD: existing network probe template has a different checksum")
+			return fmt.Errorf("existing network probe template has a different checksum")
 		}
 		return nil
 	}
@@ -225,10 +292,10 @@ func createNetworkProbe(ctx context.Context, client *proxmox.Client, node, guest
 	}
 	kind, current, err := client.GuestConfig(ctx, node, probe.VMID)
 	if err != nil || kind != proxmox.KindLXC {
-		return fmt.Errorf("HOLD: verify network probe %s after creation: %w", probe.Zone, err)
+		return fmt.Errorf("verify network probe %s after creation: %w", probe.Zone, err)
 	}
 	if current["hostname"] != probe.Hostname {
-		return fmt.Errorf("HOLD: created network probe %s has the wrong hostname", probe.Zone)
+		return fmt.Errorf("created network probe %s has the wrong hostname", probe.Zone)
 	}
 	return nil
 }
@@ -243,7 +310,7 @@ func startNetworkProbe(ctx context.Context, client *proxmox.Client, node, siteDi
 			break
 		}
 		if attempt == 11 {
-			return fmt.Errorf("HOLD: network probe %s did not reach running state", probe.Zone)
+			return fmt.Errorf("network probe %s did not reach running state", probe.Zone)
 		}
 		timer := time.NewTimer(time.Second)
 		<-timer.C
@@ -252,7 +319,7 @@ func startNetworkProbe(ctx context.Context, client *proxmox.Client, node, siteDi
 	if probe.Address != "" {
 		arping, err := executeNetworkProbe(ctx, runner, s, *probe, artifactDigest, runID, map[string]any{"version": 1, "kind": "arping", "target": probe.Address})
 		if err != nil || !arping.OK {
-			return fmt.Errorf("HOLD: duplicate-address detection failed for %s: %s", probe.Zone, responseDetail(arping, err))
+			return fmt.Errorf("duplicate-address detection failed for %s: %s", probe.Zone, responseDetail(arping, err))
 		}
 		static := fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,hwaddr=%s,ip=%s/24,gw=%s", probe.VLAN, probe.MAC, probe.Address, probe.Gateway)
 		if err := client.SetLXCConfig(ctx, node, probe.VMID, mapToValues(map[string]string{"net0": static})); err != nil {
@@ -275,7 +342,7 @@ func startNetworkProbe(ctx context.Context, client *proxmox.Client, node, siteDi
 		timer := time.NewTimer(time.Second)
 		<-timer.C
 	}
-	return fmt.Errorf("HOLD: network probe %s did not expose an IPv4 address", probe.Zone)
+	return fmt.Errorf("network probe %s did not expose an IPv4 address", probe.Zone)
 }
 
 func probeAddressMode(probe networktest.Probe) string {
@@ -522,18 +589,107 @@ func writeNetworkTestReport(s model.Site, report networktest.Report) error {
 	return writePrivate(filepath.Join(directory, "report.sha256"), []byte(hex.EncodeToString(digest[:])+"  report.json\n"))
 }
 
+type networkTestProgress struct {
+	out     io.Writer
+	total   int
+	current int
+	active  bool
+	started time.Time
+}
+
+func newNetworkTestProgress(out io.Writer, total int) *networkTestProgress {
+	return &networkTestProgress{out: out, total: total}
+}
+
+func (p *networkTestProgress) start(name string) {
+	p.current++
+	p.active = true
+	p.started = time.Now()
+	fmt.Fprintf(p.out, "[%d/%d] %s\n", p.current, p.total, name)
+}
+
+func (p *networkTestProgress) complete() {
+	if !p.active {
+		return
+	}
+	p.active = false
+	fmt.Fprintf(p.out, "      PASS (%s)\n", formatOperationDuration(time.Since(p.started)))
+}
+
+func (p *networkTestProgress) fail(err error) {
+	if !p.active {
+		return
+	}
+	p.active = false
+	fmt.Fprintf(p.out, "      FAIL: %s\n", compactNetworkTestDetail(compactError(err)))
+}
+
+func operatorNetworkTestStatus(status string) string {
+	if status == "PASS" {
+		return "PASS"
+	}
+	return "FAIL"
+}
+
+func compactNetworkTestDetail(detail string) string {
+	detail = strings.TrimSpace(detail)
+	for _, prefix := range []string{"HOLD: ", "INCONCLUSIVE: ", "FAIL: "} {
+		detail = strings.TrimPrefix(detail, prefix)
+	}
+	detail = strings.Join(strings.Fields(detail), " ")
+	const maxDetailLength = 240
+	if len(detail) > maxDetailLength {
+		return detail[:maxDetailLength-3] + "..."
+	}
+	return detail
+}
+
+type networkTestOperatorError struct{ cause error }
+
+func (e networkTestOperatorError) Error() string {
+	detail := compactNetworkTestDetail(e.cause.Error())
+	if detail == "" {
+		detail = "review the failed cases and correct the reported path or cleanup problem before retrying"
+	}
+	return "network test failed: " + detail
+}
+
+func (e networkTestOperatorError) Unwrap() error { return e.cause }
+
 func finishNetworkTest(out io.Writer, jsonOutput bool, report networktest.Report, runErr error) error {
+	if runErr == nil && report.Overall != "PASS" {
+		runErr = errors.New("network test did not pass; review the failed cases and correct the reported path or cleanup problem before retrying")
+	}
 	if jsonOutput {
 		data, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Fprintln(out, string(data))
 	} else {
-		fmt.Fprintf(out, "Network test %s: %s (%d cases)\n", report.RunID, report.Overall, len(report.Results))
+		fmt.Fprintf(out, "Network test %s: %s (%d cases)\n", report.RunID, operatorNetworkTestStatus(report.Overall), len(report.Results))
 		for _, result := range report.Results {
-			fmt.Fprintf(out, "  %-12s %s\n", result.Status, result.Name)
+			status := operatorNetworkTestStatus(result.Status)
+			fmt.Fprintf(out, "  %-12s %s\n", status, result.Name)
+			if status == "FAIL" {
+				if detail := compactNetworkTestDetail(result.Detail); detail != "" {
+					fmt.Fprintf(out, "      %s\n", detail)
+				}
+			}
+		}
+		cleanupStatus := operatorNetworkTestStatus(report.Cleanup)
+		fmt.Fprintf(out, "Cleanup: %s\n", cleanupStatus)
+		if cleanupStatus == "FAIL" {
+			if detail := compactNetworkTestDetail(report.Cleanup); detail != "" {
+				fmt.Fprintf(out, "      %s\n", detail)
+			}
+		}
+		if runErr != nil {
+			fmt.Fprintf(out, "Reason: %s\n", compactNetworkTestDetail(runErr.Error()))
 		}
 		fmt.Fprintf(out, "Evidence: %s\n", report.EvidencePath)
 	}
-	return runErr
+	if runErr != nil {
+		return networkTestOperatorError{cause: runErr}
+	}
+	return nil
 }
 
 func cleanupNetworkProbes(ctx context.Context, client *proxmox.Client, node string, s model.Site, probes []networktest.Probe) error {
@@ -556,7 +712,7 @@ func cleanupNetworkProbes(ctx context.Context, client *proxmox.Client, node stri
 			return fmt.Errorf("inspect reserved VMID %d: %w", id, err)
 		}
 		if kind != proxmox.KindLXC || !strings.Contains(fmt.Sprint(current["tags"]), networktest.HarnessTag) || !strings.Contains(fmt.Sprint(current["description"]), "installation="+s.SecretMetadata.InstallationID) {
-			return fmt.Errorf("HOLD: reserved VMID %d is occupied by an unknown guest", id)
+			return fmt.Errorf("reserved VMID %d is occupied by an unknown guest", id)
 		}
 		status, statusErr := client.LXCStatus(ctx, node, id)
 		if statusErr != nil && !proxmox.IsNotFound(statusErr) {
@@ -571,7 +727,7 @@ func cleanupNetworkProbes(ctx context.Context, client *proxmox.Client, node stri
 			return fmt.Errorf("destroy owned network probe %d: %w", id, err)
 		}
 		if _, _, err := client.GuestConfig(ctx, node, id); err == nil || !proxmox.IsNotFound(err) {
-			return fmt.Errorf("HOLD: verify cleanup of network probe %d", id)
+			return fmt.Errorf("verify cleanup of network probe %d", id)
 		}
 	}
 	return nil

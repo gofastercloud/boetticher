@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,9 +13,40 @@ import (
 	statusmodel "github.com/gofastercloud/boetticher/internal/status"
 )
 
+func TestProgressWriterStreamsOnlyBoundedOperatorLines(t *testing.T) {
+	var output bytes.Buffer
+	progress := make(chan string, 8)
+	writer := &progressWriter{dst: &output, channel: progress}
+	if _, err := writer.Write([]byte("verbose provider chatter\n[1/9] Validate desired state\n      Timing: ansible/all managed targets (42ms)\n")); err != nil {
+		t.Fatalf("progressWriter.Write() error = %v", err)
+	}
+	writer.flush()
+	close(progress)
+	var got []string
+	for line := range progress {
+		got = append(got, line)
+	}
+	if !reflect.DeepEqual(got, []string{"[1/9] Validate desired state", "Timing: ansible/all managed targets (42ms)"}) {
+		t.Fatalf("progress lines = %v", got)
+	}
+	if !strings.Contains(output.String(), "verbose provider chatter") {
+		t.Fatalf("progress writer did not preserve command output: %q", output.String())
+	}
+}
+
 func TestCommandPathStripsBinaryAndPlaceholders(t *testing.T) {
 	if got := commandPath("boetticher firewall rule add [--source SOURCE]"); got != "firewall rule add" {
 		t.Fatalf("commandPath() = %q", got)
+	}
+}
+
+func TestCommandItemHighlightsNetworkTestAsLiveDiagnostic(t *testing.T) {
+	item := commandItem{usage: "boetticher network test [--site DIR] [--zones ZONE,...]"}
+	if got := item.Title(); got != "network test" {
+		t.Fatalf("network test title = %q", got)
+	}
+	if got := item.Description(); !strings.Contains(got, "temporary probes") {
+		t.Fatalf("network test description = %q", got)
 	}
 }
 

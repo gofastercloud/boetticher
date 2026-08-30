@@ -61,7 +61,7 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) err
 		}
 		operationErr = combineDeploymentErrors(operationErr, cleanupErr)
 	}
-	report.finalize(operationErr)
+	operationErr = report.finalize(operationErr)
 	return deploymentErrorForOperator(operationErr)
 }
 
@@ -84,6 +84,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err != nil {
 		return err
 	}
+	report.setTimingPath(filepath.Join(site.RuntimeDir(s), "deploy", report.runID+".json"))
 	firewallPlan, err := firewall.PlanFromSite(s)
 	if err != nil {
 		return err
@@ -922,8 +923,11 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 				return marshalErr
 			}
 			streamDeckVariables = append(streamDeckVariables, '\n')
-			if err := ansible.RunLimited(ctx, ansiblePlaybook, inventoryPath, streamDeckVariables, "lab-streamdeck-01"); err != nil {
-				return fmt.Errorf("install StreamDeck runtime: %w", err)
+			streamDeckStarted := time.Now()
+			streamDeckErr := ansible.RunLimited(ctx, ansiblePlaybook, inventoryPath, streamDeckVariables, "lab-streamdeck-01")
+			report.recordTiming("ansible/lab-streamdeck-01", streamDeckStarted)
+			if streamDeckErr != nil {
+				return fmt.Errorf("install StreamDeck runtime: %w", streamDeckErr)
 			}
 		}
 	}
@@ -1655,6 +1659,7 @@ func checkBootstrapEndpoint(siteDir string, s model.Site) error {
 }
 
 func runTrackedAnsible(ctx context.Context, playbook, inventory string, variables []byte, limit string, report *deploymentReport) error {
+	started := time.Now()
 	var (
 		changed bool
 		err     error
@@ -1669,7 +1674,16 @@ func runTrackedAnsible(ctx context.Context, playbook, inventory string, variable
 		if target == "" {
 			target = "all managed targets"
 		}
-		report.recordMutation("Services", target, "configuration reconciled", true)
+		if report != nil {
+			report.recordMutation("Services", target, "configuration reconciled", true)
+		}
+	}
+	if report != nil {
+		target := limit
+		if target == "" {
+			target = "all managed targets"
+		}
+		report.recordTiming("ansible/"+target, started)
 	}
 	return err
 }

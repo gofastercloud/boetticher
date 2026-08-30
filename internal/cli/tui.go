@@ -32,7 +32,7 @@ func runTUI(args []string, input io.Reader, out, errOut io.Writer) error {
 		Offline:  *offline,
 		Commands: CommandUsages(),
 		Runner: func(commandArgs []string, commandInput io.Reader, commandOut, commandErrOut io.Writer) error {
-			return run(commandArgs, commandInput, commandOut, commandErrOut)
+			return operatorErrorForHuman(run(commandArgs, commandInput, commandOut, commandErrOut))
 		},
 		Observability: func(ctx context.Context) (tui.Observability, error) {
 			return readTUIObservability(ctx, *siteDir)

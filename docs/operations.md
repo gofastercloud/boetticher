@@ -48,11 +48,43 @@ Use `--offline` for a local view when the site has not been deployed or live
 refresh is not useful. Offline data is only a local projection, so use
 `boetticher status --site ./my-boetticher --live` for the supported live check.
 
+## Checking network paths
+
+`boetticher network test --site ./my-boetticher` is an advanced live diagnostic,
+not a module and not part of deploy desired state. It creates exact-owned,
+unprivileged LXC probes in the reserved 910–919 range, runs bounded
+reachability, DNS, policy, mTLS, and performance checks, and attempts cleanup
+after every run. It never changes firewall policy.
+
+Keep the first run broad when you are learning the site, or narrow it with
+`--zones TRUSTED,SANDBOX`. Add `--capture` for a bounded probe-local capture;
+use `--json` when another tool needs the private report. `--cleanup-only` is
+the explicit recovery path for stale probes that are still exactly owned by
+Boetticher. If cleanup cannot prove ownership or removal, the command fails;
+do not work around that safety check with a broad VMID purge.
+
+The experimental TUI includes `network test` in its command list. Use the
+direct CLI when you need zones, captures, JSON, or cleanup-only.
+
 ## Reading a deploy result
 
 Deploy works through nine high-level phases. It prints a phase when it starts
-and `PASS` when that phase finishes; if a phase fails, later phases are simply
-not run. There is no pretend percentage to watch.
+and `PASS` with its elapsed time when that phase finishes; if a phase fails,
+later phases are simply not run. There is no pretend percentage to watch.
+
+Bootstrap uses the same shape. Longer operations also print bounded timing
+lines for expensive work such as artifact qualification and Ansible
+reconciliation. These are there to make a slow run legible, not to turn the
+terminal into a task-by-task log.
+
+At the end of a run, Boetticher prints a private timing-report path. Bootstrap
+writes a timestamped JSON report below `bootstrap/` in the site's private
+runtime directory. Deploy writes a timestamped JSON report below `deploy/`.
+The reports contain
+phase and suboperation start times, finish times, and durations, along with
+the coarse deployment result and mutation summary. They do not contain secret
+values or the full failure text. Keep the files private; they are useful when
+comparing a slow run or sharing a small diagnostic bundle with a maintainer.
 
 The final summary is the useful bit:
 
@@ -63,6 +95,7 @@ Infrastructure changed: YES
 Temporary authority removed: YES
 Retry: YES — rerunning deploy is safe; already-converged resources are retained.
 Next action: Run boetticher doctor --live, correct the reported failure, then run boetticher deploy --site ./my-boetticher.
+Timing report: .../runtime/.../deploy/deploy-20260830T120000.000000000Z.json
 ```
 
 On success, the summary says `Deployment: PASS`. On failure, follow the one

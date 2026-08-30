@@ -77,14 +77,16 @@ func runBootstrapEndpoint(args []string, out io.Writer) error {
 	return nil
 }
 
-func runBootstrap(args []string, out io.Writer) error {
+func runBootstrap(args []string, out io.Writer) (runErr error) {
+	progress := newBootstrapReport(out, bootstrapPhaseCount)
+	defer func() { runErr = progress.finalize(runErr) }()
 	totalStarted := time.Now()
-	defer func() { emitTiming(out, "bootstrap_total", totalStarted) }()
+	defer func() { progress.emitTiming(out, "bootstrap_total", totalStarted) }()
 	networkStarted := time.Now()
 	networkFinished := false
 	defer func() {
 		if !networkFinished {
-			emitTiming(out, "bootstrap_network_trust_setup", networkStarted)
+			progress.emitTiming(out, "bootstrap_network_trust_setup", networkStarted)
 		}
 	}()
 	fs := flag.NewFlagSet("bootstrap", flag.ContinueOnError)
@@ -103,6 +105,10 @@ func runBootstrap(args []string, out io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if *dryRun {
+		progress.total = 1
+	}
+	progress.start("validate", "Validate bootstrap request")
 	if *knownHosts == "" {
 		*knownHosts = deploymentKnownHosts(*siteDir)
 	}
@@ -110,6 +116,7 @@ func runBootstrap(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	progress.setTimingPath(filepath.Join(site.RuntimeDir(s), "bootstrap", progress.runID+".json"))
 	plan, err := proxmox.PlanFromSite(s)
 	if err != nil {
 		return err
@@ -143,6 +150,7 @@ func runBootstrap(args []string, out io.Writer) error {
 		}
 	}
 	if *dryRun {
+		progress.complete()
 		fmt.Fprintf(out, "Bootstrap plan: PASS model %s\n", plan.ModelRevision)
 		fmt.Fprintf(out, "  Proxmox endpoint: %s\n  Gateway mode: %s\n  Gateway upstream MAC: %s\n  Gateway image: %s\n", s.BootstrapAddress, s.Gateway.Mode, s.Gateway.Upstream.MAC, model.QualifiedGatewayImage)
 		fmt.Fprintf(out, "  Storage: %s\n", s.StorageProfile)
@@ -153,6 +161,8 @@ func runBootstrap(args []string, out io.Writer) error {
 		fmt.Fprintln(out, "  Destructive actions: not applied (dry-run)")
 		return nil
 	}
+	progress.complete()
+	progress.start("discover", "Discover physical network")
 	publicKey, err := readOperatorPublicKey(*operatorKey)
 	if err != nil {
 		return err
@@ -164,6 +174,8 @@ func runBootstrap(args []string, out io.Writer) error {
 		return err
 	}
 	trustedKnownHosts := deploymentKnownHosts(*siteDir)
+	progress.complete()
+	progress.start("trust", "Establish host trust and scoped access")
 	hostKey, err := enrollBootstrapHostKey(*knownHosts, trustedKnownHosts)
 	if err != nil {
 		return fmt.Errorf("HOLD: bootstrap did not establish an operator-verified Proxmox host key: %w", err)
@@ -242,6 +254,8 @@ func runBootstrap(args []string, out io.Writer) error {
 		return fmt.Errorf("HOLD: Proxmox node identity changed between SSH and API discovery; SSH observed %q, API observed %q", sshDiscovery.Node, apiNode)
 	}
 	plan.Node = apiNode
+	progress.complete()
+	progress.start("platform", "Reconcile Proxmox network and storage")
 	discovery, err := proxmox.DiscoverPhysicalNetworkWithSelection(ctx, client, apiNode, s.BootstrapAddress, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
 	virtualOnlyRequested := s.PhysicalNetwork.Mode == model.ModeVirtualOnly && s.PhysicalNetwork.Trunk.Name == "" && *trunkInterface == ""
 	discovery = honorRequestedPhysicalMode(discovery, s.PhysicalNetwork.Mode, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
@@ -321,15 +335,19 @@ func runBootstrap(args []string, out io.Writer) error {
 		return fmt.Errorf("HOLD: recompute platform plan after physical binding: %w", err)
 	}
 	plan.Node = apiNode
-	emitTiming(out, "bootstrap_network_trust_setup", networkStarted)
+	progress.complete()
+	progress.start("artifacts", "Build and qualify appliance artifacts")
+	progress.emitTiming(out, "bootstrap_network_trust_setup", networkStarted)
 	networkFinished = true
-	if err := buildDefaultArtifacts(ctx, client, plan, *siteDir, publicKey, *knownHosts, model.ExpandUserPath(s.SSHIdentityFile), runner, s.BootstrapAddress, *initialUser, out); err != nil {
+	if err := buildDefaultArtifacts(ctx, client, plan, *siteDir, publicKey, *knownHosts, model.ExpandUserPath(s.SSHIdentityFile), runner, s.BootstrapAddress, *initialUser, out, progress); err != nil {
 		return err
 	}
 	plan, err = proxmox.ResolveQualifiedArtifacts(*siteDir, plan, true)
 	if err != nil {
 		return err
 	}
+	progress.complete()
+	progress.start("persist", "Persist bootstrap state")
 	if err := writeModelProjections(*siteDir, s); err != nil {
 		return fmt.Errorf("HOLD: bootstrap network binding was persisted but projections could not be regenerated: %w", err)
 	}
@@ -372,6 +390,7 @@ func runBootstrap(args []string, out io.Writer) error {
 	if err := rebuildPortal(*siteDir, s); err != nil {
 		return err
 	}
+	progress.complete()
 	fmt.Fprintf(out, "Proxmox bootstrap: PASS authenticated with scoped identity on %s\n", version)
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		fmt.Fprintln(out, "Managed gateway VM: deferred to boetticher deploy")
@@ -441,7 +460,7 @@ func honorRequestedPhysicalMode(discovery networkmodel.Discovery, desiredMode, c
 	return discovery
 }
 
-func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan proxmox.Plan, siteDir, publicKey, _ string, identityFile string, hostRunner proxmox.CommandRunner, hostAddress, hostUser string, out io.Writer) (returnErr error) {
+func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan proxmox.Plan, siteDir, publicKey, _ string, identityFile string, hostRunner proxmox.CommandRunner, hostAddress, hostUser string, out io.Writer, progress *bootstrapReport) (returnErr error) {
 	cacheStarted := time.Now()
 	base, err := artifacts.ArtifactFor("base")
 	if err != nil {
@@ -449,11 +468,11 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	}
 	if _, _, err := artifacts.ResolveArtifactEvidence(siteDir, base); err == nil {
 		if _, err := proxmox.ResolveQualifiedArtifacts(siteDir, plan, true); err == nil {
-			emitTiming(out, "artifact_cache_hit", cacheStarted)
+			progress.emitTiming(out, "artifact_cache_hit", cacheStarted)
 			return nil
 		}
 	}
-	emitTiming(out, "artifact_cache_check", cacheStarted)
+	progress.emitTiming(out, "artifact_cache_check", cacheStarted)
 	if client == nil {
 		return errors.New("Proxmox client is required for appliance construction")
 	}
@@ -480,7 +499,7 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	}()
 	provisionStarted := time.Now()
 	builderCreated, err := proxmox.EnsureBuilderVM(ctx, client, plan, publicKey)
-	emitTiming(out, "builder_vm_provisioning", provisionStarted)
+	progress.emitTiming(out, "builder_vm_provisioning", provisionStarted)
 	builderAddress := ""
 	builderRunner := proxmox.SSHRunner{KnownHosts: builderKnownHosts, StrictHostKey: "yes", IdentityFile: identityFile}
 	builderSSHUser := "root"
@@ -517,7 +536,7 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	readinessFinished := false
 	defer func() {
 		if !readinessFinished {
-			emitTiming(out, "builder_cloud_init_readiness", readinessStarted)
+			progress.emitTiming(out, "builder_cloud_init_readiness", readinessStarted)
 		}
 	}()
 	if err := client.StartVM(ctx, plan.Node, model.BuilderVMID); err != nil {
@@ -544,7 +563,7 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if err := proxmox.CheckBuilderCapacity(ctx, builderRunner, builderAddress, builderSSHUser, builder.MinimumFreeGiB); err != nil {
 		return err
 	}
-	emitTiming(out, "builder_cloud_init_readiness", readinessStarted)
+	progress.emitTiming(out, "builder_cloud_init_readiness", readinessStarted)
 	readinessFinished = true
 	sourceRoot, sourceErr := applianceBuildSourceRoot()
 	sourceStarted := time.Now()
@@ -560,15 +579,15 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if _, err := builderRunner.RunWithStdin(ctx, builderAddress, builderSSHUser, "set -eu; install -d -m 0755 -o labadmin -g labadmin /home/labadmin/build; tar -xzf - -C /home/labadmin/build", bytes.NewReader(archive)); err != nil {
 		return fmt.Errorf("transfer public appliance build definitions: %w", err)
 	}
-	emitTiming(out, "builder_source_transfer", sourceStarted)
+	progress.emitTiming(out, "builder_source_transfer", sourceStarted)
 	var buildOutputBuffer boundedBuilderOutput
 	buildStarted := time.Now()
 	if err := builderRunner.RunStream(ctx, builderAddress, builderSSHUser, "/usr/local/sbin/boetticher-build", &buildOutputBuffer); err != nil {
 		builderOutput = buildOutputBuffer.String()
-		emitTiming(out, "builder_build_and_qualification", buildStarted)
+		progress.emitTiming(out, "builder_build_and_qualification", buildStarted)
 		return fmt.Errorf("qualify default appliance artifacts on temporary builder: %w", err)
 	}
-	emitTiming(out, "builder_build_and_qualification", buildStarted)
+	progress.emitTiming(out, "builder_build_and_qualification", buildStarted)
 	archiveFile, err := os.CreateTemp("", "boetticher-builder-artifacts-*.tar.gz")
 	if err != nil {
 		return fmt.Errorf("create temporary artifact archive: %w", err)
@@ -588,7 +607,7 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if err := archiveFile.Close(); err != nil {
 		return fmt.Errorf("close qualified appliance evidence: %w", err)
 	}
-	emitTiming(out, "builder_artifact_return_transfer", returnStarted)
+	progress.emitTiming(out, "builder_artifact_return_transfer", returnStarted)
 	archiveInfo, err := os.Stat(archivePath)
 	if err != nil {
 		return fmt.Errorf("stat qualified appliance evidence: %w", err)
@@ -601,7 +620,7 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if err := artifacts.RebindEvidencePaths(siteDir); err != nil {
 		return fmt.Errorf("bind qualified evidence to controller artifact bytes: %w", err)
 	}
-	emitTiming(out, "builder_artifact_return_extraction", extractionStarted)
+	progress.emitTiming(out, "builder_artifact_return_extraction", extractionStarted)
 	buildSucceeded = true
 	return nil
 }

@@ -2,10 +2,14 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
+	"time"
 )
 
 const deploymentPhaseCount = 9
@@ -13,15 +17,24 @@ const deploymentPhaseCount = 9
 type deploymentPhase struct {
 	ID        string
 	Name      string
+	Started   time.Time
+	Finished  time.Time
 	Completed bool
 	Component string
 	Cause     error
 }
 
 type deploymentMutation struct {
-	Domain string
-	Target string
-	Action string
+	Domain string `json:"domain"`
+	Target string `json:"target"`
+	Action string `json:"action"`
+}
+
+type deploymentTiming struct {
+	Name       string `json:"name"`
+	StartedAt  string `json:"started_at"`
+	FinishedAt string `json:"finished_at"`
+	DurationMS int64  `json:"duration_ms"`
 }
 
 type deploymentReport struct {
@@ -36,14 +49,21 @@ type deploymentReport struct {
 	cleanupRemoved        bool
 	cleanupErr            error
 	dryRun                bool
+	runID                 string
+	startedAt             time.Time
+	finishedAt            time.Time
+	timingPath            string
+	timings               []deploymentTiming
 }
 
 func newDeploymentReport(out io.Writer) *deploymentReport {
-	return &deploymentReport{out: out, active: -1, mutationScopeCertain: true}
+	started := time.Now()
+	runID := "deploy-" + started.UTC().Format("20060102T150405.000000000Z")
+	return &deploymentReport{out: out, active: -1, mutationScopeCertain: true, runID: runID, startedAt: started}
 }
 
 func (r *deploymentReport) start(id, name string) {
-	r.phases = append(r.phases, deploymentPhase{ID: id, Name: name})
+	r.phases = append(r.phases, deploymentPhase{ID: id, Name: name, Started: time.Now()})
 	r.active = len(r.phases) - 1
 	fmt.Fprintf(r.out, "[%d/%d] %s\n", len(r.phases), deploymentPhaseCount, name)
 }
@@ -53,7 +73,8 @@ func (r *deploymentReport) complete() {
 		return
 	}
 	r.phases[r.active].Completed = true
-	fmt.Fprintln(r.out, "      PASS")
+	r.phases[r.active].Finished = time.Now()
+	fmt.Fprintf(r.out, "      PASS (%s)\n", formatOperationDuration(deploymentPhaseDuration(r.phases[r.active], time.Now())))
 }
 
 func (r *deploymentReport) fail(err error, component string) {
@@ -65,6 +86,7 @@ func (r *deploymentReport) fail(err error, component string) {
 		return
 	}
 	phase.Cause = err
+	phase.Finished = time.Now()
 	if component == "" {
 		component = phase.Name
 	}
@@ -73,17 +95,47 @@ func (r *deploymentReport) fail(err error, component string) {
 	fmt.Fprintf(r.out, "      FAIL: %s\n", compactError(err))
 }
 
+func (r *deploymentReport) recordFailure(operationErr error) {
+	if operationErr == nil || r.active < 0 || r.active >= len(r.phases) {
+		return
+	}
+	if r.phases[r.active].Completed || r.phases[r.active].Cause != nil {
+		return
+	}
+	r.fail(operationErr, deploymentFailureComponent(operationErr))
+}
+
+func (r *deploymentReport) setTimingPath(path string) {
+	r.timingPath = path
+}
+
+func (r *deploymentReport) recordTiming(name string, started time.Time) {
+	if name == "" || started.IsZero() {
+		return
+	}
+	finished := time.Now()
+	r.timings = append(r.timings, deploymentTiming{
+		Name:       name,
+		StartedAt:  started.UTC().Format(time.RFC3339Nano),
+		FinishedAt: finished.UTC().Format(time.RFC3339Nano),
+		DurationMS: finished.Sub(started).Milliseconds(),
+	})
+	fmt.Fprintf(r.out, "      Timing: %s (%s)\n", name, formatOperationDuration(finished.Sub(started)))
+}
+
 func (r *deploymentReport) recordMutation(domain, target, action string, changed bool) {
 	if !changed {
 		return
 	}
 	r.infrastructureChanged = true
 	r.mutations = append(r.mutations, deploymentMutation{Domain: domain, Target: target, Action: action})
+	fmt.Fprintf(r.out, "      Changed: %s: %s %s\n", titleWord(domain), target, action)
 }
 
 func (r *deploymentReport) markMutationUncertain() {
 	r.infrastructureChanged = true
 	r.mutationScopeCertain = false
+	fmt.Fprintln(r.out, "      Changed: infrastructure mutation scope requires verification")
 }
 
 func (r *deploymentReport) setCleanup(attempted, removed bool, err error) {
@@ -100,9 +152,19 @@ func (r *deploymentReport) setCleanup(attempted, removed bool, err error) {
 	}
 }
 
-func (r *deploymentReport) finalize(operationErr error) {
-	if operationErr != nil && r.active >= 0 && r.active < len(r.phases) && !r.phases[r.active].Completed {
-		r.fail(operationErr, deploymentFailureComponent(operationErr))
+func (r *deploymentReport) finalize(operationErr error) error {
+	r.recordFailure(operationErr)
+	if r.finishedAt.IsZero() {
+		r.finishedAt = time.Now()
+	}
+	timingErr := r.persistTiming(operationErr)
+	if timingErr != nil {
+		if operationErr == nil {
+			operationErr = fmt.Errorf("persist deployment timing report: %w", timingErr)
+		} else {
+			operationErr = errors.Join(operationErr, fmt.Errorf("persist deployment timing report: %w", timingErr))
+		}
+		r.recordFailure(operationErr)
 	}
 
 	fmt.Fprintln(r.out)
@@ -112,7 +174,7 @@ func (r *deploymentReport) finalize(operationErr error) {
 		if !phase.Completed {
 			result = "FAIL"
 		}
-		fmt.Fprintf(r.out, "%s %s\n", result, phase.Name)
+		fmt.Fprintf(r.out, "%s %s (%s)\n", result, phase.Name, formatOperationDuration(deploymentPhaseDuration(phase, r.finishedAt)))
 		if phase.Cause != nil {
 			reportedCause = true
 			if phase.Component != "" {
@@ -155,7 +217,10 @@ func (r *deploymentReport) finalize(operationErr error) {
 		} else {
 			fmt.Fprintln(r.out, "All requested components passed deployment and health checks.")
 		}
-		return
+		if r.timingPath != "" {
+			fmt.Fprintf(r.out, "Timing report: %s\n", r.timingPath)
+		}
+		return operationErr
 	}
 	fmt.Fprintln(r.out, "Deployment: FAIL")
 	if r.cleanupErr != nil {
@@ -165,6 +230,101 @@ func (r *deploymentReport) finalize(operationErr error) {
 	}
 	fmt.Fprintf(r.out, "Retry: %s\n", deploymentRetryAdvice(operationErr, r.cleanupErr))
 	fmt.Fprintf(r.out, "Next action: %s\n", deploymentNextAction(operationErr, r.cleanupErr))
+	if r.timingPath != "" && timingErr == nil {
+		fmt.Fprintf(r.out, "Timing report: %s\n", r.timingPath)
+	}
+	return operationErr
+}
+
+func deploymentPhaseDuration(phase deploymentPhase, finishedAt time.Time) time.Duration {
+	if phase.Started.IsZero() {
+		return 0
+	}
+	finished := phase.Finished
+	if finished.IsZero() {
+		finished = finishedAt
+	}
+	if finished.Before(phase.Started) {
+		return 0
+	}
+	return finished.Sub(phase.Started)
+}
+
+func (r *deploymentReport) persistTiming(operationErr error) error {
+	if r.timingPath == "" {
+		return nil
+	}
+	if r.finishedAt.IsZero() {
+		r.finishedAt = time.Now()
+	}
+	type phaseTiming struct {
+		ID         string `json:"id"`
+		Name       string `json:"name"`
+		StartedAt  string `json:"started_at"`
+		FinishedAt string `json:"finished_at,omitempty"`
+		DurationMS int64  `json:"duration_ms"`
+		Completed  bool   `json:"completed"`
+		Component  string `json:"component,omitempty"`
+	}
+	phases := make([]phaseTiming, 0, len(r.phases))
+	for _, phase := range r.phases {
+		finished := phase.Finished
+		if finished.IsZero() && !phase.Started.IsZero() {
+			finished = r.finishedAt
+		}
+		entry := phaseTiming{
+			ID:        phase.ID,
+			Name:      phase.Name,
+			StartedAt: phase.Started.UTC().Format(time.RFC3339Nano),
+			Completed: phase.Completed,
+			Component: phase.Component,
+		}
+		if !finished.IsZero() {
+			entry.FinishedAt = finished.UTC().Format(time.RFC3339Nano)
+			entry.DurationMS = deploymentPhaseDuration(phase, finished).Milliseconds()
+		}
+		phases = append(phases, entry)
+	}
+	document := struct {
+		Version               int                  `json:"version"`
+		RunID                 string               `json:"run_id"`
+		StartedAt             string               `json:"started_at"`
+		FinishedAt            string               `json:"finished_at"`
+		DurationMS            int64                `json:"duration_ms"`
+		Succeeded             bool                 `json:"succeeded"`
+		InfrastructureChanged bool                 `json:"infrastructure_changed"`
+		MutationScopeCertain  bool                 `json:"mutation_scope_certain"`
+		Mutations             []deploymentMutation `json:"mutations,omitempty"`
+		CleanupAttempted      bool                 `json:"cleanup_attempted"`
+		CleanupRemoved        bool                 `json:"cleanup_removed"`
+		Phases                []phaseTiming        `json:"phases"`
+		Suboperations         []deploymentTiming   `json:"suboperations"`
+	}{
+		Version:               1,
+		RunID:                 r.runID,
+		StartedAt:             r.startedAt.UTC().Format(time.RFC3339Nano),
+		FinishedAt:            r.finishedAt.UTC().Format(time.RFC3339Nano),
+		DurationMS:            r.finishedAt.Sub(r.startedAt).Milliseconds(),
+		Succeeded:             operationErr == nil && r.cleanupErr == nil,
+		InfrastructureChanged: r.infrastructureChanged,
+		MutationScopeCertain:  r.mutationScopeCertain,
+		Mutations:             append([]deploymentMutation(nil), r.mutations...),
+		CleanupAttempted:      r.cleanupAttempted,
+		CleanupRemoved:        r.cleanupRemoved,
+		Phases:                phases,
+		Suboperations:         append([]deploymentTiming(nil), r.timings...),
+	}
+	data, err := json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode deployment timing report: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(r.timingPath), 0700); err != nil {
+		return fmt.Errorf("create deployment timing directory: %w", err)
+	}
+	if err := writePrivate(r.timingPath, append(data, '\n')); err != nil {
+		return fmt.Errorf("write deployment timing report: %w", err)
+	}
+	return nil
 }
 
 func compactError(err error) string {

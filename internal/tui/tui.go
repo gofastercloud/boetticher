@@ -68,8 +68,13 @@ const (
 type commandItem struct{ usage string }
 
 func (i commandItem) FilterValue() string { return i.usage }
-func (i commandItem) Title() string       { return strings.TrimPrefix(i.usage, "boetticher ") }
-func (i commandItem) Description() string { return "Run or inspect this operator command" }
+func (i commandItem) Title() string       { return commandPath(i.usage) }
+func (i commandItem) Description() string {
+	if commandPath(i.usage) == "network test" {
+		return "Live path diagnostic; creates temporary probes and cleans them up"
+	}
+	return ""
+}
 
 type snapshot struct {
 	site       model.Site
@@ -81,18 +86,20 @@ type snapshot struct {
 }
 
 type modelState struct {
-	options  Options
-	snapshot snapshot
-	commands list.Model
-	input    textinput.Model
-	viewport viewport.Model
-	mode     mode
-	width    int
-	height   int
-	output   string
-	message  string
-	running  bool
-	command  string
+	options       Options
+	snapshot      snapshot
+	commands      list.Model
+	input         textinput.Model
+	viewport      viewport.Model
+	mode          mode
+	width         int
+	height        int
+	output        string
+	message       string
+	running       bool
+	command       string
+	progress      <-chan string
+	progressLines []string
 }
 
 type refreshResult struct {
@@ -106,6 +113,12 @@ type commandResult struct {
 	command string
 	output  string
 	err     error
+}
+
+type commandProgress struct {
+	channel <-chan string
+	line    string
+	done    bool
 }
 
 // Run starts the alternate-screen TUI.
@@ -122,7 +135,7 @@ func Run(options Options) error {
 		items = append(items, commandItem{usage: usage})
 	}
 	delegate := list.NewDefaultDelegate()
-	delegate.ShowDescription = false
+	delegate.ShowDescription = true
 	commands := list.New(items, delegate, 34, 16)
 	commands.Title = "Commands"
 	commands.SetShowStatusBar(false)
@@ -166,6 +179,7 @@ func (m *modelState) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case commandResult:
 		m.running = false
+		m.progress = nil
 		m.mode = outputMode
 		m.command = msg.command
 		m.output = strings.TrimSpace(msg.output)
@@ -180,6 +194,14 @@ func (m *modelState) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.viewport.SetContent(m.output)
 		m.viewport.GotoTop()
+	case commandProgress:
+		if !msg.done && m.running {
+			m.progressLines = append(m.progressLines, msg.line)
+			if len(m.progressLines) > 12 {
+				m.progressLines = m.progressLines[len(m.progressLines)-12:]
+			}
+			return m, waitForCommandProgress(msg.channel)
+		}
 	case tea.KeyPressMsg:
 		return m.updateKey(msg)
 	}
@@ -254,19 +276,94 @@ func (m *modelState) execute(line string) tea.Cmd {
 	command := strings.Join(args, " ")
 	m.running = true
 	m.message = "Running " + command
-	return func() tea.Msg {
+	m.progressLines = nil
+	progress := make(chan string, 128)
+	m.progress = progress
+	commandRun := func() tea.Msg {
 		var output bytes.Buffer
 		var errOutput bytes.Buffer
 		var runErr error
 		if containsSensitiveInput(args) {
+			close(progress)
 			return commandResult{command: command, output: "Sensitive operations use the existing secure terminal prompt.\n", err: runInteractive(args)}
 		}
-		runErr = m.options.Runner(args, strings.NewReader(""), &output, &errOutput)
+		progressOutput := &progressWriter{dst: &output, channel: progress}
+		runErr = m.options.Runner(args, strings.NewReader(""), progressOutput, &errOutput)
+		progressOutput.flush()
+		close(progress)
 		if errOutput.Len() > 0 {
 			output.WriteString(errOutput.String())
 		}
 		return commandResult{command: command, output: output.String(), err: runErr}
 	}
+	return tea.Batch(commandRun, waitForCommandProgress(progress))
+}
+
+func waitForCommandProgress(channel <-chan string) tea.Cmd {
+	return func() tea.Msg {
+		line, ok := <-channel
+		if !ok {
+			return commandProgress{channel: channel, done: true}
+		}
+		return commandProgress{channel: channel, line: line}
+	}
+}
+
+type progressWriter struct {
+	dst     io.Writer
+	channel chan<- string
+	partial string
+}
+
+func (w *progressWriter) Write(p []byte) (int, error) {
+	n, err := w.dst.Write(p)
+	if n == 0 {
+		return n, err
+	}
+	w.partial += string(p[:n])
+	for {
+		index := strings.IndexByte(w.partial, '\n')
+		if index < 0 {
+			break
+		}
+		w.send(w.partial[:index])
+		w.partial = w.partial[index+1:]
+	}
+	return n, err
+}
+
+func (w *progressWriter) flush() {
+	if w.partial != "" {
+		w.send(w.partial)
+		w.partial = ""
+	}
+}
+
+func (w *progressWriter) send(line string) {
+	line = strings.TrimSpace(line)
+	if !isProgressLine(line) {
+		return
+	}
+	select {
+	case w.channel <- line:
+	default:
+		// The completed command output remains authoritative. A bounded
+		// TUI channel must not slow or break the underlying operation.
+	}
+}
+
+func isProgressLine(line string) bool {
+	return strings.HasPrefix(line, "[") ||
+		strings.HasPrefix(line, "PASS ") ||
+		strings.HasPrefix(line, "FAIL ") ||
+		strings.HasPrefix(line, "FAIL:") ||
+		strings.HasPrefix(line, "Changed:") ||
+		strings.HasPrefix(line, "Timing:") ||
+		strings.HasPrefix(line, "timing stage=") ||
+		strings.HasPrefix(line, "Bootstrap:") ||
+		strings.HasPrefix(line, "Deployment:") ||
+		strings.HasPrefix(line, "Network test ") ||
+		strings.HasPrefix(line, "Network cleanup:")
 }
 
 func (m *modelState) refresh() tea.Cmd {
@@ -324,6 +421,15 @@ func (m *modelState) mainView() string {
 		return "Loading Boetticher..."
 	}
 	if m.mode == argumentMode {
+		if m.running {
+			body := "Working..."
+			if len(m.progressLines) > 0 {
+				body += "\n\n" + strings.Join(m.progressLines, "\n")
+			} else {
+				body += "\nWaiting for the first progress update..."
+			}
+			return panel(m.command, body)
+		}
 		return panel("Run command", m.input.View()+"\n\nEnter to run · esc to cancel")
 	}
 	if m.mode == outputMode {
