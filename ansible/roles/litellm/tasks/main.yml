@@ -130,7 +130,7 @@
     - {dest: /var/lib/boetticher/identity/tls/client-ca.pem, content: "{{ client_ca_pem | default('') }}"}
   no_log: true
   when: litellm_server_cert_pem | default('') | length > 0
-  notify: reload nginx
+  notify: restart nginx
 
 - name: Install the current client certificate revocation list for LiteLLM mTLS
   ansible.builtin.copy:
@@ -140,7 +140,7 @@
     group: root
     mode: '0644'
   no_log: true
-  notify: reload nginx
+  notify: restart nginx
   when: litellm_server_cert_pem | default('') | length > 0
 
 - name: Configure nginx as the only LiteLLM listener
@@ -173,13 +173,13 @@
           }
       }
   when: litellm_server_cert_pem | default('') | length > 0
-  notify: reload nginx
+  notify: restart nginx
 
 - name: Remove the distribution nginx default site
   ansible.builtin.file:
     path: /etc/nginx/sites-enabled/default
     state: absent
-  notify: reload nginx
+  notify: restart nginx
 
 - name: Enable the LiteLLM nginx site
   ansible.builtin.file:
@@ -187,7 +187,21 @@
     dest: /etc/nginx/sites-enabled/litellm.conf
     state: link
   when: litellm_server_cert_pem | default('') | length > 0
-  notify: reload nginx
+  notify: restart nginx
+
+- name: Order LiteLLM nginx after the guest network is online
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/nginx.service.d/boetticher-network.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      # The listener uses the fixed module address, which may not exist when
+      # the distribution nginx unit starts during early guest boot.
+      [Unit]
+      After=network-online.target
+      Wants=network-online.target
+  notify: restart nginx
 
 - name: Enable and start the LiteLLM backend and nginx frontend
   ansible.builtin.service:
