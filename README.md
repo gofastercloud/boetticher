@@ -74,6 +74,11 @@ authority was cleaned up, and the next command to run. See the
 The one-time `preflight` and `bootstrap` commands are part of the advanced
 command surface; use `boetticher help --advanced` for their full forms.
 
+`boetticher tui` is an experimental terminal dashboard and command launcher.
+It is handy for a quick look around, but the regular CLI remains the supported
+path for dependable operation, automation, and recovery. The TUI uses the same
+confirmation gates as the commands it launches.
+
 For an external firewall, use `boetticher init --external-firewall` and follow
 the [external-firewall contract](docs/networking/external-firewall.md) before
 bootstrap. Managed mode is the simpler default and starts with a virtual-only
