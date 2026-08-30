@@ -218,3 +218,20 @@
     state: started
   loop: [litellm, nginx]
   when: litellm_server_cert_pem | default('') | length > 0
+
+- name: Inspect LiteLLM service state after runtime configuration
+  ansible.builtin.command: systemctl show litellm --property=ActiveState --property=SubState --value
+  register: litellm_service_state
+  changed_when: false
+  when: litellm_server_cert_pem | default('') | length > 0
+
+- name: Restart LiteLLM after credential projection or an unhealthy start
+  ansible.builtin.systemd_service:
+    name: litellm
+    state: restarted
+    daemon_reload: true
+  when:
+    - litellm_server_cert_pem | default('') | length > 0
+    - >-
+      (boetticher_credential_dropin_install is changed) or
+      (litellm_service_state.stdout_lines | default([]) != ['active', 'running'])
