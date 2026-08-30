@@ -197,6 +197,14 @@
     group: root
     mode: '0755'
 
+- name: Create the nginx systemd drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/nginx.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
 - name: Order LiteLLM nginx after the guest network is online
   ansible.builtin.copy:
     dest: /etc/systemd/system/nginx.service.d/boetticher-network.conf
