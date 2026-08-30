@@ -187,7 +187,7 @@
     dest: /etc/nginx/sites-enabled/litellm.conf
     state: link
   when: litellm_server_cert_pem | default('') | length > 0
-  notify: restart nginx
+    notify: restart nginx
 
 - name: Create the nginx systemd drop-in directory
   ansible.builtin.file:
