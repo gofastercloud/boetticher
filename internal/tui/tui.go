@@ -398,11 +398,13 @@ func loadSnapshot(dir string) snapshot {
 func desiredReport(s model.Site, revision string) statusmodel.Report {
 	checks := []statusmodel.LegacyCheck{{Name: "desired platform model", Status: "PASS", Detail: "typed desired state composed locally"}}
 	for _, module := range s.Modules {
-		status := "NOT TESTED"
+		status := "FAIL"
+		detail := "live runtime evidence is unavailable in offline mode"
 		if !module.Enabled {
 			status = "PASS"
+			detail = "module is disabled"
 		}
-		checks = append(checks, statusmodel.LegacyCheck{Name: module.Name, Status: status, Detail: "runtime evidence requires a live check"})
+		checks = append(checks, statusmodel.LegacyCheck{Name: module.Name, Status: status, Detail: detail})
 	}
 	return statusmodel.FromLegacy(revision, time.Now().UTC().Format(time.RFC3339), checks)
 }

@@ -37,7 +37,9 @@ Choose the smallest guide that answers your question.
   and what remains yours.
 - [State and determinism](state-model.md) explains desired state, generated
   projections, and live observations.
-- [Command reference](commands.md) is generated from the CLI metadata.
+- [Command reference](commands.md) is generated from the CLI metadata. The
+  `tui` command is experimental; the regular commands remain the supported
+  path for automation and recovery.
 
 ## Maintainers and qualification
 

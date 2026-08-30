@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gofastercloud/boetticher/internal/model"
 	statusmodel "github.com/gofastercloud/boetticher/internal/status"
 )
 
@@ -51,5 +52,26 @@ func TestRefreshUsesLiveStatusJSONAndPreservesCommandError(t *testing.T) {
 	}
 	if strings.Join(gotArgs, " ") != "status --site /site --live --json" {
 		t.Fatalf("refresh args = %v", gotArgs)
+	}
+}
+
+func TestDesiredReportUsesBinaryResultsWithoutLiveEvidence(t *testing.T) {
+	report := desiredReport(model.Site{Modules: []model.ResolvedModule{
+		{Name: "monitoring", Enabled: true},
+		{Name: "printer", Enabled: false},
+	}}, "revision")
+	if report.OverallState != statusmodel.Failed {
+		t.Fatalf("offline report overall state = %q, want %q", report.OverallState, statusmodel.Failed)
+	}
+	if got := report.Checks[1].Evidence; got != statusmodel.FAIL {
+		t.Fatalf("enabled module evidence = %q, want FAIL", got)
+	}
+	if got := report.Checks[2].Evidence; got != statusmodel.PASS {
+		t.Fatalf("disabled module evidence = %q, want PASS", got)
+	}
+	for _, check := range report.Checks {
+		if strings.Contains(string(check.Evidence), "NOT TESTED") || strings.Contains(check.Reason, "NOT TESTED") {
+			t.Fatalf("offline report exposed non-binary evidence: %#v", check)
+		}
 	}
 }

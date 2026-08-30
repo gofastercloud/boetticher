@@ -35,6 +35,19 @@ for the short setup path.
 `update` changes compatible local configuration; it does not deploy. `upgrade`
 is an advanced command that is not available for normal release updates.
 
+## Experimental TUI
+
+`boetticher tui --site ./my-boetticher` opens a small terminal dashboard with
+live status, a command list, and a place to run an existing command. It is
+experimental: expect rough edges, and use the regular CLI when you need a
+repeatable automation or recovery path. The TUI does not create a new
+permission model; commands still keep their normal confirmation gates and
+secret-handling rules.
+
+Use `--offline` for a local view when the site has not been deployed or live
+refresh is not useful. Offline data is only a local projection, so use
+`boetticher status --site ./my-boetticher --live` for the supported live check.
+
 ## Reading a deploy result
 
 Deploy works through nine high-level phases. It prints a phase when it starts
