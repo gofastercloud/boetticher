@@ -75,6 +75,7 @@ var PublicBuildInputs = []string{
 	"internal/pathguard",
 	"internal/usbexport",
 	"images",
+	"services/streamdeck",
 	"scripts/build-images.sh",
 	"scripts/scan-images.sh",
 	"scripts/smoke-appliance.sh",

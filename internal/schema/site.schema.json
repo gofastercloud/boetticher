@@ -202,6 +202,9 @@
         "printer": {
           "$ref": "#/$defs/ToggleModuleConfig"
         },
+        "streamdeck": {
+          "$ref": "#/$defs/ToggleModuleConfig"
+        },
         "tailnet-router": {
           "$ref": "#/$defs/ToggleModuleConfig"
         }

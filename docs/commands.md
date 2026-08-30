@@ -399,7 +399,7 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, litellm, and printer are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, litellm, printer, and streamdeck are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 
@@ -1025,7 +1025,7 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, litellm, and printer are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, litellm, printer, and streamdeck are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 
@@ -1041,7 +1041,7 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, litellm, and printer are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, litellm, printer, and streamdeck are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 
@@ -1057,7 +1057,7 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, litellm, and printer are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, litellm, printer, and streamdeck are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 

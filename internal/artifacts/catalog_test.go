@@ -500,7 +500,7 @@ func TestArtifactDefinitionDigestBindsBuildInputs(t *testing.T) {
 
 func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	root := filepath.Join("..", "..", "images")
-	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "portal/image.yaml", "tailnet-router/image.yaml", "litellm/image.yaml", "aiops/image.yaml"}
+	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "portal/image.yaml", "tailnet-router/image.yaml", "litellm/image.yaml", "printer/image.yaml", "streamdeck/image.yaml", "aiops/image.yaml"}
 	for _, relative := range paths {
 		data, err := os.ReadFile(filepath.Join(root, relative))
 		if err != nil {
@@ -1050,7 +1050,7 @@ func TestBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {
 		}
 		entries[header.Name] = true
 	}
-	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "images/tailnet-router/image.yaml", "images/litellm/runtime/requirements.lock", "cmd/qualify-artifact/main.go", "cmd/boetticher-aiops/main.go", "cmd/boetticher-log-query/main.go", "internal/aiops/aiops.go", "internal/gatus/gatus.go", "internal/usbexport/plan.go"} {
+	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "images/tailnet-router/image.yaml", "images/litellm/runtime/requirements.lock", "images/streamdeck/runtime/streamdeck-status.service", "services/streamdeck/src/boetticher_streamdeck/app.py", "cmd/qualify-artifact/main.go", "cmd/boetticher-aiops/main.go", "cmd/boetticher-log-query/main.go", "internal/aiops/aiops.go", "internal/gatus/gatus.go", "internal/usbexport/plan.go"} {
 		if !entries[required] {
 			t.Fatalf("archive omitted public build input %s", required)
 		}

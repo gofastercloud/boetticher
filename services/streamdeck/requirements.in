@@ -1,0 +1,4 @@
+hatchling==1.27.0
+httpx==0.28.1
+Pillow==12.3.0
+streamdeck @ https://github.com/abcminiuser/python-elgato-streamdeck/archive/5537d6991e651d0d293000fa61ee330d6209c8e5.tar.gz

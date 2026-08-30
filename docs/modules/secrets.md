@@ -36,6 +36,12 @@ not values in `site.yml`; their plaintext values must never enter generated
 model/configuration output, artifacts, portal content, or logs. Tailscale
 registration material is only needed when retained node state is absent.
 
+The optional `streamdeck` module reuses Core's existing `pulse_api_token` from
+the monitoring module. It is installed as an encrypted systemd credential only
+after the controller has validated the mTLS Pulse read path; it is not an
+operator-configured StreamDeck secret and is never written to the display
+configuration.
+
 Kea TSIG material is delivered through a systemd credential and materialised as
 the smallest protected ephemeral secret file required by Kea D2. PowerDNS TSIG
 material is an explicit third-party exception: PowerDNS stores its supported

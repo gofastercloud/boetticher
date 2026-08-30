@@ -48,6 +48,7 @@ const (
 	LoggingVMID                 = 140
 	BuilderVMID                 = 190
 	PrinterVMID                 = 230
+	StreamDeckVMID              = 220
 	BuilderCores                = 4
 	BuilderMemoryMiB            = 8192
 	BuilderDiskGiB              = 32

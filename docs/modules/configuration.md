@@ -32,6 +32,8 @@ modules:
     model_alias: selected-alias
   printer:
     enabled: false
+  streamdeck:
+    enabled: false
   gatus:
     enabled: false
 usb_exports:
@@ -40,19 +42,24 @@ usb_exports:
     port: "1-2.4"
     vendor_id: "1a86"
     product_id: "7523"
+  - module: streamdeck
+    requirement: display
+    port: "1-2.5"
+    vendor_id: "0fd9"
+    product_id: "006d"
 ```
 
 An omitted module map uses the defaults: DNS and logging are mandatory,
 monitoring and the managed firewall are enabled, and Gatus, LiteLLM, printer,
-AIOps, and Tailnet Router are disabled. DNS has no disable switch or
+StreamDeck, AIOps, and Tailnet Router are disabled. DNS has no disable switch or
 provider-selection field; Blocky is its sole client-facing recursive/filtering
 implementation.
 
 Use `boetticher config validate` before deployment, `boetticher config show`
 to inspect normalized non-secret configuration, and `boetticher config schema`
 to print the shipped generated JSON Schema. Unknown fields and unknown module names
-are errors with a configuration path. `tailnet-router`, `litellm`, and `printer` are
-default-off; LiteLLM exposes only the explicitly declared aliases and keeps
+are errors with a configuration path. `tailnet-router`, `litellm`, `printer`, and
+`streamdeck` are default-off; LiteLLM exposes only the explicitly declared aliases and keeps
 the referenced provider credentials in SOPS-managed secret state. `aiops` is
 also default-off and accepts only `enabled` plus a declared `model_alias`;
 provider, model, tool, and SSH fields are rejected.

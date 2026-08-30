@@ -44,7 +44,7 @@ func builderArtifactTargets(plan Plan) ([]string, error) {
 		selected[guest.Artifact.Name] = true
 	}
 	targets := make([]string, 0, len(selected))
-	for _, name := range []string{"base", "dns", "logging", "monitoring", "firewall", "portal", "tailnet-router", "litellm", "printer", "aiops", "gatus"} {
+	for _, name := range []string{"base", "dns", "logging", "monitoring", "firewall", "portal", "tailnet-router", "litellm", "printer", "streamdeck", "aiops", "gatus"} {
 		definition, ok := artifacts.Lookup(name)
 		if ok && selected[definition.ArtifactName] {
 			targets = append(targets, definition.BuildTarget)
