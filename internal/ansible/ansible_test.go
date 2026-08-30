@@ -193,7 +193,13 @@ func TestAIOpsServiceAllowsDeclaredDNSResolvers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"IPAddressAllow=10.10.10.10", "IPAddressAllow=10.10.10.11"} {
+	for _, expected := range []string{
+		"LoadCredentialEncrypted=webhook-secret:/var/lib/boetticher/credentials/aiops-webhook-secret.cred",
+		"LoadCredentialEncrypted=pulse-read-token:/var/lib/boetticher/credentials/aiops-pulse-read-token.cred",
+		"LoadCredentialEncrypted=pulse-note-token:/var/lib/boetticher/credentials/aiops-pulse-note-token.cred",
+		"IPAddressAllow=10.10.10.10",
+		"IPAddressAllow=10.10.10.11",
+	} {
 		if !strings.Contains(string(service), expected) {
 			t.Fatalf("AIOps service missing %q", expected)
 		}

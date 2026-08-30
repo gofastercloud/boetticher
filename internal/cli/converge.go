@@ -1038,6 +1038,18 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 	if err != nil {
 		return err
 	}
+	if err := pulseAdmin.ValidateReadToken(ctx, readToken); err != nil {
+		if !pulse.IsUnauthorized(err) {
+			return fmt.Errorf("validate AIOps Pulse read token: %w", err)
+		}
+		readToken, err = pulseAdmin.CreateReadToken(ctx, "boetticher aiops read")
+		if err != nil {
+			return fmt.Errorf("refresh AIOps Pulse read token: %w", err)
+		}
+		if err := site.StorePlatformSecret(siteDir, s, ageIdentity, "aiops_pulse_read_token", readToken); err != nil {
+			return fmt.Errorf("store refreshed AIOps Pulse read token: %w", err)
+		}
+	}
 	noteToken, err := loadOrCreatePulseToken(siteDir, ageIdentity, s, "aiops_pulse_note_token", func() (string, error) {
 		return pulseAdmin.CreateIncidentNoteToken(ctx, "boetticher aiops notes")
 	})

@@ -246,6 +246,19 @@ func (c *Client) StateSummary(ctx context.Context) (StateSummary, error) {
 	return summary, nil
 }
 
+// ValidateReadToken checks a persisted monitoring:read token with the admin
+// client's already-configured transport. The token itself is never logged or
+// included in an error; callers may refresh it only when IsUnauthorized is
+// true.
+func (c *Client) ValidateReadToken(ctx context.Context, token string) error {
+	if !c.admin || strings.TrimSpace(token) == "" {
+		return errors.New("Pulse read-token validation requires admin authority and a token")
+	}
+	candidate := &Client{baseURL: c.baseURL, apiToken: token, http: c.http}
+	_, err := candidate.StateSummary(ctx)
+	return err
+}
+
 func (c *Client) Resources(ctx context.Context) (ResourcesResponse, error) {
 	var resources ResourcesResponse
 	if err := c.getJSON(ctx, "/resources?source=proxmox&limit=100", &resources); err != nil {
