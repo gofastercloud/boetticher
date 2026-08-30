@@ -228,6 +228,13 @@
   changed_when: false
   when: inventory_hostname == 'lab-monitor-01'
 
+- name: Inspect Pulse runtime credential materialization
+  ansible.builtin.command: test -s /run/credentials/pulse.service/pulse-admin-password
+  register: pulse_runtime_credential
+  changed_when: false
+  failed_when: false
+  when: inventory_hostname == 'lab-monitor-01'
+
 - name: Restart Pulse after credential projection or an unhealthy start
   ansible.builtin.systemd_service:
     name: pulse
@@ -237,4 +244,5 @@
     - inventory_hostname == 'lab-monitor-01'
     - >-
       (boetticher_credential_dropin_install is changed) or
-      (pulse_service_state.stdout_lines | default([]) != ['active', 'running'])
+      (pulse_service_state.stdout_lines | default([]) != ['active', 'running']) or
+      (pulse_runtime_credential.rc | default(1) != 0)

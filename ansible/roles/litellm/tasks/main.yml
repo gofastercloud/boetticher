@@ -225,6 +225,17 @@
   changed_when: false
   when: litellm_server_cert_pem | default('') | length > 0
 
+- name: Inspect LiteLLM runtime credential materialization
+  ansible.builtin.command: >-
+    test -s /run/credentials/litellm.service/{{ upstream.api_key_secret | lower | replace('_', '-') | replace('.', '-') }}
+  loop: "{{ module_configs.litellm.upstreams }}"
+  loop_control:
+    loop_var: upstream
+  register: litellm_runtime_credentials
+  changed_when: false
+  failed_when: false
+  when: litellm_server_cert_pem | default('') | length > 0
+
 - name: Restart LiteLLM after credential projection or an unhealthy start
   ansible.builtin.systemd_service:
     name: litellm
@@ -234,4 +245,5 @@
     - litellm_server_cert_pem | default('') | length > 0
     - >-
       (boetticher_credential_dropin_install is changed) or
-      (litellm_service_state.stdout_lines | default([]) != ['active', 'running'])
+      (litellm_service_state.stdout_lines | default([]) != ['active', 'running']) or
+      (litellm_runtime_credentials.results | default([]) | selectattr('rc', 'ne', 0) | list | length > 0)

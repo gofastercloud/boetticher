@@ -368,13 +368,33 @@ func TestPulseRestartsAfterCredentialProjectionOrUnhealthyStart(t *testing.T) {
 	monitorText := string(monitorData)
 	for _, required := range []string{
 		"systemctl show pulse --property=ActiveState --property=SubState --value",
+		"test -s /run/credentials/pulse.service/pulse-admin-password",
 		"boetticher_credential_dropin_install is changed",
 		"pulse_service_state.stdout_lines | default([]) != ['active', 'running']",
+		"pulse_runtime_credential.rc | default(1) != 0",
 		"state: restarted",
 		"daemon_reload: true",
 	} {
 		if !strings.Contains(monitorText, required) {
 			t.Fatalf("Pulse recovery contract is missing %q", required)
+		}
+	}
+}
+
+func TestLiteLLMRestartsWhenAnyRuntimeCredentialIsMissing(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "litellm", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		"test -s /run/credentials/litellm.service/{{ upstream.api_key_secret | lower | replace('_', '-') | replace('.', '-') }}",
+		"register: litellm_runtime_credentials",
+		"litellm_runtime_credentials.results | default([]) | selectattr('rc', 'ne', 0) | list | length > 0",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("LiteLLM credential recovery contract is missing %q", required)
 		}
 	}
 }
