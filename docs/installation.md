@@ -1,9 +1,9 @@
 # Installation
 
 Boetticher runs from a macOS or Linux controller and builds a small platform
-on a fresh amd64 Proxmox host. The controller keeps the private site
-repository, encrypted secrets, and recovery authority; the Proxmox host runs
-the platform.
+on a fresh amd64 Proxmox host. Keep the private site repository, encrypted
+secrets, and independent Age recovery copy on the controller; Proxmox runs the
+platform.
 
 ## Before you begin
 
@@ -58,6 +58,10 @@ Run the read-only hardware and configuration check:
 boetticher preflight --site my-boetticher --live
 ```
 
+Preflight is read-only unless you explicitly add `--record`. If it fails,
+fix the named prerequisite and run it again; it will not half-bootstrap the
+host.
+
 Managed mode starts with a virtual-only internal bridge. If you want a
 physical trunk, select the interface reported by preflight and pass
 `--trunk-interface IFACE` to the guarded bootstrap. External-firewall mode
@@ -106,8 +110,11 @@ boetticher status --site my-boetticher --live
 `deploy` is the normal command that applies the complete platform. It creates
 the managed gateway when selected, brings up DNS/NTP, monitoring, logs, the
 portal, backups, and any enabled optional modules. `status` gives the normal
-operator view; use `doctor` or the [troubleshooting guide](troubleshooting.md)
-when it points to a specific problem.
+operator view. Deploy reports its nine orchestration phases as it works, then
+prints one final result with the failed phase, infrastructure changes, cleanup
+status, retry advice, and one next action when something goes wrong. Use
+`doctor` or the [troubleshooting guide](troubleshooting.md) when that next
+action points to a specific problem.
 
 The generated portal and the [operations guide](operations.md) are useful
 places to start after the first deployment. Create client certificates with
@@ -132,9 +139,9 @@ before bootstrap.
 ## If something goes wrong
 
 Keep the site repository, Age identity, CA authority, and declared backups
-together as a recovery set. A failed deployment retains its bounded retry path;
-cleanup failures require the recovery instructions before you treat the host
-as settled. Local backups share the storage failure domain, so keep an
+together as a recovery set. If deployment fails, follow its `Next action`.
+Cleanup failure is a stop sign: use the [recovery guide](recovery/recovery.md)
+before retrying. Local backups share the storage failure domain, so keep an
 independent copy for anything you care about.
 
 For detailed trust, storage, and rebuild procedures, see [recovery](recovery/recovery.md),

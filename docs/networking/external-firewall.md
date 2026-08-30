@@ -26,6 +26,13 @@ reservation-only DHCP with DDNS; TRANSIT, INFRA, and MGMT use static
 assignments only. SANDBOX must use its gateway for public DNS/NTP without
 being given the broad internal namespace. Proxmox uses `10.10.99.5` on MGMT.
 
+During deploy, Boetticher checks that it can generate this external contract.
+It cannot inspect your firewall, so a successful deploy does not claim that the
+external appliance has already permitted every path. Review and apply the
+generated contract on that appliance yourself. In managed-firewall mode,
+Boetticher checks required paths against its generated policy before applying
+the policy.
+
 For dynamic DNS, the external DHCP service may send authenticated RFC2136
 updates to `10.10.10.10:5353`. Use the generated SERVERS, TRUSTED, and SANDBOX
 child forward zones and their three matching reverse zones, the TSIG key names

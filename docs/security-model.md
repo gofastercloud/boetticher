@@ -118,7 +118,7 @@ After successful convergence, Core removes the temporary root authorized key
 from every managed guest and the Proxmox host, removes the host's temporary
 root SSH allowance, and locks the root password. If deployment stops before cleanup,
 the temporary root window remains available for a safe retry. Cleanup failure
-is a deployment hold; recovery uses the authenticated root/bootstrap path to
+fails the deployment; recovery uses the authenticated root/bootstrap path to
 complete cleanup. Operator break-glass root access is separate recovery
 authority and is not represented as durable `labadmin` privilege. The
 ephemeral builder uses the temporary root deployment key and is destroyed by

@@ -48,14 +48,15 @@ renumber or migrate an existing network.
 ## Quickstart
 
 Install Proxmox and the Boetticher controller first. On a fresh host, the first
-deployment establishes trust and storage once; after that, normal operation is
-just `deploy` followed by `status`.
+deployment establishes trust and storage once. After that, most changes are
+`deploy` followed by `status`.
 
 ```text
 boetticher init --site-dir my-boetticher
 boetticher bootstrap-endpoint set PROXMOX_HOME_IP --site my-boetticher
 boetticher preflight --site my-boetticher --live
 boetticher bootstrap --site my-boetticher --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem
+boetticher deploy --site my-boetticher --dry-run --proxmox-ca /path/to/pve-root-ca.pem
 boetticher deploy --site my-boetticher --proxmox-ca /path/to/pve-root-ca.pem
 boetticher status --site my-boetticher --live
 ```
@@ -64,8 +65,13 @@ boetticher status --site my-boetticher --live
 server; it is an example placeholder, not a literal address. During bootstrap,
 verify the Proxmox host fingerprint when SSH asks, keep an independent copy of
 the Age identity, and review any dedicated-disk prompt before confirming it.
-See the [installation guide](docs/installation.md) for the one-time details
-and the [operations guide](docs/operations.md) for the everyday workflow.
+Deploy prints nine useful phases and finishes with one `PASS` or `FAIL`
+summary. If it stops, the summary tells you what changed, whether temporary
+authority was cleaned up, and the next command to run. See the
+[installation guide](docs/installation.md) for the one-time details and the
+[operations guide](docs/operations.md) for the everyday workflow.
+The one-time `preflight` and `bootstrap` commands are part of the advanced
+command surface; use `boetticher help --advanced` for their full forms.
 
 For an external firewall, use `boetticher init --external-firewall` and follow
 the [external-firewall contract](docs/networking/external-firewall.md) before

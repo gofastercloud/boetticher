@@ -111,6 +111,10 @@ func commandHelp(args []string, out io.Writer) {
 	path := strings.Join(pathParts, " ")
 	spec, ok := nestedHelpSpecs[path]
 	if !ok {
+		path = normalizedHelpPath(pathParts)
+		spec, ok = nestedHelpSpecs[path]
+	}
+	if !ok {
 		spec, ok = helpSpecs[path]
 	}
 	if !ok && len(pathParts) > 0 {
@@ -121,6 +125,21 @@ func commandHelp(args []string, out io.Writer) {
 		return
 	}
 	fmt.Fprintf(out, "Purpose:\n  %s\n\nUsage:\n  %s\n\nArguments:\n  %s\n\nOptions:\n  %s\n\nSafety:\n  %s\n\nExamples:\n  %s\n\nRelated commands:\n  %s\n", spec.Purpose, spec.Usage, spec.Arguments, spec.Options, spec.Safety, spec.Examples, spec.Related)
+}
+
+func normalizedHelpPath(pathParts []string) string {
+	if len(pathParts) < 2 {
+		return ""
+	}
+	switch pathParts[0] {
+	case "module":
+		return strings.Join(pathParts[:2], " ")
+	case "modules":
+		if len(pathParts) >= 3 {
+			return strings.Join([]string{"modules", "MODULE", pathParts[2]}, " ")
+		}
+	}
+	return ""
 }
 
 func usage(out io.Writer) {
