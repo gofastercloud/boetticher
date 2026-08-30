@@ -25,6 +25,20 @@ func TestGatusRolePreparesConfigDirectoryAndReloadsNginx(t *testing.T) {
 	}
 }
 
+func TestGatusServiceUsesSupportedConfigEnvironment(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "images", "gatus", "runtime", "gatus.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	if !strings.Contains(text, "Environment=GATUS_CONFIG_PATH=/etc/boetticher/gatus/config.yaml") {
+		t.Fatal("Gatus service does not set the supported configuration path environment")
+	}
+	if strings.Contains(text, "--config-path") {
+		t.Fatal("Gatus service invokes an unsupported config-path argument")
+	}
+}
+
 func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	first, err := Inventory(site)
