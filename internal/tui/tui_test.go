@@ -40,6 +40,15 @@ func TestCommandPathStripsBinaryAndPlaceholders(t *testing.T) {
 	}
 }
 
+func TestSelectedSiteIsAddedToSiteAwareCommands(t *testing.T) {
+	if got := addSelectedSite([]string{"deploy"}, "/sites/lab"); !reflect.DeepEqual(got, []string{"deploy", "--site", "/sites/lab"}) {
+		t.Fatalf("selected site was not added: %v", got)
+	}
+	if got := addSelectedSite([]string{"deploy", "--site", "/other"}, "/sites/lab"); !reflect.DeepEqual(got, []string{"deploy", "--site", "/other"}) {
+		t.Fatalf("explicit site was overwritten: %v", got)
+	}
+}
+
 func TestCommandItemHighlightsNetworkTestAsLiveDiagnostic(t *testing.T) {
 	item := commandItem{usage: "boetticher network test [--site DIR] [--zones ZONE,...]"}
 	if got := item.Title(); got != "network test" {

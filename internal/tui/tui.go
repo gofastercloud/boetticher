@@ -273,6 +273,7 @@ func (m *modelState) execute(line string) tea.Cmd {
 	if args[0] == "boetticher" {
 		args = args[1:]
 	}
+	args = addSelectedSite(args, m.options.SiteDir)
 	command := strings.Join(args, " ")
 	m.running = true
 	m.message = "Running " + command
@@ -297,6 +298,19 @@ func (m *modelState) execute(line string) tea.Cmd {
 		return commandResult{command: command, output: output.String(), err: runErr}
 	}
 	return tea.Batch(commandRun, waitForCommandProgress(progress))
+}
+
+func addSelectedSite(args []string, siteDir string) []string {
+	if siteDir == "" || len(args) == 0 || args[0] == "init" || args[0] == "help" || args[0] == "tui" {
+		return args
+	}
+	for _, arg := range args {
+		if arg == "--site" || strings.HasPrefix(arg, "--site=") {
+			return args
+		}
+	}
+	result := append([]string(nil), args...)
+	return append(result, "--site", siteDir)
 }
 
 func waitForCommandProgress(channel <-chan string) tea.Cmd {
