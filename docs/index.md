@@ -10,6 +10,8 @@ Choose the smallest guide that answers your question.
   updates, modules, backups, and safe next actions.
 - [Troubleshooting](troubleshooting.md) explains common stops and where to
   look next.
+- The advanced `network test` command checks bounded paths from temporary
+  probes when you need to investigate reachability without changing policy.
 
 ## Using your homelab
 

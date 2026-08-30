@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"bytes"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/firewall"
@@ -56,7 +59,6 @@ func TestPolicyAllowsHonorsSourceAndDestinationCIDRs(t *testing.T) {
 		t.Fatal("non-matching source CIDR was allowed")
 	}
 }
-
 func TestPolicyAllowsBuiltInHTTPSForDynamicTrustedProbeAddress(t *testing.T) {
 	plan, err := firewall.PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {
@@ -65,6 +67,64 @@ func TestPolicyAllowsBuiltInHTTPSForDynamicTrustedProbeAddress(t *testing.T) {
 	for _, address := range []string{"10.10.30.106", "10.10.30.199"} {
 		if !policyAllows(plan, "TRUSTED", "INFRA", "tcp", 443, address, "10.10.10.20") {
 			t.Fatalf("Pulse HTTPS was denied for dynamic TRUSTED probe address %s", address)
+		}
+	}
+}
+
+func TestFinishNetworkTestRendersBinaryOperatorResults(t *testing.T) {
+	report := networktest.Report{
+		RunID:   "run-1",
+		Overall: "INCONCLUSIVE",
+		Cleanup: "HOLD: reserved VMID 910 is occupied by an unknown guest",
+		Results: []networktest.Result{
+			{Name: "tcp/TRUSTED/portal", Status: "INCONCLUSIVE", Detail: "HOLD: the path could not be established"},
+		},
+	}
+	var output bytes.Buffer
+	if err := finishNetworkTest(&output, false, report, nil); err == nil {
+		t.Fatal("finishNetworkTest() error = nil, want failure")
+	}
+	text := output.String()
+	for _, forbidden := range []string{"HOLD", "INCONCLUSIVE", "NOT TESTED", "NOT VERIFIED", "PARTIAL", "UNKNOWN"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("human output exposed %q: %s", forbidden, text)
+		}
+	}
+	for _, want := range []string{"Network test run-1: FAIL", "FAIL         tcp/TRUSTED/portal", "Cleanup: FAIL", "Reason:"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("human output missing %q: %s", want, text)
+		}
+	}
+}
+
+func TestFinishNetworkTestKeepsRichStatusesInJSON(t *testing.T) {
+	report := networktest.Report{RunID: "run-2", Overall: "INCONCLUSIVE", Cleanup: "HOLD: cleanup failed", Results: []networktest.Result{{Name: "iperf/one/two/tcp", Status: "INCONCLUSIVE"}}}
+	var output bytes.Buffer
+	if err := finishNetworkTest(&output, true, report, nil); err == nil {
+		t.Fatal("finishNetworkTest() error = nil, want failure")
+	}
+	if !strings.Contains(output.String(), `"overall": "INCONCLUSIVE"`) || !strings.Contains(output.String(), `"status": "INCONCLUSIVE"`) {
+		t.Fatalf("JSON output lost rich evidence: %s", output.String())
+	}
+}
+
+func TestNetworkTestProgressRendersDurationsAndBinaryResults(t *testing.T) {
+	var output bytes.Buffer
+	progress := newNetworkTestProgress(&output, 2)
+	progress.start("Prepare probes")
+	progress.complete()
+	progress.start("Run path checks")
+	progress.fail(errors.New("HOLD: one or more checks need attention"))
+
+	text := output.String()
+	for _, want := range []string{"[1/2] Prepare probes", "PASS (", "[2/2] Run path checks", "FAIL: one or more checks need attention"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("network progress omitted %q:\n%s", want, text)
+		}
+	}
+	for _, forbidden := range []string{"HOLD", "INCONCLUSIVE", "NOT TESTED", "NOT VERIFIED", "PARTIAL", "UNKNOWN"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("network progress exposed %q:\n%s", forbidden, text)
 		}
 	}
 }

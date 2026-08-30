@@ -66,9 +66,10 @@ boetticher status --site my-boetticher --live
 server; it is an example placeholder, not a literal address. During bootstrap,
 verify the Proxmox host fingerprint when SSH asks, keep an independent copy of
 the Age identity, and review any dedicated-disk prompt before confirming it.
-Deploy prints nine useful phases and finishes with one `PASS` or `FAIL`
-summary. If it stops, the summary tells you what changed, whether temporary
-authority was cleaned up, and the next command to run. See the
+Deploy prints nine useful phases with elapsed times and finishes with one
+`PASS` or `FAIL` summary. If it stops, the summary tells you what changed,
+whether temporary authority was cleaned up, the next command to run, and
+where to find a private timing report. See the
 [installation guide](docs/installation.md) for the one-time details and the
 [operations guide](docs/operations.md) for the everyday workflow.
 The one-time `preflight` and `bootstrap` commands are part of the advanced
@@ -77,7 +78,16 @@ command surface; use `boetticher help --advanced` for their full forms.
 `boetticher tui` is an experimental terminal dashboard and command launcher.
 It is handy for a quick look around, but the regular CLI remains the supported
 path for dependable operation, automation, and recovery. The TUI uses the same
-confirmation gates as the commands it launches.
+confirmation gates as the commands it launches. Its command list includes the
+advanced network test, but the direct CLI is the clearer choice when you need
+to select zones, capture traffic, or clean up a previous run.
+
+After deployment, `boetticher network test --site my-boetticher` runs a bounded
+live path check from exact-owned temporary probes. It checks reachability, DNS,
+policy, mTLS, and selected performance paths without changing firewall policy,
+then attempts to remove the probes. Use `--zones TRUSTED,SANDBOX` for a narrow
+run; the command reports one `PASS` or `FAIL` result and tells you what to do
+when cleanup or a path check needs attention.
 
 For an external firewall, use `boetticher init --external-firewall` and follow
 the [external-firewall contract](docs/networking/external-firewall.md) before

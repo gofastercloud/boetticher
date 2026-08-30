@@ -65,11 +65,11 @@ Arguments: No positional arguments.
 
 Options: --site selects the private site repository; --offline skips live refresh and displays local projections.
 
-Safety: The TUI uses the existing command safety gates. Mutations still require their explicit confirmation flags; secret values are never accepted as command arguments.
+Safety: Experimental. The TUI uses the existing command safety gates. Mutations still require their explicit confirmation flags; secret values are never accepted as command arguments. The command list includes the live network test; use the direct CLI when you need zones, captures, JSON, or cleanup-only.
 
 Examples: `boetticher tui --site ./my-boetticher`
 
-Related commands: status, doctor, deploy, module, firewall
+Related commands: status, doctor, deploy, module, firewall, network test
 
 ### preflight
 
@@ -1091,7 +1091,7 @@ Arguments: No positional arguments. By default all six modeled zones are exercis
 
 Options: --zones selects a comma-separated subset; --capture adds a bounded probe-local tcpdump case; --cleanup-only removes stale exact-owned probes; --json emits the redacted report model; connection options select the Proxmox trust path.
 
-Safety: Advanced and live. It creates only exact-owned unprivileged LXC probes in VMIDs 910-919, never changes firewall policy, and always removes its probes. Unknown occupants, ambiguous evidence, and cleanup failures return HOLD. Results are private evidence and do not change desired state.
+Safety: Advanced and live. It creates only exact-owned unprivileged LXC probes in VMIDs 910-919 and never changes firewall policy. It attempts cleanup after every run; a cleanup failure fails the command and must be resolved before retrying. Unknown occupants and ambiguous evidence fail with the reason. Results are private evidence and do not change desired state.
 
 Examples: `boetticher network test --site ./my-boetticher`; `boetticher network test --zones TRUSTED,SANDBOX --json --site ./my-boetticher`
 
