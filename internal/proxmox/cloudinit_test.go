@@ -315,7 +315,7 @@ func TestBuilderArtifactTargetsFollowResolvedPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"image-base", "image-dns-blocky", "image-logging", "image-monitoring", "image-firewall", "image-portal"}
+	want := []string{"image-base", "image-dns-blocky", "image-logging", "image-monitoring", "image-firewall", "image-portal", "image-network-probe"}
 	if strings.Join(targets, ",") != strings.Join(want, ",") {
 		t.Fatalf("builder targets = %#v, want %#v", targets, want)
 	}

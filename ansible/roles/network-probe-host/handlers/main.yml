@@ -1,0 +1,14 @@
+---
+- name: Validate network probe sudo policy
+  ansible.builtin.command: visudo -cf /etc/sudoers
+  changed_when: false
+
+- name: Validate and reload SSH
+  ansible.builtin.command: sshd -t
+  changed_when: false
+  notify: Reload SSH
+
+- name: Reload SSH
+  ansible.builtin.service:
+    name: ssh
+    state: reloaded

@@ -16,8 +16,8 @@ type CloudInitFiles struct {
 }
 
 func defaultBuilderArtifactTargets() []string {
-	targets := make([]string, 0, 6)
-	for _, name := range []string{"base", "dns", "logging", "monitoring", "portal", "firewall"} {
+	targets := make([]string, 0, 7)
+	for _, name := range []string{"base", "dns", "logging", "monitoring", "portal", "firewall", "network-probe"} {
 		definition, ok := artifacts.Lookup(name)
 		if !ok {
 			continue
@@ -33,7 +33,7 @@ func defaultBuilderArtifactTargets() []string {
 // LXC derivative; the firewall image is independent but is still selected
 // only when the managed firewall is in the plan.
 func builderArtifactTargets(plan Plan) ([]string, error) {
-	selected := map[string]bool{artifacts.BaseName: true}
+	selected := map[string]bool{artifacts.BaseName: true, "boetticher-network-probe": true}
 	for _, guest := range plan.Guests {
 		if guest.Artifact.Name == "" {
 			continue
@@ -44,7 +44,7 @@ func builderArtifactTargets(plan Plan) ([]string, error) {
 		selected[guest.Artifact.Name] = true
 	}
 	targets := make([]string, 0, len(selected))
-	for _, name := range []string{"base", "dns", "logging", "monitoring", "firewall", "portal", "tailnet-router", "litellm", "printer", "aiops", "gatus"} {
+	for _, name := range []string{"base", "dns", "logging", "monitoring", "firewall", "portal", "tailnet-router", "litellm", "printer", "aiops", "gatus", "network-probe"} {
 		definition, ok := artifacts.Lookup(name)
 		if ok && selected[definition.ArtifactName] {
 			targets = append(targets, definition.BuildTarget)

@@ -282,6 +282,7 @@ func Definitions() []Definition {
 		{Name: "printer", ArtifactName: "boetticher-printer", BuildTarget: "image-printer", ScanTarget: "boetticher-printer", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/printer", "internal/model", "internal/modules", "internal/usbexport")},
 		{Name: "aiops", ArtifactName: "boetticher-aiops", BuildTarget: "image-aiops", ScanTarget: "boetticher-aiops", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/aiops", "internal/aiops", "internal/model", "internal/modules", "cmd/boetticher-aiops")},
 		{Name: "gatus", ArtifactName: "boetticher-gatus", BuildTarget: "image-gatus", ScanTarget: "boetticher-gatus", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/gatus", "internal/model", "internal/modules", "internal/gatus")},
+		{Name: "network-probe", ArtifactName: "boetticher-network-probe", BuildTarget: "image-network-probe", ScanTarget: "boetticher-network-probe", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "cmd/boetticher-network-probe", "internal/networktest", "images/network-probe")},
 	}
 }
 

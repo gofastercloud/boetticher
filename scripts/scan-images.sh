@@ -8,7 +8,7 @@ if ! command -v trivy >/dev/null 2>&1; then
   exit 2
 fi
 
-default_scan_names="boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-firewall boetticher-portal boetticher-tailnet-router boetticher-litellm boetticher-printer boetticher-aiops boetticher-gatus"
+default_scan_names="boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-firewall boetticher-portal boetticher-tailnet-router boetticher-litellm boetticher-printer boetticher-aiops boetticher-gatus boetticher-network-probe"
 case "$target" in
   scan-base) names="boetticher-base" ;;
   scan-dns-blocky) names="boetticher-dns-blocky" ;;
@@ -21,6 +21,7 @@ case "$target" in
   scan-printer) names="boetticher-printer" ;;
   scan-aiops) names="boetticher-aiops" ;;
   scan-gatus) names="boetticher-gatus" ;;
+  scan-network-probe) names="boetticher-network-probe" ;;
   scan-images)
     names="$*"
     if [ -z "$names" ]; then
@@ -31,7 +32,7 @@ case "$target" in
 esac
 for name in $names; do
   case "$name" in
-    boetticher-base|boetticher-dns-blocky|boetticher-logging|boetticher-monitoring|boetticher-firewall|boetticher-portal|boetticher-tailnet-router|boetticher-litellm|boetticher-printer|boetticher-aiops|boetticher-gatus) ;;
+    boetticher-base|boetticher-dns-blocky|boetticher-logging|boetticher-monitoring|boetticher-firewall|boetticher-portal|boetticher-tailnet-router|boetticher-litellm|boetticher-printer|boetticher-aiops|boetticher-gatus|boetticher-network-probe) ;;
     *) echo "unknown selected scan artifact: $name" >&2; exit 2 ;;
   esac
 done
@@ -156,6 +157,7 @@ scan_one() {
     boetticher-printer) module=printer ;;
     boetticher-aiops) module=aiops ;;
     boetticher-gatus) module=gatus ;;
+    boetticher-network-probe) module=network-probe ;;
   esac
   if [ "$module" = dns ]; then
     GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact \

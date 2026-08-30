@@ -20,6 +20,7 @@ boetticher ssh-config [--site DIR] [--output PATH| -] [--force] [--check] [--ide
 boetticher access [--site DIR]
 boetticher bootstrap-endpoint show|set ADDRESS [--site DIR]
 boetticher network trunk status|attach|detach [INTERFACE] [--site DIR] [--confirm] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
+boetticher network test [--site DIR] [--zones ZONE,...] [--capture] [--cleanup-only] [--json] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]
 boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]
@@ -1062,6 +1063,22 @@ Safety: tailnet-router, litellm, and printer are default-off. Configure changes 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
+
+### network test
+
+Purpose: Run bounded reachability, DNS, policy, mTLS, and performance checks from temporary probes in the selected zones.
+
+Usage: `boetticher network test [--site DIR] [--zones ZONE,...] [--capture] [--cleanup-only] [--json] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+
+Arguments: No positional arguments. By default all six modeled zones are exercised.
+
+Options: --zones selects a comma-separated subset; --capture adds a bounded probe-local tcpdump case; --cleanup-only removes stale exact-owned probes; --json emits the redacted report model; connection options select the Proxmox trust path.
+
+Safety: Advanced and live. It creates only exact-owned unprivileged LXC probes in VMIDs 910-919, never changes firewall policy, and always removes its probes. Unknown occupants, ambiguous evidence, and cleanup failures return HOLD. Results are private evidence and do not change desired state.
+
+Examples: `boetticher network test --site ./my-boetticher`; `boetticher network test --zones TRUSTED,SANDBOX --json --site ./my-boetticher`
+
+Related commands: network trunk status, firewall diff, dhcp leases, verify
 
 ### network trunk attach
 

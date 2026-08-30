@@ -37,3 +37,4 @@
   gather_facts: false
   roles:
     - usb-export-host
+    - network-probe-host

@@ -1,0 +1,67 @@
+---
+- name: Create Core network probe directory
+  ansible.builtin.file:
+    path: /usr/lib/boetticher
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create locked network probe executor account
+  ansible.builtin.user:
+    name: lab-netprobe
+    system: true
+    shell: /bin/sh
+    create_home: false
+    password_lock: true
+
+- name: Install network probe host executor
+  ansible.builtin.copy:
+    src: boetticher-network-probe-host
+    dest: /usr/lib/boetticher/boetticher-network-probe-host
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install exact network probe sudo policy
+  ansible.builtin.copy:
+    content: "lab-netprobe ALL=(root) NOPASSWD: /usr/lib/boetticher/boetticher-network-probe-host\n"
+    dest: /etc/sudoers.d/boetticher-network-probe
+    owner: root
+    group: root
+    mode: "0440"
+  notify: Validate network probe sudo policy
+
+- name: Install restricted network probe authorized key
+  ansible.builtin.copy:
+    content: "restrict,command=\"sudo -n /usr/lib/boetticher/boetticher-network-probe-host\" {{ network_probe_operator_public_key }}\n"
+    dest: /home/lab-netprobe.authorized_keys
+    owner: lab-netprobe
+    group: lab-netprobe
+    mode: "0600"
+
+- name: Extend Proxmox SSH allow list for the restricted executor
+  ansible.builtin.replace:
+    path: /etc/ssh/sshd_config.d/90-boetticher-jump.conf
+    regexp: '^AllowUsers .*$'
+    replace: 'AllowUsers labadmin lab-jump lab-netprobe'
+  notify: Validate and reload SSH
+
+- name: Extend restricted SSH policy for the network probe executor
+  ansible.builtin.blockinfile:
+    path: /etc/ssh/sshd_config.d/91-boetticher-network-probe.conf
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+    marker: "# {mark} BOETTICHER NETWORK PROBE"
+    block: |
+      Match User lab-netprobe
+          AuthorizedKeysFile /home/lab-netprobe.authorized_keys
+          ForceCommand sudo -n /usr/lib/boetticher/boetticher-network-probe-host
+          PermitTTY no
+          X11Forwarding no
+          AllowAgentForwarding no
+          AllowTcpForwarding no
+          PermitTunnel no
+  notify: Validate and reload SSH

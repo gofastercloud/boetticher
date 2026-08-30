@@ -7,11 +7,11 @@ set -eu
 target=${1:-images}
 shift || true
 case "$target" in
-  image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-gatus|images) ;;
+  image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-gatus|image-network-probe|images) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
-default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-litellm image-printer image-aiops image-gatus image-firewall"
+default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-litellm image-printer image-aiops image-gatus image-network-probe image-firewall"
 if [ "$target" = images ]; then
   selected_image_targets="$*"
   if [ -z "$selected_image_targets" ]; then
@@ -19,7 +19,7 @@ if [ "$target" = images ]; then
   fi
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
-      image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-gatus) ;;
+      image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-gatus|image-network-probe) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac
   done
@@ -866,6 +866,16 @@ build_gatus_target() {
   package_lxc boetticher-gatus
 }
 
+build_network_probe_target() {
+  printf '%s\n' 'boetticher build stage: network probe'
+  rootfs=$(prepare_rootfs boetticher-network-probe)
+  install_packages "$rootfs" arping dnsutils iperf3 netcat-openbsd nmap tcpdump
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/libexec/boetticher-network-probe" ./cmd/boetticher-network-probe
+  chmod 0755 "$rootfs/usr/local/libexec/boetticher-network-probe"
+  write_artifact_identity "$rootfs" network-probe
+  package_lxc boetticher-network-probe
+}
+
 case "$target" in
   image-base) run_timed_image_target "$target" build_base ;;
   image-dns-blocky) run_timed_image_target "$target" build_dns_blocky_target ;;
@@ -877,6 +887,7 @@ case "$target" in
   image-printer) run_timed_image_target "$target" build_printer_target ;;
   image-aiops) run_timed_image_target "$target" build_aiops_target ;;
   image-gatus) run_timed_image_target "$target" build_gatus_target ;;
+  image-network-probe) run_timed_image_target "$target" build_network_probe_target ;;
   image-firewall) run_timed_image_target "$target" build_firewall ;;
   images) build_selected_images ;;
 esac
