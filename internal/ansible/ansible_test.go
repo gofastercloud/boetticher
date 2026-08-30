@@ -1125,6 +1125,7 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 				"proxy_pass http://127.0.0.1:4000;",
 				"listen 10.10.20.60:443 ssl;",
 				"proxy_pass http://127.0.0.1:4000;",
+				"path: /etc/systemd/system/nginx.service.d",
 				"dest: /etc/systemd/system/nginx.service.d/boetticher-network.conf",
 				"After=network-online.target",
 				"Wants=network-online.target",
