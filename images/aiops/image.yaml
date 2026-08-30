@@ -17,8 +17,8 @@ runtime:
   transient_evidence: /run/boetticher-aiops
 sources:
   holmes_server:
-    url: https://github.com/HolmesGPT/holmesgpt/archive/refs/tags/0.40.0.tar.gz
-    sha256: 3465cd634b0e478f058b026b37caa3b8f10651f7aa9058dc73368b5403f0fb3d
+    url: https://codeload.github.com/HolmesGPT/holmesgpt/tar.gz/3d201559c0f3648a6c567aece09662f4f407bcc9
+    sha256: 7016d3335a7f81810de35d9030a63bc38204d94991e3343d6cdbbcaf77a755be
 security:
   internet_toolset: disabled
   bash_toolset: disabled

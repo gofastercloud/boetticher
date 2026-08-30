@@ -126,8 +126,9 @@ litellm_python_package_version=3.13.5-1
 litellm_python_venv_package_version=3.13.5-1
 litellm_pip_package_version=25.1.1+dfsg-1
 litellm_nginx_package_version=1.26.3-3+deb13u7
-holmes_source_url=https://github.com/HolmesGPT/holmesgpt/archive/refs/tags/0.40.0.tar.gz
-holmes_source_sha256=3465cd634b0e478f058b026b37caa3b8f10651f7aa9058dc73368b5403f0fb3d
+holmes_source_url=https://codeload.github.com/HolmesGPT/holmesgpt/tar.gz/3d201559c0f3648a6c567aece09662f4f407bcc9
+holmes_source_sha256=7016d3335a7f81810de35d9030a63bc38204d94991e3343d6cdbbcaf77a755be
+holmes_source_root=holmesgpt-3d201559c0f3648a6c567aece09662f4f407bcc9
 gatus_source_url=https://github.com/TwiN/gatus/archive/refs/tags/v5.36.0.tar.gz
 gatus_source_sha256=b5543af591e602281406049ee2f822a6529a8f14be0cd54df5a31c210520159a
 mkdir -p "$output_root" "$work_root"
@@ -552,7 +553,7 @@ build_aiops() {
     echo "HOLD: HolmesGPT 0.40.0 source archive failed SHA-256 verification" >&2
     return 2
   }
-  tar -xOf "$holmes_archive" holmesgpt-0.40.0/server.py > "$rootfs/opt/holmes/server.py"
+  tar -xOf "$holmes_archive" "$holmes_source_root/server.py" > "$rootfs/opt/holmes/server.py"
   chmod 0644 "$rootfs/opt/holmes/server.py"
   rm -f "$rootfs/tmp/aiops-requirements.lock"
   CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/libexec/boetticher-aiops" ./cmd/boetticher-aiops
