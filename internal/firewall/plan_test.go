@@ -237,6 +237,7 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 		"10.10.99.5/32 ip daddr 10.10.5.10/32 tcp dport 22",
 		"set boetticher_endpoint_2 { type ipv4_addr; elements = { 198.51.100.10, 198.51.100.11 } }",
 		"10.10.20.60/32 ip daddr @boetticher_endpoint_2 tcp dport 443",
+		"oifname \"wan0\" ip saddr 10.10.5.10/32 masquerade comment \"boetticher:nat-transit\"",
 		"set module_guest_sources { type ipv4_addr; elements = {",
 		"10.10.10.20, 10.10.20.60, 10.10.5.10",
 		"iifname \"servers0\" ip saddr != @module_guest_sources oifname \"wan0\"",

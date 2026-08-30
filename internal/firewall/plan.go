@@ -675,6 +675,17 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 	b.WriteString("    iifname \"infra0\" " + moduleSourceCondition + "oifname \"wan0\" ip saddr @infra_net udp dport { 53, 123, 853 } counter accept comment \"boetticher:allow:forward-infra-internet-udp\"\n")
 	b.WriteString("    iifname \"mgmt0\" " + moduleSourceCondition + "oifname \"wan0\" ip saddr @mgmt_net tcp dport 443 counter accept comment \"boetticher:allow:forward-mgmt-internet\"\n")
 	b.WriteString("  }\n  chain output { type filter hook output priority filter; policy accept; }\n}\n\n")
+	transitNATSources := make(map[string]struct{})
+	for _, rule := range plan.Rules {
+		if rule.Action == "allow" && rule.From == "TRANSIT" && rule.To == "WAN" && rule.SourceCIDR != "" {
+			transitNATSources[rule.SourceCIDR] = struct{}{}
+		}
+	}
+	transitNATSourceList := make([]string, 0, len(transitNATSources))
+	for source := range transitNATSources {
+		transitNATSourceList = append(transitNATSourceList, source)
+	}
+	sort.Strings(transitNATSourceList)
 	b.WriteString("table ip " + NATTable + " {\n")
 	if plan.Upstream != nil {
 		b.WriteString("  chain prerouting {\n    type nat hook prerouting priority dstnat; policy accept;\n")
@@ -683,7 +694,11 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 		}
 		b.WriteString("  }\n")
 	}
-	b.WriteString("  chain postrouting {\n    type nat hook postrouting priority srcnat; policy accept;\n    oifname \"wan0\" ip saddr " + networkFor(plan, "TRUSTED") + " masquerade comment \"boetticher:nat-trusted\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SERVERS") + " masquerade comment \"boetticher:nat-servers\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "INFRA") + " masquerade comment \"boetticher:nat-infra\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SANDBOX") + " masquerade comment \"boetticher:nat-sandbox\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "MGMT") + " masquerade comment \"boetticher:nat-mgmt\"\n  }\n}\n")
+	b.WriteString("  chain postrouting {\n    type nat hook postrouting priority srcnat; policy accept;\n")
+	for _, source := range transitNATSourceList {
+		fmt.Fprintf(&b, "    oifname \"wan0\" ip saddr %s masquerade comment \"boetticher:nat-transit\"\n", source)
+	}
+	b.WriteString("    oifname \"wan0\" ip saddr " + networkFor(plan, "TRUSTED") + " masquerade comment \"boetticher:nat-trusted\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SERVERS") + " masquerade comment \"boetticher:nat-servers\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "INFRA") + " masquerade comment \"boetticher:nat-infra\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SANDBOX") + " masquerade comment \"boetticher:nat-sandbox\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "MGMT") + " masquerade comment \"boetticher:nat-mgmt\"\n  }\n}\n")
 	return b.String(), nil
 }
 

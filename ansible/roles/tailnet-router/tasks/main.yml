@@ -35,14 +35,14 @@
           exit 0
       fi
       credential="${CREDENTIALS_DIRECTORY:-}/tailscale-auth-key"
-      if [ -s "$credential" ] && tailscale up --auth-key="file:$credential" --accept-dns=false --advertise-routes=10.10.0.0/16 --snat-subnet-routes=true >/dev/null 2>&1; then
+      if [ -s "$credential" ] && tailscale up --timeout=30s --auth-key="file:$credential" --accept-dns=false --advertise-routes=10.10.0.0/16 --snat-subnet-routes=true >/dev/null 2>&1; then
           exit 0
       fi
-      if [ -s /var/lib/tailscale/tailscaled.state ] && tailscale up --accept-dns=false --advertise-routes=10.10.0.0/16 --snat-subnet-routes=true >/dev/null 2>&1; then
+      if [ -s /var/lib/tailscale/tailscaled.state ] && tailscale up --timeout=30s --accept-dns=false --advertise-routes=10.10.0.0/16 --snat-subnet-routes=true >/dev/null 2>&1; then
           exit 0
       fi
       test -s "$credential"
-      tailscale up --auth-key="file:$credential" --accept-dns=false --advertise-routes=10.10.0.0/16 --snat-subnet-routes=true >/dev/null 2>&1
+      tailscale up --timeout=30s --auth-key="file:$credential" --accept-dns=false --advertise-routes=10.10.0.0/16 --snat-subnet-routes=true >/dev/null 2>&1
 
 - name: Add the bounded TUN credential and bootstrap hook to tailscaled
   ansible.builtin.copy:
