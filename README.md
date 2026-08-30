@@ -12,7 +12,8 @@ It gives a personal lab a sensible fixed layout, boring secure defaults, and
 one small operator CLI. The platform includes a managed gateway, DNS/NTP,
 monitoring, central logs, a static portal, backups, and recovery information.
 Optional first-party modules add services such as a status page, an AI router,
-read-only incident investigation, a Tailnet subnet router, or OctoPrint.
+read-only incident investigation, a Tailnet subnet router, OctoPrint, or a
+quiet StreamDeck display for Proxmox host health.
 
 Boetticher is deliberately small and opinionated. It is not Kubernetes, a
 generic infrastructure framework, or a guest-management tool. Proxmox remains

@@ -26,6 +26,21 @@ usb_exports:
     product_id: "006d"
 ```
 
+For a real site, let Boetticher find the device rather than copying a Linux
+device path into the configuration:
+
+```text
+boetticher hardware usb list --live --site ./my-boetticher
+boetticher module configure streamdeck --site ./my-boetticher
+boetticher deploy --site ./my-boetticher
+```
+
+The configure command presents compatible devices and records the selected
+physical parent port in the existing `usb_exports` configuration. If you are
+automating the change, use `--usb display=PORT` with the port reported by the
+live listing. A missing, ambiguous, or incompatible device stops the operation
+before infrastructure is changed.
+
 The module depends on `monitoring` and reads Pulse through the existing
 bounded `X-API-Token` plus mTLS contract. Core signs the service-client
 certificate, installs the shared Pulse read token as an encrypted systemd
@@ -35,6 +50,6 @@ and `libhidapi-libusb0`; it does not contain certificates, tokens, or USB
 device paths.
 
 The external Pi-hosted StreamDeck companion remains a separate deployment
-shape. This LXC module is source-tested and artifact-wired here; physical USB
-attachment, deployed mTLS, and the live display journey remain `NOT TESTED`
-until performed on the target Proxmox host and hardware.
+shape. This LXC module needs the physical USB attachment and the live mTLS and
+display checks on the target Proxmox host; deploy reports the first concrete
+failure and the next action if one of those checks does not pass.

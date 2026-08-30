@@ -28,6 +28,10 @@ capability does and what it keeps.
 and `module disable` operations apply their change immediately; use
 `--dry-run` first when you want to inspect the plan.
 
+Optional modules stay off until you enable them. The StreamDeck display also
+needs a stable physical USB binding; see the [StreamDeck guide](modules/streamdeck.md)
+for the short setup path.
+
 `update` changes compatible local configuration; it does not deploy. `upgrade`
 is an advanced command that is not available for normal release updates.
 
