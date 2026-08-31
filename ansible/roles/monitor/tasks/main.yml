@@ -187,7 +187,9 @@
     mode: '0644'
     content: |
       [Service]
+      ExecStartPre=
       ExecStartPre=/usr/local/sbin/boetticher-pulse-nginx-proxy-auth
+      ExecStartPre=/usr/sbin/nginx -t -q -g 'daemon on; master_process on;'
   register: pulse_proxy_auth_dropin
   when: inventory_hostname == 'lab-monitor-01'
 

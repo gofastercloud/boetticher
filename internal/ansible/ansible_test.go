@@ -1325,11 +1325,16 @@ func TestPulseProxyAuthMapsOnlyApprovedClientIdentities(t *testing.T) {
 		"set $boetticher_pulse_proxy_secret $boetticher_pulse_proxy_shared_secret",
 		"proxy_set_header X-Proxy-Secret $boetticher_pulse_proxy_secret",
 		"ExecStartPre=/usr/local/sbin/boetticher-pulse-nginx-proxy-auth",
+		"ExecStartPre=\n      ExecStartPre=/usr/local/sbin/boetticher-pulse-nginx-proxy-auth",
+		"ExecStartPre=/usr/sbin/nginx -t -q -g 'daemon on; master_process on;'",
 		"daemon_reload: true",
 	} {
 		if !strings.Contains(contract, expected) {
 			t.Fatalf("Pulse proxy-auth contract is missing %q", expected)
 		}
+	}
+	if rendererIndex, nginxCheckIndex := strings.Index(string(tasks), "ExecStartPre=/usr/local/sbin/boetticher-pulse-nginx-proxy-auth"), strings.Index(string(tasks), "ExecStartPre=/usr/sbin/nginx -t -q -g 'daemon on; master_process on;'"); rendererIndex == -1 || nginxCheckIndex == -1 || rendererIndex >= nginxCheckIndex {
+		t.Fatal("Pulse proxy-auth renderer must run before nginx's built-in configuration check")
 	}
 	if got := strings.Count(text, "proxy_set_header X-Proxy-Secret \"\";"); got != 4 {
 		t.Fatalf("frontend clears incoming proxy secret in %d locations, want the host-agent and three StreamDeck API locations", got)
