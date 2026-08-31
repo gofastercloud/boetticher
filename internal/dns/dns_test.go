@@ -27,6 +27,9 @@ func TestPlanSeparatesStaticAndDynamicZones(t *testing.T) {
 	if plan.DDNS.Source != "Kea D2 on lab-fw-01" || len(plan.DDNS.UpdateSources) != 1 || plan.DDNS.UpdateSources[0] != "10.10.10.1" || plan.DDNS.LeaseFailurePolicy != "lease-continues-without-DNS-registration" {
 		t.Fatalf("unexpected DDNS boundary: %#v", plan.DDNS)
 	}
+	if plan.DDNS.DNSResponseTimeoutMS != 15000 {
+		t.Fatalf("unexpected DDNS response timeout: %d", plan.DDNS.DNSResponseTimeoutMS)
+	}
 	if !hasRecord(plan.StaticRecords, "proxmox.lab.home.arpa", "10.10.99.5") {
 		t.Fatal("Proxmox component URL hostname was not added to the static DNS projection")
 	}

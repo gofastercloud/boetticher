@@ -1135,12 +1135,16 @@ func TestDNSRoleDoesNotPlaceTSIGSecretsInProcessArguments(t *testing.T) {
 		t.Fatal("Kea D2 does not use the qualified domain catalogs and TSIG key references")
 	}
 	for _, expected := range []string{
+		`"dns-server-timeout": {{ firewall_plan.ddns.dns_response_timeout_ms }},`,
 		`"name": "{{ zone.forward_zone }}."`,
 		`"name": "{{ zone.reverse_zone }}."`,
 	} {
 		if !strings.Contains(keaText, expected) {
 			t.Errorf("Kea D2 domain catalog does not use a fully qualified zone name: %s", expected)
 		}
+	}
+	if strings.Contains(keaText, `"dns-server-timeout": 500,`) {
+		t.Fatal("Kea D2 still uses the default response timeout instead of the generated DDNS contract")
 	}
 }
 
