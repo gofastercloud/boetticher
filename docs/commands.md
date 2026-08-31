@@ -9,7 +9,7 @@ boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall]
 boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--record] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]
 boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]
 boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]
-boetticher status [--site DIR] [--live] [--verbose] [--json]
+boetticher status [--site DIR] [--ssh-config PATH] [--ssh-journey] [--live] [--verbose] [--json]
 boetticher update [--site DIR] [--dry-run] [--confirm]
 boetticher logs [HOST] [--site DIR] [--unit UNIT] [--since DURATION] [--priority LEVEL] [--limit N]
 boetticher aiops status [--site DIR] [--live] [--json]
@@ -104,15 +104,15 @@ Related commands: preflight, verify, doctor
 
 ### status
 
-Purpose: Show whether the platform and its modules need attention.
+Purpose: Run the current platform health checks and show whether the platform needs attention.
 
-Usage: `boetticher status [--site DIR] [--live] [--verbose] [--json]`
+Usage: `boetticher status [--site DIR] [--ssh-config PATH] [--ssh-journey] [--live] [--verbose] [--json]`
 
 Arguments: No positional arguments.
 
-Options: --live performs bounded read-only gateway checks; --verbose includes detailed reasons and next actions; --json emits the versioned status model. Exit status is zero only for HEALTHY; FAILED, DEGRADED, and ACTION REQUIRED return non-zero. Disabled optional modules are excluded from the overall result.
+Options: --live performs bounded read-only managed-gateway checks; --ssh-journey runs a bounded authenticated bastion journey; --ssh-config selects the generated SSH configuration; --verbose includes detailed reasons and next actions; --json emits the versioned status model. Exit status is zero only for HEALTHY; a failed or degraded check returns non-zero. Checks that require separate operator, recovery, or product acceptance evidence are not included.
 
-Safety: Read-only. Live transport and malformed observations fail non-zero and are never reported as PASS.
+Safety: Read-only. Status and verify use the same health checks. Live transport and malformed observations fail non-zero and are never reported as PASS.
 
 Examples: `boetticher status --site ./my-boetticher`; `boetticher status --site ./my-boetticher --live --json`
 
@@ -168,19 +168,19 @@ Related commands: module status, doctor, logs
 
 ### verify
 
-Purpose: Verify the resolved model, ownership, artifacts, declarations, and supported live evidence.
+Purpose: Compatibility alias for the status health checks that also refreshes verification and portal artifacts.
 
 Usage: `boetticher verify [--site DIR] [--ssh-config PATH] [--ssh-journey] [--live]`
 
 Arguments: No positional arguments.
 
-Options: --ssh-journey runs a bounded authenticated bastion journey; --ssh-config selects the generated SSH configuration; --live queries the managed gateway upstream lease and publication mapping.
+Options: --ssh-journey runs a bounded authenticated bastion journey; --ssh-config selects the generated SSH configuration; --live queries the managed gateway health; verification results are written to the generated evidence and status projections.
 
-Safety: Static checks are distinct from live evidence. Unsupported live checks remain NOT TESTED.
+Safety: Status and verify use the same checks. Unsupported live or acceptance checks are omitted rather than reported as NOT TESTED.
 
-Examples: `boetticher verify --site ./my-boetticher`
+Examples: `boetticher verify --site ./my-boetticher`; `boetticher verify --site ./my-boetticher --live`
 
-Related commands: preflight, deploy, doctor
+Related commands: status, preflight, deploy, doctor
 
 ### doctor
 

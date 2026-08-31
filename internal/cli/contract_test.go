@@ -59,8 +59,11 @@ func TestQuickstartOfflineCommandsExecute(t *testing.T) {
 	if err := Run([]string{"status", "--site", siteDir}, &statusOutput, &statusOutput); err == nil {
 		t.Fatal("status unexpectedly passed before live deployment evidence")
 	}
-	if !strings.Contains(statusOutput.String(), "Platform ACTION REQUIRED") {
-		t.Fatalf("status did not preserve the pre-deployment action boundary: %s", statusOutput.String())
+	if !strings.Contains(statusOutput.String(), "Platform FAILED") {
+		t.Fatalf("status did not report the failed local health checks: %s", statusOutput.String())
+	}
+	if strings.Contains(statusOutput.String(), "NOT TESTED") || strings.Contains(statusOutput.String(), "ACTION REQUIRED") {
+		t.Fatalf("status reported an unknowable check: %s", statusOutput.String())
 	}
 }
 

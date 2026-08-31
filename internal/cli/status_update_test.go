@@ -30,19 +30,19 @@ func TestStatusJSONUsesSemanticModelAndDeterministicExit(t *testing.T) {
 
 	var output bytes.Buffer
 	err := runStatus([]string{"--site", dir, "--json"}, &output)
-	if err == nil || !strings.Contains(err.Error(), "ACTION REQUIRED") {
+	if err == nil || !strings.Contains(err.Error(), "FAILED") {
 		t.Fatalf("status without deployment evidence returned %v", err)
 	}
 	var report statusmodel.Report
 	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
 		t.Fatalf("status JSON is not the semantic model: %v\n%s", err, output.String())
 	}
-	if report.StatusModelVersion != statusmodel.ModelVersion || report.OverallState != statusmodel.ActionRequired {
+	if report.StatusModelVersion != statusmodel.ModelVersion || report.OverallState != statusmodel.Failed {
 		t.Fatalf("unexpected status report: %#v", report)
 	}
 	for _, check := range report.Checks {
-		if check.Component == "monitoring" && check.Evidence != statusmodel.NOTTESTED {
-			t.Fatalf("enabled module was reported as live evidence: %#v", check)
+		if check.Evidence == statusmodel.NOTTESTED || check.State == statusmodel.ActionRequired {
+			t.Fatalf("status reported unknowable evidence: %#v", check)
 		}
 	}
 }
@@ -146,6 +146,32 @@ func TestProjectionRefreshPreservesSameRevisionStatusEvidence(t *testing.T) {
 	}
 	if got.Checks[0].ObservedAt != existing.Checks[0].ObservedAt || got.ObservedAt != existing.ObservedAt {
 		t.Fatalf("projection refresh changed evidence timestamps: %#v", got)
+	}
+}
+
+func TestLoadStatusReportDropsQualificationOnlyChecks(t *testing.T) {
+	dir := t.TempDir()
+	s := model.NewDefaultSite("status-filter", "age1statusfilter")
+	revision, err := s.Revision()
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := statusmodel.Report{
+		StatusModelVersion: statusmodel.ModelVersion,
+		ModelRevision:      revision,
+		ObservedAt:         "2026-08-29T12:00:00Z",
+		OverallState:       statusmodel.ActionRequired,
+		Checks: []statusmodel.Check{
+			{Component: "canonical platform model validates", State: statusmodel.Healthy, Evidence: statusmodel.PASS},
+			{Component: "Age recovery fixture", State: statusmodel.ActionRequired, Evidence: statusmodel.NOTTESTED},
+		},
+	}
+	if err := writeProjection(filepath.Join(dir, "generated", "status.json"), report); err != nil {
+		t.Fatal(err)
+	}
+	got := loadStatusReport(dir, revision)
+	if len(got.Checks) != 1 || got.Checks[0].Component != "canonical platform model validates" || got.OverallState != statusmodel.Healthy {
+		t.Fatalf("qualification-only check was not filtered: %#v", got)
 	}
 }
 
