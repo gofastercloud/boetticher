@@ -92,11 +92,11 @@ server {
         if ($ssl_client_s_dn ~ "CN=aiops-pulse-(?:read|note)(?:,|$)") { return 403; }
         set $boetticher_pulse_proxy_user "";
         set $boetticher_pulse_proxy_role "";
-        if ($ssl_client_s_dn = "CN=client-operator.{{ domain }}") {
+        if ($ssl_client_s_dn = "CN=client-operator.{{ domain }},O=boetticher") {
             set $boetticher_pulse_proxy_user operator;
             set $boetticher_pulse_proxy_role admin;
         }
-        if ($ssl_client_s_dn = "CN=client-lab-display-01-kiosk.{{ domain }}") {
+        if ($ssl_client_s_dn = "CN=client-lab-display-01-kiosk.{{ domain }},O=boetticher") {
             set $boetticher_pulse_proxy_user kiosk;
             set $boetticher_pulse_proxy_role kiosk;
         }

@@ -1284,8 +1284,8 @@ func TestPulseProxyAuthMapsOnlyApprovedClientIdentities(t *testing.T) {
 	}
 	text := string(frontend)
 	for _, expected := range []string{
-		"CN=client-operator.{{ domain }}",
-		"CN=client-lab-display-01-kiosk.{{ domain }}",
+		"CN=client-operator.{{ domain }},O=boetticher",
+		"CN=client-lab-display-01-kiosk.{{ domain }},O=boetticher",
 		"include /run/boetticher/pulse-proxy-auth.conf",
 		"ExecStartPre=/usr/local/sbin/boetticher-pulse-nginx-proxy-auth",
 		"daemon_reload: true",
