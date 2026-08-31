@@ -20,6 +20,10 @@ boetticher module secrets litellm set openrouter_api_key
 Enable and disable changes require `--confirm` when they persist configuration.
 Normal disable is non-destructive: active declarations stop, while the owned
 guest and declared persistent data are retained and remain marked as owned.
+The retained guest's module services are stopped and disabled by the same
+deployment convergence through the authenticated Proxmox guest-execution
+boundary, so retained resources remain inactive across reboot even when the
+guest network is correctly isolated from the Proxmox management zone.
 
 `--purge --confirm` is the explicit destructive form. It is not available for
 mandatory modules. A purge plan must reconstruct the disabled module's

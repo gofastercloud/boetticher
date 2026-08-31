@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
@@ -91,7 +92,9 @@ func WaitForSSH(ctx context.Context, runner CommandRunner, address, user string,
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("SSH readiness cancelled for %s: %w", address, err)
 		}
-		_, err := runner.Run(ctx, address, user, "true")
+		attemptCtx, cancel := context.WithTimeout(ctx, sshAttemptTimeout)
+		_, err := runner.Run(attemptCtx, address, user, "true")
+		cancel()
 		if err == nil {
 			return nil
 		}
@@ -128,7 +131,10 @@ func WaitForCommand(ctx context.Context, runner CommandRunner, address, user, co
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("command readiness cancelled for %s: %w", address, err)
 		}
-		if _, err := runner.Run(ctx, address, user, command); err == nil {
+		attemptCtx, cancel := context.WithTimeout(ctx, sshAttemptTimeout)
+		_, err := runner.Run(attemptCtx, address, user, command)
+		cancel()
+		if err == nil {
 			return nil
 		} else {
 			lastErr = err
@@ -211,6 +217,8 @@ type SSHPhysicalNetworkDiscovery struct {
 	Node      string
 	Discovery networkmodel.Discovery
 }
+
+const sshAttemptTimeout = 15 * time.Second
 
 // DiscoverPhysicalNetworkViaSSH uses the existing fresh-host trust path before
 // a Proxmox API token exists. It executes only fixed read-only pvesh and ip
@@ -366,7 +374,7 @@ func (r SSHRunner) StartLocalForward(ctx context.Context, address, user, targetA
 		return nil, err
 	}
 	forwardContext, cancel := context.WithCancel(ctx)
-	command := exec.CommandContext(forwardContext, "ssh", args...)
+	command := newSSHProcess(args)
 	command.Stdin = nil
 	command.Stdout = io.Discard
 	stderr := &boundedOutput{limit: 64 << 10}
@@ -376,7 +384,7 @@ func (r SSHRunner) StartLocalForward(ctx context.Context, address, user, targetA
 		return nil, fmt.Errorf("start SSH local forward: %w", err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- command.Wait() }()
+	go waitForSSHProcess(forwardContext, command, done)
 	forward := &SSHLocalForward{localAddress: fmt.Sprintf("127.0.0.1:%d", localPort), cancel: cancel, done: done}
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -524,12 +532,17 @@ func (r SSHRunner) runArgsStream(ctx context.Context, address, user string, comm
 	if err != nil {
 		return err
 	}
-	process := exec.CommandContext(ctx, "ssh", args...)
+	process := newSSHProcess(args)
 	process.Stdin = stdin
 	process.Stdout = stdout
 	stderr := &boundedOutput{limit: 64 << 10}
 	process.Stderr = stderr
-	err = process.Run()
+	if err := process.Start(); err != nil {
+		return fmt.Errorf("start SSH command: %w", err)
+	}
+	done := make(chan error, 1)
+	go waitForSSHProcess(ctx, process, done)
+	err = <-done
 	if err != nil {
 		message := strings.TrimSpace(stderr.String())
 		if message != "" {
@@ -538,6 +551,26 @@ func (r SSHRunner) runArgsStream(ctx context.Context, address, user string, comm
 		return fmt.Errorf("SSH bootstrap command failed: %w", err)
 	}
 	return nil
+}
+
+func newSSHProcess(args []string) *exec.Cmd {
+	process := exec.Command("ssh", args...)
+	process.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	return process
+}
+
+func waitForSSHProcess(ctx context.Context, process *exec.Cmd, done chan<- error) {
+	wait := make(chan error, 1)
+	go func() { wait <- process.Wait() }()
+	select {
+	case err := <-wait:
+		done <- err
+	case <-ctx.Done():
+		if process.Process != nil {
+			_ = syscall.Kill(-process.Process.Pid, syscall.SIGKILL)
+		}
+		done <- <-wait
+	}
 }
 
 func (r SSHRunner) validateConfig() error {
@@ -607,7 +640,10 @@ func (r SSHRunner) connectionArgs(address, user, batchMode string) ([]string, st
 	if user == "" {
 		return nil, "", errors.New("bootstrap SSH user is required")
 	}
-	args := []string{"-o", "BatchMode=" + batchMode, "-o", "ForwardAgent=no", "-o", "ForwardX11=no"}
+	// Every readiness and cleanup command must have a finite connection
+	// boundary. Without this, an unreachable ProxyJump target can leave the
+	// deployment waiting indefinitely and can orphan the forwarding process.
+	args := []string{"-o", "BatchMode=" + batchMode, "-o", "ConnectTimeout=10", "-o", "ForwardAgent=no", "-o", "ForwardX11=no"}
 	strictHostKey := r.StrictHostKey
 	if strictHostKey == "" {
 		strictHostKey = "ask"
@@ -733,6 +769,82 @@ func RestoreTemporaryRootAccess(ctx context.Context, runner CommandRunner, addre
 				return fmt.Errorf("guest-agent restore for guest %d exited %d: %s", vmid, exitCode, strings.TrimSpace(errData))
 			}
 			return fmt.Errorf("guest-agent restore for guest %d exited %d", vmid, exitCode)
+		}
+	}
+	return nil
+}
+
+var retainedModuleServices = map[string][]string{
+	"tailnet-router": {"tailscaled"},
+	"litellm":        {"litellm", "nginx"},
+	"printer":        {"octoprint", "nginx"},
+	"streamdeck":     {"streamdeck-status.service"},
+	"aiops":          {"boetticher-aiops", "boetticher-aiops.socket", "holmes"},
+	"gatus":          {"gatus", "nginx"},
+}
+
+// InactivateRetainedModule stops and disables only the declared service set
+// for one product-owned retained guest. It deliberately crosses the guest
+// boundary through authenticated Proxmox guest execution rather than relying
+// on the guest network, which may correctly be blocked by the modeled
+// firewall. The fixed service map prevents a retained declaration from
+// turning this operation into arbitrary guest command execution.
+func InactivateRetainedModule(ctx context.Context, runner CommandRunner, address, user string, kind GuestKind, vmid int, module string) error {
+	if runner == nil {
+		return errors.New("retained module inactivation runner is required")
+	}
+	if user != "root" {
+		return errors.New("retained module inactivation requires the root transport")
+	}
+	if vmid <= 0 {
+		return errors.New("retained module inactivation requires a positive guest VMID")
+	}
+	if kind != KindQEMU && kind != KindLXC {
+		return fmt.Errorf("retained module inactivation does not support guest kind %q", kind)
+	}
+	services, ok := retainedModuleServices[module]
+	if !ok {
+		return fmt.Errorf("retained module %q has no bounded service contract", module)
+	}
+	serviceCommands := make([]string, 0, len(services))
+	for _, service := range services {
+		serviceCommands = append(serviceCommands, "systemctl disable --now "+shellQuote(service)+"; if systemctl is-active --quiet "+shellQuote(service)+"; then echo retained service remains active: "+shellQuote(service)+" >&2; exit 1; fi; if systemctl is-enabled --quiet "+shellQuote(service)+"; then echo retained service remains enabled: "+shellQuote(service)+" >&2; exit 1; fi")
+	}
+	guestCommand := "set -eu; systemctl daemon-reload; " + strings.Join(serviceCommands, "; ")
+	var command string
+	switch kind {
+	case KindQEMU:
+		command = fmt.Sprintf("/usr/sbin/qm guest exec %d -- /bin/sh -c %s", vmid, shellQuote(guestCommand))
+	case KindLXC:
+		command = fmt.Sprintf("/usr/sbin/pct exec %d -- /bin/sh -c %s", vmid, shellQuote(guestCommand))
+	}
+	output, err := runner.Run(ctx, address, user, privilegedCommand(user, command))
+	if err != nil {
+		return fmt.Errorf("inactivate retained %s guest %d: %w", module, vmid, err)
+	}
+	if kind == KindQEMU {
+		var result map[string]json.RawMessage
+		if err := json.Unmarshal(bytes.TrimSpace(output), &result); err != nil {
+			return fmt.Errorf("decode guest-agent inactivation result for guest %d: %w", vmid, err)
+		}
+		var exited int
+		var exitCode int
+		if err := json.Unmarshal(result["exited"], &exited); err != nil {
+			return fmt.Errorf("decode guest-agent completion for guest %d: %w", vmid, err)
+		}
+		if err := json.Unmarshal(result["exitcode"], &exitCode); err != nil {
+			return fmt.Errorf("decode guest-agent exit code for guest %d: %w", vmid, err)
+		}
+		if exited != 1 {
+			return fmt.Errorf("guest-agent inactivation for guest %d did not finish", vmid)
+		}
+		if exitCode != 0 {
+			var errData string
+			_ = json.Unmarshal(result["err-data"], &errData)
+			if errData != "" {
+				return fmt.Errorf("guest-agent inactivation for guest %d exited %d: %s", vmid, exitCode, strings.TrimSpace(errData))
+			}
+			return fmt.Errorf("guest-agent inactivation for guest %d exited %d", vmid, exitCode)
 		}
 	}
 	return nil

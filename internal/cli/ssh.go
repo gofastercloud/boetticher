@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -93,27 +92,7 @@ func runSSHJourney(configPath string) error {
 }
 
 func jumpDestinations(s model.Site) []string {
-	result := []string{}
-	for _, m := range s.PlatformComponents() {
-		if m.ProductOwned && m.SSHManaged && m.JumpAllowed {
-			port := m.SSHPort
-			if port == 0 {
-				port = 22
-			}
-			result = append(result, fmt.Sprintf("%s:%d", m.Address, port))
-			if m.Name == "lab-monitor-01" {
-				result = append(result, fmt.Sprintf("%s:443", m.Address))
-			}
-			if m.Name == "lab-litellm-01" {
-				result = append(result, fmt.Sprintf("%s:443", m.Address))
-			}
-			if m.Name == "lab-portal-01" {
-				result = append(result, fmt.Sprintf("%s:443", m.Address))
-			}
-		}
-	}
-	sort.Strings(result)
-	return result
+	return sshconfig.BastionDestinations(s)
 }
 
 func defaultOperatorPublicKey() string {

@@ -288,6 +288,24 @@ func TestPulseReconciliationForwardUsesRestrictedBastion(t *testing.T) {
 	}
 }
 
+func TestDeployReconcilesLiveBastionPolicyFromCanonicalDestinations(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		`proxmox.ConfigureIdentities(ctx, rootRunner, s.BootstrapAddress, "root", operatorPublicKey, jumpDestinations(s))`,
+		`Reconcile the live host-side jump policy`,
+		`proxmox.InactivateRetainedModule(ctx, rootRunner, s.BootstrapAddress, "root", guest.Kind, guest.VMID, module)`,
+		`context.WithTimeout(ctx, deploymentRootTimeout)`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("deploy does not reconcile the live bastion policy: missing %q", required)
+		}
+	}
+}
+
 func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
 	if err != nil {

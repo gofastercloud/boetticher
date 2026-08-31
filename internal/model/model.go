@@ -1041,6 +1041,44 @@ func (s Site) Validate() error {
 			return fmt.Errorf("component %s references unknown zone %q", m.Name, m.Zone)
 		}
 	}
+	for _, retained := range s.RetainedModules {
+		if retained.Module == "" || ModuleOwnershipTag(retained.Module) == "" {
+			return fmt.Errorf("retained module has invalid name %q", retained.Module)
+		}
+		if retained.Disposition != "retained" || retained.Active {
+			return fmt.Errorf("retained module %s has invalid inactive disposition", retained.Module)
+		}
+		ownerTag := ModuleOwnershipTag(retained.Module)
+		for _, guest := range retained.Guests {
+			if err := guest.Validate(); err != nil {
+				return fmt.Errorf("retained module %s contains invalid guest: %w", retained.Module, err)
+			}
+			if !guest.ProductOwned || !guest.SSHManaged || guest.Module != retained.Module {
+				return fmt.Errorf("retained guest %s must remain a product-owned SSH-managed %s guest", guest.Name, retained.Module)
+			}
+			if guest.VMID < PlatformGuestIDMin || guest.VMID > ModuleGuestIDMax {
+				return fmt.Errorf("retained guest %s uses VMID %d outside the boetticher-owned range", guest.Name, guest.VMID)
+			}
+			hasOwnerTag := false
+			for _, tag := range guest.Tags {
+				if tag == ownerTag {
+					hasOwnerTag = true
+					break
+				}
+			}
+			if !hasOwnerTag {
+				return fmt.Errorf("retained guest %s is missing canonical ownership tag %q", guest.Name, ownerTag)
+			}
+			if seenComponents[guest.Name] {
+				return fmt.Errorf("retained guest %q duplicates a platform component", guest.Name)
+			}
+			seenComponents[guest.Name] = true
+			if previous, exists := seenVMIDs[guest.VMID]; exists {
+				return fmt.Errorf("retained guest %s and %s share VMID %d", previous, guest.Name, guest.VMID)
+			}
+			seenVMIDs[guest.VMID] = guest.Name
+		}
+	}
 	if len(seenZones) != len(expectedZones) {
 		return fmt.Errorf("0.4 requires exactly TRANSIT, INFRA, SERVERS, TRUSTED, SANDBOX, and MGMT zones")
 	}

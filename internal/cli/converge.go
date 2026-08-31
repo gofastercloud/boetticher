@@ -23,6 +23,7 @@ import (
 	aiopsmodel "github.com/gofastercloud/boetticher/internal/aiops"
 	"github.com/gofastercloud/boetticher/internal/ansible"
 	"github.com/gofastercloud/boetticher/internal/appliance"
+	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/backup"
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/firewall"
@@ -126,6 +127,10 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 		return err
 	}
 	proxmoxPlan, err = proxmox.ResolveQualifiedArtifacts(*siteDir, proxmoxPlan, true)
+	if err != nil {
+		return err
+	}
+	retainedGuests, err := retainedGuestPlans(s)
 	if err != nil {
 		return err
 	}
@@ -278,6 +283,14 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 			err = fmt.Errorf("%v; HOLD: temporary root access cleanup failed: %w", err, cleanupErr)
 		}
 	}()
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		// Reconcile the live host-side jump policy from the same canonical
+		// destination list as the generated projection, including any
+		// product-owned retained guests that remain in the SSH contract.
+		if err := proxmox.ConfigureIdentities(ctx, rootRunner, s.BootstrapAddress, "root", operatorPublicKey, jumpDestinations(s)); err != nil {
+			return fmt.Errorf("reconcile Proxmox administrative and bastion identities: %w", err)
+		}
+	}
 	if err := proxmox.WaitForSSH(ctx, rootRunner, s.BootstrapAddress, "root", 1, 0); err != nil {
 		return fmt.Errorf("HOLD: temporary root deployment authority is unavailable; rerun bootstrap or recovery: %w", err)
 	}
@@ -475,6 +488,12 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 				return fmt.Errorf("HOLD: managed gateway did not pass publication readiness: %w", err)
 			}
 			firewallPlan = finalFirewallPlan
+		}
+	}
+	for _, guest := range retainedGuests {
+		module := strings.TrimPrefix(guest.Owner, "boetticher/module/")
+		if err := proxmox.InactivateRetainedModule(ctx, rootRunner, s.BootstrapAddress, "root", guest.Kind, guest.VMID, module); err != nil {
+			return fmt.Errorf("HOLD: inactivate retained %s guest %s through Proxmox: %w", module, guest.Name, err)
 		}
 	}
 	if err := ansible.Run(ctx, ansiblePlaybook, inventoryPath, variables); err != nil {
@@ -840,23 +859,27 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 	return nil
 }
 
+const deploymentRootTimeout = 3 * time.Minute
+
 func waitForDeploymentRoot(ctx context.Context, hostRunner proxmox.CommandRunner, hostAddress string, guestRunner proxmox.CommandRunner, guest proxmox.GuestPlan, publicKey, knownHosts, hostKeyAlias string) error {
 	if guest.Hostname == "" || hostKeyAlias == "" {
 		return errors.New("guest host-key identity is incomplete")
 	}
+	rootCtx, cancel := context.WithTimeout(ctx, deploymentRootTimeout)
+	defer cancel()
 	var hostKey string
 	var pinErr error
 	for attempt := 0; attempt < 30; attempt++ {
-		hostKey, pinErr = proxmox.ReadGuestHostKey(ctx, hostRunner, hostAddress, "root", guest.Kind, guest.VMID)
+		hostKey, pinErr = proxmox.ReadGuestHostKey(rootCtx, hostRunner, hostAddress, "root", guest.Kind, guest.VMID)
 		if pinErr == nil {
 			break
 		}
 		if attempt+1 < 30 {
 			timer := time.NewTimer(2 * time.Second)
 			select {
-			case <-ctx.Done():
+			case <-rootCtx.Done():
 				timer.Stop()
-				return fmt.Errorf("guest host-key pinning cancelled: %w", ctx.Err())
+				return fmt.Errorf("guest host-key pinning cancelled: %w", rootCtx.Err())
 			case <-timer.C:
 			}
 		}
@@ -867,7 +890,7 @@ func waitForDeploymentRoot(ctx context.Context, hostRunner proxmox.CommandRunner
 	if err := sshconfig.AddHostKey(knownHosts, hostKeyAlias, hostKey); err != nil {
 		return fmt.Errorf("HOLD: pin guest host key: %w", err)
 	}
-	if err := proxmox.WaitForSSH(ctx, guestRunner, guest.Address, "root", 1, 0); err == nil {
+	if err := proxmox.WaitForSSH(rootCtx, guestRunner, guest.Address, "root", 1, 0); err == nil {
 		return nil
 	}
 	var lastErr error
@@ -875,17 +898,17 @@ func waitForDeploymentRoot(ctx context.Context, hostRunner proxmox.CommandRunner
 		if attempt > 0 {
 			timer := time.NewTimer(2 * time.Second)
 			select {
-			case <-ctx.Done():
+			case <-rootCtx.Done():
 				timer.Stop()
-				return fmt.Errorf("initial root transport failed and guest re-arm cancelled: %w", ctx.Err())
+				return fmt.Errorf("initial root transport failed and guest re-arm cancelled: %w", rootCtx.Err())
 			case <-timer.C:
 			}
 		}
-		if restoreErr := proxmox.RestoreTemporaryRootAccess(ctx, hostRunner, hostAddress, "root", guest.Kind, guest.VMID, publicKey); restoreErr != nil {
+		if restoreErr := proxmox.RestoreTemporaryRootAccess(rootCtx, hostRunner, hostAddress, "root", guest.Kind, guest.VMID, publicKey); restoreErr != nil {
 			lastErr = restoreErr
 			continue
 		}
-		if retryErr := proxmox.WaitForSSH(ctx, guestRunner, guest.Address, "root", 30, 2*time.Second); retryErr == nil {
+		if retryErr := proxmox.WaitForSSH(rootCtx, guestRunner, guest.Address, "root", 30, 2*time.Second); retryErr == nil {
 			return nil
 		} else {
 			lastErr = retryErr
@@ -1320,6 +1343,32 @@ func revokeTemporaryRootAccess(ctx context.Context, s model.Site, siteDir string
 		return fmt.Errorf("revoke root access on %s: %w", model.LogicalProxmoxIdentity, err)
 	}
 	return nil
+}
+
+func retainedGuestPlans(s model.Site) ([]proxmox.GuestPlan, error) {
+	guests := make([]proxmox.GuestPlan, 0)
+	for _, retained := range s.RetainedModules {
+		artifact, err := artifacts.ArtifactFor(retained.Module)
+		if err != nil {
+			return nil, fmt.Errorf("resolve retained %s artifact identity: %w", retained.Module, err)
+		}
+		var kind proxmox.GuestKind
+		switch artifact.Kind {
+		case string(proxmox.KindQEMU):
+			kind = proxmox.KindQEMU
+		case string(proxmox.KindLXC):
+			kind = proxmox.KindLXC
+		default:
+			return nil, fmt.Errorf("retained %s has unsupported artifact kind %q", retained.Module, artifact.Kind)
+		}
+		for _, component := range retained.Guests {
+			guests = append(guests, proxmox.GuestPlan{
+				VMID: component.VMID, Name: component.Name, Hostname: component.Hostname, Kind: kind,
+				Zone: component.Zone, Address: component.Address, Owner: "boetticher/module/" + retained.Module,
+			})
+		}
+	}
+	return guests, nil
 }
 
 func resolvedDeclarationForGuest(declaration model.ModuleDeclaration, guest proxmox.GuestPlan) (model.ModuleDeclaration, error) {
