@@ -105,8 +105,15 @@ func modulesEnabled(s model.Site, name string) bool {
 // appliance DNS service, or module service that this invocation is about to
 // create; those remain post-deployment health gates.
 func validateLiveDeploymentPrerequisites(ctx context.Context, client *proxmox.Client, rootRunner proxmox.CommandRunner, siteDir string, s model.Site, plan proxmox.Plan, storagePlan storage.Plan) error {
+	return validateLiveDeploymentPrerequisitesWithResolver(ctx, client, rootRunner, siteDir, s, plan, storagePlan, net.LookupIP)
+}
+
+func validateLiveDeploymentPrerequisitesWithResolver(ctx context.Context, client *proxmox.Client, rootRunner proxmox.CommandRunner, siteDir string, s model.Site, plan proxmox.Plan, storagePlan storage.Plan, endpointLookup func(string) ([]net.IP, error)) error {
 	if client == nil || rootRunner == nil {
 		return errors.New("live deployment preflight requires the authenticated Proxmox and bootstrap paths")
+	}
+	if endpointLookup == nil {
+		endpointLookup = net.LookupIP
 	}
 	statuses, err := client.NodeStorage(ctx, plan.Node)
 	if err != nil {
@@ -148,6 +155,13 @@ func validateLiveDeploymentPrerequisites(ctx context.Context, client *proxmox.Cl
 		}
 	}
 
+	return validateExternalEndpointReadiness(s, endpointLookup)
+}
+
+func validateExternalEndpointReadiness(s model.Site, endpointLookup func(string) ([]net.IP, error)) error {
+	if endpointLookup == nil {
+		endpointLookup = net.LookupIP
+	}
 	for _, declaration := range s.Declarations {
 		for _, intent := range declaration.NetworkIntents {
 			if intent.Endpoint == "" {
@@ -162,7 +176,7 @@ func validateLiveDeploymentPrerequisites(ctx context.Context, client *proxmox.Cl
 				// reachability remain post-deployment health gates.
 				continue
 			}
-			if _, lookupErr := net.LookupIP(parsed.Hostname()); lookupErr != nil {
+			if _, lookupErr := endpointLookup(parsed.Hostname()); lookupErr != nil {
 				return fmt.Errorf("module %s external endpoint DNS lookup failed for %s: %w", declaration.Module, parsed.Hostname(), lookupErr)
 			}
 		}

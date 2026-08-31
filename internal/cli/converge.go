@@ -125,6 +125,11 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		}
 		plan = qualified
 		fmt.Fprintln(out, "  Artifact qualification: PASS (all selected artifacts qualified)")
+		if err := validateStaticDeploymentReadiness(*siteDir, s, *ageIdentity, firewallPlan, plan); err != nil {
+			fmt.Fprintf(out, "  Static deployment checks: FAIL (%s)\n", compactError(err))
+			return fmt.Errorf("static preflight failed: %w", err)
+		}
+		fmt.Fprintln(out, "  Static deployment checks: PASS")
 		fmt.Fprintln(out, "  Appliances:")
 		for _, guest := range plan.Guests {
 			fmt.Fprintf(out, "    %s  %s  %s  definition=%s\n", guest.Name, guest.Artifact.Name, artifactQualificationStatus(guest.Artifact), guest.Artifact.DefinitionSHA256)
@@ -337,7 +342,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return fmt.Errorf("resolve live Proxmox node: %w", err)
 	}
 	proxmoxPlan.Node = node
-	if err := validateLiveDeploymentPrerequisites(ctx, proxmoxClient, rootRunner, *siteDir, s, proxmoxPlan, storagePlan); err != nil {
+	if err := validateLiveDeploymentPrerequisitesWithResolver(ctx, proxmoxClient, rootRunner, *siteDir, s, proxmoxPlan, storagePlan, endpointLookup); err != nil {
 		return fmt.Errorf("live preflight failed before Proxmox mutation: %w", err)
 	}
 	var pulseProxmoxToken string
