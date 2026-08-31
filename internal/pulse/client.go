@@ -113,6 +113,14 @@ func IsUnauthorized(err error) bool {
 	return errors.As(err, &pulseErr) && pulseErr.Status == http.StatusUnauthorized
 }
 
+// IsForbidden reports whether an API request was rejected with HTTP 403.
+// Callers must combine this with a narrowly scoped client and endpoint
+// contract before treating it as credential drift.
+func IsForbidden(err error) bool {
+	var pulseErr *apiError
+	return errors.As(err, &pulseErr) && pulseErr.Status == http.StatusForbidden
+}
+
 func NewReadClient(config ClientConfig) (*Client, error) {
 	if strings.TrimSpace(config.APIToken) == "" {
 		return nil, errors.New("Pulse read client requires an API token")

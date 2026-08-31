@@ -39,6 +39,29 @@ func TestGatusServiceUsesSupportedConfigEnvironment(t *testing.T) {
 	}
 }
 
+func TestStreamDeckIdentityMaterialUsesServiceOwnedPath(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "streamdeck", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"path: /var/lib/streamdeck/tls",
+		"/var/lib/streamdeck/tls/streamdeck.key.pem",
+		"/var/lib/streamdeck/tls/streamdeck.csr.pem",
+		"/var/lib/streamdeck/tls/streamdeck.crt.pem",
+		"/var/lib/streamdeck/tls/ca.pem",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("StreamDeck role is missing service-owned identity path %q", expected)
+		}
+	}
+	if strings.Contains(text, "/var/lib/boetticher/identity/tls/streamdeck") {
+		t.Fatal("StreamDeck role still places identity material in the shared identity tree")
+	}
+}
+
 func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	first, err := Inventory(site)
@@ -267,8 +290,8 @@ func TestMonitorFrontendKeepsMTLSExceptForScopedAgentRoutes(t *testing.T) {
 	if !strings.Contains(text, "location ^~ /api/agents/") {
 		t.Fatal("monitor frontend does not proxy the supported Pulse agent routes")
 	}
-	if got := strings.Count(text, "if ($ssl_client_verify != SUCCESS) { return 403; }"); got != 6 {
-		t.Fatalf("monitor frontend mTLS guards = %d, want five exact AIOps routes plus the catch-all", got)
+	if got := strings.Count(text, "if ($ssl_client_verify != SUCCESS) { return 403; }"); got != 9 {
+		t.Fatalf("monitor frontend mTLS guards = %d, want the three StreamDeck routes, five exact AIOps routes, and the catch-all", got)
 	}
 	if !strings.Contains(text, `CN=aiops-pulse-(?:read|note)`) {
 		t.Fatal("monitor catch-all does not deny the AIOps identities outside their exact routes")
@@ -1291,6 +1314,12 @@ func TestPulseProxyAuthMapsOnlyApprovedClientIdentities(t *testing.T) {
 	for _, expected := range []string{
 		"CN=client-operator.{{ domain }},O=boetticher",
 		"CN=client-lab-display-01-kiosk.{{ domain }},O=boetticher",
+		"CN=client-boetticher-reconciler.{{ domain }},O=boetticher",
+		"CN=(?:lab-streamdeck-01|client-boetticher-pulse-read",
+		"location = /api/health",
+		"location = /api/state/summary",
+		"location = /api/resources",
+		"proxy_set_header X-API-Token $http_x_api_token",
 		"include /run/boetticher/pulse-proxy-auth.conf",
 		"set $boetticher_pulse_proxy_shared_secret",
 		"set $boetticher_pulse_proxy_secret $boetticher_pulse_proxy_shared_secret",
@@ -1302,8 +1331,8 @@ func TestPulseProxyAuthMapsOnlyApprovedClientIdentities(t *testing.T) {
 			t.Fatalf("Pulse proxy-auth contract is missing %q", expected)
 		}
 	}
-	if got := strings.Count(text, "proxy_set_header X-Proxy-Secret \"\";"); got != 1 {
-		t.Fatalf("frontend clears incoming proxy secret in %d locations, want only the host-agent location", got)
+	if got := strings.Count(text, "proxy_set_header X-Proxy-Secret \"\";"); got != 4 {
+		t.Fatalf("frontend clears incoming proxy secret in %d locations, want the host-agent and three StreamDeck API locations", got)
 	}
 	if got := strings.Count(text, "proxy_set_header X-Proxy-Secret $boetticher_pulse_proxy_secret;"); got != 5 {
 		t.Fatalf("frontend maps proxy secret in %d browser locations, want 5", got)

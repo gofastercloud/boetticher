@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 from io import BytesIO
+from pathlib import Path
+import tomllib
 
 import httpx
 from PIL import Image
@@ -9,6 +11,27 @@ from boetticher_streamdeck.hardware import FakeDeck, render_key
 from boetticher_streamdeck.models import PulseState, Resource
 from boetticher_streamdeck.pulse import PulseClient
 from boetticher_streamdeck.render import GREEN, RED, host_value, is_proxmox_host, proxmox_hosts, status_color, tile
+
+
+def test_package_metadata_allows_only_the_pinned_direct_streamdeck_reference():
+    service_dir = Path(__file__).parents[1]
+    package = tomllib.loads((service_dir / "pyproject.toml").read_text())
+    dependencies = package["project"]["dependencies"]
+    direct_dependencies = [dependency for dependency in dependencies if " @ " in dependency]
+    lockfile = (service_dir.parents[1] / "images/streamdeck/runtime/requirements.lock").read_text()
+
+    assert package["tool"]["hatch"]["metadata"]["allow-direct-references"] is True
+    assert direct_dependencies == [
+        "streamdeck @ https://github.com/abcminiuser/python-elgato-streamdeck/archive/5537d6991e651d0d293000fa61ee330d6209c8e5.tar.gz"
+    ]
+    assert direct_dependencies[0] in lockfile
+
+
+def test_hardened_service_allows_libusb_udev_and_usb_device():
+    unit = (Path(__file__).parents[3] / "images/streamdeck/runtime/streamdeck-status.service").read_text()
+    assert "RestrictAddressFamilies=AF_UNIX AF_INET AF_NETLINK" in unit
+    assert "DevicePolicy=closed" in unit
+    assert "DeviceAllow=char-usb_device rw" in unit
 
 
 def test_proxmox_hosts_ignore_guests_and_sort_by_name():
@@ -89,6 +112,41 @@ def test_pulse_client_uses_bounded_mtls_read_contract_and_paginates():
         assert [request.url.params["offset"] for request in requests if request.url.path.endswith("resources")] == ["0", "100"]
         assert state.resources[0].cpu == 10
         assert state.resources[-1].cpu is None
+    finally:
+        client.close()
+
+
+def test_pulse_client_loads_mtls_certificate_into_httpx_tls_context(monkeypatch):
+    calls = {}
+
+    class FakeContext:
+        def load_cert_chain(self, certfile, keyfile):
+            calls["cert"] = certfile
+            calls["key"] = keyfile
+
+    context = FakeContext()
+
+    def fake_context(cafile):
+        calls["ca"] = cafile
+        return context
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            calls["client"] = kwargs
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("boetticher_streamdeck.pulse.ssl.create_default_context", fake_context)
+    monkeypatch.setattr("boetticher_streamdeck.pulse.httpx.Client", FakeClient)
+
+    client = PulseClient("https://monitor.example", "read-token", ("client.pem", "client.key"), "ca.pem")
+    try:
+        assert calls["ca"] == "ca.pem"
+        assert calls["cert"] == "client.pem"
+        assert calls["key"] == "client.key"
+        assert calls["client"]["verify"] is context
+        assert "cert" not in calls["client"]
     finally:
         client.close()
 

@@ -15,6 +15,9 @@ boetticher-streamdeck = "boetticher_streamdeck.app:main"
 requires = ["hatchling==1.27.0"]
 build-backend = "hatchling.build"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

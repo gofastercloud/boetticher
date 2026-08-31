@@ -176,6 +176,76 @@ class USBExportHostTest(unittest.TestCase):
         state = json.loads((usb_export.STATE_DIR / "230.json").read_text())
         self.assertEqual(state["managed"], {})
 
+    def test_unchanged_mapping_restarts_running_guest_when_device_is_missing(self):
+        parent = self.parent()
+        device = self.add_tty(parent, "ttyUSB0")
+        path = self.write_manifest()
+        value = f"{device},uid=2200,gid=2200,mode=0660"
+        calls = []
+
+        def fake_run(*args):
+            calls.append(args)
+            if args[:2] == ("pct", "config"):
+                return "\n".join(
+                    [
+                        "hostname: lab-printer-01",
+                        "tags: boetticher;managed;module-printer",
+                        "unprivileged: 1",
+                        f"dev0: {value}",
+                    ]
+                )
+            if args[:2] == ("pct", "status"):
+                return "status: running\n"
+            if args[:2] == ("pct", "reboot"):
+                return ""
+            self.fail(f"unexpected command: {args}")
+
+        missing = mock.Mock(returncode=1, stderr="")
+        with mock.patch.object(usb_export.stat, "S_ISCHR", return_value=True), mock.patch.object(
+            usb_export, "run", side_effect=fake_run
+        ), mock.patch.object(usb_export, "run_result", return_value=missing) as run_result:
+            usb_export.reconcile(path)
+
+        run_result.assert_called_once_with(
+            "pct", "exec", "230", "--", "test", "-c", str(device)
+        )
+        self.assertIn(("pct", "reboot", "230"), calls)
+        state = json.loads((usb_export.STATE_DIR / "230.json").read_text())
+        self.assertEqual(state["managed"], {"dev0": value})
+
+    def test_unchanged_mapping_does_not_restart_when_device_is_present(self):
+        parent = self.parent()
+        device = self.add_tty(parent, "ttyUSB0")
+        path = self.write_manifest()
+        value = f"{device},uid=2200,gid=2200,mode=0660"
+        calls = []
+
+        def fake_run(*args):
+            calls.append(args)
+            if args[:2] == ("pct", "config"):
+                return "\n".join(
+                    [
+                        "hostname: lab-printer-01",
+                        "tags: boetticher;managed;module-printer",
+                        "unprivileged: 1",
+                        f"dev0: {value}",
+                    ]
+                )
+            if args[:2] == ("pct", "status"):
+                return "status: running\n"
+            self.fail(f"unexpected command: {args}")
+
+        present = mock.Mock(returncode=0, stderr="")
+        with mock.patch.object(usb_export.stat, "S_ISCHR", return_value=True), mock.patch.object(
+            usb_export, "run", side_effect=fake_run
+        ), mock.patch.object(usb_export, "run_result", return_value=present) as run_result:
+            usb_export.reconcile(path)
+
+        run_result.assert_called_once_with(
+            "pct", "exec", "230", "--", "test", "-c", str(device)
+        )
+        self.assertFalse(any(call[:2] == ("pct", "reboot") for call in calls))
+
     def test_failed_post_change_verification_never_restarts(self):
         parent = self.parent()
         device = self.add_tty(parent, "ttyUSB0")

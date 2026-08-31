@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-credential=/run/credentials/nginx.service/pulse-proxy-auth-secret
+credential=/run/credentials/nginx.service/pulse-proxy-auth-nginx-secret
 output=/run/boetticher/pulse-proxy-auth.conf
 if [ ! -r "$credential" ]; then
   echo "Pulse proxy-auth credential is unavailable to nginx" >&2

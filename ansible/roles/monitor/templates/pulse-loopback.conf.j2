@@ -23,7 +23,53 @@ server {
         set $boetticher_pulse_proxy_user kiosk;
         set $boetticher_pulse_proxy_role kiosk;
     }
+    if ($ssl_client_s_dn = "CN=client-boetticher-reconciler.{{ domain }},O=boetticher") {
+        set $boetticher_pulse_proxy_user reconciler;
+        set $boetticher_pulse_proxy_role admin;
+    }
     include /run/boetticher/pulse-proxy-auth.conf;
+
+    # The StreamDeck module and controller read client are read-only and use
+    # scoped API tokens. Keep both mTLS identities limited to exact endpoints.
+    location = /api/health {
+        if ($ssl_client_verify != SUCCESS) { return 403; }
+        if ($ssl_client_s_dn !~ "^CN=(?:lab-streamdeck-01|client-boetticher-pulse-read\.{{ domain | regex_escape }}),O=boetticher$") { return 403; }
+        limit_except GET { deny all; }
+        proxy_pass http://127.0.0.1:7655;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-API-Token $http_x_api_token;
+        proxy_set_header X-Proxy-Secret "";
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Role "";
+    }
+    location = /api/state/summary {
+        if ($ssl_client_verify != SUCCESS) { return 403; }
+        if ($ssl_client_s_dn !~ "^CN=(?:lab-streamdeck-01|client-boetticher-pulse-read\.{{ domain | regex_escape }}),O=boetticher$") { return 403; }
+        limit_except GET { deny all; }
+        proxy_pass http://127.0.0.1:7655;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-API-Token $http_x_api_token;
+        proxy_set_header X-Proxy-Secret "";
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Role "";
+    }
+    location = /api/resources {
+        if ($ssl_client_verify != SUCCESS) { return 403; }
+        if ($ssl_client_s_dn !~ "^CN=(?:lab-streamdeck-01|client-boetticher-pulse-read\.{{ domain | regex_escape }}),O=boetticher$") { return 403; }
+        limit_except GET { deny all; }
+        proxy_pass http://127.0.0.1:7655;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-API-Token $http_x_api_token;
+        proxy_set_header X-Proxy-Secret "";
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Role "";
+    }
 
     # Host agents authenticate with their scoped report token. The browser UI
     # and all other monitor routes retain the endpoint's mTLS requirement.

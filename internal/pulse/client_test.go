@@ -168,6 +168,12 @@ func TestIsUnauthorizedRecognizesWrappedAPIError(t *testing.T) {
 	if IsUnauthorized(fmt.Errorf("state check: %w", &apiError{Status: http.StatusForbidden})) {
 		t.Fatal("forbidden Pulse API error was classified as unauthorized")
 	}
+	if !IsForbidden(fmt.Errorf("health check: %w", &apiError{Status: http.StatusForbidden})) {
+		t.Fatal("forbidden Pulse API error was not recognized")
+	}
+	if IsForbidden(fmt.Errorf("health check: %w", &apiError{Status: http.StatusUnauthorized})) {
+		t.Fatal("unauthorized Pulse API error was classified as forbidden")
+	}
 }
 
 func TestAdminValidatesPersistedReadTokenWithoutLoggingInAsTheReadToken(t *testing.T) {

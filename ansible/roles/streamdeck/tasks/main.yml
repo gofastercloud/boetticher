@@ -11,7 +11,7 @@
 
 - name: Create the StreamDeck identity directory
   ansible.builtin.file:
-    path: /var/lib/boetticher/identity/tls
+    path: /var/lib/streamdeck/tls
     state: directory
     owner: root
     group: streamdeck
@@ -19,13 +19,13 @@
 
 - name: Generate the StreamDeck client private key
   ansible.builtin.command:
-    argv: [openssl, genpkey, -algorithm, EC, -pkeyopt, ec_paramgen_curve:P-256, -out, /var/lib/boetticher/identity/tls/streamdeck.key.pem]
+    argv: [openssl, genpkey, -algorithm, EC, -pkeyopt, ec_paramgen_curve:P-256, -out, /var/lib/streamdeck/tls/streamdeck.key.pem]
   args:
-    creates: /var/lib/boetticher/identity/tls/streamdeck.key.pem
+    creates: /var/lib/streamdeck/tls/streamdeck.key.pem
 
 - name: Restrict the StreamDeck client private key
   ansible.builtin.file:
-    path: /var/lib/boetticher/identity/tls/streamdeck.key.pem
+    path: /var/lib/streamdeck/tls/streamdeck.key.pem
     owner: root
     group: streamdeck
     mode: '0640'
@@ -38,24 +38,24 @@
       - -new
       - -sha256
       - -key
-      - /var/lib/boetticher/identity/tls/streamdeck.key.pem
+      - /var/lib/streamdeck/tls/streamdeck.key.pem
       - -subj
       - /CN=lab-streamdeck-01
       - -out
-      - /var/lib/boetticher/identity/tls/streamdeck.csr.pem
+      - /var/lib/streamdeck/tls/streamdeck.csr.pem
   args:
-    creates: /var/lib/boetticher/identity/tls/streamdeck.csr.pem
+    creates: /var/lib/streamdeck/tls/streamdeck.csr.pem
 
 - name: Restrict the StreamDeck client CSR
   ansible.builtin.file:
-    path: /var/lib/boetticher/identity/tls/streamdeck.csr.pem
+    path: /var/lib/streamdeck/tls/streamdeck.csr.pem
     owner: root
     group: streamdeck
     mode: '0640'
 
 - name: Fetch the StreamDeck CSR during PKI bootstrap
   ansible.builtin.fetch:
-    src: /var/lib/boetticher/identity/tls/streamdeck.csr.pem
+    src: /var/lib/streamdeck/tls/streamdeck.csr.pem
     dest: "{{ pki_csr_output_dir }}/streamdeck.csr.pem"
     flat: true
   when: pki_bootstrap_phase | default(false) | bool
@@ -76,8 +76,8 @@
     group: streamdeck
     mode: '0640'
   loop:
-    - {dest: /var/lib/boetticher/identity/tls/streamdeck.crt.pem, content: "{{ streamdeck_client_cert_pem | default('') }}"}
-    - {dest: /var/lib/boetticher/identity/tls/ca.pem, content: "{{ pulse_server_ca_pem }}"}
+    - {dest: /var/lib/streamdeck/tls/streamdeck.crt.pem, content: "{{ streamdeck_client_cert_pem | default('') }}"}
+    - {dest: /var/lib/streamdeck/tls/ca.pem, content: "{{ pulse_server_ca_pem }}"}
   no_log: true
   when: streamdeck_client_cert_pem | default('') | length > 0
 
@@ -87,7 +87,7 @@
     owner: root
     group: streamdeck
     mode: '0640'
-    content: "{{ {'pulse_url': 'https://monitor.' + domain, 'serial': (((usb_export_manifests | selectattr('vmid', 'equalto', 220) | first).exports | first).serial | default('', true)), 'client_certificate': '/var/lib/boetticher/identity/tls/streamdeck.crt.pem', 'client_key': '/var/lib/boetticher/identity/tls/streamdeck.key.pem', 'ca_certificate': '/var/lib/boetticher/identity/tls/ca.pem'} | to_nice_json }}\n"
+    content: "{{ {'pulse_url': 'https://monitor.' + domain, 'serial': (((usb_export_manifests | selectattr('vmid', 'equalto', 220) | first).exports | first).serial | default('', true)), 'client_certificate': '/var/lib/streamdeck/tls/streamdeck.crt.pem', 'client_key': '/var/lib/streamdeck/tls/streamdeck.key.pem', 'ca_certificate': '/var/lib/streamdeck/tls/ca.pem'} | to_nice_json }}\n"
 
 - name: Keep StreamDeck stopped until mTLS and runtime credential gates pass
   ansible.builtin.systemd_service:

@@ -1,4 +1,5 @@
 import json
+import ssl
 import time
 from datetime import datetime, timezone
 
@@ -11,6 +12,12 @@ MAX_RESOURCES = 400
 PAGE_SIZE = 100
 
 
+def _mtls_context(cert: tuple[str, str], ca: str) -> ssl.SSLContext:
+    context = ssl.create_default_context(cafile=ca)
+    context.load_cert_chain(certfile=cert[0], keyfile=cert[1])
+    return context
+
+
 class PulseClient:
     """Bounded, read-only Pulse client using the platform mTLS contract."""
 
@@ -19,8 +26,7 @@ class PulseClient:
         self.total_timeout = timeout
         self.client = httpx.Client(
             headers={"X-API-Token": token},
-            cert=cert,
-            verify=ca,
+            verify=_mtls_context(cert, ca),
             follow_redirects=False,
             timeout=httpx.Timeout(timeout, connect=2.0),
         )

@@ -150,7 +150,7 @@ case "$name" in
     test -f "$rootfs/etc/systemd/system/streamdeck-status.service"
     grep -Fq 'User=streamdeck' "$rootfs/etc/systemd/system/streamdeck-status.service"
     grep -Fq 'DevicePolicy=closed' "$rootfs/etc/systemd/system/streamdeck-status.service"
-    grep -Fq 'DeviceAllow=char-usb rw' "$rootfs/etc/systemd/system/streamdeck-status.service"
+    grep -Fq 'DeviceAllow=char-usb_device rw' "$rootfs/etc/systemd/system/streamdeck-status.service"
     grep -Fq 'ProtectSystem=strict' "$rootfs/etc/systemd/system/streamdeck-status.service"
     grep -Fq 'MemoryDenyWriteExecute=yes' "$rootfs/etc/systemd/system/streamdeck-status.service"
     ;;

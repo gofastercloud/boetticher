@@ -1212,7 +1212,7 @@ func TestPulseProxyAuthRendererUsesOnlyRuntimeCredentialMaterial(t *testing.T) {
 	}
 	text := string(data)
 	for _, required := range []string{
-		"/run/credentials/nginx.service/pulse-proxy-auth-secret",
+		"/run/credentials/nginx.service/pulse-proxy-auth-nginx-secret",
 		"/run/boetticher/pulse-proxy-auth.conf",
 		"case \"$secret\" in",
 		"set $boetticher_pulse_proxy_shared_secret",

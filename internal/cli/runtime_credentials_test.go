@@ -267,6 +267,19 @@ func TestPulseProxyAuthUsesSeparateEncryptedUnitCredentials(t *testing.T) {
 	}
 	pulse := dropIns["lab-monitor-01"]["pulse.service"]
 	nginx := dropIns["lab-monitor-01"]["nginx.service"]
+	foundNginxRuntimeRef := false
+	for _, binding := range bindings {
+		if binding.Spec.Unit != "nginx.service" {
+			continue
+		}
+		foundNginxRuntimeRef = true
+		if binding.Spec.RuntimeRef != "/run/credentials/nginx.service/pulse-proxy-auth-nginx-secret" {
+			t.Fatalf("nginx proxy-auth runtime reference = %q", binding.Spec.RuntimeRef)
+		}
+	}
+	if !foundNginxRuntimeRef {
+		t.Fatal("nginx proxy-auth credential binding is missing")
+	}
 	for _, expected := range []string{
 		"LoadCredentialEncrypted=pulse-proxy-auth-secret:/var/lib/boetticher/credentials/pulse-proxy-auth-secret.cred",
 	} {

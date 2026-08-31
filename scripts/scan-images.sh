@@ -156,6 +156,7 @@ scan_one() {
     boetticher-tailnet-router) module=tailnet-router ;;
     boetticher-litellm) module=litellm ;;
     boetticher-printer) module=printer ;;
+    boetticher-streamdeck) module=streamdeck ;;
     boetticher-aiops) module=aiops ;;
     boetticher-gatus) module=gatus ;;
     boetticher-network-probe) module=network-probe ;;

@@ -59,7 +59,7 @@ func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, erro
 			},
 			deploymentCredential{
 				Guest: "lab-monitor-01", Address: "10.10.10.20", SecretKey: "pulse_proxy_auth_secret",
-				Spec: secrets.CredentialSpec{Name: "pulse-proxy-auth-nginx-secret", Unit: "nginx.service", StorePath: "/var/lib/boetticher/credentials/pulse-proxy-auth-nginx-secret.cred", RuntimeRef: "/run/credentials/nginx.service/pulse-proxy-auth-secret"},
+				Spec: secrets.CredentialSpec{Name: "pulse-proxy-auth-nginx-secret", Unit: "nginx.service", StorePath: "/var/lib/boetticher/credentials/pulse-proxy-auth-nginx-secret.cred", RuntimeRef: "/run/credentials/nginx.service/pulse-proxy-auth-nginx-secret"},
 			},
 		)
 	}

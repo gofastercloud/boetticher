@@ -666,9 +666,16 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 		} else if tokenErr != nil {
 			return fmt.Errorf("load encrypted Pulse read token: %w", tokenErr)
 		}
+		readClientCertificate := clientCertificate
+		if modules.IsEnabled(s, "streamdeck") {
+			readClientCertificate, clientErr = pki.IssueClient(authority, "boetticher-pulse-read", s.Network.Domain, time.Now().UTC())
+			if clientErr != nil {
+				return fmt.Errorf("issue Pulse read client certificate: %w", clientErr)
+			}
+		}
 		pulseRead, clientErr := pulse.NewReadClient(pulse.ClientConfig{
 			BaseURL: pulseBaseURL, APIToken: readToken,
-			CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
+			CAPEM: authority.IssuingCertPEM, ClientCertPEM: readClientCertificate.CertPEM, ClientKeyPEM: readClientCertificate.KeyPEM,
 			ServerName: "monitor." + s.Network.Domain,
 		})
 		if clientErr != nil {
@@ -688,7 +695,7 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 			}
 			pulseRead, clientErr = pulse.NewReadClient(pulse.ClientConfig{
 				BaseURL: pulseBaseURL, APIToken: readToken,
-				CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
+				CAPEM: authority.IssuingCertPEM, ClientCertPEM: readClientCertificate.CertPEM, ClientKeyPEM: readClientCertificate.KeyPEM,
 				ServerName: "monitor." + s.Network.Domain,
 			})
 			if clientErr != nil {
@@ -698,10 +705,19 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 			return nil
 		}
 		health, err := pulseRead.Health(ctx)
-		if err != nil || !strings.EqualFold(health.Status, "healthy") {
-			if err != nil {
+		if err != nil {
+			if !(modules.IsEnabled(s, "streamdeck") && pulse.IsForbidden(err)) {
 				return fmt.Errorf("verify Pulse health: %w", err)
 			}
+			if refreshErr := refreshPulseReadToken(); refreshErr != nil {
+				return fmt.Errorf("refresh Pulse read token after forbidden health response: %w", refreshErr)
+			}
+			health, err = pulseRead.Health(ctx)
+			if err != nil {
+				return fmt.Errorf("verify Pulse health after read-token refresh: %w", err)
+			}
+		}
+		if !strings.EqualFold(health.Status, "healthy") {
 			return fmt.Errorf("verify Pulse health: unexpected status %q", health.Status)
 		}
 		if _, err := pulseRead.StateSummary(ctx); err != nil {
