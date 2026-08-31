@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,38 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/usbexport"
 )
+
+func TestExternalEndpointReadinessUsesDeploymentResolver(t *testing.T) {
+	s := model.NewDefaultSite("endpoint-readiness", "age1endpointreadiness")
+	s.Declarations = []model.ModuleDeclaration{{
+		Module:         "aiops",
+		NetworkIntents: []model.NetworkIntent{{Endpoint: "https://private-upstream.example/v1"}},
+	}}
+	var resolvedHost string
+	lookup := func(host string) ([]net.IP, error) {
+		resolvedHost = host
+		return []net.IP{net.ParseIP("192.0.2.30")}, nil
+	}
+	if err := validateExternalEndpointReadiness(s, lookup); err != nil {
+		t.Fatalf("deployment resolver rejected a resolvable endpoint: %v", err)
+	}
+	if resolvedHost != "private-upstream.example" {
+		t.Fatalf("deployment resolver host = %q, want private-upstream.example", resolvedHost)
+	}
+}
+
+func TestExternalEndpointReadinessPreservesResolverFailure(t *testing.T) {
+	s := model.NewDefaultSite("endpoint-failure", "age1endpointfailure")
+	s.Declarations = []model.ModuleDeclaration{{
+		Module:         "aiops",
+		NetworkIntents: []model.NetworkIntent{{Endpoint: "https://private-upstream.example/v1"}},
+	}}
+	if err := validateExternalEndpointReadiness(s, func(string) ([]net.IP, error) {
+		return nil, errors.New("deployment DNS unavailable")
+	}); err == nil || !strings.Contains(err.Error(), "deployment DNS unavailable") {
+		t.Fatalf("deployment resolver failure was not preserved: %v", err)
+	}
+}
 
 func TestStaticCredentialReadinessFailsForMissingRequiredProviderCredential(t *testing.T) {
 	siteDir := t.TempDir()
