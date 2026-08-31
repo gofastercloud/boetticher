@@ -10,6 +10,21 @@ server {
     ssl_verify_depth 3;
     ssl_protocols TLSv1.2 TLSv1.3;
 
+    # Only the explicitly mapped browser identities receive Pulse proxy auth.
+    # AIOps and host-agent paths remain token-only and never inherit the
+    # shared proxy credential.
+    set $boetticher_pulse_proxy_user "";
+    set $boetticher_pulse_proxy_role "";
+    if ($ssl_client_s_dn = "CN=client-operator.{{ domain }},O=boetticher") {
+        set $boetticher_pulse_proxy_user operator;
+        set $boetticher_pulse_proxy_role admin;
+    }
+    if ($ssl_client_s_dn = "CN=client-lab-display-01-kiosk.{{ domain }},O=boetticher") {
+        set $boetticher_pulse_proxy_user kiosk;
+        set $boetticher_pulse_proxy_role kiosk;
+    }
+    include /run/boetticher/pulse-proxy-auth.conf;
+
     # Host agents authenticate with their scoped report token. The browser UI
     # and all other monitor routes retain the endpoint's mTLS requirement.
     location ^~ /api/agents/ {
@@ -33,49 +48,65 @@ server {
         if ($ssl_client_verify != SUCCESS) { return 403; }
         limit_except GET { deny all; }
         if ($ssl_client_s_dn ~ "CN=aiops-pulse-note(?:,|$)") { return 403; }
+        set $boetticher_pulse_proxy_secret "";
+        if ($boetticher_pulse_proxy_user != "") {
+            set $boetticher_pulse_proxy_secret $boetticher_pulse_proxy_shared_secret;
+        }
         proxy_pass http://127.0.0.1:7655;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto https;
-        proxy_set_header X-Proxy-Secret "";
-        proxy_set_header Remote-User "";
-        proxy_set_header Remote-Role "";
+        proxy_set_header X-Proxy-Secret $boetticher_pulse_proxy_secret;
+        proxy_set_header Remote-User $boetticher_pulse_proxy_user;
+        proxy_set_header Remote-Role $boetticher_pulse_proxy_role;
     }
     location = /api/alerts/incidents {
         if ($ssl_client_verify != SUCCESS) { return 403; }
         limit_except GET { deny all; }
         if ($ssl_client_s_dn ~ "CN=aiops-pulse-note(?:,|$)") { return 403; }
+        set $boetticher_pulse_proxy_secret "";
+        if ($boetticher_pulse_proxy_user != "") {
+            set $boetticher_pulse_proxy_secret $boetticher_pulse_proxy_shared_secret;
+        }
         proxy_pass http://127.0.0.1:7655;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto https;
-        proxy_set_header X-Proxy-Secret "";
-        proxy_set_header Remote-User "";
-        proxy_set_header Remote-Role "";
+        proxy_set_header X-Proxy-Secret $boetticher_pulse_proxy_secret;
+        proxy_set_header Remote-User $boetticher_pulse_proxy_user;
+        proxy_set_header Remote-Role $boetticher_pulse_proxy_role;
     }
     location ~ ^/api/resources/[^/]+(?:/metrics)?$ {
         if ($ssl_client_verify != SUCCESS) { return 403; }
         limit_except GET { deny all; }
         if ($ssl_client_s_dn ~ "CN=aiops-pulse-note(?:,|$)") { return 403; }
+        set $boetticher_pulse_proxy_secret "";
+        if ($boetticher_pulse_proxy_user != "") {
+            set $boetticher_pulse_proxy_secret $boetticher_pulse_proxy_shared_secret;
+        }
         proxy_pass http://127.0.0.1:7655;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto https;
-        proxy_set_header X-Proxy-Secret "";
-        proxy_set_header Remote-User "";
-        proxy_set_header Remote-Role "";
+        proxy_set_header X-Proxy-Secret $boetticher_pulse_proxy_secret;
+        proxy_set_header Remote-User $boetticher_pulse_proxy_user;
+        proxy_set_header Remote-Role $boetticher_pulse_proxy_role;
     }
     location = /api/metrics-store/history {
         if ($ssl_client_verify != SUCCESS) { return 403; }
         limit_except GET { deny all; }
         if ($ssl_client_s_dn ~ "CN=aiops-pulse-note(?:,|$)") { return 403; }
+        set $boetticher_pulse_proxy_secret "";
+        if ($boetticher_pulse_proxy_user != "") {
+            set $boetticher_pulse_proxy_secret $boetticher_pulse_proxy_shared_secret;
+        }
         proxy_pass http://127.0.0.1:7655;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto https;
-        proxy_set_header X-Proxy-Secret "";
-        proxy_set_header Remote-User "";
-        proxy_set_header Remote-Role "";
+        proxy_set_header X-Proxy-Secret $boetticher_pulse_proxy_secret;
+        proxy_set_header Remote-User $boetticher_pulse_proxy_user;
+        proxy_set_header Remote-Role $boetticher_pulse_proxy_role;
     }
     location = /api/alerts/incidents/note {
         if ($ssl_client_verify != SUCCESS) { return 403; }
@@ -90,17 +121,8 @@ server {
     location / {
         if ($ssl_client_verify != SUCCESS) { return 403; }
         if ($ssl_client_s_dn ~ "CN=aiops-pulse-(?:read|note)(?:,|$)") { return 403; }
-        set $boetticher_pulse_proxy_user "";
-        set $boetticher_pulse_proxy_role "";
-        if ($ssl_client_s_dn = "CN=client-operator.{{ domain }},O=boetticher") {
-            set $boetticher_pulse_proxy_user operator;
-            set $boetticher_pulse_proxy_role admin;
-        }
-        if ($ssl_client_s_dn = "CN=client-lab-display-01-kiosk.{{ domain }},O=boetticher") {
-            set $boetticher_pulse_proxy_user kiosk;
-            set $boetticher_pulse_proxy_role kiosk;
-        }
         if ($boetticher_pulse_proxy_user = "") { return 403; }
+        set $boetticher_pulse_proxy_secret $boetticher_pulse_proxy_shared_secret;
         proxy_pass http://127.0.0.1:7655;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -109,10 +131,7 @@ server {
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
-        proxy_set_header X-Proxy-Secret "";
-        proxy_set_header Remote-User "";
-        proxy_set_header Remote-Role "";
-        include /run/boetticher/pulse-proxy-auth.conf;
+        proxy_set_header X-Proxy-Secret $boetticher_pulse_proxy_secret;
         proxy_set_header Remote-User $boetticher_pulse_proxy_user;
         proxy_set_header Remote-Role $boetticher_pulse_proxy_role;
     }

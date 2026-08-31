@@ -1282,25 +1282,119 @@ func TestPulseProxyAuthMapsOnlyApprovedClientIdentities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	renderer, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "pulse-nginx-proxy-auth.sh.j2"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	text := string(frontend)
+	contract := text + string(tasks) + string(renderer)
 	for _, expected := range []string{
 		"CN=client-operator.{{ domain }},O=boetticher",
 		"CN=client-lab-display-01-kiosk.{{ domain }},O=boetticher",
 		"include /run/boetticher/pulse-proxy-auth.conf",
+		"set $boetticher_pulse_proxy_shared_secret",
+		"set $boetticher_pulse_proxy_secret $boetticher_pulse_proxy_shared_secret",
+		"proxy_set_header X-Proxy-Secret $boetticher_pulse_proxy_secret",
 		"ExecStartPre=/usr/local/sbin/boetticher-pulse-nginx-proxy-auth",
 		"daemon_reload: true",
 	} {
-		if !strings.Contains(text+string(tasks), expected) {
+		if !strings.Contains(contract, expected) {
 			t.Fatalf("Pulse proxy-auth contract is missing %q", expected)
 		}
 	}
-	if got := strings.Count(text, "proxy_set_header X-Proxy-Secret \"\";"); got != 6 {
-		t.Fatalf("frontend clears incoming proxy secret in %d locations, want 6", got)
+	if got := strings.Count(text, "proxy_set_header X-Proxy-Secret \"\";"); got != 1 {
+		t.Fatalf("frontend clears incoming proxy secret in %d locations, want only the host-agent location", got)
+	}
+	if got := strings.Count(text, "proxy_set_header X-Proxy-Secret $boetticher_pulse_proxy_secret;"); got != 5 {
+		t.Fatalf("frontend maps proxy secret in %d browser locations, want 5", got)
+	}
+	if got := strings.Count(text, "set $boetticher_pulse_proxy_secret \"\";"); got != 4 {
+		t.Fatalf("frontend initializes conditional proxy secret in %d API locations, want 4", got)
 	}
 	if strings.Contains(text, "$ssl_client_cert") || strings.Contains(text, "$ssl_client_s_dn;\n") {
 		t.Fatal("frontend forwards an arbitrary client certificate identity")
 	}
 	if !strings.HasSuffix(strings.TrimSpace(text), "}") {
 		t.Fatal("Pulse frontend template has directives outside its server block")
+	}
+	agentStart := strings.Index(text, "location ^~ /api/agents/")
+	if agentStart < 0 {
+		t.Fatal("Pulse frontend is missing the host-agent location")
+	}
+	agentEnd := strings.Index(text[agentStart:], "\n    }")
+	if agentEnd < 0 {
+		t.Fatal("Pulse host-agent location is malformed")
+	}
+	if !strings.Contains(text[agentStart:agentStart+agentEnd], "proxy_set_header X-Proxy-Secret \"\";") {
+		t.Fatal("Pulse host-agent location does not clear browser proxy auth")
+	}
+}
+
+func TestPiKioskUsesDedicatedPulseClientCertificate(t *testing.T) {
+	service, err := os.ReadFile(filepath.Join("..", "..", "pi", "kiosk", "systemd", "pulse-kiosk.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dropIn, err := os.ReadFile(filepath.Join("..", "..", "pi", "kiosk", "systemd", "pulse-kiosk.service.d", "20-pulse-dashboard.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	serviceText := string(service)
+	dropInText := string(dropIn)
+	for _, required := range []string{
+		"User=kiosk",
+		"NoNewPrivileges=yes",
+		"ProtectSystem=strict",
+		"CapabilityBoundingSet=",
+		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
+		"https://monitor.lab.home.arpa",
+	} {
+		if !strings.Contains(serviceText, required) {
+			t.Fatalf("Pi kiosk service is missing %q", required)
+		}
+	}
+	for _, required := range []string{
+		"ExecStart=",
+		"--auto-select-certificate-for-urls=",
+		"ISSUER",
+		"boetticher Issuing CA",
+		"client-lab-display-01-kiosk.lab.home.arpa",
+		"https://monitor.lab.home.arpa",
+		"--disable-extensions-except=/home/kiosk/pulse-refresh-extension",
+		"--load-extension=/home/kiosk/pulse-refresh-extension",
+	} {
+		if !strings.Contains(dropInText, required) {
+			t.Fatalf("Pi kiosk Pulse drop-in is missing %q", required)
+		}
+	}
+	for _, text := range []string{serviceText, dropInText} {
+		for _, forbidden := range []string{"-----BEGIN", "private.key", "PKCS12", "X-API-Token"} {
+			if strings.Contains(text, forbidden) {
+				t.Fatalf("Pi kiosk source contains forbidden credential material %q", forbidden)
+			}
+		}
+	}
+	refreshManifest, err := os.ReadFile(filepath.Join("..", "..", "pi", "kiosk", "pulse-refresh-extension", "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshScript, err := os.ReadFile(filepath.Join("..", "..", "pi", "kiosk", "pulse-refresh-extension", "reload.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestText := string(refreshManifest)
+	scriptText := string(refreshScript)
+	for _, required := range []string{"manifest_version", "content_scripts", "https://monitor.lab.home.arpa/*", "reload.js"} {
+		if !strings.Contains(manifestText, required) {
+			t.Fatalf("Pi kiosk refresh extension is missing %q", required)
+		}
+	}
+	if !strings.Contains(scriptText, "30_000") || !strings.Contains(scriptText, "window.location.replace(window.location.href)") {
+		t.Fatal("Pi kiosk refresh extension does not reload after 30 seconds")
+	}
+	for _, forbidden := range []string{"<all_urls>", "permissions", "host_permissions", "X-API-Token", "-----BEGIN"} {
+		if strings.Contains(manifestText+scriptText, forbidden) {
+			t.Fatalf("Pi kiosk refresh extension contains forbidden capability or credential material %q", forbidden)
+		}
 	}
 }

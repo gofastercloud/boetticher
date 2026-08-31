@@ -25,7 +25,7 @@ esac
 install -d -m 0750 /run/boetticher
 tmp=$(mktemp /run/boetticher/pulse-proxy-auth.XXXXXX)
 trap 'rm -f "$tmp"' EXIT
-printf 'proxy_set_header X-Proxy-Secret "%s";\n' "$secret" > "$tmp"
+printf 'set $boetticher_pulse_proxy_shared_secret "%s";\n' "$secret" > "$tmp"
 chmod 0600 "$tmp"
 mv -f "$tmp" "$output"
 trap - EXIT

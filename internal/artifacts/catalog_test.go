@@ -1215,7 +1215,7 @@ func TestPulseProxyAuthRendererUsesOnlyRuntimeCredentialMaterial(t *testing.T) {
 		"/run/credentials/nginx.service/pulse-proxy-auth-secret",
 		"/run/boetticher/pulse-proxy-auth.conf",
 		"case \"$secret\" in",
-		"proxy_set_header X-Proxy-Secret",
+		"set $boetticher_pulse_proxy_shared_secret",
 		"chmod 0600",
 	} {
 		if !strings.Contains(text, required) {
@@ -1226,5 +1226,16 @@ func TestPulseProxyAuthRendererUsesOnlyRuntimeCredentialMaterial(t *testing.T) {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("Pulse proxy-auth renderer contains unsafe materialization %q", forbidden)
 		}
+	}
+}
+
+func TestPulseServiceDoesNotSetInvalidDisabledAgentIngestPort(t *testing.T) {
+	path := filepath.Join("..", "..", "images", "monitoring", "runtime", "pulse.service")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "PULSE_AGENT_INGEST_PORT=0") {
+		t.Fatal("Pulse service sets an invalid disabled agent-ingest port; leave the option unset")
 	}
 }

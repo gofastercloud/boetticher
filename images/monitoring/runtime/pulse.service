@@ -20,7 +20,6 @@ Environment=PULSE_DATA_DIR=/var/lib/pulse
 Environment=BIND_ADDRESS=127.0.0.1
 Environment=PULSE_DEPLOYMENT_METHOD=systemd
 Environment=PULSE_TELEMETRY=false
-Environment=PULSE_AGENT_INGEST_PORT=0
 
 [Install]
 WantedBy=multi-user.target

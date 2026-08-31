@@ -18,3 +18,10 @@ procedure is explicitly confirmed.
 Pulse credentials and agent tokens stay in the controller's encrypted secret
 workflow and protected runtime credentials. A local configuration check does
 not prove that the live Pulse UI, alerts, or backup is current.
+
+The kiosk uses its own non-administrative mTLS identity. Pulse 6.1.2 omits
+admin-only security-posture fields from the kiosk response; its generic
+frontend banner can therefore report missing API-token or protected-export
+settings on that screen even when an admin response confirms both protections
+are enabled. Do not grant the kiosk administrative or export privileges to
+suppress that banner; verify the posture from an operator session instead.
