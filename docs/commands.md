@@ -738,9 +738,9 @@ Arguments: --source and --protocol are required; choose exactly one of --destina
 
 Options: --dry-run previews the change; --confirm writes it; --age-identity, --proxmox-ca, and --insecure apply when resolving a VMID.
 
-Safety: Changes site.yml only and never deploys. Review the rule before confirming; deployment remains boetticher deploy.
+Safety: Changes site.yml only and never deploys. Core destinations remain rejected except a reserved SERVERS /32 to the fixed Pulse endpoint on TCP/443. Review the rule before confirming; deployment remains boetticher deploy.
 
-Examples: `boetticher firewall rule add --source TRUSTED --destination 10.10.20.61 --protocol tcp --ports 8080 --confirm --site ./my-boetticher`
+Examples: `boetticher firewall rule add --source TRUSTED --destination 10.10.20.61 --protocol tcp --ports 8080 --confirm --site ./my-boetticher`; `boetticher firewall rule add --source 10.10.20.50/32 --destination 10.10.10.20/32 --protocol tcp --ports 443 --id ufr-lab-display-pulse --confirm --site ./my-boetticher`
 
 Related commands: firewall diff, deploy, dhcp reservation
 

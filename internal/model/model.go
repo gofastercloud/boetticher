@@ -1490,7 +1490,7 @@ func validateUserFirewallRules(s Site) error {
 		if err != nil {
 			return fmt.Errorf("firewall rule %s: %w", rule.ID, err)
 		}
-		if firewallSelectorProtected(s, source) || firewallSelectorProtected(s, destination) {
+		if (firewallSelectorProtected(s, source) || firewallSelectorProtected(s, destination)) && !IsReservedServersPulseRule(s, source, destination, protocol, ports) {
 			return fmt.Errorf("firewall rule %s crosses a protected Core boundary", rule.ID)
 		}
 		key := source + "|" + destination + "|" + protocol + "|" + strings.Join(ports, ",")
@@ -1593,6 +1593,43 @@ func firewallSelectorProtected(s Site, selector string) bool {
 			_, protected, e := net.ParseCIDR(zone.Network)
 			if e == nil && (network.Contains(protected.IP) || protected.Contains(network.IP)) {
 				return true
+			}
+		}
+	}
+	return false
+}
+
+// IsReservedServersPulseRule is the one user-workload exception to the Core
+// boundary. An external, reservation-backed dashboard may read the fixed
+// Pulse HTTPS endpoint, but it cannot widen that access to another Core
+// service, port, or an entire zone.
+func IsReservedServersPulseRule(s Site, source, destination, protocol string, ports []string) bool {
+	if protocol != "tcp" || len(ports) != 1 || ports[0] != "443" {
+		return false
+	}
+	sourceIP, sourceNetwork, err := net.ParseCIDR(source)
+	if err != nil || sourceIP.To4() == nil {
+		return false
+	}
+	ones, bits := sourceNetwork.Mask.Size()
+	if bits != 32 || ones != 32 {
+		return false
+	}
+	servers, ok := zoneByName(s, "SERVERS")
+	if !ok {
+		return false
+	}
+	_, serversNetwork, err := net.ParseCIDR(servers.Network)
+	if err != nil || !serversNetwork.Contains(sourceIP) {
+		return false
+	}
+	for _, reservation := range s.DHCPReservations {
+		reservationIP := net.ParseIP(reservation.Address).To4()
+		if reservation.Zone == "SERVERS" && reservationIP != nil && reservationIP.String() == sourceIP.To4().String() {
+			for _, component := range s.PlatformComponents() {
+				if component.Name == "lab-monitor-01" && component.Module == "monitoring" && component.Zone == "INFRA" {
+					return destination == component.Address+"/32"
+				}
 			}
 		}
 	}

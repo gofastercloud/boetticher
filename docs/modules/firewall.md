@@ -19,3 +19,16 @@ commands change desired state only. Apply the result with `boetticher deploy`.
 The gateway's telemetry endpoint is an internal consumer boundary, not a
 general administration API. Its current live reachability, firewall policy,
 and external-appliance behavior must be checked on the deployed network.
+
+User-workload rules remain blocked from Core destinations except for one
+bounded dashboard path: a reserved SERVERS `/32` may be allowed to the fixed
+Pulse endpoint (`lab-monitor-01`, `10.10.10.20`) on TCP/443. The model requires
+the source address to match an existing SERVERS DHCP reservation and rejects
+zone-wide sources, other Core destinations, and other ports. For example:
+
+```text
+boetticher firewall rule add --source 10.10.20.50/32 --destination 10.10.10.20/32 --protocol tcp --ports 443 --id ufr-lab-display-pulse --confirm --site ./my-boetticher
+```
+
+This records desired state only; apply it with `boetticher deploy` and verify
+the live Pulse path from the reserved client.

@@ -21,6 +21,32 @@ func TestUserFirewallRuleValidationIsBoundedAndCoreSafe(t *testing.T) {
 	}
 }
 
+func TestReservedServersClientMayReachPulseHTTPS(t *testing.T) {
+	site := NewDefaultSite("installation", "age1example")
+	site.DHCPReservations = []DHCPReservation{{Zone: "SERVERS", Hostname: "lab-display-01", Address: "10.10.20.50", MAC: "dc:a6:32:e9:dd:82"}}
+	site.UserFirewallRules = []UserFirewallRule{{ID: "ufr-lab-display-pulse", Source: "10.10.20.50/32", Destination: "10.10.10.20/32", Protocol: "tcp", Ports: []string{"443"}}}
+	if err := site.Validate(); err != nil {
+		t.Fatalf("reserved SERVERS Pulse client was rejected: %v", err)
+	}
+}
+
+func TestPulseClientRuleRemainsNarrowAndReservationBound(t *testing.T) {
+	base := NewDefaultSite("installation", "age1example")
+	base.DHCPReservations = []DHCPReservation{{Zone: "SERVERS", Hostname: "lab-display-01", Address: "10.10.20.50", MAC: "dc:a6:32:e9:dd:82"}}
+	for _, rule := range []UserFirewallRule{
+		{ID: "ufr-broad", Source: "SERVERS", Destination: "10.10.10.20/32", Protocol: "tcp", Ports: []string{"443"}},
+		{ID: "ufr-unreserved", Source: "10.10.20.51/32", Destination: "10.10.10.20/32", Protocol: "tcp", Ports: []string{"443"}},
+		{ID: "ufr-other-core", Source: "10.10.20.50/32", Destination: "10.10.10.11/32", Protocol: "tcp", Ports: []string{"443"}},
+		{ID: "ufr-other-port", Source: "10.10.20.50/32", Destination: "10.10.10.20/32", Protocol: "tcp", Ports: []string{"8443"}},
+	} {
+		site := base
+		site.UserFirewallRules = []UserFirewallRule{rule}
+		if err := site.Validate(); err == nil {
+			t.Errorf("unsafe Pulse client rule was accepted: %#v", rule)
+		}
+	}
+}
+
 func TestUserFirewallRuleLimitAndEquivalentDuplicate(t *testing.T) {
 	site := NewDefaultSite("installation", "age1example")
 	for i := 0; i < maxUserFirewallRules+1; i++ {

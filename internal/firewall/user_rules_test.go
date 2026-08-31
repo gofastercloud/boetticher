@@ -63,3 +63,23 @@ func TestPlanRejectsPersistedUserRuleWithInvalidSelector(t *testing.T) {
 		t.Fatal("invalid persisted selector was silently dropped")
 	}
 }
+
+func TestReservedServersPulseClientRendersExactCoreException(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	site.DHCPReservations = []model.DHCPReservation{{Zone: "SERVERS", Hostname: "lab-display-01", Address: "10.10.20.50", MAC: "dc:a6:32:e9:dd:82"}}
+	site.UserFirewallRules = []model.UserFirewallRule{{ID: "ufr-lab-display-pulse", Source: "10.10.20.50/32", Destination: "10.10.10.20/32", Protocol: "tcp", Ports: []string{"443"}}}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range plan.Rules {
+		if rule.UserRuleID != "ufr-lab-display-pulse" {
+			continue
+		}
+		if rule.From != "SERVERS" || rule.To != "INFRA" || rule.SourceCIDR != "10.10.20.50/32" || rule.DestinationCIDR != "10.10.10.20/32" || rule.Protocol != "tcp" || len(rule.Ports) != 1 || rule.Ports[0] != "443" {
+			t.Fatalf("Pulse client rule rendered too broadly: %#v", rule)
+		}
+		return
+	}
+	t.Fatal("reserved SERVERS Pulse client rule was not rendered")
+}

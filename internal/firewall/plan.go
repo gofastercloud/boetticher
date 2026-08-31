@@ -111,7 +111,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		if _, _, ok := userSelector(s, userRule.Source); !ok {
 			return Plan{}, fmt.Errorf("HOLD: user firewall rule %s source %q cannot be rendered", userRule.ID, userRule.Source)
 		}
-		if _, _, ok := userSelector(s, userRule.Destination); !ok {
+		if _, _, ok := userRuleDestinationSelector(s, userRule); !ok {
 			return Plan{}, fmt.Errorf("HOLD: user firewall rule %s destination %q cannot be rendered", userRule.ID, userRule.Destination)
 		}
 	}
@@ -396,7 +396,7 @@ func policyRules(s model.Site) []PolicyRule {
 	sort.Slice(userRules, func(i, j int) bool { return userRules[i].ID < userRules[j].ID })
 	for _, user := range userRules {
 		sourceZone, sourceCIDR, sourceOK := userSelector(s, user.Source)
-		destinationZone, destinationCIDR, destinationOK := userSelector(s, user.Destination)
+		destinationZone, destinationCIDR, destinationOK := userRuleDestinationSelector(s, user)
 		if !sourceOK || !destinationOK {
 			continue
 		}
@@ -427,6 +427,16 @@ func userSelector(s model.Site, selector string) (string, string, bool) {
 		if e == nil && zoneNetwork.Contains(network.IP) {
 			return zone.Name, network.String(), true
 		}
+	}
+	return "", "", false
+}
+
+func userRuleDestinationSelector(s model.Site, rule model.UserFirewallRule) (string, string, bool) {
+	if zone, cidr, ok := userSelector(s, rule.Destination); ok {
+		return zone, cidr, true
+	}
+	if model.IsReservedServersPulseRule(s, rule.Source, rule.Destination, strings.ToLower(rule.Protocol), rule.Ports) {
+		return "INFRA", rule.Destination, true
 	}
 	return "", "", false
 }
