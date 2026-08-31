@@ -44,6 +44,33 @@ func TestValidateNetworkIntentCoverageMatchesManagedGeneratedPolicy(t *testing.T
 	t.Fatal("test site had no monitoring network rule")
 }
 
+func TestTailnetCoverageIgnoresDisabledOptionalDestinations(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("tailnet-only", "age1tailnetonly", model.GatewayModeManaged))
+	enabled := true
+	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &enabled}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateNetworkIntentCoverage(site, plan); err != nil {
+		t.Fatalf("tailnet-router should not require disabled optional destinations: %v", err)
+	}
+	for _, declaration := range site.Declarations {
+		if declaration.Module != "tailnet-router" {
+			continue
+		}
+		for _, intent := range declaration.NetworkIntents {
+			if intent.Destination == "litellm" {
+				t.Fatal("tailnet-router retained an intent to disabled LiteLLM")
+			}
+		}
+	}
+}
+
 func TestValidateNetworkIntentCoverageExternalModeOwnsContractGenerationOnly(t *testing.T) {
 	site := composedCoverageSite(t, model.GatewayModeExternal)
 	plan, err := PlanFromSite(site)

@@ -81,12 +81,22 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		declaration.ReturnRouting = []string{"Tailnet return traffic for 10.10.0.0/16 must use the TRANSIT gateway 10.10.5.1"}
 		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true, Devices: []model.DeviceRequirement{{Name: "tun", Path: "/dev/net/tun", Type: "c", Major: 10, Minor: 200, Access: "rwm"}}}
 		declaration.NetworkIntents = []model.NetworkIntent{
-			{Source: "lab-tailnet-01", Destination: "litellm", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "routed LiteLLM HTTPS access"},
-			{Source: "lab-tailnet-01", Destination: "portal", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "routed portal HTTPS access"},
-			{Source: "lab-tailnet-01", Destination: "monitor", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "routed monitoring HTTPS access"},
 			{Source: "lab-tailnet-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Direction: "egress", Purpose: "Tailscale router DNS resolution"},
 			{Source: "lab-tailnet-01", Destination: "dns", Protocol: "udp", Ports: []string{"123"}, Direction: "egress", Purpose: "Tailscale router time synchronisation"},
 			{Source: "lab-tailnet-01", Destination: "tailscale-control-plane", Endpoint: "https://controlplane.tailscale.com", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "Tailscale control-plane operation"},
+		}
+		for _, target := range []struct {
+			component   string
+			destination string
+			purpose     string
+		}{
+			{component: "lab-litellm-01", destination: "litellm", purpose: "routed LiteLLM HTTPS access"},
+			{component: "lab-portal-01", destination: "portal", purpose: "routed portal HTTPS access"},
+			{component: "lab-monitor-01", destination: "monitor", purpose: "routed monitoring HTTPS access"},
+		} {
+			if _, ok := moduleComponentReference(site, target.component); ok {
+				declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-tailnet-01", Destination: target.destination, Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: target.purpose})
+			}
 		}
 		for region := 1; region <= tailscaleDERPRegionCount; region++ {
 			host := fmt.Sprintf("derp%d-all.tailscale.com", region)
