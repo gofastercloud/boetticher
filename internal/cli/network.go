@@ -16,6 +16,9 @@ import (
 )
 
 func runNetwork(args []string, out io.Writer) error {
+	if len(args) > 0 && args[0] == "test" {
+		return runNetworkTest(args[1:], out)
+	}
 	if len(args) < 2 || args[0] != "trunk" {
 		return fmt.Errorf("usage: boetticher network trunk status|attach|detach [--site DIR]")
 	}

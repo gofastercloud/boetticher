@@ -43,12 +43,13 @@ with the operator's appliance.
 
 ## Detailed diagnostics
 
-`status --live`, `verify`, and `doctor` separate local configuration checks
-from observations of a live host or service. A local check can be healthy
-while a host is unreachable. `doctor` uses `CURRENT`, `ABSENT`, and
-`INCONSISTENT` to explain projections against the current model revision;
-these labels describe the check being performed, not a promise that a live
-deployment or user journey has been completed.
+`status` and `verify` use the same current health checks; `verify` additionally
+refreshes generated verification and portal artifacts. Add `--live` for the
+bounded managed-gateway checks or `--ssh-journey` for the explicit bastion
+journey. Checks requiring separate operator, recovery, or product-acceptance
+evidence are intentionally omitted. `doctor` remains the deeper diagnostic
+command and uses `CURRENT`, `ABSENT`, and `INCONSISTENT` to explain
+projections against the current model revision.
 
 For detailed firewall telemetry, appliance privilege, and portal boundaries,
 see [the architecture guide](architecture.md), [the security model](security-model.md),

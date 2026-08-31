@@ -37,6 +37,40 @@ case "$operation" in
     [ "$#" -eq 1 ] || exit 64
     exec /usr/bin/cat /var/lib/kea/kea-leases4.csv
     ;;
+  ddns-stats)
+    [ "$#" -eq 1 ] || exit 64
+    exec /usr/bin/python3 -c '
+import json
+import socket
+import sys
+
+request = json.dumps({"command": "statistic-get-all"}, separators=(",", ":")).encode() + b"\n"
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as control:
+    control.settimeout(2.0)
+    control.connect("/run/kea/kea-ddns-ctrl-socket")
+    control.sendall(request)
+    response = bytearray()
+    while True:
+        try:
+            chunk = control.recv(65536)
+        except socket.timeout:
+            break
+        if not chunk:
+            break
+        response.extend(chunk)
+        if b"\n" in chunk:
+            break
+if not response:
+    sys.exit("Kea D2 returned no control response")
+try:
+    payload = json.loads(bytes(response).splitlines()[0])
+except (IndexError, json.JSONDecodeError) as error:
+    sys.exit("Kea D2 returned invalid control JSON: " + str(error))
+if not isinstance(payload, dict) or payload.get("result") != 0:
+    sys.exit("Kea D2 rejected the statistics request")
+print(json.dumps(payload, separators=(",", ":")))
+'
+    ;;
   kernel-logs)
     [ "$#" -eq 3 ] || exit 64
     limit=$2

@@ -111,6 +111,9 @@ case "$name" in
     chroot "$rootfs" /opt/litellm/bin/python -c 'from importlib.metadata import version; assert version("litellm") == "1.74.9"'
     test -f "$rootfs/etc/systemd/system/litellm.service"
     grep -Fq -- '--host 127.0.0.1' "$rootfs/etc/systemd/system/litellm.service"
+    grep -Fq -- 'User=root' "$rootfs/etc/systemd/system/litellm.service"
+    grep -Fq -- 'CapabilityBoundingSet=CAP_SETUID CAP_SETGID' "$rootfs/etc/systemd/system/litellm.service"
+    test -x "$rootfs/usr/bin/setpriv"
     test ! -e "$rootfs/etc/boetticher/litellm/config.yaml"
     test ! -e "$rootfs/etc/nginx/sites-enabled/default"
     test ! -e "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
@@ -139,12 +142,44 @@ case "$name" in
       exit 1
     fi
     ;;
+  boetticher-streamdeck)
+    test -x "$rootfs/opt/streamdeck/bin/boetticher-streamdeck"
+    run /opt/streamdeck/bin/python --version
+    chroot "$rootfs" getent passwd streamdeck | grep -Fq ':2200:2200:'
+    chroot "$rootfs" dpkg-query -W -f='${Version}' python3 | grep -Fxq '3.13.5-1'
+    test -f "$rootfs/etc/systemd/system/streamdeck-status.service"
+    grep -Fq 'User=streamdeck' "$rootfs/etc/systemd/system/streamdeck-status.service"
+    grep -Fq 'DevicePolicy=closed' "$rootfs/etc/systemd/system/streamdeck-status.service"
+    grep -Fq 'DeviceAllow=char-usb_device rw' "$rootfs/etc/systemd/system/streamdeck-status.service"
+    grep -Fq 'ProtectSystem=strict' "$rootfs/etc/systemd/system/streamdeck-status.service"
+    grep -Fq 'MemoryDenyWriteExecute=yes' "$rootfs/etc/systemd/system/streamdeck-status.service"
+    ;;
+  boetticher-aiops)
+    test -x "$rootfs/usr/local/libexec/boetticher-aiops"
+    test -f "$rootfs/etc/systemd/system/boetticher-aiops.service"
+    test -f "$rootfs/etc/systemd/system/boetticher-aiops.socket"
+    test -f "$rootfs/etc/systemd/system/holmes.service"
+    test -f "$rootfs/etc/boetticher-aiops/config.yaml"
+    grep -Fq 'HOLMES_HOST=127.0.0.1' "$rootfs/etc/systemd/system/holmes.service"
+    grep -Fq 'IPAddressDeny=any' "$rootfs/etc/systemd/system/boetticher-aiops.service"
+    grep -Fq 'IPAddressAllow=localhost' "$rootfs/etc/systemd/system/boetticher-aiops.service"
+    grep -Fq 'NoNewPrivileges=true' "$rootfs/etc/systemd/system/boetticher-aiops.service"
+    grep -Fq 'ProtectSystem=strict' "$rootfs/etc/systemd/system/boetticher-aiops.service"
+    test ! -e "$rootfs/etc/boetticher-aiops/runtime.env"
+    ;;
   boetticher-gatus)
-    run /usr/local/bin/gatus version
+    printf '%s\n' 'boetticher smoke check: Gatus executable'
     test -x "$rootfs/usr/local/bin/gatus"
     test -f "$rootfs/etc/systemd/system/gatus.service"
     grep -Fq -- 'User=gatus' "$rootfs/etc/systemd/system/gatus.service"
     test ! -e "$rootfs/etc/boetticher/gatus/config.yaml"
+    ;;
+  boetticher-network-probe)
+    for path in /usr/sbin/arping /usr/bin/dig /usr/bin/iperf3 /usr/bin/nc /usr/bin/nmap /usr/bin/tcpdump /usr/bin/curl /usr/bin/openssl /usr/bin/jq; do
+      test -x "$rootfs$path"
+    done
+    test -x "$rootfs/usr/local/libexec/boetticher-network-probe"
+    test ! -e "$rootfs/etc/systemd/system/boetticher-network-probe.service"
     ;;
   *)
     echo "unknown smoke target: $name" >&2

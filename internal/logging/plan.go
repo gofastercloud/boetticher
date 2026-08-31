@@ -82,6 +82,12 @@ func CollectorServiceOverride(plan Plan) string {
 	}, "\n") + "\n"
 }
 
+func CollectorSocketOverride(plan Plan) string {
+	return strings.Join([]string{
+		"[Socket]", "ListenStream=", "ListenStream=127.0.0.1:" + strconv.Itoa(plan.CollectorBackendPort),
+	}, "\n") + "\n"
+}
+
 func UploadConfiguration(plan Plan, endpoint string) string {
 	return strings.Join([]string{
 		"[Upload]", "URL=" + plan.CollectorURL, "ServerKeyFile=/var/lib/boetticher/identity/logging/" + endpoint + ".key",

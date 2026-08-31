@@ -62,6 +62,7 @@ type ModulesConfig struct {
 	TailnetRouter *ToggleModuleConfig    `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
 	LiteLLM       *LiteLLMModuleConfig   `yaml:"litellm,omitempty" json:"litellm,omitempty"`
 	Printer       *ToggleModuleConfig    `yaml:"printer,omitempty" json:"printer,omitempty"`
+	StreamDeck    *ToggleModuleConfig    `yaml:"streamdeck,omitempty" json:"streamdeck,omitempty"`
 	AIOps         *AIOpsModuleConfig     `yaml:"aiops,omitempty" json:"aiops,omitempty"`
 	Gatus         *ToggleModuleConfig    `yaml:"gatus,omitempty" json:"gatus,omitempty"`
 }
@@ -159,6 +160,9 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 	if m.Printer != nil {
 		result["printer"] = ModuleConfig{Enabled: cloneBool(m.Printer.Enabled)}
 	}
+	if m.StreamDeck != nil {
+		result["streamdeck"] = ModuleConfig{Enabled: cloneBool(m.StreamDeck.Enabled)}
+	}
 	if m.AIOps != nil {
 		result["aiops"] = ModuleConfig{Enabled: cloneBool(m.AIOps.Enabled), ModelAlias: m.AIOps.ModelAlias}
 	}
@@ -190,6 +194,9 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 	}
 	if config, ok := input["printer"]; ok {
 		result.Printer = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+	}
+	if config, ok := input["streamdeck"]; ok {
+		result.StreamDeck = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	}
 	if config, ok := input["aiops"]; ok {
 		result.AIOps = &AIOpsModuleConfig{Enabled: cloneBool(config.Enabled), ModelAlias: config.ModelAlias}
@@ -228,6 +235,8 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 		m.LiteLLM = &LiteLLMModuleConfig{Enabled: cloneBool(config.Enabled), Upstreams: cloneLiteLLMUpstreams(upstreams), Models: cloneLiteLLMModels(models)}
 	case "printer":
 		m.Printer = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+	case "streamdeck":
+		m.StreamDeck = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	case "aiops":
 		alias := config.ModelAlias
 		if alias == "" && m.AIOps != nil {

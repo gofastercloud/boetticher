@@ -19,7 +19,10 @@
     state: directory
     owner: root
     group: root
-    mode: '0750'
+    # The backend drops to litellm after the root-only credential load. It
+    # needs execute-only traversal here; the config remains root-owned and
+    # group-readable by litellm.
+    mode: '0751'
 
 - name: Render only declared provider-neutral model aliases
   ansible.builtin.copy:
@@ -55,7 +58,7 @@
       {% for upstream in module_configs.litellm.upstreams %}
       export LITELLM_SECRET_{{ upstream.api_key_secret | upper | replace('-', '_') | replace('.', '_') }}="$(cat /run/credentials/litellm.service/{{ upstream.api_key_secret | lower | replace('_', '-') | replace('.', '-') }})"
       {% endfor %}
-      exec /opt/litellm/bin/litellm "$@"
+      exec /usr/bin/setpriv --reuid=litellm --regid=litellm --init-groups /opt/litellm/bin/litellm "$@"
   no_log: true
   notify: restart litellm
 
@@ -127,7 +130,7 @@
     - {dest: /var/lib/boetticher/identity/tls/client-ca.pem, content: "{{ client_ca_pem | default('') }}"}
   no_log: true
   when: litellm_server_cert_pem | default('') | length > 0
-  notify: reload nginx
+  notify: restart nginx
 
 - name: Install the current client certificate revocation list for LiteLLM mTLS
   ansible.builtin.copy:
@@ -137,7 +140,7 @@
     group: root
     mode: '0644'
   no_log: true
-  notify: reload nginx
+  notify: restart nginx
   when: litellm_server_cert_pem | default('') | length > 0
 
 - name: Configure nginx as the only LiteLLM listener
@@ -170,13 +173,13 @@
           }
       }
   when: litellm_server_cert_pem | default('') | length > 0
-  notify: reload nginx
+  notify: restart nginx
 
 - name: Remove the distribution nginx default site
   ansible.builtin.file:
     path: /etc/nginx/sites-enabled/default
     state: absent
-  notify: reload nginx
+  notify: restart nginx
 
 - name: Enable the LiteLLM nginx site
   ansible.builtin.file:
@@ -184,7 +187,29 @@
     dest: /etc/nginx/sites-enabled/litellm.conf
     state: link
   when: litellm_server_cert_pem | default('') | length > 0
-  notify: reload nginx
+  notify: restart nginx
+
+- name: Create the nginx systemd drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/nginx.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Order LiteLLM nginx after the guest network is online
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/nginx.service.d/boetticher-network.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      # The listener uses the fixed module address, which may not exist when
+      # the distribution nginx unit starts during early guest boot.
+      [Unit]
+      After=network-online.target
+      Wants=network-online.target
+  notify: restart nginx
 
 - name: Enable and start the LiteLLM backend and nginx frontend
   ansible.builtin.service:
@@ -193,3 +218,32 @@
     state: started
   loop: [litellm, nginx]
   when: litellm_server_cert_pem | default('') | length > 0
+
+- name: Inspect LiteLLM service state after runtime configuration
+  ansible.builtin.command: systemctl show litellm --property=ActiveState --property=SubState --value
+  register: litellm_service_state
+  changed_when: false
+  when: litellm_server_cert_pem | default('') | length > 0
+
+- name: Inspect LiteLLM runtime credential materialization
+  ansible.builtin.command: >-
+    test -s /run/credentials/litellm.service/{{ upstream.api_key_secret | lower | replace('_', '-') | replace('.', '-') }}
+  loop: "{{ module_configs.litellm.upstreams }}"
+  loop_control:
+    loop_var: upstream
+  register: litellm_runtime_credentials
+  changed_when: false
+  failed_when: false
+  when: litellm_server_cert_pem | default('') | length > 0
+
+- name: Restart LiteLLM after credential projection or an unhealthy start
+  ansible.builtin.systemd_service:
+    name: litellm
+    state: restarted
+    daemon_reload: true
+  when:
+    - litellm_server_cert_pem | default('') | length > 0
+    - >-
+      (boetticher_credential_dropin_install is changed) or
+      (litellm_service_state.stdout_lines | default([]) != ['active', 'running']) or
+      (litellm_runtime_credentials.results | default([]) | selectattr('rc', 'ne', 0) | list | length > 0)

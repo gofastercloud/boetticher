@@ -22,9 +22,11 @@ func TestRenderUsesBastionAndCanonicalHostKey(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"Host lab-bastion",
+		"ChannelTimeout direct-tcpip=10",
 		"Host lab-fw-01 lab-fw-01.lab.home.arpa firewall",
 		"Host lab-dns-01 lab-dns-01.lab.home.arpa dns01 dns",
 		"HostName 10.10.10.10",
+		"ConnectTimeout 10",
 		"ProxyJump lab-bastion",
 		"HostKeyAlias lab-dns-01.lab.home.arpa",
 		"StrictHostKeyChecking yes",
@@ -55,6 +57,38 @@ func TestRenderWithKnownHostsUsesSiteScopedTrustFile(t *testing.T) {
 	}
 	if strings.Contains(content, "StrictHostKeyChecking no") || strings.Contains(content, "UserKnownHostsFile /dev/null") {
 		t.Fatal("site-scoped SSH configuration weakened host-key verification")
+	}
+}
+
+func TestRenderIncludesRetainedProductOwnedGuestForCleanup(t *testing.T) {
+	s := model.NewDefaultSite("installation", "age1example")
+	s.TestedVersions.Gateway = model.QualifiedGatewayImage
+	s.BootstrapAddress = "192.0.2.10"
+	s.RetainedModules = []model.RetainedModule{{
+		Module: "tailnet-router", Disposition: "retained",
+		Guests: []model.Component{{Name: "lab-tailnet-01", Hostname: "lab-tailnet-01", Zone: "TRANSIT", Address: "10.10.5.10", VMID: 200, Module: "tailnet-router", ProductOwned: true, SSHManaged: true, SSHUser: model.DefaultAdminSSHUser, SSHPort: 22, Tags: []string{model.TagBoetticher, model.TagManaged, model.TagModule, "module-tailnet-router", model.ModuleOwnershipTag("tailnet-router")}}},
+	}}
+	content, err := RenderWithKnownHosts(s, time.Unix(0, 0), filepath.Join(t.TempDir(), "known_hosts"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, "Host lab-tailnet-01 lab-tailnet-01.lab.home.arpa") {
+		t.Fatalf("retained guest SSH identity is absent:\n%s", content)
+	}
+}
+
+func TestRenderBastionPolicyIncludesRetainedGuestForCleanup(t *testing.T) {
+	s := model.NewDefaultSite("installation", "age1example")
+	s.RetainedModules = []model.RetainedModule{{
+		Module: "tailnet-router", Disposition: "retained",
+		Guests: []model.Component{{Name: "lab-tailnet-01", Hostname: "lab-tailnet-01", Zone: "TRANSIT", Address: "10.10.5.10", VMID: 200, Module: "tailnet-router", ProductOwned: true, SSHManaged: true, JumpAllowed: true, Tags: []string{model.TagBoetticher, model.TagManaged, model.TagModule, "module-tailnet-router", model.ModuleOwnershipTag("tailnet-router")}}},
+	}}
+	content, err := RenderBastionPolicy(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(content, "10.10.5.10:22") {
+		t.Fatalf("retained guest was not added to the bastion allowlist:\n%s", content)
 	}
 }
 
@@ -165,7 +199,7 @@ func TestBastionPolicyOnlyAllowsModelledHosts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(content, "PermitOpen 10.10.10.10:22") || strings.Contains(content, "10.10.50.") {
+	if !strings.Contains(content, "PermitOpen 10.10.10.10:22") || !strings.Contains(content, "10.10.10.30:443") || strings.Contains(content, "10.10.50.") {
 		t.Fatalf("unexpected bastion destination policy: %s", content)
 	}
 }
@@ -200,5 +234,28 @@ func TestRenderComposedSiteIncludesDeclaredModuleGuests(t *testing.T) {
 		if !strings.Contains(policy, destination) {
 			t.Errorf("composed bastion policy missing module destination %q", destination)
 		}
+	}
+}
+
+func TestBastionPolicyAllowsLiteLLMHTTPSForControllerCanary(t *testing.T) {
+	enabled := true
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+		Enabled: &enabled,
+		Upstreams: []model.LiteLLMUpstreamConfig{{
+			Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key",
+		}},
+		Models: []model.LiteLLMModelConfig{{Alias: "operations", Upstream: "provider", Model: "provider/model"}},
+	}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := RenderBastionPolicy(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(policy, "10.10.20.60:443") {
+		t.Fatalf("LiteLLM HTTPS endpoint is missing from the restricted bastion policy: %s", policy)
 	}
 }

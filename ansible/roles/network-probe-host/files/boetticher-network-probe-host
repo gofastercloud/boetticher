@@ -1,0 +1,73 @@
+#!/usr/bin/python3
+import json
+import re
+import subprocess
+import sys
+
+MAX_INPUT = 64 * 1024
+MAX_OUTPUT = 60 * 1024
+VMID_MIN = 910
+VMID_MAX = 919
+RUN_ID = re.compile(r"^[a-z0-9][a-z0-9-]{7,63}$")
+ZONES = {"TRANSIT", "INFRA", "SERVERS", "TRUSTED", "SANDBOX", "MGMT"}
+
+
+def fail(message):
+    json.dump({"ok": False, "error": message}, sys.stdout)
+    sys.stdout.write("\n")
+    sys.exit(1)
+
+
+raw = sys.stdin.buffer.read(MAX_INPUT + 1)
+if len(raw) > MAX_INPUT:
+    fail("network probe request is too large")
+try:
+    request = json.loads(raw)
+except (TypeError, ValueError):
+    fail("network probe request is not JSON")
+if not isinstance(request, dict) or request.get("version") != 1 or request.get("action") != "run":
+    fail("unsupported network probe request")
+vmid = request.get("vmid")
+run_id = request.get("run_id", "")
+zone = request.get("zone", "")
+installation = request.get("installation_id", "")
+artifact = request.get("artifact_sha256", "")
+payload = request.get("payload")
+if not isinstance(vmid, int) or not VMID_MIN <= vmid <= VMID_MAX:
+    fail("network probe VMID is outside the reserved range")
+if not isinstance(run_id, str) or not RUN_ID.fullmatch(run_id):
+    fail("network probe run ID is invalid")
+if zone not in ZONES or not isinstance(installation, str) or not installation or not isinstance(artifact, str) or len(artifact) != 64 or not re.fullmatch(r"[0-9a-fA-F]{64}", artifact):
+    fail("network probe identity is incomplete")
+if not isinstance(payload, dict) or payload.get("version") != 1:
+    fail("network probe payload is invalid")
+
+config = subprocess.run(["/usr/sbin/pct", "config", str(vmid)], capture_output=True, text=True, timeout=5)
+if config.returncode != 0:
+    fail("reserved network probe guest could not be inspected")
+config_text = config.stdout
+required = [
+    "hostname: boetticher-netprobe-" + zone.lower(),
+    "boetticher-network-probe",
+    "installation=" + installation,
+    "run=" + run_id,
+    "zone=" + zone,
+    "artifact=" + artifact,
+]
+if any(value not in config_text for value in required):
+    fail("network probe guest ownership proof does not match")
+if "unprivileged: 1" not in config_text or "nesting=0" not in config_text or "onboot: 0" not in config_text:
+    fail("network probe guest security contract does not match")
+
+child = subprocess.run(
+    ["/usr/sbin/pct", "exec", str(vmid), "--", "/usr/local/libexec/boetticher-network-probe"],
+    input=json.dumps(payload).encode(), capture_output=True, timeout=20,
+)
+output = child.stdout[:MAX_OUTPUT]
+if len(child.stdout) > MAX_OUTPUT:
+    fail("network probe output exceeded the host bound")
+if child.returncode != 0 and not output:
+    fail("network probe execution failed")
+sys.stdout.buffer.write(output)
+if not output.endswith(b"\n"):
+    sys.stdout.buffer.write(b"\n")

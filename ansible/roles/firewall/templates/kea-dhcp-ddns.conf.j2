@@ -3,7 +3,7 @@
     "ip-address": "127.0.0.1",
     "port": 53001,
     "control-socket": { "socket-type": "unix", "socket-name": "/run/kea/kea-ddns-ctrl-socket" },
-    "dns-server-timeout": 500,
+    "dns-server-timeout": {{ firewall_plan.ddns.dns_response_timeout_ms }},
     "ncr-protocol": "UDP",
     "ncr-format": "JSON",
     "tsig-keys": [

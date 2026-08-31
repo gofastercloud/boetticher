@@ -10,7 +10,7 @@ Environment=OPENAI_API_BASE=http://127.0.0.1:8444/v1
 Environment=OPENAI_API_KEY=boetticher-holmes-active-investigation
 Environment=HOLMES_HOST=127.0.0.1
 Environment=HOLMES_PORT=8090
-Environment=HOLMES_CONFIG_PATH=/etc/boetticher-aiops/holmes.yaml
+Environment=HOLMES_CONFIGPATH_DIR=/etc/boetticher-aiops
 Environment=HOLMES_DISABLE_STRICT_TOOL_CALLS=false
 Environment=HOLMES_TOOL_RESULT_STORAGE_ENABLED=false
 Environment=OVERRIDE_MAX_OUTPUT_TOKEN=1200

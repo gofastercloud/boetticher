@@ -25,6 +25,43 @@ func TestGatusRolePreparesConfigDirectoryAndReloadsNginx(t *testing.T) {
 	}
 }
 
+func TestGatusServiceUsesSupportedConfigEnvironment(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "images", "gatus", "runtime", "gatus.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	if !strings.Contains(text, "Environment=GATUS_CONFIG_PATH=/etc/boetticher/gatus/config.yaml") {
+		t.Fatal("Gatus service does not set the supported configuration path environment")
+	}
+	if strings.Contains(text, "--config-path") {
+		t.Fatal("Gatus service invokes an unsupported config-path argument")
+	}
+}
+
+func TestStreamDeckIdentityMaterialUsesServiceOwnedPath(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "streamdeck", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"path: /var/lib/streamdeck/tls",
+		"/var/lib/streamdeck/tls/streamdeck.key.pem",
+		"/var/lib/streamdeck/tls/streamdeck.csr.pem",
+		"/var/lib/streamdeck/tls/streamdeck.crt.pem",
+		"/var/lib/streamdeck/tls/ca.pem",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("StreamDeck role is missing service-owned identity path %q", expected)
+		}
+	}
+	if strings.Contains(text, "/var/lib/boetticher/identity/tls/streamdeck") {
+		t.Fatal("StreamDeck role still places identity material in the shared identity tree")
+	}
+}
+
 func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	first, err := Inventory(site)
@@ -193,10 +230,48 @@ func TestAIOpsServiceAllowsDeclaredDNSResolvers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"IPAddressAllow=10.10.10.10", "IPAddressAllow=10.10.10.11"} {
+	for _, expected := range []string{
+		"LoadCredentialEncrypted=webhook-secret:/var/lib/boetticher/credentials/aiops-webhook-secret.cred",
+		"LoadCredentialEncrypted=pulse-read-token:/var/lib/boetticher/credentials/aiops-pulse-read-token.cred",
+		"LoadCredentialEncrypted=pulse-note-token:/var/lib/boetticher/credentials/aiops-pulse-note-token.cred",
+		"IPAddressAllow=10.10.10.10",
+		"IPAddressAllow=10.10.10.11",
+	} {
 		if !strings.Contains(string(service), expected) {
 			t.Fatalf("AIOps service missing %q", expected)
 		}
+	}
+}
+
+func TestPortalServiceAllowsTheCompleteClientCertificateChain(t *testing.T) {
+	service, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "portal", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"ssl_client_certificate /etc/boetticher/tls/client-ca.pem;", "ssl_crl /etc/boetticher/tls/client-ca.crl.pem;", "ssl_verify_client on;", "ssl_verify_depth 3;"} {
+		if !strings.Contains(string(service), expected) {
+			t.Fatalf("portal mTLS contract is missing %q", expected)
+		}
+	}
+}
+
+func TestHolmesServiceUsesPinnedConfigDirectoryContract(t *testing.T) {
+	service, err := os.ReadFile(filepath.Join("..", "..", "images", "aiops", "runtime", "holmes.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	build, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(service), "HOLMES_CONFIGPATH_DIR=/etc/boetticher-aiops") {
+		t.Fatal("Holmes service does not configure the pinned HolmesGPT config directory contract")
+	}
+	if strings.Contains(string(service), "HOLMES_CONFIG_PATH=") {
+		t.Fatal("Holmes service uses an unsupported config-path variable")
+	}
+	if !strings.Contains(string(build), "images/aiops/runtime/holmes.yaml \"$rootfs/etc/boetticher-aiops/config.yaml\"") {
+		t.Fatal("AIOps image does not install its config at HolmesGPT's default filename")
 	}
 }
 
@@ -215,8 +290,8 @@ func TestMonitorFrontendKeepsMTLSExceptForScopedAgentRoutes(t *testing.T) {
 	if !strings.Contains(text, "location ^~ /api/agents/") {
 		t.Fatal("monitor frontend does not proxy the supported Pulse agent routes")
 	}
-	if got := strings.Count(text, "if ($ssl_client_verify != SUCCESS) { return 403; }"); got != 6 {
-		t.Fatalf("monitor frontend mTLS guards = %d, want five exact AIOps routes plus the catch-all", got)
+	if got := strings.Count(text, "if ($ssl_client_verify != SUCCESS) { return 403; }"); got != 9 {
+		t.Fatalf("monitor frontend mTLS guards = %d, want the three StreamDeck routes, five exact AIOps routes, and the catch-all", got)
 	}
 	if !strings.Contains(text, `CN=aiops-pulse-(?:read|note)`) {
 		t.Fatal("monitor catch-all does not deny the AIOps identities outside their exact routes")
@@ -290,6 +365,22 @@ func TestBoundedOutputRetainsOnlyBoundedPrefixAndSuffix(t *testing.T) {
 	}
 }
 
+func TestBoundedOutputRetainsDiagnosticOutsideWindow(t *testing.T) {
+	var output boundedOutput
+	if _, err := output.Write([]byte("prefix\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := output.Write(bytes.Repeat([]byte{'x'}, maxAnsibleOutputBytes*3)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := output.Write([]byte("fatal: [lab-tailnet-01]: FAILED! => {\"msg\":\"runtime failed\"}\n")); err != nil {
+		t.Fatal(err)
+	}
+	if got := failureDiagnosticWithSupplement(output.Bytes(), output.DiagnosticBytes()); !strings.Contains(got, "lab-tailnet-01") {
+		t.Fatalf("diagnostic omitted error outside bounded output window: %q", got)
+	}
+}
+
 func TestLimitedRunRejectsShellSyntaxInInventoryIdentity(t *testing.T) {
 	for _, value := range []string{"lab-fw-01", "lab_dns_01", "lab.fw"} {
 		if !safeInventoryIdentity(value) {
@@ -342,13 +433,33 @@ func TestPulseRestartsAfterCredentialProjectionOrUnhealthyStart(t *testing.T) {
 	monitorText := string(monitorData)
 	for _, required := range []string{
 		"systemctl show pulse --property=ActiveState --property=SubState --value",
+		"test -s /run/credentials/pulse.service/pulse-admin-password",
 		"boetticher_credential_dropin_install is changed",
 		"pulse_service_state.stdout_lines | default([]) != ['active', 'running']",
+		"pulse_runtime_credential.rc | default(1) != 0",
 		"state: restarted",
 		"daemon_reload: true",
 	} {
 		if !strings.Contains(monitorText, required) {
 			t.Fatalf("Pulse recovery contract is missing %q", required)
+		}
+	}
+}
+
+func TestLiteLLMRestartsWhenAnyRuntimeCredentialIsMissing(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "litellm", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		"test -s /run/credentials/litellm.service/{{ upstream.api_key_secret | lower | replace('_', '-') | replace('.', '-') }}",
+		"register: litellm_runtime_credentials",
+		"litellm_runtime_credentials.results | default([]) | selectattr('rc', 'ne', 0) | list | length > 0",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("LiteLLM credential recovery contract is missing %q", required)
 		}
 	}
 }
@@ -436,6 +547,29 @@ func TestLoggingCollectorEnforcesClientRevocationAtTLSProxy(t *testing.T) {
 	}
 	if strings.Contains(text, "Enable the socket-activated collector listener") || strings.Contains(text, "--listen-https=-3") {
 		t.Fatal("logging collector still exposes the direct socket-activated TLS listener")
+	}
+}
+
+func TestLoggingRoleStopsOptionalAIOpsJournalQueryWhenDisabled(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "logging", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"Keep the optional AIOps journal query stopped when AIOps is disabled",
+		"Clear stale failure state for the disabled AIOps journal query",
+		"name: boetticher-log-query",
+		"enabled: false",
+		"state: stopped",
+		"argv: [systemctl, reset-failed, boetticher-log-query]",
+		"failed_when: boetticher_log_query_reset.rc != 0 and 'Unit boetticher-log-query.service not loaded.' not in boetticher_log_query_reset.stderr",
+		"not (module_configs.aiops is defined and module_configs.aiops.enabled | default(false) | bool)",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("logging role does not disable the optional journal query when AIOps is disabled: missing %q", expected)
+		}
 	}
 }
 
@@ -634,7 +768,7 @@ func TestDNSRoleUsesPowerDNS49CommandNames(t *testing.T) {
 			t.Fatalf("DNS role retains obsolete PowerDNS command namespace %q", forbidden)
 		}
 	}
-	for _, expected := range []string{"pdnsutil list-all-zones", "pdnsutil create-zone", "pdnsutil replace-rrset", "pdnsutil delete-rrset", "pdnsutil set-meta", "pdnsutil create-secondary-zone", "replace-rrset {{ item }} @ NS", "item.name | replace('.' ~ dns_plan.static_zone, '')", "item.value"} {
+	for _, expected := range []string{"pdnsutil list-all-zones", "pdnsutil create-zone", "pdnsutil set-kind {{ item }} MASTER", "pdnsutil replace-rrset", "pdnsutil delete-rrset", "pdnsutil set-meta", "NOTIFY-DNSUPDATE 1", "pdnsutil create-secondary-zone", "replace-rrset {{ item }} @ NS", "item.name | replace('.' ~ dns_plan.static_zone, '')", "item.value"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("DNS role missing qualified PowerDNS command %q", expected)
 		}
@@ -744,7 +878,7 @@ func TestMonitoringRoleUsesExistingTLSBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(tasks) + string(template)
-	for _, expected := range []string{"monitor_server_cert_pem", "client_ca_pem", "client_crl_pem", "ssl_crl /etc/boetticher/tls/client-ca.crl.pem", "ssl_verify_client optional", "if ($ssl_client_verify != SUCCESS) { return 403; }", "proxy_pass http://127.0.0.1:7655"} {
+	for _, expected := range []string{"monitor_server_cert_pem", "client_ca_pem", "client_crl_pem", "ssl_crl /etc/boetticher/tls/client-ca.crl.pem", "ssl_verify_client optional", "ssl_verify_depth 3;", "if ($ssl_client_verify != SUCCESS) { return 403; }", "proxy_pass http://127.0.0.1:7655"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("monitoring role missing TLS/frontend contract %q", expected)
 		}
@@ -1024,12 +1158,16 @@ func TestDNSRoleDoesNotPlaceTSIGSecretsInProcessArguments(t *testing.T) {
 		t.Fatal("Kea D2 does not use the qualified domain catalogs and TSIG key references")
 	}
 	for _, expected := range []string{
+		`"dns-server-timeout": {{ firewall_plan.ddns.dns_response_timeout_ms }},`,
 		`"name": "{{ zone.forward_zone }}."`,
 		`"name": "{{ zone.reverse_zone }}."`,
 	} {
 		if !strings.Contains(keaText, expected) {
 			t.Errorf("Kea D2 domain catalog does not use a fully qualified zone name: %s", expected)
 		}
+	}
+	if strings.Contains(keaText, `"dns-server-timeout": 500,`) {
+		t.Fatal("Kea D2 still uses the default response timeout instead of the generated DDNS contract")
 	}
 }
 
@@ -1062,11 +1200,40 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 				"boetticher_appliance_artifact",
 				"ExecStartPost=/usr/lib/boetticher/tailscale-router-bootstrap",
 				"/var/lib/tailscale",
+				"/etc/sysctl.d/99-boetticher-tailnet-router.conf",
+				"net.ipv4.ip_forward=1",
+				"argv: [sysctl, -w, net.ipv4.ip_forward=1]",
+				"After=network-online.target",
+				"Wants=network-online.target",
+				"tailscale status --json",
+				"BackendState",
+				"Running",
+				"Inspect Tailscale backend state after credential projection",
+				"state: restarted",
+				"daemon_reload: true",
+				"retries: 15",
+				"delay: 2",
+				"until:",
+				`regex_search('"BackendState"\s*:\s*"Running"')`,
+				"if [ -s \"$credential\" ] && tailscale up --timeout=30s --auth-key=\"file:$credential\"",
+				"tailscale up --timeout=30s",
 				"--accept-dns=false",
 				"--advertise-routes=10.10.0.0/16",
 				"--snat-subnet-routes=true",
 			},
-			forbidden: []string{"advertise-exit-node", "privileged: true", "ansible.builtin.apt:"},
+			forbidden: []string{"advertise-exit-node", "privileged: true", "ansible.builtin.apt:", `regex_search('"BackendState"[[:space:]]*`},
+		},
+		{
+			role: "logging",
+			required: []string{
+				"logging_collector_socket_override",
+				"systemd-journal-remote.socket.d",
+				"content: \"{{ logging_collector_socket_override }}\"",
+				"Reload logging systemd units after collector override installation",
+				"Reload nginx after enabling the journal mTLS proxy",
+				"state: reloaded",
+			},
+			forbidden: []string{"ListenStream=19532"},
 		},
 		{
 			role: "litellm",
@@ -1075,10 +1242,21 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 				"no_log: true",
 				"dest: /usr/lib/boetticher/litellm-start",
 				"group: litellm",
+				"path: /etc/boetticher/litellm",
+				"mode: '0751'",
+				"exec /usr/bin/setpriv --reuid=litellm --regid=litellm --init-groups /opt/litellm/bin/litellm \"$@\"",
 				"ssl_verify_client on;",
 				"proxy_pass http://127.0.0.1:4000;",
 				"listen 10.10.20.60:443 ssl;",
 				"proxy_pass http://127.0.0.1:4000;",
+				"path: /etc/systemd/system/nginx.service.d",
+				"dest: /etc/systemd/system/nginx.service.d/boetticher-network.conf",
+				"After=network-online.target",
+				"Wants=network-online.target",
+				"notify: restart nginx",
+				"Restart LiteLLM after credential projection or an unhealthy start",
+				"systemctl show litellm --property=ActiveState --property=SubState --value",
+				"daemon_reload: true",
 			},
 			forbidden: []string{"listen 10.10.20.60:80", "api_key: {{", "ansible.builtin.get_url:"},
 		},
@@ -1114,6 +1292,143 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 			if strings.Contains(text, forbidden) {
 				t.Errorf("%s role contains forbidden runtime contract %q", test.role, forbidden)
 			}
+		}
+	}
+}
+
+func TestPulseProxyAuthMapsOnlyApprovedClientIdentities(t *testing.T) {
+	frontend, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "pulse-loopback.conf.j2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	renderer, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "pulse-nginx-proxy-auth.sh.j2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(frontend)
+	contract := text + string(tasks) + string(renderer)
+	for _, expected := range []string{
+		"CN=client-operator.{{ domain }},O=boetticher",
+		"CN=client-lab-display-01-kiosk.{{ domain }},O=boetticher",
+		"CN=client-boetticher-reconciler.{{ domain }},O=boetticher",
+		"CN=(?:lab-streamdeck-01|client-boetticher-pulse-read",
+		"location = /api/health",
+		"location = /api/state/summary",
+		"location = /api/resources",
+		"proxy_set_header X-API-Token $http_x_api_token",
+		"include /run/boetticher/pulse-proxy-auth.conf",
+		"set $boetticher_pulse_proxy_shared_secret",
+		"set $boetticher_pulse_proxy_secret $boetticher_pulse_proxy_shared_secret",
+		"proxy_set_header X-Proxy-Secret $boetticher_pulse_proxy_secret",
+		"ExecStartPre=/usr/local/sbin/boetticher-pulse-nginx-proxy-auth",
+		"ExecStartPre=\n      ExecStartPre=/usr/local/sbin/boetticher-pulse-nginx-proxy-auth",
+		"ExecStartPre=/usr/sbin/nginx -t -q -g 'daemon on; master_process on;'",
+		"daemon_reload: true",
+	} {
+		if !strings.Contains(contract, expected) {
+			t.Fatalf("Pulse proxy-auth contract is missing %q", expected)
+		}
+	}
+	if rendererIndex, nginxCheckIndex := strings.Index(string(tasks), "ExecStartPre=/usr/local/sbin/boetticher-pulse-nginx-proxy-auth"), strings.Index(string(tasks), "ExecStartPre=/usr/sbin/nginx -t -q -g 'daemon on; master_process on;'"); rendererIndex == -1 || nginxCheckIndex == -1 || rendererIndex >= nginxCheckIndex {
+		t.Fatal("Pulse proxy-auth renderer must run before nginx's built-in configuration check")
+	}
+	if got := strings.Count(text, "proxy_set_header X-Proxy-Secret \"\";"); got != 4 {
+		t.Fatalf("frontend clears incoming proxy secret in %d locations, want the host-agent and three StreamDeck API locations", got)
+	}
+	if got := strings.Count(text, "proxy_set_header X-Proxy-Secret $boetticher_pulse_proxy_secret;"); got != 5 {
+		t.Fatalf("frontend maps proxy secret in %d browser locations, want 5", got)
+	}
+	if got := strings.Count(text, "set $boetticher_pulse_proxy_secret \"\";"); got != 4 {
+		t.Fatalf("frontend initializes conditional proxy secret in %d API locations, want 4", got)
+	}
+	if strings.Contains(text, "$ssl_client_cert") || strings.Contains(text, "$ssl_client_s_dn;\n") {
+		t.Fatal("frontend forwards an arbitrary client certificate identity")
+	}
+	if !strings.HasSuffix(strings.TrimSpace(text), "}") {
+		t.Fatal("Pulse frontend template has directives outside its server block")
+	}
+	agentStart := strings.Index(text, "location ^~ /api/agents/")
+	if agentStart < 0 {
+		t.Fatal("Pulse frontend is missing the host-agent location")
+	}
+	agentEnd := strings.Index(text[agentStart:], "\n    }")
+	if agentEnd < 0 {
+		t.Fatal("Pulse host-agent location is malformed")
+	}
+	if !strings.Contains(text[agentStart:agentStart+agentEnd], "proxy_set_header X-Proxy-Secret \"\";") {
+		t.Fatal("Pulse host-agent location does not clear browser proxy auth")
+	}
+}
+
+func TestPiKioskUsesDedicatedPulseClientCertificate(t *testing.T) {
+	service, err := os.ReadFile(filepath.Join("..", "..", "pi", "kiosk", "systemd", "pulse-kiosk.service"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dropIn, err := os.ReadFile(filepath.Join("..", "..", "pi", "kiosk", "systemd", "pulse-kiosk.service.d", "20-pulse-dashboard.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	serviceText := string(service)
+	dropInText := string(dropIn)
+	for _, required := range []string{
+		"User=kiosk",
+		"NoNewPrivileges=yes",
+		"ProtectSystem=strict",
+		"CapabilityBoundingSet=",
+		"RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK",
+		"https://monitor.lab.home.arpa",
+	} {
+		if !strings.Contains(serviceText, required) {
+			t.Fatalf("Pi kiosk service is missing %q", required)
+		}
+	}
+	for _, required := range []string{
+		"ExecStart=",
+		"--auto-select-certificate-for-urls=",
+		"ISSUER",
+		"boetticher Issuing CA",
+		"client-lab-display-01-kiosk.lab.home.arpa",
+		"https://monitor.lab.home.arpa",
+		"--disable-extensions-except=/home/kiosk/pulse-refresh-extension",
+		"--load-extension=/home/kiosk/pulse-refresh-extension",
+	} {
+		if !strings.Contains(dropInText, required) {
+			t.Fatalf("Pi kiosk Pulse drop-in is missing %q", required)
+		}
+	}
+	for _, text := range []string{serviceText, dropInText} {
+		for _, forbidden := range []string{"-----BEGIN", "private.key", "PKCS12", "X-API-Token"} {
+			if strings.Contains(text, forbidden) {
+				t.Fatalf("Pi kiosk source contains forbidden credential material %q", forbidden)
+			}
+		}
+	}
+	refreshManifest, err := os.ReadFile(filepath.Join("..", "..", "pi", "kiosk", "pulse-refresh-extension", "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshScript, err := os.ReadFile(filepath.Join("..", "..", "pi", "kiosk", "pulse-refresh-extension", "reload.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestText := string(refreshManifest)
+	scriptText := string(refreshScript)
+	for _, required := range []string{"manifest_version", "content_scripts", "https://monitor.lab.home.arpa/*", "reload.js"} {
+		if !strings.Contains(manifestText, required) {
+			t.Fatalf("Pi kiosk refresh extension is missing %q", required)
+		}
+	}
+	if !strings.Contains(scriptText, "30_000") || !strings.Contains(scriptText, "window.location.replace(window.location.href)") {
+		t.Fatal("Pi kiosk refresh extension does not reload after 30 seconds")
+	}
+	for _, forbidden := range []string{"<all_urls>", "permissions", "host_permissions", "X-API-Token", "-----BEGIN"} {
+		if strings.Contains(manifestText+scriptText, forbidden) {
+			t.Fatalf("Pi kiosk refresh extension contains forbidden capability or credential material %q", forbidden)
 		}
 	}
 }

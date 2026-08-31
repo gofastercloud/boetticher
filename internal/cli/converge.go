@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -22,6 +23,7 @@ import (
 	aiopsmodel "github.com/gofastercloud/boetticher/internal/aiops"
 	"github.com/gofastercloud/boetticher/internal/ansible"
 	"github.com/gofastercloud/boetticher/internal/appliance"
+	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/backup"
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/firewall"
@@ -101,7 +103,15 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 		return fmt.Errorf("resolve Ansible playbook source: %w", err)
 	}
 	ansiblePlaybook := filepath.Join(ansibleRoot, "ansible", "site.yml")
-	if err := writeModelProjections(*siteDir, s); err != nil {
+	endpointLookup := net.LookupIP
+	rootRunner := proxmoxRootSSHRunner(s, *siteDir)
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		if err := proxmox.WaitForSSH(ctx, rootRunner, s.BootstrapAddress, "root", 1, 0); err != nil {
+			return fmt.Errorf("HOLD: temporary root deployment authority is unavailable; rerun bootstrap or recovery: %w", err)
+		}
+		endpointLookup = endpointLookupWithFallback(net.LookupIP, remoteEndpointResolver(ctx, rootRunner, s.BootstrapAddress, "root"))
+	}
+	if err := writeModelProjectionsWithResolver(*siteDir, s, endpointLookup); err != nil {
 		return err
 	}
 	backupPlan, err := backup.PlanFromSite(s)
@@ -120,11 +130,15 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 	if err != nil {
 		return err
 	}
+	retainedGuests, err := retainedGuestPlans(s)
+	if err != nil {
+		return err
+	}
 	operatorPublicKey, err := loadBootstrapOperatorKey(*siteDir)
 	if err != nil {
 		return err
 	}
-	variables, err := ansible.Variables(s)
+	variables, err := ansible.VariablesWithOperatorKey(s, operatorPublicKey)
 	if err != nil {
 		return err
 	}
@@ -145,6 +159,9 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 	// Agent installation is enabled only in the post-Pulse bootstrap pass,
 	// after the scoped report token and encrypted credential projection exist.
 	runtimeVariables["pulse_agent_install_enabled"] = false
+	// StreamDeck activation is enabled only in the post-Pulse pass, after its
+	// shared read token and encrypted credential projection exist.
+	runtimeVariables["streamdeck_runtime_credentials_ready"] = false
 	monitoringEnabled := modules.IsEnabled(s, "monitoring")
 	aiopsEnabled := modules.IsEnabled(s, "aiops")
 	secretValues := map[string]string{}
@@ -156,7 +173,7 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 		secretValues["firewall-ddns-tsig"] = ddnsTSIG
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		ruleset, renderErr := renderDeploymentNFT(firewallPlan)
+		ruleset, renderErr := renderDeploymentNFTWithResolver(firewallPlan, endpointLookup)
 		if renderErr != nil {
 			return renderErr
 		}
@@ -248,7 +265,9 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 			break
 		}
 	}
-	rootRunner := proxmoxRootSSHRunner(s, *siteDir)
+	proxmoxPlan.PrivilegedRunner = rootRunner
+	proxmoxPlan.PrivilegedAddress = s.BootstrapAddress
+	proxmoxPlan.PrivilegedUser = "root"
 	cleanupTemporaryRoot := true
 	defer func() {
 		if !cleanupTemporaryRoot {
@@ -264,6 +283,14 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 			err = fmt.Errorf("%v; HOLD: temporary root access cleanup failed: %w", err, cleanupErr)
 		}
 	}()
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		// Reconcile the live host-side jump policy from the same canonical
+		// destination list as the generated projection, including any
+		// product-owned retained guests that remain in the SSH contract.
+		if err := proxmox.ConfigureIdentities(ctx, rootRunner, s.BootstrapAddress, "root", operatorPublicKey, jumpDestinations(s)); err != nil {
+			return fmt.Errorf("reconcile Proxmox administrative and bastion identities: %w", err)
+		}
+	}
 	if err := proxmox.WaitForSSH(ctx, rootRunner, s.BootstrapAddress, "root", 1, 0); err != nil {
 		return fmt.Errorf("HOLD: temporary root deployment authority is unavailable; rerun bootstrap or recovery: %w", err)
 	}
@@ -405,8 +432,20 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 					return fmt.Errorf("HOLD: configure DNS guest %s before dependent appliances: %w", guest.Name, err)
 				}
 				if guest.Name == "lab-dns-01" && s.Gateway.Mode == model.GatewayModeManaged {
-					if err := installPowerDNSTSIG(ctx, guestRunner, guest.Address, dnsPlan, secretValues["firewall-ddns-tsig"]); err != nil {
+					needsRestart, err := installPowerDNSTSIG(ctx, guestRunner, guest.Address, dnsPlan, secretValues["firewall-ddns-tsig"])
+					if err != nil {
 						return fmt.Errorf("install PowerDNS TSIG state on %s: %w", guest.Name, err)
+					}
+					if !needsRestart {
+						needsRestart, err = powerDNSTSIGSyncMarkerMissing(ctx, guestRunner, guest.Address)
+						if err != nil {
+							return fmt.Errorf("check PowerDNS TSIG synchronization on %s: %w", guest.Name, err)
+						}
+					}
+					if needsRestart {
+						if err := restartPowerDNSAfterTSIG(ctx, guestRunner, guest.Address); err != nil {
+							return fmt.Errorf("restart PowerDNS after TSIG state change on %s: %w", guest.Name, err)
+						}
 					}
 				}
 				if err := verifyDNSReadiness(ctx, guestRunner, guest.Address); err != nil {
@@ -427,7 +466,7 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 			if renderErr != nil {
 				return fmt.Errorf("HOLD: render published service policy: %w", renderErr)
 			}
-			finalVariables, variablesErr := ansible.VariablesWithUpstream(s, upstream)
+			finalVariables, variablesErr := ansible.VariablesWithOperatorKeyAndUpstream(s, upstream, operatorPublicKey)
 			if variablesErr != nil {
 				return fmt.Errorf("HOLD: render published service Ansible variables: %w", variablesErr)
 			}
@@ -451,6 +490,12 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 			firewallPlan = finalFirewallPlan
 		}
 	}
+	for _, guest := range retainedGuests {
+		module := strings.TrimPrefix(guest.Owner, "boetticher/module/")
+		if err := proxmox.InactivateRetainedModule(ctx, rootRunner, s.BootstrapAddress, "root", guest.Kind, guest.VMID, module); err != nil {
+			return fmt.Errorf("HOLD: inactivate retained %s guest %s through Proxmox: %w", module, guest.Name, err)
+		}
+	}
 	if err := ansible.Run(ctx, ansiblePlaybook, inventoryPath, variables); err != nil {
 		return err
 	}
@@ -468,6 +513,7 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 	var monitorCertificate pki.ServerCertificate
 	var litellmCertificate pki.ServerCertificate
 	var octoprintCertificate pki.ServerCertificate
+	var streamDeckCertificate pki.ClientCertificate
 	var gatusCertificate pki.ServerCertificate
 	var aiopsCertificates map[string]string
 	if monitoringEnabled {
@@ -500,6 +546,16 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 			return fmt.Errorf("sign OctoPrint endpoint CSR: %w", err)
 		}
 	}
+	if modules.IsEnabled(s, "streamdeck") {
+		streamDeckCSR, readErr := os.ReadFile(filepath.Join(csrDir, "streamdeck.csr.pem"))
+		if readErr != nil {
+			return fmt.Errorf("read endpoint-generated StreamDeck CSR: %w", readErr)
+		}
+		streamDeckCertificate, err = pki.SignServiceClientCSR(authority, string(streamDeckCSR), "lab-streamdeck-01", time.Now().UTC())
+		if err != nil {
+			return fmt.Errorf("sign StreamDeck client CSR: %w", err)
+		}
+	}
 	if modules.IsEnabled(s, "aiops") {
 		aiopsCertificates, err = signAIOpsCertificates(authority, s, csrDir)
 		if err != nil {
@@ -530,6 +586,9 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 	if modules.IsEnabled(s, "printer") {
 		runtimeVariables["octoprint_server_cert_pem"] = octoprintCertificate.ChainPEM
 	}
+	if modules.IsEnabled(s, "streamdeck") {
+		runtimeVariables["streamdeck_client_cert_pem"] = streamDeckCertificate.ChainPEM
+	}
 	if modules.IsEnabled(s, "gatus") {
 		runtimeVariables["gatus_server_cert_pem"] = gatusCertificate.ChainPEM
 	}
@@ -548,19 +607,18 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 		return fmt.Errorf("install endpoint-signed certificates: %w", err)
 	}
 	var pulseForward *proxmox.SSHLocalForward
+	var aiRouterForward *proxmox.SSHLocalForward
 	defer func() {
 		if pulseForward != nil {
 			_ = pulseForward.Close()
 		}
+		if aiRouterForward != nil {
+			_ = aiRouterForward.Close()
+		}
 	}()
 	if monitoringEnabled {
-		pulseRunner := proxmox.SSHRunner{
-			IdentityFile:  operatorIdentityFile(s),
-			ConfigFile:    filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"),
-			KnownHosts:    deploymentKnownHosts(*siteDir),
-			StrictHostKey: "yes",
-			HostAlias:     "lab-bastion",
-		}
+		bastionRunner := proxmoxBastionSSHRunner(s, *siteDir)
+		pulseRunner := bastionRunner
 		pulseForward, err = pulseRunner.StartLocalForward(ctx, s.BootstrapAddress, "lab-jump", "10.10.10.20", 443)
 		if err != nil {
 			return fmt.Errorf("open Pulse API tunnel through Proxmox bastion: %w", err)
@@ -579,7 +637,11 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 			return clientErr
 		}
 		if aiopsEnabled {
-			if err := qualifyAndConfigureAIOps(ctx, *siteDir, *ageIdentity, s, authority, clientCertificate, pulseAdmin, runtimeVariables, ansiblePlaybook, inventoryPath); err != nil {
+			aiRouterForward, err = bastionRunner.StartLocalForward(ctx, s.BootstrapAddress, "lab-jump", "10.10.20.60", 443)
+			if err != nil {
+				return fmt.Errorf("open AI Router canary tunnel through Proxmox bastion: %w", err)
+			}
+			if err := qualifyAndConfigureAIOps(ctx, *siteDir, *ageIdentity, s, authority, clientCertificate, pulseAdmin, aiRouterForward.Address(), runtimeVariables, ansiblePlaybook, inventoryPath); err != nil {
 				return fmt.Errorf("HOLD: AIOps qualification failed: %w", err)
 			}
 		}
@@ -604,9 +666,16 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 		} else if tokenErr != nil {
 			return fmt.Errorf("load encrypted Pulse read token: %w", tokenErr)
 		}
+		readClientCertificate := clientCertificate
+		if modules.IsEnabled(s, "streamdeck") {
+			readClientCertificate, clientErr = pki.IssueClient(authority, "boetticher-pulse-read", s.Network.Domain, time.Now().UTC())
+			if clientErr != nil {
+				return fmt.Errorf("issue Pulse read client certificate: %w", clientErr)
+			}
+		}
 		pulseRead, clientErr := pulse.NewReadClient(pulse.ClientConfig{
 			BaseURL: pulseBaseURL, APIToken: readToken,
-			CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
+			CAPEM: authority.IssuingCertPEM, ClientCertPEM: readClientCertificate.CertPEM, ClientKeyPEM: readClientCertificate.KeyPEM,
 			ServerName: "monitor." + s.Network.Domain,
 		})
 		if clientErr != nil {
@@ -626,7 +695,7 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 			}
 			pulseRead, clientErr = pulse.NewReadClient(pulse.ClientConfig{
 				BaseURL: pulseBaseURL, APIToken: readToken,
-				CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
+				CAPEM: authority.IssuingCertPEM, ClientCertPEM: readClientCertificate.CertPEM, ClientKeyPEM: readClientCertificate.KeyPEM,
 				ServerName: "monitor." + s.Network.Domain,
 			})
 			if clientErr != nil {
@@ -636,10 +705,19 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 			return nil
 		}
 		health, err := pulseRead.Health(ctx)
-		if err != nil || !strings.EqualFold(health.Status, "healthy") {
-			if err != nil {
+		if err != nil {
+			if !(modules.IsEnabled(s, "streamdeck") && pulse.IsForbidden(err)) {
 				return fmt.Errorf("verify Pulse health: %w", err)
 			}
+			if refreshErr := refreshPulseReadToken(); refreshErr != nil {
+				return fmt.Errorf("refresh Pulse read token after forbidden health response: %w", refreshErr)
+			}
+			health, err = pulseRead.Health(ctx)
+			if err != nil {
+				return fmt.Errorf("verify Pulse health after read-token refresh: %w", err)
+			}
+		}
+		if !strings.EqualFold(health.Status, "healthy") {
 			return fmt.Errorf("verify Pulse health: unexpected status %q", health.Status)
 		}
 		if _, err := pulseRead.StateSummary(ctx); err != nil {
@@ -727,6 +805,43 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 				}
 			}
 		}
+
+		streamDeckBindings, bindingErr := streamDeckCredentialBindings(s)
+		if bindingErr != nil {
+			return bindingErr
+		}
+		if len(streamDeckBindings) > 0 {
+			streamDeckRunner := applianceSSHRunner(s, *siteDir, "lab-streamdeck-01")
+			if err := installCredentialsForGuest(ctx, streamDeckRunner, "lab-streamdeck-01", streamDeckBindings, map[string]string{"pulse_api_token": readToken}); err != nil {
+				return fmt.Errorf("install StreamDeck Pulse credential: %w", err)
+			}
+			streamDeckDropIns, dropInErr := credentialDropIns(streamDeckBindings)
+			if dropInErr != nil {
+				return dropInErr
+			}
+			existingDropIns, ok := runtimeVariables["credential_dropins"].(map[string]map[string]string)
+			if !ok {
+				existingDropIns = map[string]map[string]string{}
+			}
+			for guest, dropIns := range streamDeckDropIns {
+				if existingDropIns[guest] == nil {
+					existingDropIns[guest] = map[string]string{}
+				}
+				for unit, content := range dropIns {
+					existingDropIns[guest][unit] = content
+				}
+			}
+			runtimeVariables["credential_dropins"] = existingDropIns
+			runtimeVariables["streamdeck_runtime_credentials_ready"] = true
+			streamDeckVariables, marshalErr := json.MarshalIndent(runtimeVariables, "", "  ")
+			if marshalErr != nil {
+				return marshalErr
+			}
+			streamDeckVariables = append(streamDeckVariables, '\n')
+			if err := ansible.RunLimited(ctx, ansiblePlaybook, inventoryPath, streamDeckVariables, "lab-streamdeck-01"); err != nil {
+				return fmt.Errorf("install StreamDeck runtime: %w", err)
+			}
+		}
 	}
 	if pulseForward != nil {
 		if err := pulseForward.Close(); err != nil {
@@ -760,23 +875,27 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (er
 	return nil
 }
 
+const deploymentRootTimeout = 3 * time.Minute
+
 func waitForDeploymentRoot(ctx context.Context, hostRunner proxmox.CommandRunner, hostAddress string, guestRunner proxmox.CommandRunner, guest proxmox.GuestPlan, publicKey, knownHosts, hostKeyAlias string) error {
 	if guest.Hostname == "" || hostKeyAlias == "" {
 		return errors.New("guest host-key identity is incomplete")
 	}
+	rootCtx, cancel := context.WithTimeout(ctx, deploymentRootTimeout)
+	defer cancel()
 	var hostKey string
 	var pinErr error
 	for attempt := 0; attempt < 30; attempt++ {
-		hostKey, pinErr = proxmox.ReadGuestHostKey(ctx, hostRunner, hostAddress, "root", guest.Kind, guest.VMID)
+		hostKey, pinErr = proxmox.ReadGuestHostKey(rootCtx, hostRunner, hostAddress, "root", guest.Kind, guest.VMID)
 		if pinErr == nil {
 			break
 		}
 		if attempt+1 < 30 {
 			timer := time.NewTimer(2 * time.Second)
 			select {
-			case <-ctx.Done():
+			case <-rootCtx.Done():
 				timer.Stop()
-				return fmt.Errorf("guest host-key pinning cancelled: %w", ctx.Err())
+				return fmt.Errorf("guest host-key pinning cancelled: %w", rootCtx.Err())
 			case <-timer.C:
 			}
 		}
@@ -787,7 +906,7 @@ func waitForDeploymentRoot(ctx context.Context, hostRunner proxmox.CommandRunner
 	if err := sshconfig.AddHostKey(knownHosts, hostKeyAlias, hostKey); err != nil {
 		return fmt.Errorf("HOLD: pin guest host key: %w", err)
 	}
-	if err := proxmox.WaitForSSH(ctx, guestRunner, guest.Address, "root", 1, 0); err == nil {
+	if err := proxmox.WaitForSSH(rootCtx, guestRunner, guest.Address, "root", 1, 0); err == nil {
 		return nil
 	}
 	var lastErr error
@@ -795,17 +914,17 @@ func waitForDeploymentRoot(ctx context.Context, hostRunner proxmox.CommandRunner
 		if attempt > 0 {
 			timer := time.NewTimer(2 * time.Second)
 			select {
-			case <-ctx.Done():
+			case <-rootCtx.Done():
 				timer.Stop()
-				return fmt.Errorf("initial root transport failed and guest re-arm cancelled: %w", ctx.Err())
+				return fmt.Errorf("initial root transport failed and guest re-arm cancelled: %w", rootCtx.Err())
 			case <-timer.C:
 			}
 		}
-		if restoreErr := proxmox.RestoreTemporaryRootAccess(ctx, hostRunner, hostAddress, "root", guest.Kind, guest.VMID, publicKey); restoreErr != nil {
+		if restoreErr := proxmox.RestoreTemporaryRootAccess(rootCtx, hostRunner, hostAddress, "root", guest.Kind, guest.VMID, publicKey); restoreErr != nil {
 			lastErr = restoreErr
 			continue
 		}
-		if retryErr := proxmox.WaitForSSH(ctx, guestRunner, guest.Address, "root", 30, 2*time.Second); retryErr == nil {
+		if retryErr := proxmox.WaitForSSH(rootCtx, guestRunner, guest.Address, "root", 30, 2*time.Second); retryErr == nil {
 			return nil
 		} else {
 			lastErr = retryErr
@@ -991,7 +1110,7 @@ func signAIOpsCertificates(authority pki.Authority, s model.Site, csrDir string)
 	return result, nil
 }
 
-func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, s model.Site, authority pki.Authority, controllerCertificate pki.ClientCertificate, pulseAdmin *pulse.Client, runtimeVariables map[string]any, ansiblePlaybook, inventoryPath string) error {
+func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, s model.Site, authority pki.Authority, controllerCertificate pki.ClientCertificate, pulseAdmin *pulse.Client, routerForwardAddress string, runtimeVariables map[string]any, ansiblePlaybook, inventoryPath string) error {
 	modelConfig, err := selectedAIOpsModel(s)
 	if err != nil {
 		return err
@@ -1004,7 +1123,7 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 	if _, err := aiopsmodel.DecodeModelCapabilities(metadata); err != nil {
 		return err
 	}
-	routerClient, err := controllerMTLSClient(authority, controllerCertificate)
+	routerClient, err := controllerMTLSClient(authority, controllerCertificate, routerForwardAddress)
 	if err != nil {
 		return err
 	}
@@ -1023,6 +1142,18 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 	})
 	if err != nil {
 		return err
+	}
+	if err := pulseAdmin.ValidateReadToken(ctx, readToken); err != nil {
+		if !pulse.IsUnauthorized(err) {
+			return fmt.Errorf("validate AIOps Pulse read token: %w", err)
+		}
+		readToken, err = pulseAdmin.CreateReadToken(ctx, "boetticher aiops read")
+		if err != nil {
+			return fmt.Errorf("refresh AIOps Pulse read token: %w", err)
+		}
+		if err := site.StorePlatformSecret(siteDir, s, ageIdentity, "aiops_pulse_read_token", readToken); err != nil {
+			return fmt.Errorf("store refreshed AIOps Pulse read token: %w", err)
+		}
 	}
 	noteToken, err := loadOrCreatePulseToken(siteDir, ageIdentity, s, "aiops_pulse_note_token", func() (string, error) {
 		return pulseAdmin.CreateIncidentNoteToken(ctx, "boetticher aiops notes")
@@ -1086,8 +1217,8 @@ func selectedAIOpsModel(s model.Site) (model.LiteLLMModelConfig, error) {
 	return selected, nil
 }
 
-func controllerMTLSClient(authority pki.Authority, certificate pki.ClientCertificate) (*http.Client, error) {
-	identity, err := tls.X509KeyPair([]byte(certificate.CertPEM), []byte(certificate.KeyPEM))
+func controllerMTLSClient(authority pki.Authority, certificate pki.ClientCertificate, forwardAddress string) (*http.Client, error) {
+	identity, err := tls.X509KeyPair([]byte(certificate.ChainPEM), []byte(certificate.KeyPEM))
 	if err != nil {
 		return nil, fmt.Errorf("load controller AIOps canary identity: %w", err)
 	}
@@ -1095,7 +1226,17 @@ func controllerMTLSClient(authority pki.Authority, certificate pki.ClientCertifi
 	if !roots.AppendCertsFromPEM([]byte(authority.RootCertPEM + authority.IssuingCertPEM)) {
 		return nil, errors.New("platform CA contains no certificates")
 	}
-	transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, Certificates: []tls.Certificate{identity}}, DisableCompression: true, ResponseHeaderTimeout: 30 * time.Second}
+	forwardHost, forwardPort, err := net.SplitHostPort(forwardAddress)
+	if err != nil || forwardHost != "127.0.0.1" || forwardPort == "" {
+		return nil, errors.New("AI Router canary requires a loopback SSH forward")
+	}
+	dialer := &net.Dialer{Timeout: 30 * time.Second}
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return dialer.DialContext(ctx, network, net.JoinHostPort(forwardHost, forwardPort))
+		},
+		TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, Certificates: []tls.Certificate{identity}}, DisableCompression: true, ResponseHeaderTimeout: 30 * time.Second,
+	}
 	return &http.Client{Transport: transport, Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("AI Router redirects are forbidden") }}, nil
 }
 
@@ -1220,6 +1361,32 @@ func revokeTemporaryRootAccess(ctx context.Context, s model.Site, siteDir string
 	return nil
 }
 
+func retainedGuestPlans(s model.Site) ([]proxmox.GuestPlan, error) {
+	guests := make([]proxmox.GuestPlan, 0)
+	for _, retained := range s.RetainedModules {
+		artifact, err := artifacts.ArtifactFor(retained.Module)
+		if err != nil {
+			return nil, fmt.Errorf("resolve retained %s artifact identity: %w", retained.Module, err)
+		}
+		var kind proxmox.GuestKind
+		switch artifact.Kind {
+		case string(proxmox.KindQEMU):
+			kind = proxmox.KindQEMU
+		case string(proxmox.KindLXC):
+			kind = proxmox.KindLXC
+		default:
+			return nil, fmt.Errorf("retained %s has unsupported artifact kind %q", retained.Module, artifact.Kind)
+		}
+		for _, component := range retained.Guests {
+			guests = append(guests, proxmox.GuestPlan{
+				VMID: component.VMID, Name: component.Name, Hostname: component.Hostname, Kind: kind,
+				Zone: component.Zone, Address: component.Address, Owner: "boetticher/module/" + retained.Module,
+			})
+		}
+	}
+	return guests, nil
+}
+
 func resolvedDeclarationForGuest(declaration model.ModuleDeclaration, guest proxmox.GuestPlan) (model.ModuleDeclaration, error) {
 	if declaration.Module == "" || declaration.Module != strings.TrimPrefix(guest.Owner, "boetticher/module/") {
 		return model.ModuleDeclaration{}, fmt.Errorf("module declaration ownership does not match guest %s", guest.Name)
@@ -1270,6 +1437,72 @@ func proxmoxRootSSHRunner(s model.Site, siteDir string) proxmox.SSHRunner {
 		KnownHosts:    deploymentKnownHosts(siteDir),
 		StrictHostKey: "yes",
 		HostAlias:     model.LogicalProxmoxIdentity,
+	}
+}
+
+func proxmoxBastionSSHRunner(s model.Site, siteDir string) proxmox.SSHRunner {
+	return proxmox.SSHRunner{
+		IdentityFile:  operatorIdentityFile(s),
+		ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),
+		KnownHosts:    deploymentKnownHosts(siteDir),
+		StrictHostKey: "yes",
+		HostAlias:     "lab-bastion",
+	}
+}
+
+func remoteEndpointResolver(ctx context.Context, runner proxmox.ArgsCommandRunner, address, user string) func(string) ([]net.IP, error) {
+	return func(host string) ([]net.IP, error) {
+		if strings.TrimSpace(host) != host || host == "" || strings.ContainsAny(host, " \t\r\n/") {
+			return nil, errors.New("endpoint hostname is invalid")
+		}
+		output, err := runner.RunArgs(ctx, address, user, []string{"getent", "ahostsv4", host})
+		if err != nil {
+			return nil, err
+		}
+		seen := map[string]struct{}{}
+		addresses := make([]net.IP, 0)
+		for _, line := range strings.Split(string(output), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 0 {
+				continue
+			}
+			ip := net.ParseIP(fields[0])
+			if ip == nil || ip.To4() == nil {
+				continue
+			}
+			ip = ip.To4()
+			if _, ok := seen[ip.String()]; ok {
+				continue
+			}
+			seen[ip.String()] = struct{}{}
+			addresses = append(addresses, ip)
+		}
+		if len(addresses) == 0 {
+			return nil, fmt.Errorf("remote resolver returned no IPv4 addresses for %s", host)
+		}
+		return addresses, nil
+	}
+}
+
+func endpointLookupWithFallback(primary, fallback func(string) ([]net.IP, error)) func(string) ([]net.IP, error) {
+	return func(host string) ([]net.IP, error) {
+		addresses, primaryErr := primary(host)
+		for _, address := range addresses {
+			if address != nil && address.To4() != nil {
+				return addresses, nil
+			}
+		}
+		if fallback == nil {
+			return nil, primaryErr
+		}
+		fallbackAddresses, fallbackErr := fallback(host)
+		if fallbackErr != nil {
+			if primaryErr != nil {
+				return nil, fmt.Errorf("controller resolver: %v; Proxmox resolver: %w", primaryErr, fallbackErr)
+			}
+			return nil, fallbackErr
+		}
+		return fallbackAddresses, nil
 	}
 }
 

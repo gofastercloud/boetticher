@@ -51,9 +51,29 @@ func validateRetainedModules(retained []model.RetainedModule) error {
 		if item.Module == "" || model.ModuleOwnershipTag(item.Module) == "" {
 			return fmt.Errorf("retained module has invalid name %q", item.Module)
 		}
+		if item.Disposition != "retained" || item.Active {
+			return fmt.Errorf("retained module %s has invalid inactive disposition", item.Module)
+		}
+		ownerTag := model.ModuleOwnershipTag(item.Module)
 		for _, guest := range item.Guests {
 			if err := guest.Validate(); err != nil {
 				return fmt.Errorf("retained module %s contains invalid guest: %w", item.Module, err)
+			}
+			if !guest.ProductOwned || !guest.SSHManaged || guest.Module != item.Module {
+				return fmt.Errorf("retained guest %s must remain a product-owned SSH-managed %s guest", guest.Name, item.Module)
+			}
+			if guest.VMID < model.PlatformGuestIDMin || guest.VMID > model.ModuleGuestIDMax {
+				return fmt.Errorf("retained guest %s uses VMID %d outside the boetticher-owned range", guest.Name, guest.VMID)
+			}
+			hasOwnerTag := false
+			for _, tag := range guest.Tags {
+				if tag == ownerTag {
+					hasOwnerTag = true
+					break
+				}
+			}
+			if !hasOwnerTag {
+				return fmt.Errorf("retained guest %s is missing canonical ownership tag %q", guest.Name, ownerTag)
 			}
 		}
 	}

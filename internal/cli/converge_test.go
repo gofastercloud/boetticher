@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,49 @@ import (
 
 type dnsReadinessRunner struct {
 	commands []string
+}
+
+type endpointArgsRunner struct {
+	output []byte
+	err    error
+	args   [][]string
+}
+
+func (r *endpointArgsRunner) RunArgs(_ context.Context, _ string, _ string, args []string) ([]byte, error) {
+	r.args = append(r.args, args)
+	return r.output, r.err
+}
+
+func TestRemoteEndpointResolverParsesOnlyUniqueIPv4Addresses(t *testing.T) {
+	runner := &endpointArgsRunner{output: []byte("192.0.2.20 STREAM example\n192.0.2.20 DGRAM example\n2001:db8::20 STREAM example\n")}
+	addresses, err := remoteEndpointResolver(context.Background(), runner, "192.0.2.10", "root")("example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(addresses) != 1 || addresses[0].String() != "192.0.2.20" {
+		t.Fatalf("remote endpoint addresses = %v, want one unique IPv4 address", addresses)
+	}
+	if len(runner.args) != 1 || strings.Join(runner.args[0], " ") != "getent ahostsv4 example.test" {
+		t.Fatalf("remote resolver args = %v", runner.args)
+	}
+}
+
+func TestEndpointLookupWithFallbackUsesProxmoxOnlyAfterControllerFailure(t *testing.T) {
+	primaryCalls, fallbackCalls := 0, 0
+	lookup := endpointLookupWithFallback(func(string) ([]net.IP, error) {
+		primaryCalls++
+		return nil, errors.New("controller DNS unavailable")
+	}, func(string) ([]net.IP, error) {
+		fallbackCalls++
+		return []net.IP{net.ParseIP("192.0.2.20")}, nil
+	})
+	addresses, err := lookup("example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(addresses) != 1 || addresses[0].String() != "192.0.2.20" || primaryCalls != 1 || fallbackCalls != 1 {
+		t.Fatalf("fallback lookup = %v, primary calls=%d, fallback calls=%d", addresses, primaryCalls, fallbackCalls)
+	}
 }
 
 func (r *dnsReadinessRunner) Run(_ context.Context, _ string, _ string, command string) ([]byte, error) {
@@ -129,6 +173,16 @@ func TestEndpointClientTrustProjectionIncludesRootAndIssuingCAs(t *testing.T) {
 	}
 }
 
+func TestAIOpsCanaryUsesCompleteControllerCertificateChain(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "tls.X509KeyPair([]byte(certificate.ChainPEM), []byte(certificate.KeyPEM))") {
+		t.Fatal("AIOps canary does not send the complete controller certificate chain")
+	}
+}
+
 func TestPulseCredentialBootstrapUsesTemporaryRootAuthority(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
 	if err != nil {
@@ -226,6 +280,30 @@ func TestPulseReconciliationForwardUsesRestrictedBastion(t *testing.T) {
 	if strings.Contains(text, `StartLocalForward(context.Background(), s.BootstrapAddress, "root", "10.10.10.20", 443)`) {
 		t.Fatal("Pulse reconciliation still uses the deployment-only root forwarding path")
 	}
+	if !strings.Contains(text, `bastionRunner.StartLocalForward(ctx, s.BootstrapAddress, "lab-jump", "10.10.20.60", 443)`) {
+		t.Fatal("AIOps canary does not use the restricted bastion tunnel to the internal AI Router")
+	}
+	if strings.Contains(text, `StartLocalForward(ctx, s.BootstrapAddress, "root", "10.10.20.60", 443)`) {
+		t.Fatal("AIOps canary still uses the deployment-only root forwarding path")
+	}
+}
+
+func TestDeployReconcilesLiveBastionPolicyFromCanonicalDestinations(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		`proxmox.ConfigureIdentities(ctx, rootRunner, s.BootstrapAddress, "root", operatorPublicKey, jumpDestinations(s))`,
+		`Reconcile the live host-side jump policy`,
+		`proxmox.InactivateRetainedModule(ctx, rootRunner, s.BootstrapAddress, "root", guest.Kind, guest.VMID, module)`,
+		`context.WithTimeout(ctx, deploymentRootTimeout)`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("deploy does not reconcile the live bastion policy: missing %q", required)
+		}
+	}
 }
 
 func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
@@ -236,6 +314,9 @@ func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 	text := string(data)
 	for _, required := range []string{
 		"readTokenRefreshed := false",
+		"readClientCertificate := clientCertificate",
+		`pki.IssueClient(authority, "boetticher-pulse-read"`,
+		"modules.IsEnabled(s, \"streamdeck\") && pulse.IsForbidden(err)",
 		"pulse.IsUnauthorized(err)",
 		"pulseAdmin.CreateReadToken(ctx, \"boetticher monitoring read\")",
 		"site.StorePlatformSecret(*siteDir, s, *ageIdentity, \"pulse_api_token\", readToken)",

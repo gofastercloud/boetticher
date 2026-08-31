@@ -59,8 +59,11 @@ func TestQuickstartOfflineCommandsExecute(t *testing.T) {
 	if err := Run([]string{"status", "--site", siteDir}, &statusOutput, &statusOutput); err == nil {
 		t.Fatal("status unexpectedly passed before live deployment evidence")
 	}
-	if !strings.Contains(statusOutput.String(), "Platform ACTION REQUIRED") {
-		t.Fatalf("status did not preserve the pre-deployment action boundary: %s", statusOutput.String())
+	if !strings.Contains(statusOutput.String(), "Platform FAILED") {
+		t.Fatalf("status did not report the failed local health checks: %s", statusOutput.String())
+	}
+	if strings.Contains(statusOutput.String(), "NOT TESTED") || strings.Contains(statusOutput.String(), "ACTION REQUIRED") {
+		t.Fatalf("status reported an unknowable check: %s", statusOutput.String())
 	}
 }
 
@@ -98,7 +101,7 @@ func TestPublicHelpPathsDoNotFail(t *testing.T) {
 	for _, args := range [][]string{
 		{"init", "--help"}, {"preflight", "-h"}, {"bootstrap", "--help"}, {"deploy", "--help"}, {"status", "--help"}, {"update", "--help"},
 		{"verify", "--help"}, {"doctor", "--help"}, {"network", "--help"}, {"firewall", "--help"},
-		{"dhcp", "--help"}, {"dns", "--help"}, {"pki", "--help"}, {"access", "--help"}, {"portal", "--help"},
+		{"dhcp", "--help"}, {"dns", "--help"}, {"pki", "--help"}, {"access", "--help"}, {"portal", "--help"}, {"network", "test", "--help"},
 		{"module", "--help"}, {"module", "secrets", "--help"}, {"modules", "--help"}, {"config", "--help"}, {"logs", "--help"}, {"aiops", "--help"}, {"upgrade", "--help"},
 	} {
 		var output bytes.Buffer

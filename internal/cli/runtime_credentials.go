@@ -13,6 +13,8 @@ import (
 	"github.com/gofastercloud/boetticher/internal/secrets"
 )
 
+const powerDNSTSIGSyncMarker = "/var/lib/powerdns/.boetticher-tsig-synced-v1"
+
 // deploymentCredential binds a controller-side recovery secret to one
 // consuming appliance unit. The secret value is deliberately kept outside
 // this metadata and outside the Ansible variable document.
@@ -50,6 +52,16 @@ func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, erro
 				RuntimeRef: "/run/credentials/pulse.service/pulse-admin-password",
 			},
 		})
+		bindings = append(bindings,
+			deploymentCredential{
+				Guest: "lab-monitor-01", Address: "10.10.10.20", SecretKey: "pulse_proxy_auth_secret",
+				Spec: secrets.CredentialSpec{Name: "pulse-proxy-auth-secret", Unit: "pulse.service", StorePath: "/var/lib/boetticher/credentials/pulse-proxy-auth-secret.cred", RuntimeRef: "/run/credentials/pulse.service/pulse-proxy-auth-secret"},
+			},
+			deploymentCredential{
+				Guest: "lab-monitor-01", Address: "10.10.10.20", SecretKey: "pulse_proxy_auth_secret",
+				Spec: secrets.CredentialSpec{Name: "pulse-proxy-auth-nginx-secret", Unit: "nginx.service", StorePath: "/var/lib/boetticher/credentials/pulse-proxy-auth-nginx-secret.cred", RuntimeRef: "/run/credentials/nginx.service/pulse-proxy-auth-nginx-secret"},
+			},
+		)
 	}
 	if modules.IsEnabled(site, "tailnet-router") {
 		bindings = append(bindings, deploymentCredential{
@@ -130,6 +142,28 @@ func monitoringAgentCredentialBindings(site model.Site) ([]deploymentCredential,
 	return bindings, nil
 }
 
+// streamDeckCredentialBindings creates the single runtime projection needed
+// by the read-only StreamDeck client. Pulse owns the token; Core installs it
+// only after the mTLS Pulse read path has passed its deployment gate.
+func streamDeckCredentialBindings(site model.Site) ([]deploymentCredential, error) {
+	if !modules.IsEnabled(site, "streamdeck") {
+		return nil, nil
+	}
+	binding := deploymentCredential{
+		Guest: "lab-streamdeck-01", Address: "10.10.20.70", SecretKey: "pulse_api_token",
+		Spec: secrets.CredentialSpec{
+			Name:       "pulse-token",
+			Unit:       "streamdeck-status.service",
+			StorePath:  "/var/lib/boetticher/credentials/streamdeck-pulse-token.cred",
+			RuntimeRef: "/run/credentials/streamdeck-status.service/pulse-token",
+		},
+	}
+	if err := secrets.Validate([]secrets.CredentialSpec{binding.Spec}); err != nil {
+		return nil, fmt.Errorf("validate StreamDeck credential declaration: %w", err)
+	}
+	return []deploymentCredential{binding}, nil
+}
+
 func credentialName(reference string) string {
 	return model.LiteLLMSecretReferenceID(reference)
 }
@@ -191,20 +225,72 @@ func installCredentialsForGuest(ctx context.Context, runner proxmox.CommandRunne
 // installPowerDNSTSIG is the explicit protected-backend exception for
 // PowerDNS. The supported SQLite backend persists TSIG material, so Core
 // streams one bounded SQL document over SSH after the database exists.
-func installPowerDNSTSIG(ctx context.Context, runner proxmox.StdinCommandRunner, address string, plan dns.Plan, secret string) error {
+func installPowerDNSTSIG(ctx context.Context, runner proxmox.StdinCommandRunner, address string, plan dns.Plan, secret string) (bool, error) {
 	if runner == nil || secret == "" {
-		return fmt.Errorf("PowerDNS TSIG installation requires a runner and secret")
+		return false, fmt.Errorf("PowerDNS TSIG installation requires a runner and secret")
 	}
 	var sql strings.Builder
 	sql.WriteString("BEGIN;\n")
+	matchClauses := make([]string, 0, len(plan.DDNS.Zones))
+	for _, zone := range plan.DDNS.Zones {
+		matchClauses = append(matchClauses, fmt.Sprintf("(name = %s AND algorithm = %s AND secret = %s)", sqlQuote(zone.TSIGKeyName), sqlQuote(plan.DDNS.TSIGAlgorithm), sqlQuote(secret)))
+	}
+	if len(matchClauses) == 0 {
+		return false, fmt.Errorf("PowerDNS TSIG installation requires at least one DDNS zone")
+	}
+	fmt.Fprintf(&sql, "SELECT CASE WHEN (SELECT COUNT(*) FROM tsigkeys WHERE %s) = %d THEN 0 ELSE 1 END;\n", strings.Join(matchClauses, " OR "), len(matchClauses))
 	for _, zone := range plan.DDNS.Zones {
 		fmt.Fprintf(&sql, "INSERT OR REPLACE INTO tsigkeys (name, algorithm, secret) VALUES (%s, %s, %s);\n", sqlQuote(zone.TSIGKeyName), sqlQuote(plan.DDNS.TSIGAlgorithm), sqlQuote(secret))
 	}
 	sql.WriteString("COMMIT;\n")
-	if _, err := runner.RunWithStdin(ctx, address, "root", "sqlite3 /var/lib/powerdns/pdns.sqlite3", strings.NewReader(sql.String())); err != nil {
-		return fmt.Errorf("install PowerDNS protected TSIG backend state: %w", err)
+	output, err := runner.RunWithStdin(ctx, address, "root", "sqlite3 /var/lib/powerdns/pdns.sqlite3", strings.NewReader(sql.String()))
+	if err != nil {
+		return false, fmt.Errorf("install PowerDNS protected TSIG backend state: %w", err)
+	}
+	needsRestart, err := parsePowerDNSTSIGChange(output)
+	if err != nil {
+		return false, fmt.Errorf("determine PowerDNS TSIG backend change: %w", err)
+	}
+	return needsRestart, nil
+}
+
+func parsePowerDNSTSIGChange(output []byte) (bool, error) {
+	fields := strings.Fields(string(output))
+	if len(fields) != 1 || (fields[0] != "0" && fields[0] != "1") {
+		return false, fmt.Errorf("sqlite3 change marker is invalid")
+	}
+	return fields[0] == "1", nil
+}
+
+func restartPowerDNSAfterTSIG(ctx context.Context, runner proxmox.CommandRunner, address string) error {
+	if runner == nil {
+		return fmt.Errorf("PowerDNS restart requires a runner")
+	}
+	if _, err := runner.Run(ctx, address, "root", "systemctl restart pdns"); err != nil {
+		return fmt.Errorf("restart PowerDNS after protected TSIG backend change: %w", err)
+	}
+	if _, err := runner.Run(ctx, address, "root", "install -D -m 0640 -o pdns -g pdns /dev/null "+powerDNSTSIGSyncMarker); err != nil {
+		return fmt.Errorf("record PowerDNS TSIG synchronization: %w", err)
 	}
 	return nil
+}
+
+func powerDNSTSIGSyncMarkerMissing(ctx context.Context, runner proxmox.CommandRunner, address string) (bool, error) {
+	if runner == nil {
+		return false, fmt.Errorf("PowerDNS synchronization check requires a runner")
+	}
+	output, err := runner.Run(ctx, address, "root", "test -f "+powerDNSTSIGSyncMarker+" && printf present || printf absent")
+	if err != nil {
+		return false, fmt.Errorf("check PowerDNS TSIG synchronization: %w", err)
+	}
+	switch strings.TrimSpace(string(output)) {
+	case "present":
+		return false, nil
+	case "absent":
+		return true, nil
+	default:
+		return false, fmt.Errorf("PowerDNS synchronization marker state is invalid")
+	}
 }
 
 func sqlQuote(value string) string {

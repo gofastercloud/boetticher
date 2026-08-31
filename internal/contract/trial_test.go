@@ -52,6 +52,13 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 			t.Fatalf("default trial builder does not produce %s", artifact)
 		}
 	}
+	scanSource, err := os.ReadFile(filepath.Join(repoRoot, "scripts", "scan-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(scanSource), "boetticher-streamdeck) module=streamdeck ;;") {
+		t.Fatal("artifact qualification does not map the StreamDeck artifact to its module")
+	}
 	bootstrapSource, err := os.ReadFile(filepath.Join(repoRoot, "internal", "cli", "bootstrap.go"))
 	if err != nil {
 		t.Fatal(err)

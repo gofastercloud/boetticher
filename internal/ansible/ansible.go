@@ -1,6 +1,7 @@
 package ansible
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,15 +23,19 @@ import (
 )
 
 const maxAnsibleOutputBytes = 64 * 1024
+const maxAnsibleDiagnosticBytes = 16 * 1024
 
 type boundedOutput struct {
-	data      []byte
-	prefix    []byte
-	suffix    []byte
-	truncated bool
+	data           []byte
+	prefix         []byte
+	suffix         []byte
+	diagnostic     []byte
+	diagnosticScan []byte
+	truncated      bool
 }
 
 func (b *boundedOutput) Write(data []byte) (int, error) {
+	b.captureDiagnostics(data)
 	if !b.truncated && len(b.data)+len(data) <= maxAnsibleOutputBytes {
 		b.data = append(b.data, data...)
 		return len(data), nil
@@ -53,6 +58,39 @@ func (b *boundedOutput) Write(data []byte) (int, error) {
 	suffixLimit := maxAnsibleOutputBytes - prefixLimit
 	b.suffix = retainSuffix(b.suffix, data, suffixLimit)
 	return len(data), nil
+}
+
+func (b *boundedOutput) captureDiagnostics(data []byte) {
+	b.diagnosticScan = append(b.diagnosticScan, data...)
+	for {
+		index := bytes.IndexByte(b.diagnosticScan, '\n')
+		if index < 0 {
+			break
+		}
+		line := b.diagnosticScan[:index]
+		b.diagnosticScan = b.diagnosticScan[index+1:]
+		if !isDiagnosticLine(line) || len(b.diagnostic) >= maxAnsibleDiagnosticBytes {
+			continue
+		}
+		remaining := maxAnsibleDiagnosticBytes - len(b.diagnostic)
+		if len(line)+1 > remaining {
+			line = line[:remaining-1]
+		}
+		b.diagnostic = append(b.diagnostic, line...)
+		b.diagnostic = append(b.diagnostic, '\n')
+	}
+	if len(b.diagnosticScan) > maxAnsibleDiagnosticBytes {
+		b.diagnosticScan = append([]byte(nil), b.diagnosticScan[len(b.diagnosticScan)-maxAnsibleDiagnosticBytes:]...)
+	}
+}
+
+func isDiagnosticLine(line []byte) bool {
+	text := string(line)
+	return strings.Contains(text, "[ERROR]:") || strings.Contains(text, "fatal:") || strings.Contains(text, "FAILED!") || strings.Contains(text, "unreachable=")
+}
+
+func (b boundedOutput) DiagnosticBytes() []byte {
+	return append([]byte(nil), b.diagnostic...)
 }
 
 func (b boundedOutput) Bytes() []byte {
@@ -124,7 +162,7 @@ func Inventory(s model.Site) (string, error) {
 	b.WriteString(revision + "\n\n")
 	groups := map[string][]model.Component{
 		"dns": {}, "monitor": {}, "portal": {}, "logging": {},
-		"tailnet-router": {}, "litellm": {}, "printer": {}, "aiops": {}, "gatus": {},
+		"tailnet-router": {}, "litellm": {}, "printer": {}, "streamdeck": {}, "aiops": {}, "gatus": {},
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		groups["firewall"] = nil
@@ -148,7 +186,7 @@ func Inventory(s model.Site) (string, error) {
 			groups["logging"] = append(groups["logging"], component)
 		}
 		switch component.Module {
-		case "tailnet-router", "litellm", "printer", "aiops", "gatus":
+		case "tailnet-router", "litellm", "printer", "streamdeck", "aiops", "gatus":
 			groups[component.Module] = append(groups[component.Module], component)
 		}
 	}
@@ -169,14 +207,14 @@ func Inventory(s model.Site) (string, error) {
 		address = s.BootstrapAddress
 	}
 	writeHostAt(&b, *proxmoxComponent, address)
-	for _, group := range []string{"dns", "monitor", "portal", "logging", "tailnet-router", "litellm", "printer", "aiops"} {
+	for _, group := range []string{"dns", "monitor", "portal", "logging", "tailnet-router", "litellm", "printer", "streamdeck", "aiops"} {
 		writeInventoryGroup(&b, group, groups[group])
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		writeInventoryGroup(&b, "firewall", groups["firewall"])
 	}
 	writeInventoryGroup(&b, "gatus", groups["gatus"])
-	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\ntailnet-router\nlitellm\nprinter\naiops\ngatus\n")
+	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\ntailnet-router\nlitellm\nprinter\nstreamdeck\naiops\ngatus\n")
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		b.WriteString("firewall\n")
 	}
@@ -200,14 +238,22 @@ func writeHostAt(b *strings.Builder, component model.Component, address string) 
 }
 
 func Variables(s model.Site) ([]byte, error) {
-	return variables(s, nil)
+	return variables(s, nil, "")
 }
 
 func VariablesWithUpstream(s model.Site, upstream firewall.UpstreamObservation) ([]byte, error) {
-	return variables(s, &upstream)
+	return variables(s, &upstream, "")
 }
 
-func variables(s model.Site, upstream *firewall.UpstreamObservation) ([]byte, error) {
+func VariablesWithOperatorKey(s model.Site, publicKey string) ([]byte, error) {
+	return variables(s, nil, publicKey)
+}
+
+func VariablesWithOperatorKeyAndUpstream(s model.Site, upstream firewall.UpstreamObservation, publicKey string) ([]byte, error) {
+	return variables(s, &upstream, publicKey)
+}
+
+func variables(s model.Site, upstream *firewall.UpstreamObservation, operatorPublicKey string) ([]byte, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
@@ -256,34 +302,36 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation) ([]byte, er
 		}
 	}
 	value := struct {
-		ModelRevision               string                        `json:"model_revision"`
-		Domain                      string                        `json:"domain"`
-		ProxmoxManagementAddress    string                        `json:"proxmox_management_address"`
-		IPv4Only                    bool                          `json:"ipv4_only"`
-		AuthoritativeDNS            string                        `json:"authoritative_dns"`
-		AuthoritativeDNSVersion     string                        `json:"authoritative_dns_version"`
-		AuthoritativePackageVersion string                        `json:"authoritative_package_version"`
-		AuthoritativeDNSPort        string                        `json:"authoritative_dns_port"`
-		DynamicZones                []string                      `json:"dynamic_zones"`
-		DNSPlan                     dns.Plan                      `json:"dns_plan"`
-		FirewallPlan                firewall.Plan                 `json:"firewall_plan"`
-		MonitoringPlan              pulse.Plan                    `json:"monitoring_plan"`
-		PulseAgentTargets           []string                      `json:"pulse_agent_targets"`
-		PulseAgentVersion           string                        `json:"pulse_agent_version"`
-		PulseAgentReleaseURL        string                        `json:"pulse_agent_release_url"`
-		PulseAgentReleaseSHA256     string                        `json:"pulse_agent_release_sha256"`
-		BlockyConfig                string                        `json:"blocky_config"`
-		LoggingPlan                 logging.Plan                  `json:"logging_plan"`
-		LoggingCollectorConfig      string                        `json:"logging_collector_config"`
-		LoggingServiceOverride      string                        `json:"logging_collector_service_override"`
-		LoggingUploadConfigs        map[string]string             `json:"logging_upload_configs"`
-		LoggingClientCertificates   map[string]string             `json:"logging_client_certificates"`
-		LoggingCollectorCertificate string                        `json:"logging_collector_certificate"`
-		ModuleConfigs               map[string]model.ModuleConfig `json:"module_configs"`
-		ModuleDeclarations          []model.ModuleDeclaration     `json:"module_declarations"`
-		GatusConfig                 string                        `json:"gatus_config"`
-		USBExportManifests          []usbexport.GuestManifest     `json:"usb_export_manifests"`
-	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan, firewallPlan, monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), loggingUploads, map[string]string{}, "", s.ModuleConfig, s.Declarations, string(gatusConfig), usbPlan}
+		ModelRevision                 string                        `json:"model_revision"`
+		Domain                        string                        `json:"domain"`
+		ProxmoxManagementAddress      string                        `json:"proxmox_management_address"`
+		IPv4Only                      bool                          `json:"ipv4_only"`
+		AuthoritativeDNS              string                        `json:"authoritative_dns"`
+		AuthoritativeDNSVersion       string                        `json:"authoritative_dns_version"`
+		AuthoritativePackageVersion   string                        `json:"authoritative_package_version"`
+		AuthoritativeDNSPort          string                        `json:"authoritative_dns_port"`
+		DynamicZones                  []string                      `json:"dynamic_zones"`
+		DNSPlan                       dns.Plan                      `json:"dns_plan"`
+		FirewallPlan                  firewall.Plan                 `json:"firewall_plan"`
+		MonitoringPlan                pulse.Plan                    `json:"monitoring_plan"`
+		PulseAgentTargets             []string                      `json:"pulse_agent_targets"`
+		PulseAgentVersion             string                        `json:"pulse_agent_version"`
+		PulseAgentReleaseURL          string                        `json:"pulse_agent_release_url"`
+		PulseAgentReleaseSHA256       string                        `json:"pulse_agent_release_sha256"`
+		BlockyConfig                  string                        `json:"blocky_config"`
+		LoggingPlan                   logging.Plan                  `json:"logging_plan"`
+		LoggingCollectorConfig        string                        `json:"logging_collector_config"`
+		LoggingServiceOverride        string                        `json:"logging_collector_service_override"`
+		LoggingSocketOverride         string                        `json:"logging_collector_socket_override"`
+		LoggingUploadConfigs          map[string]string             `json:"logging_upload_configs"`
+		LoggingClientCertificates     map[string]string             `json:"logging_client_certificates"`
+		LoggingCollectorCertificate   string                        `json:"logging_collector_certificate"`
+		ModuleConfigs                 map[string]model.ModuleConfig `json:"module_configs"`
+		ModuleDeclarations            []model.ModuleDeclaration     `json:"module_declarations"`
+		GatusConfig                   string                        `json:"gatus_config"`
+		USBExportManifests            []usbexport.GuestManifest     `json:"usb_export_manifests"`
+		NetworkProbeOperatorPublicKey string                        `json:"network_probe_operator_public_key,omitempty"`
+	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan, firewallPlan, monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), logging.CollectorSocketOverride(loggingPlan), loggingUploads, map[string]string{}, "", s.ModuleConfig, s.Declarations, string(gatusConfig), usbPlan, operatorPublicKey}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err
@@ -340,7 +388,7 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	command.Stderr = &output
 	err = command.Run()
 	if err != nil {
-		diagnostic := failureDiagnostic(output.Bytes())
+		diagnostic := failureDiagnosticWithSupplement(output.Bytes(), output.DiagnosticBytes())
 		if diagnostic == "" {
 			return fmt.Errorf("ansible-playbook failed: %w", err)
 		}
@@ -350,7 +398,14 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 }
 
 func failureDiagnostic(output []byte) string {
+	return failureDiagnosticWithSupplement(output, nil)
+}
+
+func failureDiagnosticWithSupplement(output, supplement []byte) string {
 	lines := strings.Split(string(output), "\n")
+	if len(supplement) > 0 {
+		lines = append(lines, strings.Split(string(supplement), "\n")...)
+	}
 	selected := make([]string, 0, 3)
 	for _, line := range lines {
 		if strings.Contains(line, "[ERROR]:") || strings.Contains(line, "fatal:") || strings.Contains(line, "unreachable=") {

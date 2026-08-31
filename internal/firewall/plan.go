@@ -111,7 +111,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		if _, _, ok := userSelector(s, userRule.Source); !ok {
 			return Plan{}, fmt.Errorf("HOLD: user firewall rule %s source %q cannot be rendered", userRule.ID, userRule.Source)
 		}
-		if _, _, ok := userSelector(s, userRule.Destination); !ok {
+		if _, _, ok := userRuleDestinationSelector(s, userRule); !ok {
 			return Plan{}, fmt.Errorf("HOLD: user firewall rule %s destination %q cannot be rendered", userRule.ID, userRule.Destination)
 		}
 	}
@@ -332,6 +332,55 @@ func policyRules(s model.Site) []PolicyRule {
 			Description: "boetticher " + name,
 		})
 	}
+	// Pulse is a Core service protected by the endpoint's mTLS boundary. Allow
+	// the modeled client zones to reach only the fixed Pulse HTTPS address;
+	// source-zone selectors keep this useful for operators without granting
+	// access to the rest of INFRA.
+	if monitor, ok := componentReference(s, "monitor"); ok && monitor.Module == "monitoring" && monitor.Address != "" {
+		for _, source := range []string{"TRANSIT", "SERVERS", "TRUSTED"} {
+			for _, zone := range s.Network.Zones {
+				if zone.Name != source {
+					continue
+				}
+				rules = append(rules, PolicyRule{
+					Sequence:        len(rules) + 1,
+					Name:            source + " HTTPS to Pulse",
+					From:            source,
+					To:              "INFRA",
+					Action:          "allow",
+					Protocol:        "tcp",
+					Ports:           []string{"443"},
+					Counter:         "boetticher_" + strings.ToLower(source) + "_https_to_pulse",
+					Description:     "boetticher " + source + " HTTPS to Pulse",
+					SourceCIDR:      zone.Network,
+					DestinationCIDR: monitor.Address + "/32",
+				})
+			}
+		}
+	}
+	// Portal is a Core service with its own fixed mTLS-protected frontend.
+	if portal, ok := componentReference(s, "portal"); ok && portal.Address != "" {
+		for _, source := range []string{"TRANSIT", "SERVERS", "TRUSTED"} {
+			for _, zone := range s.Network.Zones {
+				if zone.Name != source {
+					continue
+				}
+				rules = append(rules, PolicyRule{
+					Sequence:        len(rules) + 1,
+					Name:            source + " HTTPS to Portal",
+					From:            source,
+					To:              "INFRA",
+					Action:          "allow",
+					Protocol:        "tcp",
+					Ports:           []string{"443"},
+					Counter:         "boetticher_" + strings.ToLower(source) + "_https_to_portal",
+					Description:     "boetticher " + source + " HTTPS to Portal",
+					SourceCIDR:      zone.Network,
+					DestinationCIDR: portal.Address + "/32",
+				})
+			}
+		}
+	}
 	// These are gateway-local services. Forwarding rules below deliberately
 	// place internal denies before any Internet egress rule.
 	for _, zone := range []string{"TRUSTED", "SERVERS", "SANDBOX"} {
@@ -347,7 +396,6 @@ func policyRules(s model.Site) []PolicyRule {
 	add("SANDBOX to MGMT deny", "SANDBOX", "MGMT", "deny", "any", nil, true, false)
 	add("TRUSTED DNS to INFRA", "TRUSTED", "INFRA", "allow", "tcp/udp", []string{"53"}, false, false)
 	add("TRUSTED NTP to INFRA", "TRUSTED", "INFRA", "allow", "udp", []string{"123"}, false, false)
-	add("TRUSTED HTTPS to INFRA", "TRUSTED", "INFRA", "allow", "tcp", []string{"443"}, false, false)
 	add("TRUSTED HTTPS to SERVERS", "TRUSTED", "SERVERS", "allow", "tcp", []string{"443"}, false, false)
 	add("TRUSTED administration to MGMT", "TRUSTED", "MGMT", "allow", "tcp", []string{"22", "443", "8006"}, false, false)
 	add("SERVERS DNS to INFRA", "SERVERS", "INFRA", "allow", "tcp/udp", []string{"53"}, false, false)
@@ -364,10 +412,28 @@ func policyRules(s model.Site) []PolicyRule {
 		add("TRANSIT to "+destination+" deny", "TRANSIT", destination, "deny", "any", nil, true, false)
 	}
 	add("any to TRANSIT deny", "any", "TRANSIT", "deny", "any", nil, true, false)
+	// The Proxmox host is the controlled SSH jump point for the isolated
+	// TRANSIT appliance. Keep this management path narrower than the ordinary
+	// MGMT rules: only the host's fixed management address may reach the
+	// module's SSH port, and only while the module is declared.
+	if tailnet, ok := componentReference(s, "lab-tailnet-01"); ok {
+		rules = append(rules, PolicyRule{
+			Sequence:        len(rules) + 1,
+			Name:            "MGMT administration to tailnet-router",
+			From:            "MGMT",
+			To:              "TRANSIT",
+			Action:          "allow",
+			Protocol:        "tcp",
+			Ports:           []string{"22"},
+			Counter:         "boetticher_mgmt_administration_to_tailnet_router",
+			Description:     "boetticher MGMT administration to tailnet-router",
+			SourceCIDR:      model.ProxmoxManagementAddress + "/32",
+			DestinationCIDR: tailnet.Address + "/32",
+		})
+	}
 	for _, declaration := range s.Declarations {
 		for _, intent := range declaration.NetworkIntents {
-			rule := policyRuleForIntent(s, declaration.Module, intent)
-			if rule.Name != "" {
+			for _, rule := range policyRulesForIntent(s, declaration.Module, intent) {
 				rule.Sequence = len(rules) + 1
 				rules = append(rules, rule)
 			}
@@ -377,7 +443,7 @@ func policyRules(s model.Site) []PolicyRule {
 	sort.Slice(userRules, func(i, j int) bool { return userRules[i].ID < userRules[j].ID })
 	for _, user := range userRules {
 		sourceZone, sourceCIDR, sourceOK := userSelector(s, user.Source)
-		destinationZone, destinationCIDR, destinationOK := userSelector(s, user.Destination)
+		destinationZone, destinationCIDR, destinationOK := userRuleDestinationSelector(s, user)
 		if !sourceOK || !destinationOK {
 			continue
 		}
@@ -412,36 +478,81 @@ func userSelector(s model.Site, selector string) (string, string, bool) {
 	return "", "", false
 }
 
+func userRuleDestinationSelector(s model.Site, rule model.UserFirewallRule) (string, string, bool) {
+	if zone, cidr, ok := userSelector(s, rule.Destination); ok {
+		return zone, cidr, true
+	}
+	if model.IsReservedServersPulseRule(s, rule.Source, rule.Destination, strings.ToLower(rule.Protocol), rule.Ports) {
+		return "INFRA", rule.Destination, true
+	}
+	return "", "", false
+}
+
 func policyRuleForIntent(s model.Site, module string, intent model.NetworkIntent) PolicyRule {
+	rules := policyRulesForIntent(s, module, intent)
+	if len(rules) == 0 {
+		return PolicyRule{}
+	}
+	return rules[0]
+}
+
+func policyRulesForIntent(s model.Site, module string, intent model.NetworkIntent) []PolicyRule {
 	source, sourceOK := componentReference(s, intent.Source)
 	if !sourceOK || (intent.Endpoint == "" && intent.Destination == "") {
-		return PolicyRule{}
+		return nil
 	}
-	rule := PolicyRule{
-		Name: "module " + module + " " + intent.Purpose,
-		From: source.Zone, To: "WAN", Action: "allow", Protocol: intent.Protocol,
-		Ports: append([]string(nil), intent.Ports...), Counter: "boetticher_module_" + safeRuleToken(module),
-		Description: "module " + module + ": " + intent.Purpose,
-		SourceCIDR:  source.Address + "/32",
-	}
-	if destination, ok := componentReference(s, intent.Destination); ok {
-		rule.To = destination.Zone
-		rule.DestinationCIDR = destination.Address + "/32"
-		rule.Name += " " + intent.Destination
-	} else if intent.Endpoint != "" {
+	if intent.Endpoint != "" {
 		parsed, err := url.Parse(intent.Endpoint)
 		if err != nil || parsed.Hostname() == "" {
-			return PolicyRule{}
+			return nil
 		}
-		rule.DestinationHost = parsed.Hostname()
-		rule.Name += " " + intent.Destination
-	} else {
-		return PolicyRule{}
+		return []PolicyRule{{
+			Name: "module " + module + " " + intent.Purpose + " " + intent.Destination,
+			From: source.Zone, To: "WAN", Action: "allow", Protocol: intent.Protocol,
+			Ports: append([]string(nil), intent.Ports...), Counter: "boetticher_module_" + safeRuleToken(module),
+			Description: "module " + module + ": " + intent.Purpose,
+			SourceCIDR:  source.Address + "/32", DestinationHost: parsed.Hostname(),
+		}}
 	}
-	if rule.To == "" || rule.From == "" {
-		return PolicyRule{}
+	destinations := componentReferences(s, intent.Destination)
+	if len(destinations) == 0 {
+		return nil
 	}
-	return rule
+	destinationLabel := intent.Destination
+	rules := make([]PolicyRule, 0, len(destinations))
+	for _, destination := range destinations {
+		if len(destinations) > 1 {
+			destinationLabel = destination.Name
+		}
+		rules = append(rules, PolicyRule{
+			Name: "module " + module + " " + intent.Purpose + " " + destinationLabel,
+			From: source.Zone, To: destination.Zone, Action: "allow", Protocol: intent.Protocol,
+			Ports: append([]string(nil), intent.Ports...), Counter: "boetticher_module_" + safeRuleToken(module),
+			Description: "module " + module + ": " + intent.Purpose,
+			SourceCIDR:  source.Address + "/32", DestinationCIDR: destination.Address + "/32",
+		})
+	}
+	return rules
+}
+
+// componentReferences expands logical service aliases that intentionally name
+// a redundant platform service. In particular, "dns" means every managed DNS
+// endpoint, while dns01/dns02 retain their single-component meaning.
+func componentReferences(s model.Site, reference string) []model.Component {
+	reference = strings.TrimSuffix(strings.ToLower(reference), ".")
+	if reference == "dns" {
+		var destinations []model.Component
+		for _, component := range s.PlatformComponents() {
+			if component.Module == "dns" {
+				destinations = append(destinations, component)
+			}
+		}
+		return destinations
+	}
+	if component, ok := componentReference(s, reference); ok {
+		return []model.Component{component}
+	}
+	return nil
 }
 
 func componentReference(s model.Site, reference string) (model.Component, bool) {
@@ -501,6 +612,36 @@ func RenderSafeNFT(plan Plan) (string, error) {
 }
 
 func RenderNFT(plan Plan) (string, error) {
+	return renderNFTWithResolver(plan, net.LookupIP)
+}
+
+// RenderNFTWithResolver renders the managed policy using the supplied
+// endpoint resolver. Deployment uses this to keep endpoint resolution inside
+// an already-authenticated management path when the controller has no DNS
+// configuration of its own.
+func RenderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (string, error) {
+	if lookup == nil {
+		return "", errors.New("nftables endpoint resolver is required")
+	}
+	return renderNFTWithResolver(plan, lookup)
+}
+
+// RenderSafeNFTWithResolver emits the base policy while an optional
+// publication remains inactive until a current upstream DHCP observation is
+// available, using the supplied endpoint resolver.
+func RenderSafeNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (string, error) {
+	plan.Publications = nil
+	plan.Upstream = nil
+	return RenderNFTWithResolver(plan, lookup)
+}
+
+type destinationHostSet struct {
+	host      string
+	setName   string
+	addresses []string
+}
+
+func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (string, error) {
 	if plan.Mode != model.GatewayModeManaged {
 		return "", errors.New("nftables is only rendered for managed gateway mode")
 	}
@@ -521,6 +662,10 @@ func RenderNFT(plan Plan) (string, error) {
 			return "", fmt.Errorf("HOLD: validate upstream DHCP observation: %w", err)
 		}
 	}
+	destinationSets, err := resolveDestinationHostSets(plan.Rules, lookup)
+	if err != nil {
+		return "", err
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Generated by boetticher. Model revision: %s\n", plan.ModelRevision)
 	b.WriteString("destroy table inet " + FilterTable + "\n")
@@ -528,6 +673,9 @@ func RenderNFT(plan Plan) (string, error) {
 	b.WriteString("table inet " + FilterTable + " {\n")
 	for _, zone := range []string{"INFRA", "TRUSTED", "SERVERS", "SANDBOX", "MGMT", "TRANSIT"} {
 		fmt.Fprintf(&b, "  set %s_net { type ipv4_addr; flags interval; elements = { %s } }\n", strings.ToLower(zone), networkFor(plan, zone))
+	}
+	for _, destinationSet := range destinationSets {
+		fmt.Fprintf(&b, "  set %s { type ipv4_addr; elements = { %s } }\n", destinationSet.setName, strings.Join(destinationSet.addresses, ", "))
 	}
 	if sources := moduleGuestSources(plan); len(sources) > 0 {
 		fmt.Fprintf(&b, "  set module_guest_sources { type ipv4_addr; elements = { %s } }\n", strings.Join(sources, ", "))
@@ -554,7 +702,7 @@ func RenderNFT(plan Plan) (string, error) {
 		}
 		destination := rule.DestinationCIDR
 		if destination == "" {
-			destination = rule.DestinationHost
+			destination = "@" + destinationHostSetName(destinationSets, rule.DestinationHost)
 		}
 		ports := ""
 		if len(rule.Ports) > 0 {
@@ -619,6 +767,17 @@ func RenderNFT(plan Plan) (string, error) {
 	b.WriteString("    iifname \"infra0\" " + moduleSourceCondition + "oifname \"wan0\" ip saddr @infra_net udp dport { 53, 123, 853 } counter accept comment \"boetticher:allow:forward-infra-internet-udp\"\n")
 	b.WriteString("    iifname \"mgmt0\" " + moduleSourceCondition + "oifname \"wan0\" ip saddr @mgmt_net tcp dport 443 counter accept comment \"boetticher:allow:forward-mgmt-internet\"\n")
 	b.WriteString("  }\n  chain output { type filter hook output priority filter; policy accept; }\n}\n\n")
+	transitNATSources := make(map[string]struct{})
+	for _, rule := range plan.Rules {
+		if rule.Action == "allow" && rule.From == "TRANSIT" && rule.To == "WAN" && rule.SourceCIDR != "" {
+			transitNATSources[rule.SourceCIDR] = struct{}{}
+		}
+	}
+	transitNATSourceList := make([]string, 0, len(transitNATSources))
+	for source := range transitNATSources {
+		transitNATSourceList = append(transitNATSourceList, source)
+	}
+	sort.Strings(transitNATSourceList)
 	b.WriteString("table ip " + NATTable + " {\n")
 	if plan.Upstream != nil {
 		b.WriteString("  chain prerouting {\n    type nat hook prerouting priority dstnat; policy accept;\n")
@@ -627,8 +786,65 @@ func RenderNFT(plan Plan) (string, error) {
 		}
 		b.WriteString("  }\n")
 	}
-	b.WriteString("  chain postrouting {\n    type nat hook postrouting priority srcnat; policy accept;\n    oifname \"wan0\" ip saddr " + networkFor(plan, "TRUSTED") + " masquerade comment \"boetticher:nat-trusted\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SERVERS") + " masquerade comment \"boetticher:nat-servers\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "INFRA") + " masquerade comment \"boetticher:nat-infra\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SANDBOX") + " masquerade comment \"boetticher:nat-sandbox\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "MGMT") + " masquerade comment \"boetticher:nat-mgmt\"\n  }\n}\n")
+	b.WriteString("  chain postrouting {\n    type nat hook postrouting priority srcnat; policy accept;\n")
+	for _, source := range transitNATSourceList {
+		fmt.Fprintf(&b, "    oifname \"wan0\" ip saddr %s masquerade comment \"boetticher:nat-transit\"\n", source)
+	}
+	b.WriteString("    oifname \"wan0\" ip saddr " + networkFor(plan, "TRUSTED") + " masquerade comment \"boetticher:nat-trusted\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SERVERS") + " masquerade comment \"boetticher:nat-servers\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "INFRA") + " masquerade comment \"boetticher:nat-infra\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SANDBOX") + " masquerade comment \"boetticher:nat-sandbox\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "MGMT") + " masquerade comment \"boetticher:nat-mgmt\"\n  }\n}\n")
 	return b.String(), nil
+}
+
+func resolveDestinationHostSets(rules []PolicyRule, lookup func(string) ([]net.IP, error)) ([]destinationHostSet, error) {
+	if lookup == nil {
+		return nil, errors.New("HOLD: endpoint address resolver is unavailable")
+	}
+	hosts := map[string]struct{}{}
+	for _, rule := range rules {
+		if rule.Action == "allow" && rule.SourceCIDR != "" && rule.DestinationCIDR == "" && rule.DestinationHost != "" {
+			hosts[rule.DestinationHost] = struct{}{}
+		}
+	}
+	orderedHosts := make([]string, 0, len(hosts))
+	for host := range hosts {
+		orderedHosts = append(orderedHosts, host)
+	}
+	sort.Strings(orderedHosts)
+	result := make([]destinationHostSet, 0, len(orderedHosts))
+	for index, host := range orderedHosts {
+		ips, err := lookup(host)
+		if err != nil {
+			return nil, fmt.Errorf("HOLD: resolve endpoint %s: %w", host, err)
+		}
+		seen := map[string]struct{}{}
+		addresses := make([]string, 0, len(ips))
+		for _, ip := range ips {
+			ipv4 := ip.To4()
+			if ipv4 == nil {
+				continue
+			}
+			address := ipv4.String()
+			if _, ok := seen[address]; ok {
+				continue
+			}
+			seen[address] = struct{}{}
+			addresses = append(addresses, address)
+		}
+		if len(addresses) == 0 {
+			return nil, fmt.Errorf("HOLD: resolve endpoint %s: no IPv4 addresses", host)
+		}
+		sort.Strings(addresses)
+		result = append(result, destinationHostSet{host: host, setName: fmt.Sprintf("boetticher_endpoint_%d", index), addresses: addresses})
+	}
+	return result, nil
+}
+
+func destinationHostSetName(sets []destinationHostSet, host string) string {
+	for _, destinationSet := range sets {
+		if destinationSet.host == host {
+			return destinationSet.setName
+		}
+	}
+	return "boetticher_endpoint_unresolved"
 }
 
 func upstreamAddress(upstream UpstreamObservation) string {

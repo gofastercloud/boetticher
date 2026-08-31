@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,108 +44,16 @@ func runVerify(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "Modules")
-	for _, module := range s.Modules {
-		if module.Enabled {
-			fmt.Fprintf(out, "  PASS  %-12s %s / %s (%s)\n", module.Name, module.Policy, module.State, module.Reason)
-		} else {
-			fmt.Fprintf(out, "  INFO  %-12s %s / Disabled\n", module.Name, module.Policy)
-		}
-	}
-	for _, retained := range s.RetainedModules {
-		fmt.Fprintf(out, "  INFO  %-12s retained resources remain boetticher-owned and inactive\n", retained.Module)
-	}
 	revision, err := s.Revision()
 	if err != nil {
 		return err
 	}
-	sshResult := portal.CheckResult{Name: "generated SSH configuration", Status: "NOT TESTED", Detail: "run boetticher ssh-config first"}
-	if err := sshconfig.Check(*sshPath, s); err == nil {
-		sshResult = portal.CheckResult{Name: "generated SSH configuration", Status: "PASS", Detail: "configuration is current and preserves host-key verification"}
-	} else if !errors.Is(err, os.ErrNotExist) && !strings.Contains(err.Error(), "no such file") {
-		sshResult = portal.CheckResult{Name: "generated SSH configuration", Status: "FAIL", Detail: err.Error()}
-	}
-	sshJourneyResult := portal.CheckResult{Name: "authenticated SSH journey via Proxmox bastion", Status: "NOT TESTED", Detail: "use --ssh-journey to exercise an internal host", Tier: statusmodel.TierJourney}
-	if *sshJourney {
-		if sshResult.Status != "PASS" {
-			sshJourneyResult.Detail = "generated SSH configuration is not current"
-		} else if err := runSSHJourney(*sshPath); err != nil {
-			sshJourneyResult = portal.CheckResult{Name: "authenticated SSH journey via Proxmox bastion", Status: "FAIL", Detail: err.Error(), Tier: statusmodel.TierJourney}
-		} else {
-			sshJourneyResult = portal.CheckResult{Name: "authenticated SSH journey via Proxmox bastion", Status: "PASS", Detail: "authenticated command completed through ProxyJump", Tier: statusmodel.TierJourney}
-		}
-	}
-
-	results := offlineVerificationResults(*siteDir, s)
-	results = append(results,
-		sshResult,
-		sshJourneyResult,
-		portal.CheckResult{Name: "DNS01/DNS02 reachable", Status: "NOT TESTED", Detail: "requires deployed network journey"},
-		portal.CheckResult{Name: "NTP01/NTP02 synchronized", Status: "NOT TESTED", Detail: "requires deployed Chrony evidence"},
-		portal.CheckResult{Name: "Proxmox API least privilege", Status: "NOT TESTED", Detail: "requires authenticated Proxmox API evidence"},
-		portal.CheckResult{Name: "internal CA available", Status: "STATIC PASS", Detail: "CA metadata is present in the initialized model"},
-		portal.CheckResult{Name: "portal requires client certificate", Status: "NOT TESTED", Detail: "requires deployed mTLS journey"},
-		portal.CheckResult{Name: "Pulse requires client certificate", Status: "NOT TESTED", Detail: "requires deployed mTLS journey"},
-		portal.CheckResult{Name: "latest VM/LXC backup", Status: "NOT TESTED", Detail: "requires current backup evidence"},
-		portal.CheckResult{Name: "Age recovery fixture", Status: "NOT TESTED", Detail: "requires independent recovery copy"},
-	)
-	if s.Gateway.Mode == model.GatewayModeManaged {
-		upstreamResult := portal.CheckResult{Name: "managed gateway upstream DHCP", Status: "NOT TESTED", Detail: "use --live to query wan0 lease, prefix, gateway, and MAC"}
-		publicationResult := portal.CheckResult{Name: "published service mapping", Status: "NOT TESTED", Detail: "use --live to verify the effective upstream address and DNAT mapping"}
-		if *live {
-			plan, planErr := firewall.PlanFromSite(s)
-			if planErr != nil {
-				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "FAIL", Detail: planErr.Error()}
-				publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "FAIL", Detail: planErr.Error()}
-			} else if data, commandErr := gatewayCommand(*siteDir, s, "sudo", gatewayStatusScript, "status"); commandErr != nil {
-				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "NOT TESTED", Detail: commandErr.Error()}
-				publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "NOT TESTED", Detail: commandErr.Error()}
-			} else if liveStatus, parseErr := parseGatewayStatus(string(data)); parseErr != nil {
-				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "FAIL", Detail: parseErr.Error()}
-				publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "FAIL", Detail: parseErr.Error()}
-			} else if observationErr := firewall.ValidateUpstreamObservation(plan, liveStatus.Upstream); observationErr != nil {
-				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "FAIL", Detail: observationErr.Error()}
-				publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "FAIL", Detail: "upstream observation is not safe for publication"}
-			} else if livePlan, planErr := firewall.PlanFromSiteWithUpstream(s, liveStatus.Upstream); planErr != nil {
-				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "PASS", Detail: fmt.Sprintf("MAC %s address %s gateway %s", liveStatus.Upstream.MAC, liveStatus.Upstream.Address, liveStatus.Upstream.Gateway)}
-				publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "FAIL", Detail: planErr.Error()}
-			} else if ruleset, commandErr := gatewayCommand(*siteDir, s, "sudo", gatewayStatusScript, "ruleset"); commandErr != nil {
-				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "PASS", Detail: fmt.Sprintf("MAC %s address %s gateway %s", liveStatus.Upstream.MAC, liveStatus.Upstream.Address, liveStatus.Upstream.Gateway)}
-				publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "FAIL", Detail: fmt.Sprintf("read installed firewall ruleset: %v", commandErr)}
-			} else if diff, compareErr := firewall.CompareNFT(livePlan, ruleset); compareErr != nil {
-				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "PASS", Detail: fmt.Sprintf("MAC %s address %s gateway %s", liveStatus.Upstream.MAC, liveStatus.Upstream.Address, liveStatus.Upstream.Gateway)}
-				publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "FAIL", Detail: fmt.Sprintf("compare installed firewall ruleset: %v", compareErr)}
-			} else if !diff.Current() {
-				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "PASS", Detail: fmt.Sprintf("MAC %s address %s gateway %s", liveStatus.Upstream.MAC, liveStatus.Upstream.Address, liveStatus.Upstream.Gateway)}
-				publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "FAIL", Detail: fmt.Sprintf("installed firewall ruleset drift: %+v", diff)}
-			} else {
-				upstreamResult = portal.CheckResult{Name: upstreamResult.Name, Status: "PASS", Detail: fmt.Sprintf("MAC %s address %s gateway %s", liveStatus.Upstream.MAC, liveStatus.Upstream.Address, liveStatus.Upstream.Gateway)}
-				if len(livePlan.Publications) == 0 {
-					publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "STATIC PASS", Detail: "no upstream publication is configured"}
-				} else {
-					parts := make([]string, 0, len(livePlan.Publications))
-					for _, publication := range livePlan.Publications {
-						parts = append(parts, fmt.Sprintf("%s:%d/%s -> %s", strings.Split(liveStatus.Upstream.Address, "/")[0], publication.Port, publication.Protocol, publication.Destination))
-					}
-					publicationResult = portal.CheckResult{Name: publicationResult.Name, Status: "PASS", Detail: strings.Join(parts, ", ")}
-				}
-			}
-		}
-		results = append(results, upstreamResult, publicationResult)
-	}
-	if s.Gateway.Mode == model.GatewayModeManaged {
-		results = append(results,
-			portal.CheckResult{Name: "managed gateway services", Status: "NOT TESTED", Detail: "requires deployed managed gateway evidence"},
-			portal.CheckResult{Name: "SANDBOX cannot access TRUSTED", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
-			portal.CheckResult{Name: "SANDBOX cannot access SERVERS", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
-			portal.CheckResult{Name: "SANDBOX cannot access MGMT", Status: "NOT TESTED", Detail: "requires virtual-lab or live network journey"},
-			portal.CheckResult{Name: "TRANSIT/INFRA/MGMT are static-only; SERVERS is reservation-only", Status: "NOT TESTED", Detail: "requires deployed static-address, reservation, and Kea evidence"},
-		)
-	} else {
-		results = append(results, portal.CheckResult{Name: "external gateway contract", Status: "STATIC PASS", Detail: "required VLAN, gateway, DHCP, DNS, NTP, and policy intent is generated"})
-	}
-	verificationObservedAt := time.Now().UTC().Format(time.RFC3339)
-	results = annotateVerificationEvidence(results, verificationObservedAt)
+	results, verificationObservedAt := collectHealthResults(healthOptions{
+		siteDir:    *siteDir,
+		sshPath:    *sshPath,
+		sshJourney: *sshJourney,
+		live:       *live,
+	}, s)
 	fmt.Fprintln(out, "Modules")
 	for _, module := range s.Modules {
 		if module.Enabled {
@@ -157,15 +66,7 @@ func runVerify(args []string, out io.Writer) error {
 		fmt.Fprintln(out, "Logging                EXPECTED mandatory collector and asynchronous upload")
 	}
 	evidence := portal.Evidence{GeneratedAt: verificationObservedAt, Results: results}
-	semanticChecks := make([]statusmodel.LegacyCheck, 0, len(results))
-	for _, result := range results {
-		semanticChecks = append(semanticChecks, statusmodel.LegacyCheck{
-			Name: result.Name, Status: result.Status, Detail: result.Detail,
-			Tier: result.Tier, ObservedAt: result.ObservedAt,
-			Reason: result.Reason, NextAction: result.NextAction,
-		})
-	}
-	semantic := statusmodel.FromLegacy(revision, evidence.GeneratedAt, semanticChecks)
+	semantic := healthStatusReport(revision, evidence.GeneratedAt, results)
 	document := struct {
 		ModelRevision string          `json:"model_revision"`
 		Evidence      portal.Evidence `json:"evidence"`
@@ -191,10 +92,147 @@ func runVerify(args []string, out io.Writer) error {
 	fmt.Fprintf(out, "Model revision: %s\n", revision)
 	for _, result := range evidence.Results {
 		if result.Status == "FAIL" {
-			return errors.New("verification found a failed local check")
+			return errors.New("verification found a failed health check")
 		}
 	}
 	return nil
+}
+
+type healthOptions struct {
+	siteDir    string
+	sshPath    string
+	sshJourney bool
+	live       bool
+}
+
+// collectHealthResults is the single result path shared by status and verify.
+// It only emits checks the command can perform now. Qualification gates that
+// require an operator, an independent copy, or a separate network journey do
+// not belong in this normal health report.
+func collectHealthResults(options healthOptions, s model.Site) ([]portal.CheckResult, string) {
+	endpointLookup, cancelEndpointLookup := verificationEndpointLookup(options.siteDir, s, options.live)
+	defer cancelEndpointLookup()
+	results := offlineVerificationResultsWithResolver(options.siteDir, s, endpointLookup)
+
+	sshConfigReady := false
+	if err := sshconfig.Check(options.sshPath, s); err == nil {
+		sshConfigReady = true
+		results = append(results, portal.CheckResult{Name: "generated SSH configuration", Status: "PASS", Detail: "configuration is current and preserves host-key verification"})
+	} else if !errors.Is(err, os.ErrNotExist) && !strings.Contains(err.Error(), "no such file") {
+		results = append(results, portal.CheckResult{Name: "generated SSH configuration", Status: "FAIL", Detail: err.Error()})
+	}
+	if options.sshJourney {
+		journey := portal.CheckResult{Name: "authenticated SSH journey via Proxmox bastion", Tier: statusmodel.TierJourney}
+		if !sshConfigReady {
+			journey.Status = "FAIL"
+			journey.Detail = "generated SSH configuration is not current"
+		} else if err := runSSHJourney(options.sshPath); err != nil {
+			journey.Status = "FAIL"
+			journey.Detail = err.Error()
+		} else {
+			journey.Status = "PASS"
+			journey.Detail = "authenticated command completed through ProxyJump"
+		}
+		results = append(results, journey)
+	}
+	if s.Gateway.Mode == model.GatewayModeManaged && options.live {
+		results = append(results, liveGatewayHealthResults(options.siteDir, s)...)
+	} else if s.Gateway.Mode == model.GatewayModeExternal {
+		results = append(results, portal.CheckResult{Name: "external gateway contract", Status: "STATIC PASS", Detail: "required VLAN, gateway, DHCP, DNS, NTP, and policy intent is generated"})
+	}
+
+	observedAt := time.Now().UTC().Format(time.RFC3339)
+	return annotateVerificationEvidence(results, observedAt), observedAt
+}
+
+func liveGatewayHealthResults(siteDir string, s model.Site) []portal.CheckResult {
+	upstreamName := "managed gateway upstream DHCP"
+	publicationName := "published service mapping"
+	servicesName := "managed gateway services"
+	fail := func(detail string) []portal.CheckResult {
+		return []portal.CheckResult{
+			{Name: upstreamName, Status: "FAIL", Detail: detail},
+			{Name: publicationName, Status: "FAIL", Detail: detail},
+			{Name: servicesName, Status: "FAIL", Detail: detail},
+		}
+	}
+
+	plan, err := firewall.PlanFromSite(s)
+	if err != nil {
+		return fail(err.Error())
+	}
+	data, err := gatewayCommand(siteDir, s, "sudo", gatewayStatusScript, "status")
+	if err != nil {
+		return fail(err.Error())
+	}
+	liveStatus, err := parseGatewayStatus(string(data))
+	if err != nil {
+		return fail(err.Error())
+	}
+	serviceDetail := fmt.Sprintf("nftables=%s, kea-dhcp4-server=%s, kea-dhcp-ddns-server=%s, dnsmasq=%s", liveStatus.Services["nftables"], liveStatus.Services["kea-dhcp4-server"], liveStatus.Services["kea-dhcp-ddns-server"], liveStatus.Services["dnsmasq"])
+	services := portal.CheckResult{Name: servicesName, Status: "PASS", Detail: serviceDetail}
+	if err := validateDHCPServices(liveStatus); err != nil {
+		services.Status = "FAIL"
+		services.Detail = err.Error()
+	}
+
+	upstreamDetail := fmt.Sprintf("MAC %s address %s gateway %s", liveStatus.Upstream.MAC, liveStatus.Upstream.Address, liveStatus.Upstream.Gateway)
+	upstream := portal.CheckResult{Name: upstreamName, Status: "PASS", Detail: upstreamDetail}
+	publication := portal.CheckResult{Name: publicationName}
+	if err := firewall.ValidateUpstreamObservation(plan, liveStatus.Upstream); err != nil {
+		upstream.Status = "FAIL"
+		upstream.Detail = err.Error()
+		publication.Status = "FAIL"
+		publication.Detail = "upstream observation is not safe for publication"
+		return []portal.CheckResult{upstream, publication, services}
+	}
+	livePlan, err := firewall.PlanFromSiteWithUpstream(s, liveStatus.Upstream)
+	if err != nil {
+		publication.Status = "FAIL"
+		publication.Detail = err.Error()
+		return []portal.CheckResult{upstream, publication, services}
+	}
+	ruleset, err := gatewayCommand(siteDir, s, "sudo", gatewayStatusScript, "ruleset")
+	if err != nil {
+		publication.Status = "FAIL"
+		publication.Detail = fmt.Sprintf("read installed firewall ruleset: %v", err)
+		return []portal.CheckResult{upstream, publication, services}
+	}
+	diff, err := firewall.CompareNFT(livePlan, ruleset)
+	if err != nil {
+		publication.Status = "FAIL"
+		publication.Detail = fmt.Sprintf("compare installed firewall ruleset: %v", err)
+		return []portal.CheckResult{upstream, publication, services}
+	}
+	if !diff.Current() {
+		publication.Status = "FAIL"
+		publication.Detail = fmt.Sprintf("installed firewall ruleset drift: %+v", diff)
+		return []portal.CheckResult{upstream, publication, services}
+	}
+	if len(livePlan.Publications) == 0 {
+		publication.Status = "STATIC PASS"
+		publication.Detail = "no upstream publication is configured"
+	} else {
+		parts := make([]string, 0, len(livePlan.Publications))
+		for _, item := range livePlan.Publications {
+			parts = append(parts, fmt.Sprintf("%s:%d/%s -> %s", strings.Split(liveStatus.Upstream.Address, "/")[0], item.Port, item.Protocol, item.Destination))
+		}
+		publication.Status = "PASS"
+		publication.Detail = strings.Join(parts, ", ")
+	}
+	return []portal.CheckResult{upstream, publication, services}
+}
+
+func healthStatusReport(revision, observedAt string, results []portal.CheckResult) statusmodel.Report {
+	checks := make([]statusmodel.LegacyCheck, 0, len(results))
+	for _, result := range results {
+		checks = append(checks, statusmodel.LegacyCheck{
+			Name: result.Name, Status: result.Status, Detail: result.Detail,
+			Tier: result.Tier, ObservedAt: result.ObservedAt,
+			Reason: result.Reason, NextAction: result.NextAction,
+		})
+	}
+	return statusmodel.FromLegacy(revision, observedAt, checks)
 }
 
 // annotateVerificationEvidence assigns tiers from the verification contract,
@@ -202,33 +240,21 @@ func runVerify(args []string, out io.Writer) error {
 // renamed or newly introduced check cannot inherit a stronger evidence claim.
 func annotateVerificationEvidence(results []portal.CheckResult, observedAt string) []portal.CheckResult {
 	tiers := map[string]statusmodel.EvidenceTier{
-		"canonical platform model validates":                              statusmodel.TierLocal,
-		"firewall policy projection":                                      statusmodel.TierLocal,
-		"DNS/DDNS projection":                                             statusmodel.TierLocal,
-		"Pulse monitoring projection":                                     statusmodel.TierLocal,
-		"platform backup projection":                                      statusmodel.TierLocal,
-		"storage projection":                                              statusmodel.TierLocal,
-		"qualified appliance evidence":                                    statusmodel.TierLocal,
-		"SSH bastion allow-list":                                          statusmodel.TierLocal,
-		"portal artifact":                                                 statusmodel.TierLocal,
-		"generated SSH configuration":                                     statusmodel.TierLocal,
-		"authenticated SSH journey via Proxmox bastion":                   statusmodel.TierJourney,
-		"DNS01/DNS02 reachable":                                           statusmodel.TierJourney,
-		"NTP01/NTP02 synchronized":                                        statusmodel.TierDeployed,
-		"Proxmox API least privilege":                                     statusmodel.TierDeployed,
-		"internal CA available":                                           statusmodel.TierLocal,
-		"portal requires client certificate":                              statusmodel.TierJourney,
-		"Pulse requires client certificate":                               statusmodel.TierJourney,
-		"latest VM/LXC backup":                                            statusmodel.TierDeployed,
-		"Age recovery fixture":                                            statusmodel.TierProduct,
-		"managed gateway upstream DHCP":                                   statusmodel.TierDeployed,
-		"published service mapping":                                       statusmodel.TierDeployed,
-		"managed gateway services":                                        statusmodel.TierDeployed,
-		"SANDBOX cannot access TRUSTED":                                   statusmodel.TierJourney,
-		"SANDBOX cannot access SERVERS":                                   statusmodel.TierJourney,
-		"SANDBOX cannot access MGMT":                                      statusmodel.TierJourney,
-		"TRANSIT/INFRA/MGMT are static-only; SERVERS is reservation-only": statusmodel.TierDeployed,
-		"external gateway contract":                                       statusmodel.TierLocal,
+		"canonical platform model validates":            statusmodel.TierLocal,
+		"firewall policy projection":                    statusmodel.TierLocal,
+		"DNS/DDNS projection":                           statusmodel.TierLocal,
+		"Pulse monitoring projection":                   statusmodel.TierLocal,
+		"platform backup projection":                    statusmodel.TierLocal,
+		"storage projection":                            statusmodel.TierLocal,
+		"qualified appliance evidence":                  statusmodel.TierLocal,
+		"SSH bastion allow-list":                        statusmodel.TierLocal,
+		"portal artifact":                               statusmodel.TierLocal,
+		"generated SSH configuration":                   statusmodel.TierLocal,
+		"authenticated SSH journey via Proxmox bastion": statusmodel.TierJourney,
+		"managed gateway upstream DHCP":                 statusmodel.TierDeployed,
+		"published service mapping":                     statusmodel.TierDeployed,
+		"managed gateway services":                      statusmodel.TierDeployed,
+		"external gateway contract":                     statusmodel.TierLocal,
 	}
 	for index := range results {
 		results[index].Tier = statusmodel.TierLocal
@@ -590,7 +616,20 @@ func expectedStorageStatus(statuses []proxmox.StorageStatus, plan storage.Plan) 
 	return found[plan.GuestStorage], nil
 }
 
+func verificationEndpointLookup(siteDir string, s model.Site, live bool) (func(string) ([]net.IP, error), context.CancelFunc) {
+	if !live || s.Gateway.Mode != model.GatewayModeManaged || strings.TrimSpace(s.BootstrapAddress) == "" {
+		return net.LookupIP, func() {}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	rootRunner := proxmoxRootSSHRunner(s, siteDir)
+	return endpointLookupWithFallback(net.LookupIP, remoteEndpointResolver(ctx, rootRunner, s.BootstrapAddress, "root")), cancel
+}
+
 func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResult {
+	return offlineVerificationResultsWithResolver(siteDir, s, net.LookupIP)
+}
+
+func offlineVerificationResultsWithResolver(siteDir string, s model.Site, endpointLookup func(string) ([]net.IP, error)) []portal.CheckResult {
 	results := []portal.CheckResult{{Name: "canonical platform model validates", Status: "PASS", Detail: "fixed 0.4 topology and address contract validated locally"}}
 	checks := []struct {
 		name  string
@@ -614,7 +653,7 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 				return errors.New("IPv4-only firewall policy is incomplete")
 			}
 			if s.Gateway.Mode == model.GatewayModeManaged {
-				ruleset, renderErr := renderDeploymentNFT(plan)
+				ruleset, renderErr := renderDeploymentNFTWithResolver(plan, endpointLookup)
 				if renderErr != nil {
 					return renderErr
 				}

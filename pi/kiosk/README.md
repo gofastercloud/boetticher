@@ -15,11 +15,18 @@ without taking the other one down.
   from `/proc`, `/sys`, and `df`.
 - `systemd/pulse-kiosk-stats.service` and `.timer` refresh that file roughly
   every two seconds.
-The browser is run as the non-root `kiosk` user by `pulse-kiosk.service` under
-Cage/seatd. The screen is the HDMI-connected DUEX LITE display. The current
-network bootstrap uses DHCP; Ethernet must be proven before Wi-Fi is disabled,
-and the eventual VLAN 20 static assignment remains a network-change-window
-operation.
+- `systemd/pulse-kiosk.service` runs the browser as the non-root `kiosk` user
+  under Cage/seatd.
+- `systemd/pulse-kiosk.service.d/20-pulse-dashboard.conf` selects the kiosk's
+  dedicated mTLS client certificate for the Pulse origin. The private key
+  remains in the Pi's NSS database and is never copied into this repository.
+- `pulse-refresh-extension/` contains a permission-free Chromium content
+  script scoped to the Pulse origin that reloads the kiosk page every 30
+  seconds.
+
+The screen is the HDMI-connected DUEX LITE display. The current network
+bootstrap uses DHCP; Ethernet must be proven before Wi-Fi is disabled, and the
+eventual VLAN 20 static assignment remains a network-change-window operation.
 
 ## Installing the kiosk files
 
@@ -30,7 +37,12 @@ install -D -o kiosk -g kiosk -m 0644 visualizer/index.html /home/kiosk/visualize
 install -D -o root -g root -m 0755 libexec/pulse-kiosk-stats /usr/local/libexec/pulse-kiosk-stats
 install -D -o root -g root -m 0644 systemd/pulse-kiosk-stats.service /etc/systemd/system/pulse-kiosk-stats.service
 install -D -o root -g root -m 0644 systemd/pulse-kiosk-stats.timer /etc/systemd/system/pulse-kiosk-stats.timer
+install -D -o root -g root -m 0644 systemd/pulse-kiosk.service /etc/systemd/system/pulse-kiosk.service
+install -D -o root -g root -m 0644 systemd/pulse-kiosk.service.d/20-pulse-dashboard.conf /etc/systemd/system/pulse-kiosk.service.d/20-pulse-dashboard.conf
+install -D -o kiosk -g kiosk -m 0644 pulse-refresh-extension/manifest.json /home/kiosk/pulse-refresh-extension/manifest.json
+install -D -o kiosk -g kiosk -m 0644 pulse-refresh-extension/reload.js /home/kiosk/pulse-refresh-extension/reload.js
 systemctl daemon-reload
+systemctl enable pulse-kiosk.service
 systemctl enable --now pulse-kiosk-stats.timer
 systemctl restart pulse-kiosk.service
 ```

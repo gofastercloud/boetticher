@@ -1,6 +1,7 @@
 package modules
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -16,7 +17,7 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantOrder := []string{"firewall", "dns", "logging", "monitoring", "aiops", "gatus", "litellm", "printer", "tailnet-router"}
+	wantOrder := []string{"firewall", "dns", "logging", "monitoring", "aiops", "gatus", "litellm", "printer", "streamdeck", "tailnet-router"}
 	if len(modules) != len(wantOrder) {
 		t.Fatalf("unexpected module resolution: %#v", modules)
 	}
@@ -135,7 +136,7 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	if err := registry.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"tailnet-router", "litellm", "printer", "aiops", "gatus"} {
+	for _, name := range []string{"tailnet-router", "litellm", "printer", "streamdeck", "aiops", "gatus"} {
 		definition, ok := registry.Definition(name)
 		if !ok || definition.Policy != DefaultOff {
 			t.Fatalf("%s is not a default-off first-party module: %#v", name, definition)
@@ -152,6 +153,10 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	printer, _ := registry.Definition("printer")
 	if printer.ReservedVMIDStart != 230 || printer.ReservedVMIDEnd != 239 || printer.Guests[0].VMID != model.PrinterVMID || printer.Placement.ZoneType != model.ZoneTypeServers {
 		t.Fatalf("printer identity contract is incomplete: %#v", printer)
+	}
+	streamDeck, _ := registry.Definition("streamdeck")
+	if streamDeck.ReservedVMIDStart != 220 || streamDeck.ReservedVMIDEnd != 229 || streamDeck.Guests[0].VMID != model.StreamDeckVMID || streamDeck.Guests[0].Address != "10.10.20.70" || streamDeck.Placement.ZoneType != model.ZoneTypeServers || len(streamDeck.USBRequirements) != 1 || streamDeck.USBRequirements[0].DeviceType != "raw-usb" {
+		t.Fatalf("streamdeck identity contract is incomplete: %#v", streamDeck)
 	}
 	aiops, _ := registry.Definition("aiops")
 	if aiops.ReservedVMIDStart != 240 || aiops.ReservedVMIDEnd != 249 || aiops.Guests[0].VMID != 240 || aiops.Guests[0].Address != "10.10.20.90" || aiops.Placement.ZoneType != model.ZoneTypeServers {
@@ -290,6 +295,48 @@ func TestPrinterComposesMinimalOctoPrintDeclaration(t *testing.T) {
 	}
 }
 
+func TestStreamDeckComposesReadOnlyPulseDisplayDeclaration(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	enabled := true
+	config.Modules.StreamDeck = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.USBExports = []model.USBExportBinding{{Module: "streamdeck", Requirement: "display", Port: "1-2.5", VendorID: "0fd9", ProductID: "006d"}}
+	site, _, err := Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	streamDeck, ok := findDeclaration(site, "streamdeck")
+	if !ok {
+		t.Fatal("StreamDeck declaration is missing")
+	}
+	if len(streamDeck.Guests) != 1 || streamDeck.Guests[0].Name != "lab-streamdeck-01" || streamDeck.Guests[0].Address != "10.10.20.70" || streamDeck.Guests[0].MTLS {
+		t.Fatalf("StreamDeck guest contract is incomplete: %#v", streamDeck.Guests)
+	}
+	if !streamDeck.Security.Unprivileged || len(streamDeck.USBRequirements) != 1 || streamDeck.USBRequirements[0].DeviceType != "raw-usb" {
+		t.Fatalf("StreamDeck USB/security contract is incomplete: %#v", streamDeck)
+	}
+	var pulseToken model.SecretDeclaration
+	for _, secret := range streamDeck.Secrets {
+		if secret.Name == "pulse_api_token" {
+			pulseToken = secret
+		}
+	}
+	if pulseToken.Consumer != "streamdeck-status" || pulseToken.Delivery != "systemd-credential" || pulseToken.Lifecycle != model.SecretLifecycleRuntime {
+		t.Fatalf("StreamDeck Pulse token contract is incomplete: %#v", streamDeck.Secrets)
+	}
+	if !hasPersistentState(streamDeck.Persistent, "tls-identity", "/var/lib/boetticher/identity/tls") || !hasPersistentVolume(streamDeck.Volumes, "tls-identity", "/var/lib/boetticher/identity/tls") {
+		t.Fatalf("StreamDeck TLS persistence contract is incomplete: persistent=%#v volumes=%#v", streamDeck.Persistent, streamDeck.Volumes)
+	}
+	if len(streamDeck.Persistent) != 2 || len(streamDeck.Volumes) != 2 {
+		t.Fatalf("StreamDeck persistence contract contains unexpected entries: persistent=%#v volumes=%#v", streamDeck.Persistent, streamDeck.Volumes)
+	}
+	if len(streamDeck.Certificates) != 2 || streamDeck.Certificates[1].Identity != "lab-streamdeck-01" || len(streamDeck.NetworkIntents) != 3 {
+		t.Fatalf("StreamDeck mTLS/network declaration is incomplete: certificates=%#v intents=%#v", streamDeck.Certificates, streamDeck.NetworkIntents)
+	}
+	if len(streamDeck.Monitoring) != 2 || streamDeck.Monitoring[1].Name != "streamdeck-status" {
+		t.Fatalf("StreamDeck monitoring declaration is incomplete: %#v", streamDeck.Monitoring)
+	}
+}
+
 func TestRegistryRejectsUnsupportedUSBDeviceType(t *testing.T) {
 	registry := NewRegistry([]ModuleDefinition{{
 		Name: "bad-usb", Version: "1.0.0", Policy: DefaultOff,
@@ -328,6 +375,38 @@ func TestTailnetAndLiteLLMComposeTypedDeclarations(t *testing.T) {
 	}
 	if litellm.Guests[0].Address != "10.10.20.60" || !litellm.Guests[0].MTLS || len(litellm.Secrets) != 1 || litellm.Secrets[0].Name != "openrouter_api_key" {
 		t.Fatalf("litellm declaration is incomplete: %#v", litellm)
+	}
+}
+
+func TestTailnetDeclarationCoversTailscaleDERPRegions(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	enabled := true
+	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &enabled}
+	site, _, err := Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tailnet, ok := findDeclaration(site, "tailnet-router")
+	if !ok {
+		t.Fatal("tailnet-router declaration is missing")
+	}
+	want := make(map[string]bool, 28)
+	for region := 1; region <= 28; region++ {
+		want[fmt.Sprintf("https://derp%d-all.tailscale.com", region)] = false
+	}
+	for _, intent := range tailnet.NetworkIntents {
+		if _, ok := want[intent.Endpoint]; !ok {
+			continue
+		}
+		if intent.Source != "lab-tailnet-01" || intent.Protocol != "tcp" || strings.Join(intent.Ports, ",") != "443" || intent.Direction != "egress" {
+			t.Fatalf("DERP intent is incomplete: %#v", intent)
+		}
+		want[intent.Endpoint] = true
+	}
+	for endpoint, found := range want {
+		if !found {
+			t.Errorf("tailnet declaration is missing DERP endpoint %s", endpoint)
+		}
 	}
 }
 
@@ -497,4 +576,25 @@ func TestDependencyCycleIsRejected(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("dependency cycle was accepted: %v", err)
 	}
+}
+
+func TestMonitoringDeclaresOperatorSuppliedPulseProxySecret(t *testing.T) {
+	site, _, err := Compose(testConfig(model.GatewayModeManaged))
+	if err != nil {
+		t.Fatal(err)
+	}
+	declaration, ok := findDeclaration(site, "monitoring")
+	if !ok {
+		t.Fatal("monitoring declaration is missing")
+	}
+	for _, secret := range declaration.Secrets {
+		if secret.Name != "pulse_proxy_auth_secret" {
+			continue
+		}
+		if secret.Generation != "operator-supplied" || secret.Delivery != "systemd-credential" || secret.Consumer != "pulse-server/nginx" || secret.Lifecycle != model.SecretLifecycleRuntime {
+			t.Fatalf("Pulse proxy-auth secret contract is incomplete: %#v", secret)
+		}
+		return
+	}
+	t.Fatal("monitoring declaration does not include pulse_proxy_auth_secret")
 }

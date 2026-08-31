@@ -90,6 +90,20 @@
     - inventory_hostname == 'lab-dns-01'
     - item not in primary_zones.stdout
 
+- name: Read current primary replication zones
+  ansible.builtin.command: pdnsutil list-all-zones MASTER
+  register: primary_master_zones
+  changed_when: false
+  when: inventory_hostname == 'lab-dns-01'
+
+- name: Configure authoritative zones for primary replication
+  ansible.builtin.command: >-
+    pdnsutil set-kind {{ item }} MASTER
+  loop: "{{ [dns_plan.static_zone] + (dns_plan.dynamic_zones | map(attribute='name') | list) + (dns_plan.reverse_zones | map(attribute='name') | list) }}"
+  when:
+    - inventory_hostname == 'lab-dns-01'
+    - item not in primary_master_zones.stdout
+
 - name: Remove exact malformed PowerDNS NS rrsets from the prior boetticher attempt
   ansible.builtin.shell: |
     set -eu
@@ -138,6 +152,7 @@
   ansible.builtin.shell: >-
     pdnsutil set-meta {{ item.forward_zone }} ALLOW-DNSUPDATE-FROM
     {{ dns_plan.ddns.update_sources | join(' ') }} &&
+    pdnsutil set-meta {{ item.forward_zone }} NOTIFY-DNSUPDATE 1 &&
     pdnsutil set-meta {{ item.forward_zone }} TSIG-ALLOW-DNSUPDATE {{ item.tsig_key_name }}
   args:
     executable: /bin/sh
@@ -151,6 +166,7 @@
   ansible.builtin.shell: >-
     pdnsutil set-meta {{ item.reverse_zone }} ALLOW-DNSUPDATE-FROM
     {{ dns_plan.ddns.update_sources | join(' ') }} &&
+    pdnsutil set-meta {{ item.reverse_zone }} NOTIFY-DNSUPDATE 1 &&
     pdnsutil set-meta {{ item.reverse_zone }} TSIG-ALLOW-DNSUPDATE {{ item.tsig_key_name }}
   args:
     executable: /bin/sh

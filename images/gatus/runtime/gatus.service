@@ -5,7 +5,8 @@ Wants=network-online.target
 [Service]
 User=gatus
 Group=gatus
-ExecStart=/usr/local/bin/gatus --config-path /etc/boetticher/gatus/config.yaml
+Environment=GATUS_CONFIG_PATH=/etc/boetticher/gatus/config.yaml
+ExecStart=/usr/local/bin/gatus
 Restart=on-failure
 NoNewPrivileges=yes
 PrivateTmp=yes

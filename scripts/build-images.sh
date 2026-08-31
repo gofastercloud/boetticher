@@ -7,11 +7,11 @@ set -eu
 target=${1:-images}
 shift || true
 case "$target" in
-  image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-gatus|images) ;;
+  image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-streamdeck|image-gatus|image-network-probe|images) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
-default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-litellm image-printer image-aiops image-gatus image-firewall"
+default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-litellm image-printer image-streamdeck image-aiops image-gatus image-network-probe image-firewall"
 if [ "$target" = images ]; then
   selected_image_targets="$*"
   if [ -z "$selected_image_targets" ]; then
@@ -19,7 +19,7 @@ if [ "$target" = images ]; then
   fi
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
-      image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-gatus) ;;
+      image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-streamdeck|image-gatus|image-network-probe) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac
   done
@@ -126,8 +126,9 @@ litellm_python_package_version=3.13.5-1
 litellm_python_venv_package_version=3.13.5-1
 litellm_pip_package_version=25.1.1+dfsg-1
 litellm_nginx_package_version=1.26.3-3+deb13u7
-holmes_source_url=https://github.com/HolmesGPT/holmesgpt/archive/refs/tags/0.40.0.tar.gz
-holmes_source_sha256=3465cd634b0e478f058b026b37caa3b8f10651f7aa9058dc73368b5403f0fb3d
+holmes_source_url=https://codeload.github.com/HolmesGPT/holmesgpt/tar.gz/3d201559c0f3648a6c567aece09662f4f407bcc9
+holmes_source_sha256=7016d3335a7f81810de35d9030a63bc38204d94991e3343d6cdbbcaf77a755be
+holmes_source_root=holmesgpt-3d201559c0f3648a6c567aece09662f4f407bcc9
 gatus_source_url=https://github.com/TwiN/gatus/archive/refs/tags/v5.36.0.tar.gz
 gatus_source_sha256=b5543af591e602281406049ee2f822a6529a8f14be0cd54df5a31c210520159a
 mkdir -p "$output_root" "$work_root"
@@ -457,7 +458,7 @@ build_tailnet_router() {
   printf '%s  %s\n' "$tailscale_key_sha256" "$key" | sha256sum --check --status
   install -D -m 0644 "$key" "$rootfs$tailscale_keyring"
   printf '%s\n' "deb [signed-by=$tailscale_keyring] https://pkgs.tailscale.com/stable/debian trixie main" > "$rootfs/etc/apt/sources.list.d/tailscale.list"
-  install_packages "$rootfs" "tailscale=$tailscale_package_version"
+  install_packages "$rootfs" dbus "tailscale=$tailscale_package_version"
   installed_version=$(chroot "$rootfs" dpkg-query -W -f='${Version}' tailscale)
   if [ "$installed_version" != "$tailscale_package_version" ]; then
     echo "HOLD: unexpected Tailscale package version: $installed_version" >&2
@@ -496,12 +497,22 @@ build_litellm() {
   install -D -m 0644 images/litellm/runtime/requirements.lock "$rootfs/tmp/litellm-requirements.lock"
   install -D -m 0644 images/litellm/runtime/litellm.service "$rootfs/etc/systemd/system/litellm.service"
   install -D -m 0755 images/litellm/runtime/model-capabilities.py "$rootfs/usr/local/libexec/boetticher-litellm-model-capabilities"
+  test -x "$rootfs/usr/bin/setpriv"
+  grep -Fq -- 'User=root' "$rootfs/etc/systemd/system/litellm.service"
+  grep -Fq -- 'CapabilityBoundingSet=CAP_SETUID CAP_SETGID' "$rootfs/etc/systemd/system/litellm.service"
   chroot "$rootfs" /opt/litellm/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/litellm-requirements.lock
   installed_version=$(chroot "$rootfs" /opt/litellm/bin/python -c 'from importlib.metadata import version; print(version("litellm"))')
   if [ "$installed_version" != "$litellm_version" ]; then
     echo "HOLD: unexpected LiteLLM version: $installed_version" >&2
     return 2
   fi
+  # The wheel ships an example log and precompiled bytecode, and its schema
+  # metadata contains a sample Slack webhook that secret scanners correctly
+  # treat as credential-shaped content. Runtime configuration is supplied
+  # separately, so remove build residue and neutralize only that static sample.
+  find "$rootfs/opt/litellm" -type f \( -name '*.log' -o -name '*.pyc' \) -delete
+  find "$rootfs/opt/litellm" -type d -name __pycache__ -prune -exec rm -rf -- {} +
+  find "$rootfs/opt/litellm" -type f -name '*.py' -exec sed -i -E 's#https://hooks\.slack\.com/services/[A-Za-z0-9/_-]+#https://example.invalid/slack-webhook#g' {} +
   rm -f "$rootfs/tmp/litellm-requirements.lock"
   write_artifact_identity "$rootfs" litellm
   package_lxc boetticher-litellm
@@ -525,6 +536,26 @@ build_printer() {
   package_lxc boetticher-printer
 }
 
+build_streamdeck() {
+  printf '%s\n' 'boetticher build stage: streamdeck'
+  rootfs=$(prepare_rootfs boetticher-streamdeck)
+  install_packages "$rootfs" python3=3.13.5-1 python3-venv=3.13.5-1 python3-pip=25.1.1+dfsg-1 libhidapi-libusb0 fonts-dejavu-core
+  chroot "$rootfs" groupadd --system --gid 2200 streamdeck
+  chroot "$rootfs" useradd --system --uid 2200 --gid 2200 --home-dir /var/lib/streamdeck --create-home --shell /usr/sbin/nologin streamdeck
+  chroot "$rootfs" python3 -m venv /opt/streamdeck
+  install -D -m 0644 images/streamdeck/runtime/requirements.lock "$rootfs/tmp/streamdeck-requirements.lock"
+  chroot "$rootfs" /opt/streamdeck/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/streamdeck-requirements.lock
+  install -D -m 0644 services/streamdeck/pyproject.toml "$rootfs/usr/src/boetticher-streamdeck/pyproject.toml"
+  cp -a services/streamdeck/src "$rootfs/usr/src/boetticher-streamdeck/"
+  chroot "$rootfs" /opt/streamdeck/bin/pip install --no-cache-dir --no-deps --no-build-isolation /usr/src/boetticher-streamdeck
+  chroot "$rootfs" apt-get clean
+  rm -rf "$rootfs/var/lib/apt/lists/"*
+  install -D -m 0644 images/streamdeck/runtime/streamdeck-status.service "$rootfs/etc/systemd/system/streamdeck-status.service"
+  rm -f "$rootfs/tmp/streamdeck-requirements.lock"
+  write_artifact_identity "$rootfs" streamdeck
+  package_lxc boetticher-streamdeck
+}
+
 build_aiops() {
   printf '%s\n' 'boetticher build stage: aiops'
   rootfs=$(prepare_rootfs boetticher-aiops)
@@ -542,7 +573,7 @@ build_aiops() {
     echo "HOLD: HolmesGPT 0.40.0 source archive failed SHA-256 verification" >&2
     return 2
   }
-  tar -xOf "$holmes_archive" holmesgpt-0.40.0/server.py > "$rootfs/opt/holmes/server.py"
+  tar -xOf "$holmes_archive" "$holmes_source_root/server.py" > "$rootfs/opt/holmes/server.py"
   chmod 0644 "$rootfs/opt/holmes/server.py"
   rm -f "$rootfs/tmp/aiops-requirements.lock"
   CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/libexec/boetticher-aiops" ./cmd/boetticher-aiops
@@ -551,7 +582,7 @@ build_aiops() {
   install -D -m 0644 images/aiops/runtime/boetticher-aiops.service "$rootfs/etc/systemd/system/boetticher-aiops.service"
   install -D -m 0644 images/aiops/runtime/boetticher-aiops.socket "$rootfs/etc/systemd/system/boetticher-aiops.socket"
   install -D -m 0644 images/aiops/runtime/holmes.service "$rootfs/etc/systemd/system/holmes.service"
-  install -D -m 0644 images/aiops/runtime/holmes.yaml "$rootfs/etc/boetticher-aiops/holmes.yaml"
+  install -D -m 0644 images/aiops/runtime/holmes.yaml "$rootfs/etc/boetticher-aiops/config.yaml"
   write_artifact_identity "$rootfs" aiops
   package_lxc boetticher-aiops
 }
@@ -833,6 +864,11 @@ build_printer_target() {
   build_printer
 }
 
+build_streamdeck_target() {
+  [ -f "$(artifact_for boetticher-base)" ] || build_base
+  build_streamdeck
+}
+
 build_aiops_target() {
   [ -f "$(artifact_for boetticher-base)" ] || build_base
   build_aiops
@@ -855,6 +891,16 @@ build_gatus_target() {
   package_lxc boetticher-gatus
 }
 
+build_network_probe_target() {
+  printf '%s\n' 'boetticher build stage: network probe'
+  rootfs=$(prepare_rootfs boetticher-network-probe)
+  install_packages "$rootfs" arping dnsutils isc-dhcp-client iperf3 netcat-openbsd nmap tcpdump
+  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/libexec/boetticher-network-probe" ./cmd/boetticher-network-probe
+  chmod 0755 "$rootfs/usr/local/libexec/boetticher-network-probe"
+  write_artifact_identity "$rootfs" network-probe
+  package_lxc boetticher-network-probe
+}
+
 case "$target" in
   image-base) run_timed_image_target "$target" build_base ;;
   image-dns-blocky) run_timed_image_target "$target" build_dns_blocky_target ;;
@@ -864,8 +910,10 @@ case "$target" in
   image-tailnet-router) run_timed_image_target "$target" build_tailnet_router_target ;;
   image-litellm) run_timed_image_target "$target" build_litellm_target ;;
   image-printer) run_timed_image_target "$target" build_printer_target ;;
+  image-streamdeck) run_timed_image_target "$target" build_streamdeck_target ;;
   image-aiops) run_timed_image_target "$target" build_aiops_target ;;
   image-gatus) run_timed_image_target "$target" build_gatus_target ;;
+  image-network-probe) run_timed_image_target "$target" build_network_probe_target ;;
   image-firewall) run_timed_image_target "$target" build_firewall ;;
   images) build_selected_images ;;
 esac

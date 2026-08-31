@@ -1,9 +1,13 @@
 package cli
 
 import (
+	"fmt"
+	"net"
+	"strings"
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/portal"
 	statusmodel "github.com/gofastercloud/boetticher/internal/status"
 )
@@ -34,6 +38,50 @@ func TestOfflineVerificationAcceptsAllManagedDynamicDNSZones(t *testing.T) {
 	t.Fatal("DNS/DDNS projection result is missing")
 }
 
+func TestOfflineVerificationUsesSuppliedEndpointResolver(t *testing.T) {
+	config := model.ConfigFromSite(model.NewDefaultSite("verify-endpoint", "age1verifyendpoint"))
+	enabled := true
+	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &enabled}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := offlineVerificationResultsWithResolver(t.TempDir(), site, func(string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("198.51.100.30")}, nil
+	})
+	for _, result := range results {
+		if result.Name == "firewall policy projection" {
+			if result.Status != "STATIC PASS" {
+				t.Fatalf("firewall policy projection status = %q, detail = %q", result.Status, result.Detail)
+			}
+			return
+		}
+	}
+	t.Fatal("firewall policy projection result is missing")
+}
+
+func TestOfflineVerificationPreservesEndpointResolutionHold(t *testing.T) {
+	config := model.ConfigFromSite(model.NewDefaultSite("verify-endpoint-hold", "age1verifyendpointhold"))
+	enabled := true
+	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &enabled}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := offlineVerificationResultsWithResolver(t.TempDir(), site, func(host string) ([]net.IP, error) {
+		return nil, fmt.Errorf("resolver unavailable for %s", host)
+	})
+	for _, result := range results {
+		if result.Name == "firewall policy projection" {
+			if result.Status != "FAIL" || !strings.Contains(result.Detail, "HOLD: resolve endpoint") {
+				t.Fatalf("endpoint resolution failure was not preserved: %#v", result)
+			}
+			return
+		}
+	}
+	t.Fatal("firewall policy projection result is missing")
+}
+
 func TestVerificationEvidenceUsesExplicitTiers(t *testing.T) {
 	results := annotateVerificationEvidence([]portal.CheckResult{
 		{Name: "canonical platform model validates", Status: "PASS", Detail: "journey evidence in prose must not change this"},
@@ -48,6 +96,20 @@ func TestVerificationEvidenceUsesExplicitTiers(t *testing.T) {
 		}
 		if result.ObservedAt != "2026-08-29T00:00:00Z" {
 			t.Fatalf("result %q observed at %q", result.Name, result.ObservedAt)
+		}
+	}
+}
+
+func TestHealthResultsOmitQualificationOnlyChecks(t *testing.T) {
+	site := model.NewDefaultSite("health-results", "age1healthresults")
+	results, _ := collectHealthResults(healthOptions{siteDir: t.TempDir(), sshPath: t.TempDir() + "/missing"}, site)
+	for _, result := range results {
+		if result.Status == "NOT TESTED" {
+			t.Fatalf("health result was left unknowable: %#v", result)
+		}
+		switch result.Name {
+		case "DNS01/DNS02 reachable", "NTP01/NTP02 synchronized", "Proxmox API least privilege", "portal requires client certificate", "Pulse requires client certificate", "latest VM/LXC backup", "Age recovery fixture", "SANDBOX cannot access TRUSTED", "SANDBOX cannot access SERVERS", "SANDBOX cannot access MGMT", "TRANSIT/INFRA/MGMT are static-only; SERVERS is reservation-only":
+			t.Fatalf("qualification-only check was included: %#v", result)
 		}
 	}
 }

@@ -79,6 +79,15 @@ func render(s model.Site, generatedAt time.Time, knownHosts string) (string, err
 		}
 		writeHost(&b, uniqueStrings(aliases), m.Address, m.SSHUser, m.Hostname+"."+s.Network.Domain, identity, knownHosts, true, false)
 	}
+	for _, retained := range s.RetainedModules {
+		for _, m := range retained.Guests {
+			if !m.ProductOwned || !m.SSHManaged {
+				continue
+			}
+			aliases := append([]string{m.Name, m.Hostname + "." + s.Network.Domain}, m.DNSAliases...)
+			writeHost(&b, uniqueStrings(aliases), m.Address, m.SSHUser, m.Hostname+"."+s.Network.Domain, identity, knownHosts, true, false)
+		}
+	}
 	return b.String(), nil
 }
 
@@ -100,20 +109,7 @@ func RenderBastionPolicy(s model.Site) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	destinations := make([]string, 0)
-	for _, m := range s.PlatformComponents() {
-		if m.ProductOwned && m.SSHManaged && m.JumpAllowed {
-			port := m.SSHPort
-			if port == 0 {
-				port = 22
-			}
-			destinations = append(destinations, fmt.Sprintf("%s:%d", m.Address, port))
-			if m.Name == "lab-monitor-01" {
-				destinations = append(destinations, fmt.Sprintf("%s:443", m.Address))
-			}
-		}
-	}
-	sort.Strings(destinations)
+	destinations := BastionDestinations(s)
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Managed by boetticher.\n# boetticher-model-revision: %s\n# Install through the authenticated Proxmox deployment path.\n\n", revision)
 	b.WriteString("Match User lab-jump\n")
@@ -128,6 +124,39 @@ func RenderBastionPolicy(s model.Site) (string, error) {
 	}
 	b.WriteString("\n")
 	return b.String(), nil
+}
+
+// BastionDestinations returns the canonical destination list used by both the
+// generated controller projection and the authenticated Proxmox installation
+// path. Retained product-owned guests remain within the declared SSH contract,
+// but do not gain any destinations outside their model contract.
+func BastionDestinations(s model.Site) []string {
+	destinations := make([]string, 0)
+	for _, m := range s.PlatformComponents() {
+		destinations = appendBastionDestinations(destinations, m)
+	}
+	for _, retained := range s.RetainedModules {
+		for _, m := range retained.Guests {
+			destinations = appendBastionDestinations(destinations, m)
+		}
+	}
+	sort.Strings(destinations)
+	return destinations
+}
+
+func appendBastionDestinations(destinations []string, component model.Component) []string {
+	if !component.ProductOwned || !component.SSHManaged || !component.JumpAllowed {
+		return destinations
+	}
+	port := component.SSHPort
+	if port == 0 {
+		port = 22
+	}
+	destinations = append(destinations, fmt.Sprintf("%s:%d", component.Address, port))
+	if component.Name == "lab-monitor-01" || component.Name == "lab-litellm-01" || component.Name == "lab-portal-01" {
+		destinations = append(destinations, fmt.Sprintf("%s:443", component.Address))
+	}
+	return destinations
 }
 
 func DefaultPath() string { return model.ExpandUserPath(model.DefaultSSHConfig) }
@@ -425,6 +454,7 @@ func writeHost(b *strings.Builder, aliases []string, hostName, user, hostKeyAlia
 	aliases = uniqueStrings(append(append([]string{}, aliases...), hostName))
 	fmt.Fprintf(b, "Host %s\n", strings.Join(aliases, " "))
 	fmt.Fprintf(b, "    HostName %s\n", hostName)
+	b.WriteString("    ConnectTimeout 10\n")
 	if user != "" {
 		fmt.Fprintf(b, "    User %s\n", user)
 	}
@@ -438,7 +468,7 @@ func writeHost(b *strings.Builder, aliases []string, hostName, user, hostKeyAlia
 		fmt.Fprintf(b, "    UserKnownHostsFile %s\n", knownHosts)
 	}
 	if bastion {
-		b.WriteString("    RequestTTY no\n    ForwardAgent no\n    ForwardX11 no\n")
+		b.WriteString("    RequestTTY no\n    ForwardAgent no\n    ForwardX11 no\n    ChannelTimeout direct-tcpip=10\n")
 	} else if throughBastion {
 		b.WriteString("    ProxyJump lab-bastion\n    StrictHostKeyChecking yes\n")
 	}

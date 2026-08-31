@@ -12,6 +12,7 @@ tailscale:
   signing_key_sha256: 3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39
   repository_suite: trixie
 runtime:
+  system_bus: dbus
   accept_dns: false
   advertise_routes: 10.10.0.0/16
   subnet_route_snat: true

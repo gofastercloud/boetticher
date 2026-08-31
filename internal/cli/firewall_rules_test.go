@@ -44,3 +44,16 @@ func TestFirewallRuleAddValidatesAgainstComposedModuleAddresses(t *testing.T) {
 		t.Fatal("rule targeting a composed Core module address was accepted")
 	}
 }
+
+func TestFirewallRuleAddAcceptsReservedServersPulseClient(t *testing.T) {
+	config := model.ConfigFromSite(model.NewDefaultSite("installation", "age1example"))
+	config.DHCPReservations = []model.DHCPReservation{{Zone: "SERVERS", Hostname: "lab-display-01", Address: "10.10.20.50", MAC: "dc:a6:32:e9:dd:82"}}
+	resolved, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule := model.UserFirewallRule{ID: "ufr-lab-display-pulse", Source: "10.10.20.50/32", Destination: "10.10.10.20/32", Protocol: "tcp", Ports: []string{"443"}}
+	if err := addFirewallRule("", config, resolved, rule, true, true, false, &bytes.Buffer{}); err != nil {
+		t.Fatalf("reserved SERVERS Pulse client was rejected: %v", err)
+	}
+}

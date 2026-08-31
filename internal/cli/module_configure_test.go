@@ -315,7 +315,7 @@ func TestConfigureSecretsIgnoreUnrelatedModuleSecrets(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "secrets"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := site.StoreEncryptedDocument(dir, recipient, "secrets/boetticher.sops.yaml", map[string]string{"unrelated": "keep"}); err != nil {
+	if err := site.StoreEncryptedDocument(dir, recipient, "secrets/boetticher.sops.yaml", map[string]string{"unrelated": "keep", "pulse_proxy_auth_secret": "test-only"}); err != nil {
 		t.Fatal(err)
 	}
 	updates, missing, err := configureSecrets(dir, current, current, identityPath, "monitoring", nil, strings.NewReader(""), &bytes.Buffer{}, true, nil)

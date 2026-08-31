@@ -500,7 +500,7 @@ func TestArtifactDefinitionDigestBindsBuildInputs(t *testing.T) {
 
 func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	root := filepath.Join("..", "..", "images")
-	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "portal/image.yaml", "tailnet-router/image.yaml", "litellm/image.yaml", "aiops/image.yaml"}
+	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "portal/image.yaml", "tailnet-router/image.yaml", "litellm/image.yaml", "printer/image.yaml", "streamdeck/image.yaml", "aiops/image.yaml"}
 	for _, relative := range paths {
 		data, err := os.ReadFile(filepath.Join(root, relative))
 		if err != nil {
@@ -615,6 +615,9 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 			t.Fatalf("tailnet-router image definition is missing %q", required)
 		}
 	}
+	if !strings.Contains(string(buildScript), `install_packages "$rootfs" dbus "tailscale=$tailscale_package_version"`) {
+		t.Fatal("tailnet-router build does not install the system D-Bus required by its systemd lifecycle")
+	}
 	litellm, err := os.ReadFile(filepath.Join(root, "litellm", "image.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -660,8 +663,22 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 			t.Fatalf("LiteLLM capability reader is missing fail-closed field %q", required)
 		}
 	}
-	if !strings.Contains(buildText, "build_tailnet_router") || !strings.Contains(buildText, "build_litellm") || !strings.Contains(buildText, "--require-hashes") || !strings.Contains(buildText, "rm -f \"$rootfs/etc/nginx/sites-enabled/default\"") {
-		t.Fatal("first-party appliance build paths are incomplete or do not enforce the dependency lock")
+	for _, required := range []string{
+		"build_tailnet_router",
+		"build_litellm",
+		"--require-hashes",
+		"test -x \"$rootfs/usr/bin/setpriv\"",
+		"grep -Fq -- 'User=root' \"$rootfs/etc/systemd/system/litellm.service\"",
+		"grep -Fq -- 'CapabilityBoundingSet=CAP_SETUID CAP_SETGID' \"$rootfs/etc/systemd/system/litellm.service\"",
+		"rm -f \"$rootfs/etc/nginx/sites-enabled/default\"",
+		"find \"$rootfs/opt/litellm\" -type f \\(",
+		"-name '*.log' -o -name '*.pyc'",
+		"-name __pycache__ -prune -exec rm -rf -- {} +",
+		`sed -i -E 's#https://hooks\.slack\.com/services/[A-Za-z0-9/_-]+#https://example.invalid/slack-webhook#g'`,
+	} {
+		if !strings.Contains(buildText, required) {
+			t.Fatalf("LiteLLM build hygiene is missing %q", required)
+		}
 	}
 }
 
@@ -702,6 +719,9 @@ func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *tes
 	}
 	if strings.Contains(buildText, "build_dns_blocky() {\n  printf '%s\\n' 'boetticher build stage: dns blocky'\n  rootfs=$(prepare_rootfs boetticher-dns-blocky)\n  install_powerdns \"$rootfs\"\n  install_packages \"$rootfs\" chrony") {
 		t.Fatal("DNS construction still performs a redundant package-index transaction")
+	}
+	if !strings.Contains(buildText, `install_packages "$rootfs" arping dnsutils isc-dhcp-client iperf3 netcat-openbsd nmap tcpdump`) {
+		t.Fatal("network probe image does not include the DHCP client required by dynamic zones")
 	}
 }
 
@@ -782,11 +802,11 @@ func TestAIOpsArtifactPinsUnmodifiedHolmesAndIsolation(t *testing.T) {
 		text string
 		want []string
 	}{
-		{"definition", string(definition), []string{"holmesgpt: 0.40.0", "https://github.com/HolmesGPT/holmesgpt/archive/refs/tags/0.40.0.tar.gz", "3465cd634b0e478f058b026b37caa3b8f10651f7aa9058dc73368b5403f0fb3d", "holmes_network: loopback-only"}},
-		{"lock", string(lock), []string{"holmesgpt==0.40.0", "--hash=sha256:"}},
-		{"service", string(service), []string{"/opt/holmes/bin/python -u /opt/holmes/server.py", "HOLMES_HOST=127.0.0.1", "HOLMES_TOOL_RESULT_STORAGE_ENABLED=false", "OVERRIDE_MAX_OUTPUT_TOKEN=1200", "IPAddressDeny=any", "IPAddressAllow=localhost"}},
+		{"definition", string(definition), []string{"holmesgpt: 0.40.0", "https://codeload.github.com/HolmesGPT/holmesgpt/tar.gz/3d201559c0f3648a6c567aece09662f4f407bcc9", "7016d3335a7f81810de35d9030a63bc38204d94991e3343d6cdbbcaf77a755be", "holmes_network: loopback-only"}},
+		{"lock", string(lock), []string{"holmesgpt==0.40.0", "greenlet==3.5.5", "--hash=sha256:2eabb980975cba5b93a95f6f69287d05fc05ac955bfd6a320a7c083eeb52c0b0"}},
+		{"service", string(service), []string{"/opt/holmes/bin/python -u /opt/holmes/server.py", "HOLMES_HOST=127.0.0.1", "HOLMES_CONFIGPATH_DIR=/etc/boetticher-aiops", "HOLMES_TOOL_RESULT_STORAGE_ENABLED=false", "OVERRIDE_MAX_OUTPUT_TOKEN=1200", "IPAddressDeny=any", "IPAddressAllow=localhost"}},
 		{"config", string(config), []string{"max_steps: 12", "internet:\n    enabled: false", "http://127.0.0.1:8443", "/v1/evidence/query", "methods:\n            - POST"}},
-		{"build", string(build), []string{"holmes_source_sha256=3465cd634b0e478f058b026b37caa3b8f10651f7aa9058dc73368b5403f0fb3d", "sha256sum --check --status", "holmesgpt-0.40.0/server.py"}},
+		{"build", string(build), []string{"holmes_source_sha256=7016d3335a7f81810de35d9030a63bc38204d94991e3343d6cdbbcaf77a755be", "sha256sum --check --status", "holmes_source_root/server.py"}},
 	}
 	for _, check := range checks {
 		for _, required := range check.want {
@@ -797,6 +817,37 @@ func TestAIOpsArtifactPinsUnmodifiedHolmesAndIsolation(t *testing.T) {
 	}
 	if strings.Contains(string(service), "holmes serve") {
 		t.Fatal("AIOps uses the nonexistent Holmes 0.40.0 wheel serve command")
+	}
+	smoke, err := os.ReadFile(filepath.Join(root, "scripts", "smoke-appliance.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"boetticher-aiops)", "/usr/local/libexec/boetticher-aiops", "holmes.service", "IPAddressDeny=any", "config.yaml", "test ! -e \"$rootfs/etc/boetticher-aiops/runtime.env\""} {
+		if !strings.Contains(string(smoke), required) {
+			t.Fatalf("AIOps smoke contract is missing %q", required)
+		}
+	}
+}
+
+func TestGatusArtifactSmokeContractUsesSupportedChecks(t *testing.T) {
+	smoke, err := os.ReadFile(filepath.Join("..", "..", "scripts", "smoke-appliance.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(smoke)
+	for _, required := range []string{
+		"boetticher-gatus)",
+		"test -x \"$rootfs/usr/local/bin/gatus\"",
+		"test -f \"$rootfs/etc/systemd/system/gatus.service\"",
+		"User=gatus",
+		"test ! -e \"$rootfs/etc/boetticher/gatus/config.yaml\"",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Gatus smoke contract is missing %q", required)
+		}
+	}
+	if strings.Contains(text, "run /usr/local/bin/gatus version") {
+		t.Fatal("Gatus smoke contract invokes an unsupported version subcommand")
 	}
 }
 
@@ -878,7 +929,7 @@ func TestApplianceBootstrapInputsContainNoOperatorKeyOrSiteState(t *testing.T) {
 		t.Fatalf("runtime state helper is not bounded: %s", runtimeState)
 	}
 	runtimeStateText := string(runtimeState)
-	for _, required := range []string{"directory_mode=0750", "directory_mode=0755", `install -d -m "$directory_mode" "$directory"`} {
+	for _, required := range []string{"directory_mode=0751", "directory_mode=0755", `install -d -m "$directory_mode" "$directory"`} {
 		if !strings.Contains(runtimeStateText, required) {
 			t.Fatalf("runtime state helper is missing directory permission contract %q", required)
 		}
@@ -940,7 +991,7 @@ func TestFirewallInspectionContractIsRootOwnedAndFailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	policyText, helperText := string(sudoers), string(helper)
-	for _, operation := range []string{"status", "ruleset", "table", "leases", "kernel-logs"} {
+	for _, operation := range []string{"status", "ruleset", "table", "leases", "ddns-stats", "kernel-logs"} {
 		if !strings.Contains(policyText, "inspect-firewall "+operation) || !strings.Contains(helperText, operation) {
 			t.Fatalf("firewall inspection operation %q is not present in both contracts", operation)
 		}
@@ -1005,7 +1056,7 @@ func TestBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {
 		}
 		entries[header.Name] = true
 	}
-	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "images/tailnet-router/image.yaml", "images/litellm/runtime/requirements.lock", "cmd/qualify-artifact/main.go", "cmd/boetticher-aiops/main.go", "cmd/boetticher-log-query/main.go", "internal/aiops/aiops.go", "internal/gatus/gatus.go", "internal/usbexport/plan.go"} {
+	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "images/tailnet-router/image.yaml", "images/litellm/runtime/requirements.lock", "images/streamdeck/runtime/streamdeck-status.service", "services/streamdeck/src/boetticher_streamdeck/app.py", "cmd/qualify-artifact/main.go", "cmd/boetticher-aiops/main.go", "cmd/boetticher-log-query/main.go", "internal/aiops/aiops.go", "internal/gatus/gatus.go", "internal/usbexport/plan.go"} {
 		if !entries[required] {
 			t.Fatalf("archive omitted public build input %s", required)
 		}
@@ -1078,7 +1129,7 @@ func TestBuildSourceArchiveContainsBlockyRendererDependencies(t *testing.T) {
 		}
 		entries[header.Name] = true
 	}
-	for _, relative := range []string{"cmd/render-blocky-config/main.go", "internal/dns/recursive.go", "internal/dns/dns.go", "internal/modules/compose.go"} {
+	for _, relative := range []string{"cmd/render-blocky-config/main.go", "internal/dns/recursive.go", "internal/dns/dns.go", "internal/modules/compose.go", "internal/pathguard/pathguard.go"} {
 		if !entries[relative] {
 			t.Fatalf("transferred builder source is missing %s", relative)
 		}
@@ -1150,5 +1201,41 @@ func TestTransferredEvidenceIsReboundToControllerArtifactBytes(t *testing.T) {
 	}
 	if resolved.ContentSHA256 != evidence.ContentSHA256 {
 		t.Fatalf("rebound content checksum = %q, want %q", resolved.ContentSHA256, evidence.ContentSHA256)
+	}
+}
+
+func TestPulseProxyAuthRendererUsesOnlyRuntimeCredentialMaterial(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "pulse-nginx-proxy-auth.sh.j2")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		"/run/credentials/nginx.service/pulse-proxy-auth-nginx-secret",
+		"/run/boetticher/pulse-proxy-auth.conf",
+		"case \"$secret\" in",
+		"set $boetticher_pulse_proxy_shared_secret",
+		"chmod 0600",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Pulse proxy-auth renderer is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"pulse_proxy_auth_secret:", "PROXY_AUTH_SECRET=", "echo \"$secret\""} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("Pulse proxy-auth renderer contains unsafe materialization %q", forbidden)
+		}
+	}
+}
+
+func TestPulseServiceDoesNotSetInvalidDisabledAgentIngestPort(t *testing.T) {
+	path := filepath.Join("..", "..", "images", "monitoring", "runtime", "pulse.service")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "PULSE_AGENT_INGEST_PORT=0") {
+		t.Fatal("Pulse service sets an invalid disabled agent-ingest port; leave the option unset")
 	}
 }

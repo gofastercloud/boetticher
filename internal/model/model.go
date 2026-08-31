@@ -48,6 +48,7 @@ const (
 	LoggingVMID                 = 140
 	BuilderVMID                 = 190
 	PrinterVMID                 = 230
+	StreamDeckVMID              = 220
 	BuilderCores                = 4
 	BuilderMemoryMiB            = 8192
 	BuilderDiskGiB              = 32
@@ -593,7 +594,7 @@ func NewDefaultSite(installationID, ageRecipient string) Site {
 		{Name: "lab-fw-01", VMID: ProxmoxVMID, Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "Debian firewall", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "firewall"},
 		{Name: "lab-dns-01", VMID: DNS01VMID, Hostname: "lab-dns-01", Zone: "INFRA", Address: "10.10.10.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "dns"},
 		{Name: "lab-dns-02", VMID: DNS02VMID, Hostname: "lab-dns-02", Zone: "INFRA", Address: "10.10.10.11", Role: "DNS/NTP", DNSAliases: []string{"dns02"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "dns"},
-		{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "INFRA", Address: "10.10.10.20", Role: "Pulse monitoring", DNSAliases: []string{"monitor"}, URL: "https://monitor." + DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "monitoring"},
+		{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "INFRA", Address: "10.10.10.20", Role: "Pulse monitoring", DNSAliases: []string{"monitor"}, URL: "https://monitor." + DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "monitoring"},
 		{Name: "lab-log-01", VMID: LoggingVMID, Hostname: "lab-log-01", Zone: "INFRA", Address: "10.10.10.40", Role: "Central systemd journal", DNSAliases: []string{"logs"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "logging"},
 	} {
 		component.Tags = []string{TagBoetticher, TagManaged, TagModule, "module-" + component.Module, ModuleOwnershipTag(component.Module), TagBackup}
@@ -1040,6 +1041,44 @@ func (s Site) Validate() error {
 			return fmt.Errorf("component %s references unknown zone %q", m.Name, m.Zone)
 		}
 	}
+	for _, retained := range s.RetainedModules {
+		if retained.Module == "" || ModuleOwnershipTag(retained.Module) == "" {
+			return fmt.Errorf("retained module has invalid name %q", retained.Module)
+		}
+		if retained.Disposition != "retained" || retained.Active {
+			return fmt.Errorf("retained module %s has invalid inactive disposition", retained.Module)
+		}
+		ownerTag := ModuleOwnershipTag(retained.Module)
+		for _, guest := range retained.Guests {
+			if err := guest.Validate(); err != nil {
+				return fmt.Errorf("retained module %s contains invalid guest: %w", retained.Module, err)
+			}
+			if !guest.ProductOwned || !guest.SSHManaged || guest.Module != retained.Module {
+				return fmt.Errorf("retained guest %s must remain a product-owned SSH-managed %s guest", guest.Name, retained.Module)
+			}
+			if guest.VMID < PlatformGuestIDMin || guest.VMID > ModuleGuestIDMax {
+				return fmt.Errorf("retained guest %s uses VMID %d outside the boetticher-owned range", guest.Name, guest.VMID)
+			}
+			hasOwnerTag := false
+			for _, tag := range guest.Tags {
+				if tag == ownerTag {
+					hasOwnerTag = true
+					break
+				}
+			}
+			if !hasOwnerTag {
+				return fmt.Errorf("retained guest %s is missing canonical ownership tag %q", guest.Name, ownerTag)
+			}
+			if seenComponents[guest.Name] {
+				return fmt.Errorf("retained guest %q duplicates a platform component", guest.Name)
+			}
+			seenComponents[guest.Name] = true
+			if previous, exists := seenVMIDs[guest.VMID]; exists {
+				return fmt.Errorf("retained guest %s and %s share VMID %d", previous, guest.Name, guest.VMID)
+			}
+			seenVMIDs[guest.VMID] = guest.Name
+		}
+	}
 	if len(seenZones) != len(expectedZones) {
 		return fmt.Errorf("0.4 requires exactly TRANSIT, INFRA, SERVERS, TRUSTED, SANDBOX, and MGMT zones")
 	}
@@ -1451,7 +1490,7 @@ func validateUserFirewallRules(s Site) error {
 		if err != nil {
 			return fmt.Errorf("firewall rule %s: %w", rule.ID, err)
 		}
-		if firewallSelectorProtected(s, source) || firewallSelectorProtected(s, destination) {
+		if (firewallSelectorProtected(s, source) || firewallSelectorProtected(s, destination)) && !IsReservedServersPulseRule(s, source, destination, protocol, ports) {
 			return fmt.Errorf("firewall rule %s crosses a protected Core boundary", rule.ID)
 		}
 		key := source + "|" + destination + "|" + protocol + "|" + strings.Join(ports, ",")
@@ -1554,6 +1593,43 @@ func firewallSelectorProtected(s Site, selector string) bool {
 			_, protected, e := net.ParseCIDR(zone.Network)
 			if e == nil && (network.Contains(protected.IP) || protected.Contains(network.IP)) {
 				return true
+			}
+		}
+	}
+	return false
+}
+
+// IsReservedServersPulseRule is the one user-workload exception to the Core
+// boundary. An external, reservation-backed dashboard may read the fixed
+// Pulse HTTPS endpoint, but it cannot widen that access to another Core
+// service, port, or an entire zone.
+func IsReservedServersPulseRule(s Site, source, destination, protocol string, ports []string) bool {
+	if protocol != "tcp" || len(ports) != 1 || ports[0] != "443" {
+		return false
+	}
+	sourceIP, sourceNetwork, err := net.ParseCIDR(source)
+	if err != nil || sourceIP.To4() == nil {
+		return false
+	}
+	ones, bits := sourceNetwork.Mask.Size()
+	if bits != 32 || ones != 32 {
+		return false
+	}
+	servers, ok := zoneByName(s, "SERVERS")
+	if !ok {
+		return false
+	}
+	_, serversNetwork, err := net.ParseCIDR(servers.Network)
+	if err != nil || !serversNetwork.Contains(sourceIP) {
+		return false
+	}
+	for _, reservation := range s.DHCPReservations {
+		reservationIP := net.ParseIP(reservation.Address).To4()
+		if reservation.Zone == "SERVERS" && reservationIP != nil && reservationIP.String() == sourceIP.To4().String() {
+			for _, component := range s.PlatformComponents() {
+				if component.Name == "lab-monitor-01" && component.Module == "monitoring" && component.Zone == "INFRA" {
+					return destination == component.Address+"/32"
+				}
 			}
 		}
 	}

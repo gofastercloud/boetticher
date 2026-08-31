@@ -51,22 +51,34 @@ func ParseSerial(serial string) (*big.Int, error) {
 }
 
 // GenerateCRL creates the current enforceable client revocation material for
-// the issuing CA. Entries are sorted by serial to keep the generated artifact
-// stable for the same revocation set; the CRL number and timestamps are still
-// fresh on each deployment.
+// the issuing and root CAs. The issuing CRL is emitted first because existing
+// Go consumers parse the first CRL; the empty root CRL follows so TLS
+// frontends can perform revocation checking across the complete trust chain.
 func GenerateCRL(authority Authority, revocations []Revocation, now time.Time) (string, error) {
-	issuingKey, err := parseECKey(authority.IssuingKeyPEM)
+	issuingCRL, err := generateCARevocationList(authority.IssuingCertPEM, authority.IssuingKeyPEM, revocations, now)
 	if err != nil {
-		return "", fmt.Errorf("parse issuing key: %w", err)
+		return "", fmt.Errorf("create issuing CA CRL: %w", err)
 	}
-	issuingCert, err := parseCert(authority.IssuingCertPEM)
+	rootCRL, err := generateCARevocationList(authority.RootCertPEM, authority.RootKeyPEM, nil, now)
 	if err != nil {
-		return "", fmt.Errorf("parse issuing certificate: %w", err)
+		return "", fmt.Errorf("create root CA CRL: %w", err)
+	}
+	return issuingCRL + rootCRL, nil
+}
+
+func generateCARevocationList(certPEM, keyPEM string, revocations []Revocation, now time.Time) (string, error) {
+	key, err := parseECKey(keyPEM)
+	if err != nil {
+		return "", fmt.Errorf("parse CA key: %w", err)
+	}
+	certificate, err := parseCert(certPEM)
+	if err != nil {
+		return "", fmt.Errorf("parse CA certificate: %w", err)
 	}
 	// Authorities created before CRL support may not have an SKI. Deriving it
 	// from the existing public key preserves compatibility while keeping the
-	// CRL issuer and signature tied to the configured issuing key.
-	issuer := *issuingCert
+	// CRL issuer and signature tied to the configured CA key.
+	issuer := *certificate
 	if len(issuer.SubjectKeyId) == 0 {
 		issuer.SubjectKeyId = publicKeyIdentifier(issuer.PublicKey)
 	}
@@ -104,7 +116,7 @@ func GenerateCRL(authority Authority, revocations []Revocation, now time.Time) (
 		Number:                    number,
 		ThisUpdate:                now,
 		NextUpdate:                now.AddDate(10, 0, 0),
-	}, &issuer, issuingKey)
+	}, &issuer, key)
 	if err != nil {
 		return "", fmt.Errorf("create client certificate CRL: %w", err)
 	}

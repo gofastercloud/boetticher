@@ -23,6 +23,20 @@ import (
 	"github.com/gofastercloud/boetticher/internal/modules"
 )
 
+type recordingArgsRunner struct {
+	address string
+	user    string
+	args    [][]string
+	err     error
+}
+
+func (r *recordingArgsRunner) RunArgs(_ context.Context, address, user string, args []string) ([]byte, error) {
+	r.address = address
+	r.user = user
+	r.args = append(r.args, append([]string(nil), args...))
+	return nil, r.err
+}
+
 func TestFoundationPlanIsDeterministic(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	first, err := PlanFromSite(site)
@@ -1103,7 +1117,16 @@ func TestCreatedLXCIsNotStartedWhenProxmoxDropsTUNContract(t *testing.T) {
 		Artifact: artifact,
 		Security: model.GuestSecurityDeclaration{Unprivileged: true, Devices: []model.DeviceRequirement{{Path: "/dev/net/tun", Type: "c", Major: 10, Minor: 200, Access: "rwm"}}},
 	}
-	plan := Plan{Node: "node", Storage: "local", Guests: []GuestPlan{guest}, ArtifactFiles: map[string]string{artifactKey(artifact): artifactPath}}
+	privilegedRunner := &recordingArgsRunner{}
+	plan := Plan{
+		Node:              "node",
+		Storage:           "local",
+		Guests:            []GuestPlan{guest},
+		ArtifactFiles:     map[string]string{artifactKey(artifact): artifactPath},
+		PrivilegedRunner:  privilegedRunner,
+		PrivilegedAddress: "192.0.2.10",
+		PrivilegedUser:    "root",
+	}
 	var storageLookups, configLookups int
 	started := false
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
@@ -1126,6 +1149,12 @@ func TestCreatedLXCIsNotStartedWhenProxmoxDropsTUNContract(t *testing.T) {
 			_, _ = io.Copy(io.Discard, r.Body)
 			return response([]byte(`{"data":null}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc":
+			if err := r.ParseForm(); err != nil {
+				t.Fatalf("parse create form: %v", err)
+			}
+			if got := r.Form.Get("dev0"); got != "" {
+				t.Fatalf("scoped API create unexpectedly received dev0=%q", got)
+			}
 			return response([]byte(`{"data":null}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/200/status/start":
 			started = true
@@ -1142,6 +1171,136 @@ func TestCreatedLXCIsNotStartedWhenProxmoxDropsTUNContract(t *testing.T) {
 	}
 	if started {
 		t.Fatal("LXC start was requested after TUN contract verification failed")
+	}
+	if privilegedRunner.address != "192.0.2.10" || privilegedRunner.user != "root" || len(privilegedRunner.args) != 1 {
+		t.Fatalf("unexpected privileged device configuration calls: %#v", privilegedRunner)
+	}
+	if got, want := privilegedRunner.args[0], []string{"/usr/sbin/pct", "set", "200", "--dev0", "path=/dev/net/tun,mode=0666"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("privileged device configuration args = %#v, want %#v", got, want)
+	}
+}
+
+func TestDeviceBearingLXCMustHavePrivilegedAuthorityBeforeStorageMutation(t *testing.T) {
+	artifact := model.Artifact{
+		Name:             "boetticher-tailnet-router",
+		Version:          "1.0.0",
+		Architecture:     "amd64",
+		Kind:             "lxc",
+		DefinitionSHA256: strings.Repeat("a", 64),
+		ContentSHA256:    strings.Repeat("b", 64),
+	}
+	guest := GuestPlan{
+		VMID:     200,
+		Name:     "lab-tailnet-01",
+		Hostname: "lab-tailnet-01",
+		Kind:     KindLXC,
+		Owner:    "boetticher/module/tailnet-router",
+		Artifact: artifact,
+		Security: model.GuestSecurityDeclaration{
+			Unprivileged: true,
+			Devices:      []model.DeviceRequirement{{Path: "/dev/net/tun", Type: "c", Major: 10, Minor: 200, Access: "rwm"}},
+		},
+	}
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodGet && (r.URL.Path == "/api2/json/nodes/node/qemu/200/config" || r.URL.Path == "/api2/json/nodes/node/lxc/200/config") {
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		}
+		t.Fatalf("unexpected request before privileged authority validation: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err := ProvisionModule(context.Background(), client, Plan{Node: "node", Storage: "local", Guests: []GuestPlan{guest}}, "tailnet-router")
+	if err == nil || !strings.Contains(err.Error(), "authorized root bootstrap path") {
+		t.Fatalf("missing privileged authority was not held before mutation: %v", err)
+	}
+}
+
+func TestCreatedLXCDeviceIsAppliedBeforeStart(t *testing.T) {
+	artifactBytes := []byte("qualified tailnet-router artifact")
+	artifactPath := filepath.Join(t.TempDir(), "tailnet-router.tar.zst")
+	if err := os.WriteFile(artifactPath, artifactBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	contentSum := sha256.Sum256(artifactBytes)
+	artifact := model.Artifact{
+		Name:             "boetticher-tailnet-router",
+		Version:          "1.0.0",
+		Architecture:     "amd64",
+		Kind:             "lxc",
+		DefinitionSHA256: strings.Repeat("a", 64),
+		ContentSHA256:    hex.EncodeToString(contentSum[:]),
+	}
+	guest := GuestPlan{
+		VMID:     200,
+		Name:     "lab-tailnet-01",
+		Hostname: "lab-tailnet-01",
+		Kind:     KindLXC,
+		Owner:    "boetticher/module/tailnet-router",
+		Tags:     []string{"boetticher", "managed", "module", "module-tailnet-router", "boetticher-module-tailnet-router", "backup"},
+		Artifact: artifact,
+		Security: model.GuestSecurityDeclaration{Unprivileged: true, Devices: []model.DeviceRequirement{{Path: "/dev/net/tun", Type: "c", Major: 10, Minor: 200, Access: "rwm"}}},
+	}
+	privilegedRunner := &recordingArgsRunner{}
+	plan := Plan{
+		Node:              "node",
+		Storage:           "local",
+		Guests:            []GuestPlan{guest},
+		ArtifactFiles:     map[string]string{artifactKey(artifact): artifactPath},
+		PrivilegedRunner:  privilegedRunner,
+		PrivilegedAddress: "192.0.2.10",
+		PrivilegedUser:    "root",
+	}
+	var storageLookups, configLookups int
+	started := false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/200/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/200/config":
+			configLookups++
+			if configLookups == 1 {
+				return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+			}
+			return response([]byte(`{"data":{"name":"lab-tailnet-01","hostname":"lab-tailnet-01","description":"` + artifactDescription(artifact) + `","unprivileged":1,"dev0":"path=/dev/net/tun,mode=0666","tags":"boetticher;managed;module;module-tailnet-router;boetticher-module-tailnet-router;backup"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+			storageLookups++
+			if storageLookups == 1 {
+				return response([]byte(`{"data":[]}`))
+			}
+			return response([]byte(`{"data":[{"volid":"local:vztmpl/boetticher-tailnet-router-1.0.0-amd64.tar.zst","filename":"boetticher-tailnet-router-1.0.0-amd64.tar.zst","checksum":"` + artifact.ContentSHA256 + `"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
+			_, _ = io.Copy(io.Discard, r.Body)
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc":
+			if err := r.ParseForm(); err != nil {
+				t.Fatalf("parse create form: %v", err)
+			}
+			if got := r.Form.Get("dev0"); got != "" {
+				t.Fatalf("scoped API create unexpectedly received dev0=%q", got)
+			}
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/200/status/current":
+			return response([]byte(`{"data":{"status":"stopped"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/200/status/start":
+			started = true
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected LXC device provisioning request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := ProvisionModule(context.Background(), client, plan, "tailnet-router"); err != nil {
+		t.Fatalf("ProvisionModule() = %v", err)
+	}
+	if !started {
+		t.Fatal("LXC start was not requested after exact device verification")
+	}
+	if privilegedRunner.address != "192.0.2.10" || privilegedRunner.user != "root" || len(privilegedRunner.args) != 1 {
+		t.Fatalf("unexpected privileged device configuration calls: %#v", privilegedRunner)
+	}
+	if got, want := privilegedRunner.args[0], []string{"/usr/sbin/pct", "set", "200", "--dev0", "path=/dev/net/tun,mode=0666"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("privileged device configuration args = %#v, want %#v", got, want)
 	}
 }
 

@@ -38,6 +38,9 @@ func TestPlanProjectsMandatoryCollectorAndManagedSources(t *testing.T) {
 	if strings.Contains(CollectorServiceOverride(plan), "--listen-https") {
 		t.Fatal("collector backend still exposes an unrevocable TLS listener")
 	}
+	if got := CollectorSocketOverride(plan); !strings.Contains(got, "ListenStream=\nListenStream=127.0.0.1:19534") {
+		t.Fatalf("collector socket override does not move socket activation to the loopback backend: %q", got)
+	}
 	if strings.Contains(CollectorConfiguration(plan), "TrustedCertificateFile=") {
 		t.Fatal("collector backend configuration still implies direct TLS termination")
 	}

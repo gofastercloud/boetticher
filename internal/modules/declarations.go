@@ -9,6 +9,8 @@ import (
 	"github.com/gofastercloud/boetticher/internal/model"
 )
 
+const tailscaleDERPRegionCount = 28
+
 func composeDeclarations(site model.Site, resolved []ResolvedModule) ([]model.ModuleDeclaration, error) {
 	declarations := make([]model.ModuleDeclaration, 0, len(resolved))
 	for _, module := range resolved {
@@ -55,6 +57,7 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 	case "monitoring":
 		declaration.Secrets = []model.SecretDeclaration{
 			{Name: "pulse_admin_password", Purpose: "Pulse administrative bootstrap authentication", Consumer: "pulse-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential", Lifecycle: model.SecretLifecycleRuntime},
+			{Name: "pulse_proxy_auth_secret", Purpose: "shared Pulse reverse-proxy authentication secret", Consumer: "pulse-server/nginx", Generation: "operator-supplied", Rotation: "replaceable", Delivery: "systemd-credential", Lifecycle: model.SecretLifecycleRuntime},
 			{Name: "pulse_proxmox_token", Purpose: "API-only Proxmox monitoring token value", Consumer: "deployment-controller", Generation: "ephemeral", Rotation: "replaceable", Delivery: "controller-memory", Lifecycle: model.SecretLifecycleRuntime},
 			{Name: "pulse_api_token", Purpose: "read-only Pulse monitoring API integration", Consumer: "deployment-controller", Generation: "ephemeral", Rotation: "replaceable", Delivery: "controller-memory", Lifecycle: model.SecretLifecycleRuntime},
 			{Name: "pulse_agent_token", Purpose: "read-only Pulse host-agent report authentication", Consumer: "pulse-agent", Generation: "ephemeral", Rotation: "replaceable", Delivery: "systemd-credential", Lifecycle: model.SecretLifecycleRuntime},
@@ -84,7 +87,10 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 			{Source: "lab-tailnet-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Direction: "egress", Purpose: "Tailscale router DNS resolution"},
 			{Source: "lab-tailnet-01", Destination: "dns", Protocol: "udp", Ports: []string{"123"}, Direction: "egress", Purpose: "Tailscale router time synchronisation"},
 			{Source: "lab-tailnet-01", Destination: "tailscale-control-plane", Endpoint: "https://controlplane.tailscale.com", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "Tailscale control-plane operation"},
-			{Source: "lab-tailnet-01", Destination: "tailscale-derp", Endpoint: "https://derp.tailscale.com", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "Tailscale DERP operation"},
+		}
+		for region := 1; region <= tailscaleDERPRegionCount; region++ {
+			host := fmt.Sprintf("derp%d-all.tailscale.com", region)
+			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-tailnet-01", Destination: fmt.Sprintf("tailscale-derp-%02d", region), Endpoint: "https://" + host, Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "Tailscale DERP region operation"})
 		}
 		if IsEnabled(site, "logging") {
 			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-tailnet-01", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"})
@@ -126,6 +132,16 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 			model.MonitoringDeclaration{Name: "octoprint", Kind: "service", Target: "lab-printer-01", Checks: []string{"octoprint", "loopback", "serial"}, Description: "OctoPrint backend and printer serial availability"},
 		)
 		declaration.Portal = []model.PortalEntry{{Name: "printer", Description: "mTLS-protected OctoPrint management for the Ender-3 V3 SE", URLs: []string{"https://octoprint." + site.Network.Domain}, Docs: []string{"docs/modules/printer.md"}}}
+	case "streamdeck":
+		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true}
+		declaration.Secrets = []model.SecretDeclaration{{Name: "pulse_api_token", Purpose: "read-only Pulse monitoring API integration", Consumer: "streamdeck-status", Generation: "dependency", Rotation: "replaceable", Delivery: "systemd-credential", Lifecycle: model.SecretLifecycleRuntime}}
+		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "lab-streamdeck-01", SANs: []string{"lab-streamdeck-01." + site.Network.Domain}, Consumer: "streamdeck-status"})
+		declaration.NetworkIntents = append(declaration.NetworkIntents,
+			model.NetworkIntent{Source: "lab-streamdeck-01", Destination: "monitor." + site.Network.Domain, Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "read-only Pulse Proxmox host status polling"},
+			model.NetworkIntent{Source: "lab-streamdeck-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Direction: "egress", Purpose: "StreamDeck DNS resolution"},
+			model.NetworkIntent{Source: "lab-streamdeck-01", Destination: "dns", Protocol: "udp", Ports: []string{"123"}, Direction: "egress", Purpose: "StreamDeck time synchronisation"},
+		)
+		declaration.Monitoring = append(declaration.Monitoring, model.MonitoringDeclaration{Name: "streamdeck-status", Kind: "service", Target: "lab-streamdeck-01", Checks: []string{"streamdeck-status", "usb"}, Description: "read-only Proxmox host status display and USB availability"})
 	case "aiops":
 		config := site.ModuleConfig[name]
 		if _, err := model.ResolveLiteLLMAlias(site.ModuleConfig["litellm"], config.ModelAlias); err != nil {
@@ -199,6 +215,8 @@ func persistentFor(module, guest string) []model.PersistentState {
 			{Name: "octoprint-state", Guest: guest, Path: "/var/lib/octoprint", Kind: "application-state", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"},
 			{Name: "tls-identity", Guest: guest, Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"},
 		}
+	case "streamdeck":
+		return []model.PersistentState{identity, {Name: "tls-identity", Guest: guest, Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	case "aiops":
 		return []model.PersistentState{identity, {Name: "aiops-state", Guest: guest, Path: "/var/lib/boetticher/aiops", Kind: "incident-state-and-endpoint-identities", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	default:
@@ -224,6 +242,8 @@ func volumesFor(module, guest string) []model.PersistentVolumeDeclaration {
 		return []model.PersistentVolumeDeclaration{identity, volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true)}
 	case "printer":
 		return []model.PersistentVolumeDeclaration{identity, volume("octoprint-state", "/var/lib/octoprint", 8, true), volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true)}
+	case "streamdeck":
+		return []model.PersistentVolumeDeclaration{identity, volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true)}
 	case "aiops":
 		return []model.PersistentVolumeDeclaration{identity, volume("aiops-state", "/var/lib/boetticher/aiops", 1, true)}
 	case "logging":

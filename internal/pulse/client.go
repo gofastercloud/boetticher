@@ -113,6 +113,14 @@ func IsUnauthorized(err error) bool {
 	return errors.As(err, &pulseErr) && pulseErr.Status == http.StatusUnauthorized
 }
 
+// IsForbidden reports whether an API request was rejected with HTTP 403.
+// Callers must combine this with a narrowly scoped client and endpoint
+// contract before treating it as credential drift.
+func IsForbidden(err error) bool {
+	var pulseErr *apiError
+	return errors.As(err, &pulseErr) && pulseErr.Status == http.StatusForbidden
+}
+
 func NewReadClient(config ClientConfig) (*Client, error) {
 	if strings.TrimSpace(config.APIToken) == "" {
 		return nil, errors.New("Pulse read client requires an API token")
@@ -244,6 +252,19 @@ func (c *Client) StateSummary(ctx context.Context) (StateSummary, error) {
 		return StateSummary{}, errors.New("Pulse state summary has no lastUpdate")
 	}
 	return summary, nil
+}
+
+// ValidateReadToken checks a persisted monitoring:read token with the admin
+// client's already-configured transport. The token itself is never logged or
+// included in an error; callers may refresh it only when IsUnauthorized is
+// true.
+func (c *Client) ValidateReadToken(ctx context.Context, token string) error {
+	if !c.admin || strings.TrimSpace(token) == "" {
+		return errors.New("Pulse read-token validation requires admin authority and a token")
+	}
+	candidate := &Client{baseURL: c.baseURL, apiToken: token, http: c.http}
+	_, err := candidate.StateSummary(ctx)
+	return err
 }
 
 func (c *Client) Resources(ctx context.Context) (ResourcesResponse, error) {

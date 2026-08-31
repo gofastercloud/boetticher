@@ -9,7 +9,7 @@ boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall]
 boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--record] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]
 boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]
 boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]
-boetticher status [--site DIR] [--live] [--verbose] [--json]
+boetticher status [--site DIR] [--ssh-config PATH] [--ssh-journey] [--live] [--verbose] [--json]
 boetticher update [--site DIR] [--dry-run] [--confirm]
 boetticher logs [HOST] [--site DIR] [--unit UNIT] [--since DURATION] [--priority LEVEL] [--limit N]
 boetticher aiops status [--site DIR] [--live] [--json]
@@ -20,6 +20,7 @@ boetticher ssh-config [--site DIR] [--output PATH| -] [--force] [--check] [--ide
 boetticher access [--site DIR]
 boetticher bootstrap-endpoint show|set ADDRESS [--site DIR]
 boetticher network trunk status|attach|detach [INTERFACE] [--site DIR] [--confirm] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
+boetticher network test [--site DIR] [--zones ZONE,...] [--capture] [--cleanup-only] [--json] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]
 boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]
@@ -103,15 +104,15 @@ Related commands: preflight, verify, doctor
 
 ### status
 
-Purpose: Show whether the platform and its modules need attention.
+Purpose: Run the current platform health checks and show whether the platform needs attention.
 
-Usage: `boetticher status [--site DIR] [--live] [--verbose] [--json]`
+Usage: `boetticher status [--site DIR] [--ssh-config PATH] [--ssh-journey] [--live] [--verbose] [--json]`
 
 Arguments: No positional arguments.
 
-Options: --live performs bounded read-only gateway checks; --verbose includes detailed reasons and next actions; --json emits the versioned status model. Exit status is zero only for HEALTHY; FAILED, DEGRADED, and ACTION REQUIRED return non-zero. Disabled optional modules are excluded from the overall result.
+Options: --live performs bounded read-only managed-gateway checks; --ssh-journey runs a bounded authenticated bastion journey; --ssh-config selects the generated SSH configuration; --verbose includes detailed reasons and next actions; --json emits the versioned status model. Exit status is zero only for HEALTHY; a failed or degraded check returns non-zero. Checks that require separate operator, recovery, or product acceptance evidence are not included.
 
-Safety: Read-only. Live transport and malformed observations fail non-zero and are never reported as PASS.
+Safety: Read-only. Status and verify use the same health checks. Live transport and malformed observations fail non-zero and are never reported as PASS.
 
 Examples: `boetticher status --site ./my-boetticher`; `boetticher status --site ./my-boetticher --live --json`
 
@@ -167,19 +168,19 @@ Related commands: module status, doctor, logs
 
 ### verify
 
-Purpose: Verify the resolved model, ownership, artifacts, declarations, and supported live evidence.
+Purpose: Compatibility alias for the status health checks that also refreshes verification and portal artifacts.
 
 Usage: `boetticher verify [--site DIR] [--ssh-config PATH] [--ssh-journey] [--live]`
 
 Arguments: No positional arguments.
 
-Options: --ssh-journey runs a bounded authenticated bastion journey; --ssh-config selects the generated SSH configuration; --live queries the managed gateway upstream lease and publication mapping.
+Options: --ssh-journey runs a bounded authenticated bastion journey; --ssh-config selects the generated SSH configuration; --live queries the managed gateway health; verification results are written to the generated evidence and status projections.
 
-Safety: Static checks are distinct from live evidence. Unsupported live checks remain NOT TESTED.
+Safety: Status and verify use the same checks. Unsupported live or acceptance checks are omitted rather than reported as NOT TESTED.
 
-Examples: `boetticher verify --site ./my-boetticher`
+Examples: `boetticher verify --site ./my-boetticher`; `boetticher verify --site ./my-boetticher --live`
 
-Related commands: preflight, deploy, doctor
+Related commands: status, preflight, deploy, doctor
 
 ### doctor
 
@@ -399,7 +400,7 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, litellm, and printer are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, litellm, printer, and streamdeck are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 
@@ -737,9 +738,9 @@ Arguments: --source and --protocol are required; choose exactly one of --destina
 
 Options: --dry-run previews the change; --confirm writes it; --age-identity, --proxmox-ca, and --insecure apply when resolving a VMID.
 
-Safety: Changes site.yml only and never deploys. Review the rule before confirming; deployment remains boetticher deploy.
+Safety: Changes site.yml only and never deploys. Core destinations remain rejected except a reserved SERVERS /32 to the fixed Pulse endpoint on TCP/443. Review the rule before confirming; deployment remains boetticher deploy.
 
-Examples: `boetticher firewall rule add --source TRUSTED --destination 10.10.20.61 --protocol tcp --ports 8080 --confirm --site ./my-boetticher`
+Examples: `boetticher firewall rule add --source TRUSTED --destination 10.10.20.61 --protocol tcp --ports 8080 --confirm --site ./my-boetticher`; `boetticher firewall rule add --source 10.10.20.50/32 --destination 10.10.10.20/32 --protocol tcp --ports 443 --id ufr-lab-display-pulse --confirm --site ./my-boetticher`
 
 Related commands: firewall diff, deploy, dhcp reservation
 
@@ -1025,7 +1026,7 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, litellm, and printer are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, litellm, printer, and streamdeck are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 
@@ -1041,7 +1042,7 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, litellm, and printer are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, litellm, printer, and streamdeck are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 
@@ -1057,11 +1058,27 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, litellm, and printer are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, litellm, printer, and streamdeck are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 
 Related commands: config validate, deploy, doctor
+
+### network test
+
+Purpose: Run bounded reachability, DNS, policy, mTLS, and performance checks from temporary probes in the selected zones.
+
+Usage: `boetticher network test [--site DIR] [--zones ZONE,...] [--capture] [--cleanup-only] [--json] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]`
+
+Arguments: No positional arguments. By default all six modeled zones are exercised.
+
+Options: --zones selects a comma-separated subset; --capture adds a bounded probe-local tcpdump case; --cleanup-only removes stale exact-owned probes; --json emits the redacted report model; connection options select the Proxmox trust path.
+
+Safety: Advanced and live. It creates only exact-owned unprivileged LXC probes in VMIDs 910-919, never changes firewall policy, and always removes its probes. Unknown occupants, ambiguous evidence, and cleanup failures return HOLD. Results are private evidence and do not change desired state.
+
+Examples: `boetticher network test --site ./my-boetticher`; `boetticher network test --zones TRUSTED,SANDBOX --json --site ./my-boetticher`
+
+Related commands: network trunk status, firewall diff, dhcp leases, verify
 
 ### network trunk attach
 

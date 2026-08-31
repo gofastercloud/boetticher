@@ -1,6 +1,9 @@
 package firewall
 
 import (
+	"errors"
+	"fmt"
+	"net"
 	"reflect"
 	"strings"
 	"testing"
@@ -210,7 +213,18 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ruleset, err := RenderNFT(plan)
+	ruleset, err := renderNFTWithResolver(plan, func(host string) ([]net.IP, error) {
+		if host == "openrouter.ai" {
+			return []net.IP{net.ParseIP("198.51.100.11"), net.ParseIP("198.51.100.10")}, nil
+		}
+		if host == "controlplane.tailscale.com" {
+			return []net.IP{net.ParseIP("198.51.100.30")}, nil
+		}
+		if strings.HasPrefix(host, "derp") && strings.HasSuffix(host, "-all.tailscale.com") {
+			return []net.IP{net.ParseIP("198.51.100.31")}, nil
+		}
+		return nil, fmt.Errorf("unexpected endpoint %s", host)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +234,10 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 		"10.10.5.10/32 ip daddr 10.10.10.20/32 tcp dport 443",
 		"10.10.10.20/32 ip daddr 10.10.99.5/32 tcp dport 8006",
 		"10.10.99.5/32 ip daddr 10.10.10.40/32 tcp dport 19532",
-		"10.10.20.60/32 ip daddr openrouter.ai tcp dport 443",
+		"10.10.99.5/32 ip daddr 10.10.5.10/32 tcp dport 22",
+		"set boetticher_endpoint_29 { type ipv4_addr; elements = { 198.51.100.10, 198.51.100.11 } }",
+		"10.10.20.60/32 ip daddr @boetticher_endpoint_29 tcp dport 443",
+		"oifname \"wan0\" ip saddr 10.10.5.10/32 masquerade comment \"boetticher:nat-transit\"",
 		"set module_guest_sources { type ipv4_addr; elements = {",
 		"10.10.10.20, 10.10.20.60, 10.10.5.10",
 		"iifname \"servers0\" ip saddr != @module_guest_sources oifname \"wan0\"",
@@ -235,6 +252,9 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 	}
 	if strings.Contains(ruleset, `iifname "transit0" ip daddr @servers_net accept`) {
 		t.Fatal("managed module policy contains a broad TRANSIT-to-SERVERS allow")
+	}
+	if strings.Index(ruleset, "10.10.99.5/32 ip daddr 10.10.5.10/32 tcp dport 22") > strings.Index(ruleset, "TO-TRANSIT-DROP") {
+		t.Fatal("narrow Proxmox jump path occurs after the TRANSIT default deny")
 	}
 	if strings.Contains(ruleset, "10051") {
 		t.Fatal("Pulse-based monitoring policy retains the removed Zabbix port")
@@ -266,7 +286,15 @@ func TestDistinctLiteLLMUpstreamsHaveDistinctSemanticCounterIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ruleset, err := RenderNFT(plan)
+	ruleset, err := renderNFTWithResolver(plan, func(host string) ([]net.IP, error) {
+		if host == "openrouter.ai" {
+			return []net.IP{net.ParseIP("198.51.100.10")}, nil
+		}
+		if host == "api.anthropic.com" {
+			return []net.IP{net.ParseIP("198.51.100.20")}, nil
+		}
+		return nil, fmt.Errorf("unexpected endpoint %s", host)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,6 +306,30 @@ func TestDistinctLiteLLMUpstreamsHaveDistinctSemanticCounterIDs(t *testing.T) {
 	}
 	if len(upstreamRules) != 2 || upstreamRules[0] == upstreamRules[1] {
 		t.Fatalf("LiteLLM upstream semantic counter rules = %v", upstreamRules)
+	}
+}
+
+func TestEndpointResolutionFailsClosed(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	litellmEnabled := true
+	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+		Enabled:   &litellmEnabled,
+		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
+		Models:    []model.LiteLLMModelConfig{{Alias: "selected-alias", Upstream: "openrouter", Model: "selected/openrouter-model"}},
+	}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = renderNFTWithResolver(plan, func(string) ([]net.IP, error) {
+		return nil, errors.New("temporary resolver failure")
+	})
+	if err == nil || !strings.Contains(err.Error(), "HOLD: resolve endpoint openrouter.ai") {
+		t.Fatalf("endpoint resolver failure was not preserved as a HOLD: %v", err)
 	}
 }
 
@@ -421,6 +473,32 @@ func TestManagedRulesetIsDeterministicAndFailClosed(t *testing.T) {
 	}
 }
 
+func TestPulseHTTPSIsAllowedFromModeledClientZones(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleset, err := RenderNFT(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"iifname \"transit0\" oifname \"infra0\" ip saddr 10.10.5.0/24 ip daddr 10.10.10.20/32 tcp dport 443 counter accept",
+		"iifname \"servers0\" oifname \"infra0\" ip saddr 10.10.20.0/24 ip daddr 10.10.10.20/32 tcp dport 443 counter accept",
+		"iifname \"trusted0\" oifname \"infra0\" ip saddr 10.10.30.0/24 ip daddr 10.10.10.20/32 tcp dport 443 counter accept",
+	} {
+		if !strings.Contains(ruleset, expected) {
+			t.Errorf("Pulse client-zone rule missing %q:\\n%s", expected, ruleset)
+		}
+	}
+	if strings.Contains(ruleset, "iifname \"trusted0\" oifname \"infra0\" ip saddr 10.10.30.0/24 ip daddr @infra_net tcp dport 443 counter accept") {
+		t.Fatal("TRUSTED retains a broad HTTPS-to-INFRA rule")
+	}
+	if strings.Index(ruleset, "iifname \"transit0\" oifname \"infra0\" ip saddr 10.10.5.0/24") > strings.Index(ruleset, "TRANSIT-INFRA-DROP") {
+		t.Fatal("TRANSIT-to-Pulse allow occurs after the TRANSIT default deny")
+	}
+}
+
 func TestExternalPlanHasPolicyButNoManagedInterfaces(t *testing.T) {
 	plan, err := PlanFromSite(model.NewSite("installation", "age1example", model.GatewayModeExternal))
 	if err != nil {
@@ -446,5 +524,68 @@ func TestExternalPlanHasPolicyButNoManagedInterfaces(t *testing.T) {
 	}
 	if _, err := RenderNFT(plan); err == nil {
 		t.Fatal("external mode rendered a managed nftables ruleset")
+	}
+}
+
+func TestPortalHTTPSIsAllowedFromModeledClientZones(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleset, err := RenderNFT(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"iifname \"transit0\" oifname \"infra0\" ip saddr 10.10.5.0/24 ip daddr 10.10.10.30/32 tcp dport 443 counter accept",
+		"iifname \"servers0\" oifname \"infra0\" ip saddr 10.10.20.0/24 ip daddr 10.10.10.30/32 tcp dport 443 counter accept",
+		"iifname \"trusted0\" oifname \"infra0\" ip saddr 10.10.30.0/24 ip daddr 10.10.10.30/32 tcp dport 443 counter accept",
+	} {
+		if !strings.Contains(ruleset, expected) {
+			t.Errorf("Portal client-zone rule missing %q:\\n%s", expected, ruleset)
+		}
+	}
+	if strings.Index(ruleset, "iifname \"transit0\" oifname \"infra0\" ip saddr 10.10.5.0/24 ip daddr 10.10.10.30/32") > strings.Index(ruleset, "TRANSIT-INFRA-DROP") {
+		t.Fatal("TRANSIT-to-Portal allow occurs after the TRANSIT default deny")
+	}
+}
+
+func TestTailnetRouterUsesBothDNSAndNTPEndpoints(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	enabled := true
+	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &enabled}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := policyRules(site)
+	seen := map[string]map[string]bool{"Tailscale router DNS resolution": {}, "Tailscale router time synchronisation": {}}
+	for _, rule := range rules {
+		for purpose := range seen {
+			if strings.Contains(rule.Description, purpose) {
+				seen[purpose][rule.DestinationCIDR] = true
+			}
+		}
+	}
+	for purpose, destinations := range seen {
+		if len(destinations) != 2 || !destinations["10.10.10.10/32"] || !destinations["10.10.10.11/32"] {
+			t.Fatalf("Tailnet %s destinations = %v, want both DNS endpoints", purpose, destinations)
+		}
+	}
+}
+
+func TestLogicalDNSIntentExpandsToAllManagedDNSEndpoints(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	rules := policyRulesForIntent(site, "monitoring", model.NetworkIntent{
+		Source: "lab-monitor-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Purpose: "DNS resolution",
+	})
+	seen := map[string]bool{}
+	names := map[string]bool{}
+	for _, rule := range rules {
+		seen[rule.DestinationCIDR] = true
+		names[rule.Name] = true
+	}
+	if len(seen) != 2 || len(names) != 2 || !seen["10.10.10.10/32"] || !seen["10.10.10.11/32"] {
+		t.Fatalf("logical DNS intent destinations = %v, names = %v, want both managed DNS endpoints with unique names", seen, names)
 	}
 }

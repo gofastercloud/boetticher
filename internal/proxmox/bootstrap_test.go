@@ -98,6 +98,9 @@ func TestSSHRunnerUsesBoundedTrustOnFirstUseForFreshApplianceHostKeys(t *testing
 	if !strings.Contains(joined, "StrictHostKeyChecking=yes") {
 		t.Fatalf("fresh appliance probe does not require a pinned host key: %#v", args)
 	}
+	if !strings.Contains(joined, "ConnectTimeout=10") {
+		t.Fatalf("fresh appliance probe does not have a bounded SSH connection timeout: %#v", args)
+	}
 	if strings.Contains(joined, "StrictHostKeyChecking=no") {
 		t.Fatalf("fresh appliance probe disables host-key verification: %#v", args)
 	}
@@ -178,6 +181,24 @@ func TestSSHRunnerHostAliasStillSelectsApplianceConfigHost(t *testing.T) {
 	}
 }
 
+func TestSSHRunnerRestrictsAuthenticationToConfiguredIdentity(t *testing.T) {
+	runner := SSHRunner{IdentityFile: "/tmp/operator", StrictHostKey: "yes"}
+	args, err := runner.commandArgs("192.0.2.10", "root", []string{"true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(args, "IdentitiesOnly=yes") || !containsString(args, "-i") || !containsString(args, "/tmp/operator") {
+		t.Fatalf("SSH runner did not restrict authentication to the configured identity: %#v", args)
+	}
+}
+
+func TestSSHProcessUsesDedicatedProcessGroupForProxyJumpCleanup(t *testing.T) {
+	process := newSSHProcess([]string{"true"})
+	if process.SysProcAttr == nil || !process.SysProcAttr.Setpgid {
+		t.Fatal("SSH process is not isolated for process-group cancellation")
+	}
+}
+
 func TestSSHRunnerLocalForwardUsesLoopbackAndBoundedTarget(t *testing.T) {
 	runner := SSHRunner{ConfigFile: "/tmp/boetticher.conf", StrictHostKey: "yes", HostAlias: "lab-proxmox-01"}
 	args, err := runner.forwardArgs("192.0.2.10", "root", 43123, "10.10.10.20", 443)
@@ -202,6 +223,7 @@ func TestSSHRunnerRejectsWeakHostKeyVerificationModes(t *testing.T) {
 
 func TestConfigureManagementNetworkValidatesUnchangedHOMEAndVLANState(t *testing.T) {
 	runner := &fakeRunner{responses: map[string][]byte{
+		"sudo -n /bin/cat /etc/network/interfaces":        []byte("auto vmbr0\niface vmbr0 inet static\n"),
 		"sudo -n /usr/sbin/ip -4 -j addr show dev vmbr0":  []byte(`[{"addr":"192.0.2.10/24"}]`),
 		"sudo -n /usr/sbin/ip -4 -j route show default":   []byte(`[{"dst":"default","gateway":"192.0.2.1"}]`),
 		"sudo -n /usr/sbin/ip -4 addr show dev vmbr1.99":  []byte("inet 10.10.99.5/24"),
@@ -212,6 +234,8 @@ func TestConfigureManagementNetworkValidatesUnchangedHOMEAndVLANState(t *testing
 		t.Fatal(err)
 	}
 	for _, required := range []string{
+		"sudo -n /bin/cat /etc/network/interfaces",
+		"sudo -n install -D -m 0644 /dev/stdin /etc/network/interfaces",
 		"sudo -n /usr/sbin/ip -4 -j addr show dev vmbr0",
 		"sudo -n /usr/sbin/ip -4 -j route show default",
 		"sudo -n /usr/sbin/ifreload -a",
@@ -566,6 +590,38 @@ func TestRestoreTemporaryRootAccessRejectsGuestAgentFailure(t *testing.T) {
 	err := RestoreTemporaryRootAccess(context.Background(), runner, "192.0.2.10", "root", KindQEMU, 100, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator")
 	if err == nil || !strings.Contains(err.Error(), "exited 1") {
 		t.Fatalf("guest-agent failure was not preserved: %v", err)
+	}
+}
+
+func TestInactivateRetainedModuleUsesBoundedGuestServiceContract(t *testing.T) {
+	for _, guest := range []struct {
+		kind GuestKind
+		want string
+	}{
+		{kind: KindQEMU, want: "/usr/sbin/qm guest exec 200 -- /bin/sh -c"},
+		{kind: KindLXC, want: "/usr/sbin/pct exec 200 -- /bin/sh -c"},
+	} {
+		t.Run(string(guest.kind), func(t *testing.T) {
+			runner := &fakeRunner{output: []byte("{\"exitcode\":0,\"exited\":1}")}
+			if err := InactivateRetainedModule(context.Background(), runner, "192.0.2.10", "root", guest.kind, 200, "tailnet-router"); err != nil {
+				t.Fatal(err)
+			}
+			if runner.user != "root" || !strings.Contains(runner.command, guest.want) || !strings.Contains(runner.command, "systemctl disable --now") || !strings.Contains(runner.command, "tailscaled") {
+				t.Fatalf("retained inactivation used unexpected command: %#v", runner)
+			}
+			for _, forbidden := range []string{"systemctl disable --now '*'", "rm -rf", "sudo", "ssh ", "ansible"} {
+				if strings.Contains(runner.command, forbidden) {
+					t.Fatalf("retained inactivation contains forbidden %q: %s", forbidden, runner.command)
+				}
+			}
+		})
+	}
+}
+
+func TestInactivateRetainedModuleRejectsUnknownServiceContract(t *testing.T) {
+	err := InactivateRetainedModule(context.Background(), &fakeRunner{}, "192.0.2.10", "root", KindLXC, 200, "unknown")
+	if err == nil || !strings.Contains(err.Error(), "no bounded service contract") {
+		t.Fatalf("unknown retained module was not rejected: %v", err)
 	}
 }
 

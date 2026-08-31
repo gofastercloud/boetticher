@@ -155,6 +155,16 @@ func TestParseSiteConfigRejectsUnknownModuleName(t *testing.T) {
 	}
 }
 
+func TestParseSiteConfigAllowsGatusModule(t *testing.T) {
+	config, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  gatus:\n    enabled: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Modules.Gatus == nil || config.Modules.Gatus.Enabled == nil || !*config.Modules.Gatus.Enabled {
+		t.Fatalf("Gatus module configuration was not decoded: %#v", config.Modules.Gatus)
+	}
+}
+
 func TestLiteLLMConfigIsStrictAndProviderNeutral(t *testing.T) {
 	valid := []byte(`api_version: boetticher/v3
 modules:

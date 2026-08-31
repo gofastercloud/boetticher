@@ -133,6 +133,30 @@
   notify: reload logging systemd
   when: inventory_hostname == logging_plan.collector
 
+- name: Install the journal-remote socket override
+  ansible.builtin.file:
+    path: /etc/systemd/system/systemd-journal-remote.socket.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: inventory_hostname == logging_plan.collector
+
+- name: Install the journal-remote socket override file
+  ansible.builtin.copy:
+    content: "{{ logging_collector_socket_override }}"
+    dest: /etc/systemd/system/systemd-journal-remote.socket.d/boetticher.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload logging systemd
+  when: inventory_hostname == logging_plan.collector
+
+- name: Reload logging systemd units after collector override installation
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: inventory_hostname == logging_plan.collector
+
 - name: Disable the socket-activated collector listener
   ansible.builtin.service:
     name: systemd-journal-remote.socket
@@ -206,6 +230,33 @@
   when:
     - inventory_hostname == logging_plan.collector
     - logging_collector_certificate | default('') | length > 0
+
+- name: Reload nginx after enabling the journal mTLS proxy
+  ansible.builtin.systemd_service:
+    name: nginx
+    state: reloaded
+  when:
+    - inventory_hostname == logging_plan.collector
+    - logging_collector_certificate | default('') | length > 0
+
+- name: Keep the optional AIOps journal query stopped when AIOps is disabled
+  ansible.builtin.service:
+    name: boetticher-log-query
+    enabled: false
+    state: stopped
+  when:
+    - inventory_hostname == logging_plan.collector
+    - not (module_configs.aiops is defined and module_configs.aiops.enabled | default(false) | bool)
+
+- name: Clear stale failure state for the disabled AIOps journal query
+  ansible.builtin.command:
+    argv: [systemctl, reset-failed, boetticher-log-query]
+  register: boetticher_log_query_reset
+  changed_when: false
+  failed_when: boetticher_log_query_reset.rc != 0 and 'Unit boetticher-log-query.service not loaded.' not in boetticher_log_query_reset.stderr
+  when:
+    - inventory_hostname == logging_plan.collector
+    - not (module_configs.aiops is defined and module_configs.aiops.enabled | default(false) | bool)
 
 - name: Install the bounded AIOps journal query policy
   ansible.builtin.file:

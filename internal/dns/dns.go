@@ -14,6 +14,7 @@ const (
 	AuthoritativeImplementation = model.AuthoritativeDNS
 	AuthoritativeVersion        = model.AuthoritativeDNSVersion
 	AuthoritativePort           = "5353"
+	DNSResponseTimeoutMS        = 15000
 	ConflictPolicy              = "reject-new-active-lease"
 	TSIGSecretReference         = "secrets/boetticher.sops.yaml#ddns_tsig_secret"
 )
@@ -62,16 +63,17 @@ type StaticRecord struct {
 }
 
 type DDNSPlan struct {
-	Enabled             bool       `json:"enabled"`
-	Source              string     `json:"source"`
-	UpdateTarget        string     `json:"update_target"`
-	UpdateSources       []string   `json:"update_sources"`
-	TSIGSecretReference string     `json:"tsig_secret_reference"`
-	ConflictPolicy      string     `json:"conflict_policy"`
-	LeaseFailurePolicy  string     `json:"lease_failure_policy"`
-	Replication         string     `json:"replication"`
-	TSIGAlgorithm       string     `json:"tsig_algorithm"`
-	Zones               []DDNSZone `json:"zones"`
+	Enabled              bool       `json:"enabled"`
+	Source               string     `json:"source"`
+	UpdateTarget         string     `json:"update_target"`
+	DNSResponseTimeoutMS int        `json:"dns_response_timeout_ms"`
+	UpdateSources        []string   `json:"update_sources"`
+	TSIGSecretReference  string     `json:"tsig_secret_reference"`
+	ConflictPolicy       string     `json:"conflict_policy"`
+	LeaseFailurePolicy   string     `json:"lease_failure_policy"`
+	Replication          string     `json:"replication"`
+	TSIGAlgorithm        string     `json:"tsig_algorithm"`
+	Zones                []DDNSZone `json:"zones"`
 }
 
 type DDNSZone struct {
@@ -135,8 +137,8 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	}
 	listenAddresses := []string{"127.0.0.1", "10.10.10.10"}
 	ddns := DDNSPlan{
-		Enabled: true, Source: "Kea D2 on lab-fw-01", UpdateTarget: "10.10.10.10:" + AuthoritativePort,
-		UpdateSources: []string{"10.10.99.1"}, TSIGSecretReference: TSIGSecretReference,
+		Enabled: true, Source: "Kea D2 on lab-fw-01", UpdateTarget: "10.10.10.10:" + AuthoritativePort, DNSResponseTimeoutMS: DNSResponseTimeoutMS,
+		UpdateSources: []string{"10.10.10.1"}, TSIGSecretReference: TSIGSecretReference,
 		ConflictPolicy: ConflictPolicy, LeaseFailurePolicy: "lease-continues-without-DNS-registration", Replication: "PowerDNS AXFR/IXFR lab-dns-01 primary to lab-dns-02 secondary on port " + AuthoritativePort,
 		TSIGAlgorithm: "hmac-sha256", Zones: ddnsZones,
 	}
@@ -160,9 +162,11 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	}, nil
 }
 
-// TSIGKeyName is the single naming contract shared by Kea and PowerDNS.
+// TSIGKeyName is the single naming contract shared by Kea and PowerDNS. The
+// canonical key identity omits the DNS root label; PowerDNS's gsqlite3 TSIG
+// lookup receives the wire name in this form.
 func TSIGKeyName(sourceZone, domain string) string {
-	return strings.ToLower(strings.TrimSuffix(sourceZone, ".")) + ".ddns." + strings.ToLower(strings.TrimSuffix(domain, ".")) + "."
+	return strings.ToLower(strings.TrimSuffix(sourceZone, ".")) + ".ddns." + strings.ToLower(strings.TrimSuffix(domain, "."))
 }
 
 func staticRecords(s model.Site) ([]StaticRecord, error) {

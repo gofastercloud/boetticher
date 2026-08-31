@@ -26,6 +26,8 @@
       when: inventory_hostname in groups.get('litellm', [])
     - role: printer
       when: inventory_hostname in groups.get('printer', [])
+    - role: streamdeck
+      when: inventory_hostname in groups.get('streamdeck', [])
     - role: aiops
       when: inventory_hostname in groups.get('aiops', [])
     - role: gatus
@@ -37,3 +39,4 @@
   gather_facts: false
   roles:
     - usb-export-host
+    - network-probe-host

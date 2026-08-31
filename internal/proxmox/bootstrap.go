@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
@@ -91,7 +92,9 @@ func WaitForSSH(ctx context.Context, runner CommandRunner, address, user string,
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("SSH readiness cancelled for %s: %w", address, err)
 		}
-		_, err := runner.Run(ctx, address, user, "true")
+		attemptCtx, cancel := context.WithTimeout(ctx, sshAttemptTimeout)
+		_, err := runner.Run(attemptCtx, address, user, "true")
+		cancel()
 		if err == nil {
 			return nil
 		}
@@ -128,7 +131,10 @@ func WaitForCommand(ctx context.Context, runner CommandRunner, address, user, co
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("command readiness cancelled for %s: %w", address, err)
 		}
-		if _, err := runner.Run(ctx, address, user, command); err == nil {
+		attemptCtx, cancel := context.WithTimeout(ctx, sshAttemptTimeout)
+		_, err := runner.Run(attemptCtx, address, user, command)
+		cancel()
+		if err == nil {
 			return nil
 		} else {
 			lastErr = err
@@ -211,6 +217,8 @@ type SSHPhysicalNetworkDiscovery struct {
 	Node      string
 	Discovery networkmodel.Discovery
 }
+
+const sshAttemptTimeout = 15 * time.Second
 
 // DiscoverPhysicalNetworkViaSSH uses the existing fresh-host trust path before
 // a Proxmox API token exists. It executes only fixed read-only pvesh and ip
@@ -366,7 +374,7 @@ func (r SSHRunner) StartLocalForward(ctx context.Context, address, user, targetA
 		return nil, err
 	}
 	forwardContext, cancel := context.WithCancel(ctx)
-	command := exec.CommandContext(forwardContext, "ssh", args...)
+	command := newSSHProcess(args)
 	command.Stdin = nil
 	command.Stdout = io.Discard
 	stderr := &boundedOutput{limit: 64 << 10}
@@ -376,7 +384,7 @@ func (r SSHRunner) StartLocalForward(ctx context.Context, address, user, targetA
 		return nil, fmt.Errorf("start SSH local forward: %w", err)
 	}
 	done := make(chan error, 1)
-	go func() { done <- command.Wait() }()
+	go waitForSSHProcess(forwardContext, command, done)
 	forward := &SSHLocalForward{localAddress: fmt.Sprintf("127.0.0.1:%d", localPort), cancel: cancel, done: done}
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -422,11 +430,38 @@ iface vmbr1.99 inet static
     down ip route del 10.10.0.0/16 via 10.10.99.1 dev vmbr1.99 || true
 `
 
+const networkInterfacesSourceDirectory = "source-directory /etc/network/interfaces.d"
+
+func ensureNetworkInterfacesSource(ctx context.Context, runner StdinCommandRunner, address, user string) error {
+	content, err := runner.Run(ctx, address, user, privilegedCommand(user, "/bin/cat /etc/network/interfaces"))
+	if err != nil {
+		return fmt.Errorf("read Proxmox network interfaces configuration: %w", err)
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		if strings.TrimSpace(line) == networkInterfacesSourceDirectory {
+			return nil
+		}
+	}
+	updated := append([]byte(nil), content...)
+	if len(updated) > 0 && updated[len(updated)-1] != '\n' {
+		updated = append(updated, '\n')
+	}
+	updated = append(updated, []byte(networkInterfacesSourceDirectory+"\n")...)
+	install := privilegedCommand(user, "install -D -m 0644 /dev/stdin /etc/network/interfaces")
+	if _, err := runner.RunWithStdin(ctx, address, user, install, bytes.NewReader(updated)); err != nil {
+		return fmt.Errorf("enable Proxmox network interfaces directory: %w", err)
+	}
+	return nil
+}
+
 // ConfigureManagementNetwork establishes the fixed virtual-only Proxmox
 // management leg. It never changes vmbr0, its member, or the default route.
 func ConfigureManagementNetwork(ctx context.Context, runner StdinCommandRunner, address, user string) error {
 	if runner == nil {
 		return errors.New("management network runner is required")
+	}
+	if err := ensureNetworkInterfacesSource(ctx, runner, address, user); err != nil {
+		return err
 	}
 	install := privilegedCommand(user, "install -D -m 0644 /dev/stdin /etc/network/interfaces.d/boetticher-management")
 	if _, err := runner.RunWithStdin(ctx, address, user, install, strings.NewReader(managementInterfaceConfig)); err != nil {
@@ -497,12 +532,17 @@ func (r SSHRunner) runArgsStream(ctx context.Context, address, user string, comm
 	if err != nil {
 		return err
 	}
-	process := exec.CommandContext(ctx, "ssh", args...)
+	process := newSSHProcess(args)
 	process.Stdin = stdin
 	process.Stdout = stdout
 	stderr := &boundedOutput{limit: 64 << 10}
 	process.Stderr = stderr
-	err = process.Run()
+	if err := process.Start(); err != nil {
+		return fmt.Errorf("start SSH command: %w", err)
+	}
+	done := make(chan error, 1)
+	go waitForSSHProcess(ctx, process, done)
+	err = <-done
 	if err != nil {
 		message := strings.TrimSpace(stderr.String())
 		if message != "" {
@@ -511,6 +551,26 @@ func (r SSHRunner) runArgsStream(ctx context.Context, address, user string, comm
 		return fmt.Errorf("SSH bootstrap command failed: %w", err)
 	}
 	return nil
+}
+
+func newSSHProcess(args []string) *exec.Cmd {
+	process := exec.Command("ssh", args...)
+	process.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	return process
+}
+
+func waitForSSHProcess(ctx context.Context, process *exec.Cmd, done chan<- error) {
+	wait := make(chan error, 1)
+	go func() { wait <- process.Wait() }()
+	select {
+	case err := <-wait:
+		done <- err
+	case <-ctx.Done():
+		if process.Process != nil {
+			_ = syscall.Kill(-process.Process.Pid, syscall.SIGKILL)
+		}
+		done <- <-wait
+	}
 }
 
 func (r SSHRunner) validateConfig() error {
@@ -580,7 +640,10 @@ func (r SSHRunner) connectionArgs(address, user, batchMode string) ([]string, st
 	if user == "" {
 		return nil, "", errors.New("bootstrap SSH user is required")
 	}
-	args := []string{"-o", "BatchMode=" + batchMode, "-o", "ForwardAgent=no", "-o", "ForwardX11=no"}
+	// Every readiness and cleanup command must have a finite connection
+	// boundary. Without this, an unreachable ProxyJump target can leave the
+	// deployment waiting indefinitely and can orphan the forwarding process.
+	args := []string{"-o", "BatchMode=" + batchMode, "-o", "ConnectTimeout=10", "-o", "ForwardAgent=no", "-o", "ForwardX11=no"}
 	strictHostKey := r.StrictHostKey
 	if strictHostKey == "" {
 		strictHostKey = "ask"
@@ -599,7 +662,10 @@ func (r SSHRunner) connectionArgs(address, user, batchMode string) ([]string, st
 		args = append(args, "-p", fmt.Sprint(r.Port))
 	}
 	if r.IdentityFile != "" {
-		args = append(args, "-i", r.IdentityFile)
+		// The generated deployment path supplies one enrolled operator key. Do
+		// not let an unrelated local agent identity consume the server's
+		// authentication budget before that key is tried.
+		args = append(args, "-o", "IdentitiesOnly=yes", "-i", r.IdentityFile)
 	}
 	if r.HostKeyAlias != "" {
 		if !safeNodeID(r.HostKeyAlias) {
@@ -642,7 +708,7 @@ func ConfigureIdentities(ctx context.Context, runner CommandRunner, address, ini
 	// Public keys and destination addresses are the only values interpolated;
 	// credentials are never placed in this command.
 	jumpKey := "restrict,port-forwarding,permitopen=\"" + strings.Join(allowedDestinations, "\",permitopen=\"") + "\" " + publicKeyLine(adminPublicKey)
-	command := "set -eu; id -u labadmin >/dev/null 2>&1 || useradd --create-home --shell /bin/bash labadmin; passwd --lock labadmin; gpasswd --delete labadmin sudo >/dev/null 2>&1 || true; id -u lab-jump >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin lab-jump; install -d -m 700 /root/.ssh /home/labadmin/.ssh /etc/ssh/sshd_config.d; touch /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /root/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /root/.ssh/authorized_keys; install -m 600 /dev/null /home/labadmin/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /home/labadmin/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /home/labadmin/.ssh/authorized_keys; install -m 600 /dev/null /home/lab-jump.authorized_keys; printf '%s\\n' " + shellQuote(jumpKey) + " > /home/lab-jump.authorized_keys; chown lab-jump:lab-jump /home/lab-jump.authorized_keys; chown -R labadmin:labadmin /home/labadmin/.ssh; rm -f /etc/sudoers.d/boetticher-labadmin; cat > /etc/ssh/sshd_config.d/90-boetticher-jump.conf <<'EOF'\nAllowUsers root labadmin lab-jump\nMatch User lab-jump\n    AuthorizedKeysFile /home/lab-jump.authorized_keys\n    PermitTTY no\n    X11Forwarding no\n    AllowAgentForwarding no\n    AllowTcpForwarding local\n    PermitOpen " + strings.Join(allowedDestinations, " ") + "\nEOF\nvisudo -cf /etc/sudoers\nsshd -t\nsystemctl reload ssh || systemctl reload sshd"
+	command := "set -eu; id -u labadmin >/dev/null 2>&1 || useradd --create-home --shell /bin/bash labadmin; passwd --lock labadmin; gpasswd --delete labadmin sudo >/dev/null 2>&1 || true; id -u lab-jump >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin lab-jump; install -d -m 700 /root/.ssh /home/labadmin/.ssh /etc/ssh/sshd_config.d; touch /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /root/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /root/.ssh/authorized_keys; install -m 600 /dev/null /home/labadmin/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /home/labadmin/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /home/labadmin/.ssh/authorized_keys; install -m 600 /dev/null /home/lab-jump.authorized_keys; printf '%s\\n' " + shellQuote(jumpKey) + " > /home/lab-jump.authorized_keys; chown lab-jump:lab-jump /home/lab-jump.authorized_keys; chown -R labadmin:labadmin /home/labadmin/.ssh; rm -f /etc/sudoers.d/boetticher-labadmin; cat > /etc/ssh/sshd_config.d/90-boetticher-jump.conf <<'EOF'\nAllowUsers root labadmin lab-jump lab-netprobe\nMatch User lab-jump\n    AuthorizedKeysFile /home/lab-jump.authorized_keys\n    PermitTTY no\n    X11Forwarding no\n    AllowAgentForwarding no\n    AllowTcpForwarding local\n    PermitOpen " + strings.Join(allowedDestinations, " ") + "\nEOF\nvisudo -cf /etc/sudoers\nsshd -t\nsystemctl reload ssh || systemctl reload sshd"
 	_, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, command))
 	return err
 }
@@ -703,6 +769,82 @@ func RestoreTemporaryRootAccess(ctx context.Context, runner CommandRunner, addre
 				return fmt.Errorf("guest-agent restore for guest %d exited %d: %s", vmid, exitCode, strings.TrimSpace(errData))
 			}
 			return fmt.Errorf("guest-agent restore for guest %d exited %d", vmid, exitCode)
+		}
+	}
+	return nil
+}
+
+var retainedModuleServices = map[string][]string{
+	"tailnet-router": {"tailscaled"},
+	"litellm":        {"litellm", "nginx"},
+	"printer":        {"octoprint", "nginx"},
+	"streamdeck":     {"streamdeck-status.service"},
+	"aiops":          {"boetticher-aiops", "boetticher-aiops.socket", "holmes"},
+	"gatus":          {"gatus", "nginx"},
+}
+
+// InactivateRetainedModule stops and disables only the declared service set
+// for one product-owned retained guest. It deliberately crosses the guest
+// boundary through authenticated Proxmox guest execution rather than relying
+// on the guest network, which may correctly be blocked by the modeled
+// firewall. The fixed service map prevents a retained declaration from
+// turning this operation into arbitrary guest command execution.
+func InactivateRetainedModule(ctx context.Context, runner CommandRunner, address, user string, kind GuestKind, vmid int, module string) error {
+	if runner == nil {
+		return errors.New("retained module inactivation runner is required")
+	}
+	if user != "root" {
+		return errors.New("retained module inactivation requires the root transport")
+	}
+	if vmid <= 0 {
+		return errors.New("retained module inactivation requires a positive guest VMID")
+	}
+	if kind != KindQEMU && kind != KindLXC {
+		return fmt.Errorf("retained module inactivation does not support guest kind %q", kind)
+	}
+	services, ok := retainedModuleServices[module]
+	if !ok {
+		return fmt.Errorf("retained module %q has no bounded service contract", module)
+	}
+	serviceCommands := make([]string, 0, len(services))
+	for _, service := range services {
+		serviceCommands = append(serviceCommands, "systemctl disable --now "+shellQuote(service)+"; if systemctl is-active --quiet "+shellQuote(service)+"; then echo retained service remains active: "+shellQuote(service)+" >&2; exit 1; fi; if systemctl is-enabled --quiet "+shellQuote(service)+"; then echo retained service remains enabled: "+shellQuote(service)+" >&2; exit 1; fi")
+	}
+	guestCommand := "set -eu; systemctl daemon-reload; " + strings.Join(serviceCommands, "; ")
+	var command string
+	switch kind {
+	case KindQEMU:
+		command = fmt.Sprintf("/usr/sbin/qm guest exec %d -- /bin/sh -c %s", vmid, shellQuote(guestCommand))
+	case KindLXC:
+		command = fmt.Sprintf("/usr/sbin/pct exec %d -- /bin/sh -c %s", vmid, shellQuote(guestCommand))
+	}
+	output, err := runner.Run(ctx, address, user, privilegedCommand(user, command))
+	if err != nil {
+		return fmt.Errorf("inactivate retained %s guest %d: %w", module, vmid, err)
+	}
+	if kind == KindQEMU {
+		var result map[string]json.RawMessage
+		if err := json.Unmarshal(bytes.TrimSpace(output), &result); err != nil {
+			return fmt.Errorf("decode guest-agent inactivation result for guest %d: %w", vmid, err)
+		}
+		var exited int
+		var exitCode int
+		if err := json.Unmarshal(result["exited"], &exited); err != nil {
+			return fmt.Errorf("decode guest-agent completion for guest %d: %w", vmid, err)
+		}
+		if err := json.Unmarshal(result["exitcode"], &exitCode); err != nil {
+			return fmt.Errorf("decode guest-agent exit code for guest %d: %w", vmid, err)
+		}
+		if exited != 1 {
+			return fmt.Errorf("guest-agent inactivation for guest %d did not finish", vmid)
+		}
+		if exitCode != 0 {
+			var errData string
+			_ = json.Unmarshal(result["err-data"], &errData)
+			if errData != "" {
+				return fmt.Errorf("guest-agent inactivation for guest %d exited %d: %s", vmid, exitCode, strings.TrimSpace(errData))
+			}
+			return fmt.Errorf("guest-agent inactivation for guest %d exited %d", vmid, exitCode)
 		}
 	}
 	return nil
@@ -803,7 +945,7 @@ func RevokeTemporaryRootAccess(ctx context.Context, runner CommandRunner, addres
 	removeKey := "file=/root/.ssh/authorized_keys; tmp=/root/.ssh/authorized_keys.boetticher-cleanup; trap 'rm -f \"$tmp\"' EXIT; if [ -f \"$file\" ]; then if grep -Fvx -- " + shellQuote(publicKey) + " \"$file\" >\"$tmp\"; then install -m 600 -o root -g root \"$tmp\" \"$file\"; else status=$?; [ \"$status\" -eq 1 ] || exit \"$status\"; rm -f \"$file\"; fi; fi; passwd --lock root"
 	command := "set -eu; " + removeKey
 	if host {
-		command = "set -eu; file=/etc/ssh/sshd_config.d/90-boetticher-jump.conf; if grep -qxF 'AllowUsers root labadmin lab-jump' \"$file\"; then sed -i 's/^AllowUsers root labadmin lab-jump$/AllowUsers labadmin lab-jump/' \"$file\"; elif ! grep -qxF 'AllowUsers labadmin lab-jump' \"$file\"; then exit 74; fi; sshd -t; systemctl reload ssh || systemctl reload sshd; " + removeKey
+		command = "set -eu; file=/etc/ssh/sshd_config.d/90-boetticher-jump.conf; if grep -qxF 'AllowUsers root labadmin lab-jump lab-netprobe' \"$file\"; then sed -i 's/^AllowUsers root labadmin lab-jump lab-netprobe$/AllowUsers labadmin lab-jump lab-netprobe/' \"$file\"; elif ! grep -qxF 'AllowUsers labadmin lab-jump lab-netprobe' \"$file\"; then exit 74; fi; sshd -t; systemctl reload ssh || systemctl reload sshd; " + removeKey
 	}
 	if _, err := runner.Run(ctx, address, user, command); err != nil {
 		return fmt.Errorf("revoke temporary root access: %w", err)
