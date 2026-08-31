@@ -577,3 +577,24 @@ func TestDependencyCycleIsRejected(t *testing.T) {
 		t.Fatalf("dependency cycle was accepted: %v", err)
 	}
 }
+
+func TestMonitoringDeclaresOperatorSuppliedPulseProxySecret(t *testing.T) {
+	site, _, err := Compose(testConfig(model.GatewayModeManaged))
+	if err != nil {
+		t.Fatal(err)
+	}
+	declaration, ok := findDeclaration(site, "monitoring")
+	if !ok {
+		t.Fatal("monitoring declaration is missing")
+	}
+	for _, secret := range declaration.Secrets {
+		if secret.Name != "pulse_proxy_auth_secret" {
+			continue
+		}
+		if secret.Generation != "operator-supplied" || secret.Delivery != "systemd-credential" || secret.Consumer != "pulse-server/nginx" || secret.Lifecycle != model.SecretLifecycleRuntime {
+			t.Fatalf("Pulse proxy-auth secret contract is incomplete: %#v", secret)
+		}
+		return
+	}
+	t.Fatal("monitoring declaration does not include pulse_proxy_auth_secret")
+}

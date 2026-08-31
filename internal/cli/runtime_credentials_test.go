@@ -250,3 +250,31 @@ func TestPowerDNSTSIGSyncMarkerState(t *testing.T) {
 		})
 	}
 }
+
+func TestPulseProxyAuthUsesSeparateEncryptedUnitCredentials(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := deploymentCredentialBindings(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dropIns, err := credentialDropIns(bindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pulse := dropIns["lab-monitor-01"]["pulse.service"]
+	nginx := dropIns["lab-monitor-01"]["nginx.service"]
+	for _, expected := range []string{
+		"LoadCredentialEncrypted=pulse-proxy-auth-secret:/var/lib/boetticher/credentials/pulse-proxy-auth-secret.cred",
+	} {
+		if !strings.Contains(pulse, expected) {
+			t.Fatalf("Pulse proxy-auth credential projection is missing %q: %s", expected, pulse)
+		}
+	}
+	if !strings.Contains(nginx, "LoadCredentialEncrypted=pulse-proxy-auth-nginx-secret:/var/lib/boetticher/credentials/pulse-proxy-auth-nginx-secret.cred") || strings.Contains(pulse+nginx, "synthetic-secret") {
+		t.Fatalf("nginx proxy-auth credential projection is incomplete or leaked a value: pulse=%s nginx=%s", pulse, nginx)
+	}
+}

@@ -332,6 +332,55 @@ func policyRules(s model.Site) []PolicyRule {
 			Description: "boetticher " + name,
 		})
 	}
+	// Pulse is a Core service protected by the endpoint's mTLS boundary. Allow
+	// the modeled client zones to reach only the fixed Pulse HTTPS address;
+	// source-zone selectors keep this useful for operators without granting
+	// access to the rest of INFRA.
+	if monitor, ok := componentReference(s, "monitor"); ok && monitor.Module == "monitoring" && monitor.Address != "" {
+		for _, source := range []string{"TRANSIT", "SERVERS", "TRUSTED"} {
+			for _, zone := range s.Network.Zones {
+				if zone.Name != source {
+					continue
+				}
+				rules = append(rules, PolicyRule{
+					Sequence:        len(rules) + 1,
+					Name:            source + " HTTPS to Pulse",
+					From:            source,
+					To:              "INFRA",
+					Action:          "allow",
+					Protocol:        "tcp",
+					Ports:           []string{"443"},
+					Counter:         "boetticher_" + strings.ToLower(source) + "_https_to_pulse",
+					Description:     "boetticher " + source + " HTTPS to Pulse",
+					SourceCIDR:      zone.Network,
+					DestinationCIDR: monitor.Address + "/32",
+				})
+			}
+		}
+	}
+	// Portal is a Core service with its own fixed mTLS-protected frontend.
+	if portal, ok := componentReference(s, "portal"); ok && portal.Address != "" {
+		for _, source := range []string{"TRANSIT", "SERVERS", "TRUSTED"} {
+			for _, zone := range s.Network.Zones {
+				if zone.Name != source {
+					continue
+				}
+				rules = append(rules, PolicyRule{
+					Sequence:        len(rules) + 1,
+					Name:            source + " HTTPS to Portal",
+					From:            source,
+					To:              "INFRA",
+					Action:          "allow",
+					Protocol:        "tcp",
+					Ports:           []string{"443"},
+					Counter:         "boetticher_" + strings.ToLower(source) + "_https_to_portal",
+					Description:     "boetticher " + source + " HTTPS to Portal",
+					SourceCIDR:      zone.Network,
+					DestinationCIDR: portal.Address + "/32",
+				})
+			}
+		}
+	}
 	// These are gateway-local services. Forwarding rules below deliberately
 	// place internal denies before any Internet egress rule.
 	for _, zone := range []string{"TRUSTED", "SERVERS", "SANDBOX"} {
@@ -347,7 +396,6 @@ func policyRules(s model.Site) []PolicyRule {
 	add("SANDBOX to MGMT deny", "SANDBOX", "MGMT", "deny", "any", nil, true, false)
 	add("TRUSTED DNS to INFRA", "TRUSTED", "INFRA", "allow", "tcp/udp", []string{"53"}, false, false)
 	add("TRUSTED NTP to INFRA", "TRUSTED", "INFRA", "allow", "udp", []string{"123"}, false, false)
-	add("TRUSTED HTTPS to INFRA", "TRUSTED", "INFRA", "allow", "tcp", []string{"443"}, false, false)
 	add("TRUSTED HTTPS to SERVERS", "TRUSTED", "SERVERS", "allow", "tcp", []string{"443"}, false, false)
 	add("TRUSTED administration to MGMT", "TRUSTED", "MGMT", "allow", "tcp", []string{"22", "443", "8006"}, false, false)
 	add("SERVERS DNS to INFRA", "SERVERS", "INFRA", "allow", "tcp/udp", []string{"53"}, false, false)
@@ -385,8 +433,7 @@ func policyRules(s model.Site) []PolicyRule {
 	}
 	for _, declaration := range s.Declarations {
 		for _, intent := range declaration.NetworkIntents {
-			rule := policyRuleForIntent(s, declaration.Module, intent)
-			if rule.Name != "" {
+			for _, rule := range policyRulesForIntent(s, declaration.Module, intent) {
 				rule.Sequence = len(rules) + 1
 				rules = append(rules, rule)
 			}
@@ -442,35 +489,70 @@ func userRuleDestinationSelector(s model.Site, rule model.UserFirewallRule) (str
 }
 
 func policyRuleForIntent(s model.Site, module string, intent model.NetworkIntent) PolicyRule {
+	rules := policyRulesForIntent(s, module, intent)
+	if len(rules) == 0 {
+		return PolicyRule{}
+	}
+	return rules[0]
+}
+
+func policyRulesForIntent(s model.Site, module string, intent model.NetworkIntent) []PolicyRule {
 	source, sourceOK := componentReference(s, intent.Source)
 	if !sourceOK || (intent.Endpoint == "" && intent.Destination == "") {
-		return PolicyRule{}
+		return nil
 	}
-	rule := PolicyRule{
-		Name: "module " + module + " " + intent.Purpose,
-		From: source.Zone, To: "WAN", Action: "allow", Protocol: intent.Protocol,
-		Ports: append([]string(nil), intent.Ports...), Counter: "boetticher_module_" + safeRuleToken(module),
-		Description: "module " + module + ": " + intent.Purpose,
-		SourceCIDR:  source.Address + "/32",
-	}
-	if destination, ok := componentReference(s, intent.Destination); ok {
-		rule.To = destination.Zone
-		rule.DestinationCIDR = destination.Address + "/32"
-		rule.Name += " " + intent.Destination
-	} else if intent.Endpoint != "" {
+	if intent.Endpoint != "" {
 		parsed, err := url.Parse(intent.Endpoint)
 		if err != nil || parsed.Hostname() == "" {
-			return PolicyRule{}
+			return nil
 		}
-		rule.DestinationHost = parsed.Hostname()
-		rule.Name += " " + intent.Destination
-	} else {
-		return PolicyRule{}
+		return []PolicyRule{{
+			Name: "module " + module + " " + intent.Purpose + " " + intent.Destination,
+			From: source.Zone, To: "WAN", Action: "allow", Protocol: intent.Protocol,
+			Ports: append([]string(nil), intent.Ports...), Counter: "boetticher_module_" + safeRuleToken(module),
+			Description: "module " + module + ": " + intent.Purpose,
+			SourceCIDR:  source.Address + "/32", DestinationHost: parsed.Hostname(),
+		}}
 	}
-	if rule.To == "" || rule.From == "" {
-		return PolicyRule{}
+	destinations := componentReferences(s, intent.Destination)
+	if len(destinations) == 0 {
+		return nil
 	}
-	return rule
+	destinationLabel := intent.Destination
+	rules := make([]PolicyRule, 0, len(destinations))
+	for _, destination := range destinations {
+		if len(destinations) > 1 {
+			destinationLabel = destination.Name
+		}
+		rules = append(rules, PolicyRule{
+			Name: "module " + module + " " + intent.Purpose + " " + destinationLabel,
+			From: source.Zone, To: destination.Zone, Action: "allow", Protocol: intent.Protocol,
+			Ports: append([]string(nil), intent.Ports...), Counter: "boetticher_module_" + safeRuleToken(module),
+			Description: "module " + module + ": " + intent.Purpose,
+			SourceCIDR:  source.Address + "/32", DestinationCIDR: destination.Address + "/32",
+		})
+	}
+	return rules
+}
+
+// componentReferences expands logical service aliases that intentionally name
+// a redundant platform service. In particular, "dns" means every managed DNS
+// endpoint, while dns01/dns02 retain their single-component meaning.
+func componentReferences(s model.Site, reference string) []model.Component {
+	reference = strings.TrimSuffix(strings.ToLower(reference), ".")
+	if reference == "dns" {
+		var destinations []model.Component
+		for _, component := range s.PlatformComponents() {
+			if component.Module == "dns" {
+				destinations = append(destinations, component)
+			}
+		}
+		return destinations
+	}
+	if component, ok := componentReference(s, reference); ok {
+		return []model.Component{component}
+	}
+	return nil
 }
 
 func componentReference(s model.Site, reference string) (model.Component, bool) {

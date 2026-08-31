@@ -21,6 +21,9 @@ server {
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
+        proxy_set_header X-Proxy-Secret "";
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Role "";
     }
 
     # AIOps identities are constrained by certificate identity as well as their
@@ -34,6 +37,9 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Proxy-Secret "";
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Role "";
     }
     location = /api/alerts/incidents {
         if ($ssl_client_verify != SUCCESS) { return 403; }
@@ -43,6 +49,9 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Proxy-Secret "";
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Role "";
     }
     location ~ ^/api/resources/[^/]+(?:/metrics)?$ {
         if ($ssl_client_verify != SUCCESS) { return 403; }
@@ -52,6 +61,9 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Proxy-Secret "";
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Role "";
     }
     location = /api/metrics-store/history {
         if ($ssl_client_verify != SUCCESS) { return 403; }
@@ -61,6 +73,9 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header X-Proxy-Secret "";
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Role "";
     }
     location = /api/alerts/incidents/note {
         if ($ssl_client_verify != SUCCESS) { return 403; }
@@ -75,6 +90,17 @@ server {
     location / {
         if ($ssl_client_verify != SUCCESS) { return 403; }
         if ($ssl_client_s_dn ~ "CN=aiops-pulse-(?:read|note)(?:,|$)") { return 403; }
+        set $boetticher_pulse_proxy_user "";
+        set $boetticher_pulse_proxy_role "";
+        if ($ssl_client_s_dn = "CN=client-operator.{{ domain }}") {
+            set $boetticher_pulse_proxy_user operator;
+            set $boetticher_pulse_proxy_role admin;
+        }
+        if ($ssl_client_s_dn = "CN=client-lab-display-01-kiosk.{{ domain }}") {
+            set $boetticher_pulse_proxy_user kiosk;
+            set $boetticher_pulse_proxy_role kiosk;
+        }
+        if ($boetticher_pulse_proxy_user = "") { return 403; }
         proxy_pass http://127.0.0.1:7655;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -83,5 +109,11 @@ server {
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
+        proxy_set_header X-Proxy-Secret "";
+        proxy_set_header Remote-User "";
+        proxy_set_header Remote-Role "";
+        include /run/boetticher/pulse-proxy-auth.conf;
+        proxy_set_header Remote-User $boetticher_pulse_proxy_user;
+        proxy_set_header Remote-Role $boetticher_pulse_proxy_role;
     }
 }

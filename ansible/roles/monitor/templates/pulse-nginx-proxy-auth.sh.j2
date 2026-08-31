@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+
+credential=/run/credentials/nginx.service/pulse-proxy-auth-secret
+output=/run/boetticher/pulse-proxy-auth.conf
+if [ ! -r "$credential" ]; then
+  echo "Pulse proxy-auth credential is unavailable to nginx" >&2
+  exit 1
+fi
+secret=$(cat "$credential")
+if [ ! -s "$credential" ] ||
+  [ "$(wc -l < "$credential")" -ne 0 ] ||
+  LC_ALL=C grep -q "$(printf '\r')" "$credential"
+then
+  echo "Pulse proxy-auth credential for nginx is invalid" >&2
+  exit 1
+fi
+case "$secret" in
+  ''|*[!A-Za-z0-9._~+/_=-]*)
+    echo "Pulse proxy-auth credential contains unsupported characters" >&2
+    exit 1
+    ;;
+esac
+
+install -d -m 0750 /run/boetticher
+tmp=$(mktemp /run/boetticher/pulse-proxy-auth.XXXXXX)
+trap 'rm -f "$tmp"' EXIT
+printf 'proxy_set_header X-Proxy-Secret "%s";\n' "$secret" > "$tmp"
+chmod 0600 "$tmp"
+mv -f "$tmp" "$output"
+trap - EXIT

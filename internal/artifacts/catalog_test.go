@@ -1203,3 +1203,28 @@ func TestTransferredEvidenceIsReboundToControllerArtifactBytes(t *testing.T) {
 		t.Fatalf("rebound content checksum = %q, want %q", resolved.ContentSHA256, evidence.ContentSHA256)
 	}
 }
+
+func TestPulseProxyAuthRendererUsesOnlyRuntimeCredentialMaterial(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "pulse-nginx-proxy-auth.sh.j2")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		"/run/credentials/nginx.service/pulse-proxy-auth-secret",
+		"/run/boetticher/pulse-proxy-auth.conf",
+		"case \"$secret\" in",
+		"proxy_set_header X-Proxy-Secret",
+		"chmod 0600",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Pulse proxy-auth renderer is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"pulse_proxy_auth_secret:", "PROXY_AUTH_SECRET=", "echo \"$secret\""} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("Pulse proxy-auth renderer contains unsafe materialization %q", forbidden)
+		}
+	}
+}

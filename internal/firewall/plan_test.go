@@ -473,6 +473,32 @@ func TestManagedRulesetIsDeterministicAndFailClosed(t *testing.T) {
 	}
 }
 
+func TestPulseHTTPSIsAllowedFromModeledClientZones(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleset, err := RenderNFT(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"iifname \"transit0\" oifname \"infra0\" ip saddr 10.10.5.0/24 ip daddr 10.10.10.20/32 tcp dport 443 counter accept",
+		"iifname \"servers0\" oifname \"infra0\" ip saddr 10.10.20.0/24 ip daddr 10.10.10.20/32 tcp dport 443 counter accept",
+		"iifname \"trusted0\" oifname \"infra0\" ip saddr 10.10.30.0/24 ip daddr 10.10.10.20/32 tcp dport 443 counter accept",
+	} {
+		if !strings.Contains(ruleset, expected) {
+			t.Errorf("Pulse client-zone rule missing %q:\\n%s", expected, ruleset)
+		}
+	}
+	if strings.Contains(ruleset, "iifname \"trusted0\" oifname \"infra0\" ip saddr 10.10.30.0/24 ip daddr @infra_net tcp dport 443 counter accept") {
+		t.Fatal("TRUSTED retains a broad HTTPS-to-INFRA rule")
+	}
+	if strings.Index(ruleset, "iifname \"transit0\" oifname \"infra0\" ip saddr 10.10.5.0/24") > strings.Index(ruleset, "TRANSIT-INFRA-DROP") {
+		t.Fatal("TRANSIT-to-Pulse allow occurs after the TRANSIT default deny")
+	}
+}
+
 func TestExternalPlanHasPolicyButNoManagedInterfaces(t *testing.T) {
 	plan, err := PlanFromSite(model.NewSite("installation", "age1example", model.GatewayModeExternal))
 	if err != nil {
@@ -498,5 +524,68 @@ func TestExternalPlanHasPolicyButNoManagedInterfaces(t *testing.T) {
 	}
 	if _, err := RenderNFT(plan); err == nil {
 		t.Fatal("external mode rendered a managed nftables ruleset")
+	}
+}
+
+func TestPortalHTTPSIsAllowedFromModeledClientZones(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleset, err := RenderNFT(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"iifname \"transit0\" oifname \"infra0\" ip saddr 10.10.5.0/24 ip daddr 10.10.10.30/32 tcp dport 443 counter accept",
+		"iifname \"servers0\" oifname \"infra0\" ip saddr 10.10.20.0/24 ip daddr 10.10.10.30/32 tcp dport 443 counter accept",
+		"iifname \"trusted0\" oifname \"infra0\" ip saddr 10.10.30.0/24 ip daddr 10.10.10.30/32 tcp dport 443 counter accept",
+	} {
+		if !strings.Contains(ruleset, expected) {
+			t.Errorf("Portal client-zone rule missing %q:\\n%s", expected, ruleset)
+		}
+	}
+	if strings.Index(ruleset, "iifname \"transit0\" oifname \"infra0\" ip saddr 10.10.5.0/24 ip daddr 10.10.10.30/32") > strings.Index(ruleset, "TRANSIT-INFRA-DROP") {
+		t.Fatal("TRANSIT-to-Portal allow occurs after the TRANSIT default deny")
+	}
+}
+
+func TestTailnetRouterUsesBothDNSAndNTPEndpoints(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	enabled := true
+	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &enabled}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := policyRules(site)
+	seen := map[string]map[string]bool{"Tailscale router DNS resolution": {}, "Tailscale router time synchronisation": {}}
+	for _, rule := range rules {
+		for purpose := range seen {
+			if strings.Contains(rule.Description, purpose) {
+				seen[purpose][rule.DestinationCIDR] = true
+			}
+		}
+	}
+	for purpose, destinations := range seen {
+		if len(destinations) != 2 || !destinations["10.10.10.10/32"] || !destinations["10.10.10.11/32"] {
+			t.Fatalf("Tailnet %s destinations = %v, want both DNS endpoints", purpose, destinations)
+		}
+	}
+}
+
+func TestLogicalDNSIntentExpandsToAllManagedDNSEndpoints(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	rules := policyRulesForIntent(site, "monitoring", model.NetworkIntent{
+		Source: "lab-monitor-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Purpose: "DNS resolution",
+	})
+	seen := map[string]bool{}
+	names := map[string]bool{}
+	for _, rule := range rules {
+		seen[rule.DestinationCIDR] = true
+		names[rule.Name] = true
+	}
+	if len(seen) != 2 || len(names) != 2 || !seen["10.10.10.10/32"] || !seen["10.10.10.11/32"] {
+		t.Fatalf("logical DNS intent destinations = %v, names = %v, want both managed DNS endpoints with unique names", seen, names)
 	}
 }

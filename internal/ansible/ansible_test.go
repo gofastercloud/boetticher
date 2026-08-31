@@ -1272,3 +1272,35 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 		}
 	}
 }
+
+func TestPulseProxyAuthMapsOnlyApprovedClientIdentities(t *testing.T) {
+	frontend, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "pulse-loopback.conf.j2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(frontend)
+	for _, expected := range []string{
+		"CN=client-operator.{{ domain }}",
+		"CN=client-lab-display-01-kiosk.{{ domain }}",
+		"include /run/boetticher/pulse-proxy-auth.conf",
+		"ExecStartPre=/usr/local/sbin/boetticher-pulse-nginx-proxy-auth",
+		"daemon_reload: true",
+	} {
+		if !strings.Contains(text+string(tasks), expected) {
+			t.Fatalf("Pulse proxy-auth contract is missing %q", expected)
+		}
+	}
+	if got := strings.Count(text, "proxy_set_header X-Proxy-Secret \"\";"); got != 6 {
+		t.Fatalf("frontend clears incoming proxy secret in %d locations, want 6", got)
+	}
+	if strings.Contains(text, "$ssl_client_cert") || strings.Contains(text, "$ssl_client_s_dn;\n") {
+		t.Fatal("frontend forwards an arbitrary client certificate identity")
+	}
+	if !strings.HasSuffix(strings.TrimSpace(text), "}") {
+		t.Fatal("Pulse frontend template has directives outside its server block")
+	}
+}

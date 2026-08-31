@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/firewall"
+	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/networktest"
 )
 
@@ -53,5 +54,17 @@ func TestPolicyAllowsHonorsSourceAndDestinationCIDRs(t *testing.T) {
 	}
 	if policyAllows(policy, "TRUSTED", "INFRA", "tcp", 443, "10.10.30.251", "10.10.10.30") {
 		t.Fatal("non-matching source CIDR was allowed")
+	}
+}
+
+func TestPolicyAllowsBuiltInHTTPSForDynamicTrustedProbeAddress(t *testing.T) {
+	plan, err := firewall.PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, address := range []string{"10.10.30.106", "10.10.30.199"} {
+		if !policyAllows(plan, "TRUSTED", "INFRA", "tcp", 443, address, "10.10.10.20") {
+			t.Fatalf("Pulse HTTPS was denied for dynamic TRUSTED probe address %s", address)
+		}
 	}
 }

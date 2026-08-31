@@ -158,3 +158,10 @@ upstreams. Malformed configuration, duplicate DNS identities, fixed VMID
 collisions, conflicting network declarations, artifact checksum mismatches,
 missing gateway capability, dependency cycles, and secret values in
 declarations are rejected before infrastructure mutation.
+
+The built-in managed-firewall policy permits TCP/443 from TRANSIT, SERVERS, and
+TRUSTED to the fixed Pulse and Portal addresses only. Pulse still requires a
+trusted client certificate at its TLS frontend; the network rule does not
+expose the rest of INFRA. Operator and kiosk certificates are mapped by exact
+approved identity, with the kiosk receiving a separate non-administrative Pulse
+identity.

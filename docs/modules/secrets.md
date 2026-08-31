@@ -52,3 +52,11 @@ from SOPS/Age during deployment.
 Endpoint private keys are generated on the endpoint. TLS certificates may be
 reissued after replacement; SSH host identity is persistent so bastion host-key
 identity remains stable.
+
+The monitoring module's `pulse_proxy_auth_secret` is an operator-supplied
+random shared secret for the Pulse server and its nginx frontend. Boetticher
+stores it only in the encrypted SOPS/Age platform document and projects it as
+separate encrypted systemd credentials to `pulse.service` and `nginx.service`.
+The nginx frontend materialises its proxy header at service start in protected
+runtime state; the value is not placed in `site.yml`, generated public
+configuration, command arguments, or logs.

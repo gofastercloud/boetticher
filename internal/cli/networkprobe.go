@@ -138,6 +138,7 @@ func runNetworkTest(args []string, out io.Writer) error {
 			runErr = err
 			break
 		}
+		created[index] = *probe
 	}
 	if runErr == nil {
 		authority, authorityErr := site.LoadAuthority(*siteDir, s, *ageIdentity)

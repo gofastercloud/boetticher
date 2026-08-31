@@ -169,6 +169,37 @@
     - proxmox_ca_pem is defined
     - proxmox_ca_pem | length > 0
 
+- name: Install the Pulse nginx proxy-auth renderer
+  ansible.builtin.template:
+    src: pulse-nginx-proxy-auth.sh.j2
+    dest: /usr/local/sbin/boetticher-pulse-nginx-proxy-auth
+    owner: root
+    group: root
+    mode: '0750'
+  register: pulse_proxy_auth_renderer
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Configure nginx to materialize the Pulse proxy-auth header
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/nginx.service.d/boetticher-pulse-proxy-auth.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Service]
+      ExecStartPre=/usr/local/sbin/boetticher-pulse-nginx-proxy-auth
+  register: pulse_proxy_auth_dropin
+  when: inventory_hostname == 'lab-monitor-01'
+
+- name: Restart nginx after changing the Pulse proxy-auth renderer
+  ansible.builtin.systemd_service:
+    name: nginx
+    state: restarted
+    daemon_reload: true
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - pulse_proxy_auth_renderer is changed or pulse_proxy_auth_dropin is changed
+
 - name: Configure the Pulse frontend with server TLS and client certificate authentication
   ansible.builtin.template:
     src: pulse-loopback.conf.j2
