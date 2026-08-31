@@ -31,7 +31,9 @@ type deploymentMutation struct {
 }
 
 type deploymentTiming struct {
-	Name       string `json:"name"`
+	Phase      string `json:"phase"`
+	Kind       string `json:"kind"`
+	Target     string `json:"target"`
 	StartedAt  string `json:"started_at"`
 	FinishedAt string `json:"finished_at"`
 	DurationMS int64  `json:"duration_ms"`
@@ -50,6 +52,9 @@ type deploymentReport struct {
 	cleanupErr            error
 	dryRun                bool
 	runID                 string
+	operation             string
+	platformVersion       string
+	modelRevision         string
 	startedAt             time.Time
 	finishedAt            time.Time
 	timingPath            string
@@ -59,7 +64,19 @@ type deploymentReport struct {
 func newDeploymentReport(out io.Writer) *deploymentReport {
 	started := time.Now()
 	runID := "deploy-" + started.UTC().Format("20060102T150405.000000000Z")
-	return &deploymentReport{out: out, active: -1, mutationScopeCertain: true, runID: runID, startedAt: started}
+	return &deploymentReport{out: out, active: -1, mutationScopeCertain: true, runID: runID, operation: "deploy", startedAt: started}
+}
+
+func (r *deploymentReport) setIdentity(platformVersion, modelRevision string) {
+	r.platformVersion = platformVersion
+	r.modelRevision = modelRevision
+}
+
+func (r *deploymentReport) activePhaseID() string {
+	if r.active >= 0 && r.active < len(r.phases) {
+		return r.phases[r.active].ID
+	}
+	return "unknown"
 }
 
 func (r *deploymentReport) start(id, name string) {
@@ -109,18 +126,27 @@ func (r *deploymentReport) setTimingPath(path string) {
 	r.timingPath = path
 }
 
-func (r *deploymentReport) recordTiming(name string, started time.Time) {
-	if name == "" || started.IsZero() {
+func (r *deploymentReport) recordTiming(phase, kind, target string, started time.Time) {
+	if phase == "" || kind == "" || target == "" || started.IsZero() {
 		return
 	}
 	finished := time.Now()
 	r.timings = append(r.timings, deploymentTiming{
-		Name:       name,
+		Phase:      phase,
+		Kind:       kind,
+		Target:     target,
 		StartedAt:  started.UTC().Format(time.RFC3339Nano),
 		FinishedAt: finished.UTC().Format(time.RFC3339Nano),
 		DurationMS: finished.Sub(started).Milliseconds(),
 	})
-	fmt.Fprintf(r.out, "      Timing: %s (%s)\n", name, formatOperationDuration(finished.Sub(started)))
+	fmt.Fprintf(r.out, "      Timing: %s/%s/%s (%s)\n", phase, kind, target, formatOperationDuration(finished.Sub(started)))
+}
+
+func (r *deploymentReport) timed(phase, kind, target string, fn func() error) error {
+	started := time.Now()
+	err := fn()
+	r.recordTiming(phase, kind, target, started)
+	return err
 }
 
 func (r *deploymentReport) recordMutation(domain, target, action string, changed bool) {
@@ -158,14 +184,6 @@ func (r *deploymentReport) finalize(operationErr error) error {
 		r.finishedAt = time.Now()
 	}
 	timingErr := r.persistTiming(operationErr)
-	if timingErr != nil {
-		if operationErr == nil {
-			operationErr = fmt.Errorf("persist deployment timing report: %w", timingErr)
-		} else {
-			operationErr = errors.Join(operationErr, fmt.Errorf("persist deployment timing report: %w", timingErr))
-		}
-		r.recordFailure(operationErr)
-	}
 
 	fmt.Fprintln(r.out)
 	reportedCause := false
@@ -217,23 +235,30 @@ func (r *deploymentReport) finalize(operationErr error) error {
 		} else {
 			fmt.Fprintln(r.out, "All requested components passed deployment and health checks.")
 		}
-		if r.timingPath != "" {
-			fmt.Fprintf(r.out, "Timing report: %s\n", r.timingPath)
-		}
+		r.renderTimingAvailability(timingErr)
 		return operationErr
 	}
 	fmt.Fprintln(r.out, "Deployment: FAIL")
 	if r.cleanupErr != nil {
 		fmt.Fprintln(r.out, "Failed phase: Temporary authority cleanup")
-	} else if r.active >= 0 && r.active < len(r.phases) && r.phases[r.active].Name != "" {
+	} else if r.active >= 0 && r.active < len(r.phases) && !r.phases[r.active].Completed && r.phases[r.active].Cause != nil {
 		fmt.Fprintf(r.out, "Failed phase: %s\n", r.phases[r.active].Name)
 	}
 	fmt.Fprintf(r.out, "Retry: %s\n", deploymentRetryAdvice(operationErr, r.cleanupErr))
 	fmt.Fprintf(r.out, "Next action: %s\n", deploymentNextAction(operationErr, r.cleanupErr))
-	if r.timingPath != "" && timingErr == nil {
-		fmt.Fprintf(r.out, "Timing report: %s\n", r.timingPath)
-	}
+	r.renderTimingAvailability(timingErr)
 	return operationErr
+}
+
+func (r *deploymentReport) renderTimingAvailability(err error) {
+	if r.timingPath == "" {
+		return
+	}
+	if err != nil {
+		fmt.Fprintf(r.out, "Timing report: unavailable (%s)\n", compactError(err))
+		return
+	}
+	fmt.Fprintf(r.out, "Timing report: %s\n", r.timingPath)
 }
 
 func deploymentPhaseDuration(phase deploymentPhase, finishedAt time.Time) time.Duration {
@@ -287,6 +312,9 @@ func (r *deploymentReport) persistTiming(operationErr error) error {
 	}
 	document := struct {
 		Version               int                  `json:"version"`
+		Operation             string               `json:"operation"`
+		PlatformVersion       string               `json:"platform_version,omitempty"`
+		ModelRevision         string               `json:"model_revision,omitempty"`
 		RunID                 string               `json:"run_id"`
 		StartedAt             string               `json:"started_at"`
 		FinishedAt            string               `json:"finished_at"`
@@ -301,6 +329,9 @@ func (r *deploymentReport) persistTiming(operationErr error) error {
 		Suboperations         []deploymentTiming   `json:"suboperations"`
 	}{
 		Version:               1,
+		Operation:             r.operation,
+		PlatformVersion:       r.platformVersion,
+		ModelRevision:         r.modelRevision,
 		RunID:                 r.runID,
 		StartedAt:             r.startedAt.UTC().Format(time.RFC3339Nano),
 		FinishedAt:            r.finishedAt.UTC().Format(time.RFC3339Nano),
