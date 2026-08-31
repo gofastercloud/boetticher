@@ -52,7 +52,9 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) err
 	if cleanup != nil {
 		report.setCleanup(true, false, nil)
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		cleanupErr := cleanup(cleanupCtx)
+		cleanupErr := report.timed("cleanup", "temporary-authority", "deployment", func() error {
+			return cleanup(cleanupCtx)
+		})
 		cancel()
 		if cleanupErr == nil {
 			report.setCleanup(true, true, nil)
@@ -84,6 +86,11 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err != nil {
 		return err
 	}
+	modelRevision, err := s.Revision()
+	if err != nil {
+		return fmt.Errorf("calculate model revision: %w", err)
+	}
+	report.setIdentity(model.PlatformVersion, modelRevision)
 	report.setTimingPath(filepath.Join(site.RuntimeDir(s), "deploy", report.runID+".json"))
 	firewallPlan, err := firewall.PlanFromSite(s)
 	if err != nil {
@@ -394,7 +401,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		if replacementErr != nil {
 			return replacementErr
 		}
-		if err := proxmox.EnsureFirewallVM(ctx, proxmoxClient, proxmoxPlan); err != nil {
+		if err := report.timed("proxmox", "reconcile", firewallGuest.Name, func() error {
+			return proxmox.EnsureFirewallVM(ctx, proxmoxClient, proxmoxPlan)
+		}); err != nil {
 			if !firewallExisted || firewallReplaced {
 				report.markMutationUncertain()
 			}
@@ -411,7 +420,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 				return fmt.Errorf("retire replaced gateway host key: %w", err)
 			}
 		}
-		if err := proxmoxClient.EnsureVMRunning(ctx, proxmoxPlan.Node, model.ProxmoxVMID); err != nil {
+		if err := report.timed("proxmox", "reconcile", firewallGuest.Name+"/start", func() error {
+			return proxmoxClient.EnsureVMRunning(ctx, proxmoxPlan.Node, model.ProxmoxVMID)
+		}); err != nil {
 			return fmt.Errorf("start managed gateway appliance: %w", err)
 		}
 	}
@@ -421,7 +432,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		firewallRunner = applianceSSHRunner(s, *siteDir, "lab-fw-01")
 		firewallGuest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
-		if err := waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, firewallRunner, firewallGuest, operatorPublicKey, deploymentKnownHosts(*siteDir), firewallGuest.Hostname+"."+s.Network.Domain); err != nil {
+		if err := report.timed("appliances", "readiness", firewallGuest.Name, func() error {
+			return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, firewallRunner, firewallGuest, operatorPublicKey, deploymentKnownHosts(*siteDir), firewallGuest.Hostname+"."+s.Network.Domain)
+		}); err != nil {
 			return fmt.Errorf("HOLD: managed gateway is not reachable before dependent appliances: %w", err)
 		}
 		if err := verifyFirewallBootstrapNetwork(ctx, firewallRunner); err != nil {
@@ -433,7 +446,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, "lab-fw-01", report); err != nil {
 			return fmt.Errorf("HOLD: configure managed gateway before dependent appliances: %w", err)
 		}
-		if err := verifyGatewayReadiness(ctx, firewallRunner, "10.10.99.1"); err != nil {
+		if err := report.timed("appliances", "readiness", firewallGuest.Name+"/gateway", func() error {
+			return verifyGatewayReadiness(ctx, firewallRunner, "10.10.99.1")
+		}); err != nil {
 			return fmt.Errorf("HOLD: managed gateway did not pass runtime readiness before dependent appliances: %w", err)
 		}
 	}
@@ -470,7 +485,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 				missingGuests = append(missingGuests, candidate)
 			}
 		}
-		if err := proxmox.ProvisionModule(ctx, proxmoxClient, proxmoxPlan, module); err != nil {
+		if err := report.timed("appliances", "proxmox", module, func() error {
+			return proxmox.ProvisionModule(ctx, proxmoxClient, proxmoxPlan, module)
+		}); err != nil {
 			if len(missingGuests) > 0 || len(replacedGuests) > 0 {
 				report.markMutationUncertain()
 			}
@@ -496,7 +513,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 				continue
 			}
 			guestRunner := applianceSSHRunner(s, *siteDir, guest.Name)
-			if err := waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, guestRunner, guest, operatorPublicKey, deploymentKnownHosts(*siteDir), guest.Hostname+"."+s.Network.Domain); err != nil {
+			if err := report.timed("appliances", "readiness", guest.Name, func() error {
+				return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, guestRunner, guest, operatorPublicKey, deploymentKnownHosts(*siteDir), guest.Hostname+"."+s.Network.Domain)
+			}); err != nil {
 				return fmt.Errorf("HOLD: %s guest %s is not reachable after first boot: %w", module, guest.Name, err)
 			}
 			if err := installCredentialsForGuest(ctx, guestRunner, guest.Name, credentialBindings, secretValues); err != nil {
@@ -523,7 +542,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 						}
 					}
 				}
-				if err := verifyDNSReadiness(ctx, guestRunner, guest.Address); err != nil {
+				if err := report.timed("appliances", "readiness", guest.Name+"/dns", func() error {
+					return verifyDNSReadiness(ctx, guestRunner, guest.Address)
+				}); err != nil {
 					return fmt.Errorf("HOLD: DNS guest %s did not pass runtime readiness before dependent appliances: %w", guest.Name, err)
 				}
 			}
@@ -559,7 +580,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, "lab-fw-01", report); err != nil {
 				return fmt.Errorf("HOLD: activate published services on managed gateway: %w", err)
 			}
-			if err := verifyGatewayReadiness(ctx, firewallRunner, "10.10.99.1"); err != nil {
+			if err := report.timed("network", "readiness", "lab-fw-01/gateway", func() error {
+				return verifyGatewayReadiness(ctx, firewallRunner, "10.10.99.1")
+			}); err != nil {
 				return fmt.Errorf("HOLD: managed gateway did not pass publication readiness: %w", err)
 			}
 			firewallPlan = finalFirewallPlan
@@ -788,7 +811,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			readTokenRefreshed = true
 			return nil
 		}
-		health, err := pulseRead.Health(ctx)
+		var health pulse.HealthStatus
+		err = report.timed("health", "health", "pulse", func() error {
+			var healthErr error
+			health, healthErr = pulseRead.Health(ctx)
+			return healthErr
+		})
 		if err != nil {
 			if !(modules.IsEnabled(s, "streamdeck") && pulse.IsForbidden(err)) {
 				return fmt.Errorf("verify Pulse health: %w", err)
@@ -796,7 +824,11 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			if refreshErr := refreshPulseReadToken(); refreshErr != nil {
 				return fmt.Errorf("refresh Pulse read token after forbidden health response: %w", refreshErr)
 			}
-			health, err = pulseRead.Health(ctx)
+			err = report.timed("health", "health", "pulse-refresh", func() error {
+				var healthErr error
+				health, healthErr = pulseRead.Health(ctx)
+				return healthErr
+			})
 			if err != nil {
 				return fmt.Errorf("verify Pulse health after read-token refresh: %w", err)
 			}
@@ -925,7 +957,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			streamDeckVariables = append(streamDeckVariables, '\n')
 			streamDeckStarted := time.Now()
 			streamDeckErr := ansible.RunLimited(ctx, ansiblePlaybook, inventoryPath, streamDeckVariables, "lab-streamdeck-01")
-			report.recordTiming("ansible/lab-streamdeck-01", streamDeckStarted)
+			report.recordTiming("health", "ansible", "lab-streamdeck-01", streamDeckStarted)
 			if streamDeckErr != nil {
 				return fmt.Errorf("install StreamDeck runtime: %w", streamDeckErr)
 			}
@@ -1207,7 +1239,12 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 		return err
 	}
 	runner := applianceSSHRunner(s, siteDir, "lab-litellm-01")
-	metadata, err := runner.RunArgs(ctx, "10.10.20.60", "root", []string{"/usr/local/libexec/boetticher-litellm-model-capabilities", modelConfig.Model})
+	var metadata []byte
+	err = report.timed("health", "health", "litellm", func() error {
+		var metadataErr error
+		metadata, metadataErr = runner.RunArgs(ctx, "10.10.20.60", "root", []string{"/usr/local/libexec/boetticher-litellm-model-capabilities", modelConfig.Model})
+		return metadataErr
+	})
 	if err != nil {
 		return fmt.Errorf("read pinned LiteLLM model metadata: %w", err)
 	}
@@ -1220,7 +1257,9 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 	}
 	canaryContext, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	if err := aiopsmodel.QualifyModelAlias(canaryContext, routerClient, "https://ai."+s.Network.Domain+"/v1/chat/completions", s.ModuleConfig["aiops"].ModelAlias); err != nil {
+	if err := report.timed("health", "health", "aiops", func() error {
+		return aiopsmodel.QualifyModelAlias(canaryContext, routerClient, "https://ai."+s.Network.Domain+"/v1/chat/completions", s.ModuleConfig["aiops"].ModelAlias)
+	}); err != nil {
 		return err
 	}
 
@@ -1683,7 +1722,7 @@ func runTrackedAnsible(ctx context.Context, playbook, inventory string, variable
 		if target == "" {
 			target = "all managed targets"
 		}
-		report.recordTiming("ansible/"+target, started)
+		report.recordTiming(report.activePhaseID(), "ansible", target, started)
 	}
 	return err
 }

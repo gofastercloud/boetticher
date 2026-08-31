@@ -82,13 +82,6 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	defer func() { runErr = progress.finalize(runErr) }()
 	totalStarted := time.Now()
 	defer func() { progress.emitTiming(out, "bootstrap_total", totalStarted) }()
-	networkStarted := time.Now()
-	networkFinished := false
-	defer func() {
-		if !networkFinished {
-			progress.emitTiming(out, "bootstrap_network_trust_setup", networkStarted)
-		}
-	}()
 	fs := flag.NewFlagSet("bootstrap", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
@@ -124,6 +117,11 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	if s.BootstrapAddress == "" {
 		return errors.New("bootstrap endpoint is not configured; use boetticher bootstrap-endpoint set ADDRESS first")
 	}
+	modelRevision, revisionErr := s.Revision()
+	if revisionErr != nil {
+		return fmt.Errorf("calculate model revision: %w", revisionErr)
+	}
+	progress.setIdentity(model.PlatformVersion, modelRevision)
 	if !*dryRun {
 		if err := site.ValidateAgeIdentity(*ageIdentity, s.SecretMetadata.AgeRecipient); err != nil {
 			return fmt.Errorf("HOLD: Age identity is not usable for this site: %w", err)
@@ -337,8 +335,6 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	plan.Node = apiNode
 	progress.complete()
 	progress.start("artifacts", "Build and qualify appliance artifacts")
-	progress.emitTiming(out, "bootstrap_network_trust_setup", networkStarted)
-	networkFinished = true
 	if err := buildDefaultArtifacts(ctx, client, plan, *siteDir, publicKey, *knownHosts, model.ExpandUserPath(s.SSHIdentityFile), runner, s.BootstrapAddress, *initialUser, out, progress); err != nil {
 		return err
 	}

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,28 +22,38 @@ type bootstrapPhase struct {
 }
 
 type bootstrapTiming struct {
-	Name       string `json:"name"`
+	Phase      string `json:"phase"`
+	Kind       string `json:"kind"`
+	Target     string `json:"target"`
 	StartedAt  string `json:"started_at"`
 	FinishedAt string `json:"finished_at"`
 	DurationMS int64  `json:"duration_ms"`
 }
 
 type bootstrapReport struct {
-	out        io.Writer
-	phases     []bootstrapPhase
-	active     int
-	total      int
-	runID      string
-	startedAt  time.Time
-	finishedAt time.Time
-	timingPath string
-	timings    []bootstrapTiming
+	out             io.Writer
+	phases          []bootstrapPhase
+	active          int
+	total           int
+	runID           string
+	operation       string
+	platformVersion string
+	modelRevision   string
+	startedAt       time.Time
+	finishedAt      time.Time
+	timingPath      string
+	timings         []bootstrapTiming
 }
 
 func newBootstrapReport(out io.Writer, total int) *bootstrapReport {
 	started := time.Now()
 	runID := "bootstrap-" + started.UTC().Format("20060102T150405.000000000Z")
-	return &bootstrapReport{out: out, active: -1, total: total, runID: runID, startedAt: started}
+	return &bootstrapReport{out: out, active: -1, total: total, runID: runID, operation: "bootstrap", startedAt: started}
+}
+
+func (r *bootstrapReport) setIdentity(platformVersion, modelRevision string) {
+	r.platformVersion = platformVersion
+	r.modelRevision = modelRevision
 }
 
 func (r *bootstrapReport) start(id, name string) {
@@ -83,7 +92,9 @@ func (r *bootstrapReport) recordTiming(name string, started time.Time) {
 	}
 	finished := time.Now()
 	r.timings = append(r.timings, bootstrapTiming{
-		Name:       name,
+		Phase:      "artifacts",
+		Kind:       "artifact",
+		Target:     name,
 		StartedAt:  started.UTC().Format(time.RFC3339Nano),
 		FinishedAt: finished.UTC().Format(time.RFC3339Nano),
 		DurationMS: finished.Sub(started).Milliseconds(),
@@ -101,16 +112,6 @@ func (r *bootstrapReport) finalize(operationErr error) error {
 	}
 	r.finishedAt = time.Now()
 	timingErr := r.persist(operationErr)
-	if timingErr != nil {
-		if operationErr == nil {
-			operationErr = fmt.Errorf("persist bootstrap timing report: %w", timingErr)
-		} else {
-			operationErr = errors.Join(operationErr, fmt.Errorf("persist bootstrap timing report: %w", timingErr))
-		}
-		if r.active >= 0 && r.active < len(r.phases) && !r.phases[r.active].Completed && r.phases[r.active].Cause == nil {
-			r.fail(operationErr)
-		}
-	}
 
 	fmt.Fprintln(r.out)
 	reportedCause := false
@@ -127,25 +128,30 @@ func (r *bootstrapReport) finalize(operationErr error) error {
 	}
 	if operationErr == nil {
 		fmt.Fprintln(r.out, "Bootstrap: PASS")
-		if r.timingPath != "" {
-			fmt.Fprintf(r.out, "Timing report: %s\n", r.timingPath)
-		}
+		r.renderTimingAvailability(timingErr)
 		return operationErr
 	}
 	fmt.Fprintln(r.out, "Bootstrap: FAIL")
 	if r.active >= 0 && r.active < len(r.phases) && !r.phases[r.active].Completed {
 		fmt.Fprintf(r.out, "Failed phase: %s\n", r.phases[r.active].Name)
-	} else if timingErr != nil {
-		fmt.Fprintf(r.out, "Failed finalization: %s\n", compactError(timingErr))
 	}
 	if !reportedCause {
 		fmt.Fprintf(r.out, "Reason: %s\n", compactError(operationErr))
 	}
 	fmt.Fprintf(r.out, "Next action: %s\n", bootstrapNextAction(operationErr))
-	if r.timingPath != "" && timingErr == nil {
-		fmt.Fprintf(r.out, "Timing report: %s\n", r.timingPath)
-	}
+	r.renderTimingAvailability(timingErr)
 	return operationErr
+}
+
+func (r *bootstrapReport) renderTimingAvailability(err error) {
+	if r.timingPath == "" {
+		return
+	}
+	if err != nil {
+		fmt.Fprintf(r.out, "Timing report: unavailable (%s)\n", compactError(err))
+		return
+	}
+	fmt.Fprintf(r.out, "Timing report: %s\n", r.timingPath)
 }
 
 func phaseDuration(phase bootstrapPhase, finishedAt time.Time) time.Duration {
@@ -196,23 +202,29 @@ func (r *bootstrapReport) persist(operationErr error) error {
 		phases = append(phases, entry)
 	}
 	document := struct {
-		Version       int               `json:"version"`
-		RunID         string            `json:"run_id"`
-		StartedAt     string            `json:"started_at"`
-		FinishedAt    string            `json:"finished_at"`
-		DurationMS    int64             `json:"duration_ms"`
-		Succeeded     bool              `json:"succeeded"`
-		Phases        []phaseTiming     `json:"phases"`
-		Suboperations []bootstrapTiming `json:"suboperations"`
+		Version         int               `json:"version"`
+		Operation       string            `json:"operation"`
+		PlatformVersion string            `json:"platform_version,omitempty"`
+		ModelRevision   string            `json:"model_revision,omitempty"`
+		RunID           string            `json:"run_id"`
+		StartedAt       string            `json:"started_at"`
+		FinishedAt      string            `json:"finished_at"`
+		DurationMS      int64             `json:"duration_ms"`
+		Succeeded       bool              `json:"succeeded"`
+		Phases          []phaseTiming     `json:"phases"`
+		Suboperations   []bootstrapTiming `json:"suboperations"`
 	}{
-		Version:       1,
-		RunID:         r.runID,
-		StartedAt:     r.startedAt.UTC().Format(time.RFC3339Nano),
-		FinishedAt:    r.finishedAt.UTC().Format(time.RFC3339Nano),
-		DurationMS:    r.finishedAt.Sub(r.startedAt).Milliseconds(),
-		Succeeded:     operationErr == nil,
-		Phases:        phases,
-		Suboperations: append([]bootstrapTiming(nil), r.timings...),
+		Version:         1,
+		Operation:       r.operation,
+		PlatformVersion: r.platformVersion,
+		ModelRevision:   r.modelRevision,
+		RunID:           r.runID,
+		StartedAt:       r.startedAt.UTC().Format(time.RFC3339Nano),
+		FinishedAt:      r.finishedAt.UTC().Format(time.RFC3339Nano),
+		DurationMS:      r.finishedAt.Sub(r.startedAt).Milliseconds(),
+		Succeeded:       operationErr == nil,
+		Phases:          phases,
+		Suboperations:   append([]bootstrapTiming(nil), r.timings...),
 	}
 	data, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {
