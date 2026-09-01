@@ -61,6 +61,19 @@ func TestPortalHomeUsesCanonicalSemanticStatus(t *testing.T) {
 	}
 }
 
+func TestPortalHomeDoesNotChurnWithGenerationTime(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	evidence := Evidence{GeneratedAt: "2026-08-29T00:00:00Z"}
+	first := home(site, "revision", evidence, time.Unix(1, 0))
+	second := home(site, "revision", evidence, time.Unix(2, 0))
+	if first != second {
+		t.Fatal("portal home changed when only the generation time changed")
+	}
+	if !strings.Contains(first, "observed: 2026-08-29T00:00:00Z") {
+		t.Fatalf("portal home omitted the recorded observation time: %s", first)
+	}
+}
+
 func TestPortalRejectsSymlinkedOutputParentBeforePublication(t *testing.T) {
 	dir := t.TempDir()
 	external := t.TempDir()
