@@ -185,7 +185,12 @@
         for priority in $(ip -4 rule show | awk '$NF == 51820 {gsub(":", "", $1); print $1}'); do
         ip -4 rule del priority "$priority";
         done;
-        ip -4 route flush table 51820
+        route_status=0;
+        route_output=$(ip -4 route flush table 51820 2>&1) || route_status=$?;
+        if [ "$route_status" -ne 0 ] && ! printf '%s\n' "$route_output" | grep -Fq 'FIB table does not exist'; then
+        printf '%s\n' "$route_output" >&2;
+        exit "$route_status";
+        fi
   changed_when: false
   when: firewall_plan.policy_routes | default([]) | length == 0
 

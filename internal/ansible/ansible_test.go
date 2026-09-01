@@ -1072,6 +1072,24 @@ func TestFirewallRoleCreatesNftablesConfigurationDirectory(t *testing.T) {
 	}
 }
 
+func TestFirewallPolicyRoutingCleanupIsIdempotentWhenTableIsAbsent(t *testing.T) {
+	tasksPath := filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml")
+	tasksData, err := os.ReadFile(tasksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	templatePath := filepath.Join("..", "..", "ansible", "roles", "firewall", "templates", "boetticher-policy-routing-down.j2")
+	templateData, err := os.ReadFile(templatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, text := range map[string]string{"firewall cleanup task": string(tasksData), "AirVPN down helper": string(templateData)} {
+		if !strings.Contains(text, "route_status=0") || !strings.Contains(text, "FIB table does not exist") || !strings.Contains(text, "exit \"$route_status\"") {
+			t.Fatalf("%s does not preserve idempotent route-table cleanup", name)
+		}
+	}
+}
+
 func TestFirewallTelemetryHasFixedReadOnlyPrivilegeAndNetworkContract(t *testing.T) {
 	unitPath := filepath.Join("..", "..", "images", "firewall", "runtime", "boetticher-firewall-telemetry.service")
 	unitData, err := os.ReadFile(unitPath)
