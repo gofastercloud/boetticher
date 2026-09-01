@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -469,6 +470,14 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return fmt.Errorf("HOLD: managed gateway did not pass runtime readiness before dependent appliances: %w", err)
 		}
 	}
+	guestStates := map[int]deploymentGuestArtifactState{}
+	if err := report.timed("appliances", "preflight", "guest-state", func() error {
+		var err error
+		guestStates, err = inspectDeploymentGuestStates(ctx, proxmoxClient, proxmoxPlan.Node, deploymentGuestPlans(s, proxmoxPlan))
+		return err
+	}); err != nil {
+		return err
+	}
 	dnsPlan, err := dns.PlanFromSite(s)
 	if err != nil {
 		return fmt.Errorf("resolve DNS readiness contract: %w", err)
@@ -487,10 +496,11 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			if !matches || candidate.Kind != proxmox.KindLXC {
 				continue
 			}
-			existed, replacement, stateErr := proxmox.InspectGuestArtifact(ctx, proxmoxClient, proxmoxPlan.Node, candidate)
-			if stateErr != nil {
-				return stateErr
+			state, ok := guestStates[candidate.VMID]
+			if !ok {
+				return fmt.Errorf("inspect %s state: guest was not included in preflight", candidate.Name)
 			}
+			existed, replacement := state.exists, state.replacement
 			if replacement {
 				replacedGuests = append(replacedGuests, candidate)
 			}
@@ -1117,6 +1127,86 @@ func deploymentModuleNames(s model.Site) []string {
 	}
 	result = append(result, "portal")
 	return result
+}
+
+type deploymentGuestArtifactState struct {
+	exists      bool
+	replacement bool
+}
+
+func deploymentGuestPlans(s model.Site, plan proxmox.Plan) []proxmox.GuestPlan {
+	seen := make(map[int]bool)
+	guests := make([]proxmox.GuestPlan, 0, len(plan.Guests))
+	for _, module := range deploymentModuleNames(s) {
+		for _, guest := range plan.Guests {
+			matches := guest.Owner == "boetticher/module/"+module
+			if module == "portal" {
+				matches = guest.Name == "lab-portal-01"
+			}
+			if !matches || guest.Kind != proxmox.KindLXC || seen[guest.VMID] {
+				continue
+			}
+			seen[guest.VMID] = true
+			guests = append(guests, guest)
+		}
+	}
+	return guests
+}
+
+func inspectDeploymentGuestStates(ctx context.Context, client *proxmox.Client, node string, guests []proxmox.GuestPlan) (map[int]deploymentGuestArtifactState, error) {
+	if client == nil {
+		return nil, errors.New("Proxmox client is required")
+	}
+	if node == "" {
+		return nil, errors.New("Proxmox node is required")
+	}
+	if len(guests) == 0 {
+		return map[int]deploymentGuestArtifactState{}, nil
+	}
+	type result struct {
+		index       int
+		exists      bool
+		replacement bool
+		err         error
+	}
+	jobs := make(chan int, len(guests))
+	results := make(chan result, len(guests))
+	for index := range guests {
+		jobs <- index
+	}
+	close(jobs)
+	workers := 4
+	if len(guests) < workers {
+		workers = len(guests)
+	}
+	var wait sync.WaitGroup
+	wait.Add(workers)
+	for worker := 0; worker < workers; worker++ {
+		go func() {
+			defer wait.Done()
+			for index := range jobs {
+				exists, replacement, err := proxmox.InspectGuestArtifact(ctx, client, node, guests[index])
+				results <- result{index: index, exists: exists, replacement: replacement, err: err}
+			}
+		}()
+	}
+	wait.Wait()
+	close(results)
+	ordered := make([]result, len(guests))
+	for item := range results {
+		ordered[item.index] = item
+	}
+	states := make(map[int]deploymentGuestArtifactState, len(guests))
+	for _, item := range ordered {
+		if item.err != nil {
+			return nil, item.err
+		}
+		if _, duplicate := states[guests[item.index].VMID]; duplicate {
+			return nil, fmt.Errorf("duplicate deployment guest VMID %d", guests[item.index].VMID)
+		}
+		states[guests[item.index].VMID] = deploymentGuestArtifactState{exists: item.exists, replacement: item.replacement}
+	}
+	return states, nil
 }
 
 func loadBootstrapOperatorKey(siteDir string) (string, error) {

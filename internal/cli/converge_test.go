@@ -4,15 +4,20 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
+	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
 
 type dnsReadinessRunner struct {
@@ -23,6 +28,12 @@ type endpointArgsRunner struct {
 	output []byte
 	err    error
 	args   [][]string
+}
+
+type convergeRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f convergeRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
 }
 
 func (r *endpointArgsRunner) RunArgs(_ context.Context, _ string, _ string, args []string) ([]byte, error) {
@@ -76,6 +87,42 @@ func TestDeploymentModuleNamesFollowResolvedManagedGraph(t *testing.T) {
 	want := []string{"dns", "logging", "monitoring", "portal"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("managed deployment order = %v, want %v", got, want)
+	}
+}
+
+func TestInspectDeploymentGuestStatesUsesBoundedParallelReadPool(t *testing.T) {
+	var active, maximum int32
+	transport := convergeRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if !strings.HasSuffix(r.URL.Path, "/config") {
+			t.Fatalf("unexpected guest preflight path: %s", r.URL.Path)
+		}
+		if strings.Contains(r.URL.Path, "/qemu/") {
+			return &http.Response{StatusCode: http.StatusNotFound, Status: "404 Not Found", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"errors":{"vmid":"not found"}}`))}, nil
+		}
+		current := atomic.AddInt32(&active, 1)
+		for {
+			seen := atomic.LoadInt32(&maximum)
+			if current <= seen || atomic.CompareAndSwapInt32(&maximum, seen, current) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+		atomic.AddInt32(&active, -1)
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"data":{}}`))}, nil
+	})
+	client := &proxmox.Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	guests := make([]proxmox.GuestPlan, 6)
+	for index := range guests {
+		guests[index] = proxmox.GuestPlan{VMID: 110 + index, Kind: proxmox.KindLXC}
+	}
+	report := newDeploymentReport(io.Discard)
+	ctx := telemetry.WithObserver(context.Background(), report)
+	states, err := inspectDeploymentGuestStates(ctx, client, "node", guests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != len(guests) || atomic.LoadInt32(&maximum) < 2 || atomic.LoadInt32(&maximum) > 4 {
+		t.Fatalf("guest preflight states=%d maximum-concurrency=%d, want six states and concurrency 2..4", len(states), maximum)
 	}
 }
 

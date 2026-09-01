@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/telemetry"
@@ -62,9 +63,12 @@ type deploymentReport struct {
 	timingPath            string
 	timings               []deploymentTiming
 	measurements          operationMeasurements
+	measurementMu         sync.Mutex
 }
 
 func (r *deploymentReport) Observe(event telemetry.Event) {
+	r.measurementMu.Lock()
+	defer r.measurementMu.Unlock()
 	r.measurements.Observe(event)
 }
 
