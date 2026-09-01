@@ -747,7 +747,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		if readErr != nil {
 			return fmt.Errorf("read endpoint-generated monitor CSR: %w", readErr)
 		}
-		monitorCertificate, err = pki.SignServerCSR(authority, string(monitorCSR), "monitor", s.Network.Domain, []string{"lab-monitor-01." + s.Network.Domain}, time.Now().UTC())
+		monitorCertificate, err = signOrReuseServerCertificate(authority, string(monitorCSR), csrDir, "monitor", "monitor", s.Network.Domain, []string{"lab-monitor-01." + s.Network.Domain})
 		if err != nil {
 			return fmt.Errorf("sign monitor endpoint CSR: %w", err)
 		}
@@ -757,7 +757,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		if readErr != nil {
 			return fmt.Errorf("read endpoint-generated LiteLLM CSR: %w", readErr)
 		}
-		litellmCertificate, err = pki.SignServerCSR(authority, string(litellmCSR), "litellm", s.Network.Domain, []string{"ai." + s.Network.Domain, "lab-litellm-01." + s.Network.Domain}, time.Now().UTC())
+		litellmCertificate, err = signOrReuseServerCertificate(authority, string(litellmCSR), csrDir, "litellm", "litellm", s.Network.Domain, []string{"ai." + s.Network.Domain, "lab-litellm-01." + s.Network.Domain})
 		if err != nil {
 			return fmt.Errorf("sign LiteLLM endpoint CSR: %w", err)
 		}
@@ -767,7 +767,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		if readErr != nil {
 			return fmt.Errorf("read endpoint-generated OctoPrint CSR: %w", readErr)
 		}
-		octoprintCertificate, err = pki.SignServerCSR(authority, string(octoprintCSR), "octoprint", s.Network.Domain, []string{"printer." + s.Network.Domain, "lab-printer-01." + s.Network.Domain}, time.Now().UTC())
+		octoprintCertificate, err = signOrReuseServerCertificate(authority, string(octoprintCSR), csrDir, "octoprint", "octoprint", s.Network.Domain, []string{"printer." + s.Network.Domain, "lab-printer-01." + s.Network.Domain})
 		if err != nil {
 			return fmt.Errorf("sign OctoPrint endpoint CSR: %w", err)
 		}
@@ -777,7 +777,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		if readErr != nil {
 			return fmt.Errorf("read endpoint-generated StreamDeck CSR: %w", readErr)
 		}
-		streamDeckCertificate, err = pki.SignServiceClientCSR(authority, string(streamDeckCSR), "lab-streamdeck-01", time.Now().UTC())
+		streamDeckCertificate, err = signOrReuseServiceClientCertificate(authority, string(streamDeckCSR), csrDir, "streamdeck", "lab-streamdeck-01")
 		if err != nil {
 			return fmt.Errorf("sign StreamDeck client CSR: %w", err)
 		}
@@ -793,12 +793,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		if readErr != nil {
 			return fmt.Errorf("read endpoint-generated Gatus CSR: %w", readErr)
 		}
-		gatusCertificate, err = pki.SignServerCSR(authority, string(csr), "gatus", s.Network.Domain, []string{"lab-gatus-01." + s.Network.Domain}, time.Now().UTC())
+		gatusCertificate, err = signOrReuseServerCertificate(authority, string(csr), csrDir, "gatus", "gatus", s.Network.Domain, []string{"lab-gatus-01." + s.Network.Domain})
 		if err != nil {
 			return fmt.Errorf("sign Gatus endpoint CSR: %w", err)
 		}
 	}
-	portalCertificate, err := pki.SignServerCSR(authority, string(portalCSR), "portal", s.Network.Domain, []string{"lab-portal-01." + s.Network.Domain}, time.Now().UTC())
+	portalCertificate, err := signOrReuseServerCertificate(authority, string(portalCSR), csrDir, "portal", "portal", s.Network.Domain, []string{"lab-portal-01." + s.Network.Domain})
 	if err != nil {
 		return fmt.Errorf("sign portal endpoint CSR: %w", err)
 	}
@@ -1390,7 +1390,7 @@ func signLoggingCertificates(authority pki.Authority, s model.Site, csrDir strin
 		if err != nil {
 			return nil, "", fmt.Errorf("read %s logging CSR: %w", component.Name, err)
 		}
-		certificate, err := pki.SignClientCSR(authority, string(csr), component.Name, s.Network.Domain, time.Now().UTC())
+		certificate, err := signOrReuseEndpointClientCertificate(authority, string(csr), csrDir, "logging-"+component.Name, component.Name, s.Network.Domain)
 		if err != nil {
 			return nil, "", fmt.Errorf("sign %s logging CSR: %w", component.Name, err)
 		}
@@ -1400,7 +1400,7 @@ func signLoggingCertificates(authority pki.Authority, s model.Site, csrDir strin
 	if err != nil {
 		return nil, "", fmt.Errorf("read logging collector CSR: %w", err)
 	}
-	collector, err := pki.SignServerCSR(authority, string(collectorCSR), "logs", s.Network.Domain, []string{"lab-log-01." + s.Network.Domain}, time.Now().UTC())
+	collector, err := signOrReuseServerCertificate(authority, string(collectorCSR), csrDir, "logging-collector", "logs", s.Network.Domain, []string{"lab-log-01." + s.Network.Domain})
 	if err != nil {
 		return nil, "", fmt.Errorf("sign logging collector CSR: %w", err)
 	}
@@ -1408,7 +1408,6 @@ func signLoggingCertificates(authority pki.Authority, s model.Site, csrDir strin
 }
 
 func signAIOpsCertificates(authority pki.Authority, s model.Site, csrDir string) (map[string]string, error) {
-	now := time.Now().UTC()
 	readCSR := func(name string) (string, error) {
 		data, err := os.ReadFile(filepath.Join(csrDir, name+".csr.pem"))
 		if err != nil {
@@ -1429,7 +1428,7 @@ func signAIOpsCertificates(authority pki.Authority, s model.Site, csrDir string)
 		if err != nil {
 			return nil, err
 		}
-		certificate, err := pki.SignServerCSR(authority, csr, request.identity, s.Network.Domain, request.aliases, now)
+		certificate, err := signOrReuseServerCertificate(authority, csr, csrDir, request.file, request.identity, s.Network.Domain, request.aliases)
 		if err != nil {
 			return nil, fmt.Errorf("sign %s CSR: %w", request.file, err)
 		}
@@ -1446,7 +1445,7 @@ func signAIOpsCertificates(authority pki.Authority, s model.Site, csrDir string)
 		if err != nil {
 			return nil, err
 		}
-		certificate, err := pki.SignServiceClientCSR(authority, csr, request.identity, now)
+		certificate, err := signOrReuseServiceClientCertificate(authority, csr, csrDir, request.file, request.identity)
 		if err != nil {
 			return nil, fmt.Errorf("sign %s CSR: %w", request.file, err)
 		}

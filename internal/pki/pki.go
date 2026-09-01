@@ -1,6 +1,7 @@
 package pki
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -38,6 +39,10 @@ type ServerCertificate struct {
 	ChainPEM    string
 	Fingerprint string
 }
+
+// CertificateRenewalWindow is the safety margin used when deciding whether a
+// previously issued managed certificate can be reused.
+const CertificateRenewalWindow = 30 * 24 * time.Hour
 
 // SignServerCSR signs a CSR whose key was generated on the managed endpoint.
 // The requested identity is checked against the model before the issuing CA
@@ -144,6 +149,205 @@ func signClientCSR(authority Authority, csrPEM, name, wanted string, now time.Ti
 		Fingerprint: fmt.Sprintf("sha256:%x", fingerprint[:]),
 		Serial:      template.SerialNumber.Text(16),
 	}, nil
+}
+
+// ValidateServerCertificate validates a cached server certificate against the
+// current CSR and authority. The chain must contain exactly the leaf and the
+// current issuing certificate. Only a certificate with enough remaining
+// lifetime to cross the renewal window is reusable.
+func ValidateServerCertificate(authority Authority, chainPEM, csrPEM, name, domain string, aliases []string, now time.Time) (ServerCertificate, error) {
+	if err := ValidateClientName(name); err != nil {
+		return ServerCertificate{}, err
+	}
+	wantNames := append([]string{name + "." + domain}, aliases...)
+	csr, err := parseAndValidateCSR(csrPEM, wantNames[0], wantNames, true)
+	if err != nil {
+		return ServerCertificate{}, err
+	}
+	leaf, issuing, err := parseCertificateChain(chainPEM)
+	if err != nil {
+		return ServerCertificate{}, err
+	}
+	if err := validateCachedCertificate(authority, leaf, issuing, csr, wantNames, x509.ExtKeyUsageServerAuth, now); err != nil {
+		return ServerCertificate{}, err
+	}
+	return ServerCertificate{
+		Name:        name,
+		CertPEM:     marshalCert(leaf.Raw),
+		ChainPEM:    marshalCert(leaf.Raw) + authority.IssuingCertPEM,
+		Fingerprint: certificateFingerprint(leaf.Raw),
+	}, nil
+}
+
+// ValidateClientCertificate validates a cached endpoint client certificate
+// against the current CSR and authority.
+func ValidateClientCertificate(authority Authority, chainPEM, csrPEM, name, domain string, now time.Time) (ClientCertificate, error) {
+	if err := ValidateClientName(name); err != nil {
+		return ClientCertificate{}, err
+	}
+	wanted := "client-" + name + "." + domain
+	csr, err := parseAndValidateCSR(csrPEM, wanted, nil, false)
+	if err != nil {
+		return ClientCertificate{}, err
+	}
+	leaf, issuing, err := parseCertificateChain(chainPEM)
+	if err != nil {
+		return ClientCertificate{}, err
+	}
+	if err := validateCachedCertificate(authority, leaf, issuing, csr, nil, x509.ExtKeyUsageClientAuth, now); err != nil {
+		return ClientCertificate{}, err
+	}
+	return ClientCertificate{
+		Name:        name,
+		CertPEM:     marshalCert(leaf.Raw),
+		ChainPEM:    marshalCert(leaf.Raw) + authority.IssuingCertPEM,
+		Fingerprint: certificateFingerprint(leaf.Raw),
+		Serial:      leaf.SerialNumber.Text(16),
+	}, nil
+}
+
+// ValidateServiceClientCertificate validates a cached certificate for a
+// fixed service identity which has no DNS SANs.
+func ValidateServiceClientCertificate(authority Authority, chainPEM, csrPEM, identity string, now time.Time) (ClientCertificate, error) {
+	if err := ValidateClientName(identity); err != nil {
+		return ClientCertificate{}, err
+	}
+	csr, err := parseAndValidateCSR(csrPEM, identity, nil, false)
+	if err != nil {
+		return ClientCertificate{}, err
+	}
+	leaf, issuing, err := parseCertificateChain(chainPEM)
+	if err != nil {
+		return ClientCertificate{}, err
+	}
+	if err := validateCachedCertificate(authority, leaf, issuing, csr, nil, x509.ExtKeyUsageClientAuth, now); err != nil {
+		return ClientCertificate{}, err
+	}
+	return ClientCertificate{
+		Name:        identity,
+		CertPEM:     marshalCert(leaf.Raw),
+		ChainPEM:    marshalCert(leaf.Raw) + authority.IssuingCertPEM,
+		Fingerprint: certificateFingerprint(leaf.Raw),
+		Serial:      leaf.SerialNumber.Text(16),
+	}, nil
+}
+
+func parseAndValidateCSR(csrPEM, wanted string, wantNames []string, server bool) (*x509.CertificateRequest, error) {
+	block, rest := pem.Decode([]byte(csrPEM))
+	if block == nil || block.Type != "CERTIFICATE REQUEST" {
+		return nil, fmt.Errorf("certificate request PEM block missing")
+	}
+	if len(bytes.TrimSpace(rest)) != 0 {
+		return nil, fmt.Errorf("certificate request contains unexpected trailing data")
+	}
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse certificate request: %w", err)
+	}
+	if err := csr.CheckSignature(); err != nil {
+		return nil, fmt.Errorf("verify certificate request signature: %w", err)
+	}
+	if csr.Subject.CommonName != wanted || len(csr.EmailAddresses) != 0 || len(csr.IPAddresses) != 0 || len(csr.URIs) != 0 {
+		return nil, fmt.Errorf("certificate request identity is not approved for %s", wanted)
+	}
+	if server {
+		if !sameDNSNames(csr.DNSNames, wantNames) {
+			return nil, fmt.Errorf("server certificate request SANs are not approved for %s", wanted)
+		}
+	} else if len(csr.DNSNames) != 0 {
+		return nil, fmt.Errorf("client certificate request must not contain DNS SANs")
+	}
+	return csr, nil
+}
+
+func parseCertificateChain(chainPEM string) (*x509.Certificate, *x509.Certificate, error) {
+	rest := []byte(chainPEM)
+	certificates := make([]*x509.Certificate, 0, 2)
+	for range 2 {
+		block, remaining := pem.Decode(rest)
+		if block == nil || block.Type != "CERTIFICATE" {
+			return nil, nil, fmt.Errorf("certificate chain must contain a leaf and issuing certificate")
+		}
+		certificate, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, nil, fmt.Errorf("parse certificate chain: %w", err)
+		}
+		certificates = append(certificates, certificate)
+		rest = remaining
+	}
+	if len(bytes.TrimSpace(rest)) != 0 {
+		return nil, nil, fmt.Errorf("certificate chain contains unexpected trailing data")
+	}
+	return certificates[0], certificates[1], nil
+}
+
+func validateCachedCertificate(authority Authority, leaf, issuing *x509.Certificate, csr *x509.CertificateRequest, wantNames []string, usage x509.ExtKeyUsage, now time.Time) error {
+	if leaf == nil || issuing == nil || csr == nil {
+		return fmt.Errorf("cached certificate inputs are incomplete")
+	}
+	currentIssuing, err := parseCert(authority.IssuingCertPEM)
+	if err != nil {
+		return fmt.Errorf("parse current issuing certificate: %w", err)
+	}
+	if !bytes.Equal(issuing.Raw, currentIssuing.Raw) {
+		return fmt.Errorf("cached certificate uses a different issuing certificate")
+	}
+	root, err := parseCert(authority.RootCertPEM)
+	if err != nil {
+		return fmt.Errorf("parse current root certificate: %w", err)
+	}
+	if leaf.IsCA || !leaf.BasicConstraintsValid || leaf.KeyUsage != x509.KeyUsageDigitalSignature {
+		return fmt.Errorf("cached certificate has unexpected CA or key usage constraints")
+	}
+	if len(leaf.ExtKeyUsage) != 1 || leaf.ExtKeyUsage[0] != usage || len(leaf.UnknownExtKeyUsage) != 0 {
+		return fmt.Errorf("cached certificate has unexpected extended key usage")
+	}
+	if leaf.Subject.CommonName != csr.Subject.CommonName || !certificateSubjectMatches(leaf.Subject, csr.Subject.CommonName) {
+		return fmt.Errorf("cached certificate subject does not match the CSR")
+	}
+	if len(wantNames) == 0 {
+		if len(leaf.DNSNames) != 0 || len(leaf.EmailAddresses) != 0 || len(leaf.IPAddresses) != 0 || len(leaf.URIs) != 0 {
+			return fmt.Errorf("cached client certificate contains subject alternatives")
+		}
+	} else if !sameDNSNames(leaf.DNSNames, wantNames) || len(leaf.EmailAddresses) != 0 || len(leaf.IPAddresses) != 0 || len(leaf.URIs) != 0 {
+		return fmt.Errorf("cached server certificate SANs do not match the approved identity")
+	}
+	csrKey, err := x509.MarshalPKIXPublicKey(csr.PublicKey)
+	if err != nil {
+		return fmt.Errorf("marshal CSR public key: %w", err)
+	}
+	certificateKey, err := x509.MarshalPKIXPublicKey(leaf.PublicKey)
+	if err != nil {
+		return fmt.Errorf("marshal cached certificate public key: %w", err)
+	}
+	if !bytes.Equal(csrKey, certificateKey) {
+		return fmt.Errorf("cached certificate public key does not match the CSR")
+	}
+	if !leaf.NotAfter.After(now.UTC().Add(CertificateRenewalWindow)) {
+		return fmt.Errorf("cached certificate is within the renewal window")
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+	intermediates := x509.NewCertPool()
+	intermediates.AddCert(issuing)
+	if _, err := leaf.Verify(x509.VerifyOptions{
+		Roots:         roots,
+		Intermediates: intermediates,
+		CurrentTime:   now.UTC(),
+		KeyUsages:     []x509.ExtKeyUsage{usage},
+	}); err != nil {
+		return fmt.Errorf("verify cached certificate chain: %w", err)
+	}
+	return nil
+}
+
+func certificateSubjectMatches(subject pkix.Name, commonName string) bool {
+	return subject.String() == (pkix.Name{CommonName: commonName, Organization: []string{"boetticher"}}).String() && len(subject.ExtraNames) == 0
+}
+
+func certificateFingerprint(der []byte) string {
+	fingerprint := sha256.Sum256(der)
+	return fmt.Sprintf("sha256:%x", fingerprint[:])
 }
 
 func sameDNSNames(got, want []string) bool {
