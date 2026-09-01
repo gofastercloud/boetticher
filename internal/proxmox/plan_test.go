@@ -87,6 +87,29 @@ func (r *recordingArgsRunner) RunArgs(_ context.Context, address, user string, a
 	return nil, r.err
 }
 
+func TestInspectGuestArtifactReadsExistingGuestConfigOnce(t *testing.T) {
+	guest := GuestPlan{
+		VMID: 100, Kind: KindQEMU,
+		Artifact: model.Artifact{Name: "boetticher-dns-blocky", Version: "1.0.0", Architecture: "amd64"},
+	}
+	reads := 0
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/node/qemu/100/config" {
+			t.Fatalf("unexpected guest artifact request: %s %s", r.Method, r.URL.Path)
+		}
+		reads++
+		return response([]byte(`{"data":{"description":"` + artifactDescription(guest.Artifact) + `"}}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	exists, replacement, err := InspectGuestArtifact(context.Background(), client, "node", guest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists || replacement || reads != 1 {
+		t.Fatalf("guest artifact state = exists:%t replacement:%t reads:%d", exists, replacement, reads)
+	}
+}
+
 func TestFoundationPlanIsDeterministic(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	first, err := PlanFromSite(site)

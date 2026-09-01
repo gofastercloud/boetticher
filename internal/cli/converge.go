@@ -412,13 +412,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 				break
 			}
 		}
-		firewallExisted, existenceErr := deploymentGuestExists(ctx, proxmoxClient, proxmoxPlan.Node, firewallGuest)
-		if existenceErr != nil {
-			return existenceErr
-		}
-		firewallReplaced, replacementErr := proxmox.GuestArtifactNeedsReplacement(ctx, proxmoxClient, proxmoxPlan.Node, firewallGuest)
-		if replacementErr != nil {
-			return replacementErr
+		firewallExisted, firewallReplaced, stateErr := proxmox.InspectGuestArtifact(ctx, proxmoxClient, proxmoxPlan.Node, firewallGuest)
+		if stateErr != nil {
+			return stateErr
 		}
 		if err := report.timed("proxmox", "reconcile", firewallGuest.Name, func() error {
 			return proxmox.EnsureFirewallVM(ctx, proxmoxClient, proxmoxPlan)
@@ -491,13 +487,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			if !matches || candidate.Kind != proxmox.KindLXC {
 				continue
 			}
-			existed, existenceErr := deploymentGuestExists(ctx, proxmoxClient, proxmoxPlan.Node, candidate)
-			if existenceErr != nil {
-				return existenceErr
-			}
-			replacement, replacementErr := proxmox.GuestArtifactNeedsReplacement(ctx, proxmoxClient, proxmoxPlan.Node, candidate)
-			if replacementErr != nil {
-				return replacementErr
+			existed, replacement, stateErr := proxmox.InspectGuestArtifact(ctx, proxmoxClient, proxmoxPlan.Node, candidate)
+			if stateErr != nil {
+				return stateErr
 			}
 			if replacement {
 				replacedGuests = append(replacedGuests, candidate)
@@ -1796,22 +1788,4 @@ func runTrackedAnsible(ctx context.Context, playbook, inventory string, variable
 		report.recordTiming(report.activePhaseID(), "ansible", target, started)
 	}
 	return err
-}
-
-// deploymentGuestExists is a read-only boundary used to make the coarse
-// mutation report honest. A successful reconcile after an absent-state
-// observation can be reported as created; an error after that observation is
-// conservatively reported as an uncertain mutation scope.
-func deploymentGuestExists(ctx context.Context, client *proxmox.Client, node string, guest proxmox.GuestPlan) (bool, error) {
-	if client == nil {
-		return false, errors.New("Proxmox client is required")
-	}
-	_, _, err := client.GuestConfig(ctx, node, guest.VMID)
-	if proxmox.IsNotFound(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("inspect existing %s guest before reconciliation: %w", guest.Name, err)
-	}
-	return true, nil
 }

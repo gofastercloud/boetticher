@@ -1939,25 +1939,35 @@ func guestArtifactNeedsReplacement(current map[string]any, expected GuestPlan) b
 	return normalizeArtifactDescription(observed) != artifactDescription(expected.Artifact)
 }
 
+// InspectGuestArtifact performs the one live guest-config read needed before
+// appliance reconciliation. It returns existence and replacement state
+// together so callers do not query the same Proxmox config twice. A kind
+// mismatch remains present but not replaceable; the normal ensure path then
+// preserves its ownership HOLD.
+func InspectGuestArtifact(ctx context.Context, client *Client, node string, guest GuestPlan) (exists, replacement bool, err error) {
+	if client == nil {
+		return false, false, errors.New("Proxmox client is required")
+	}
+	kind, current, err := client.GuestConfig(ctx, node, guest.VMID)
+	if IsNotFound(err) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, fmt.Errorf("inspect guest %s artifact identity: %w", guest.Name, err)
+	}
+	if kind != guest.Kind {
+		return true, false, nil
+	}
+	return true, guestArtifactNeedsReplacement(current, guest), nil
+}
+
 // GuestArtifactNeedsReplacement reports whether one existing guest needs the
 // explicitly confirmed appliance-rootfs replacement. A missing guest is not a
 // replacement, and kind mismatches remain the responsibility of the normal
 // ensure path so its existing HOLD is preserved.
 func GuestArtifactNeedsReplacement(ctx context.Context, client *Client, node string, guest GuestPlan) (bool, error) {
-	if client == nil {
-		return false, errors.New("Proxmox client is required")
-	}
-	kind, current, err := client.GuestConfig(ctx, node, guest.VMID)
-	if IsNotFound(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("inspect guest %s artifact identity: %w", guest.Name, err)
-	}
-	if kind != guest.Kind {
-		return false, nil
-	}
-	return guestArtifactNeedsReplacement(current, guest), nil
+	_, replacement, err := InspectGuestArtifact(ctx, client, node, guest)
+	return replacement, err
 }
 
 func normalizeArtifactDescription(value string) string {
