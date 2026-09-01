@@ -12,6 +12,10 @@ import (
 	"strings"
 )
 
+// Keep enough bounded output budget for reasoning-capable providers to emit
+// the requested tool or schema result without weakening the live contract.
+const canaryMaxTokens = 256
+
 type ModelCapabilities struct {
 	Mode                    string `json:"mode"`
 	SupportsFunctionCalling *bool  `json:"supports_function_calling"`
@@ -53,8 +57,8 @@ func QualifyModelAlias(ctx context.Context, client *http.Client, endpoint, alias
 	if err != nil {
 		return fmt.Errorf("strict tool canary: %w", err)
 	}
-	if len(first.ToolCalls) != 1 || first.ToolCalls[0].Function.Name != "qualification_probe" {
-		return errors.New("strict tool canary did not return the one authorized tool")
+	if len(first.ToolCalls) != 1 || first.ToolCalls[0].Type != "function" || first.ToolCalls[0].ID == "" || first.ToolCalls[0].Function.Name != "qualification_probe" {
+		return fmt.Errorf("strict tool canary did not return the one authorized tool (tool_calls=%d finish_reason=%q content_bytes=%d)", len(first.ToolCalls), first.FinishReason, len([]byte(first.Content)))
 	}
 	var arguments struct {
 		Nonce string `json:"nonce"`
@@ -77,8 +81,9 @@ func QualifyModelAlias(ctx context.Context, client *http.Client, endpoint, alias
 }
 
 type canaryMessage struct {
-	Content   string `json:"content"`
-	ToolCalls []struct {
+	Content      string `json:"content"`
+	FinishReason string `json:"finish_reason"`
+	ToolCalls    []struct {
 		ID       string `json:"id"`
 		Type     string `json:"type"`
 		Function struct {
@@ -90,11 +95,12 @@ type canaryMessage struct {
 
 func modelCanaryRequest(ctx context.Context, client *http.Client, endpoint, alias string, messages []map[string]any, tools []any, toolChoice any) (canaryMessage, error) {
 	request := map[string]any{
-		"model": alias, "messages": messages, "max_tokens": 32,
+		"model": alias, "messages": messages, "max_tokens": canaryMaxTokens,
 	}
 	if len(tools) > 0 {
 		request["tools"] = tools
 		request["tool_choice"] = toolChoice
+		request["parallel_tool_calls"] = false
 	} else {
 		request["response_format"] = map[string]any{
 			"type": "json_schema",
@@ -131,11 +137,16 @@ func modelCanaryRequest(ctx context.Context, client *http.Client, endpoint, alia
 	}
 	var completion struct {
 		Choices []struct {
-			Message canaryMessage `json:"message"`
+			Message      canaryMessage `json:"message"`
+			FinishReason string        `json:"finish_reason"`
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(data, &completion); err != nil || len(completion.Choices) != 1 {
 		return canaryMessage{}, errors.New("model canary returned an invalid completion")
 	}
-	return completion.Choices[0].Message, nil
+	message := completion.Choices[0].Message
+	if message.FinishReason == "" {
+		message.FinishReason = completion.Choices[0].FinishReason
+	}
+	return message, nil
 }
