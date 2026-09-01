@@ -662,6 +662,9 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 			t.Fatalf("LiteLLM build hygiene is missing %q", required)
 		}
 	}
+	if _, err := os.Stat(filepath.Join(root, "litellm", "runtime", "litellm-start")); !os.IsNotExist(err) {
+		t.Fatalf("LiteLLM artifact retains the removed Python launcher: %v", err)
+	}
 }
 
 func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *testing.T) {
