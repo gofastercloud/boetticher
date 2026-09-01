@@ -206,12 +206,12 @@ func TestPurgeModuleSecretValuesRemovesOnlyDeclaredNames(t *testing.T) {
 }
 
 func TestPurgeModuleSecretsRefusesSharedDeclaration(t *testing.T) {
-	declaration := model.ModuleDeclaration{Module: "litellm", Secrets: []model.SecretDeclaration{{Name: "shared_key"}}}
+	declaration := model.ModuleDeclaration{Module: "bifrost", Secrets: []model.SecretDeclaration{{Name: "shared_key"}}}
 	s := model.Site{Declarations: []model.ModuleDeclaration{
 		declaration,
 		{Module: "other", Secrets: []model.SecretDeclaration{{Name: "shared_key"}}},
 	}}
-	if _, err := moduleSecretOwnership(s, "litellm", declaration); err == nil {
+	if _, err := moduleSecretOwnership(s, "bifrost", declaration); err == nil {
 		t.Fatal("shared module secret was accepted for purge")
 	}
 }

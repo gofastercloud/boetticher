@@ -11,7 +11,7 @@ modules:
   airvpn:
     enabled: true
     servers: europe
-  litellm:
+  bifrost:
     enabled: true
     network: airvpn
 ```

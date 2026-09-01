@@ -150,7 +150,7 @@
     owner: root
     group: boetticher-aiops
     mode: '0640'
-    content: "{{ {'hosts': {'lab-fw-01': ['kea-dhcp4.service', 'nftables.service'], 'lab-dns-01': ['blocky.service', 'pdns.service', 'chrony.service'], 'lab-dns-02': ['blocky.service', 'pdns.service', 'chrony.service'], 'lab-monitor-01': ['pulse.service'], 'lab-log-01': ['systemd-journal-remote.service', 'boetticher-log-query.service'], 'lab-litellm-01': ['litellm.service', 'nginx.service'], 'lab-aiops-01': ['boetticher-aiops.service', 'holmes.service']}} | to_nice_json }}"
+    content: "{{ {'hosts': {'lab-fw-01': ['kea-dhcp4.service', 'nftables.service'], 'lab-dns-01': ['blocky.service', 'pdns.service', 'chrony.service'], 'lab-dns-02': ['blocky.service', 'pdns.service', 'chrony.service'], 'lab-monitor-01': ['pulse.service'], 'lab-log-01': ['systemd-journal-remote.service', 'boetticher-log-query.service'], 'lab-bifrost-01': ['bifrost.service', 'nginx.service'], 'lab-aiops-01': ['boetticher-aiops.service', 'holmes.service']}} | to_nice_json }}"
 
 - name: Keep AIOps stopped until every activation gate is proven
   ansible.builtin.service:

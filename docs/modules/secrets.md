@@ -10,9 +10,9 @@ normal environment variable or public configuration file.
 Operators manage declared operator-supplied values through the shared CLI:
 
 ```text
-boetticher module secrets litellm list --site ./my-boetticher
-boetticher module secrets litellm set openrouter_api_key --site ./my-boetticher
-boetticher module secrets litellm remove openrouter_api_key --confirm --site ./my-boetticher
+boetticher module secrets bifrost list --site ./my-boetticher
+boetticher module secrets bifrost set openrouter_api_key --site ./my-boetticher
+boetticher module secrets bifrost remove openrouter_api_key --confirm --site ./my-boetticher
 ```
 
 `set` reads from a hidden TTY prompt when interactive. When deliberately
@@ -30,7 +30,7 @@ the corresponding `secrets set` commands, and `--dry-run` reports the gap
 without prompting or changing state.
 
 First-party `tailnet-router` declares `tailscale_auth_key` as operator-supplied
-bootstrap material. `litellm` declares the configured upstream secret
+bootstrap material. `bifrost` declares the configured upstream secret
 references, such as `openrouter_api_key`. These names are SOPS document keys,
 not values in `site.yml`; their plaintext values must never enter generated
 model/configuration output, artifacts, portal content, or logs. Tailscale

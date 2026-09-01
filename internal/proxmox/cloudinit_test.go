@@ -181,7 +181,7 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 	if !strings.Contains(files.UserData, "./scripts/build-images.sh images image-base image-dns-blocky image-logging image-monitoring image-portal image-firewall") || !strings.Contains(files.UserData, "./scripts/scan-images.sh scan-images boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-portal boetticher-firewall") {
 		t.Fatalf("builder cloud-init does not select the default core artifact set: %s", files.UserData)
 	}
-	if strings.Contains(files.UserData, "image-tailnet-router") || strings.Contains(files.UserData, "image-litellm") {
+	if strings.Contains(files.UserData, "image-tailnet-router") || strings.Contains(files.UserData, "image-bifrost") {
 		t.Fatal("default builder cloud-init selects disabled optional artifacts")
 	}
 	for _, required := range []string{
@@ -341,7 +341,7 @@ func TestBuilderArtifactTargetsFollowResolvedPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(strings.Join(scans, " "), "tailnet") || strings.Contains(strings.Join(scans, " "), "litellm") {
+	if strings.Contains(strings.Join(scans, " "), "tailnet") || strings.Contains(strings.Join(scans, " "), "bifrost") {
 		t.Fatalf("disabled optional scans selected: %#v", scans)
 	}
 	if _, err := builderArtifactTargets(Plan{Guests: []GuestPlan{{Name: "unknown", Artifact: model.Artifact{Name: "unknown"}}}}); err == nil {

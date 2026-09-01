@@ -1,5 +1,5 @@
 [Unit]
-Description=Boetticher Bifrost LiteLLM-compatible loopback backend
+Description=Boetticher Bifrost-compatible loopback backend
 After=network-online.target
 Wants=network-online.target
 
@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=simple
 User=bifrost
 Group=bifrost
-ExecStart=/usr/local/libexec/boetticher-bifrost serve --config /etc/boetticher/litellm/config.json
+ExecStart=/usr/local/libexec/boetticher-bifrost serve --config /etc/boetticher/bifrost/config.json
 Restart=on-failure
 NoNewPrivileges=yes
 CapabilityBoundingSet=

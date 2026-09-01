@@ -90,7 +90,7 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 			destination string
 			purpose     string
 		}{
-			{component: "lab-litellm-01", destination: "litellm", purpose: "routed LiteLLM HTTPS access"},
+			{component: "lab-bifrost-01", destination: "bifrost", purpose: "routed Bifrost HTTPS access"},
 			{component: "lab-portal-01", destination: "portal", purpose: "routed portal HTTPS access"},
 			{component: "lab-monitor-01", destination: "monitor", purpose: "routed monitoring HTTPS access"},
 		} {
@@ -117,25 +117,25 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		declaration.ReturnRouting = []string{"AirVPN-selected module traffic uses the TRANSIT gateway 10.10.5.1 and returns only through the AirVPN tunnel"}
 		declaration.Monitoring = append(declaration.Monitoring, model.MonitoringDeclaration{Name: "boetticher-airvpn", Kind: "service", Target: "lab-airvpn-01", Checks: []string{"wireguard", "forwarding", "kill-switch"}, Description: "AirVPN WireGuard transit and fail-closed forwarding health"})
 		declaration.Portal = []model.PortalEntry{{Name: "airvpn", Description: "AirVPN WireGuard external egress transit", Docs: []string{"docs/modules/airvpn.md"}}}
-	case "litellm":
+	case "bifrost":
 		config := site.ModuleConfig[name]
 		for _, upstream := range config.Upstreams {
-			declaration.Secrets = appendUniqueSecret(declaration.Secrets, model.SecretDeclaration{Name: upstream.APIKeySecret, Purpose: "server-side credential for the configured LiteLLM upstream", Consumer: "litellm", Generation: "operator-supplied", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file", Lifecycle: model.SecretLifecycleRuntime})
-			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-litellm-01", Destination: upstream.Name, Endpoint: upstream.BaseURL, Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "configured LiteLLM upstream HTTPS access"})
+			declaration.Secrets = appendUniqueSecret(declaration.Secrets, model.SecretDeclaration{Name: upstream.APIKeySecret, Purpose: "server-side credential for the configured Bifrost upstream", Consumer: "bifrost", Generation: "operator-supplied", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file", Lifecycle: model.SecretLifecycleRuntime})
+			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-bifrost-01", Destination: upstream.Name, Endpoint: upstream.BaseURL, Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "configured Bifrost upstream HTTPS access"})
 		}
 		declaration.NetworkIntents = append(declaration.NetworkIntents,
-			model.NetworkIntent{Source: "lab-litellm-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Direction: "egress", Purpose: "LiteLLM DNS resolution"},
-			model.NetworkIntent{Source: "lab-litellm-01", Destination: "dns", Protocol: "udp", Ports: []string{"123"}, Direction: "egress", Purpose: "LiteLLM time synchronisation"},
+			model.NetworkIntent{Source: "lab-bifrost-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Direction: "egress", Purpose: "Bifrost DNS resolution"},
+			model.NetworkIntent{Source: "lab-bifrost-01", Destination: "dns", Protocol: "udp", Ports: []string{"123"}, Direction: "egress", Purpose: "Bifrost time synchronisation"},
 		)
 		if IsEnabled(site, "logging") {
-			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-litellm-01", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"})
+			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-bifrost-01", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"})
 		}
-		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "litellm." + site.Network.Domain, SANs: []string{"litellm." + site.Network.Domain, "ai." + site.Network.Domain}, Consumer: "nginx"})
+		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "bifrost." + site.Network.Domain, SANs: []string{"bifrost." + site.Network.Domain, "ai." + site.Network.Domain}, Consumer: "nginx"})
 		declaration.Monitoring = append(declaration.Monitoring,
-			model.MonitoringDeclaration{Name: "nginx", Kind: "service", Target: "lab-litellm-01", Checks: []string{"nginx", "https", "mtls"}, Description: "LiteLLM mTLS frontend health"},
-			model.MonitoringDeclaration{Name: "litellm", Kind: "service", Target: "lab-litellm-01", Checks: []string{"litellm", "loopback"}, Description: "LiteLLM loopback backend health"},
+			model.MonitoringDeclaration{Name: "nginx", Kind: "service", Target: "lab-bifrost-01", Checks: []string{"nginx", "https", "mtls"}, Description: "Bifrost mTLS frontend health"},
+			model.MonitoringDeclaration{Name: "bifrost", Kind: "service", Target: "lab-bifrost-01", Checks: []string{"bifrost", "loopback"}, Description: "Bifrost loopback backend health"},
 		)
-		declaration.Portal = []model.PortalEntry{{Name: "litellm", Description: "mTLS-protected provider-neutral AI API aliases", URLs: []string{"https://litellm." + site.Network.Domain}, Docs: []string{"docs/modules/litellm.md"}}}
+		declaration.Portal = []model.PortalEntry{{Name: "bifrost", Description: "mTLS-protected provider-neutral AI API aliases", URLs: []string{"https://bifrost." + site.Network.Domain}, Docs: []string{"docs/modules/bifrost.md"}}}
 	case "printer":
 		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true}
 		declaration.DNSRecords = []model.DNSRecord{{Name: "octoprint." + site.Network.Domain, Type: "A", Address: "10.10.20.80", Owner: "printer"}, {Name: "printer." + site.Network.Domain, Type: "A", Address: "10.10.20.80", Owner: "printer"}}
@@ -164,7 +164,7 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		declaration.Monitoring = append(declaration.Monitoring, model.MonitoringDeclaration{Name: "streamdeck-status", Kind: "service", Target: "lab-streamdeck-01", Checks: []string{"streamdeck-status", "usb"}, Description: "read-only Proxmox host status display and USB availability"})
 	case "aiops":
 		config := site.ModuleConfig[name]
-		if _, err := model.ResolveLiteLLMAlias(site.ModuleConfig["litellm"], config.ModelAlias); err != nil {
+		if _, err := model.ResolveBifrostAlias(site.ModuleConfig["bifrost"], config.ModelAlias); err != nil {
 			return model.ModuleDeclaration{}, fmt.Errorf("aiops model alias: %w", err)
 		}
 		declaration.Secrets = []model.SecretDeclaration{
@@ -183,7 +183,7 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 			{Source: "lab-monitor-01", Destination: "lab-aiops-01", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "Pulse webhook delivery and AIOps health"},
 			{Source: "lab-aiops-01", Destination: "monitor", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "bounded Pulse evidence reads and incident notes"},
 			{Source: "lab-aiops-01", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19533"}, Direction: "egress", Purpose: "bounded central journal evidence"},
-			{Source: "lab-aiops-01", Destination: "litellm", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "selected AI Router model alias"},
+			{Source: "lab-aiops-01", Destination: "bifrost", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "selected AI Router model alias"},
 			{Source: "lab-aiops-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Direction: "egress", Purpose: "AIOps DNS resolution"},
 			{Source: "lab-aiops-01", Destination: "dns", Protocol: "udp", Ports: []string{"123"}, Direction: "egress", Purpose: "AIOps time synchronisation"},
 			{Source: "lab-aiops-01", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"},
@@ -230,7 +230,7 @@ func persistentFor(module, guest string) []model.PersistentState {
 		return []model.PersistentState{identity, {Name: "tailscale-state", Guest: guest, Path: "/var/lib/tailscale", Kind: "node-identity", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	case "airvpn":
 		return []model.PersistentState{identity}
-	case "litellm":
+	case "bifrost":
 		return []model.PersistentState{identity, {Name: "tls-identity", Guest: guest, Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	case "printer":
 		return []model.PersistentState{identity,
@@ -262,7 +262,7 @@ func volumesFor(module, guest string) []model.PersistentVolumeDeclaration {
 		return []model.PersistentVolumeDeclaration{identity, volume("tailscale-state", "/var/lib/tailscale", 4, true)}
 	case "airvpn":
 		return []model.PersistentVolumeDeclaration{identity}
-	case "litellm":
+	case "bifrost":
 		return []model.PersistentVolumeDeclaration{identity, volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true)}
 	case "printer":
 		return []model.PersistentVolumeDeclaration{identity, volume("octoprint-state", "/var/lib/octoprint", 8, true), volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true)}

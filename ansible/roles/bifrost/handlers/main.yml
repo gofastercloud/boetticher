@@ -1,7 +1,7 @@
 ---
-- name: restart litellm
+- name: restart bifrost
   ansible.builtin.service:
-    name: litellm
+    name: bifrost
     state: restarted
 
 - name: restart nginx

@@ -67,8 +67,8 @@ func staticCredentialReadiness(siteDir string, s model.Site, ageIdentity string)
 	if modulesEnabled(s, "tailnet-router") && !hasRetainedModuleState(s.RetainedModules, "tailnet-router") {
 		keys = append(keys, "tailscale_auth_key")
 	}
-	if modulesEnabled(s, "litellm") {
-		for _, upstream := range s.ModuleConfig["litellm"].Upstreams {
+	if modulesEnabled(s, "bifrost") {
+		for _, upstream := range s.ModuleConfig["bifrost"].Upstreams {
 			keys = append(keys, upstream.APIKeySecret)
 		}
 	}

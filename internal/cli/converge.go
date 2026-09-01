@@ -762,7 +762,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return fmt.Errorf("read endpoint-generated portal CSR: %w", err)
 	}
 	var monitorCertificate pki.ServerCertificate
-	var litellmCertificate pki.ServerCertificate
+	var bifrostCertificate pki.ServerCertificate
 	var octoprintCertificate pki.ServerCertificate
 	var streamDeckCertificate pki.ClientCertificate
 	var gatusCertificate pki.ServerCertificate
@@ -777,14 +777,14 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return fmt.Errorf("sign monitor endpoint CSR: %w", err)
 		}
 	}
-	if modules.IsEnabled(s, "litellm") {
-		litellmCSR, readErr := os.ReadFile(filepath.Join(csrDir, "litellm.csr.pem"))
+	if modules.IsEnabled(s, "bifrost") {
+		bifrostCSR, readErr := os.ReadFile(filepath.Join(csrDir, "bifrost.csr.pem"))
 		if readErr != nil {
-			return fmt.Errorf("read endpoint-generated LiteLLM CSR: %w", readErr)
+			return fmt.Errorf("read endpoint-generated Bifrost CSR: %w", readErr)
 		}
-		litellmCertificate, err = signOrReuseServerCertificate(authority, string(litellmCSR), csrDir, "litellm", "litellm", s.Network.Domain, []string{"ai." + s.Network.Domain, "lab-litellm-01." + s.Network.Domain})
+		bifrostCertificate, err = signOrReuseServerCertificate(authority, string(bifrostCSR), csrDir, "bifrost", "bifrost", s.Network.Domain, []string{"ai." + s.Network.Domain, "lab-bifrost-01." + s.Network.Domain})
 		if err != nil {
-			return fmt.Errorf("sign LiteLLM endpoint CSR: %w", err)
+			return fmt.Errorf("sign Bifrost endpoint CSR: %w", err)
 		}
 	}
 	if modules.IsEnabled(s, "printer") {
@@ -831,8 +831,8 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if monitoringEnabled {
 		runtimeVariables["monitor_server_cert_pem"] = monitorCertificate.ChainPEM
 	}
-	if modules.IsEnabled(s, "litellm") {
-		runtimeVariables["litellm_server_cert_pem"] = litellmCertificate.ChainPEM
+	if modules.IsEnabled(s, "bifrost") {
+		runtimeVariables["bifrost_server_cert_pem"] = bifrostCertificate.ChainPEM
 	}
 	if modules.IsEnabled(s, "printer") {
 		runtimeVariables["octoprint_server_cert_pem"] = octoprintCertificate.ChainPEM
@@ -1481,15 +1481,15 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 	if err != nil {
 		return err
 	}
-	runner := applianceSSHRunner(s, siteDir, "lab-litellm-01")
+	runner := applianceSSHRunner(s, siteDir, "lab-bifrost-01")
 	var metadata []byte
-	err = report.timed("health", "health", "litellm", func() error {
+	err = report.timed("health", "health", "bifrost", func() error {
 		var metadataErr error
-		metadata, metadataErr = runner.RunArgs(ctx, "10.10.20.60", "root", []string{"/usr/local/libexec/boetticher-litellm-model-capabilities", modelConfig.Alias})
+		metadata, metadataErr = runner.RunArgs(ctx, "10.10.20.60", "root", []string{"/usr/local/libexec/boetticher-bifrost-model-capabilities", modelConfig.Alias})
 		return metadataErr
 	})
 	if err != nil {
-		return fmt.Errorf("read pinned LiteLLM model metadata: %w", err)
+		return fmt.Errorf("read pinned Bifrost model metadata: %w", err)
 	}
 	if _, err := aiopsmodel.DecodeModelCapabilities(metadata); err != nil {
 		return err
@@ -1605,20 +1605,20 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 	return runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, append(variables, '\n'), "lab-aiops-01", ansible.PhaseHealth, report)
 }
 
-func selectedAIOpsModel(s model.Site) (model.LiteLLMModelConfig, error) {
+func selectedAIOpsModel(s model.Site) (model.BifrostModelConfig, error) {
 	alias := s.ModuleConfig["aiops"].ModelAlias
-	var selected model.LiteLLMModelConfig
-	for _, candidate := range s.ModuleConfig["litellm"].Models {
+	var selected model.BifrostModelConfig
+	for _, candidate := range s.ModuleConfig["bifrost"].Models {
 		if candidate.Alias != alias {
 			continue
 		}
 		if selected.Alias != "" {
-			return model.LiteLLMModelConfig{}, errors.New("AIOps model alias is ambiguous")
+			return model.BifrostModelConfig{}, errors.New("AIOps model alias is ambiguous")
 		}
 		selected = candidate
 	}
 	if selected.Alias == "" {
-		return model.LiteLLMModelConfig{}, errors.New("AIOps model alias is undeclared")
+		return model.BifrostModelConfig{}, errors.New("AIOps model alias is undeclared")
 	}
 	return selected, nil
 }

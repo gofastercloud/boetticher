@@ -60,7 +60,7 @@ type ModulesConfig struct {
 	Firewall      *ToggleModuleConfig    `yaml:"firewall,omitempty" json:"firewall,omitempty"`
 	Logging       *MandatoryModuleConfig `yaml:"logging,omitempty" json:"logging,omitempty"`
 	TailnetRouter *ToggleModuleConfig    `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
-	LiteLLM       *LiteLLMModuleConfig   `yaml:"litellm,omitempty" json:"litellm,omitempty"`
+	Bifrost       *BifrostModuleConfig   `yaml:"bifrost,omitempty" json:"bifrost,omitempty"`
 	Printer       *ToggleModuleConfig    `yaml:"printer,omitempty" json:"printer,omitempty"`
 	StreamDeck    *ToggleModuleConfig    `yaml:"streamdeck,omitempty" json:"streamdeck,omitempty"`
 	AIOps         *AIOpsModuleConfig     `yaml:"aiops,omitempty" json:"aiops,omitempty"`
@@ -122,24 +122,24 @@ type ToggleModuleConfig struct {
 	Network ModuleNetworkMode `yaml:"network,omitempty" json:"network,omitempty" jsonschema:"enum=direct,enum=airvpn"`
 }
 
-type LiteLLMModuleConfig struct {
+type BifrostModuleConfig struct {
 	// Enabled selects whether the AI router should be deployed.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	// Network selects the external egress path for the AI router.
 	Network ModuleNetworkMode `yaml:"network,omitempty" json:"network,omitempty" jsonschema:"enum=direct,enum=airvpn"`
 	// Upstreams declares HTTPS provider endpoints and references to encrypted credentials.
-	Upstreams []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	Upstreams []BifrostUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
 	// Models declares the provider-neutral aliases clients may request.
-	Models []LiteLLMModelConfig `yaml:"models,omitempty" json:"models,omitempty"`
+	Models []BifrostModelConfig `yaml:"models,omitempty" json:"models,omitempty"`
 }
 
-type LiteLLMUpstreamConfig struct {
+type BifrostUpstreamConfig struct {
 	Name         string `yaml:"name" json:"name"`
 	BaseURL      string `yaml:"base_url" json:"base_url"`
 	APIKeySecret string `yaml:"api_key_secret" json:"api_key_secret"`
 }
 
-type LiteLLMModelConfig struct {
+type BifrostModelConfig struct {
 	Alias    string `yaml:"alias" json:"alias"`
 	Upstream string `yaml:"upstream" json:"upstream"`
 	Model    string `yaml:"model" json:"model"`
@@ -178,8 +178,8 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 	if m.TailnetRouter != nil {
 		result["tailnet-router"] = ModuleConfig{Enabled: cloneBool(m.TailnetRouter.Enabled), Network: m.TailnetRouter.Network}
 	}
-	if m.LiteLLM != nil {
-		result["litellm"] = ModuleConfig{Enabled: cloneBool(m.LiteLLM.Enabled), Network: m.LiteLLM.Network, Upstreams: cloneLiteLLMUpstreams(m.LiteLLM.Upstreams), Models: cloneLiteLLMModels(m.LiteLLM.Models)}
+	if m.Bifrost != nil {
+		result["bifrost"] = ModuleConfig{Enabled: cloneBool(m.Bifrost.Enabled), Network: m.Bifrost.Network, Upstreams: cloneBifrostUpstreams(m.Bifrost.Upstreams), Models: cloneBifrostModels(m.Bifrost.Models)}
 	}
 	if m.Printer != nil {
 		result["printer"] = ModuleConfig{Enabled: cloneBool(m.Printer.Enabled), Network: m.Printer.Network}
@@ -216,8 +216,8 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 	if config, ok := input["tailnet-router"]; ok {
 		result.TailnetRouter = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	}
-	if config, ok := input["litellm"]; ok {
-		result.LiteLLM = &LiteLLMModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Upstreams: cloneLiteLLMUpstreams(config.Upstreams), Models: cloneLiteLLMModels(config.Models)}
+	if config, ok := input["bifrost"]; ok {
+		result.Bifrost = &BifrostModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Upstreams: cloneBifrostUpstreams(config.Upstreams), Models: cloneBifrostModels(config.Models)}
 	}
 	if config, ok := input["printer"]; ok {
 		result.Printer = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
@@ -255,14 +255,14 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 		m.Logging = &MandatoryModuleConfig{}
 	case "tailnet-router":
 		m.TailnetRouter = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
-	case "litellm":
+	case "bifrost":
 		upstreams := config.Upstreams
 		models := config.Models
-		if len(upstreams) == 0 && len(models) == 0 && m.LiteLLM != nil {
-			upstreams = m.LiteLLM.Upstreams
-			models = m.LiteLLM.Models
+		if len(upstreams) == 0 && len(models) == 0 && m.Bifrost != nil {
+			upstreams = m.Bifrost.Upstreams
+			models = m.Bifrost.Models
 		}
-		m.LiteLLM = &LiteLLMModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Upstreams: cloneLiteLLMUpstreams(upstreams), Models: cloneLiteLLMModels(models)}
+		m.Bifrost = &BifrostModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Upstreams: cloneBifrostUpstreams(upstreams), Models: cloneBifrostModels(models)}
 	case "printer":
 		m.Printer = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	case "streamdeck":
@@ -295,82 +295,82 @@ func cloneBool(value *bool) *bool {
 	return &copy
 }
 
-func cloneLiteLLMUpstreams(values []LiteLLMUpstreamConfig) []LiteLLMUpstreamConfig {
-	return append([]LiteLLMUpstreamConfig(nil), values...)
+func cloneBifrostUpstreams(values []BifrostUpstreamConfig) []BifrostUpstreamConfig {
+	return append([]BifrostUpstreamConfig(nil), values...)
 }
 
-func cloneLiteLLMModels(values []LiteLLMModelConfig) []LiteLLMModelConfig {
-	return append([]LiteLLMModelConfig(nil), values...)
+func cloneBifrostModels(values []BifrostModelConfig) []BifrostModelConfig {
+	return append([]BifrostModelConfig(nil), values...)
 }
 
-func ValidateLiteLLMConfig(config ModuleConfig) error {
+func ValidateBifrostConfig(config ModuleConfig) error {
 	if len(config.Upstreams) == 0 {
-		return errors.New("modules.litellm.upstreams must contain at least one upstream")
+		return errors.New("modules.bifrost.upstreams must contain at least one upstream")
 	}
 	if len(config.Upstreams) > 16 {
-		return errors.New("modules.litellm.upstreams must contain at most 16 upstreams")
+		return errors.New("modules.bifrost.upstreams must contain at most 16 upstreams")
 	}
 	if len(config.Models) == 0 {
-		return errors.New("modules.litellm.models must contain at least one explicit model alias")
+		return errors.New("modules.bifrost.models must contain at least one explicit model alias")
 	}
 	if len(config.Models) > 32 {
-		return errors.New("modules.litellm.models must contain at most 32 model aliases")
+		return errors.New("modules.bifrost.models must contain at most 32 model aliases")
 	}
 	upstreams := make(map[string]struct{}, len(config.Upstreams))
 	secretReferences := make(map[string]string, len(config.Upstreams))
 	for _, upstream := range config.Upstreams {
 		if !modelTokenPattern.MatchString(upstream.Name) {
-			return fmt.Errorf("modules.litellm.upstreams.name %q is not a safe token", upstream.Name)
+			return fmt.Errorf("modules.bifrost.upstreams.name %q is not a safe token", upstream.Name)
 		}
 		if _, exists := upstreams[upstream.Name]; exists {
-			return fmt.Errorf("modules.litellm has duplicate upstream %q", upstream.Name)
+			return fmt.Errorf("modules.bifrost has duplicate upstream %q", upstream.Name)
 		}
 		upstreams[upstream.Name] = struct{}{}
 		parsed, err := url.Parse(upstream.BaseURL)
 		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-			return fmt.Errorf("modules.litellm upstream %s requires a valid HTTPS base_url", upstream.Name)
+			return fmt.Errorf("modules.bifrost upstream %s requires a valid HTTPS base_url", upstream.Name)
 		}
-		if !liteLLMSecretReferencePattern.MatchString(upstream.APIKeySecret) {
-			return fmt.Errorf("modules.litellm upstream %s has an invalid api_key_secret reference", upstream.Name)
+		if !bifrostSecretReferencePattern.MatchString(upstream.APIKeySecret) {
+			return fmt.Errorf("modules.bifrost upstream %s has an invalid api_key_secret reference", upstream.Name)
 		}
-		secretID := LiteLLMSecretReferenceID(upstream.APIKeySecret)
+		secretID := BifrostSecretReferenceID(upstream.APIKeySecret)
 		if previous, exists := secretReferences[secretID]; exists && previous != upstream.APIKeySecret {
-			return fmt.Errorf("modules.litellm upstreams %q and %q have colliding api_key_secret references", previous, upstream.APIKeySecret)
+			return fmt.Errorf("modules.bifrost upstreams %q and %q have colliding api_key_secret references", previous, upstream.APIKeySecret)
 		}
 		secretReferences[secretID] = upstream.APIKeySecret
 	}
 	aliases := make(map[string]struct{}, len(config.Models))
 	for _, model := range config.Models {
 		if !modelTokenPattern.MatchString(model.Alias) {
-			return fmt.Errorf("modules.litellm model alias %q is not a safe token", model.Alias)
+			return fmt.Errorf("modules.bifrost model alias %q is not a safe token", model.Alias)
 		}
 		if _, exists := aliases[model.Alias]; exists {
-			return fmt.Errorf("modules.litellm has duplicate model alias %q", model.Alias)
+			return fmt.Errorf("modules.bifrost has duplicate model alias %q", model.Alias)
 		}
 		aliases[model.Alias] = struct{}{}
 		if _, exists := upstreams[model.Upstream]; !exists {
-			return fmt.Errorf("modules.litellm model alias %s references unknown upstream %q", model.Alias, model.Upstream)
+			return fmt.Errorf("modules.bifrost model alias %s references unknown upstream %q", model.Alias, model.Upstream)
 		}
 		if !providerModelPattern.MatchString(model.Model) {
-			return fmt.Errorf("modules.litellm model %s has an invalid provider model identifier", model.Alias)
+			return fmt.Errorf("modules.bifrost model %s has an invalid provider model identifier", model.Alias)
 		}
 	}
 	return nil
 }
 
-// ResolveLiteLLMAlias is the provider-neutral client contract. Callers may
+// ResolveBifrostAlias is the provider-neutral client contract. Callers may
 // use only an explicitly declared alias; provider model identifiers are
 // internal mapping data and are never accepted as implicit public models.
-func ResolveLiteLLMAlias(config ModuleConfig, alias string) (LiteLLMModelConfig, error) {
-	if err := ValidateLiteLLMConfig(config); err != nil {
-		return LiteLLMModelConfig{}, err
+func ResolveBifrostAlias(config ModuleConfig, alias string) (BifrostModelConfig, error) {
+	if err := ValidateBifrostConfig(config); err != nil {
+		return BifrostModelConfig{}, err
 	}
 	for _, model := range config.Models {
 		if model.Alias == alias {
 			return model, nil
 		}
 	}
-	return LiteLLMModelConfig{}, fmt.Errorf("undeclared LiteLLM model alias %q", alias)
+	return BifrostModelConfig{}, fmt.Errorf("undeclared Bifrost model alias %q", alias)
 }
 
 func ConfigFromSite(s Site) SiteConfig {
@@ -509,7 +509,7 @@ func cloneModuleConfig(input map[string]ModuleConfig) map[string]ModuleConfig {
 	}
 	output := make(map[string]ModuleConfig, len(input))
 	for name, config := range input {
-		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Servers: config.Servers, ModelAlias: config.ModelAlias, Upstreams: cloneLiteLLMUpstreams(config.Upstreams), Models: cloneLiteLLMModels(config.Models)}
+		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Servers: config.Servers, ModelAlias: config.ModelAlias, Upstreams: cloneBifrostUpstreams(config.Upstreams), Models: cloneBifrostModels(config.Models)}
 	}
 	return output
 }

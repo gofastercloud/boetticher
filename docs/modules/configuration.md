@@ -17,7 +17,7 @@ modules:
     enabled: false
   tailnet-router:
     enabled: false
-  litellm:
+  bifrost:
     enabled: false
     upstreams:
       - name: openrouter
@@ -50,7 +50,7 @@ usb_exports:
 ```
 
 An omitted module map uses the defaults: DNS and logging are mandatory,
-monitoring and the managed firewall are enabled, and Gatus, LiteLLM, printer,
+monitoring and the managed firewall are enabled, and Gatus, Bifrost, printer,
 StreamDeck, AIOps, and Tailnet Router are disabled. DNS has no disable switch or
 provider-selection field; Blocky is its sole client-facing recursive/filtering
 implementation.
@@ -58,8 +58,8 @@ implementation.
 Use `boetticher config validate` before deployment, `boetticher config show`
 to inspect normalized non-secret configuration, and `boetticher config schema`
 to print the shipped generated JSON Schema. Unknown fields and unknown module names
-are errors with a configuration path. `tailnet-router`, `litellm`, `printer`, and
-`streamdeck` are default-off; LiteLLM exposes only the explicitly declared aliases and keeps
+are errors with a configuration path. `tailnet-router`, `bifrost`, `printer`, and
+`streamdeck` are default-off; Bifrost exposes only the explicitly declared aliases and keeps
 the referenced provider credentials in SOPS-managed secret state. `aiops` is
 also default-off and accepts only `enabled` plus a declared `model_alias`;
 provider, model, tool, and SSH fields are rejected.

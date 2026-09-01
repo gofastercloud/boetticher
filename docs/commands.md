@@ -418,7 +418,7 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, airvpn, litellm, printer, and streamdeck are default-off. AirVPN profile rotation is explicit and uses the controller-only API key. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, airvpn, bifrost, printer, and streamdeck are default-off. AirVPN profile rotation is explicit and uses the controller-only API key. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 
@@ -1014,7 +1014,7 @@ Options: --site selects the private site repository; --age-identity selects the 
 
 Safety: Secret values are read from a hidden prompt or stdin and are never accepted as arguments, displayed, logged, or written to generated output. The command changes encrypted desired state only; it never deploys. AirVPN rotation is limited to the Core-generated profile.
 
-Examples: `boetticher module secrets litellm list --site ./my-boetticher`; `boetticher module secrets litellm set openrouter_api_key --site ./my-boetticher`; `boetticher module secrets litellm remove openrouter_api_key --confirm --site ./my-boetticher`; `boetticher module secrets airvpn rotate --confirm --site ./my-boetticher`
+Examples: `boetticher module secrets bifrost list --site ./my-boetticher`; `boetticher module secrets bifrost set openrouter_api_key --site ./my-boetticher`; `boetticher module secrets bifrost remove openrouter_api_key --confirm --site ./my-boetticher`; `boetticher module secrets airvpn rotate --confirm --site ./my-boetticher`
 
 Related commands: module configure, deploy, config validate
 
@@ -1060,7 +1060,7 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, airvpn, litellm, printer, and streamdeck are default-off. AirVPN profile rotation is explicit and uses the controller-only API key. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, airvpn, bifrost, printer, and streamdeck are default-off. AirVPN profile rotation is explicit and uses the controller-only API key. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 
@@ -1076,7 +1076,7 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, airvpn, litellm, printer, and streamdeck are default-off. AirVPN profile rotation is explicit and uses the controller-only API key. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, airvpn, bifrost, printer, and streamdeck are default-off. AirVPN profile rotation is explicit and uses the controller-only API key. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 
@@ -1092,7 +1092,7 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, airvpn, litellm, printer, and streamdeck are default-off. AirVPN profile rotation is explicit and uses the controller-only API key. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, airvpn, bifrost, printer, and streamdeck are default-off. AirVPN profile rotation is explicit and uses the controller-only API key. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 

@@ -109,7 +109,7 @@ var providerModelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,25
 var usbPortPattern = regexp.MustCompile(`^[0-9]+-[0-9]+(?:\.[0-9]+)*$`)
 var usbIDPattern = regexp.MustCompile(`^[0-9a-f]{4}$`)
 
-var liteLLMSecretReferencePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
+var bifrostSecretReferencePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 
 // ValidateStableDevice accepts only one direct stable-device entry. Keeping
 // the suffix to a single path component prevents lexical dot segments or
@@ -132,10 +132,10 @@ func IsDNSLabel(value string) bool {
 	return dnsLabelPattern.MatchString(strings.ToLower(value))
 }
 
-// LiteLLMSecretReferenceID is the one credential identity used by the
+// BifrostSecretReferenceID is the one credential identity used by the
 // controller-side credential path and the Ansible environment projection.
 // Validation rejects distinct source references that share this identity.
-func LiteLLMSecretReferenceID(reference string) string {
+func BifrostSecretReferenceID(reference string) string {
 	var b strings.Builder
 	for _, character := range strings.ToLower(reference) {
 		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
@@ -380,8 +380,8 @@ type ModuleConfig struct {
 	Network    ModuleNetworkMode       `yaml:"network,omitempty" json:"network,omitempty"`
 	Servers    string                  `yaml:"servers,omitempty" json:"servers,omitempty"`
 	ModelAlias string                  `yaml:"model_alias,omitempty" json:"model_alias,omitempty"`
-	Upstreams  []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
-	Models     []LiteLLMModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
+	Upstreams  []BifrostUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	Models     []BifrostModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
 }
 
 type USBExportBinding struct {
@@ -957,8 +957,8 @@ func (s Site) Validate() error {
 	if s.SecretMetadata.InstallationID == "" || s.SecretMetadata.AgeRecipient == "" {
 		return fmt.Errorf("secret_metadata must contain installation_id and public age_recipient")
 	}
-	if litellm, ok := s.ModuleConfig["litellm"]; ok && (litellm.Enabled != nil && *litellm.Enabled || len(litellm.Upstreams) > 0 || len(litellm.Models) > 0) {
-		if err := ValidateLiteLLMConfig(litellm); err != nil {
+	if bifrost, ok := s.ModuleConfig["bifrost"]; ok && (bifrost.Enabled != nil && *bifrost.Enabled || len(bifrost.Upstreams) > 0 || len(bifrost.Models) > 0) {
+		if err := ValidateBifrostConfig(bifrost); err != nil {
 			return err
 		}
 	}

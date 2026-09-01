@@ -64,8 +64,8 @@ func TestTailnetCoverageIgnoresDisabledOptionalDestinations(t *testing.T) {
 			continue
 		}
 		for _, intent := range declaration.NetworkIntents {
-			if intent.Destination == "litellm" {
-				t.Fatal("tailnet-router retained an intent to disabled LiteLLM")
+			if intent.Destination == "bifrost" {
+				t.Fatal("tailnet-router retained an intent to disabled Bifrost")
 			}
 		}
 	}

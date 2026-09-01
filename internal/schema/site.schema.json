@@ -37,6 +37,74 @@
       ],
       "type": "object"
     },
+    "BifrostModelConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "alias": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "upstream": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "alias",
+        "upstream",
+        "model"
+      ],
+      "type": "object"
+    },
+    "BifrostModuleConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "models": {
+          "items": {
+            "$ref": "#/$defs/BifrostModelConfig"
+          },
+          "type": "array"
+        },
+        "network": {
+          "enum": [
+            "direct",
+            "airvpn"
+          ],
+          "type": "string"
+        },
+        "upstreams": {
+          "items": {
+            "$ref": "#/$defs/BifrostUpstreamConfig"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "BifrostUpstreamConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "api_key_secret": {
+          "type": "string"
+        },
+        "base_url": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "base_url",
+        "api_key_secret"
+      ],
+      "type": "object"
+    },
     "DHCPReservation": {
       "additionalProperties": false,
       "properties": {
@@ -131,74 +199,6 @@
       ],
       "type": "object"
     },
-    "LiteLLMModelConfig": {
-      "additionalProperties": false,
-      "properties": {
-        "alias": {
-          "type": "string"
-        },
-        "model": {
-          "type": "string"
-        },
-        "upstream": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "alias",
-        "upstream",
-        "model"
-      ],
-      "type": "object"
-    },
-    "LiteLLMModuleConfig": {
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "models": {
-          "items": {
-            "$ref": "#/$defs/LiteLLMModelConfig"
-          },
-          "type": "array"
-        },
-        "network": {
-          "enum": [
-            "direct",
-            "airvpn"
-          ],
-          "type": "string"
-        },
-        "upstreams": {
-          "items": {
-            "$ref": "#/$defs/LiteLLMUpstreamConfig"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "LiteLLMUpstreamConfig": {
-      "additionalProperties": false,
-      "properties": {
-        "api_key_secret": {
-          "type": "string"
-        },
-        "base_url": {
-          "type": "string"
-        },
-        "name": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "name",
-        "base_url",
-        "api_key_secret"
-      ],
-      "type": "object"
-    },
     "MandatoryModuleConfig": {
       "additionalProperties": false,
       "properties": {},
@@ -213,6 +213,9 @@
         "airvpn": {
           "$ref": "#/$defs/AirVPNModuleConfig"
         },
+        "bifrost": {
+          "$ref": "#/$defs/BifrostModuleConfig"
+        },
         "dns": {
           "$ref": "#/$defs/DNSModuleConfig"
         },
@@ -221,9 +224,6 @@
         },
         "gatus": {
           "$ref": "#/$defs/ToggleModuleConfig"
-        },
-        "litellm": {
-          "$ref": "#/$defs/LiteLLMModuleConfig"
         },
         "logging": {
           "$ref": "#/$defs/MandatoryModuleConfig"

@@ -7,12 +7,12 @@ set -eu
 target=${1:-images}
 shift || true
 case "$target" in
-  image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-streamdeck|image-gatus|image-network-probe|images) ;;
+  image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-streamdeck|image-gatus|image-network-probe|images) ;;
   image-airvpn) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
-default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-airvpn image-litellm image-printer image-streamdeck image-aiops image-gatus image-network-probe image-firewall"
+default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-airvpn image-bifrost image-printer image-streamdeck image-aiops image-gatus image-network-probe image-firewall"
 if [ "$target" = images ]; then
   selected_image_targets="$*"
   if [ -z "$selected_image_targets" ]; then
@@ -20,7 +20,7 @@ if [ "$target" = images ]; then
   fi
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
-      image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-streamdeck|image-gatus|image-network-probe) ;;
+      image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-streamdeck|image-gatus|image-network-probe) ;;
       image-airvpn) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac
@@ -162,11 +162,10 @@ tailscale_package_version=1.76.6
 tailscale_key_url=https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg
 tailscale_key_sha256=3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39
 tailscale_keyring=/usr/share/keyrings/tailscale-archive-keyring.gpg
-litellm_version=1.74.9
-litellm_python_package_version=3.13.5-1
-litellm_python_venv_package_version=3.13.5-1
-litellm_pip_package_version=25.1.1+dfsg-1
-litellm_nginx_package_version=1.26.3-3+deb13u7
+aiops_python_package_version=3.13.5-1
+aiops_python_venv_package_version=3.13.5-1
+aiops_pip_package_version=25.1.1+dfsg-1
+bifrost_nginx_package_version=1.26.3-3+deb13u7
 holmes_source_url=https://codeload.github.com/HolmesGPT/holmesgpt/tar.gz/3d201559c0f3648a6c567aece09662f4f407bcc9
 holmes_source_sha256=7016d3335a7f81810de35d9030a63bc38204d94991e3343d6cdbbcaf77a755be
 holmes_source_root=holmesgpt-3d201559c0f3648a6c567aece09662f4f407bcc9
@@ -567,18 +566,18 @@ build_airvpn() {
   package_lxc boetticher-airvpn
 }
 
-build_litellm() {
-  printf '%s\n' 'boetticher build stage: litellm'
-  rootfs=$(prepare_rootfs boetticher-litellm)
-  install_packages "$rootfs" "nginx=$litellm_nginx_package_version"
+build_bifrost() {
+  printf '%s\n' 'boetticher build stage: bifrost'
+  rootfs=$(prepare_rootfs boetticher-bifrost)
+  install_packages "$rootfs" "nginx=$bifrost_nginx_package_version"
   chroot "$rootfs" useradd --system --home-dir /var/lib/bifrost --create-home --shell /usr/sbin/nologin bifrost
   chroot "$rootfs" install -d -o bifrost -g bifrost -m 0750 /var/lib/bifrost
   rm -f "$rootfs/etc/nginx/sites-enabled/default" "$rootfs/etc/nginx/sites-available/default" "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
-  install -D -m 0644 images/litellm/runtime/litellm.service "$rootfs/etc/systemd/system/litellm.service"
+  install -D -m 0644 images/bifrost/runtime/bifrost.service "$rootfs/etc/systemd/system/bifrost.service"
   CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/libexec/boetticher-bifrost" ./cmd/boetticher-bifrost
-  ln -s boetticher-bifrost "$rootfs/usr/local/libexec/boetticher-litellm-model-capabilities"
-  write_artifact_identity "$rootfs" litellm
-  package_lxc boetticher-litellm
+  ln -s boetticher-bifrost "$rootfs/usr/local/libexec/boetticher-bifrost-model-capabilities"
+  write_artifact_identity "$rootfs" bifrost
+  package_lxc boetticher-bifrost
 }
 
 build_printer() {
@@ -618,9 +617,9 @@ build_aiops() {
   printf '%s\n' 'boetticher build stage: aiops'
   rootfs=$(prepare_rootfs boetticher-aiops)
   install_packages "$rootfs" \
-    "python3=$litellm_python_package_version" \
-    "python3-venv=$litellm_python_venv_package_version" \
-    "python3-pip=$litellm_pip_package_version"
+    "python3=$aiops_python_package_version" \
+    "python3-venv=$aiops_python_venv_package_version" \
+    "python3-pip=$aiops_pip_package_version"
   chroot "$rootfs" python3 -m venv /opt/holmes
   install -D -m 0644 images/aiops/runtime/requirements.lock "$rootfs/tmp/aiops-requirements.lock"
   pip_install "$rootfs" /opt/holmes/bin/pip install --require-hashes --requirement /tmp/aiops-requirements.lock
@@ -911,9 +910,9 @@ build_airvpn_target() {
   build_airvpn
 }
 
-build_litellm_target() {
+build_bifrost_target() {
   [ -f "$(artifact_for boetticher-base)" ] || build_base
-  build_litellm
+  build_bifrost
 }
 
 build_printer_target() {
@@ -965,7 +964,7 @@ case "$target" in
   image-portal) run_timed_image_target "$target" build_portal_target ;;
   image-tailnet-router) run_timed_image_target "$target" build_tailnet_router_target ;;
   image-airvpn) run_timed_image_target "$target" build_airvpn_target ;;
-  image-litellm) run_timed_image_target "$target" build_litellm_target ;;
+  image-bifrost) run_timed_image_target "$target" build_bifrost_target ;;
   image-printer) run_timed_image_target "$target" build_printer_target ;;
   image-streamdeck) run_timed_image_target "$target" build_streamdeck_target ;;
   image-aiops) run_timed_image_target "$target" build_aiops_target ;;
