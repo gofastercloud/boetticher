@@ -19,7 +19,8 @@ race:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test -race ./internal/aiops ./cmd/boetticher-aiops
 
 streamdeck-check:
-	PYTHONPATH=services/streamdeck/src UV_CACHE_DIR=$(UV_CACHE_DIR) uv run --project pi/streamdeck --frozen --with pytest pytest pi/streamdeck/tests services/streamdeck/tests/test_lxc_streamdeck.py
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./internal/streamdeck ./cmd/boetticher-streamdeck
+	UV_CACHE_DIR=$(UV_CACHE_DIR) uv run --project pi/streamdeck --frozen --with pytest pytest pi/streamdeck/tests
 
 usb-export-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ansible/roles/usb-export-host/tests -p 'test_*.py' -v
