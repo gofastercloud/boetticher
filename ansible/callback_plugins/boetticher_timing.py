@@ -18,9 +18,10 @@ CALLBACK_NEEDS_WHITELIST = True
 _MAX_TEXT = 512
 _MAX_MARKERS = 64
 _MARKER_RE = re.compile(
-    r"^boetticher-observation dns-metadata-update "
+    r"^boetticher-observation dns-metadata-drift "
     r"([A-Za-z0-9.-]+) "
-    r"(ALLOW-DNSUPDATE-FROM|NOTIFY-DNSUPDATE|TSIG-ALLOW-DNSUPDATE)$"
+    r"(ALLOW-DNSUPDATE-FROM|NOTIFY-DNSUPDATE|TSIG-ALLOW-DNSUPDATE) "
+    r"([0-9]+)$"
 )
 
 
@@ -48,7 +49,7 @@ class CallbackModule(CallbackBase):
                 match = _MARKER_RE.fullmatch(str(line).strip())
                 if not match:
                     continue
-                marker = f"dns-metadata-update:{match.group(1)}:{match.group(2)}"
+                marker = f"dns-metadata-drift:{match.group(1)}:{match.group(2)}:{match.group(3)}"
                 if marker not in markers:
                     markers.append(marker)
                 if len(markers) >= _MAX_MARKERS:
