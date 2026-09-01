@@ -3,6 +3,7 @@ package ansible
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +23,45 @@ func TestGatusRolePreparesConfigDirectoryAndReloadsNginx(t *testing.T) {
 	}
 	if !strings.Contains(text, "dest: /etc/nginx/sites-enabled/gatus.conf, state: link") || !strings.Contains(text, "notify: reload nginx") {
 		t.Fatal("Gatus role does not notify nginx after enabling its site")
+	}
+}
+
+func TestPhaseVariablesExposeOnlySafeDeploymentPhaseMetadata(t *testing.T) {
+	data, err := phaseVariables([]byte(`{"example":"value"}`), PhaseBootstrap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var values map[string]any
+	if err := json.Unmarshal(data, &values); err != nil {
+		t.Fatal(err)
+	}
+	if values["boetticher_deploy_phase"] != PhaseBootstrap {
+		t.Fatalf("phase metadata = %v, want %q", values["boetticher_deploy_phase"], PhaseBootstrap)
+	}
+	if values["example"] != "value" {
+		t.Fatalf("phase variable rewrite lost existing value: %v", values)
+	}
+	if _, err := phaseVariables([]byte(`{}`), "unexpected"); err == nil {
+		t.Fatal("unsupported phase was accepted")
+	}
+}
+
+func TestServicePhaseSkipsNetworkOnlyRoles(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "site.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, expected := range []string{
+		"- role: dns\n      when:\n        - inventory_hostname in groups.get('dns', [])\n        - boetticher_deploy_phase | default('full') != 'services'",
+		"- role: firewall\n      when:\n        - inventory_hostname in groups.get('firewall', [])\n        - boetticher_deploy_phase | default('full') != 'services'",
+		"- role: tailnet-router\n      when:\n        - inventory_hostname in groups.get('tailnet-router', [])\n        - boetticher_deploy_phase | default('full') != 'services'",
+		"- role: usb-export-host\n      when: boetticher_deploy_phase | default('full') != 'services'",
+		"- role: network-probe-host\n      when: boetticher_deploy_phase | default('full') != 'services'",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("site playbook is missing service-phase guard block %q", expected)
+		}
 	}
 }
 
@@ -317,14 +357,16 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	}
 	argsPath := filepath.Join(tempDir, "args")
 	forksPath := filepath.Join(tempDir, "forks")
+	inputPath := filepath.Join(tempDir, "input")
 	scriptPath := filepath.Join(tempDir, "ansible-playbook")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ANSIBLE_ARGS_FILE\"\nprintf '%s' \"$ANSIBLE_FORKS\" > \"$ANSIBLE_FORKS_FILE\"\ncat >/dev/null\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ANSIBLE_ARGS_FILE\"\nprintf '%s' \"$ANSIBLE_FORKS\" > \"$ANSIBLE_FORKS_FILE\"\ncat > \"$ANSIBLE_INPUT_FILE\"\nif [ -n \"$BOETTICHER_ANSIBLE_TIMING_FILE\" ]; then printf '%s\\n' '{\"host\":\"lab-fw-01\",\"task\":\"fake task\",\"path\":\"fake.yml:1\",\"status\":\"ok\",\"duration_ms\":3,\"changed\":false}' >> \"$BOETTICHER_ANSIBLE_TIMING_FILE\"; fi\n"
 	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", tempDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("ANSIBLE_ARGS_FILE", argsPath)
 	t.Setenv("ANSIBLE_FORKS_FILE", forksPath)
+	t.Setenv("ANSIBLE_INPUT_FILE", inputPath)
 	previousForks, hadForks := os.LookupEnv("ANSIBLE_FORKS")
 	if err := os.Unsetenv("ANSIBLE_FORKS"); err != nil {
 		t.Fatal(err)
@@ -337,8 +379,12 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 		}
 	})
 
-	if _, err := run(context.Background(), "ansible/site.yml", inventoryPath, []byte("{}"), "lab-fw-01"); err != nil {
+	result, err := run(context.Background(), filepath.Join("..", "..", "ansible", "site.yml"), inventoryPath, []byte("{}"), "lab-fw-01", PhaseFull)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if len(result.TaskTimings) != 1 || result.TaskTimings[0].Task != "fake task" {
+		t.Fatalf("Ansible task timings = %+v, want one fake task timing", result.TaskTimings)
 	}
 	args, err := os.ReadFile(argsPath)
 	if err != nil {
@@ -357,6 +403,13 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	}
 	if string(forks) != defaultAnsibleForks {
 		t.Fatalf("Ansible fork default = %q, want %q", forks, defaultAnsibleForks)
+	}
+	input, err := os.ReadFile(inputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(input), `"boetticher_deploy_phase": "full"`) {
+		t.Fatalf("Ansible variables did not contain the deployment phase: %s", input)
 	}
 }
 

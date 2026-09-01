@@ -1,6 +1,7 @@
 package ansible
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -33,6 +34,31 @@ const maxAnsibleDiagnosticBytes = 16 * 1024
 // without creating unbounded load on a homelab controller or gateway. An
 // explicit operator setting remains authoritative.
 const defaultAnsibleForks = "8"
+
+const (
+	PhaseFull      = "full"
+	PhaseBootstrap = "bootstrap"
+	PhaseServices  = "services"
+)
+
+const maxAnsibleTaskTimings = 4096
+
+// TaskTiming is deliberately limited to task identity and duration. Ansible
+// results can contain credentials, rendered configuration, and command
+// output; none of that belongs in a deployment timing report.
+type TaskTiming struct {
+	Host       string `json:"host"`
+	Task       string `json:"task"`
+	Path       string `json:"path"`
+	Status     string `json:"status"`
+	DurationMS int64  `json:"duration_ms"`
+	Changed    bool   `json:"changed"`
+}
+
+type RunResult struct {
+	Changed     bool
+	TaskTimings []TaskTiming
+}
 
 type boundedOutput struct {
 	data           []byte
@@ -361,14 +387,22 @@ func dynamicZoneNames(zones []dns.DynamicZone) []string {
 // file. The playbook itself must obtain any future secret material through an
 // approved runtime mechanism.
 func Run(ctx context.Context, playbook, inventory string, variables []byte) error {
-	_, err := run(ctx, playbook, inventory, variables, "")
+	_, err := run(ctx, playbook, inventory, variables, "", PhaseFull)
 	return err
 }
 
 // RunWithMutation reports only whether the bounded Ansible recap contained a
 // non-zero changed count. It is intentionally not a per-resource audit log.
 func RunWithMutation(ctx context.Context, playbook, inventory string, variables []byte) (bool, error) {
-	return run(ctx, playbook, inventory, variables, "")
+	result, err := run(ctx, playbook, inventory, variables, "", PhaseFull)
+	return result.Changed, err
+}
+
+// RunWithMutationPhase is RunWithMutation with an explicit deployment phase
+// exposed to the playbook. The phase is passed as extra-vars over stdin, not
+// as an argv value, so the command line remains free of configuration data.
+func RunWithMutationPhase(ctx context.Context, playbook, inventory string, variables []byte, phase string) (RunResult, error) {
+	return run(ctx, playbook, inventory, variables, "", phase)
 }
 
 // RunLimited executes the same generated playbook against one known inventory
@@ -385,19 +419,34 @@ func RunLimitedWithMutation(ctx context.Context, playbook, inventory string, var
 	if !safeInventoryIdentity(limit) {
 		return false, errors.New("Ansible limit must be one safe inventory identity")
 	}
-	return run(ctx, playbook, inventory, variables, limit)
+	result, err := run(ctx, playbook, inventory, variables, limit, PhaseFull)
+	return result.Changed, err
 }
 
-func run(ctx context.Context, playbook, inventory string, variables []byte, limit string) (bool, error) {
+// RunLimitedWithMutationPhase is the phase-aware form used by tracked deploy
+// stages that also need to converge a single known inventory identity.
+func RunLimitedWithMutationPhase(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string) (RunResult, error) {
+	if !safeInventoryIdentity(limit) {
+		return RunResult{}, errors.New("Ansible limit must be one safe inventory identity")
+	}
+	return run(ctx, playbook, inventory, variables, limit, phase)
+}
+
+func run(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string) (RunResult, error) {
+	var empty RunResult
 	if playbook == "" || inventory == "" {
-		return false, errors.New("Ansible playbook and inventory are required")
+		return empty, errors.New("Ansible playbook and inventory are required")
 	}
 	if err := sshconfig.ValidateExecutionConfig(generatedSSHConfigPath(inventory)); err != nil {
-		return false, fmt.Errorf("validate Ansible SSH configuration: %w", err)
+		return empty, fmt.Errorf("validate Ansible SSH configuration: %w", err)
 	}
 	executable, err := exec.LookPath("ansible-playbook")
 	if err != nil {
-		return false, fmt.Errorf("ansible-playbook is required: %w", err)
+		return empty, fmt.Errorf("ansible-playbook is required: %w", err)
+	}
+	variables, err = phaseVariables(variables, phase)
+	if err != nil {
+		return empty, err
 	}
 	args := []string{"-i", inventory, "--user", "root", playbook, "--extra-vars", "@/dev/stdin", "--ssh-common-args", "-F " + generatedSSHConfigPath(inventory)}
 	if limit != "" {
@@ -405,7 +454,9 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	}
 	command := exec.CommandContext(ctx, executable, args...)
 	command.Stdin = strings.NewReader(string(variables))
-	command.Env = ansibleEnvironment()
+	timingPath, timingCleanup := prepareTaskTiming(playbook)
+	defer timingCleanup()
+	command.Env = ansibleEnvironment(playbook, timingPath)
 	var output boundedOutput
 	command.Stdout = &output
 	command.Stderr = &output
@@ -416,22 +467,126 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 		Category: "ansible", Operation: "playbook", Target: ansibleTarget(limit),
 		Duration: time.Since(started), Success: err == nil, Changed: changed,
 	})
+	result := RunResult{Changed: changed, TaskTimings: readTaskTimings(timingPath)}
 	if err != nil {
 		diagnostic := failureDiagnosticWithSupplement(output.Bytes(), output.DiagnosticBytes())
 		if diagnostic == "" {
-			return changed, fmt.Errorf("ansible-playbook failed: %w", err)
+			return result, fmt.Errorf("ansible-playbook failed: %w", err)
 		}
-		return changed, fmt.Errorf("ansible-playbook failed: %w: %s", err, diagnostic)
+		return result, fmt.Errorf("ansible-playbook failed: %w: %s", err, diagnostic)
 	}
-	return changed, nil
+	return result, nil
 }
 
-func ansibleEnvironment() []string {
+func phaseVariables(variables []byte, phase string) ([]byte, error) {
+	if phase == "" {
+		phase = PhaseFull
+	}
+	if phase != PhaseFull && phase != PhaseBootstrap && phase != PhaseServices {
+		return nil, fmt.Errorf("unsupported Ansible deployment phase %q", phase)
+	}
+	var values map[string]any
+	if err := json.Unmarshal(variables, &values); err != nil {
+		return nil, fmt.Errorf("decode Ansible variables: %w", err)
+	}
+	if values == nil {
+		return nil, errors.New("Ansible variables must be a JSON object")
+	}
+	values["boetticher_deploy_phase"] = phase
+	data, err := json.MarshalIndent(values, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode Ansible variables: %w", err)
+	}
+	return append(data, '\n'), nil
+}
+
+func ansibleEnvironment(playbook, timingPath string) []string {
 	environment := os.Environ()
 	if _, ok := os.LookupEnv("ANSIBLE_FORKS"); !ok {
 		environment = append(environment, "ANSIBLE_FORKS="+defaultAnsibleForks)
 	}
-	return append(environment, "ANSIBLE_HOST_KEY_CHECKING=True", "ANSIBLE_SSH_PIPELINING=True")
+	environment = setEnvironmentValue(environment, "ANSIBLE_HOST_KEY_CHECKING", "True")
+	environment = setEnvironmentValue(environment, "ANSIBLE_SSH_PIPELINING", "True")
+	pluginDir := filepath.Join(filepath.Dir(playbook), "callback_plugins")
+	if _, err := os.Stat(filepath.Join(pluginDir, "boetticher_timing.py")); err == nil {
+		environment = appendEnvironmentValue(environment, "ANSIBLE_CALLBACK_PLUGINS", pluginDir, string(os.PathListSeparator))
+		environment = appendEnvironmentValue(environment, "ANSIBLE_CALLBACKS_ENABLED", "boetticher_timing", ",")
+		if timingPath != "" {
+			environment = setEnvironmentValue(environment, "BOETTICHER_ANSIBLE_TIMING_FILE", timingPath)
+		}
+	}
+	return environment
+}
+
+func setEnvironmentValue(environment []string, key, value string) []string {
+	prefix := key + "="
+	for index, entry := range environment {
+		if strings.HasPrefix(entry, prefix) {
+			environment[index] = prefix + value
+			return environment
+		}
+	}
+	return append(environment, prefix+value)
+}
+
+func appendEnvironmentValue(environment []string, key, value, separator string) []string {
+	prefix := key + "="
+	for index, entry := range environment {
+		if strings.HasPrefix(entry, prefix) {
+			current := strings.TrimPrefix(entry, prefix)
+			for _, part := range strings.Split(current, separator) {
+				if part == value {
+					return environment
+				}
+			}
+			if current == "" {
+				environment[index] = prefix + value
+			} else {
+				environment[index] = prefix + current + separator + value
+			}
+			return environment
+		}
+	}
+	return append(environment, prefix+value)
+}
+
+func prepareTaskTiming(playbook string) (string, func()) {
+	pluginPath := filepath.Join(filepath.Dir(playbook), "callback_plugins", "boetticher_timing.py")
+	if _, err := os.Stat(pluginPath); err != nil {
+		return "", func() {}
+	}
+	file, err := os.CreateTemp("", "boetticher-ansible-timing-*.jsonl")
+	if err != nil {
+		return "", func() {}
+	}
+	path := file.Name()
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", func() {}
+	}
+	return path, func() { _ = os.Remove(path) }
+}
+
+func readTaskTimings(path string) []TaskTiming {
+	if path == "" {
+		return nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 1024), 16*1024)
+	timings := make([]TaskTiming, 0)
+	for scanner.Scan() && len(timings) < maxAnsibleTaskTimings {
+		var timing TaskTiming
+		if err := json.Unmarshal(scanner.Bytes(), &timing); err != nil || timing.Host == "" || timing.Task == "" || timing.Status == "" || timing.DurationMS < 0 {
+			continue
+		}
+		timings = append(timings, timing)
+	}
+	return timings
 }
 
 func ansibleTarget(limit string) string {

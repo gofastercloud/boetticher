@@ -8,10 +8,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/gofastercloud/boetticher/internal/ansible"
 	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
 
@@ -42,6 +44,16 @@ type deploymentTiming struct {
 	DurationMS int64  `json:"duration_ms"`
 }
 
+type deploymentAnsibleTaskTiming struct {
+	Phase      string `json:"phase"`
+	Host       string `json:"host"`
+	Task       string `json:"task"`
+	Path       string `json:"path"`
+	Status     string `json:"status"`
+	DurationMS int64  `json:"duration_ms"`
+	Changed    bool   `json:"changed"`
+}
+
 type deploymentReport struct {
 	out                   io.Writer
 	phases                []deploymentPhase
@@ -62,6 +74,7 @@ type deploymentReport struct {
 	finishedAt            time.Time
 	timingPath            string
 	timings               []deploymentTiming
+	ansibleTaskTimings    []deploymentAnsibleTaskTiming
 	measurements          operationMeasurements
 	measurementMu         sync.Mutex
 }
@@ -151,6 +164,21 @@ func (r *deploymentReport) recordTiming(phase, kind, target string, started time
 		DurationMS: finished.Sub(started).Milliseconds(),
 	})
 	fmt.Fprintf(r.out, "      Timing: %s/%s/%s (%s)\n", phase, kind, target, formatOperationDuration(finished.Sub(started)))
+}
+
+func (r *deploymentReport) recordAnsibleTaskTimings(phase string, timings []ansible.TaskTiming) {
+	for _, timing := range timings {
+		r.ansibleTaskTimings = append(r.ansibleTaskTimings, deploymentAnsibleTaskTiming{
+			Phase: phase, Host: timing.Host, Task: timing.Task, Path: timing.Path,
+			Status: timing.Status, DurationMS: timing.DurationMS, Changed: timing.Changed,
+		})
+	}
+	if len(r.ansibleTaskTimings) > 4096 {
+		sort.SliceStable(r.ansibleTaskTimings, func(i, j int) bool {
+			return r.ansibleTaskTimings[i].DurationMS > r.ansibleTaskTimings[j].DurationMS
+		})
+		r.ansibleTaskTimings = r.ansibleTaskTimings[:4096]
+	}
 }
 
 func (r *deploymentReport) timed(phase, kind, target string, fn func() error) error {
@@ -323,23 +351,24 @@ func (r *deploymentReport) persistTiming(operationErr error) error {
 		phases = append(phases, entry)
 	}
 	document := struct {
-		Version               int                   `json:"version"`
-		Operation             string                `json:"operation"`
-		PlatformVersion       string                `json:"platform_version,omitempty"`
-		ModelRevision         string                `json:"model_revision,omitempty"`
-		RunID                 string                `json:"run_id"`
-		StartedAt             string                `json:"started_at"`
-		FinishedAt            string                `json:"finished_at"`
-		DurationMS            int64                 `json:"duration_ms"`
-		Succeeded             bool                  `json:"succeeded"`
-		InfrastructureChanged bool                  `json:"infrastructure_changed"`
-		MutationScopeCertain  bool                  `json:"mutation_scope_certain"`
-		Mutations             []deploymentMutation  `json:"mutations,omitempty"`
-		CleanupAttempted      bool                  `json:"cleanup_attempted"`
-		CleanupRemoved        bool                  `json:"cleanup_removed"`
-		Phases                []phaseTiming         `json:"phases"`
-		Suboperations         []deploymentTiming    `json:"suboperations"`
-		Measurements          operationMeasurements `json:"measurements"`
+		Version               int                           `json:"version"`
+		Operation             string                        `json:"operation"`
+		PlatformVersion       string                        `json:"platform_version,omitempty"`
+		ModelRevision         string                        `json:"model_revision,omitempty"`
+		RunID                 string                        `json:"run_id"`
+		StartedAt             string                        `json:"started_at"`
+		FinishedAt            string                        `json:"finished_at"`
+		DurationMS            int64                         `json:"duration_ms"`
+		Succeeded             bool                          `json:"succeeded"`
+		InfrastructureChanged bool                          `json:"infrastructure_changed"`
+		MutationScopeCertain  bool                          `json:"mutation_scope_certain"`
+		Mutations             []deploymentMutation          `json:"mutations,omitempty"`
+		CleanupAttempted      bool                          `json:"cleanup_attempted"`
+		CleanupRemoved        bool                          `json:"cleanup_removed"`
+		Phases                []phaseTiming                 `json:"phases"`
+		Suboperations         []deploymentTiming            `json:"suboperations"`
+		AnsibleTaskTimings    []deploymentAnsibleTaskTiming `json:"ansible_task_timings,omitempty"`
+		Measurements          operationMeasurements         `json:"measurements"`
 	}{
 		Version:               1,
 		Operation:             r.operation,
@@ -357,6 +386,7 @@ func (r *deploymentReport) persistTiming(operationErr error) error {
 		CleanupRemoved:        r.cleanupRemoved,
 		Phases:                phases,
 		Suboperations:         append([]deploymentTiming(nil), r.timings...),
+		AnsibleTaskTimings:    append([]deploymentAnsibleTaskTiming(nil), r.ansibleTaskTimings...),
 		Measurements:          r.measurements,
 	}
 	data, err := json.MarshalIndent(document, "", "  ")

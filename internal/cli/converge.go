@@ -624,7 +624,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	report.complete()
 	report.start("network", "Reconcile network and DNS")
-	if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, "", report); err != nil {
+	if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report); err != nil {
 		return err
 	}
 	report.complete()
@@ -734,7 +734,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return err
 	}
 	variables = append(variables, '\n')
-	if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, "", report); err != nil {
+	if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseServices, report); err != nil {
 		return fmt.Errorf("install endpoint-signed certificates: %w", err)
 	}
 	report.complete()
@@ -1859,17 +1859,21 @@ func checkBootstrapEndpoint(siteDir string, s model.Site) error {
 }
 
 func runTrackedAnsible(ctx context.Context, playbook, inventory string, variables []byte, limit string, report *deploymentReport) error {
+	return runTrackedAnsiblePhase(ctx, playbook, inventory, variables, limit, ansible.PhaseFull, report)
+}
+
+func runTrackedAnsiblePhase(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string, report *deploymentReport) error {
 	started := time.Now()
 	var (
-		changed bool
-		err     error
+		result ansible.RunResult
+		err    error
 	)
 	if limit == "" {
-		changed, err = ansible.RunWithMutation(ctx, playbook, inventory, variables)
+		result, err = ansible.RunWithMutationPhase(ctx, playbook, inventory, variables, phase)
 	} else {
-		changed, err = ansible.RunLimitedWithMutation(ctx, playbook, inventory, variables, limit)
+		result, err = ansible.RunLimitedWithMutationPhase(ctx, playbook, inventory, variables, limit, phase)
 	}
-	if changed {
+	if result.Changed {
 		target := limit
 		if target == "" {
 			target = "all managed targets"
@@ -1879,6 +1883,7 @@ func runTrackedAnsible(ctx context.Context, playbook, inventory string, variable
 		}
 	}
 	if report != nil {
+		report.recordAnsibleTaskTimings(phase, result.TaskTimings)
 		target := limit
 		if target == "" {
 			target = "all managed targets"

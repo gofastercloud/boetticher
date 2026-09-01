@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gofastercloud/boetticher/internal/ansible"
 )
 
 func TestDeploymentReportRendersSuccessfulBinarySummary(t *testing.T) {
@@ -73,6 +75,7 @@ func TestDeploymentReportPersistsTimingAndMutationSummary(t *testing.T) {
 	report.start("proxmox", "Reconcile Proxmox platform and storage")
 	report.recordMutation("Proxmox", "lab-fw-01", "guest created", true)
 	report.recordTiming("proxmox", "ansible", "lab-fw-01", time.Now().Add(-25*time.Millisecond))
+	report.recordAnsibleTaskTimings("proxmox", []ansible.TaskTiming{{Host: "lab-fw-01", Task: "Apply config", Path: "roles/base/tasks/main.yml:12", Status: "ok", DurationMS: 17, Changed: true}})
 	report.complete()
 	report.finalize(nil)
 
@@ -95,15 +98,24 @@ func TestDeploymentReportPersistsTimingAndMutationSummary(t *testing.T) {
 			Target     string `json:"target"`
 			DurationMS int64  `json:"duration_ms"`
 		} `json:"suboperations"`
+		AnsibleTaskTimings []struct {
+			Phase      string `json:"phase"`
+			Host       string `json:"host"`
+			Task       string `json:"task"`
+			DurationMS int64  `json:"duration_ms"`
+		} `json:"ansible_task_timings"`
 	}
 	if err := json.Unmarshal(data, &document); err != nil {
 		t.Fatalf("decode deployment timing report: %v", err)
 	}
-	if document.Operation != "deploy" || document.PlatformVersion != "0.4.1" || document.ModelRevision != "sha256:model" || !document.Succeeded || !document.InfrastructureChanged || !document.MutationScopeCertain || len(document.Mutations) != 1 || len(document.Phases) != 1 || len(document.Suboperations) != 1 {
+	if document.Operation != "deploy" || document.PlatformVersion != "0.4.1" || document.ModelRevision != "sha256:model" || !document.Succeeded || !document.InfrastructureChanged || !document.MutationScopeCertain || len(document.Mutations) != 1 || len(document.Phases) != 1 || len(document.Suboperations) != 1 || len(document.AnsibleTaskTimings) != 1 {
 		t.Fatalf("unexpected deployment timing report: %+v", document)
 	}
 	if document.Suboperations[0].Phase != "proxmox" || document.Suboperations[0].Kind != "ansible" || document.Suboperations[0].Target != "lab-fw-01" || document.Suboperations[0].DurationMS < 0 {
 		t.Fatalf("unexpected deployment suboperation timing: %+v", document.Suboperations[0])
+	}
+	if document.AnsibleTaskTimings[0].Phase != "proxmox" || document.AnsibleTaskTimings[0].Host != "lab-fw-01" || document.AnsibleTaskTimings[0].Task != "Apply config" || document.AnsibleTaskTimings[0].DurationMS != 17 {
+		t.Fatalf("unexpected Ansible task timing: %+v", document.AnsibleTaskTimings[0])
 	}
 	if strings.Contains(string(data), "failure") {
 		t.Fatalf("deployment timing report should not contain failure details: %s", data)

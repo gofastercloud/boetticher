@@ -11,17 +11,23 @@
     - base
     - chrony
     - role: dns
-      when: inventory_hostname in groups.get('dns', [])
+      when:
+        - inventory_hostname in groups.get('dns', [])
+        - boetticher_deploy_phase | default('full') != 'services'
     - role: monitor
       when: inventory_hostname in groups.get('monitor', [])
     - role: logging
       when: inventory_hostname in logging_upload_configs or inventory_hostname == 'lab-log-01'
     - role: firewall
-      when: inventory_hostname in groups.get('firewall', [])
+      when:
+        - inventory_hostname in groups.get('firewall', [])
+        - boetticher_deploy_phase | default('full') != 'services'
     - role: portal
       when: inventory_hostname == 'lab-portal-01'
     - role: tailnet-router
-      when: inventory_hostname in groups.get('tailnet-router', [])
+      when:
+        - inventory_hostname in groups.get('tailnet-router', [])
+        - boetticher_deploy_phase | default('full') != 'services'
     - role: litellm
       when: inventory_hostname in groups.get('litellm', [])
     - role: printer
@@ -38,5 +44,7 @@
   become: false
   gather_facts: false
   roles:
-    - usb-export-host
-    - network-probe-host
+    - role: usb-export-host
+      when: boetticher_deploy_phase | default('full') != 'services'
+    - role: network-probe-host
+      when: boetticher_deploy_phase | default('full') != 'services'
