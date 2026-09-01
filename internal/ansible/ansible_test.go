@@ -1332,6 +1332,7 @@ func TestDNSDDNSMetadataIsReconciledAgainstLivePowerDNSState(t *testing.T) {
 		"Reconcile Kea DDNS metadata on the primary when changed",
 		"pdnsutil get-meta",
 		"metadata_values()",
+		"tr ',' ' '",
 		"changed_when: \"'updated' in ddns_metadata.stdout\"",
 	} {
 		if !strings.Contains(text, expected) {

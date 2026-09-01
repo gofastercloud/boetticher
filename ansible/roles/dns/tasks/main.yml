@@ -204,6 +204,7 @@
     metadata_values() {
       pdnsutil get-meta "$1" "$2" 2>/dev/null |
         sed -n 's/^[^=]*=[[:space:]]*//p' |
+        tr ',' ' ' |
         tr -s '[:space:]' '\n' |
         awk 'NF' |
         LC_ALL=C sort |
