@@ -21,7 +21,8 @@ _MARKER_RE = re.compile(
     r"^boetticher-observation dns-metadata-drift "
     r"([A-Za-z0-9.-]+) "
     r"(ALLOW-DNSUPDATE-FROM|NOTIFY-DNSUPDATE|TSIG-ALLOW-DNSUPDATE) "
-    r"([0-9]+) ([0-9]+) ([0-9a-f]{16})$"
+    r"([0-9]+) ([0-9]+) ([0-9a-f]{16}) "
+    r"((?:[0-9]+:[0-9a-f]{8}(?:,[0-9]+:[0-9a-f]{8})*)|none)$"
 )
 
 
@@ -49,7 +50,7 @@ class CallbackModule(CallbackBase):
                 match = _MARKER_RE.fullmatch(str(line).strip())
                 if not match:
                     continue
-                marker = f"dns-metadata-drift:{match.group(1)}:{match.group(2)}:{match.group(3)}:{match.group(4)}:{match.group(5)}"
+                marker = f"dns-metadata-drift:{match.group(1)}:{match.group(2)}:{match.group(3)}:{match.group(4)}:{match.group(5)}:{match.group(6)}"
                 if marker not in markers:
                     markers.append(marker)
                 if len(markers) >= _MAX_MARKERS:

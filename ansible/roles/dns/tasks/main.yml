@@ -210,6 +210,17 @@
         LC_ALL=C sort |
         paste -sd ' ' -
     }
+    metadata_token_metrics() {
+      printf '%s\n' "$1" |
+        awk '{ for (i = 1; i <= NF; i++) print $i }' |
+        while IFS= read -r token; do
+          [ -n "$token" ] || continue
+          token_length="$(printf '%s' "$token" | wc -c | tr -d '[:space:]')"
+          token_digest="$(printf '%s' "$token" | sha256sum | cut -c1-8)"
+          printf '%s:%s\n' "$token_length" "$token_digest"
+        done |
+        paste -sd ',' -
+    }
     expected_sources="$(printf '%s\n' {% for source in dns_plan.ddns.update_sources %}{{ source | quote }} {% endfor %} | tr -s '[:space:]' '\n' | awk 'NF' | LC_ALL=C sort | paste -sd ' ' -)"
     updated=0
     for zone in {{ item.forward_zone | quote }} {{ item.reverse_zone | quote }}; do
@@ -218,7 +229,9 @@
         current_length="$(printf '%s' "$current_sources" | wc -c | tr -d '[:space:]')"
         current_count="$(printf '%s\n' "$current_sources" | awk '{print NF}')"
         current_digest="$(printf '%s' "$current_sources" | sha256sum | cut -c1-16)"
-        printf 'boetticher-observation dns-metadata-drift %s ALLOW-DNSUPDATE-FROM %s %s %s\n' "$zone" "$current_length" "$current_count" "$current_digest"
+        current_tokens="$(metadata_token_metrics "$current_sources")"
+        [ -n "$current_tokens" ] || current_tokens=none
+        printf 'boetticher-observation dns-metadata-drift %s ALLOW-DNSUPDATE-FROM %s %s %s %s\n' "$zone" "$current_length" "$current_count" "$current_digest" "$current_tokens"
         pdnsutil set-meta "$zone" ALLOW-DNSUPDATE-FROM {% for source in dns_plan.ddns.update_sources %}{{ source | quote }} {% endfor %}
         updated=1
       fi
@@ -227,7 +240,9 @@
         current_length="$(printf '%s' "$current_notify" | wc -c | tr -d '[:space:]')"
         current_count="$(printf '%s\n' "$current_notify" | awk '{print NF}')"
         current_digest="$(printf '%s' "$current_notify" | sha256sum | cut -c1-16)"
-        printf 'boetticher-observation dns-metadata-drift %s NOTIFY-DNSUPDATE %s %s %s\n' "$zone" "$current_length" "$current_count" "$current_digest"
+        current_tokens="$(metadata_token_metrics "$current_notify")"
+        [ -n "$current_tokens" ] || current_tokens=none
+        printf 'boetticher-observation dns-metadata-drift %s NOTIFY-DNSUPDATE %s %s %s %s\n' "$zone" "$current_length" "$current_count" "$current_digest" "$current_tokens"
         pdnsutil set-meta "$zone" NOTIFY-DNSUPDATE 1
         updated=1
       fi
@@ -236,7 +251,9 @@
         current_length="$(printf '%s' "$current_tsig" | wc -c | tr -d '[:space:]')"
         current_count="$(printf '%s\n' "$current_tsig" | awk '{print NF}')"
         current_digest="$(printf '%s' "$current_tsig" | sha256sum | cut -c1-16)"
-        printf 'boetticher-observation dns-metadata-drift %s TSIG-ALLOW-DNSUPDATE %s %s %s\n' "$zone" "$current_length" "$current_count" "$current_digest"
+        current_tokens="$(metadata_token_metrics "$current_tsig")"
+        [ -n "$current_tokens" ] || current_tokens=none
+        printf 'boetticher-observation dns-metadata-drift %s TSIG-ALLOW-DNSUPDATE %s %s %s %s\n' "$zone" "$current_length" "$current_count" "$current_digest" "$current_tokens"
         pdnsutil set-meta "$zone" TSIG-ALLOW-DNSUPDATE {{ item.tsig_key_name | quote }}
         updated=1
       fi
