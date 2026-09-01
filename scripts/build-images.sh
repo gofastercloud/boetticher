@@ -557,6 +557,7 @@ build_litellm() {
   rm -f "$rootfs/etc/nginx/sites-enabled/default" "$rootfs/etc/nginx/sites-available/default" "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
   install -D -m 0644 images/litellm/runtime/requirements.lock "$rootfs/tmp/litellm-requirements.lock"
   install -D -m 0644 images/litellm/runtime/litellm.service "$rootfs/etc/systemd/system/litellm.service"
+  install -D -m 0750 images/litellm/runtime/litellm-start "$rootfs/usr/lib/boetticher/litellm-start"
   install -D -m 0755 images/litellm/runtime/model-capabilities.py "$rootfs/usr/local/libexec/boetticher-litellm-model-capabilities"
   test -x "$rootfs/usr/bin/setpriv"
   grep -Fq -- 'User=root' "$rootfs/etc/systemd/system/litellm.service"

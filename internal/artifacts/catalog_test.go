@@ -671,6 +671,19 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 			t.Fatalf("LiteLLM capability reader is missing fail-closed field %q", required)
 		}
 	}
+	launcher, err := os.ReadFile(filepath.Join(root, "litellm", "runtime", "litellm-start"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"credential_dir=/run/credentials/litellm.service",
+		"export \"LITELLM_SECRET_${environment_name}=$value\"",
+		"exec /usr/bin/setpriv --reuid=litellm --regid=litellm --init-groups /opt/litellm/bin/litellm \"$@\"",
+	} {
+		if !strings.Contains(string(launcher), required) {
+			t.Fatalf("LiteLLM launcher is missing %q", required)
+		}
+	}
 	for _, required := range []string{
 		"build_tailnet_router",
 		"build_litellm",
@@ -678,6 +691,7 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 		"test -x \"$rootfs/usr/bin/setpriv\"",
 		"grep -Fq -- 'User=root' \"$rootfs/etc/systemd/system/litellm.service\"",
 		"grep -Fq -- 'CapabilityBoundingSet=CAP_SETUID CAP_SETGID' \"$rootfs/etc/systemd/system/litellm.service\"",
+		"install -D -m 0750 images/litellm/runtime/litellm-start \"$rootfs/usr/lib/boetticher/litellm-start\"",
 		"rm -f \"$rootfs/etc/nginx/sites-enabled/default\"",
 		"find \"$rootfs/opt/litellm\" -type f \\(",
 		"-name '*.log' -o -name '*.pyc'",
