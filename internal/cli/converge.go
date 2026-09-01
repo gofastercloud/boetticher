@@ -797,12 +797,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		} else if tokenErr != nil {
 			return fmt.Errorf("load encrypted Pulse read token: %w", tokenErr)
 		}
-		readClientCertificate := clientCertificate
-		if modules.IsEnabled(s, "streamdeck") {
-			readClientCertificate, clientErr = pki.IssueClient(authority, "boetticher-pulse-read", s.Network.Domain, time.Now().UTC())
-			if clientErr != nil {
-				return fmt.Errorf("issue Pulse read client certificate: %w", clientErr)
-			}
+		readClientCertificate, clientErr := pki.IssueClient(authority, "boetticher-pulse-read", s.Network.Domain, time.Now().UTC())
+		if clientErr != nil {
+			return fmt.Errorf("issue Pulse read client certificate: %w", clientErr)
 		}
 		pulseRead, clientErr := pulse.NewReadClient(pulse.ClientConfig{
 			BaseURL: pulseBaseURL, APIToken: readToken,

@@ -378,7 +378,6 @@ func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 	text := string(data)
 	for _, required := range []string{
 		"readTokenRefreshed := false",
-		"readClientCertificate := clientCertificate",
 		`pki.IssueClient(authority, "boetticher-pulse-read"`,
 		"modules.IsEnabled(s, \"streamdeck\") && pulse.IsForbidden(err)",
 		"pulse.IsUnauthorized(err)",
