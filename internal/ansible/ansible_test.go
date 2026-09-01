@@ -460,6 +460,32 @@ func TestGeneratedSSHConfigPathIsBoundToInventoryProjection(t *testing.T) {
 	}
 }
 
+func TestAnsibleStrategyIsFreeOnlyForServices(t *testing.T) {
+	t.Setenv("ANSIBLE_STRATEGY", "free")
+	for _, test := range []struct {
+		phase string
+		want  string
+	}{
+		{phase: PhaseFull, want: defaultAnsibleStrategy},
+		{phase: PhaseBootstrap, want: defaultAnsibleStrategy},
+		{phase: PhaseServices, want: serviceAnsibleStrategy},
+		{phase: PhaseHealth, want: defaultAnsibleStrategy},
+	} {
+		environment := ansibleEnvironment("ansible/site.yml", "", test.phase)
+		prefix := "ANSIBLE_STRATEGY="
+		got := ""
+		for _, entry := range environment {
+			if strings.HasPrefix(entry, prefix) {
+				got = strings.TrimPrefix(entry, prefix)
+				break
+			}
+		}
+		if got != test.want {
+			t.Fatalf("ANSIBLE_STRATEGY for phase %q = %q, want %q", test.phase, got, test.want)
+		}
+	}
+}
+
 func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	tempDir := t.TempDir()
 	inventoryPath := filepath.Join(tempDir, "site", "generated", "ansible", "inventory.ini")

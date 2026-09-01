@@ -36,6 +36,15 @@ const maxAnsibleDiagnosticBytes = 16 * 1024
 const defaultAnsibleForks = "8"
 
 const (
+	// The network foundation and health phases retain linear ordering. The
+	// services phase runs only after the foundation phase has completed and
+	// contains host-local work, so independent guests can progress without
+	// waiting at every task barrier.
+	defaultAnsibleStrategy = "linear"
+	serviceAnsibleStrategy = "free"
+)
+
+const (
 	PhaseFull      = "full"
 	PhaseBootstrap = "bootstrap"
 	PhaseServices  = "services"
@@ -483,7 +492,7 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	command.Stdin = strings.NewReader(string(variables))
 	timingPath, timingCleanup := prepareTaskTiming(playbook)
 	defer timingCleanup()
-	command.Env = ansibleEnvironment(playbook, timingPath)
+	command.Env = ansibleEnvironment(playbook, timingPath, phase)
 	var output boundedOutput
 	command.Stdout = &output
 	command.Stderr = &output
@@ -528,11 +537,19 @@ func phaseVariables(variables []byte, phase string) ([]byte, error) {
 	return append(data, '\n'), nil
 }
 
-func ansibleEnvironment(playbook, timingPath string) []string {
+func ansibleEnvironment(playbook, timingPath, phase string) []string {
 	environment := os.Environ()
 	if _, ok := os.LookupEnv("ANSIBLE_FORKS"); !ok {
 		environment = append(environment, "ANSIBLE_FORKS="+defaultAnsibleForks)
 	}
+	strategy := defaultAnsibleStrategy
+	if phase == PhaseServices {
+		strategy = serviceAnsibleStrategy
+	}
+	// Keep the strategy deterministic for every deploy phase. In particular,
+	// an ambient ANSIBLE_STRATEGY=free must not weaken ordering in the network
+	// foundation or health phases.
+	environment = setEnvironmentValue(environment, "ANSIBLE_STRATEGY", strategy)
 	environment = setEnvironmentValue(environment, "ANSIBLE_HOST_KEY_CHECKING", "True")
 	environment = setEnvironmentValue(environment, "ANSIBLE_SSH_PIPELINING", "True")
 	pluginDir := filepath.Join(filepath.Dir(playbook), "callback_plugins")
