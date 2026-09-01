@@ -208,7 +208,7 @@ func TestSSHRunnerLocalForwardUsesLoopbackAndBoundedTarget(t *testing.T) {
 	if !containsString(args, "-N") || !containsString(args, "-L") || !containsString(args, "127.0.0.1:43123:10.10.10.20:443") {
 		t.Fatalf("local forward is not loopback-only or target-bounded: %#v", args)
 	}
-	if !containsString(args, "BatchMode=yes") || !containsString(args, "ExitOnForwardFailure=yes") || !containsString(args, "root@lab-proxmox-01") {
+	if !containsString(args, "BatchMode=yes") || !containsString(args, "ControlMaster=no") || !containsString(args, "ControlPath=none") || !containsString(args, "ExitOnForwardFailure=yes") || !containsString(args, "root@lab-proxmox-01") {
 		t.Fatalf("local forward does not use non-interactive Proxmox SSH: %#v", args)
 	}
 }

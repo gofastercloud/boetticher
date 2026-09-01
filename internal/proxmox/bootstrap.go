@@ -648,7 +648,10 @@ func (r SSHRunner) forwardArgs(address, user string, localPort int, targetAddres
 		return nil, err
 	}
 	forward := fmt.Sprintf("127.0.0.1:%d:%s:%d", localPort, targetAddress, targetPort)
-	args = append(args, "-o", "ExitOnForwardFailure=yes")
+	// Short-lived forwards must create their own forwarding-only connection.
+	// Reusing a ControlMaster can make OpenSSH request a shell session as the
+	// nologin bastion user, which exits before the forward becomes ready.
+	args = append(args, "-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "ExitOnForwardFailure=yes")
 	return append(args, "-N", "-L", forward, target), nil
 }
 
