@@ -117,7 +117,7 @@
     set -eu
     records="$(pdnsutil list-zone {{ item }})"
     if printf '%s\n' "$records" | awk '$1 == "{{ item }}.{{ item }}" && $4 == "NS" && ($5 == "lab-dns-01.{{ dns_plan.static_zone }}." || $5 == "lab-dns-02.{{ dns_plan.static_zone }}.") { found=1 } END { exit !found }'; then
-      pdnsutil delete-rrset {{ item }} {{ item }} NS
+      pdnsutil delete-rrset {{ item | quote }} {{ (item ~ '.' ~ item) | quote }} NS
     fi
   args:
     executable: /bin/sh

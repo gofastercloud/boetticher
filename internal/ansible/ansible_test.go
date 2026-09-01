@@ -1307,6 +1307,7 @@ func TestDNSAuthoritativeUpdatesAreGatedByLiveRRsetState(t *testing.T) {
 		"changed_when: \"'updated' in static_dns_records.stdout\"",
 		"$4 == \"NS\"",
 		"$5 == \"lab-dns-01.{{ dns_plan.static_zone }}.\"",
+		"(item ~ '.' ~ item) | quote",
 		"$4 == record_type",
 		"normalized($5) == normalized(wanted)",
 	} {
