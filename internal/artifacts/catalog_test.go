@@ -653,6 +653,7 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 		"build_tailnet_router",
 		"build_litellm",
 		"CGO_ENABLED=0 go build",
+		"getent passwd bifrost | grep -Eq '^bifrost:'",
 		"grep -Fxq 'User=bifrost' \"$rootfs/etc/systemd/system/litellm.service\"",
 		"grep -Fxq 'CapabilityBoundingSet=' \"$rootfs/etc/systemd/system/litellm.service\"",
 		"boetticher-bifrost",

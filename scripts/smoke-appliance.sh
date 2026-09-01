@@ -168,7 +168,7 @@ case "$name" in
     require_executable 'litellm nginx executable is missing' "$rootfs/usr/sbin/nginx"
     require_executable 'Bifrost executable is missing' "$rootfs/usr/local/libexec/boetticher-bifrost"
     require_executable 'LiteLLM-compatible capabilities executable is missing' "$rootfs/usr/local/libexec/boetticher-litellm-model-capabilities"
-    chroot "$rootfs" getent passwd bifrost | grep -Fq ':bifrost:'
+    chroot "$rootfs" getent passwd bifrost | grep -Eq '^bifrost:'
     chroot "$rootfs" dpkg-query -W -f='${Version}' nginx | grep -Fxq '1.26.3-3+deb13u7'
     test -f "$rootfs/etc/systemd/system/litellm.service"
     grep -Fq -- 'ExecStart=/usr/local/libexec/boetticher-bifrost serve --config /etc/boetticher/litellm/config.json' "$rootfs/etc/systemd/system/litellm.service"
