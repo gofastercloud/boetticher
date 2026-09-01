@@ -8,7 +8,7 @@ This reference is generated from the CLI command metadata. `deploy` is the only 
 boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall]
 boetticher tui [--site DIR] [--offline]
 boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--record] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]
-boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]
+boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run] [--cleanup]
 boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]
 boetticher status [--site DIR] [--ssh-config PATH] [--ssh-journey] [--live] [--verbose] [--json]
 boetticher update [--site DIR] [--dry-run] [--confirm]
@@ -91,15 +91,15 @@ Related commands: bootstrap, deploy --dry-run
 
 Purpose: Prepare Proxmox trust, bridges, storage, the temporary Linux builder, and qualified appliance artifacts.
 
-Usage: `boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]`
+Usage: `boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run] [--cleanup]`
 
 Arguments: No positional arguments.
 
-Options: --dry-run renders only; --recovery-confirmed confirms the independent Age recovery copy; --storage-confirmed confirms explicit dedicated-storage initialization; --age-identity selects the operator-owned private Age identity; --operator-key selects the initial operator SSH public key; --initial-user selects the initial SSH user; --known-hosts selects an independently enrolled SSH trust file and defaults to the site-scoped trust file; --proxmox-ca selects the Proxmox API CA PEM file; --insecure explicitly allows self-signed Proxmox API TLS; --trunk-interface selects the physical trunk interface.
+Options: --dry-run renders only; --cleanup removes only an exact-owned stale temporary builder and does not rebuild artifacts; --recovery-confirmed confirms the independent Age recovery copy; --storage-confirmed confirms explicit dedicated-storage initialization; --age-identity selects the operator-owned private Age identity; --operator-key selects the initial operator SSH public key; --initial-user selects the initial SSH user; --known-hosts selects an independently enrolled SSH trust file and defaults to the site-scoped trust file; --proxmox-ca selects the Proxmox API CA PEM file; --insecure explicitly allows self-signed Proxmox API TLS; --trunk-interface selects the physical trunk interface.
 
-Safety: May change Proxmox bootstrap infrastructure and creates a temporary builder. Verify the first SSH host fingerprint at the explicit ask prompt; subsequent privileged paths require the enrolled key.
+Safety: May change Proxmox bootstrap infrastructure and creates a temporary builder. Cleanup proves the canonical builder name and owner tag before stopping or removing VMID 190. Verify the first SSH host fingerprint at the explicit ask prompt; subsequent privileged paths require the enrolled key.
 
-Examples: `boetticher bootstrap --site ./my-boetticher --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem`
+Examples: `boetticher bootstrap --site ./my-boetticher --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem`; `boetticher bootstrap --site ./my-boetticher --cleanup --age-identity /path/to/age-identity.txt --proxmox-ca /path/to/pve-root-ca.pem`
 
 Related commands: preflight, deploy, verify
 

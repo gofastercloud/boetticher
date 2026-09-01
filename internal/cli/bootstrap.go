@@ -96,8 +96,12 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS during bootstrap")
 	trunkInterface := fs.String("trunk-interface", "", "explicit physical trunk interface when discovery finds multiple candidates")
 	dryRun := fs.Bool("dry-run", false, "render and validate the bootstrap plan without connecting")
+	cleanup := fs.Bool("cleanup", false, "remove an exact-owned stale temporary artifact builder without rebuilding")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *cleanup {
+		return runBootstrapCleanup(*siteDir, *ageIdentity, *proxmoxCA, *insecure, out, progress)
 	}
 	if *dryRun {
 		progress.total = 1
@@ -634,6 +638,39 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	}
 	progress.emitTiming(out, "builder_artifact_return_extraction", extractionStarted)
 	buildSucceeded = true
+	return nil
+}
+
+func runBootstrapCleanup(siteDir, ageIdentity, proxmoxCA string, insecure bool, out io.Writer, progress *bootstrapReport) error {
+	progress.total = 2
+	progress.start("validate", "Validate temporary builder cleanup request")
+	s, err := site.Load(siteDir)
+	if err != nil {
+		return err
+	}
+	plan, err := proxmox.PlanFromSite(s)
+	if err != nil {
+		return fmt.Errorf("validate temporary builder cleanup plan: %w", err)
+	}
+	client, _, err := loadProxmoxClient(siteDir, s, ageIdentity, proxmoxCA, insecure)
+	if err != nil {
+		return fmt.Errorf("prepare Proxmox client for temporary builder cleanup: %w", err)
+	}
+	ctx := telemetry.WithObserver(context.Background(), progress)
+	node, err := client.SingleNode(ctx)
+	if err != nil {
+		return fmt.Errorf("identify Proxmox node for temporary builder cleanup: %w", err)
+	}
+	if plan.Node != "" && node != plan.Node {
+		return fmt.Errorf("Proxmox node identity changed during temporary builder cleanup: desired %q, observed %q", plan.Node, node)
+	}
+	progress.complete()
+	progress.start("cleanup", "Remove exact-owned temporary artifact builder")
+	if err := proxmox.DestroyBuilderVM(ctx, client, node); err != nil {
+		return fmt.Errorf("remove temporary artifact builder: %w", err)
+	}
+	progress.complete()
+	fmt.Fprintf(out, "Temporary artifact builder VMID %d: removed\n", model.BuilderVMID)
 	return nil
 }
 
