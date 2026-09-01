@@ -45,9 +45,9 @@ The module depends on `monitoring` and reads Pulse through the existing
 bounded `X-API-Token` plus mTLS contract. Core signs the service-client
 certificate, installs the shared Pulse read token as an encrypted systemd
 credential, and starts the service only after both gates pass. The appliance
-image contains the pinned StreamDeck library, Pillow renderer, httpx client,
-and `libhidapi-libusb0`; it does not contain certificates, tokens, or USB
-device paths.
+image contains a statically linked Go service and the pinned native Linux
+`matthewpi/streamdeck` library; it has no LXC-local package environment and
+does not contain certificates, tokens, or USB device paths.
 
 The external Pi-hosted StreamDeck companion remains a separate deployment
 shape. This LXC module needs the physical USB attachment and the live mTLS and

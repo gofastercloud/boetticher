@@ -209,10 +209,10 @@ case "$name" in
     fi
     ;;
   boetticher-streamdeck)
-    test -x "$rootfs/opt/streamdeck/bin/boetticher-streamdeck"
-    run /opt/streamdeck/bin/python --version
+    test -x "$rootfs/usr/local/libexec/boetticher-streamdeck"
+    test ! -e "$rootfs/opt/streamdeck"
+    test ! -e "$rootfs/usr/src/boetticher-streamdeck"
     chroot "$rootfs" getent passwd streamdeck | grep -Fq ':2200:2200:'
-    chroot "$rootfs" dpkg-query -W -f='${Version}' python3 | grep -Fxq '3.13.5-1'
     test -f "$rootfs/etc/systemd/system/streamdeck-status.service"
     grep -Fq 'User=streamdeck' "$rootfs/etc/systemd/system/streamdeck-status.service"
     grep -Fq 'DevicePolicy=closed' "$rootfs/etc/systemd/system/streamdeck-status.service"

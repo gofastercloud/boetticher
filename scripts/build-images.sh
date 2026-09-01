@@ -581,19 +581,14 @@ build_printer() {
 build_streamdeck() {
   printf '%s\n' 'boetticher build stage: streamdeck'
   rootfs=$(prepare_rootfs boetticher-streamdeck)
-  install_packages "$rootfs" python3=3.13.5-1 python3-venv=3.13.5-1 python3-pip=25.1.1+dfsg-1 libhidapi-libusb0 fonts-dejavu-core
   chroot "$rootfs" groupadd --system --gid 2200 streamdeck
   chroot "$rootfs" useradd --system --uid 2200 --gid 2200 --home-dir /var/lib/streamdeck --create-home --shell /usr/sbin/nologin streamdeck
-  chroot "$rootfs" python3 -m venv /opt/streamdeck
-  install -D -m 0644 images/streamdeck/runtime/requirements.lock "$rootfs/tmp/streamdeck-requirements.lock"
-  pip_install "$rootfs" /opt/streamdeck/bin/pip install --require-hashes --requirement /tmp/streamdeck-requirements.lock
-  install -D -m 0644 services/streamdeck/pyproject.toml "$rootfs/usr/src/boetticher-streamdeck/pyproject.toml"
-  cp -a services/streamdeck/src "$rootfs/usr/src/boetticher-streamdeck/"
-  pip_install "$rootfs" /opt/streamdeck/bin/pip install --no-deps --no-build-isolation /usr/src/boetticher-streamdeck
+  CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/libexec/boetticher-streamdeck" ./cmd/boetticher-streamdeck
+  chroot "$rootfs" chown root:root /usr/local/libexec/boetticher-streamdeck
+  chroot "$rootfs" chmod 0755 /usr/local/libexec/boetticher-streamdeck
   chroot "$rootfs" apt-get clean
   rm -rf "$rootfs/var/lib/apt/lists/"*
   install -D -m 0644 images/streamdeck/runtime/streamdeck-status.service "$rootfs/etc/systemd/system/streamdeck-status.service"
-  rm -f "$rootfs/tmp/streamdeck-requirements.lock"
   write_artifact_identity "$rootfs" streamdeck
   package_lxc boetticher-streamdeck
 }
