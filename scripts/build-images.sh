@@ -106,7 +106,10 @@ download_cached() {
   fi
 }
 
-zstd_level=${BOETTICHER_ZSTD_LEVEL:-19}
+# Level 3 keeps the qualified artifact format and integrity checks while
+# avoiding the disproportionate CPU cost of the historical level-19 default.
+# The environment override remains available for measured release trials.
+zstd_level=${BOETTICHER_ZSTD_LEVEL:-3}
 case "$zstd_level" in
   ''|*[!0-9]*)
     echo "HOLD: BOETTICHER_ZSTD_LEVEL must be an integer from 1 through 22" >&2

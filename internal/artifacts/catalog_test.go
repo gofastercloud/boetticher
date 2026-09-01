@@ -693,8 +693,8 @@ func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *tes
 		t.Fatal(err)
 	}
 	benchmarkText := string(benchmarkScript)
-	if !strings.Contains(buildText, "zstd_level=${BOETTICHER_ZSTD_LEVEL:-19}") || !strings.Contains(buildText, `zstd -T0 "-$2"`) || !strings.Contains(buildText, `measurement_emit "artifact_compression"`) || !strings.Contains(buildText, "artifact_inventory") {
-		t.Fatal("artifact compression does not expose bounded measurement levels with the existing default")
+	if !strings.Contains(buildText, "zstd_level=${BOETTICHER_ZSTD_LEVEL:-3}") || !strings.Contains(buildText, `zstd -T0 "-$2"`) || !strings.Contains(buildText, `measurement_emit "artifact_compression"`) || !strings.Contains(buildText, "artifact_inventory") {
+		t.Fatal("artifact compression does not expose bounded measurement levels with the measured default")
 	}
 	for _, required := range []string{
 		"BOETTICHER_BENCHMARK_ZSTD_LEVELS",
