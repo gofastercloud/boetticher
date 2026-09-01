@@ -116,7 +116,7 @@
   ansible.builtin.shell: |
     set -eu
     records="$(pdnsutil list-zone {{ item }})"
-    if printf '%s\n' "$records" | awk '$1 == "{{ item }}.{{ item }}" && $3 == "NS" && ($4 == "lab-dns-01.{{ dns_plan.static_zone }}." || $4 == "lab-dns-02.{{ dns_plan.static_zone }}.") { found=1 } END { exit !found }'; then
+    if printf '%s\n' "$records" | awk '$1 == "{{ item }}.{{ item }}" && $4 == "NS" && ($5 == "lab-dns-01.{{ dns_plan.static_zone }}." || $5 == "lab-dns-02.{{ dns_plan.static_zone }}.") { found=1 } END { exit !found }'; then
       pdnsutil delete-rrset {{ item }} {{ item }} NS
     fi
   args:
@@ -130,7 +130,7 @@
     records="$(pdnsutil list-zone {{ dns_plan.static_zone }})"
     updated=0
     {% for item in dns_plan.static_records %}
-    if printf '%s\n' "$records" | awk -v wanted_name={{ (item.name ~ '.' ~ dns_plan.static_zone) | quote }} -v wanted_type={{ item.type | quote }} -v wanted_value={{ item.value | quote }} '$1 == wanted_name && $3 == wanted_type && $4 == wanted_value { found=1 } END { exit !found }'; then
+    if printf '%s\n' "$records" | awk -v wanted_name={{ (item.name ~ '.' ~ dns_plan.static_zone) | quote }} -v wanted_type={{ item.type | quote }} -v wanted_value={{ item.value | quote }} '$1 == wanted_name && $4 == wanted_type && $5 == wanted_value { found=1 } END { exit !found }'; then
       pdnsutil delete-rrset {{ dns_plan.static_zone | quote }} {{ item.name | quote }} {{ item.type | quote }}
       updated=1
     fi
@@ -150,7 +150,7 @@
     zone={{ item | quote }}
     current="$(pdnsutil list-zone "$zone" | awk -v zone="$zone" '
       function normalized(value) { sub(/\.$/, "", value); return value }
-      $3 == "NS" && (normalized($1) == normalized(zone) || $1 == "@") { print normalized($4) }
+      $4 == "NS" && (normalized($1) == normalized(zone) || $1 == "@") { print normalized($5) }
     ' | LC_ALL=C sort)"
     expected="$(printf '%s\n' {{ ('lab-dns-01.' ~ dns_plan.static_zone) | quote }} {{ ('lab-dns-02.' ~ dns_plan.static_zone) | quote }} | LC_ALL=C sort)"
     if [ "$current" != "$expected" ]; then
@@ -173,7 +173,7 @@
     record_value={{ item.value | quote }}
     current="$(printf '%s\n' "$records" | awk -v name="$record_name" -v record_type="$record_type" -v wanted="$record_value" '
       function normalized(value) { sub(/\.$/, "", value); return value }
-      normalized($1) == normalized(name) && $3 == record_type && normalized($4) == normalized(wanted) { print normalized($4) }
+      normalized($1) == normalized(name) && $4 == record_type && normalized($5) == normalized(wanted) { print normalized($5) }
     ' | LC_ALL=C sort)"
     expected="$(printf '%s\n' "$record_value" | LC_ALL=C sort)"
     if [ "$current" != "$expected" ]; then

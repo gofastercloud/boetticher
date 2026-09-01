@@ -1305,6 +1305,10 @@ func TestDNSAuthoritativeUpdatesAreGatedByLiveRRsetState(t *testing.T) {
 		"updated=0",
 		"changed_when: \"'updated' in malformed_static_rrsets.stdout\"",
 		"changed_when: \"'updated' in static_dns_records.stdout\"",
+		"$4 == \"NS\"",
+		"$5 == \"lab-dns-01.{{ dns_plan.static_zone }}.\"",
+		"$4 == record_type",
+		"normalized($5) == normalized(wanted)",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("DNS role is missing live RRset convergence guard %q", expected)
