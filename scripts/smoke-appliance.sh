@@ -19,6 +19,19 @@ run() {
   chroot "$rootfs" "$@" >/dev/null 2>&1
 }
 
+fail_check() {
+  printf '%s\n' "boetticher smoke failure: $*" >&2
+  exit 1
+}
+
+require_absent() {
+  label=$1
+  path=$2
+  if [ -e "$path" ]; then
+    fail_check "$label: $path"
+  fi
+}
+
 printf '%s\n' 'boetticher smoke check: module descriptor absence'
 test ! -e "$rootfs/etc/boetticher/module.yaml"
 printf '%s\n' 'boetticher smoke check: artifact identity presence'
@@ -30,17 +43,20 @@ if grep -q 'content_sha256' "$rootfs/usr/lib/boetticher/artifact.json"; then
   exit 1
 fi
 printf '%s\n' 'boetticher smoke check: authorized key absence'
-test ! -e "$rootfs/home/labadmin/.ssh/authorized_keys"
-test ! -e "$rootfs/root/.ssh/authorized_keys"
+require_absent 'artifact contains labadmin authorized key' "$rootfs/home/labadmin/.ssh/authorized_keys"
+require_absent 'artifact contains root authorized key' "$rootfs/root/.ssh/authorized_keys"
 printf '%s\n' 'boetticher smoke check: SSH host identity absence'
-if find "$rootfs/etc/ssh" -maxdepth 1 -name 'ssh_host_*' -print -quit | grep -q .; then
-  echo "artifact contains baked SSH host identity" >&2
-  exit 1
+host_key=$(find "$rootfs/etc/ssh" -maxdepth 1 -name 'ssh_host_*' -print -quit)
+if [ -n "$host_key" ]; then
+  fail_check "artifact contains baked SSH host identity: $host_key"
 fi
 printf '%s\n' 'boetticher smoke check: durable labadmin privilege absence'
-if grep -Eq '^[[:space:]]*labadmin[[:space:]]+ALL=' "$rootfs/etc/sudoers.d/boetticher"; then
-  echo "base appliance contains a durable labadmin sudo rule" >&2
-  exit 1
+if [ ! -f "$rootfs/etc/sudoers.d/boetticher" ]; then
+  fail_check "base sudoers policy is missing: $rootfs/etc/sudoers.d/boetticher"
+fi
+sudo_rule=$(grep -En '^[[:space:]]*labadmin[[:space:]]+ALL=' "$rootfs/etc/sudoers.d/boetticher" || true)
+if [ -n "$sudo_rule" ]; then
+  fail_check "base appliance contains a durable labadmin sudo rule: $sudo_rule"
 fi
 
 case "$name" in
