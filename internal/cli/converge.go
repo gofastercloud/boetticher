@@ -91,23 +91,29 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err != nil {
 		return err
 	}
-	airvpnProfile, err := prepareAirVPNProfile(ctx, *siteDir, s, *ageIdentity, *dryRun, *rotateAirVPN)
-	if err != nil {
-		return err
-	}
 	modelRevision, err := s.Revision()
 	if err != nil {
 		return fmt.Errorf("calculate model revision: %w", err)
 	}
 	report.setIdentity(model.PlatformVersion, modelRevision)
 	report.setTimingPath(filepath.Join(site.RuntimeDir(s), "deploy", report.runID+".json"))
-	var firewallPlan firewall.Plan
-	if airvpnProfile == nil {
-		firewallPlan, err = firewall.PlanFromSite(s)
-	} else {
-		firewallPlan, err = firewall.PlanFromSiteWithAirVPN(s, airvpnProfile.Metadata)
+	var airvpnProfile *preparedAirVPNProfile
+	if err := report.timed("validate", "provider", "airvpn-profile", func() error {
+		var profileErr error
+		airvpnProfile, profileErr = prepareAirVPNProfile(ctx, *siteDir, s, *ageIdentity, *dryRun, *rotateAirVPN)
+		return profileErr
+	}); err != nil {
+		return err
 	}
-	if err != nil {
+	var firewallPlan firewall.Plan
+	if err := report.timed("validate", "local", "firewall-plan", func() error {
+		if airvpnProfile == nil {
+			firewallPlan, err = firewall.PlanFromSite(s)
+		} else {
+			firewallPlan, err = firewall.PlanFromSiteWithAirVPN(s, airvpnProfile.Metadata)
+		}
+		return err
+	}); err != nil {
 		return err
 	}
 	if airvpnProfile != nil && airvpnProfile.Created {
@@ -135,18 +141,26 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			fmt.Fprintln(out, "  External contract: generated")
 		}
 		fmt.Fprintln(out, "  Destructive actions: not applied (dry-run)")
-		plan, planErr := proxmox.PlanFromSite(s)
-		if planErr != nil {
+		var plan proxmox.Plan
+		if err := report.timed("artifacts", "local", "proxmox-plan", func() error {
+			var planErr error
+			plan, planErr = proxmox.PlanFromSite(s)
 			return planErr
+		}); err != nil {
+			return err
 		}
-		qualified, qualifyErr := proxmox.ResolveQualifiedArtifacts(*siteDir, plan, true)
-		if qualifyErr != nil {
-			fmt.Fprintf(out, "  Artifact qualification: FAIL (%s)\n", compactError(qualifyErr))
+		if err := report.timed("artifacts", "qualification", "selected-artifacts", func() error {
+			var qualifyErr error
+			plan, qualifyErr = proxmox.ResolveQualifiedArtifacts(*siteDir, plan, true)
 			return qualifyErr
+		}); err != nil {
+			fmt.Fprintf(out, "  Artifact qualification: FAIL (%s)\n", compactError(err))
+			return err
 		}
-		plan = qualified
 		fmt.Fprintln(out, "  Artifact qualification: PASS (all selected artifacts qualified)")
-		if err := validateStaticDeploymentReadiness(*siteDir, s, *ageIdentity, firewallPlan, plan); err != nil {
+		if err := report.timed("artifacts", "local", "static-readiness", func() error {
+			return validateStaticDeploymentReadiness(*siteDir, s, *ageIdentity, firewallPlan, plan)
+		}); err != nil {
 			fmt.Fprintf(out, "  Static deployment checks: FAIL (%s)\n", compactError(err))
 			return fmt.Errorf("static preflight failed: %w", err)
 		}
@@ -176,8 +190,11 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		endpointLookup = endpointLookupWithFallback(net.LookupIP, remoteEndpointResolver(ctx, rootRunner, s.BootstrapAddress, "root"))
 	}
 	if airvpnMetadata != nil {
-		firewallPlan, err = firewall.BindAirVPNEndpoint(firewallPlan, endpointLookup)
-		if err != nil {
+		if err := report.timed("artifacts", "provider", "airvpn-endpoint", func() error {
+			var bindErr error
+			firewallPlan, bindErr = firewall.BindAirVPNEndpoint(firewallPlan, endpointLookup)
+			return bindErr
+		}); err != nil {
 			return err
 		}
 		// Carry the resolved, non-secret endpoint addresses into every later
@@ -193,17 +210,26 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err != nil {
 		return err
 	}
-	proxmoxPlan, err := proxmox.PlanFromSite(s)
-	if err != nil {
+	var proxmoxPlan proxmox.Plan
+	if err := report.timed("artifacts", "local", "proxmox-plan", func() error {
+		var planErr error
+		proxmoxPlan, planErr = proxmox.PlanFromSite(s)
+		return planErr
+	}); err != nil {
 		return err
 	}
-	proxmoxPlan, err = proxmox.ResolveQualifiedArtifacts(*siteDir, proxmoxPlan, true)
-	if err != nil {
+	if err := report.timed("artifacts", "qualification", "selected-artifacts", func() error {
+		var qualifyErr error
+		proxmoxPlan, qualifyErr = proxmox.ResolveQualifiedArtifacts(*siteDir, proxmoxPlan, true)
+		return qualifyErr
+	}); err != nil {
 		return err
 	}
 	report.complete()
 	report.start("credentials-pki", "Prepare credentials and PKI")
-	if err := validateStaticDeploymentReadiness(*siteDir, s, *ageIdentity, firewallPlan, proxmoxPlan); err != nil {
+	if err := report.timed("credentials-pki", "local", "static-readiness", func() error {
+		return validateStaticDeploymentReadiness(*siteDir, s, *ageIdentity, firewallPlan, proxmoxPlan)
+	}); err != nil {
 		return fmt.Errorf("static preflight failed: %w", err)
 	}
 	retainedGuests, err := retainedGuestPlans(s)
@@ -215,12 +241,14 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return err
 	}
 	var variables []byte
-	if airvpnMetadata == nil {
-		variables, err = ansible.VariablesWithOperatorKey(s, operatorPublicKey)
-	} else {
-		variables, err = ansible.VariablesWithOperatorKeyAndAirVPN(s, operatorPublicKey, *airvpnMetadata)
-	}
-	if err != nil {
+	if err := report.timed("credentials-pki", "local", "ansible-variables", func() error {
+		if airvpnMetadata == nil {
+			variables, err = ansible.VariablesWithOperatorKey(s, operatorPublicKey)
+		} else {
+			variables, err = ansible.VariablesWithOperatorKeyAndAirVPN(s, operatorPublicKey, *airvpnMetadata)
+		}
+		return err
+	}); err != nil {
 		return err
 	}
 	var runtimeVariables map[string]any
@@ -616,9 +644,13 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			}
 		}
 		if module == "dns" && s.Gateway.Mode == model.GatewayModeManaged && len(firewallPlan.Publications) > 0 {
-			upstream, observeErr := observeGatewayUpstream(ctx, firewallRunner, firewallPlan)
-			if observeErr != nil {
-				return fmt.Errorf("HOLD: published services require a safe current upstream DHCP lease: %w", observeErr)
+			var upstream firewall.UpstreamObservation
+			if err := report.timed("network", "ssh", "gateway-upstream", func() error {
+				var observeErr error
+				upstream, observeErr = observeGatewayUpstream(ctx, firewallRunner, firewallPlan)
+				return observeErr
+			}); err != nil {
+				return fmt.Errorf("HOLD: published services require a safe current upstream DHCP lease: %w", err)
 			}
 			var finalFirewallPlan firewall.Plan
 			var planErr error
@@ -631,9 +663,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 				return fmt.Errorf("HOLD: resolve published service policy from upstream lease: %w", planErr)
 			}
 			if airvpnMetadata != nil {
-				finalFirewallPlan, planErr = firewall.BindAirVPNEndpoint(finalFirewallPlan, endpointLookup)
-				if planErr != nil {
-					return fmt.Errorf("HOLD: resolve AirVPN provider endpoint: %w", planErr)
+				if err := report.timed("network", "provider", "airvpn-endpoint", func() error {
+					var bindErr error
+					finalFirewallPlan, bindErr = firewall.BindAirVPNEndpoint(finalFirewallPlan, endpointLookup)
+					return bindErr
+				}); err != nil {
+					return fmt.Errorf("HOLD: resolve AirVPN provider endpoint: %w", err)
 				}
 				airvpnMetadata = finalFirewallPlan.AirVPN
 			}

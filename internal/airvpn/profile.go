@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
 
 const (
@@ -49,7 +51,7 @@ type Client struct {
 	BaseURL    string
 }
 
-func (c Client) Generate(ctx context.Context, apiKey, servers string) (Profile, error) {
+func (c Client) Generate(ctx context.Context, apiKey, servers string) (profile Profile, err error) {
 	if strings.TrimSpace(apiKey) == "" || strings.ContainsAny(apiKey, " \t\r\n") {
 		return Profile{}, errors.New("AirVPN API key is empty or contains whitespace")
 	}
@@ -97,11 +99,20 @@ func (c Client) Generate(ctx context.Context, apiKey, servers string) (Profile, 
 			return http.ErrUseLastResponse
 		}
 	}
+	requestStarted := time.Now()
+	status := 0
+	defer func() {
+		telemetry.Record(ctx, telemetry.Event{
+			Category: "provider_api", Operation: "generate_profile", Target: "airvpn-generator",
+			Method: http.MethodGet, Status: status, Duration: time.Since(requestStarted), Success: err == nil,
+		})
+	}()
 	response, err := httpClient.Do(request)
 	if err != nil {
 		return Profile{}, fmt.Errorf("request AirVPN WireGuard profile: %w", err)
 	}
 	defer response.Body.Close()
+	status = response.StatusCode
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxProfileBytes+1))
 	if err != nil {
 		return Profile{}, fmt.Errorf("read AirVPN WireGuard profile: %w", err)

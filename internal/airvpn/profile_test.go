@@ -7,7 +7,17 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
+
+type eventObserver struct {
+	events []telemetry.Event
+}
+
+func (o *eventObserver) Observe(event telemetry.Event) {
+	o.events = append(o.events, event)
+}
 
 func testKey(value byte) string {
 	return base64.StdEncoding.EncodeToString([]byte(strings.Repeat(string(value), 32)))
@@ -42,7 +52,9 @@ func TestGenerateBuildsBoundedAirVPNRequestAndRedactsFailures(t *testing.T) {
 	}))
 	defer server.Close()
 
-	profile, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(context.Background(), "controller-key", "europe")
+	observer := &eventObserver{}
+	ctx := telemetry.WithObserver(context.Background(), observer)
+	profile, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(ctx, "controller-key", "europe")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,6 +64,13 @@ func TestGenerateBuildsBoundedAirVPNRequestAndRedactsFailures(t *testing.T) {
 	if strings.Contains(profile.Config, "DNS") || !strings.Contains(profile.Config, "AllowedIPs = 0.0.0.0/0") {
 		t.Fatalf("profile was not normalized: %q", profile.Config)
 	}
+	if len(observer.events) != 1 {
+		t.Fatalf("provider API measurements = %+v, want one event", observer.events)
+	}
+	event := observer.events[0]
+	if event.Category != "provider_api" || event.Operation != "generate_profile" || event.Target != "airvpn-generator" || event.Method != http.MethodGet || event.Status != http.StatusOK || !event.Success || event.Duration < 0 {
+		t.Fatalf("unexpected provider API measurement: %+v", event)
+	}
 }
 
 func TestGenerateDoesNotIncludeProviderResponseInError(t *testing.T) {
@@ -60,9 +79,14 @@ func TestGenerateDoesNotIncludeProviderResponseInError(t *testing.T) {
 		_, _ = w.Write([]byte("secret-provider-response"))
 	}))
 	defer server.Close()
-	_, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(context.Background(), "controller-key", "europe")
+	observer := &eventObserver{}
+	ctx := telemetry.WithObserver(context.Background(), observer)
+	_, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(ctx, "controller-key", "europe")
 	if err == nil || strings.Contains(err.Error(), "secret-provider-response") || !strings.Contains(err.Error(), "HTTP 401") {
 		t.Fatalf("unexpected redaction result: %v", err)
+	}
+	if len(observer.events) != 1 || observer.events[0].Status != http.StatusUnauthorized || observer.events[0].Success {
+		t.Fatalf("unexpected failed provider API measurement: %+v", observer.events)
 	}
 }
 

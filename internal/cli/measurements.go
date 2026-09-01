@@ -25,9 +25,10 @@ type measurementSummary struct {
 }
 
 type operationMeasurements struct {
-	ProxmoxAPI measurementSummary `json:"proxmox_api"`
-	SSH        measurementSummary `json:"ssh"`
-	Ansible    measurementSummary `json:"ansible"`
+	ProxmoxAPI  measurementSummary `json:"proxmox_api"`
+	ProviderAPI measurementSummary `json:"provider_api"`
+	SSH         measurementSummary `json:"ssh"`
+	Ansible     measurementSummary `json:"ansible"`
 }
 
 func (m *operationMeasurements) Observe(event telemetry.Event) {
@@ -38,6 +39,8 @@ func (m *operationMeasurements) Observe(event telemetry.Event) {
 	switch event.Category {
 	case "proxmox_api":
 		summary = &m.ProxmoxAPI
+	case "provider_api":
+		summary = &m.ProviderAPI
 	case "ssh":
 		summary = &m.SSH
 	case "ansible":
@@ -107,6 +110,6 @@ func isDecimal(value string) bool {
 }
 
 func (m operationMeasurements) summaryLine() string {
-	return fmt.Sprintf("Measured operations: Proxmox API %d (%dms), SSH %d (%dms), Ansible %d (%dms)",
-		m.ProxmoxAPI.Count, m.ProxmoxAPI.DurationMS, m.SSH.Count, m.SSH.DurationMS, m.Ansible.Count, m.Ansible.DurationMS)
+	return fmt.Sprintf("Measured operations: Proxmox API %d (%dms), Provider API %d (%dms), SSH %d (%dms), Ansible %d (%dms)",
+		m.ProxmoxAPI.Count, m.ProxmoxAPI.DurationMS, m.ProviderAPI.Count, m.ProviderAPI.DurationMS, m.SSH.Count, m.SSH.DurationMS, m.Ansible.Count, m.Ansible.DurationMS)
 }

@@ -23,6 +23,10 @@ func TestOperationMeasurementsAggregateLowCardinalityKeys(t *testing.T) {
 		Status: 1, Duration: 10 * time.Millisecond,
 	})
 	measurements.Observe(telemetry.Event{
+		Category: "provider_api", Operation: "generate_profile", Target: "airvpn-generator",
+		Method: "GET", Status: 200, Duration: 40 * time.Millisecond, Success: true,
+	})
+	measurements.Observe(telemetry.Event{
 		Category: "ansible", Operation: "playbook", Target: "all",
 		Status: 0, Duration: 2 * time.Second, Success: true, Changed: true,
 	})
@@ -36,12 +40,15 @@ func TestOperationMeasurementsAggregateLowCardinalityKeys(t *testing.T) {
 	if measurements.Ansible.Count != 1 || measurements.Ansible.Changed != 1 {
 		t.Fatalf("unexpected Ansible measurements: %+v", measurements.Ansible)
 	}
+	if measurements.ProviderAPI.Count != 1 || measurements.ProviderAPI.DurationMS != 40 {
+		t.Fatalf("unexpected provider measurements: %+v", measurements.ProviderAPI)
+	}
 	for key := range measurements.ProxmoxAPI.ByKey {
 		if strings.Contains(key, "secret-looking-id") || strings.Contains(key, "/190/") {
 			t.Fatalf("measurement key retained high-cardinality identity: %q", key)
 		}
 	}
-	if got := measurements.summaryLine(); !strings.Contains(got, "Proxmox API 2") || !strings.Contains(got, "SSH 1") || !strings.Contains(got, "Ansible 1") {
+	if got := measurements.summaryLine(); !strings.Contains(got, "Proxmox API 2") || !strings.Contains(got, "Provider API 1") || !strings.Contains(got, "SSH 1") || !strings.Contains(got, "Ansible 1") {
 		t.Fatalf("unexpected measurement summary: %s", got)
 	}
 }

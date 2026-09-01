@@ -26,7 +26,9 @@
     - role: portal
       when: inventory_hostname == 'lab-portal-01'
     - role: tailnet-router
-      when: inventory_hostname in groups.get('tailnet-router', [])
+      when:
+        - inventory_hostname in groups.get('tailnet-router', [])
+        - boetticher_deploy_phase | default('full') != 'services'
     - role: airvpn
       when: inventory_hostname in groups.get('airvpn', [])
     - role: litellm
