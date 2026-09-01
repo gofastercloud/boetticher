@@ -314,8 +314,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err != nil {
 		return fmt.Errorf("HOLD: load client revocations: %w", err)
 	}
-	clientCRL, err := pki.GenerateCRL(authority, revocations, time.Now().UTC())
-	if err != nil {
+	var clientCRL string
+	if err := report.timed("credentials-pki", "local", "client-crl", func() error {
+		var crlErr error
+		clientCRL, crlErr = generateOrReuseClientCRL(authority, revocations, site.RuntimeDir(s), time.Now().UTC())
+		return crlErr
+	}); err != nil {
 		return fmt.Errorf("HOLD: generate enforceable client revocation list: %w", err)
 	}
 	runtimeVariables["client_crl_pem"] = clientCRL

@@ -189,6 +189,32 @@ func TestGenerateCRLRevokesExactCertificateSerial(t *testing.T) {
 	}
 }
 
+func TestValidateCRLRequiresCurrentAuthorityAndExactRevocations(t *testing.T) {
+	now := time.Date(2026, time.August, 29, 0, 0, 0, 0, time.UTC)
+	authority, err := GenerateAuthority(now, "lab.home.arpa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate, err := IssueClient(authority, "first", "lab.home.arpa", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revocations := []Revocation{{Name: certificate.Name, Serial: certificate.Serial, RevokedAt: now.Add(-time.Minute)}}
+	crl, err := GenerateCRL(authority, revocations, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateCRL(authority, crl, revocations, now.Add(time.Minute)); err != nil {
+		t.Fatalf("valid CRL rejected: %v", err)
+	}
+	if err := ValidateCRL(authority, crl, nil, now.Add(time.Minute)); err == nil {
+		t.Fatal("CRL with an unexpected revocation set was accepted")
+	}
+	if err := ValidateCRL(authority, crl+"tampered", revocations, now.Add(time.Minute)); err == nil {
+		t.Fatal("tampered CRL was accepted")
+	}
+}
+
 func TestSignedServerCertificateUsesServerAuthAndSANs(t *testing.T) {
 	authority, err := GenerateAuthority(time.Unix(0, 0), "lab.home.arpa")
 	if err != nil {
