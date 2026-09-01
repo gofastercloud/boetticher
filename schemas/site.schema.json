@@ -560,7 +560,7 @@
   "properties": {
     "api_version": {
       "const": "boetticher/v3",
-      "description": "Operator-facing configuration contract identifier.",
+      "description": "Version marker for this site file.",
       "type": "string"
     },
     "bootstrap_address": {
@@ -586,15 +586,15 @@
     },
     "gateway": {
       "$ref": "#/$defs/Gateway",
-      "description": "Gateway mode and the existing upstream connection contract."
+      "description": "Gateway mode and the existing upstream connection."
     },
     "modules": {
       "$ref": "#/$defs/ModulesConfig",
-      "description": "Authoritative typed configuration for built-in modules."
+      "description": "Typed settings for built-in modules."
     },
     "network": {
       "$ref": "#/$defs/Network",
-      "description": "Private domain and fixed network-zone contract."
+      "description": "Private domain and fixed network-zone layout."
     },
     "ownership": {
       "$ref": "#/$defs/OwnershipPolicy"
@@ -613,7 +613,7 @@
     },
     "schema_version": {
       "const": 3,
-      "description": "Shape version of the operator-authored site file.",
+      "description": "Shape version of this site file.",
       "type": "integer"
     },
     "secret_metadata": {

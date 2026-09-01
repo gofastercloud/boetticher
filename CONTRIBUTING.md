@@ -1,56 +1,60 @@
 # Contributing to Boetticher
 
-Thanks for helping make Boetticher useful, understandable, and safe to
-recover. Start with the [project guide](AGENTS.md), [architecture](docs/architecture.md),
-[security model](docs/security-model.md), and [ownership boundary](docs/platform-ownership.md).
+Thanks for being here. Boetticher is a small passion project for people who
+think a homelab should feel powerful without becoming a second full-time job.
+Good contributions make the lab more useful, more understandable, or simply
+more fun to run.
 
-## The shape of the project
+Start with [the lab guide](https://gofastercloud.github.io/boetticher/lab.html),
+then skim [Modules](https://gofastercloud.github.io/boetticher/modules.html) if
+your change touches an appliance, image, network, or companion.
 
-Boetticher is an opinionated homelab appliance, not a generic VM manager or
-infrastructure framework. Prefer a small fixed contract, a concrete Go
-implementation, and deletion over a new abstraction. Modules are bounded
-first-party capabilities; Core owns platform mutation and user workloads stay
-outside the model.
+## Keep the shape small
 
-Keep one authoritative representation of desired configuration. Generated
-files, observations, and test or qualification records are projections. Do
-not weaken ownership checks, SSH host verification, SOPS/Age boundaries,
-destructive confirmations, or the distinction between local checks and live
-acceptance.
+Boetticher is a fixed-shape homelab appliance, not a generic VM manager or
+infrastructure framework. Prefer a concrete Go change and a focused module
+over a new platform for arbitrary plugins or workload management. Proxmox
+continues to own the user's VMs and LXCs.
 
-## Development loop
+The project deliberately keeps a few things strict: host identity checks,
+encrypted secrets, explicit confirmations before data-changing work, and a
+clear distinction between your saved settings and the running lab. Do not make
+those less clear just to shorten a code path.
+
+## A good development loop
 
 ```sh
 gofmt -w cmd internal
 make ci
 ```
 
-Use the Go version declared in `go.mod`. Keep generated contracts
-deterministic and regenerate command or schema references from their source.
-Do not commit secrets, Age private identities, caches, bootstrap credentials,
-or live installation state.
+Use the Go version in `go.mod`. Add a focused regression test for a behavioural
+or security fix. The public guide source lives in `docs/` and is published as a
+GitHub Pages site. Keep generated files generated: the command page comes from
+`internal/cli/commands.go`, so run `make command-docs` rather than editing
+`docs/commands.md` by hand.
 
-For a behavior or security fix, add a focused regression test. For changes to
-bootstrap, credentials, routing, firewall policy, physical NIC assignment,
-PKI, backup ownership, or recovery, explain the failure mode being prevented.
+Never commit a secret, age identity, cache, bootstrap credential, or live site
+directory. If you think one slipped into a change, stop and deal with that
+before opening a pull request.
 
 ## Pull requests
 
-- Keep changes narrow and describe the user-visible contract.
-- Include tests and documentation for new behavior.
-- Preserve rich evidence and failure semantics internally; human-facing
-  asserted checks and operations are binary `PASS` or `FAIL`. Do not claim
-  live Proxmox, DNS, network, or recovery acceptance from local tests.
-- Do not add generic VM/LXC lifecycle management or adopt user guests.
-- Do not weaken host-key verification or bypass ownership checks to make a
-  test pass.
-- Keep application software in deterministic appliance artifacts. Ansible
-  applies bounded site configuration and verification; it does not replace
-  artifact-selected software.
-- Modules declare bounded placement and persistent needs; Core owns physical
-  storage and destructive lifecycle operations.
+- Keep the change focused and explain what someone running a lab will notice.
+- Add the test and documentation that make the new behaviour easy to keep.
+- Keep the guide small; fold a topic into an existing page unless there is a
+  compelling reason to grow it.
+- Describe any effect on bootstrap, storage, routing, firewall rules, USB, or
+  recovery in plain language.
+- Do not add a broad guest lifecycle manager or silently take over user guests.
+- Keep application software in pinned appliance images; Ansible supplies
+  site-specific configuration rather than becoming another application platform.
+
+If you are unsure whether an idea belongs here, open an issue or draft pull
+request early. A small conversation is cheaper than a heroic rebase.
 
 ## Reporting security issues
 
-Please do not open a public issue containing credentials, private keys,
-exploit details, or sensitive installation data. Follow [SECURITY.md](SECURITY.md).
+Please do not put credentials, private keys, live addresses, private site
+configuration, or exploit steps in a public issue. [SECURITY.md](SECURITY.md)
+explains the private reporting route.

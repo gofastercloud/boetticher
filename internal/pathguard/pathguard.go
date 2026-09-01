@@ -1,6 +1,6 @@
-// Package pathguard contains small filesystem guards for controller-owned
-// paths. It deliberately rejects symlink components instead of resolving them
-// to an unrelated tree.
+// Package pathguard contains small filesystem helpers for controller-owned
+// paths. It rejects symlink components rather than wandering into an unrelated
+// tree.
 package pathguard
 
 import (

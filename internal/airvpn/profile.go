@@ -1,5 +1,5 @@
-// Package airvpn contains the controller-side AirVPN profile contract. It
-// deliberately exposes only public endpoint metadata to routing callers.
+// Package airvpn handles the controller-side AirVPN profile flow. It exposes
+// only public endpoint metadata to routing callers.
 package airvpn
 
 import (

@@ -23,8 +23,9 @@ func TestPublicDocumentationMatchesV03Model(t *testing.T) {
 		return string(data)
 	}
 	readme := read("README.md")
-	architecture := read("docs/architecture.md")
-	ownership := read("docs/platform-ownership.md")
+	home := read("docs/index.md")
+	start := read("docs/start.md")
+	lab := read("docs/lab.md")
 	commands := read("docs/commands.md")
 	site := model.NewDefaultSite("contract-installation", "age1contract")
 
@@ -45,15 +46,15 @@ func TestPublicDocumentationMatchesV03Model(t *testing.T) {
 		storage.GuestStorageID,
 		storage.BackupStorageID,
 	} {
-		if !strings.Contains(readme, want) && !strings.Contains(architecture, want) && !strings.Contains(ownership, want) && !strings.Contains(read("docs/storage/dedicated-data-disk.md"), want) {
+		if !strings.Contains(readme, want) && !strings.Contains(home, want) && !strings.Contains(start, want) && !strings.Contains(lab, want) {
 			t.Errorf("public documentation is missing model contract %q", want)
 		}
 	}
 	for _, component := range site.PlatformComponents() {
-		if !strings.Contains(readme, component.Hostname) && !strings.Contains(architecture, component.Hostname) {
+		if !strings.Contains(readme, component.Hostname) && !strings.Contains(lab, component.Hostname) {
 			t.Errorf("public architecture is missing platform hostname %q", component.Hostname)
 		}
-		if component.URL != "" && !strings.Contains(readme, component.URL) && !strings.Contains(architecture, component.URL) {
+		if component.URL != "" && !strings.Contains(readme, component.URL) && !strings.Contains(lab, component.URL) {
 			t.Errorf("public architecture is missing platform URL %q", component.URL)
 		}
 	}
@@ -75,6 +76,46 @@ func TestCommandReferenceIsGeneratedFromCLIContract(t *testing.T) {
 	}
 	if got := cli.CommandReferenceMarkdown(); string(data) != got {
 		t.Fatal("docs/commands.md is stale; run make command-docs")
+	}
+}
+
+func TestDocsSiteKeepsOneSmallGuideSet(t *testing.T) {
+	root := repositoryRoot(t)
+	guideNames := []string{"index.md", "start.md", "lab.md", "modules.md", "commands.md"}
+	entries, err := os.ReadDir(filepath.Join(root, "docs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	guides := 0
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
+			guides++
+		}
+	}
+	if guides != len(guideNames) {
+		t.Fatalf("docs site has %d Markdown guides, want %d", guides, len(guideNames))
+	}
+	for _, name := range guideNames {
+		data, err := os.ReadFile(filepath.Join(root, "docs", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(string(data), "---\nlayout: default\n") {
+			t.Errorf("docs/%s is not a Jekyll site page", name)
+		}
+	}
+	for _, path := range []string{
+		"docs/_config.yml",
+		"docs/_layouts/default.html",
+		"docs/assets/site.css",
+		"docs/images/boetticher-cover.jpg",
+		"docs/images/workbench-hero.webp",
+		"docs/images/build-bench.webp",
+		"docs/images/network-lab.webp",
+	} {
+		if _, err := os.Stat(filepath.Join(root, path)); err != nil {
+			t.Errorf("docs site asset %s: %v", path, err)
+		}
 	}
 }
 

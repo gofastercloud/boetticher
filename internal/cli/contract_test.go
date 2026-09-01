@@ -161,7 +161,7 @@ func TestNestedHelpPathsArePathAwareAndSubstantive(t *testing.T) {
 				t.Fatal(err)
 			}
 			text := output.String()
-			for _, section := range []string{"Purpose:", "Usage:", "Arguments:", "Options:", "Safety:", "Examples:", "Related commands:"} {
+			for _, section := range []string{"What it does:", "Usage:", "Arguments:", "Options:", "Worth knowing:", "Try it:", "Related commands:"} {
 				if !strings.Contains(text, section) {
 					t.Errorf("nested help %q is missing %s: %s", path, section, text)
 				}

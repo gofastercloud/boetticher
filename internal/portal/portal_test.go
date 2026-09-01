@@ -53,10 +53,10 @@ func TestPortalHomeUsesCanonicalSemanticStatus(t *testing.T) {
 		Results:     []CheckResult{{Name: "legacy evidence", Status: "FAIL", Detail: "stale presentation"}},
 		Status:      &canonical,
 	}, time.Unix(0, 0))
-	if !strings.Contains(content, "Platform result: PASS") {
+	if !strings.Contains(content, "Lab result: PASS") {
 		t.Fatalf("portal did not use canonical semantic status: %s", content)
 	}
-	if !strings.Contains(content, "Model revision: <code>revision</code>") {
+	if !strings.Contains(content, "Lab revision: <code>revision</code>") {
 		t.Fatalf("portal home omitted the model revision: %s", content)
 	}
 }
@@ -132,6 +132,31 @@ func TestPortalRejectsSymlinkedSourceDocument(t *testing.T) {
 	}
 	if err := Build(model.NewDefaultSite("installation", "age1example"), filepath.Join(dir, "portal"), docs, Evidence{}, networkmodel.Discovery{Mode: model.ModeVirtualOnly}, time.Unix(0, 0)); err == nil {
 		t.Fatal("portal accepted a symlinked source document")
+	}
+}
+
+func TestPortalGuideCopyOmitsSiteFrontMatter(t *testing.T) {
+	dir := t.TempDir()
+	docs := filepath.Join(dir, "docs")
+	if err := os.Mkdir(docs, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(docs, "guide.md"), []byte("---\nlayout: default\ntitle: A guide\n---\n\n# Hello from the guide\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Build(model.NewDefaultSite("installation", "age1example"), filepath.Join(dir, "portal"), docs, Evidence{}, networkmodel.Discovery{Mode: model.ModeVirtualOnly}, time.Unix(0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "portal", "docs", "guide.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(data)
+	if strings.Contains(page, "layout: default") || strings.Contains(page, "title: A guide") {
+		t.Fatalf("portal copied Jekyll front matter into the guide: %s", page)
+	}
+	if !strings.Contains(page, "# Hello from the guide") {
+		t.Fatalf("portal lost the guide body: %s", page)
 	}
 }
 
@@ -326,11 +351,11 @@ func TestPortalPublishesSupportedApplianceManagementBoundary(t *testing.T) {
 	page := string(data)
 	for _, want := range []string{
 		"Boetticher CLI",
-		"native product UI/API",
-		"generated portal/status surfaces",
-		"Proxmox console/exec",
-		"Routine operator SSH and hand mutation of Core-managed appliances are unsupported",
-		"internal controller",
+		"native product UI or API",
+		"quick lab overview and the latest check results",
+		"Proxmox console or exec",
+		"Normal SSH and hands-on changes to Boetticher appliances are not part of the everyday workflow",
+		"internal deployment plumbing",
 	} {
 		if !strings.Contains(page, want) {
 			t.Errorf("portal access page missing %q", want)
@@ -352,10 +377,10 @@ func TestExternalPortalKeepsExternalApplianceOperatorManaged(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := string(data)
-	if !strings.Contains(page, "external firewall appliance is operator-managed") || !strings.Contains(page, "does not manage that appliance") {
-		t.Fatalf("external portal omitted operator-managed appliance boundary: %s", page)
+	if !strings.Contains(page, "external firewall is yours to run") || !strings.Contains(page, "does not manage the appliance") {
+		t.Fatalf("external portal omitted the external-appliance boundary: %s", page)
 	}
-	if strings.Contains(page, "hand mutation of Core-managed appliances are unsupported") {
+	if strings.Contains(page, "hands-on changes to Boetticher appliances are not part of the everyday workflow") {
 		t.Fatalf("external portal applied Core-only prohibition to external appliance: %s", page)
 	}
 }
@@ -373,7 +398,7 @@ func TestPortalServicesDoesNotPresentSSHAsOperatorInterface(t *testing.T) {
 	if strings.Contains(page, "<th>SSH</th>") || strings.Contains(page, "managed via lab-bastion") {
 		t.Fatalf("portal services page presents SSH as an operator interface: %s", page)
 	}
-	if !strings.Contains(page, "internal controller transport") {
+	if !strings.Contains(page, "internal deployment path") {
 		t.Fatal("portal services page omitted the internal transport boundary")
 	}
 }
@@ -397,7 +422,7 @@ func TestPortalPublishesModuleArtifactAndLoggingSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := string(data)
-	for _, want := range []string{"Enabled modules", "Action required:", "Important links"} {
+	for _, want := range []string{"Enabled modules", "Action required:", "Useful links"} {
 		if !strings.Contains(page, want) {
 			t.Fatalf("portal omitted %q", want)
 		}
