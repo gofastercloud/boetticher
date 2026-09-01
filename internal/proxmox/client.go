@@ -129,12 +129,27 @@ func (c *Client) Delete(ctx context.Context, endpoint string) error {
 // invoking this destructive operation; the API client deliberately does not
 // infer ownership from a VMID.
 func (c *Client) DestroyQEMU(ctx context.Context, node string, vmid int) error {
+	return c.destroyQEMU(ctx, node, vmid, true)
+}
+
+// DestroyQEMUKeepingUnreferencedDisks removes a guest while retaining disks
+// which are not owned by that guest. It is reserved for the disposable
+// builder, whose separately-owned cache volume must survive VM teardown.
+func (c *Client) DestroyQEMUKeepingUnreferencedDisks(ctx context.Context, node string, vmid int) error {
+	return c.destroyQEMU(ctx, node, vmid, false)
+}
+
+func (c *Client) destroyQEMU(ctx context.Context, node string, vmid int, destroyUnreferencedDisks bool) error {
 	if node == "" || vmid <= 0 {
 		return errors.New("Proxmox node and positive VMID are required")
 	}
+	destroy := "0"
+	if destroyUnreferencedDisks {
+		destroy = "1"
+	}
 	return c.request(ctx, http.MethodDelete, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid)), url.Values{
 		"purge":                      {"1"},
-		"destroy-unreferenced-disks": {"1"},
+		"destroy-unreferenced-disks": {destroy},
 	}, nil, nil)
 }
 

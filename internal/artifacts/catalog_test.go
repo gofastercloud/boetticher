@@ -872,6 +872,27 @@ func TestApplianceBuildEmbedsDefinitionIdentityWithoutContentEvidence(t *testing
 	}
 }
 
+func TestApplianceBuildUsesPersistentFilesystemAndPackageCaches(t *testing.T) {
+	buildScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(buildScript)
+	for _, required := range []string{
+		"cp -a --reflink=auto",
+		"pip_install \"$rootfs\"",
+		"mount --bind \"$pip_cache\" \"$rootfs/root/.cache/pip\"",
+		"pip_cache=\"$cache_root/pip\"",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("image build is missing persistent cache optimization %q", required)
+		}
+	}
+	if strings.Contains(text, "--no-cache-dir") {
+		t.Fatal("Python image builds explicitly disable the persistent pip cache")
+	}
+}
+
 func TestFirewallBuildUsesIndividualVirtCustomizeDirectories(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
 	if err != nil {

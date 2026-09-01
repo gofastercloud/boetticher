@@ -355,7 +355,7 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	plan.Node = apiNode
 	progress.complete()
 	progress.start("artifacts", "Build and qualify appliance artifacts")
-	if err := buildDefaultArtifacts(ctx, client, plan, *siteDir, publicKey, *knownHosts, model.ExpandUserPath(s.SSHIdentityFile), runner, s.BootstrapAddress, *initialUser, out, progress); err != nil {
+	if err := buildDefaultArtifacts(ctx, client, plan, *siteDir, publicKey, *knownHosts, model.ExpandUserPath(s.SSHIdentityFile), runner, runner, s.BootstrapAddress, *initialUser, out, progress); err != nil {
 		return err
 	}
 	plan, err = proxmox.ResolveQualifiedArtifacts(*siteDir, plan, true)
@@ -467,7 +467,7 @@ func honorRequestedPhysicalMode(discovery networkmodel.Discovery, desiredMode, c
 	return discovery
 }
 
-func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan proxmox.Plan, siteDir, publicKey, _ string, identityFile string, hostRunner proxmox.CommandRunner, hostAddress, hostUser string, out io.Writer, progress *bootstrapReport) (returnErr error) {
+func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan proxmox.Plan, siteDir, publicKey, _ string, identityFile string, hostRunner proxmox.CommandRunner, hostArgsRunner proxmox.ArgsCommandRunner, hostAddress, hostUser string, out io.Writer, progress *bootstrapReport) (returnErr error) {
 	cacheStarted := time.Now()
 	base, err := artifacts.ArtifactFor("base")
 	if err != nil {
@@ -483,6 +483,11 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if client == nil {
 		return errors.New("Proxmox client is required for appliance construction")
 	}
+	cacheVolume, err := proxmox.EnsureBuilderCacheVolume(ctx, client, plan.Node, hostArgsRunner, hostAddress, hostUser)
+	if err != nil {
+		return fmt.Errorf("prepare persistent builder cache: %w", err)
+	}
+	plan.BuilderCacheVolume = cacheVolume
 	transportCompression := strings.ToLower(strings.TrimSpace(os.Getenv("BOETTICHER_BUILDER_TRANSPORT_COMPRESSION")))
 	if transportCompression == "" {
 		transportCompression = "gzip"

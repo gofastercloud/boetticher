@@ -289,11 +289,27 @@ prepare_rootfs() {
     create_base_rootfs "$(rootfs_for boetticher-base)"
   fi
   rm -rf "$rootfs"
-  cp -a "$(rootfs_for boetticher-base)" "$rootfs"
+  cp -a --reflink=auto "$(rootfs_for boetticher-base)" "$rootfs"
   ACTIVE_ROOT=$rootfs
   mkdir -p "$rootfs/var/lib/boetticher/identity/ssh" "$rootfs/etc/boetticher" "$rootfs/usr/lib/boetticher"
   printf '%s\n' "artifact=$name" > "$rootfs/usr/lib/boetticher/build-input.txt"
   printf '%s\n' "$rootfs"
+}
+
+pip_install() {
+  rootfs=$1
+  pip_path=$2
+  shift 2
+  pip_cache="$cache_root/pip"
+  mkdir -p "$pip_cache" "$rootfs/root/.cache/pip"
+  mount --bind "$pip_cache" "$rootfs/root/.cache/pip"
+  if chroot "$rootfs" "$pip_path" "$@"; then
+    status=0
+  else
+    status=$?
+  fi
+  umount -R "$rootfs/root/.cache/pip" || true
+  return "$status"
 }
 
 install_packages() {
@@ -545,7 +561,7 @@ build_litellm() {
   test -x "$rootfs/usr/bin/setpriv"
   grep -Fq -- 'User=root' "$rootfs/etc/systemd/system/litellm.service"
   grep -Fq -- 'CapabilityBoundingSet=CAP_SETUID CAP_SETGID' "$rootfs/etc/systemd/system/litellm.service"
-  chroot "$rootfs" /opt/litellm/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/litellm-requirements.lock
+  pip_install "$rootfs" /opt/litellm/bin/pip install --require-hashes --requirement /tmp/litellm-requirements.lock
   installed_version=$(chroot "$rootfs" /opt/litellm/bin/python -c 'from importlib.metadata import version; print(version("litellm"))')
   if [ "$installed_version" != "$litellm_version" ]; then
     echo "HOLD: unexpected LiteLLM version: $installed_version" >&2
@@ -571,7 +587,7 @@ build_printer() {
   chroot "$rootfs" useradd --system --uid 2200 --gid 2200 --home-dir /var/lib/octoprint --create-home --shell /usr/sbin/nologin octoprint
   chroot "$rootfs" python3 -m venv /opt/octoprint
   install -D -m 0644 images/printer/runtime/requirements.lock "$rootfs/tmp/octoprint-requirements.lock"
-  chroot "$rootfs" /opt/octoprint/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/octoprint-requirements.lock
+  pip_install "$rootfs" /opt/octoprint/bin/pip install --require-hashes --requirement /tmp/octoprint-requirements.lock
   chroot "$rootfs" apt-get purge --yes --auto-remove python3-dev build-essential
   chroot "$rootfs" apt-get clean
   rm -rf "$rootfs/var/lib/apt/lists/"*
@@ -589,10 +605,10 @@ build_streamdeck() {
   chroot "$rootfs" useradd --system --uid 2200 --gid 2200 --home-dir /var/lib/streamdeck --create-home --shell /usr/sbin/nologin streamdeck
   chroot "$rootfs" python3 -m venv /opt/streamdeck
   install -D -m 0644 images/streamdeck/runtime/requirements.lock "$rootfs/tmp/streamdeck-requirements.lock"
-  chroot "$rootfs" /opt/streamdeck/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/streamdeck-requirements.lock
+  pip_install "$rootfs" /opt/streamdeck/bin/pip install --require-hashes --requirement /tmp/streamdeck-requirements.lock
   install -D -m 0644 services/streamdeck/pyproject.toml "$rootfs/usr/src/boetticher-streamdeck/pyproject.toml"
   cp -a services/streamdeck/src "$rootfs/usr/src/boetticher-streamdeck/"
-  chroot "$rootfs" /opt/streamdeck/bin/pip install --no-cache-dir --no-deps --no-build-isolation /usr/src/boetticher-streamdeck
+  pip_install "$rootfs" /opt/streamdeck/bin/pip install --no-deps --no-build-isolation /usr/src/boetticher-streamdeck
   chroot "$rootfs" apt-get clean
   rm -rf "$rootfs/var/lib/apt/lists/"*
   install -D -m 0644 images/streamdeck/runtime/streamdeck-status.service "$rootfs/etc/systemd/system/streamdeck-status.service"
@@ -610,7 +626,7 @@ build_aiops() {
     "python3-pip=$litellm_pip_package_version"
   chroot "$rootfs" python3 -m venv /opt/holmes
   install -D -m 0644 images/aiops/runtime/requirements.lock "$rootfs/tmp/aiops-requirements.lock"
-  chroot "$rootfs" /opt/holmes/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/aiops-requirements.lock
+  pip_install "$rootfs" /opt/holmes/bin/pip install --require-hashes --requirement /tmp/aiops-requirements.lock
   chroot "$rootfs" /opt/holmes/bin/python -c 'import importlib.metadata; assert importlib.metadata.version("holmesgpt") == "0.40.0"'
   holmes_archive="$cache_root/downloads/holmesgpt-0.40.0.tar.gz"
   download_cached "$holmes_archive" "$holmes_source_url" "$holmes_source_sha256" sha256sum

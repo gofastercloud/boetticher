@@ -191,7 +191,16 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 			t.Fatalf("builder cloud-init does not pin and verify %q", required)
 		}
 	}
-	for _, required := range []string{"BOETTICHER_CACHE_ROOT=/var/cache/boetticher", "mkdir -p \"$BOETTICHER_CACHE_ROOT\""} {
+	for _, required := range []string{
+		"BOETTICHER_CACHE_ROOT=/var/cache/boetticher",
+		"GOCACHE=/var/cache/boetticher/go-build",
+		"GOMODCACHE=/var/cache/boetticher/go-mod",
+		"mkdir -p \"$BOETTICHER_CACHE_ROOT\"",
+		"findmnt -n -o SOURCE --target \"$BOETTICHER_CACHE_ROOT\"",
+		"HOLD: builder cache volume is not mounted",
+		"LABEL=boetticher-builder-cache",
+		"scsi-0QEMU_QEMU_HARDDISK_drive-scsi1",
+	} {
 		if !strings.Contains(files.UserData, required) {
 			t.Fatalf("builder cloud-init does not configure persistent cache root %q", required)
 		}

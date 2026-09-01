@@ -47,6 +47,10 @@ const (
 	PortalVMID                  = 130
 	LoggingVMID                 = 140
 	BuilderVMID                 = 190
+	BuilderCacheOwnerVMID       = 191
+	BuilderCacheStorage         = "local-lvm"
+	BuilderCacheVolumeName      = "vm-191-boetticher-builder-cache"
+	BuilderCacheDiskGiB         = 64
 	PrinterVMID                 = 230
 	StreamDeckVMID              = 220
 	BuilderCores                = 4
