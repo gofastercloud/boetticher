@@ -162,7 +162,6 @@ tailscale_package_version=1.76.6
 tailscale_key_url=https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg
 tailscale_key_sha256=3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39
 tailscale_keyring=/usr/share/keyrings/tailscale-archive-keyring.gpg
-litellm_version=1.74.9
 litellm_python_package_version=3.13.5-1
 litellm_python_venv_package_version=3.13.5-1
 litellm_pip_package_version=25.1.1+dfsg-1
