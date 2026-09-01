@@ -36,6 +36,7 @@
     owner: root
     group: root
     mode: "0644"
+  when: boetticher_deploy_phase | default('full') != 'bootstrap'
 
 - name: Create the portal TLS directory
   ansible.builtin.file:

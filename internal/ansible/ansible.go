@@ -55,9 +55,16 @@ type TaskTiming struct {
 	Changed    bool   `json:"changed"`
 }
 
+type TaskBatchTiming struct {
+	Task       string `json:"task"`
+	Path       string `json:"path"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
 type RunResult struct {
-	Changed     bool
-	TaskTimings []TaskTiming
+	Changed          bool
+	TaskTimings      []TaskTiming
+	TaskBatchTimings []TaskBatchTiming
 }
 
 type boundedOutput struct {
@@ -467,7 +474,8 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 		Category: "ansible", Operation: "playbook", Target: ansibleTarget(limit),
 		Duration: time.Since(started), Success: err == nil, Changed: changed,
 	})
-	result := RunResult{Changed: changed, TaskTimings: readTaskTimings(timingPath)}
+	taskTimings, taskBatchTimings := readTaskTimings(timingPath)
+	result := RunResult{Changed: changed, TaskTimings: taskTimings, TaskBatchTimings: taskBatchTimings}
 	if err != nil {
 		diagnostic := failureDiagnosticWithSupplement(output.Bytes(), output.DiagnosticBytes())
 		if diagnostic == "" {
@@ -567,26 +575,45 @@ func prepareTaskTiming(playbook string) (string, func()) {
 	return path, func() { _ = os.Remove(path) }
 }
 
-func readTaskTimings(path string) []TaskTiming {
+func readTaskTimings(path string) ([]TaskTiming, []TaskBatchTiming) {
 	if path == "" {
-		return nil
+		return nil, nil
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	defer file.Close()
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 1024), 16*1024)
 	timings := make([]TaskTiming, 0)
-	for scanner.Scan() && len(timings) < maxAnsibleTaskTimings {
-		var timing TaskTiming
-		if err := json.Unmarshal(scanner.Bytes(), &timing); err != nil || timing.Host == "" || timing.Task == "" || timing.Status == "" || timing.DurationMS < 0 {
+	batchTimings := make([]TaskBatchTiming, 0)
+	for scanner.Scan() && (len(timings) < maxAnsibleTaskTimings || len(batchTimings) < maxAnsibleTaskTimings) {
+		var event struct {
+			Event      string `json:"event"`
+			Host       string `json:"host"`
+			Task       string `json:"task"`
+			Path       string `json:"path"`
+			Status     string `json:"status"`
+			DurationMS int64  `json:"duration_ms"`
+			Changed    bool   `json:"changed"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			continue
 		}
-		timings = append(timings, timing)
+		switch event.Event {
+		case "task_batch":
+			if event.Task != "" && event.Path != "" && event.DurationMS >= 0 && len(batchTimings) < maxAnsibleTaskTimings {
+				batchTimings = append(batchTimings, TaskBatchTiming{Task: event.Task, Path: event.Path, DurationMS: event.DurationMS})
+			}
+		default:
+			if event.Host == "" || event.Task == "" || event.Status == "" || event.DurationMS < 0 || len(timings) >= maxAnsibleTaskTimings {
+				continue
+			}
+			timings = append(timings, TaskTiming{Host: event.Host, Task: event.Task, Path: event.Path, Status: event.Status, DurationMS: event.DurationMS, Changed: event.Changed})
+		}
 	}
-	return timings
+	return timings, batchTimings
 }
 
 func ansibleTarget(limit string) string {

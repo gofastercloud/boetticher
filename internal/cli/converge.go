@@ -1884,6 +1884,7 @@ func runTrackedAnsiblePhase(ctx context.Context, playbook, inventory string, var
 	}
 	if report != nil {
 		report.recordAnsibleTaskTimings(phase, result.TaskTimings)
+		report.recordAnsibleTaskBatches(phase, result.TaskBatchTimings)
 		target := limit
 		if target == "" {
 			target = "all managed targets"

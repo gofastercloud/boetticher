@@ -9,7 +9,8 @@
   gather_facts: false
   roles:
     - base
-    - chrony
+    - role: chrony
+      when: boetticher_deploy_phase | default('full') != 'services'
     - role: dns
       when:
         - inventory_hostname in groups.get('dns', [])

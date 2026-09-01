@@ -24,6 +24,7 @@ class CallbackModule(CallbackBase):
         super().__init__()
         self._path = os.environ.get("BOETTICHER_ANSIBLE_TIMING_FILE", "")
         self._started = {}
+        self._batch = None
 
     @staticmethod
     def _text(value, limit=_MAX_TEXT):
@@ -34,6 +35,38 @@ class CallbackModule(CallbackBase):
             return
         key = (self._text(host.get_name(), 256), self._text(task._uuid, 128))
         self._started[key] = (time.monotonic(), task)
+
+    def _write(self, entry):
+        try:
+            with open(self._path, "a", encoding="utf-8") as output:
+                output.write(json.dumps(entry, separators=(",", ":")) + "\n")
+        except OSError:
+            # Timing is diagnostic only and must never change deployment
+            # success or failure.
+            return
+
+    def _finish_batch(self):
+        if not self._path or self._batch is None:
+            return
+        started, task = self._batch
+        self._write({
+            "event": "task_batch",
+            "task": self._text(task.get_name()),
+            "path": self._text(task.get_path()),
+            "duration_ms": max(0, round((time.monotonic() - started) * 1000)),
+        })
+        self._batch = None
+
+    def v2_playbook_on_task_start(self, task, is_conditional):
+        # The interval between task-start callbacks includes strategy,
+        # controller scheduling, and connection/setup gaps that per-host
+        # runner callbacks do not expose.
+        self._finish_batch()
+        if self._path:
+            self._batch = (time.monotonic(), task)
+
+    def v2_playbook_on_stats(self, stats):
+        self._finish_batch()
 
     def _record(self, result, status):
         if not self._path:
@@ -53,13 +86,7 @@ class CallbackModule(CallbackBase):
             "duration_ms": duration_ms,
             "changed": bool(result._result.get("changed", False)),
         }
-        try:
-            with open(self._path, "a", encoding="utf-8") as output:
-                output.write(json.dumps(entry, separators=(",", ":")) + "\n")
-        except OSError:
-            # Timing is diagnostic only and must never change deployment
-            # success or failure.
-            return
+        self._write(entry)
 
     def v2_runner_on_ok(self, result):
         self._record(result, "ok")

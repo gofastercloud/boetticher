@@ -56,6 +56,7 @@ func TestServicePhaseSkipsNetworkOnlyRoles(t *testing.T) {
 		"- role: dns\n      when:\n        - inventory_hostname in groups.get('dns', [])\n        - boetticher_deploy_phase | default('full') != 'services'",
 		"- role: firewall\n      when:\n        - inventory_hostname in groups.get('firewall', [])\n        - boetticher_deploy_phase | default('full') != 'services'",
 		"- role: tailnet-router\n      when:\n        - inventory_hostname in groups.get('tailnet-router', [])\n        - boetticher_deploy_phase | default('full') != 'services'",
+		"- role: chrony\n      when: boetticher_deploy_phase | default('full') != 'services'",
 		"- role: usb-export-host\n      when: boetticher_deploy_phase | default('full') != 'services'",
 		"- role: network-probe-host\n      when: boetticher_deploy_phase | default('full') != 'services'",
 	} {
@@ -63,6 +64,65 @@ func TestServicePhaseSkipsNetworkOnlyRoles(t *testing.T) {
 			t.Fatalf("site playbook is missing service-phase guard block %q", expected)
 		}
 	}
+}
+
+func TestStableBaseTasksSkipServicesButFinalTasksRemain(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, name := range []string{
+		"Install base packages",
+		"Remove labadmin from the sudo group",
+		"Configure Chrony for unprivileged appliances",
+		"Allow Chrony startup without kernel clock control",
+		"Install Chrony startup override",
+		"Disable the restricted Chrony service in appliances",
+		"Configure appliances to use the platform DNS pair",
+		"Write bounded local journald configuration",
+		"Generate endpoint-local logging CSR",
+		"Install the asynchronous journal-upload configuration skeleton",
+		"Install bounded journal-upload retry policy",
+		"Install declared systemd credential drop-ins",
+	} {
+		block := ansibleTaskBlock(text, name)
+		if block == "" || !strings.Contains(block, "boetticher_deploy_phase | default('full') != 'services'") {
+			t.Fatalf("stable base task %q is not guarded from the services phase", name)
+		}
+	}
+	for _, name := range []string{
+		"Install the controller-signed endpoint journal certificate",
+		"Enable asynchronous journal upload after endpoint certificate installation",
+	} {
+		block := ansibleTaskBlock(text, name)
+		if block == "" || strings.Contains(block, "boetticher_deploy_phase | default('full') != 'services'") {
+			t.Fatalf("final base task %q was incorrectly skipped from the services phase", name)
+		}
+	}
+}
+
+func TestPortalPublicationIsDeferredToServicesPhase(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "portal", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := ansibleTaskBlock(string(contents), "Publish generated portal")
+	if block == "" || !strings.Contains(block, "boetticher_deploy_phase | default('full') != 'bootstrap'") {
+		t.Fatal("portal publication is not deferred from the bootstrap phase")
+	}
+}
+
+func ansibleTaskBlock(text, name string) string {
+	start := strings.Index(text, "- name: "+name)
+	if start < 0 {
+		return ""
+	}
+	rest := text[start+len("- name: "):]
+	if next := strings.Index(rest, "\n- name:"); next >= 0 {
+		return text[start : start+len("- name: ")+next]
+	}
+	return text[start:]
 }
 
 func TestGatusServiceUsesSupportedConfigEnvironment(t *testing.T) {
@@ -359,7 +419,7 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	forksPath := filepath.Join(tempDir, "forks")
 	inputPath := filepath.Join(tempDir, "input")
 	scriptPath := filepath.Join(tempDir, "ansible-playbook")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ANSIBLE_ARGS_FILE\"\nprintf '%s' \"$ANSIBLE_FORKS\" > \"$ANSIBLE_FORKS_FILE\"\ncat > \"$ANSIBLE_INPUT_FILE\"\nif [ -n \"$BOETTICHER_ANSIBLE_TIMING_FILE\" ]; then printf '%s\\n' '{\"host\":\"lab-fw-01\",\"task\":\"fake task\",\"path\":\"fake.yml:1\",\"status\":\"ok\",\"duration_ms\":3,\"changed\":false}' >> \"$BOETTICHER_ANSIBLE_TIMING_FILE\"; fi\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ANSIBLE_ARGS_FILE\"\nprintf '%s' \"$ANSIBLE_FORKS\" > \"$ANSIBLE_FORKS_FILE\"\ncat > \"$ANSIBLE_INPUT_FILE\"\nif [ -n \"$BOETTICHER_ANSIBLE_TIMING_FILE\" ]; then printf '%s\\n' '{\"host\":\"lab-fw-01\",\"task\":\"fake task\",\"path\":\"fake.yml:1\",\"status\":\"ok\",\"duration_ms\":3,\"changed\":false}' '{\"event\":\"task_batch\",\"task\":\"fake batch\",\"path\":\"fake.yml:2\",\"duration_ms\":7}' >> \"$BOETTICHER_ANSIBLE_TIMING_FILE\"; fi\n"
 	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -385,6 +445,9 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	}
 	if len(result.TaskTimings) != 1 || result.TaskTimings[0].Task != "fake task" {
 		t.Fatalf("Ansible task timings = %+v, want one fake task timing", result.TaskTimings)
+	}
+	if len(result.TaskBatchTimings) != 1 || result.TaskBatchTimings[0].Task != "fake batch" || result.TaskBatchTimings[0].DurationMS != 7 {
+		t.Fatalf("Ansible task batch timings = %+v, want one fake batch timing", result.TaskBatchTimings)
 	}
 	args, err := os.ReadFile(argsPath)
 	if err != nil {
@@ -665,14 +728,20 @@ func TestLoggingUploadServiceCanTraverseRuntimeStateParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, expected := range []string{
+	for _, name := range []string{
 		"Allow endpoint services to traverse the boetticher runtime state path",
+		"Allow endpoint services to traverse the boetticher identity path",
+	} {
+		block := ansibleTaskBlock(text, name)
+		if block == "" || !strings.Contains(block, "inventory_hostname in logging_upload_configs") {
+			t.Fatalf("journal upload parent traversal task %q is missing its host guard", name)
+		}
+	}
+	for _, expected := range []string{
 		"path: /var/lib/boetticher",
 		"group: systemd-journal",
 		"mode: '0751'",
-		"Allow endpoint services to traverse the boetticher identity path",
 		"path: /var/lib/boetticher/identity",
-		"when: inventory_hostname in logging_upload_configs",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("journal upload parent traversal is missing %q", expected)
@@ -796,18 +865,13 @@ func TestBaseRoleRunsChronyWithoutKernelClockControlInAppliances(t *testing.T) {
 	}
 	text := string(data)
 	for _, expected := range []string{
-		"- name: Configure Chrony for unprivileged appliances",
 		"content: \"DAEMON_OPTS=\\\"-x\\\"\\n\"",
 		"dest: /etc/default/chrony",
-		"when: inventory_hostname not in groups.get('proxmox', [])",
-		"- name: Allow Chrony startup without kernel clock control",
 		"path: /etc/systemd/system/chrony.service.d",
 		"state: directory",
-		"- name: Install Chrony startup override",
 		"content: \"[Unit]\\nAfter=network-online.target\\nWants=network-online.target\\nConditionCapability=\\n\"",
 		"dest: /etc/systemd/system/chrony.service.d/boetticher.conf",
 		"notify: reload systemd",
-		"- name: Disable the restricted Chrony service in appliances",
 		"name: chronyd-restricted.service",
 		"enabled: false",
 		"state: stopped",
@@ -815,6 +879,10 @@ func TestBaseRoleRunsChronyWithoutKernelClockControlInAppliances(t *testing.T) {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("base role missing %q", expected)
 		}
+	}
+	chronyBlock := ansibleTaskBlock(text, "Configure Chrony for unprivileged appliances")
+	if chronyBlock == "" || !strings.Contains(chronyBlock, "inventory_hostname not in groups.get('proxmox', [])") {
+		t.Fatal("base role does not restrict unprivileged Chrony configuration to appliances")
 	}
 }
 
