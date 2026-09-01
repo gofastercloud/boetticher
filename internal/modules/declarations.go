@@ -107,6 +107,16 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		}
 		declaration.Monitoring = append(declaration.Monitoring, model.MonitoringDeclaration{Name: "tailscaled", Kind: "service", Target: "lab-tailnet-01", Checks: []string{"tailscaled", "route-advertisement"}, Description: "Tailscale daemon and advertised subnet route health"})
 		declaration.Portal = []model.PortalEntry{{Name: "tailnet-router", Description: "Tailscale subnet router; Internet exit-node behavior is not enabled", Docs: []string{"docs/modules/tailnet-router.md"}}}
+	case "airvpn":
+		declaration.Secrets = []model.SecretDeclaration{{Name: "airvpn_wireguard_config", Purpose: "retained AirVPN IPv4 WireGuard profile", Consumer: "boetticher-airvpn", Generation: "api-generated", Rotation: "explicit", Delivery: "systemd-credential", Lifecycle: model.SecretLifecycleRuntime, Persistent: true}}
+		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true, Devices: []model.DeviceRequirement{{Name: "tun", Path: "/dev/net/tun", Type: "c", Major: 10, Minor: 200, Access: "rwm"}}}
+		declaration.NetworkIntents = []model.NetworkIntent{
+			{Source: "lab-airvpn-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Direction: "egress", Purpose: "AirVPN guest DNS resolution"},
+			{Source: "lab-airvpn-01", Destination: "dns", Protocol: "udp", Ports: []string{"123"}, Direction: "egress", Purpose: "AirVPN guest time synchronisation"},
+		}
+		declaration.ReturnRouting = []string{"AirVPN-selected module traffic uses the TRANSIT gateway 10.10.5.1 and returns only through the AirVPN tunnel"}
+		declaration.Monitoring = append(declaration.Monitoring, model.MonitoringDeclaration{Name: "boetticher-airvpn", Kind: "service", Target: "lab-airvpn-01", Checks: []string{"wireguard", "forwarding", "kill-switch"}, Description: "AirVPN WireGuard transit and fail-closed forwarding health"})
+		declaration.Portal = []model.PortalEntry{{Name: "airvpn", Description: "AirVPN WireGuard external egress transit", Docs: []string{"docs/modules/airvpn.md"}}}
 	case "litellm":
 		config := site.ModuleConfig[name]
 		for _, upstream := range config.Upstreams {
@@ -218,6 +228,8 @@ func persistentFor(module, guest string) []model.PersistentState {
 		}
 	case "tailnet-router":
 		return []model.PersistentState{identity, {Name: "tailscale-state", Guest: guest, Path: "/var/lib/tailscale", Kind: "node-identity", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
+	case "airvpn":
+		return []model.PersistentState{identity}
 	case "litellm":
 		return []model.PersistentState{identity, {Name: "tls-identity", Guest: guest, Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	case "printer":
@@ -248,6 +260,8 @@ func volumesFor(module, guest string) []model.PersistentVolumeDeclaration {
 		return []model.PersistentVolumeDeclaration{identity, volume("kea-leases", "/var/lib/kea", 4, true), volume("firewall-telemetry", "/var/lib/boetticher/firewall-telemetry", 2, true)}
 	case "tailnet-router":
 		return []model.PersistentVolumeDeclaration{identity, volume("tailscale-state", "/var/lib/tailscale", 4, true)}
+	case "airvpn":
+		return []model.PersistentVolumeDeclaration{identity}
 	case "litellm":
 		return []model.PersistentVolumeDeclaration{identity, volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true)}
 	case "printer":

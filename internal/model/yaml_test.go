@@ -165,6 +165,42 @@ func TestParseSiteConfigAllowsGatusModule(t *testing.T) {
 	}
 }
 
+func TestParseSiteConfigAllowsTypedAirVPNSelectorAndNetworkMode(t *testing.T) {
+	config, err := ParseSiteConfig([]byte(`api_version: boetticher/v3
+modules:
+  airvpn:
+    enabled: true
+    servers: europe
+  litellm:
+    enabled: true
+    network: airvpn
+    upstreams:
+      - name: provider
+        base_url: https://provider.example/v1
+        api_key_secret: provider_api_key
+    models:
+      - alias: selected
+        upstream: provider
+        model: provider/model
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Modules.AirVPN == nil || config.Modules.AirVPN.Servers != "europe" || config.Modules.AirVPN.Enabled == nil || !*config.Modules.AirVPN.Enabled {
+		t.Fatalf("unexpected AirVPN configuration: %#v", config.Modules.AirVPN)
+	}
+	if config.Modules.LiteLLM == nil || config.Modules.LiteLLM.Network != ModuleNetworkAirVPN {
+		t.Fatalf("unexpected typed client network mode: %#v", config.Modules.LiteLLM)
+	}
+}
+
+func TestParseSiteConfigRejectsNetworkModeOnIneligibleModule(t *testing.T) {
+	_, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  monitoring:\n    network: airvpn\n"))
+	if err == nil || !strings.Contains(err.Error(), "modules.monitoring.network") {
+		t.Fatalf("network mode was accepted on an ineligible module: %v", err)
+	}
+}
+
 func TestLiteLLMConfigIsStrictAndProviderNeutral(t *testing.T) {
 	valid := []byte(`api_version: boetticher/v3
 modules:

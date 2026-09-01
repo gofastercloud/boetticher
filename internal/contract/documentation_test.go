@@ -58,7 +58,7 @@ func TestPublicDocumentationMatchesV03Model(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]",
+		"boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--rotate-airvpn-profile] [--confirm]",
 		"boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]",
 	} {
 		if !strings.Contains(commands, want) {

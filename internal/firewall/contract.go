@@ -51,6 +51,18 @@ func RenderExternalContract(s model.Site, plan Plan) (string, error) {
 			fmt.Fprintf(&b, "- Module `%s` return-routing requirement: %s\n", declaration.Module, route)
 		}
 	}
+	if len(plan.PolicyRoutes) > 0 {
+		b.WriteString("\n## AirVPN source policy\n\n")
+		if plan.AirVPN == nil {
+			b.WriteString("- AirVPN profile metadata is unavailable; deployment must remain blocked until the retained profile is generated.\n")
+		} else {
+			fmt.Fprintf(&b, "- Provider endpoint: `%s:%d`; resolved IPv4 addresses: `%s`; tunnel address: `%s`; profile digest: `%s`.\n", plan.AirVPN.EndpointHost, plan.AirVPN.EndpointPort, strings.Join(plan.AirVPN.EndpointAddresses, ", "), plan.AirVPN.TunnelAddress, plan.AirVPN.SHA256)
+		}
+		for _, route := range plan.PolicyRoutes {
+			fmt.Fprintf(&b, "- Source `%s` uses routing table `%d` at priority `%d`, with default route via `%s` on `%s`; internal site CIDRs remain direct.\n", route.SourceCIDR, route.Table, route.Priority, route.DefaultGateway, route.DefaultInterface)
+		}
+		b.WriteString("- The external gateway must NAT only the exact AirVPN provider UDP handshake from `10.10.5.20`; all other TRANSIT-to-WAN and TRANSIT-to-HOME forwarding remains blocked.\n")
+	}
 	if len(s.Declarations) > 0 {
 		b.WriteString("\n## Composed module contracts\n\n")
 	}
@@ -60,6 +72,8 @@ func RenderExternalContract(s model.Site, plan Plan) (string, error) {
 			b.WriteString("### tailnet-router\n\n- Address: `10.10.5.10` on TRANSIT (`10.10.5.0/24`, gateway `10.10.5.1`).\n- Advertised route: `10.10.0.0/16`; Tailscale route approval is an operator action.\n- Subnet-route SNAT: enabled.\n- Tailscale runtime: `accept-dns=false`.\n- Permitted internal destinations: LiteLLM HTTPS, portal HTTPS, and monitoring HTTPS only, plus DNS/NTP and required Tailscale control/DERP egress.\n- Explicit deny expectations: TRUSTED, SANDBOX, MGMT, Proxmox API, SSH, arbitrary SERVERS workloads, and Internet exit-node behavior remain denied.\n- Required return routing: Tailnet traffic for `10.10.0.0/16` returns through the TRANSIT gateway.\n\n")
 		case "litellm":
 			b.WriteString("### litellm\n\n- Address: `10.10.20.60` in SERVERS.\n- Frontend: HTTPS on `443` with required client certificate; no plaintext listener.\n- Backend: loopback-only `127.0.0.1:4000`.\n- Outbound: only the configured upstream HTTPS endpoint(s), plus DNS/NTP as required; unknown Internet destinations remain denied.\n\n")
+		case "airvpn":
+			b.WriteString("### airvpn\n\n- Address: `10.10.5.20` on TRANSIT.\n- The guest is an unprivileged LXC with `/dev/net/tun` and no added Linux capabilities.\n- The guest kill switch permits selected client sources to `airvpn0`, permits only the exact provider handshake on `eth0`, and drops direct-WAN and internal fallback paths.\n- The WireGuard profile is controller-generated, retained as an encrypted site secret, and never included in this contract.\n\n")
 		}
 	}
 	b.WriteString("\n## Required behavior\n\n")
@@ -91,6 +105,9 @@ func RenderExternalContract(s model.Site, plan Plan) (string, error) {
 			ports = " (" + strings.Join(rule.Ports, ", ") + ")"
 		}
 		extra := ""
+		if rule.Route != "" {
+			extra += " route=" + rule.Route
+		}
 		if rule.SourceCIDR != "" {
 			extra += " source=" + rule.SourceCIDR
 		}

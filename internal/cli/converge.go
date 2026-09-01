@@ -75,6 +75,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
 	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS")
 	dryRun := fs.Bool("dry-run", false, "render and validate policy without connecting")
+	rotateAirVPN := fs.Bool("rotate-airvpn-profile", false, "explicitly regenerate and retain the AirVPN WireGuard profile")
 	confirm := fs.Bool("confirm", false, "confirm destructive appliance replacement or purge actions")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -86,15 +87,31 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err != nil {
 		return err
 	}
+	airvpnProfile, err := prepareAirVPNProfile(ctx, *siteDir, s, *ageIdentity, *dryRun, *rotateAirVPN)
+	if err != nil {
+		return err
+	}
 	modelRevision, err := s.Revision()
 	if err != nil {
 		return fmt.Errorf("calculate model revision: %w", err)
 	}
 	report.setIdentity(model.PlatformVersion, modelRevision)
 	report.setTimingPath(filepath.Join(site.RuntimeDir(s), "deploy", report.runID+".json"))
-	firewallPlan, err := firewall.PlanFromSite(s)
+	var firewallPlan firewall.Plan
+	if airvpnProfile == nil {
+		firewallPlan, err = firewall.PlanFromSite(s)
+	} else {
+		firewallPlan, err = firewall.PlanFromSiteWithAirVPN(s, airvpnProfile.Metadata)
+	}
 	if err != nil {
 		return err
+	}
+	if airvpnProfile != nil && airvpnProfile.Created {
+		report.recordMutation("Secrets", "airvpn_wireguard_config", "encrypted provider profile stored", true)
+	}
+	var airvpnMetadata *firewall.AirVPNProfile
+	if airvpnProfile != nil {
+		airvpnMetadata = &airvpnProfile.Metadata
 	}
 	report.complete()
 	if *dryRun {
@@ -154,6 +171,16 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		}
 		endpointLookup = endpointLookupWithFallback(net.LookupIP, remoteEndpointResolver(ctx, rootRunner, s.BootstrapAddress, "root"))
 	}
+	if airvpnMetadata != nil {
+		firewallPlan, err = firewall.BindAirVPNEndpoint(firewallPlan, endpointLookup)
+		if err != nil {
+			return err
+		}
+		// Carry the resolved, non-secret endpoint addresses into every later
+		// variables/projection render. The profile pointer in the plan is the
+		// runtime-only metadata authority for this deployment.
+		airvpnMetadata = firewallPlan.AirVPN
+	}
 	backupPlan, err := backup.PlanFromSite(s)
 	if err != nil {
 		return err
@@ -183,7 +210,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err != nil {
 		return err
 	}
-	variables, err := ansible.VariablesWithOperatorKey(s, operatorPublicKey)
+	var variables []byte
+	if airvpnMetadata == nil {
+		variables, err = ansible.VariablesWithOperatorKey(s, operatorPublicKey)
+	} else {
+		variables, err = ansible.VariablesWithOperatorKeyAndAirVPN(s, operatorPublicKey, *airvpnMetadata)
+	}
 	if err != nil {
 		return err
 	}
@@ -291,7 +323,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	runtimeVariables["pki_bootstrap_phase"] = true
 	runtimeVariables["pki_csr_output_dir"] = csrDir
-	if err := writeModelProjectionsWithResolver(*siteDir, s, endpointLookup); err != nil {
+	if err := writeModelProjectionsWithResolverAndAirVPN(*siteDir, s, endpointLookup, airvpnMetadata); err != nil {
 		return err
 	}
 	report.recordMutation("Generated state", "site projections", "reconciled", true)
@@ -559,15 +591,34 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			if observeErr != nil {
 				return fmt.Errorf("HOLD: published services require a safe current upstream DHCP lease: %w", observeErr)
 			}
-			finalFirewallPlan, planErr := firewall.PlanFromSiteWithUpstream(s, upstream)
+			var finalFirewallPlan firewall.Plan
+			var planErr error
+			if airvpnMetadata == nil {
+				finalFirewallPlan, planErr = firewall.PlanFromSiteWithUpstream(s, upstream)
+			} else {
+				finalFirewallPlan, planErr = firewall.PlanFromSiteWithUpstreamAndAirVPN(s, upstream, *airvpnMetadata)
+			}
 			if planErr != nil {
 				return fmt.Errorf("HOLD: resolve published service policy from upstream lease: %w", planErr)
 			}
-			finalRuleset, renderErr := firewall.RenderNFT(finalFirewallPlan)
+			if airvpnMetadata != nil {
+				finalFirewallPlan, planErr = firewall.BindAirVPNEndpoint(finalFirewallPlan, endpointLookup)
+				if planErr != nil {
+					return fmt.Errorf("HOLD: resolve AirVPN provider endpoint: %w", planErr)
+				}
+				airvpnMetadata = finalFirewallPlan.AirVPN
+			}
+			finalRuleset, renderErr := renderDeploymentNFTWithResolver(finalFirewallPlan, endpointLookup)
 			if renderErr != nil {
 				return fmt.Errorf("HOLD: render published service policy: %w", renderErr)
 			}
-			finalVariables, variablesErr := ansible.VariablesWithOperatorKeyAndUpstream(s, upstream, operatorPublicKey)
+			var finalVariables []byte
+			var variablesErr error
+			if airvpnMetadata == nil {
+				finalVariables, variablesErr = ansible.VariablesWithOperatorKeyAndUpstream(s, upstream, operatorPublicKey)
+			} else {
+				finalVariables, variablesErr = ansible.VariablesWithOperatorKeyAndUpstreamAndAirVPN(s, upstream, operatorPublicKey, *airvpnMetadata)
+			}
 			if variablesErr != nil {
 				return fmt.Errorf("HOLD: render published service Ansible variables: %w", variablesErr)
 			}
@@ -992,7 +1043,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		}
 		s.PendingDNSDeletions = nil
 	}
-	if err := writeModelProjections(*siteDir, s); err != nil {
+	if err := writeModelProjectionsWithResolverAndAirVPN(*siteDir, s, endpointLookup, airvpnMetadata); err != nil {
 		return err
 	}
 	report.recordMutation("Generated state", "site projections", "persisted", true)

@@ -1,4 +1,4 @@
-.PHONY: ci test build vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-portal image-tailnet-router image-litellm image-printer image-streamdeck image-aiops image-gatus image-network-probe images scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-litellm scan-printer scan-streamdeck scan-aiops scan-gatus scan-network-probe command-docs command-docs-check race streamdeck-check
+.PHONY: ci test build vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-portal image-tailnet-router image-airvpn image-litellm image-printer image-streamdeck image-aiops image-gatus image-network-probe images scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-airvpn scan-litellm scan-printer scan-streamdeck scan-aiops scan-gatus scan-network-probe command-docs command-docs-check race streamdeck-check
 
 GOCACHE ?= /tmp/boetticher-gocache
 GOMODCACHE ?= /tmp/boetticher-gomodcache
@@ -58,10 +58,10 @@ image-check:
 	sh -n scripts/build-images.sh scripts/scan-images.sh scripts/smoke-appliance.sh scripts/smoke-firewall-image.sh images/base/first-boot/boetticher-first-boot.sh images/base/runtime/install-runtime-state.sh
 	@test -z "$$(rg -n 'BOETTICHER_IMAGE_BUILD_COMMAND|exec sh -c' scripts || true)"
 
-image-base image-dns-blocky image-logging image-monitoring image-firewall image-portal image-tailnet-router image-litellm image-printer image-streamdeck image-aiops image-gatus image-network-probe images:
+image-base image-dns-blocky image-logging image-monitoring image-firewall image-portal image-tailnet-router image-airvpn image-litellm image-printer image-streamdeck image-aiops image-gatus image-network-probe images:
 	./scripts/build-images.sh $@
 
-scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-litellm scan-printer scan-streamdeck scan-aiops scan-gatus scan-network-probe scan-images:
+scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-airvpn scan-litellm scan-printer scan-streamdeck scan-aiops scan-gatus scan-network-probe scan-images:
 	./scripts/scan-images.sh $@
 
 naming-check:

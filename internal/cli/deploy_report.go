@@ -409,7 +409,7 @@ func deploymentFailureComponent(err error) string {
 		return ""
 	}
 	message := strings.ToLower(compactError(err))
-	for _, component := range []string{"tailnet-router", "monitoring", "litellm", "aiops", "gatus", "printer", "dns", "logging", "managed gateway", "firewall", "proxmox", "storage", "network", "credentials", "pki"} {
+	for _, component := range []string{"airvpn", "tailnet-router", "monitoring", "litellm", "aiops", "gatus", "printer", "dns", "logging", "managed gateway", "firewall", "proxmox", "storage", "network", "credentials", "pki"} {
 		if strings.Contains(message, component) {
 			return component
 		}

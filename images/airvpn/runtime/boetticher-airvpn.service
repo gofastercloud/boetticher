@@ -1,0 +1,28 @@
+[Unit]
+Description=boetticher AirVPN WireGuard transit
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=WG_QUICK_USERSPACE_IMPLEMENTATION=/usr/bin/wireguard-go
+ExecStartPre=/usr/lib/boetticher/airvpn-prepare
+ExecStart=/usr/bin/wg-quick up /run/boetticher/airvpn0.conf
+ExecStartPost=/usr/lib/boetticher/airvpn-routes-up
+ExecStartPost=/usr/lib/boetticher/airvpn-forwarding-up
+ExecStop=/usr/bin/wg-quick down /run/boetticher/airvpn0.conf
+ExecStopPost=/usr/lib/boetticher/airvpn-routes-down
+ExecStopPost=/usr/lib/boetticher/airvpn-forwarding-down
+TimeoutStartSec=90s
+TimeoutStopSec=30s
+Restart=on-failure
+RestartSec=5s
+UMask=0077
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/run/boetticher
+
+[Install]
+WantedBy=multi-user.target

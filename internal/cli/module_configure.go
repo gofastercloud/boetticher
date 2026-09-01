@@ -489,6 +489,13 @@ func configurationField(fields []model.ModuleConfigField, key string) (model.Mod
 
 func configurationFieldValue(config model.ModuleConfig, key string) string {
 	switch key {
+	case "network":
+		if config.Network == "" {
+			return string(model.ModuleNetworkDirect)
+		}
+		return string(config.Network)
+	case "servers":
+		return config.Servers
 	case "model_alias":
 		return config.ModelAlias
 	case "upstreams":
@@ -516,6 +523,10 @@ func applyConfigurationField(config *model.SiteConfig, name string, field model.
 	}
 	moduleConfig := config.Modules.Map()[name]
 	switch field.Key {
+	case "network":
+		moduleConfig.Network = model.ModuleNetworkMode(value)
+	case "servers":
+		moduleConfig.Servers = value
 	case "model_alias":
 		moduleConfig.ModelAlias = value
 	case "upstreams":

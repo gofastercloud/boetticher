@@ -1,0 +1,13 @@
+#!/bin/sh
+set -eu
+
+credential="${CREDENTIALS_DIRECTORY:-}/airvpn-wireguard-config"
+test -n "$credential" -a -s "$credential"
+test ! -L /run/boetticher
+install -d -m 0700 /run/boetticher
+if [ -e /run/boetticher/airvpn0.conf ] || [ -L /run/boetticher/airvpn0.conf ]; then
+  rm -f /run/boetticher/airvpn0.conf
+fi
+ln -s "$credential" /run/boetticher/airvpn0.conf
+test -L /run/boetticher/airvpn0.conf
+test -s /run/boetticher/airvpn0.conf

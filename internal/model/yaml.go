@@ -39,7 +39,7 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 		return SiteConfig{}, fmt.Errorf("decode site.yml: %w", err)
 	}
 	for name := range config.Modules.Map() {
-		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "litellm" && name != "printer" && name != "streamdeck" && name != "aiops" && name != "gatus" {
+		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "litellm" && name != "printer" && name != "streamdeck" && name != "aiops" && name != "gatus" && name != "airvpn" {
 			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s is not a registered first-party module", name)
 		}
 	}
@@ -70,19 +70,27 @@ func validateModuleConfigShape(data []byte) error {
 		case "dns":
 		case "monitoring", "firewall", "printer", "streamdeck":
 			allowed["enabled"] = true
+			if name == "printer" || name == "streamdeck" {
+				allowed["network"] = true
+			}
 		case "logging":
 			// Logging is mandatory and has no persisted lifecycle fields.
 		case "tailnet-router":
 			allowed["enabled"] = true
 		case "litellm":
 			allowed["enabled"] = true
+			allowed["network"] = true
 			allowed["upstreams"] = true
 			allowed["models"] = true
 		case "aiops", "gatus":
 			allowed["enabled"] = true
+			allowed["network"] = true
 			if name == "aiops" {
 				allowed["model_alias"] = true
 			}
+		case "airvpn":
+			allowed["enabled"] = true
+			allowed["servers"] = true
 		default:
 			return fmt.Errorf("site.yml: modules.%s: unknown first-party module", name)
 		}
@@ -100,6 +108,12 @@ func validateModuleConfigShape(data []byte) error {
 			}
 			if field == "enabled" && fieldValue.Tag != "!!bool" && fieldValue.Tag != "!!null" {
 				return fmt.Errorf("site.yml: modules.%s.enabled: expected a boolean", name)
+			}
+			if field == "network" && fieldValue.Tag != "!!str" {
+				return fmt.Errorf("site.yml: modules.%s.network: expected a string", name)
+			}
+			if name == "airvpn" && field == "servers" && fieldValue.Tag != "!!str" {
+				return fmt.Errorf("site.yml: modules.airvpn.servers: expected a string")
 			}
 			if name == "litellm" && (field == "upstreams" || field == "models") && fieldValue.Kind != yaml.SequenceNode {
 				return fmt.Errorf("site.yml: modules.litellm.%s: expected a list", field)
