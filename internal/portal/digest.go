@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 )
 
@@ -15,7 +16,11 @@ import (
 // It is a cache key for controller-to-guest publication only; ownership and
 // file-mode enforcement remain part of the Ansible publication task.
 func ContentDigest(root string) (string, error) {
-	hash := sha256.New()
+	type contentFile struct {
+		path     string
+		relative string
+	}
+	files := make([]contentFile, 0)
 	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -33,21 +38,31 @@ func ContentDigest(root string) (string, error) {
 		if err != nil {
 			return fmt.Errorf("relativize portal file %s: %w", path, err)
 		}
-		if _, err := fmt.Fprintf(hash, "%s\x00", filepath.ToSlash(relative)); err != nil {
-			return err
+		files = append(files, contentFile{path: path, relative: filepath.ToSlash(relative)})
+		return nil
+	}); err != nil {
+		return "", fmt.Errorf("digest portal tree: %w", err)
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].relative < files[j].relative
+	})
+	hash := sha256.New()
+	for _, fileEntry := range files {
+		if _, err := fmt.Fprintf(hash, "%s\x00", fileEntry.relative); err != nil {
+			return "", err
 		}
-		file, err := os.Open(path)
+		file, err := os.Open(fileEntry.path)
 		if err != nil {
-			return err
+			return "", err
 		}
 		_, copyErr := io.Copy(hash, file)
 		closeErr := file.Close()
 		if copyErr != nil {
-			return copyErr
+			return "", copyErr
 		}
-		return closeErr
-	}); err != nil {
-		return "", fmt.Errorf("digest portal tree: %w", err)
+		if closeErr != nil {
+			return "", closeErr
+		}
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }

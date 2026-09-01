@@ -3,6 +3,9 @@ package portal
 import (
 	"archive/tar"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -166,6 +169,40 @@ func TestContentDigestRejectsSymlink(t *testing.T) {
 	}
 	if _, err := ContentDigest(root); err == nil {
 		t.Fatal("content digest accepted a symlink")
+	}
+}
+
+func TestContentDigestUsesGlobalRelativePathOrder(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "portal")
+	if err := os.MkdirAll(filepath.Join(root, "docs", "operations"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"docs/operations.html":      "sibling",
+		"docs/operations/logs.html": "nested",
+	}
+	for relative, content := range files {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(relative)), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hash := sha256.New()
+	for _, relative := range []string{"docs/operations.html", "docs/operations/logs.html"} {
+		fmt.Fprintf(hash, "%s\x00", relative)
+		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = hash.Write(content)
+	}
+	want := hex.EncodeToString(hash.Sum(nil))
+	got, err := ContentDigest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("content digest = %q, want globally sorted path digest %q", got, want)
 	}
 }
 
