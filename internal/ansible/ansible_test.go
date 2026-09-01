@@ -614,6 +614,11 @@ func TestLiteLLMRestartsWhenAnyRuntimeCredentialIsMissing(t *testing.T) {
 		"test -s /run/credentials/litellm.service/{{ upstream.api_key_secret | lower | replace('_', '-') | replace('.', '-') }}",
 		"register: litellm_runtime_credentials",
 		"litellm_runtime_credentials.results | default([]) | selectattr('rc', 'ne', 0) | list | length > 0",
+		"register: litellm_service_start",
+		"systemctl status litellm --no-pager --full",
+		"register: litellm_service_diagnostics",
+		"register: litellm_final_service_state",
+		"litellm_final_service_state.stdout_lines | default([]) == ['active', 'running']",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("LiteLLM credential recovery contract is missing %q", required)

@@ -217,6 +217,8 @@
     name: "{{ item }}"
     enabled: true
     state: started
+  register: litellm_service_start
+  failed_when: false
   loop: [litellm, nginx]
   when: litellm_server_cert_pem | default('') | length > 0
 
@@ -237,14 +239,52 @@
   failed_when: false
   when: litellm_server_cert_pem | default('') | length > 0
 
+- name: Collect bounded Bifrost service diagnostics when startup is unhealthy
+  ansible.builtin.command: systemctl status litellm --no-pager --full
+  register: litellm_service_diagnostics
+  changed_when: false
+  failed_when: false
+  when:
+    - litellm_server_cert_pem | default('') | length > 0
+    - >-
+      (litellm_service_start.results | default([]) | selectattr('item', 'equalto', 'litellm') | selectattr('failed', 'defined') | selectattr('failed') | list | length > 0) or
+      (litellm_service_state.stdout_lines | default([]) != ['active', 'running']) or
+      (litellm_runtime_credentials.results | default([]) | selectattr('rc', 'ne', 0) | list | length > 0)
+
 - name: Restart LiteLLM after credential projection or an unhealthy start
   ansible.builtin.systemd_service:
     name: litellm
     state: restarted
     daemon_reload: true
+  register: litellm_recovery_result
+  failed_when: false
   when:
     - litellm_server_cert_pem | default('') | length > 0
     - >-
       (boetticher_credential_dropin_install is changed) or
       (litellm_service_state.stdout_lines | default([]) != ['active', 'running']) or
       (litellm_runtime_credentials.results | default([]) | selectattr('rc', 'ne', 0) | list | length > 0)
+
+- name: Inspect final LiteLLM service state after recovery attempt
+  ansible.builtin.command: systemctl show litellm --property=ActiveState --property=SubState --value
+  register: litellm_final_service_state
+  changed_when: false
+  when: litellm_server_cert_pem | default('') | length > 0
+
+- name: Collect final bounded Bifrost diagnostics when recovery failed
+  ansible.builtin.command: systemctl status litellm --no-pager --full
+  register: litellm_final_service_diagnostics
+  changed_when: false
+  failed_when: false
+  when:
+    - litellm_server_cert_pem | default('') | length > 0
+    - litellm_final_service_state.stdout_lines | default([]) != ['active', 'running']
+
+- name: Require the Bifrost backend to be running after runtime configuration
+  ansible.builtin.assert:
+    that:
+      - litellm_final_service_state.stdout_lines | default([]) == ['active', 'running']
+    fail_msg: >-
+      Bifrost LiteLLM-compatible backend is unhealthy:
+      {{ litellm_final_service_diagnostics.stdout | default(litellm_service_diagnostics.stdout | default('systemd status unavailable')) | trim }}
+  when: litellm_server_cert_pem | default('') | length > 0
