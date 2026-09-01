@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+for priority in $(ip -4 rule show | awk '$NF == {{ firewall_plan.policy_routes[0].table }} {gsub(":", "", $1); print $1}'); do
+  ip -4 rule del priority "$priority"
+done
+ip -4 route flush table {{ firewall_plan.policy_routes[0].table }}

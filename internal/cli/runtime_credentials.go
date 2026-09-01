@@ -69,6 +69,12 @@ func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, erro
 			Spec: secrets.CredentialSpec{Name: "tailscale-auth-key", Unit: "tailscaled.service", StorePath: "/var/lib/boetticher/credentials/tailscale-auth-key.cred", RuntimeRef: "/run/credentials/tailscaled.service/tailscale-auth-key"},
 		})
 	}
+	if modules.IsEnabled(site, "airvpn") {
+		bindings = append(bindings, deploymentCredential{
+			Guest: "lab-airvpn-01", Address: model.AirVPNGuestAddress, SecretKey: "airvpn_wireguard_config",
+			Spec: secrets.CredentialSpec{Name: "airvpn-wireguard-config", Unit: "boetticher-airvpn.service", StorePath: "/var/lib/boetticher/credentials/airvpn-wireguard-config.cred", RuntimeRef: "/run/credentials/boetticher-airvpn.service/airvpn-wireguard-config"},
+		})
+	}
 	if modules.IsEnabled(site, "litellm") {
 		for _, upstream := range site.ModuleConfig["litellm"].Upstreams {
 			bindings = append(bindings, deploymentCredential{

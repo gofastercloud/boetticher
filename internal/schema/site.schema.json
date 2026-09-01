@@ -8,10 +8,32 @@
         },
         "model_alias": {
           "type": "string"
+        },
+        "network": {
+          "enum": [
+            "direct",
+            "airvpn"
+          ],
+          "type": "string"
         }
       },
       "required": [
         "model_alias"
+      ],
+      "type": "object"
+    },
+    "AirVPNModuleConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "servers": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "servers"
       ],
       "type": "object"
     },
@@ -141,6 +163,13 @@
           },
           "type": "array"
         },
+        "network": {
+          "enum": [
+            "direct",
+            "airvpn"
+          ],
+          "type": "string"
+        },
         "upstreams": {
           "items": {
             "$ref": "#/$defs/LiteLLMUpstreamConfig"
@@ -180,6 +209,9 @@
       "properties": {
         "aiops": {
           "$ref": "#/$defs/AIOpsModuleConfig"
+        },
+        "airvpn": {
+          "$ref": "#/$defs/AirVPNModuleConfig"
         },
         "dns": {
           "$ref": "#/$defs/DNSModuleConfig"
@@ -375,6 +407,13 @@
       "properties": {
         "enabled": {
           "type": "boolean"
+        },
+        "network": {
+          "enum": [
+            "direct",
+            "airvpn"
+          ],
+          "type": "string"
         }
       },
       "type": "object"

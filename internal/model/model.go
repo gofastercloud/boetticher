@@ -53,6 +53,7 @@ const (
 	BuilderCacheDiskGiB         = 64
 	PrinterVMID                 = 230
 	StreamDeckVMID              = 220
+	AirVPNGuestVMID             = 260
 	BuilderCores                = 4
 	BuilderMemoryMiB            = 8192
 	BuilderDiskGiB              = 32
@@ -65,6 +66,7 @@ const (
 	TransitVLAN                 = 5
 	TransitNetwork              = "10.10.5.0/24"
 	TransitGateway              = "10.10.5.1"
+	AirVPNGuestAddress          = "10.10.5.20"
 	InfraVLAN                   = 10
 	InfraNetwork                = "10.10.10.0/24"
 	InfraGateway                = "10.10.10.1"
@@ -370,6 +372,8 @@ type Component struct {
 
 type ModuleConfig struct {
 	Enabled    *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Network    ModuleNetworkMode       `yaml:"network,omitempty" json:"network,omitempty"`
+	Servers    string                  `yaml:"servers,omitempty" json:"servers,omitempty"`
 	ModelAlias string                  `yaml:"model_alias,omitempty" json:"model_alias,omitempty"`
 	Upstreams  []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
 	Models     []LiteLLMModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`

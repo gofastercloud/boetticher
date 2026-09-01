@@ -1,0 +1,14 @@
+[Unit]
+Description=boetticher source-based AirVPN policy routing
+Wants=network-online.target
+After=network-online.target systemd-networkd.service
+Before=boetticher-forwarding.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/boetticher/policy-routing-up
+ExecStop=/usr/lib/boetticher/policy-routing-down
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

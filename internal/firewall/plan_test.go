@@ -617,3 +617,72 @@ func TestLogicalDNSIntentExpandsToAllManagedDNSEndpoints(t *testing.T) {
 		t.Fatalf("logical DNS intent destinations = %v, names = %v, want both managed DNS endpoints with unique names", seen, names)
 	}
 }
+
+func TestAirVPNSelectedSourcesUseTransitWithoutDirectWANFallback(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("airvpn", "age1airvpn", model.GatewayModeManaged))
+	airvpnEnabled, litellmEnabled := true, true
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &airvpnEnabled, Servers: "europe"}
+	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+		Enabled: &litellmEnabled, Network: model.ModuleNetworkAirVPN,
+		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key"}},
+		Models:    []model.LiteLLMModelConfig{{Alias: "selected", Upstream: "provider", Model: "provider/model"}},
+	}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := AirVPNProfile{EndpointHost: "airvpn.example", EndpointPort: 1637, TunnelAddress: "10.64.12.3", SHA256: strings.Repeat("a", 64)}
+	plan, err := PlanFromSiteWithAirVPN(site, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(plan.AirVPNSources, []string{"10.10.20.60/32"}) || len(plan.PolicyRoutes) != 1 {
+		t.Fatalf("unexpected AirVPN source policy: sources=%v routes=%v", plan.AirVPNSources, plan.PolicyRoutes)
+	}
+	route := plan.PolicyRoutes[0]
+	if route.SourceCIDR != "10.10.20.60/32" || route.Table != 51820 || route.Priority != 10000 || route.DefaultGateway != model.AirVPNGuestAddress || route.DefaultInterface != "transit0" || len(route.InternalRoutes) != 6 {
+		t.Fatalf("unexpected AirVPN policy route: %#v", route)
+	}
+	var selectedRule PolicyRule
+	for _, rule := range plan.Rules {
+		if rule.Route == "airvpn" {
+			selectedRule = rule
+			break
+		}
+	}
+	if selectedRule.From != "SERVERS" || selectedRule.To != "TRANSIT" || selectedRule.SourceCIDR != "10.10.20.60/32" || selectedRule.NAT {
+		t.Fatalf("selected-source transit rule is incomplete: %#v", selectedRule)
+	}
+	plan, err = BindAirVPNEndpoint(plan, func(host string) ([]net.IP, error) {
+		if host == "airvpn.example" || host == "provider.example" {
+			return []net.IP{net.ParseIP("198.51.100.44")}, nil
+		}
+		return nil, fmt.Errorf("unexpected endpoint %s", host)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleset, err := RenderNFTWithResolver(plan, func(host string) ([]net.IP, error) {
+		if host == "airvpn.example" || host == "provider.example" {
+			return []net.IP{net.ParseIP("198.51.100.44")}, nil
+		}
+		return nil, fmt.Errorf("unexpected endpoint %s", host)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		`ip saddr @airvpn_sources oifname "wan0" counter log prefix "boetticher AIRVPN-DIRECT-DROP " drop`,
+		"oifname \"transit0\" ip saddr @airvpn_sources counter accept comment \"boetticher:allow:airvpn-selected-transit\"",
+		"oifname \"wan0\" ip saddr != @airvpn_sources ip saddr 10.10.20.0/24 masquerade comment \"boetticher:nat-servers\"",
+		"oifname \"wan0\" ip saddr 10.10.5.20/32 ip daddr @boetticher_endpoint_0 udp dport 1637 masquerade comment \"boetticher:nat-airvpn-handshake\"",
+		`iifname "transit0" oifname "wan0" counter log prefix "boetticher TRANSIT-INTERNET-DROP " drop`,
+	} {
+		if !strings.Contains(ruleset, expected) {
+			t.Errorf("AirVPN ruleset is missing %q:\n%s", expected, ruleset)
+		}
+	}
+	if strings.Contains(ruleset, `oifname "wan0" ip saddr 10.10.20.60/32 masquerade`) {
+		t.Fatal("selected AirVPN source has a direct WAN NAT rule")
+	}
+}

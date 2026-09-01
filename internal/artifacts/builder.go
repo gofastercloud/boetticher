@@ -65,6 +65,7 @@ var PublicBuildInputs = []string{
 	"cmd/qualify-artifact",
 	"cmd/render-blocky-config",
 	"internal/aiops",
+	"internal/airvpn",
 	"internal/artifacts",
 	"internal/dns",
 	"internal/firewall",

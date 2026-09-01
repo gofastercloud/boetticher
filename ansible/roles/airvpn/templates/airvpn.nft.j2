@@ -1,0 +1,42 @@
+destroy table inet boetticher_airvpn
+destroy table ip boetticher_airvpn_nat
+
+table inet boetticher_airvpn {
+  chain input {
+    type filter hook input priority filter; policy drop;
+    iifname "lo" accept comment "boetticher:airvpn-input-loopback"
+    ct state established,related accept comment "boetticher:airvpn-input-established"
+    iifname "eth0" ip saddr 10.10.99.5 tcp dport 22 accept comment "boetticher:airvpn-input-managed-ssh"
+  }
+
+  chain output {
+    type filter hook output priority filter; policy drop;
+    oifname "lo" accept comment "boetticher:airvpn-output-loopback"
+    ct state established,related accept comment "boetticher:airvpn-output-established"
+{% for address in firewall_plan.airvpn.endpoint_addresses %}
+    oifname "eth0" ip daddr {{ address }} udp dport {{ firewall_plan.airvpn.endpoint_port }} accept comment "boetticher:airvpn-provider-handshake-{{ loop.index }}"
+{% endfor %}
+    oifname "eth0" ip daddr { {{ dns_plan.nameservers | join(', ') }} } tcp dport 53 accept comment "boetticher:airvpn-dns-tcp"
+    oifname "eth0" ip daddr { {{ dns_plan.nameservers | join(', ') }} } udp dport { 53, 123 } accept comment "boetticher:airvpn-dns-ntp-udp"
+    oifname "airvpn0" accept comment "boetticher:airvpn-output-tunnel"
+  }
+
+  chain forward {
+    type filter hook forward priority filter; policy drop;
+    ct state established,related accept comment "boetticher:airvpn-forward-established"
+{% if firewall_plan.airvpn_source_cidrs | default([]) | length > 0 %}
+    iifname "eth0" oifname "airvpn0" ip saddr { {{ firewall_plan.airvpn_source_cidrs | join(', ') }} } accept comment "boetticher:airvpn-selected-sources"
+{% endif %}
+    iifname "eth0" oifname "eth0" drop comment "boetticher:airvpn-no-direct-forward"
+    iifname "eth0" drop comment "boetticher:airvpn-no-internal-forward"
+  }
+}
+
+table ip boetticher_airvpn_nat {
+  chain postrouting {
+    type nat hook postrouting priority srcnat; policy accept;
+{% if firewall_plan.airvpn_source_cidrs | default([]) | length > 0 %}
+    oifname "airvpn0" ip saddr { {{ firewall_plan.airvpn_source_cidrs | join(', ') }} } masquerade comment "boetticher:airvpn-payload-nat"
+{% endif %}
+  }
+}

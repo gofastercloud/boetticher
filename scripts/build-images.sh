@@ -8,10 +8,11 @@ target=${1:-images}
 shift || true
 case "$target" in
   image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-streamdeck|image-gatus|image-network-probe|images) ;;
+  image-airvpn) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
-default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-litellm image-printer image-streamdeck image-aiops image-gatus image-network-probe image-firewall"
+default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-airvpn image-litellm image-printer image-streamdeck image-aiops image-gatus image-network-probe image-firewall"
 if [ "$target" = images ]; then
   selected_image_targets="$*"
   if [ -z "$selected_image_targets" ]; then
@@ -20,6 +21,7 @@ if [ "$target" = images ]; then
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
       image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-streamdeck|image-gatus|image-network-probe) ;;
+      image-airvpn) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac
   done
@@ -530,6 +532,20 @@ build_tailnet_router() {
   package_lxc boetticher-tailnet-router
 }
 
+build_airvpn() {
+  printf '%s\n' 'boetticher build stage: airvpn'
+  rootfs=$(prepare_rootfs boetticher-airvpn)
+  install_packages "$rootfs" wireguard-tools wireguard-go nftables iproute2
+  install -D -m 0644 images/airvpn/runtime/boetticher-airvpn.service "$rootfs/etc/systemd/system/boetticher-airvpn.service"
+  install -D -m 0755 images/airvpn/runtime/airvpn-prepare "$rootfs/usr/lib/boetticher/airvpn-prepare"
+  install -D -m 0755 images/airvpn/runtime/airvpn-routes-up "$rootfs/usr/lib/boetticher/airvpn-routes-up"
+  install -D -m 0755 images/airvpn/runtime/airvpn-routes-down "$rootfs/usr/lib/boetticher/airvpn-routes-down"
+  install -D -m 0755 images/airvpn/runtime/airvpn-forwarding-up "$rootfs/usr/lib/boetticher/airvpn-forwarding-up"
+  install -D -m 0755 images/airvpn/runtime/airvpn-forwarding-down "$rootfs/usr/lib/boetticher/airvpn-forwarding-down"
+  write_artifact_identity "$rootfs" airvpn
+  package_lxc boetticher-airvpn
+}
+
 build_litellm() {
   printf '%s\n' 'boetticher build stage: litellm'
   rootfs=$(prepare_rootfs boetticher-litellm)
@@ -909,6 +925,11 @@ build_tailnet_router_target() {
   build_tailnet_router
 }
 
+build_airvpn_target() {
+  [ -f "$(artifact_for boetticher-base)" ] || build_base
+  build_airvpn
+}
+
 build_litellm_target() {
   [ -f "$(artifact_for boetticher-base)" ] || build_base
   build_litellm
@@ -962,6 +983,7 @@ case "$target" in
   image-monitoring) run_timed_image_target "$target" build_monitoring_target ;;
   image-portal) run_timed_image_target "$target" build_portal_target ;;
   image-tailnet-router) run_timed_image_target "$target" build_tailnet_router_target ;;
+  image-airvpn) run_timed_image_target "$target" build_airvpn_target ;;
   image-litellm) run_timed_image_target "$target" build_litellm_target ;;
   image-printer) run_timed_image_target "$target" build_printer_target ;;
   image-streamdeck) run_timed_image_target "$target" build_streamdeck_target ;;

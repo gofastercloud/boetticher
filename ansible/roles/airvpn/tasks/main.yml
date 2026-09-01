@@ -1,0 +1,110 @@
+---
+- name: Require an immutable AirVPN appliance artifact
+  ansible.builtin.assert:
+    that: boetticher_appliance_artifact | default(false) | bool
+    fail_msg: "AirVPN runtime configuration requires a qualified immutable appliance artifact"
+
+- name: Require the retained public AirVPN firewall metadata
+  ansible.builtin.assert:
+    that:
+      - firewall_plan is defined
+      - firewall_plan.airvpn is defined
+      - firewall_plan.airvpn.endpoint_host | length > 0
+      - firewall_plan.airvpn.endpoint_port == 1637
+      - firewall_plan.airvpn.endpoint_addresses | default([]) | length > 0
+    fail_msg: "AirVPN requires resolved endpoint metadata"
+  no_log: true
+
+- name: Require the systemd credential binding for the retained profile
+  ansible.builtin.assert:
+    that: credential_dropins[inventory_hostname]['boetticher-airvpn.service'] is defined
+    fail_msg: "AirVPN requires the encrypted WireGuard profile credential binding"
+  no_log: true
+
+- name: Keep AirVPN forwarding disabled until the tunnel is ready
+  ansible.builtin.copy:
+    content: |
+      net.ipv4.ip_forward=0
+      net.ipv6.conf.all.forwarding=0
+      net.ipv6.conf.default.forwarding=0
+    dest: /etc/sysctl.d/99-boetticher-airvpn.conf
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Apply the AirVPN fail-closed forwarding default
+  ansible.builtin.command:
+    argv: [sysctl, -w, net.ipv4.ip_forward=0, net.ipv6.conf.all.forwarding=0, net.ipv6.conf.default.forwarding=0]
+  changed_when: false
+
+- name: Install AirVPN forwarding lifecycle helpers
+  ansible.builtin.copy:
+    dest: "/usr/lib/boetticher/{{ item.name }}"
+    owner: root
+    group: root
+    mode: '0750'
+    content: "{{ item.content }}"
+  loop:
+    - name: airvpn-forwarding-up
+      content: |
+        #!/bin/sh
+        set -eu
+        sysctl -w net.ipv4.ip_forward=1 >/dev/null
+    - name: airvpn-forwarding-down
+      content: |
+        #!/bin/sh
+        set -eu
+        sysctl -w net.ipv4.ip_forward=0 >/dev/null
+
+- name: Create the AirVPN nftables configuration directory
+  ansible.builtin.file:
+    path: /etc/nftables.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Render the AirVPN guest kill switch
+  ansible.builtin.template:
+    src: airvpn.nft.j2
+    dest: /run/boetticher-airvpn.nft.new
+    owner: root
+    group: root
+    mode: '0600'
+  no_log: true
+
+- name: Validate the AirVPN guest kill switch
+  ansible.builtin.command:
+    argv: [nft, -c, -f, /run/boetticher-airvpn.nft.new]
+  changed_when: false
+  no_log: true
+
+- name: Install the validated AirVPN guest kill switch
+  ansible.builtin.copy:
+    remote_src: true
+    src: /run/boetticher-airvpn.nft.new
+    dest: /etc/nftables.d/airvpn.nft
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Apply the AirVPN guest kill switch before starting WireGuard
+  ansible.builtin.command:
+    argv: [nft, -f, /etc/nftables.d/airvpn.nft]
+  changed_when: true
+
+- name: Enable and start the AirVPN transit service
+  ansible.builtin.systemd_service:
+    name: boetticher-airvpn.service
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Require the AirVPN WireGuard interface
+  ansible.builtin.command: ip link show airvpn0
+  changed_when: false
+  no_log: true
+
+- name: Require an active AirVPN transit service
+  ansible.builtin.command: systemctl is-active boetticher-airvpn.service
+  changed_when: false

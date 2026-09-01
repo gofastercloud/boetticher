@@ -55,6 +55,7 @@ func ValidateNetworkIntentCoverage(s model.Site, plan Plan) error {
 func ruleEquivalent(left, right PolicyRule) bool {
 	return left.From == right.From && left.To == right.To &&
 		left.Protocol == right.Protocol &&
+		left.Route == right.Route &&
 		reflect.DeepEqual(left.Ports, right.Ports) &&
 		left.SourceCIDR == right.SourceCIDR &&
 		left.DestinationCIDR == right.DestinationCIDR &&

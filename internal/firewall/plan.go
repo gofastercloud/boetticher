@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/dns"
@@ -71,11 +72,38 @@ type PolicyRule struct {
 	Counter         string   `json:"counter"`
 	LogPrefix       string   `json:"log_prefix,omitempty"`
 	NAT             bool     `json:"nat,omitempty"`
+	Route           string   `json:"route,omitempty"`
 	Description     string   `json:"description"`
 	SourceCIDR      string   `json:"source_cidr,omitempty"`
 	DestinationCIDR string   `json:"destination_cidr,omitempty"`
 	DestinationHost string   `json:"destination_host,omitempty"`
 	UserRuleID      string   `json:"user_rule_id,omitempty"`
+}
+
+// AirVPNProfile is the non-secret portion of the retained provider profile.
+// The private key and the normalized WireGuard configuration never enter a
+// firewall plan.
+type AirVPNProfile struct {
+	EndpointHost      string   `json:"endpoint_host"`
+	EndpointPort      int      `json:"endpoint_port"`
+	TunnelAddress     string   `json:"tunnel_address"`
+	EndpointAddresses []string `json:"endpoint_addresses,omitempty"`
+	SHA256            string   `json:"sha256"`
+}
+
+type PolicyRoute struct {
+	SourceCIDR       string             `json:"source_cidr"`
+	Table            int                `json:"table"`
+	Priority         int                `json:"priority"`
+	DefaultGateway   string             `json:"default_gateway"`
+	DefaultInterface string             `json:"default_interface"`
+	InternalRoutes   []PolicyRouteEntry `json:"internal_routes"`
+}
+
+type PolicyRouteEntry struct {
+	Destination string `json:"destination"`
+	Gateway     string `json:"gateway,omitempty"`
+	Interface   string `json:"interface"`
 }
 
 type DHCPSubnet struct {
@@ -127,6 +155,9 @@ type Plan struct {
 	Interfaces    []Interface          `json:"interfaces"`
 	Rules         []PolicyRule         `json:"rules"`
 	ModuleSources []string             `json:"module_source_cidrs,omitempty"`
+	AirVPNSources []string             `json:"airvpn_source_cidrs,omitempty"`
+	PolicyRoutes  []PolicyRoute        `json:"policy_routes,omitempty"`
+	AirVPN        *AirVPNProfile       `json:"airvpn,omitempty"`
 	DHCP          []DHCPSubnet         `json:"dhcp_subnets"`
 	DDNS          dns.DDNSPlan         `json:"ddns"`
 	Publications  []PublishedService   `json:"publications,omitempty"`
@@ -135,6 +166,55 @@ type Plan struct {
 }
 
 func PlanFromSite(s model.Site) (Plan, error) {
+	return planFromSite(s, nil)
+}
+
+func PlanFromSiteWithAirVPN(s model.Site, profile AirVPNProfile) (Plan, error) {
+	return planFromSite(s, &profile)
+}
+
+// BindAirVPNEndpoint resolves the provider endpoint into the runtime-only
+// metadata consumed by gateway and guest firewall renderers.
+func BindAirVPNEndpoint(plan Plan, lookup func(string) ([]net.IP, error)) (Plan, error) {
+	if plan.AirVPN == nil {
+		return plan, nil
+	}
+	if lookup == nil {
+		return Plan{}, errors.New("HOLD: AirVPN endpoint resolver is unavailable")
+	}
+	ips, err := lookup(plan.AirVPN.EndpointHost)
+	if err != nil {
+		return Plan{}, fmt.Errorf("HOLD: resolve AirVPN provider endpoint: %w", err)
+	}
+	seen := map[string]bool{}
+	addresses := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		if ipv4 := ip.To4(); ipv4 != nil && !seen[ipv4.String()] {
+			seen[ipv4.String()] = true
+			addresses = append(addresses, ipv4.String())
+		}
+	}
+	if len(addresses) == 0 {
+		return Plan{}, errors.New("HOLD: AirVPN provider endpoint has no IPv4 address")
+	}
+	sort.Strings(addresses)
+	plan.AirVPN.EndpointAddresses = addresses
+	return plan, nil
+}
+
+func PlanFromSiteWithUpstreamAndAirVPN(s model.Site, upstream UpstreamObservation, profile AirVPNProfile) (Plan, error) {
+	plan, err := planFromSite(s, &profile)
+	if err != nil {
+		return Plan{}, err
+	}
+	if err := ValidateUpstreamObservation(plan, upstream); err != nil {
+		return Plan{}, err
+	}
+	plan.Upstream = &upstream
+	return plan, nil
+}
+
+func planFromSite(s model.Site, airvpnProfile *AirVPNProfile) (Plan, error) {
 	if err := s.Validate(); err != nil {
 		return Plan{}, err
 	}
@@ -160,6 +240,31 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		engine = "operator-managed external firewall"
 	}
 	rules := policyRules(s)
+	transitRules := airVPNTransitRules(s)
+	for index := range transitRules {
+		transitRules[index].Sequence = len(rules) + index + 1
+	}
+	rules = append(rules, transitRules...)
+	if airvpnProfile != nil {
+		if err := validateAirVPNProfile(*airvpnProfile); err != nil {
+			return Plan{}, err
+		}
+		rules = append(rules, PolicyRule{
+			Sequence:        len(rules) + 1,
+			Name:            "AirVPN provider WireGuard handshake",
+			From:            "TRANSIT",
+			To:              "WAN",
+			Action:          "allow",
+			Protocol:        "udp",
+			Ports:           []string{strconv.Itoa(airvpnProfile.EndpointPort)},
+			Counter:         "boetticher_airvpn_provider_handshake",
+			NAT:             true,
+			Route:           "direct",
+			Description:     "boetticher AirVPN provider WireGuard handshake only",
+			SourceCIDR:      model.AirVPNGuestAddress + "/32",
+			DestinationHost: airvpnProfile.EndpointHost,
+		})
+	}
 	userRuleCount := 0
 	for _, rule := range rules {
 		if rule.UserRuleID != "" {
@@ -178,8 +283,13 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		Telemetry:     DefaultTelemetryPlan(s.Gateway.Mode == model.GatewayModeManaged),
 		Rules:         rules,
 		ModuleSources: moduleSourceCIDRs(s),
+		AirVPNSources: airVPNSources(s),
+		PolicyRoutes:  policyRoutes(s),
 		DHCP:          dhcpSubnets(s),
 		DDNS:          dnsPlan.DDNS,
+	}
+	if airvpnProfile != nil {
+		plan.AirVPN = airvpnProfile
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		plan.Interfaces = gatewayInterfaces(s)
@@ -198,6 +308,44 @@ func PlanFromSiteWithUpstream(s model.Site, upstream UpstreamObservation) (Plan,
 	}
 	plan.Upstream = &upstream
 	return plan, nil
+}
+
+func validateAirVPNProfile(profile AirVPNProfile) error {
+	if !validAirVPNEndpointHost(profile.EndpointHost) || profile.EndpointPort != 1637 {
+		return errors.New("HOLD: AirVPN firewall metadata has an invalid provider endpoint")
+	}
+	if address := net.ParseIP(profile.TunnelAddress); address == nil || address.To4() == nil {
+		return errors.New("HOLD: AirVPN firewall metadata has an invalid tunnel address")
+	}
+	if len(profile.SHA256) != 64 {
+		return errors.New("HOLD: AirVPN firewall metadata is missing the profile digest")
+	}
+	for _, character := range profile.SHA256 {
+		if !(character >= '0' && character <= '9' || character >= 'a' && character <= 'f' || character >= 'A' && character <= 'F') {
+			return errors.New("HOLD: AirVPN firewall metadata has an invalid profile digest")
+		}
+	}
+	return nil
+}
+
+func validAirVPNEndpointHost(host string) bool {
+	if host == "" || len(host) > 253 || strings.ContainsAny(host, " \t\r\n/\\") {
+		return false
+	}
+	if address := net.ParseIP(host); address != nil {
+		return address.To4() != nil
+	}
+	for _, label := range strings.Split(host, ".") {
+		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, character := range label {
+			if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '-') {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func publishedServices(s model.Site) []PublishedService {
@@ -270,11 +418,87 @@ func moduleSourceCIDRs(s model.Site) []string {
 			}
 		}
 	}
+	for _, cidr := range airVPNSources(s) {
+		seen[cidr] = true
+	}
 	result := make([]string, 0, len(seen))
 	for cidr := range seen {
 		result = append(result, cidr)
 	}
 	sort.Strings(result)
+	return result
+}
+
+func airVPNSources(s model.Site) []string {
+	seen := map[string]bool{}
+	for _, component := range s.PlatformComponents() {
+		config, ok := s.ModuleConfig[component.Module]
+		if !ok || config.Network != model.ModuleNetworkAirVPN {
+			continue
+		}
+		if address := net.ParseIP(component.Address).To4(); address != nil {
+			seen[address.String()+"/32"] = true
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for cidr := range seen {
+		result = append(result, cidr)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func airVPNTransitRules(s model.Site) []PolicyRule {
+	rules := make([]PolicyRule, 0)
+	for _, sourceCIDR := range airVPNSources(s) {
+		address := strings.TrimSuffix(sourceCIDR, "/32")
+		for _, component := range s.PlatformComponents() {
+			if component.Address != address {
+				continue
+			}
+			rules = append(rules, PolicyRule{
+				Name:        "AirVPN selected source transit route " + component.Name,
+				From:        component.Zone,
+				To:          "TRANSIT",
+				Action:      "allow",
+				Protocol:    "any",
+				Counter:     "boetticher_airvpn_selected_source_transit",
+				Route:       "airvpn",
+				Description: "boetticher AirVPN-selected external egress via TRANSIT",
+				SourceCIDR:  sourceCIDR,
+			})
+			break
+		}
+	}
+	return rules
+}
+
+func policyRoutes(s model.Site) []PolicyRoute {
+	sources := airVPNSources(s)
+	if len(sources) == 0 {
+		return nil
+	}
+	zones := append([]model.Zone(nil), s.Normalize().Network.Zones...)
+	sort.Slice(zones, func(i, j int) bool { return zones[i].VLAN < zones[j].VLAN })
+	routes := make([]PolicyRouteEntry, 0, len(zones))
+	for _, zone := range zones {
+		entry := PolicyRouteEntry{Destination: zone.Network, Interface: strings.ToLower(zone.Name) + "0"}
+		if zone.Type != model.ZoneTypeTransit {
+			entry.Gateway = zone.Gateway
+		}
+		routes = append(routes, entry)
+	}
+	result := make([]PolicyRoute, 0, len(sources))
+	for index, source := range sources {
+		result = append(result, PolicyRoute{
+			SourceCIDR:       source,
+			Table:            51820,
+			Priority:         10000 + index,
+			DefaultGateway:   model.AirVPNGuestAddress,
+			DefaultInterface: "transit0",
+			InternalRoutes:   append([]PolicyRouteEntry(nil), routes...),
+		})
+	}
 	return result
 }
 
@@ -533,17 +757,24 @@ func policyRulesForIntent(s model.Site, module string, intent model.NetworkInten
 	if !sourceOK || (intent.Endpoint == "" && intent.Destination == "") {
 		return nil
 	}
-	if intent.Endpoint != "" {
+	// An endpoint URL is external only when the logical destination is not an
+	// existing site component. Product-owned checks may carry an HTTPS URL for
+	// an internal service; those paths remain direct.
+	if intent.Endpoint != "" && len(componentReferences(s, intent.Destination)) == 0 {
 		parsed, err := url.Parse(intent.Endpoint)
 		if err != nil || parsed.Hostname() == "" {
 			return nil
 		}
+		to, route, nat := "WAN", "direct", true
+		if moduleNetworkMode(s, module) == model.ModuleNetworkAirVPN {
+			to, route, nat = "TRANSIT", "airvpn", false
+		}
 		return []PolicyRule{{
 			Name: "module " + module + " " + intent.Purpose + " " + intent.Destination,
-			From: source.Zone, To: "WAN", Action: "allow", Protocol: intent.Protocol,
+			From: source.Zone, To: to, Action: "allow", Protocol: intent.Protocol,
 			Ports: append([]string(nil), intent.Ports...), Counter: "boetticher_module_" + safeRuleToken(module),
-			Description: "module " + module + ": " + intent.Purpose,
-			SourceCIDR:  source.Address + "/32", DestinationHost: parsed.Hostname(),
+			NAT: nat, Route: route, Description: "module " + module + ": " + intent.Purpose,
+			SourceCIDR: source.Address + "/32", DestinationHost: parsed.Hostname(),
 		}}
 	}
 	destinations := componentReferences(s, intent.Destination)
@@ -565,6 +796,13 @@ func policyRulesForIntent(s model.Site, module string, intent model.NetworkInten
 		})
 	}
 	return rules
+}
+
+func moduleNetworkMode(s model.Site, module string) model.ModuleNetworkMode {
+	if config, ok := s.ModuleConfig[module]; ok && config.Network != "" {
+		return config.Network
+	}
+	return model.ModuleNetworkDirect
 }
 
 // componentReferences expands logical service aliases that intentionally name
@@ -686,6 +924,9 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 	if !plan.Telemetry.Enabled {
 		return "", errors.New("managed firewall telemetry is disabled")
 	}
+	if len(plan.PolicyRoutes) > 0 && plan.AirVPN == nil {
+		return "", errors.New("HOLD: AirVPN profile metadata is required for selected-source policy routing")
+	}
 	if len(plan.Publications) > 0 {
 		if plan.Upstream == nil {
 			return "", errors.New("HOLD: published services require a current upstream DHCP observation")
@@ -712,16 +953,23 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 	if sources := moduleGuestSources(plan); len(sources) > 0 {
 		fmt.Fprintf(&b, "  set module_guest_sources { type ipv4_addr; elements = { %s } }\n", strings.Join(sources, ", "))
 	}
+	if len(plan.AirVPNSources) > 0 {
+		fmt.Fprintf(&b, "  set airvpn_sources { type ipv4_addr; elements = { %s } }\n", strings.Join(plan.AirVPNSources, ", "))
+	}
 	telemetrySource := strings.TrimSuffix(plan.Telemetry.AllowedSources[0], "/32")
 	b.WriteString("  chain input {\n    type filter hook input priority filter; policy drop;\n    iifname \"lo\" accept comment \"boetticher:input-loopback\"\n    ct state established,related accept comment \"boetticher:input-established\"\n    iifname \"wan0\" udp sport 67 udp dport 68 accept comment \"boetticher:input-wan-dhcp\"\n    iifname { \"infra0\", \"trusted0\", \"servers0\", \"sandbox0\", \"mgmt0\" } ip protocol icmp icmp type echo-request counter accept comment \"boetticher:allow:input-diagnostic-icmp\"\n    iifname { \"trusted0\", \"servers0\", \"sandbox0\" } udp dport 67 counter accept comment \"boetticher:allow:input-zone-dhcp\"\n    iifname \"sandbox0\" udp dport 53 counter accept comment \"boetticher:allow:input-sandbox-dns-udp\"\n    iifname \"sandbox0\" tcp dport 53 counter accept comment \"boetticher:allow:input-sandbox-dns-tcp\"\n    iifname \"sandbox0\" udp dport 123 counter accept comment \"boetticher:allow:input-sandbox-ntp\"\n    iifname \"mgmt0\" tcp dport 22 counter accept comment \"boetticher:allow:input-mgmt-ssh\"\n    iifname \"infra0\" ip saddr " + telemetrySource + " tcp dport 9765 counter accept comment \"boetticher:allow:input-firewall-telemetry\"\n  }\n")
 	b.WriteString("  chain forward {\n    type filter hook forward priority filter; policy drop;\n    ct state established,related accept comment \"boetticher:forward-established\"\n")
+	if len(plan.AirVPNSources) > 0 {
+		b.WriteString("    ip saddr @airvpn_sources oifname \"wan0\" counter log prefix \"boetticher AIRVPN-DIRECT-DROP \" drop comment \"boetticher:drop:airvpn-direct-wan\"\n")
+	}
 	if plan.Upstream != nil {
 		for _, publication := range plan.Publications {
 			fmt.Fprintf(&b, "    iifname \"wan0\" oifname \"%s\" ip saddr %s ip daddr %s %s dport %d counter accept comment \"boetticher:publish-%s-%s\"\n", publication.DestinationIface, upstreamSourceCIDR(*plan.Upstream), publication.DestinationCIDR, publication.Protocol, publication.Port, safeRuleToken(publication.Service), publication.Protocol)
 		}
 	}
+	airVPNTransitRendered := false
 	for _, rule := range plan.Rules {
-		if rule.Action != "allow" || rule.SourceCIDR == "" || (rule.DestinationCIDR == "" && rule.DestinationHost == "") || rule.From == "" || rule.To == "" {
+		if rule.Action != "allow" || rule.SourceCIDR == "" || rule.From == "" || rule.To == "" {
 			continue
 		}
 		sourceIface := strings.ToLower(rule.From) + "0"
@@ -730,6 +978,20 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 			destinationIface = "wan0"
 		}
 		if sourceIface == "any0" || destinationIface == "gateway0" {
+			continue
+		}
+		if rule.Route == "airvpn" && rule.To == "TRANSIT" {
+			if airVPNTransitRendered {
+				continue
+			}
+			for _, zone := range []string{"INFRA", "TRUSTED", "SERVERS", "SANDBOX", "MGMT", "TRANSIT"} {
+				fmt.Fprintf(&b, "    iifname { \"infra0\", \"trusted0\", \"servers0\", \"sandbox0\", \"mgmt0\" } oifname \"transit0\" ip saddr @airvpn_sources ip daddr @%s_net counter drop comment \"boetticher:drop:airvpn-selected-to-%s\"\n", strings.ToLower(zone), strings.ToLower(zone))
+			}
+			b.WriteString("    iifname { \"infra0\", \"trusted0\", \"servers0\", \"sandbox0\", \"mgmt0\" } oifname \"transit0\" ip saddr @airvpn_sources counter accept comment \"boetticher:allow:airvpn-selected-transit\"\n")
+			airVPNTransitRendered = true
+			continue
+		}
+		if rule.DestinationCIDR == "" && rule.DestinationHost == "" {
 			continue
 		}
 		destination := rule.DestinationCIDR
@@ -802,6 +1064,9 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 	transitNATSources := make(map[string]struct{})
 	for _, rule := range plan.Rules {
 		if rule.Action == "allow" && rule.From == "TRANSIT" && rule.To == "WAN" && rule.SourceCIDR != "" {
+			if plan.AirVPN != nil && rule.SourceCIDR == model.AirVPNGuestAddress+"/32" {
+				continue
+			}
 			transitNATSources[rule.SourceCIDR] = struct{}{}
 		}
 	}
@@ -811,6 +1076,20 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 	}
 	sort.Strings(transitNATSourceList)
 	b.WriteString("table ip " + NATTable + " {\n")
+	if len(plan.AirVPNSources) > 0 {
+		fmt.Fprintf(&b, "  set airvpn_sources { type ipv4_addr; elements = { %s } }\n", strings.Join(plan.AirVPNSources, ", "))
+	}
+	airvpnEndpointSet := ""
+	if plan.AirVPN != nil {
+		for _, destinationSet := range destinationSets {
+			if destinationSet.host != plan.AirVPN.EndpointHost {
+				continue
+			}
+			fmt.Fprintf(&b, "  set %s { type ipv4_addr; elements = { %s } }\n", destinationSet.setName, strings.Join(destinationSet.addresses, ", "))
+			airvpnEndpointSet = destinationSet.setName
+			break
+		}
+	}
 	if plan.Upstream != nil {
 		b.WriteString("  chain prerouting {\n    type nat hook prerouting priority dstnat; policy accept;\n")
 		for _, publication := range plan.Publications {
@@ -819,10 +1098,17 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 		b.WriteString("  }\n")
 	}
 	b.WriteString("  chain postrouting {\n    type nat hook postrouting priority srcnat; policy accept;\n")
+	if airvpnEndpointSet != "" {
+		fmt.Fprintf(&b, "    oifname \"wan0\" ip saddr %s ip daddr @%s udp dport %d masquerade comment \"boetticher:nat-airvpn-handshake\"\n", model.AirVPNGuestAddress+"/32", airvpnEndpointSet, plan.AirVPN.EndpointPort)
+	}
 	for _, source := range transitNATSourceList {
 		fmt.Fprintf(&b, "    oifname \"wan0\" ip saddr %s masquerade comment \"boetticher:nat-transit\"\n", source)
 	}
-	b.WriteString("    oifname \"wan0\" ip saddr " + networkFor(plan, "TRUSTED") + " masquerade comment \"boetticher:nat-trusted\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SERVERS") + " masquerade comment \"boetticher:nat-servers\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "INFRA") + " masquerade comment \"boetticher:nat-infra\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "SANDBOX") + " masquerade comment \"boetticher:nat-sandbox\"\n    oifname \"wan0\" ip saddr " + networkFor(plan, "MGMT") + " masquerade comment \"boetticher:nat-mgmt\"\n  }\n}\n")
+	ordinaryNATSourceCondition := ""
+	if len(plan.AirVPNSources) > 0 {
+		ordinaryNATSourceCondition = "ip saddr != @airvpn_sources "
+	}
+	b.WriteString("    oifname \"wan0\" " + ordinaryNATSourceCondition + "ip saddr " + networkFor(plan, "TRUSTED") + " masquerade comment \"boetticher:nat-trusted\"\n    oifname \"wan0\" " + ordinaryNATSourceCondition + "ip saddr " + networkFor(plan, "SERVERS") + " masquerade comment \"boetticher:nat-servers\"\n    oifname \"wan0\" " + ordinaryNATSourceCondition + "ip saddr " + networkFor(plan, "INFRA") + " masquerade comment \"boetticher:nat-infra\"\n    oifname \"wan0\" " + ordinaryNATSourceCondition + "ip saddr " + networkFor(plan, "SANDBOX") + " masquerade comment \"boetticher:nat-sandbox\"\n    oifname \"wan0\" " + ordinaryNATSourceCondition + "ip saddr " + networkFor(plan, "MGMT") + " masquerade comment \"boetticher:nat-mgmt\"\n  }\n}\n")
 	return b.String(), nil
 }
 

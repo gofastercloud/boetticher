@@ -1,7 +1,7 @@
 [Unit]
 Description=boetticher IPv4 forwarding readiness gate
-Requires=nftables.service kea-dhcp4-server.service kea-dhcp-ddns-server.service dnsmasq.service
-After=network-online.target nftables.service kea-dhcp4-server.service kea-dhcp-ddns-server.service dnsmasq.service
+Requires=nftables.service kea-dhcp4-server.service kea-dhcp-ddns-server.service dnsmasq.service{% if firewall_plan.policy_routes | default([]) | length > 0 %} boetticher-policy-routing.service{% endif %}
+After=network-online.target nftables.service kea-dhcp4-server.service kea-dhcp-ddns-server.service dnsmasq.service{% if firewall_plan.policy_routes | default([]) | length > 0 %} boetticher-policy-routing.service{% endif %}
 Wants=network-online.target
 
 [Service]

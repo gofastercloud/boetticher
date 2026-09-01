@@ -140,6 +140,22 @@ case "$name" in
       exit 1
     fi
     ;;
+  boetticher-airvpn)
+    test -x "$rootfs/usr/bin/wg"
+    test -x "$rootfs/usr/bin/wireguard-go"
+    test -x "$rootfs/usr/sbin/nft"
+    test -f "$rootfs/etc/systemd/system/boetticher-airvpn.service"
+    for helper in airvpn-prepare airvpn-routes-up airvpn-routes-down airvpn-forwarding-up airvpn-forwarding-down; do
+      test -x "$rootfs/usr/lib/boetticher/$helper"
+    done
+    grep -Fq 'WG_QUICK_USERSPACE_IMPLEMENTATION=/usr/bin/wireguard-go' "$rootfs/etc/systemd/system/boetticher-airvpn.service"
+    grep -Fq 'ExecStart=/usr/bin/wg-quick up /run/boetticher/airvpn0.conf' "$rootfs/etc/systemd/system/boetticher-airvpn.service"
+    grep -Fq 'ExecStop=/usr/bin/wg-quick down /run/boetticher/airvpn0.conf' "$rootfs/etc/systemd/system/boetticher-airvpn.service"
+    if grep -R -n -E 'PrivateKey|PresharedKey|airvpn_wireguard_config|Api-Key' "$rootfs/etc" "$rootfs/usr/lib" 2>/dev/null; then
+      echo "airvpn artifact contains provider profile or credential configuration" >&2
+      exit 1
+    fi
+    ;;
   boetticher-litellm)
     test -x "$rootfs/usr/sbin/nginx"
     test -x "$rootfs/opt/litellm/bin/python"
