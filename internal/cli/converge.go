@@ -212,8 +212,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	monitoringEnabled := modules.IsEnabled(s, "monitoring")
 	aiopsEnabled := modules.IsEnabled(s, "aiops")
 	secretValues := map[string]string{}
+	platformSecrets, err := site.LoadPlatformSecretCache(*siteDir, s, *ageIdentity)
+	if err != nil {
+		return fmt.Errorf("load encrypted platform secrets: %w", err)
+	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		ddnsTSIG, loadErr := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "ddns_tsig_secret")
+		ddnsTSIG, loadErr := platformSecrets.Get("ddns_tsig_secret")
 		if loadErr != nil {
 			return fmt.Errorf("load encrypted DDNS TSIG material: %w", loadErr)
 		}
@@ -242,7 +246,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	var pulseAdminPassword string
 	if monitoringEnabled {
 		var loadErr error
-		pulseAdminPassword, loadErr = site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_admin_password")
+		pulseAdminPassword, loadErr = platformSecrets.Get("pulse_admin_password")
 		if loadErr != nil {
 			return fmt.Errorf("load encrypted Pulse administrative password: %w", loadErr)
 		}
@@ -259,7 +263,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			activeCredentialBindings = append(activeCredentialBindings, binding)
 			continue
 		}
-		value, loadErr := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, binding.SecretKey)
+		value, loadErr := platformSecrets.Get(binding.SecretKey)
 		if loadErr != nil {
 			if binding.SecretKey == "tailscale_auth_key" && errors.Is(loadErr, site.ErrPlatformSecretMissing) {
 				// A retained, valid Tailscale state file is the durable node
