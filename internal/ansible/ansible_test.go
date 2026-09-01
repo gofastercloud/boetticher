@@ -114,6 +114,9 @@ func TestPortalPublicationIsDeferredToServicesPhase(t *testing.T) {
 	if !strings.Contains(block, "portal_publication_state.rc | default(1) != 0") {
 		t.Fatal("portal publication does not have a live content and metadata drift gate")
 	}
+	if !strings.Contains(string(contents), "portal_source_archive") || !strings.Contains(block, "ansible.builtin.unarchive") || !strings.Contains(block, "Atomically activate the new portal current link") {
+		t.Fatal("portal publication is not content-addressed and transactional")
+	}
 }
 
 func TestFirewallInterfaceTemplatesUseOneLiveDriftProbe(t *testing.T) {
@@ -1350,10 +1353,13 @@ func TestApplianceRolesDoNotMutateModuleSoftware(t *testing.T) {
 			t.Fatal(err)
 		}
 		text := string(data)
-		for _, forbidden := range []string{"ansible.builtin.apt:", "ansible.builtin.apt_repository:", "ansible.builtin.get_url:", "ansible.builtin.unarchive:"} {
+		for _, forbidden := range []string{"ansible.builtin.apt:", "ansible.builtin.apt_repository:", "ansible.builtin.get_url:"} {
 			if strings.Contains(text, forbidden) {
 				t.Fatalf("%s appliance role retains software mutation task %q", role, forbidden)
 			}
+		}
+		if role != "portal" && strings.Contains(text, "ansible.builtin.unarchive:") {
+			t.Fatalf("%s appliance role retains software mutation task %q", role, "ansible.builtin.unarchive:")
 		}
 		if !strings.Contains(text, "boetticher_appliance_artifact") {
 			t.Fatalf("%s appliance role does not require the qualified artifact path", role)

@@ -267,8 +267,16 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err != nil {
 		return fmt.Errorf("digest generated portal: %w", err)
 	}
+	portalArchiveDir := filepath.Join(site.RuntimeDir(s), "portal")
+	portalSourceArchive := filepath.Join(portalArchiveDir, portalContentDigest+".tar")
+	if err := report.timed("credentials-pki", "local", "portal-archive", func() error {
+		return portal.ContentArchive(portalSourceDir, portalSourceArchive)
+	}); err != nil {
+		return fmt.Errorf("archive generated portal: %w", err)
+	}
 	runtimeVariables["portal_source_dir"] = portalSourceDir
 	runtimeVariables["portal_content_digest"] = portalContentDigest
+	runtimeVariables["portal_source_archive"] = portalSourceArchive
 	runtimeVariables["boetticher_appliance_artifact"] = true
 	// Agent installation is enabled only in the post-Pulse bootstrap pass,
 	// after the scoped report token and encrypted credential projection exist.

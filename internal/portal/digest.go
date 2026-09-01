@@ -1,12 +1,14 @@
 package portal
 
 import (
+	"archive/tar"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // ContentDigest returns a deterministic digest of the generated portal tree.
@@ -48,4 +50,105 @@ func ContentDigest(root string) (string, error) {
 		return "", fmt.Errorf("digest portal tree: %w", err)
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// ContentArchive writes a deterministic, rootless tar archive of the portal
+// tree. The archive is a transport optimisation only; the source tree and its
+// digest remain the content authority.
+func ContentArchive(root, destination string) error {
+	if root == "" || destination == "" {
+		return fmt.Errorf("portal archive source and destination are required")
+	}
+	if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
+		return fmt.Errorf("create portal archive directory: %w", err)
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(destination), ".portal-archive-*")
+	if err != nil {
+		return fmt.Errorf("create portal archive temporary file: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	removeTemporary := true
+	defer func() {
+		_ = temporary.Close()
+		if removeTemporary {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	if err := temporary.Chmod(0600); err != nil {
+		return fmt.Errorf("restrict portal archive temporary file: %w", err)
+	}
+	archiveWriter := tar.NewWriter(temporary)
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == root {
+			if !entry.IsDir() {
+				return fmt.Errorf("portal archive source is not a directory")
+			}
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("portal tree contains symlink %s", path)
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return fmt.Errorf("relativize portal archive path %s: %w", path, err)
+		}
+		header := &tar.Header{
+			Name:    filepath.ToSlash(relative),
+			ModTime: time.Unix(0, 0).UTC(),
+			Uid:     0,
+			Gid:     0,
+		}
+		if entry.IsDir() {
+			header.Mode = 0755
+			header.Typeflag = tar.TypeDir
+		} else {
+			if !entry.Type().IsRegular() {
+				return fmt.Errorf("portal tree contains non-regular file %s", path)
+			}
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			header.Mode = 0644
+			header.Typeflag = tar.TypeReg
+			header.Size = info.Size()
+		}
+		if err := archiveWriter.WriteHeader(header); err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			file, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			_, copyErr := io.Copy(archiveWriter, file)
+			closeErr := file.Close()
+			if copyErr != nil {
+				return copyErr
+			}
+			if closeErr != nil {
+				return closeErr
+			}
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("archive portal tree: %w", err)
+	}
+	if err := archiveWriter.Close(); err != nil {
+		return fmt.Errorf("close portal archive: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		return fmt.Errorf("sync portal archive: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close portal archive temporary file: %w", err)
+	}
+	if err := os.Rename(temporaryPath, destination); err != nil {
+		return fmt.Errorf("publish portal archive: %w", err)
+	}
+	removeTemporary = false
+	return nil
 }

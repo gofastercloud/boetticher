@@ -1,6 +1,9 @@
 package portal
 
 import (
+	"archive/tar"
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -163,6 +166,84 @@ func TestContentDigestRejectsSymlink(t *testing.T) {
 	}
 	if _, err := ContentDigest(root); err == nil {
 		t.Fatal("content digest accepted a symlink")
+	}
+}
+
+func TestContentArchiveIsDeterministicAndRootless(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "portal")
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("index"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "docs", "readme.html"), []byte("readme"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	firstPath := filepath.Join(dir, "first.tar")
+	secondPath := filepath.Join(dir, "second.tar")
+	if err := ContentArchive(root, firstPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := ContentArchive(root, secondPath); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(firstPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(secondPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatal("portal archives were not deterministic")
+	}
+	reader := tar.NewReader(bytes.NewReader(first))
+	seen := map[string]string{}
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if filepath.IsAbs(header.Name) || strings.HasPrefix(header.Name, "../") {
+			t.Fatalf("portal archive contains an unsafe path %q", header.Name)
+		}
+		if header.Name != "docs" && header.Name != "docs/readme.html" && header.Name != "index.html" {
+			t.Fatalf("portal archive contains unexpected path %q", header.Name)
+		}
+		if header.Typeflag == tar.TypeReg {
+			content, err := io.ReadAll(reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			seen[header.Name] = string(content)
+		}
+	}
+	if seen["index.html"] != "index" || seen["docs/readme.html"] != "readme" {
+		t.Fatalf("portal archive contents = %#v", seen)
+	}
+}
+
+func TestContentArchiveRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "portal")
+	if err := os.Mkdir(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "outside.html")
+	if err := os.WriteFile(target, []byte("outside"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "index.html")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ContentArchive(root, filepath.Join(dir, "portal.tar")); err == nil {
+		t.Fatal("portal archive accepted a symlink")
 	}
 }
 
