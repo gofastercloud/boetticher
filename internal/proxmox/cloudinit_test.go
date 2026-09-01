@@ -191,6 +191,11 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 			t.Fatalf("builder cloud-init does not pin and verify %q", required)
 		}
 	}
+	for _, required := range []string{"BOETTICHER_CACHE_ROOT=/var/cache/boetticher", "mkdir -p \"$BOETTICHER_CACHE_ROOT\""} {
+		if !strings.Contains(files.UserData, required) {
+			t.Fatalf("builder cloud-init does not configure persistent cache root %q", required)
+		}
+	}
 	if strings.Contains(files.UserData, "package_update: true") || strings.Contains(files.UserData, "packages:") {
 		t.Fatal("builder cloud-init uses unpinned cloud-init package installation")
 	}

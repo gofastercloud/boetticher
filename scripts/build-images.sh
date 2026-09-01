@@ -73,6 +73,37 @@ measurement_emit() {
   fi
 }
 
+verify_cached() {
+  expected=$1
+  file=$2
+  checker=$3
+  case "$checker" in
+    sha256sum) printf '%s  %s\n' "$expected" "$file" | sha256sum --check --status ;;
+    sha512sum) printf '%s  %s\n' "$expected" "$file" | sha512sum --check --status ;;
+    *) echo "HOLD: unsupported cached download checksum tool: $checker" >&2; return 2 ;;
+  esac
+}
+
+download_cached() {
+  destination=$1
+  url=$2
+  expected=$3
+  checker=$4
+  mkdir -p "$(dirname "$destination")"
+  if [ ! -f "$destination" ]; then
+    temporary="$destination.tmp.$$"
+    rm -f "$temporary"
+    curl --fail --location --silent --show-error --output "$temporary" "$url"
+    if ! verify_cached "$expected" "$temporary" "$checker"; then
+      rm -f "$temporary"
+      return 1
+    fi
+    mv "$temporary" "$destination"
+  else
+    verify_cached "$expected" "$destination" "$checker"
+  fi
+}
+
 zstd_level=${BOETTICHER_ZSTD_LEVEL:-19}
 case "$zstd_level" in
   ''|*[!0-9]*)
@@ -193,7 +224,8 @@ artifact_for() {
 
 create_base_rootfs() {
   rootfs=$1
-  base_cache_key=$(printf '%s\n' "$base_release" "$mirror" "$base_packages" "$(sha256sum "$base_definition" | awk '{print $1}')" | sha256sum | awk '{print $1}')
+  base_inputs_digest=$(sha256sum "$base_definition" images/base/runtime/* images/base/first-boot/* "$script_path" | sha256sum | awk '{print $1}')
+  base_cache_key=$(printf '%s\n' "$base_release" "$mirror" "$base_packages" "$base_inputs_digest" | sha256sum | awk '{print $1}')
   base_cache="$cache_root/base/$base_cache_key"
   if [ -f "$base_cache/.boetticher-base-complete" ] && [ -d "$base_cache/etc" ]; then
     rm -rf "$rootfs"
@@ -308,11 +340,8 @@ install_packages() {
 
 install_powerdns() {
   rootfs=$1
-  key="$work_root/powerdns-auth-49-pub.asc"
-  if [ ! -f "$key" ]; then
-    curl --fail --location --silent --show-error --output "$key" "$powerdns_key_url"
-  fi
-  printf '%s  %s\n' "$powerdns_key_sha256" "$key" | sha256sum --check --status
+  key="$cache_root/downloads/powerdns-auth-49-pub.asc"
+  download_cached "$key" "$powerdns_key_url" "$powerdns_key_sha256" sha256sum
   install -D -m 0644 "$key" "$rootfs/etc/apt/keyrings/auth-49-pub.asc"
   printf '%s\n' "deb [signed-by=/etc/apt/keyrings/auth-49-pub.asc] $powerdns_repo $powerdns_suite main" > "$rootfs/etc/apt/sources.list.d/pdns.list"
   printf '%s\n' 'Package: pdns-*' 'Pin: origin repo.powerdns.com' 'Pin-Priority: 600' > "$rootfs/etc/apt/preferences.d/auth-49"
@@ -344,11 +373,8 @@ install_powerdns() {
 
 install_pulse() {
   rootfs=$1
-  release="$work_root/pulse-v${pulse_version}-linux-amd64.tar.gz"
-  if [ ! -f "$release" ]; then
-    curl --fail --location --silent --show-error --output "$release" "$pulse_release_url"
-  fi
-  printf '%s  %s\n' "$pulse_release_sha256" "$release" | sha256sum --check --status
+  release="$cache_root/downloads/pulse-v${pulse_version}-linux-amd64.tar.gz"
+  download_cached "$release" "$pulse_release_url" "$pulse_release_sha256" sha256sum
   install_packages "$rootfs" nginx
   install -D -m 0755 /dev/null "$rootfs/opt/pulse/bin/pulse"
   tar -xOf "$release" ./bin/pulse > "$rootfs/opt/pulse/bin/pulse"
@@ -400,9 +426,8 @@ build_dns_blocky() {
   install_powerdns "$rootfs"
   install -D -m 0644 images/dns/common/filtering-policy.hosts "$rootfs/etc/boetticher/dns/filtering/boetticher.hosts"
   mkdir -p "$rootfs/usr/local/bin"
-  archive="$work_root/blocky_v0.34.0_Linux_x86_64.tar.gz"
-  curl --fail --location --silent --show-error --output "$archive" https://github.com/0xERR0R/blocky/releases/download/v0.34.0/blocky_v0.34.0_Linux_x86_64.tar.gz
-  printf '%s  %s\n' 17b03f892346a160e9faf974ce68baae85fa4f2a94d7bf8ea52592a94be5eeb4 "$archive" | sha256sum --check --status
+  archive="$cache_root/downloads/blocky_v0.34.0_Linux_x86_64.tar.gz"
+  download_cached "$archive" https://github.com/0xERR0R/blocky/releases/download/v0.34.0/blocky_v0.34.0_Linux_x86_64.tar.gz 17b03f892346a160e9faf974ce68baae85fa4f2a94be5eeb4 sha256sum
   tar -xOf "$archive" blocky > "$rootfs/usr/local/bin/blocky"
   chmod 0755 "$rootfs/usr/local/bin/blocky"
   blocky_config="$work_root/blocky-config.yml"
@@ -474,11 +499,8 @@ build_portal() {
 build_tailnet_router() {
   printf '%s\n' 'boetticher build stage: tailnet-router'
   rootfs=$(prepare_rootfs boetticher-tailnet-router)
-  key="$work_root/tailscale-trixie.noarmor.gpg"
-  if [ ! -f "$key" ]; then
-    curl --fail --location --silent --show-error --output "$key" "$tailscale_key_url"
-  fi
-  printf '%s  %s\n' "$tailscale_key_sha256" "$key" | sha256sum --check --status
+  key="$cache_root/downloads/tailscale-trixie.noarmor.gpg"
+  download_cached "$key" "$tailscale_key_url" "$tailscale_key_sha256" sha256sum
   install -D -m 0644 "$key" "$rootfs$tailscale_keyring"
   printf '%s\n' "deb [signed-by=$tailscale_keyring] https://pkgs.tailscale.com/stable/debian trixie main" > "$rootfs/etc/apt/sources.list.d/tailscale.list"
   install_packages "$rootfs" dbus "tailscale=$tailscale_package_version"
@@ -590,12 +612,8 @@ build_aiops() {
   install -D -m 0644 images/aiops/runtime/requirements.lock "$rootfs/tmp/aiops-requirements.lock"
   chroot "$rootfs" /opt/holmes/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/aiops-requirements.lock
   chroot "$rootfs" /opt/holmes/bin/python -c 'import importlib.metadata; assert importlib.metadata.version("holmesgpt") == "0.40.0"'
-  holmes_archive="$work_root/holmesgpt-0.40.0.tar.gz"
-  curl --fail --location --silent --show-error --output "$holmes_archive" "$holmes_source_url"
-  printf '%s  %s\n' "$holmes_source_sha256" "$holmes_archive" | sha256sum --check --status - || {
-    echo "HOLD: HolmesGPT 0.40.0 source archive failed SHA-256 verification" >&2
-    return 2
-  }
+  holmes_archive="$cache_root/downloads/holmesgpt-0.40.0.tar.gz"
+  download_cached "$holmes_archive" "$holmes_source_url" "$holmes_source_sha256" sha256sum
   tar -xOf "$holmes_archive" "$holmes_source_root/server.py" > "$rootfs/opt/holmes/server.py"
   chmod 0644 "$rootfs/opt/holmes/server.py"
   rm -f "$rootfs/tmp/aiops-requirements.lock"
@@ -620,11 +638,8 @@ build_firewall() {
   done
   destination="$output_root/boetticher-firewall"
   mkdir -p "$destination"
-  input="$work_root/debian-13-genericcloud-amd64-20260327-2429.qcow2"
-  if [ ! -f "$input" ]; then
-    curl --fail --location --silent --show-error --output "$input" https://cloud.debian.org/images/cloud/trixie/20260327-2429/debian-13-genericcloud-amd64-20260327-2429.qcow2
-  fi
-  printf '%s  %s\n' 09559ec27d263997827dd8cddf76e97ea8e0f1803380aa501ea7eaa4b4968cd76ffef4ec7eb07ef1a9ccbeb0925a5020492ea9ed53eb167d62f3a2285039912c "$input" | sha512sum --check --status
+  input="$cache_root/downloads/debian-13-genericcloud-amd64-20260327-2429.qcow2"
+  download_cached "$input" https://cloud.debian.org/images/cloud/trixie/20260327-2429/debian-13-genericcloud-amd64-20260327-2429.qcow2 09559ec27d263997827dd8cddf76e97ea8e0f1803380aa501ea7eaa4b4968cd76ffef4ec7eb07ef1a9ccbeb0925a5020492ea9ed53eb167d62f3a2285039912c sha512sum
   image="$destination/boetticher-firewall-1.0.0-amd64.qcow2"
   artifact_identity="$work_root/firewall-artifact.json"
   telemetry_binary="$work_root/boetticher-firewall-telemetry"
@@ -901,9 +916,8 @@ build_gatus_target() {
   [ -f "$(artifact_for boetticher-base)" ] || build_base
   rootfs=$(prepare_rootfs boetticher-gatus)
   install_packages "$rootfs" nginx ca-certificates
-  archive="$work_root/gatus-v5.36.0.tar.gz"
-  if [ ! -f "$archive" ]; then curl --fail --location --silent --show-error --output "$archive" "$gatus_source_url"; fi
-  printf '%s  %s\n' "$gatus_source_sha256" "$archive" | sha256sum --check --status
+  archive="$cache_root/downloads/gatus-v5.36.0.tar.gz"
+  download_cached "$archive" "$gatus_source_url" "$gatus_source_sha256" sha256sum
   source_root="$work_root/gatus-source"; rm -rf "$source_root"; mkdir -p "$source_root"
   tar -xzf "$archive" -C "$source_root" --strip-components=1
   (cd "$source_root" && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/bin/gatus" .)
