@@ -166,25 +166,18 @@ case "$name" in
     ;;
   boetticher-litellm)
     require_executable 'litellm nginx executable is missing' "$rootfs/usr/sbin/nginx"
-    require_executable 'litellm Python executable is missing' "$rootfs/opt/litellm/bin/python"
-    require_executable 'litellm server executable is missing' "$rootfs/opt/litellm/bin/litellm"
-    chroot "$rootfs" dpkg-query -W -f='${Version}' python3 | grep -Fxq '3.13.5-1'
-    chroot "$rootfs" dpkg-query -W -f='${Version}' python3-venv | grep -Fxq '3.13.5-1'
-    chroot "$rootfs" dpkg-query -W -f='${Version}' python3-pip | grep -Fxq '25.1.1+dfsg-1'
+    require_executable 'Bifrost executable is missing' "$rootfs/usr/local/libexec/boetticher-bifrost"
+    require_executable 'LiteLLM-compatible capabilities executable is missing' "$rootfs/usr/local/libexec/boetticher-litellm-model-capabilities"
+    chroot "$rootfs" getent passwd bifrost | grep -Fq ':bifrost:'
     chroot "$rootfs" dpkg-query -W -f='${Version}' nginx | grep -Fxq '1.26.3-3+deb13u7'
-    chroot "$rootfs" /opt/litellm/bin/python -c 'from importlib.metadata import version; assert version("litellm") == "1.74.9"'
     test -f "$rootfs/etc/systemd/system/litellm.service"
-    test -x "$rootfs/usr/lib/boetticher/litellm-start"
-    grep -Fq -- '--host 127.0.0.1' "$rootfs/etc/systemd/system/litellm.service"
-    grep -Fq -- 'User=root' "$rootfs/etc/systemd/system/litellm.service"
-    grep -Fxq 'Group=root' "$rootfs/etc/systemd/system/litellm.service"
-    grep -Fxq 'ExecStart=/usr/lib/boetticher/litellm-start --config /etc/boetticher/litellm/config.yaml --host 127.0.0.1 --port 4000' "$rootfs/etc/systemd/system/litellm.service"
-    grep -Fq -- 'CapabilityBoundingSet=CAP_SETUID CAP_SETGID' "$rootfs/etc/systemd/system/litellm.service"
-    test -x "$rootfs/usr/bin/setpriv"
-    test ! -e "$rootfs/etc/boetticher/litellm/config.yaml"
+    grep -Fq -- 'ExecStart=/usr/local/libexec/boetticher-bifrost serve --config /etc/boetticher/litellm/config.json' "$rootfs/etc/systemd/system/litellm.service"
+    grep -Fxq 'User=bifrost' "$rootfs/etc/systemd/system/litellm.service"
+    grep -Fxq 'Group=bifrost' "$rootfs/etc/systemd/system/litellm.service"
+    grep -Fxq 'CapabilityBoundingSet=' "$rootfs/etc/systemd/system/litellm.service"
+    test ! -e "$rootfs/etc/boetticher/litellm/config.json"
     test ! -e "$rootfs/etc/nginx/sites-enabled/default"
     test ! -e "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
-    chroot "$rootfs" runuser -u litellm -- test -x /opt/litellm/bin/litellm
     if find "$rootfs/etc/nginx" -type f \( -name '*.pem' -o -name '*.key' \) -print -quit | grep -q .; then
       echo "litellm artifact contains generated TLS material" >&2
       exit 1

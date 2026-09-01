@@ -549,49 +549,13 @@ build_airvpn() {
 build_litellm() {
   printf '%s\n' 'boetticher build stage: litellm'
   rootfs=$(prepare_rootfs boetticher-litellm)
-  install_packages "$rootfs" \
-    "nginx=$litellm_nginx_package_version" \
-    "python3=$litellm_python_package_version" \
-    "python3-venv=$litellm_python_venv_package_version" \
-    "python3-pip=$litellm_pip_package_version"
-  for package in nginx python3 python3-venv python3-pip; do
-    expected_version=$litellm_nginx_package_version
-    if [ "$package" = python3 ] || [ "$package" = python3-venv ]; then
-      expected_version=$litellm_python_package_version
-    elif [ "$package" = python3-pip ]; then
-      expected_version=$litellm_pip_package_version
-    fi
-    installed_version=$(chroot "$rootfs" dpkg-query -W -f='${Version}' "$package")
-    if [ "$installed_version" != "$expected_version" ]; then
-      echo "HOLD: unexpected $package version: $installed_version" >&2
-      return 2
-    fi
-  done
-  chroot "$rootfs" python3 -m venv /opt/litellm
-  chroot "$rootfs" useradd --system --home-dir /var/lib/litellm --create-home --shell /usr/sbin/nologin litellm
-  chroot "$rootfs" chown -R litellm:litellm /var/lib/litellm
+  install_packages "$rootfs" "nginx=$litellm_nginx_package_version"
+  chroot "$rootfs" useradd --system --home-dir /var/lib/bifrost --create-home --shell /usr/sbin/nologin bifrost
+  chroot "$rootfs" install -d -o bifrost -g bifrost -m 0750 /var/lib/bifrost
   rm -f "$rootfs/etc/nginx/sites-enabled/default" "$rootfs/etc/nginx/sites-available/default" "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
-  install -D -m 0644 images/litellm/runtime/requirements.lock "$rootfs/tmp/litellm-requirements.lock"
   install -D -m 0644 images/litellm/runtime/litellm.service "$rootfs/etc/systemd/system/litellm.service"
-  install -D -m 0750 images/litellm/runtime/litellm-start "$rootfs/usr/lib/boetticher/litellm-start"
-  install -D -m 0755 images/litellm/runtime/model-capabilities.py "$rootfs/usr/local/libexec/boetticher-litellm-model-capabilities"
-  test -x "$rootfs/usr/bin/setpriv"
-  grep -Fq -- 'User=root' "$rootfs/etc/systemd/system/litellm.service"
-  grep -Fq -- 'CapabilityBoundingSet=CAP_SETUID CAP_SETGID' "$rootfs/etc/systemd/system/litellm.service"
-  pip_install "$rootfs" /opt/litellm/bin/pip install --require-hashes --requirement /tmp/litellm-requirements.lock
-  installed_version=$(chroot "$rootfs" /opt/litellm/bin/python -c 'from importlib.metadata import version; print(version("litellm"))')
-  if [ "$installed_version" != "$litellm_version" ]; then
-    echo "HOLD: unexpected LiteLLM version: $installed_version" >&2
-    return 2
-  fi
-  # The wheel ships an example log and precompiled bytecode, and its schema
-  # metadata contains a sample Slack webhook that secret scanners correctly
-  # treat as credential-shaped content. Runtime configuration is supplied
-  # separately, so remove build residue and neutralize only that static sample.
-  find "$rootfs/opt/litellm" -type f \( -name '*.log' -o -name '*.pyc' \) -delete
-  find "$rootfs/opt/litellm" -type d -name __pycache__ -prune -exec rm -rf -- {} +
-  find "$rootfs/opt/litellm" -type f -name '*.py' -exec sed -i -E 's#https://hooks\.slack\.com/services/[A-Za-z0-9/_-]+#https://example.invalid/slack-webhook#g' {} +
-  rm -f "$rootfs/tmp/litellm-requirements.lock"
+  CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/libexec/boetticher-bifrost" ./cmd/boetticher-bifrost
+  ln -s boetticher-bifrost "$rootfs/usr/local/libexec/boetticher-litellm-model-capabilities"
   write_artifact_identity "$rootfs" litellm
   package_lxc boetticher-litellm
 }
