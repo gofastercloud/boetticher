@@ -38,8 +38,9 @@ The 0.4 image definitions pin or fetch these components:
 | [OctoPrint](https://github.com/OctoPrint/OctoPrint) | 1.11.8 | Optional printer image | Retain the application license and the locked Python dependency notices. |
 | [Tailscale](https://tailscale.com/) | 1.76.6 | Optional Tailnet Router image | Retain the package license and repository notices. |
 | [Ansible Core](https://github.com/ansible/ansible) | 2.19.1 | Controller runtime | [GPLv3 copying terms](https://github.com/ansible/ansible/blob/devel/COPYING) |
-| [python-elgato-streamdeck](https://github.com/abcminiuser/python-elgato-streamdeck) | pinned commit; runtime 0.10.0 | StreamDeck companion | Retain the source license and notices for the pinned archive. |
-| [Pillow](https://python-pillow.github.io/) and [HTTPX](https://www.python-httpx.org/) | 12.3.0 / 0.28.1 | StreamDeck companion | Retain their package licenses and notices. |
+| [matthewpi/streamdeck](https://github.com/matthewpi/streamdeck) | commit 6586ce762db315c6633567f9a10ed4ef14fcd33e | StreamDeck LXC | [MIT license](https://github.com/matthewpi/streamdeck/blob/6586ce762db315c6633567f9a10ed4ef14fcd33e/LICENSE); retain the exact Go dependency notices. |
+| [python-elgato-streamdeck](https://github.com/abcminiuser/python-elgato-streamdeck) | pinned commit; runtime 0.10.0 | External Pi StreamDeck companion | Retain the source license and notices for the pinned archive. |
+| [Pillow](https://python-pillow.github.io/) and [HTTPX](https://www.python-httpx.org/) | 12.3.0 / 0.28.1 | External Pi StreamDeck companion | Retain their package licenses and notices. |
 
 The base images also contain Debian packages such as systemd, OpenSSL,
 OpenSSH, Kea, nftables, Chrony, nginx, and CA certificates. Their exact
