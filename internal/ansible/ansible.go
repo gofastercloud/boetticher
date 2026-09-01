@@ -43,16 +43,18 @@ const (
 
 const maxAnsibleTaskTimings = 4096
 
-// TaskTiming is deliberately limited to task identity and duration. Ansible
-// results can contain credentials, rendered configuration, and command
-// output; none of that belongs in a deployment timing report.
+// TaskTiming is deliberately limited to task identity, duration, and a small
+// allow-listed set of secret-free observation markers. Ansible results can
+// contain credentials, rendered configuration, and command output; none of
+// that belongs in a deployment timing report.
 type TaskTiming struct {
-	Host       string `json:"host"`
-	Task       string `json:"task"`
-	Path       string `json:"path"`
-	Status     string `json:"status"`
-	DurationMS int64  `json:"duration_ms"`
-	Changed    bool   `json:"changed"`
+	Host       string   `json:"host"`
+	Task       string   `json:"task"`
+	Path       string   `json:"path"`
+	Status     string   `json:"status"`
+	DurationMS int64    `json:"duration_ms"`
+	Changed    bool     `json:"changed"`
+	Markers    []string `json:"markers,omitempty"`
 }
 
 type TaskBatchTiming struct {
@@ -607,13 +609,14 @@ func readTaskTimings(path string) ([]TaskTiming, []TaskBatchTiming) {
 	batchTimings := make([]TaskBatchTiming, 0)
 	for scanner.Scan() && (len(timings) < maxAnsibleTaskTimings || len(batchTimings) < maxAnsibleTaskTimings) {
 		var event struct {
-			Event      string `json:"event"`
-			Host       string `json:"host"`
-			Task       string `json:"task"`
-			Path       string `json:"path"`
-			Status     string `json:"status"`
-			DurationMS int64  `json:"duration_ms"`
-			Changed    bool   `json:"changed"`
+			Event      string   `json:"event"`
+			Host       string   `json:"host"`
+			Task       string   `json:"task"`
+			Path       string   `json:"path"`
+			Status     string   `json:"status"`
+			DurationMS int64    `json:"duration_ms"`
+			Changed    bool     `json:"changed"`
+			Markers    []string `json:"markers"`
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			continue
@@ -627,7 +630,7 @@ func readTaskTimings(path string) ([]TaskTiming, []TaskBatchTiming) {
 			if event.Host == "" || event.Task == "" || event.Status == "" || event.DurationMS < 0 || len(timings) >= maxAnsibleTaskTimings {
 				continue
 			}
-			timings = append(timings, TaskTiming{Host: event.Host, Task: event.Task, Path: event.Path, Status: event.Status, DurationMS: event.DurationMS, Changed: event.Changed})
+			timings = append(timings, TaskTiming{Host: event.Host, Task: event.Task, Path: event.Path, Status: event.Status, DurationMS: event.DurationMS, Changed: event.Changed, Markers: event.Markers})
 		}
 	}
 	return timings, batchTimings

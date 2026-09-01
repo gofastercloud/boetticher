@@ -214,14 +214,17 @@
     updated=0
     for zone in {{ item.forward_zone | quote }} {{ item.reverse_zone | quote }}; do
       if [ "$(metadata_values "$zone" ALLOW-DNSUPDATE-FROM)" != "$expected_sources" ]; then
+        printf 'boetticher-observation dns-metadata-update %s ALLOW-DNSUPDATE-FROM\n' "$zone"
         pdnsutil set-meta "$zone" ALLOW-DNSUPDATE-FROM {% for source in dns_plan.ddns.update_sources %}{{ source | quote }} {% endfor %}
         updated=1
       fi
       if [ "$(metadata_values "$zone" NOTIFY-DNSUPDATE)" != "1" ]; then
+        printf 'boetticher-observation dns-metadata-update %s NOTIFY-DNSUPDATE\n' "$zone"
         pdnsutil set-meta "$zone" NOTIFY-DNSUPDATE 1
         updated=1
       fi
       if [ "$(metadata_values "$zone" TSIG-ALLOW-DNSUPDATE)" != {{ item.tsig_key_name | quote }} ]; then
+        printf 'boetticher-observation dns-metadata-update %s TSIG-ALLOW-DNSUPDATE\n' "$zone"
         pdnsutil set-meta "$zone" TSIG-ALLOW-DNSUPDATE {{ item.tsig_key_name | quote }}
         updated=1
       fi

@@ -2023,6 +2023,11 @@ func runTrackedAnsiblePhase(ctx context.Context, playbook, inventory string, var
 	if report != nil {
 		report.recordAnsibleTaskTimings(phase, result.TaskTimings)
 		report.recordAnsibleTaskBatches(phase, result.TaskBatchTimings)
+		for _, timing := range result.TaskTimings {
+			for _, marker := range timing.Markers {
+				fmt.Fprintf(report.out, "      Observation: %s (%s)\n", marker, timing.Host)
+			}
+		}
 		target := limit
 		if target == "" {
 			target = "all managed targets"

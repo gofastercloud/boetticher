@@ -45,13 +45,14 @@ type deploymentTiming struct {
 }
 
 type deploymentAnsibleTaskTiming struct {
-	Phase      string `json:"phase"`
-	Host       string `json:"host"`
-	Task       string `json:"task"`
-	Path       string `json:"path"`
-	Status     string `json:"status"`
-	DurationMS int64  `json:"duration_ms"`
-	Changed    bool   `json:"changed"`
+	Phase      string   `json:"phase"`
+	Host       string   `json:"host"`
+	Task       string   `json:"task"`
+	Path       string   `json:"path"`
+	Status     string   `json:"status"`
+	DurationMS int64    `json:"duration_ms"`
+	Changed    bool     `json:"changed"`
+	Markers    []string `json:"markers,omitempty"`
 }
 
 type deploymentAnsibleTaskBatchTiming struct {
@@ -178,7 +179,7 @@ func (r *deploymentReport) recordAnsibleTaskTimings(phase string, timings []ansi
 	for _, timing := range timings {
 		r.ansibleTaskTimings = append(r.ansibleTaskTimings, deploymentAnsibleTaskTiming{
 			Phase: phase, Host: timing.Host, Task: timing.Task, Path: timing.Path,
-			Status: timing.Status, DurationMS: timing.DurationMS, Changed: timing.Changed,
+			Status: timing.Status, DurationMS: timing.DurationMS, Changed: timing.Changed, Markers: append([]string(nil), timing.Markers...),
 		})
 	}
 	if len(r.ansibleTaskTimings) > 4096 {
