@@ -111,6 +111,27 @@ func TestPortalPublicationIsDeferredToServicesPhase(t *testing.T) {
 	if block == "" || !strings.Contains(block, "boetticher_deploy_phase | default('full') != 'bootstrap'") {
 		t.Fatal("portal publication is not deferred from the bootstrap phase")
 	}
+	if !strings.Contains(block, "portal_publication_state.rc | default(1) != 0") {
+		t.Fatal("portal publication does not have a live content and metadata drift gate")
+	}
+}
+
+func TestFirewallInterfaceTemplatesUseOneLiveDriftProbe(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, expected := range []string{
+		"Check managed gateway interface configuration for drift",
+		"firewall_interface_config_digests[item.name].link",
+		"firewall_interface_config_digests[item.name].network",
+		"firewall_interface_state.rc != 0",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("firewall role is missing live interface drift guard %q", expected)
+		}
+	}
 }
 
 func ansibleTaskBlock(text, name string) string {
@@ -909,7 +930,7 @@ func TestDNSRoleUsesPowerDNS49CommandNames(t *testing.T) {
 			t.Fatalf("DNS role retains obsolete PowerDNS command namespace %q", forbidden)
 		}
 	}
-	for _, expected := range []string{"pdnsutil list-all-zones", "pdnsutil create-zone", "pdnsutil set-kind {{ item }} MASTER", "pdnsutil replace-rrset", "pdnsutil delete-rrset", "pdnsutil set-meta", "NOTIFY-DNSUPDATE 1", "pdnsutil create-secondary-zone", "replace-rrset {{ item }} @ NS", "item.name | replace('.' ~ dns_plan.static_zone, '')", "item.value"} {
+	for _, expected := range []string{"pdnsutil list-all-zones", "pdnsutil create-zone", "pdnsutil set-kind {{ item }} MASTER", "pdnsutil replace-rrset", "pdnsutil delete-rrset", "pdnsutil set-meta", "NOTIFY-DNSUPDATE 1", "pdnsutil create-secondary-zone", "pdnsutil replace-rrset \"$zone\" @ NS", "item.name | replace('.' ~ dns_plan.static_zone, '')", "item.value"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("DNS role missing qualified PowerDNS command %q", expected)
 		}
@@ -1207,6 +1228,7 @@ func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
 		`"trusted.lab.home.arpa"`,
 		`"sandbox.lab.home.arpa"`,
 		`"blocky_config"`,
+		`"firewall_interface_config_digests"`,
 		`upstreams:\n    groups:\n        default:`,
 		`"usb_export_manifests": []`,
 	} {
@@ -1216,6 +1238,25 @@ func TestVariablesContainDNSConvergenceContractWithoutSecrets(t *testing.T) {
 	}
 	if strings.Contains(text, "c2VjcmV0") {
 		t.Fatal("generated Ansible variables contain secret material")
+	}
+}
+
+func TestDNSAuthoritativeUpdatesAreGatedByLiveRRsetState(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"Initialize authoritative NS records on the primary when changed",
+		"Publish model-owned static DNS records to the primary when changed",
+		"pdnsutil list-zone",
+		"changed_when: \"'updated' in static_dns_records.stdout\"",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("DNS role is missing live RRset convergence guard %q", expected)
+		}
 	}
 }
 

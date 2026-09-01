@@ -11,6 +11,13 @@
       - portal_source_dir | length > 0
     fail_msg: "portal_source_dir must point to the controller-built static portal"
 
+- name: Require the controller portal content digest
+  ansible.builtin.assert:
+    that:
+      - portal_content_digest is defined
+      - portal_content_digest is match('^[0-9a-f]{64}$')
+    fail_msg: "portal_content_digest must be a controller-computed SHA-256 digest"
+
 - name: Require controller-issued portal mTLS material
   ansible.builtin.assert:
     that:
@@ -29,14 +36,41 @@
     group: root
     mode: "0755"
 
-- name: Publish generated portal
+- name: Check the published portal content and metadata
+  ansible.builtin.shell: |
+    set -eu
+    root=/var/www/boetticher
+    [ -d "$root" ] || exit 1
+    if find "$root" -type l -print -quit | grep -q .; then
+      exit 1
+    fi
+    if find "$root" -type f \( ! -user root -o ! -group root -o ! -perm 0644 \) -print -quit | grep -q .; then
+      exit 1
+    fi
+    actual="$({
+      find "$root" -type f -printf '%P\n' | LC_ALL=C sort
+    } | while IFS= read -r relative; do
+      printf '%s\0' "$relative"
+      cat "$root/$relative"
+    done | sha256sum | awk '{print $1}')"
+    [ "$actual" = "{{ portal_content_digest }}" ]
+  args:
+    executable: /bin/sh
+  register: portal_publication_state
+  changed_when: false
+  failed_when: false
+  when: boetticher_deploy_phase | default('full') != 'bootstrap'
+
+- name: Publish generated portal when content or metadata changed
   ansible.builtin.copy:
     src: "{{ portal_source_dir }}/"
     dest: /var/www/boetticher/
     owner: root
     group: root
     mode: "0644"
-  when: boetticher_deploy_phase | default('full') != 'bootstrap'
+  when:
+    - boetticher_deploy_phase | default('full') != 'bootstrap'
+    - portal_publication_state.rc | default(1) != 0
 
 - name: Create the portal TLS directory
   ansible.builtin.file:

@@ -39,6 +39,34 @@ func TestManagedPlanUsesOneUntaggedFirewallInterfacePerZone(t *testing.T) {
 	}
 }
 
+func TestGatewayInterfaceConfigurationDigestsMatchRenderedFiles(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digests := GatewayInterfaceConfigurationDigests(plan)
+	if len(digests) != len(plan.Interfaces) {
+		t.Fatalf("got %d interface configuration digests, want %d", len(digests), len(plan.Interfaces))
+	}
+	for _, iface := range plan.Interfaces {
+		got, ok := digests[iface.Name]
+		if !ok || len(got.Link) != 64 || len(got.Network) != 64 {
+			t.Fatalf("missing valid configuration digests for %s: %#v", iface.Name, got)
+		}
+		link := fmt.Sprintf("[Match]\nMACAddress=%s\n\n[Link]\nName=%s\n", iface.MAC, iface.Name)
+		network := fmt.Sprintf("[Match]\nName=%s\n\n[Network]\n", iface.Name)
+		if iface.Method == "dhcp" {
+			network += "DHCP=ipv4\n"
+		} else {
+			network += fmt.Sprintf("Address=%s\n", iface.Address)
+		}
+		network += "IPv6AcceptRA=no\nLinkLocalAddressing=no\n"
+		if got.Link != sha256Hex(link) || got.Network != sha256Hex(network) {
+			t.Fatalf("configuration digest mismatch for %s: %#v", iface.Name, got)
+		}
+	}
+}
+
 func TestManagedFirewallTelemetryContractAndSemanticCounterComments(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {

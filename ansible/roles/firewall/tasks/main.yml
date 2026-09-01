@@ -65,6 +65,34 @@
     argv: [sysctl, -w, net.ipv4.ip_forward=0, net.ipv6.conf.all.forwarding=0, net.ipv6.conf.default.forwarding=0]
   changed_when: true
 
+- name: Check managed gateway interface configuration for drift
+  ansible.builtin.shell: |
+    set -u
+    needs_convergence=0
+    check_file() {
+      path="$1"
+      expected="$2"
+      if [ -L "$path" ]; then
+        needs_convergence=1
+        return
+      fi
+      actual="$(sha256sum "$path" 2>/dev/null | awk '{print $1}' || true)"
+      metadata="$(stat -c '%U:%G:%a' "$path" 2>/dev/null || true)"
+      if [ "$actual" != "$expected" ] || [ "$metadata" != "root:root:644" ]; then
+        needs_convergence=1
+      fi
+    }
+    {% for item in firewall_plan.interfaces %}
+    check_file {{ ('/etc/systemd/network/10-boetticher-' ~ item.name ~ '.link') | quote }} {{ firewall_interface_config_digests[item.name].link | quote }}
+    check_file {{ ('/etc/systemd/network/20-boetticher-' ~ item.name ~ '.network') | quote }} {{ firewall_interface_config_digests[item.name].network | quote }}
+    {% endfor %}
+    exit "$needs_convergence"
+  args:
+    executable: /bin/sh
+  register: firewall_interface_state
+  changed_when: false
+  failed_when: false
+
 - name: Configure role-oriented gateway link names
   ansible.builtin.template:
     src: boetticher.link.j2
@@ -74,6 +102,7 @@
     mode: '0644'
   loop: "{{ firewall_plan.interfaces }}"
   notify: restart systemd-networkd
+  when: firewall_interface_state.rc != 0
 
 - name: Configure gateway network interfaces
   ansible.builtin.template:
@@ -84,6 +113,7 @@
     mode: '0644'
   loop: "{{ firewall_plan.interfaces }}"
   notify: restart systemd-networkd
+  when: firewall_interface_state.rc != 0
 
 - name: Enable systemd-networkd
   ansible.builtin.service:

@@ -31,6 +31,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/pki"
+	"github.com/gofastercloud/boetticher/internal/portal"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/site"
@@ -202,7 +203,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err != nil {
 		return err
 	}
+	portalContentDigest, err := portal.ContentDigest(portalSourceDir)
+	if err != nil {
+		return fmt.Errorf("digest generated portal: %w", err)
+	}
 	runtimeVariables["portal_source_dir"] = portalSourceDir
+	runtimeVariables["portal_content_digest"] = portalContentDigest
 	runtimeVariables["boetticher_appliance_artifact"] = true
 	// Agent installation is enabled only in the post-Pulse bootstrap pass,
 	// after the scoped report token and encrypted credential projection exist.
@@ -599,6 +605,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 				return fmt.Errorf("HOLD: decode published service Ansible variables: %w", err)
 			}
 			runtimeVariables["firewall_plan"] = finalVariableDocument["firewall_plan"]
+			runtimeVariables["firewall_interface_config_digests"] = finalVariableDocument["firewall_interface_config_digests"]
 			runtimeVariables["firewall_ruleset"] = finalRuleset
 			variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
 			if err != nil {

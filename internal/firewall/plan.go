@@ -1,6 +1,8 @@
 package firewall
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -26,6 +28,36 @@ type Interface struct {
 	VLAN    int    `json:"vlan,omitempty"`
 	Address string `json:"address"`
 	Method  string `json:"method"`
+}
+
+type InterfaceConfigurationDigest struct {
+	Link    string `json:"link"`
+	Network string `json:"network"`
+}
+
+// GatewayInterfaceConfigurationDigests returns the checksums of the two
+// systemd-networkd files rendered for each managed gateway interface. The
+// Ansible role uses these values for one cheap live drift probe before it
+// invokes the slower template modules.
+func GatewayInterfaceConfigurationDigests(plan Plan) map[string]InterfaceConfigurationDigest {
+	result := make(map[string]InterfaceConfigurationDigest, len(plan.Interfaces))
+	for _, iface := range plan.Interfaces {
+		link := fmt.Sprintf("[Match]\nMACAddress=%s\n\n[Link]\nName=%s\n", iface.MAC, iface.Name)
+		network := fmt.Sprintf("[Match]\nName=%s\n\n[Network]\n", iface.Name)
+		if iface.Method == "dhcp" {
+			network += "DHCP=ipv4\n"
+		} else {
+			network += fmt.Sprintf("Address=%s\n", iface.Address)
+		}
+		network += "IPv6AcceptRA=no\nLinkLocalAddressing=no\n"
+		result[iface.Name] = InterfaceConfigurationDigest{Link: sha256Hex(link), Network: sha256Hex(network)}
+	}
+	return result
+}
+
+func sha256Hex(value string) string {
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
 }
 
 type PolicyRule struct {

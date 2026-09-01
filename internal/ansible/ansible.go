@@ -344,36 +344,37 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation, operatorPub
 		}
 	}
 	value := struct {
-		ModelRevision                 string                        `json:"model_revision"`
-		Domain                        string                        `json:"domain"`
-		ProxmoxManagementAddress      string                        `json:"proxmox_management_address"`
-		IPv4Only                      bool                          `json:"ipv4_only"`
-		AuthoritativeDNS              string                        `json:"authoritative_dns"`
-		AuthoritativeDNSVersion       string                        `json:"authoritative_dns_version"`
-		AuthoritativePackageVersion   string                        `json:"authoritative_package_version"`
-		AuthoritativeDNSPort          string                        `json:"authoritative_dns_port"`
-		DynamicZones                  []string                      `json:"dynamic_zones"`
-		DNSPlan                       dns.Plan                      `json:"dns_plan"`
-		FirewallPlan                  firewall.Plan                 `json:"firewall_plan"`
-		MonitoringPlan                pulse.Plan                    `json:"monitoring_plan"`
-		PulseAgentTargets             []string                      `json:"pulse_agent_targets"`
-		PulseAgentVersion             string                        `json:"pulse_agent_version"`
-		PulseAgentReleaseURL          string                        `json:"pulse_agent_release_url"`
-		PulseAgentReleaseSHA256       string                        `json:"pulse_agent_release_sha256"`
-		BlockyConfig                  string                        `json:"blocky_config"`
-		LoggingPlan                   logging.Plan                  `json:"logging_plan"`
-		LoggingCollectorConfig        string                        `json:"logging_collector_config"`
-		LoggingServiceOverride        string                        `json:"logging_collector_service_override"`
-		LoggingSocketOverride         string                        `json:"logging_collector_socket_override"`
-		LoggingUploadConfigs          map[string]string             `json:"logging_upload_configs"`
-		LoggingClientCertificates     map[string]string             `json:"logging_client_certificates"`
-		LoggingCollectorCertificate   string                        `json:"logging_collector_certificate"`
-		ModuleConfigs                 map[string]model.ModuleConfig `json:"module_configs"`
-		ModuleDeclarations            []model.ModuleDeclaration     `json:"module_declarations"`
-		GatusConfig                   string                        `json:"gatus_config"`
-		USBExportManifests            []usbexport.GuestManifest     `json:"usb_export_manifests"`
-		NetworkProbeOperatorPublicKey string                        `json:"network_probe_operator_public_key,omitempty"`
-	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan, firewallPlan, monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), logging.CollectorSocketOverride(loggingPlan), loggingUploads, map[string]string{}, "", s.ModuleConfig, s.Declarations, string(gatusConfig), usbPlan, operatorPublicKey}
+		ModelRevision                  string                                           `json:"model_revision"`
+		Domain                         string                                           `json:"domain"`
+		ProxmoxManagementAddress       string                                           `json:"proxmox_management_address"`
+		IPv4Only                       bool                                             `json:"ipv4_only"`
+		AuthoritativeDNS               string                                           `json:"authoritative_dns"`
+		AuthoritativeDNSVersion        string                                           `json:"authoritative_dns_version"`
+		AuthoritativePackageVersion    string                                           `json:"authoritative_package_version"`
+		AuthoritativeDNSPort           string                                           `json:"authoritative_dns_port"`
+		DynamicZones                   []string                                         `json:"dynamic_zones"`
+		DNSPlan                        dns.Plan                                         `json:"dns_plan"`
+		FirewallPlan                   firewall.Plan                                    `json:"firewall_plan"`
+		FirewallInterfaceConfigDigests map[string]firewall.InterfaceConfigurationDigest `json:"firewall_interface_config_digests,omitempty"`
+		MonitoringPlan                 pulse.Plan                                       `json:"monitoring_plan"`
+		PulseAgentTargets              []string                                         `json:"pulse_agent_targets"`
+		PulseAgentVersion              string                                           `json:"pulse_agent_version"`
+		PulseAgentReleaseURL           string                                           `json:"pulse_agent_release_url"`
+		PulseAgentReleaseSHA256        string                                           `json:"pulse_agent_release_sha256"`
+		BlockyConfig                   string                                           `json:"blocky_config"`
+		LoggingPlan                    logging.Plan                                     `json:"logging_plan"`
+		LoggingCollectorConfig         string                                           `json:"logging_collector_config"`
+		LoggingServiceOverride         string                                           `json:"logging_collector_service_override"`
+		LoggingSocketOverride          string                                           `json:"logging_collector_socket_override"`
+		LoggingUploadConfigs           map[string]string                                `json:"logging_upload_configs"`
+		LoggingClientCertificates      map[string]string                                `json:"logging_client_certificates"`
+		LoggingCollectorCertificate    string                                           `json:"logging_collector_certificate"`
+		ModuleConfigs                  map[string]model.ModuleConfig                    `json:"module_configs"`
+		ModuleDeclarations             []model.ModuleDeclaration                        `json:"module_declarations"`
+		GatusConfig                    string                                           `json:"gatus_config"`
+		USBExportManifests             []usbexport.GuestManifest                        `json:"usb_export_manifests"`
+		NetworkProbeOperatorPublicKey  string                                           `json:"network_probe_operator_public_key,omitempty"`
+	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan, firewallPlan, firewall.GatewayInterfaceConfigurationDigests(firewallPlan), monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), logging.CollectorSocketOverride(loggingPlan), loggingUploads, map[string]string{}, "", s.ModuleConfig, s.Declarations, string(gatusConfig), usbPlan, operatorPublicKey}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err
