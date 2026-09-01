@@ -40,15 +40,19 @@ class CallbackModule(CallbackBase):
     @staticmethod
     def _markers(result):
         markers = []
-        for line in result._result.get("stdout_lines", []) or []:
-            match = _MARKER_RE.fullmatch(str(line).strip())
-            if not match:
-                continue
-            marker = f"dns-metadata-update:{match.group(1)}:{match.group(2)}"
-            if marker not in markers:
-                markers.append(marker)
-            if len(markers) >= _MAX_MARKERS:
-                break
+        results = result._result.get("results")
+        if not isinstance(results, list):
+            results = [result._result]
+        for item in results:
+            for line in item.get("stdout_lines", []) or []:
+                match = _MARKER_RE.fullmatch(str(line).strip())
+                if not match:
+                    continue
+                marker = f"dns-metadata-update:{match.group(1)}:{match.group(2)}"
+                if marker not in markers:
+                    markers.append(marker)
+                if len(markers) >= _MAX_MARKERS:
+                    return markers
         return markers
 
     def v2_runner_on_start(self, host, task):
