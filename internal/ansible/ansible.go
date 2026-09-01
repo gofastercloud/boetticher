@@ -28,6 +28,12 @@ import (
 const maxAnsibleOutputBytes = 64 * 1024
 const maxAnsibleDiagnosticBytes = 16 * 1024
 
+// The appliance inventory is small, but the network and services passes touch
+// several independent guests. Eight forks removes avoidable host batching
+// without creating unbounded load on a homelab controller or gateway. An
+// explicit operator setting remains authoritative.
+const defaultAnsibleForks = "8"
+
 type boundedOutput struct {
 	data           []byte
 	prefix         []byte
@@ -399,7 +405,7 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	}
 	command := exec.CommandContext(ctx, executable, args...)
 	command.Stdin = strings.NewReader(string(variables))
-	command.Env = append(os.Environ(), "ANSIBLE_HOST_KEY_CHECKING=True", "ANSIBLE_SSH_PIPELINING=True")
+	command.Env = ansibleEnvironment()
 	var output boundedOutput
 	command.Stdout = &output
 	command.Stderr = &output
@@ -418,6 +424,14 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 		return changed, fmt.Errorf("ansible-playbook failed: %w: %s", err, diagnostic)
 	}
 	return changed, nil
+}
+
+func ansibleEnvironment() []string {
+	environment := os.Environ()
+	if _, ok := os.LookupEnv("ANSIBLE_FORKS"); !ok {
+		environment = append(environment, "ANSIBLE_FORKS="+defaultAnsibleForks)
+	}
+	return append(environment, "ANSIBLE_HOST_KEY_CHECKING=True", "ANSIBLE_SSH_PIPELINING=True")
 }
 
 func ansibleTarget(limit string) string {

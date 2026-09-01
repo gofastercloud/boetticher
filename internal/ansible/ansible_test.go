@@ -316,13 +316,26 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 		t.Fatal(err)
 	}
 	argsPath := filepath.Join(tempDir, "args")
+	forksPath := filepath.Join(tempDir, "forks")
 	scriptPath := filepath.Join(tempDir, "ansible-playbook")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ANSIBLE_ARGS_FILE\"\ncat >/dev/null\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ANSIBLE_ARGS_FILE\"\nprintf '%s' \"$ANSIBLE_FORKS\" > \"$ANSIBLE_FORKS_FILE\"\ncat >/dev/null\n"
 	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", tempDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("ANSIBLE_ARGS_FILE", argsPath)
+	t.Setenv("ANSIBLE_FORKS_FILE", forksPath)
+	previousForks, hadForks := os.LookupEnv("ANSIBLE_FORKS")
+	if err := os.Unsetenv("ANSIBLE_FORKS"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if hadForks {
+			_ = os.Setenv("ANSIBLE_FORKS", previousForks)
+		} else {
+			_ = os.Unsetenv("ANSIBLE_FORKS")
+		}
+	})
 
 	if _, err := run(context.Background(), "ansible/site.yml", inventoryPath, []byte("{}"), "lab-fw-01"); err != nil {
 		t.Fatal(err)
@@ -337,6 +350,13 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	}
 	if strings.Contains(text, "@-\n") {
 		t.Fatalf("Ansible received the unsupported stdin filename:\n%s", text)
+	}
+	forks, err := os.ReadFile(forksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(forks) != defaultAnsibleForks {
+		t.Fatalf("Ansible fork default = %q, want %q", forks, defaultAnsibleForks)
 	}
 }
 
