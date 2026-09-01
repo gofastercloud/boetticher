@@ -1783,22 +1783,49 @@ func (c *temporaryRootCleanup) revoke(ctx context.Context) error {
 }
 
 func revokeTemporaryRootAccessForGuests(ctx context.Context, s model.Site, siteDir string, guests []proxmox.GuestPlan, operatorPublicKey string, host bool) error {
+	return revokeTemporaryRootAccessForGuestsWith(ctx, s, siteDir, guests, operatorPublicKey, host, proxmox.RevokeTemporaryRootAccess)
+}
+
+type temporaryRootRevoker func(context.Context, proxmox.CommandRunner, string, string, string, bool) error
+
+func revokeTemporaryRootAccessForGuestsWith(ctx context.Context, s model.Site, siteDir string, guests []proxmox.GuestPlan, operatorPublicKey string, host bool, revoke temporaryRootRevoker) error {
+	type target struct {
+		name    string
+		address string
+		isHost  bool
+		runner  proxmox.CommandRunner
+	}
+	targets := make([]target, 0, len(guests)+1)
 	for _, guest := range guests {
 		if guest.Owner == "" || guest.Address == "" {
 			continue
 		}
-		runner := applianceSSHRunner(s, siteDir, guest.Name)
-		if err := proxmox.RevokeTemporaryRootAccess(ctx, runner, guest.Address, "root", operatorPublicKey, false); err != nil {
-			return fmt.Errorf("revoke root access on %s: %w", guest.Name, err)
-		}
+		targets = append(targets, target{name: guest.Name, address: guest.Address, runner: applianceSSHRunner(s, siteDir, guest.Name)})
 	}
 	if host {
-		hostRunner := proxmoxRootSSHRunner(s, siteDir)
-		if err := proxmox.RevokeTemporaryRootAccess(ctx, hostRunner, s.BootstrapAddress, "root", operatorPublicKey, true); err != nil {
-			return fmt.Errorf("revoke root access on %s: %w", model.LogicalProxmoxIdentity, err)
-		}
+		targets = append(targets, target{name: model.LogicalProxmoxIdentity, address: s.BootstrapAddress, isHost: true, runner: proxmoxRootSSHRunner(s, siteDir)})
 	}
-	return nil
+	if len(targets) == 0 {
+		return nil
+	}
+
+	// Cleanup is a security boundary, not a best-effort loop. An unreachable
+	// guest must not prevent attempts against every other exact target,
+	// especially the Proxmox host. Run the independent revocations together so
+	// one slow SSH failure cannot consume the entire bounded cleanup window.
+	errs := make([]error, len(targets))
+	var wg sync.WaitGroup
+	for index, item := range targets {
+		wg.Add(1)
+		go func(index int, item target) {
+			defer wg.Done()
+			if err := revoke(ctx, item.runner, item.address, "root", operatorPublicKey, item.isHost); err != nil {
+				errs[index] = fmt.Errorf("revoke root access on %s: %w", item.name, err)
+			}
+		}(index, item)
+	}
+	wg.Wait()
+	return errors.Join(errs...)
 }
 
 func retainedGuestPlans(s model.Site) ([]proxmox.GuestPlan, error) {

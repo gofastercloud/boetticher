@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -345,6 +346,39 @@ func TestDeploymentRootCleanupTracksAuthorityEstablishedDuringRearm(t *testing.T
 	}
 	if !authorityEstablished || len(cleanup.guests) != 1 {
 		t.Fatalf("temporary root authority tracking = established:%t guests:%d", authorityEstablished, len(cleanup.guests))
+	}
+}
+
+func TestTemporaryRootCleanupAttemptsEveryTargetAfterFailure(t *testing.T) {
+	operatorKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA operator"
+	guests := []proxmox.GuestPlan{
+		{Name: "lab-dns-01", Address: "10.10.10.10", Owner: "boetticher/module/dns"},
+		{Name: "lab-monitor-01", Address: "10.10.10.20", Owner: "boetticher/module/monitoring"},
+	}
+	var mu sync.Mutex
+	seen := make(map[string]bool)
+	sentinel := errors.New("guest unavailable")
+	revoke := func(_ context.Context, _ proxmox.CommandRunner, address, _ string, _ string, host bool) error {
+		mu.Lock()
+		defer mu.Unlock()
+		key := address
+		if host {
+			key = "host:" + address
+		}
+		seen[key] = true
+		if address == "10.10.10.10" {
+			return sentinel
+		}
+		return nil
+	}
+	err := revokeTemporaryRootAccessForGuestsWith(context.Background(), model.Site{BootstrapAddress: "192.0.2.10"}, t.TempDir(), guests, operatorKey, true, revoke)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("cleanup error = %v, want the failed guest error", err)
+	}
+	for _, key := range []string{"10.10.10.10", "10.10.10.20", "host:192.0.2.10"} {
+		if !seen[key] {
+			t.Fatalf("cleanup did not attempt %s; seen=%v", key, seen)
+		}
 	}
 }
 
