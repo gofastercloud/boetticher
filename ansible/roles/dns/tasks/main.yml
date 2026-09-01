@@ -175,30 +175,41 @@
   loop: "{{ dns_plan.pending_deletions | default([]) }}"
   when: inventory_hostname == 'lab-dns-01'
 
-- name: Authorize Kea DDNS updates for dynamic forward zones
-  ansible.builtin.shell: >-
-    pdnsutil set-meta {{ item.forward_zone }} ALLOW-DNSUPDATE-FROM
-    {{ dns_plan.ddns.update_sources | join(' ') }} &&
-    pdnsutil set-meta {{ item.forward_zone }} NOTIFY-DNSUPDATE 1 &&
-    pdnsutil set-meta {{ item.forward_zone }} TSIG-ALLOW-DNSUPDATE {{ item.tsig_key_name }}
+- name: Reconcile Kea DDNS metadata on the primary when changed
+  ansible.builtin.shell: |
+    set -eu
+    metadata_values() {
+      pdnsutil get-meta "$1" "$2" 2>/dev/null |
+        sed -n 's/^[^=]*=[[:space:]]*//p' |
+        tr -s '[:space:]' '\n' |
+        awk 'NF' |
+        LC_ALL=C sort |
+        paste -sd ' ' -
+    }
+    expected_sources="$(printf '%s\n' {% for source in dns_plan.ddns.update_sources %}{{ source | quote }} {% endfor %} | tr -s '[:space:]' '\n' | awk 'NF' | LC_ALL=C sort | paste -sd ' ' -)"
+    updated=0
+    for zone in {{ item.forward_zone | quote }} {{ item.reverse_zone | quote }}; do
+      if [ "$(metadata_values "$zone" ALLOW-DNSUPDATE-FROM)" != "$expected_sources" ]; then
+        pdnsutil set-meta "$zone" ALLOW-DNSUPDATE-FROM {% for source in dns_plan.ddns.update_sources %}{{ source | quote }} {% endfor %}
+        updated=1
+      fi
+      if [ "$(metadata_values "$zone" NOTIFY-DNSUPDATE)" != "1" ]; then
+        pdnsutil set-meta "$zone" NOTIFY-DNSUPDATE 1
+        updated=1
+      fi
+      if [ "$(metadata_values "$zone" TSIG-ALLOW-DNSUPDATE)" != {{ item.tsig_key_name | quote }} ]; then
+        pdnsutil set-meta "$zone" TSIG-ALLOW-DNSUPDATE {{ item.tsig_key_name | quote }}
+        updated=1
+      fi
+    done
+    if [ "$updated" -eq 1 ]; then
+      printf 'updated\n'
+    fi
   args:
     executable: /bin/sh
   loop: "{{ dns_plan.ddns.zones }}"
-  changed_when: false
-  when:
-    - inventory_hostname == 'lab-dns-01'
-    - dns_plan.ddns.enabled | bool
-
-- name: Authorize Kea DDNS updates for reverse zones
-  ansible.builtin.shell: >-
-    pdnsutil set-meta {{ item.reverse_zone }} ALLOW-DNSUPDATE-FROM
-    {{ dns_plan.ddns.update_sources | join(' ') }} &&
-    pdnsutil set-meta {{ item.reverse_zone }} NOTIFY-DNSUPDATE 1 &&
-    pdnsutil set-meta {{ item.reverse_zone }} TSIG-ALLOW-DNSUPDATE {{ item.tsig_key_name }}
-  args:
-    executable: /bin/sh
-  loop: "{{ dns_plan.ddns.zones }}"
-  changed_when: false
+  register: ddns_metadata
+  changed_when: "'updated' in ddns_metadata.stdout"
   when:
     - inventory_hostname == 'lab-dns-01'
     - dns_plan.ddns.enabled | bool
