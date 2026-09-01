@@ -117,7 +117,7 @@
     set -eu
     records="$(pdnsutil list-zone {{ item }})"
     if printf '%s\n' "$records" | awk '$1 == "{{ item }}.{{ item }}" && $4 == "NS" && ($5 == "lab-dns-01.{{ dns_plan.static_zone }}." || $5 == "lab-dns-02.{{ dns_plan.static_zone }}.") { found=1 } END { exit !found }'; then
-      pdnsutil delete-rrset {{ item | quote }} {{ (item ~ '.' ~ item ~ '.') | quote }} NS
+      pdnsutil delete-rrset {{ item | quote }} {{ item | quote }} NS
     fi
   args:
     executable: /bin/sh
@@ -131,7 +131,7 @@
     updated=0
     {% for item in dns_plan.static_records %}
     if printf '%s\n' "$records" | awk -v wanted_name={{ (item.name ~ '.' ~ dns_plan.static_zone) | quote }} -v wanted_type={{ item.type | quote }} -v wanted_value={{ item.value | quote }} '$1 == wanted_name && $4 == wanted_type && $5 == wanted_value { found=1 } END { exit !found }'; then
-      pdnsutil delete-rrset {{ dns_plan.static_zone | quote }} {{ (item.name ~ '.' ~ dns_plan.static_zone ~ '.') | quote }} {{ item.type | quote }}
+      pdnsutil delete-rrset {{ dns_plan.static_zone | quote }} {{ item.name | quote }} {{ item.type | quote }}
       updated=1
     fi
     {% endfor %}
