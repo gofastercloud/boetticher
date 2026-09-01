@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
@@ -132,6 +133,34 @@ func TestBuilderProgressWriterForwardsOnlySafeProgressLines(t *testing.T) {
 	}
 	if strings.Contains(output.String(), "package output") || !strings.Contains(output.String(), "timing stage=artifact_build") || !strings.Contains(output.String(), "measurement stage=artifact_compression") || !strings.Contains(output.String(), "boetticher package stage: boetticher-base archive") {
 		t.Fatalf("builder progress output = %q", output.String())
+	}
+}
+
+func TestEmitTransferMeasurementReportsBytesDurationAndThroughput(t *testing.T) {
+	var output bytes.Buffer
+	emitTransferMeasurement(&output, "builder_source_transfer", "gzip", 2048, time.Now().Add(-2*time.Second))
+	line := output.String()
+	for _, required := range []string{
+		"measurement stage=builder_source_transfer",
+		"transport=gzip",
+		"bytes=2048",
+		"duration_ms=",
+		"throughput_bytes_per_second=",
+	} {
+		if !strings.Contains(line, required) {
+			t.Fatalf("transfer measurement missing %q: %q", required, line)
+		}
+	}
+}
+
+func TestEmitTransferMeasurementRejectsInvalidInputs(t *testing.T) {
+	var output bytes.Buffer
+	emitTransferMeasurement(&output, "", "gzip", 1, time.Now())
+	emitTransferMeasurement(&output, "stage", "", 1, time.Now())
+	emitTransferMeasurement(&output, "stage", "gzip", -1, time.Now())
+	emitTransferMeasurement(&output, "stage", "gzip", 1, time.Time{})
+	if output.Len() != 0 {
+		t.Fatalf("invalid transfer measurement was emitted: %q", output.String())
 	}
 }
 

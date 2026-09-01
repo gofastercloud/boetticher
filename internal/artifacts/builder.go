@@ -82,6 +82,7 @@ var PublicBuildInputs = []string{
 	"internal/streamdeck",
 	"internal/usbexport",
 	"images",
+	"scripts/benchmark-artifact-compression.sh",
 	"scripts/build-images.sh",
 	"scripts/scan-images.sh",
 	"scripts/smoke-appliance.sh",

@@ -56,6 +56,18 @@ Bootstrap's private JSON report identifies artifact stages with `phase`,
 check and a cold builder run, which makes warm and cold bootstrap comparisons
 less guessy.
 
+The builder emits artifact inventory and compression measurements for each LXC
+artifact. They include apparent and allocated rootfs bytes, regular-file count,
+compressed bytes, zstd level, wall and CPU time, compression ratio, and the
+enclosing artifact-build duration. The standalone
+`scripts/benchmark-artifact-compression.sh ROOTFS OUTPUT_DIR` harness repeats
+packaging against a qualified rootfs with plain tar and selected zstd levels;
+set `BOETTICHER_BENCHMARK_ZSTD_LEVELS` and
+`BOETTICHER_BENCHMARK_INCLUDE_PLAIN=0` to narrow a run. It writes only under
+the requested output directory and does not replace the normal qualified
+artifact. Compare end-to-end delivery time, not archive size alone, before
+changing the default transport or zstd level.
+
 Builder output is streamed to the controller and artifact uploads are streamed
 to Proxmox. Extraction rejects traversal, links, unsupported entries, excess
 entries, and excessive expanded output. Artifact binaries remain runtime/cache

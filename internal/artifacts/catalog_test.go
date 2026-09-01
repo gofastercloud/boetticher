@@ -688,8 +688,26 @@ func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *tes
 	if strings.Count(buildText, "image-tailnet-router|image-litellm|image-aiops") != 2 {
 		t.Fatal("AIOps is not accepted by both direct and selected image target validation")
 	}
-	if !strings.Contains(buildText, "zstd_level=${BOETTICHER_ZSTD_LEVEL:-19}") || !strings.Contains(buildText, `zstd -T0 "-$zstd_level"`) || !strings.Contains(buildText, `measurement_emit "artifact_compression"`) {
+	benchmarkScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "benchmark-artifact-compression.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	benchmarkText := string(benchmarkScript)
+	if !strings.Contains(buildText, "zstd_level=${BOETTICHER_ZSTD_LEVEL:-19}") || !strings.Contains(buildText, `zstd -T0 "-$2"`) || !strings.Contains(buildText, `measurement_emit "artifact_compression"`) || !strings.Contains(buildText, "artifact_inventory") {
 		t.Fatal("artifact compression does not expose bounded measurement levels with the existing default")
+	}
+	for _, required := range []string{
+		"BOETTICHER_BENCHMARK_ZSTD_LEVELS",
+		"BOETTICHER_BENCHMARK_INCLUDE_PLAIN",
+		"rootfs_apparent_bytes",
+		"rootfs_allocated_bytes",
+		"file_count",
+		"cpu_user_ms",
+		"compression_ratio",
+	} {
+		if !strings.Contains(benchmarkText, required) {
+			t.Fatalf("artifact compression benchmark is missing %q", required)
+		}
 	}
 	if strings.Count(scanText, "trivy fs --scanners vuln,secret") != 1 || !strings.Contains(scanText, "trivy fs --download-db-only") || !strings.Contains(scanText, "--skip-db-update") {
 		t.Fatalf("qualification performs more than one full Trivy filesystem scan: %d", strings.Count(scanText, "trivy fs --scanners vuln,secret"))
