@@ -296,6 +296,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return renderErr
 		}
 		runtimeVariables["firewall_ruleset"] = ruleset
+		runtimeVariables["firewall_ruleset_sha256"] = firewall.RulesetDigest(ruleset)
 	}
 	authority, err := site.LoadAuthority(*siteDir, s, *ageIdentity)
 	if err != nil {
@@ -693,6 +694,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			runtimeVariables["firewall_plan"] = finalVariableDocument["firewall_plan"]
 			runtimeVariables["firewall_interface_config_digests"] = finalVariableDocument["firewall_interface_config_digests"]
 			runtimeVariables["firewall_ruleset"] = finalRuleset
+			runtimeVariables["firewall_ruleset_sha256"] = firewall.RulesetDigest(finalRuleset)
 			variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
 			if err != nil {
 				return fmt.Errorf("HOLD: encode published service Ansible variables: %w", err)

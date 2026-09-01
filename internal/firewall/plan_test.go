@@ -67,6 +67,17 @@ func TestGatewayInterfaceConfigurationDigestsMatchRenderedFiles(t *testing.T) {
 	}
 }
 
+func TestRulesetDigestIsStableAndContentAddressed(t *testing.T) {
+	first := RulesetDigest("table inet boetticher {}\n")
+	second := RulesetDigest("table inet boetticher {}\n")
+	if first != second || len(first) != 64 {
+		t.Fatalf("identical rulesets produced different or invalid digests: %q %q", first, second)
+	}
+	if first == RulesetDigest("table inet boetticher { counter }\n") {
+		t.Fatal("different rulesets produced the same digest")
+	}
+}
+
 func TestManagedFirewallTelemetryContractAndSemanticCounterComments(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {

@@ -134,6 +134,25 @@ func TestFirewallInterfaceTemplatesUseOneLiveDriftProbe(t *testing.T) {
 	}
 }
 
+func TestFirewallRulesetTransferIsGatedByLiveContentDigest(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, expected := range []string{
+		"firewall_ruleset_sha256 is match('^[0-9a-f]{64}$')",
+		"Check the managed gateway nftables ruleset for drift",
+		"sha256sum \"$path\"",
+		"firewall_ruleset_state.rc != 0",
+		"Apply the validated ruleset before enabling forwarding",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("firewall role is missing content-addressed ruleset guard %q", expected)
+		}
+	}
+}
+
 func ansibleTaskBlock(text, name string) string {
 	start := strings.Index(text, "- name: "+name)
 	if start < 0 {
