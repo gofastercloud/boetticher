@@ -232,7 +232,7 @@
         current_tokens="$(metadata_token_metrics "$current_sources")"
         [ -n "$current_tokens" ] || current_tokens=none
         printf 'boetticher-observation dns-metadata-drift %s ALLOW-DNSUPDATE-FROM %s %s %s %s\n' "$zone" "$current_length" "$current_count" "$current_digest" "$current_tokens"
-        pdnsutil set-meta "$zone" ALLOW-DNSUPDATE-FROM {% for source in dns_plan.ddns.update_sources %}{{ source | quote }} {% endfor %}
+        pdnsutil set-meta "$zone" ALLOW-DNSUPDATE-FROM {% for source in dns_plan.ddns.update_sources %}{{ source | quote }} {% endfor %};
         updated=1
       fi
       current_notify="$(metadata_values "$zone" NOTIFY-DNSUPDATE)"

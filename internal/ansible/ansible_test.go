@@ -1336,6 +1336,7 @@ func TestDNSDDNSMetadataIsReconciledAgainstLivePowerDNSState(t *testing.T) {
 		"pdnsutil get-meta",
 		"metadata_values()",
 		"tr ',' ' '",
+		"pdnsutil set-meta \"$zone\" ALLOW-DNSUPDATE-FROM {% for source in dns_plan.ddns.update_sources %}{{ source | quote }} {% endfor %};",
 		"changed_when: \"'updated' in ddns_metadata.stdout\"",
 	} {
 		if !strings.Contains(text, expected) {
