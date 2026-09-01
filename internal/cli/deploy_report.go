@@ -274,7 +274,11 @@ func (r *deploymentReport) finalize(operationErr error) error {
 	}
 	fmt.Fprintln(r.out, r.measurements.summaryLine())
 	if len(r.mutations) > 0 {
-		fmt.Fprintln(r.out, "Changes before failure:")
+		label := "Changes applied:"
+		if operationErr != nil || r.cleanupErr != nil {
+			label = "Changes before failure:"
+		}
+		fmt.Fprintln(r.out, label)
 		for _, mutation := range r.mutations {
 			fmt.Fprintf(r.out, "  %s: %s %s\n", titleWord(mutation.Domain), mutation.Target, mutation.Action)
 		}
