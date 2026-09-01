@@ -58,6 +58,9 @@
     if find "$root" -type l -print -quit | grep -q .; then
       exit 1
     fi
+    if find "$root" -type d \( ! -user root -o ! -group root -o ! -perm 0755 \) -print -quit | grep -q .; then
+      exit 1
+    fi
     if find "$root" -type f \( ! -user root -o ! -group root -o ! -perm 0644 \) -print -quit | grep -q .; then
       exit 1
     fi
@@ -108,13 +111,15 @@
         remote_src: false
         owner: root
         group: root
-        mode: "0644"
 
     - name: Validate staged portal content and metadata
       ansible.builtin.shell: |
         set -eu
         root=/var/www/boetticher/.staging-{{ portal_content_digest }}
         if find "$root" -type l -print -quit | grep -q .; then
+          exit 1
+        fi
+        if find "$root" -type d \( ! -user root -o ! -group root -o ! -perm 0755 \) -print -quit | grep -q .; then
           exit 1
         fi
         if find "$root" -type f \( ! -user root -o ! -group root -o ! -perm 0644 \) -print -quit | grep -q .; then
@@ -140,6 +145,9 @@
         fi
         [ -d "$root" ] && [ ! -L "$root" ] || exit 1
         if find "$root" -type l -print -quit | grep -q .; then
+          exit 1
+        fi
+        if find "$root" -type d \( ! -user root -o ! -group root -o ! -perm 0755 \) -print -quit | grep -q .; then
           exit 1
         fi
         if find "$root" -type f \( ! -user root -o ! -group root -o ! -perm 0644 \) -print -quit | grep -q .; then

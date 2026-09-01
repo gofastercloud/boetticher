@@ -266,6 +266,12 @@ func TestContentArchiveIsDeterministicAndRootless(t *testing.T) {
 		if header.Name != "docs" && header.Name != "docs/readme.html" && header.Name != "index.html" {
 			t.Fatalf("portal archive contains unexpected path %q", header.Name)
 		}
+		if header.Name == "docs" && header.Mode != 0755 {
+			t.Fatalf("portal archive directory mode = %o, want 0755", header.Mode)
+		}
+		if header.Typeflag == tar.TypeReg && header.Mode != 0644 {
+			t.Fatalf("portal archive file %q mode = %o, want 0644", header.Name, header.Mode)
+		}
 		if header.Typeflag == tar.TypeReg {
 			content, err := io.ReadAll(reader)
 			if err != nil {
@@ -294,6 +300,32 @@ func TestContentArchiveRejectsSymlink(t *testing.T) {
 	}
 	if err := ContentArchive(root, filepath.Join(dir, "portal.tar")); err == nil {
 		t.Fatal("portal archive accepted a symlink")
+	}
+}
+
+func TestContentArchiveRejectsSymlinkedDestinationParent(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "portal")
+	if err := os.Mkdir(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("index"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(dir, "outside")
+	if err := os.Mkdir(outside, 0755); err != nil {
+		t.Fatal(err)
+	}
+	linkedParent := filepath.Join(dir, "archive")
+	if err := os.Symlink(outside, linkedParent); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ContentArchive(root, filepath.Join(linkedParent, "portal.tar")); err == nil {
+		t.Fatal("portal archive followed a symlinked destination parent")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "portal.tar")); !os.IsNotExist(err) {
+		t.Fatalf("portal archive was written outside the controller-owned tree: %v", err)
 	}
 }
 

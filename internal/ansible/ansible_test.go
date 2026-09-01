@@ -129,6 +129,9 @@ func TestPortalPublicationIsDeferredToServicesPhase(t *testing.T) {
 	if !strings.Contains(string(contents), "portal_source_archive") || !strings.Contains(block, "ansible.builtin.unarchive") || !strings.Contains(block, "Atomically activate the new portal current link") {
 		t.Fatal("portal publication is not content-addressed and transactional")
 	}
+	if strings.Contains(block, "mode: \"0644\"") || !strings.Contains(block, "-type d \\( ! -user root") {
+		t.Fatal("portal publication must preserve and validate executable directory modes separately from file modes")
+	}
 }
 
 func TestFirewallInterfaceTemplatesUseOneLiveDriftProbe(t *testing.T) {

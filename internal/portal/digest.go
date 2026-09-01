@@ -2,6 +2,7 @@ package portal
 
 import (
 	"archive/tar"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/gofastercloud/boetticher/internal/pathguard"
 )
 
 // ContentDigest returns a deterministic digest of the generated portal tree.
@@ -74,25 +77,8 @@ func ContentArchive(root, destination string) error {
 	if root == "" || destination == "" {
 		return fmt.Errorf("portal archive source and destination are required")
 	}
-	if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
-		return fmt.Errorf("create portal archive directory: %w", err)
-	}
-	temporary, err := os.CreateTemp(filepath.Dir(destination), ".portal-archive-*")
-	if err != nil {
-		return fmt.Errorf("create portal archive temporary file: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	removeTemporary := true
-	defer func() {
-		_ = temporary.Close()
-		if removeTemporary {
-			_ = os.Remove(temporaryPath)
-		}
-	}()
-	if err := temporary.Chmod(0600); err != nil {
-		return fmt.Errorf("restrict portal archive temporary file: %w", err)
-	}
-	archiveWriter := tar.NewWriter(temporary)
+	var archive bytes.Buffer
+	archiveWriter := tar.NewWriter(&archive)
 	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -155,15 +141,8 @@ func ContentArchive(root, destination string) error {
 	if err := archiveWriter.Close(); err != nil {
 		return fmt.Errorf("close portal archive: %w", err)
 	}
-	if err := temporary.Sync(); err != nil {
-		return fmt.Errorf("sync portal archive: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close portal archive temporary file: %w", err)
-	}
-	if err := os.Rename(temporaryPath, destination); err != nil {
+	if err := pathguard.WriteFile(destination, archive.Bytes(), 0600); err != nil {
 		return fmt.Errorf("publish portal archive: %w", err)
 	}
-	removeTemporary = false
 	return nil
 }
