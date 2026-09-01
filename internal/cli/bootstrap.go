@@ -473,15 +473,13 @@ func honorRequestedPhysicalMode(discovery networkmodel.Discovery, desiredMode, c
 
 func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan proxmox.Plan, siteDir, publicKey, _ string, identityFile string, hostRunner proxmox.CommandRunner, hostArgsRunner proxmox.ArgsCommandRunner, hostAddress, hostUser string, out io.Writer, progress *bootstrapReport) (returnErr error) {
 	cacheStarted := time.Now()
-	base, err := artifacts.ArtifactFor("base")
+	buildTargets, err := proxmox.BuilderArtifactTargetsForMissing(siteDir, plan)
 	if err != nil {
 		return err
 	}
-	if _, _, err := artifacts.ResolveArtifactEvidence(siteDir, base); err == nil {
-		if _, err := proxmox.ResolveQualifiedArtifacts(siteDir, plan, true); err == nil {
-			progress.emitTiming(out, "artifact_cache_hit", cacheStarted)
-			return nil
-		}
+	if len(buildTargets) == 0 {
+		progress.emitTiming(out, "artifact_cache_hit", cacheStarted)
+		return nil
 	}
 	progress.emitTiming(out, "artifact_cache_check", cacheStarted)
 	if client == nil {
@@ -492,6 +490,7 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 		return fmt.Errorf("prepare persistent builder cache: %w", err)
 	}
 	plan.BuilderCacheVolume = cacheVolume
+	plan.BuilderArtifactTargets = buildTargets
 	transportCompression := strings.ToLower(strings.TrimSpace(os.Getenv("BOETTICHER_BUILDER_TRANSPORT_COMPRESSION")))
 	if transportCompression == "" {
 		transportCompression = "gzip"

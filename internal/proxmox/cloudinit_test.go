@@ -1,9 +1,12 @@
 package proxmox
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"gopkg.in/yaml.v3"
 )
@@ -343,6 +346,74 @@ func TestBuilderArtifactTargetsFollowResolvedPlan(t *testing.T) {
 	if _, err := builderArtifactTargets(Plan{Guests: []GuestPlan{{Name: "unknown", Artifact: model.Artifact{Name: "unknown"}}}}); err == nil {
 		t.Fatal("unknown builder artifact was accepted")
 	}
+}
+
+func TestBuilderArtifactTargetsForMissingSkipsQualifiedArtifacts(t *testing.T) {
+	root := t.TempDir()
+	base := mustQualifiedTestArtifact(t, root, "base")
+	probe := mustQualifiedTestArtifact(t, root, "network-probe")
+	dns, err := artifacts.ArtifactFor("dns")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := Plan{Guests: []GuestPlan{
+		{Artifact: base},
+		{Artifact: dns},
+	}}
+	targets, err := BuilderArtifactTargetsForMissing(root, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"image-base", "image-dns-blocky"}
+	if strings.Join(targets, ",") != strings.Join(want, ",") {
+		t.Fatalf("missing builder targets = %#v, want %#v", targets, want)
+	}
+
+	plan.Guests = append(plan.Guests, GuestPlan{Artifact: probe})
+	plan.Guests[1].Artifact = mustQualifiedTestArtifact(t, root, "dns")
+	targets, err = BuilderArtifactTargetsForMissing(root, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 0 {
+		t.Fatalf("fully cached builder targets = %#v, want none", targets)
+	}
+}
+
+func mustQualifiedTestArtifact(t *testing.T, root, module string) model.Artifact {
+	t.Helper()
+	artifact, err := artifacts.ArtifactFor(module)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "generated", "artifacts", artifact.Name, "artifact.bin")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(module+" cached artifact"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := artifacts.EvidenceForFile(path, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = path
+	trivyPath := filepath.Join(filepath.Dir(path), "trivy.json")
+	if err := os.WriteFile(trivyPath, []byte(`{"Results":[]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	evidence.TrivyReportSHA256, err = artifacts.QualificationInputSHA256(trivyPath, "Trivy report")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err = artifacts.QualifyEvidence(evidence, artifacts.ScanSummary{Completed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := artifacts.WriteEvidence(root, artifact.Name, evidence); err != nil {
+		t.Fatal(err)
+	}
+	return artifact
 }
 
 func TestRenderBuilderCloudInitWithKeyAndTargetsUsesRequestedArtifacts(t *testing.T) {

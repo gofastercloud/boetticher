@@ -80,11 +80,16 @@ type Plan struct {
 	// ArtifactFiles is controller-local evidence and is intentionally excluded
 	// from canonical model output. It maps qualified definitions to the exact
 	// bytes that may be imported into Proxmox.
-	ArtifactFiles        map[string]string `json:"-"`
-	OperatorPublicKey    string            `json:"-"`
-	CloudInitFiles       CloudInitFiles    `json:"-"`
-	BuilderCacheVolume   string            `json:"-"`
-	DestructiveConfirmed bool              `json:"-"`
+	ArtifactFiles      map[string]string `json:"-"`
+	OperatorPublicKey  string            `json:"-"`
+	CloudInitFiles     CloudInitFiles    `json:"-"`
+	BuilderCacheVolume string            `json:"-"`
+	// BuilderArtifactTargets is an operation-local bootstrap optimization. It
+	// narrows a fresh builder run to artifacts whose controller-side
+	// qualification evidence is missing or invalid; the builder still applies
+	// its own smoke, scan, and qualification gates to every selected target.
+	BuilderArtifactTargets []string `json:"-"`
+	DestructiveConfirmed   bool     `json:"-"`
 	// PrivilegedRunner is the already-authorized, bounded root bootstrap path.
 	// Proxmox rejects /dev/net/tun on the scoped API identity, so device-bearing
 	// LXC creation applies the exact device setting through this path after the
@@ -733,7 +738,10 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 	if client == nil {
 		return false, errors.New("Proxmox client is required")
 	}
-	buildTargets, err := builderArtifactTargets(plan)
+	buildTargets := append([]string(nil), plan.BuilderArtifactTargets...)
+	if len(buildTargets) == 0 {
+		buildTargets, err = builderArtifactTargets(plan)
+	}
 	if err != nil {
 		return false, fmt.Errorf("resolve builder artifact targets: %w", err)
 	}

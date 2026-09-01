@@ -53,6 +53,51 @@ func builderArtifactTargets(plan Plan) ([]string, error) {
 	return targets, nil
 }
 
+// BuilderArtifactTargetsForMissing returns the smallest builder workload that
+// can repair the controller-side artifact cache for a resolved plan. A
+// derivative LXC still includes the base target because the builder needs its
+// rootfs as a local build input, even when the controller already has a
+// qualified base artifact. Existing artifact bytes and qualification records
+// are never copied into the builder or treated as a substitute for its gates.
+func BuilderArtifactTargetsForMissing(root string, plan Plan) ([]string, error) {
+	selected := make(map[string]bool)
+	for _, guest := range plan.Guests {
+		if guest.Artifact.Name == "" {
+			continue
+		}
+		if _, ok := artifacts.DefinitionForArtifact(guest.Artifact.Name); !ok {
+			return nil, fmt.Errorf("unsupported builder artifact %q for guest %s", guest.Artifact.Name, guest.Name)
+		}
+		if _, _, err := artifacts.ResolveArtifactEvidence(root, guest.Artifact); err != nil {
+			selected[guest.Artifact.Name] = true
+		}
+	}
+	probe, err := artifacts.ArtifactFor("network-probe")
+	if err != nil {
+		return nil, err
+	}
+	if _, _, err := artifacts.ResolveArtifactEvidence(root, probe); err != nil {
+		selected[probe.Name] = true
+	}
+	if len(selected) == 0 {
+		return nil, nil
+	}
+	for name := range selected {
+		if name != artifacts.BaseName && name != "boetticher-firewall" {
+			selected[artifacts.BaseName] = true
+			break
+		}
+	}
+	targets := make([]string, 0, len(selected))
+	for _, name := range []string{"base", "dns", "logging", "monitoring", "firewall", "portal", "tailnet-router", "litellm", "printer", "streamdeck", "aiops", "gatus", "network-probe"} {
+		definition, ok := artifacts.Lookup(name)
+		if ok && selected[definition.ArtifactName] {
+			targets = append(targets, definition.BuildTarget)
+		}
+	}
+	return targets, nil
+}
+
 func builderScanTargets(buildTargets []string) ([]string, error) {
 	scans := make([]string, 0, len(buildTargets))
 	for _, buildTarget := range buildTargets {
