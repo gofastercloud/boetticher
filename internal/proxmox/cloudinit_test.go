@@ -378,6 +378,16 @@ func TestBuilderArtifactTargetsForMissingSkipsQualifiedArtifacts(t *testing.T) {
 	if len(targets) != 0 {
 		t.Fatalf("fully cached builder targets = %#v, want none", targets)
 	}
+	if err := os.Remove(artifacts.EvidencePath(root, base.Name)); err != nil {
+		t.Fatal(err)
+	}
+	targets, err = BuilderArtifactTargetsForMissing(root, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(targets, ",") != "image-base" {
+		t.Fatalf("missing base builder targets = %#v, want image-base", targets)
+	}
 }
 
 func mustQualifiedTestArtifact(t *testing.T, root, module string) model.Artifact {

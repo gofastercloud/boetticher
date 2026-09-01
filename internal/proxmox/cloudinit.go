@@ -61,6 +61,13 @@ func builderArtifactTargets(plan Plan) ([]string, error) {
 // are never copied into the builder or treated as a substitute for its gates.
 func BuilderArtifactTargetsForMissing(root string, plan Plan) ([]string, error) {
 	selected := make(map[string]bool)
+	base, err := artifacts.ArtifactFor("base")
+	if err != nil {
+		return nil, err
+	}
+	if _, _, err := artifacts.ResolveArtifactEvidence(root, base); err != nil {
+		selected[base.Name] = true
+	}
 	for _, guest := range plan.Guests {
 		if guest.Artifact.Name == "" {
 			continue
