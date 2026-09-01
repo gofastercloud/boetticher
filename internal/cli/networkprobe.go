@@ -552,13 +552,17 @@ func mtlsDenied(output string) bool {
 }
 
 func responseDetail(response probeResponse, err error) string {
-	if err != nil {
-		return err.Error()
-	}
+	details := make([]string, 0, 3)
 	if response.Error != "" {
-		return response.Error
+		details = append(details, response.Error)
 	}
-	return strings.TrimSpace(response.Output)
+	if output := strings.TrimSpace(response.Output); output != "" {
+		details = append(details, output)
+	}
+	if err != nil {
+		details = append(details, err.Error())
+	}
+	return strings.Join(details, "; ")
 }
 
 func networkTestOverall(results []networktest.Result, cleanupErr error) string {

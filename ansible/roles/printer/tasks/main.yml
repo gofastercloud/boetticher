@@ -155,6 +155,21 @@
   loop: [octoprint, nginx]
   when: octoprint_server_cert_pem | default('') | length > 0
 
+- name: Wait for the OctoPrint backend before advertising the endpoint
+  ansible.builtin.uri:
+    url: http://127.0.0.1:5000/
+    method: GET
+    status_code: 200
+    return_content: false
+    timeout: 5
+  register: octoprint_backend
+  retries: 10
+  delay: 1
+  until: octoprint_backend.status | default(0) == 200
+  when:
+    - octoprint_server_cert_pem | default('') | length > 0
+    - boetticher_deploy_phase | default('full') in ['full', 'services']
+
 - name: Apply the mTLS frontend before testing its negative path
   ansible.builtin.meta: flush_handlers
 

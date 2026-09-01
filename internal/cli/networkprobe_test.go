@@ -71,6 +71,18 @@ func TestPolicyAllowsBuiltInHTTPSForDynamicTrustedProbeAddress(t *testing.T) {
 	}
 }
 
+func TestResponseDetailPreservesProbeOutputWhenExecutionFails(t *testing.T) {
+	detail := responseDetail(probeResponse{
+		Error:  "curl exited with status 28",
+		Output: "http_code=000 time=5.000000",
+	}, errors.New("exit status 1"))
+	for _, want := range []string{"curl exited with status 28", "http_code=000 time=5.000000", "exit status 1"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("response detail %q omitted %q", detail, want)
+		}
+	}
+}
+
 func TestFinishNetworkTestRendersBinaryOperatorResults(t *testing.T) {
 	report := networktest.Report{
 		RunID:   "run-1",
