@@ -74,33 +74,33 @@ measurement_emit() {
 }
 
 verify_cached() {
-  expected=$1
-  file=$2
-  checker=$3
-  case "$checker" in
-    sha256sum) printf '%s  %s\n' "$expected" "$file" | sha256sum --check --status ;;
-    sha512sum) printf '%s  %s\n' "$expected" "$file" | sha512sum --check --status ;;
-    *) echo "HOLD: unsupported cached download checksum tool: $checker" >&2; return 2 ;;
+  cache_expected=$1
+  cache_file=$2
+  cache_checker=$3
+  case "$cache_checker" in
+    sha256sum) printf '%s  %s\n' "$cache_expected" "$cache_file" | sha256sum --check --status ;;
+    sha512sum) printf '%s  %s\n' "$cache_expected" "$cache_file" | sha512sum --check --status ;;
+    *) echo "HOLD: unsupported cached download checksum tool: $cache_checker" >&2; return 2 ;;
   esac
 }
 
 download_cached() {
-  destination=$1
-  url=$2
-  expected=$3
-  checker=$4
-  mkdir -p "$(dirname "$destination")"
-  if [ ! -f "$destination" ]; then
-    temporary="$destination.tmp.$$"
-    rm -f "$temporary"
-    curl --fail --location --silent --show-error --output "$temporary" "$url"
-    if ! verify_cached "$expected" "$temporary" "$checker"; then
-      rm -f "$temporary"
+  cache_destination=$1
+  cache_url=$2
+  cache_expected=$3
+  cache_checker=$4
+  mkdir -p "$(dirname "$cache_destination")"
+  if [ ! -f "$cache_destination" ]; then
+    cache_temporary="$cache_destination.tmp.$$"
+    rm -f "$cache_temporary"
+    curl --fail --location --silent --show-error --output "$cache_temporary" "$cache_url"
+    if ! verify_cached "$cache_expected" "$cache_temporary" "$cache_checker"; then
+      rm -f "$cache_temporary"
       return 1
     fi
-    mv "$temporary" "$destination"
+    mv "$cache_temporary" "$cache_destination"
   else
-    verify_cached "$expected" "$destination" "$checker"
+    verify_cached "$cache_expected" "$cache_destination" "$cache_checker"
   fi
 }
 
@@ -443,7 +443,7 @@ build_dns_blocky() {
   install -D -m 0644 images/dns/common/filtering-policy.hosts "$rootfs/etc/boetticher/dns/filtering/boetticher.hosts"
   mkdir -p "$rootfs/usr/local/bin"
   archive="$cache_root/downloads/blocky_v0.34.0_Linux_x86_64.tar.gz"
-  download_cached "$archive" https://github.com/0xERR0R/blocky/releases/download/v0.34.0/blocky_v0.34.0_Linux_x86_64.tar.gz 17b03f892346a160e9faf974ce68baae85fa4f2a94be5eeb4 sha256sum
+  download_cached "$archive" https://github.com/0xERR0R/blocky/releases/download/v0.34.0/blocky_v0.34.0_Linux_x86_64.tar.gz 17b03f892346a160e9faf974ce68baae85fa4f2a94d7bf8ea52592a94be5eeb4 sha256sum
   tar -xOf "$archive" blocky > "$rootfs/usr/local/bin/blocky"
   chmod 0755 "$rootfs/usr/local/bin/blocky"
   blocky_config="$work_root/blocky-config.yml"

@@ -518,8 +518,16 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(blocky), "implementation_sha256: 17b03f892346a160e9faf974ce68baae85fa4f2a94d7bf8ea52592a94be5eeb4") {
+	blockyChecksum := "17b03f892346a160e9faf974ce68baae85fa4f2a94d7bf8ea52592a94be5eeb4"
+	if !strings.Contains(string(blocky), "implementation_sha256: "+blockyChecksum) {
 		t.Fatal("Blocky release checksum is not pinned")
+	}
+	buildScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(buildScript), "download_cached \"$archive\" https://github.com/0xERR0R/blocky/releases/download/v0.34.0/blocky_v0.34.0_Linux_x86_64.tar.gz "+blockyChecksum+" sha256sum") {
+		t.Fatal("Blocky build does not use the image definition checksum")
 	}
 	dnsCommon, err := os.ReadFile(filepath.Join(root, "dns", "image.yaml"))
 	if err != nil {
@@ -557,7 +565,7 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 			t.Fatalf("monitoring image definition is missing Pulse qualification input %q", required)
 		}
 	}
-	buildScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	buildScript, err = os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -890,6 +898,34 @@ func TestApplianceBuildUsesPersistentFilesystemAndPackageCaches(t *testing.T) {
 	}
 	if strings.Contains(text, "--no-cache-dir") {
 		t.Fatal("Python image builds explicitly disable the persistent pip cache")
+	}
+}
+
+func TestCachedDownloadDoesNotClobberBuildVariables(t *testing.T) {
+	buildScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(buildScript)
+	start := strings.Index(text, "download_cached() {")
+	if start < 0 {
+		t.Fatal("cached download helper is missing")
+	}
+	remainder := text[start:]
+	end := strings.Index(remainder, "\n}\n")
+	if end < 0 {
+		t.Fatal("cached download helper is not closed")
+	}
+	helper := remainder[:end]
+	for _, required := range []string{"cache_destination=$1", "cache_url=$2", "cache_expected=$3", "cache_checker=$4", "cache_temporary="} {
+		if !strings.Contains(helper, required) {
+			t.Fatalf("cached download helper does not isolate %q", required)
+		}
+	}
+	for _, forbidden := range []string{"\ndestination=", "\nurl=", "\nexpected=", "\nchecker=", "\ntemporary="} {
+		if strings.Contains(helper, forbidden) {
+			t.Fatalf("cached download helper assigns caller variable %q", forbidden[1:])
+		}
 	}
 }
 

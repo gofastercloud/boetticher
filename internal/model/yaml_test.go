@@ -22,6 +22,20 @@ func TestExampleSiteIsValid(t *testing.T) {
 	}
 }
 
+func TestParseDocumentSupportsLiteralBlockScalars(t *testing.T) {
+	document, err := ParseDocument([]byte("api_user: labadmin@pve\nca_pem: |\n  -----BEGIN CERTIFICATE-----\n  certificate-data\n  -----END CERTIFICATE-----\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	values, ok := document.(map[string]any)
+	if !ok {
+		t.Fatalf("parsed document type = %T, want mapping", document)
+	}
+	if got, want := values["ca_pem"], "-----BEGIN CERTIFICATE-----\ncertificate-data\n-----END CERTIFICATE-----\n"; got != want {
+		t.Fatalf("literal block scalar = %q, want %q", got, want)
+	}
+}
+
 func TestParseSiteConfigRejectsExpandedComponents(t *testing.T) {
 	data := []byte("api_version: boetticher/v3\nschema_version: 3\ncomponents: []\n")
 	_, err := ParseSiteConfig(data)

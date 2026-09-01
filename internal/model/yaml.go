@@ -240,6 +240,16 @@ func parseBlock(lines []yamlLine, index, indent int) (any, int, error) {
 			return nil, index, fmt.Errorf("line %d: duplicate key %q", line.line, key)
 		}
 		index++
+		if value == "|" || strings.HasPrefix(value, "|-") || strings.HasPrefix(value, "|+") {
+			var block strings.Builder
+			for index < len(lines) && lines[index].indent > indent {
+				block.WriteString(lines[index].text)
+				block.WriteByte('\n')
+				index++
+			}
+			result[key] = block.String()
+			continue
+		}
 		if value != "" {
 			result[key] = parseScalar(value)
 			continue
