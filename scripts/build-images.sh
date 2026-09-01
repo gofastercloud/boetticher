@@ -94,6 +94,7 @@ done
 
 output_root=${BOETTICHER_ARTIFACT_OUTPUT:-generated/artifacts}
 work_root=${BOETTICHER_IMAGE_WORK:-/tmp/boetticher-image-build}
+cache_root=${BOETTICHER_CACHE_ROOT:-$work_root/cache}
 timing_log=${BOETTICHER_TIMING_LOG:-}
 script_path=$0
 base_definition=images/base/debian.yaml
@@ -131,7 +132,7 @@ holmes_source_sha256=7016d3335a7f81810de35d9030a63bc38204d94991e3343d6cdbbcaf77a
 holmes_source_root=holmesgpt-3d201559c0f3648a6c567aece09662f4f407bcc9
 gatus_source_url=https://github.com/TwiN/gatus/archive/refs/tags/v5.36.0.tar.gz
 gatus_source_sha256=b5543af591e602281406049ee2f822a6529a8f14be0cd54df5a31c210520159a
-mkdir -p "$output_root" "$work_root"
+mkdir -p "$output_root" "$work_root" "$cache_root/apt" "$cache_root/downloads" "$cache_root/base"
 
 provenance_path="$(dirname "$output_root")/builder-provenance.json"
 version_or_unavailable() {
@@ -192,6 +193,16 @@ artifact_for() {
 
 create_base_rootfs() {
   rootfs=$1
+  base_cache_key=$(printf '%s\n' "$base_release" "$mirror" "$base_packages" "$(sha256sum "$base_definition" | awk '{print $1}')" | sha256sum | awk '{print $1}')
+  base_cache="$cache_root/base/$base_cache_key"
+  if [ -f "$base_cache/.boetticher-base-complete" ] && [ -d "$base_cache/etc" ]; then
+    rm -rf "$rootfs"
+    mkdir -p "$rootfs"
+    cp -a --reflink=auto "$base_cache/." "$rootfs/"
+    rm -f "$rootfs/.boetticher-base-complete"
+    measurement_emit "build_cache" "kind=base" "status=hit" "key=$base_cache_key"
+    return
+  fi
   rm -rf "$rootfs"
   mkdir -p "$rootfs"
   mmdebstrap --variant=minbase --architectures=amd64 \
@@ -222,6 +233,14 @@ create_base_rootfs() {
   rm -f "$rootfs/root/.ssh/authorized_keys" "$rootfs/home/labadmin/.ssh/authorized_keys"
   rm -f "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
   chroot "$rootfs" systemctl enable boetticher-first-boot.service
+  cache_tmp="$cache_root/base/.${base_cache_key}.tmp.$$"
+  rm -rf "$cache_tmp"
+  mkdir -p "$cache_tmp"
+  cp -a --reflink=auto "$rootfs/." "$cache_tmp/"
+  touch "$cache_tmp/.boetticher-base-complete"
+  rm -rf "$base_cache"
+  mv "$cache_tmp" "$base_cache"
+  measurement_emit "build_cache" "kind=base" "status=stored" "key=$base_cache_key"
 }
 
 write_artifact_identity() {
@@ -248,6 +267,8 @@ prepare_rootfs() {
 install_packages() {
   rootfs=$1
   shift
+  package_cache="$cache_root/apt/$(basename "$rootfs")"
+  mkdir -p "$package_cache"
   resolver_target=""
   resolver_backup="$work_root/$(basename "$rootfs").resolv.conf"
   if [ -L "$rootfs/etc/resolv.conf" ]; then
@@ -268,15 +289,17 @@ install_packages() {
   mount --bind /dev "$rootfs/dev"
   mount -t proc proc "$rootfs/proc"
   mount --rbind /sys "$rootfs/sys"
+  mount --bind "$package_cache" "$rootfs/var/cache/apt/archives"
   if ! chroot "$rootfs" apt-get update || ! chroot "$rootfs" env DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends "$@"; then
+    umount -R "$rootfs/var/cache/apt/archives" || true
     umount -R "$rootfs/dev" || true
     umount -R "$rootfs/proc" || true
     umount -R "$rootfs/sys" || true
     restore_resolver
     return 1
   fi
-  chroot "$rootfs" apt-get clean
-  rm -rf "$rootfs/var/lib/apt/lists/"*
+  umount -R "$rootfs/var/cache/apt/archives" || true
+  rm -rf "$rootfs/var/cache/apt/archives/"* "$rootfs/var/lib/apt/lists/"*
   umount -R "$rootfs/dev" || true
   umount -R "$rootfs/proc" || true
   umount -R "$rootfs/sys" || true

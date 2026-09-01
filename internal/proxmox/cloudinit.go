@@ -240,6 +240,8 @@ users:
       export BOETTICHER_ARTIFACT_OUTPUT=/home/labadmin/build/generated/artifacts
       export BOETTICHER_EVIDENCE_ROOT=/home/labadmin/build
       export BOETTICHER_IMAGE_WORK=/var/lib/boetticher/image-work
+      export BOETTICHER_CACHE_ROOT=/var/cache/boetticher
+      mkdir -p "$BOETTICHER_CACHE_ROOT"
       printf '%s\n' 'timing stage=builder_configuration vmid=190 cores=4 memory_mib=8192 disk_gib=32 network=bootstrap-upstream-only'
       ./scripts/build-images.sh images ` + strings.Join(buildTargets, " ") + `
       ./scripts/scan-images.sh scan-images ` + strings.Join(scanTargets, " ") + `

@@ -397,15 +397,6 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	}(), "proxmox-trust-transition-complete"}); err != nil {
 		return err
 	}
-	if err := writeModelProjections(*siteDir, s); err != nil {
-		return err
-	}
-	if err := writePhysicalDiscovery(*siteDir, s, postDiscovery); err != nil {
-		return err
-	}
-	if err := rebuildPortal(*siteDir, s); err != nil {
-		return err
-	}
 	progress.complete()
 	fmt.Fprintf(out, "Proxmox bootstrap: PASS authenticated with scoped identity on %s\n", version)
 	if s.Gateway.Mode == model.GatewayModeManaged {

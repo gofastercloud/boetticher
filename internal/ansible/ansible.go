@@ -399,7 +399,7 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	}
 	command := exec.CommandContext(ctx, executable, args...)
 	command.Stdin = strings.NewReader(string(variables))
-	command.Env = append(os.Environ(), "ANSIBLE_HOST_KEY_CHECKING=True")
+	command.Env = append(os.Environ(), "ANSIBLE_HOST_KEY_CHECKING=True", "ANSIBLE_SSH_PIPELINING=True")
 	var output boundedOutput
 	command.Stdout = &output
 	command.Stderr = &output
