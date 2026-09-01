@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,6 +101,18 @@ func TestBoundedBuilderArchiveRejectsOversizedReturn(t *testing.T) {
 	}
 	if buffer.String() != "1234" {
 		t.Fatalf("oversized builder archive changed output: %q", buffer.String())
+	}
+}
+
+func TestBuilderFailureOutputPreservesBoundedCommandError(t *testing.T) {
+	output := &boundedBuilderOutput{}
+	output.Write([]byte("stdout\n"))
+	got := builderFailureOutput(output, errors.New("SSH bootstrap command failed: artifact contains baked SSH host identity: /tmp/rootfs/etc/ssh/ssh_host_rsa_key"))
+	if !strings.Contains(got, "[builder-command-error]") || !strings.Contains(got, "artifact contains baked SSH host identity") {
+		t.Fatalf("builder command error was not preserved: %q", got)
+	}
+	if len(got) > maxBuilderDiagnosticOutput {
+		t.Fatalf("builder command diagnostic exceeded bound: %d", len(got))
 	}
 }
 

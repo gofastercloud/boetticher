@@ -597,10 +597,10 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	progress.emitTiming(out, "builder_source_transfer", sourceStarted)
 	var buildOutputBuffer boundedBuilderOutput
 	buildStarted := time.Now()
-	if err := builderRunner.RunStream(ctx, builderAddress, builderSSHUser, "/usr/local/sbin/boetticher-build", &buildOutputBuffer); err != nil {
-		builderOutput = buildOutputBuffer.String()
+	if buildErr := builderRunner.RunStream(ctx, builderAddress, builderSSHUser, "/usr/local/sbin/boetticher-build", &buildOutputBuffer); buildErr != nil {
+		builderOutput = builderFailureOutput(&buildOutputBuffer, buildErr)
 		progress.emitTiming(out, "builder_build_and_qualification", buildStarted)
-		return fmt.Errorf("qualify default appliance artifacts on temporary builder: %w", err)
+		return fmt.Errorf("qualify default appliance artifacts on temporary builder: %w", buildErr)
 	}
 	progress.emitTiming(out, "builder_build_and_qualification", buildStarted)
 	archiveFile, err := os.CreateTemp("", "boetticher-builder-artifacts-*.tar.gz")
@@ -793,6 +793,13 @@ func (b *boundedBuilderArchive) Write(data []byte) (int, error) {
 }
 
 func (b *boundedBuilderOutput) String() string { return b.buffer.String() }
+
+func builderFailureOutput(output *boundedBuilderOutput, cause error) string {
+	if cause != nil {
+		_, _ = output.Write([]byte("\n[builder-command-error]\n" + cause.Error() + "\n"))
+	}
+	return output.String()
+}
 
 func persistBuilderUnavailableDiagnostics(siteDir string, cause error) error {
 	if siteDir == "" {
