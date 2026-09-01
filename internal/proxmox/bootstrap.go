@@ -200,11 +200,12 @@ func WaitForQEMUIPv4ViaNeighbor(ctx context.Context, runner CommandRunner, addre
 }
 
 type SSHRunner struct {
-	Port          int
-	KnownHosts    string
-	StrictHostKey string
-	IdentityFile  string
-	ConfigFile    string
+	Port            int
+	KnownHosts      string
+	StrictHostKey   string
+	IdentityFile    string
+	ConfigFile      string
+	freshConnection bool
 	// HostAlias selects a generated SSH configuration host, including its
 	// ProxyJump policy. It does not change the network destination.
 	HostAlias string
@@ -212,6 +213,15 @@ type SSHRunner struct {
 	// network target remains the supplied address. It is used for bootstrap
 	// connections whose address is not resolvable through HOME DNS.
 	HostKeyAlias string
+}
+
+// FreshConnection returns a runner that bypasses OpenSSH connection
+// multiplexing. It is used for authentication probes where an existing
+// control master could outlive a temporary credential and produce a false
+// positive.
+func (r SSHRunner) FreshConnection() SSHRunner {
+	r.freshConnection = true
+	return r
 }
 
 type SSHPhysicalNetworkDiscovery struct {
@@ -694,6 +704,9 @@ func (r SSHRunner) connectionArgs(address, user, batchMode string) ([]string, st
 			return nil, "", errors.New("SSH host-key alias is not a safe identifier")
 		}
 		args = append(args, "-o", "HostKeyAlias="+r.HostKeyAlias)
+	}
+	if r.freshConnection {
+		args = append(args, "-o", "ControlMaster=no", "-o", "ControlPath=none")
 	}
 	target := address
 	if r.HostAlias != "" {

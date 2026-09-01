@@ -519,12 +519,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	report.complete()
 	report.start("appliances", "Reconcile appliance guests")
-	var firewallRunner proxmox.CommandRunner
+	var firewallRunner proxmox.SSHRunner
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		firewallRunner = applianceSSHRunner(s, *siteDir, "lab-fw-01")
 		firewallGuest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
 		if err := report.timed("appliances", "readiness", firewallGuest.Name, func() error {
-			return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, firewallRunner, firewallGuest, operatorPublicKey, deploymentKnownHosts(*siteDir), firewallGuest.Hostname+"."+s.Network.Domain, func() {
+			return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, firewallRunner.FreshConnection(), firewallGuest, operatorPublicKey, deploymentKnownHosts(*siteDir), firewallGuest.Hostname+"."+s.Network.Domain, func() {
 				rootCleanup.guestEstablished(firewallGuest)
 			})
 		}); err != nil {
@@ -612,7 +612,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			}
 			guestRunner := applianceSSHRunner(s, *siteDir, guest.Name)
 			if err := report.timed("appliances", "readiness", guest.Name, func() error {
-				return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, guestRunner, guest, operatorPublicKey, deploymentKnownHosts(*siteDir), guest.Hostname+"."+s.Network.Domain, func() {
+				return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, guestRunner.FreshConnection(), guest, operatorPublicKey, deploymentKnownHosts(*siteDir), guest.Hostname+"."+s.Network.Domain, func() {
 					rootCleanup.guestEstablished(guest)
 				})
 			}); err != nil {

@@ -106,6 +106,18 @@ func TestSSHRunnerUsesBoundedTrustOnFirstUseForFreshApplianceHostKeys(t *testing
 	}
 }
 
+func TestSSHRunnerFreshConnectionBypassesMultiplexing(t *testing.T) {
+	runner := (SSHRunner{StrictHostKey: "yes", HostAlias: "lab-dns-01"}).FreshConnection()
+	args, err := runner.commandArgs("10.10.10.10", "root", []string{"true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, "ControlMaster=no") || !strings.Contains(joined, "ControlPath=none") {
+		t.Fatalf("fresh authentication probe can reuse an existing control master: %#v", args)
+	}
+}
+
 func TestReadGuestHostKeyUsesAuthenticatedProxmoxBoundary(t *testing.T) {
 	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA guest\n"
 	for _, test := range []struct {
