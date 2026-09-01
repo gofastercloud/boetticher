@@ -1304,6 +1304,7 @@ func TestDNSAuthoritativeUpdatesAreGatedByLiveRRsetState(t *testing.T) {
 		"Remove exact malformed PowerDNS static rrsets from the prior boetticher attempt",
 		"updated=0",
 		"changed_when: \"'updated' in malformed_static_rrsets.stdout\"",
+		"changed_when: \"'updated' in malformed_ns_rrsets.stdout\"",
 		"changed_when: \"'updated' in static_dns_records.stdout\"",
 		"$4 == \"NS\"",
 		"$5 == \"lab-dns-01.{{ dns_plan.static_zone }}.\"",
