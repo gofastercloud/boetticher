@@ -1462,7 +1462,7 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 	var metadata []byte
 	err = report.timed("health", "health", "litellm", func() error {
 		var metadataErr error
-		metadata, metadataErr = runner.RunArgs(ctx, "10.10.20.60", "root", []string{"/usr/local/libexec/boetticher-litellm-model-capabilities", modelConfig.Model})
+		metadata, metadataErr = runner.RunArgs(ctx, "10.10.20.60", "root", []string{"/usr/local/libexec/boetticher-litellm-model-capabilities", modelConfig.Alias})
 		return metadataErr
 	})
 	if err != nil {

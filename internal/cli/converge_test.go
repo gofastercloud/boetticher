@@ -371,6 +371,20 @@ func TestPulseReconciliationForwardUsesRestrictedBastion(t *testing.T) {
 	}
 }
 
+func TestAIOpsModelCapabilitiesUseTheLiteLLMAlias(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `"/usr/local/libexec/boetticher-litellm-model-capabilities", modelConfig.Alias`) {
+		t.Fatal("AIOps model capability lookup does not use the declared LiteLLM alias")
+	}
+	if strings.Contains(text, `"/usr/local/libexec/boetticher-litellm-model-capabilities", modelConfig.Model`) {
+		t.Fatal("AIOps model capability lookup passes the provider model instead of the LiteLLM alias")
+	}
+}
+
 func TestDeployReconcilesLiveBastionPolicyFromCanonicalDestinations(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
 	if err != nil {
