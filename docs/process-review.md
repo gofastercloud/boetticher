@@ -602,20 +602,75 @@ host-key proof, skip post-mutation rereads, turn cleanup failure into a warning,
 or treat a health endpoint as an authenticated product journey. Those would
 make the tool feel faster by weakening the proof it is supposed to provide.
 
+## Measured follow-up: Issue #77
+
+The source review above was intentionally static. The following measurements
+are a separate live follow-up on a disposable site with all first-party
+optional modules enabled except the intentionally disabled AirVPN and Gatus
+modules. They are evidence for the current `0.4.3` branch, not a claim about
+every site shape.
+
+The five-run linear warm baseline was 352.012 seconds median and 357.548
+seconds nearest-rank p95. The first code-controlled service-only run reached
+307.104 seconds, with 146.556 seconds in network convergence and 36.188
+seconds in services convergence. That isolates the service-phase scheduling
+gain, but it is not the final comparison because the network phase was still
+linear.
+
+Commit `bbce54e` applies the same bounded `free` Ansible strategy to the
+all-host network/bootstrap pass, only after the managed gateway and both DNS
+guests pass runtime readiness. The first combined warm run completed in
+251.722 seconds: appliances 54.796 seconds, network 93.213 seconds, services
+36.122 seconds, and health 62.062 seconds. That is 100.290 seconds, or 28.5%,
+below the linear median and leaves 48.278 seconds inside the five-minute
+full-deploy objective. It is a measured single-run result, not yet a qualified
+optimized p95; more comparable warm runs are still required.
+
+The live gates remained intact on that run: status reported 13/13 checks
+healthy, `verify --live` passed, `doctor --live` passed, and the native network
+smoke suite passed all 122 cases with cleanup passing. No ownership, trust,
+replacement, mutation-scope, or final-health gate was removed. The status,
+verify, and doctor checks must use the site-local generated SSH configuration
+when inspecting an isolated site directory.
+
+Cold behavior remains a different problem. The isolated cold bootstrap took
+1,037.908 seconds and the cold deploy took 1,068.507 seconds. Builder work
+dominated: image build 585.790 seconds, qualification 214.299 seconds, and
+the returned artifact stream 104.836 seconds. The warm five-minute result must
+not be presented as a cold-install result.
+
+The measurements do not support implementing a broad operation-local snapshot
+yet: local validation and projection preparation are single-digit
+milliseconds in the live report, while remote readiness, appliance work,
+Ansible convergence, and authenticated health journeys dominate. The current
+highest-value structural changes are therefore the bounded phase scheduling
+already implemented, artifact/build-cache and compression measurement, and
+avoiding certificate or configuration churn. A snapshot can be revisited if
+future instrumentation shows local preparation becoming material.
+
+The 180-second warm aspiration in Issue #77 was not reached. Reaching it would
+require materially changing the remaining remote critical path—especially
+network convergence and health journeys—not removing their proof. That is a
+separate optimisation decision with a higher correctness risk. The current
+five-minute objective has been met once and should be called qualified only
+after the remaining comparable warm matrix is complete.
+
 ## Evidence limits
 
-This review is source-derived and local. The repository test suite was run on
-this branch with task-local Go caches:
+The original review was source-derived and local. The repository test suite
+was also run on this branch with task-local Go caches:
 
 ```text
 go test ./...
 PASS
 ```
 
-That proves the current tests pass locally. It does not prove remote CI,
-deployment, live gateway state, browser/API journeys, physical USB/storage
-state, or product-level acceptance. Runtime counts will vary with enabled
+That proves the current tests pass locally. The measured follow-up adds the
+explicit live evidence described above, but does not prove remote CI,
+deployment of a different revision, browser/API journeys outside the exercised
+paths, physical USB/storage state beyond the disposable run, or product-level
+acceptance for other module sets. Runtime counts will vary with enabled
 modules, external endpoints, retained guests, physical mode, AIOps, and retry
-paths. The approximate counts in this document should be treated as a map of
-source-level repetition and a basis for instrumentation, not as timing
-measurements.
+paths. The source-derived counts remain a map of repetition, while the timing
+claims are limited to the measured disposable runs and their stated
+qualification status.
