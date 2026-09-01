@@ -460,15 +460,15 @@ func TestGeneratedSSHConfigPathIsBoundToInventoryProjection(t *testing.T) {
 	}
 }
 
-func TestAnsibleStrategyIsFreeOnlyForServices(t *testing.T) {
+func TestAnsibleStrategyAllowsParallelConvergenceOnlyAfterFoundation(t *testing.T) {
 	t.Setenv("ANSIBLE_STRATEGY", "free")
 	for _, test := range []struct {
 		phase string
 		want  string
 	}{
 		{phase: PhaseFull, want: defaultAnsibleStrategy},
-		{phase: PhaseBootstrap, want: defaultAnsibleStrategy},
-		{phase: PhaseServices, want: serviceAnsibleStrategy},
+		{phase: PhaseBootstrap, want: parallelAnsibleStrategy},
+		{phase: PhaseServices, want: parallelAnsibleStrategy},
 		{phase: PhaseHealth, want: defaultAnsibleStrategy},
 	} {
 		environment := ansibleEnvironment("ansible/site.yml", "", test.phase)

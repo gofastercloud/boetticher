@@ -36,12 +36,12 @@ const maxAnsibleDiagnosticBytes = 16 * 1024
 const defaultAnsibleForks = "8"
 
 const (
-	// The network foundation and health phases retain linear ordering. The
-	// services phase runs only after the foundation phase has completed and
-	// contains host-local work, so independent guests can progress without
-	// waiting at every task barrier.
-	defaultAnsibleStrategy = "linear"
-	serviceAnsibleStrategy = "free"
+	// The converge orchestrator establishes the network foundation before its
+	// all-host bootstrap pass, and the services pass follows it. Both passes
+	// can progress independent guests without waiting at every task barrier.
+	// Full and health remain linear to preserve ordered limited gates.
+	defaultAnsibleStrategy  = "linear"
+	parallelAnsibleStrategy = "free"
 )
 
 const (
@@ -543,8 +543,8 @@ func ansibleEnvironment(playbook, timingPath, phase string) []string {
 		environment = append(environment, "ANSIBLE_FORKS="+defaultAnsibleForks)
 	}
 	strategy := defaultAnsibleStrategy
-	if phase == PhaseServices {
-		strategy = serviceAnsibleStrategy
+	if phase == PhaseBootstrap || phase == PhaseServices {
+		strategy = parallelAnsibleStrategy
 	}
 	// Keep the strategy deterministic for every deploy phase. In particular,
 	// an ambient ANSIBLE_STRATEGY=free must not weaken ordering in the network

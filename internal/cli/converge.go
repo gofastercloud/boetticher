@@ -740,6 +740,10 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	report.complete()
 	report.start("network", "Reconcile network and DNS")
+	// The managed gateway and both DNS guests have passed their runtime
+	// readiness checks above before this all-host bootstrap/network pass. That
+	// foundation barrier makes independent host progress safe; the later
+	// health phase remains the final live gate.
 	if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report); err != nil {
 		return err
 	}

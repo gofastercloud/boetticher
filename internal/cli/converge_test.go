@@ -171,6 +171,20 @@ func TestPublishedFirewallIsNotRepeatedInTheAllHostNetworkPhase(t *testing.T) {
 	}
 }
 
+func TestAllHostNetworkConvergenceFollowsRuntimeReadiness(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report); err != nil`)
+	gatewayReadiness := strings.Index(text, `return verifyGatewayReadiness(ctx, firewallRunner, "10.10.99.1")`)
+	dnsReadiness := strings.Index(text, `return verifyDNSReadiness(ctx, guestRunner, guest.Address)`)
+	if allHostsConvergence < 0 || gatewayReadiness < 0 || dnsReadiness < 0 || gatewayReadiness > allHostsConvergence || dnsReadiness > allHostsConvergence {
+		t.Fatal("all-host network convergence does not follow gateway and DNS runtime readiness")
+	}
+}
+
 func TestAnsiblePlaybookIsAvailableFromControllerSource(t *testing.T) {
 	root, err := applianceBuildSourceRoot()
 	if err != nil {
