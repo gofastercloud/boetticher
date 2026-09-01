@@ -22,6 +22,7 @@
     argv: [openssl, genpkey, -algorithm, EC, -pkeyopt, ec_paramgen_curve:P-256, -out, /var/lib/streamdeck/tls/streamdeck.key.pem]
   args:
     creates: /var/lib/streamdeck/tls/streamdeck.key.pem
+  when: boetticher_deploy_phase | default('full') != 'health'
 
 - name: Restrict the StreamDeck client private key
   ansible.builtin.file:
@@ -29,6 +30,7 @@
     owner: root
     group: streamdeck
     mode: '0640'
+  when: boetticher_deploy_phase | default('full') != 'health'
 
 - name: Generate the StreamDeck client CSR
   ansible.builtin.command:
@@ -45,6 +47,7 @@
       - /var/lib/streamdeck/tls/streamdeck.csr.pem
   args:
     creates: /var/lib/streamdeck/tls/streamdeck.csr.pem
+  when: boetticher_deploy_phase | default('full') != 'health'
 
 - name: Restrict the StreamDeck client CSR
   ansible.builtin.file:
@@ -52,6 +55,7 @@
     owner: root
     group: streamdeck
     mode: '0640'
+  when: boetticher_deploy_phase | default('full') != 'health'
 
 - name: Fetch the StreamDeck CSR during PKI bootstrap
   ansible.builtin.fetch:

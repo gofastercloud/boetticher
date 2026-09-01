@@ -34,6 +34,7 @@
     - {file: pulse-note, identity: aiops-pulse-note}
     - {file: log-query-client, identity: aiops-log-read}
     - {file: ai-router-client, identity: aiops-router-client}
+  when: boetticher_deploy_phase | default('full') != 'health'
 
 - name: Restrict AIOps endpoint private keys to the adapter
   ansible.builtin.file:
@@ -42,6 +43,7 @@
     group: boetticher-aiops
     mode: '0640'
   loop: [aiops, pulse-read, pulse-note, log-query-client, ai-router-client]
+  when: boetticher_deploy_phase | default('full') != 'health'
 
 - name: Generate the AIOps server CSR locally
   ansible.builtin.command:
@@ -60,6 +62,7 @@
       - /var/lib/boetticher/identity/tls/aiops.csr.pem
   args:
     creates: /var/lib/boetticher/identity/tls/aiops.csr.pem
+  when: boetticher_deploy_phase | default('full') != 'health'
 
 - name: Generate exact AIOps service-client CSRs locally
   ansible.builtin.command:
@@ -81,6 +84,7 @@
     - {file: pulse-note, identity: aiops-pulse-note}
     - {file: log-query-client, identity: aiops-log-read}
     - {file: ai-router-client, identity: aiops-router-client}
+  when: boetticher_deploy_phase | default('full') != 'health'
 
 - name: Fetch AIOps CSRs during PKI bootstrap
   ansible.builtin.fetch:

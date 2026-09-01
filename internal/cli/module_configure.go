@@ -210,7 +210,10 @@ func runModuleConfigure(args []string, input io.Reader, out, errOut io.Writer) e
 		return fail(fmt.Errorf("HOLD: required operator secrets are missing: %s", strings.Join(missing, ", ")))
 	}
 	report.Dependencies = dependencies
-	report.Changes = configureChanges(name, config, working, resolvedSite, proposedSite, fields, updates)
+	report.Changes, err = configureChanges(name, config, working, resolvedSite, proposedSite, fields, updates)
+	if err != nil {
+		return fail(err)
+	}
 	if len(report.Changes) == 0 {
 		report.Status = "NO_CHANGES"
 		return emitConfigureReport(out, opts.json, report)
@@ -840,9 +843,12 @@ func newlyEnabledDependencies(current, proposed model.Site, name string) []strin
 	return result
 }
 
-func configureChanges(name string, before, after model.SiteConfig, current, proposed model.Site, fields []model.ModuleConfigField, updates map[string]string) []moduleConfigureChange {
+func configureChanges(name string, before, after model.SiteConfig, current, proposed model.Site, fields []model.ModuleConfigField, updates map[string]string) ([]moduleConfigureChange, error) {
 	changes := make([]moduleConfigureChange, 0)
-	beforeSite, _, _ := modules.Compose(before)
+	beforeSite, _, err := modules.Compose(before)
+	if err != nil {
+		return nil, fmt.Errorf("compose existing module state: %w", err)
+	}
 	beforeEnabled := map[string]bool{}
 	for _, module := range beforeSite.Modules {
 		beforeEnabled[module.Name] = module.Enabled
@@ -879,7 +885,7 @@ func configureChanges(name string, before, after model.SiteConfig, current, prop
 		}
 		changes = append(changes, change)
 	}
-	return changes
+	return changes, nil
 }
 
 func fieldSensitive(field model.ModuleConfigField) bool {

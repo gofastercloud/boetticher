@@ -44,6 +44,9 @@ func TestPhaseVariablesExposeOnlySafeDeploymentPhaseMetadata(t *testing.T) {
 	if _, err := phaseVariables([]byte(`{}`), "unexpected"); err == nil {
 		t.Fatal("unsupported phase was accepted")
 	}
+	if _, err := phaseVariables([]byte(`{}`), PhaseHealth); err != nil {
+		t.Fatalf("health phase was rejected: %v", err)
+	}
 }
 
 func TestServicePhaseSkipsNetworkOnlyRoles(t *testing.T) {
@@ -53,13 +56,13 @@ func TestServicePhaseSkipsNetworkOnlyRoles(t *testing.T) {
 	}
 	text := string(contents)
 	for _, expected := range []string{
-		"- role: dns\n      when:\n        - inventory_hostname in groups.get('dns', [])\n        - boetticher_deploy_phase | default('full') != 'services'",
-		"- role: firewall\n      when:\n        - inventory_hostname in groups.get('firewall', [])\n        - boetticher_deploy_phase | default('full') != 'services'",
-		"- role: firewall\n      when:\n        - inventory_hostname in groups.get('firewall', [])\n        - boetticher_deploy_phase | default('full') != 'services'\n        - not (boetticher_skip_firewall | default(false) | bool)",
-		"- role: tailnet-router\n      when:\n        - inventory_hostname in groups.get('tailnet-router', [])\n        - boetticher_deploy_phase | default('full') != 'services'",
-		"- role: chrony\n      when: boetticher_deploy_phase | default('full') != 'services'",
-		"- role: usb-export-host\n      when: boetticher_deploy_phase | default('full') != 'services'",
-		"- role: network-probe-host\n      when: boetticher_deploy_phase | default('full') != 'services'",
+		"- role: dns\n      when:\n        - inventory_hostname in groups.get('dns', [])\n        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']",
+		"- role: firewall\n      when:\n        - inventory_hostname in groups.get('firewall', [])\n        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']",
+		"- role: firewall\n      when:\n        - inventory_hostname in groups.get('firewall', [])\n        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']\n        - not (boetticher_skip_firewall | default(false) | bool)",
+		"- role: tailnet-router\n      when:\n        - inventory_hostname in groups.get('tailnet-router', [])\n        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']",
+		"- role: chrony\n      when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']",
+		"- role: usb-export-host\n      when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']",
+		"- role: network-probe-host\n      when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("site playbook is missing service-phase guard block %q", expected)
@@ -85,11 +88,19 @@ func TestStableBaseTasksSkipServicesButFinalTasksRemain(t *testing.T) {
 		"Generate endpoint-local logging CSR",
 		"Install the asynchronous journal-upload configuration skeleton",
 		"Install bounded journal-upload retry policy",
+	} {
+		block := ansibleTaskBlock(text, name)
+		if block == "" || !strings.Contains(block, "boetticher_deploy_phase | default('full') in ['full', 'bootstrap']") {
+			t.Fatalf("stable base task %q is not guarded from the services phase", name)
+		}
+	}
+	for _, name := range []string{
+		"Create declared systemd credential drop-in directories",
 		"Install declared systemd credential drop-ins",
 	} {
 		block := ansibleTaskBlock(text, name)
 		if block == "" || !strings.Contains(block, "boetticher_deploy_phase | default('full') != 'services'") {
-			t.Fatalf("stable base task %q is not guarded from the services phase", name)
+			t.Fatalf("runtime base task %q is not available outside the services phase", name)
 		}
 	}
 	for _, name := range []string{

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"net"
 	"os"
 	"os/exec"
@@ -335,10 +336,43 @@ func checkRevisionFile(path, revision string) error {
 	if err != nil {
 		return err
 	}
-	if !strings.Contains(string(data), revision) {
-		return fmt.Errorf("model revision is not current")
+	text := strings.ReplaceAll(string(data), "\r\n", "\n")
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".json":
+		var document struct {
+			ModelRevision string `json:"model_revision"`
+		}
+		if err := json.Unmarshal(data, &document); err != nil {
+			return fmt.Errorf("read model revision: invalid JSON: %w", err)
+		}
+		if document.ModelRevision != revision {
+			return fmt.Errorf("model revision is not current")
+		}
+	case ".ini":
+		if !hasRevisionLine(text, "# Model revision: "+revision) {
+			return fmt.Errorf("model revision is not current")
+		}
+	case ".conf":
+		if !hasRevisionLine(text, "# boetticher-model-revision: "+revision) {
+			return fmt.Errorf("model revision is not current")
+		}
+	case ".html":
+		if !strings.Contains(text, "Model revision: <code>"+html.EscapeString(revision)+"</code>") {
+			return fmt.Errorf("model revision is not current")
+		}
+	default:
+		return fmt.Errorf("cannot verify model revision in %s", filepath.Base(path))
 	}
 	return nil
+}
+
+func hasRevisionLine(text, expected string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		if line == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func loadEvidence(dir, expectedRevision string) portal.Evidence {

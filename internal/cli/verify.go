@@ -48,12 +48,15 @@ func runVerify(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	results, verificationObservedAt := collectHealthResults(healthOptions{
+	results, verificationObservedAt, err := collectHealthResults(healthOptions{
 		siteDir:    *siteDir,
 		sshPath:    *sshPath,
 		sshJourney: *sshJourney,
 		live:       *live,
 	}, s)
+	if err != nil {
+		return err
+	}
 	fmt.Fprintln(out, "Modules")
 	for _, module := range s.Modules {
 		if module.Enabled {
@@ -109,7 +112,7 @@ type healthOptions struct {
 // It only emits checks the command can perform now. Qualification gates that
 // require an operator, an independent copy, or a separate network journey do
 // not belong in this normal health report.
-func collectHealthResults(options healthOptions, s model.Site) ([]portal.CheckResult, string) {
+func collectHealthResults(options healthOptions, s model.Site) ([]portal.CheckResult, string, error) {
 	endpointLookup, cancelEndpointLookup := verificationEndpointLookup(options.siteDir, s, options.live)
 	defer cancelEndpointLookup()
 	results := offlineVerificationResultsWithResolver(options.siteDir, s, endpointLookup)
@@ -142,7 +145,11 @@ func collectHealthResults(options healthOptions, s model.Site) ([]portal.CheckRe
 	}
 
 	observedAt := time.Now().UTC().Format(time.RFC3339)
-	return annotateVerificationEvidence(results, observedAt), observedAt
+	annotated, err := annotateVerificationEvidence(results, observedAt)
+	if err != nil {
+		return nil, "", err
+	}
+	return annotated, observedAt, nil
 }
 
 func liveGatewayHealthResults(siteDir string, s model.Site) []portal.CheckResult {
@@ -238,7 +245,7 @@ func healthStatusReport(revision, observedAt string, results []portal.CheckResul
 // annotateVerificationEvidence assigns tiers from the verification contract,
 // not from human-readable detail text. The map is deliberately explicit so a
 // renamed or newly introduced check cannot inherit a stronger evidence claim.
-func annotateVerificationEvidence(results []portal.CheckResult, observedAt string) []portal.CheckResult {
+func annotateVerificationEvidence(results []portal.CheckResult, observedAt string) ([]portal.CheckResult, error) {
 	tiers := map[string]statusmodel.EvidenceTier{
 		"canonical platform model validates":            statusmodel.TierLocal,
 		"firewall policy projection":                    statusmodel.TierLocal,
@@ -257,15 +264,17 @@ func annotateVerificationEvidence(results []portal.CheckResult, observedAt strin
 		"external gateway contract":                     statusmodel.TierLocal,
 	}
 	for index := range results {
-		results[index].Tier = statusmodel.TierLocal
-		if tier, ok := tiers[results[index].Name]; ok {
-			results[index].Tier = tier
+		if _, ok := tiers[results[index].Name]; !ok {
+			return nil, fmt.Errorf("verification result %q is not in the evidence contract", results[index].Name)
 		}
+	}
+	for index := range results {
+		results[index].Tier = tiers[results[index].Name]
 		if results[index].ObservedAt == "" {
 			results[index].ObservedAt = observedAt
 		}
 	}
-	return results
+	return results, nil
 }
 
 func runDoctor(args []string, out io.Writer) error {

@@ -1096,11 +1096,8 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 				return marshalErr
 			}
 			streamDeckVariables = append(streamDeckVariables, '\n')
-			streamDeckStarted := time.Now()
-			streamDeckErr := ansible.RunLimited(ctx, ansiblePlaybook, inventoryPath, streamDeckVariables, "lab-streamdeck-01")
-			report.recordTiming("health", "ansible", "lab-streamdeck-01", streamDeckStarted)
-			if streamDeckErr != nil {
-				return fmt.Errorf("install StreamDeck runtime: %w", streamDeckErr)
+			if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, streamDeckVariables, "lab-streamdeck-01", ansible.PhaseHealth, report); err != nil {
+				return fmt.Errorf("install StreamDeck runtime: %w", err)
 			}
 		}
 	}
@@ -1601,7 +1598,7 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 	if err != nil {
 		return err
 	}
-	return runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, append(variables, '\n'), "lab-aiops-01", report)
+	return runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, append(variables, '\n'), "lab-aiops-01", ansible.PhaseHealth, report)
 }
 
 func selectedAIOpsModel(s model.Site) (model.LiteLLMModelConfig, error) {

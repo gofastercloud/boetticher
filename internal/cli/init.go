@@ -44,10 +44,9 @@ func runInit(args []string, out io.Writer) error {
 	fmt.Fprintf(out, "Gateway: PASS mode %s\n", created.Gateway.Mode)
 	fmt.Fprintf(out, "Gateway upstream MAC: %s (create the matching upstream DHCP reservation)\n", created.Gateway.Upstream.MAC)
 	if created.Gateway.Mode == model.GatewayModeExternal {
-		fmt.Fprintln(out, "Physical network prerequisite: FAIL external mode requires a distinct physical vmbr1 trunk before bootstrap")
+		fmt.Fprintln(out, "Physical network prerequisite: external mode requires a distinct physical vmbr1 trunk before bootstrap")
 	}
-	fmt.Fprintln(out, "Readiness: FAIL")
-	fmt.Fprintln(out, "  Independent Age recovery copy: FAIL required before destructive bootstrap")
+	fmt.Fprintln(out, "Bootstrap prerequisite: independent Age recovery copy required before destructive bootstrap")
 	fmt.Fprintln(out, "Next action: secure the independent Age recovery copy, then run boetticher preflight --site <site>")
 	return nil
 }

@@ -39,6 +39,7 @@ const (
 	PhaseFull      = "full"
 	PhaseBootstrap = "bootstrap"
 	PhaseServices  = "services"
+	PhaseHealth    = "health"
 )
 
 const maxAnsibleTaskTimings = 4096
@@ -509,7 +510,7 @@ func phaseVariables(variables []byte, phase string) ([]byte, error) {
 	if phase == "" {
 		phase = PhaseFull
 	}
-	if phase != PhaseFull && phase != PhaseBootstrap && phase != PhaseServices {
+	if phase != PhaseFull && phase != PhaseBootstrap && phase != PhaseServices && phase != PhaseHealth {
 		return nil, fmt.Errorf("unsupported Ansible deployment phase %q", phase)
 	}
 	var values map[string]any
