@@ -414,7 +414,11 @@ func readCredential(path string) (string, error) {
 	if err != nil {
 		return "", errors.New("credential is unavailable")
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 {
+	// systemd exposes credentials through a private, read-only directory. The
+	// projected file may therefore carry read bits beyond the service UID;
+	// reject writable files and symlinks while relying on systemd for the
+	// directory access boundary.
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o222 != 0 {
 		return "", errors.New("credential file is not a protected regular file")
 	}
 	data, err := os.ReadFile(path)

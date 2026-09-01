@@ -131,6 +131,17 @@ func TestRouterRejectsSymlinkedCredential(t *testing.T) {
 	}
 }
 
+func TestRouterAcceptsSystemdReadOnlyCredentialProjection(t *testing.T) {
+	credentials := t.TempDir()
+	if err := os.WriteFile(filepath.Join(credentials, "key"), []byte("test-key"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	config := Config{Upstreams: []Upstream{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", Credential: "key"}}, Models: []Model{{Alias: "operations", Upstream: "openrouter", Model: "openai/model"}}}
+	if _, err := NewRouter(config, credentials); err != nil {
+		t.Fatalf("systemd-style read-only credential was rejected: %v", err)
+	}
+}
+
 func TestModelCapabilitiesAreReadFromTheConfiguredProvider(t *testing.T) {
 	credentials := t.TempDir()
 	if err := os.WriteFile(filepath.Join(credentials, "key"), []byte("test-key"), 0o400); err != nil {
