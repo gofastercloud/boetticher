@@ -31,7 +31,8 @@ records require a fresh construction.
 The builder receives an artifact target list derived from the resolved plan.
 The base, enabled module appliances, and managed firewall are built
 and qualified; disabled optional modules such as Tailnet Router and LiteLLM
-are not constructed during the default workflow. The memory-heavy base and
+(including its lightweight Bifrost implementation) are not constructed during
+the default workflow. The memory-heavy base and
 firewall stages run sequentially on the bounded builder; after they complete,
 independent LXC workers use bounded concurrency of two. Each worker has its
 own root filesystem, temporary build directory, log, and cleanup trap; a

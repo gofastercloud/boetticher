@@ -11,11 +11,13 @@ modules:
     model_alias: operations-investigator
 ```
 
-The module depends on Pulse monitoring, mandatory central logging, and
-LiteLLM. Provider credentials, upstream URLs, and provider model identifiers
-remain owned by LiteLLM and are not valid AIOps configuration.
+The module depends on Pulse monitoring, mandatory central logging, and the
+LiteLLM-compatible AI Router module. That module is implemented by the
+lightweight Bifrost router and is currently provisioned only for AIOps.
+Provider credentials, upstream URLs, and provider model identifiers remain
+owned by the router and are not valid AIOps configuration.
 
-Activation is fail-closed. LiteLLM's pinned local metadata must explicitly
+Activation is fail-closed. The router's local provider metadata must explicitly
 prove chat completions, function calling, response schemas, at least 32,768
 input tokens, and at least 1,200 output tokens. Core then runs a bounded live
 tool-calling and response-schema canary through the declared alias. Unknown

@@ -625,12 +625,9 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	for _, required := range []string{
 		"name: boetticher-litellm",
 		"version: 1.0.0",
-		"python: 3.13.5-1",
-		"python_venv: 3.13.5-1",
-		"pip: 25.1.1+dfsg-1",
-		"litellm: 1.74.9",
+		"router: bifrost",
+		"router_contract: litellm-openai-compatible",
 		"nginx: 1.26.3-3+deb13u7",
-		"dependency_lock: requirements.lock",
 		"backend_bind: 127.0.0.1:4000",
 		"mtls_required: true",
 	} {
@@ -638,45 +635,25 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 			t.Fatalf("LiteLLM image definition is missing %q", required)
 		}
 	}
-	lock, err := os.ReadFile(filepath.Join(root, "litellm", "runtime", "requirements.lock"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(lock), "litellm==1.74.9") || !strings.Contains(string(lock), "--hash=sha256:") {
-		t.Fatal("LiteLLM dependency lock is not transitive and hash pinned")
-	}
 	smokeScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "smoke-appliance.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	buildText := string(buildScript)
 	smokeText := string(smokeScript)
-	if strings.Contains(buildText+smokeText, "litellm.__version__") || !strings.Contains(buildText, "from importlib.metadata import version") || !strings.Contains(buildText, `version("litellm")`) || !strings.Contains(smokeText, `version("litellm")`) {
-		t.Fatal("LiteLLM qualification does not use stable distribution metadata for version verification")
-	}
-	capabilityReader, err := os.ReadFile(filepath.Join(root, "litellm", "runtime", "model-capabilities.py"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, required := range []string{"LITELLM_LOCAL_MODEL_COST_MAP", "supports_function_calling", "supports_response_schema", "max_input_tokens", "max_output_tokens"} {
-		if !strings.Contains(string(capabilityReader), required) {
-			t.Fatalf("LiteLLM capability reader is missing fail-closed field %q", required)
-		}
+	if strings.Contains(buildText+smokeText, "litellm.__version__") {
+		t.Fatal("LiteLLM replacement still carries the removed Python runtime contract")
 	}
 	for _, required := range []string{
 		"build_tailnet_router",
 		"build_litellm",
-		"--require-hashes",
-		"test -x \"$rootfs/usr/bin/setpriv\"",
-		"grep -Fq -- 'User=root' \"$rootfs/etc/systemd/system/litellm.service\"",
-		"grep -Fq -- 'CapabilityBoundingSet=CAP_SETUID CAP_SETGID' \"$rootfs/etc/systemd/system/litellm.service\"",
+		"CGO_ENABLED=0 go build",
+		"grep -Fxq 'User=bifrost' \"$rootfs/etc/systemd/system/litellm.service\"",
+		"grep -Fxq 'CapabilityBoundingSet=' \"$rootfs/etc/systemd/system/litellm.service\"",
 		"rm -f \"$rootfs/etc/nginx/sites-enabled/default\"",
-		"find \"$rootfs/opt/litellm\" -type f \\(",
-		"-name '*.log' -o -name '*.pyc'",
-		"-name __pycache__ -prune -exec rm -rf -- {} +",
-		`sed -i -E 's#https://hooks\.slack\.com/services/[A-Za-z0-9/_-]+#https://example.invalid/slack-webhook#g'`,
+		"boetticher-bifrost",
 	} {
-		if !strings.Contains(buildText, required) {
+		if !strings.Contains(buildText+smokeText, required) {
 			t.Fatalf("LiteLLM build hygiene is missing %q", required)
 		}
 	}
@@ -1056,7 +1033,7 @@ func TestBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {
 		}
 		entries[header.Name] = true
 	}
-	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "images/tailnet-router/image.yaml", "images/litellm/runtime/requirements.lock", "images/streamdeck/runtime/streamdeck-status.service", "services/streamdeck/src/boetticher_streamdeck/app.py", "cmd/qualify-artifact/main.go", "cmd/boetticher-aiops/main.go", "cmd/boetticher-log-query/main.go", "internal/aiops/aiops.go", "internal/gatus/gatus.go", "internal/usbexport/plan.go"} {
+	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "images/tailnet-router/image.yaml", "cmd/boetticher-bifrost/main.go", "internal/bifrost/router.go", "images/streamdeck/runtime/streamdeck-status.service", "services/streamdeck/src/boetticher_streamdeck/app.py", "cmd/qualify-artifact/main.go", "cmd/boetticher-aiops/main.go", "cmd/boetticher-log-query/main.go", "internal/aiops/aiops.go", "internal/gatus/gatus.go", "internal/usbexport/plan.go"} {
 		if !entries[required] {
 			t.Fatalf("archive omitted public build input %s", required)
 		}

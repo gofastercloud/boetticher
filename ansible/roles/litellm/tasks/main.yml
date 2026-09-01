@@ -1,64 +1,54 @@
 ---
-- name: Require an immutable LiteLLM appliance artifact
+- name: Require an immutable Bifrost LiteLLM-compatible appliance artifact
   ansible.builtin.assert:
     that: boetticher_appliance_artifact | default(false) | bool
-    fail_msg: "LiteLLM requires a qualified immutable appliance artifact"
+    fail_msg: "Bifrost requires a qualified immutable appliance artifact"
 
-- name: Require the typed LiteLLM configuration projection
+- name: Require the typed Bifrost configuration projection
   ansible.builtin.assert:
     that:
       - module_configs.litellm is defined
       - module_configs.litellm.upstreams | length > 0
       - module_configs.litellm.models | length > 0
-    fail_msg: "LiteLLM requires the validated upstream and model-alias projection"
+    fail_msg: "Bifrost requires the validated upstream and model-alias projection"
   no_log: true
 
-- name: Create the LiteLLM runtime configuration directory
+- name: Create the Bifrost runtime configuration directory
   ansible.builtin.file:
     path: /etc/boetticher/litellm
     state: directory
     owner: root
     group: root
-    # The backend drops to litellm after the root-only credential load. It
-    # needs execute-only traversal here; the config remains root-owned and
-    # group-readable by litellm.
     mode: '0751'
 
-- name: Render only declared provider-neutral model aliases
+- name: Render the Bifrost LiteLLM-compatible model routing configuration
   ansible.builtin.copy:
-    dest: /etc/boetticher/litellm/config.yaml
+    dest: /etc/boetticher/litellm/config.json
     owner: root
-    group: litellm
+    group: bifrost
     mode: '0640'
     content: |
-      model_list:
+      {
+        "listen": "127.0.0.1:4000",
+        "upstreams": [
+      {% for upstream in module_configs.litellm.upstreams %}
+          {
+            "name": {{ upstream.name | to_json }},
+            "base_url": {{ upstream.base_url | to_json }},
+            "credential": {{ upstream.api_key_secret | lower | replace('_', '-') | replace('.', '-') | to_json }}
+          }{% if not loop.last %},{% endif %}
+      {% endfor %}
+        ],
+        "models": [
       {% for model in module_configs.litellm.models %}
-      {% for upstream in module_configs.litellm.upstreams %}
-      {% if model.upstream == upstream.name %}
-        - model_name: {{ model.alias }}
-          litellm_params:
-            model: {{ model.model }}
-            api_base: {{ upstream.base_url }}
-            api_key: os.environ/LITELLM_SECRET_{{ upstream.api_key_secret | upper | replace('-', '_') | replace('.', '_') }}
-      {% endif %}
+          {
+            "alias": {{ model.alias | to_json }},
+            "upstream": {{ model.upstream | to_json }},
+            "model": {{ model.model | to_json }}
+          }{% if not loop.last %},{% endif %}
       {% endfor %}
-      {% endfor %}
-  no_log: true
-  notify: restart litellm
-
-- name: Render the credential-only LiteLLM launcher
-  ansible.builtin.copy:
-    dest: /usr/lib/boetticher/litellm-start
-    owner: root
-    group: litellm
-    mode: '0750'
-    content: |
-      #!/bin/sh
-      set -eu
-      {% for upstream in module_configs.litellm.upstreams %}
-      export LITELLM_SECRET_{{ upstream.api_key_secret | upper | replace('-', '_') | replace('.', '_') }}="$(cat /run/credentials/litellm.service/{{ upstream.api_key_secret | lower | replace('_', '-') | replace('.', '-') }})"
-      {% endfor %}
-      exec /usr/bin/setpriv --reuid=litellm --regid=litellm --init-groups /opt/litellm/bin/litellm "$@"
+        ]
+      }
   no_log: true
   notify: restart litellm
 
@@ -164,6 +154,9 @@
               proxy_pass http://127.0.0.1:4000;
               proxy_set_header Host $host;
               proxy_set_header X-Forwarded-Proto https;
+          }
+          location ^~ /internal/ {
+              return 404;
           }
           location / {
               if ($ssl_client_s_dn ~ "CN=aiops-router-client(?:,|$)") { return 403; }
