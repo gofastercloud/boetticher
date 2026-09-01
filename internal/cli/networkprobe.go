@@ -29,7 +29,12 @@ import (
 	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
-const networkProbeHostCommand = "/usr/lib/boetticher/boetticher-network-probe-host"
+const (
+	networkProbeHostCommand   = "/usr/lib/boetticher/boetticher-network-probe-host"
+	networkTestPrepareTimeout = 5 * time.Minute
+	networkTestCasesTimeout   = 10 * time.Minute
+	networkTestCleanupTimeout = 5 * time.Minute
+)
 
 type probeResponse struct {
 	OK           bool              `json:"ok"`
@@ -138,7 +143,7 @@ func runNetworkTest(args []string, out io.Writer) error {
 		progress.fail(err)
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), networkTestPrepareTimeout)
 	defer cancel()
 	node, err := client.SingleNode(ctx)
 	if err != nil {
@@ -193,6 +198,8 @@ func runNetworkTest(args []string, out io.Writer) error {
 		progress.start("Run bounded path checks")
 	}
 	if runErr == nil {
+		caseCtx, cancelCases := context.WithTimeout(context.Background(), networkTestCasesTimeout)
+		defer cancelCases()
 		authority, authorityErr := site.LoadAuthority(*siteDir, s, *ageIdentity)
 		if authorityErr != nil {
 			runErr = fmt.Errorf("load mTLS authority: %w", authorityErr)
@@ -203,7 +210,7 @@ func runNetworkTest(args []string, out io.Writer) error {
 			} else {
 				for index := range created {
 					before := len(report.Results)
-					if err := runNetworkProbeCases(ctx, *siteDir, s, policy, &created[index], created, artifact.ContentSHA256, runID, authority.RootCertPEM+authority.IssuingCertPEM, cert, *capture, &report); err != nil {
+					if err := runNetworkProbeCases(caseCtx, *siteDir, s, policy, &created[index], created, artifact.ContentSHA256, runID, authority.RootCertPEM+authority.IssuingCertPEM, cert, *capture, &report); err != nil {
 						runErr = err
 						break
 					}
@@ -224,7 +231,9 @@ func runNetworkTest(args []string, out io.Writer) error {
 	}
 	report.Probes = created
 	progress.start("Remove temporary probes")
-	cleanupErr := cleanupNetworkProbes(context.Background(), client, node, s, probes)
+	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), networkTestCleanupTimeout)
+	defer cancelCleanup()
+	cleanupErr := cleanupNetworkProbes(cleanupCtx, client, node, s, probes)
 	if cleanupErr != nil {
 		report.Cleanup = "HOLD: " + cleanupErr.Error()
 		progress.fail(cleanupErr)
