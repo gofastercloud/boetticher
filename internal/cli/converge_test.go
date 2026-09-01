@@ -412,6 +412,8 @@ func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 	for _, required := range []string{
 		"readTokenRefreshed := false",
 		`pki.IssueClient(authority, "boetticher-pulse-read"`,
+		"pulse.NewReadClient(pulse.ClientConfig{",
+		"pulseRead.StateSummary(ctx)",
 		"modules.IsEnabled(s, \"streamdeck\") && pulse.IsForbidden(err)",
 		"pulse.IsUnauthorized(err)",
 		"pulseAdmin.CreateReadToken(ctx, \"boetticher monitoring read\")",
@@ -421,6 +423,9 @@ func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 		if !strings.Contains(text, required) {
 			t.Fatalf("Pulse read-token recovery is missing %q", required)
 		}
+	}
+	if strings.Contains(text, "pulseAdmin.ValidateReadToken(ctx, readToken)") {
+		t.Fatal("AIOps Pulse token validation must use the dedicated read client")
 	}
 }
 

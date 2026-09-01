@@ -869,7 +869,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			if err != nil {
 				return fmt.Errorf("open AI Router canary tunnel through Proxmox bastion: %w", err)
 			}
-			if err := qualifyAndConfigureAIOps(ctx, *siteDir, *ageIdentity, s, authority, clientCertificate, pulseAdmin, aiRouterForward.Address(), runtimeVariables, ansiblePlaybook, inventoryPath, report); err != nil {
+			if err := qualifyAndConfigureAIOps(ctx, *siteDir, *ageIdentity, s, authority, clientCertificate, pulseAdmin, pulseBaseURL, aiRouterForward.Address(), runtimeVariables, ansiblePlaybook, inventoryPath, report); err != nil {
 				return fmt.Errorf("HOLD: AIOps qualification failed: %w", err)
 			}
 		}
@@ -1454,7 +1454,7 @@ func signAIOpsCertificates(authority pki.Authority, s model.Site, csrDir string)
 	return result, nil
 }
 
-func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, s model.Site, authority pki.Authority, controllerCertificate pki.ClientCertificate, pulseAdmin *pulse.Client, routerForwardAddress string, runtimeVariables map[string]any, ansiblePlaybook, inventoryPath string, report *deploymentReport) error {
+func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, s model.Site, authority pki.Authority, controllerCertificate pki.ClientCertificate, pulseAdmin *pulse.Client, pulseBaseURL, routerForwardAddress string, runtimeVariables map[string]any, ansiblePlaybook, inventoryPath string, report *deploymentReport) error {
 	modelConfig, err := selectedAIOpsModel(s)
 	if err != nil {
 		return err
@@ -1497,7 +1497,19 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 	if err != nil {
 		return err
 	}
-	if err := pulseAdmin.ValidateReadToken(ctx, readToken); err != nil {
+	pulseReadCertificate, err := pki.IssueClient(authority, "boetticher-pulse-read", s.Network.Domain, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("issue AIOps Pulse read client certificate: %w", err)
+	}
+	pulseRead, err := pulse.NewReadClient(pulse.ClientConfig{
+		BaseURL: pulseBaseURL, APIToken: readToken,
+		CAPEM: authority.IssuingCertPEM, ClientCertPEM: pulseReadCertificate.CertPEM, ClientKeyPEM: pulseReadCertificate.KeyPEM,
+		ServerName: "monitor." + s.Network.Domain,
+	})
+	if err != nil {
+		return fmt.Errorf("configure AIOps Pulse read client: %w", err)
+	}
+	if _, err := pulseRead.StateSummary(ctx); err != nil {
 		if !pulse.IsUnauthorized(err) {
 			return fmt.Errorf("validate AIOps Pulse read token: %w", err)
 		}
@@ -1509,6 +1521,17 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 			return fmt.Errorf("store refreshed AIOps Pulse read token: %w", err)
 		}
 		report.recordMutation("Secrets", "aiops_pulse_read_token", "credential refreshed", true)
+		pulseRead, err = pulse.NewReadClient(pulse.ClientConfig{
+			BaseURL: pulseBaseURL, APIToken: readToken,
+			CAPEM: authority.IssuingCertPEM, ClientCertPEM: pulseReadCertificate.CertPEM, ClientKeyPEM: pulseReadCertificate.KeyPEM,
+			ServerName: "monitor." + s.Network.Domain,
+		})
+		if err != nil {
+			return fmt.Errorf("reconfigure AIOps Pulse read client: %w", err)
+		}
+		if _, err := pulseRead.StateSummary(ctx); err != nil {
+			return fmt.Errorf("validate refreshed AIOps Pulse read token: %w", err)
+		}
 	}
 	if created {
 		report.recordMutation("Secrets", "aiops_pulse_read_token", "credential stored", true)
