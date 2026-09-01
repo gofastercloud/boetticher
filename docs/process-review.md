@@ -623,8 +623,26 @@ guests pass runtime readiness. The first combined warm run completed in
 251.722 seconds: appliances 54.796 seconds, network 93.213 seconds, services
 36.122 seconds, and health 62.062 seconds. That is 100.290 seconds, or 28.5%,
 below the linear median and leaves 48.278 seconds inside the five-minute
-full-deploy objective. It is a measured single-run result, not yet a qualified
-optimized p95; more comparable warm runs are still required.
+full-deploy objective. At that point it was only a single-run result; the
+matrix below adds comparable warm samples and the associated failure record.
+
+The subsequent warm matrix produced four more passing runs at 248.407,
+246.696, 248.099, and 240.083 seconds. Across the five passing runs, the
+median is 248.099 seconds and the nearest-rank p95 is 251.722 seconds; the
+phase medians are appliances 53.861 seconds, network 92.449 seconds, services
+35.448 seconds, and health 62.062 seconds. The p95 is 103.913 seconds, or
+29.5%, below the five-run linear median and leaves 48.278 seconds inside the
+five-minute objective.
+
+There was one intervening failed attempt at 223.548 seconds. Its strict AIOps
+canary returned `EOF`, and its cleanup then failed to revoke temporary root
+access on `lab-dns-01` after the Proxmox endpoint briefly became unreachable.
+The failure is retained as reliability evidence rather than excluded from the
+history. Proxmox recovered, the next native deploy passed the AIOps canary and
+removed temporary authority, and commit `b3c8ef5` makes cleanup attempt every
+exact guest and host target before returning a combined failure. Therefore the
+five timing samples are a preliminary optimized p95, not a claim of
+failure-free qualification.
 
 The live gates remained intact on that run: status reported 13/13 checks
 healthy, `verify --live` passed, `doctor --live` passed, and the native network
@@ -648,12 +666,13 @@ already implemented, artifact/build-cache and compression measurement, and
 avoiding certificate or configuration churn. A snapshot can be revisited if
 future instrumentation shows local preparation becoming material.
 
-The 180-second warm aspiration in Issue #77 was not reached. Reaching it would
-require materially changing the remaining remote critical path—especially
-network convergence and health journeys—not removing their proof. That is a
-separate optimisation decision with a higher correctness risk. The current
-five-minute objective has been met once and should be called qualified only
-after the remaining comparable warm matrix is complete.
+The 180-second warm aspiration in Issue #77 was not reached: the measured
+optimized p95 remains 71.722 seconds above it. Reaching it would require
+materially changing the remaining remote critical path—especially network
+convergence and health journeys—not removing their proof. That is a separate
+optimisation decision with a higher correctness risk. The current five-minute
+objective is met across the five passing timing samples, subject to the one
+recorded AIOps reliability failure and its recovery.
 
 ## Evidence limits
 
