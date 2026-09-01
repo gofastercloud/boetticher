@@ -158,6 +158,19 @@ func TestPublishedServicesActivateAtTheEndOfDNSModule(t *testing.T) {
 	}
 }
 
+func TestPublishedFirewallIsNotRepeatedInTheAllHostNetworkPhase(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	finalFirewall := strings.Index(text, `runtimeVariables["boetticher_skip_firewall"] = true`)
+	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report); err != nil`)
+	if finalFirewall < 0 || allHostsConvergence < 0 || finalFirewall > allHostsConvergence {
+		t.Fatal("all-host network convergence does not skip the already published firewall")
+	}
+}
+
 func TestAnsiblePlaybookIsAvailableFromControllerSource(t *testing.T) {
 	root, err := applianceBuildSourceRoot()
 	if err != nil {

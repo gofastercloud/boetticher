@@ -721,6 +721,15 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 				return fmt.Errorf("HOLD: managed gateway did not pass publication readiness: %w", err)
 			}
 			firewallPlan = finalFirewallPlan
+			// The final limited pass has already converged the firewall using the
+			// observed upstream lease. Do not immediately run that same role
+			// again in the all-host network phase.
+			runtimeVariables["boetticher_skip_firewall"] = true
+			variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
+			if err != nil {
+				return fmt.Errorf("HOLD: encode network-phase Ansible variables: %w", err)
+			}
+			variables = append(variables, '\n')
 		}
 	}
 	for _, guest := range retainedGuests {
