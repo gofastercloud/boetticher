@@ -66,6 +66,7 @@ type ModulesConfig struct {
 	AIOps         *AIOpsModuleConfig     `yaml:"aiops,omitempty" json:"aiops,omitempty"`
 	Gatus         *ToggleModuleConfig    `yaml:"gatus,omitempty" json:"gatus,omitempty"`
 	AirVPN        *AirVPNModuleConfig    `yaml:"airvpn,omitempty" json:"airvpn,omitempty"`
+	Arr           *ToggleModuleConfig    `yaml:"arr,omitempty" json:"arr,omitempty"`
 }
 
 // ModuleNetworkMode selects the bounded egress path for a network-capable
@@ -196,6 +197,9 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 	if m.AirVPN != nil {
 		result["airvpn"] = ModuleConfig{Enabled: cloneBool(m.AirVPN.Enabled), Servers: m.AirVPN.Servers}
 	}
+	if m.Arr != nil {
+		result["arr"] = ModuleConfig{Enabled: cloneBool(m.Arr.Enabled), Network: m.Arr.Network}
+	}
 	return result
 }
 
@@ -233,6 +237,9 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 	}
 	if config, ok := input["airvpn"]; ok {
 		result.AirVPN = &AirVPNModuleConfig{Enabled: cloneBool(config.Enabled), Servers: config.Servers}
+	}
+	if config, ok := input["arr"]; ok {
+		result.Arr = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	}
 	return result
 }
@@ -281,6 +288,8 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 			servers = m.AirVPN.Servers
 		}
 		m.AirVPN = &AirVPNModuleConfig{Enabled: cloneBool(config.Enabled), Servers: servers}
+	case "arr":
+		m.Arr = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	default:
 		return fmt.Errorf("modules.%s: unknown first-party module", name)
 	}

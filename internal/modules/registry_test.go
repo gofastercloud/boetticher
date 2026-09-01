@@ -17,7 +17,7 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantOrder := []string{"firewall", "dns", "logging", "monitoring", "aiops", "airvpn", "gatus", "litellm", "printer", "streamdeck", "tailnet-router"}
+	wantOrder := []string{"firewall", "dns", "logging", "monitoring", "aiops", "airvpn", "arr", "gatus", "litellm", "printer", "streamdeck", "tailnet-router"}
 	if len(modules) != len(wantOrder) {
 		t.Fatalf("unexpected module resolution: %#v", modules)
 	}
@@ -104,6 +104,38 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 		if secret.Consumer == "powerdns-authoritative" && (!secret.Persistent || secret.Delivery != "protected-powerdns-backend") {
 			t.Fatalf("PowerDNS secret exception is not explicit: %#v", secret)
 		}
+	}
+}
+
+func TestArrRequiresAirVPNAndComposesOwnedDHCPReservation(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	enabled := true
+	config.Modules.Arr = &model.ToggleModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
+	airvpnEnabled := true
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &airvpnEnabled, Servers: "europe"}
+	site, _, err := Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	declaration, ok := findDeclaration(site, "arr")
+	if !ok || len(declaration.DHCPReservations) != 1 {
+		t.Fatalf("arr declaration reservation missing: %#v", declaration)
+	}
+	reservation := declaration.DHCPReservations[0]
+	if reservation.Hostname != "lab-arr-01" || reservation.Address != model.ArrGuestAddress || reservation.MAC != model.ArrGuestMAC || reservation.VMID != model.ArrVMID {
+		t.Fatalf("unexpected arr DHCP reservation: %#v", reservation)
+	}
+	if len(site.DHCPReservations) != 1 || site.DHCPReservations[0] != reservation {
+		t.Fatalf("module reservation was not projected into canonical DHCP state: %#v", site.DHCPReservations)
+	}
+}
+
+func TestArrRejectsNonAirVPNNetwork(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	enabled := true
+	config.Modules.Arr = &model.ToggleModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkDirect}
+	if _, _, err := Compose(config); err == nil || !strings.Contains(err.Error(), "modules.arr.network") {
+		t.Fatalf("arr direct network mode was accepted: %v", err)
 	}
 }
 

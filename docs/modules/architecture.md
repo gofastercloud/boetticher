@@ -15,6 +15,7 @@ The built-in modules are:
 | `firewall` | default-on | managed gateway and bounded firewall telemetry API |
 | `gatus` | default-off | HTTPS checks for enabled platform services |
 | `litellm` | default-off | HTTPS AI model router for declared aliases |
+| `arr` | default-off | AirVPN-routed Sonarr and Radarr video services |
 | `printer` | default-off | OctoPrint for one supported USB-connected printer |
 | `streamdeck` | default-off | read-only USB StreamDeck display for Proxmox host health and CPU/RAM |
 | `tailnet-router` | default-off | bounded Tailnet route advertisement |
@@ -35,7 +36,7 @@ deployment operations.
 
 Read the module page for [DNS](dns.md), [logging](logging.md),
 [monitoring](monitoring.md), [firewall](firewall.md), [Gatus](gatus.md),
-[LiteLLM/Bifrost](litellm.md), [printer](printer.md), [StreamDeck](streamdeck.md),
+[LiteLLM/Bifrost](litellm.md), [arr](arr.md), [printer](printer.md), [StreamDeck](streamdeck.md),
 [AIOps](aiops.md), or [Tailnet Router](tailnet-router.md) before enabling an
 optional capability.
 

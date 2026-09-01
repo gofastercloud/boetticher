@@ -111,6 +111,13 @@ func FirstPartyRegistry() Registry {
 				{Name: "lab-airvpn-01", VMID: model.AirVPNGuestVMID, Hostname: "lab-airvpn-01", Address: model.AirVPNGuestAddress, Role: "AirVPN WireGuard transit", DNSAliases: []string{"airvpn"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
+		"arr": {
+			Name: "arr", Description: "AirVPN-routed Sonarr and Radarr video services", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
+			DependsOn: []string{"airvpn"}, Requires: []Capability{CapabilityAirVPNTransit, CapabilityDNS, CapabilityNTP}, GuestIDs: []int{model.ArrVMID}, ReservedVMIDStart: 270, ReservedVMIDEnd: 279,
+			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
+				{Name: "lab-arr-01", VMID: model.ArrVMID, Hostname: "lab-arr-01", Address: model.ArrGuestAddress, MAC: model.ArrGuestMAC, Role: "Sonarr and Radarr video services", DNSAliases: []string{"sonarr", "radarr"}, URL: "https://sonarr." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			},
+		},
 		"litellm": {
 			Name: "litellm", Description: "mTLS-protected LiteLLM AI API router", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
 			Configuration: []model.ModuleConfigField{
@@ -457,6 +464,9 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 		if !modelToken(airvpn.Servers) {
 			return nil, fmt.Errorf("modules.airvpn.servers: selector contains unsafe characters")
 		}
+	}
+	if arr, ok := configs["arr"]; ok && arr.Enabled != nil && *arr.Enabled && arr.Network != model.ModuleNetworkAirVPN {
+		return nil, fmt.Errorf("modules.arr.network: arr requires AirVPN egress; set network: airvpn")
 	}
 	for name, moduleConfig := range configs {
 		if name == "litellm" && (moduleConfig.Enabled != nil && *moduleConfig.Enabled || len(moduleConfig.Upstreams) > 0 || len(moduleConfig.Models) > 0) {

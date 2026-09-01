@@ -117,6 +117,24 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		declaration.ReturnRouting = []string{"AirVPN-selected module traffic uses the TRANSIT gateway 10.10.5.1 and returns only through the AirVPN tunnel"}
 		declaration.Monitoring = append(declaration.Monitoring, model.MonitoringDeclaration{Name: "boetticher-airvpn", Kind: "service", Target: "lab-airvpn-01", Checks: []string{"wireguard", "forwarding", "kill-switch"}, Description: "AirVPN WireGuard transit and fail-closed forwarding health"})
 		declaration.Portal = []model.PortalEntry{{Name: "airvpn", Description: "AirVPN WireGuard external egress transit", Docs: []string{"docs/modules/airvpn.md"}}}
+	case "arr":
+		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true}
+		declaration.DNSRecords = []model.DNSRecord{{Name: "sonarr." + site.Network.Domain, Type: "A", Address: model.ArrGuestAddress, Owner: "arr"}, {Name: "radarr." + site.Network.Domain, Type: "A", Address: model.ArrGuestAddress, Owner: "arr"}}
+		declaration.DHCPReservations = []model.DHCPReservation{{Zone: "SERVERS", Hostname: "lab-arr-01", Address: model.ArrGuestAddress, MAC: model.ArrGuestMAC, VMID: model.ArrVMID}}
+		declaration.NetworkIntents = []model.NetworkIntent{
+			{Source: "lab-arr-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Direction: "egress", Purpose: "arr DNS resolution"},
+			{Source: "lab-arr-01", Destination: "dns", Protocol: "udp", Ports: []string{"123"}, Direction: "egress", Purpose: "arr time synchronisation"},
+		}
+		if IsEnabled(site, "logging") {
+			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-arr-01", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"})
+		}
+		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "sonarr." + site.Network.Domain, SANs: []string{"sonarr." + site.Network.Domain, "radarr." + site.Network.Domain, "lab-arr-01." + site.Network.Domain}, Consumer: "nginx"})
+		declaration.Monitoring = append(declaration.Monitoring,
+			model.MonitoringDeclaration{Name: "nginx", Kind: "service", Target: "lab-arr-01", Checks: []string{"nginx", "https", "mtls"}, Description: "Sonarr and Radarr mTLS frontend health"},
+			model.MonitoringDeclaration{Name: "sonarr", Kind: "service", Target: "lab-arr-01", Checks: []string{"sonarr", "loopback"}, Description: "Sonarr loopback backend health"},
+			model.MonitoringDeclaration{Name: "radarr", Kind: "service", Target: "lab-arr-01", Checks: []string{"radarr", "loopback"}, Description: "Radarr loopback backend health"},
+		)
+		declaration.Portal = []model.PortalEntry{{Name: "arr", Description: "mTLS-protected Sonarr and Radarr video services", URLs: []string{"https://sonarr." + site.Network.Domain, "https://radarr." + site.Network.Domain}, Docs: []string{"docs/modules/arr.md"}}}
 	case "litellm":
 		config := site.ModuleConfig[name]
 		for _, upstream := range config.Upstreams {
@@ -230,6 +248,8 @@ func persistentFor(module, guest string) []model.PersistentState {
 		return []model.PersistentState{identity, {Name: "tailscale-state", Guest: guest, Path: "/var/lib/tailscale", Kind: "node-identity", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	case "airvpn":
 		return []model.PersistentState{identity}
+	case "arr":
+		return []model.PersistentState{identity, {Name: "arr-state", Guest: guest, Path: "/var/lib/arr", Kind: "application-state", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}, {Name: "tls-identity", Guest: guest, Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	case "litellm":
 		return []model.PersistentState{identity, {Name: "tls-identity", Guest: guest, Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	case "printer":
@@ -262,6 +282,8 @@ func volumesFor(module, guest string) []model.PersistentVolumeDeclaration {
 		return []model.PersistentVolumeDeclaration{identity, volume("tailscale-state", "/var/lib/tailscale", 4, true)}
 	case "airvpn":
 		return []model.PersistentVolumeDeclaration{identity}
+	case "arr":
+		return []model.PersistentVolumeDeclaration{identity, volume("arr-state", "/var/lib/arr", 16, true), volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true)}
 	case "litellm":
 		return []model.PersistentVolumeDeclaration{identity, volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true)}
 	case "printer":

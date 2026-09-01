@@ -7,12 +7,12 @@ set -eu
 target=${1:-images}
 shift || true
 case "$target" in
-  image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-streamdeck|image-gatus|image-network-probe|images) ;;
+  image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-arr|image-streamdeck|image-gatus|image-network-probe|images) ;;
   image-airvpn) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
-default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-airvpn image-litellm image-printer image-streamdeck image-aiops image-gatus image-network-probe image-firewall"
+default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-airvpn image-litellm image-printer image-arr image-streamdeck image-aiops image-gatus image-network-probe image-firewall"
 if [ "$target" = images ]; then
   selected_image_targets="$*"
   if [ -z "$selected_image_targets" ]; then
@@ -20,7 +20,7 @@ if [ "$target" = images ]; then
   fi
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
-      image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-streamdeck|image-gatus|image-network-probe) ;;
+      image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-arr|image-streamdeck|image-gatus|image-network-probe) ;;
       image-airvpn) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac
@@ -172,6 +172,13 @@ holmes_source_sha256=7016d3335a7f81810de35d9030a63bc38204d94991e3343d6cdbbcaf77a
 holmes_source_root=holmesgpt-3d201559c0f3648a6c567aece09662f4f407bcc9
 gatus_source_url=https://github.com/TwiN/gatus/archive/refs/tags/v5.36.0.tar.gz
 gatus_source_sha256=b5543af591e602281406049ee2f822a6529a8f14be0cd54df5a31c210520159a
+arr_nginx_package_version=1.26.3-3+deb13u7
+sonarr_version=4.0.19.2979
+sonarr_release_url=https://github.com/Sonarr/Sonarr/releases/download/v4.0.19.2979/Sonarr.main.4.0.19.2979.linux-x64.tar.gz
+sonarr_release_sha256=b691b3584c31c0b5514058dee81071c923f63d59a37d19e32f92fa13eaa153db
+radarr_version=6.3.0.10514
+radarr_release_url=https://github.com/Radarr/Radarr/releases/download/v6.3.0.10514/Radarr.master.6.3.0.10514.linux-core-x64.tar.gz
+radarr_release_sha256=41d6455c037ff267c5ad5a0f0de4502cebe8f89ec3d051da97851933d48a4047
 mkdir -p "$output_root" "$work_root" "$cache_root/apt" "$cache_root/downloads" "$cache_root/base"
 
 provenance_path="$(dirname "$output_root")/builder-provenance.json"
@@ -599,6 +606,38 @@ build_printer() {
   package_lxc boetticher-printer
 }
 
+build_arr() {
+  printf '%s\n' 'boetticher build stage: arr'
+  rootfs=$(prepare_rootfs boetticher-arr)
+  install_packages "$rootfs" "nginx=$arr_nginx_package_version" ca-certificates
+  sonarr_archive="$cache_root/downloads/Sonarr.main.$sonarr_version.linux-x64.tar.gz"
+  radarr_archive="$cache_root/downloads/Radarr.master.$radarr_version.linux-core-x64.tar.gz"
+  download_cached "$sonarr_archive" "$sonarr_release_url" "$sonarr_release_sha256" sha256sum
+  download_cached "$radarr_archive" "$radarr_release_url" "$radarr_release_sha256" sha256sum
+  sonarr_root="$work_root/sonarr-$sonarr_version"; radarr_root="$work_root/radarr-$radarr_version"
+  rm -rf "$sonarr_root" "$radarr_root"
+  mkdir -p "$sonarr_root" "$radarr_root"
+  tar -xzf "$sonarr_archive" -C "$sonarr_root" --strip-components=1
+  tar -xzf "$radarr_archive" -C "$radarr_root" --strip-components=1
+  install -d -m 0755 "$rootfs/opt/sonarr" "$rootfs/opt/radarr"
+  cp -a "$sonarr_root/." "$rootfs/opt/sonarr/"
+  cp -a "$radarr_root/." "$rootfs/opt/radarr/"
+  chroot "$rootfs" groupadd --system --gid 2200 arr
+  chroot "$rootfs" useradd --system --uid 2200 --gid 2200 --home-dir /var/lib/arr/sonarr --create-home --shell /usr/sbin/nologin sonarr
+  chroot "$rootfs" useradd --system --uid 2201 --gid 2200 --home-dir /var/lib/arr/radarr --create-home --shell /usr/sbin/nologin radarr
+  chroot "$rootfs" install -d -o sonarr -g arr -m 0750 /var/lib/arr/sonarr
+  chroot "$rootfs" install -d -o radarr -g arr -m 0750 /var/lib/arr/radarr
+  chroot "$rootfs" chown -R root:root /opt/sonarr /opt/radarr
+  chroot "$rootfs" chmod -R u+rwX,go+rX,go-w /opt/sonarr /opt/radarr
+  install -D -m 0644 images/arr/runtime/sonarr.service "$rootfs/etc/systemd/system/sonarr.service"
+  install -D -m 0644 images/arr/runtime/radarr.service "$rootfs/etc/systemd/system/radarr.service"
+  rm -f "$rootfs/etc/nginx/sites-enabled/default" "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
+  chroot "$rootfs" apt-get clean
+  rm -rf "$rootfs/var/lib/apt/lists/"*
+  write_artifact_identity "$rootfs" arr
+  package_lxc boetticher-arr
+}
+
 build_streamdeck() {
   printf '%s\n' 'boetticher build stage: streamdeck'
   rootfs=$(prepare_rootfs boetticher-streamdeck)
@@ -921,6 +960,11 @@ build_printer_target() {
   build_printer
 }
 
+build_arr_target() {
+  [ -f "$(artifact_for boetticher-base)" ] || build_base
+  build_arr
+}
+
 build_streamdeck_target() {
   [ -f "$(artifact_for boetticher-base)" ] || build_base
   build_streamdeck
@@ -967,6 +1011,7 @@ case "$target" in
   image-airvpn) run_timed_image_target "$target" build_airvpn_target ;;
   image-litellm) run_timed_image_target "$target" build_litellm_target ;;
   image-printer) run_timed_image_target "$target" build_printer_target ;;
+  image-arr) run_timed_image_target "$target" build_arr_target ;;
   image-streamdeck) run_timed_image_target "$target" build_streamdeck_target ;;
   image-aiops) run_timed_image_target "$target" build_aiops_target ;;
   image-gatus) run_timed_image_target "$target" build_gatus_target ;;

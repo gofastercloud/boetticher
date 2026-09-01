@@ -760,6 +760,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	var monitorCertificate pki.ServerCertificate
 	var litellmCertificate pki.ServerCertificate
 	var octoprintCertificate pki.ServerCertificate
+	var arrCertificate pki.ServerCertificate
 	var streamDeckCertificate pki.ClientCertificate
 	var gatusCertificate pki.ServerCertificate
 	var aiopsCertificates map[string]string
@@ -791,6 +792,16 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		octoprintCertificate, err = signOrReuseServerCertificate(authority, string(octoprintCSR), csrDir, "octoprint", "octoprint", s.Network.Domain, []string{"printer." + s.Network.Domain, "lab-printer-01." + s.Network.Domain})
 		if err != nil {
 			return fmt.Errorf("sign OctoPrint endpoint CSR: %w", err)
+		}
+	}
+	if modules.IsEnabled(s, "arr") {
+		arrCSR, readErr := os.ReadFile(filepath.Join(csrDir, "arr.csr.pem"))
+		if readErr != nil {
+			return fmt.Errorf("read endpoint-generated arr CSR: %w", readErr)
+		}
+		arrCertificate, err = signOrReuseServerCertificate(authority, string(arrCSR), csrDir, "arr", "sonarr", s.Network.Domain, []string{"sonarr." + s.Network.Domain, "radarr." + s.Network.Domain, "lab-arr-01." + s.Network.Domain})
+		if err != nil {
+			return fmt.Errorf("sign arr endpoint CSR: %w", err)
 		}
 	}
 	if modules.IsEnabled(s, "streamdeck") {
@@ -832,6 +843,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	if modules.IsEnabled(s, "printer") {
 		runtimeVariables["octoprint_server_cert_pem"] = octoprintCertificate.ChainPEM
+	}
+	if modules.IsEnabled(s, "arr") {
+		runtimeVariables["arr_server_cert_pem"] = arrCertificate.ChainPEM
 	}
 	if modules.IsEnabled(s, "streamdeck") {
 		runtimeVariables["streamdeck_client_cert_pem"] = streamDeckCertificate.ChainPEM

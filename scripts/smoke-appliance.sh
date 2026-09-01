@@ -208,6 +208,25 @@ case "$name" in
       exit 1
     fi
     ;;
+  boetticher-arr)
+    test -x "$rootfs/usr/sbin/nginx"
+    test -x "$rootfs/opt/sonarr/Sonarr"
+    test -x "$rootfs/opt/radarr/Radarr"
+    chroot "$rootfs" getent passwd sonarr | grep -Fq ':2200:2200:'
+    chroot "$rootfs" getent passwd radarr | grep -Fq ':2201:2200:'
+    chroot "$rootfs" dpkg-query -W -f='${Version}' nginx | grep -Fxq '1.26.3-3+deb13u7'
+    test -f "$rootfs/etc/systemd/system/sonarr.service"
+    test -f "$rootfs/etc/systemd/system/radarr.service"
+    grep -Fq 'ExecStart=/opt/sonarr/Sonarr -nobrowser -data=/var/lib/arr/sonarr' "$rootfs/etc/systemd/system/sonarr.service"
+    grep -Fq 'ExecStart=/opt/radarr/Radarr -nobrowser -data=/var/lib/arr/radarr' "$rootfs/etc/systemd/system/radarr.service"
+    grep -Fq 'ProtectSystem=strict' "$rootfs/etc/systemd/system/sonarr.service"
+    grep -Fq 'ProtectSystem=strict' "$rootfs/etc/systemd/system/radarr.service"
+    test ! -e "$rootfs/etc/nginx/sites-enabled/default"
+    if find "$rootfs/etc/nginx" -type f \( -name '*.pem' -o -name '*.key' \) -print -quit | grep -q .; then
+      echo "arr artifact contains generated TLS material" >&2
+      exit 1
+    fi
+    ;;
   boetticher-streamdeck)
     test -x "$rootfs/usr/local/libexec/boetticher-streamdeck"
     test ! -e "$rootfs/opt/streamdeck"

@@ -213,6 +213,9 @@
         "airvpn": {
           "$ref": "#/$defs/AirVPNModuleConfig"
         },
+        "arr": {
+          "$ref": "#/$defs/ToggleModuleConfig"
+        },
         "dns": {
           "$ref": "#/$defs/DNSModuleConfig"
         },
