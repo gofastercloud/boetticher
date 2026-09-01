@@ -19,6 +19,7 @@ import (
 
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
+	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
 
 type CommandRunner interface {
@@ -373,6 +374,14 @@ func (r SSHRunner) StartLocalForward(ctx context.Context, address, user, targetA
 	if err != nil {
 		return nil, err
 	}
+	started := time.Now()
+	status := 1
+	defer func() {
+		telemetry.Record(ctx, telemetry.Event{
+			Category: "ssh", Operation: "local-forward", Target: user + "@" + address,
+			Status: status, Duration: time.Since(started), Success: status == 0,
+		})
+	}()
 	forwardContext, cancel := context.WithCancel(ctx)
 	command := newSSHProcess(args)
 	command.Stdin = nil
@@ -409,6 +418,7 @@ func (r SSHRunner) StartLocalForward(ctx context.Context, address, user, targetA
 			connection, dialErr := net.DialTimeout("tcp", forward.localAddress, 250*time.Millisecond)
 			if dialErr == nil {
 				_ = connection.Close()
+				status = 0
 				return forward, nil
 			}
 		case <-timeout.C:
@@ -532,6 +542,14 @@ func (r SSHRunner) runArgsStream(ctx context.Context, address, user string, comm
 	if err != nil {
 		return err
 	}
+	started := time.Now()
+	status := 1
+	defer func() {
+		telemetry.Record(ctx, telemetry.Event{
+			Category: "ssh", Operation: "command", Target: user + "@" + address,
+			Status: status, Duration: time.Since(started), Success: status == 0,
+		})
+	}()
 	process := newSSHProcess(args)
 	process.Stdin = stdin
 	process.Stdout = stdout
@@ -550,6 +568,7 @@ func (r SSHRunner) runArgsStream(ctx context.Context, address, user string, comm
 		}
 		return fmt.Errorf("SSH bootstrap command failed: %w", err)
 	}
+	status = 0
 	return nil
 }
 

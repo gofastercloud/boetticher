@@ -238,6 +238,23 @@ func TestDeploymentWaitsForGuestHostKeyThroughBootWindow(t *testing.T) {
 	}
 }
 
+func TestDeploymentRootCleanupTracksAuthorityEstablishedDuringRearm(t *testing.T) {
+	hostRunner := &deploymentRootTestRunner{hostOutput: []byte("{\"exitcode\":0,\"exited\":1,\"out-data\":\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\\n\"}")}
+	guestRunner := &deploymentRootTestRunner{guestErr: errors.New("permission denied"), guestSuccessAfter: 2}
+	guest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1", Owner: "boetticher/core/firewall"}
+	cleanup := newTemporaryRootCleanup(model.Site{}, t.TempDir(), "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA operator")
+	authorityEstablished := false
+	if err := waitForDeploymentRoot(context.Background(), hostRunner, "192.0.2.10", guestRunner, guest, cleanup.operatorPublicKey, filepath.Join(t.TempDir(), "known_hosts"), "lab-fw-01.lab.home.arpa", func() {
+		authorityEstablished = true
+		cleanup.guestEstablished(guest)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !authorityEstablished || len(cleanup.guests) != 1 {
+		t.Fatalf("temporary root authority tracking = established:%t guests:%d", authorityEstablished, len(cleanup.guests))
+	}
+}
+
 type deploymentRootTestRunner struct {
 	calls             int
 	lastCommand       string

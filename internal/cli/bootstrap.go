@@ -21,6 +21,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
 	"github.com/gofastercloud/boetticher/internal/storage"
+	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
 
 func runBootstrapEndpoint(args []string, out io.Writer) error {
@@ -167,6 +168,7 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	}
 	runner := proxmox.SSHRunner{KnownHosts: *knownHosts, StrictHostKey: "ask", HostKeyAlias: model.LogicalProxmoxIdentity}
 	ctx := context.Background()
+	ctx = telemetry.WithObserver(ctx, progress)
 	sshDiscovery, err := proxmox.DiscoverPhysicalNetworkViaSSH(ctx, runner, s.BootstrapAddress, *initialUser, s.BootstrapAddress, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
 	if err != nil {
 		return err
@@ -196,6 +198,14 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	} else if err := proxmox.CheckScopedCredentialAvailability(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
 		return err
 	}
+	proxmoxCAPEM := credentials.CAPEM
+	if *proxmoxCA != "" {
+		caData, readErr := os.ReadFile(*proxmoxCA)
+		if readErr != nil {
+			return fmt.Errorf("read Proxmox API CA file: %w", readErr)
+		}
+		proxmoxCAPEM = string(caData)
+	}
 	if err := proxmox.InstallOperatorKey(ctx, runner, s.BootstrapAddress, *initialUser, publicKey); err != nil {
 		return fmt.Errorf("install operator SSH key: %w", err)
 	}
@@ -209,7 +219,7 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 		return fmt.Errorf("configure Proxmox administrative and bastion identities: %w", err)
 	}
 	trustClient, err := proxmox.NewClient(proxmox.Config{
-		BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", CAFile: *proxmoxCA, Insecure: *insecure,
+		BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", CAFile: *proxmoxCA, CAPEM: proxmoxCAPEM, Insecure: *insecure,
 	})
 	if err != nil {
 		return fmt.Errorf("prepare Proxmox API trust before credential creation: %w", err)
@@ -218,6 +228,13 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 		return fmt.Errorf("verify Proxmox API TLS before credential creation: %w", err)
 	}
 	if credentialsExist {
+		if proxmoxCAPEM != "" && credentials.CAPEM != proxmoxCAPEM {
+			credentials.CAPEM = proxmoxCAPEM
+			if err := site.StoreProxmoxCredentials(*siteDir, s, *ageIdentity, credentials); err != nil {
+				return fmt.Errorf("store Proxmox API CA in SOPS: %w", err)
+			}
+			fmt.Fprintln(out, "Proxmox API CA in SOPS: PASS (stored)")
+		}
 		if err := proxmox.EnsureScopedCredentialACL(ctx, runner, s.BootstrapAddress, *initialUser, credentials.APIUser, credentials.TokenID, "BoetticherProvisioner"); err != nil {
 			return fmt.Errorf("reconcile scoped Proxmox API credentials: %w", err)
 		}
@@ -227,14 +244,17 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 		if createErr != nil {
 			return fmt.Errorf("create scoped Proxmox API credentials: %w", createErr)
 		}
-		credentials = site.ProxmoxCredentials{APIUser: "labadmin@pve", TokenID: "boetticher", TokenSecret: tokenSecret}
+		credentials = site.ProxmoxCredentials{APIUser: "labadmin@pve", TokenID: "boetticher", TokenSecret: tokenSecret, CAPEM: proxmoxCAPEM}
 		if err := site.StoreProxmoxCredentials(*siteDir, s, *ageIdentity, credentials); err != nil {
-			return fmt.Errorf("store Proxmox credentials in SOPS: %w", err)
+			return fmt.Errorf("store Proxmox credentials and API CA in SOPS: %w", err)
+		}
+		if proxmoxCAPEM != "" {
+			fmt.Fprintln(out, "Proxmox API CA in SOPS: PASS (stored)")
 		}
 	}
 	client, err := proxmox.NewClient(proxmox.Config{
 		BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", User: credentials.APIUser,
-		TokenID: credentials.TokenID, TokenSecret: credentials.TokenSecret, CAFile: *proxmoxCA, Insecure: *insecure,
+		TokenID: credentials.TokenID, TokenSecret: credentials.TokenSecret, CAFile: *proxmoxCA, CAPEM: proxmoxCAPEM, Insecure: *insecure,
 		SnippetRunner: runner, SnippetAddress: s.BootstrapAddress, SnippetUser: *initialUser,
 	})
 	if err != nil {

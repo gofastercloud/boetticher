@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/firewall"
@@ -20,6 +21,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
+	"github.com/gofastercloud/boetticher/internal/telemetry"
 	"github.com/gofastercloud/boetticher/internal/usbexport"
 )
 
@@ -401,8 +403,13 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	var output boundedOutput
 	command.Stdout = &output
 	command.Stderr = &output
+	started := time.Now()
 	err = command.Run()
 	changed := ansibleOutputChanged(output.Bytes())
+	telemetry.Record(ctx, telemetry.Event{
+		Category: "ansible", Operation: "playbook", Target: ansibleTarget(limit),
+		Duration: time.Since(started), Success: err == nil, Changed: changed,
+	})
 	if err != nil {
 		diagnostic := failureDiagnosticWithSupplement(output.Bytes(), output.DiagnosticBytes())
 		if diagnostic == "" {
@@ -411,6 +418,13 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 		return changed, fmt.Errorf("ansible-playbook failed: %w: %s", err, diagnostic)
 	}
 	return changed, nil
+}
+
+func ansibleTarget(limit string) string {
+	if limit == "" {
+		return "all"
+	}
+	return limit
 }
 
 var ansibleChangedPattern = regexp.MustCompile(`changed=([0-9]+)`)

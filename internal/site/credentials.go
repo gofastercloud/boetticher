@@ -15,6 +15,7 @@ type ProxmoxCredentials struct {
 	APIUser     string `json:"api_user"`
 	TokenID     string `json:"token_id"`
 	TokenSecret string `json:"token_secret"`
+	CAPEM       string `json:"ca_pem,omitempty"`
 }
 
 func StoreProxmoxCredentials(dir string, s model.Site, ageIdentityPath string, credentials ProxmoxCredentials) error {
@@ -37,6 +38,7 @@ func LoadProxmoxCredentials(dir string, s model.Site, ageIdentityPath string) (P
 		APIUser:     stringValue(values, "api_user"),
 		TokenID:     stringValue(values, "token_id"),
 		TokenSecret: stringValue(values, "token_secret"),
+		CAPEM:       stringValue(values, "ca_pem"),
 	}, validateProxmoxCredentials(values)
 }
 

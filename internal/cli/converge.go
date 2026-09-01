@@ -35,6 +35,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
 	"github.com/gofastercloud/boetticher/internal/storage"
+	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
 
 func runDeploy(args []string, out io.Writer) error {
@@ -45,6 +46,7 @@ func runDeploy(args []string, out io.Writer) error {
 
 func runDeployWithContext(ctx context.Context, args []string, out io.Writer) error {
 	report := newDeploymentReport(out)
+	ctx = telemetry.WithObserver(ctx, report)
 	var cleanup func(context.Context) error
 	operationErr := runDeployOperation(ctx, args, out, report, func(fn func(context.Context) error) {
 		cleanup = fn
@@ -283,6 +285,10 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return fmt.Errorf("read Proxmox API CA file: %w", readErr)
 		}
 		runtimeVariables["proxmox_ca_pem"] = string(proxmoxCAPEM)
+	} else if proxmoxCredentials, loadErr := site.LoadProxmoxCredentials(*siteDir, s, *ageIdentity); loadErr != nil {
+		return fmt.Errorf("load encrypted Proxmox credentials for API trust projection: %w", loadErr)
+	} else if proxmoxCredentials.CAPEM != "" {
+		runtimeVariables["proxmox_ca_pem"] = proxmoxCredentials.CAPEM
 	}
 	inventoryPath := filepath.Join(*siteDir, "generated", "ansible", "inventory.ini")
 	csrDir := filepath.Join(site.RuntimeDir(s), "pki")
@@ -291,7 +297,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	runtimeVariables["pki_bootstrap_phase"] = true
 	runtimeVariables["pki_csr_output_dir"] = csrDir
-	if err := writeModelProjectionsWithResolver(*siteDir, s, endpointLookup); err != nil {
+	if err := report.timed("credentials-pki", "local", "projections", func() error {
+		return writeModelProjectionsWithResolver(*siteDir, s, endpointLookup)
+	}); err != nil {
 		return err
 	}
 	report.recordMutation("Generated state", "site projections", "reconciled", true)
@@ -318,14 +326,16 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	proxmoxPlan.PrivilegedRunner = rootRunner
 	proxmoxPlan.PrivilegedAddress = s.BootstrapAddress
 	proxmoxPlan.PrivilegedUser = "root"
-	registerCleanup(func(cleanupCtx context.Context) error {
-		return revokeTemporaryRootAccess(cleanupCtx, s, *siteDir, proxmoxPlan, operatorPublicKey)
-	})
+	rootCleanup := newTemporaryRootCleanup(s, *siteDir, operatorPublicKey)
+	registerCleanup(rootCleanup.revoke)
 	report.start("proxmox", "Reconcile Proxmox platform and storage")
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		// Reconcile the live host-side jump policy from the same canonical
 		// destination list as the generated projection, including any
 		// product-owned retained guests that remain in the SSH contract.
+		// Arm cleanup before the remote command because the command can make
+		// partial changes before reporting an error.
+		rootCleanup.hostEstablished()
 		if err := proxmox.ConfigureIdentities(ctx, rootRunner, s.BootstrapAddress, "root", operatorPublicKey, jumpDestinations(s)); err != nil {
 			return fmt.Errorf("reconcile Proxmox administrative and bastion identities: %w", err)
 		}
@@ -438,7 +448,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		firewallRunner = applianceSSHRunner(s, *siteDir, "lab-fw-01")
 		firewallGuest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
 		if err := report.timed("appliances", "readiness", firewallGuest.Name, func() error {
-			return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, firewallRunner, firewallGuest, operatorPublicKey, deploymentKnownHosts(*siteDir), firewallGuest.Hostname+"."+s.Network.Domain)
+			return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, firewallRunner, firewallGuest, operatorPublicKey, deploymentKnownHosts(*siteDir), firewallGuest.Hostname+"."+s.Network.Domain, func() {
+				rootCleanup.guestEstablished(firewallGuest)
+			})
 		}); err != nil {
 			return fmt.Errorf("HOLD: managed gateway is not reachable before dependent appliances: %w", err)
 		}
@@ -519,7 +531,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			}
 			guestRunner := applianceSSHRunner(s, *siteDir, guest.Name)
 			if err := report.timed("appliances", "readiness", guest.Name, func() error {
-				return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, guestRunner, guest, operatorPublicKey, deploymentKnownHosts(*siteDir), guest.Hostname+"."+s.Network.Domain)
+				return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, guestRunner, guest, operatorPublicKey, deploymentKnownHosts(*siteDir), guest.Hostname+"."+s.Network.Domain, func() {
+					rootCleanup.guestEstablished(guest)
+				})
 			}); err != nil {
 				return fmt.Errorf("HOLD: %s guest %s is not reachable after first boot: %w", module, guest.Name, err)
 			}
@@ -992,11 +1006,15 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		}
 		s.PendingDNSDeletions = nil
 	}
-	if err := writeModelProjections(*siteDir, s); err != nil {
+	if err := report.timed("persist", "local", "projections", func() error {
+		return writeModelProjections(*siteDir, s)
+	}); err != nil {
 		return err
 	}
 	report.recordMutation("Generated state", "site projections", "persisted", true)
-	if err := rebuildPortal(*siteDir, s); err != nil {
+	if err := report.timed("persist", "local", "portal", func() error {
+		return rebuildPortal(*siteDir, s)
+	}); err != nil {
 		return err
 	}
 	report.complete()
@@ -1005,9 +1023,14 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 
 const deploymentRootTimeout = 3 * time.Minute
 
-func waitForDeploymentRoot(ctx context.Context, hostRunner proxmox.CommandRunner, hostAddress string, guestRunner proxmox.CommandRunner, guest proxmox.GuestPlan, publicKey, knownHosts, hostKeyAlias string) error {
+func waitForDeploymentRoot(ctx context.Context, hostRunner proxmox.CommandRunner, hostAddress string, guestRunner proxmox.CommandRunner, guest proxmox.GuestPlan, publicKey, knownHosts, hostKeyAlias string, onAuthorityEstablished ...func()) error {
 	if guest.Hostname == "" || hostKeyAlias == "" {
 		return errors.New("guest host-key identity is incomplete")
+	}
+	markAuthorityEstablished := func() {
+		if len(onAuthorityEstablished) > 0 && onAuthorityEstablished[0] != nil {
+			onAuthorityEstablished[0]()
+		}
 	}
 	rootCtx, cancel := context.WithTimeout(ctx, deploymentRootTimeout)
 	defer cancel()
@@ -1035,6 +1058,7 @@ func waitForDeploymentRoot(ctx context.Context, hostRunner proxmox.CommandRunner
 		return fmt.Errorf("HOLD: pin guest host key: %w", err)
 	}
 	if err := proxmox.WaitForSSH(rootCtx, guestRunner, guest.Address, "root", 1, 0); err == nil {
+		markAuthorityEstablished()
 		return nil
 	}
 	var lastErr error
@@ -1052,6 +1076,10 @@ func waitForDeploymentRoot(ctx context.Context, hostRunner proxmox.CommandRunner
 			lastErr = restoreErr
 			continue
 		}
+		// Restoration itself establishes cleanup responsibility. The guest
+		// probe may still fail, but the temporary key must be removed on the
+		// outer failure path in that case too.
+		markAuthorityEstablished()
 		if retryErr := proxmox.WaitForSSH(rootCtx, guestRunner, guest.Address, "root", 30, 2*time.Second); retryErr == nil {
 			return nil
 		} else {
@@ -1489,8 +1517,40 @@ func applianceSSHRunner(s model.Site, siteDir, hostAlias string) proxmox.SSHRunn
 	}
 }
 
-func revokeTemporaryRootAccess(ctx context.Context, s model.Site, siteDir string, plan proxmox.Plan, operatorPublicKey string) error {
-	for _, guest := range plan.Guests {
+type temporaryRootCleanup struct {
+	s                 model.Site
+	siteDir           string
+	operatorPublicKey string
+	host              bool
+	guests            []proxmox.GuestPlan
+	guestNames        map[string]struct{}
+}
+
+func newTemporaryRootCleanup(s model.Site, siteDir, operatorPublicKey string) *temporaryRootCleanup {
+	return &temporaryRootCleanup{s: s, siteDir: siteDir, operatorPublicKey: operatorPublicKey, guestNames: make(map[string]struct{})}
+}
+
+func (c *temporaryRootCleanup) hostEstablished() {
+	c.host = true
+}
+
+func (c *temporaryRootCleanup) guestEstablished(guest proxmox.GuestPlan) {
+	if _, ok := c.guestNames[guest.Name]; ok {
+		return
+	}
+	c.guestNames[guest.Name] = struct{}{}
+	c.guests = append(c.guests, guest)
+}
+
+func (c *temporaryRootCleanup) revoke(ctx context.Context) error {
+	if !c.host && len(c.guests) == 0 {
+		return nil
+	}
+	return revokeTemporaryRootAccessForGuests(ctx, c.s, c.siteDir, c.guests, c.operatorPublicKey, c.host)
+}
+
+func revokeTemporaryRootAccessForGuests(ctx context.Context, s model.Site, siteDir string, guests []proxmox.GuestPlan, operatorPublicKey string, host bool) error {
+	for _, guest := range guests {
 		if guest.Owner == "" || guest.Address == "" {
 			continue
 		}
@@ -1499,9 +1559,11 @@ func revokeTemporaryRootAccess(ctx context.Context, s model.Site, siteDir string
 			return fmt.Errorf("revoke root access on %s: %w", guest.Name, err)
 		}
 	}
-	hostRunner := proxmoxRootSSHRunner(s, siteDir)
-	if err := proxmox.RevokeTemporaryRootAccess(ctx, hostRunner, s.BootstrapAddress, "root", operatorPublicKey, true); err != nil {
-		return fmt.Errorf("revoke root access on %s: %w", model.LogicalProxmoxIdentity, err)
+	if host {
+		hostRunner := proxmoxRootSSHRunner(s, siteDir)
+		if err := proxmox.RevokeTemporaryRootAccess(ctx, hostRunner, s.BootstrapAddress, "root", operatorPublicKey, true); err != nil {
+			return fmt.Errorf("revoke root access on %s: %w", model.LogicalProxmoxIdentity, err)
+		}
 	}
 	return nil
 }
@@ -1560,7 +1622,7 @@ func loadProxmoxClientWithSnippetUser(siteDir string, s model.Site, ageIdentity,
 	}
 	client, err := proxmox.NewClient(proxmox.Config{
 		BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", User: credentials.APIUser,
-		TokenID: credentials.TokenID, TokenSecret: credentials.TokenSecret, CAFile: caFile, Insecure: insecure,
+		TokenID: credentials.TokenID, TokenSecret: credentials.TokenSecret, CAFile: caFile, CAPEM: credentials.CAPEM, Insecure: insecure,
 		SnippetRunner: proxmox.SSHRunner{
 			IdentityFile:  operatorIdentityFile(s),
 			ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),

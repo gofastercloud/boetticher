@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
 
 const deploymentPhaseCount = 9
@@ -59,6 +61,11 @@ type deploymentReport struct {
 	finishedAt            time.Time
 	timingPath            string
 	timings               []deploymentTiming
+	measurements          operationMeasurements
+}
+
+func (r *deploymentReport) Observe(event telemetry.Event) {
+	r.measurements.Observe(event)
 }
 
 func newDeploymentReport(out io.Writer) *deploymentReport {
@@ -210,6 +217,7 @@ func (r *deploymentReport) finalize(operationErr error) error {
 	} else {
 		fmt.Fprintln(r.out, "Infrastructure changed: NO")
 	}
+	fmt.Fprintln(r.out, r.measurements.summaryLine())
 	if len(r.mutations) > 0 {
 		fmt.Fprintln(r.out, "Changes before failure:")
 		for _, mutation := range r.mutations {
@@ -311,22 +319,23 @@ func (r *deploymentReport) persistTiming(operationErr error) error {
 		phases = append(phases, entry)
 	}
 	document := struct {
-		Version               int                  `json:"version"`
-		Operation             string               `json:"operation"`
-		PlatformVersion       string               `json:"platform_version,omitempty"`
-		ModelRevision         string               `json:"model_revision,omitempty"`
-		RunID                 string               `json:"run_id"`
-		StartedAt             string               `json:"started_at"`
-		FinishedAt            string               `json:"finished_at"`
-		DurationMS            int64                `json:"duration_ms"`
-		Succeeded             bool                 `json:"succeeded"`
-		InfrastructureChanged bool                 `json:"infrastructure_changed"`
-		MutationScopeCertain  bool                 `json:"mutation_scope_certain"`
-		Mutations             []deploymentMutation `json:"mutations,omitempty"`
-		CleanupAttempted      bool                 `json:"cleanup_attempted"`
-		CleanupRemoved        bool                 `json:"cleanup_removed"`
-		Phases                []phaseTiming        `json:"phases"`
-		Suboperations         []deploymentTiming   `json:"suboperations"`
+		Version               int                   `json:"version"`
+		Operation             string                `json:"operation"`
+		PlatformVersion       string                `json:"platform_version,omitempty"`
+		ModelRevision         string                `json:"model_revision,omitempty"`
+		RunID                 string                `json:"run_id"`
+		StartedAt             string                `json:"started_at"`
+		FinishedAt            string                `json:"finished_at"`
+		DurationMS            int64                 `json:"duration_ms"`
+		Succeeded             bool                  `json:"succeeded"`
+		InfrastructureChanged bool                  `json:"infrastructure_changed"`
+		MutationScopeCertain  bool                  `json:"mutation_scope_certain"`
+		Mutations             []deploymentMutation  `json:"mutations,omitempty"`
+		CleanupAttempted      bool                  `json:"cleanup_attempted"`
+		CleanupRemoved        bool                  `json:"cleanup_removed"`
+		Phases                []phaseTiming         `json:"phases"`
+		Suboperations         []deploymentTiming    `json:"suboperations"`
+		Measurements          operationMeasurements `json:"measurements"`
 	}{
 		Version:               1,
 		Operation:             r.operation,
@@ -344,6 +353,7 @@ func (r *deploymentReport) persistTiming(operationErr error) error {
 		CleanupRemoved:        r.cleanupRemoved,
 		Phases:                phases,
 		Suboperations:         append([]deploymentTiming(nil), r.timings...),
+		Measurements:          r.measurements,
 	}
 	data, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {
