@@ -11,7 +11,7 @@ ephemeral systemd-credential path. Existing retained state is reused without
 re-registering on each boot.
 
 Core composes the module's network intent. In managed gateway mode, only the
-declared LiteLLM, portal, monitoring, DNS/NTP, logging, and Tailscale
+declared Bifrost, portal, monitoring, DNS/NTP, logging, and Tailscale
 control-plane flows are allowed; the TRANSIT baseline denies other internal
 and Internet destinations. DNS and NTP intents target both managed DNS
 endpoints (dns01 and dns02). Tailscale coordination uses TCP/443 to the

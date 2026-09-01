@@ -75,11 +75,11 @@ func deploymentCredentialBindings(site model.Site) ([]deploymentCredential, erro
 			Spec: secrets.CredentialSpec{Name: "airvpn-wireguard-config", Unit: "boetticher-airvpn.service", StorePath: "/var/lib/boetticher/credentials/airvpn-wireguard-config.cred", RuntimeRef: "/run/credentials/boetticher-airvpn.service/airvpn-wireguard-config"},
 		})
 	}
-	if modules.IsEnabled(site, "litellm") {
-		for _, upstream := range site.ModuleConfig["litellm"].Upstreams {
+	if modules.IsEnabled(site, "bifrost") {
+		for _, upstream := range site.ModuleConfig["bifrost"].Upstreams {
 			bindings = append(bindings, deploymentCredential{
-				Guest: "lab-litellm-01", Address: "10.10.20.60", SecretKey: upstream.APIKeySecret,
-				Spec: secrets.CredentialSpec{Name: credentialName(upstream.APIKeySecret), Unit: "litellm.service", StorePath: "/var/lib/boetticher/credentials/" + credentialName(upstream.APIKeySecret) + ".cred", RuntimeRef: "/run/credentials/litellm.service/" + credentialName(upstream.APIKeySecret)},
+				Guest: "lab-bifrost-01", Address: "10.10.20.60", SecretKey: upstream.APIKeySecret,
+				Spec: secrets.CredentialSpec{Name: credentialName(upstream.APIKeySecret), Unit: "bifrost.service", StorePath: "/var/lib/boetticher/credentials/" + credentialName(upstream.APIKeySecret) + ".cred", RuntimeRef: "/run/credentials/bifrost.service/" + credentialName(upstream.APIKeySecret)},
 			})
 		}
 	}
@@ -171,7 +171,7 @@ func streamDeckCredentialBindings(site model.Site) ([]deploymentCredential, erro
 }
 
 func credentialName(reference string) string {
-	return model.LiteLLMSecretReferenceID(reference)
+	return model.BifrostSecretReferenceID(reference)
 }
 
 // credentialDropIns returns non-secret systemd projections grouped by

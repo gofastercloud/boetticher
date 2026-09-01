@@ -20,7 +20,7 @@ replacement:
   evidence hashes, token usage and audit state; raw evidence and prompts are
   removed at terminal transition.
 - gatus: no persistent application volume; its runtime state is ephemeral.
-- litellm: the retained TLS identity and declared persistent service state.
+- bifrost: the retained TLS identity and declared persistent service state.
 - printer: the backed-up `/var/lib/octoprint` volume, plus retained TLS and
   SSH identities.
 - streamdeck: the backed-up retained TLS and SSH identities; display images and

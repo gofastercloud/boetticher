@@ -37,7 +37,7 @@ Proxmox management plane or user workloads part of the cache lifecycle.
 
 The builder receives an artifact target list derived from the resolved plan.
 The base, enabled module appliances, and managed firewall are built
-and qualified; disabled optional modules such as Tailnet Router and LiteLLM
+and qualified; disabled optional modules such as Tailnet Router and Bifrost
 (including its lightweight Bifrost implementation) are not constructed during
 the default workflow. The memory-heavy base and
 firewall stages run sequentially on the bounded builder; after they complete,

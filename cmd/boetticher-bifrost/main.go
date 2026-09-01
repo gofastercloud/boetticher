@@ -26,9 +26,9 @@ func main() {
 }
 
 func run(args []string) error {
-	if filepath.Base(os.Args[0]) == "boetticher-litellm-model-capabilities" {
+	if filepath.Base(os.Args[0]) == "boetticher-bifrost-model-capabilities" {
 		if len(args) != 1 {
-			return errors.New("usage: boetticher-litellm-model-capabilities MODEL_ALIAS")
+			return errors.New("usage: boetticher-bifrost-model-capabilities MODEL_ALIAS")
 		}
 		return printLocalCapabilities(args[0])
 	}

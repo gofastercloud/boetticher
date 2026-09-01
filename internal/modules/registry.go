@@ -111,8 +111,8 @@ func FirstPartyRegistry() Registry {
 				{Name: "lab-airvpn-01", VMID: model.AirVPNGuestVMID, Hostname: "lab-airvpn-01", Address: model.AirVPNGuestAddress, Role: "AirVPN WireGuard transit", DNSAliases: []string{"airvpn"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
-		"litellm": {
-			Name: "litellm", Description: "mTLS-protected LiteLLM AI API router", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
+		"bifrost": {
+			Name: "bifrost", Description: "mTLS-protected Bifrost AI API router", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
 			Configuration: []model.ModuleConfigField{
 				{Key: "upstreams", Type: model.ModuleConfigObjectList, Prompt: "AI Router upstreams", Description: "HTTPS provider endpoints and their SOPS secret references", Required: true, MinItems: 1, MaxItems: 16, ItemFields: []model.ModuleConfigField{
 					{Key: "name", Type: model.ModuleConfigString, Prompt: "Upstream name", Required: true},
@@ -121,13 +121,13 @@ func FirstPartyRegistry() Registry {
 				}},
 				{Key: "models", Type: model.ModuleConfigObjectList, Prompt: "AI Router model aliases", Description: "Provider-neutral aliases exposed to dependent modules", Required: true, MinItems: 1, MaxItems: 32, ItemFields: []model.ModuleConfigField{
 					{Key: "alias", Type: model.ModuleConfigString, Prompt: "Public alias", Required: true},
-					{Key: "upstream", Type: model.ModuleConfigEnum, Prompt: "Upstream", Required: true, Resolver: "litellm-upstream-name"},
+					{Key: "upstream", Type: model.ModuleConfigEnum, Prompt: "Upstream", Required: true, Resolver: "bifrost-upstream-name"},
 					{Key: "model", Type: model.ModuleConfigString, Prompt: "Provider model identifier", Required: true},
 				}},
 			},
 			Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityAIAPI}, GuestIDs: []int{210}, ReservedVMIDStart: 210, ReservedVMIDEnd: 219,
 			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
-				{Name: "lab-litellm-01", VMID: 210, Hostname: "lab-litellm-01", Address: "10.10.20.60", Role: "LiteLLM AI API router", DNSAliases: []string{"litellm", "ai"}, URL: "https://litellm." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+				{Name: "lab-bifrost-01", VMID: 210, Hostname: "lab-bifrost-01", Address: "10.10.20.60", Role: "Bifrost AI API router", DNSAliases: []string{"bifrost", "ai"}, URL: "https://bifrost." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 		"printer": {
@@ -148,8 +148,8 @@ func FirstPartyRegistry() Registry {
 		},
 		"aiops": {
 			Name: "aiops", Description: "Read-only HolmesGPT incident investigation", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
-			Configuration: []model.ModuleConfigField{{Key: "model_alias", Type: model.ModuleConfigModelAlias, Prompt: "AI Router model alias", Description: "An alias explicitly declared by the LiteLLM module", Required: true, Resolver: "litellm-model-alias"}},
-			DependsOn:     []string{"monitoring", "logging", "litellm"}, Requires: []Capability{CapabilityMonitoring, CapabilityLogging, CapabilityAIAPI, CapabilityDNS, CapabilityNTP}, GuestIDs: []int{240}, ReservedVMIDStart: 240, ReservedVMIDEnd: 249,
+			Configuration: []model.ModuleConfigField{{Key: "model_alias", Type: model.ModuleConfigModelAlias, Prompt: "AI Router model alias", Description: "An alias explicitly declared by the Bifrost module", Required: true, Resolver: "bifrost-model-alias"}},
+			DependsOn:     []string{"monitoring", "logging", "bifrost"}, Requires: []Capability{CapabilityMonitoring, CapabilityLogging, CapabilityAIAPI, CapabilityDNS, CapabilityNTP}, GuestIDs: []int{240}, ReservedVMIDStart: 240, ReservedVMIDEnd: 249,
 			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
 				{Name: "lab-aiops-01", VMID: 240, Hostname: "lab-aiops-01", Zone: "SERVERS", Address: "10.10.20.90", Role: "HolmesGPT AIOps investigation", DNSAliases: []string{"aiops"}, URL: "https://aiops." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
@@ -188,12 +188,12 @@ func (r Registry) ConfigurationFields(name string, config model.SiteConfig) ([]m
 	resolve = func(values []model.ModuleConfigField) {
 		for index := range values {
 			switch values[index].Resolver {
-			case "litellm-model-alias":
-				for _, item := range config.Modules.Map()["litellm"].Models {
+			case "bifrost-model-alias":
+				for _, item := range config.Modules.Map()["bifrost"].Models {
 					values[index].AllowedValues = append(values[index].AllowedValues, item.Alias)
 				}
-			case "litellm-upstream-name":
-				for _, item := range config.Modules.Map()["litellm"].Upstreams {
+			case "bifrost-upstream-name":
+				for _, item := range config.Modules.Map()["bifrost"].Upstreams {
 					values[index].AllowedValues = append(values[index].AllowedValues, item.Name)
 				}
 			}
@@ -378,7 +378,7 @@ func validateConfigurationFields(module string, fields []model.ModuleConfigField
 				return fmt.Errorf("module %s configuration field %s has a resolver for a non-choice type", module, field.Key)
 			}
 			switch field.Resolver {
-			case "litellm-model-alias", "litellm-upstream-name":
+			case "bifrost-model-alias", "bifrost-upstream-name":
 			default:
 				return fmt.Errorf("module %s configuration field %s has unknown resolver %q", module, field.Key, field.Resolver)
 			}
@@ -459,8 +459,8 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 		}
 	}
 	for name, moduleConfig := range configs {
-		if name == "litellm" && (moduleConfig.Enabled != nil && *moduleConfig.Enabled || len(moduleConfig.Upstreams) > 0 || len(moduleConfig.Models) > 0) {
-			if err := model.ValidateLiteLLMConfig(moduleConfig); err != nil {
+		if name == "bifrost" && (moduleConfig.Enabled != nil && *moduleConfig.Enabled || len(moduleConfig.Upstreams) > 0 || len(moduleConfig.Models) > 0) {
+			if err := model.ValidateBifrostConfig(moduleConfig); err != nil {
 				return nil, err
 			}
 		}
@@ -468,11 +468,11 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 			if !modelToken(moduleConfig.ModelAlias) {
 				return nil, fmt.Errorf("modules.aiops.model_alias: a safe declared AI Router alias is required")
 			}
-			litellm, ok := configs["litellm"]
+			bifrost, ok := configs["bifrost"]
 			if !ok {
-				return nil, fmt.Errorf("modules.aiops.model_alias: LiteLLM configuration is required")
+				return nil, fmt.Errorf("modules.aiops.model_alias: Bifrost configuration is required")
 			}
-			if _, err := model.ResolveLiteLLMAlias(litellm, moduleConfig.ModelAlias); err != nil {
+			if _, err := model.ResolveBifrostAlias(bifrost, moduleConfig.ModelAlias); err != nil {
 				return nil, fmt.Errorf("modules.aiops.model_alias: %w", err)
 			}
 		}

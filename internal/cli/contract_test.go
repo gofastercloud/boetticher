@@ -129,7 +129,7 @@ func TestPluralModuleNamespaceUsesGenericLifecycleAndRejectsUnknownCommands(t *t
 	if err := os.WriteFile(filepath.Join(dir, "site.yml"), config, 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"tailnet-router", "litellm", "aiops"} {
+	for _, name := range []string{"tailnet-router", "bifrost", "aiops"} {
 		var output bytes.Buffer
 		if err := Run([]string{"modules", name, "show", "--site", dir}, &output, &output); err != nil {
 			t.Fatal(err)
