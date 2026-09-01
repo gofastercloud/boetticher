@@ -648,10 +648,6 @@ func runBootstrapCleanup(siteDir, ageIdentity, proxmoxCA string, insecure bool, 
 	if err != nil {
 		return err
 	}
-	plan, err := proxmox.PlanFromSite(s)
-	if err != nil {
-		return fmt.Errorf("validate temporary builder cleanup plan: %w", err)
-	}
 	client, _, err := loadProxmoxClient(siteDir, s, ageIdentity, proxmoxCA, insecure)
 	if err != nil {
 		return fmt.Errorf("prepare Proxmox client for temporary builder cleanup: %w", err)
@@ -660,9 +656,6 @@ func runBootstrapCleanup(siteDir, ageIdentity, proxmoxCA string, insecure bool, 
 	node, err := client.SingleNode(ctx)
 	if err != nil {
 		return fmt.Errorf("identify Proxmox node for temporary builder cleanup: %w", err)
-	}
-	if plan.Node != "" && node != plan.Node {
-		return fmt.Errorf("Proxmox node identity changed during temporary builder cleanup: desired %q, observed %q", plan.Node, node)
 	}
 	progress.complete()
 	progress.start("cleanup", "Remove exact-owned temporary artifact builder")
