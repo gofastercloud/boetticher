@@ -24,6 +24,8 @@ import (
 	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
 
+const builderBuildCommand = `sh -c 'tail -n 0 -F /var/log/boetticher-build.log 2>/dev/null & tail_pid=$!; trap "kill $tail_pid 2>/dev/null || true" EXIT; /usr/local/sbin/boetticher-build'`
+
 func runBootstrapEndpoint(args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: boetticher bootstrap-endpoint show|set ADDRESS [--site DIR]")
@@ -522,17 +524,19 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	builderOutput := ""
 	if builderCreated {
 		defer func() {
+			cleanupContext, cancelCleanup := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancelCleanup()
 			var cleanupErr error
 			if !buildSucceeded {
 				if builderAddress != "" {
-					if err := persistBuilderDiagnosticsWithOutput(ctx, builderRunner, builderAddress, builderSSHUser, siteDir, builderOutput); err != nil {
+					if err := persistBuilderDiagnosticsWithOutput(cleanupContext, builderRunner, builderAddress, builderSSHUser, siteDir, builderOutput); err != nil {
 						cleanupErr = errors.Join(cleanupErr, err)
 					}
 				} else if err := persistBuilderUnavailableDiagnostics(siteDir, returnErr); err != nil {
 					cleanupErr = errors.Join(cleanupErr, err)
 				}
 			}
-			if err := proxmox.DestroyBuilderVM(ctx, client, plan.Node); err != nil {
+			if err := proxmox.DestroyBuilderVM(cleanupContext, client, plan.Node); err != nil {
 				cleanupErr = errors.Join(cleanupErr, err)
 			}
 			if cleanupErr != nil {
@@ -597,7 +601,8 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	progress.emitTiming(out, "builder_source_transfer", sourceStarted)
 	var buildOutputBuffer boundedBuilderOutput
 	buildStarted := time.Now()
-	if buildErr := builderRunner.RunStream(ctx, builderAddress, builderSSHUser, "/usr/local/sbin/boetticher-build", &buildOutputBuffer); buildErr != nil {
+	buildStreamOutput := io.MultiWriter(&buildOutputBuffer, &builderProgressWriter{out: out})
+	if buildErr := builderRunner.RunStream(ctx, builderAddress, builderSSHUser, builderBuildCommand, buildStreamOutput); buildErr != nil {
 		builderOutput = builderFailureOutput(&buildOutputBuffer, buildErr)
 		progress.emitTiming(out, "builder_build_and_qualification", buildStarted)
 		return fmt.Errorf("qualify default appliance artifacts on temporary builder: %w", buildErr)
@@ -793,6 +798,30 @@ func (b *boundedBuilderArchive) Write(data []byte) (int, error) {
 }
 
 func (b *boundedBuilderOutput) String() string { return b.buffer.String() }
+
+type builderProgressWriter struct {
+	out  io.Writer
+	line []byte
+}
+
+func (w *builderProgressWriter) Write(data []byte) (int, error) {
+	if w.out == nil {
+		return len(data), nil
+	}
+	w.line = append(w.line, data...)
+	for {
+		index := bytes.IndexByte(w.line, '\n')
+		if index < 0 {
+			break
+		}
+		line := strings.TrimSuffix(string(w.line[:index]), "\r")
+		if strings.HasPrefix(line, "timing ") || strings.HasPrefix(line, "measurement ") || strings.HasPrefix(line, "boetticher build stage: ") || strings.HasPrefix(line, "boetticher package stage: ") {
+			_, _ = fmt.Fprintln(w.out, line)
+		}
+		w.line = w.line[index+1:]
+	}
+	return len(data), nil
+}
 
 func builderFailureOutput(output *boundedBuilderOutput, cause error) string {
 	if cause != nil {

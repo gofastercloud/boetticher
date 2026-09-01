@@ -116,6 +116,25 @@ func TestBuilderFailureOutputPreservesBoundedCommandError(t *testing.T) {
 	}
 }
 
+func TestBuilderBuildCommandStreamsThePersistentLog(t *testing.T) {
+	for _, required := range []string{"tail -n 0 -F /var/log/boetticher-build.log", "/usr/local/sbin/boetticher-build", "trap"} {
+		if !strings.Contains(builderBuildCommand, required) {
+			t.Fatalf("builder command does not contain %q: %s", required, builderBuildCommand)
+		}
+	}
+}
+
+func TestBuilderProgressWriterForwardsOnlySafeProgressLines(t *testing.T) {
+	var output bytes.Buffer
+	writer := &builderProgressWriter{out: &output}
+	if _, err := writer.Write([]byte("package output\ntiming stage=artifact_build duration_ms=10 artifact=boetticher-base\nmeasurement stage=artifact_compression artifact=boetticher-base\nboetticher package stage: boetticher-base archive\n")); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "package output") || !strings.Contains(output.String(), "timing stage=artifact_build") || !strings.Contains(output.String(), "measurement stage=artifact_compression") || !strings.Contains(output.String(), "boetticher package stage: boetticher-base archive") {
+		t.Fatalf("builder progress output = %q", output.String())
+	}
+}
+
 func TestPersistBuilderUnavailableDiagnosticsRecordsEarlyFailure(t *testing.T) {
 	directory := t.TempDir()
 	if err := persistBuilderUnavailableDiagnostics(directory, context.DeadlineExceeded); err != nil {
