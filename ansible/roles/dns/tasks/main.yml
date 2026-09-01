@@ -216,21 +216,27 @@
       current_sources="$(metadata_values "$zone" ALLOW-DNSUPDATE-FROM)"
       if [ "$current_sources" != "$expected_sources" ]; then
         current_length="$(printf '%s' "$current_sources" | wc -c | tr -d '[:space:]')"
-        printf 'boetticher-observation dns-metadata-drift %s ALLOW-DNSUPDATE-FROM %s\n' "$zone" "$current_length"
+        current_count="$(printf '%s\n' "$current_sources" | awk '{print NF}')"
+        current_digest="$(printf '%s' "$current_sources" | sha256sum | cut -c1-16)"
+        printf 'boetticher-observation dns-metadata-drift %s ALLOW-DNSUPDATE-FROM %s %s %s\n' "$zone" "$current_length" "$current_count" "$current_digest"
         pdnsutil set-meta "$zone" ALLOW-DNSUPDATE-FROM {% for source in dns_plan.ddns.update_sources %}{{ source | quote }} {% endfor %}
         updated=1
       fi
       current_notify="$(metadata_values "$zone" NOTIFY-DNSUPDATE)"
       if [ "$current_notify" != "1" ]; then
         current_length="$(printf '%s' "$current_notify" | wc -c | tr -d '[:space:]')"
-        printf 'boetticher-observation dns-metadata-drift %s NOTIFY-DNSUPDATE %s\n' "$zone" "$current_length"
+        current_count="$(printf '%s\n' "$current_notify" | awk '{print NF}')"
+        current_digest="$(printf '%s' "$current_notify" | sha256sum | cut -c1-16)"
+        printf 'boetticher-observation dns-metadata-drift %s NOTIFY-DNSUPDATE %s %s %s\n' "$zone" "$current_length" "$current_count" "$current_digest"
         pdnsutil set-meta "$zone" NOTIFY-DNSUPDATE 1
         updated=1
       fi
       current_tsig="$(metadata_values "$zone" TSIG-ALLOW-DNSUPDATE)"
       if [ "$current_tsig" != {{ item.tsig_key_name | quote }} ]; then
         current_length="$(printf '%s' "$current_tsig" | wc -c | tr -d '[:space:]')"
-        printf 'boetticher-observation dns-metadata-drift %s TSIG-ALLOW-DNSUPDATE %s\n' "$zone" "$current_length"
+        current_count="$(printf '%s\n' "$current_tsig" | awk '{print NF}')"
+        current_digest="$(printf '%s' "$current_tsig" | sha256sum | cut -c1-16)"
+        printf 'boetticher-observation dns-metadata-drift %s TSIG-ALLOW-DNSUPDATE %s %s %s\n' "$zone" "$current_length" "$current_count" "$current_digest"
         pdnsutil set-meta "$zone" TSIG-ALLOW-DNSUPDATE {{ item.tsig_key_name | quote }}
         updated=1
       fi

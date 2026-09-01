@@ -463,7 +463,7 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	forksPath := filepath.Join(tempDir, "forks")
 	inputPath := filepath.Join(tempDir, "input")
 	scriptPath := filepath.Join(tempDir, "ansible-playbook")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ANSIBLE_ARGS_FILE\"\nprintf '%s' \"$ANSIBLE_FORKS\" > \"$ANSIBLE_FORKS_FILE\"\ncat > \"$ANSIBLE_INPUT_FILE\"\nif [ -n \"$BOETTICHER_ANSIBLE_TIMING_FILE\" ]; then printf '%s\\n' '{\"host\":\"lab-fw-01\",\"task\":\"fake task\",\"path\":\"fake.yml:1\",\"status\":\"ok\",\"duration_ms\":3,\"changed\":false,\"markers\":[\"dns-metadata-drift:servers.lab.home.arpa:ALLOW-DNSUPDATE-FROM:10\"]}' '{\"event\":\"task_batch\",\"task\":\"fake batch\",\"path\":\"fake.yml:2\",\"duration_ms\":7}' >> \"$BOETTICHER_ANSIBLE_TIMING_FILE\"; fi\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ANSIBLE_ARGS_FILE\"\nprintf '%s' \"$ANSIBLE_FORKS\" > \"$ANSIBLE_FORKS_FILE\"\ncat > \"$ANSIBLE_INPUT_FILE\"\nif [ -n \"$BOETTICHER_ANSIBLE_TIMING_FILE\" ]; then printf '%s\\n' '{\"host\":\"lab-fw-01\",\"task\":\"fake task\",\"path\":\"fake.yml:1\",\"status\":\"ok\",\"duration_ms\":3,\"changed\":false,\"markers\":[\"dns-metadata-drift:servers.lab.home.arpa:ALLOW-DNSUPDATE-FROM:20:1:27ee1412f884f2f2\"]}' '{\"event\":\"task_batch\",\"task\":\"fake batch\",\"path\":\"fake.yml:2\",\"duration_ms\":7}' >> \"$BOETTICHER_ANSIBLE_TIMING_FILE\"; fi\n"
 	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -490,7 +490,7 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	if len(result.TaskTimings) != 1 || result.TaskTimings[0].Task != "fake task" {
 		t.Fatalf("Ansible task timings = %+v, want one fake task timing", result.TaskTimings)
 	}
-	if len(result.TaskTimings[0].Markers) != 1 || result.TaskTimings[0].Markers[0] != "dns-metadata-drift:servers.lab.home.arpa:ALLOW-DNSUPDATE-FROM:10" {
+	if len(result.TaskTimings[0].Markers) != 1 || result.TaskTimings[0].Markers[0] != "dns-metadata-drift:servers.lab.home.arpa:ALLOW-DNSUPDATE-FROM:20:1:27ee1412f884f2f2" {
 		t.Fatalf("Ansible task markers = %+v, want the safe DNS observation marker", result.TaskTimings[0].Markers)
 	}
 	if len(result.TaskBatchTimings) != 1 || result.TaskBatchTimings[0].Task != "fake batch" || result.TaskBatchTimings[0].DurationMS != 7 {
