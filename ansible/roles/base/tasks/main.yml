@@ -12,13 +12,16 @@
     state: present
     update_cache: true
     cache_valid_time: 3600
-  when: inventory_hostname in groups.get('proxmox', [])
+  when:
+    - inventory_hostname in groups.get('proxmox', [])
+    - boetticher_deploy_phase | default('full') != 'services'
 
 - name: Remove labadmin from the sudo group
   ansible.builtin.command: gpasswd --delete labadmin sudo
   register: remove_labadmin_sudo_group
   changed_when: remove_labadmin_sudo_group.rc == 0
   failed_when: remove_labadmin_sudo_group.rc not in [0, 3]
+  when: boetticher_deploy_phase | default('full') != 'services'
 
 - name: Remove legacy labadmin sudo policy
   ansible.builtin.file:
@@ -27,6 +30,7 @@
   loop:
     - /etc/sudoers.d/boetticher
     - /etc/sudoers.d/boetticher-labadmin
+  when: boetticher_deploy_phase | default('full') != 'services'
 
 - name: Allow endpoint services to traverse the boetticher runtime state path
   ansible.builtin.file:
@@ -37,7 +41,9 @@
     # Child service directories remain separately protected. Execute access
     # for other users permits traversal without directory listing or reads.
     mode: '0751'
-  when: inventory_hostname in logging_upload_configs
+  when:
+    - inventory_hostname in logging_upload_configs
+    - boetticher_deploy_phase | default('full') != 'services'
 
 - name: Allow endpoint services to traverse the boetticher identity path
   ansible.builtin.file:
@@ -46,7 +52,9 @@
     owner: root
     group: systemd-journal
     mode: '0750'
-  when: inventory_hostname in logging_upload_configs
+  when:
+    - inventory_hostname in logging_upload_configs
+    - boetticher_deploy_phase | default('full') != 'services'
 
 - name: Configure Chrony for unprivileged appliances
   ansible.builtin.copy:
@@ -55,7 +63,9 @@
     owner: root
     group: root
     mode: '0644'
-  when: inventory_hostname not in groups.get('proxmox', [])
+  when:
+    - inventory_hostname not in groups.get('proxmox', [])
+    - boetticher_deploy_phase | default('full') != 'services'
 
 - name: Allow Chrony startup without kernel clock control
   ansible.builtin.file:
@@ -64,7 +74,9 @@
     owner: root
     group: root
     mode: '0755'
-  when: inventory_hostname not in groups.get('proxmox', [])
+  when:
+    - inventory_hostname not in groups.get('proxmox', [])
+    - boetticher_deploy_phase | default('full') != 'services'
 
 - name: Install Chrony startup override
   ansible.builtin.copy:
@@ -74,24 +86,24 @@
     group: root
     mode: '0644'
   notify: reload systemd
-  when: inventory_hostname not in groups.get('proxmox', [])
+  when:
+    - inventory_hostname not in groups.get('proxmox', [])
+    - boetticher_deploy_phase | default('full') != 'services'
 
 - name: Flush systemd after installing the Chrony override
   ansible.builtin.meta: flush_handlers
-  when: inventory_hostname not in groups.get('proxmox', [])
+  when:
+    - inventory_hostname not in groups.get('proxmox', [])
+    - boetticher_deploy_phase | default('full') != 'services'
 
 - name: Disable the restricted Chrony service in appliances
   ansible.builtin.service:
     name: chronyd-restricted.service
     enabled: false
     state: stopped
-  when: inventory_hostname not in groups.get('proxmox', [])
-
-- name: Enable chrony
-  ansible.builtin.service:
-    name: chrony
-    enabled: true
-    state: started
+  when:
+    - inventory_hostname not in groups.get('proxmox', [])
+    - boetticher_deploy_phase | default('full') != 'services'
 
 - name: Configure appliances to use the platform DNS pair
   ansible.builtin.copy:
@@ -100,7 +112,9 @@
     owner: root
     group: root
     mode: '0644'
-  when: inventory_hostname not in groups.get('proxmox', [])
+  when:
+    - inventory_hostname not in groups.get('proxmox', [])
+    - boetticher_deploy_phase | default('full') != 'services'
 
 - name: Pin the Proxmox API certificate hostname for Pulse
   ansible.builtin.lineinfile:
@@ -112,6 +126,7 @@
   when:
     - inventory_hostname == 'lab-monitor-01'
     - proxmox_management_address is defined
+    - boetticher_deploy_phase | default('full') != 'services'
 
 - name: Pin the Proxmox collector hostname to the managed logging appliance
   ansible.builtin.lineinfile:
@@ -123,6 +138,7 @@
   when:
     - inventory_hostname in groups.get('proxmox', [])
     - inventory_hostname in logging_upload_configs
+    - boetticher_deploy_phase | default('full') != 'services'
 
 - name: Pin the Pulse monitoring hostname for host agents
   ansible.builtin.lineinfile:
@@ -134,6 +150,7 @@
   when:
     - inventory_hostname in (pulse_agent_targets | default([]))
     - monitoring_plan.components | selectattr('name', 'equalto', 'lab-monitor-01') | list | length == 1
+    - boetticher_deploy_phase | default('full') != 'services'
 
 - name: Install bounded local journald configuration
   ansible.builtin.file:
@@ -142,6 +159,7 @@
     owner: root
     group: root
     mode: '0755'
+  when: boetticher_deploy_phase | default('full') != 'services'
 
 - name: Write bounded local journald configuration
   ansible.builtin.copy:
@@ -151,6 +169,7 @@
     group: root
     mode: '0644'
   notify: restart journald
+  when: boetticher_deploy_phase | default('full') != 'services'
 
 - name: Create endpoint-local logging identity directory
   ansible.builtin.file:
@@ -159,14 +178,18 @@
     owner: root
     group: systemd-journal
     mode: '0750'
-  when: inventory_hostname in logging_upload_configs
+  when:
+    - inventory_hostname in logging_upload_configs
+    - boetticher_deploy_phase | default('full') != 'services'
 
 - name: Generate endpoint-local logging private key
   ansible.builtin.command:
     argv: [openssl, genpkey, -algorithm, EC, -pkeyopt, ec_paramgen_curve:P-256, -out, "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key"]
   args:
     creates: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key"
-  when: inventory_hostname in logging_upload_configs
+  when:
+    - inventory_hostname in logging_upload_configs
+    - boetticher_deploy_phase | default('full') != 'services'
 
 - name: Allow the upload service to read its private key
   ansible.builtin.file:
@@ -174,14 +197,18 @@
     owner: root
     group: systemd-journal
     mode: '0640'
-  when: inventory_hostname in logging_upload_configs
+  when:
+    - inventory_hostname in logging_upload_configs
+    - boetticher_deploy_phase | default('full') != 'services'
 
 - name: Generate endpoint-local logging CSR
   ansible.builtin.command:
     argv: [openssl, req, -new, -sha256, -key, "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key", -subj, "/CN=client-{{ inventory_hostname }}.{{ domain }}", -out, "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.csr"]
   args:
     creates: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.csr"
-  when: inventory_hostname in logging_upload_configs
+  when:
+    - inventory_hostname in logging_upload_configs
+    - boetticher_deploy_phase | default('full') != 'services'
 
 - name: Fetch endpoint-local logging CSR for controller signing
   ansible.builtin.fetch:
@@ -199,7 +226,9 @@
     owner: root
     group: root
     mode: '0644'
-  when: inventory_hostname in logging_upload_configs
+  when:
+    - inventory_hostname in logging_upload_configs
+    - boetticher_deploy_phase | default('full') != 'services'
 
 - name: Install the controller-signed endpoint journal certificate
   ansible.builtin.copy:
@@ -220,7 +249,9 @@
     owner: root
     group: root
     mode: '0644'
-  when: inventory_hostname in logging_upload_configs
+  when:
+    - inventory_hostname in logging_upload_configs
+    - boetticher_deploy_phase | default('full') != 'services'
 
 - name: Install bounded journal-upload retry policy
   block:
@@ -243,7 +274,9 @@
     - name: Reload systemd after installing journal-upload policy
       ansible.builtin.systemd:
         daemon_reload: true
-  when: inventory_hostname in logging_upload_configs
+  when:
+    - inventory_hostname in logging_upload_configs
+    - boetticher_deploy_phase | default('full') != 'services'
 
 - name: Enable asynchronous journal upload after endpoint certificate installation
   ansible.builtin.service:
@@ -264,6 +297,7 @@
   loop: "{{ (credential_dropins[inventory_hostname] | default({})) | dict2items }}"
   loop_control:
     label: "{{ item.key }}"
+  when: boetticher_deploy_phase | default('full') != 'services'
 
 - name: Install declared systemd credential drop-ins
   ansible.builtin.copy:
@@ -277,6 +311,7 @@
     label: "{{ item.key }}"
   register: boetticher_credential_dropin_install
   notify: reload systemd
+  when: boetticher_deploy_phase | default('full') != 'services'
 
 - name: Install Pulse host-agent hardware collection dependencies
   ansible.builtin.apt:

@@ -65,7 +65,18 @@ type ModulesConfig struct {
 	StreamDeck    *ToggleModuleConfig    `yaml:"streamdeck,omitempty" json:"streamdeck,omitempty"`
 	AIOps         *AIOpsModuleConfig     `yaml:"aiops,omitempty" json:"aiops,omitempty"`
 	Gatus         *ToggleModuleConfig    `yaml:"gatus,omitempty" json:"gatus,omitempty"`
+	AirVPN        *AirVPNModuleConfig    `yaml:"airvpn,omitempty" json:"airvpn,omitempty"`
 }
+
+// ModuleNetworkMode selects the bounded egress path for a network-capable
+// first-party module. Empty is treated as direct for compatibility with
+// existing v3 site files.
+type ModuleNetworkMode string
+
+const (
+	ModuleNetworkDirect ModuleNetworkMode = "direct"
+	ModuleNetworkAirVPN ModuleNetworkMode = "airvpn"
+)
 
 // ModuleConfigField describes one operator-facing decision in a first-party
 // module contract. It is metadata for the generic configure UX; the typed
@@ -107,11 +118,15 @@ type MandatoryModuleConfig struct{}
 type ToggleModuleConfig struct {
 	// Enabled selects whether an optional module should be deployed.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Network selects the external egress path for network-capable modules.
+	Network ModuleNetworkMode `yaml:"network,omitempty" json:"network,omitempty" jsonschema:"enum=direct,enum=airvpn"`
 }
 
 type LiteLLMModuleConfig struct {
 	// Enabled selects whether the AI router should be deployed.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Network selects the external egress path for the AI router.
+	Network ModuleNetworkMode `yaml:"network,omitempty" json:"network,omitempty" jsonschema:"enum=direct,enum=airvpn"`
 	// Upstreams declares HTTPS provider endpoints and references to encrypted credentials.
 	Upstreams []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
 	// Models declares the provider-neutral aliases clients may request.
@@ -131,8 +146,17 @@ type LiteLLMModelConfig struct {
 }
 
 type AIOpsModuleConfig struct {
-	Enabled    *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	ModelAlias string `yaml:"model_alias" json:"model_alias"`
+	Enabled    *bool             `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Network    ModuleNetworkMode `yaml:"network,omitempty" json:"network,omitempty" jsonschema:"enum=direct,enum=airvpn"`
+	ModelAlias string            `yaml:"model_alias" json:"model_alias"`
+}
+
+// AirVPNModuleConfig controls the controller-side AirVPN profile generator.
+// The API key is intentionally not part of this type; it is read from the
+// controller's host-only secret path during deployment.
+type AirVPNModuleConfig struct {
+	Enabled *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Servers string `yaml:"servers" json:"servers"`
 }
 
 // Map returns the normalized internal lookup projection. It is deliberately
@@ -143,31 +167,34 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 		result["dns"] = ModuleConfig{}
 	}
 	if m.Monitoring != nil {
-		result["monitoring"] = ModuleConfig{Enabled: cloneBool(m.Monitoring.Enabled)}
+		result["monitoring"] = ModuleConfig{Enabled: cloneBool(m.Monitoring.Enabled), Network: m.Monitoring.Network}
 	}
 	if m.Firewall != nil {
-		result["firewall"] = ModuleConfig{Enabled: cloneBool(m.Firewall.Enabled)}
+		result["firewall"] = ModuleConfig{Enabled: cloneBool(m.Firewall.Enabled), Network: m.Firewall.Network}
 	}
 	if m.Logging != nil {
 		result["logging"] = ModuleConfig{}
 	}
 	if m.TailnetRouter != nil {
-		result["tailnet-router"] = ModuleConfig{Enabled: cloneBool(m.TailnetRouter.Enabled)}
+		result["tailnet-router"] = ModuleConfig{Enabled: cloneBool(m.TailnetRouter.Enabled), Network: m.TailnetRouter.Network}
 	}
 	if m.LiteLLM != nil {
-		result["litellm"] = ModuleConfig{Enabled: cloneBool(m.LiteLLM.Enabled), Upstreams: cloneLiteLLMUpstreams(m.LiteLLM.Upstreams), Models: cloneLiteLLMModels(m.LiteLLM.Models)}
+		result["litellm"] = ModuleConfig{Enabled: cloneBool(m.LiteLLM.Enabled), Network: m.LiteLLM.Network, Upstreams: cloneLiteLLMUpstreams(m.LiteLLM.Upstreams), Models: cloneLiteLLMModels(m.LiteLLM.Models)}
 	}
 	if m.Printer != nil {
-		result["printer"] = ModuleConfig{Enabled: cloneBool(m.Printer.Enabled)}
+		result["printer"] = ModuleConfig{Enabled: cloneBool(m.Printer.Enabled), Network: m.Printer.Network}
 	}
 	if m.StreamDeck != nil {
-		result["streamdeck"] = ModuleConfig{Enabled: cloneBool(m.StreamDeck.Enabled)}
+		result["streamdeck"] = ModuleConfig{Enabled: cloneBool(m.StreamDeck.Enabled), Network: m.StreamDeck.Network}
 	}
 	if m.AIOps != nil {
-		result["aiops"] = ModuleConfig{Enabled: cloneBool(m.AIOps.Enabled), ModelAlias: m.AIOps.ModelAlias}
+		result["aiops"] = ModuleConfig{Enabled: cloneBool(m.AIOps.Enabled), Network: m.AIOps.Network, ModelAlias: m.AIOps.ModelAlias}
 	}
 	if m.Gatus != nil {
-		result["gatus"] = ModuleConfig{Enabled: cloneBool(m.Gatus.Enabled)}
+		result["gatus"] = ModuleConfig{Enabled: cloneBool(m.Gatus.Enabled), Network: m.Gatus.Network}
+	}
+	if m.AirVPN != nil {
+		result["airvpn"] = ModuleConfig{Enabled: cloneBool(m.AirVPN.Enabled), Servers: m.AirVPN.Servers}
 	}
 	return result
 }
@@ -178,31 +205,34 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 		result.DNS = &DNSModuleConfig{}
 	}
 	if config, ok := input["monitoring"]; ok {
-		result.Monitoring = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		result.Monitoring = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	}
 	if config, ok := input["firewall"]; ok {
-		result.Firewall = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		result.Firewall = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	}
 	if _, ok := input["logging"]; ok {
 		result.Logging = &MandatoryModuleConfig{}
 	}
 	if config, ok := input["tailnet-router"]; ok {
-		result.TailnetRouter = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		result.TailnetRouter = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	}
 	if config, ok := input["litellm"]; ok {
-		result.LiteLLM = &LiteLLMModuleConfig{Enabled: cloneBool(config.Enabled), Upstreams: cloneLiteLLMUpstreams(config.Upstreams), Models: cloneLiteLLMModels(config.Models)}
+		result.LiteLLM = &LiteLLMModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Upstreams: cloneLiteLLMUpstreams(config.Upstreams), Models: cloneLiteLLMModels(config.Models)}
 	}
 	if config, ok := input["printer"]; ok {
-		result.Printer = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		result.Printer = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	}
 	if config, ok := input["streamdeck"]; ok {
-		result.StreamDeck = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		result.StreamDeck = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	}
 	if config, ok := input["aiops"]; ok {
-		result.AIOps = &AIOpsModuleConfig{Enabled: cloneBool(config.Enabled), ModelAlias: config.ModelAlias}
+		result.AIOps = &AIOpsModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, ModelAlias: config.ModelAlias}
 	}
 	if config, ok := input["gatus"]; ok {
-		result.Gatus = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		result.Gatus = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
+	}
+	if config, ok := input["airvpn"]; ok {
+		result.AirVPN = &AirVPNModuleConfig{Enabled: cloneBool(config.Enabled), Servers: config.Servers}
 	}
 	return result
 }
@@ -215,16 +245,16 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 		}
 		m.DNS = &DNSModuleConfig{}
 	case "monitoring":
-		m.Monitoring = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		m.Monitoring = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	case "firewall":
-		m.Firewall = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		m.Firewall = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	case "logging":
 		if config.Enabled != nil {
 			return errors.New("modules.logging.enabled: mandatory module cannot be disabled")
 		}
 		m.Logging = &MandatoryModuleConfig{}
 	case "tailnet-router":
-		m.TailnetRouter = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		m.TailnetRouter = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	case "litellm":
 		upstreams := config.Upstreams
 		models := config.Models
@@ -232,19 +262,25 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 			upstreams = m.LiteLLM.Upstreams
 			models = m.LiteLLM.Models
 		}
-		m.LiteLLM = &LiteLLMModuleConfig{Enabled: cloneBool(config.Enabled), Upstreams: cloneLiteLLMUpstreams(upstreams), Models: cloneLiteLLMModels(models)}
+		m.LiteLLM = &LiteLLMModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Upstreams: cloneLiteLLMUpstreams(upstreams), Models: cloneLiteLLMModels(models)}
 	case "printer":
-		m.Printer = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		m.Printer = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	case "streamdeck":
-		m.StreamDeck = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		m.StreamDeck = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	case "aiops":
 		alias := config.ModelAlias
 		if alias == "" && m.AIOps != nil {
 			alias = m.AIOps.ModelAlias
 		}
-		m.AIOps = &AIOpsModuleConfig{Enabled: cloneBool(config.Enabled), ModelAlias: alias}
+		m.AIOps = &AIOpsModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, ModelAlias: alias}
 	case "gatus":
-		m.Gatus = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		m.Gatus = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
+	case "airvpn":
+		servers := config.Servers
+		if servers == "" && m.AirVPN != nil {
+			servers = m.AirVPN.Servers
+		}
+		m.AirVPN = &AirVPNModuleConfig{Enabled: cloneBool(config.Enabled), Servers: servers}
 	default:
 		return fmt.Errorf("modules.%s: unknown first-party module", name)
 	}
@@ -473,7 +509,7 @@ func cloneModuleConfig(input map[string]ModuleConfig) map[string]ModuleConfig {
 	}
 	output := make(map[string]ModuleConfig, len(input))
 	for name, config := range input {
-		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), ModelAlias: config.ModelAlias, Upstreams: cloneLiteLLMUpstreams(config.Upstreams), Models: cloneLiteLLMModels(config.Models)}
+		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Servers: config.Servers, ModelAlias: config.ModelAlias, Upstreams: cloneLiteLLMUpstreams(config.Upstreams), Models: cloneLiteLLMModels(config.Models)}
 	}
 	return output
 }

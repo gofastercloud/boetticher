@@ -30,11 +30,84 @@ type recordingArgsRunner struct {
 	err     error
 }
 
+func TestEnsureBuilderCacheVolumeAllocatesOnlyReservedCanonicalVolume(t *testing.T) {
+	storageReads := 0
+	runner := &recordingArgsRunner{}
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/191/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/191/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local-lvm/content":
+			storageReads++
+			if got := r.URL.Query().Get("content"); got != "images" {
+				t.Fatalf("storage content filter = %q, want images", got)
+			}
+			if storageReads == 1 {
+				return response([]byte(`{"data":[]}`))
+			}
+			return response([]byte(`{"data":[{"volid":"local-lvm:vm-191-boetticher-builder-cache"}]}`))
+		default:
+			t.Fatalf("unexpected builder cache request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	volume, err := EnsureBuilderCacheVolume(context.Background(), client, "node", runner, "192.0.2.10", "labadmin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if volume != model.BuilderCacheStorage+":"+model.BuilderCacheVolumeName {
+		t.Fatalf("cache volume = %q, want canonical volume", volume)
+	}
+	if len(runner.args) != 1 || !reflect.DeepEqual(runner.args[0], []string{"sudo", "-n", "pvesm", "alloc", "local-lvm", "191", "vm-191-boetticher-builder-cache", "64G", "--format", "raw"}) {
+		t.Fatalf("cache allocation command = %#v", runner.args)
+	}
+}
+
+func TestEnsureBuilderCacheVolumeHoldsWhenReservedOwnerIsOccupied(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/191/config" {
+			return response([]byte(`{"data":{"name":"unrelated-guest"}}`))
+		}
+		t.Fatalf("unexpected occupied cache owner request: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if _, err := EnsureBuilderCacheVolume(context.Background(), client, "node", &recordingArgsRunner{}, "192.0.2.10", "root"); err == nil || !strings.Contains(err.Error(), "VMID 191 is occupied") {
+		t.Fatalf("occupied cache owner was not held: %v", err)
+	}
+}
+
 func (r *recordingArgsRunner) RunArgs(_ context.Context, address, user string, args []string) ([]byte, error) {
 	r.address = address
 	r.user = user
 	r.args = append(r.args, append([]string(nil), args...))
 	return nil, r.err
+}
+
+func TestInspectGuestArtifactReadsExistingGuestConfigOnce(t *testing.T) {
+	guest := GuestPlan{
+		VMID: 100, Kind: KindQEMU,
+		Artifact: model.Artifact{Name: "boetticher-dns-blocky", Version: "1.0.0", Architecture: "amd64"},
+	}
+	reads := 0
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/node/qemu/100/config" {
+			t.Fatalf("unexpected guest artifact request: %s %s", r.Method, r.URL.Path)
+		}
+		reads++
+		return response([]byte(`{"data":{"description":"` + artifactDescription(guest.Artifact) + `"}}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	exists, replacement, err := InspectGuestArtifact(context.Background(), client, "node", guest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exists || replacement || reads != 1 {
+		t.Fatalf("guest artifact state = exists:%t replacement:%t reads:%d", exists, replacement, reads)
+	}
 }
 
 func TestFoundationPlanIsDeterministic(t *testing.T) {
@@ -354,17 +427,19 @@ func TestLXCBootstrapKeyCanBeOmittedForPlanRendering(t *testing.T) {
 
 func TestEnsureBuilderArmsCleanupWhenCreateTaskFails(t *testing.T) {
 	plan := Plan{
-		Node:            "node",
-		Storage:         "local",
-		GatewayImage:    "debian-13-builder-input",
-		GatewayImageURL: "https://example.invalid/debian-13-builder-input.qcow2",
-		GatewaySHA512:   strings.Repeat("a", 128),
+		Node:               "node",
+		Storage:            "local",
+		GatewayImage:       "debian-13-builder-input",
+		GatewayImageURL:    "https://example.invalid/debian-13-builder-input.qcow2",
+		GatewaySHA512:      strings.Repeat("a", 128),
+		BuilderCacheVolume: model.BuilderCacheStorage + ":" + model.BuilderCacheVolumeName,
 	}
 	snippetsDeleted := 0
 	createSSHKeys := ""
 	bootOrder := ""
 	builderNet0 := ""
 	builderSCSIHW := ""
+	builderCacheDisk := ""
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/190/config":
@@ -384,6 +459,7 @@ func TestEnsureBuilderArmsCleanupWhenCreateTaskFails(t *testing.T) {
 			bootOrder = r.Form.Get("boot")
 			builderNet0 = r.Form.Get("net0")
 			builderSCSIHW = r.Form.Get("scsihw")
+			builderCacheDisk = r.Form.Get("scsi1")
 			return response([]byte(`{"data":"UPID:pve:create-builder"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:create-builder/status":
 			return response([]byte(`{"data":{"status":"stopped","exitstatus":"create failed"}}`))
@@ -418,17 +494,21 @@ func TestEnsureBuilderArmsCleanupWhenCreateTaskFails(t *testing.T) {
 	if builderSCSIHW != "virtio-scsi-single" {
 		t.Fatalf("builder SCSI controller = %q, want virtio-scsi-single", builderSCSIHW)
 	}
+	if builderCacheDisk != model.BuilderCacheStorage+":"+model.BuilderCacheVolumeName+",format=raw,serial=boetticher-builder-cache" {
+		t.Fatalf("builder cache disk = %q, want canonical persistent volume", builderCacheDisk)
+	}
 }
 
 func TestEnsureBuilderCleansPartialSnippetUploads(t *testing.T) {
 	for failAt := 1; failAt <= 3; failAt++ {
 		t.Run(fmt.Sprintf("upload-%d", failAt), func(t *testing.T) {
 			plan := Plan{
-				Node:            "node",
-				Storage:         "local",
-				GatewayImage:    "debian-13-builder-input",
-				GatewayImageURL: "https://example.invalid/debian-13-builder-input.qcow2",
-				GatewaySHA512:   strings.Repeat("a", 128),
+				Node:               "node",
+				Storage:            "local",
+				GatewayImage:       "debian-13-builder-input",
+				GatewayImageURL:    "https://example.invalid/debian-13-builder-input.qcow2",
+				GatewaySHA512:      strings.Repeat("a", 128),
+				BuilderCacheVolume: model.BuilderCacheStorage + ":" + model.BuilderCacheVolumeName,
 			}
 			uploads := 0
 			deletes := 0

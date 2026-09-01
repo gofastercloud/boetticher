@@ -24,6 +24,7 @@ const (
 	CapabilityMonitoring    Capability = "monitoring"
 	CapabilityLogging       Capability = "logging"
 	CapabilityTailnetAccess Capability = "tailnet-access"
+	CapabilityAirVPNTransit Capability = "airvpn-transit"
 	CapabilityAIAPI         Capability = "ai-api"
 )
 
@@ -47,6 +48,7 @@ type ModuleDefinition struct {
 	USBRequirements   []model.USBRequirement
 	Configuration     []model.ModuleConfigField
 	StaticDeviceSlots int
+	NetworkCapable    bool
 }
 
 type Registry struct {
@@ -101,8 +103,16 @@ func FirstPartyRegistry() Registry {
 				{Name: "lab-tailnet-01", VMID: 200, Hostname: "lab-tailnet-01", Address: "10.10.5.10", Role: "Tailnet subnet router", DNSAliases: []string{"tailnet-router", "tailnet"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
+		"airvpn": {
+			Name: "airvpn", Description: "AirVPN WireGuard external egress transit node", Version: "1.0.0", Policy: DefaultOff,
+			Requires: []Capability{CapabilityGateway, CapabilityDNS, CapabilityNTP}, Provides: []Capability{CapabilityAirVPNTransit}, GuestIDs: []int{model.AirVPNGuestVMID}, ReservedVMIDStart: 260, ReservedVMIDEnd: 269,
+			Configuration: []model.ModuleConfigField{{Key: "servers", Type: model.ModuleConfigString, Prompt: "AirVPN server selector", Description: "AirVPN named server, country, or region selector used once to generate the retained WireGuard profile", Required: true}},
+			Placement:     PlacementRequirement{ZoneType: model.ZoneTypeTransit}, Guests: []model.Component{
+				{Name: "lab-airvpn-01", VMID: model.AirVPNGuestVMID, Hostname: "lab-airvpn-01", Address: model.AirVPNGuestAddress, Role: "AirVPN WireGuard transit", DNSAliases: []string{"airvpn"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			},
+		},
 		"litellm": {
-			Name: "litellm", Description: "mTLS-protected LiteLLM AI API router", Version: "1.0.0", Policy: DefaultOff,
+			Name: "litellm", Description: "mTLS-protected LiteLLM AI API router", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
 			Configuration: []model.ModuleConfigField{
 				{Key: "upstreams", Type: model.ModuleConfigObjectList, Prompt: "AI Router upstreams", Description: "HTTPS provider endpoints and their SOPS secret references", Required: true, MinItems: 1, MaxItems: 16, ItemFields: []model.ModuleConfigField{
 					{Key: "name", Type: model.ModuleConfigString, Prompt: "Upstream name", Required: true},
@@ -121,7 +131,7 @@ func FirstPartyRegistry() Registry {
 			},
 		},
 		"printer": {
-			Name: "printer", Description: "OctoPrint management for one USB-connected Ender-3 V3 SE", Version: "1.0.0", Policy: DefaultOff,
+			Name: "printer", Description: "OctoPrint management for one USB-connected Ender-3 V3 SE", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
 			Requires: []Capability{CapabilityDNS}, GuestIDs: []int{model.PrinterVMID}, ReservedVMIDStart: 230, ReservedVMIDEnd: 239,
 			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
 				{Name: "lab-printer-01", VMID: model.PrinterVMID, Hostname: "lab-printer-01", Address: "10.10.20.80", Role: "OctoPrint for Ender-3 V3 SE", DNSAliases: []string{"octoprint", "printer"}, URL: "https://octoprint." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
@@ -129,7 +139,7 @@ func FirstPartyRegistry() Registry {
 			USBRequirements: []model.USBRequirement{{Name: "serial", Guest: "lab-printer-01", DeviceType: "serial", Access: "rw", Required: true, AllowedIdentities: []model.USBIdentity{{VendorID: "1a86", ProductID: "7523"}}}},
 		},
 		"streamdeck": {
-			Name: "streamdeck", Description: "Read-only Proxmox host status display backed by Pulse", Version: "1.0.0", Policy: DefaultOff,
+			Name: "streamdeck", Description: "Read-only Proxmox host status display backed by Pulse", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
 			DependsOn: []string{"monitoring"}, Requires: []Capability{CapabilityDNS, CapabilityMonitoring}, GuestIDs: []int{model.StreamDeckVMID}, ReservedVMIDStart: 220, ReservedVMIDEnd: 229,
 			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
 				{Name: "lab-streamdeck-01", VMID: model.StreamDeckVMID, Hostname: "lab-streamdeck-01", Address: "10.10.20.70", Role: "Pulse Proxmox host status display", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
@@ -137,14 +147,14 @@ func FirstPartyRegistry() Registry {
 			USBRequirements: []model.USBRequirement{{Name: "display", Guest: "lab-streamdeck-01", DeviceType: "raw-usb", Access: "rw", Required: true, AllowedIdentities: []model.USBIdentity{{VendorID: "0fd9", ProductID: "006d"}}}},
 		},
 		"aiops": {
-			Name: "aiops", Description: "Read-only HolmesGPT incident investigation", Version: "1.0.0", Policy: DefaultOff,
+			Name: "aiops", Description: "Read-only HolmesGPT incident investigation", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
 			Configuration: []model.ModuleConfigField{{Key: "model_alias", Type: model.ModuleConfigModelAlias, Prompt: "AI Router model alias", Description: "An alias explicitly declared by the LiteLLM module", Required: true, Resolver: "litellm-model-alias"}},
 			DependsOn:     []string{"monitoring", "logging", "litellm"}, Requires: []Capability{CapabilityMonitoring, CapabilityLogging, CapabilityAIAPI, CapabilityDNS, CapabilityNTP}, GuestIDs: []int{240}, ReservedVMIDStart: 240, ReservedVMIDEnd: 249,
 			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
 				{Name: "lab-aiops-01", VMID: 240, Hostname: "lab-aiops-01", Zone: "SERVERS", Address: "10.10.20.90", Role: "HolmesGPT AIOps investigation", DNSAliases: []string{"aiops"}, URL: "https://aiops." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
-		"gatus": {Name: "gatus", Description: "Generated status page for declared services", Version: "1.0.0", Policy: DefaultOff, DependsOn: []string{"monitoring"}, Requires: []Capability{CapabilityDNS}, GuestIDs: []int{model.GatusVMID}, ReservedVMIDStart: 250, ReservedVMIDEnd: 259, Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{{Name: "lab-gatus-01", VMID: model.GatusVMID, Hostname: "lab-gatus-01", Address: "10.10.20.100", Role: "Gatus status page", DNSAliases: []string{"gatus"}, URL: "https://gatus." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true}}},
+		"gatus": {Name: "gatus", Description: "Generated status page for declared services", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true, DependsOn: []string{"monitoring"}, Requires: []Capability{CapabilityDNS}, GuestIDs: []int{model.GatusVMID}, ReservedVMIDStart: 250, ReservedVMIDEnd: 259, Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{{Name: "lab-gatus-01", VMID: model.GatusVMID, Hostname: "lab-gatus-01", Address: "10.10.20.100", Role: "Gatus status page", DNSAliases: []string{"gatus"}, URL: "https://gatus." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true}}},
 	}}
 }
 
@@ -171,6 +181,9 @@ func (r Registry) ConfigurationFields(name string, config model.SiteConfig) ([]m
 		return nil, fmt.Errorf("unknown first-party module %q", name)
 	}
 	fields := cloneConfigurationFields(definition.Configuration)
+	if definition.NetworkCapable {
+		fields = append([]model.ModuleConfigField{{Key: "network", Type: model.ModuleConfigEnum, Prompt: "Network egress mode", Description: "Route declared external application egress directly or through the AirVPN transit node", Default: string(model.ModuleNetworkDirect), AllowedValues: []string{string(model.ModuleNetworkDirect), string(model.ModuleNetworkAirVPN)}}}, fields...)
+	}
 	var resolve func([]model.ModuleConfigField)
 	resolve = func(values []model.ModuleConfigField) {
 		for index := range values {
@@ -434,6 +447,17 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 	if err := validateModuleConfigNames(r, configs); err != nil {
 		return nil, err
 	}
+	if err := validateModuleNetworkModes(r, configs); err != nil {
+		return nil, err
+	}
+	if airvpn, ok := configs["airvpn"]; ok && (airvpn.Enabled != nil && *airvpn.Enabled || airvpn.Servers != "") {
+		if airvpn.Servers == "" {
+			return nil, fmt.Errorf("modules.airvpn.servers: a server or region selector is required when AirVPN is enabled")
+		}
+		if !modelToken(airvpn.Servers) {
+			return nil, fmt.Errorf("modules.airvpn.servers: selector contains unsafe characters")
+		}
+	}
 	for name, moduleConfig := range configs {
 		if name == "litellm" && (moduleConfig.Enabled != nil && *moduleConfig.Enabled || len(moduleConfig.Upstreams) > 0 || len(moduleConfig.Models) > 0) {
 			if err := model.ValidateLiteLLMConfig(moduleConfig); err != nil {
@@ -481,6 +505,15 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 			}
 		}
 		active["firewall"] = false
+	}
+	for name, moduleConfig := range configs {
+		if moduleConfig.Network != model.ModuleNetworkAirVPN || !active[name] {
+			continue
+		}
+		airvpn, explicitlyConfigured := configs["airvpn"]
+		if !explicitlyConfigured || airvpn.Enabled == nil || !*airvpn.Enabled || !active["airvpn"] {
+			return nil, fmt.Errorf("modules.%s.network: AirVPN egress requires modules.airvpn.enabled=true", name)
+		}
 	}
 	for name := range active {
 		if !active[name] {
@@ -542,7 +575,7 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 			}
 		}
 	}
-	ordered, err := topologicalOrder(r, active)
+	ordered, err := topologicalOrder(r, active, configs)
 	if err != nil {
 		return nil, err
 	}
@@ -573,6 +606,25 @@ func validateModuleConfigNames(r Registry, configs map[string]model.ModuleConfig
 	return nil
 }
 
+func validateModuleNetworkModes(r Registry, configs map[string]model.ModuleConfig) error {
+	for name, config := range configs {
+		if config.Network == "" || config.Network == model.ModuleNetworkDirect {
+			continue
+		}
+		if config.Network != model.ModuleNetworkAirVPN {
+			return fmt.Errorf("modules.%s.network: unsupported mode %q", name, config.Network)
+		}
+		definition, ok := r.Definition(name)
+		if !ok {
+			continue
+		}
+		if !definition.NetworkCapable {
+			return fmt.Errorf("modules.%s.network: module is not network-capable", name)
+		}
+	}
+	return nil
+}
+
 func modelToken(value string) bool {
 	if value == "" || len(value) > 128 {
 		return false
@@ -589,7 +641,7 @@ func defaultEnabled(policy EnablementPolicy) bool {
 	return policy == Mandatory || policy == DefaultOn
 }
 
-func topologicalOrder(r Registry, active map[string]bool) ([]string, error) {
+func topologicalOrder(r Registry, active map[string]bool, configs map[string]model.ModuleConfig) ([]string, error) {
 	state := map[string]int{}
 	result := []string{}
 	var visit func(string) error
@@ -602,7 +654,7 @@ func topologicalOrder(r Registry, active map[string]bool) ([]string, error) {
 		}
 		state[name] = 1
 		definition := r.definitions[name]
-		dependencies := effectiveDependencies(r, definition, active)
+		dependencies := effectiveDependencies(r, definition, active, configs)
 		sort.Strings(dependencies)
 		for _, dependency := range dependencies {
 			if !active[dependency] {
@@ -637,9 +689,12 @@ func topologicalOrder(r Registry, active map[string]bool) ([]string, error) {
 // effectiveDependencies includes both concrete module dependencies and the
 // active first-party provider of each required capability. External providers
 // are deliberately absent from this graph.
-func effectiveDependencies(r Registry, definition ModuleDefinition, active map[string]bool) []string {
+func effectiveDependencies(r Registry, definition ModuleDefinition, active map[string]bool, configs map[string]model.ModuleConfig) []string {
 	seen := map[string]bool{}
 	dependencies := append([]string(nil), definition.DependsOn...)
+	if definition.NetworkCapable && configs[definition.Name].Network == model.ModuleNetworkAirVPN {
+		dependencies = append(dependencies, "airvpn")
+	}
 	for _, dependency := range dependencies {
 		seen[dependency] = true
 	}

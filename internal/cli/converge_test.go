@@ -4,15 +4,20 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
+	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
 
 type dnsReadinessRunner struct {
@@ -23,6 +28,12 @@ type endpointArgsRunner struct {
 	output []byte
 	err    error
 	args   [][]string
+}
+
+type convergeRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f convergeRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
 }
 
 func (r *endpointArgsRunner) RunArgs(_ context.Context, _ string, _ string, args []string) ([]byte, error) {
@@ -79,6 +90,61 @@ func TestDeploymentModuleNamesFollowResolvedManagedGraph(t *testing.T) {
 	}
 }
 
+func TestInspectDeploymentGuestStatesUsesBoundedParallelReadPool(t *testing.T) {
+	var active, maximum int32
+	transport := convergeRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if !strings.HasSuffix(r.URL.Path, "/config") {
+			t.Fatalf("unexpected guest preflight path: %s", r.URL.Path)
+		}
+		if strings.Contains(r.URL.Path, "/qemu/") {
+			return &http.Response{StatusCode: http.StatusNotFound, Status: "404 Not Found", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"errors":{"vmid":"not found"}}`))}, nil
+		}
+		current := atomic.AddInt32(&active, 1)
+		for {
+			seen := atomic.LoadInt32(&maximum)
+			if current <= seen || atomic.CompareAndSwapInt32(&maximum, seen, current) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+		atomic.AddInt32(&active, -1)
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"data":{}}`))}, nil
+	})
+	client := &proxmox.Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	guests := make([]proxmox.GuestPlan, 6)
+	for index := range guests {
+		guests[index] = proxmox.GuestPlan{VMID: 110 + index, Kind: proxmox.KindLXC}
+	}
+	report := newDeploymentReport(io.Discard)
+	ctx := telemetry.WithObserver(context.Background(), report)
+	states, err := inspectDeploymentGuestStates(ctx, client, "node", guests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != len(guests) || atomic.LoadInt32(&maximum) < 2 || atomic.LoadInt32(&maximum) > 4 {
+		t.Fatalf("guest preflight states=%d maximum-concurrency=%d, want six states and concurrency 2..4", len(states), maximum)
+	}
+}
+
+func TestDNSInitialConfigurationOnlyRunsForNewOrReplacedGuests(t *testing.T) {
+	cases := []struct {
+		name  string
+		state deploymentGuestArtifactState
+		want  bool
+	}{
+		{name: "missing", state: deploymentGuestArtifactState{}, want: true},
+		{name: "replaced", state: deploymentGuestArtifactState{exists: true, replacement: true}, want: true},
+		{name: "unchanged", state: deploymentGuestArtifactState{exists: true}, want: false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := needsInitialDNSConfiguration(testCase.state); got != testCase.want {
+				t.Fatalf("needsInitialDNSConfiguration(%+v) = %t, want %t", testCase.state, got, testCase.want)
+			}
+		})
+	}
+}
+
 func TestPublishedServicesActivateAtTheEndOfDNSModule(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
 	if err != nil {
@@ -86,7 +152,7 @@ func TestPublishedServicesActivateAtTheEndOfDNSModule(t *testing.T) {
 	}
 	text := string(data)
 	publicationActivation := strings.Index(text, `if module == "dns" && s.Gateway.Mode == model.GatewayModeManaged && len(firewallPlan.Publications) > 0`)
-	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, "", report); err != nil`)
+	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report); err != nil`)
 	if publicationActivation < 0 || allHostsConvergence < 0 || publicationActivation > allHostsConvergence {
 		t.Fatal("published services are not activated immediately after the DNS module")
 	}
@@ -238,6 +304,23 @@ func TestDeploymentWaitsForGuestHostKeyThroughBootWindow(t *testing.T) {
 	}
 }
 
+func TestDeploymentRootCleanupTracksAuthorityEstablishedDuringRearm(t *testing.T) {
+	hostRunner := &deploymentRootTestRunner{hostOutput: []byte("{\"exitcode\":0,\"exited\":1,\"out-data\":\"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\\n\"}")}
+	guestRunner := &deploymentRootTestRunner{guestErr: errors.New("permission denied"), guestSuccessAfter: 2}
+	guest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1", Owner: "boetticher/core/firewall"}
+	cleanup := newTemporaryRootCleanup(model.Site{}, t.TempDir(), "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA operator")
+	authorityEstablished := false
+	if err := waitForDeploymentRoot(context.Background(), hostRunner, "192.0.2.10", guestRunner, guest, cleanup.operatorPublicKey, filepath.Join(t.TempDir(), "known_hosts"), "lab-fw-01.lab.home.arpa", func() {
+		authorityEstablished = true
+		cleanup.guestEstablished(guest)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !authorityEstablished || len(cleanup.guests) != 1 {
+		t.Fatalf("temporary root authority tracking = established:%t guests:%d", authorityEstablished, len(cleanup.guests))
+	}
+}
+
 type deploymentRootTestRunner struct {
 	calls             int
 	lastCommand       string
@@ -288,6 +371,20 @@ func TestPulseReconciliationForwardUsesRestrictedBastion(t *testing.T) {
 	}
 }
 
+func TestAIOpsModelCapabilitiesUseTheLiteLLMAlias(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, `"/usr/local/libexec/boetticher-litellm-model-capabilities", modelConfig.Alias`) {
+		t.Fatal("AIOps model capability lookup does not use the declared LiteLLM alias")
+	}
+	if strings.Contains(text, `"/usr/local/libexec/boetticher-litellm-model-capabilities", modelConfig.Model`) {
+		t.Fatal("AIOps model capability lookup passes the provider model instead of the LiteLLM alias")
+	}
+}
+
 func TestDeployReconcilesLiveBastionPolicyFromCanonicalDestinations(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
 	if err != nil {
@@ -314,7 +411,6 @@ func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 	text := string(data)
 	for _, required := range []string{
 		"readTokenRefreshed := false",
-		"readClientCertificate := clientCertificate",
 		`pki.IssueClient(authority, "boetticher-pulse-read"`,
 		"modules.IsEnabled(s, \"streamdeck\") && pulse.IsForbidden(err)",
 		"pulse.IsUnauthorized(err)",

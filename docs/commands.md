@@ -8,8 +8,8 @@ This reference is generated from the CLI command metadata. `deploy` is the only 
 boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall]
 boetticher tui [--site DIR] [--offline]
 boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--record] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]
-boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]
-boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]
+boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run] [--cleanup]
+boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--rotate-airvpn-profile] [--confirm]
 boetticher status [--site DIR] [--ssh-config PATH] [--ssh-journey] [--live] [--verbose] [--json]
 boetticher update [--site DIR] [--dry-run] [--confirm]
 boetticher logs [HOST] [--site DIR] [--unit UNIT] [--since DURATION] [--priority LEVEL] [--limit N]
@@ -31,7 +31,7 @@ boetticher dhcp reservation add|list|remove [--site DIR] [--hostname NAME] [--ad
 boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME] [--value VALUE] [--json]
 boetticher storage status|initialize [--site DIR] [--live] [--storage-confirmed] [--initial-user USER] [--known-hosts PATH]
 boetticher module list|show|plan|configure|enable|disable|status [NAME] [--site DIR] [--dry-run] [--json] [--confirm] [--purge] [--non-interactive] [--enabled BOOL] [--set KEY=VALUE] [--secret NAME] [--usb REQUIREMENT=PORT] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
-boetticher module secrets MODULE list|set|remove [--site DIR] [--age-identity PATH] [--confirm]
+boetticher module secrets MODULE list|set|remove|rotate [--site DIR] [--age-identity PATH] [--confirm]
 boetticher modules list|MODULE show|plan|configure|enable|disable|status|secrets|purge [--site DIR] [--dry-run] [--json] [--confirm] [--non-interactive] [--enabled BOOL] [--set KEY=VALUE] [--secret NAME] [--usb REQUIREMENT=PORT] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher config validate|show|schema [--site DIR]
 boetticher portal build [--site DIR] [--output DIR] [--docs DIR]
@@ -91,15 +91,15 @@ Related commands: bootstrap, deploy --dry-run
 
 Purpose: Prepare Proxmox trust, bridges, storage, the temporary Linux builder, and qualified appliance artifacts.
 
-Usage: `boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run]`
+Usage: `boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run] [--cleanup]`
 
 Arguments: No positional arguments.
 
-Options: --dry-run renders only; --recovery-confirmed confirms the independent Age recovery copy; --storage-confirmed confirms explicit dedicated-storage initialization; --age-identity selects the operator-owned private Age identity; --operator-key selects the initial operator SSH public key; --initial-user selects the initial SSH user; --known-hosts selects an independently enrolled SSH trust file and defaults to the site-scoped trust file; --proxmox-ca selects the Proxmox API CA PEM file; --insecure explicitly allows self-signed Proxmox API TLS; --trunk-interface selects the physical trunk interface.
+Options: --dry-run renders only; --cleanup removes only an exact-owned stale temporary builder and does not rebuild artifacts; --recovery-confirmed confirms the independent Age recovery copy; --storage-confirmed confirms explicit dedicated-storage initialization; --age-identity selects the operator-owned private Age identity; --operator-key selects the initial operator SSH public key; --initial-user selects the initial SSH user; --known-hosts selects an independently enrolled SSH trust file and defaults to the site-scoped trust file; --proxmox-ca selects the Proxmox API CA PEM file; --insecure explicitly allows self-signed Proxmox API TLS; --trunk-interface selects the physical trunk interface.
 
-Safety: May change Proxmox bootstrap infrastructure and creates a temporary builder. Verify the first SSH host fingerprint at the explicit ask prompt; subsequent privileged paths require the enrolled key.
+Safety: May change Proxmox bootstrap infrastructure and creates a temporary builder. Cleanup proves the canonical builder name and owner tag before stopping or removing VMID 190. Verify the first SSH host fingerprint at the explicit ask prompt; subsequent privileged paths require the enrolled key.
 
-Examples: `boetticher bootstrap --site ./my-boetticher --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem`
+Examples: `boetticher bootstrap --site ./my-boetticher --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem`; `boetticher bootstrap --site ./my-boetticher --cleanup --age-identity /path/to/age-identity.txt --proxmox-ca /path/to/pve-root-ca.pem`
 
 Related commands: preflight, deploy, verify
 
@@ -107,15 +107,15 @@ Related commands: preflight, deploy, verify
 
 Purpose: Make boetticher-owned platform resources match the complete resolved desired model.
 
-Usage: `boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--confirm]`
+Usage: `boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--rotate-airvpn-profile] [--confirm]`
 
 Arguments: No positional arguments.
 
-Options: --dry-run plans without mutation; --confirm authorizes destructive operations supported by the active providers, including replacement of an owned appliance rootfs when its declared persistent volumes can be retained; connection options select the Proxmox trust path. A normal deploy prints nine orchestration phases and one final PASS or FAIL summary with the next action on failure.
+Options: --dry-run plans without mutation; --rotate-airvpn-profile explicitly regenerates the retained AirVPN WireGuard profile; --confirm authorizes destructive operations supported by the active providers, including replacement of an owned appliance rootfs when its declared persistent volumes can be retained; connection options select the Proxmox trust path. A normal deploy prints nine orchestration phases and one final PASS or FAIL summary with the next action on failure.
 
-Safety: This is the sole public platform-application operation. It requires the temporary root SSH access established by bootstrap, uses the scoped Proxmox API token for lifecycle operations, and removes temporary root access after successful convergence. Review the plan before applying it; unowned occupants, invalid persistent-volume identities, and unsupported replacement conditions fail with recovery guidance.
+Safety: This is the sole public platform-application operation. It requires the temporary root SSH access established by bootstrap, uses the scoped Proxmox API token for lifecycle operations, and removes temporary root access after successful convergence. Review the plan before applying it; unowned occupants, invalid persistent-volume identities, and unsupported replacement conditions fail with recovery guidance. AirVPN profile generation reads only the controller-only key path and never places the key or profile in arguments, logs, or generated public state.
 
-Examples: `boetticher deploy --site ./my-boetticher --dry-run`; `boetticher deploy --site ./my-boetticher`
+Examples: `boetticher deploy --site ./my-boetticher --dry-run`; `boetticher deploy --site ./my-boetticher`; `boetticher deploy --site ./my-boetticher --rotate-airvpn-profile`
 
 Related commands: preflight, verify, doctor
 
@@ -417,7 +417,7 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, litellm, printer, and streamdeck are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, airvpn, litellm, printer, and streamdeck are default-off. AirVPN profile rotation is explicit and uses the controller-only API key. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 
@@ -989,15 +989,15 @@ Related commands: module configure, deploy
 
 Purpose: Inspect and manage declared operator-supplied secrets for a first-party module.
 
-Usage: `boetticher module secrets MODULE list|set|remove [--site DIR] [--age-identity PATH] [--confirm]`
+Usage: `boetticher module secrets MODULE list|set|remove|rotate [--site DIR] [--age-identity PATH] [--confirm]`
 
-Arguments: MODULE is a registered first-party module; list, set, and remove select the secret operation, with NAME required for set and remove.
+Arguments: MODULE is a registered first-party module; list, set, and remove select the secret operation, with NAME required for set and remove. AirVPN rotate removes the Core-generated retained profile and requires no NAME.
 
-Options: --site selects the private site repository; --age-identity selects the operator-owned private Age identity; --confirm is required for secret removal.
+Options: --site selects the private site repository; --age-identity selects the operator-owned private Age identity; --confirm is required for secret removal and AirVPN profile rotation.
 
-Safety: Secret values are read from a hidden prompt or stdin and are never accepted as arguments, displayed, logged, or written to generated output. The command changes encrypted desired state only; it never deploys.
+Safety: Secret values are read from a hidden prompt or stdin and are never accepted as arguments, displayed, logged, or written to generated output. The command changes encrypted desired state only; it never deploys. AirVPN rotation is limited to the Core-generated profile.
 
-Examples: `boetticher module secrets litellm list --site ./my-boetticher`; `boetticher module secrets litellm set openrouter_api_key --site ./my-boetticher`; `boetticher module secrets litellm remove openrouter_api_key --confirm --site ./my-boetticher`
+Examples: `boetticher module secrets litellm list --site ./my-boetticher`; `boetticher module secrets litellm set openrouter_api_key --site ./my-boetticher`; `boetticher module secrets litellm remove openrouter_api_key --confirm --site ./my-boetticher`; `boetticher module secrets airvpn rotate --confirm --site ./my-boetticher`
 
 Related commands: module configure, deploy, config validate
 
@@ -1043,7 +1043,7 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, litellm, printer, and streamdeck are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, airvpn, litellm, printer, and streamdeck are default-off. AirVPN profile rotation is explicit and uses the controller-only API key. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 
@@ -1059,7 +1059,7 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, litellm, printer, and streamdeck are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, airvpn, litellm, printer, and streamdeck are default-off. AirVPN profile rotation is explicit and uses the controller-only API key. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 
@@ -1075,7 +1075,7 @@ Arguments: MODULE is a registered first-party module. list retains the generic m
 
 Options: --dry-run shows the resolved effect; --confirm authorizes configuration, destructive lifecycle changes, and secret removal; configure accepts repeatable --set KEY=VALUE, --usb REQUIREMENT=PORT, and --secret NAME (value from stdin).
 
-Safety: tailnet-router, litellm, printer, and streamdeck are default-off. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
+Safety: tailnet-router, airvpn, litellm, printer, and streamdeck are default-off. AirVPN profile rotation is explicit and uses the controller-only API key. Configure changes desired state only and never deploys; confirmed enable and disable invoke deploy. Secret values are never displayed or accepted as command arguments.
 
 Examples: `boetticher modules printer configure --site ./my-boetticher`; `boetticher modules aiops configure --set model_alias=operations-investigator --site ./my-boetticher`
 

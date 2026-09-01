@@ -8,10 +8,11 @@ target=${1:-images}
 shift || true
 case "$target" in
   image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-streamdeck|image-gatus|image-network-probe|images) ;;
+  image-airvpn) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
-default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-litellm image-printer image-streamdeck image-aiops image-gatus image-network-probe image-firewall"
+default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-airvpn image-litellm image-printer image-streamdeck image-aiops image-gatus image-network-probe image-firewall"
 if [ "$target" = images ]; then
   selected_image_targets="$*"
   if [ -z "$selected_image_targets" ]; then
@@ -20,6 +21,7 @@ if [ "$target" = images ]; then
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
       image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-streamdeck|image-gatus|image-network-probe) ;;
+      image-airvpn) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac
   done
@@ -73,6 +75,37 @@ measurement_emit() {
   fi
 }
 
+verify_cached() {
+  cache_expected=$1
+  cache_file=$2
+  cache_checker=$3
+  case "$cache_checker" in
+    sha256sum) printf '%s  %s\n' "$cache_expected" "$cache_file" | sha256sum --check --status ;;
+    sha512sum) printf '%s  %s\n' "$cache_expected" "$cache_file" | sha512sum --check --status ;;
+    *) echo "HOLD: unsupported cached download checksum tool: $cache_checker" >&2; return 2 ;;
+  esac
+}
+
+download_cached() {
+  cache_destination=$1
+  cache_url=$2
+  cache_expected=$3
+  cache_checker=$4
+  mkdir -p "$(dirname "$cache_destination")"
+  if [ ! -f "$cache_destination" ]; then
+    cache_temporary="$cache_destination.tmp.$$"
+    rm -f "$cache_temporary"
+    curl --fail --location --silent --show-error --output "$cache_temporary" "$cache_url"
+    if ! verify_cached "$cache_expected" "$cache_temporary" "$cache_checker"; then
+      rm -f "$cache_temporary"
+      return 1
+    fi
+    mv "$cache_temporary" "$cache_destination"
+  else
+    verify_cached "$cache_expected" "$cache_destination" "$cache_checker"
+  fi
+}
+
 zstd_level=${BOETTICHER_ZSTD_LEVEL:-19}
 case "$zstd_level" in
   ''|*[!0-9]*)
@@ -94,6 +127,7 @@ done
 
 output_root=${BOETTICHER_ARTIFACT_OUTPUT:-generated/artifacts}
 work_root=${BOETTICHER_IMAGE_WORK:-/tmp/boetticher-image-build}
+cache_root=${BOETTICHER_CACHE_ROOT:-$work_root/cache}
 timing_log=${BOETTICHER_TIMING_LOG:-}
 script_path=$0
 base_definition=images/base/debian.yaml
@@ -131,7 +165,7 @@ holmes_source_sha256=7016d3335a7f81810de35d9030a63bc38204d94991e3343d6cdbbcaf77a
 holmes_source_root=holmesgpt-3d201559c0f3648a6c567aece09662f4f407bcc9
 gatus_source_url=https://github.com/TwiN/gatus/archive/refs/tags/v5.36.0.tar.gz
 gatus_source_sha256=b5543af591e602281406049ee2f822a6529a8f14be0cd54df5a31c210520159a
-mkdir -p "$output_root" "$work_root"
+mkdir -p "$output_root" "$work_root" "$cache_root/apt" "$cache_root/downloads" "$cache_root/base"
 
 provenance_path="$(dirname "$output_root")/builder-provenance.json"
 version_or_unavailable() {
@@ -192,6 +226,17 @@ artifact_for() {
 
 create_base_rootfs() {
   rootfs=$1
+  base_inputs_digest=$(sha256sum "$base_definition" images/base/runtime/* images/base/first-boot/* "$script_path" | sha256sum | awk '{print $1}')
+  base_cache_key=$(printf '%s\n' "$base_release" "$mirror" "$base_packages" "$base_inputs_digest" | sha256sum | awk '{print $1}')
+  base_cache="$cache_root/base/$base_cache_key"
+  if [ -f "$base_cache/.boetticher-base-complete" ] && [ -d "$base_cache/etc" ]; then
+    rm -rf "$rootfs"
+    mkdir -p "$rootfs"
+    cp -a --reflink=auto "$base_cache/." "$rootfs/"
+    rm -f "$rootfs/.boetticher-base-complete"
+    measurement_emit "build_cache" "kind=base" "status=hit" "key=$base_cache_key"
+    return
+  fi
   rm -rf "$rootfs"
   mkdir -p "$rootfs"
   mmdebstrap --variant=minbase --architectures=amd64 \
@@ -222,6 +267,14 @@ create_base_rootfs() {
   rm -f "$rootfs/root/.ssh/authorized_keys" "$rootfs/home/labadmin/.ssh/authorized_keys"
   rm -f "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
   chroot "$rootfs" systemctl enable boetticher-first-boot.service
+  cache_tmp="$cache_root/base/.${base_cache_key}.tmp.$$"
+  rm -rf "$cache_tmp"
+  mkdir -p "$cache_tmp"
+  cp -a --reflink=auto "$rootfs/." "$cache_tmp/"
+  touch "$cache_tmp/.boetticher-base-complete"
+  rm -rf "$base_cache"
+  mv "$cache_tmp" "$base_cache"
+  measurement_emit "build_cache" "kind=base" "status=stored" "key=$base_cache_key"
 }
 
 write_artifact_identity() {
@@ -238,16 +291,34 @@ prepare_rootfs() {
     create_base_rootfs "$(rootfs_for boetticher-base)"
   fi
   rm -rf "$rootfs"
-  cp -a "$(rootfs_for boetticher-base)" "$rootfs"
+  cp -a --reflink=auto "$(rootfs_for boetticher-base)" "$rootfs"
   ACTIVE_ROOT=$rootfs
   mkdir -p "$rootfs/var/lib/boetticher/identity/ssh" "$rootfs/etc/boetticher" "$rootfs/usr/lib/boetticher"
   printf '%s\n' "artifact=$name" > "$rootfs/usr/lib/boetticher/build-input.txt"
   printf '%s\n' "$rootfs"
 }
 
+pip_install() {
+  rootfs=$1
+  pip_path=$2
+  shift 2
+  pip_cache="$cache_root/pip"
+  mkdir -p "$pip_cache" "$rootfs/root/.cache/pip"
+  mount --bind "$pip_cache" "$rootfs/root/.cache/pip"
+  if chroot "$rootfs" "$pip_path" "$@"; then
+    status=0
+  else
+    status=$?
+  fi
+  umount -R "$rootfs/root/.cache/pip" || true
+  return "$status"
+}
+
 install_packages() {
   rootfs=$1
   shift
+  package_cache="$cache_root/apt/$(basename "$rootfs")"
+  mkdir -p "$package_cache"
   resolver_target=""
   resolver_backup="$work_root/$(basename "$rootfs").resolv.conf"
   if [ -L "$rootfs/etc/resolv.conf" ]; then
@@ -268,15 +339,17 @@ install_packages() {
   mount --bind /dev "$rootfs/dev"
   mount -t proc proc "$rootfs/proc"
   mount --rbind /sys "$rootfs/sys"
+  mount --bind "$package_cache" "$rootfs/var/cache/apt/archives"
   if ! chroot "$rootfs" apt-get update || ! chroot "$rootfs" env DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends "$@"; then
+    umount -R "$rootfs/var/cache/apt/archives" || true
     umount -R "$rootfs/dev" || true
     umount -R "$rootfs/proc" || true
     umount -R "$rootfs/sys" || true
     restore_resolver
     return 1
   fi
-  chroot "$rootfs" apt-get clean
-  rm -rf "$rootfs/var/lib/apt/lists/"*
+  umount -R "$rootfs/var/cache/apt/archives" || true
+  rm -rf "$rootfs/var/cache/apt/archives/"* "$rootfs/var/lib/apt/lists/"*
   umount -R "$rootfs/dev" || true
   umount -R "$rootfs/proc" || true
   umount -R "$rootfs/sys" || true
@@ -285,11 +358,8 @@ install_packages() {
 
 install_powerdns() {
   rootfs=$1
-  key="$work_root/powerdns-auth-49-pub.asc"
-  if [ ! -f "$key" ]; then
-    curl --fail --location --silent --show-error --output "$key" "$powerdns_key_url"
-  fi
-  printf '%s  %s\n' "$powerdns_key_sha256" "$key" | sha256sum --check --status
+  key="$cache_root/downloads/powerdns-auth-49-pub.asc"
+  download_cached "$key" "$powerdns_key_url" "$powerdns_key_sha256" sha256sum
   install -D -m 0644 "$key" "$rootfs/etc/apt/keyrings/auth-49-pub.asc"
   printf '%s\n' "deb [signed-by=/etc/apt/keyrings/auth-49-pub.asc] $powerdns_repo $powerdns_suite main" > "$rootfs/etc/apt/sources.list.d/pdns.list"
   printf '%s\n' 'Package: pdns-*' 'Pin: origin repo.powerdns.com' 'Pin-Priority: 600' > "$rootfs/etc/apt/preferences.d/auth-49"
@@ -321,11 +391,8 @@ install_powerdns() {
 
 install_pulse() {
   rootfs=$1
-  release="$work_root/pulse-v${pulse_version}-linux-amd64.tar.gz"
-  if [ ! -f "$release" ]; then
-    curl --fail --location --silent --show-error --output "$release" "$pulse_release_url"
-  fi
-  printf '%s  %s\n' "$pulse_release_sha256" "$release" | sha256sum --check --status
+  release="$cache_root/downloads/pulse-v${pulse_version}-linux-amd64.tar.gz"
+  download_cached "$release" "$pulse_release_url" "$pulse_release_sha256" sha256sum
   install_packages "$rootfs" nginx
   install -D -m 0755 /dev/null "$rootfs/opt/pulse/bin/pulse"
   tar -xOf "$release" ./bin/pulse > "$rootfs/opt/pulse/bin/pulse"
@@ -377,9 +444,8 @@ build_dns_blocky() {
   install_powerdns "$rootfs"
   install -D -m 0644 images/dns/common/filtering-policy.hosts "$rootfs/etc/boetticher/dns/filtering/boetticher.hosts"
   mkdir -p "$rootfs/usr/local/bin"
-  archive="$work_root/blocky_v0.34.0_Linux_x86_64.tar.gz"
-  curl --fail --location --silent --show-error --output "$archive" https://github.com/0xERR0R/blocky/releases/download/v0.34.0/blocky_v0.34.0_Linux_x86_64.tar.gz
-  printf '%s  %s\n' 17b03f892346a160e9faf974ce68baae85fa4f2a94d7bf8ea52592a94be5eeb4 "$archive" | sha256sum --check --status
+  archive="$cache_root/downloads/blocky_v0.34.0_Linux_x86_64.tar.gz"
+  download_cached "$archive" https://github.com/0xERR0R/blocky/releases/download/v0.34.0/blocky_v0.34.0_Linux_x86_64.tar.gz 17b03f892346a160e9faf974ce68baae85fa4f2a94d7bf8ea52592a94be5eeb4 sha256sum
   tar -xOf "$archive" blocky > "$rootfs/usr/local/bin/blocky"
   chmod 0755 "$rootfs/usr/local/bin/blocky"
   blocky_config="$work_root/blocky-config.yml"
@@ -451,11 +517,8 @@ build_portal() {
 build_tailnet_router() {
   printf '%s\n' 'boetticher build stage: tailnet-router'
   rootfs=$(prepare_rootfs boetticher-tailnet-router)
-  key="$work_root/tailscale-trixie.noarmor.gpg"
-  if [ ! -f "$key" ]; then
-    curl --fail --location --silent --show-error --output "$key" "$tailscale_key_url"
-  fi
-  printf '%s  %s\n' "$tailscale_key_sha256" "$key" | sha256sum --check --status
+  key="$cache_root/downloads/tailscale-trixie.noarmor.gpg"
+  download_cached "$key" "$tailscale_key_url" "$tailscale_key_sha256" sha256sum
   install -D -m 0644 "$key" "$rootfs$tailscale_keyring"
   printf '%s\n' "deb [signed-by=$tailscale_keyring] https://pkgs.tailscale.com/stable/debian trixie main" > "$rootfs/etc/apt/sources.list.d/tailscale.list"
   install_packages "$rootfs" dbus "tailscale=$tailscale_package_version"
@@ -469,51 +532,30 @@ build_tailnet_router() {
   package_lxc boetticher-tailnet-router
 }
 
+build_airvpn() {
+  printf '%s\n' 'boetticher build stage: airvpn'
+  rootfs=$(prepare_rootfs boetticher-airvpn)
+  install_packages "$rootfs" wireguard-tools wireguard-go nftables iproute2
+  install -D -m 0644 images/airvpn/runtime/boetticher-airvpn.service "$rootfs/etc/systemd/system/boetticher-airvpn.service"
+  install -D -m 0755 images/airvpn/runtime/airvpn-prepare "$rootfs/usr/lib/boetticher/airvpn-prepare"
+  install -D -m 0755 images/airvpn/runtime/airvpn-routes-up "$rootfs/usr/lib/boetticher/airvpn-routes-up"
+  install -D -m 0755 images/airvpn/runtime/airvpn-routes-down "$rootfs/usr/lib/boetticher/airvpn-routes-down"
+  install -D -m 0755 images/airvpn/runtime/airvpn-forwarding-up "$rootfs/usr/lib/boetticher/airvpn-forwarding-up"
+  install -D -m 0755 images/airvpn/runtime/airvpn-forwarding-down "$rootfs/usr/lib/boetticher/airvpn-forwarding-down"
+  write_artifact_identity "$rootfs" airvpn
+  package_lxc boetticher-airvpn
+}
+
 build_litellm() {
   printf '%s\n' 'boetticher build stage: litellm'
   rootfs=$(prepare_rootfs boetticher-litellm)
-  install_packages "$rootfs" \
-    "nginx=$litellm_nginx_package_version" \
-    "python3=$litellm_python_package_version" \
-    "python3-venv=$litellm_python_venv_package_version" \
-    "python3-pip=$litellm_pip_package_version"
-  for package in nginx python3 python3-venv python3-pip; do
-    expected_version=$litellm_nginx_package_version
-    if [ "$package" = python3 ] || [ "$package" = python3-venv ]; then
-      expected_version=$litellm_python_package_version
-    elif [ "$package" = python3-pip ]; then
-      expected_version=$litellm_pip_package_version
-    fi
-    installed_version=$(chroot "$rootfs" dpkg-query -W -f='${Version}' "$package")
-    if [ "$installed_version" != "$expected_version" ]; then
-      echo "HOLD: unexpected $package version: $installed_version" >&2
-      return 2
-    fi
-  done
-  chroot "$rootfs" python3 -m venv /opt/litellm
-  chroot "$rootfs" useradd --system --home-dir /var/lib/litellm --create-home --shell /usr/sbin/nologin litellm
-  chroot "$rootfs" chown -R litellm:litellm /var/lib/litellm
+  install_packages "$rootfs" "nginx=$litellm_nginx_package_version"
+  chroot "$rootfs" useradd --system --home-dir /var/lib/bifrost --create-home --shell /usr/sbin/nologin bifrost
+  chroot "$rootfs" install -d -o bifrost -g bifrost -m 0750 /var/lib/bifrost
   rm -f "$rootfs/etc/nginx/sites-enabled/default" "$rootfs/etc/nginx/sites-available/default" "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
-  install -D -m 0644 images/litellm/runtime/requirements.lock "$rootfs/tmp/litellm-requirements.lock"
   install -D -m 0644 images/litellm/runtime/litellm.service "$rootfs/etc/systemd/system/litellm.service"
-  install -D -m 0755 images/litellm/runtime/model-capabilities.py "$rootfs/usr/local/libexec/boetticher-litellm-model-capabilities"
-  test -x "$rootfs/usr/bin/setpriv"
-  grep -Fq -- 'User=root' "$rootfs/etc/systemd/system/litellm.service"
-  grep -Fq -- 'CapabilityBoundingSet=CAP_SETUID CAP_SETGID' "$rootfs/etc/systemd/system/litellm.service"
-  chroot "$rootfs" /opt/litellm/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/litellm-requirements.lock
-  installed_version=$(chroot "$rootfs" /opt/litellm/bin/python -c 'from importlib.metadata import version; print(version("litellm"))')
-  if [ "$installed_version" != "$litellm_version" ]; then
-    echo "HOLD: unexpected LiteLLM version: $installed_version" >&2
-    return 2
-  fi
-  # The wheel ships an example log and precompiled bytecode, and its schema
-  # metadata contains a sample Slack webhook that secret scanners correctly
-  # treat as credential-shaped content. Runtime configuration is supplied
-  # separately, so remove build residue and neutralize only that static sample.
-  find "$rootfs/opt/litellm" -type f \( -name '*.log' -o -name '*.pyc' \) -delete
-  find "$rootfs/opt/litellm" -type d -name __pycache__ -prune -exec rm -rf -- {} +
-  find "$rootfs/opt/litellm" -type f -name '*.py' -exec sed -i -E 's#https://hooks\.slack\.com/services/[A-Za-z0-9/_-]+#https://example.invalid/slack-webhook#g' {} +
-  rm -f "$rootfs/tmp/litellm-requirements.lock"
+  CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/libexec/boetticher-bifrost" ./cmd/boetticher-bifrost
+  ln -s boetticher-bifrost "$rootfs/usr/local/libexec/boetticher-litellm-model-capabilities"
   write_artifact_identity "$rootfs" litellm
   package_lxc boetticher-litellm
 }
@@ -526,7 +568,7 @@ build_printer() {
   chroot "$rootfs" useradd --system --uid 2200 --gid 2200 --home-dir /var/lib/octoprint --create-home --shell /usr/sbin/nologin octoprint
   chroot "$rootfs" python3 -m venv /opt/octoprint
   install -D -m 0644 images/printer/runtime/requirements.lock "$rootfs/tmp/octoprint-requirements.lock"
-  chroot "$rootfs" /opt/octoprint/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/octoprint-requirements.lock
+  pip_install "$rootfs" /opt/octoprint/bin/pip install --require-hashes --requirement /tmp/octoprint-requirements.lock
   chroot "$rootfs" apt-get purge --yes --auto-remove python3-dev build-essential
   chroot "$rootfs" apt-get clean
   rm -rf "$rootfs/var/lib/apt/lists/"*
@@ -544,10 +586,10 @@ build_streamdeck() {
   chroot "$rootfs" useradd --system --uid 2200 --gid 2200 --home-dir /var/lib/streamdeck --create-home --shell /usr/sbin/nologin streamdeck
   chroot "$rootfs" python3 -m venv /opt/streamdeck
   install -D -m 0644 images/streamdeck/runtime/requirements.lock "$rootfs/tmp/streamdeck-requirements.lock"
-  chroot "$rootfs" /opt/streamdeck/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/streamdeck-requirements.lock
+  pip_install "$rootfs" /opt/streamdeck/bin/pip install --require-hashes --requirement /tmp/streamdeck-requirements.lock
   install -D -m 0644 services/streamdeck/pyproject.toml "$rootfs/usr/src/boetticher-streamdeck/pyproject.toml"
   cp -a services/streamdeck/src "$rootfs/usr/src/boetticher-streamdeck/"
-  chroot "$rootfs" /opt/streamdeck/bin/pip install --no-cache-dir --no-deps --no-build-isolation /usr/src/boetticher-streamdeck
+  pip_install "$rootfs" /opt/streamdeck/bin/pip install --no-deps --no-build-isolation /usr/src/boetticher-streamdeck
   chroot "$rootfs" apt-get clean
   rm -rf "$rootfs/var/lib/apt/lists/"*
   install -D -m 0644 images/streamdeck/runtime/streamdeck-status.service "$rootfs/etc/systemd/system/streamdeck-status.service"
@@ -565,14 +607,10 @@ build_aiops() {
     "python3-pip=$litellm_pip_package_version"
   chroot "$rootfs" python3 -m venv /opt/holmes
   install -D -m 0644 images/aiops/runtime/requirements.lock "$rootfs/tmp/aiops-requirements.lock"
-  chroot "$rootfs" /opt/holmes/bin/pip install --no-cache-dir --require-hashes --requirement /tmp/aiops-requirements.lock
+  pip_install "$rootfs" /opt/holmes/bin/pip install --require-hashes --requirement /tmp/aiops-requirements.lock
   chroot "$rootfs" /opt/holmes/bin/python -c 'import importlib.metadata; assert importlib.metadata.version("holmesgpt") == "0.40.0"'
-  holmes_archive="$work_root/holmesgpt-0.40.0.tar.gz"
-  curl --fail --location --silent --show-error --output "$holmes_archive" "$holmes_source_url"
-  printf '%s  %s\n' "$holmes_source_sha256" "$holmes_archive" | sha256sum --check --status - || {
-    echo "HOLD: HolmesGPT 0.40.0 source archive failed SHA-256 verification" >&2
-    return 2
-  }
+  holmes_archive="$cache_root/downloads/holmesgpt-0.40.0.tar.gz"
+  download_cached "$holmes_archive" "$holmes_source_url" "$holmes_source_sha256" sha256sum
   tar -xOf "$holmes_archive" "$holmes_source_root/server.py" > "$rootfs/opt/holmes/server.py"
   chmod 0644 "$rootfs/opt/holmes/server.py"
   rm -f "$rootfs/tmp/aiops-requirements.lock"
@@ -597,11 +635,8 @@ build_firewall() {
   done
   destination="$output_root/boetticher-firewall"
   mkdir -p "$destination"
-  input="$work_root/debian-13-genericcloud-amd64-20260327-2429.qcow2"
-  if [ ! -f "$input" ]; then
-    curl --fail --location --silent --show-error --output "$input" https://cloud.debian.org/images/cloud/trixie/20260327-2429/debian-13-genericcloud-amd64-20260327-2429.qcow2
-  fi
-  printf '%s  %s\n' 09559ec27d263997827dd8cddf76e97ea8e0f1803380aa501ea7eaa4b4968cd76ffef4ec7eb07ef1a9ccbeb0925a5020492ea9ed53eb167d62f3a2285039912c "$input" | sha512sum --check --status
+  input="$cache_root/downloads/debian-13-genericcloud-amd64-20260327-2429.qcow2"
+  download_cached "$input" https://cloud.debian.org/images/cloud/trixie/20260327-2429/debian-13-genericcloud-amd64-20260327-2429.qcow2 09559ec27d263997827dd8cddf76e97ea8e0f1803380aa501ea7eaa4b4968cd76ffef4ec7eb07ef1a9ccbeb0925a5020492ea9ed53eb167d62f3a2285039912c sha512sum
   image="$destination/boetticher-firewall-1.0.0-amd64.qcow2"
   artifact_identity="$work_root/firewall-artifact.json"
   telemetry_binary="$work_root/boetticher-firewall-telemetry"
@@ -854,6 +889,11 @@ build_tailnet_router_target() {
   build_tailnet_router
 }
 
+build_airvpn_target() {
+  [ -f "$(artifact_for boetticher-base)" ] || build_base
+  build_airvpn
+}
+
 build_litellm_target() {
   [ -f "$(artifact_for boetticher-base)" ] || build_base
   build_litellm
@@ -878,9 +918,8 @@ build_gatus_target() {
   [ -f "$(artifact_for boetticher-base)" ] || build_base
   rootfs=$(prepare_rootfs boetticher-gatus)
   install_packages "$rootfs" nginx ca-certificates
-  archive="$work_root/gatus-v5.36.0.tar.gz"
-  if [ ! -f "$archive" ]; then curl --fail --location --silent --show-error --output "$archive" "$gatus_source_url"; fi
-  printf '%s  %s\n' "$gatus_source_sha256" "$archive" | sha256sum --check --status
+  archive="$cache_root/downloads/gatus-v5.36.0.tar.gz"
+  download_cached "$archive" "$gatus_source_url" "$gatus_source_sha256" sha256sum
   source_root="$work_root/gatus-source"; rm -rf "$source_root"; mkdir -p "$source_root"
   tar -xzf "$archive" -C "$source_root" --strip-components=1
   (cd "$source_root" && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/bin/gatus" .)
@@ -908,6 +947,7 @@ case "$target" in
   image-monitoring) run_timed_image_target "$target" build_monitoring_target ;;
   image-portal) run_timed_image_target "$target" build_portal_target ;;
   image-tailnet-router) run_timed_image_target "$target" build_tailnet_router_target ;;
+  image-airvpn) run_timed_image_target "$target" build_airvpn_target ;;
   image-litellm) run_timed_image_target "$target" build_litellm_target ;;
   image-printer) run_timed_image_target "$target" build_printer_target ;;
   image-streamdeck) run_timed_image_target "$target" build_streamdeck_target ;;

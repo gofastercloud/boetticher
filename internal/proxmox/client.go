@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
 
 type Client struct {
@@ -38,6 +40,7 @@ type Config struct {
 	TokenID     string
 	TokenSecret string
 	CAFile      string
+	CAPEM       string
 	Insecure    bool
 	Timeout     time.Duration
 	// SnippetRunner is the authenticated Proxmox host path used because PVE
@@ -73,14 +76,20 @@ func NewClient(config Config) (*Client, error) {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: config.Insecure} // #nosec G402 -- only enabled by explicit operator choice.
+	caPEM := []byte(config.CAPEM)
+	caDescription := "Proxmox CA PEM"
 	if config.CAFile != "" {
 		data, err := os.ReadFile(config.CAFile)
 		if err != nil {
 			return nil, fmt.Errorf("read Proxmox CA file: %w", err)
 		}
+		caPEM = data
+		caDescription = "Proxmox CA file"
+	}
+	if len(caPEM) > 0 {
 		roots := x509.NewCertPool()
-		if !roots.AppendCertsFromPEM(data) {
-			return nil, errors.New("Proxmox CA file contains no certificates")
+		if !roots.AppendCertsFromPEM(caPEM) {
+			return nil, fmt.Errorf("%s contains no certificates", caDescription)
 		}
 		transport.TLSClientConfig.RootCAs = roots
 	}
@@ -120,12 +129,27 @@ func (c *Client) Delete(ctx context.Context, endpoint string) error {
 // invoking this destructive operation; the API client deliberately does not
 // infer ownership from a VMID.
 func (c *Client) DestroyQEMU(ctx context.Context, node string, vmid int) error {
+	return c.destroyQEMU(ctx, node, vmid, true)
+}
+
+// DestroyQEMUKeepingUnreferencedDisks removes a guest while retaining disks
+// which are not owned by that guest. It is reserved for the disposable
+// builder, whose separately-owned cache volume must survive VM teardown.
+func (c *Client) DestroyQEMUKeepingUnreferencedDisks(ctx context.Context, node string, vmid int) error {
+	return c.destroyQEMU(ctx, node, vmid, false)
+}
+
+func (c *Client) destroyQEMU(ctx context.Context, node string, vmid int, destroyUnreferencedDisks bool) error {
 	if node == "" || vmid <= 0 {
 		return errors.New("Proxmox node and positive VMID are required")
 	}
+	destroy := "0"
+	if destroyUnreferencedDisks {
+		destroy = "1"
+	}
 	return c.request(ctx, http.MethodDelete, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid)), url.Values{
 		"purge":                      {"1"},
-		"destroy-unreferenced-disks": {"1"},
+		"destroy-unreferenced-disks": {destroy},
 	}, nil, nil)
 }
 
@@ -167,10 +191,18 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 // credentials. The API may require authentication for the probe, so any HTTP
 // response proves the TLS handshake completed; transport and certificate
 // failures remain errors.
-func (c *Client) CheckTLS(ctx context.Context) error {
+func (c *Client) CheckTLS(ctx context.Context) (err error) {
 	if c == nil || c.HTTP == nil {
 		return errors.New("Proxmox client is required")
 	}
+	started := time.Now()
+	status := 0
+	defer func() {
+		telemetry.Record(ctx, telemetry.Event{
+			Category: "proxmox_api", Operation: "/version", Method: http.MethodGet,
+			Status: status, Duration: time.Since(started), Success: err == nil || status != 0,
+		})
+	}()
 	base, err := url.Parse(c.BaseURL)
 	if err != nil {
 		return err
@@ -184,6 +216,7 @@ func (c *Client) CheckTLS(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	status = response.StatusCode
 	return response.Body.Close()
 }
 
@@ -587,10 +620,18 @@ func (c *Client) StorageContent(ctx context.Context, node, storage, content stri
 // UploadStorageFile imports one already-qualified appliance byte stream into
 // a named Proxmox storage content class. The caller must verify its content
 // digest before calling this method.
-func (c *Client) UploadStorageFile(ctx context.Context, node, storage, content, source, filename, checksum string) error {
+func (c *Client) UploadStorageFile(ctx context.Context, node, storage, content, source, filename, checksum string) (err error) {
 	if node == "" || storage == "" || content == "" || source == "" || filename == "" || checksum == "" {
 		return errors.New("node, storage, content, source, filename, and checksum are required")
 	}
+	started := time.Now()
+	status := 0
+	defer func() {
+		telemetry.Record(ctx, telemetry.Event{
+			Category: "proxmox_api", Operation: path.Join("/nodes", node, "storage", storage, "upload"), Method: http.MethodPost,
+			Status: status, Duration: time.Since(started), Success: err == nil,
+		})
+	}()
 	if len(checksum) != sha256.Size*2 {
 		return errors.New("artifact checksum must be a SHA-256 hex digest")
 	}
@@ -654,6 +695,7 @@ func (c *Client) UploadStorageFile(ctx context.Context, node, storage, content, 
 		_ = <-streamErr
 		return err
 	}
+	status = response.StatusCode
 	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
 	if err != nil {
@@ -711,7 +753,7 @@ func artifactMultipartParts(content, checksum, filename string) ([]byte, []byte,
 
 // UploadStorageText uploads deterministic non-secret cloud-init content to a
 // snippets storage class without creating a controller-side plaintext file.
-func (c *Client) UploadStorageText(ctx context.Context, node, storage, content, filename, value string) error {
+func (c *Client) UploadStorageText(ctx context.Context, node, storage, content, filename, value string) (err error) {
 	if node == "" || storage == "" || content == "" || filename == "" {
 		return errors.New("node, storage, content, and filename are required")
 	}
@@ -724,6 +766,14 @@ func (c *Client) UploadStorageText(ctx context.Context, node, storage, content, 
 		}
 		return uploadSnippetViaSSH(ctx, c.snippetRunner, c.snippetAddr, c.snippetUser, filename, value)
 	}
+	started := time.Now()
+	status := 0
+	defer func() {
+		telemetry.Record(ctx, telemetry.Event{
+			Category: "proxmox_api", Operation: path.Join("/nodes", node, "storage", storage, "upload"), Method: http.MethodPost,
+			Status: status, Duration: time.Since(started), Success: err == nil,
+		})
+	}()
 	body := &bytes.Buffer{}
 	multipartWriter := multipart.NewWriter(body)
 	if err := multipartWriter.WriteField("content", content); err != nil {
@@ -756,6 +806,7 @@ func (c *Client) UploadStorageText(ctx context.Context, node, storage, content, 
 	if err != nil {
 		return err
 	}
+	status = response.StatusCode
 	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
 	if err != nil {
@@ -1085,7 +1136,15 @@ func IsNotFound(err error) bool {
 		strings.HasSuffix(message, ".conf' does not exist")
 }
 
-func (c *Client) request(ctx context.Context, method, endpoint string, query url.Values, form url.Values, out any) error {
+func (c *Client) request(ctx context.Context, method, endpoint string, query url.Values, form url.Values, out any) (err error) {
+	started := time.Now()
+	status := 0
+	defer func() {
+		telemetry.Record(ctx, telemetry.Event{
+			Category: "proxmox_api", Operation: endpoint, Method: method,
+			Status: status, Duration: time.Since(started), Success: err == nil,
+		})
+	}()
 	base, err := url.Parse(c.BaseURL)
 	if err != nil {
 		return err
@@ -1112,6 +1171,7 @@ func (c *Client) request(ctx context.Context, method, endpoint string, query url
 	if err != nil {
 		return err
 	}
+	status = response.StatusCode
 	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
 	if err != nil {

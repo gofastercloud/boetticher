@@ -116,6 +116,56 @@ func TestPortalRejectsSymlinkedSourceDocument(t *testing.T) {
 	}
 }
 
+func TestContentDigestIsStableAndChangesWithPortalContent(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "portal")
+	if err := os.Mkdir(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("one"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	first, err := ContentDigest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := ContentDigest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second || len(first) != 64 {
+		t.Fatalf("content digest was not stable: %q %q", first, second)
+	}
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("two"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	third, err := ContentDigest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third == first {
+		t.Fatal("content digest did not change after portal content changed")
+	}
+}
+
+func TestContentDigestRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "portal")
+	if err := os.Mkdir(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "outside.html")
+	if err := os.WriteFile(target, []byte("outside"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "index.html")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ContentDigest(root); err == nil {
+		t.Fatal("content digest accepted a symlink")
+	}
+}
+
 func TestManagedPortalPublishesGatewayDetails(t *testing.T) {
 	dir := t.TempDir()
 	site := model.NewDefaultSite("installation", "age1example")

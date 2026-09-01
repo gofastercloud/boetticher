@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
 
 const bootstrapPhaseCount = 6
@@ -43,6 +45,11 @@ type bootstrapReport struct {
 	finishedAt      time.Time
 	timingPath      string
 	timings         []bootstrapTiming
+	measurements    operationMeasurements
+}
+
+func (r *bootstrapReport) Observe(event telemetry.Event) {
+	r.measurements.Observe(event)
 }
 
 func newBootstrapReport(out io.Writer, total int) *bootstrapReport {
@@ -126,6 +133,7 @@ func (r *bootstrapReport) finalize(operationErr error) error {
 			fmt.Fprintf(r.out, "      Reason: %s\n", compactError(phase.Cause))
 		}
 	}
+	fmt.Fprintln(r.out, r.measurements.summaryLine())
 	if operationErr == nil {
 		fmt.Fprintln(r.out, "Bootstrap: PASS")
 		r.renderTimingAvailability(timingErr)
@@ -202,17 +210,18 @@ func (r *bootstrapReport) persist(operationErr error) error {
 		phases = append(phases, entry)
 	}
 	document := struct {
-		Version         int               `json:"version"`
-		Operation       string            `json:"operation"`
-		PlatformVersion string            `json:"platform_version,omitempty"`
-		ModelRevision   string            `json:"model_revision,omitempty"`
-		RunID           string            `json:"run_id"`
-		StartedAt       string            `json:"started_at"`
-		FinishedAt      string            `json:"finished_at"`
-		DurationMS      int64             `json:"duration_ms"`
-		Succeeded       bool              `json:"succeeded"`
-		Phases          []phaseTiming     `json:"phases"`
-		Suboperations   []bootstrapTiming `json:"suboperations"`
+		Version         int                   `json:"version"`
+		Operation       string                `json:"operation"`
+		PlatformVersion string                `json:"platform_version,omitempty"`
+		ModelRevision   string                `json:"model_revision,omitempty"`
+		RunID           string                `json:"run_id"`
+		StartedAt       string                `json:"started_at"`
+		FinishedAt      string                `json:"finished_at"`
+		DurationMS      int64                 `json:"duration_ms"`
+		Succeeded       bool                  `json:"succeeded"`
+		Phases          []phaseTiming         `json:"phases"`
+		Suboperations   []bootstrapTiming     `json:"suboperations"`
+		Measurements    operationMeasurements `json:"measurements"`
 	}{
 		Version:         1,
 		Operation:       r.operation,
@@ -225,6 +234,7 @@ func (r *bootstrapReport) persist(operationErr error) error {
 		Succeeded:       operationErr == nil,
 		Phases:          phases,
 		Suboperations:   append([]bootstrapTiming(nil), r.timings...),
+		Measurements:    r.measurements,
 	}
 	data, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {

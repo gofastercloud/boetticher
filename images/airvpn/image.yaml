@@ -1,0 +1,19 @@
+name: boetticher-airvpn
+version: 1.0.0
+kind: lxc
+base: boetticher-base
+base_version: 0.4.0
+architecture: amd64
+runtime:
+  wireguard: wireguard-tools
+  userspace_backend: wireguard-go
+  protocol: wireguard-ipv4-udp
+  provider_port: 1637
+  device: default
+  forwarding: selected-sources-only
+  kill_switch: nftables
+  credential: airvpn-wireguard-config
+logging: inherited-from-base
+security:
+  unprivileged: true
+  tun_device: /dev/net/tun

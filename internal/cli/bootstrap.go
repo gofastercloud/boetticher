@@ -21,7 +21,10 @@ import (
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
 	"github.com/gofastercloud/boetticher/internal/storage"
+	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
+
+const builderBuildCommand = `sh -c 'tail -n 0 -F /var/log/boetticher-build.log 2>/dev/null & tail_pid=$!; trap "kill $tail_pid 2>/dev/null || true" EXIT; /usr/local/sbin/boetticher-build'`
 
 func runBootstrapEndpoint(args []string, out io.Writer) error {
 	if len(args) == 0 {
@@ -95,8 +98,12 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS during bootstrap")
 	trunkInterface := fs.String("trunk-interface", "", "explicit physical trunk interface when discovery finds multiple candidates")
 	dryRun := fs.Bool("dry-run", false, "render and validate the bootstrap plan without connecting")
+	cleanup := fs.Bool("cleanup", false, "remove an exact-owned stale temporary artifact builder without rebuilding")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *cleanup {
+		return runBootstrapCleanup(*siteDir, *ageIdentity, *proxmoxCA, *insecure, out, progress)
 	}
 	if *dryRun {
 		progress.total = 1
@@ -167,6 +174,7 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	}
 	runner := proxmox.SSHRunner{KnownHosts: *knownHosts, StrictHostKey: "ask", HostKeyAlias: model.LogicalProxmoxIdentity}
 	ctx := context.Background()
+	ctx = telemetry.WithObserver(ctx, progress)
 	sshDiscovery, err := proxmox.DiscoverPhysicalNetworkViaSSH(ctx, runner, s.BootstrapAddress, *initialUser, s.BootstrapAddress, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
 	if err != nil {
 		return err
@@ -196,6 +204,14 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	} else if err := proxmox.CheckScopedCredentialAvailability(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
 		return err
 	}
+	proxmoxCAPEM := credentials.CAPEM
+	if *proxmoxCA != "" {
+		caData, readErr := os.ReadFile(*proxmoxCA)
+		if readErr != nil {
+			return fmt.Errorf("read Proxmox API CA file: %w", readErr)
+		}
+		proxmoxCAPEM = string(caData)
+	}
 	if err := proxmox.InstallOperatorKey(ctx, runner, s.BootstrapAddress, *initialUser, publicKey); err != nil {
 		return fmt.Errorf("install operator SSH key: %w", err)
 	}
@@ -209,7 +225,7 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 		return fmt.Errorf("configure Proxmox administrative and bastion identities: %w", err)
 	}
 	trustClient, err := proxmox.NewClient(proxmox.Config{
-		BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", CAFile: *proxmoxCA, Insecure: *insecure,
+		BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", CAFile: *proxmoxCA, CAPEM: proxmoxCAPEM, Insecure: *insecure,
 	})
 	if err != nil {
 		return fmt.Errorf("prepare Proxmox API trust before credential creation: %w", err)
@@ -218,6 +234,13 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 		return fmt.Errorf("verify Proxmox API TLS before credential creation: %w", err)
 	}
 	if credentialsExist {
+		if proxmoxCAPEM != "" && credentials.CAPEM != proxmoxCAPEM {
+			credentials.CAPEM = proxmoxCAPEM
+			if err := site.StoreProxmoxCredentials(*siteDir, s, *ageIdentity, credentials); err != nil {
+				return fmt.Errorf("store Proxmox API CA in SOPS: %w", err)
+			}
+			fmt.Fprintln(out, "Proxmox API CA in SOPS: PASS (stored)")
+		}
 		if err := proxmox.EnsureScopedCredentialACL(ctx, runner, s.BootstrapAddress, *initialUser, credentials.APIUser, credentials.TokenID, "BoetticherProvisioner"); err != nil {
 			return fmt.Errorf("reconcile scoped Proxmox API credentials: %w", err)
 		}
@@ -227,14 +250,17 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 		if createErr != nil {
 			return fmt.Errorf("create scoped Proxmox API credentials: %w", createErr)
 		}
-		credentials = site.ProxmoxCredentials{APIUser: "labadmin@pve", TokenID: "boetticher", TokenSecret: tokenSecret}
+		credentials = site.ProxmoxCredentials{APIUser: "labadmin@pve", TokenID: "boetticher", TokenSecret: tokenSecret, CAPEM: proxmoxCAPEM}
 		if err := site.StoreProxmoxCredentials(*siteDir, s, *ageIdentity, credentials); err != nil {
-			return fmt.Errorf("store Proxmox credentials in SOPS: %w", err)
+			return fmt.Errorf("store Proxmox credentials and API CA in SOPS: %w", err)
+		}
+		if proxmoxCAPEM != "" {
+			fmt.Fprintln(out, "Proxmox API CA in SOPS: PASS (stored)")
 		}
 	}
 	client, err := proxmox.NewClient(proxmox.Config{
 		BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", User: credentials.APIUser,
-		TokenID: credentials.TokenID, TokenSecret: credentials.TokenSecret, CAFile: *proxmoxCA, Insecure: *insecure,
+		TokenID: credentials.TokenID, TokenSecret: credentials.TokenSecret, CAFile: *proxmoxCA, CAPEM: proxmoxCAPEM, Insecure: *insecure,
 		SnippetRunner: runner, SnippetAddress: s.BootstrapAddress, SnippetUser: *initialUser,
 	})
 	if err != nil {
@@ -335,7 +361,7 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	plan.Node = apiNode
 	progress.complete()
 	progress.start("artifacts", "Build and qualify appliance artifacts")
-	if err := buildDefaultArtifacts(ctx, client, plan, *siteDir, publicKey, *knownHosts, model.ExpandUserPath(s.SSHIdentityFile), runner, s.BootstrapAddress, *initialUser, out, progress); err != nil {
+	if err := buildDefaultArtifacts(ctx, client, plan, *siteDir, publicKey, *knownHosts, model.ExpandUserPath(s.SSHIdentityFile), runner, runner, s.BootstrapAddress, *initialUser, out, progress); err != nil {
 		return err
 	}
 	plan, err = proxmox.ResolveQualifiedArtifacts(*siteDir, plan, true)
@@ -375,15 +401,6 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 		}
 		return 0
 	}(), "proxmox-trust-transition-complete"}); err != nil {
-		return err
-	}
-	if err := writeModelProjections(*siteDir, s); err != nil {
-		return err
-	}
-	if err := writePhysicalDiscovery(*siteDir, s, postDiscovery); err != nil {
-		return err
-	}
-	if err := rebuildPortal(*siteDir, s); err != nil {
 		return err
 	}
 	progress.complete()
@@ -456,22 +473,26 @@ func honorRequestedPhysicalMode(discovery networkmodel.Discovery, desiredMode, c
 	return discovery
 }
 
-func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan proxmox.Plan, siteDir, publicKey, _ string, identityFile string, hostRunner proxmox.CommandRunner, hostAddress, hostUser string, out io.Writer, progress *bootstrapReport) (returnErr error) {
+func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan proxmox.Plan, siteDir, publicKey, _ string, identityFile string, hostRunner proxmox.CommandRunner, hostArgsRunner proxmox.ArgsCommandRunner, hostAddress, hostUser string, out io.Writer, progress *bootstrapReport) (returnErr error) {
 	cacheStarted := time.Now()
-	base, err := artifacts.ArtifactFor("base")
+	buildTargets, err := proxmox.BuilderArtifactTargetsForMissing(siteDir, plan)
 	if err != nil {
 		return err
 	}
-	if _, _, err := artifacts.ResolveArtifactEvidence(siteDir, base); err == nil {
-		if _, err := proxmox.ResolveQualifiedArtifacts(siteDir, plan, true); err == nil {
-			progress.emitTiming(out, "artifact_cache_hit", cacheStarted)
-			return nil
-		}
+	if len(buildTargets) == 0 {
+		progress.emitTiming(out, "artifact_cache_hit", cacheStarted)
+		return nil
 	}
 	progress.emitTiming(out, "artifact_cache_check", cacheStarted)
 	if client == nil {
 		return errors.New("Proxmox client is required for appliance construction")
 	}
+	cacheVolume, err := proxmox.EnsureBuilderCacheVolume(ctx, client, plan.Node, hostArgsRunner, hostAddress, hostUser)
+	if err != nil {
+		return fmt.Errorf("prepare persistent builder cache: %w", err)
+	}
+	plan.BuilderCacheVolume = cacheVolume
+	plan.BuilderArtifactTargets = buildTargets
 	transportCompression := strings.ToLower(strings.TrimSpace(os.Getenv("BOETTICHER_BUILDER_TRANSPORT_COMPRESSION")))
 	if transportCompression == "" {
 		transportCompression = "gzip"
@@ -503,17 +524,19 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	builderOutput := ""
 	if builderCreated {
 		defer func() {
+			cleanupContext, cancelCleanup := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancelCleanup()
 			var cleanupErr error
 			if !buildSucceeded {
 				if builderAddress != "" {
-					if err := persistBuilderDiagnosticsWithOutput(ctx, builderRunner, builderAddress, builderSSHUser, siteDir, builderOutput); err != nil {
+					if err := persistBuilderDiagnosticsWithOutput(cleanupContext, builderRunner, builderAddress, builderSSHUser, siteDir, builderOutput); err != nil {
 						cleanupErr = errors.Join(cleanupErr, err)
 					}
 				} else if err := persistBuilderUnavailableDiagnostics(siteDir, returnErr); err != nil {
 					cleanupErr = errors.Join(cleanupErr, err)
 				}
 			}
-			if err := proxmox.DestroyBuilderVM(ctx, client, plan.Node); err != nil {
+			if err := proxmox.DestroyBuilderVM(cleanupContext, client, plan.Node); err != nil {
 				cleanupErr = errors.Join(cleanupErr, err)
 			}
 			if cleanupErr != nil {
@@ -578,10 +601,11 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	progress.emitTiming(out, "builder_source_transfer", sourceStarted)
 	var buildOutputBuffer boundedBuilderOutput
 	buildStarted := time.Now()
-	if err := builderRunner.RunStream(ctx, builderAddress, builderSSHUser, "/usr/local/sbin/boetticher-build", &buildOutputBuffer); err != nil {
-		builderOutput = buildOutputBuffer.String()
+	buildStreamOutput := io.MultiWriter(&buildOutputBuffer, &builderProgressWriter{out: out})
+	if buildErr := builderRunner.RunStream(ctx, builderAddress, builderSSHUser, builderBuildCommand, buildStreamOutput); buildErr != nil {
+		builderOutput = builderFailureOutput(&buildOutputBuffer, buildErr)
 		progress.emitTiming(out, "builder_build_and_qualification", buildStarted)
-		return fmt.Errorf("qualify default appliance artifacts on temporary builder: %w", err)
+		return fmt.Errorf("qualify default appliance artifacts on temporary builder: %w", buildErr)
 	}
 	progress.emitTiming(out, "builder_build_and_qualification", buildStarted)
 	archiveFile, err := os.CreateTemp("", "boetticher-builder-artifacts-*.tar.gz")
@@ -618,6 +642,32 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	}
 	progress.emitTiming(out, "builder_artifact_return_extraction", extractionStarted)
 	buildSucceeded = true
+	return nil
+}
+
+func runBootstrapCleanup(siteDir, ageIdentity, proxmoxCA string, insecure bool, out io.Writer, progress *bootstrapReport) error {
+	progress.total = 2
+	progress.start("validate", "Validate temporary builder cleanup request")
+	s, err := site.Load(siteDir)
+	if err != nil {
+		return err
+	}
+	client, _, err := loadProxmoxClient(siteDir, s, ageIdentity, proxmoxCA, insecure)
+	if err != nil {
+		return fmt.Errorf("prepare Proxmox client for temporary builder cleanup: %w", err)
+	}
+	ctx := telemetry.WithObserver(context.Background(), progress)
+	node, err := client.SingleNode(ctx)
+	if err != nil {
+		return fmt.Errorf("identify Proxmox node for temporary builder cleanup: %w", err)
+	}
+	progress.complete()
+	progress.start("cleanup", "Remove exact-owned temporary artifact builder")
+	if err := proxmox.DestroyBuilderVM(ctx, client, node); err != nil {
+		return fmt.Errorf("remove temporary artifact builder: %w", err)
+	}
+	progress.complete()
+	fmt.Fprintf(out, "Temporary artifact builder VMID %d: removed\n", model.BuilderVMID)
 	return nil
 }
 
@@ -748,6 +798,37 @@ func (b *boundedBuilderArchive) Write(data []byte) (int, error) {
 }
 
 func (b *boundedBuilderOutput) String() string { return b.buffer.String() }
+
+type builderProgressWriter struct {
+	out  io.Writer
+	line []byte
+}
+
+func (w *builderProgressWriter) Write(data []byte) (int, error) {
+	if w.out == nil {
+		return len(data), nil
+	}
+	w.line = append(w.line, data...)
+	for {
+		index := bytes.IndexByte(w.line, '\n')
+		if index < 0 {
+			break
+		}
+		line := strings.TrimSuffix(string(w.line[:index]), "\r")
+		if strings.HasPrefix(line, "timing ") || strings.HasPrefix(line, "measurement ") || strings.HasPrefix(line, "boetticher build stage: ") || strings.HasPrefix(line, "boetticher package stage: ") {
+			_, _ = fmt.Fprintln(w.out, line)
+		}
+		w.line = w.line[index+1:]
+	}
+	return len(data), nil
+}
+
+func builderFailureOutput(output *boundedBuilderOutput, cause error) string {
+	if cause != nil {
+		_, _ = output.Write([]byte("\n[builder-command-error]\n" + cause.Error() + "\n"))
+	}
+	return output.String()
+}
 
 func persistBuilderUnavailableDiagnostics(siteDir string, cause error) error {
 	if siteDir == "" {

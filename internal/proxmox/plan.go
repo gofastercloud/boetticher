@@ -80,10 +80,16 @@ type Plan struct {
 	// ArtifactFiles is controller-local evidence and is intentionally excluded
 	// from canonical model output. It maps qualified definitions to the exact
 	// bytes that may be imported into Proxmox.
-	ArtifactFiles        map[string]string `json:"-"`
-	OperatorPublicKey    string            `json:"-"`
-	CloudInitFiles       CloudInitFiles    `json:"-"`
-	DestructiveConfirmed bool              `json:"-"`
+	ArtifactFiles      map[string]string `json:"-"`
+	OperatorPublicKey  string            `json:"-"`
+	CloudInitFiles     CloudInitFiles    `json:"-"`
+	BuilderCacheVolume string            `json:"-"`
+	// BuilderArtifactTargets is an operation-local bootstrap optimization. It
+	// narrows a fresh builder run to artifacts whose controller-side
+	// qualification evidence is missing or invalid; the builder still applies
+	// its own smoke, scan, and qualification gates to every selected target.
+	BuilderArtifactTargets []string `json:"-"`
+	DestructiveConfirmed   bool     `json:"-"`
 	// PrivilegedRunner is the already-authorized, bounded root bootstrap path.
 	// Proxmox rejects /dev/net/tun on the scoped API identity, so device-bearing
 	// LXC creation applies the exact device setting through this path after the
@@ -680,6 +686,50 @@ func EnsureFirewallVM(ctx context.Context, client *Client, plan Plan) error {
 
 const builderOwnerTag = "boetticher-builder"
 
+const builderCacheSerial = "boetticher-builder-cache"
+
+// EnsureBuilderCacheVolume allocates one separately owned cache volume for
+// disposable builder VM190. The cache volume is owned by the reserved
+// platform storage identity VM191, so destroying VM190 cannot remove it.
+
+func EnsureBuilderCacheVolume(ctx context.Context, client *Client, node string, runner ArgsCommandRunner, address, user string) (string, error) {
+	if client == nil || node == "" || runner == nil || address == "" || user == "" {
+		return "", errors.New("Proxmox client and privileged cache-volume runner are required")
+	}
+	if kind, _, err := client.GuestConfig(ctx, node, model.BuilderCacheOwnerVMID); err == nil {
+		return "", fmt.Errorf("HOLD: builder cache owner VMID %d is occupied by a %s guest", model.BuilderCacheOwnerVMID, kind)
+	} else if !IsNotFound(err) {
+		return "", fmt.Errorf("inspect builder cache owner VMID %d: %w", model.BuilderCacheOwnerVMID, err)
+	}
+	volumeID := model.BuilderCacheStorage + ":" + model.BuilderCacheVolumeName
+	entries, err := client.StorageContent(ctx, node, model.BuilderCacheStorage, "images")
+	if err != nil {
+		return "", fmt.Errorf("inspect builder cache storage: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.VolID == volumeID {
+			return volumeID, nil
+		}
+	}
+	allocArgs := []string{"pvesm", "alloc", model.BuilderCacheStorage, strconv.Itoa(model.BuilderCacheOwnerVMID), model.BuilderCacheVolumeName, fmt.Sprintf("%dG", model.BuilderCacheDiskGiB), "--format", "raw"}
+	if user != "root" {
+		allocArgs = append([]string{"sudo", "-n"}, allocArgs...)
+	}
+	if _, err := runner.RunArgs(ctx, address, user, allocArgs); err != nil {
+		return "", fmt.Errorf("allocate persistent builder cache volume: %w", err)
+	}
+	entries, err = client.StorageContent(ctx, node, model.BuilderCacheStorage, "images")
+	if err != nil {
+		return "", fmt.Errorf("verify persistent builder cache volume: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.VolID == volumeID {
+			return volumeID, nil
+		}
+	}
+	return "", fmt.Errorf("HOLD: Proxmox did not expose allocated builder cache volume %s", volumeID)
+}
+
 // EnsureBuilderVM creates the transient Linux build environment from the
 // pinned Debian input. It is Core bootstrap infrastructure, not a module or a
 // user workload, and an existing object must prove that ownership before it is
@@ -688,9 +738,15 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 	if client == nil {
 		return false, errors.New("Proxmox client is required")
 	}
-	buildTargets, err := builderArtifactTargets(plan)
+	buildTargets := append([]string(nil), plan.BuilderArtifactTargets...)
+	if len(buildTargets) == 0 {
+		buildTargets, err = builderArtifactTargets(plan)
+	}
 	if err != nil {
 		return false, fmt.Errorf("resolve builder artifact targets: %w", err)
+	}
+	if plan.BuilderCacheVolume != model.BuilderCacheStorage+":"+model.BuilderCacheVolumeName {
+		return false, fmt.Errorf("HOLD: persistent builder cache volume is required and must be canonical: %q", plan.BuilderCacheVolume)
 	}
 	kind, current, err := client.GuestConfig(ctx, plan.Node, model.BuilderVMID)
 	if err == nil {
@@ -730,6 +786,7 @@ func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey s
 		"ipconfig0": {"ip=dhcp"},
 		"ciuser":    {model.DefaultAdminSSHUser},
 	}
+	params.Set("scsi1", plan.BuilderCacheVolume+",format=raw,serial="+builderCacheSerial)
 	cloudInit, err := RenderBuilderCloudInitWithKeyAndTargets(publicKey, buildTargets)
 	if err != nil {
 		return false, fmt.Errorf("render builder cloud-init: %w", err)
@@ -860,7 +917,15 @@ func DestroyBuilderVM(ctx context.Context, client *Client, node string) (returnE
 			return fmt.Errorf("stop temporary builder: %w", err)
 		}
 	}
-	if err := client.DestroyQEMU(ctx, node, model.BuilderVMID); err != nil {
+	if disk, _ := current["scsi1"].(string); disk != "" {
+		if !strings.HasPrefix(disk, model.BuilderCacheStorage+":"+model.BuilderCacheVolumeName) || !strings.Contains(disk, "serial="+builderCacheSerial) {
+			return fmt.Errorf("HOLD: refusing to detach unexpected builder disk %q", disk)
+		}
+		if err := client.SetVMConfig(ctx, node, model.BuilderVMID, url.Values{"delete": {"scsi1"}}); err != nil {
+			return fmt.Errorf("detach persistent builder cache volume: %w", err)
+		}
+	}
+	if err := client.DestroyQEMUKeepingUnreferencedDisks(ctx, node, model.BuilderVMID); err != nil {
 		return fmt.Errorf("destroy temporary builder: %w", err)
 	}
 	if err := WaitForGuestAbsent(ctx, client, node, model.BuilderVMID, 30, time.Second); err != nil {
@@ -1882,25 +1947,35 @@ func guestArtifactNeedsReplacement(current map[string]any, expected GuestPlan) b
 	return normalizeArtifactDescription(observed) != artifactDescription(expected.Artifact)
 }
 
+// InspectGuestArtifact performs the one live guest-config read needed before
+// appliance reconciliation. It returns existence and replacement state
+// together so callers do not query the same Proxmox config twice. A kind
+// mismatch remains present but not replaceable; the normal ensure path then
+// preserves its ownership HOLD.
+func InspectGuestArtifact(ctx context.Context, client *Client, node string, guest GuestPlan) (exists, replacement bool, err error) {
+	if client == nil {
+		return false, false, errors.New("Proxmox client is required")
+	}
+	kind, current, err := client.GuestConfig(ctx, node, guest.VMID)
+	if IsNotFound(err) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, fmt.Errorf("inspect guest %s artifact identity: %w", guest.Name, err)
+	}
+	if kind != guest.Kind {
+		return true, false, nil
+	}
+	return true, guestArtifactNeedsReplacement(current, guest), nil
+}
+
 // GuestArtifactNeedsReplacement reports whether one existing guest needs the
 // explicitly confirmed appliance-rootfs replacement. A missing guest is not a
 // replacement, and kind mismatches remain the responsibility of the normal
 // ensure path so its existing HOLD is preserved.
 func GuestArtifactNeedsReplacement(ctx context.Context, client *Client, node string, guest GuestPlan) (bool, error) {
-	if client == nil {
-		return false, errors.New("Proxmox client is required")
-	}
-	kind, current, err := client.GuestConfig(ctx, node, guest.VMID)
-	if IsNotFound(err) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("inspect guest %s artifact identity: %w", guest.Name, err)
-	}
-	if kind != guest.Kind {
-		return false, nil
-	}
-	return guestArtifactNeedsReplacement(current, guest), nil
+	_, replacement, err := InspectGuestArtifact(ctx, client, node, guest)
+	return replacement, err
 }
 
 func normalizeArtifactDescription(value string) string {

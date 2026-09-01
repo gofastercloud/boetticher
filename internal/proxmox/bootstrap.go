@@ -19,6 +19,7 @@ import (
 
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
+	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
 
 type CommandRunner interface {
@@ -373,6 +374,14 @@ func (r SSHRunner) StartLocalForward(ctx context.Context, address, user, targetA
 	if err != nil {
 		return nil, err
 	}
+	started := time.Now()
+	status := 1
+	defer func() {
+		telemetry.Record(ctx, telemetry.Event{
+			Category: "ssh", Operation: "local-forward", Target: user + "@" + address,
+			Status: status, Duration: time.Since(started), Success: status == 0,
+		})
+	}()
 	forwardContext, cancel := context.WithCancel(ctx)
 	command := newSSHProcess(args)
 	command.Stdin = nil
@@ -409,6 +418,7 @@ func (r SSHRunner) StartLocalForward(ctx context.Context, address, user, targetA
 			connection, dialErr := net.DialTimeout("tcp", forward.localAddress, 250*time.Millisecond)
 			if dialErr == nil {
 				_ = connection.Close()
+				status = 0
 				return forward, nil
 			}
 		case <-timeout.C:
@@ -532,6 +542,14 @@ func (r SSHRunner) runArgsStream(ctx context.Context, address, user string, comm
 	if err != nil {
 		return err
 	}
+	started := time.Now()
+	status := 1
+	defer func() {
+		telemetry.Record(ctx, telemetry.Event{
+			Category: "ssh", Operation: "command", Target: user + "@" + address,
+			Status: status, Duration: time.Since(started), Success: status == 0,
+		})
+	}()
 	process := newSSHProcess(args)
 	process.Stdin = stdin
 	process.Stdout = stdout
@@ -550,6 +568,7 @@ func (r SSHRunner) runArgsStream(ctx context.Context, address, user string, comm
 		}
 		return fmt.Errorf("SSH bootstrap command failed: %w", err)
 	}
+	status = 0
 	return nil
 }
 
@@ -629,7 +648,10 @@ func (r SSHRunner) forwardArgs(address, user string, localPort int, targetAddres
 		return nil, err
 	}
 	forward := fmt.Sprintf("127.0.0.1:%d:%s:%d", localPort, targetAddress, targetPort)
-	args = append(args, "-o", "ExitOnForwardFailure=yes")
+	// Short-lived forwards must create their own forwarding-only connection.
+	// Reusing a ControlMaster can make OpenSSH request a shell session as the
+	// nologin bastion user, which exits before the forward becomes ready.
+	args = append(args, "-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "ExitOnForwardFailure=yes")
 	return append(args, "-N", "-L", forward, target), nil
 }
 
@@ -708,7 +730,7 @@ func ConfigureIdentities(ctx context.Context, runner CommandRunner, address, ini
 	// Public keys and destination addresses are the only values interpolated;
 	// credentials are never placed in this command.
 	jumpKey := "restrict,port-forwarding,permitopen=\"" + strings.Join(allowedDestinations, "\",permitopen=\"") + "\" " + publicKeyLine(adminPublicKey)
-	command := "set -eu; id -u labadmin >/dev/null 2>&1 || useradd --create-home --shell /bin/bash labadmin; passwd --lock labadmin; gpasswd --delete labadmin sudo >/dev/null 2>&1 || true; id -u lab-jump >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin lab-jump; install -d -m 700 /root/.ssh /home/labadmin/.ssh /etc/ssh/sshd_config.d; touch /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /root/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /root/.ssh/authorized_keys; install -m 600 /dev/null /home/labadmin/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /home/labadmin/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /home/labadmin/.ssh/authorized_keys; install -m 600 /dev/null /home/lab-jump.authorized_keys; printf '%s\\n' " + shellQuote(jumpKey) + " > /home/lab-jump.authorized_keys; chown lab-jump:lab-jump /home/lab-jump.authorized_keys; chown -R labadmin:labadmin /home/labadmin/.ssh; rm -f /etc/sudoers.d/boetticher-labadmin; cat > /etc/ssh/sshd_config.d/90-boetticher-jump.conf <<'EOF'\nAllowUsers root labadmin lab-jump lab-netprobe\nMatch User lab-jump\n    AuthorizedKeysFile /home/lab-jump.authorized_keys\n    PermitTTY no\n    X11Forwarding no\n    AllowAgentForwarding no\n    AllowTcpForwarding local\n    PermitOpen " + strings.Join(allowedDestinations, " ") + "\nEOF\nvisudo -cf /etc/sudoers\nsshd -t\nsystemctl reload ssh || systemctl reload sshd"
+	command := "set -eu; id -u labadmin >/dev/null 2>&1 || useradd --create-home --shell /bin/bash labadmin; passwd --lock labadmin; gpasswd --delete labadmin sudo >/dev/null 2>&1 || true; id -u lab-jump >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin lab-jump; install -d -m 700 -o lab-jump -g lab-jump /home/lab-jump; install -d -m 700 /root/.ssh /home/labadmin/.ssh /etc/ssh/sshd_config.d; touch /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /root/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /root/.ssh/authorized_keys; install -m 600 /dev/null /home/labadmin/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /home/labadmin/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /home/labadmin/.ssh/authorized_keys; install -m 600 /dev/null /home/lab-jump.authorized_keys; printf '%s\\n' " + shellQuote(jumpKey) + " > /home/lab-jump.authorized_keys; chown lab-jump:lab-jump /home/lab-jump.authorized_keys; chown -R labadmin:labadmin /home/labadmin/.ssh; rm -f /etc/sudoers.d/boetticher-labadmin; cat > /etc/ssh/sshd_config.d/90-boetticher-jump.conf <<'EOF'\nAllowUsers root labadmin lab-jump lab-netprobe\nMatch User lab-jump\n    AuthorizedKeysFile /home/lab-jump.authorized_keys\n    PermitTTY no\n    X11Forwarding no\n    AllowAgentForwarding no\n    AllowTcpForwarding local\n    PermitOpen " + strings.Join(allowedDestinations, " ") + "\nEOF\nvisudo -cf /etc/sudoers\nsshd -t\nsystemctl reload ssh || systemctl reload sshd"
 	_, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, command))
 	return err
 }

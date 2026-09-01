@@ -65,6 +65,34 @@
     argv: [sysctl, -w, net.ipv4.ip_forward=0, net.ipv6.conf.all.forwarding=0, net.ipv6.conf.default.forwarding=0]
   changed_when: true
 
+- name: Check managed gateway interface configuration for drift
+  ansible.builtin.shell: |
+    set -u
+    needs_convergence=0
+    check_file() {
+      path="$1"
+      expected="$2"
+      if [ -L "$path" ]; then
+        needs_convergence=1
+        return
+      fi
+      actual="$(sha256sum "$path" 2>/dev/null | awk '{print $1}' || true)"
+      metadata="$(stat -c '%U:%G:%a' "$path" 2>/dev/null || true)"
+      if [ "$actual" != "$expected" ] || [ "$metadata" != "root:root:644" ]; then
+        needs_convergence=1
+      fi
+    }
+    {% for item in firewall_plan.interfaces %}
+    check_file {{ ('/etc/systemd/network/10-boetticher-' ~ item.name ~ '.link') | quote }} {{ firewall_interface_config_digests[item.name].link | quote }}
+    check_file {{ ('/etc/systemd/network/20-boetticher-' ~ item.name ~ '.network') | quote }} {{ firewall_interface_config_digests[item.name].network | quote }}
+    {% endfor %}
+    exit "$needs_convergence"
+  args:
+    executable: /bin/sh
+  register: firewall_interface_state
+  changed_when: false
+  failed_when: false
+
 - name: Configure role-oriented gateway link names
   ansible.builtin.template:
     src: boetticher.link.j2
@@ -74,6 +102,7 @@
     mode: '0644'
   loop: "{{ firewall_plan.interfaces }}"
   notify: restart systemd-networkd
+  when: firewall_interface_state.rc != 0
 
 - name: Configure gateway network interfaces
   ansible.builtin.template:
@@ -84,6 +113,7 @@
     mode: '0644'
   loop: "{{ firewall_plan.interfaces }}"
   notify: restart systemd-networkd
+  when: firewall_interface_state.rc != 0
 
 - name: Enable systemd-networkd
   ansible.builtin.service:
@@ -93,6 +123,86 @@
 
 - name: Load credential drop-ins before starting gateway services
   ansible.builtin.meta: flush_handlers
+
+- name: Install source-based AirVPN policy routing helpers
+  ansible.builtin.template:
+    src: boetticher-policy-routing-up.j2
+    dest: /usr/lib/boetticher/policy-routing-up
+    owner: root
+    group: root
+    mode: '0750'
+  when: firewall_plan.policy_routes | default([]) | length > 0
+
+- name: Install AirVPN policy routing cleanup helper
+  ansible.builtin.template:
+    src: boetticher-policy-routing-down.j2
+    dest: /usr/lib/boetticher/policy-routing-down
+    owner: root
+    group: root
+    mode: '0750'
+  when: firewall_plan.policy_routes | default([]) | length > 0
+
+- name: Install the AirVPN source-policy routing service
+  ansible.builtin.template:
+    src: boetticher-policy-routing.service.j2
+    dest: /etc/systemd/system/boetticher-policy-routing.service
+    owner: root
+    group: root
+    mode: '0644'
+  when: firewall_plan.policy_routes | default([]) | length > 0
+
+- name: Enable AirVPN source-policy routing before forwarding
+  ansible.builtin.systemd_service:
+    name: boetticher-policy-routing.service
+    enabled: true
+    state: restarted
+    daemon_reload: true
+  when: firewall_plan.policy_routes | default([]) | length > 0
+
+- name: Check for an obsolete AirVPN source-policy routing service
+  ansible.builtin.stat:
+    path: /etc/systemd/system/boetticher-policy-routing.service
+  register: obsolete_policy_routing_service
+  when: firewall_plan.policy_routes | default([]) | length == 0
+
+- name: Stop obsolete AirVPN source-policy routing
+  ansible.builtin.systemd_service:
+    name: boetticher-policy-routing.service
+    enabled: false
+    state: stopped
+    daemon_reload: true
+  when:
+    - firewall_plan.policy_routes | default([]) | length == 0
+    - obsolete_policy_routing_service.stat.exists | default(false)
+
+- name: Remove obsolete AirVPN source-policy routing rules
+  ansible.builtin.command:
+    argv:
+      - sh
+      - -c
+      - >-
+        set -eu;
+        for priority in $(ip -4 rule show | awk '$NF == 51820 {gsub(":", "", $1); print $1}'); do
+        ip -4 rule del priority "$priority";
+        done;
+        route_status=0;
+        route_output=$(ip -4 route flush table 51820 2>&1) || route_status=$?;
+        if [ "$route_status" -ne 0 ] && ! printf '%s\n' "$route_output" | grep -Fq 'FIB table does not exist'; then
+        printf '%s\n' "$route_output" >&2;
+        exit "$route_status";
+        fi
+  changed_when: false
+  when: firewall_plan.policy_routes | default([]) | length == 0
+
+- name: Remove obsolete AirVPN source-policy routing files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /usr/lib/boetticher/policy-routing-up
+    - /usr/lib/boetticher/policy-routing-down
+    - /etc/systemd/system/boetticher-policy-routing.service
+  when: firewall_plan.policy_routes | default([]) | length == 0
 
 - name: Create nftables configuration directory
   ansible.builtin.file:

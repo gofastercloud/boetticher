@@ -8,8 +8,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/gofastercloud/boetticher/internal/ansible"
+	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
 
 const deploymentPhaseCount = 9
@@ -39,6 +44,23 @@ type deploymentTiming struct {
 	DurationMS int64  `json:"duration_ms"`
 }
 
+type deploymentAnsibleTaskTiming struct {
+	Phase      string `json:"phase"`
+	Host       string `json:"host"`
+	Task       string `json:"task"`
+	Path       string `json:"path"`
+	Status     string `json:"status"`
+	DurationMS int64  `json:"duration_ms"`
+	Changed    bool   `json:"changed"`
+}
+
+type deploymentAnsibleTaskBatchTiming struct {
+	Phase      string `json:"phase"`
+	Task       string `json:"task"`
+	Path       string `json:"path"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
 type deploymentReport struct {
 	out                   io.Writer
 	phases                []deploymentPhase
@@ -59,6 +81,16 @@ type deploymentReport struct {
 	finishedAt            time.Time
 	timingPath            string
 	timings               []deploymentTiming
+	ansibleTaskTimings    []deploymentAnsibleTaskTiming
+	ansibleTaskBatches    []deploymentAnsibleTaskBatchTiming
+	measurements          operationMeasurements
+	measurementMu         sync.Mutex
+}
+
+func (r *deploymentReport) Observe(event telemetry.Event) {
+	r.measurementMu.Lock()
+	defer r.measurementMu.Unlock()
+	r.measurements.Observe(event)
 }
 
 func newDeploymentReport(out io.Writer) *deploymentReport {
@@ -142,6 +174,35 @@ func (r *deploymentReport) recordTiming(phase, kind, target string, started time
 	fmt.Fprintf(r.out, "      Timing: %s/%s/%s (%s)\n", phase, kind, target, formatOperationDuration(finished.Sub(started)))
 }
 
+func (r *deploymentReport) recordAnsibleTaskTimings(phase string, timings []ansible.TaskTiming) {
+	for _, timing := range timings {
+		r.ansibleTaskTimings = append(r.ansibleTaskTimings, deploymentAnsibleTaskTiming{
+			Phase: phase, Host: timing.Host, Task: timing.Task, Path: timing.Path,
+			Status: timing.Status, DurationMS: timing.DurationMS, Changed: timing.Changed,
+		})
+	}
+	if len(r.ansibleTaskTimings) > 4096 {
+		sort.SliceStable(r.ansibleTaskTimings, func(i, j int) bool {
+			return r.ansibleTaskTimings[i].DurationMS > r.ansibleTaskTimings[j].DurationMS
+		})
+		r.ansibleTaskTimings = r.ansibleTaskTimings[:4096]
+	}
+}
+
+func (r *deploymentReport) recordAnsibleTaskBatches(phase string, timings []ansible.TaskBatchTiming) {
+	for _, timing := range timings {
+		r.ansibleTaskBatches = append(r.ansibleTaskBatches, deploymentAnsibleTaskBatchTiming{
+			Phase: phase, Task: timing.Task, Path: timing.Path, DurationMS: timing.DurationMS,
+		})
+	}
+	if len(r.ansibleTaskBatches) > 4096 {
+		sort.SliceStable(r.ansibleTaskBatches, func(i, j int) bool {
+			return r.ansibleTaskBatches[i].DurationMS > r.ansibleTaskBatches[j].DurationMS
+		})
+		r.ansibleTaskBatches = r.ansibleTaskBatches[:4096]
+	}
+}
+
 func (r *deploymentReport) timed(phase, kind, target string, fn func() error) error {
 	started := time.Now()
 	err := fn()
@@ -210,6 +271,7 @@ func (r *deploymentReport) finalize(operationErr error) error {
 	} else {
 		fmt.Fprintln(r.out, "Infrastructure changed: NO")
 	}
+	fmt.Fprintln(r.out, r.measurements.summaryLine())
 	if len(r.mutations) > 0 {
 		fmt.Fprintln(r.out, "Changes before failure:")
 		for _, mutation := range r.mutations {
@@ -311,22 +373,25 @@ func (r *deploymentReport) persistTiming(operationErr error) error {
 		phases = append(phases, entry)
 	}
 	document := struct {
-		Version               int                  `json:"version"`
-		Operation             string               `json:"operation"`
-		PlatformVersion       string               `json:"platform_version,omitempty"`
-		ModelRevision         string               `json:"model_revision,omitempty"`
-		RunID                 string               `json:"run_id"`
-		StartedAt             string               `json:"started_at"`
-		FinishedAt            string               `json:"finished_at"`
-		DurationMS            int64                `json:"duration_ms"`
-		Succeeded             bool                 `json:"succeeded"`
-		InfrastructureChanged bool                 `json:"infrastructure_changed"`
-		MutationScopeCertain  bool                 `json:"mutation_scope_certain"`
-		Mutations             []deploymentMutation `json:"mutations,omitempty"`
-		CleanupAttempted      bool                 `json:"cleanup_attempted"`
-		CleanupRemoved        bool                 `json:"cleanup_removed"`
-		Phases                []phaseTiming        `json:"phases"`
-		Suboperations         []deploymentTiming   `json:"suboperations"`
+		Version               int                                `json:"version"`
+		Operation             string                             `json:"operation"`
+		PlatformVersion       string                             `json:"platform_version,omitempty"`
+		ModelRevision         string                             `json:"model_revision,omitempty"`
+		RunID                 string                             `json:"run_id"`
+		StartedAt             string                             `json:"started_at"`
+		FinishedAt            string                             `json:"finished_at"`
+		DurationMS            int64                              `json:"duration_ms"`
+		Succeeded             bool                               `json:"succeeded"`
+		InfrastructureChanged bool                               `json:"infrastructure_changed"`
+		MutationScopeCertain  bool                               `json:"mutation_scope_certain"`
+		Mutations             []deploymentMutation               `json:"mutations,omitempty"`
+		CleanupAttempted      bool                               `json:"cleanup_attempted"`
+		CleanupRemoved        bool                               `json:"cleanup_removed"`
+		Phases                []phaseTiming                      `json:"phases"`
+		Suboperations         []deploymentTiming                 `json:"suboperations"`
+		AnsibleTaskTimings    []deploymentAnsibleTaskTiming      `json:"ansible_task_timings,omitempty"`
+		AnsibleTaskBatches    []deploymentAnsibleTaskBatchTiming `json:"ansible_task_batches,omitempty"`
+		Measurements          operationMeasurements              `json:"measurements"`
 	}{
 		Version:               1,
 		Operation:             r.operation,
@@ -344,6 +409,9 @@ func (r *deploymentReport) persistTiming(operationErr error) error {
 		CleanupRemoved:        r.cleanupRemoved,
 		Phases:                phases,
 		Suboperations:         append([]deploymentTiming(nil), r.timings...),
+		AnsibleTaskTimings:    append([]deploymentAnsibleTaskTiming(nil), r.ansibleTaskTimings...),
+		AnsibleTaskBatches:    append([]deploymentAnsibleTaskBatchTiming(nil), r.ansibleTaskBatches...),
+		Measurements:          r.measurements,
 	}
 	data, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {
@@ -409,7 +477,7 @@ func deploymentFailureComponent(err error) string {
 		return ""
 	}
 	message := strings.ToLower(compactError(err))
-	for _, component := range []string{"tailnet-router", "monitoring", "litellm", "aiops", "gatus", "printer", "dns", "logging", "managed gateway", "firewall", "proxmox", "storage", "network", "credentials", "pki"} {
+	for _, component := range []string{"airvpn", "tailnet-router", "monitoring", "litellm", "aiops", "gatus", "printer", "dns", "logging", "managed gateway", "firewall", "proxmox", "storage", "network", "credentials", "pki"} {
 		if strings.Contains(message, component) {
 			return component
 		}

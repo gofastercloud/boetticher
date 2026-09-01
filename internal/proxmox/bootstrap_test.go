@@ -208,7 +208,7 @@ func TestSSHRunnerLocalForwardUsesLoopbackAndBoundedTarget(t *testing.T) {
 	if !containsString(args, "-N") || !containsString(args, "-L") || !containsString(args, "127.0.0.1:43123:10.10.10.20:443") {
 		t.Fatalf("local forward is not loopback-only or target-bounded: %#v", args)
 	}
-	if !containsString(args, "BatchMode=yes") || !containsString(args, "ExitOnForwardFailure=yes") || !containsString(args, "root@lab-proxmox-01") {
+	if !containsString(args, "BatchMode=yes") || !containsString(args, "ControlMaster=no") || !containsString(args, "ControlPath=none") || !containsString(args, "ExitOnForwardFailure=yes") || !containsString(args, "root@lab-proxmox-01") {
 		t.Fatalf("local forward does not use non-interactive Proxmox SSH: %#v", args)
 	}
 }
@@ -543,7 +543,7 @@ func TestConfigureIdentitiesInstallsTemporaryRootAccessWithoutLabadminSudo(t *te
 	if err := ConfigureIdentities(context.Background(), runner, "192.0.2.10", "root", key, []string{"10.10.99.1:22", "10.10.10.20:443"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"passwd --lock labadmin", "/root/.ssh/authorized_keys", "rm -f /etc/sudoers.d/boetticher-labadmin", "visudo -cf /etc/sudoers", "chown lab-jump:lab-jump /home/lab-jump.authorized_keys", "AllowUsers root labadmin lab-jump", "Match User lab-jump"} {
+	for _, required := range []string{"passwd --lock labadmin", "/root/.ssh/authorized_keys", "rm -f /etc/sudoers.d/boetticher-labadmin", "visudo -cf /etc/sudoers", "install -d -m 700 -o lab-jump -g lab-jump /home/lab-jump", "chown lab-jump:lab-jump /home/lab-jump.authorized_keys", "AllowUsers root labadmin lab-jump", "Match User lab-jump"} {
 		if !strings.Contains(runner.command, required) {
 			t.Fatalf("identity bootstrap missing %q: %s", required, runner.command)
 		}

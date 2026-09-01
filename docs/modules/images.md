@@ -28,10 +28,18 @@ file are cleaned up. A valid controller cache with a matching build record and
 content hash avoids creating the builder. Missing, stale, or mismatched build
 records require a fresh construction.
 
+The builder also receives a separately allocated `local-lvm` cache volume
+under reserved owner identity VMID 191. It is mounted at
+`/var/cache/boetticher` and holds verified downloads, APT archives, Python
+packages, and Go build/module caches. Cleanup detaches this volume before
+destroying VM 190, so the next fresh builder can reuse it without making the
+Proxmox management plane or user workloads part of the cache lifecycle.
+
 The builder receives an artifact target list derived from the resolved plan.
 The base, enabled module appliances, and managed firewall are built
 and qualified; disabled optional modules such as Tailnet Router and LiteLLM
-are not constructed during the default workflow. The memory-heavy base and
+(including its lightweight Bifrost implementation) are not constructed during
+the default workflow. The memory-heavy base and
 firewall stages run sequentially on the bounded builder; after they complete,
 independent LXC workers use bounded concurrency of two. Each worker has its
 own root filesystem, temporary build directory, log, and cleanup trap; a

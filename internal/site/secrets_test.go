@@ -1,6 +1,7 @@
 package site
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,6 +41,31 @@ func TestPlatformSecretUpdatePresenceAndRemoval(t *testing.T) {
 	}
 	if _, exists := values["openrouter_api_key"]; exists || values["unrelated"] != "keep" {
 		t.Fatalf("secret removal changed the wrong document content: %#v", values)
+	}
+}
+
+func TestPlatformSecretCacheReadsOneDocumentAndPreservesMissingKeySemantics(t *testing.T) {
+	siteDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(siteDir, "secrets"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	identityPath, recipient := writeTestAgeIdentity(t)
+	if err := StoreEncryptedDocument(siteDir, recipient, "secrets/boetticher.sops.yaml", map[string]string{"first": "one", "second": "two"}); err != nil {
+		t.Fatal(err)
+	}
+	s := model.Site{SecretMetadata: model.SecretMetadata{AgeRecipient: recipient}}
+	cache, err := LoadPlatformSecretCache(siteDir, s, identityPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first, err := cache.Get("first"); err != nil || first != "one" {
+		t.Fatalf("cache first value = %q, %v", first, err)
+	}
+	if second, err := cache.Get("second"); err != nil || second != "two" {
+		t.Fatalf("cache second value = %q, %v", second, err)
+	}
+	if _, err := cache.Get("missing"); !errors.Is(err, ErrPlatformSecretMissing) {
+		t.Fatalf("missing cache value error = %v", err)
 	}
 }
 

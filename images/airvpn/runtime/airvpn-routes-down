@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+
+ip route del 10.10.0.0/16 via 10.10.5.1 dev eth0 table 51820 2>/dev/null || true

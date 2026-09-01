@@ -402,6 +402,32 @@ func LoadPlatformSecret(dir string, s model.Site, ageIdentityPath, key string) (
 	return value, nil
 }
 
+// PlatformSecretCache holds one decrypted platform document for the lifetime
+// of a caller's operation. It is deliberately in-memory only; callers must
+// not persist or expose it.
+type PlatformSecretCache struct {
+	values map[string]any
+}
+
+func LoadPlatformSecretCache(dir string, s model.Site, ageIdentityPath string) (PlatformSecretCache, error) {
+	values, err := LoadEncryptedDocument(dir, ageIdentityPath, filepath.Join("secrets", "boetticher.sops.yaml"))
+	if err != nil {
+		return PlatformSecretCache{}, err
+	}
+	return PlatformSecretCache{values: values}, nil
+}
+
+func (c PlatformSecretCache) Get(key string) (string, error) {
+	if !platformSecretName.MatchString(key) {
+		return "", fmt.Errorf("platform secret key %q is unsafe", key)
+	}
+	value := stringValue(c.values, key)
+	if value == "" {
+		return "", fmt.Errorf("%w: %s", ErrPlatformSecretMissing, key)
+	}
+	return value, nil
+}
+
 // StorePlatformSecret updates one encrypted platform secret without writing a
 // plaintext intermediate. Callers retain the value only in process memory
 // until SOPS has encrypted the complete document.

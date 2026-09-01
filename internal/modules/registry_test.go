@@ -17,7 +17,7 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantOrder := []string{"firewall", "dns", "logging", "monitoring", "aiops", "gatus", "litellm", "printer", "streamdeck", "tailnet-router"}
+	wantOrder := []string{"firewall", "dns", "logging", "monitoring", "aiops", "airvpn", "gatus", "litellm", "printer", "streamdeck", "tailnet-router"}
 	if len(modules) != len(wantOrder) {
 		t.Fatalf("unexpected module resolution: %#v", modules)
 	}
@@ -136,7 +136,7 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	if err := registry.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"tailnet-router", "litellm", "printer", "streamdeck", "aiops", "gatus"} {
+	for _, name := range []string{"tailnet-router", "airvpn", "litellm", "printer", "streamdeck", "aiops", "gatus"} {
 		definition, ok := registry.Definition(name)
 		if !ok || definition.Policy != DefaultOff {
 			t.Fatalf("%s is not a default-off first-party module: %#v", name, definition)
@@ -162,6 +162,39 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	if aiops.ReservedVMIDStart != 240 || aiops.ReservedVMIDEnd != 249 || aiops.Guests[0].VMID != 240 || aiops.Guests[0].Address != "10.10.20.90" || aiops.Placement.ZoneType != model.ZoneTypeServers {
 		t.Fatalf("aiops identity contract is incomplete: %#v", aiops)
 	}
+	airvpn, _ := registry.Definition("airvpn")
+	if airvpn.NetworkCapable || airvpn.ReservedVMIDStart != 260 || airvpn.ReservedVMIDEnd != 269 || airvpn.Guests[0].VMID != model.AirVPNGuestVMID || airvpn.Guests[0].Address != model.AirVPNGuestAddress || airvpn.Placement.ZoneType != model.ZoneTypeTransit {
+		t.Fatalf("AirVPN identity contract is incomplete: %#v", airvpn)
+	}
+	if len(airvpn.Configuration) != 1 || airvpn.Configuration[0].Key != "servers" {
+		t.Fatalf("AirVPN configuration contract is incomplete: %#v", airvpn.Configuration)
+	}
+}
+
+func TestAirVPNNetworkSelectionRequiresExplicitProviderAndOrdersTransitFirst(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	clientEnabled, airvpnEnabled := true, false
+	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+		Enabled: &clientEnabled, Network: model.ModuleNetworkAirVPN,
+		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key"}},
+		Models:    []model.LiteLLMModelConfig{{Alias: "selected", Upstream: "provider", Model: "provider/model"}},
+	}
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &airvpnEnabled, Servers: "europe"}
+	if _, _, err := Compose(config); err == nil || !strings.Contains(err.Error(), "modules.litellm.network") {
+		t.Fatalf("AirVPN client was accepted without an enabled provider: %v", err)
+	}
+	airvpnEnabled = true
+	site, resolved, err := Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	positions := map[string]int{}
+	for index, module := range resolved {
+		positions[module.Definition.Name] = index
+	}
+	if positions["airvpn"] >= positions["litellm"] || site.ModuleConfig["litellm"].Network != model.ModuleNetworkAirVPN {
+		t.Fatalf("AirVPN provider was not ordered before its selected client: positions=%v config=%#v", positions, site.ModuleConfig["litellm"])
+	}
 }
 
 func TestFirstPartyConfigurationFieldsAreTypedAndResolvedFromDeclarations(t *testing.T) {
@@ -175,24 +208,24 @@ func TestFirstPartyConfigurationFieldsAreTypedAndResolvedFromDeclarations(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fields) != 1 || fields[0].Type != model.ModuleConfigModelAlias || len(fields[0].AllowedValues) != 1 || fields[0].AllowedValues[0] != "operations" {
+	if len(fields) != 2 || fields[0].Key != "network" || fields[0].Type != model.ModuleConfigEnum || fields[1].Type != model.ModuleConfigModelAlias || len(fields[1].AllowedValues) != 1 || fields[1].AllowedValues[0] != "operations" {
 		t.Fatalf("unexpected AIOps configuration schema: %#v", fields)
 	}
 	litellm, err := registry.ConfigurationFields("litellm", config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(litellm) != 2 || litellm[0].Type != model.ModuleConfigObjectList || litellm[1].Type != model.ModuleConfigObjectList {
+	if len(litellm) != 3 || litellm[0].Key != "network" || litellm[1].Type != model.ModuleConfigObjectList || litellm[2].Type != model.ModuleConfigObjectList {
 		t.Fatalf("unexpected LiteLLM configuration schema: %#v", litellm)
 	}
 	secretField := model.ModuleConfigField{}
-	for _, field := range litellm[0].ItemFields {
+	for _, field := range litellm[1].ItemFields {
 		if field.Key == "api_key_secret" {
 			secretField = field
 		}
 	}
 	if !secretField.Sensitive {
-		t.Fatalf("LiteLLM secret reference is not structurally classified: %#v", litellm[0])
+		t.Fatalf("LiteLLM secret reference is not structurally classified: %#v", litellm[1])
 	}
 }
 

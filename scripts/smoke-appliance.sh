@@ -19,6 +19,27 @@ run() {
   chroot "$rootfs" "$@" >/dev/null 2>&1
 }
 
+fail_check() {
+  printf '%s\n' "boetticher smoke failure: $*" >&2
+  exit 1
+}
+
+require_absent() {
+  label=$1
+  path=$2
+  if [ -e "$path" ]; then
+    fail_check "$label: $path"
+  fi
+}
+
+require_executable() {
+  label=$1
+  path=$2
+  if [ ! -x "$path" ]; then
+    fail_check "$label: $path"
+  fi
+}
+
 printf '%s\n' 'boetticher smoke check: module descriptor absence'
 test ! -e "$rootfs/etc/boetticher/module.yaml"
 printf '%s\n' 'boetticher smoke check: artifact identity presence'
@@ -30,17 +51,20 @@ if grep -q 'content_sha256' "$rootfs/usr/lib/boetticher/artifact.json"; then
   exit 1
 fi
 printf '%s\n' 'boetticher smoke check: authorized key absence'
-test ! -e "$rootfs/home/labadmin/.ssh/authorized_keys"
-test ! -e "$rootfs/root/.ssh/authorized_keys"
+require_absent 'artifact contains labadmin authorized key' "$rootfs/home/labadmin/.ssh/authorized_keys"
+require_absent 'artifact contains root authorized key' "$rootfs/root/.ssh/authorized_keys"
 printf '%s\n' 'boetticher smoke check: SSH host identity absence'
-if find "$rootfs/etc/ssh" -maxdepth 1 -name 'ssh_host_*' -print -quit | grep -q .; then
-  echo "artifact contains baked SSH host identity" >&2
-  exit 1
+host_key=$(find "$rootfs/etc/ssh" -maxdepth 1 -name 'ssh_host_*' -print -quit)
+if [ -n "$host_key" ]; then
+  fail_check "artifact contains baked SSH host identity: $host_key"
 fi
 printf '%s\n' 'boetticher smoke check: durable labadmin privilege absence'
-if grep -Eq '^[[:space:]]*labadmin[[:space:]]+ALL=' "$rootfs/etc/sudoers.d/boetticher"; then
-  echo "base appliance contains a durable labadmin sudo rule" >&2
-  exit 1
+if [ ! -f "$rootfs/etc/sudoers.d/boetticher" ]; then
+  fail_check "base sudoers policy is missing: $rootfs/etc/sudoers.d/boetticher"
+fi
+sudo_rule=$(grep -En '^[[:space:]]*labadmin[[:space:]]+ALL=' "$rootfs/etc/sudoers.d/boetticher" || true)
+if [ -n "$sudo_rule" ]; then
+  fail_check "base appliance contains a durable labadmin sudo rule: $sudo_rule"
 fi
 
 case "$name" in
@@ -124,27 +148,36 @@ case "$name" in
       exit 1
     fi
     ;;
+  boetticher-airvpn)
+    test -x "$rootfs/usr/bin/wg"
+    test -x "$rootfs/usr/bin/wireguard-go"
+    test -x "$rootfs/usr/sbin/nft"
+    test -f "$rootfs/etc/systemd/system/boetticher-airvpn.service"
+    for helper in airvpn-prepare airvpn-routes-up airvpn-routes-down airvpn-forwarding-up airvpn-forwarding-down; do
+      test -x "$rootfs/usr/lib/boetticher/$helper"
+    done
+    grep -Fq 'WG_QUICK_USERSPACE_IMPLEMENTATION=/usr/bin/wireguard-go' "$rootfs/etc/systemd/system/boetticher-airvpn.service"
+    grep -Fq 'ExecStart=/usr/bin/wg-quick up /run/boetticher/airvpn0.conf' "$rootfs/etc/systemd/system/boetticher-airvpn.service"
+    grep -Fq 'ExecStop=/usr/bin/wg-quick down /run/boetticher/airvpn0.conf' "$rootfs/etc/systemd/system/boetticher-airvpn.service"
+    if grep -R -n -E 'PrivateKey|PresharedKey|airvpn_wireguard_config|Api-Key' "$rootfs/etc" "$rootfs/usr/lib" 2>/dev/null; then
+      echo "airvpn artifact contains provider profile or credential configuration" >&2
+      exit 1
+    fi
+    ;;
   boetticher-litellm)
-    test -x "$rootfs/usr/sbin/nginx"
-    test -x "$rootfs/opt/litellm/bin/python"
-    test -x "$rootfs/opt/litellm/bin/litellm"
-    chroot "$rootfs" dpkg-query -W -f='${Version}' python3 | grep -Fxq '3.13.5-1'
-    chroot "$rootfs" dpkg-query -W -f='${Version}' python3-venv | grep -Fxq '3.13.5-1'
-    chroot "$rootfs" dpkg-query -W -f='${Version}' python3-pip | grep -Fxq '25.1.1+dfsg-1'
+    require_executable 'litellm nginx executable is missing' "$rootfs/usr/sbin/nginx"
+    require_executable 'Bifrost executable is missing' "$rootfs/usr/local/libexec/boetticher-bifrost"
+    require_executable 'LiteLLM-compatible capabilities executable is missing' "$rootfs/usr/local/libexec/boetticher-litellm-model-capabilities"
+    chroot "$rootfs" getent passwd bifrost | grep -Eq '^bifrost:'
     chroot "$rootfs" dpkg-query -W -f='${Version}' nginx | grep -Fxq '1.26.3-3+deb13u7'
-    chroot "$rootfs" /opt/litellm/bin/python -c 'from importlib.metadata import version; assert version("litellm") == "1.74.9"'
     test -f "$rootfs/etc/systemd/system/litellm.service"
-    test -x "$rootfs/usr/lib/boetticher/litellm-start"
-    grep -Fq -- '--host 127.0.0.1' "$rootfs/etc/systemd/system/litellm.service"
-    grep -Fq -- 'User=root' "$rootfs/etc/systemd/system/litellm.service"
-    grep -Fxq 'Group=root' "$rootfs/etc/systemd/system/litellm.service"
-    grep -Fxq 'ExecStart=/usr/lib/boetticher/litellm-start --config /etc/boetticher/litellm/config.yaml --host 127.0.0.1 --port 4000' "$rootfs/etc/systemd/system/litellm.service"
-    grep -Fq -- 'CapabilityBoundingSet=CAP_SETUID CAP_SETGID' "$rootfs/etc/systemd/system/litellm.service"
-    test -x "$rootfs/usr/bin/setpriv"
-    test ! -e "$rootfs/etc/boetticher/litellm/config.yaml"
+    grep -Fq -- 'ExecStart=/usr/local/libexec/boetticher-bifrost serve --config /etc/boetticher/litellm/config.json' "$rootfs/etc/systemd/system/litellm.service"
+    grep -Fxq 'User=bifrost' "$rootfs/etc/systemd/system/litellm.service"
+    grep -Fxq 'Group=bifrost' "$rootfs/etc/systemd/system/litellm.service"
+    grep -Fxq 'CapabilityBoundingSet=' "$rootfs/etc/systemd/system/litellm.service"
+    test ! -e "$rootfs/etc/boetticher/litellm/config.json"
     test ! -e "$rootfs/etc/nginx/sites-enabled/default"
     test ! -e "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
-    chroot "$rootfs" runuser -u litellm -- test -x /opt/litellm/bin/litellm
     if find "$rootfs/etc/nginx" -type f \( -name '*.pem' -o -name '*.key' \) -print -quit | grep -q .; then
       echo "litellm artifact contains generated TLS material" >&2
       exit 1

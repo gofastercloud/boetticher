@@ -87,9 +87,11 @@ phase and suboperation start times, finish times, and durations, along with
 the coarse deployment result and mutation summary. Each suboperation has a
 phase, kind, and target, and each report includes the operation, platform
 version, and model revision so runs can be compared sensibly. They do not
-contain secret values or the full failure text. Keep the files private; they
-are useful when comparing a slow run or sharing a small diagnostic bundle with
-a maintainer.
+contain secret values or the full failure text. The aggregate measurements
+also separate Proxmox API, provider API, SSH, and Ansible work; for example,
+an AirVPN profile-generation request is measured without recording its key,
+selector, URL, or response. Keep the files private; they are useful when
+comparing a slow run or sharing a small diagnostic bundle with a maintainer.
 
 Timing is best-effort observability. If the controller cannot write the report,
 the operation still succeeds or fails on its own merits and the summary says

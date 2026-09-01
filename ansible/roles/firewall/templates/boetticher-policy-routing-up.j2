@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+{% for policy in firewall_plan.policy_routes %}
+{% for route in policy.internal_routes %}
+ip route replace {{ route.destination }}{% if route.gateway %} via {{ route.gateway }}{% endif %} dev {{ route.interface }} table {{ policy.table }}
+{% endfor %}
+ip route replace default via {{ policy.default_gateway }} dev {{ policy.default_interface }} table {{ policy.table }}
+ip rule replace from {{ policy.source_cidr }} priority {{ policy.priority }} table {{ policy.table }}
+{% endfor %}

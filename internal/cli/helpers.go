@@ -52,6 +52,10 @@ func writeModelProjections(dir string, s model.Site) error {
 }
 
 func writeModelProjectionsWithResolver(dir string, s model.Site, endpointLookup func(string) ([]net.IP, error)) error {
+	return writeModelProjectionsWithResolverAndAirVPN(dir, s, endpointLookup, nil)
+}
+
+func writeModelProjectionsWithResolverAndAirVPN(dir string, s model.Site, endpointLookup func(string) ([]net.IP, error), airvpnProfile *firewall.AirVPNProfile) error {
 	if err := pathguard.ValidateNoSymlinkComponents(filepath.Join(dir, "generated")); err != nil {
 		return fmt.Errorf("refuse generated projection path: %w", err)
 	}
@@ -67,9 +71,21 @@ func writeModelProjectionsWithResolver(dir string, s model.Site, endpointLookup 
 	if err != nil {
 		return err
 	}
-	firewallPlan, err := firewall.PlanFromSite(s)
+	var firewallPlan firewall.Plan
+	if airvpnProfile == nil {
+		firewallPlan, err = firewall.PlanFromSite(s)
+	} else {
+		firewallPlan, err = firewall.PlanFromSiteWithAirVPN(s, *airvpnProfile)
+	}
 	if err != nil {
 		return err
+	}
+	if airvpnProfile != nil {
+		firewallPlan, err = firewall.BindAirVPNEndpoint(firewallPlan, endpointLookup)
+		if err != nil {
+			return err
+		}
+		*airvpnProfile = *firewallPlan.AirVPN
 	}
 	if err := writeProjection(filepath.Join(dir, "generated", "inventory.json"), struct {
 		ModelRevision string            `json:"model_revision"`
@@ -177,7 +193,12 @@ func writeModelProjectionsWithResolver(dir string, s model.Site, endpointLookup 
 	if err := writePublic(filepath.Join(dir, "generated", "ansible", "inventory.ini"), []byte(inventory)); err != nil {
 		return err
 	}
-	variables, err := ansible.Variables(s)
+	var variables []byte
+	if airvpnProfile == nil {
+		variables, err = ansible.Variables(s)
+	} else {
+		variables, err = ansible.VariablesWithAirVPN(s, *airvpnProfile)
+	}
 	if err != nil {
 		return err
 	}

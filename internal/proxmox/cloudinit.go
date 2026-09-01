@@ -53,6 +53,58 @@ func builderArtifactTargets(plan Plan) ([]string, error) {
 	return targets, nil
 }
 
+// BuilderArtifactTargetsForMissing returns the smallest builder workload that
+// can repair the controller-side artifact cache for a resolved plan. A
+// derivative LXC still includes the base target because the builder needs its
+// rootfs as a local build input, even when the controller already has a
+// qualified base artifact. Existing artifact bytes and qualification records
+// are never copied into the builder or treated as a substitute for its gates.
+func BuilderArtifactTargetsForMissing(root string, plan Plan) ([]string, error) {
+	selected := make(map[string]bool)
+	base, err := artifacts.ArtifactFor("base")
+	if err != nil {
+		return nil, err
+	}
+	if _, _, err := artifacts.ResolveArtifactEvidence(root, base); err != nil {
+		selected[base.Name] = true
+	}
+	for _, guest := range plan.Guests {
+		if guest.Artifact.Name == "" {
+			continue
+		}
+		if _, ok := artifacts.DefinitionForArtifact(guest.Artifact.Name); !ok {
+			return nil, fmt.Errorf("unsupported builder artifact %q for guest %s", guest.Artifact.Name, guest.Name)
+		}
+		if _, _, err := artifacts.ResolveArtifactEvidence(root, guest.Artifact); err != nil {
+			selected[guest.Artifact.Name] = true
+		}
+	}
+	probe, err := artifacts.ArtifactFor("network-probe")
+	if err != nil {
+		return nil, err
+	}
+	if _, _, err := artifacts.ResolveArtifactEvidence(root, probe); err != nil {
+		selected[probe.Name] = true
+	}
+	if len(selected) == 0 {
+		return nil, nil
+	}
+	for name := range selected {
+		if name != artifacts.BaseName && name != "boetticher-firewall" {
+			selected[artifacts.BaseName] = true
+			break
+		}
+	}
+	targets := make([]string, 0, len(selected))
+	for _, name := range []string{"base", "dns", "logging", "monitoring", "firewall", "portal", "tailnet-router", "litellm", "printer", "streamdeck", "aiops", "gatus", "network-probe"} {
+		definition, ok := artifacts.Lookup(name)
+		if ok && selected[definition.ArtifactName] {
+			targets = append(targets, definition.BuildTarget)
+		}
+	}
+	return targets, nil
+}
+
 func builderScanTargets(buildTargets []string) ([]string, error) {
 	scans := make([]string, 0, len(buildTargets))
 	for _, buildTarget := range buildTargets {
@@ -211,7 +263,14 @@ users:
 		userData += "  - name: root\n    ssh_authorized_keys:\n      - " + strconv.Quote(operatorPublicKey) + "\n"
 	}
 	userData += "ssh_pwauth: false\ndisable_root: " + strconv.FormatBool(operatorPublicKey == "") + "\n"
-	userData += `write_files:
+	userData += `fs_setup:
+  - label: boetticher-builder-cache
+    filesystem: ext4
+    device: /dev/disk/by-id/scsi-0QEMU_QEMU_HARDDISK_drive-scsi1
+    overwrite: false
+mounts:
+  - ["LABEL=boetticher-builder-cache", "/var/cache/boetticher", "ext4", "defaults,nofail", "0", "2"]
+write_files:
   - path: /etc/apt/sources.list.d/boetticher-builder.sources
     permissions: '0644'
     content: |
@@ -240,6 +299,13 @@ users:
       export BOETTICHER_ARTIFACT_OUTPUT=/home/labadmin/build/generated/artifacts
       export BOETTICHER_EVIDENCE_ROOT=/home/labadmin/build
       export BOETTICHER_IMAGE_WORK=/var/lib/boetticher/image-work
+      export BOETTICHER_CACHE_ROOT=/var/cache/boetticher
+      export GOCACHE=/var/cache/boetticher/go-build
+      export GOMODCACHE=/var/cache/boetticher/go-mod
+      mkdir -p "$BOETTICHER_CACHE_ROOT"
+      mkdir -p "$GOCACHE" "$GOMODCACHE"
+      cache_source=$(findmnt -n -o SOURCE --target "$BOETTICHER_CACHE_ROOT")
+      case "$cache_source" in /dev/*) ;; *) echo 'HOLD: builder cache volume is not mounted' >&2; exit 2 ;; esac
       printf '%s\n' 'timing stage=builder_configuration vmid=190 cores=4 memory_mib=8192 disk_gib=32 network=bootstrap-upstream-only'
       ./scripts/build-images.sh images ` + strings.Join(buildTargets, " ") + `
       ./scripts/scan-images.sh scan-images ` + strings.Join(scanTargets, " ") + `
@@ -248,7 +314,7 @@ users:
       find /home/labadmin/build/generated/artifacts -type f -exec chmod 0644 {} +
       touch /home/labadmin/build/.qualification-complete
 runcmd:
-  - [sh, -c, "set -eu; rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; apt-get -o Acquire::Check-Valid-Until=false update; DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends ca-certificates curl jq libguestfs-tools mmdebstrap openssh-server qemu-guest-agent qemu-utils sudo tar zstd"]
+  - [sh, -c, "set -eu; rm -f /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; apt-get -o Acquire::Check-Valid-Until=false update; DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends ca-certificates curl jq libguestfs-tools mmdebstrap findutils openssh-server qemu-guest-agent qemu-utils sudo tar util-linux zstd"]
   - [sh, -c, "set -eu; ssh-keygen -A"]
   - [systemctl, enable, --now, qemu-guest-agent]
   - [sh, -c, "set -eu; archive=/tmp/go1.26.5.linux-amd64.tar.gz; curl --fail --location --silent --show-error --output $archive https://go.dev/dl/go1.26.5.linux-amd64.tar.gz; printf '%s  %s\\n' 5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053 $archive | sha256sum --check --status; rm -rf /usr/local/go; tar -C /usr/local -xzf $archive; printf '%s\\n' 'export PATH=/usr/local/go/bin:$PATH' > /etc/profile.d/boetticher-go.sh; test \"$(/usr/local/go/bin/go version)\" = \"go version go1.26.5 linux/amd64\"; rm -f $archive"]

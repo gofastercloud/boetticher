@@ -11,7 +11,7 @@ The built-in modules are:
 | `logging` | mandatory | central systemd journal |
 | `dns` | mandatory | Blocky client DNS, PowerDNS authoritative DNS, and NTP |
 | `monitoring` | default-on | Pulse Proxmox API monitoring and tagged-host hardware telemetry |
-| `aiops` | default-off | HolmesGPT read-only incident investigation through Pulse, journals, and LiteLLM |
+| `aiops` | default-off | HolmesGPT read-only incident investigation through Pulse, journals, and the LiteLLM-compatible Bifrost router |
 | `firewall` | default-on | managed gateway and bounded firewall telemetry API |
 | `gatus` | default-off | HTTPS checks for enabled platform services |
 | `litellm` | default-off | HTTPS AI model router for declared aliases |
@@ -35,7 +35,7 @@ deployment operations.
 
 Read the module page for [DNS](dns.md), [logging](logging.md),
 [monitoring](monitoring.md), [firewall](firewall.md), [Gatus](gatus.md),
-[LiteLLM](litellm.md), [printer](printer.md), [StreamDeck](streamdeck.md),
+[LiteLLM/Bifrost](litellm.md), [printer](printer.md), [StreamDeck](streamdeck.md),
 [AIOps](aiops.md), or [Tailnet Router](tailnet-router.md) before enabling an
 optional capability.
 

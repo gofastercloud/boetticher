@@ -35,14 +35,14 @@ var platformOwnedSecretNames = map[string]struct{}{
 
 func runModuleSecrets(args []string, input io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: boetticher module secrets MODULE list|set|remove")
+		return errors.New("usage: boetticher module secrets MODULE list|set|remove|rotate")
 	}
 	return runModuleSecretsForName(args[1:], input, out, errOut, args[0])
 }
 
 func runModuleSecretsForName(args []string, input io.Reader, out, errOut io.Writer, name string) error {
 	if len(args) == 0 {
-		return errors.New("usage: boetticher module secrets MODULE list|set|remove")
+		return errors.New("usage: boetticher module secrets MODULE list|set|remove|rotate")
 	}
 	switch args[0] {
 	case "list":
@@ -51,9 +51,42 @@ func runModuleSecretsForName(args []string, input io.Reader, out, errOut io.Writ
 		return runModuleSecretSet(name, args[1:], input, out, errOut)
 	case "remove":
 		return runModuleSecretRemove(name, args[1:], out)
+	case "rotate":
+		return runModuleSecretRotate(name, args[1:], out)
 	default:
 		return fmt.Errorf("unknown module secrets command %q", args[0])
 	}
+}
+
+func runModuleSecretRotate(name string, args []string, out io.Writer) error {
+	if name != "airvpn" {
+		return fmt.Errorf("module %s has no Core-managed secret rotation", name)
+	}
+	flags, err := parseModuleSecretFlags(args, "module secrets rotate")
+	if err != nil {
+		return err
+	}
+	if !flags.confirm {
+		return errors.New("AirVPN profile rotation requires --confirm")
+	}
+	s, _, declarations, err := loadModuleSecretContract(flags, name)
+	if err != nil {
+		return err
+	}
+	declaration, ok := findSecretDeclaration(declarations, "airvpn_wireguard_config")
+	if !ok || declaration.Generation != "api-generated" {
+		return errors.New("AirVPN WireGuard profile is not a Core-managed generated secret")
+	}
+	changed, err := site.RemovePlatformSecrets(flags.siteDir, s, flags.ageIdentity, []string{"airvpn_wireguard_config"})
+	if err != nil {
+		return fmt.Errorf("rotate encrypted AirVPN WireGuard profile: %w", err)
+	}
+	if changed {
+		fmt.Fprintln(out, "airvpn_wireguard_config: rotation requested; deploy will generate a new profile")
+	} else {
+		fmt.Fprintln(out, "airvpn_wireguard_config: already absent; next deploy will generate a profile")
+	}
+	return nil
 }
 
 type moduleSecretFlags struct {

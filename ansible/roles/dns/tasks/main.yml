@@ -128,18 +128,45 @@
   loop: "{{ dns_plan.static_records }}"
   when: inventory_hostname == 'lab-dns-01'
 
-- name: Initialize authoritative NS records on the primary
-  ansible.builtin.command: >-
-    pdnsutil replace-rrset {{ item }} @ NS 300
-    lab-dns-01.{{ dns_plan.static_zone }}. lab-dns-02.{{ dns_plan.static_zone }}.
+- name: Initialize authoritative NS records on the primary when changed
+  ansible.builtin.shell: |
+    set -eu
+    zone={{ item | quote }}
+    current="$(pdnsutil list-zone "$zone" | awk -v zone="$zone" '
+      function normalized(value) { sub(/\.$/, "", value); return value }
+      $3 == "NS" && (normalized($1) == normalized(zone) || $1 == "@") { print normalized($4) }
+    ' | LC_ALL=C sort)"
+    expected="$(printf '%s\n' {{ ('lab-dns-01.' ~ dns_plan.static_zone) | quote }} {{ ('lab-dns-02.' ~ dns_plan.static_zone) | quote }} | LC_ALL=C sort)"
+    if [ "$current" != "$expected" ]; then
+      pdnsutil replace-rrset "$zone" @ NS 300 {{ ('lab-dns-01.' ~ dns_plan.static_zone ~ '.') | quote }} {{ ('lab-dns-02.' ~ dns_plan.static_zone ~ '.') | quote }}
+      printf 'updated\n'
+    fi
   loop: "{{ [dns_plan.static_zone] + (dns_plan.dynamic_zones | map(attribute='name') | list) + (dns_plan.reverse_zones | map(attribute='name') | list) }}"
+  register: authoritative_ns_records
+  changed_when: "'updated' in authoritative_ns_records.stdout"
   when: inventory_hostname == 'lab-dns-01'
 
-- name: Publish model-owned static DNS records to the primary
-  ansible.builtin.command: >-
-    pdnsutil replace-rrset {{ dns_plan.static_zone }} {{ item.name | replace('.' ~ dns_plan.static_zone, '') }}
-    {{ item.type }} 300 {{ item.value }}
-  loop: "{{ dns_plan.static_records }}"
+- name: Publish model-owned static DNS records to the primary when changed
+  ansible.builtin.shell: |
+    set -eu
+    zone={{ dns_plan.static_zone | quote }}
+    records="$(pdnsutil list-zone "$zone")"
+    {% for item in dns_plan.static_records %}
+    record_name={{ item.name | quote }}
+    record_type={{ item.type | quote }}
+    record_value={{ item.value | quote }}
+    current="$(printf '%s\n' "$records" | awk -v name="$record_name" -v record_type="$record_type" -v wanted="$record_value" '
+      function normalized(value) { sub(/\.$/, "", value); return value }
+      normalized($1) == normalized(name) && $3 == record_type && normalized($4) == normalized(wanted) { print normalized($4) }
+    ' | LC_ALL=C sort)"
+    expected="$(printf '%s\n' "$record_value" | LC_ALL=C sort)"
+    if [ "$current" != "$expected" ]; then
+      pdnsutil replace-rrset "$zone" {{ (item.name | replace('.' ~ dns_plan.static_zone, '')) | quote }} {{ item.type | quote }} 300 "$record_value"
+      printf 'updated\n'
+    fi
+    {% endfor %}
+  register: static_dns_records
+  changed_when: "'updated' in static_dns_records.stdout"
   when: inventory_hostname == 'lab-dns-01'
 
 - name: Remove explicitly deleted user DNS records from the primary

@@ -5,12 +5,9 @@ base: boetticher-base
 base_version: 0.4.0
 architecture: amd64
 runtime:
-  python: 3.13.5-1
-  python_venv: 3.13.5-1
-  pip: 25.1.1+dfsg-1
-  litellm: 1.74.9
+  router: bifrost
+  router_contract: litellm-openai-compatible
   nginx: 1.26.3-3+deb13u7
-  dependency_lock: requirements.lock
   backend_bind: 127.0.0.1:4000
   frontend_bind: 443
   mtls_required: true

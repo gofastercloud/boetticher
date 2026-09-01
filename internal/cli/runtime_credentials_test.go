@@ -106,6 +106,28 @@ func TestFirstPartyModuleCredentialsUseEphemeralSystemdPaths(t *testing.T) {
 	}
 }
 
+func TestAirVPNCredentialUsesOnlyItsServiceRuntimePath(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("airvpn", "age1airvpn", model.GatewayModeManaged))
+	enabled := true
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "europe"}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := deploymentCredentialBindings(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dropIns, err := credentialDropIns(bindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection := dropIns["lab-airvpn-01"]["boetticher-airvpn.service"]
+	if !strings.Contains(projection, "LoadCredentialEncrypted=airvpn-wireguard-config:/var/lib/boetticher/credentials/airvpn-wireguard-config.cred") || strings.Contains(projection, "europe") {
+		t.Fatalf("AirVPN credential projection is incomplete or contains configuration data: %q", projection)
+	}
+}
+
 func TestStreamDeckUsesSharedPulseTokenOnlyInPostPulseProjection(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	enabled := true

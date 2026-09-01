@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -100,6 +101,37 @@ func TestBoundedBuilderArchiveRejectsOversizedReturn(t *testing.T) {
 	}
 	if buffer.String() != "1234" {
 		t.Fatalf("oversized builder archive changed output: %q", buffer.String())
+	}
+}
+
+func TestBuilderFailureOutputPreservesBoundedCommandError(t *testing.T) {
+	output := &boundedBuilderOutput{}
+	output.Write([]byte("stdout\n"))
+	got := builderFailureOutput(output, errors.New("SSH bootstrap command failed: artifact contains baked SSH host identity: /tmp/rootfs/etc/ssh/ssh_host_rsa_key"))
+	if !strings.Contains(got, "[builder-command-error]") || !strings.Contains(got, "artifact contains baked SSH host identity") {
+		t.Fatalf("builder command error was not preserved: %q", got)
+	}
+	if len(got) > maxBuilderDiagnosticOutput {
+		t.Fatalf("builder command diagnostic exceeded bound: %d", len(got))
+	}
+}
+
+func TestBuilderBuildCommandStreamsThePersistentLog(t *testing.T) {
+	for _, required := range []string{"tail -n 0 -F /var/log/boetticher-build.log", "/usr/local/sbin/boetticher-build", "trap"} {
+		if !strings.Contains(builderBuildCommand, required) {
+			t.Fatalf("builder command does not contain %q: %s", required, builderBuildCommand)
+		}
+	}
+}
+
+func TestBuilderProgressWriterForwardsOnlySafeProgressLines(t *testing.T) {
+	var output bytes.Buffer
+	writer := &builderProgressWriter{out: &output}
+	if _, err := writer.Write([]byte("package output\ntiming stage=artifact_build duration_ms=10 artifact=boetticher-base\nmeasurement stage=artifact_compression artifact=boetticher-base\nboetticher package stage: boetticher-base archive\n")); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "package output") || !strings.Contains(output.String(), "timing stage=artifact_build") || !strings.Contains(output.String(), "measurement stage=artifact_compression") || !strings.Contains(output.String(), "boetticher package stage: boetticher-base archive") {
+		t.Fatalf("builder progress output = %q", output.String())
 	}
 }
 

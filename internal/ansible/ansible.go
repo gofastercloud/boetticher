@@ -1,6 +1,7 @@
 package ansible
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/firewall"
@@ -20,11 +22,50 @@ import (
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
+	"github.com/gofastercloud/boetticher/internal/telemetry"
 	"github.com/gofastercloud/boetticher/internal/usbexport"
 )
 
 const maxAnsibleOutputBytes = 64 * 1024
 const maxAnsibleDiagnosticBytes = 16 * 1024
+
+// The appliance inventory is small, but the network and services passes touch
+// several independent guests. Eight forks removes avoidable host batching
+// without creating unbounded load on a homelab controller or gateway. An
+// explicit operator setting remains authoritative.
+const defaultAnsibleForks = "8"
+
+const (
+	PhaseFull      = "full"
+	PhaseBootstrap = "bootstrap"
+	PhaseServices  = "services"
+)
+
+const maxAnsibleTaskTimings = 4096
+
+// TaskTiming is deliberately limited to task identity and duration. Ansible
+// results can contain credentials, rendered configuration, and command
+// output; none of that belongs in a deployment timing report.
+type TaskTiming struct {
+	Host       string `json:"host"`
+	Task       string `json:"task"`
+	Path       string `json:"path"`
+	Status     string `json:"status"`
+	DurationMS int64  `json:"duration_ms"`
+	Changed    bool   `json:"changed"`
+}
+
+type TaskBatchTiming struct {
+	Task       string `json:"task"`
+	Path       string `json:"path"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
+type RunResult struct {
+	Changed          bool
+	TaskTimings      []TaskTiming
+	TaskBatchTimings []TaskBatchTiming
+}
 
 type boundedOutput struct {
 	data           []byte
@@ -163,7 +204,7 @@ func Inventory(s model.Site) (string, error) {
 	b.WriteString(revision + "\n\n")
 	groups := map[string][]model.Component{
 		"dns": {}, "monitor": {}, "portal": {}, "logging": {},
-		"tailnet-router": {}, "litellm": {}, "printer": {}, "streamdeck": {}, "aiops": {}, "gatus": {},
+		"tailnet-router": {}, "airvpn": {}, "litellm": {}, "printer": {}, "streamdeck": {}, "aiops": {}, "gatus": {},
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		groups["firewall"] = nil
@@ -187,7 +228,7 @@ func Inventory(s model.Site) (string, error) {
 			groups["logging"] = append(groups["logging"], component)
 		}
 		switch component.Module {
-		case "tailnet-router", "litellm", "printer", "streamdeck", "aiops", "gatus":
+		case "tailnet-router", "airvpn", "litellm", "printer", "streamdeck", "aiops", "gatus":
 			groups[component.Module] = append(groups[component.Module], component)
 		}
 	}
@@ -208,14 +249,14 @@ func Inventory(s model.Site) (string, error) {
 		address = s.BootstrapAddress
 	}
 	writeHostAt(&b, *proxmoxComponent, address)
-	for _, group := range []string{"dns", "monitor", "portal", "logging", "tailnet-router", "litellm", "printer", "streamdeck", "aiops"} {
+	for _, group := range []string{"dns", "monitor", "portal", "logging", "tailnet-router", "airvpn", "litellm", "printer", "streamdeck", "aiops"} {
 		writeInventoryGroup(&b, group, groups[group])
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		writeInventoryGroup(&b, "firewall", groups["firewall"])
 	}
 	writeInventoryGroup(&b, "gatus", groups["gatus"])
-	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\ntailnet-router\nlitellm\nprinter\nstreamdeck\naiops\ngatus\n")
+	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\ntailnet-router\nairvpn\nlitellm\nprinter\nstreamdeck\naiops\ngatus\n")
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		b.WriteString("firewall\n")
 	}
@@ -239,22 +280,34 @@ func writeHostAt(b *strings.Builder, component model.Component, address string) 
 }
 
 func Variables(s model.Site) ([]byte, error) {
-	return variables(s, nil, "")
+	return variables(s, nil, "", nil)
 }
 
 func VariablesWithUpstream(s model.Site, upstream firewall.UpstreamObservation) ([]byte, error) {
-	return variables(s, &upstream, "")
+	return variables(s, &upstream, "", nil)
 }
 
 func VariablesWithOperatorKey(s model.Site, publicKey string) ([]byte, error) {
-	return variables(s, nil, publicKey)
+	return variables(s, nil, publicKey, nil)
 }
 
 func VariablesWithOperatorKeyAndUpstream(s model.Site, upstream firewall.UpstreamObservation, publicKey string) ([]byte, error) {
-	return variables(s, &upstream, publicKey)
+	return variables(s, &upstream, publicKey, nil)
 }
 
-func variables(s model.Site, upstream *firewall.UpstreamObservation, operatorPublicKey string) ([]byte, error) {
+func VariablesWithOperatorKeyAndAirVPN(s model.Site, publicKey string, profile firewall.AirVPNProfile) ([]byte, error) {
+	return variables(s, nil, publicKey, &profile)
+}
+
+func VariablesWithAirVPN(s model.Site, profile firewall.AirVPNProfile) ([]byte, error) {
+	return variables(s, nil, "", &profile)
+}
+
+func VariablesWithOperatorKeyAndUpstreamAndAirVPN(s model.Site, upstream firewall.UpstreamObservation, publicKey string, profile firewall.AirVPNProfile) ([]byte, error) {
+	return variables(s, &upstream, publicKey, &profile)
+}
+
+func variables(s model.Site, upstream *firewall.UpstreamObservation, operatorPublicKey string, airvpnProfile *firewall.AirVPNProfile) ([]byte, error) {
 	if err := s.Validate(); err != nil {
 		return nil, err
 	}
@@ -275,7 +328,11 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation, operatorPub
 		return nil, err
 	}
 	var firewallPlan firewall.Plan
-	if upstream == nil {
+	if airvpnProfile != nil && upstream == nil {
+		firewallPlan, err = firewall.PlanFromSiteWithAirVPN(s, *airvpnProfile)
+	} else if airvpnProfile != nil {
+		firewallPlan, err = firewall.PlanFromSiteWithUpstreamAndAirVPN(s, *upstream, *airvpnProfile)
+	} else if upstream == nil {
 		firewallPlan, err = firewall.PlanFromSite(s)
 	} else {
 		firewallPlan, err = firewall.PlanFromSiteWithUpstream(s, *upstream)
@@ -303,36 +360,37 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation, operatorPub
 		}
 	}
 	value := struct {
-		ModelRevision                 string                        `json:"model_revision"`
-		Domain                        string                        `json:"domain"`
-		ProxmoxManagementAddress      string                        `json:"proxmox_management_address"`
-		IPv4Only                      bool                          `json:"ipv4_only"`
-		AuthoritativeDNS              string                        `json:"authoritative_dns"`
-		AuthoritativeDNSVersion       string                        `json:"authoritative_dns_version"`
-		AuthoritativePackageVersion   string                        `json:"authoritative_package_version"`
-		AuthoritativeDNSPort          string                        `json:"authoritative_dns_port"`
-		DynamicZones                  []string                      `json:"dynamic_zones"`
-		DNSPlan                       dns.Plan                      `json:"dns_plan"`
-		FirewallPlan                  firewall.Plan                 `json:"firewall_plan"`
-		MonitoringPlan                pulse.Plan                    `json:"monitoring_plan"`
-		PulseAgentTargets             []string                      `json:"pulse_agent_targets"`
-		PulseAgentVersion             string                        `json:"pulse_agent_version"`
-		PulseAgentReleaseURL          string                        `json:"pulse_agent_release_url"`
-		PulseAgentReleaseSHA256       string                        `json:"pulse_agent_release_sha256"`
-		BlockyConfig                  string                        `json:"blocky_config"`
-		LoggingPlan                   logging.Plan                  `json:"logging_plan"`
-		LoggingCollectorConfig        string                        `json:"logging_collector_config"`
-		LoggingServiceOverride        string                        `json:"logging_collector_service_override"`
-		LoggingSocketOverride         string                        `json:"logging_collector_socket_override"`
-		LoggingUploadConfigs          map[string]string             `json:"logging_upload_configs"`
-		LoggingClientCertificates     map[string]string             `json:"logging_client_certificates"`
-		LoggingCollectorCertificate   string                        `json:"logging_collector_certificate"`
-		ModuleConfigs                 map[string]model.ModuleConfig `json:"module_configs"`
-		ModuleDeclarations            []model.ModuleDeclaration     `json:"module_declarations"`
-		GatusConfig                   string                        `json:"gatus_config"`
-		USBExportManifests            []usbexport.GuestManifest     `json:"usb_export_manifests"`
-		NetworkProbeOperatorPublicKey string                        `json:"network_probe_operator_public_key,omitempty"`
-	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan, firewallPlan, monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), logging.CollectorSocketOverride(loggingPlan), loggingUploads, map[string]string{}, "", s.ModuleConfig, s.Declarations, string(gatusConfig), usbPlan, operatorPublicKey}
+		ModelRevision                  string                                           `json:"model_revision"`
+		Domain                         string                                           `json:"domain"`
+		ProxmoxManagementAddress       string                                           `json:"proxmox_management_address"`
+		IPv4Only                       bool                                             `json:"ipv4_only"`
+		AuthoritativeDNS               string                                           `json:"authoritative_dns"`
+		AuthoritativeDNSVersion        string                                           `json:"authoritative_dns_version"`
+		AuthoritativePackageVersion    string                                           `json:"authoritative_package_version"`
+		AuthoritativeDNSPort           string                                           `json:"authoritative_dns_port"`
+		DynamicZones                   []string                                         `json:"dynamic_zones"`
+		DNSPlan                        dns.Plan                                         `json:"dns_plan"`
+		FirewallPlan                   firewall.Plan                                    `json:"firewall_plan"`
+		FirewallInterfaceConfigDigests map[string]firewall.InterfaceConfigurationDigest `json:"firewall_interface_config_digests,omitempty"`
+		MonitoringPlan                 pulse.Plan                                       `json:"monitoring_plan"`
+		PulseAgentTargets              []string                                         `json:"pulse_agent_targets"`
+		PulseAgentVersion              string                                           `json:"pulse_agent_version"`
+		PulseAgentReleaseURL           string                                           `json:"pulse_agent_release_url"`
+		PulseAgentReleaseSHA256        string                                           `json:"pulse_agent_release_sha256"`
+		BlockyConfig                   string                                           `json:"blocky_config"`
+		LoggingPlan                    logging.Plan                                     `json:"logging_plan"`
+		LoggingCollectorConfig         string                                           `json:"logging_collector_config"`
+		LoggingServiceOverride         string                                           `json:"logging_collector_service_override"`
+		LoggingSocketOverride          string                                           `json:"logging_collector_socket_override"`
+		LoggingUploadConfigs           map[string]string                                `json:"logging_upload_configs"`
+		LoggingClientCertificates      map[string]string                                `json:"logging_client_certificates"`
+		LoggingCollectorCertificate    string                                           `json:"logging_collector_certificate"`
+		ModuleConfigs                  map[string]model.ModuleConfig                    `json:"module_configs"`
+		ModuleDeclarations             []model.ModuleDeclaration                        `json:"module_declarations"`
+		GatusConfig                    string                                           `json:"gatus_config"`
+		USBExportManifests             []usbexport.GuestManifest                        `json:"usb_export_manifests"`
+		NetworkProbeOperatorPublicKey  string                                           `json:"network_probe_operator_public_key,omitempty"`
+	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan, firewallPlan, firewall.GatewayInterfaceConfigurationDigests(firewallPlan), monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), logging.CollectorSocketOverride(loggingPlan), loggingUploads, map[string]string{}, "", s.ModuleConfig, s.Declarations, string(gatusConfig), usbPlan, operatorPublicKey}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err
@@ -353,14 +411,22 @@ func dynamicZoneNames(zones []dns.DynamicZone) []string {
 // file. The playbook itself must obtain any future secret material through an
 // approved runtime mechanism.
 func Run(ctx context.Context, playbook, inventory string, variables []byte) error {
-	_, err := run(ctx, playbook, inventory, variables, "")
+	_, err := run(ctx, playbook, inventory, variables, "", PhaseFull)
 	return err
 }
 
 // RunWithMutation reports only whether the bounded Ansible recap contained a
 // non-zero changed count. It is intentionally not a per-resource audit log.
 func RunWithMutation(ctx context.Context, playbook, inventory string, variables []byte) (bool, error) {
-	return run(ctx, playbook, inventory, variables, "")
+	result, err := run(ctx, playbook, inventory, variables, "", PhaseFull)
+	return result.Changed, err
+}
+
+// RunWithMutationPhase is RunWithMutation with an explicit deployment phase
+// exposed to the playbook. The phase is passed as extra-vars over stdin, not
+// as an argv value, so the command line remains free of configuration data.
+func RunWithMutationPhase(ctx context.Context, playbook, inventory string, variables []byte, phase string) (RunResult, error) {
+	return run(ctx, playbook, inventory, variables, "", phase)
 }
 
 // RunLimited executes the same generated playbook against one known inventory
@@ -377,19 +443,34 @@ func RunLimitedWithMutation(ctx context.Context, playbook, inventory string, var
 	if !safeInventoryIdentity(limit) {
 		return false, errors.New("Ansible limit must be one safe inventory identity")
 	}
-	return run(ctx, playbook, inventory, variables, limit)
+	result, err := run(ctx, playbook, inventory, variables, limit, PhaseFull)
+	return result.Changed, err
 }
 
-func run(ctx context.Context, playbook, inventory string, variables []byte, limit string) (bool, error) {
+// RunLimitedWithMutationPhase is the phase-aware form used by tracked deploy
+// stages that also need to converge a single known inventory identity.
+func RunLimitedWithMutationPhase(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string) (RunResult, error) {
+	if !safeInventoryIdentity(limit) {
+		return RunResult{}, errors.New("Ansible limit must be one safe inventory identity")
+	}
+	return run(ctx, playbook, inventory, variables, limit, phase)
+}
+
+func run(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string) (RunResult, error) {
+	var empty RunResult
 	if playbook == "" || inventory == "" {
-		return false, errors.New("Ansible playbook and inventory are required")
+		return empty, errors.New("Ansible playbook and inventory are required")
 	}
 	if err := sshconfig.ValidateExecutionConfig(generatedSSHConfigPath(inventory)); err != nil {
-		return false, fmt.Errorf("validate Ansible SSH configuration: %w", err)
+		return empty, fmt.Errorf("validate Ansible SSH configuration: %w", err)
 	}
 	executable, err := exec.LookPath("ansible-playbook")
 	if err != nil {
-		return false, fmt.Errorf("ansible-playbook is required: %w", err)
+		return empty, fmt.Errorf("ansible-playbook is required: %w", err)
+	}
+	variables, err = phaseVariables(variables, phase)
+	if err != nil {
+		return empty, err
 	}
 	args := []string{"-i", inventory, "--user", "root", playbook, "--extra-vars", "@/dev/stdin", "--ssh-common-args", "-F " + generatedSSHConfigPath(inventory)}
 	if limit != "" {
@@ -397,20 +478,166 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	}
 	command := exec.CommandContext(ctx, executable, args...)
 	command.Stdin = strings.NewReader(string(variables))
-	command.Env = append(os.Environ(), "ANSIBLE_HOST_KEY_CHECKING=True")
+	timingPath, timingCleanup := prepareTaskTiming(playbook)
+	defer timingCleanup()
+	command.Env = ansibleEnvironment(playbook, timingPath)
 	var output boundedOutput
 	command.Stdout = &output
 	command.Stderr = &output
+	started := time.Now()
 	err = command.Run()
 	changed := ansibleOutputChanged(output.Bytes())
+	telemetry.Record(ctx, telemetry.Event{
+		Category: "ansible", Operation: "playbook", Target: ansibleTarget(limit),
+		Duration: time.Since(started), Success: err == nil, Changed: changed,
+	})
+	taskTimings, taskBatchTimings := readTaskTimings(timingPath)
+	result := RunResult{Changed: changed, TaskTimings: taskTimings, TaskBatchTimings: taskBatchTimings}
 	if err != nil {
 		diagnostic := failureDiagnosticWithSupplement(output.Bytes(), output.DiagnosticBytes())
 		if diagnostic == "" {
-			return changed, fmt.Errorf("ansible-playbook failed: %w", err)
+			return result, fmt.Errorf("ansible-playbook failed: %w", err)
 		}
-		return changed, fmt.Errorf("ansible-playbook failed: %w: %s", err, diagnostic)
+		return result, fmt.Errorf("ansible-playbook failed: %w: %s", err, diagnostic)
 	}
-	return changed, nil
+	return result, nil
+}
+
+func phaseVariables(variables []byte, phase string) ([]byte, error) {
+	if phase == "" {
+		phase = PhaseFull
+	}
+	if phase != PhaseFull && phase != PhaseBootstrap && phase != PhaseServices {
+		return nil, fmt.Errorf("unsupported Ansible deployment phase %q", phase)
+	}
+	var values map[string]any
+	if err := json.Unmarshal(variables, &values); err != nil {
+		return nil, fmt.Errorf("decode Ansible variables: %w", err)
+	}
+	if values == nil {
+		return nil, errors.New("Ansible variables must be a JSON object")
+	}
+	values["boetticher_deploy_phase"] = phase
+	data, err := json.MarshalIndent(values, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode Ansible variables: %w", err)
+	}
+	return append(data, '\n'), nil
+}
+
+func ansibleEnvironment(playbook, timingPath string) []string {
+	environment := os.Environ()
+	if _, ok := os.LookupEnv("ANSIBLE_FORKS"); !ok {
+		environment = append(environment, "ANSIBLE_FORKS="+defaultAnsibleForks)
+	}
+	environment = setEnvironmentValue(environment, "ANSIBLE_HOST_KEY_CHECKING", "True")
+	environment = setEnvironmentValue(environment, "ANSIBLE_SSH_PIPELINING", "True")
+	pluginDir := filepath.Join(filepath.Dir(playbook), "callback_plugins")
+	if _, err := os.Stat(filepath.Join(pluginDir, "boetticher_timing.py")); err == nil {
+		environment = appendEnvironmentValue(environment, "ANSIBLE_CALLBACK_PLUGINS", pluginDir, string(os.PathListSeparator))
+		environment = appendEnvironmentValue(environment, "ANSIBLE_CALLBACKS_ENABLED", "boetticher_timing", ",")
+		if timingPath != "" {
+			environment = setEnvironmentValue(environment, "BOETTICHER_ANSIBLE_TIMING_FILE", timingPath)
+		}
+	}
+	return environment
+}
+
+func setEnvironmentValue(environment []string, key, value string) []string {
+	prefix := key + "="
+	for index, entry := range environment {
+		if strings.HasPrefix(entry, prefix) {
+			environment[index] = prefix + value
+			return environment
+		}
+	}
+	return append(environment, prefix+value)
+}
+
+func appendEnvironmentValue(environment []string, key, value, separator string) []string {
+	prefix := key + "="
+	for index, entry := range environment {
+		if strings.HasPrefix(entry, prefix) {
+			current := strings.TrimPrefix(entry, prefix)
+			for _, part := range strings.Split(current, separator) {
+				if part == value {
+					return environment
+				}
+			}
+			if current == "" {
+				environment[index] = prefix + value
+			} else {
+				environment[index] = prefix + current + separator + value
+			}
+			return environment
+		}
+	}
+	return append(environment, prefix+value)
+}
+
+func prepareTaskTiming(playbook string) (string, func()) {
+	pluginPath := filepath.Join(filepath.Dir(playbook), "callback_plugins", "boetticher_timing.py")
+	if _, err := os.Stat(pluginPath); err != nil {
+		return "", func() {}
+	}
+	file, err := os.CreateTemp("", "boetticher-ansible-timing-*.jsonl")
+	if err != nil {
+		return "", func() {}
+	}
+	path := file.Name()
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", func() {}
+	}
+	return path, func() { _ = os.Remove(path) }
+}
+
+func readTaskTimings(path string) ([]TaskTiming, []TaskBatchTiming) {
+	if path == "" {
+		return nil, nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 1024), 16*1024)
+	timings := make([]TaskTiming, 0)
+	batchTimings := make([]TaskBatchTiming, 0)
+	for scanner.Scan() && (len(timings) < maxAnsibleTaskTimings || len(batchTimings) < maxAnsibleTaskTimings) {
+		var event struct {
+			Event      string `json:"event"`
+			Host       string `json:"host"`
+			Task       string `json:"task"`
+			Path       string `json:"path"`
+			Status     string `json:"status"`
+			DurationMS int64  `json:"duration_ms"`
+			Changed    bool   `json:"changed"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
+			continue
+		}
+		switch event.Event {
+		case "task_batch":
+			if event.Task != "" && event.Path != "" && event.DurationMS >= 0 && len(batchTimings) < maxAnsibleTaskTimings {
+				batchTimings = append(batchTimings, TaskBatchTiming{Task: event.Task, Path: event.Path, DurationMS: event.DurationMS})
+			}
+		default:
+			if event.Host == "" || event.Task == "" || event.Status == "" || event.DurationMS < 0 || len(timings) >= maxAnsibleTaskTimings {
+				continue
+			}
+			timings = append(timings, TaskTiming{Host: event.Host, Task: event.Task, Path: event.Path, Status: event.Status, DurationMS: event.DurationMS, Changed: event.Changed})
+		}
+	}
+	return timings, batchTimings
+}
+
+func ansibleTarget(limit string) string {
+	if limit == "" {
+		return "all"
+	}
+	return limit
 }
 
 var ansibleChangedPattern = regexp.MustCompile(`changed=([0-9]+)`)

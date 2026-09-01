@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+
+# wg-quick's full-tunnel policy table would otherwise send HOME traffic into
+# the provider tunnel. Keep every fixed site network direct in that table.
+ip route replace 10.10.0.0/16 via 10.10.5.1 dev eth0 table 51820
