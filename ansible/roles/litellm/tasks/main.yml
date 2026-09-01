@@ -240,7 +240,9 @@
   when: litellm_server_cert_pem | default('') | length > 0
 
 - name: Collect bounded Bifrost service diagnostics when startup is unhealthy
-  ansible.builtin.command: systemctl status litellm --no-pager --full
+  ansible.builtin.command: >-
+    systemctl show litellm
+    --property=LoadState,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus,StatusText,ExecMainStartTimestamp
   register: litellm_service_diagnostics
   changed_when: false
   failed_when: false
@@ -272,7 +274,9 @@
   when: litellm_server_cert_pem | default('') | length > 0
 
 - name: Collect final bounded Bifrost diagnostics when recovery failed
-  ansible.builtin.command: systemctl status litellm --no-pager --full
+  ansible.builtin.command: >-
+    systemctl show litellm
+    --property=LoadState,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus,StatusText,ExecMainStartTimestamp
   register: litellm_final_service_diagnostics
   changed_when: false
   failed_when: false
