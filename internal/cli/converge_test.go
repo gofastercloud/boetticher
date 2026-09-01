@@ -126,6 +126,25 @@ func TestInspectDeploymentGuestStatesUsesBoundedParallelReadPool(t *testing.T) {
 	}
 }
 
+func TestDNSInitialConfigurationOnlyRunsForNewOrReplacedGuests(t *testing.T) {
+	cases := []struct {
+		name  string
+		state deploymentGuestArtifactState
+		want  bool
+	}{
+		{name: "missing", state: deploymentGuestArtifactState{}, want: true},
+		{name: "replaced", state: deploymentGuestArtifactState{exists: true, replacement: true}, want: true},
+		{name: "unchanged", state: deploymentGuestArtifactState{exists: true}, want: false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := needsInitialDNSConfiguration(testCase.state); got != testCase.want {
+				t.Fatalf("needsInitialDNSConfiguration(%+v) = %t, want %t", testCase.state, got, testCase.want)
+			}
+		})
+	}
+}
+
 func TestPublishedServicesActivateAtTheEndOfDNSModule(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
 	if err != nil {

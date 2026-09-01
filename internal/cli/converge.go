@@ -547,8 +547,11 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 				return fmt.Errorf("install %s credentials: %w", guest.Name, err)
 			}
 			if module == "dns" {
-				if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, guest.Name, report); err != nil {
-					return fmt.Errorf("HOLD: configure DNS guest %s before dependent appliances: %w", guest.Name, err)
+				state := guestStates[guest.VMID]
+				if needsInitialDNSConfiguration(state) {
+					if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, guest.Name, report); err != nil {
+						return fmt.Errorf("HOLD: configure DNS guest %s before dependent appliances: %w", guest.Name, err)
+					}
 				}
 				if guest.Name == "lab-dns-01" && s.Gateway.Mode == model.GatewayModeManaged {
 					needsRestart, err := installPowerDNSTSIG(ctx, guestRunner, guest.Address, dnsPlan, secretValues["firewall-ddns-tsig"])
@@ -1129,6 +1132,14 @@ func deploymentModuleNames(s model.Site) []string {
 type deploymentGuestArtifactState struct {
 	exists      bool
 	replacement bool
+}
+
+// needsInitialDNSConfiguration keeps the dependency barrier for new or
+// replaced DNS guests while avoiding a duplicate full role pass for an
+// unchanged guest. The authoritative all-host network convergence still runs
+// after appliance reconciliation and applies current desired state.
+func needsInitialDNSConfiguration(state deploymentGuestArtifactState) bool {
+	return !state.exists || state.replacement
 }
 
 func deploymentGuestPlans(s model.Site, plan proxmox.Plan) []proxmox.GuestPlan {
