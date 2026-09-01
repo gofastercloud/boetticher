@@ -32,6 +32,14 @@ require_absent() {
   fi
 }
 
+require_executable() {
+  label=$1
+  path=$2
+  if [ ! -x "$path" ]; then
+    fail_check "$label: $path"
+  fi
+}
+
 printf '%s\n' 'boetticher smoke check: module descriptor absence'
 test ! -e "$rootfs/etc/boetticher/module.yaml"
 printf '%s\n' 'boetticher smoke check: artifact identity presence'
@@ -157,9 +165,9 @@ case "$name" in
     fi
     ;;
   boetticher-litellm)
-    test -x "$rootfs/usr/sbin/nginx"
-    test -x "$rootfs/opt/litellm/bin/python"
-    test -x "$rootfs/opt/litellm/bin/litellm"
+    require_executable 'litellm nginx executable is missing' "$rootfs/usr/sbin/nginx"
+    require_executable 'litellm Python executable is missing' "$rootfs/opt/litellm/bin/python"
+    require_executable 'litellm server executable is missing' "$rootfs/opt/litellm/bin/litellm"
     chroot "$rootfs" dpkg-query -W -f='${Version}' python3 | grep -Fxq '3.13.5-1'
     chroot "$rootfs" dpkg-query -W -f='${Version}' python3-venv | grep -Fxq '3.13.5-1'
     chroot "$rootfs" dpkg-query -W -f='${Version}' python3-pip | grep -Fxq '25.1.1+dfsg-1'
