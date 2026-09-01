@@ -35,11 +35,19 @@
     fail_msg: "The installed PowerDNS version is not the qualified 4.9.17 release"
   when: inventory_hostname in groups.get('dns', [])
 
+- name: Check whether the PowerDNS database exists
+  ansible.builtin.stat:
+    path: /var/lib/powerdns/pdns.sqlite3
+  register: powerdns_database
+  when: inventory_hostname in groups.get('dns', [])
+
 - name: Stop PowerDNS before initializing its local database
   ansible.builtin.service:
     name: pdns
     state: stopped
-  when: inventory_hostname in groups.get('dns', [])
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - not powerdns_database.stat.exists
 
 - name: Create the PowerDNS data directory
   ansible.builtin.file:
@@ -120,12 +128,20 @@
   ansible.builtin.shell: |
     set -eu
     records="$(pdnsutil list-zone {{ dns_plan.static_zone }})"
-    if printf '%s\n' "$records" | awk '$1 == "{{ item.name }}.{{ dns_plan.static_zone }}" && $3 == "{{ item.type }}" && $4 == "{{ item.value }}" { found=1 } END { exit !found }'; then
-      pdnsutil delete-rrset {{ dns_plan.static_zone }} {{ item.name }} {{ item.type }}
+    updated=0
+    {% for item in dns_plan.static_records %}
+    if printf '%s\n' "$records" | awk -v wanted_name={{ (item.name ~ '.' ~ dns_plan.static_zone) | quote }} -v wanted_type={{ item.type | quote }} -v wanted_value={{ item.value | quote }} '$1 == wanted_name && $3 == wanted_type && $4 == wanted_value { found=1 } END { exit !found }'; then
+      pdnsutil delete-rrset {{ dns_plan.static_zone | quote }} {{ item.name | quote }} {{ item.type | quote }}
+      updated=1
+    fi
+    {% endfor %}
+    if [ "$updated" -eq 1 ]; then
+      printf 'updated\n'
     fi
   args:
     executable: /bin/sh
-  loop: "{{ dns_plan.static_records }}"
+  register: malformed_static_rrsets
+  changed_when: "'updated' in malformed_static_rrsets.stdout"
   when: inventory_hostname == 'lab-dns-01'
 
 - name: Initialize authoritative NS records on the primary when changed

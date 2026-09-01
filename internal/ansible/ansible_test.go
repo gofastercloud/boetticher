@@ -1296,14 +1296,22 @@ func TestDNSAuthoritativeUpdatesAreGatedByLiveRRsetState(t *testing.T) {
 	}
 	text := string(data)
 	for _, expected := range []string{
+		"Check whether the PowerDNS database exists",
+		"not powerdns_database.stat.exists",
 		"Initialize authoritative NS records on the primary when changed",
 		"Publish model-owned static DNS records to the primary when changed",
 		"pdnsutil list-zone",
+		"Remove exact malformed PowerDNS static rrsets from the prior boetticher attempt",
+		"updated=0",
+		"changed_when: \"'updated' in malformed_static_rrsets.stdout\"",
 		"changed_when: \"'updated' in static_dns_records.stdout\"",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("DNS role is missing live RRset convergence guard %q", expected)
 		}
+	}
+	if strings.Contains(text, "loop: \"{{ dns_plan.static_records }}\"") {
+		t.Fatal("DNS role still runs one malformed static-record probe per record")
 	}
 }
 
