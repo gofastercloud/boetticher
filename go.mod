@@ -11,7 +11,7 @@ require (
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/invopop/jsonschema v0.14.0
 	github.com/matthewpi/streamdeck v0.0.0-20240226234722-6586ce762db3
-	golang.org/x/image v0.15.0
+	golang.org/x/image v0.41.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
 	google.golang.org/grpc v1.82.1
