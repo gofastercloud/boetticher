@@ -184,6 +184,42 @@ func TestProviderJSONErrorCategoryRecognizesOpaqueProviderPrerequisites(t *testi
 	}
 }
 
+func TestProviderUserinfoRequiresAnAuthenticatedUserObject(t *testing.T) {
+	cases := map[string]bool{
+		`{"user":{"connected":false}}`: true,
+		`{"user":null}`:                false,
+		`{"user":"private-data"}`:      false,
+		`{"status":"ok"}`:              false,
+	}
+	for response, want := range cases {
+		if got := providerUserinfoHasAuthenticatedUser([]byte(response)); got != want {
+			t.Fatalf("authenticated user for %s = %t, want %t", response, got, want)
+		}
+	}
+}
+
+func TestProviderReadinessRejectsAnonymousUserinfoWithoutListingDevices(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/userinfo/":
+			if r.Header.Get("Api-Key") != "controller-key" {
+				t.Fatalf("userinfo missed API key")
+			}
+			_, _ = w.Write([]byte(`{"user":null}`))
+		case "/devices/":
+			t.Fatal("AirVPN devices must not be listed for anonymous userinfo")
+		default:
+			t.Fatalf("unexpected AirVPN readiness request: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	readiness, err := (Client{}).providerReadiness(context.Background(), server.URL, "controller-key", server.Client())
+	if err != nil || readiness.APIKeyAccepted || readiness.DeviceCount != 0 {
+		t.Fatalf("anonymous userinfo readiness = %#v, %v", readiness, err)
+	}
+}
+
 func TestGenerateExplainsUnavailableSelectorAgainstLiveStatus(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

@@ -327,7 +327,7 @@ func (c Client) providerReadiness(ctx context.Context, baseURL, apiKey string, h
 	if err != nil {
 		return providerReadiness{}, errors.New("parse AirVPN userinfo")
 	}
-	if hasError {
+	if hasError || !providerUserinfoHasAuthenticatedUser(userinfo) {
 		return providerReadiness{}, nil
 	}
 
@@ -400,6 +400,19 @@ func providerJSONHasError(data []byte) (bool, error) {
 	}
 	errorValue = bytes.TrimSpace(errorValue)
 	return len(errorValue) > 0 && !bytes.Equal(errorValue, []byte("null")), nil
+}
+
+func providerUserinfoHasAuthenticatedUser(data []byte) bool {
+	var response map[string]json.RawMessage
+	if err := json.Unmarshal(data, &response); err != nil {
+		return false
+	}
+	user, ok := response["user"]
+	if !ok || len(user) == 0 || bytes.Equal(bytes.TrimSpace(user), []byte("null")) {
+		return false
+	}
+	var details map[string]json.RawMessage
+	return json.Unmarshal(user, &details) == nil && details != nil
 }
 
 // providerResponseSummary exposes only the small diagnostics needed to
