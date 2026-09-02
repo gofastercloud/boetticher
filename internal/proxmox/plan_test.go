@@ -743,6 +743,132 @@ func TestEnsureQEMUMigratesLegacyPersistentVolumeSerial(t *testing.T) {
 	}
 }
 
+func TestEnsureQEMUMigratesVerifiedPersistentVolumesToDeclaredStorage(t *testing.T) {
+	guest := GuestPlan{VMID: 100, Name: "test-fw", Volumes: []model.PersistentVolumeDeclaration{{
+		Name: "kea-leases", Module: "firewall", Guest: "lab-fw-01", SizeGiB: 4,
+		MountPath: "/var/lib/kea", Storage: modelStorageIDForTest, Backup: true,
+	}}}
+	serial, err := persistentVolumeSerial(guest.Volumes[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := "local:100/vm-100-disk-0.raw,backup=1,serial=" + serial + ",size=4G"
+	after := modelStorageIDForTest + ":100/vm-100-disk-0,backup=1,serial=" + serial + ",size=4G"
+	configReads := 0
+	moved := false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/config":
+			configReads++
+			if moved {
+				return response([]byte(`{"data":{"name":"test-fw","digest":"0123456789abcdef0123456789abcdef01234568","scsi1":"` + after + `"}}`))
+			}
+			return response([]byte(`{"data":{"name":"test-fw","digest":"0123456789abcdef0123456789abcdef01234567","scsi1":"` + before + `"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/status/current":
+			return response([]byte(`{"data":{"status":"stopped"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/100/move_disk":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if got, want := r.Form.Get("disk"), "scsi1"; got != want {
+				t.Fatalf("disk = %q, want %q", got, want)
+			}
+			if got, want := r.Form.Get("storage"), modelStorageIDForTest; got != want {
+				t.Fatalf("storage = %q, want %q", got, want)
+			}
+			if got, want := r.Form.Get("delete"), "1"; got != want {
+				t.Fatalf("delete = %q, want %q", got, want)
+			}
+			moved = true
+			return response([]byte(`{"data":"UPID:pve:move-disk"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:move-disk/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		default:
+			t.Fatalf("unexpected persistent-volume migration request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := ensureQEMU(context.Background(), client, Plan{Node: "node"}, guest); err != nil {
+		t.Fatalf("ensureQEMU() = %v", err)
+	}
+	if !moved || configReads < 3 {
+		t.Fatalf("persistent volume migration did not refresh provider configuration: moved=%t reads=%d", moved, configReads)
+	}
+}
+
+func TestEnsureQEMURefusesPersistentVolumeMigrationWithoutExactIdentity(t *testing.T) {
+	guest := GuestPlan{VMID: 100, Name: "test-fw", Volumes: []model.PersistentVolumeDeclaration{{
+		Name: "kea-leases", Module: "firewall", Guest: "lab-fw-01", SizeGiB: 4,
+		MountPath: "/var/lib/kea", Storage: modelStorageIDForTest, Backup: true,
+	}}}
+	moveRequested := false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/config" {
+			return response([]byte(`{"data":{"name":"test-fw","scsi1":"local:100/vm-100-disk-0.raw,backup=1,serial=boetticher-other,size=4G"}}`))
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/100/move_disk" {
+			moveRequested = true
+		}
+		t.Fatalf("unexpected request while rejecting persistent-volume migration: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err := ensureQEMU(context.Background(), client, Plan{Node: "node"}, guest)
+	if err == nil || !strings.Contains(err.Error(), "refusing to migrate") {
+		t.Fatalf("unproven persistent volume migration = %v", err)
+	}
+	if moveRequested {
+		t.Fatal("unproven persistent volume was moved")
+	}
+}
+
+func TestEnsureQEMURestoresRunningGuestAfterPersistentVolumeMigrationFailure(t *testing.T) {
+	guest := GuestPlan{VMID: 100, Name: "test-fw", Volumes: []model.PersistentVolumeDeclaration{{
+		Name: "kea-leases", Module: "firewall", Guest: "lab-fw-01", SizeGiB: 4,
+		MountPath: "/var/lib/kea", Storage: modelStorageIDForTest, Backup: true,
+	}}}
+	serial, err := persistentVolumeSerial(guest.Volumes[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := "local:100/vm-100-disk-0.raw,backup=1,serial=" + serial + ",size=4G"
+	stopped, restored := false, false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/config":
+			return response([]byte(`{"data":{"name":"test-fw","digest":"0123456789abcdef0123456789abcdef01234567","scsi1":"` + observed + `"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/status/current":
+			return response([]byte(`{"data":{"status":"running"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/100/status/stop":
+			stopped = true
+			return response([]byte(`{"data":"UPID:pve:stop"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:stop/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/100/move_disk":
+			return response([]byte(`{"data":"UPID:pve:move-disk"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:move-disk/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"ERROR: copy failed"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/100/status/start":
+			restored = true
+			return response([]byte(`{"data":"UPID:pve:start"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:start/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		default:
+			t.Fatalf("unexpected failure-recovery request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err = ensureQEMU(context.Background(), client, Plan{Node: "node"}, guest)
+	if err == nil || !strings.Contains(err.Error(), "copy failed") {
+		t.Fatalf("failed persistent-volume move = %v", err)
+	}
+	if !stopped || !restored {
+		t.Fatalf("running guest was not safely restored: stopped=%t restored=%t", stopped, restored)
+	}
+}
+
 func TestEnsureQEMURequiresConfirmationToReplaceOwnedArtifact(t *testing.T) {
 	guest := GuestPlan{VMID: 100, Name: "test-fw", Artifact: model.Artifact{
 		Name: "boetticher-firewall", Version: "1.0.0", Architecture: "amd64", ContentSHA256: "new-content",

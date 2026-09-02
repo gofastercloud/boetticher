@@ -226,6 +226,44 @@ func TestResizeQEMUDiskUsesExplicitBoundedGrowth(t *testing.T) {
 	}
 }
 
+func TestMoveQEMUPersistentDiskWaitsForVerifiedCopyBeforeDeletingSource(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/100/move_disk":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if got, want := r.Form.Get("disk"), "scsi1"; got != want {
+				t.Fatalf("disk = %q, want %q", got, want)
+			}
+			if got, want := r.Form.Get("storage"), "boetticher-thin"; got != want {
+				t.Fatalf("storage = %q, want %q", got, want)
+			}
+			if got, want := r.Form.Get("digest"), "0123456789abcdef0123456789abcdef01234567"; got != want {
+				t.Fatalf("digest = %q, want %q", got, want)
+			}
+			if got, want := r.Form.Get("delete"), "1"; got != want {
+				t.Fatalf("delete = %q, want %q", got, want)
+			}
+			return response([]byte(`{"data":"UPID:pve:move-disk"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:move-disk/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		default:
+			t.Fatalf("unexpected disk-move request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.MoveQEMUPersistentDisk(context.Background(), "node", 100, "scsi1", "boetticher-thin", "0123456789abcdef0123456789abcdef01234567"); err != nil {
+		t.Fatal(err)
+	}
+	for _, disk := range []string{"scsi0", "scsi01", "ide1"} {
+		if err := client.MoveQEMUPersistentDisk(context.Background(), "node", 100, disk, "boetticher-thin", "0123456789abcdef0123456789abcdef01234567"); err == nil {
+			t.Fatalf("unsafe disk key %q was accepted", disk)
+		}
+	}
+}
+
 func TestDeleteStorageSnippetRejectsPathsAndUsesExactEndpoint(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method != http.MethodDelete || r.URL.Path != "/api2/json/nodes/node/storage/local/content/snippets/boetticher-190-meta.yaml" {

@@ -386,6 +386,41 @@ func (c *Client) ResizeQEMUDisk(ctx context.Context, node string, vmid int, disk
 	return nil
 }
 
+// MoveQEMUPersistentDisk moves one attached Boetticher persistent SCSI disk
+// to the declared storage. The caller must establish ownership from the
+// disk's stable serial before invoking this operation. Proxmox deletes the
+// source only after its copy task succeeds, which avoids leaving an active
+// configuration pointing at a removed source volume.
+func (c *Client) MoveQEMUPersistentDisk(ctx context.Context, node string, vmid int, disk, storage, digest string) error {
+	if c == nil || !safeNodeID(node) || vmid <= 0 || !safePersistentQEMUDiskKey(disk) || !safeNodeID(storage) || len(digest) != 40 || !isHex(digest) {
+		return errors.New("Proxmox node, positive VMID, persistent SCSI disk, storage, and config digest are required")
+	}
+	var upid string
+	if err := c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "move_disk"), url.Values{
+		"disk":    {disk},
+		"storage": {storage},
+		"digest":  {digest},
+		"delete":  {"1"},
+	}, &upid); err != nil {
+		return fmt.Errorf("move QEMU persistent disk: %w", err)
+	}
+	if upid == "" {
+		return errors.New("Proxmox did not return a QEMU disk move task")
+	}
+	if err := c.WaitTask(ctx, node, upid); err != nil {
+		return fmt.Errorf("wait for QEMU persistent disk move: %w", err)
+	}
+	return nil
+}
+
+func safePersistentQEMUDiskKey(value string) bool {
+	if !strings.HasPrefix(value, "scsi") {
+		return false
+	}
+	index, err := strconv.Atoi(strings.TrimPrefix(value, "scsi"))
+	return err == nil && index > 0 && index <= 30 && value == "scsi"+strconv.Itoa(index)
+}
+
 func (c *Client) StartVM(ctx context.Context, node string, vmid int) error {
 	var upid string
 	if err := c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "start"), nil, &upid); err != nil {

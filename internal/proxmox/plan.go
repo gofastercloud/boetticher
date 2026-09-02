@@ -1298,6 +1298,9 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 		if err := migrateLegacyQEMUPersistentVolumeSerials(ctx, client, plan, guest, current); err != nil {
 			return err
 		}
+		if err := migrateQEMUPersistentVolumes(ctx, client, plan, guest, current); err != nil {
+			return err
+		}
 		if err := validateExistingQEMUVolumes(current, plan, guest); err != nil {
 			return err
 		}
@@ -1704,6 +1707,137 @@ func migrateLegacyQEMUPersistentVolumeSerials(ctx context.Context, client *Clien
 		current[key] = value[0]
 	}
 	return nil
+}
+
+// migrateQEMUPersistentVolumes reconciles a prior supported storage profile
+// with the currently declared one. It moves only disks whose attached slot,
+// stable serial, backup setting, and exact size prove that the volume belongs
+// to this declared guest. An active gateway is stopped for the short move and
+// restored even if a later move fails.
+func migrateQEMUPersistentVolumes(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) (err error) {
+	type migration struct {
+		disk    string
+		storage string
+		volume  model.PersistentVolumeDeclaration
+	}
+	migrations := make([]migration, 0, len(guest.Volumes))
+	for index, volume := range guest.Volumes {
+		expected, expectedErr := qemuPersistentVolumeParam(plan, volume)
+		if expectedErr != nil {
+			return expectedErr
+		}
+		disk := fmt.Sprintf("scsi%d", index+1)
+		observed, _ := current[disk].(string)
+		observedStorage := qemuVolumeStorageID(observed)
+		expectedStorage := qemuVolumeStorageID(expected)
+		if observedStorage == "" || expectedStorage == "" {
+			return fmt.Errorf("HOLD: refusing to migrate guest %s persistent volume %s with malformed storage identity", guest.Name, disk)
+		}
+		if observedStorage == expectedStorage {
+			continue
+		}
+		if !qemuVolumeMatchesPersistentIdentity(observed, expected) {
+			return fmt.Errorf("HOLD: refusing to migrate guest %s persistent volume %s=%q; its serial, backup setting, or size does not prove the declared contract %q", guest.Name, disk, observed, expected)
+		}
+		migrations = append(migrations, migration{disk: disk, storage: expectedStorage, volume: volume})
+	}
+	if len(migrations) == 0 {
+		return nil
+	}
+
+	status, err := client.QEMUStatus(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("inspect %s status before persistent-volume migration: %w", guest.Name, err)
+	}
+	if status != "running" && status != "stopped" {
+		return fmt.Errorf("HOLD: guest %s is %q; refusing persistent-volume migration outside a running or stopped state", guest.Name, status)
+	}
+	wasRunning := status == "running"
+	if wasRunning {
+		if err := client.StopVM(ctx, plan.Node, guest.VMID); err != nil {
+			return fmt.Errorf("stop %s before persistent-volume migration: %w", guest.Name, err)
+		}
+		defer func() {
+			if startErr := client.StartVM(ctx, plan.Node, guest.VMID); startErr != nil {
+				if err == nil {
+					err = fmt.Errorf("restore %s after persistent-volume migration: %w", guest.Name, startErr)
+				} else {
+					err = fmt.Errorf("%w; additionally failed to restore %s after persistent-volume migration: %v", err, guest.Name, startErr)
+				}
+			}
+		}()
+	}
+
+	for _, migration := range migrations {
+		refreshed := map[string]any{}
+		if err := client.QEMUConfig(ctx, plan.Node, guest.VMID, &refreshed); err != nil {
+			return fmt.Errorf("inspect %s before moving persistent volume %s: %w", guest.Name, migration.disk, err)
+		}
+		expected, expectedErr := qemuPersistentVolumeParam(plan, migration.volume)
+		if expectedErr != nil {
+			return expectedErr
+		}
+		observed, _ := refreshed[migration.disk].(string)
+		if qemuVolumeStorageID(observed) == migration.storage {
+			continue
+		}
+		if !qemuVolumeMatchesPersistentIdentity(observed, expected) {
+			return fmt.Errorf("HOLD: guest %s persistent volume %s changed before migration", guest.Name, migration.disk)
+		}
+		digest, _ := refreshed["digest"].(string)
+		if err := client.MoveQEMUPersistentDisk(ctx, plan.Node, guest.VMID, migration.disk, migration.storage, digest); err != nil {
+			return fmt.Errorf("migrate persistent volume %s for %s: %w", migration.disk, guest.Name, err)
+		}
+	}
+
+	refreshed := map[string]any{}
+	if err := client.QEMUConfig(ctx, plan.Node, guest.VMID, &refreshed); err != nil {
+		return fmt.Errorf("verify %s persistent-volume migration: %w", guest.Name, err)
+	}
+	for key := range current {
+		delete(current, key)
+	}
+	for key, value := range refreshed {
+		current[key] = value
+	}
+	return nil
+}
+
+func qemuVolumeStorageID(value string) string {
+	first, _, _ := strings.Cut(value, ",")
+	storage, volume, ok := strings.Cut(first, ":")
+	if !ok || storage == "" || volume == "" {
+		return ""
+	}
+	return storage
+}
+
+func qemuVolumeMatchesPersistentIdentity(observed, expected string) bool {
+	observedParts := strings.Split(observed, ",")
+	expectedParts := strings.Split(expected, ",")
+	if len(observedParts) == 0 || len(expectedParts) == 0 {
+		return false
+	}
+	_, expectedSize, expectedOK := strings.Cut(expectedParts[0], ":")
+	if !expectedOK || expectedSize == "" || qemuVolumeStorageID(observed) == "" {
+		return false
+	}
+	observedOptions := qemuVolumeOptions(observedParts[1:])
+	expectedOptions := qemuVolumeOptions(expectedParts[1:])
+	return observedOptions["backup"] == expectedOptions["backup"] &&
+		observedOptions["serial"] == expectedOptions["serial"] &&
+		observedOptions["size"] == expectedSize+"G"
+}
+
+func qemuVolumeOptions(parts []string) map[string]string {
+	options := make(map[string]string, len(parts))
+	for _, option := range parts {
+		name, value, ok := strings.Cut(option, "=")
+		if ok {
+			options[name] = value
+		}
+	}
+	return options
 }
 
 func qemuVolumeMatchesSerial(observed, expected, serial string) bool {
