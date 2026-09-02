@@ -117,6 +117,85 @@ func TestGenerateDownloadsFirstProfileFromProviderManifest(t *testing.T) {
 	}
 }
 
+func TestGenerateRetriesOpaqueProviderErrorWithManagedAirVPNDevice(t *testing.T) {
+	deviceLists := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/generator/":
+			switch r.URL.Query().Get("device") {
+			case defaultDeviceName:
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"error":"provider-private-error"}`))
+			case managedDeviceName:
+				w.Header().Set("Content-Type", "text/plain")
+				_, _ = w.Write([]byte(testProfile()))
+			default:
+				t.Fatalf("unexpected AirVPN device selector: %q", r.URL.Query().Get("device"))
+			}
+		case "/status/":
+			_, _ = w.Write([]byte(`{"servers":[{"public_name":"Ainalrami","country_name":"Japan","country_code":"jp","continent":"Asia","health":"ok"}]}`))
+		case "/userinfo/":
+			_, _ = w.Write([]byte(`{"user":{"premium":true}}`))
+		case "/devices/":
+			var request map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request["action"] != "list" {
+				t.Fatalf("unexpected AirVPN device request: request=%v error=%v", request, err)
+			}
+			deviceLists++
+			if deviceLists == 1 {
+				_, _ = w.Write([]byte(`{"devices":[{"status":"ready"}]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"devices":[{"name":"boetticher-airvpn","description":"Boetticher AirVPN transit","status":"ready"}]}`))
+		default:
+			t.Fatalf("unexpected AirVPN request: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	profile, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(context.Background(), "controller-key", "japan")
+	if err != nil || deviceLists != 2 || profile.Metadata.EndpointPort != DefaultPort {
+		t.Fatalf("managed AirVPN retry failed: profile=%#v device-lists=%d error=%v", profile.Metadata, deviceLists, err)
+	}
+}
+
+func TestEnsureManagedAirVPNDeviceCreatesOnlyItsOwnDevice(t *testing.T) {
+	deviceLists := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/devices/" || r.Method != http.MethodPost || r.Header.Get("Api-Key") != "controller-key" {
+			t.Fatalf("unexpected AirVPN device request: path=%q method=%q api-key=%q", r.URL.Path, r.Method, r.Header.Get("Api-Key"))
+		}
+		var request map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("decode AirVPN device request: %v", err)
+		}
+		switch request["action"] {
+		case "list":
+			deviceLists++
+			if deviceLists == 1 {
+				_, _ = w.Write([]byte(`{"devices":[]}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"devices":[{"id":"private-id","name":"boetticher-airvpn","description":"Boetticher AirVPN transit","status":"ready"}]}`))
+		case "add":
+			_, _ = w.Write([]byte(`{"id":"private-id"}`))
+		case "modify":
+			if request["id"] != "private-id" || request["name"] != managedDeviceName || request["description"] != managedDeviceNote {
+				t.Fatalf("unexpected managed-device mutation: %v", request)
+			}
+			_, _ = w.Write([]byte(`{"result":"ok"}`))
+		default:
+			t.Fatalf("unexpected AirVPN device action: %q", request["action"])
+		}
+	}))
+	defer server.Close()
+
+	device, err := (Client{}).ensureManagedDevice(context.Background(), server.URL, "controller-key", server.Client())
+	if err != nil || device != managedDeviceName || deviceLists != 2 {
+		t.Fatalf("managed AirVPN device was not created safely: device=%q lists=%d error=%v", device, deviceLists, err)
+	}
+}
+
 func TestGenerateDoesNotIncludeProviderResponseInError(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
