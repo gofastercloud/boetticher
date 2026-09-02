@@ -64,6 +64,26 @@ func writeStorageProjection(dir string, s model.Site) error {
 	return writeProjection(filepath.Join(dir, "generated", "storage", "desired-state.json"), storagePlan)
 }
 
+// writeBootstrapProjections preserves the complete projection gate for normal
+// sites. An AirVPN selected-source policy is different: its firewall and
+// Ansible projections cannot exist until deploy has generated and qualified a
+// provider profile. Bootstrap only needs the canonical model and storage
+// contract, and must not turn that later deploy-time dependency into an
+// expensive post-artifact bootstrap failure.
+func writeBootstrapProjections(dir string, s model.Site) error {
+	firewallPlan, err := firewall.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
+	if len(firewallPlan.PolicyRoutes) == 0 {
+		return writeModelProjections(dir, s)
+	}
+	if err := writeModelProjection(dir, s); err != nil {
+		return err
+	}
+	return writeStorageProjection(dir, s)
+}
+
 func writeModelProjections(dir string, s model.Site) error {
 	return writeModelProjectionsWithResolver(dir, s, net.LookupIP)
 }

@@ -84,6 +84,9 @@ func TestInitializationCommandIsStableAndGuarded(t *testing.T) {
 		"UUID=$uuid /srv/boetticher/backups ext4 defaults,nofail 0 2",
 		"pvesm add lvmthin boetticher-thin",
 		"pvesm add dir boetticher-backups",
+		"pvesh get /storage/boetticher-thin --output-format json",
+		"pvesh get /storage/boetticher-backups --output-format json",
+		"perl -MJSON::PP=decode_json",
 	} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("initialization command does not contain %q:\n%s", want, command)
@@ -91,6 +94,9 @@ func TestInitializationCommandIsStableAndGuarded(t *testing.T) {
 	}
 	if strings.Contains(command, "wipefs --all --force") {
 		t.Fatal("ordinary storage initialization can discard an existing layout")
+	}
+	if strings.Contains(command, "pvesm config") {
+		t.Fatal("storage initialization uses the removed pvesm config subcommand")
 	}
 	if strings.Contains(command, "/dev/sd") || strings.Contains(command, "/dev/nvme") {
 		t.Fatal("initialization command embedded a transient device identity")

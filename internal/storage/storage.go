@@ -222,8 +222,8 @@ func InitializationCommand(device string, confirmed, reinitialize bool) (string,
 		"test -n \"$uuid\"",
 		"grep -Fq \"UUID=$uuid " + BackupMount + " " + BackupFilesystem + " defaults,nofail 0 2\" /etc/fstab || printf '%s\\n' \"UUID=$uuid " + BackupMount + " " + BackupFilesystem + " defaults,nofail 0 2\" >> /etc/fstab",
 		"mountpoint -q " + BackupMount + " || mount " + BackupMount,
-		"if pvesm status --storage " + GuestStorageID + " >/dev/null 2>&1; then pvesm config " + GuestStorageID + " | grep -Fq 'vgname " + VolumeGroup + "' && pvesm config " + GuestStorageID + " | grep -Fq 'thinpool " + ThinPool + "' || { echo 'boetticher guest storage has a conflicting definition' >&2; exit 56; }; else pvesm add lvmthin " + GuestStorageID + " --vgname " + VolumeGroup + " --thinpool " + ThinPool + " --content images,rootdir; fi",
-		"if pvesm status --storage " + BackupStorageID + " >/dev/null 2>&1; then pvesm config " + BackupStorageID + " | grep -Fq 'path " + BackupMount + "' || { echo 'boetticher backup storage has a conflicting definition' >&2; exit 57; }; else pvesm add dir " + BackupStorageID + " --path " + BackupMount + " --content backup; fi",
+		"if pvesm status --storage " + GuestStorageID + " >/dev/null 2>&1; then " + storageConfigurationCheck(GuestStorageID, "type=lvmthin", "vgname="+VolumeGroup, "thinpool="+ThinPool, "content=images", "content=rootdir") + " || { echo 'boetticher guest storage has a conflicting definition' >&2; exit 56; }; else pvesm add lvmthin " + GuestStorageID + " --vgname " + VolumeGroup + " --thinpool " + ThinPool + " --content images,rootdir; fi",
+		"if pvesm status --storage " + BackupStorageID + " >/dev/null 2>&1; then " + storageConfigurationCheck(BackupStorageID, "type=dir", "path="+BackupMount, "content=backup") + " || { echo 'boetticher backup storage has a conflicting definition' >&2; exit 57; }; else pvesm add dir " + BackupStorageID + " --path " + BackupMount + " --content backup; fi",
 		"pvesm status --storage " + GuestStorageID + " >/dev/null",
 		"pvesm status --storage " + BackupStorageID + " >/dev/null",
 	}...)
@@ -236,4 +236,31 @@ func validateDevice(device string) error {
 
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+// storageConfigurationCheck reads the supported Proxmox storage API through
+// pvesh. PVE 9 no longer provides the old "pvesm config" subcommand, while
+// the API supplies the structured configuration we need to validate before
+// accepting an existing storage ID.
+func storageConfigurationCheck(storageID string, expected ...string) string {
+	const program = `my ($storage, @expected) = @ARGV;
+my $config = eval { decode_json(do { local $/; <STDIN> }) };
+exit 1 if $@ || ref($config) ne q(HASH);
+exit 1 unless ($config->{storage} // q()) eq $storage;
+my %content = map { $_ => 1 } split /,/, ($config->{content} // q());
+for my $entry (@expected) {
+  my ($field, $value) = split /=/, $entry, 2;
+  exit 1 unless defined $value;
+  if ($field eq q(content)) {
+    exit 1 unless $content{$value};
+    next;
+  }
+  exit 1 unless ($config->{$field} // q()) eq $value;
+}`
+	arguments := make([]string, 0, len(expected)+1)
+	arguments = append(arguments, shellQuote(storageID))
+	for _, entry := range expected {
+		arguments = append(arguments, shellQuote(entry))
+	}
+	return "pvesh get /storage/" + storageID + " --output-format json | perl -MJSON::PP=decode_json -e " + shellQuote(program) + " " + strings.Join(arguments, " ")
 }

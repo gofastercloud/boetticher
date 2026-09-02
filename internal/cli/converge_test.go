@@ -255,6 +255,35 @@ func TestWriteStorageProjectionDoesNotRequireAirVPNProfile(t *testing.T) {
 	}
 }
 
+func TestWriteBootstrapProjectionsDefersAirVPNRuntimeProjections(t *testing.T) {
+	config := model.ConfigFromSite(model.NewDefaultSite("installation", "age1example"))
+	config.StorageProfile = "dedicated-data-disk"
+	config.StorageDevice = "/dev/disk/by-id/ata-example-data"
+	enabled := true
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "australia"}
+	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
+	s, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	if err := writeBootstrapProjections(dir, s); err != nil {
+		t.Fatalf("write bootstrap projections before AirVPN profile exists: %v", err)
+	}
+	for _, path := range []string{
+		filepath.Join(dir, "generated", "model.json"),
+		filepath.Join(dir, "generated", "storage", "desired-state.json"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("safe bootstrap projection %s was not written: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "generated", "firewall", "boetticher.nft")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("bootstrap wrote a firewall projection without AirVPN metadata: %v", err)
+	}
+}
+
 func TestProjectionCleanupRejectsSymlinkedModuleRoot(t *testing.T) {
 	dir := t.TempDir()
 	moduleRootParent := filepath.Join(dir, "generated")

@@ -387,7 +387,7 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	}
 	progress.complete()
 	progress.start("persist", "Persist bootstrap state")
-	if err := writeModelProjections(*siteDir, s); err != nil {
+	if err := writeBootstrapProjections(*siteDir, s); err != nil {
 		return fmt.Errorf("HOLD: bootstrap network binding was persisted but projections could not be regenerated: %w", err)
 	}
 	if err := writePhysicalDiscovery(*siteDir, s, postDiscovery); err != nil {
