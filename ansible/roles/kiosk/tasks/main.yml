@@ -506,7 +506,6 @@
       no_log: true
 
     - name: Import the controller-issued kiosk identity into NSS
-      become_user: kiosk
       ansible.builtin.command:
         argv:
           - pk12util
