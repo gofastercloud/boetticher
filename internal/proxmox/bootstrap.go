@@ -1044,6 +1044,67 @@ func CheckScopedCredentialAvailability(ctx context.Context, runner CommandRunner
 	return nil
 }
 
+// RemoveExactScopedCredentialToken removes only the reserved, stale
+// provisioning token when the caller has deliberately started a new site and
+// cannot recover Proxmox's one-time token value. The surrounding role must
+// still be the exact bounded Boetticher role; it never removes the user,
+// role, root access, or any other token.
+func RemoveExactScopedCredentialToken(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID, role string) (bool, error) {
+	if !safeID(userID) || !safeID(tokenID) || !safeID(role) {
+		return false, errors.New("Proxmox identity and token IDs must be simple identifiers")
+	}
+	roleOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/roles --output-format json"))
+	if err != nil {
+		return false, fmt.Errorf("HOLD: inspect Proxmox role %q before token replacement: %w", role, err)
+	}
+	roleExists, err := validateScopedRoleJSON(roleOutput, role, ScopedProvisionerPrivileges())
+	if err != nil {
+		return false, fmt.Errorf("HOLD: Proxmox role %q is not the expected bounded role: %w", role, err)
+	}
+	if !roleExists {
+		return false, fmt.Errorf("HOLD: Proxmox role %q is not present for exact token replacement", role)
+	}
+	usersOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users --output-format json"))
+	if err != nil {
+		return false, fmt.Errorf("HOLD: inspect Proxmox users before token replacement: %w", err)
+	}
+	users, err := accessIDs(usersOutput, "userid", "id")
+	if err != nil {
+		return false, fmt.Errorf("HOLD: decode Proxmox users before token replacement: %w", err)
+	}
+	if !users[userID] {
+		return false, nil
+	}
+	tokensCommand := "pvesh get /access/users/" + shellQuote(userID) + "/token --output-format json"
+	tokensOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, tokensCommand))
+	if err != nil {
+		return false, fmt.Errorf("HOLD: inspect Proxmox tokens for %s before replacement: %w", userID, err)
+	}
+	tokens, err := accessIDs(tokensOutput, "tokenid", "id")
+	if err != nil {
+		return false, fmt.Errorf("HOLD: decode Proxmox tokens before replacement: %w", err)
+	}
+	if !tokens[tokenID] {
+		return false, nil
+	}
+	removeToken := "pvesh delete /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID)
+	if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, removeToken)); err != nil {
+		return false, fmt.Errorf("remove exact stale Proxmox token %s!%s: %w", userID, tokenID, err)
+	}
+	remainingOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, tokensCommand))
+	if err != nil {
+		return false, fmt.Errorf("verify Proxmox token removal for %s: %w", userID, err)
+	}
+	remaining, err := accessIDs(remainingOutput, "tokenid", "id")
+	if err != nil {
+		return false, fmt.Errorf("HOLD: decode Proxmox tokens after replacement: %w", err)
+	}
+	if remaining[tokenID] {
+		return false, fmt.Errorf("HOLD: exact stale Proxmox token %s!%s remains after deletion", userID, tokenID)
+	}
+	return true, nil
+}
+
 // CheckScopedCredentialReuse verifies that an encrypted, previously-created
 // provisioning identity still exists with the expected bounded role. It is
 // read-only and permits safe retry/bootstrap qualification without treating

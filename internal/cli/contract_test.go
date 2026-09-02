@@ -248,7 +248,7 @@ func validateCommandForm(t *testing.T, fields []string) {
 		"init":               {"--site-dir": true, "--age-identity": true, "--external-firewall": true, "--storage-profile": true, "--storage-device": true},
 		"bootstrap-endpoint": {"--site": true},
 		"preflight":          {"--site": true, "--live": true, "--record": true, "--bootstrap-address": true, "--trunk-interface": true},
-		"bootstrap":          {"--site": true, "--recovery-confirmed": true, "--trunk-interface": true, "--dry-run": true, "--proxmox-ca": true, "--insecure": true},
+		"bootstrap":          {"--site": true, "--recovery-confirmed": true, "--replace-scoped-credentials": true, "--trunk-interface": true, "--dry-run": true, "--proxmox-ca": true, "--insecure": true},
 		"deploy":             {"--site": true, "--dry-run": true, "--confirm": true, "--proxmox-ca": true, "--insecure": true},
 		"status":             {"--site": true, "--live": true, "--verbose": true, "--json": true},
 		"update":             {"--site": true, "--dry-run": true, "--confirm": true},

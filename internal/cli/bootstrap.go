@@ -91,6 +91,7 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
 	recoveryConfirmed := fs.Bool("recovery-confirmed", false, "confirm an independent Age recovery copy exists")
 	storageConfirmed := fs.Bool("storage-confirmed", false, "confirm initialization of the configured dedicated data disk")
+	replaceScopedCredentials := fs.Bool("replace-scoped-credentials", false, "replace the exact stale Boetticher Proxmox API token when its encrypted value is unavailable")
 	operatorKey := fs.String("operator-key", "", "operator SSH public key path")
 	initialUser := fs.String("initial-user", "root", "initial SSH user on the fresh Proxmox host")
 	knownHosts := fs.String("known-hosts", "", "SSH known-hosts file for bootstrap; defaults to the site trust file")
@@ -194,6 +195,9 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	}
 	var credentials site.ProxmoxCredentials
 	if credentialsExist {
+		if *replaceScopedCredentials {
+			return errors.New("--replace-scoped-credentials is only valid when this site has no encrypted Proxmox credentials")
+		}
 		credentials, err = site.LoadProxmoxCredentials(*siteDir, s, *ageIdentity)
 		if err != nil {
 			return fmt.Errorf("load existing Proxmox API credentials: %w", err)
@@ -201,8 +205,21 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 		if credentials.APIUser != "labadmin@pve" || credentials.TokenID != "boetticher" {
 			return fmt.Errorf("HOLD: encrypted Proxmox credentials identify %s!%s, expected labadmin@pve!boetticher", credentials.APIUser, credentials.TokenID)
 		}
-	} else if err := proxmox.CheckScopedCredentialAvailability(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
-		return err
+	} else {
+		if *replaceScopedCredentials {
+			removed, removeErr := proxmox.RemoveExactScopedCredentialToken(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner")
+			if removeErr != nil {
+				return removeErr
+			}
+			if removed {
+				fmt.Fprintln(out, "Stale Boetticher scoped API token: PASS removed exact owned token")
+			} else {
+				fmt.Fprintln(out, "Stale Boetticher scoped API token: PASS no matching token present")
+			}
+		}
+		if err := proxmox.CheckScopedCredentialAvailability(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
+			return err
+		}
 	}
 	proxmoxCAPEM := credentials.CAPEM
 	if *proxmoxCA != "" {

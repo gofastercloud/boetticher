@@ -22,6 +22,31 @@ type fakeRunner struct {
 	errors      map[string]error
 }
 
+type staleScopedTokenRunner struct {
+	commands []string
+	removed  bool
+}
+
+func (r *staleScopedTokenRunner) Run(_ context.Context, _ string, _ string, command string) ([]byte, error) {
+	r.commands = append(r.commands, command)
+	switch command {
+	case "pvesh get /access/roles --output-format json":
+		return []byte(`[{"roleid":"BoetticherProvisioner","privs":"` + ScopedProvisionerPrivileges() + `","special":0}]`), nil
+	case "pvesh get /access/users --output-format json":
+		return []byte(`[{"userid":"labadmin@pve"}]`), nil
+	case "pvesh get /access/users/'labadmin@pve'/token --output-format json":
+		if r.removed {
+			return []byte(`[]`), nil
+		}
+		return []byte(`[{"tokenid":"boetticher"}]`), nil
+	case "pvesh delete /access/users/'labadmin@pve'/token/'boetticher'":
+		r.removed = true
+		return nil, nil
+	default:
+		return nil, errors.New("unexpected command: " + command)
+	}
+}
+
 func TestManagementNetworkConfigIsFixedAndPreservesHOME(t *testing.T) {
 	if !strings.Contains(managementInterfaceConfig, "vmbr1.99") || !strings.Contains(managementInterfaceConfig, "10.10.99.5/24") || !strings.Contains(managementInterfaceConfig, "10.10.0.0/16 via 10.10.99.1") {
 		t.Fatal("management interface configuration is incomplete")
@@ -361,6 +386,45 @@ func TestCheckScopedCredentialAvailabilityHoldsExistingToken(t *testing.T) {
 	for _, command := range runner.commands {
 		if strings.Contains(command, " create ") || strings.Contains(command, " set ") || strings.Contains(command, " delete ") {
 			t.Fatalf("credential reservation check mutated Proxmox: %s", command)
+		}
+	}
+}
+
+func TestRemoveExactScopedCredentialTokenDeletesOnlyTheOwnedToken(t *testing.T) {
+	runner := &staleScopedTokenRunner{}
+	removed, err := RemoveExactScopedCredentialToken(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner")
+	if err != nil || !removed {
+		t.Fatalf("RemoveExactScopedCredentialToken() = %t, %v", removed, err)
+	}
+	if !runner.removed {
+		t.Fatal("exact scoped token was not removed")
+	}
+	deleteCommand := "pvesh delete /access/users/'labadmin@pve'/token/'boetticher'"
+	if !containsString(runner.commands, deleteCommand) {
+		t.Fatalf("expected exact token deletion command, got %#v", runner.commands)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "pvesh delete ") && command != deleteCommand {
+			t.Fatalf("token replacement issued an unexpected deletion: %s", command)
+		}
+		for _, forbidden := range []string{"/access/users/'labadmin@pve' --", "/access/roles", "root@pam"} {
+			if strings.Contains(command, "pvesh delete ") && strings.Contains(command, forbidden) {
+				t.Fatalf("token replacement deletion touched forbidden target %q: %s", forbidden, command)
+			}
+		}
+	}
+}
+
+func TestRemoveExactScopedCredentialTokenRefusesUnexpectedRole(t *testing.T) {
+	runner := &fakeRunner{responses: map[string][]byte{
+		"pvesh get /access/roles --output-format json": []byte(`[]`),
+	}}
+	if _, err := RemoveExactScopedCredentialToken(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner"); err == nil || !strings.Contains(err.Error(), "not present") {
+		t.Fatalf("unexpected scoped role was accepted for token removal: %v", err)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "pvesh delete ") {
+			t.Fatalf("unexpected role triggered token deletion: %s", command)
 		}
 	}
 }
