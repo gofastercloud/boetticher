@@ -102,6 +102,18 @@ func TestGenerateDescribesInvalidProviderResponseWithoutLeakingIt(t *testing.T) 
 	}
 }
 
+func TestGenerateClassifiesJSONProviderErrorWithoutLeakingIt(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"message":"device default is unavailable for controller-key"}`))
+	}))
+	defer server.Close()
+	_, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(context.Background(), "controller-key", "europe")
+	if err == nil || !strings.Contains(err.Error(), "content_type=application/json") || !strings.Contains(err.Error(), "shape=json-device") || strings.Contains(err.Error(), "device default") || strings.Contains(err.Error(), "controller-key") {
+		t.Fatalf("JSON provider error was not safely classified: %v", err)
+	}
+}
+
 func TestGenerateDoesNotFollowRedirects(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "https://example.invalid/leak", http.StatusFound)

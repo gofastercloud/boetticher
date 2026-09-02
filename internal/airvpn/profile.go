@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -155,12 +156,47 @@ func providerResponseShape(data []byte) string {
 		case strings.HasPrefix(line, "<"):
 			return "markup"
 		case strings.HasPrefix(line, "{") || strings.HasPrefix(line, "["):
-			return "structured"
+			return "json-" + providerJSONErrorCategory(data)
 		default:
 			return "plain"
 		}
 	}
 	return "empty"
+}
+
+func providerJSONErrorCategory(data []byte) string {
+	var response map[string]json.RawMessage
+	if err := json.Unmarshal(data, &response); err != nil {
+		return "invalid"
+	}
+	var details []string
+	for _, field := range []string{"error", "message", "detail", "reason", "code"} {
+		value, ok := response[field]
+		if !ok {
+			continue
+		}
+		var text string
+		if json.Unmarshal(value, &text) == nil {
+			details = append(details, text)
+		}
+	}
+	message := strings.ToLower(strings.Join(details, " "))
+	switch {
+	case strings.Contains(message, "api") && strings.Contains(message, "key"):
+		return "api-key"
+	case strings.Contains(message, "authoriz") || strings.Contains(message, "authenticat"):
+		return "authorization"
+	case strings.Contains(message, "device"):
+		return "device"
+	case strings.Contains(message, "server") || strings.Contains(message, "country") || strings.Contains(message, "region"):
+		return "server-selector"
+	case strings.Contains(message, "subscription") || strings.Contains(message, "account") || strings.Contains(message, "plan"):
+		return "account"
+	case message == "":
+		return "unspecified"
+	default:
+		return "provider-error"
+	}
 }
 
 func ParseProfile(data []byte) (Profile, error) {
