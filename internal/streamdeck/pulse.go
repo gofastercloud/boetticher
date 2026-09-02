@@ -224,9 +224,26 @@ func defaultString(value, fallback string) string {
 }
 
 func optionalPercent(value any) *float64 {
-	number, ok := value.(float64)
-	if !ok || number < 0 || number > 100 {
+	switch value := value.(type) {
+	case float64:
+		return boundedPercent(value)
+	case map[string]any:
+		if percent, ok := value["percent"].(float64); ok {
+			return boundedPercent(percent)
+		}
+		unit, _ := value["unit"].(string)
+		if strings.EqualFold(strings.TrimSpace(unit), "percent") {
+			if percent, ok := value["value"].(float64); ok {
+				return boundedPercent(percent)
+			}
+		}
+	}
+	return nil
+}
+
+func boundedPercent(value float64) *float64 {
+	if value < 0 || value > 100 {
 		return nil
 	}
-	return &number
+	return &value
 }

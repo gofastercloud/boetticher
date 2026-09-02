@@ -65,6 +65,32 @@ func TestPulseFetchIsBoundedAndPaginates(t *testing.T) {
 	}
 }
 
+func TestDecodeResourceAcceptsStructuredPulseMetrics(t *testing.T) {
+	resource, err := decodeResource(json.RawMessage(`{
+		"name":"lab-fw-01",
+		"type":"vm",
+		"sources":["proxmox"],
+		"platformScopes":["proxmox-pve"],
+		"status":"warning",
+		"metrics":{
+			"cpu":{"value":1.25,"percent":1.25,"unit":"percent"},
+			"memory":{"value":0,"used":449294336,"total":2147483648,"percent":20.921897888183594,"unit":"bytes"}
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resource.CPU == nil || *resource.CPU != 1.25 {
+		t.Fatalf("structured CPU = %#v, want 1.25", resource.CPU)
+	}
+	if resource.Memory == nil || *resource.Memory != 20.921897888183594 {
+		t.Fatalf("structured memory = %#v, want 20.921897888183594", resource.Memory)
+	}
+	if got := optionalPercent(map[string]any{"value": 449294336.0, "unit": "bytes"}); got != nil {
+		t.Fatalf("byte metric was interpreted as a percent: %#v", got)
+	}
+}
+
 func TestPulseFetchUsesCurrentProxmoxResourceProvenance(t *testing.T) {
 	var sourceQuery string
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
