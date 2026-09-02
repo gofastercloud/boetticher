@@ -1013,6 +1013,37 @@ func EnsureVirtualBridge(ctx context.Context, client *Client, node string) error
 	return nil
 }
 
+// EnsureVirtualOnlyBridge keeps the Boetticher-owned vmbr1 bridge present but
+// deliberately unclaimed. It removes a single stale physical member only
+// after DetachTrunk has proved that member is neither the HOME/bootstrap path
+// nor vmbr0's upstream. Ambiguous multi-port bridges remain a hard failure.
+func EnsureVirtualOnlyBridge(ctx context.Context, client *Client, node, bootstrapAddress string) error {
+	if err := EnsureVirtualBridge(ctx, client, node); err != nil {
+		return err
+	}
+	var interfaces []NetworkInterface
+	if err := client.NodeNetwork(ctx, node, &interfaces); err != nil {
+		return fmt.Errorf("inspect virtual-only vmbr1: %w", err)
+	}
+	for _, iface := range interfaces {
+		if iface.Iface != "vmbr1" {
+			continue
+		}
+		members := strings.Fields(iface.BridgePorts)
+		if len(members) == 0 || (len(members) == 1 && members[0] == "none") {
+			return nil
+		}
+		if len(members) != 1 || !safeInterfaceName(members[0]) {
+			return fmt.Errorf("HOLD: virtual-only vmbr1 has ambiguous physical members %q", iface.BridgePorts)
+		}
+		if err := DetachTrunk(ctx, client, node, members[0], bootstrapAddress); err != nil {
+			return fmt.Errorf("detach stale virtual-only vmbr1 member %s: %w", members[0], err)
+		}
+		return nil
+	}
+	return errors.New("vmbr1 is absent after virtual-only bridge reconciliation")
+}
+
 func AttachTrunk(ctx context.Context, client *Client, node, physicalInterface, bootstrapAddress string) error {
 	if client == nil {
 		return errors.New("Proxmox client is required")

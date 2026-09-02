@@ -176,6 +176,56 @@ func TestEnsureVirtualBridgeOmitsInvalidNonePort(t *testing.T) {
 	}
 }
 
+func TestEnsureVirtualOnlyBridgeDetachesOneStaleMember(t *testing.T) {
+	reads := 0
+	detached := false
+	reloads := 0
+	initial := `{"data":[
+  {"iface":"vmbr0","type":"bridge","address":"192.0.2.73/24","gateway":"192.0.2.1","bridge_ports":"eno1"},
+  {"iface":"vmbr1","type":"bridge","bridge_ports":"enxa0cec8a2b210","bridge_vlan_aware":true},
+  {"iface":"eno1","type":"eth","hwaddr":"00:11:22:33:44:55","active":true},
+  {"iface":"enxa0cec8a2b210","type":"eth","hwaddr":"00:aa:bb:cc:dd:ee","active":false}
+]}`
+	cleared := `{"data":[
+  {"iface":"vmbr0","type":"bridge","address":"192.0.2.73/24","gateway":"192.0.2.1","bridge_ports":"eno1"},
+  {"iface":"vmbr1","type":"bridge","bridge_ports":"none","bridge_vlan_aware":true},
+  {"iface":"eno1","type":"eth","hwaddr":"00:11:22:33:44:55","active":true},
+  {"iface":"enxa0cec8a2b210","type":"eth","hwaddr":"00:aa:bb:cc:dd:ee","active":false}
+]}`
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/proxmox/network":
+			reads++
+			if detached {
+				return response([]byte(cleared))
+			}
+			return response([]byte(initial))
+		case r.Method == http.MethodPut && r.URL.Path == "/api2/json/nodes/proxmox/network/vmbr1":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if r.Form.Get("type") != "bridge" || r.Form.Get("bridge_ports") != "none" || r.Form.Get("bridge_vlan_aware") != "1" {
+				t.Fatalf("unexpected virtual-only detach form: %v", r.Form)
+			}
+			detached = true
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api2/json/nodes/proxmox/network":
+			reloads++
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected network request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := EnsureVirtualOnlyBridge(context.Background(), client, "proxmox", "192.0.2.73"); err != nil {
+		t.Fatal(err)
+	}
+	if !detached || reloads != 1 || reads < 4 {
+		t.Fatalf("virtual-only bridge reconciliation did not verify its detach: detached=%t reloads=%d reads=%d", detached, reloads, reads)
+	}
+}
+
 func TestAttachTrunkSendsRequiredBridgeType(t *testing.T) {
 	networkReads := 0
 	networkReloads := 0

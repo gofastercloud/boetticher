@@ -307,7 +307,11 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	if s.Gateway.Mode == model.GatewayModeExternal && discovery.Trunk == nil {
 		return errors.New("external gateway mode requires a distinct physical vmbr1 trunk interface")
 	}
-	if err := proxmox.EnsureVirtualBridge(ctx, client, apiNode); err != nil {
+	if virtualOnlyRequested {
+		if err := proxmox.EnsureVirtualOnlyBridge(ctx, client, apiNode, s.BootstrapAddress); err != nil {
+			return err
+		}
+	} else if err := proxmox.EnsureVirtualBridge(ctx, client, apiNode); err != nil {
 		return err
 	}
 	if err := client.ReloadNodeNetwork(ctx, apiNode); err != nil {
