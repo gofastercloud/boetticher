@@ -721,6 +721,15 @@ func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *tes
 	if !strings.Contains(scanText, "timing_artifact=${3:-}") || strings.Contains(scanText, "timing_emit() {\n  stage=$1\n  duration_ms=$2\n  artifact=${3:-}") {
 		t.Fatal("qualification timing helper must not overwrite the artifact path")
 	}
+	for _, required := range []string{
+		"module=${name#boetticher-}",
+		"[ \"$module\" = dns-blocky ] && module=dns",
+		"if ! GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact",
+	} {
+		if !strings.Contains(scanText, required) {
+			t.Fatalf("qualification does not derive or fail-closed validate artifact module identity: missing %q", required)
+		}
+	}
 	if strings.Contains(buildText, "build_dns_blocky() {\n  printf '%s\\n' 'boetticher build stage: dns blocky'\n  rootfs=$(prepare_rootfs boetticher-dns-blocky)\n  install_powerdns \"$rootfs\"\n  install_packages \"$rootfs\" chrony") {
 		t.Fatal("DNS construction still performs a redundant package-index transaction")
 	}

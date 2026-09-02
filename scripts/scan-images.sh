@@ -147,33 +147,13 @@ scan_one() {
     mounted=0
   fi
   cleanup_scan_root
-  module=$name
-  case "$name" in
-    boetticher-dns-blocky) module=dns ;;
-    boetticher-base) module=base ;;
-    boetticher-logging) module=logging ;;
-    boetticher-monitoring) module=monitoring ;;
-    boetticher-firewall) module=firewall ;;
-    boetticher-portal) module=portal ;;
-    boetticher-tailnet-router) module=tailnet-router ;;
-    boetticher-airvpn) module=airvpn ;;
-    boetticher-bifrost) module=bifrost ;;
-    boetticher-printer) module=printer ;;
-    boetticher-streamdeck) module=streamdeck ;;
-    boetticher-aiops) module=aiops ;;
-    boetticher-gatus) module=gatus ;;
-    boetticher-network-probe) module=network-probe ;;
-  esac
-  if [ "$module" = dns ]; then
-    GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact \
-      -artifact "$artifact" -report "$report" -manifest "$manifest" -sbom "$sbom" \
-      $provenance_arg \
-      -evidence-root "$evidence_root" -module "$module"
-  else
-    GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact \
-      -artifact "$artifact" -report "$report" -manifest "$manifest" -sbom "$sbom" \
-      $provenance_arg \
-      -evidence-root "$evidence_root" -module "$module"
+  module=${name#boetticher-}
+  [ "$module" = dns-blocky ] && module=dns
+  if ! GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact \
+    -artifact "$artifact" -report "$report" -manifest "$manifest" -sbom "$sbom" \
+    $provenance_arg \
+    -evidence-root "$evidence_root" -module "$module"; then
+    exit 1
   fi
   scan_finished=$(timing_now_ms)
   timing_emit "artifact_qualification" "$((scan_finished - scan_started))" "$name"

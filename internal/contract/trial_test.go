@@ -56,8 +56,10 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(scanSource), "boetticher-streamdeck) module=streamdeck ;;") {
-		t.Fatal("artifact qualification does not map the StreamDeck artifact to its module")
+	for _, required := range []string{"module=${name#boetticher-}", "[ \"$module\" = dns-blocky ] && module=dns", "if ! GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact"} {
+		if !strings.Contains(string(scanSource), required) {
+			t.Fatalf("artifact qualification does not derive and fail-closed validate module identity: %s", required)
+		}
 	}
 	bootstrapSource, err := os.ReadFile(filepath.Join(repoRoot, "internal", "cli", "bootstrap.go"))
 	if err != nil {
