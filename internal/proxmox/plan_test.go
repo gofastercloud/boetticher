@@ -869,6 +869,107 @@ func TestEnsureQEMURestoresRunningGuestAfterPersistentVolumeMigrationFailure(t *
 	}
 }
 
+func TestEnsureQEMUReconcilesDeclaredNetworkInterfacesBeforeStart(t *testing.T) {
+	guest := GuestPlan{VMID: 100, Name: "test-fw", NICs: []GuestNIC{{
+		Name: "wan0", Bridge: "vmbr0", Method: "dhcp", MAC: "02:00:00:00:01:01",
+	}}}
+	stale := "virtio=02:00:00:00:ff:ff,bridge=vmbr0,firewall=1"
+	current := "virtio=02:00:00:00:01:01,bridge=vmbr0,firewall=1"
+	updated := false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/config":
+			if updated {
+				return response([]byte(`{"data":{"name":"test-fw","net0":"` + current + `"}}`))
+			}
+			return response([]byte(`{"data":{"name":"test-fw","net0":"` + stale + `"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/status/current":
+			return response([]byte(`{"data":{"status":"stopped"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/100/config":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if got, want := r.Form.Get("net0"), "virtio,bridge=vmbr0,firewall=1,macaddr=02:00:00:00:01:01"; got != want {
+				t.Fatalf("network reconciliation = %q, want %q", got, want)
+			}
+			updated = true
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected QEMU network reconciliation request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := ensureQEMU(context.Background(), client, Plan{Node: "node"}, guest); err != nil {
+		t.Fatalf("ensureQEMU() = %v", err)
+	}
+	if !updated {
+		t.Fatal("stale owned network interface was not reconciled")
+	}
+}
+
+func TestEnsureQEMUHoldsUndeclaredNetworkInterfaceBeforeMutation(t *testing.T) {
+	guest := GuestPlan{VMID: 100, Name: "test-fw", NICs: []GuestNIC{{
+		Name: "wan0", Bridge: "vmbr0", Method: "dhcp", MAC: "02:00:00:00:01:01",
+	}}}
+	mutation := false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/config" {
+			return response([]byte(`{"data":{"name":"test-fw","net0":"virtio=02:00:00:00:01:01,bridge=vmbr0,firewall=1","net1":"virtio=02:00:00:00:01:02,bridge=vmbr1,firewall=1"}}`))
+		}
+		mutation = true
+		t.Fatalf("unexpected request while holding undeclared network interface: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err := ensureQEMU(context.Background(), client, Plan{Node: "node"}, guest)
+	if err == nil || !strings.Contains(err.Error(), "undeclared network interface") {
+		t.Fatalf("undeclared network interface was accepted: %v", err)
+	}
+	if mutation {
+		t.Fatal("undeclared network interface was mutated")
+	}
+}
+
+func TestEnsureQEMURestoresRunningGuestAfterNetworkReconciliationFailure(t *testing.T) {
+	guest := GuestPlan{VMID: 100, Name: "test-fw", NICs: []GuestNIC{{
+		Name: "wan0", Bridge: "vmbr0", Method: "dhcp", MAC: "02:00:00:00:01:01",
+	}}}
+	stale := "virtio=02:00:00:00:ff:ff,bridge=vmbr0,firewall=1"
+	stopped, restored := false, false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/config":
+			return response([]byte(`{"data":{"name":"test-fw","net0":"` + stale + `"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/status/current":
+			return response([]byte(`{"data":{"status":"running"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/100/status/stop":
+			stopped = true
+			return response([]byte(`{"data":"UPID:pve:stop"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:stop/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/100/config":
+			return apiResponse(http.StatusBadRequest, `{"errors":{"net0":"rejected"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/100/status/start":
+			restored = true
+			return response([]byte(`{"data":"UPID:pve:start"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:start/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		default:
+			t.Fatalf("unexpected network failure-recovery request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err := ensureQEMU(context.Background(), client, Plan{Node: "node"}, guest)
+	if err == nil || !strings.Contains(err.Error(), "reconcile network interfaces") {
+		t.Fatalf("failed network reconciliation = %v", err)
+	}
+	if !stopped || !restored {
+		t.Fatalf("running guest was not safely restored: stopped=%t restored=%t", stopped, restored)
+	}
+}
+
 func TestEnsureQEMURequiresConfirmationToReplaceOwnedArtifact(t *testing.T) {
 	guest := GuestPlan{VMID: 100, Name: "test-fw", Artifact: model.Artifact{
 		Name: "boetticher-firewall", Version: "1.0.0", Architecture: "amd64", ContentSHA256: "new-content",

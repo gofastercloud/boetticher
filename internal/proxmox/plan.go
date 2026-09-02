@@ -1295,6 +1295,9 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 				return err
 			}
 		}
+		if err := reconcileQEMUNetworkInterfaces(ctx, client, plan, guest, current); err != nil {
+			return err
+		}
 		if err := migrateLegacyQEMUPersistentVolumeSerials(ctx, client, plan, guest, current); err != nil {
 			return err
 		}
@@ -1352,12 +1355,12 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 	for key, value := range volumeParams {
 		params.Set(key, value)
 	}
-	for index, nic := range guest.NICs {
-		value := fmt.Sprintf("virtio,bridge=%s,firewall=1,macaddr=%s", nic.Bridge, nic.MAC)
-		if nic.VLAN != 0 {
-			value += fmt.Sprintf(",tag=%d", nic.VLAN)
-		}
-		params.Set(fmt.Sprintf("net%d", index), value)
+	nicParams, err := qemuNICParams(guest)
+	if err != nil {
+		return fmt.Errorf("validate network interfaces for %s: %w", guest.Name, err)
+	}
+	for key, value := range nicParams {
+		params.Set(key, value)
 	}
 	if err := client.CreateVM(ctx, plan.Node, guest.VMID, params); err != nil {
 		return fmt.Errorf("create gateway VM %s: %w", guest.Name, err)
@@ -1444,6 +1447,204 @@ func qemuPersistentVolumeParam(plan Plan, volume model.PersistentVolumeDeclarati
 		return "", err
 	}
 	return params["scsi1"], nil
+}
+
+func qemuNICParams(guest GuestPlan) (map[string]string, error) {
+	params := map[string]string{}
+	for index, nic := range guest.NICs {
+		value, err := qemuNICParam(nic)
+		if err != nil {
+			return nil, err
+		}
+		params[fmt.Sprintf("net%d", index)] = value
+	}
+	return params, nil
+}
+
+func qemuNICParam(nic GuestNIC) (string, error) {
+	if !safeInterfaceName(nic.Name) || !safeInterfaceName(nic.Bridge) || nic.VLAN < 0 || nic.VLAN > 4094 {
+		return "", fmt.Errorf("network interface %q has an unsafe name, bridge, or VLAN", nic.Name)
+	}
+	mac, err := net.ParseMAC(nic.MAC)
+	if err != nil || len(mac) != 6 {
+		return "", fmt.Errorf("network interface %q has an invalid MAC identity", nic.Name)
+	}
+	value := fmt.Sprintf("virtio,bridge=%s,firewall=1,macaddr=%s", nic.Bridge, strings.ToLower(mac.String()))
+	if nic.VLAN != 0 {
+		value += fmt.Sprintf(",tag=%d", nic.VLAN)
+	}
+	return value, nil
+}
+
+// reconcileQEMUNetworkInterfaces keeps the owned appliance's Proxmox NIC
+// contract aligned with the cloud-init transport contract. This prevents an
+// old VM MAC from making a replacement firewall unbootable. Unknown NICs are
+// held rather than removed, and a previously running guest is restored if a
+// configuration update fails.
+func reconcileQEMUNetworkInterfaces(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) (err error) {
+	params, err := qemuNICReconciliationParams(current, guest)
+	if err != nil {
+		return err
+	}
+	if len(params) == 0 {
+		return nil
+	}
+
+	refreshed := map[string]any{}
+	if err := client.QEMUConfig(ctx, plan.Node, guest.VMID, &refreshed); err != nil {
+		return fmt.Errorf("inspect %s before network reconciliation: %w", guest.Name, err)
+	}
+	params, err = qemuNICReconciliationParams(refreshed, guest)
+	if err != nil {
+		return err
+	}
+	if len(params) == 0 {
+		replaceQEMUConfig(current, refreshed)
+		return nil
+	}
+
+	status, err := client.QEMUStatus(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("inspect %s status before network reconciliation: %w", guest.Name, err)
+	}
+	if status != "running" && status != "stopped" {
+		return fmt.Errorf("HOLD: guest %s is %q; refusing network reconciliation outside a running or stopped state", guest.Name, status)
+	}
+	wasRunning := status == "running"
+	if wasRunning {
+		if err := client.StopVM(ctx, plan.Node, guest.VMID); err != nil {
+			return fmt.Errorf("stop %s before network reconciliation: %w", guest.Name, err)
+		}
+		defer func() {
+			if startErr := client.StartVM(ctx, plan.Node, guest.VMID); startErr != nil {
+				if err == nil {
+					err = fmt.Errorf("restore %s after network reconciliation: %w", guest.Name, startErr)
+				} else {
+					err = fmt.Errorf("%w; additionally failed to restore %s after network reconciliation: %v", err, guest.Name, startErr)
+				}
+			}
+		}()
+	}
+
+	refreshed = map[string]any{}
+	if err := client.QEMUConfig(ctx, plan.Node, guest.VMID, &refreshed); err != nil {
+		return fmt.Errorf("inspect %s before applying network reconciliation: %w", guest.Name, err)
+	}
+	params, err = qemuNICReconciliationParams(refreshed, guest)
+	if err != nil {
+		return err
+	}
+	if len(params) == 0 {
+		replaceQEMUConfig(current, refreshed)
+		return nil
+	}
+	if err := client.SetVMConfig(ctx, plan.Node, guest.VMID, params); err != nil {
+		return fmt.Errorf("reconcile network interfaces for %s: %w", guest.Name, err)
+	}
+
+	refreshed = map[string]any{}
+	if err := client.QEMUConfig(ctx, plan.Node, guest.VMID, &refreshed); err != nil {
+		return fmt.Errorf("verify %s network reconciliation: %w", guest.Name, err)
+	}
+	if err := validateExistingQEMUNetworkInterfaces(refreshed, guest); err != nil {
+		return err
+	}
+	replaceQEMUConfig(current, refreshed)
+	return nil
+}
+
+func qemuNICReconciliationParams(current map[string]any, guest GuestPlan) (url.Values, error) {
+	if err := validateNoUndeclaredQEMUNetworkInterfaces(current, guest); err != nil {
+		return nil, err
+	}
+	params := url.Values{}
+	for index, nic := range guest.NICs {
+		key := fmt.Sprintf("net%d", index)
+		observed, _ := current[key].(string)
+		if qemuNICMatches(observed, nic) {
+			continue
+		}
+		value, err := qemuNICParam(nic)
+		if err != nil {
+			return nil, err
+		}
+		params.Set(key, value)
+	}
+	return params, nil
+}
+
+func validateExistingQEMUNetworkInterfaces(current map[string]any, guest GuestPlan) error {
+	if err := validateNoUndeclaredQEMUNetworkInterfaces(current, guest); err != nil {
+		return err
+	}
+	for index, nic := range guest.NICs {
+		key := fmt.Sprintf("net%d", index)
+		observed, _ := current[key].(string)
+		if !qemuNICMatches(observed, nic) {
+			return fmt.Errorf("HOLD: guest %s has network interface %s=%q, expected the declared %s contract", guest.Name, key, observed, nic.Name)
+		}
+	}
+	return nil
+}
+
+func validateNoUndeclaredQEMUNetworkInterfaces(current map[string]any, guest GuestPlan) error {
+	for key := range current {
+		if !strings.HasPrefix(key, "net") {
+			continue
+		}
+		index, ok := qemuNICIndex(key)
+		if !ok || index >= len(guest.NICs) {
+			return fmt.Errorf("HOLD: guest %s has undeclared network interface %s", guest.Name, key)
+		}
+	}
+	return nil
+}
+
+func qemuNICIndex(value string) (int, bool) {
+	if !strings.HasPrefix(value, "net") {
+		return 0, false
+	}
+	index, err := strconv.Atoi(strings.TrimPrefix(value, "net"))
+	if err != nil || index < 0 || value != "net"+strconv.Itoa(index) {
+		return 0, false
+	}
+	return index, true
+}
+
+func qemuNICMatches(observed string, nic GuestNIC) bool {
+	parts := strings.Split(observed, ",")
+	if len(parts) == 0 {
+		return false
+	}
+	model, inlineMAC, hasInlineMAC := strings.Cut(parts[0], "=")
+	if model != "virtio" {
+		return false
+	}
+	options := qemuVolumeOptions(parts[1:])
+	optionMAC := options["macaddr"]
+	if hasInlineMAC && optionMAC != "" && !strings.EqualFold(inlineMAC, optionMAC) {
+		return false
+	}
+	observedMAC := inlineMAC
+	if observedMAC == "" {
+		observedMAC = optionMAC
+	}
+	if !strings.EqualFold(observedMAC, nic.MAC) || options["bridge"] != nic.Bridge || options["firewall"] != "1" {
+		return false
+	}
+	if nic.VLAN == 0 {
+		return options["tag"] == ""
+	}
+	return options["tag"] == strconv.Itoa(nic.VLAN)
+}
+
+func replaceQEMUConfig(current, refreshed map[string]any) {
+	for key := range current {
+		delete(current, key)
+	}
+	for key, value := range refreshed {
+		current[key] = value
+	}
 }
 
 func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
@@ -1794,12 +1995,7 @@ func migrateQEMUPersistentVolumes(ctx context.Context, client *Client, plan Plan
 	if err := client.QEMUConfig(ctx, plan.Node, guest.VMID, &refreshed); err != nil {
 		return fmt.Errorf("verify %s persistent-volume migration: %w", guest.Name, err)
 	}
-	for key := range current {
-		delete(current, key)
-	}
-	for key, value := range refreshed {
-		current[key] = value
-	}
+	replaceQEMUConfig(current, refreshed)
 	return nil
 }
 
