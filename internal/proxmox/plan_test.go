@@ -1504,6 +1504,173 @@ func TestEnsureLXCRequiresConfirmationToReplaceOwnedArtifact(t *testing.T) {
 	}
 }
 
+func TestValidateLegacyLXCRecreationRequiresExactOwnedRawState(t *testing.T) {
+	guest := GuestPlan{
+		VMID: 110, Name: "lab-dns-01", Hostname: "lab-dns-01", Owner: "boetticher/module/dns", DiskGiB: 8,
+		Tags:     []string{"boetticher", "managed", "module", "module-dns", "boetticher-module-dns", "backup"},
+		Security: model.GuestSecurityDeclaration{Unprivileged: true},
+		Volumes: []model.PersistentVolumeDeclaration{{
+			Name: "ssh-identity", Module: "dns", Guest: "lab-dns-01", Storage: modelStorageIDForTest,
+			SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/ssh", Backup: true,
+		}},
+	}
+	current := map[string]any{
+		"name": guest.Name, "hostname": guest.Hostname, "unprivileged": 1, "tags": strings.Join(guest.Tags, ";"),
+		"rootfs": "local:110/vm-110-disk-0.raw,size=8G",
+		"mp0":    "local:110/vm-110-disk-1.raw,mp=/var/lib/boetticher/identity/ssh,backup=1,size=1G",
+	}
+	if err := validateLegacyLXCRecreation(current, guest); err != nil {
+		t.Fatalf("validated legacy LXC state = %v", err)
+	}
+	current["mp0"] = "local:110/vm-110-disk-9.raw,mp=/var/lib/boetticher/identity/ssh,backup=1,size=1G"
+	if err := validateLegacyLXCRecreation(current, guest); err == nil || !strings.Contains(err.Error(), "exact legacy") {
+		t.Fatalf("non-canonical legacy volume was accepted: %v", err)
+	}
+}
+
+func TestLegacyLXCRecreationSkipsAlreadyMigratedState(t *testing.T) {
+	guest := GuestPlan{
+		VMID: 110, Name: "lab-dns-01", Hostname: "lab-dns-01", Owner: "boetticher/module/dns", DiskGiB: 8,
+		Tags:     []string{"boetticher", "managed", "module", "module-dns", "boetticher-module-dns", "backup"},
+		Security: model.GuestSecurityDeclaration{Unprivileged: true},
+		Volumes: []model.PersistentVolumeDeclaration{{
+			Name: "ssh-identity", Module: "dns", Guest: "lab-dns-01", Storage: modelStorageIDForTest,
+			SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/ssh", Backup: true,
+		}},
+	}
+	current := map[string]any{
+		"rootfs": modelStorageIDForTest + ":8,size=8G",
+		"mp0":    modelStorageIDForTest + ":1,mp=/var/lib/boetticher/identity/ssh,backup=1,size=1G",
+	}
+	recreate, err := legacyLXCRecreationRequired(current, guest)
+	if err != nil || recreate {
+		t.Fatalf("already migrated state recreation = %t, %v", recreate, err)
+	}
+}
+
+func TestDiscardLegacyLXCRestoresRunningGuestAfterDestroyFailure(t *testing.T) {
+	guest := GuestPlan{VMID: 110, Name: "lab-dns-01"}
+	stopped, restored := false, false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/current":
+			return response([]byte(`{"data":{"status":"running"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/stop":
+			stopped = true
+			return response([]byte(`{"data":"UPID:pve:stop"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:stop/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api2/json/nodes/node/lxc/110":
+			if r.URL.Query().Get("purge") != "1" || r.URL.Query().Get("destroy-unreferenced-disks") != "1" {
+				t.Fatalf("legacy LXC destroy query = %v", r.URL.Query())
+			}
+			return apiResponse(http.StatusInternalServerError, `{"errors":{"destroy":"failure"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/start":
+			restored = true
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected legacy LXC recovery request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err := discardLegacyLXC(context.Background(), client, Plan{Node: "node"}, guest)
+	if err == nil || !strings.Contains(err.Error(), "discard legacy state") {
+		t.Fatalf("discard legacy LXC error = %v", err)
+	}
+	if !stopped || !restored {
+		t.Fatalf("running legacy LXC was not restored after failed recreation: stopped=%t restored=%t", stopped, restored)
+	}
+}
+
+func TestEnsureLXCRecreatesExactLegacyStateBeforePersistentVolumeMigration(t *testing.T) {
+	artifact := model.Artifact{
+		Name: "boetticher-dns-blocky", Version: "1.0.0", Architecture: "amd64",
+		DefinitionSHA256: strings.Repeat("a", 64), ContentSHA256: strings.Repeat("b", 64),
+	}
+	guest := GuestPlan{
+		VMID: 110, Name: "lab-dns-01", Hostname: "lab-dns-01", Owner: "boetticher/module/dns", DiskGiB: 8,
+		Tags:     []string{"boetticher", "managed", "module", "module-dns", "boetticher-module-dns", "backup"},
+		Artifact: artifact, Security: model.GuestSecurityDeclaration{Unprivileged: true},
+		Volumes: []model.PersistentVolumeDeclaration{{
+			Name: "ssh-identity", Module: "dns", Guest: "lab-dns-01", Storage: modelStorageIDForTest,
+			SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/ssh", Backup: true,
+		}},
+	}
+	current := map[string]any{
+		"name": guest.Name, "hostname": guest.Hostname, "unprivileged": 1, "tags": strings.Join(guest.Tags, ";"),
+		"rootfs": "local:110/vm-110-disk-0.raw,size=8G",
+		"mp0":    "local:110/vm-110-disk-1.raw,mp=/var/lib/boetticher/identity/ssh,backup=1,size=1G",
+	}
+	created := false
+	lxcConfigReads := 0
+	jsonResponse := func(value any) *http.Response {
+		data, err := json.Marshal(map[string]any{"data": value})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response(data)
+	}
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/110/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
+			lxcConfigReads++
+			switch lxcConfigReads {
+			case 1:
+				return jsonResponse(current)
+			case 2:
+				return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+			case 3:
+				if !created {
+					t.Fatal("created LXC identity was read before creation")
+				}
+				return jsonResponse(map[string]any{
+					"name": guest.Name, "hostname": guest.Hostname, "description": artifactDescription(artifact), "unprivileged": 1,
+					"tags": strings.Join(guest.Tags, ";"), "rootfs": modelStorageIDForTest + ":8,size=8G",
+					"mp0": modelStorageIDForTest + ":1,mp=/var/lib/boetticher/identity/ssh,backup=1,size=1G",
+				})
+			default:
+				t.Fatalf("unexpected LXC config read %d", lxcConfigReads)
+				return nil
+			}
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+			return response([]byte(`{"data":[{"filename":"boetticher-dns-blocky-1.0.0-amd64.tar.zst","checksum":"` + artifact.ContentSHA256 + `"}]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/current":
+			return response([]byte(`{"data":{"status":"stopped"}}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api2/json/nodes/node/lxc/110":
+			if r.URL.Query().Get("purge") != "1" || r.URL.Query().Get("destroy-unreferenced-disks") != "1" {
+				t.Fatalf("legacy LXC destroy query = %v", r.URL.Query())
+			}
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if got, want := r.Form.Get("rootfs"), modelStorageIDForTest+":8"; got != want {
+				t.Fatalf("recreated rootfs = %q, want %q", got, want)
+			}
+			if got, want := r.Form.Get("mp0"), modelStorageIDForTest+":1,mp=/var/lib/boetticher/identity/ssh,backup=1"; got != want {
+				t.Fatalf("recreated persistent volume = %q, want %q", got, want)
+			}
+			created = true
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected legacy LXC recreation request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	plan := Plan{Node: "node", Storage: modelStorageIDForTest, DestructiveConfirmed: true, ForceLegacyLXCRecreation: true}
+	if err := ensureLXC(context.Background(), client, plan, guest); err != nil {
+		t.Fatalf("ensureLXC() = %v", err)
+	}
+	if !created {
+		t.Fatal("legacy LXC was not recreated")
+	}
+}
+
 func TestExistingLXCReconcilesPlatformNameservers(t *testing.T) {
 	plan := Plan{Node: "node", Nameservers: []string{"10.10.10.10", "10.10.10.11"}}
 	guest := GuestPlan{

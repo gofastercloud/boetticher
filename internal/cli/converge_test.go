@@ -616,22 +616,26 @@ func TestDeployDryRunDoesNotWriteLocalProjections(t *testing.T) {
 
 func TestValidateDeployRecoveryOptions(t *testing.T) {
 	tests := []struct {
-		name            string
-		mode            string
-		replaceFirewall bool
-		confirm         bool
-		dryRun          bool
-		want            string
+		name               string
+		mode               string
+		replaceFirewall    bool
+		recreateLegacyLXCs bool
+		confirm            bool
+		dryRun             bool
+		want               string
 	}{
 		{name: "ordinary deployment", mode: model.GatewayModeManaged},
 		{name: "managed dry run", mode: model.GatewayModeManaged, replaceFirewall: true, dryRun: true},
 		{name: "managed confirmed", mode: model.GatewayModeManaged, replaceFirewall: true, confirm: true},
 		{name: "managed unconfirmed", mode: model.GatewayModeManaged, replaceFirewall: true, want: "requires --confirm"},
 		{name: "external gateway", mode: model.GatewayModeExternal, replaceFirewall: true, confirm: true, want: "managed gateway mode"},
+		{name: "legacy LXC dry run", mode: model.GatewayModeManaged, recreateLegacyLXCs: true, dryRun: true},
+		{name: "legacy LXC confirmed", mode: model.GatewayModeManaged, recreateLegacyLXCs: true, confirm: true},
+		{name: "legacy LXC unconfirmed", mode: model.GatewayModeManaged, recreateLegacyLXCs: true, want: "--recreate-legacy-lxcs requires --confirm"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := validateDeployRecoveryOptions(test.mode, test.replaceFirewall, test.confirm, test.dryRun)
+			err := validateDeployRecoveryOptions(test.mode, test.replaceFirewall, test.recreateLegacyLXCs, test.confirm, test.dryRun)
 			if test.want == "" && err != nil {
 				t.Fatalf("validateDeployRecoveryOptions() = %v", err)
 			}

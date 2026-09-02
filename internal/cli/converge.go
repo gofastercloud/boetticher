@@ -46,15 +46,17 @@ func runDeploy(args []string, out io.Writer) error {
 	return runDeployWithContext(ctx, args, out)
 }
 
-func validateDeployRecoveryOptions(gatewayMode string, replaceFirewall, confirm, dryRun bool) error {
-	if !replaceFirewall {
-		return nil
+func validateDeployRecoveryOptions(gatewayMode string, replaceFirewall, recreateLegacyLXCs, confirm, dryRun bool) error {
+	if replaceFirewall {
+		if gatewayMode != model.GatewayModeManaged {
+			return errors.New("--replace-firewall is available only in managed gateway mode")
+		}
+		if !confirm && !dryRun {
+			return errors.New("--replace-firewall requires --confirm; use --dry-run to inspect the recovery plan")
+		}
 	}
-	if gatewayMode != model.GatewayModeManaged {
-		return errors.New("--replace-firewall is available only in managed gateway mode")
-	}
-	if !confirm && !dryRun {
-		return errors.New("--replace-firewall requires --confirm; use --dry-run to inspect the recovery plan")
+	if recreateLegacyLXCs && !confirm && !dryRun {
+		return errors.New("--recreate-legacy-lxcs requires --confirm outside --dry-run")
 	}
 	return nil
 }
@@ -94,6 +96,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	dryRun := fs.Bool("dry-run", false, "render and validate policy without connecting")
 	rotateAirVPN := fs.Bool("rotate-airvpn-profile", false, "explicitly regenerate and retain the AirVPN WireGuard profile")
 	replaceFirewall := fs.Bool("replace-firewall", false, "replace only the managed firewall root disk after proving its persistent volumes")
+	recreateLegacyLXCs := fs.Bool("recreate-legacy-lxcs", false, "discard only proven legacy local-raw LXC state and recreate those appliances on planned storage")
 	confirm := fs.Bool("confirm", false, "confirm destructive appliance replacement or purge actions")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -104,7 +107,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err != nil {
 		return err
 	}
-	if err := validateDeployRecoveryOptions(s.Gateway.Mode, *replaceFirewall, *confirm, *dryRun); err != nil {
+	if err := validateDeployRecoveryOptions(s.Gateway.Mode, *replaceFirewall, *recreateLegacyLXCs, *confirm, *dryRun); err != nil {
 		return err
 	}
 	modelRevision, err := s.Revision()
@@ -146,6 +149,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		fmt.Fprintf(out, "  Mode: %s\n  Engine: %s\n  DHCP subnets: %d\n  Policy rules: %d\n", firewallPlan.Mode, firewallPlan.Engine, len(firewallPlan.DHCP), len(firewallPlan.Rules))
 		if *replaceFirewall {
 			fmt.Fprintln(out, "  Firewall root recovery: requested (dry-run; declared persistent volumes remain attached)")
+		}
+		if *recreateLegacyLXCs {
+			fmt.Fprintln(out, "  Legacy LXC recovery: requested (dry-run; no appliance state is discarded)")
 		}
 		if s.Gateway.Mode == model.GatewayModeManaged {
 			ruleset, renderErr := renderDeploymentNFT(firewallPlan)
@@ -484,6 +490,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	proxmoxPlan.DestructiveConfirmed = *confirm
 	proxmoxPlan.ForceFirewallRootReplacement = *replaceFirewall
+	proxmoxPlan.ForceLegacyLXCRecreation = *recreateLegacyLXCs
 	if backupPlan.StorageTarget == backup.DedicatedStorageID {
 		changed, err := proxmoxClient.EnsureLVMThinStorageWithMutation(ctx, storage.GuestStorageID, storage.VolumeGroup, storage.ThinPool)
 		if changed {

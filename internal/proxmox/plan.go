@@ -98,6 +98,11 @@ type Plan struct {
 	// declared persistent volumes have been proven, and never applies to any
 	// other appliance.
 	ForceFirewallRootReplacement bool `json:"-"`
+	// ForceLegacyLXCRecreation is a separately confirmed recovery action for
+	// Boetticher-owned LXCs that still use the exact legacy local raw layout.
+	// It discards their declared state and recreates them on the planned
+	// storage; QEMU guests and non-legacy LXCs are never selected.
+	ForceLegacyLXCRecreation bool `json:"-"`
 	// PrivilegedRunner is the already-authorized, bounded root bootstrap path.
 	// Proxmox rejects /dev/net/tun on the scoped API identity, so device-bearing
 	// LXC creation applies the exact device setting through this path after the
@@ -1725,6 +1730,26 @@ func ensureLXCWithRetainedVolumes(ctx context.Context, client *Client, plan Plan
 		if kind != KindLXC {
 			return fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, expected LXC %s", guest.VMID, kind, guest.Name)
 		}
+		if plan.ForceLegacyLXCRecreation {
+			recreate, err := legacyLXCRecreationRequired(current, guest)
+			if err != nil {
+				return err
+			}
+			if recreate {
+				if !plan.DestructiveConfirmed {
+					return fmt.Errorf("HOLD: legacy LXC recreation requires --confirm")
+				}
+				if err := prepareLegacyLXCRecreation(ctx, client, plan, guest); err != nil {
+					return err
+				}
+				if err := discardLegacyLXC(ctx, client, plan, guest); err != nil {
+					return err
+				}
+				recreatedPlan := plan
+				recreatedPlan.ForceLegacyLXCRecreation = false
+				return ensureLXCWithRetainedVolumes(ctx, client, recreatedPlan, guest, nil)
+			}
+		}
 		if err := validateNoUndeclaredLXCVolumes(current, guest); err != nil {
 			return err
 		}
@@ -1755,20 +1780,13 @@ func ensureLXCWithRetainedVolumes(ctx context.Context, client *Client, plan Plan
 	if !IsNotFound(err) {
 		return fmt.Errorf("inspect container %s: %w", guest.Name, err)
 	}
-	if guest.Artifact.Name == "" || guest.Artifact.DefinitionSHA256 == "" {
-		return fmt.Errorf("HOLD: guest %s has no resolved appliance artifact", guest.Name)
-	}
-	if guest.Artifact.ContentSHA256 == "" {
-		return fmt.Errorf("NOT BUILT: guest %s artifact %s has no qualified content checksum", guest.Name, guest.Artifact.Name)
-	}
 	if err := validateLXCPrivilegedDeviceAuthority(plan, guest); err != nil {
 		return err
 	}
-	filename := guest.Artifact.Name + "-" + guest.Artifact.Version + "-" + guest.Artifact.Architecture + ".tar.zst"
-	if err := ensureArtifactInStorage(ctx, client, plan.Node, "local", "vztmpl", filename, guest.Artifact.ContentSHA256, plan.ArtifactFiles[artifactKey(guest.Artifact)]); err != nil {
-		return fmt.Errorf("prepare appliance template for %s: %w", guest.Name, err)
+	template, err := lxcTemplate(ctx, client, plan, guest)
+	if err != nil {
+		return err
 	}
-	template := "local:vztmpl/" + filename
 	params := url.Values{
 		"hostname":     {guest.Hostname},
 		"description":  {artifactDescription(guest.Artifact)},
@@ -1845,6 +1863,136 @@ func ensureLXCWithRetainedVolumes(ctx context.Context, client *Client, plan Plan
 	}
 	if err := validateExistingGuestVolumes(current, guest); err != nil {
 		return fmt.Errorf("HOLD: verify created container %s persistent volumes: %w", guest.Name, err)
+	}
+	return nil
+}
+
+func lxcTemplate(ctx context.Context, client *Client, plan Plan, guest GuestPlan) (string, error) {
+	if guest.Artifact.Name == "" || guest.Artifact.DefinitionSHA256 == "" {
+		return "", fmt.Errorf("HOLD: guest %s has no resolved appliance artifact", guest.Name)
+	}
+	if guest.Artifact.ContentSHA256 == "" {
+		return "", fmt.Errorf("NOT BUILT: guest %s artifact %s has no qualified content checksum", guest.Name, guest.Artifact.Name)
+	}
+	filename := guest.Artifact.Name + "-" + guest.Artifact.Version + "-" + guest.Artifact.Architecture + ".tar.zst"
+	if err := ensureArtifactInStorage(ctx, client, plan.Node, "local", "vztmpl", filename, guest.Artifact.ContentSHA256, plan.ArtifactFiles[artifactKey(guest.Artifact)]); err != nil {
+		return "", fmt.Errorf("prepare appliance template for %s: %w", guest.Name, err)
+	}
+	return "local:vztmpl/" + filename, nil
+}
+
+func prepareLegacyLXCRecreation(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
+	if err := validateLXCPrivilegedDeviceAuthority(plan, guest); err != nil {
+		return err
+	}
+	if _, err := lxcBootstrapKeyParams(plan.OperatorPublicKey); err != nil {
+		return fmt.Errorf("validate appliance bootstrap key for %s before legacy LXC recreation: %w", guest.Name, err)
+	}
+	for _, volume := range guest.Volumes {
+		if _, err := persistentVolumeParam(volume); err != nil {
+			return fmt.Errorf("validate persistent volume %s for %s before legacy LXC recreation: %w", volume.Name, guest.Name, err)
+		}
+	}
+	_, err := lxcTemplate(ctx, client, plan, guest)
+	return err
+}
+
+func legacyLXCRecreationRequired(current map[string]any, guest GuestPlan) (bool, error) {
+	rootfs, _ := current["rootfs"].(string)
+	rootfsStorage := lxcVolumeStorageID(rootfs)
+	if rootfsStorage == "" {
+		return false, fmt.Errorf("HOLD: guest %s has malformed rootfs identity", guest.Name)
+	}
+	legacy := rootfsStorage == "local"
+	for index := range guest.Volumes {
+		mountpoint := fmt.Sprintf("mp%d", index)
+		observed, _ := current[mountpoint].(string)
+		storage := lxcVolumeStorageID(observed)
+		if storage == "" {
+			return false, fmt.Errorf("HOLD: guest %s has malformed persistent volume %s", guest.Name, mountpoint)
+		}
+		legacy = legacy || storage == "local"
+	}
+	if !legacy {
+		return false, nil
+	}
+	if err := validateLegacyLXCRecreation(current, guest); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func validateLegacyLXCRecreation(current map[string]any, guest GuestPlan) error {
+	if guest.VMID <= 0 || guest.DiskGiB <= 0 {
+		return fmt.Errorf("HOLD: guest %s lacks a valid legacy LXC recovery identity", guest.Name)
+	}
+	if err := validateExistingGuestIdentityFields(current, guest); err != nil {
+		return err
+	}
+	if got, _ := current["tags"].(string); canonicalTags(got) != canonicalTags(strings.Join(guest.Tags, ";")) {
+		return fmt.Errorf("HOLD: guest %s has unexpected tags %q before legacy LXC recreation", guest.Name, got)
+	}
+	if err := validateNoUndeclaredLXCVolumes(current, guest); err != nil {
+		return err
+	}
+	rootfs, _ := current["rootfs"].(string)
+	if !legacyLXCRootfsMatches(rootfs, guest) {
+		return fmt.Errorf("HOLD: guest %s rootfs does not have the exact legacy raw layout", guest.Name)
+	}
+	for index, volume := range guest.Volumes {
+		expected, err := persistentVolumeParam(volume)
+		if err != nil {
+			return err
+		}
+		mountpoint := fmt.Sprintf("mp%d", index)
+		observed, _ := current[mountpoint].(string)
+		if !exactLegacyLXCRawVolume(observed, guest.VMID, index+1) || !lxcVolumeMatchesPersistentIdentity(observed, expected) {
+			return fmt.Errorf("HOLD: guest %s persistent volume %s does not have the exact legacy raw layout", guest.Name, mountpoint)
+		}
+	}
+	return nil
+}
+
+func legacyLXCRawVolumeID(vmid, disk int) string {
+	return fmt.Sprintf("local:%d/vm-%d-disk-%d.raw", vmid, vmid, disk)
+}
+
+func exactLegacyLXCRawVolume(observed string, vmid, disk int) bool {
+	first, _, _ := strings.Cut(observed, ",")
+	return first == legacyLXCRawVolumeID(vmid, disk)
+}
+
+func legacyLXCRootfsMatches(observed string, guest GuestPlan) bool {
+	if !exactLegacyLXCRawVolume(observed, guest.VMID, 0) {
+		return false
+	}
+	_, options, _ := strings.Cut(observed, ",")
+	return qemuVolumeOptions(strings.Split(options, ","))["size"] == strconv.Itoa(guest.DiskGiB)+"G"
+}
+
+func discardLegacyLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) (err error) {
+	status, err := client.LXCStatus(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("inspect %s status before legacy LXC recreation: %w", guest.Name, err)
+	}
+	if status != "running" && status != "stopped" {
+		return fmt.Errorf("HOLD: guest %s is %q; refusing legacy LXC recreation outside a running or stopped state", guest.Name, status)
+	}
+	if status == "running" {
+		if err = client.StopLXC(ctx, plan.Node, guest.VMID); err != nil {
+			return fmt.Errorf("stop %s before legacy LXC recreation: %w", guest.Name, err)
+		}
+		defer func() {
+			if err == nil {
+				return
+			}
+			if startErr := client.StartLXC(ctx, plan.Node, guest.VMID); startErr != nil {
+				err = fmt.Errorf("%w; additionally failed to restore %s after legacy LXC recreation failure: %v", err, guest.Name, startErr)
+			}
+		}()
+	}
+	if err = client.DestroyLXC(ctx, plan.Node, guest.VMID); err != nil {
+		return fmt.Errorf("discard legacy state for %s before recreation: %w", guest.Name, err)
 	}
 	return nil
 }
