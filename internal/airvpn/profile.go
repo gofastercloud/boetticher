@@ -27,6 +27,7 @@ const (
 	DefaultPort       = 1637
 	DefaultKeepalive  = 25
 	maxProfileBytes   = 128 * 1024
+	maxStatusBytes    = 2 * 1024 * 1024
 	generatorTimeout  = 30 * time.Second
 )
 
@@ -127,9 +128,88 @@ func (c Client) Generate(ctx context.Context, apiKey, servers string) (profile P
 	}
 	profile, err = ParseProfile(data)
 	if err != nil {
+		if providerResponseShape(data) == "json-provider-error" {
+			available, statusErr := c.selectorHasLiveServer(ctx, baseURL, servers, httpClient)
+			if statusErr == nil && !available {
+				return Profile{}, fmt.Errorf("AirVPN selector %q currently has no live provider servers; choose a current AirVPN server, country, or continent", servers)
+			}
+		}
 		return Profile{}, fmt.Errorf("AirVPN generator returned an invalid WireGuard profile (%s): %w", providerResponseSummary(response.Header.Get("Content-Type"), data), err)
 	}
 	return profile, nil
+}
+
+type providerStatus struct {
+	Servers []providerServer `json:"servers"`
+}
+
+type providerServer struct {
+	PublicName  string `json:"public_name"`
+	CountryName string `json:"country_name"`
+	CountryCode string `json:"country_code"`
+	Continent   string `json:"continent"`
+	Health      string `json:"health"`
+}
+
+// selectorHasLiveServer checks the public provider status only after a JSON
+// generator error, so an unavailable selector gets a concrete remediation
+// without adding an API call to the successful profile path.
+func (c Client) selectorHasLiveServer(ctx context.Context, baseURL, selector string, httpClient *http.Client) (available bool, err error) {
+	parsed, err := url.Parse(strings.TrimRight(baseURL, "/") + "/status/")
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+		return false, errors.New("AirVPN status URL must be HTTPS without user information")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return false, fmt.Errorf("create AirVPN status request: %w", err)
+	}
+	requestStarted := time.Now()
+	status := 0
+	defer func() {
+		telemetry.Record(ctx, telemetry.Event{
+			Category: "provider_api", Operation: "selector_status", Target: "airvpn-status",
+			Method: http.MethodGet, Status: status, Duration: time.Since(requestStarted), Success: err == nil,
+		})
+	}()
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return false, fmt.Errorf("request AirVPN status: %w", err)
+	}
+	defer response.Body.Close()
+	status = response.StatusCode
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return false, fmt.Errorf("AirVPN status returned HTTP %d", response.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxStatusBytes+1))
+	if err != nil {
+		return false, fmt.Errorf("read AirVPN status: %w", err)
+	}
+	if len(data) > maxStatusBytes {
+		return false, errors.New("AirVPN status exceeds the safe size limit")
+	}
+	var provider providerStatus
+	if err := json.Unmarshal(data, &provider); err != nil {
+		return false, errors.New("parse AirVPN status")
+	}
+	needle := strings.ToLower(strings.TrimSpace(selector))
+	for _, server := range provider.Servers {
+		if strings.ToLower(strings.TrimSpace(server.Health)) != "ok" {
+			continue
+		}
+		if needle == "earth" || needle == "all" || selectorMatchesServer(needle, server) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func selectorMatchesServer(selector string, server providerServer) bool {
+	for _, candidate := range []string{server.PublicName, server.CountryName, server.CountryCode, server.Continent} {
+		if selector == strings.ToLower(strings.TrimSpace(candidate)) {
+			return true
+		}
+	}
+	return false
 }
 
 // providerResponseSummary exposes only the small diagnostics needed to

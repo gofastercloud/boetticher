@@ -126,6 +126,27 @@ func TestGenerateClassifiesNestedJSONProviderErrorWithoutLeakingIt(t *testing.T)
 	}
 }
 
+func TestGenerateExplainsUnavailableSelectorAgainstLiveStatus(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/generator/":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"error":"selection unavailable"}`))
+		case "/status/":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"servers":[{"public_name":"Ainalrami","country_name":"Japan","country_code":"jp","continent":"Asia","health":"ok"}]}`))
+		default:
+			t.Fatalf("unexpected AirVPN status request: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	_, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(context.Background(), "controller-key", "australia")
+	if err == nil || !strings.Contains(err.Error(), `selector "australia" currently has no live provider servers`) || strings.Contains(err.Error(), "selection unavailable") {
+		t.Fatalf("unavailable AirVPN selector was not safely explained: %v", err)
+	}
+}
+
 func TestGenerateDoesNotFollowRedirects(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "https://example.invalid/leak", http.StatusFound)
