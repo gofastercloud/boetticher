@@ -38,7 +38,7 @@ func TestGenerateBuildsBoundedAirVPNRequestAndRedactsFailures(t *testing.T) {
 			"device":                         "default",
 			"system":                         "other",
 			"resolve":                        "on",
-			"iplayer_exit":                   "ipv4",
+			"iplayer_entry":                  "ipv4",
 			"wireguard_mtu":                  "0",
 			"wireguard_persistent_keepalive": "25",
 		}
