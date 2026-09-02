@@ -114,6 +114,22 @@ func TestKioskSetupRequiresConfirmationForMutation(t *testing.T) {
 	}
 }
 
+func TestValidateKioskSSHInputsRejectsSymlinkedKnownHostsParent(t *testing.T) {
+	dir := t.TempDir()
+	identity := filepath.Join(dir, "id_ed25519")
+	if err := os.WriteFile(identity, []byte("not-a-key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	external := t.TempDir()
+	if err := os.Symlink(external, filepath.Join(dir, "generated")); err != nil {
+		t.Fatal(err)
+	}
+	err := validateKioskSSHInputs(identity, filepath.Join(dir, "generated", "ssh", "kiosk_known_hosts"), false)
+	if err == nil {
+		t.Fatal("symlinked kiosk known-hosts parent was accepted")
+	}
+}
+
 func TestEnsureKioskClientCertificateReplacesMismatchedCachedLeaf(t *testing.T) {
 	now := time.Now().UTC()
 	authority, err := pki.GenerateAuthority(now, "lab.home.arpa")
@@ -189,5 +205,39 @@ func TestEnsureKioskClientCertificateRetainsValidatedCachedIdentityMaterial(t *t
 	}
 	if got.KeyPEM != issued.KeyPEM || got.CertPEM != issued.CertPEM || got.ChainPEM != issued.ChainPEM {
 		t.Fatal("validated cached kiosk identity material was not preserved")
+	}
+}
+
+func TestEnsureKioskClientCertificateRepairsPartialCachedIdentity(t *testing.T) {
+	now := time.Now().UTC()
+	authority, err := pki.GenerateAuthority(now, "lab.home.arpa")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runtime := filepath.Join(t.TempDir(), "runtime")
+	t.Setenv("BOETTICHER_RUNTIME_DIR", runtime)
+	s := model.NewDefaultSite("installation", "age1example")
+	runtimeDir := filepath.Join(site.RuntimeDir(s), "pki", kioskClientName)
+	if err := os.MkdirAll(runtimeDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, "client.key.pem"), []byte("partial"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ensureKioskClientCertificate(t.TempDir(), s, authority)
+	if err != nil {
+		t.Fatalf("partial kiosk identity was not repaired: %v", err)
+	}
+	for name, want := range map[string]string{
+		"client.key.pem": got.KeyPEM,
+		"client.crt.pem": got.CertPEM,
+		"chain.crt.pem":  got.ChainPEM,
+	} {
+		data, err := os.ReadFile(filepath.Join(runtimeDir, name))
+		if err != nil || string(data) != want {
+			t.Fatalf("repaired kiosk identity %s = %q, %v", name, data, err)
+		}
 	}
 }

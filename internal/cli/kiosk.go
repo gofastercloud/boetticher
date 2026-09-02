@@ -259,6 +259,9 @@ func validateKioskSSHInputs(identity, knownHosts string, dryRun bool) error {
 		if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
 			return errors.New("SSH identity file must be a regular file restricted to its owner")
 		}
+		if err := pathguard.ValidateNoSymlinkComponents(knownHosts); err != nil {
+			return fmt.Errorf("validate SSH known-hosts path: %w", err)
+		}
 		if info, err := os.Lstat(knownHosts); err == nil {
 			if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
 				return errors.New("SSH known-hosts file must be a regular file restricted to its owner")
@@ -373,9 +376,6 @@ func ensureKioskClientCertificate(siteDir string, s model.Site, authority pki.Au
 			return pki.ClientCertificate{}, fmt.Errorf("read kiosk PKI runtime: %w", err)
 		}
 	}
-	if present != 0 && present != len(paths) {
-		return pki.ClientCertificate{}, errors.New("kiosk PKI runtime is incomplete; refusing to replace partial identity material")
-	}
 	if present == len(paths) {
 		certificate, err := validateKioskClientCertificate(authority, string(existing[0]), string(existing[1]), string(existing[2]), s.Network.Domain, now)
 		if err == nil {
@@ -390,16 +390,7 @@ func ensureKioskClientCertificate(siteDir string, s model.Site, authority pki.Au
 	if err != nil {
 		return pki.ClientCertificate{}, fmt.Errorf("issue kiosk client certificate: %w", err)
 	}
-	if err := os.MkdirAll(runtimeDir, 0700); err != nil {
-		return pki.ClientCertificate{}, fmt.Errorf("create kiosk PKI runtime directory: %w", err)
-	}
-	if err := writePrivate(paths[0], []byte(certificate.KeyPEM)); err != nil {
-		return pki.ClientCertificate{}, err
-	}
-	if err := writePublic(paths[1], []byte(certificate.CertPEM)); err != nil {
-		return pki.ClientCertificate{}, err
-	}
-	if err := writePublic(paths[2], []byte(certificate.ChainPEM)); err != nil {
+	if err := publishKioskClientIdentity(runtimeDir, certificate); err != nil {
 		return pki.ClientCertificate{}, err
 	}
 	metadata := fmt.Sprintf("name: %s\nfingerprint: %s\nserial: %s\ncreated_at: %s\n", kioskClientName, certificate.Fingerprint, certificate.Serial, time.Now().UTC().Format(time.RFC3339))
@@ -412,4 +403,59 @@ func ensureKioskClientCertificate(siteDir string, s model.Site, authority pki.Au
 		}
 	}
 	return certificate, nil
+}
+
+func publishKioskClientIdentity(runtimeDir string, certificate pki.ClientCertificate) error {
+	if err := pathguard.ValidateNoSymlinkComponents(runtimeDir); err != nil {
+		return fmt.Errorf("refuse kiosk identity path: %w", err)
+	}
+	parent := filepath.Dir(runtimeDir)
+	if err := pathguard.MkdirAll(parent, 0700); err != nil {
+		return fmt.Errorf("create kiosk identity parent: %w", err)
+	}
+	stage, err := pathguard.MkdirTemp(parent, ".boetticher-kiosk-identity-", 0700)
+	if err != nil {
+		return fmt.Errorf("stage kiosk identity: %w", err)
+	}
+	defer func() { _ = pathguard.RemoveAll(stage) }()
+	for _, file := range []struct {
+		name string
+		data string
+		mode os.FileMode
+	}{
+		{name: "client.key.pem", data: certificate.KeyPEM, mode: 0600},
+		{name: "client.crt.pem", data: certificate.CertPEM, mode: 0644},
+		{name: "chain.crt.pem", data: certificate.ChainPEM, mode: 0644},
+	} {
+		if err := pathguard.WriteFile(filepath.Join(stage, file.name), []byte(file.data), file.mode); err != nil {
+			return fmt.Errorf("stage kiosk identity %s: %w", file.name, err)
+		}
+	}
+	return publishKioskIdentity(runtimeDir, stage)
+}
+
+func publishKioskIdentity(runtimeDir, stage string) error {
+	if err := pathguard.ValidateNoSymlinkComponents(runtimeDir); err != nil {
+		return fmt.Errorf("refuse kiosk identity publication path: %w", err)
+	}
+	previous := runtimeDir + ".previous"
+	if err := pathguard.ValidateNoSymlinkComponents(previous); err != nil {
+		return fmt.Errorf("refuse kiosk identity previous path: %w", err)
+	}
+	if _, err := os.Lstat(runtimeDir); err == nil {
+		if err := pathguard.RemoveAll(previous); err != nil {
+			return err
+		}
+		if err := pathguard.Rename(runtimeDir, previous); err != nil {
+			return err
+		}
+		if err := pathguard.Rename(stage, runtimeDir); err != nil {
+			_ = pathguard.Rename(previous, runtimeDir)
+			return err
+		}
+		return pathguard.RemoveAll(previous)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return pathguard.Rename(stage, runtimeDir)
 }

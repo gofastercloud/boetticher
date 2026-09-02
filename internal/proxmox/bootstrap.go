@@ -1044,6 +1044,8 @@ func CheckScopedCredentialAvailability(ctx context.Context, runner CommandRunner
 	return nil
 }
 
+const scopedCredentialComment = "boetticher automation identity"
+
 // RemoveExactScopedCredentialToken removes only the reserved, stale
 // provisioning token when the caller has deliberately started a new site and
 // cannot recover Proxmox's one-time token value. The surrounding role must
@@ -1086,6 +1088,13 @@ func RemoveExactScopedCredentialToken(ctx context.Context, runner CommandRunner,
 	}
 	if !tokens[tokenID] {
 		return false, nil
+	}
+	aclOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/acl --output-format json"))
+	if err != nil {
+		return false, fmt.Errorf("HOLD: inspect Proxmox ACLs before token replacement: %w", err)
+	}
+	if err := validateScopedCredentialTokenOwnership(usersOutput, tokensOutput, aclOutput, userID, tokenID, role); err != nil {
+		return false, fmt.Errorf("HOLD: scoped Proxmox token ownership is not the expected Boetticher identity: %w", err)
 	}
 	removeToken := "pvesh delete /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID)
 	if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, removeToken)); err != nil {
@@ -1315,7 +1324,7 @@ type pulseMonitoringACLEntry struct {
 
 func validatePulseMonitoringUserOwnership(usersOutput []byte) error {
 	var users []pulseMonitoringUserEntry
-	if err := decodePulseMonitoringList(usersOutput, &users); err != nil {
+	if err := decodeAccessList(usersOutput, &users); err != nil {
 		return fmt.Errorf("decode Pulse monitoring users: %w", err)
 	}
 	userFound := false
@@ -1339,7 +1348,7 @@ func validatePulseMonitoringTokenOwnership(usersOutput, tokensOutput, aclOutput 
 		return err
 	}
 	var tokens []pulseMonitoringTokenEntry
-	if err := decodePulseMonitoringList(tokensOutput, &tokens); err != nil {
+	if err := decodeAccessList(tokensOutput, &tokens); err != nil {
 		return fmt.Errorf("decode Pulse monitoring tokens: %w", err)
 	}
 	tokenFound := false
@@ -1356,7 +1365,7 @@ func validatePulseMonitoringTokenOwnership(usersOutput, tokensOutput, aclOutput 
 		return errors.New("Pulse monitoring token is absent")
 	}
 	var acls []pulseMonitoringACLEntry
-	if err := decodePulseMonitoringList(aclOutput, &acls); err != nil {
+	if err := decodeAccessList(aclOutput, &acls); err != nil {
 		return fmt.Errorf("decode Pulse monitoring ACLs: %w", err)
 	}
 	expected := map[string]string{
@@ -1382,7 +1391,7 @@ func validatePulseMonitoringTokenOwnership(usersOutput, tokensOutput, aclOutput 
 	return nil
 }
 
-func decodePulseMonitoringList(output []byte, destination any) error {
+func decodeAccessList(output []byte, destination any) error {
 	var envelope struct {
 		Data json.RawMessage `json:"data"`
 	}
@@ -1390,6 +1399,91 @@ func decodePulseMonitoringList(output []byte, destination any) error {
 		return json.Unmarshal(envelope.Data, destination)
 	}
 	return json.Unmarshal(output, destination)
+}
+
+type scopedCredentialUserEntry struct {
+	Comment string `json:"comment"`
+	Enable  int    `json:"enable"`
+	Expire  int    `json:"expire"`
+	UserID  string `json:"userid"`
+}
+
+type scopedCredentialTokenEntry struct {
+	Expire  int    `json:"expire"`
+	Privsep int    `json:"privsep"`
+	TokenID string `json:"tokenid"`
+}
+
+type scopedCredentialACLEntry struct {
+	Path      string `json:"path"`
+	Propagate int    `json:"propagate"`
+	RoleID    string `json:"roleid"`
+	Type      string `json:"type"`
+	UGID      string `json:"ugid"`
+}
+
+func validateScopedCredentialTokenOwnership(usersOutput, tokensOutput, aclOutput []byte, userID, tokenID, role string) error {
+	var users []scopedCredentialUserEntry
+	if err := decodeAccessList(usersOutput, &users); err != nil {
+		return fmt.Errorf("decode scoped credential users: %w", err)
+	}
+	userFound := false
+	for _, user := range users {
+		if user.UserID != userID {
+			continue
+		}
+		if user.Comment != scopedCredentialComment || user.Enable != 1 || user.Expire != 0 {
+			return errors.New("scoped credential user metadata is unexpected")
+		}
+		userFound = true
+	}
+	if !userFound {
+		return errors.New("scoped credential user is absent")
+	}
+
+	var tokens []scopedCredentialTokenEntry
+	if err := decodeAccessList(tokensOutput, &tokens); err != nil {
+		return fmt.Errorf("decode scoped credential tokens: %w", err)
+	}
+	tokenFound := false
+	for _, token := range tokens {
+		if token.TokenID != tokenID {
+			continue
+		}
+		if token.Privsep != 1 || token.Expire != 0 {
+			return errors.New("scoped credential token metadata is unexpected")
+		}
+		tokenFound = true
+	}
+	if !tokenFound {
+		return errors.New("scoped credential token is absent")
+	}
+
+	var acls []scopedCredentialACLEntry
+	if err := decodeAccessList(aclOutput, &acls); err != nil {
+		return fmt.Errorf("decode scoped credential ACLs: %w", err)
+	}
+	expected := map[string]string{
+		userID:                 "user",
+		userID + "!" + tokenID: "token",
+	}
+	seen := make(map[string]bool, len(expected))
+	for _, acl := range acls {
+		expectedType, relevant := expected[acl.UGID]
+		if !relevant {
+			continue
+		}
+		if seen[acl.UGID] || acl.Path != "/" || acl.Propagate != 1 || acl.RoleID != role || acl.Type != expectedType {
+			return errors.New("scoped credential ACL is unexpected")
+		}
+		seen[acl.UGID] = true
+	}
+	for ugid := range expected {
+		if !seen[ugid] {
+			return fmt.Errorf("scoped credential ACL %q is absent", ugid)
+		}
+	}
+	return nil
 }
 
 func requireBuiltInRole(output []byte, wanted, wantedPrivileges string) error {
@@ -1441,7 +1535,7 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 		return "", fmt.Errorf("HOLD: decode Proxmox users: %w", err)
 	}
 	if !users[userID] {
-		createUser := "pvesh create /access/users --userid " + shellQuote(userID) + " --comment 'boetticher automation identity'"
+		createUser := "pvesh create /access/users --userid " + shellQuote(userID) + " --comment " + shellQuote(scopedCredentialComment)
 		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, createUser)); err != nil {
 			return "", fmt.Errorf("create Proxmox automation user: %w", err)
 		}

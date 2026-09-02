@@ -214,6 +214,30 @@ func TestReadAndCopyKnownHostKeyBindsBootstrapAlias(t *testing.T) {
 	}
 }
 
+func TestAddKnownHostKeyRejectsSymlinkedParent(t *testing.T) {
+	dir := t.TempDir()
+	external := t.TempDir()
+	sentinel := filepath.Join(external, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(dir, "generated")); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "generated", "ssh", "kiosk_known_hosts")
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	if err := AddKnownHostKey(path, "lab-display-01", key); err == nil {
+		t.Fatal("known-host enrollment followed a symlinked parent")
+	}
+	if _, err := os.Stat(filepath.Join(external, "ssh", "kiosk_known_hosts")); !os.IsNotExist(err) {
+		t.Fatalf("known-host enrollment wrote outside its trusted tree: %v", err)
+	}
+	data, err := os.ReadFile(sentinel)
+	if err != nil || string(data) != "keep" {
+		t.Fatalf("external sentinel changed: %q, %v", data, err)
+	}
+}
+
 func TestValidateBootstrapAddressRequiresCanonicalIPv4(t *testing.T) {
 	for _, address := range []string{"proxmox.example", "192.0.2.10:8006", " 192.0.2.10", "2001:db8::10", "192.0.2.010"} {
 		if err := ValidateBootstrapAddress(address); err == nil {

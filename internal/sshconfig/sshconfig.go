@@ -14,6 +14,7 @@ import (
 	"unicode"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/pathguard"
 )
 
 func Render(s model.Site, generatedAt time.Time) (string, error) {
@@ -238,7 +239,7 @@ func RemoveHostKey(path, host string) error {
 	if path == "" || host == "" || strings.ContainsAny(host, " \t\r\n") {
 		return errors.New("known-hosts path and exact host are required")
 	}
-	content, err := os.ReadFile(path)
+	content, err := pathguard.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -283,7 +284,7 @@ func RemoveHostKey(path, host string) error {
 	if !changed {
 		return nil
 	}
-	return Write(path, []byte(strings.Join(kept, "")), true)
+	return pathguard.WriteFile(path, []byte(strings.Join(kept, "")), 0600)
 }
 
 // ReadHostKey returns the first plain host-key entry for the exact alias.
@@ -294,7 +295,7 @@ func ReadHostKey(path, host string) (string, error) {
 	if path == "" || host == "" || strings.ContainsAny(host, " \t\r\n,|*?!") {
 		return "", errors.New("known-hosts path and exact host are required")
 	}
-	content, err := os.ReadFile(path)
+	content, err := pathguard.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("host key for %s is not enrolled: %w", host, err)
 	}
@@ -365,7 +366,7 @@ func addHostKey(path, host, publicKey string, normalize func(string) (string, er
 	if len(content) > 0 && !strings.HasSuffix(string(content), "\n") {
 		separator = "\n"
 	}
-	return Write(path, append(append(append([]byte{}, content...), []byte(separator)...), []byte(host+" "+canonicalKey+"\n")...), true)
+	return pathguard.WriteFile(path, append(append(append([]byte{}, content...), []byte(separator)...), []byte(host+" "+canonicalKey+"\n")...), 0600)
 }
 
 func normalizeKnownHostKey(publicKey string) (string, error) {

@@ -38,12 +38,14 @@ func (r *staleScopedTokenRunner) Run(_ context.Context, _ string, _ string, comm
 	case "pvesh get /access/roles --output-format json":
 		return []byte(`[{"roleid":"BoetticherProvisioner","privs":"` + ScopedProvisionerPrivileges() + `","special":0}]`), nil
 	case "pvesh get /access/users --output-format json":
-		return []byte(`[{"userid":"labadmin@pve"}]`), nil
+		return []byte(`[{"comment":"boetticher automation identity","enable":1,"expire":0,"userid":"labadmin@pve"}]`), nil
 	case "pvesh get /access/users/'labadmin@pve'/token --output-format json":
 		if r.removed {
 			return []byte(`[]`), nil
 		}
-		return []byte(`[{"tokenid":"boetticher"}]`), nil
+		return []byte(`[{"expire":0,"privsep":1,"tokenid":"boetticher"}]`), nil
+	case "pvesh get /access/acl --output-format json":
+		return []byte(`[{"path":"/","propagate":1,"roleid":"BoetticherProvisioner","type":"user","ugid":"labadmin@pve"},{"path":"/","propagate":1,"roleid":"BoetticherProvisioner","type":"token","ugid":"labadmin@pve!boetticher"}]`), nil
 	case "pvesh delete /access/users/'labadmin@pve'/token/'boetticher'":
 		r.removed = true
 		return nil, nil
@@ -434,6 +436,9 @@ func TestRemoveExactScopedCredentialTokenDeletesOnlyTheOwnedToken(t *testing.T) 
 	if !containsString(runner.commands, deleteCommand) {
 		t.Fatalf("expected exact token deletion command, got %#v", runner.commands)
 	}
+	if !containsString(runner.commands, "pvesh get /access/acl --output-format json") {
+		t.Fatalf("token replacement did not prove scoped credential ACL ownership: %#v", runner.commands)
+	}
 	for _, command := range runner.commands {
 		if strings.Contains(command, "pvesh delete ") && command != deleteCommand {
 			t.Fatalf("token replacement issued an unexpected deletion: %s", command)
@@ -443,6 +448,53 @@ func TestRemoveExactScopedCredentialTokenDeletesOnlyTheOwnedToken(t *testing.T) 
 				t.Fatalf("token replacement deletion touched forbidden target %q: %s", forbidden, command)
 			}
 		}
+	}
+}
+
+func TestRemoveExactScopedCredentialTokenRefusesUnexpectedOwnership(t *testing.T) {
+	role := []byte(`[{"roleid":"BoetticherProvisioner","privs":"` + ScopedProvisionerPrivileges() + `","special":0}]`)
+	for _, test := range []struct {
+		name   string
+		users  []byte
+		tokens []byte
+		acls   []byte
+	}{
+		{
+			name:   "user metadata",
+			users:  []byte(`[{"comment":"unexpected","enable":1,"expire":0,"userid":"labadmin@pve"}]`),
+			tokens: []byte(`[{"expire":0,"privsep":1,"tokenid":"boetticher"}]`),
+			acls:   []byte(`[{"path":"/","propagate":1,"roleid":"BoetticherProvisioner","type":"user","ugid":"labadmin@pve"},{"path":"/","propagate":1,"roleid":"BoetticherProvisioner","type":"token","ugid":"labadmin@pve!boetticher"}]`),
+		},
+		{
+			name:   "token metadata",
+			users:  []byte(`[{"comment":"boetticher automation identity","enable":1,"expire":0,"userid":"labadmin@pve"}]`),
+			tokens: []byte(`[{"expire":0,"privsep":0,"tokenid":"boetticher"}]`),
+			acls:   []byte(`[{"path":"/","propagate":1,"roleid":"BoetticherProvisioner","type":"user","ugid":"labadmin@pve"},{"path":"/","propagate":1,"roleid":"BoetticherProvisioner","type":"token","ugid":"labadmin@pve!boetticher"}]`),
+		},
+		{
+			name:   "ACL",
+			users:  []byte(`[{"comment":"boetticher automation identity","enable":1,"expire":0,"userid":"labadmin@pve"}]`),
+			tokens: []byte(`[{"expire":0,"privsep":1,"tokenid":"boetticher"}]`),
+			acls:   []byte(`[]`),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runner := &fakeRunner{responses: map[string][]byte{
+				"pvesh get /access/roles --output-format json":                      role,
+				"pvesh get /access/users --output-format json":                      test.users,
+				"pvesh get /access/users/'labadmin@pve'/token --output-format json": test.tokens,
+				"pvesh get /access/acl --output-format json":                        test.acls,
+			}}
+			removed, err := RemoveExactScopedCredentialToken(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner")
+			if err == nil || !strings.Contains(err.Error(), "ownership") {
+				t.Fatalf("unexpected scoped credential ownership was accepted: removed=%t err=%v", removed, err)
+			}
+			for _, command := range runner.commands {
+				if strings.Contains(command, "pvesh delete") {
+					t.Fatalf("unexpected ownership triggered token deletion: %s", command)
+				}
+			}
+		})
 	}
 }
 

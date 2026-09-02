@@ -26,6 +26,20 @@ func TestGatusRolePreparesConfigDirectoryAndReloadsNginx(t *testing.T) {
 	}
 }
 
+func TestARRRoleSeedsConfigurationWithoutOverwritingApplicationState(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "arr", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := ansibleTaskBlock(string(contents), "Bind Sonarr and Radarr to loopback with no native login")
+	if block == "" {
+		t.Fatal("ARR role is missing its initial Sonarr/Radarr configuration task")
+	}
+	if !strings.Contains(block, "force: false") {
+		t.Fatal("ARR role overwrites application-managed configuration on every deploy")
+	}
+}
+
 func TestPhaseVariablesExposeOnlySafeDeploymentPhaseMetadata(t *testing.T) {
 	data, err := phaseVariables([]byte(`{"example":"value"}`), PhaseBootstrap)
 	if err != nil {
