@@ -159,14 +159,14 @@ func TestGenerateRetriesOpaqueProviderErrorWithManagedAirVPNDevice(t *testing.T)
 	}
 }
 
-func TestGenerateExplainsGeneratorAuthorizationWithoutCreatingAirVPNDevice(t *testing.T) {
+func TestGenerateExplainsLegacyGeneratorAuthorizationWithoutCreatingAirVPNDevice(t *testing.T) {
 	requests := 0
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
 		switch r.URL.Path {
 		case "/generator/":
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"result":"Authorization required"}`))
+			_, _ = w.Write([]byte(`{"error":"Authorization required"}`))
 		case "/userinfo/":
 			_, _ = w.Write([]byte(`{"user":null}`))
 		case "/devices/", "/status/":

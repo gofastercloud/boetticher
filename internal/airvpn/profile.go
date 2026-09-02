@@ -91,20 +91,16 @@ func (c Client) Generate(ctx context.Context, apiKey, servers string) (Profile, 
 // product-owned managed device fallback.
 func (c Client) handleGeneratorJSONFailure(ctx context.Context, baseURL, apiKey, servers string, httpClient *http.Client, attempt providerProfileAttempt) (Profile, error) {
 	if !providerJSONHasResult(attempt.Data) {
+		if category := providerJSONErrorCategory(attempt.Data); category == "authorization" || category == "api-key" {
+			return c.handleGeneratorAuthorization(ctx, baseURL, apiKey, httpClient)
+		}
 		return c.handleLegacyGeneratorJSONFailure(ctx, baseURL, apiKey, servers, httpClient, attempt)
 	}
 	category := providerJSONErrorCategory(attempt.Data)
 	summary := providerResponseSummary(attempt.ContentType, attempt.Data)
 	switch category {
 	case "authorization", "api-key":
-		readiness, err := c.providerReadiness(ctx, baseURL, apiKey, httpClient)
-		if err != nil {
-			return Profile{}, fmt.Errorf("AirVPN account readiness check failed after a generator authorization result: %w", err)
-		}
-		if !readiness.APIKeyAccepted {
-			return Profile{}, errors.New("AirVPN did not authorize the controller API key; confirm it is activated for API access or replace it before deploying")
-		}
-		return Profile{}, errors.New("AirVPN accepted the controller API key but did not authorize it for the configuration generator; confirm its API access is activated before deploying")
+		return c.handleGeneratorAuthorization(ctx, baseURL, apiKey, httpClient)
 	case "server-selector":
 		available, err := c.selectorHasLiveServer(ctx, baseURL, servers, httpClient)
 		if err == nil && !available {
@@ -118,6 +114,17 @@ func (c Client) handleGeneratorJSONFailure(ctx context.Context, baseURL, apiKey,
 	default:
 		return Profile{}, fmt.Errorf("AirVPN generator returned an unclassified provider result (%s); no AirVPN device changes were made", summary)
 	}
+}
+
+func (c Client) handleGeneratorAuthorization(ctx context.Context, baseURL, apiKey string, httpClient *http.Client) (Profile, error) {
+	readiness, err := c.providerReadiness(ctx, baseURL, apiKey, httpClient)
+	if err != nil {
+		return Profile{}, fmt.Errorf("AirVPN account readiness check failed after a generator authorization result: %w", err)
+	}
+	if !readiness.APIKeyAccepted {
+		return Profile{}, errors.New("AirVPN did not authorize the controller API key; confirm it is activated for API access or replace it before deploying")
+	}
+	return Profile{}, errors.New("AirVPN accepted the controller API key but did not authorize it for the configuration generator; confirm its API access is activated before deploying")
 }
 
 // handleLegacyGeneratorJSONFailure retains read-only prerequisites for the
