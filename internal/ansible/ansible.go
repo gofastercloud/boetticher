@@ -698,7 +698,7 @@ func failureDiagnosticWithSupplement(output, supplement []byte) string {
 	}
 	selected := make([]string, 0, 3)
 	for _, line := range lines {
-		if strings.Contains(line, "[ERROR]:") || strings.Contains(line, "fatal:") || strings.Contains(line, "unreachable=") {
+		if strings.Contains(line, "[ERROR]:") || strings.Contains(line, "ERROR!") || strings.Contains(line, "fatal:") || strings.Contains(line, "FAILED!") || strings.Contains(line, "unreachable=") || strings.Contains(line, "no hosts matched") {
 			selected = append(selected, strings.TrimSpace(line))
 		}
 	}
