@@ -234,6 +234,27 @@ func TestProjectionCleanupRejectsSymlinkedGeneratedRoot(t *testing.T) {
 	}
 }
 
+func TestWriteStorageProjectionDoesNotRequireAirVPNProfile(t *testing.T) {
+	config := model.ConfigFromSite(model.NewDefaultSite("installation", "age1example"))
+	config.StorageProfile = "dedicated-data-disk"
+	config.StorageDevice = "/dev/disk/by-id/ata-example-data"
+	enabled := true
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "australia"}
+	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
+	s, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	if err := writeStorageProjection(dir, s); err != nil {
+		t.Fatalf("write storage projection before AirVPN profile exists: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "generated", "storage", "desired-state.json")); err != nil {
+		t.Fatalf("storage projection was not written: %v", err)
+	}
+}
+
 func TestProjectionCleanupRejectsSymlinkedModuleRoot(t *testing.T) {
 	dir := t.TempDir()
 	moduleRootParent := filepath.Join(dir, "generated")

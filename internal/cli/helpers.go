@@ -48,6 +48,22 @@ func writeModelProjection(dir string, s model.Site) error {
 	return writePublic(filepath.Join(dir, "generated", "model.json"), append(data, '\n'))
 }
 
+// writeStorageProjection refreshes the storage contract without requiring
+// runtime metadata owned by another deployment phase. In particular, a
+// selected-source AirVPN policy cannot be rendered until deploy has generated
+// and qualified its provider profile, but dedicated storage initialization
+// must remain safe to run before that happens.
+func writeStorageProjection(dir string, s model.Site) error {
+	if err := pathguard.ValidateNoSymlinkComponents(filepath.Join(dir, "generated")); err != nil {
+		return fmt.Errorf("refuse generated projection path: %w", err)
+	}
+	storagePlan, err := storage.PlanFromSite(s)
+	if err != nil {
+		return err
+	}
+	return writeProjection(filepath.Join(dir, "generated", "storage", "desired-state.json"), storagePlan)
+}
+
 func writeModelProjections(dir string, s model.Site) error {
 	return writeModelProjectionsWithResolver(dir, s, net.LookupIP)
 }
@@ -144,11 +160,7 @@ func writeModelProjectionsWithResolverAndAirVPN(dir string, s model.Site, endpoi
 	if err := writeProjection(filepath.Join(dir, "generated", "backup", "desired-policy.json"), backupPlan); err != nil {
 		return err
 	}
-	storagePlan, err := storage.PlanFromSite(s)
-	if err != nil {
-		return err
-	}
-	if err := writeProjection(filepath.Join(dir, "generated", "storage", "desired-state.json"), storagePlan); err != nil {
+	if err := writeStorageProjection(dir, s); err != nil {
 		return err
 	}
 	loggingPlan, err := logging.PlanFromSite(s)
