@@ -251,15 +251,18 @@ func providerJSONErrorCategory(data []byte) string {
 	collectProviderJSONStrings(response, &details, 0)
 	message := strings.ToLower(strings.Join(details, " "))
 	switch {
-	case strings.Contains(message, "api") && strings.Contains(message, "key"):
+	case strings.Contains(message, "device") || strings.Contains(message, "user key"):
+		return "device"
+	case strings.Contains(message, "api") && strings.Contains(message, "key"),
+		strings.Contains(message, "invalid key") || strings.Contains(message, "expired key") || strings.Contains(message, "missing key") || strings.Contains(message, "key required") || strings.Contains(message, "key is required"):
 		return "api-key"
 	case strings.Contains(message, "authoriz") || strings.Contains(message, "authenticat"):
 		return "authorization"
-	case strings.Contains(message, "device"):
-		return "device"
+	case strings.Contains(message, "parameter") || strings.Contains(message, "argument") || strings.Contains(message, "option") || strings.Contains(message, "protocol") || strings.Contains(message, "format"):
+		return "request"
 	case strings.Contains(message, "server") || strings.Contains(message, "country") || strings.Contains(message, "region"):
 		return "server-selector"
-	case strings.Contains(message, "subscription") || strings.Contains(message, "account") || strings.Contains(message, "plan"):
+	case strings.Contains(message, "subscription") || strings.Contains(message, "account") || strings.Contains(message, "plan") || strings.Contains(message, "credit") || strings.Contains(message, "active access") || strings.Contains(message, "active service"):
 		return "account"
 	case message == "":
 		return "unspecified"

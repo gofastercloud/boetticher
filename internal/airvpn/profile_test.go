@@ -129,6 +129,20 @@ func TestGenerateClassifiesNestedJSONProviderErrorWithoutLeakingIt(t *testing.T)
 	}
 }
 
+func TestProviderJSONErrorCategoryRecognizesOpaqueProviderPrerequisites(t *testing.T) {
+	cases := map[string]string{
+		`{"error":"invalid key"}`:                      "api-key",
+		`{"error":"invalid generator parameter"}`:      "request",
+		`{"error":"active access is required"}`:        "account",
+		`{"error":"selected user key is unavailable"}`: "device",
+	}
+	for response, want := range cases {
+		if got := providerJSONErrorCategory([]byte(response)); got != want {
+			t.Fatalf("provider error category for %s = %q, want %q", response, got, want)
+		}
+	}
+}
+
 func TestGenerateExplainsUnavailableSelectorAgainstLiveStatus(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
