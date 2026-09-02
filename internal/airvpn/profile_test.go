@@ -29,14 +29,13 @@ func testProfile() string {
 
 func TestGenerateBuildsBoundedAirVPNRequestAndRedactsFailures(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/generator/" || r.Header.Get("Api-Key") != "controller-key" || r.Header.Get("Accept") != "text/plain" {
+		if r.URL.Path != "/generator/" || r.Header.Get("Api-Key") != "controller-key" || r.Header.Get("Accept") != "" {
 			t.Fatalf("unexpected generator request: path=%q api-key=%q accept=%q", r.URL.Path, r.Header.Get("Api-Key"), r.Header.Get("Accept"))
 		}
 		want := map[string]string{
 			"protocols":     "wireguard_1_udp_1637",
 			"servers":       "europe",
 			"device":        "default",
-			"system":        "other",
 			"resolve":       "on",
 			"iplayer_entry": "ipv4",
 		}
@@ -45,7 +44,7 @@ func TestGenerateBuildsBoundedAirVPNRequestAndRedactsFailures(t *testing.T) {
 				t.Fatalf("query %s=%q, want %q", key, r.URL.Query().Get(key), value)
 			}
 		}
-		for _, key := range []string{"wireguard_mtu", "wireguard_persistent_keepalive"} {
+		for _, key := range []string{"system", "wireguard_mtu", "wireguard_persistent_keepalive"} {
 			if value := r.URL.Query().Get(key); value != "" {
 				t.Fatalf("query %s=%q, want it omitted", key, value)
 			}

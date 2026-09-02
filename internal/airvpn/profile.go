@@ -73,7 +73,6 @@ func (c Client) Generate(ctx context.Context, apiKey, servers string) (profile P
 	query.Set("protocols", fmt.Sprintf("wireguard_1_udp_%d", DefaultPort))
 	query.Set("servers", servers)
 	query.Set("device", "default")
-	query.Set("system", "other")
 	query.Set("resolve", "on")
 	query.Set("iplayer_entry", "ipv4")
 	parsed.RawQuery = query.Encode()
@@ -82,7 +81,6 @@ func (c Client) Generate(ctx context.Context, apiKey, servers string) (profile P
 		return Profile{}, fmt.Errorf("create AirVPN generator request: %w", err)
 	}
 	request.Header.Set("Api-Key", apiKey)
-	request.Header.Set("Accept", "text/plain")
 	httpClient := c.HTTPClient
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: generatorTimeout}
