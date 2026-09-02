@@ -1942,7 +1942,41 @@ func releaseLegacyLXCLoopMapping(ctx context.Context, plan Plan, guest GuestPlan
 	if _, err := plan.PrivilegedRunner.RunArgs(ctx, plan.PrivilegedAddress, plan.PrivilegedUser, []string{"/usr/sbin/losetup", "--detach", loops[0]}); err != nil {
 		return fmt.Errorf("HOLD: detach inactive legacy loop mapping %s for persistent volume %s: %w", loops[0], volumeID, err)
 	}
-	return nil
+	return waitForLegacyLXCLoopRelease(ctx, plan, volumeID, volumePath, loops[0], 10, time.Second)
+}
+
+// waitForLegacyLXCLoopRelease accounts for losetup's deferred autoclear
+// behavior. A successful detach can remain visible until the stopped LXC's
+// old mount namespace drains; handing it to Proxmox before then recreates the
+// read-only mount conflict. A changed or still-attached mapping is blocking.
+func waitForLegacyLXCLoopRelease(ctx context.Context, plan Plan, volumeID, volumePath, expectedLoop string, attempts int, interval time.Duration) error {
+	if attempts < 1 || interval < 0 {
+		return errors.New("legacy LXC loop-release wait is invalid")
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
+		loopOutput, err := plan.PrivilegedRunner.RunArgs(ctx, plan.PrivilegedAddress, plan.PrivilegedUser, []string{"/usr/sbin/losetup", "--noheadings", "--output", "NAME", "--associated", volumePath})
+		if err != nil {
+			return fmt.Errorf("re-check legacy loop mapping for %s: %w", volumeID, err)
+		}
+		loops := strings.Fields(string(loopOutput))
+		if len(loops) == 0 {
+			return nil
+		}
+		if len(loops) != 1 || !isLoopDevice(loops[0]) || loops[0] != expectedLoop {
+			return fmt.Errorf("HOLD: legacy persistent volume %s has changed loop mappings %q after detach", volumeID, strings.TrimSpace(string(loopOutput)))
+		}
+		if attempt+1 == attempts {
+			break
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("wait for legacy loop mapping %s to release: %w", expectedLoop, ctx.Err())
+		case <-timer.C:
+		}
+	}
+	return fmt.Errorf("HOLD: legacy loop mapping %s for persistent volume %s remained attached after detach", expectedLoop, volumeID)
 }
 
 func legacyLXCLocalRawVolumeID(observed string, vmid int) (string, error) {

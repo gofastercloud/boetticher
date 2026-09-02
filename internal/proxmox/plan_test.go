@@ -895,7 +895,7 @@ func TestEnsureLXCMigratesVerifiedPersistentVolumesToDeclaredStorage(t *testing.
 	after := modelStorageIDForTest + ":vm-110-disk-1,mp=/var/lib/powerdns,backup=1,size=8G"
 	moved := false
 	legacyPath := "/var/lib/vz/images/110/vm-110-disk-1.raw"
-	privilegedRunner := &recordingArgsRunner{outputs: [][]byte{[]byte(legacyPath + "\n"), []byte("/dev/loop15\n"), []byte(legacyPath + "\n")}}
+	privilegedRunner := &recordingArgsRunner{outputs: [][]byte{[]byte(legacyPath + "\n"), []byte("/dev/loop15\n"), []byte(legacyPath + "\n"), nil}}
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/110/config":
@@ -940,7 +940,7 @@ func TestEnsureLXCMigratesVerifiedPersistentVolumesToDeclaredStorage(t *testing.
 	if !moved {
 		t.Fatal("verified LXC persistent volume was not migrated")
 	}
-	if got, want := privilegedRunner.args, [][]string{{"/usr/sbin/pvesm", "path", "local:110/vm-110-disk-1.raw"}, {"/usr/sbin/losetup", "--noheadings", "--output", "NAME", "--associated", legacyPath}, {"/usr/sbin/losetup", "--noheadings", "--output", "BACK-FILE", "/dev/loop15"}, {"/usr/sbin/losetup", "--detach", "/dev/loop15"}}; !reflect.DeepEqual(got, want) {
+	if got, want := privilegedRunner.args, [][]string{{"/usr/sbin/pvesm", "path", "local:110/vm-110-disk-1.raw"}, {"/usr/sbin/losetup", "--noheadings", "--output", "NAME", "--associated", legacyPath}, {"/usr/sbin/losetup", "--noheadings", "--output", "BACK-FILE", "/dev/loop15"}, {"/usr/sbin/losetup", "--detach", "/dev/loop15"}, {"/usr/sbin/losetup", "--noheadings", "--output", "NAME", "--associated", legacyPath}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("legacy loop release commands = %#v, want %#v", got, want)
 	}
 }
@@ -988,7 +988,7 @@ func TestMigrateLXCPersistentVolumesRestoresRunningGuestAfterMoveFailure(t *test
 	before := "local:110/vm-110-disk-1.raw,mp=/var/lib/powerdns,backup=1,size=8G"
 	stopped, restored := false, false
 	legacyPath := "/var/lib/vz/images/110/vm-110-disk-1.raw"
-	privilegedRunner := &recordingArgsRunner{outputs: [][]byte{[]byte(legacyPath + "\n"), []byte("/dev/loop15\n"), []byte(legacyPath + "\n")}}
+	privilegedRunner := &recordingArgsRunner{outputs: [][]byte{[]byte(legacyPath + "\n"), []byte("/dev/loop15\n"), []byte(legacyPath + "\n"), nil}}
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/current":
@@ -1021,7 +1021,7 @@ func TestMigrateLXCPersistentVolumesRestoresRunningGuestAfterMoveFailure(t *test
 	if !stopped || !restored {
 		t.Fatalf("running LXC was not safely restored: stopped=%t restored=%t", stopped, restored)
 	}
-	if got, want := privilegedRunner.args, [][]string{{"/usr/sbin/pvesm", "path", "local:110/vm-110-disk-1.raw"}, {"/usr/sbin/losetup", "--noheadings", "--output", "NAME", "--associated", legacyPath}, {"/usr/sbin/losetup", "--noheadings", "--output", "BACK-FILE", "/dev/loop15"}, {"/usr/sbin/losetup", "--detach", "/dev/loop15"}}; !reflect.DeepEqual(got, want) {
+	if got, want := privilegedRunner.args, [][]string{{"/usr/sbin/pvesm", "path", "local:110/vm-110-disk-1.raw"}, {"/usr/sbin/losetup", "--noheadings", "--output", "NAME", "--associated", legacyPath}, {"/usr/sbin/losetup", "--noheadings", "--output", "BACK-FILE", "/dev/loop15"}, {"/usr/sbin/losetup", "--detach", "/dev/loop15"}, {"/usr/sbin/losetup", "--noheadings", "--output", "NAME", "--associated", legacyPath}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("legacy loop release commands = %#v, want %#v", got, want)
 	}
 }
@@ -1040,6 +1040,19 @@ func TestReleaseLegacyLXCLoopMappingFailsClosedWhenDetachFails(t *testing.T) {
 	}
 	if got, want := runner.args, [][]string{{"/usr/sbin/pvesm", "path", "local:110/vm-110-disk-1.raw"}, {"/usr/sbin/losetup", "--noheadings", "--output", "NAME", "--associated", legacyPath}, {"/usr/sbin/losetup", "--noheadings", "--output", "BACK-FILE", "/dev/loop15"}, {"/usr/sbin/losetup", "--detach", "/dev/loop15"}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("legacy loop release commands = %#v, want %#v", got, want)
+	}
+}
+
+func TestWaitForLegacyLXCLoopReleaseFailsClosedWhenLoopRemainsAttached(t *testing.T) {
+	legacyPath := "/var/lib/vz/images/110/vm-110-disk-1.raw"
+	runner := &recordingArgsRunner{outputs: [][]byte{[]byte("/dev/loop15\n")}}
+	plan := Plan{Node: "node", PrivilegedRunner: runner, PrivilegedAddress: "192.0.2.10", PrivilegedUser: "root"}
+	err := waitForLegacyLXCLoopRelease(context.Background(), plan, "local:110/vm-110-disk-1.raw", legacyPath, "/dev/loop15", 1, 0)
+	if err == nil || !strings.Contains(err.Error(), "remained attached") {
+		t.Fatalf("retained loop mapping was not held: %v", err)
+	}
+	if got, want := runner.args, [][]string{{"/usr/sbin/losetup", "--noheadings", "--output", "NAME", "--associated", legacyPath}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("legacy loop release probe = %#v, want %#v", got, want)
 	}
 }
 
