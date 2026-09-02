@@ -37,6 +37,21 @@
       ],
       "type": "object"
     },
+    "ArrModuleConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "network": {
+          "enum": [
+            "airvpn"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "BifrostModelConfig": {
       "additionalProperties": false,
       "properties": {
@@ -213,6 +228,9 @@
         "airvpn": {
           "$ref": "#/$defs/AirVPNModuleConfig"
         },
+        "arr": {
+          "$ref": "#/$defs/ArrModuleConfig"
+        },
         "bifrost": {
           "$ref": "#/$defs/BifrostModuleConfig"
         },
@@ -223,7 +241,7 @@
           "$ref": "#/$defs/ToggleModuleConfig"
         },
         "gatus": {
-          "$ref": "#/$defs/ToggleModuleConfig"
+          "$ref": "#/$defs/NetworkToggleModuleConfig"
         },
         "logging": {
           "$ref": "#/$defs/MandatoryModuleConfig"
@@ -232,10 +250,10 @@
           "$ref": "#/$defs/ToggleModuleConfig"
         },
         "printer": {
-          "$ref": "#/$defs/ToggleModuleConfig"
+          "$ref": "#/$defs/NetworkToggleModuleConfig"
         },
         "streamdeck": {
-          "$ref": "#/$defs/ToggleModuleConfig"
+          "$ref": "#/$defs/NetworkToggleModuleConfig"
         },
         "tailnet-router": {
           "$ref": "#/$defs/ToggleModuleConfig"
@@ -260,6 +278,22 @@
         "domain",
         "zones"
       ],
+      "type": "object"
+    },
+    "NetworkToggleModuleConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "network": {
+          "enum": [
+            "direct",
+            "airvpn"
+          ],
+          "type": "string"
+        }
+      },
       "type": "object"
     },
     "OwnershipPolicy": {
@@ -407,13 +441,6 @@
       "properties": {
         "enabled": {
           "type": "boolean"
-        },
-        "network": {
-          "enum": [
-            "direct",
-            "airvpn"
-          ],
-          "type": "string"
         }
       },
       "type": "object"

@@ -17,7 +17,7 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantOrder := []string{"firewall", "dns", "logging", "monitoring", "aiops", "airvpn", "bifrost", "gatus", "printer", "streamdeck", "tailnet-router"}
+	wantOrder := []string{"firewall", "dns", "logging", "monitoring", "aiops", "airvpn", "arr", "bifrost", "gatus", "printer", "streamdeck", "tailnet-router"}
 	if len(modules) != len(wantOrder) {
 		t.Fatalf("unexpected module resolution: %#v", modules)
 	}
@@ -107,10 +107,42 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	}
 }
 
+func TestArrRequiresAirVPNAndComposesOwnedDHCPReservation(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	enabled := true
+	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
+	airvpnEnabled := true
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &airvpnEnabled, Servers: "europe"}
+	site, _, err := Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	declaration, ok := findDeclaration(site, "arr")
+	if !ok || len(declaration.DHCPReservations) != 1 {
+		t.Fatalf("arr declaration reservation missing: %#v", declaration)
+	}
+	reservation := declaration.DHCPReservations[0]
+	if reservation.Hostname != "lab-arr-01" || reservation.Address != model.ArrGuestAddress || reservation.MAC != model.ArrGuestMAC || reservation.VMID != model.ArrVMID {
+		t.Fatalf("unexpected arr DHCP reservation: %#v", reservation)
+	}
+	if len(site.DHCPReservations) != 1 || site.DHCPReservations[0] != reservation {
+		t.Fatalf("module reservation was not projected into canonical DHCP state: %#v", site.DHCPReservations)
+	}
+}
+
+func TestArrRejectsNonAirVPNNetwork(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	enabled := true
+	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkDirect}
+	if _, _, err := Compose(config); err == nil || !strings.Contains(err.Error(), "modules.arr.network") {
+		t.Fatalf("arr direct network mode was accepted: %v", err)
+	}
+}
+
 func TestGatusCrossZoneHTTPSIntentsFollowManagedServiceMetadata(t *testing.T) {
 	config := testConfig(model.GatewayModeManaged)
 	enabled := true
-	config.Modules.Gatus = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.Gatus = &model.NetworkToggleModuleConfig{Enabled: &enabled}
 	site, _, err := Compose(config)
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +166,7 @@ func TestGatusCrossZoneHTTPSIntentsFollowManagedServiceMetadata(t *testing.T) {
 func TestGatusInvalidCrossZoneEndpointFailsComposition(t *testing.T) {
 	config := testConfig(model.GatewayModeManaged)
 	enabled := true
-	config.Modules.Gatus = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.Gatus = &model.NetworkToggleModuleConfig{Enabled: &enabled}
 	site, _, err := Compose(config)
 	if err != nil {
 		t.Fatal(err)
@@ -250,6 +282,13 @@ func TestFirstPartyConfigurationFieldsAreTypedAndResolvedFromDeclarations(t *tes
 	if !secretField.Sensitive {
 		t.Fatalf("Bifrost secret reference is not structurally classified: %#v", bifrost[1])
 	}
+	arr, err := registry.ConfigurationFields("arr", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(arr) != 1 || arr[0].Key != "network" || arr[0].Default != string(model.ModuleNetworkAirVPN) || len(arr[0].AllowedValues) != 1 || arr[0].AllowedValues[0] != string(model.ModuleNetworkAirVPN) {
+		t.Fatalf("unexpected ARR configuration schema: %#v", arr)
+	}
 }
 
 func TestRegistryRejectsMalformedConfigurationField(t *testing.T) {
@@ -322,7 +361,7 @@ func TestAIOpsRejectsUndeclaredAliasAndExplicitlyDisabledDependency(t *testing.T
 func TestPrinterComposesMinimalOctoPrintDeclaration(t *testing.T) {
 	config := testConfig(model.GatewayModeManaged)
 	enabled := true
-	config.Modules.Printer = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.Printer = &model.NetworkToggleModuleConfig{Enabled: &enabled}
 	config.USBExports = []model.USBExportBinding{{Module: "printer", Requirement: "serial", Port: "1-2.4", VendorID: "1a86", ProductID: "7523"}}
 	site, _, err := Compose(config)
 	if err != nil {
@@ -354,7 +393,7 @@ func TestPrinterComposesMinimalOctoPrintDeclaration(t *testing.T) {
 func TestStreamDeckComposesReadOnlyPulseDisplayDeclaration(t *testing.T) {
 	config := testConfig(model.GatewayModeManaged)
 	enabled := true
-	config.Modules.StreamDeck = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.StreamDeck = &model.NetworkToggleModuleConfig{Enabled: &enabled}
 	config.USBExports = []model.USBExportBinding{{Module: "streamdeck", Requirement: "display", Port: "1-2.5", VendorID: "0fd9", ProductID: "006d"}}
 	site, _, err := Compose(config)
 	if err != nil {
@@ -573,6 +612,14 @@ func TestLoggingConfigurationHasNoLifecycleToggle(t *testing.T) {
 	disabled := false
 	if err := config.Set("logging", model.ModuleConfig{Enabled: &disabled}); err == nil || !strings.Contains(err.Error(), "modules.logging.enabled") {
 		t.Fatalf("logging lifecycle toggle was accepted: %v", err)
+	}
+}
+
+func TestNonNetworkModuleRejectsNetworkConfiguration(t *testing.T) {
+	var config model.ModulesConfig
+	enabled := true
+	if err := config.Set("monitoring", model.ModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}); err == nil || !strings.Contains(err.Error(), "modules.monitoring.network") {
+		t.Fatalf("monitoring network configuration was accepted: %v", err)
 	}
 }
 

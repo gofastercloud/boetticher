@@ -33,22 +33,24 @@ type PlacementRequirement struct {
 }
 
 type ModuleDefinition struct {
-	Name              string
-	Description       string
-	Version           string
-	Policy            EnablementPolicy
-	DependsOn         []string
-	Requires          []Capability
-	Provides          []Capability
-	GuestIDs          []int
-	ReservedVMIDStart int
-	ReservedVMIDEnd   int
-	Placement         PlacementRequirement
-	Guests            []model.Component
-	USBRequirements   []model.USBRequirement
-	Configuration     []model.ModuleConfigField
-	StaticDeviceSlots int
-	NetworkCapable    bool
+	Name                string
+	Description         string
+	Version             string
+	Policy              EnablementPolicy
+	DependsOn           []string
+	Requires            []Capability
+	Provides            []Capability
+	GuestIDs            []int
+	ReservedVMIDStart   int
+	ReservedVMIDEnd     int
+	Placement           PlacementRequirement
+	Guests              []model.Component
+	USBRequirements     []model.USBRequirement
+	Configuration       []model.ModuleConfigField
+	StaticDeviceSlots   int
+	NetworkCapable      bool
+	AllowedNetworkModes []model.ModuleNetworkMode
+	DefaultNetworkMode  model.ModuleNetworkMode
 }
 
 type Registry struct {
@@ -109,6 +111,14 @@ func FirstPartyRegistry() Registry {
 			Configuration: []model.ModuleConfigField{{Key: "servers", Type: model.ModuleConfigString, Prompt: "AirVPN server selector", Description: "AirVPN named server, country, or region selector used once to generate the retained WireGuard profile", Required: true}},
 			Placement:     PlacementRequirement{ZoneType: model.ZoneTypeTransit}, Guests: []model.Component{
 				{Name: "lab-airvpn-01", VMID: model.AirVPNGuestVMID, Hostname: "lab-airvpn-01", Address: model.AirVPNGuestAddress, Role: "AirVPN WireGuard transit", DNSAliases: []string{"airvpn"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			},
+		},
+		"arr": {
+			Name: "arr", Description: "AirVPN-routed Sonarr and Radarr video services", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
+			AllowedNetworkModes: []model.ModuleNetworkMode{model.ModuleNetworkAirVPN}, DefaultNetworkMode: model.ModuleNetworkAirVPN,
+			DependsOn: []string{"airvpn"}, Requires: []Capability{CapabilityAirVPNTransit, CapabilityDNS, CapabilityNTP}, GuestIDs: []int{model.ArrVMID}, ReservedVMIDStart: 270, ReservedVMIDEnd: 279,
+			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
+				{Name: "lab-arr-01", VMID: model.ArrVMID, Hostname: "lab-arr-01", Address: model.ArrGuestAddress, MAC: model.ArrGuestMAC, Role: "Sonarr and Radarr video services", DNSAliases: []string{"sonarr", "radarr"}, URL: "https://sonarr." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 		"bifrost": {
@@ -182,7 +192,19 @@ func (r Registry) ConfigurationFields(name string, config model.SiteConfig) ([]m
 	}
 	fields := cloneConfigurationFields(definition.Configuration)
 	if definition.NetworkCapable {
-		fields = append([]model.ModuleConfigField{{Key: "network", Type: model.ModuleConfigEnum, Prompt: "Network egress mode", Description: "Route declared external application egress directly or through the AirVPN transit node", Default: string(model.ModuleNetworkDirect), AllowedValues: []string{string(model.ModuleNetworkDirect), string(model.ModuleNetworkAirVPN)}}}, fields...)
+		allowed := definition.AllowedNetworkModes
+		if len(allowed) == 0 {
+			allowed = []model.ModuleNetworkMode{model.ModuleNetworkDirect, model.ModuleNetworkAirVPN}
+		}
+		defaultMode := definition.DefaultNetworkMode
+		if defaultMode == "" {
+			defaultMode = model.ModuleNetworkDirect
+		}
+		allowedValues := make([]string, 0, len(allowed))
+		for _, mode := range allowed {
+			allowedValues = append(allowedValues, string(mode))
+		}
+		fields = append([]model.ModuleConfigField{{Key: "network", Type: model.ModuleConfigEnum, Prompt: "Network egress mode", Description: "Route declared external application egress through the selected network path", Default: string(defaultMode), AllowedValues: allowedValues}}, fields...)
 	}
 	var resolve func([]model.ModuleConfigField)
 	resolve = func(values []model.ModuleConfigField) {
@@ -313,6 +335,18 @@ func (r Registry) Validate() error {
 		}
 		if definition.Placement.ZoneType != "" && !supportedPlacementZoneType(definition.Placement.ZoneType) {
 			return fmt.Errorf("module %s has unknown placement zone type %q", definition.Name, definition.Placement.ZoneType)
+		}
+		if !definition.NetworkCapable && len(definition.AllowedNetworkModes) > 0 {
+			return fmt.Errorf("module %s declares network modes but is not network-capable", definition.Name)
+		}
+		if definition.NetworkCapable {
+			allowed := definition.AllowedNetworkModes
+			if len(allowed) == 0 {
+				allowed = []model.ModuleNetworkMode{model.ModuleNetworkDirect, model.ModuleNetworkAirVPN}
+			}
+			if definition.DefaultNetworkMode != "" && !containsNetworkMode(allowed, definition.DefaultNetworkMode) {
+				return fmt.Errorf("module %s has a default network mode that is not allowed", definition.Name)
+			}
 		}
 		if err := validateConfigurationFields(definition.Name, definition.Configuration); err != nil {
 			return err
@@ -457,6 +491,9 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 		if !modelToken(airvpn.Servers) {
 			return nil, fmt.Errorf("modules.airvpn.servers: selector contains unsafe characters")
 		}
+	}
+	if arr, ok := configs["arr"]; ok && arr.Enabled != nil && *arr.Enabled && arr.Network != model.ModuleNetworkAirVPN {
+		return nil, fmt.Errorf("modules.arr.network: arr requires AirVPN egress; set network: airvpn")
 	}
 	for name, moduleConfig := range configs {
 		if name == "bifrost" && (moduleConfig.Enabled != nil && *moduleConfig.Enabled || len(moduleConfig.Upstreams) > 0 || len(moduleConfig.Models) > 0) {
@@ -608,11 +645,8 @@ func validateModuleConfigNames(r Registry, configs map[string]model.ModuleConfig
 
 func validateModuleNetworkModes(r Registry, configs map[string]model.ModuleConfig) error {
 	for name, config := range configs {
-		if config.Network == "" || config.Network == model.ModuleNetworkDirect {
+		if config.Network == "" {
 			continue
-		}
-		if config.Network != model.ModuleNetworkAirVPN {
-			return fmt.Errorf("modules.%s.network: unsupported mode %q", name, config.Network)
 		}
 		definition, ok := r.Definition(name)
 		if !ok {
@@ -621,8 +655,24 @@ func validateModuleNetworkModes(r Registry, configs map[string]model.ModuleConfi
 		if !definition.NetworkCapable {
 			return fmt.Errorf("modules.%s.network: module is not network-capable", name)
 		}
+		allowed := definition.AllowedNetworkModes
+		if len(allowed) == 0 {
+			allowed = []model.ModuleNetworkMode{model.ModuleNetworkDirect, model.ModuleNetworkAirVPN}
+		}
+		if !containsNetworkMode(allowed, config.Network) {
+			return fmt.Errorf("modules.%s.network: unsupported mode %q", name, config.Network)
+		}
 	}
 	return nil
+}
+
+func containsNetworkMode(values []model.ModuleNetworkMode, wanted model.ModuleNetworkMode) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func modelToken(value string) bool {

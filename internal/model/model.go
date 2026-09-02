@@ -54,6 +54,7 @@ const (
 	PrinterVMID                 = 230
 	StreamDeckVMID              = 220
 	AirVPNGuestVMID             = 260
+	ArrVMID                     = 270
 	BuilderCores                = 4
 	BuilderMemoryMiB            = 8192
 	BuilderDiskGiB              = 32
@@ -67,6 +68,8 @@ const (
 	TransitNetwork              = "10.10.5.0/24"
 	TransitGateway              = "10.10.5.1"
 	AirVPNGuestAddress          = "10.10.5.20"
+	ArrGuestAddress             = "10.10.20.110"
+	ArrGuestMAC                 = "02:00:00:00:02:10"
 	InfraVLAN                   = 10
 	InfraNetwork                = "10.10.10.0/24"
 	InfraGateway                = "10.10.10.1"
@@ -368,6 +371,7 @@ type Component struct {
 	ProductOwned bool     `json:"product_owned"`
 	Module       string   `json:"module,omitempty"`
 	Logging      bool     `json:"logging"`
+	MAC          string   `json:"mac,omitempty"`
 }
 
 type ModuleConfig struct {
@@ -574,6 +578,7 @@ type ModuleDeclaration struct {
 	Secrets          []SecretDeclaration           `json:"secrets,omitempty"`
 	NetworkIntents   []NetworkIntent               `json:"network_intents,omitempty"`
 	DNSRecords       []DNSRecord                   `json:"dns_records,omitempty"`
+	DHCPReservations []DHCPReservation             `json:"dhcp_reservations,omitempty"`
 	Certificates     []CertificateRequest          `json:"certificates,omitempty"`
 	Monitoring       []MonitoringDeclaration       `json:"monitoring,omitempty"`
 	Backups          []BackupDeclaration           `json:"backups,omitempty"`
@@ -728,6 +733,9 @@ func (s Site) Normalize() Site {
 		sort.Slice(copySite.Declarations[i].DNSRecords, func(a, b int) bool {
 			return copySite.Declarations[i].DNSRecords[a].Name < copySite.Declarations[i].DNSRecords[b].Name
 		})
+		sort.Slice(copySite.Declarations[i].DHCPReservations, func(a, b int) bool {
+			return copySite.Declarations[i].DHCPReservations[a].Hostname < copySite.Declarations[i].DHCPReservations[b].Hostname
+		})
 	}
 	return copySite
 }
@@ -773,6 +781,7 @@ func cloneModuleDeclarations(input []ModuleDeclaration) []ModuleDeclaration {
 			declaration.NetworkIntents[j].Ports = append([]string(nil), input[i].NetworkIntents[j].Ports...)
 		}
 		declaration.DNSRecords = append([]DNSRecord(nil), input[i].DNSRecords...)
+		declaration.DHCPReservations = append([]DHCPReservation(nil), input[i].DHCPReservations...)
 		declaration.Certificates = append([]CertificateRequest(nil), input[i].Certificates...)
 		for j := range declaration.Certificates {
 			declaration.Certificates[j].SANs = append([]string(nil), input[i].Certificates[j].SANs...)
@@ -1360,7 +1369,16 @@ func validateDHCPReservations(s Site) error {
 		}
 		canonicalAddress := address.To4().String()
 		if _, exists := platformAddresses[canonicalAddress]; exists {
-			return fmt.Errorf("DHCP reservation %s address %s collides with an existing platform address", reservation.Hostname, canonicalAddress)
+			ownedMatch := false
+			for _, component := range s.PlatformComponents() {
+				if component.ProductOwned && component.Module != "" && component.Address == canonicalAddress && component.Hostname == reservation.Hostname && strings.EqualFold(component.MAC, reservation.MAC) {
+					ownedMatch = true
+					break
+				}
+			}
+			if !ownedMatch {
+				return fmt.Errorf("DHCP reservation %s address %s collides with an existing platform address", reservation.Hostname, canonicalAddress)
+			}
 		}
 		if _, exists := seenAddresses[canonicalAddress]; exists {
 			return fmt.Errorf("duplicate DHCP reservation address %s", canonicalAddress)
@@ -1380,7 +1398,16 @@ func validateDHCPReservations(s Site) error {
 		seenHostnames[strings.ToLower(reservation.Hostname)] = struct{}{}
 		seenMACs[canonicalMAC] = struct{}{}
 		if reservation.VMID != 0 && (reservation.VMID < UserGuestIDMin || reservation.VMID > UserGuestIDMax) {
-			return fmt.Errorf("DHCP reservation %s uses VMID %d outside the user-workload range", reservation.Hostname, reservation.VMID)
+			ownedMatch := false
+			for _, component := range s.PlatformComponents() {
+				if component.ProductOwned && component.Module != "" && component.VMID == reservation.VMID && component.Hostname == reservation.Hostname && component.Address == canonicalAddress && strings.EqualFold(component.MAC, reservation.MAC) {
+					ownedMatch = true
+					break
+				}
+			}
+			if !ownedMatch {
+				return fmt.Errorf("DHCP reservation %s uses VMID %d outside the user-workload range", reservation.Hostname, reservation.VMID)
+			}
 		}
 	}
 	return nil

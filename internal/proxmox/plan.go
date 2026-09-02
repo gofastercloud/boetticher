@@ -38,6 +38,7 @@ type GuestPlan struct {
 	Hostname        string                              `json:"hostname"`
 	Zone            string                              `json:"zone"`
 	Address         string                              `json:"address"`
+	MAC             string                              `json:"mac,omitempty"`
 	Gateway         string                              `json:"gateway"`
 	VLAN            int                                 `json:"vlan"`
 	Cores           int                                 `json:"cores"`
@@ -398,7 +399,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		}
 		guest := GuestPlan{
 			VMID: component.VMID, Name: component.Name, Hostname: component.Hostname, Zone: component.Zone,
-			Address: component.Address, Gateway: gatewayFor(component.Zone), VLAN: vlanFor(s, component.Zone),
+			Address: component.Address, MAC: component.MAC, Gateway: gatewayFor(component.Zone), VLAN: vlanFor(s, component.Zone),
 			Kind: KindLXC, Cores: 2, MemoryMiB: 1024, DiskGiB: 8,
 			Monitoring: component.Monitoring, Backup: component.Backup, Tags: componentTags(s, component.Name), ManagedUSBSlots: usbSlots[component.VMID],
 		}
@@ -628,6 +629,13 @@ func vlanFor(s model.Site, zoneName string) int {
 		}
 	}
 	return 0
+}
+
+func lxcNetworkParam(guest GuestPlan) string {
+	if guest.MAC != "" {
+		return fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,macaddr=%s,ip=dhcp", guest.VLAN, guest.MAC)
+	}
+	return fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,ip=%s/24,gw=%s", guest.VLAN, guest.Address, gatewayFor(guest.Zone))
 }
 
 func componentTags(s model.Site, name string) []string {
@@ -1453,7 +1461,7 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		"features":     {"nesting=0"},
 		"rootfs":       {fmt.Sprintf("%s:%d", plan.Storage, guest.DiskGiB)},
 		"tags":         {strings.Join(guest.Tags, ";")},
-		"net0":         {fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,ip=%s/24,gw=%s", guest.VLAN, guest.Address, gatewayFor(guest.Zone))},
+		"net0":         {lxcNetworkParam(guest)},
 	}
 	if len(plan.Nameservers) > 0 {
 		params.Set("nameserver", strings.Join(plan.Nameservers, " "))

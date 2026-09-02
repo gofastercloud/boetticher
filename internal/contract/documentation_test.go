@@ -88,12 +88,19 @@ func TestDocsSiteKeepsOneSmallGuideSet(t *testing.T) {
 	}
 	guides := 0
 	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, "docs", entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.HasPrefix(string(data), "---\nlayout: default\n") {
 			guides++
 		}
 	}
 	if guides != len(guideNames) {
-		t.Fatalf("docs site has %d Markdown guides, want %d", guides, len(guideNames))
+		t.Fatalf("docs site has %d Jekyll guides, want %d", guides, len(guideNames))
 	}
 	for _, name := range guideNames {
 		data, err := os.ReadFile(filepath.Join(root, "docs", name))

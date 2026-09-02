@@ -52,17 +52,18 @@ type SiteConfig struct {
 // ModulesConfig holds the settings for built-in modules. Each module has a
 // typed shape; an internal lookup map is built later for the deploy code.
 type ModulesConfig struct {
-	DNS           *DNSModuleConfig       `yaml:"dns,omitempty" json:"dns,omitempty"`
-	Monitoring    *ToggleModuleConfig    `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
-	Firewall      *ToggleModuleConfig    `yaml:"firewall,omitempty" json:"firewall,omitempty"`
-	Logging       *MandatoryModuleConfig `yaml:"logging,omitempty" json:"logging,omitempty"`
-	TailnetRouter *ToggleModuleConfig    `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
-	Bifrost       *BifrostModuleConfig   `yaml:"bifrost,omitempty" json:"bifrost,omitempty"`
-	Printer       *ToggleModuleConfig    `yaml:"printer,omitempty" json:"printer,omitempty"`
-	StreamDeck    *ToggleModuleConfig    `yaml:"streamdeck,omitempty" json:"streamdeck,omitempty"`
-	AIOps         *AIOpsModuleConfig     `yaml:"aiops,omitempty" json:"aiops,omitempty"`
-	Gatus         *ToggleModuleConfig    `yaml:"gatus,omitempty" json:"gatus,omitempty"`
-	AirVPN        *AirVPNModuleConfig    `yaml:"airvpn,omitempty" json:"airvpn,omitempty"`
+	DNS           *DNSModuleConfig           `yaml:"dns,omitempty" json:"dns,omitempty"`
+	Monitoring    *ToggleModuleConfig        `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
+	Firewall      *ToggleModuleConfig        `yaml:"firewall,omitempty" json:"firewall,omitempty"`
+	Logging       *MandatoryModuleConfig     `yaml:"logging,omitempty" json:"logging,omitempty"`
+	TailnetRouter *ToggleModuleConfig        `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
+	Bifrost       *BifrostModuleConfig       `yaml:"bifrost,omitempty" json:"bifrost,omitempty"`
+	Printer       *NetworkToggleModuleConfig `yaml:"printer,omitempty" json:"printer,omitempty"`
+	StreamDeck    *NetworkToggleModuleConfig `yaml:"streamdeck,omitempty" json:"streamdeck,omitempty"`
+	AIOps         *AIOpsModuleConfig         `yaml:"aiops,omitempty" json:"aiops,omitempty"`
+	Gatus         *NetworkToggleModuleConfig `yaml:"gatus,omitempty" json:"gatus,omitempty"`
+	AirVPN        *AirVPNModuleConfig        `yaml:"airvpn,omitempty" json:"airvpn,omitempty"`
+	Arr           *ArrModuleConfig           `yaml:"arr,omitempty" json:"arr,omitempty"`
 }
 
 // ModuleNetworkMode selects the Internet route for a module that supports it.
@@ -111,12 +112,27 @@ type DNSModuleConfig struct{}
 // module the platform needs.
 type MandatoryModuleConfig struct{}
 
-// ToggleModuleConfig is the shared on/off setting for a simple optional module.
+// ToggleModuleConfig is the on/off setting for an optional module without
+// application egress configuration.
 type ToggleModuleConfig struct {
+	// Enabled selects whether an optional module should be deployed.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// NetworkToggleModuleConfig is the on/off setting for an optional module that
+// declares an external egress path.
+type NetworkToggleModuleConfig struct {
 	// Enabled selects whether an optional module should be deployed.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	// Network selects the external egress path for network-capable modules.
 	Network ModuleNetworkMode `yaml:"network,omitempty" json:"network,omitempty" jsonschema:"enum=direct,enum=airvpn"`
+}
+
+// ArrModuleConfig is fixed to AirVPN egress because the *arr services are
+// intentionally never allowed to use the direct WAN path.
+type ArrModuleConfig struct {
+	Enabled *bool             `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Network ModuleNetworkMode `yaml:"network,omitempty" json:"network,omitempty" jsonschema:"enum=airvpn"`
 }
 
 // BifrostModuleConfig configures the provider-neutral Bifrost AI endpoint and
@@ -170,16 +186,16 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 		result["dns"] = ModuleConfig{}
 	}
 	if m.Monitoring != nil {
-		result["monitoring"] = ModuleConfig{Enabled: cloneBool(m.Monitoring.Enabled), Network: m.Monitoring.Network}
+		result["monitoring"] = ModuleConfig{Enabled: cloneBool(m.Monitoring.Enabled)}
 	}
 	if m.Firewall != nil {
-		result["firewall"] = ModuleConfig{Enabled: cloneBool(m.Firewall.Enabled), Network: m.Firewall.Network}
+		result["firewall"] = ModuleConfig{Enabled: cloneBool(m.Firewall.Enabled)}
 	}
 	if m.Logging != nil {
 		result["logging"] = ModuleConfig{}
 	}
 	if m.TailnetRouter != nil {
-		result["tailnet-router"] = ModuleConfig{Enabled: cloneBool(m.TailnetRouter.Enabled), Network: m.TailnetRouter.Network}
+		result["tailnet-router"] = ModuleConfig{Enabled: cloneBool(m.TailnetRouter.Enabled)}
 	}
 	if m.Bifrost != nil {
 		result["bifrost"] = ModuleConfig{Enabled: cloneBool(m.Bifrost.Enabled), Network: m.Bifrost.Network, Upstreams: cloneBifrostUpstreams(m.Bifrost.Upstreams), Models: cloneBifrostModels(m.Bifrost.Models)}
@@ -199,6 +215,13 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 	if m.AirVPN != nil {
 		result["airvpn"] = ModuleConfig{Enabled: cloneBool(m.AirVPN.Enabled), Servers: m.AirVPN.Servers}
 	}
+	if m.Arr != nil {
+		network := m.Arr.Network
+		if network == "" && m.Arr.Enabled != nil && *m.Arr.Enabled {
+			network = ModuleNetworkAirVPN
+		}
+		result["arr"] = ModuleConfig{Enabled: cloneBool(m.Arr.Enabled), Network: network}
+	}
 	return result
 }
 
@@ -208,34 +231,37 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 		result.DNS = &DNSModuleConfig{}
 	}
 	if config, ok := input["monitoring"]; ok {
-		result.Monitoring = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
+		result.Monitoring = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	}
 	if config, ok := input["firewall"]; ok {
-		result.Firewall = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
+		result.Firewall = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	}
 	if _, ok := input["logging"]; ok {
 		result.Logging = &MandatoryModuleConfig{}
 	}
 	if config, ok := input["tailnet-router"]; ok {
-		result.TailnetRouter = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
+		result.TailnetRouter = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	}
 	if config, ok := input["bifrost"]; ok {
 		result.Bifrost = &BifrostModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Upstreams: cloneBifrostUpstreams(config.Upstreams), Models: cloneBifrostModels(config.Models)}
 	}
 	if config, ok := input["printer"]; ok {
-		result.Printer = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
+		result.Printer = &NetworkToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	}
 	if config, ok := input["streamdeck"]; ok {
-		result.StreamDeck = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
+		result.StreamDeck = &NetworkToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	}
 	if config, ok := input["aiops"]; ok {
 		result.AIOps = &AIOpsModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, ModelAlias: config.ModelAlias}
 	}
 	if config, ok := input["gatus"]; ok {
-		result.Gatus = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
+		result.Gatus = &NetworkToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	}
 	if config, ok := input["airvpn"]; ok {
 		result.AirVPN = &AirVPNModuleConfig{Enabled: cloneBool(config.Enabled), Servers: config.Servers}
+	}
+	if config, ok := input["arr"]; ok {
+		result.Arr = &ArrModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	}
 	return result
 }
@@ -248,16 +274,25 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 		}
 		m.DNS = &DNSModuleConfig{}
 	case "monitoring":
-		m.Monitoring = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
+		if config.Network != "" {
+			return errors.New("modules.monitoring.network: module is not network-capable")
+		}
+		m.Monitoring = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	case "firewall":
-		m.Firewall = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
+		if config.Network != "" {
+			return errors.New("modules.firewall.network: module is not network-capable")
+		}
+		m.Firewall = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	case "logging":
 		if config.Enabled != nil {
 			return errors.New("modules.logging.enabled: mandatory module cannot be disabled")
 		}
 		m.Logging = &MandatoryModuleConfig{}
 	case "tailnet-router":
-		m.TailnetRouter = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
+		if config.Network != "" {
+			return errors.New("modules.tailnet-router.network: module is not network-capable")
+		}
+		m.TailnetRouter = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	case "bifrost":
 		upstreams := config.Upstreams
 		models := config.Models
@@ -267,9 +302,9 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 		}
 		m.Bifrost = &BifrostModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Upstreams: cloneBifrostUpstreams(upstreams), Models: cloneBifrostModels(models)}
 	case "printer":
-		m.Printer = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
+		m.Printer = &NetworkToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	case "streamdeck":
-		m.StreamDeck = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
+		m.StreamDeck = &NetworkToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	case "aiops":
 		alias := config.ModelAlias
 		if alias == "" && m.AIOps != nil {
@@ -277,13 +312,22 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 		}
 		m.AIOps = &AIOpsModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, ModelAlias: alias}
 	case "gatus":
-		m.Gatus = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
+		m.Gatus = &NetworkToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	case "airvpn":
 		servers := config.Servers
 		if servers == "" && m.AirVPN != nil {
 			servers = m.AirVPN.Servers
 		}
 		m.AirVPN = &AirVPNModuleConfig{Enabled: cloneBool(config.Enabled), Servers: servers}
+	case "arr":
+		network := config.Network
+		if network == "" && m.Arr != nil {
+			network = m.Arr.Network
+		}
+		if network == "" && config.Enabled != nil && *config.Enabled {
+			network = ModuleNetworkAirVPN
+		}
+		m.Arr = &ArrModuleConfig{Enabled: cloneBool(config.Enabled), Network: network}
 	default:
 		return fmt.Errorf("modules.%s: unknown first-party module", name)
 	}

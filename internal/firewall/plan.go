@@ -248,11 +248,6 @@ func planFromSite(s model.Site, airvpnProfile *AirVPNProfile) (Plan, error) {
 		engine = "operator-managed external firewall"
 	}
 	rules := policyRules(s)
-	transitRules := airVPNTransitRules(s)
-	for index := range transitRules {
-		transitRules[index].Sequence = len(rules) + index + 1
-	}
-	rules = append(rules, transitRules...)
 	if airvpnProfile != nil {
 		if err := validateAirVPNProfile(*airvpnProfile); err != nil {
 			return Plan{}, err
@@ -454,31 +449,6 @@ func airVPNSources(s model.Site) []string {
 	}
 	sort.Strings(result)
 	return result
-}
-
-func airVPNTransitRules(s model.Site) []PolicyRule {
-	rules := make([]PolicyRule, 0)
-	for _, sourceCIDR := range airVPNSources(s) {
-		address := strings.TrimSuffix(sourceCIDR, "/32")
-		for _, component := range s.PlatformComponents() {
-			if component.Address != address {
-				continue
-			}
-			rules = append(rules, PolicyRule{
-				Name:        "AirVPN selected source transit route " + component.Name,
-				From:        component.Zone,
-				To:          "TRANSIT",
-				Action:      "allow",
-				Protocol:    "any",
-				Counter:     "boetticher_airvpn_selected_source_transit",
-				Route:       "airvpn",
-				Description: "boetticher AirVPN-selected external egress via TRANSIT",
-				SourceCIDR:  sourceCIDR,
-			})
-			break
-		}
-	}
-	return rules
 }
 
 func policyRoutes(s model.Site) []PolicyRoute {
@@ -975,7 +945,6 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 			fmt.Fprintf(&b, "    iifname \"wan0\" oifname \"%s\" ip saddr %s ip daddr %s %s dport %d counter accept comment \"boetticher:publish-%s-%s\"\n", publication.DestinationIface, upstreamSourceCIDR(*plan.Upstream), publication.DestinationCIDR, publication.Protocol, publication.Port, safeRuleToken(publication.Service), publication.Protocol)
 		}
 	}
-	airVPNTransitRendered := false
 	for _, rule := range plan.Rules {
 		if rule.Action != "allow" || rule.SourceCIDR == "" || rule.From == "" || rule.To == "" {
 			continue
@@ -986,17 +955,6 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 			destinationIface = "wan0"
 		}
 		if sourceIface == "any0" || destinationIface == "gateway0" {
-			continue
-		}
-		if rule.Route == "airvpn" && rule.To == "TRANSIT" {
-			if airVPNTransitRendered {
-				continue
-			}
-			for _, zone := range []string{"INFRA", "TRUSTED", "SERVERS", "SANDBOX", "MGMT", "TRANSIT"} {
-				fmt.Fprintf(&b, "    iifname { \"infra0\", \"trusted0\", \"servers0\", \"sandbox0\", \"mgmt0\" } oifname \"transit0\" ip saddr @airvpn_sources ip daddr @%s_net counter drop comment \"boetticher:drop:airvpn-selected-to-%s\"\n", strings.ToLower(zone), strings.ToLower(zone))
-			}
-			b.WriteString("    iifname { \"infra0\", \"trusted0\", \"servers0\", \"sandbox0\", \"mgmt0\" } oifname \"transit0\" ip saddr @airvpn_sources counter accept comment \"boetticher:allow:airvpn-selected-transit\"\n")
-			airVPNTransitRendered = true
 			continue
 		}
 		if rule.DestinationCIDR == "" && rule.DestinationHost == "" {

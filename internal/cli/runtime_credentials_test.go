@@ -131,7 +131,7 @@ func TestAirVPNCredentialUsesOnlyItsServiceRuntimePath(t *testing.T) {
 func TestStreamDeckUsesSharedPulseTokenOnlyInPostPulseProjection(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	enabled := true
-	config.Modules.StreamDeck = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.StreamDeck = &model.NetworkToggleModuleConfig{Enabled: &enabled}
 	config.USBExports = []model.USBExportBinding{{Module: "streamdeck", Requirement: "display", Port: "1-2.5", VendorID: "0fd9", ProductID: "006d"}}
 	site, _, err := modules.Compose(config)
 	if err != nil {

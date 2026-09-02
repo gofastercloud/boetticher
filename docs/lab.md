@@ -99,6 +99,17 @@ boetticher doctor --site ./my-boetticher --live
 
 Then recover the site repository and age identity, restore the Proxmox management path if needed, run `preflight --live`, and deploy to rebuild Boetticher’s own platform pieces. Reattach or restore persistent application data, check the services you care about, then take a fresh off-host backup. Do not delete an unfamiliar VM, LXC, volume, or network device just to make a later run quieter.
 
+If Proxmox itself is fresh or the bootstrap path is lost, use the guarded recovery sequence instead of jumping straight to deploy:
+
+```text
+boetticher bootstrap-endpoint set PROXMOX_HOME_IP --site ./my-boetticher
+boetticher preflight --site ./my-boetticher --live --record --trunk-interface IFACE
+boetticher bootstrap --site ./my-boetticher --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem --trunk-interface IFACE
+boetticher deploy --site ./my-boetticher --proxmox-ca /path/to/pve-root-ca.pem
+```
+
+Use `--storage-confirmed` as well when the site uses the dedicated-data-disk profile, after checking the stable device identity.
+
 ## When you want to go bigger
 
 ### Add a physical VLAN trunk

@@ -1,0 +1,20 @@
+[Unit]
+Description=Radarr
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=radarr
+Group=arr
+ExecStart=/opt/radarr/Radarr -nobrowser -data=/var/lib/arr/radarr
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/arr/radarr
+
+[Install]
+WantedBy=multi-user.target

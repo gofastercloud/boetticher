@@ -684,7 +684,7 @@ func TestAirVPNSelectedSourcesUseTransitWithoutDirectWANFallback(t *testing.T) {
 	}
 	for _, expected := range []string{
 		`ip saddr @airvpn_sources oifname "wan0" counter log prefix "boetticher AIRVPN-DIRECT-DROP " drop`,
-		"oifname \"transit0\" ip saddr @airvpn_sources counter accept comment \"boetticher:allow:airvpn-selected-transit\"",
+		`iifname "servers0" oifname "transit0" ip saddr 10.10.20.60/32 ip daddr @boetticher_endpoint_1 tcp dport 443 counter accept`,
 		"oifname \"wan0\" ip saddr != @airvpn_sources ip saddr 10.10.20.0/24 masquerade comment \"boetticher:nat-servers\"",
 		"oifname \"wan0\" ip saddr 10.10.5.20/32 ip daddr @boetticher_endpoint_0 udp dport 1637 masquerade comment \"boetticher:nat-airvpn-handshake\"",
 		`iifname "transit0" oifname "wan0" counter log prefix "boetticher TRANSIT-INTERNET-DROP " drop`,
@@ -692,6 +692,9 @@ func TestAirVPNSelectedSourcesUseTransitWithoutDirectWANFallback(t *testing.T) {
 		if !strings.Contains(ruleset, expected) {
 			t.Errorf("AirVPN ruleset is missing %q:\n%s", expected, ruleset)
 		}
+	}
+	if strings.Contains(ruleset, `oifname "transit0" ip saddr @airvpn_sources counter accept comment "boetticher:allow:airvpn-selected-transit"`) {
+		t.Fatal("AirVPN selected source has a source-wide transit allow")
 	}
 	if strings.Contains(ruleset, `oifname "wan0" ip saddr 10.10.20.60/32 masquerade`) {
 		t.Fatal("selected AirVPN source has a direct WAN NAT rule")

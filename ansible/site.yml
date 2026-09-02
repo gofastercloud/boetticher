@@ -38,6 +38,8 @@
       when: inventory_hostname in groups.get('bifrost', [])
     - role: printer
       when: inventory_hostname in groups.get('printer', [])
+    - role: arr
+      when: inventory_hostname in groups.get('arr', [])
     - role: streamdeck
       when: inventory_hostname in groups.get('streamdeck', [])
     - role: aiops

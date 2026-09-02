@@ -28,7 +28,10 @@ boetticher status --site my-boetticher --live
 `init` makes your little private site repository and its age recovery identity. Keep an independent copy of that identity somewhere sensible before you need it. If you choose the dedicated-data storage profile, pause at the confirmation and make sure the selected disk really is the spare one.
 
 <aside class="callout">
-  <p><strong>Bring your own firewall?</strong> Add <code>--external-firewall</code> to <code>init</code>. That is a proper architectural handoff, not a cosmetic setting, so choose it deliberately. The <a href="lab.html#when-you-want-to-go-bigger">lab guide</a> has the compact version of what your appliance needs to provide.</p>
+  <p><strong>Bring your own firewall?</strong> Add <code>--external-firewall</code> to <code>init</code>, then select and record the physical trunk explicitly during live preflight and bootstrap:</p>
+  <pre><code>boetticher preflight --site my-boetticher --live --record --trunk-interface IFACE
+boetticher bootstrap --site my-boetticher --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem --trunk-interface IFACE</code></pre>
+  <p>Your appliance must provide the six VLANs, gateway addresses, DHCP where applicable, DNS/NTP routes, NAT, and zone separation. That is a proper architectural handoff, not a cosmetic setting; the <a href="lab.html#when-you-want-to-go-bigger">lab guide</a> has the compact contract.</p>
 </aside>
 
 ## Your everyday rhythm

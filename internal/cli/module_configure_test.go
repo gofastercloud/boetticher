@@ -29,7 +29,7 @@ func TestConfigureJSONDryRunIsRedactedAndDoesNotMutate(t *testing.T) {
 	dir := t.TempDir()
 	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
 	disabled := false
-	config.Modules.Printer = &model.ToggleModuleConfig{Enabled: &disabled}
+	config.Modules.Printer = &model.NetworkToggleModuleConfig{Enabled: &disabled}
 	config.USBExports = []model.USBExportBinding{{Module: "printer", Requirement: "serial", Port: "1-2.3", VendorID: "1a86", ProductID: "7523"}}
 	writeConfigureSite(t, dir, config)
 	original, err := os.ReadFile(filepath.Join(dir, "site.yml"))
@@ -60,7 +60,7 @@ func TestConfigureJSONApplyIsDesiredStateOnlyAndIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
 	disabled := false
-	config.Modules.Printer = &model.ToggleModuleConfig{Enabled: &disabled}
+	config.Modules.Printer = &model.NetworkToggleModuleConfig{Enabled: &disabled}
 	config.USBExports = []model.USBExportBinding{{Module: "printer", Requirement: "serial", Port: "1-2.3", VendorID: "1a86", ProductID: "7523"}}
 	writeConfigureSite(t, dir, config)
 	var output bytes.Buffer
