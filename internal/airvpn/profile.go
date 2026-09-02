@@ -132,7 +132,8 @@ func ParseProfile(data []byte) (Profile, error) {
 	}
 	sections := map[string]map[string]string{}
 	section := ""
-	for lineNumber, raw := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
+	profileText := strings.TrimPrefix(strings.ReplaceAll(string(data), "\r\n", "\n"), "\ufeff")
+	for lineNumber, raw := range strings.Split(profileText, "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "#") {
 			continue

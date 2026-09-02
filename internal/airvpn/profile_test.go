@@ -117,6 +117,16 @@ func TestParseProfileRejectsUnsafeOrIncompleteProfiles(t *testing.T) {
 	}
 }
 
+func TestParseProfileAcceptsUTF8BOM(t *testing.T) {
+	profile, err := ParseProfile(append([]byte{0xef, 0xbb, 0xbf}, []byte(testProfile())...))
+	if err != nil {
+		t.Fatalf("UTF-8 BOM-prefixed WireGuard profile was rejected: %v", err)
+	}
+	if profile.Metadata.EndpointHost != "198.51.100.44" {
+		t.Fatalf("unexpected parsed profile metadata: %#v", profile.Metadata)
+	}
+}
+
 func TestGenerateRejectsOversizedProviderResponse(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(strings.Repeat("x", maxProfileBytes+1)))
