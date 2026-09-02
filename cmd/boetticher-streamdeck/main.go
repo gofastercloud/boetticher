@@ -33,7 +33,7 @@ func (d *nativeDeck) SetButton(ctx context.Context, index int, data []byte) erro
 func (d *nativeDeck) Close(ctx context.Context) error { return d.deck.Close(ctx) }
 
 func openDeck(ctx context.Context, _ string) (streamdeck.Deck, error) {
-	device, err := decklib.Open(ctx)
+	device, err := openRawDeck(ctx, decklib.Open, reconnectStreamDeckUSB)
 	if err != nil {
 		return nil, err
 	}
@@ -45,6 +45,17 @@ func openDeck(ctx context.Context, _ string) (streamdeck.Deck, error) {
 		return nil, err
 	}
 	return &nativeDeck{deck: deck}, nil
+}
+
+func openRawDeck(ctx context.Context, open func(context.Context) (*decklib.Device, error), reconnect func() error) (*decklib.Device, error) {
+	device, err := open(ctx)
+	if !errors.Is(err, syscall.ENODATA) {
+		return device, err
+	}
+	if err := reconnect(); err != nil {
+		return nil, fmt.Errorf("reconnect unbound StreamDeck USB driver: %w", err)
+	}
+	return open(ctx)
 }
 
 func main() {

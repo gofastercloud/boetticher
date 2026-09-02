@@ -32,6 +32,9 @@ type Deck interface {
 func ProxmoxHosts(resources []Resource) []Resource {
 	hosts := make([]Resource, 0, len(resources))
 	for _, resource := range resources {
+		if !hasProxmoxProvenance(resource) {
+			continue
+		}
 		switch strings.ToLower(strings.TrimSpace(resource.Kind)) {
 		case "node", "host", "proxmox-host", "pve", "vm", "system-container":
 			hosts = append(hosts, resource)
@@ -47,6 +50,23 @@ func ProxmoxHosts(resources []Resource) []Resource {
 		}
 	}
 	return hosts
+}
+
+func hasProxmoxProvenance(resource Resource) bool {
+	if resource.sourceMetadata || len(resource.Sources) > 0 || len(resource.PlatformScopes) > 0 {
+		for _, source := range resource.Sources {
+			if strings.EqualFold(strings.TrimSpace(source), "proxmox") {
+				return true
+			}
+		}
+		for _, scope := range resource.PlatformScopes {
+			if isProxmoxPlatform(scope) {
+				return true
+			}
+		}
+		return false
+	}
+	return strings.TrimSpace(resource.PlatformType) == "" || isProxmoxPlatform(resource.PlatformType)
 }
 
 func isProxmoxPlatform(value string) bool {
