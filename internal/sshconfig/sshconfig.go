@@ -44,7 +44,7 @@ func RenderDirect(address, user, identity, knownHosts string, port int) (string,
 	}
 	var b strings.Builder
 	b.WriteString("# Temporary Boetticher Raspberry Pi setup transport. Do not edit.\n")
-	b.WriteString("Host boetticher-kiosk\n")
+	fmt.Fprintf(&b, "Host boetticher-kiosk %s\n", address)
 	fmt.Fprintf(&b, "    HostName %s\n    Port %d\n    User %s\n", address, port, user)
 	b.WriteString("    ConnectTimeout 10\n    BatchMode yes\n    PasswordAuthentication no\n    KbdInteractiveAuthentication no\n    PubkeyAuthentication yes\n    StrictHostKeyChecking yes\n")
 	fmt.Fprintf(&b, "    UserKnownHostsFile %s\n    IdentityFile %s\n", knownHosts, identity)
