@@ -63,6 +63,48 @@ func TestRenderWithKnownHostsUsesSiteScopedTrustFile(t *testing.T) {
 	}
 }
 
+func TestRenderDirectPinsFreshApplianceTransport(t *testing.T) {
+	content, err := RenderDirect("192.0.2.50", "piadmin", "/tmp/operator key", "/tmp/kiosk known_hosts", 22)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"Host boetticher-kiosk",
+		"HostName 192.0.2.50",
+		"Port 22",
+		"User piadmin",
+		"StrictHostKeyChecking yes",
+		`UserKnownHostsFile "/tmp/kiosk known_hosts"`,
+		`IdentityFile "/tmp/operator key"`,
+		"IdentitiesOnly yes",
+		"ForwardAgent no",
+		"RequestTTY no",
+	} {
+		if !strings.Contains(content, expected) {
+			t.Errorf("direct SSH configuration missing %q: %s", expected, content)
+		}
+	}
+	if strings.Contains(content, "ProxyCommand") || strings.Contains(content, "StrictHostKeyChecking no") {
+		t.Fatal("direct SSH configuration weakened or redirected transport")
+	}
+}
+
+func TestRenderDirectRejectsUnsafeTransportInputs(t *testing.T) {
+	for _, address := range []string{"pi.example", "192.0.2.50:22", "2001:db8::50", "192.0.2.050"} {
+		if _, err := RenderDirect(address, "pi", "/tmp/key", "/tmp/known_hosts", 22); err == nil {
+			t.Fatalf("non-canonical address %q was accepted", address)
+		}
+	}
+	for _, user := range []string{"pi;id", "pi user", "1pi"} {
+		if _, err := RenderDirect("192.0.2.50", user, "/tmp/key", "/tmp/known_hosts", 22); err == nil {
+			t.Fatalf("unsafe SSH user %q was accepted", user)
+		}
+	}
+	if _, err := RenderDirect("192.0.2.50", "pi", "/tmp/key\nProxyCommand sh -c id", "/tmp/known_hosts", 22); err == nil {
+		t.Fatal("control-character SSH identity path was accepted")
+	}
+}
+
 func TestRenderIncludesRetainedProductOwnedGuestForCleanup(t *testing.T) {
 	s := model.NewDefaultSite("installation", "age1example")
 	s.TestedVersions.Gateway = model.QualifiedGatewayImage

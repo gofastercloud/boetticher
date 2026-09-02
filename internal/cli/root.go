@@ -70,6 +70,8 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runNetwork(args[1:], out)
 	case "hardware":
 		return runHardware(args[1:], out)
+	case "kiosk":
+		return runKiosk(args[1:], out)
 	case "verify":
 		return runVerify(args[1:], out)
 	case "doctor":
