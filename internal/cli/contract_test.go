@@ -51,6 +51,17 @@ func TestQuickstartOfflineCommandsExecute(t *testing.T) {
 	}
 
 	run("init", "--site-dir", siteDir, "--age-identity", identity)
+	initialized, err := site.Load(siteDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	presence, err := site.PlatformSecretPresence(siteDir, initialized, identity, []string{"pulse_proxy_auth_secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !presence["pulse_proxy_auth_secret"] {
+		t.Fatal("init did not create the Core-owned Pulse proxy credential")
+	}
 	run("bootstrap-endpoint", "set", "192.0.2.10", "--site", siteDir)
 	run("config", "validate", "--site", siteDir)
 	run("module", "list", "--site", siteDir)

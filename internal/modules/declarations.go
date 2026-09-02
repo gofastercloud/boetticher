@@ -57,7 +57,7 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 	case "monitoring":
 		declaration.Secrets = []model.SecretDeclaration{
 			{Name: "pulse_admin_password", Purpose: "Pulse administrative bootstrap authentication", Consumer: "pulse-server", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential", Lifecycle: model.SecretLifecycleRuntime},
-			{Name: "pulse_proxy_auth_secret", Purpose: "shared Pulse reverse-proxy authentication secret", Consumer: "pulse-server/nginx", Generation: "operator-supplied", Rotation: "replaceable", Delivery: "systemd-credential", Lifecycle: model.SecretLifecycleRuntime},
+			{Name: "pulse_proxy_auth_secret", Purpose: "shared Pulse reverse-proxy authentication secret", Consumer: "pulse-server/nginx", Generation: "random", Rotation: "replaceable", Delivery: "systemd-credential", Lifecycle: model.SecretLifecycleRuntime},
 			{Name: "pulse_proxmox_token", Purpose: "API-only Proxmox monitoring token value", Consumer: "deployment-controller", Generation: "ephemeral", Rotation: "replaceable", Delivery: "controller-memory", Lifecycle: model.SecretLifecycleRuntime},
 			{Name: "pulse_api_token", Purpose: "read-only Pulse monitoring API integration", Consumer: "deployment-controller", Generation: "ephemeral", Rotation: "replaceable", Delivery: "controller-memory", Lifecycle: model.SecretLifecycleRuntime},
 			{Name: "pulse_agent_token", Purpose: "read-only Pulse host-agent report authentication", Consumer: "pulse-agent", Generation: "ephemeral", Rotation: "replaceable", Delivery: "systemd-credential", Lifecycle: model.SecretLifecycleRuntime},

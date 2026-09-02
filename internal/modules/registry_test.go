@@ -722,7 +722,7 @@ func TestDependencyCycleIsRejected(t *testing.T) {
 	}
 }
 
-func TestMonitoringDeclaresOperatorSuppliedPulseProxySecret(t *testing.T) {
+func TestMonitoringDeclaresCoreGeneratedPulseProxySecret(t *testing.T) {
 	site, _, err := Compose(testConfig(model.GatewayModeManaged))
 	if err != nil {
 		t.Fatal(err)
@@ -735,7 +735,7 @@ func TestMonitoringDeclaresOperatorSuppliedPulseProxySecret(t *testing.T) {
 		if secret.Name != "pulse_proxy_auth_secret" {
 			continue
 		}
-		if secret.Generation != "operator-supplied" || secret.Delivery != "systemd-credential" || secret.Consumer != "pulse-server/nginx" || secret.Lifecycle != model.SecretLifecycleRuntime {
+		if secret.Generation != "random" || secret.Delivery != "systemd-credential" || secret.Consumer != "pulse-server/nginx" || secret.Lifecycle != model.SecretLifecycleRuntime {
 			t.Fatalf("Pulse proxy-auth secret contract is incomplete: %#v", secret)
 		}
 		return

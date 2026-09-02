@@ -331,6 +331,14 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return fmt.Errorf("load encrypted Pulse administrative password: %w", loadErr)
 		}
 		secretValues["pulse_admin_password"] = pulseAdminPassword
+		pulseProxyAuthSecret, created, loadErr := loadOrCreateRandomSecret(*siteDir, *ageIdentity, s, "pulse_proxy_auth_secret")
+		if loadErr != nil {
+			return loadErr
+		}
+		if created {
+			report.recordMutation("Secrets", "pulse_proxy_auth_secret", "credential stored", true)
+		}
+		secretValues["pulse_proxy_auth_secret"] = pulseProxyAuthSecret
 	}
 	activeCredentialBindings := make([]deploymentCredential, 0, len(credentialBindings))
 	for _, binding := range credentialBindings {
@@ -1520,7 +1528,7 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 		return err
 	}
 
-	webhookSecret, created, err := loadOrCreateAIOpsSecret(siteDir, ageIdentity, s, "aiops_webhook_secret")
+	webhookSecret, created, err := loadOrCreateRandomSecret(siteDir, ageIdentity, s, "aiops_webhook_secret")
 	if err != nil {
 		return err
 	}
@@ -1660,7 +1668,7 @@ func controllerMTLSClient(authority pki.Authority, certificate pki.ClientCertifi
 	return &http.Client{Transport: transport, Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("AI Router redirects are forbidden") }}, nil
 }
 
-func loadOrCreateAIOpsSecret(siteDir, ageIdentity string, s model.Site, key string) (string, bool, error) {
+func loadOrCreateRandomSecret(siteDir, ageIdentity string, s model.Site, key string) (string, bool, error) {
 	value, err := site.LoadPlatformSecret(siteDir, s, ageIdentity, key)
 	if err == nil {
 		return value, false, nil
