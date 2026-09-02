@@ -3,6 +3,7 @@
 package airvpn
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -129,6 +130,15 @@ func (c Client) Generate(ctx context.Context, apiKey, servers string) (profile P
 			if statusErr == nil && !available {
 				return Profile{}, fmt.Errorf("AirVPN selector %q currently has no live provider servers; choose a current AirVPN server, country, or continent", servers)
 			}
+			readiness, readinessErr := c.providerReadiness(ctx, baseURL, apiKey, httpClient)
+			if readinessErr == nil {
+				if !readiness.APIKeyAccepted {
+					return Profile{}, errors.New("AirVPN API key was not accepted; replace the controller key with an active AirVPN API key")
+				}
+				if readiness.DeviceCount == 0 {
+					return Profile{}, errors.New("AirVPN API key is accepted but the account has no AirVPN devices; create a WireGuard-capable device before deploying")
+				}
+			}
 		}
 		return Profile{}, fmt.Errorf("AirVPN generator returned an invalid WireGuard profile (%s): %w", providerResponseSummary(response.Header.Get("Content-Type"), data), err)
 	}
@@ -145,6 +155,11 @@ type providerServer struct {
 	CountryCode string `json:"country_code"`
 	Continent   string `json:"continent"`
 	Health      string `json:"health"`
+}
+
+type providerReadiness struct {
+	APIKeyAccepted bool
+	DeviceCount    int
 }
 
 // selectorHasLiveServer checks the public provider status only after a JSON
@@ -206,6 +221,110 @@ func selectorMatchesServer(selector string, server providerServer) bool {
 		}
 	}
 	return false
+}
+
+// providerReadiness makes bounded, read-only account checks only after a
+// provider generator error. It never returns account or device data.
+func (c Client) providerReadiness(ctx context.Context, baseURL, apiKey string, httpClient *http.Client) (providerReadiness, error) {
+	userinfoURL, err := url.Parse(strings.TrimRight(baseURL, "/") + "/userinfo/")
+	if err != nil || userinfoURL.Scheme != "https" || userinfoURL.Host == "" || userinfoURL.User != nil {
+		return providerReadiness{}, errors.New("AirVPN userinfo URL must be HTTPS without user information")
+	}
+	query := userinfoURL.Query()
+	query.Set("format", "json")
+	userinfoURL.RawQuery = query.Encode()
+	userinfoRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, userinfoURL.String(), nil)
+	if err != nil {
+		return providerReadiness{}, fmt.Errorf("create AirVPN userinfo request: %w", err)
+	}
+	userinfoRequest.Header.Set("Api-Key", apiKey)
+	userinfo, status, err := providerJSONRequest(ctx, httpClient, userinfoRequest, "validate_api_key", "airvpn-userinfo")
+	if err != nil {
+		return providerReadiness{}, err
+	}
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return providerReadiness{}, nil
+	}
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		return providerReadiness{}, fmt.Errorf("AirVPN userinfo returned HTTP %d", status)
+	}
+	hasError, err := providerJSONHasError(userinfo)
+	if err != nil {
+		return providerReadiness{}, errors.New("parse AirVPN userinfo")
+	}
+	if hasError {
+		return providerReadiness{}, nil
+	}
+
+	devicesURL, err := url.Parse(strings.TrimRight(baseURL, "/") + "/devices/")
+	if err != nil || devicesURL.Scheme != "https" || devicesURL.Host == "" || devicesURL.User != nil {
+		return providerReadiness{}, errors.New("AirVPN devices URL must be HTTPS without user information")
+	}
+	body, err := json.Marshal(map[string]string{"action": "list", "format": "json"})
+	if err != nil {
+		return providerReadiness{}, errors.New("encode AirVPN devices request")
+	}
+	devicesRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, devicesURL.String(), bytes.NewReader(body))
+	if err != nil {
+		return providerReadiness{}, fmt.Errorf("create AirVPN devices request: %w", err)
+	}
+	devicesRequest.Header.Set("Api-Key", apiKey)
+	devicesRequest.Header.Set("Content-Type", "application/json")
+	devices, status, err := providerJSONRequest(ctx, httpClient, devicesRequest, "list_devices", "airvpn-devices")
+	if err != nil {
+		return providerReadiness{}, err
+	}
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		return providerReadiness{}, fmt.Errorf("AirVPN devices returned HTTP %d", status)
+	}
+	hasError, err = providerJSONHasError(devices)
+	if err != nil || hasError {
+		return providerReadiness{}, errors.New("parse AirVPN devices")
+	}
+	var response struct {
+		Devices []json.RawMessage `json:"devices"`
+	}
+	if err := json.Unmarshal(devices, &response); err != nil || response.Devices == nil {
+		return providerReadiness{}, errors.New("parse AirVPN devices")
+	}
+	return providerReadiness{APIKeyAccepted: true, DeviceCount: len(response.Devices)}, nil
+}
+
+func providerJSONRequest(ctx context.Context, httpClient *http.Client, request *http.Request, operation, target string) (data []byte, status int, err error) {
+	requestStarted := time.Now()
+	defer func() {
+		telemetry.Record(ctx, telemetry.Event{
+			Category: "provider_api", Operation: operation, Target: target,
+			Method: request.Method, Status: status, Duration: time.Since(requestStarted), Success: err == nil && status >= http.StatusOK && status < http.StatusMultipleChoices,
+		})
+	}()
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return nil, 0, fmt.Errorf("request %s: %w", target, err)
+	}
+	defer response.Body.Close()
+	status = response.StatusCode
+	data, err = io.ReadAll(io.LimitReader(response.Body, maxStatusBytes+1))
+	if err != nil {
+		return nil, status, fmt.Errorf("read %s: %w", target, err)
+	}
+	if len(data) > maxStatusBytes {
+		return nil, status, fmt.Errorf("%s exceeds the safe size limit", target)
+	}
+	return data, status, nil
+}
+
+func providerJSONHasError(data []byte) (bool, error) {
+	var response map[string]json.RawMessage
+	if err := json.Unmarshal(data, &response); err != nil {
+		return false, err
+	}
+	errorValue, ok := response["error"]
+	if !ok {
+		return false, nil
+	}
+	errorValue = bytes.TrimSpace(errorValue)
+	return len(errorValue) > 0 && !bytes.Equal(errorValue, []byte("null")), nil
 }
 
 // providerResponseSummary exposes only the small diagnostics needed to

@@ -3,6 +3,7 @@ package airvpn
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -160,6 +161,70 @@ func TestGenerateExplainsUnavailableSelectorAgainstLiveStatus(t *testing.T) {
 	_, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(context.Background(), "controller-key", "australia")
 	if err == nil || !strings.Contains(err.Error(), `selector "australia" currently has no live provider servers`) || strings.Contains(err.Error(), "selection unavailable") {
 		t.Fatalf("unavailable AirVPN selector was not safely explained: %v", err)
+	}
+}
+
+func TestGenerateExplainsMissingAirVPNDevicesWithoutLeakingProviderData(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/generator/":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"error":"provider-private-error"}`))
+		case "/status/":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"servers":[{"public_name":"Ainalrami","country_name":"Japan","country_code":"jp","continent":"Asia","health":"ok"}]}`))
+		case "/userinfo/":
+			if r.Method != http.MethodGet || r.Header.Get("Api-Key") != "controller-key" || r.URL.Query().Get("format") != "json" {
+				t.Fatalf("unexpected AirVPN userinfo request: method=%s api-key=%q query=%q", r.Method, r.Header.Get("Api-Key"), r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`{"user":{"private":"provider-private-data"}}`))
+		case "/devices/":
+			if r.Method != http.MethodPost || r.Header.Get("Api-Key") != "controller-key" || r.Header.Get("Content-Type") != "application/json" {
+				t.Fatalf("unexpected AirVPN devices request: method=%s api-key=%q content-type=%q", r.Method, r.Header.Get("Api-Key"), r.Header.Get("Content-Type"))
+			}
+			var request map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request["action"] != "list" || request["format"] != "json" {
+				t.Fatalf("unexpected AirVPN devices body: request=%v error=%v", request, err)
+			}
+			_, _ = w.Write([]byte(`{"devices":[]}`))
+		default:
+			t.Fatalf("unexpected AirVPN readiness request: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	_, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(context.Background(), "controller-key", "japan")
+	if err == nil || !strings.Contains(err.Error(), "API key is accepted but the account has no AirVPN devices") || strings.Contains(err.Error(), "provider-private") || strings.Contains(err.Error(), "controller-key") {
+		t.Fatalf("missing AirVPN device diagnostic was not safely explained: %v", err)
+	}
+}
+
+func TestGenerateExplainsRejectedAirVPNAPIKeyWithoutCallingDevices(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/generator/":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"error":"provider-private-error"}`))
+		case "/status/":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"servers":[{"public_name":"Ainalrami","country_name":"Japan","country_code":"jp","continent":"Asia","health":"ok"}]}`))
+		case "/userinfo/":
+			if r.Method != http.MethodGet || r.Header.Get("Api-Key") != "controller-key" || r.URL.Query().Get("format") != "json" {
+				t.Fatalf("unexpected AirVPN userinfo request: method=%s api-key=%q query=%q", r.Method, r.Header.Get("Api-Key"), r.URL.RawQuery)
+			}
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":"provider-private-error"}`))
+		case "/devices/":
+			t.Fatal("AirVPN device list must not run after a rejected API key")
+		default:
+			t.Fatalf("unexpected AirVPN readiness request: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	_, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(context.Background(), "controller-key", "japan")
+	if err == nil || !strings.Contains(err.Error(), "AirVPN API key was not accepted") || strings.Contains(err.Error(), "provider-private") || strings.Contains(err.Error(), "controller-key") {
+		t.Fatalf("rejected AirVPN API key was not safely explained: %v", err)
 	}
 }
 
