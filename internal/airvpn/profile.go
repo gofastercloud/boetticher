@@ -142,8 +142,14 @@ func (c Client) Generate(ctx context.Context, apiKey, servers string) (profile P
 				if !readiness.APIKeyAccepted {
 					return Profile{}, errors.New("AirVPN API key was not accepted; replace the controller key with an active AirVPN API key")
 				}
+				if readiness.SubscriptionKnown && !readiness.SubscriptionActive {
+					return Profile{}, errors.New("AirVPN account has no active premium access; renew or activate it before deploying")
+				}
 				if readiness.DeviceCount == 0 {
 					return Profile{}, errors.New("AirVPN API key is accepted but the account has no AirVPN devices; create a WireGuard-capable device before deploying")
+				}
+				if !readiness.HasReadyDevice {
+					return Profile{}, errors.New("AirVPN account has no ready WireGuard device; wait for it to become ready or renew it before deploying")
 				}
 			}
 		}
@@ -165,8 +171,11 @@ type providerServer struct {
 }
 
 type providerReadiness struct {
-	APIKeyAccepted bool
-	DeviceCount    int
+	APIKeyAccepted     bool
+	SubscriptionKnown  bool
+	SubscriptionActive bool
+	DeviceCount        int
+	HasReadyDevice     bool
 }
 
 // providerProfileManifest recognizes the provider's successful JSON index
@@ -327,7 +336,8 @@ func (c Client) providerReadiness(ctx context.Context, baseURL, apiKey string, h
 	if err != nil {
 		return providerReadiness{}, errors.New("parse AirVPN userinfo")
 	}
-	if hasError || !providerUserinfoHasAuthenticatedUser(userinfo) {
+	authenticated, subscriptionKnown, subscriptionActive := providerUserinfoStatus(userinfo)
+	if hasError || !authenticated {
 		return providerReadiness{}, nil
 	}
 
@@ -357,12 +367,24 @@ func (c Client) providerReadiness(ctx context.Context, baseURL, apiKey string, h
 		return providerReadiness{}, errors.New("parse AirVPN devices")
 	}
 	var response struct {
-		Devices []json.RawMessage `json:"devices"`
+		Devices []struct {
+			Status string `json:"status"`
+		} `json:"devices"`
 	}
 	if err := json.Unmarshal(devices, &response); err != nil || response.Devices == nil {
 		return providerReadiness{}, errors.New("parse AirVPN devices")
 	}
-	return providerReadiness{APIKeyAccepted: true, DeviceCount: len(response.Devices)}, nil
+	hasReadyDevice := false
+	for _, device := range response.Devices {
+		if strings.EqualFold(strings.TrimSpace(device.Status), "ready") {
+			hasReadyDevice = true
+			break
+		}
+	}
+	return providerReadiness{
+		APIKeyAccepted: true, SubscriptionKnown: subscriptionKnown, SubscriptionActive: subscriptionActive,
+		DeviceCount: len(response.Devices), HasReadyDevice: hasReadyDevice,
+	}, nil
 }
 
 func providerJSONRequest(ctx context.Context, httpClient *http.Client, request *http.Request, operation, target string) (data []byte, status int, err error) {
@@ -402,17 +424,27 @@ func providerJSONHasError(data []byte) (bool, error) {
 	return len(errorValue) > 0 && !bytes.Equal(errorValue, []byte("null")), nil
 }
 
-func providerUserinfoHasAuthenticatedUser(data []byte) bool {
+func providerUserinfoStatus(data []byte) (authenticated, subscriptionKnown, subscriptionActive bool) {
 	var response map[string]json.RawMessage
 	if err := json.Unmarshal(data, &response); err != nil {
-		return false
+		return false, false, false
 	}
 	user, ok := response["user"]
 	if !ok || len(user) == 0 || bytes.Equal(bytes.TrimSpace(user), []byte("null")) {
-		return false
+		return false, false, false
 	}
 	var details map[string]json.RawMessage
-	return json.Unmarshal(user, &details) == nil && details != nil
+	if err := json.Unmarshal(user, &details); err != nil || details == nil {
+		return false, false, false
+	}
+	premium, ok := details["premium"]
+	if !ok {
+		return true, false, false
+	}
+	if err := json.Unmarshal(premium, &subscriptionActive); err != nil {
+		return true, false, false
+	}
+	return true, true, subscriptionActive
 }
 
 // providerResponseSummary exposes only the small diagnostics needed to

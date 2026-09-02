@@ -184,16 +184,22 @@ func TestProviderJSONErrorCategoryRecognizesOpaqueProviderPrerequisites(t *testi
 	}
 }
 
-func TestProviderUserinfoRequiresAnAuthenticatedUserObject(t *testing.T) {
-	cases := map[string]bool{
-		`{"user":{"connected":false}}`: true,
-		`{"user":null}`:                false,
-		`{"user":"private-data"}`:      false,
-		`{"status":"ok"}`:              false,
+func TestProviderUserinfoStatusRequiresAnAuthenticatedUserObject(t *testing.T) {
+	cases := []struct {
+		response                                             string
+		authenticated, subscriptionKnown, subscriptionActive bool
+	}{
+		{response: `{"user":{"connected":false}}`, authenticated: true},
+		{response: `{"user":{"premium":true}}`, authenticated: true, subscriptionKnown: true, subscriptionActive: true},
+		{response: `{"user":{"premium":false}}`, authenticated: true, subscriptionKnown: true},
+		{response: `{"user":null}`},
+		{response: `{"user":"private-data"}`},
+		{response: `{"status":"ok"}`},
 	}
-	for response, want := range cases {
-		if got := providerUserinfoHasAuthenticatedUser([]byte(response)); got != want {
-			t.Fatalf("authenticated user for %s = %t, want %t", response, got, want)
+	for _, test := range cases {
+		authenticated, subscriptionKnown, subscriptionActive := providerUserinfoStatus([]byte(test.response))
+		if authenticated != test.authenticated || subscriptionKnown != test.subscriptionKnown || subscriptionActive != test.subscriptionActive {
+			t.Fatalf("userinfo status for %s = %t, %t, %t; want %t, %t, %t", test.response, authenticated, subscriptionKnown, subscriptionActive, test.authenticated, test.subscriptionKnown, test.subscriptionActive)
 		}
 	}
 }
@@ -217,6 +223,50 @@ func TestProviderReadinessRejectsAnonymousUserinfoWithoutListingDevices(t *testi
 	readiness, err := (Client{}).providerReadiness(context.Background(), server.URL, "controller-key", server.Client())
 	if err != nil || readiness.APIKeyAccepted || readiness.DeviceCount != 0 {
 		t.Fatalf("anonymous userinfo readiness = %#v, %v", readiness, err)
+	}
+}
+
+func TestProviderReadinessSeparatesReadyDevicesFromDeviceCount(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/userinfo/":
+			_, _ = w.Write([]byte(`{"user":{"premium":true}}`))
+		case "/devices/":
+			_, _ = w.Write([]byte(`{"devices":[{"status":"pending"}]}`))
+		default:
+			t.Fatalf("unexpected AirVPN readiness request: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	readiness, err := (Client{}).providerReadiness(context.Background(), server.URL, "controller-key", server.Client())
+	if err != nil || !readiness.APIKeyAccepted || !readiness.SubscriptionKnown || !readiness.SubscriptionActive || readiness.DeviceCount != 1 || readiness.HasReadyDevice {
+		t.Fatalf("unexpected AirVPN readiness: %#v, %v", readiness, err)
+	}
+}
+
+func TestGenerateExplainsInactiveAirVPNSubscriptionWithoutLeakingProviderData(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/generator/":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"error":"provider-private-error"}`))
+		case "/status/":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"servers":[{"public_name":"Ainalrami","country_name":"Japan","country_code":"jp","continent":"Asia","health":"ok"}]}`))
+		case "/userinfo/":
+			_, _ = w.Write([]byte(`{"user":{"premium":false,"private":"provider-private-data"}}`))
+		case "/devices/":
+			_, _ = w.Write([]byte(`{"devices":[{"status":"ready"}]}`))
+		default:
+			t.Fatalf("unexpected AirVPN readiness request: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	_, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(context.Background(), "controller-key", "japan")
+	if err == nil || !strings.Contains(err.Error(), "account has no active premium access") || strings.Contains(err.Error(), "provider-private") || strings.Contains(err.Error(), "controller-key") {
+		t.Fatalf("inactive AirVPN subscription was not safely explained: %v", err)
 	}
 }
 
