@@ -196,6 +196,20 @@ func TestEnsureManagedAirVPNDeviceCreatesOnlyItsOwnDevice(t *testing.T) {
 	}
 }
 
+func TestEnsureManagedAirVPNDeviceReadinessWaitRespectsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("cancelled readiness wait must not call AirVPN")
+	}))
+	defer server.Close()
+
+	_, err := (Client{}).waitForManagedDevice(ctx, server.URL, "controller-key", server.Client())
+	if err != context.Canceled {
+		t.Fatalf("managed AirVPN readiness cancellation = error %v", err)
+	}
+}
+
 func TestGenerateDoesNotIncludeProviderResponseInError(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)

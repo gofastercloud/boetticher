@@ -24,15 +24,17 @@ import (
 )
 
 const (
-	DefaultAPIBaseURL = "https://airvpn.org/api"
-	DefaultPort       = 1637
-	DefaultKeepalive  = 25
-	maxProfileBytes   = 128 * 1024
-	maxStatusBytes    = 2 * 1024 * 1024
-	generatorTimeout  = 30 * time.Second
-	defaultDeviceName = "default"
-	managedDeviceName = "boetticher-airvpn"
-	managedDeviceNote = "Boetticher AirVPN transit"
+	DefaultAPIBaseURL         = "https://airvpn.org/api"
+	DefaultPort               = 1637
+	DefaultKeepalive          = 25
+	maxProfileBytes           = 128 * 1024
+	maxStatusBytes            = 2 * 1024 * 1024
+	generatorTimeout          = 30 * time.Second
+	defaultDeviceName         = "default"
+	managedDeviceName         = "boetticher-airvpn"
+	managedDeviceNote         = "Boetticher AirVPN transit"
+	managedDeviceReadyWait    = 30 * time.Second
+	managedDevicePollInterval = 2 * time.Second
 )
 
 // Profile is the validated and normalized WireGuard profile. Config is
@@ -448,7 +450,7 @@ func (c Client) ensureManagedDevice(ctx context.Context, baseURL, apiKey string,
 			return "", errors.New("AirVPN account has a device using Boetticher's reserved name; rename it before deploying")
 		}
 		if !strings.EqualFold(strings.TrimSpace(device.Status), "ready") {
-			return "", errors.New("Boetticher's AirVPN device is not ready; wait for it to become ready before deploying")
+			return c.waitForManagedDevice(ctx, baseURL, apiKey, httpClient)
 		}
 		return managedDeviceName, nil
 	}
@@ -472,16 +474,39 @@ func (c Client) ensureManagedDevice(ctx context.Context, baseURL, apiKey string,
 	if !providerDeviceActionSucceeded(data) {
 		return "", errors.New("AirVPN did not accept the Boetticher-managed device name")
 	}
-	devices, err = c.listProviderDevices(ctx, baseURL, apiKey, httpClient, "confirm_managed_device")
-	if err != nil {
-		return "", fmt.Errorf("confirm the Boetticher-managed AirVPN device: %w", err)
+	return c.waitForManagedDevice(ctx, baseURL, apiKey, httpClient)
+}
+
+func (c Client) waitForManagedDevice(ctx context.Context, baseURL, apiKey string, httpClient *http.Client) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
-	for _, device := range devices {
-		if device.Name == managedDeviceName && device.Description == managedDeviceNote && strings.EqualFold(strings.TrimSpace(device.Status), "ready") {
-			return managedDeviceName, nil
+	deadline := time.NewTimer(managedDeviceReadyWait)
+	defer deadline.Stop()
+	for {
+		devices, err := c.listProviderDevices(ctx, baseURL, apiKey, httpClient, "confirm_managed_device")
+		if err != nil {
+			return "", fmt.Errorf("confirm the Boetticher-managed AirVPN device: %w", err)
+		}
+		for _, device := range devices {
+			if device.Name != managedDeviceName {
+				continue
+			}
+			if device.Description != managedDeviceNote {
+				return "", errors.New("AirVPN account has a device using Boetticher's reserved name; rename it before deploying")
+			}
+			if strings.EqualFold(strings.TrimSpace(device.Status), "ready") {
+				return managedDeviceName, nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-deadline.C:
+			return "", errors.New("AirVPN did not report the Boetticher-managed device as ready within 30 seconds; rerun deploy after it is ready")
+		case <-time.After(managedDevicePollInterval):
 		}
 	}
-	return "", errors.New("AirVPN did not report the Boetticher-managed device as ready; rerun deploy after it is ready")
 }
 
 func (c Client) listProviderDevices(ctx context.Context, baseURL, apiKey string, httpClient *http.Client, operation string) ([]providerDevice, error) {
