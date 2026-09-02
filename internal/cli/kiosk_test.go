@@ -154,3 +154,40 @@ func TestEnsureKioskClientCertificateReplacesMismatchedCachedLeaf(t *testing.T) 
 		t.Fatal("mismatched cached kiosk certificate was reused")
 	}
 }
+
+func TestEnsureKioskClientCertificateRetainsValidatedCachedIdentityMaterial(t *testing.T) {
+	now := time.Now().UTC()
+	authority, err := pki.GenerateAuthority(now, "lab.home.arpa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued, err := pki.IssueClient(authority, kioskClientName, "lab.home.arpa", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runtime := filepath.Join(t.TempDir(), "runtime")
+	t.Setenv("BOETTICHER_RUNTIME_DIR", runtime)
+	s := model.NewDefaultSite("installation", "age1example")
+	runtimeDir := filepath.Join(site.RuntimeDir(s), "pki", kioskClientName)
+	if err := os.MkdirAll(runtimeDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for path, contents := range map[string]string{
+		"client.key.pem": issued.KeyPEM,
+		"client.crt.pem": issued.CertPEM,
+		"chain.crt.pem":  issued.ChainPEM,
+	} {
+		if err := os.WriteFile(filepath.Join(runtimeDir, path), []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := ensureKioskClientCertificate(t.TempDir(), s, authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.KeyPEM != issued.KeyPEM || got.CertPEM != issued.CertPEM || got.ChainPEM != issued.ChainPEM {
+		t.Fatal("validated cached kiosk identity material was not preserved")
+	}
+}

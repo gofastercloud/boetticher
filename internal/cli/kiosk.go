@@ -379,6 +379,9 @@ func ensureKioskClientCertificate(siteDir string, s model.Site, authority pki.Au
 	if present == len(paths) {
 		certificate, err := validateKioskClientCertificate(authority, string(existing[0]), string(existing[1]), string(existing[2]), s.Network.Domain, now)
 		if err == nil {
+			certificate.KeyPEM = string(existing[0])
+			certificate.CertPEM = string(existing[1])
+			certificate.ChainPEM = string(existing[2])
 			return certificate, nil
 		}
 	}
