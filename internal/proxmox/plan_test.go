@@ -260,6 +260,8 @@ func TestComposedPlanUsesResolvedCapabilityOrder(t *testing.T) {
 
 func TestArrPlanUsesDeclarationOwnedDHCPIdentity(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	config.StorageProfile = "dedicated-data-disk"
+	config.StorageDevice = "/dev/disk/by-id/ata-example-data"
 	enabled := true
 	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
 	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "europe"}

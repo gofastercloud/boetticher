@@ -55,6 +55,8 @@ const (
 	StreamDeckVMID              = 220
 	AirVPNGuestVMID             = 260
 	ArrVMID                     = 270
+	ArrDownloadsVolumeGiB       = 500
+	ArrDownloadsMountPath       = "/var/lib/arr/downloads"
 	BuilderCores                = 4
 	BuilderMemoryMiB            = 8192
 	BuilderDiskGiB              = 32

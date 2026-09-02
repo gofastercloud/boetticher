@@ -216,7 +216,7 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 		return fmt.Errorf("install operator SSH key: %w", err)
 	}
 	if s.StorageProfile == "dedicated-data-disk" {
-		if err := storage.Initialize(ctx, runner, s.BootstrapAddress, *initialUser, s.StorageDevice, *storageConfirmed); err != nil {
+		if err := storage.Initialize(ctx, runner, s.BootstrapAddress, *initialUser, s.StorageDevice, *storageConfirmed, false); err != nil {
 			return err
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/storage"
@@ -25,6 +26,7 @@ func runStorage(args []string, out io.Writer) error {
 	knownHosts := fs.String("known-hosts", "", "optional SSH known-hosts file")
 	live := fs.Bool("live", false, "inspect the configured storage over the Proxmox SSH path")
 	confirmed := fs.Bool("storage-confirmed", false, "confirm the fixed dedicated-disk initialization")
+	reinitialize := fs.Bool("reinitialize", false, "discard an old unmounted, non-LVM layout on the exact configured data disk")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -48,7 +50,8 @@ func runStorage(args []string, out io.Writer) error {
 				if commandErr != nil {
 					return commandErr
 				}
-				data, runErr := (proxmox.SSHRunner{KnownHosts: *knownHosts}).Run(context.Background(), s.BootstrapAddress, *initialUser, command)
+				runner := proxmox.SSHRunner{KnownHosts: *knownHosts, StrictHostKey: "yes", HostKeyAlias: model.LogicalProxmoxIdentity}
+				data, runErr := runner.Run(context.Background(), s.BootstrapAddress, *initialUser, command)
 				if runErr != nil {
 					return runErr
 				}
@@ -76,8 +79,8 @@ func runStorage(args []string, out io.Writer) error {
 	if !*confirmed {
 		return errors.New("dedicated storage initialization is destructive; repeat with --storage-confirmed after reviewing the stable device")
 	}
-	runner := proxmox.SSHRunner{KnownHosts: *knownHosts}
-	if err := storage.Initialize(context.Background(), runner, s.BootstrapAddress, *initialUser, plan.Device, true); err != nil {
+	runner := proxmox.SSHRunner{KnownHosts: *knownHosts, StrictHostKey: "yes", HostKeyAlias: model.LogicalProxmoxIdentity}
+	if err := storage.Initialize(context.Background(), runner, s.BootstrapAddress, *initialUser, plan.Device, true, *reinitialize); err != nil {
 		return err
 	}
 	if err := writeModelProjections(*siteDir, s); err != nil {

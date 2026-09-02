@@ -136,16 +136,17 @@ type InitializeRunner interface {
 
 // Initialize runs the one fixed dedicated-disk initializer over the existing
 // fresh-host SSH path. The remote command is intentionally conservative:
-// it adopts only the exact expected layout, refuses a system/populated disk,
-// and requires an explicit destructive confirmation for a new layout.
-func Initialize(ctx context.Context, runner InitializeRunner, address, user, device string, confirmed bool) error {
+// it adopts only the exact expected layout, refuses a system/active disk, and
+// requires explicit destructive confirmation before it creates a new layout.
+// Reinitialization of a dormant old layout is a separate, opt-in action.
+func Initialize(ctx context.Context, runner InitializeRunner, address, user, device string, confirmed, reinitialize bool) error {
 	if runner == nil {
 		return errors.New("storage initialization runner is required")
 	}
 	if err := validateDevice(device); err != nil {
 		return err
 	}
-	command, err := InitializationCommand(device, confirmed)
+	command, err := InitializationCommand(device, confirmed, reinitialize)
 	if err != nil {
 		return err
 	}
@@ -160,16 +161,22 @@ func Initialize(ctx context.Context, runner InitializeRunner, address, user, dev
 
 // InitializationCommand returns a reviewable shell command for the fixed 0.4
 // layout. It contains no credentials and accepts only a stable by-id device.
-func InitializationCommand(device string, confirmed bool) (string, error) {
+// An existing unmounted, non-LVM layout remains a refusal unless both the
+// ordinary destructive confirmation and explicit reinitialization flag are
+// supplied.
+func InitializationCommand(device string, confirmed, reinitialize bool) (string, error) {
 	if err := validateDevice(device); err != nil {
 		return "", err
+	}
+	if reinitialize && !confirmed {
+		return "", errors.New("storage reinitialization requires destructive confirmation")
 	}
 	confirmation := "no"
 	if confirmed {
 		confirmation = "yes"
 	}
 	quoted := shellQuote(device)
-	return strings.Join([]string{
+	lines := []string{
 		"set -eu",
 		"device=" + quoted,
 		"test -e \"$device\" && test -b \"$(readlink -f \"$device\")\"",
@@ -178,6 +185,7 @@ func InitializationCommand(device string, confirmed bool) (string, error) {
 		"root_device=\"$root_source\"",
 		"while parent=\"$(lsblk -ndo PKNAME \"$root_device\")\"; do [ -z \"$parent\" ] && break; root_device=\"/dev/$parent\"; done",
 		"[ \"$resolved\" != \"$root_device\" ] || { echo 'refusing the Proxmox system disk' >&2; exit 42; }",
+		"is_target_device_or_partition() { candidate=\"$(readlink -f \"$1\")\"; case \"$candidate\" in \"$resolved\"|\"$resolved\"[0-9]*|\"$resolved\"p[0-9]*) return 0;; esac; return 1; }",
 		"if vgs --noheadings --select vg_name=" + VolumeGroup + " 2>/dev/null | grep -q .; then",
 		"  pv=\"$(pvs --noheadings --select vg_name=" + VolumeGroup + " -o pv_name | xargs)\"",
 		"  [ \"$(readlink -f \"$pv\")\" = \"$resolved\" ] || { echo 'existing boetticher VG is on an unexpected device' >&2; exit 43; }",
@@ -186,9 +194,23 @@ func InitializationCommand(device string, confirmed bool) (string, error) {
 		"  [ \"$(blkid -s TYPE -o value /dev/" + VolumeGroup + "/" + BackupLogicalVol + ")\" = " + BackupFilesystem + " ] || { echo 'boetticher backup filesystem is not ext4' >&2; exit 46; }",
 		"else",
 		"  [ " + shellQuote(confirmation) + " = yes ] || { echo 'dedicated storage initialization is destructive; repeat with explicit confirmation' >&2; exit 50; }",
-		"  if lsblk -nrpo NAME,FSTYPE,MOUNTPOINT \"$resolved\" | awk 'NF > 1 && ($2 != \"\" || $3 != \"\") { found=1 } END { exit found }'; then :; else echo 'refusing a populated or mounted data disk' >&2; exit 51; fi",
-		"  if pvs --noheadings -o pv_name 2>/dev/null | grep -Fq \"$resolved\"; then echo 'refusing a disk already used by LVM' >&2; exit 52; fi",
-		"  if wipefs -n \"$resolved\" | grep -q .; then echo 'refusing a disk with existing filesystem signatures' >&2; exit 53; fi",
+		"  if lsblk -nrpo MOUNTPOINT \"$resolved\" | awk 'NF { found=1 } END { exit found ? 0 : 1 }'; then echo 'refusing a mounted data disk' >&2; exit 51; fi",
+		"  if swapon --noheadings --raw --output NAME 2>/dev/null | ( while IFS= read -r swap; do is_target_device_or_partition \"$swap\" && exit 0; done; exit 1 ); then echo 'refusing a disk with active swap' >&2; exit 52; fi",
+		"  if pvs --noheadings -o pv_name 2>/dev/null | ( while IFS= read -r pv; do pv=\"$(printf %s \"$pv\" | xargs)\"; [ -n \"$pv\" ] && is_target_device_or_partition \"$pv\" && exit 0; done; exit 1 ); then echo 'refusing a disk already used by LVM' >&2; exit 53; fi",
+	}
+	if reinitialize {
+		lines = append(lines,
+			"  if wipefs -n \"$resolved\" | grep -q .; then",
+			"    wipefs --all --force \"$resolved\"",
+			"    command -v partprobe >/dev/null 2>&1 && partprobe \"$resolved\" || true",
+			"    command -v udevadm >/dev/null 2>&1 && udevadm settle || true",
+			"    if wipefs -n \"$resolved\" | grep -q .; then echo 'refusing to continue while storage signatures remain' >&2; exit 54; fi",
+			"  fi",
+		)
+	} else {
+		lines = append(lines, "  if wipefs -n \"$resolved\" | grep -q .; then echo 'refusing a disk with existing filesystem signatures; repeat with --reinitialize after reviewing the exact stable device' >&2; exit 54; fi")
+	}
+	lines = append(lines, []string{
 		"  pvcreate --yes \"$resolved\"",
 		"  vgcreate " + VolumeGroup + " \"$resolved\"",
 		"  lvcreate -l " + ThinPoolPercent + " -T " + VolumeGroup + "/" + ThinPool,
@@ -200,11 +222,12 @@ func InitializationCommand(device string, confirmed bool) (string, error) {
 		"test -n \"$uuid\"",
 		"grep -Fq \"UUID=$uuid " + BackupMount + " " + BackupFilesystem + " defaults,nofail 0 2\" /etc/fstab || printf '%s\\n' \"UUID=$uuid " + BackupMount + " " + BackupFilesystem + " defaults,nofail 0 2\" >> /etc/fstab",
 		"mountpoint -q " + BackupMount + " || mount " + BackupMount,
-		"if pvesm status --storage " + GuestStorageID + " >/dev/null 2>&1; then pvesm config " + GuestStorageID + " | grep -Fq 'vgname " + VolumeGroup + "' && pvesm config " + GuestStorageID + " | grep -Fq 'thinpool " + ThinPool + "' || { echo 'boetticher guest storage has a conflicting definition' >&2; exit 54; }; else pvesm add lvmthin " + GuestStorageID + " --vgname " + VolumeGroup + " --thinpool " + ThinPool + " --content images,rootdir; fi",
-		"if pvesm status --storage " + BackupStorageID + " >/dev/null 2>&1; then pvesm config " + BackupStorageID + " | grep -Fq 'path " + BackupMount + "' || { echo 'boetticher backup storage has a conflicting definition' >&2; exit 55; }; else pvesm add dir " + BackupStorageID + " --path " + BackupMount + " --content backup; fi",
+		"if pvesm status --storage " + GuestStorageID + " >/dev/null 2>&1; then pvesm config " + GuestStorageID + " | grep -Fq 'vgname " + VolumeGroup + "' && pvesm config " + GuestStorageID + " | grep -Fq 'thinpool " + ThinPool + "' || { echo 'boetticher guest storage has a conflicting definition' >&2; exit 56; }; else pvesm add lvmthin " + GuestStorageID + " --vgname " + VolumeGroup + " --thinpool " + ThinPool + " --content images,rootdir; fi",
+		"if pvesm status --storage " + BackupStorageID + " >/dev/null 2>&1; then pvesm config " + BackupStorageID + " | grep -Fq 'path " + BackupMount + "' || { echo 'boetticher backup storage has a conflicting definition' >&2; exit 57; }; else pvesm add dir " + BackupStorageID + " --path " + BackupMount + " --content backup; fi",
 		"pvesm status --storage " + GuestStorageID + " >/dev/null",
 		"pvesm status --storage " + BackupStorageID + " >/dev/null",
-	}, "\n"), nil
+	}...)
+	return strings.Join(lines, "\n"), nil
 }
 
 func validateDevice(device string) error {

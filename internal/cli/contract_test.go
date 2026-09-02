@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/site"
 )
 
 func TestQuickstartCommandsMatchPublicCLI(t *testing.T) {
@@ -70,6 +71,22 @@ func TestQuickstartOfflineCommandsExecute(t *testing.T) {
 	}
 	if strings.Contains(statusOutput.String(), "NOT TESTED") || strings.Contains(statusOutput.String(), "ACTION REQUIRED") {
 		t.Fatalf("status reported an unknowable check: %s", statusOutput.String())
+	}
+}
+
+func TestInitConfiguresDedicatedDataDiskWithoutManualSiteEdits(t *testing.T) {
+	siteDir := filepath.Join(t.TempDir(), "my-boetticher")
+	identity := filepath.Join(t.TempDir(), "age-identity.txt")
+	var output bytes.Buffer
+	if err := Run([]string{"init", "--site-dir", siteDir, "--age-identity", identity, "--storage-profile", "dedicated-data-disk", "--storage-device", "/dev/disk/by-id/ata-example-data"}, &output, &output); err != nil {
+		t.Fatalf("init dedicated storage: %v\n%s", err, output.String())
+	}
+	configured, err := site.Load(siteDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configured.StorageProfile != "dedicated-data-disk" || configured.StorageDevice != "/dev/disk/by-id/ata-example-data" {
+		t.Fatalf("dedicated storage was not saved: %#v", configured)
 	}
 }
 
@@ -228,7 +245,7 @@ func validateCommandForm(t *testing.T, fields []string) {
 		t.Fatalf("invalid command form: %q", fields)
 	}
 	known := map[string]map[string]bool{
-		"init":               {"--site-dir": true, "--age-identity": true, "--external-firewall": true},
+		"init":               {"--site-dir": true, "--age-identity": true, "--external-firewall": true, "--storage-profile": true, "--storage-device": true},
 		"bootstrap-endpoint": {"--site": true},
 		"preflight":          {"--site": true, "--live": true, "--record": true, "--bootstrap-address": true, "--trunk-interface": true},
 		"bootstrap":          {"--site": true, "--recovery-confirmed": true, "--trunk-interface": true, "--dry-run": true, "--proxmox-ca": true, "--insecure": true},
@@ -246,7 +263,7 @@ func validateCommandForm(t *testing.T, fields []string) {
 		"pki":                {"--site": true},
 		"firewall":           {"--site": true, "--live": true, "--json": true},
 		"dhcp":               {"--site": true, "--live": true, "--json": true},
-		"storage":            {"--site": true, "--live": true, "--storage-confirmed": true},
+		"storage":            {"--site": true, "--live": true, "--storage-confirmed": true, "--reinitialize": true},
 		"module":             {"--site": true, "--dry-run": true, "--confirm": true, "--purge": true, "--age-identity": true, "--proxmox-ca": true, "--insecure": true},
 		"config":             {"--site": true},
 	}

@@ -700,3 +700,62 @@ func TestAirVPNSelectedSourcesUseTransitWithoutDirectWANFallback(t *testing.T) {
 		t.Fatal("selected AirVPN source has a direct WAN NAT rule")
 	}
 }
+
+func TestArrAirVPNEgressIsBoundedAndFailClosed(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("arr-airvpn", "age1arr", model.GatewayModeManaged))
+	enabled := true
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "australia"}
+	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := AirVPNProfile{EndpointHost: "airvpn.example", EndpointPort: 1637, TunnelAddress: "10.64.12.3", SHA256: strings.Repeat("a", 64)}
+	plan, err := PlanFromSiteWithAirVPN(site, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var egress PolicyRule
+	for _, rule := range plan.Rules {
+		if rule.Name == "ARR media acquisition through AirVPN" {
+			egress = rule
+			break
+		}
+	}
+	if egress.From != "SERVERS" || egress.To != "TRANSIT" || egress.Action != "allow" || egress.Protocol != "any" || egress.SourceCIDR != model.ArrGuestAddress+"/32" || egress.DestinationCIDR != "0.0.0.0/0" || egress.NAT || egress.Route != "airvpn" {
+		t.Fatalf("ARR AirVPN egress rule = %#v", egress)
+	}
+	if !reflect.DeepEqual(plan.AirVPNSources, []string{model.ArrGuestAddress + "/32"}) {
+		t.Fatalf("ARR AirVPN source set = %#v", plan.AirVPNSources)
+	}
+	plan, err = BindAirVPNEndpoint(plan, func(host string) ([]net.IP, error) {
+		if host == "airvpn.example" {
+			return []net.IP{net.ParseIP("198.51.100.44")}, nil
+		}
+		return nil, fmt.Errorf("unexpected endpoint %s", host)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleset, err := RenderNFTWithResolver(plan, func(host string) ([]net.IP, error) {
+		if host == "airvpn.example" {
+			return []net.IP{net.ParseIP("198.51.100.44")}, nil
+		}
+		return nil, fmt.Errorf("unexpected endpoint %s", host)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`iifname "servers0" oifname "transit0" ip saddr 10.10.20.110/32 ip daddr 0.0.0.0/0 counter accept`,
+		`ip saddr @airvpn_sources oifname "wan0" counter log prefix "boetticher AIRVPN-DIRECT-DROP " drop`,
+		`oifname "wan0" ip saddr != @airvpn_sources ip saddr 10.10.20.0/24 masquerade comment "boetticher:nat-servers"`,
+	} {
+		if !strings.Contains(ruleset, want) {
+			t.Errorf("ARR AirVPN ruleset is missing %q:\n%s", want, ruleset)
+		}
+	}
+	if strings.Contains(ruleset, `oifname "wan0" ip saddr 10.10.20.110/32 masquerade`) {
+		t.Fatal("ARR AirVPN source has a direct WAN NAT rule")
+	}
+}

@@ -249,7 +249,12 @@ func persistentFor(module, guest string) []model.PersistentState {
 	case "airvpn":
 		return []model.PersistentState{identity}
 	case "arr":
-		return []model.PersistentState{identity, {Name: "arr-state", Guest: guest, Path: "/var/lib/arr", Kind: "application-state", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}, {Name: "tls-identity", Guest: guest, Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
+		return []model.PersistentState{
+			identity,
+			{Name: "arr-state", Guest: guest, Path: "/var/lib/arr", Kind: "application-state", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"},
+			{Name: "tls-identity", Guest: guest, Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"},
+			{Name: "downloads", Guest: guest, Path: model.ArrDownloadsMountPath, Kind: "media-downloads", Backup: false, Sensitive: false, Replacement: "retain-across-rootfs-replacement"},
+		}
 	case "bifrost":
 		return []model.PersistentState{identity, {Name: "tls-identity", Guest: guest, Path: "/var/lib/boetticher/identity/tls", Kind: "endpoint-tls", Backup: true, Sensitive: true, Replacement: "retain-across-rootfs-replacement"}}
 	case "printer":
@@ -283,7 +288,12 @@ func volumesFor(module, guest string) []model.PersistentVolumeDeclaration {
 	case "airvpn":
 		return []model.PersistentVolumeDeclaration{identity}
 	case "arr":
-		return []model.PersistentVolumeDeclaration{identity, volume("arr-state", "/var/lib/arr", 16, true), volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true)}
+		downloads := volume("downloads", model.ArrDownloadsMountPath, model.ArrDownloadsVolumeGiB, false)
+		downloads.Placement = model.StorageRequireDataDisk
+		// Keep existing mount-point ordering stable for upgrades. The large
+		// download volume is appended so it cannot be mistaken for a legacy
+		// TLS identity mount during a rootfs replacement.
+		return []model.PersistentVolumeDeclaration{identity, volume("arr-state", "/var/lib/arr", 16, true), volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true), downloads}
 	case "bifrost":
 		return []model.PersistentVolumeDeclaration{identity, volume("tls-identity", "/var/lib/boetticher/identity/tls", 1, true)}
 	case "printer":

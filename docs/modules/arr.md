@@ -18,11 +18,12 @@ External application traffic must use AirVPN. Direct-WAN fallback, LAB-to-HOME
 forwarding or NAT, Proxmox access, and unrelated internal-zone access are not
 part of the module contract.
 
-Media storage is planned as Raspberry Pi NFS over the SERVERS network. Proxmox
-will own the NFS client mount and expose only scoped bind mounts to the LXC; the
-LXC will not mount NFS itself. The Pi is expected to become single-homed on the
-lab network after lab stabilization. External media is not included in
-Boetticher backups.
+Media uses one fixed 500 GiB `downloads` volume at
+`/var/lib/arr/downloads`. Core places it on the dedicated Boetticher data disk
+(`boetticher-thin`), so ARR cannot be enabled on the single-disk profile. The
+volume is group-writable by Sonarr and Radarr, retained across rootfs
+replacement, and excluded from Boetticher backups. There is no NFS client or
+Raspberry Pi storage path in this module.
 
 The appliance pins Sonarr `4.0.19.2979` and Radarr `6.3.0.10514` to official
 Linux x64 release assets and verifies their published SHA-256 digests during

@@ -14,7 +14,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/arr/sonarr
+ReadWritePaths=/var/lib/arr/sonarr /var/lib/arr/downloads
 
 [Install]
 WantedBy=multi-user.target

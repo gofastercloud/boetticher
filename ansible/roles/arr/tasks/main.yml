@@ -81,10 +81,11 @@
     state: directory
     owner: "{{ item.owner }}"
     group: arr
-    mode: '0750'
+    mode: "{{ item.mode }}"
   loop:
-    - {path: /var/lib/arr/sonarr, owner: sonarr}
-    - {path: /var/lib/arr/radarr, owner: radarr}
+    - {path: /var/lib/arr/sonarr, owner: sonarr, mode: '0750'}
+    - {path: /var/lib/arr/radarr, owner: radarr, mode: '0750'}
+    - {path: /var/lib/arr/downloads, owner: root, mode: '2770'}
 
 - name: Bind Sonarr and Radarr to loopback with no native login
   ansible.builtin.copy:

@@ -128,6 +128,26 @@ func TestArrRequiresAirVPNAndComposesOwnedDHCPReservation(t *testing.T) {
 	if len(site.DHCPReservations) != 1 || site.DHCPReservations[0] != reservation {
 		t.Fatalf("module reservation was not projected into canonical DHCP state: %#v", site.DHCPReservations)
 	}
+	var downloadsVolume model.PersistentVolumeDeclaration
+	for _, volume := range declaration.Volumes {
+		if volume.Name == "downloads" {
+			downloadsVolume = volume
+			break
+		}
+	}
+	if downloadsVolume.Guest != "lab-arr-01" || downloadsVolume.MountPath != "/var/lib/arr/downloads" || downloadsVolume.SizeGiB != 500 || downloadsVolume.Backup || downloadsVolume.Placement != model.StorageRequireDataDisk {
+		t.Fatalf("ARR downloads volume contract is incomplete: %#v", downloadsVolume)
+	}
+	var downloadsState model.PersistentState
+	for _, state := range declaration.Persistent {
+		if state.Name == "downloads" {
+			downloadsState = state
+			break
+		}
+	}
+	if downloadsState.Path != "/var/lib/arr/downloads" || downloadsState.Kind != "media-downloads" || downloadsState.Backup || downloadsState.Sensitive || downloadsState.Replacement != "retain-across-rootfs-replacement" {
+		t.Fatalf("ARR downloads persistent-state contract is incomplete: %#v", downloadsState)
+	}
 }
 
 func TestArrRejectsNonAirVPNNetwork(t *testing.T) {

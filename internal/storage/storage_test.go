@@ -2,10 +2,12 @@ package storage
 
 import (
 	"context"
+	"os/exec"
 	"strings"
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/modules"
 )
 
 type recordingInitializeRunner struct {
@@ -33,8 +35,37 @@ func TestDedicatedPlanUsesFixedLayout(t *testing.T) {
 	}
 }
 
+func TestArrDownloadsUseDedicatedDataStorageAndRequireIt(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	enabled := true
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "australia"}
+	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PlanFromSite(site); err == nil || !strings.Contains(err.Error(), "arr volume downloads requires dedicated") {
+		t.Fatalf("single-disk ARR download storage was accepted: %v", err)
+	}
+	site.StorageProfile = "dedicated-data-disk"
+	site.StorageDevice = "/dev/disk/by-id/ata-example-data"
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, volume := range plan.Volumes {
+		if volume.Module == "arr" && volume.Name == "downloads" {
+			if volume.Storage != GuestStorageID || volume.Placement != model.StorageRequireDataDisk || volume.Backup {
+				t.Fatalf("ARR download volume storage = %#v", volume)
+			}
+			return
+		}
+	}
+	t.Fatal("ARR download volume is missing from dedicated storage plan")
+}
+
 func TestInitializationCommandIsStableAndGuarded(t *testing.T) {
-	command, err := InitializationCommand("/dev/disk/by-id/ata-example-data", true)
+	command, err := InitializationCommand("/dev/disk/by-id/ata-example-data", true, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +73,7 @@ func TestInitializationCommandIsStableAndGuarded(t *testing.T) {
 		"findmnt -no SOURCE /",
 		"refusing the Proxmox system disk",
 		"wipefs -n",
+		"repeat with --reinitialize after reviewing the exact stable device",
 		"pvcreate --yes",
 		"vgcreate vg_boetticher",
 		"lvcreate -l 70%VG -T vg_boetticher/thinpool",
@@ -55,10 +87,13 @@ func TestInitializationCommandIsStableAndGuarded(t *testing.T) {
 			t.Fatalf("initialization command does not contain %q:\n%s", want, command)
 		}
 	}
+	if strings.Contains(command, "wipefs --all --force") {
+		t.Fatal("ordinary storage initialization can discard an existing layout")
+	}
 	if strings.Contains(command, "/dev/sd") || strings.Contains(command, "/dev/nvme") {
 		t.Fatal("initialization command embedded a transient device identity")
 	}
-	withoutConfirmation, err := InitializationCommand("/dev/disk/by-id/ata-example-data", false)
+	withoutConfirmation, err := InitializationCommand("/dev/disk/by-id/ata-example-data", false, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,9 +102,44 @@ func TestInitializationCommandIsStableAndGuarded(t *testing.T) {
 	}
 }
 
+func TestInitializationCommandRequiresExplicitReinitializeForOldLayouts(t *testing.T) {
+	if _, err := InitializationCommand("/dev/disk/by-id/ata-example-data", false, true); err == nil {
+		t.Fatal("reinitialization without destructive confirmation was accepted")
+	}
+	command, err := InitializationCommand("/dev/disk/by-id/ata-example-data", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"refusing a mounted data disk",
+		"refusing a disk with active swap",
+		"refusing a disk already used by LVM",
+		"wipefs --all --force \"$resolved\"",
+		"refusing to continue while storage signatures remain",
+	} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("reinitialization command does not contain %q:\n%s", want, command)
+		}
+	}
+}
+
+func TestInitializationCommandHasValidShellSyntax(t *testing.T) {
+	for _, reinitialize := range []bool{false, true} {
+		command, err := InitializationCommand("/dev/disk/by-id/ata-example-data", true, reinitialize)
+		if err != nil {
+			t.Fatal(err)
+		}
+		check := exec.Command("sh", "-n")
+		check.Stdin = strings.NewReader(command)
+		if output, err := check.CombinedOutput(); err != nil {
+			t.Fatalf("storage command syntax (reinitialize=%t): %v\n%s\n%s", reinitialize, err, output, command)
+		}
+	}
+}
+
 func TestInitializationRejectsTransientOrUnsafeDevice(t *testing.T) {
 	for _, device := range []string{"/dev/sdb", "/dev/disk/by-id/foo bar", "/dev/disk/by-id/foo\nbar", "/dev/disk/by-id/../sdb", "/dev/disk/by-id/foo/../../sdb", "/dev/disk/by-id/foo/", "/dev/disk/by-id/foo\\bar", ""} {
-		if _, err := InitializationCommand(device, true); err == nil {
+		if _, err := InitializationCommand(device, true, false); err == nil {
 			t.Fatalf("unsafe storage device %q was accepted", device)
 		}
 	}
@@ -77,7 +147,7 @@ func TestInitializationRejectsTransientOrUnsafeDevice(t *testing.T) {
 
 func TestInitializationAcceptsDirectStableDeviceNames(t *testing.T) {
 	for _, device := range []string{"/dev/disk/by-id/ata-Samsung_SSD_870", "/dev/disk/by-id/usb-Generic_Flash", "/dev/disk/by-id/nvme-eui.1234"} {
-		if _, err := InitializationCommand(device, true); err != nil {
+		if _, err := InitializationCommand(device, true, false); err != nil {
 			t.Fatalf("valid stable device %q was rejected: %v", device, err)
 		}
 	}
@@ -85,14 +155,14 @@ func TestInitializationAcceptsDirectStableDeviceNames(t *testing.T) {
 
 func TestInitializationUsesNonInteractiveSudoForNonRoot(t *testing.T) {
 	runner := &recordingInitializeRunner{}
-	if err := Initialize(context.Background(), runner, "192.0.2.10", "labadmin", "/dev/disk/by-id/ata-example-data", true); err != nil {
+	if err := Initialize(context.Background(), runner, "192.0.2.10", "labadmin", "/dev/disk/by-id/ata-example-data", true, false); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasPrefix(runner.command, "sudo -n sh -c ") {
 		t.Fatalf("dedicated storage initialization did not use non-interactive sudo: %q", runner.command)
 	}
 	rootRunner := &recordingInitializeRunner{}
-	if err := Initialize(context.Background(), rootRunner, "192.0.2.10", "root", "/dev/disk/by-id/ata-example-data", true); err != nil {
+	if err := Initialize(context.Background(), rootRunner, "192.0.2.10", "root", "/dev/disk/by-id/ata-example-data", true, false); err != nil {
 		t.Fatal(err)
 	}
 	if strings.HasPrefix(rootRunner.command, "sudo -n ") {

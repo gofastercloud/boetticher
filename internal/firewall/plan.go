@@ -665,6 +665,25 @@ func policyRules(s model.Site) []PolicyRule {
 			DestinationCIDR: tailnet.Address + "/32",
 		})
 	}
+	// ARR is the one current module whose job includes arbitrary media
+	// acquisition. Keep that egress bound to its fixed source, the TRANSIT
+	// interface, and the AirVPN route; never turn a SERVERS-zone allowance into
+	// a generic Internet escape hatch.
+	if arr, ok := componentReference(s, "lab-arr-01"); ok && moduleNetworkMode(s, "arr") == model.ModuleNetworkAirVPN {
+		rules = append(rules, PolicyRule{
+			Sequence:        len(rules) + 1,
+			Name:            "ARR media acquisition through AirVPN",
+			From:            arr.Zone,
+			To:              "TRANSIT",
+			Action:          "allow",
+			Protocol:        "any",
+			Counter:         "boetticher_arr_airvpn_egress",
+			Route:           "airvpn",
+			Description:     "boetticher ARR media acquisition through AirVPN only",
+			SourceCIDR:      arr.Address + "/32",
+			DestinationCIDR: "0.0.0.0/0",
+		})
+	}
 	for _, declaration := range s.Declarations {
 		for _, intent := range declaration.NetworkIntents {
 			for _, rule := range policyRulesForIntent(s, declaration.Module, intent) {
