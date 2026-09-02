@@ -1,0 +1,541 @@
+---
+- name: Require a supported Raspberry Pi controller target
+  ansible.builtin.assert:
+    that:
+      - ansible_system == 'Linux'
+      - ansible_architecture in ['aarch64', 'arm64']
+      - ansible_distribution in ['Debian', 'Raspbian']
+      - ansible_service_mgr == 'systemd'
+      - ansible_python.executable == '/usr/bin/python3'
+    fail_msg: "The kiosk target must be a 64-bit Debian-based Raspberry Pi using systemd and /usr/bin/python3"
+
+- name: Require the exact controller-issued kiosk identity inputs
+  ansible.builtin.assert:
+    that:
+      - kiosk_client_key_pem | default('') | length > 0
+      - kiosk_client_cert_pem | default('') | length > 0
+      - kiosk_root_ca_pem | default('') | length > 0
+      - kiosk_issuing_ca_pem | default('') | length > 0
+      - kiosk_pulse_agent_token | default('') | length > 0
+      - kiosk_client_subject | default('') is match('^client-[A-Za-z0-9_.-]+$')
+      - kiosk_client_nickname | default('') is match('^[A-Za-z0-9_. -]+$')
+      - kiosk_pulse_url | default('') is match('^https://[A-Za-z0-9.-]+$')
+    fail_msg: "The kiosk requires a validated Boetticher client identity and HTTPS Pulse URL"
+  no_log: true
+
+- name: Measure the existing log footprint before enabling log2ram
+  ansible.builtin.command: du -smx /var/log
+  register: kiosk_var_log_size
+  changed_when: false
+
+- name: Refuse a log2ram volume smaller than the existing logs
+  ansible.builtin.assert:
+    that:
+      - kiosk_var_log_size.rc == 0
+      - kiosk_var_log_size.stdout.split()[0] | int < kiosk_log2ram_size_mb
+    fail_msg: "The existing /var/log footprint must be smaller than the configured log2ram volume; rotate or remove old logs before retrying"
+
+- name: Install APT prerequisites for the log2ram repository
+  ansible.builtin.apt:
+    name:
+      - gnupg
+      - python3-debian
+      - rsync
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Configure the signed Azlux log2ram repository
+  ansible.builtin.deb822_repository:
+    name: boetticher-log2ram
+    types: deb
+    uris: https://packages.azlux.fr/debian/
+    suites: "{{ ansible_distribution_release }}"
+    components:
+      - main
+    signed_by: https://azlux.fr/repo.gpg
+    state: present
+  register: kiosk_log2ram_repository
+
+- name: Pin the Azlux log2ram package on Debian 13
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/boetticher-log2ram.pref
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      Package: log2ram
+      Pin: origin "packages.azlux.fr"
+      Pin-Priority: 1001
+  when: ansible_distribution_release == 'trixie'
+
+- name: Remove the Debian 13 log2ram pin on other releases
+  ansible.builtin.file:
+    path: /etc/apt/preferences.d/boetticher-log2ram.pref
+    state: absent
+  when: ansible_distribution_release != 'trixie'
+
+- name: Refresh APT after changing the log2ram repository
+  ansible.builtin.apt:
+    update_cache: true
+  when: kiosk_log2ram_repository is changed
+
+- name: Install kiosk and host-baseline packages
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - cage
+      - chromium
+      - chrony
+      - dbus
+      - dbus-user-session
+      - lm-sensors
+      - libnss3-tools
+      - log2ram
+      - openssh-server
+      - openssl
+      - smartmontools
+      - seatd
+      - unattended-upgrades
+      - util-linux
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Enable unattended package-list refresh and upgrades
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+- name: Configure log2ram for bounded journald-backed RAM storage
+  ansible.builtin.lineinfile:
+    path: /etc/log2ram.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    create: false
+    mode: '0644'
+  loop:
+    - {regexp: '^SIZE=', line: 'SIZE={{ kiosk_log2ram_size }}'}
+    - {regexp: '^#?USE_RSYNC=', line: 'USE_RSYNC=true'}
+    - {regexp: '^#?NOTIFICATION=', line: 'NOTIFICATION=false'}
+    - {regexp: '^JOURNALD_AWARE=', line: 'JOURNALD_AWARE=true'}
+    - {regexp: '^ZL2R=', line: 'ZL2R=false'}
+    - {regexp: '^COMP_ALG=', line: 'COMP_ALG=lz4'}
+    - {regexp: '^LOG_DISK_SIZE=', line: 'LOG_DISK_SIZE=256M'}
+  notify: restart log2ram
+
+- name: Create bounded local journald configuration for log2ram
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Write bounded local journald configuration for log2ram
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/boetticher-kiosk.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Journal]
+      Storage=persistent
+      SystemMaxUse={{ kiosk_log2ram_system_max_use }}
+      RuntimeMaxUse={{ kiosk_log2ram_runtime_max_use }}
+      MaxRetentionSec=14day
+      Compress=yes
+  notify: restart journald
+
+- name: Install the Boetticher CA for Pulse host-agent HTTPS
+  ansible.builtin.copy:
+    content: "{{ kiosk_root_ca_pem }}{{ kiosk_issuing_ca_pem }}"
+    dest: /usr/local/share/ca-certificates/boetticher-pulse.crt
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Refresh system CA trust for Pulse host-agent HTTPS
+  ansible.builtin.command: update-ca-certificates
+  register: kiosk_pulse_agent_ca_update
+  changed_when: "'0 added, 0 removed' not in kiosk_pulse_agent_ca_update.stdout"
+
+- name: Install the exact pinned ARM64 Pulse host-agent binary
+  ansible.builtin.get_url:
+    url: "{{ kiosk_pulse_agent_release_url }}"
+    dest: /usr/local/bin/pulse-agent
+    checksum: "sha256:{{ kiosk_pulse_agent_release_sha256 }}"
+    owner: root
+    group: root
+    mode: '0755'
+  notify: restart pulse-agent
+
+- name: Verify the pinned ARM64 Pulse host-agent version
+  ansible.builtin.command: /usr/local/bin/pulse-agent --version
+  register: kiosk_pulse_agent_version_result
+  changed_when: false
+
+- name: Prove the expected Pulse host-agent version is installed
+  ansible.builtin.assert:
+    that:
+      - kiosk_pulse_agent_version in kiosk_pulse_agent_version_result.stdout
+    fail_msg: "Installed Pulse host-agent did not report the pinned version"
+
+- name: Encrypt the Pulse agent report token into the systemd credential store
+  block:
+    - name: Create the temporary Pulse credential staging directory
+      ansible.builtin.file:
+        path: /run/boetticher-kiosk
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Stage the Pulse agent report token in a root-only runtime file
+      ansible.builtin.copy:
+        dest: /run/boetticher-kiosk/pulse-agent-token
+        content: "{{ kiosk_pulse_agent_token }}"
+        owner: root
+        group: root
+        mode: '0600'
+      no_log: true
+
+    - name: Store the Pulse agent report token as a systemd encrypted credential
+      ansible.builtin.command:
+        argv:
+          - systemd-creds
+          - encrypt
+          - --name=pulse-agent-token
+          - /run/boetticher-kiosk/pulse-agent-token
+          - /var/lib/boetticher/credentials/pulse-agent-token.cred
+      notify:
+        - reload systemd
+        - restart pulse-agent
+      no_log: true
+  always:
+    - name: Remove the staged Pulse agent report token
+      ansible.builtin.file:
+        path: /run/boetticher-kiosk/pulse-agent-token
+        state: absent
+
+- name: Install the Pulse agent systemd service
+  ansible.builtin.template:
+    src: pulse-agent.service.j2
+    dest: /etc/systemd/system/pulse-agent.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart pulse-agent
+
+- name: Install the Pulse agent encrypted credential drop-in
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/pulse-agent.service.d/10-boetticher-credentials.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Service]
+      LoadCredentialEncrypted=pulse-agent-token:/var/lib/boetticher/credentials/pulse-agent-token.cred
+  notify:
+    - reload systemd
+    - restart pulse-agent
+
+- name: Create the unprivileged kiosk account
+  ansible.builtin.user:
+    name: kiosk
+    comment: Boetticher Pulse display
+    home: /home/kiosk
+    shell: /usr/sbin/nologin
+    create_home: true
+    password_lock: true
+    groups:
+      - video
+      - render
+      - input
+    append: true
+
+- name: Create kiosk application and NSS directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: /home/kiosk/visualizer, owner: kiosk, group: kiosk, mode: '0750'}
+    - {path: /home/kiosk/pulse-refresh-extension, owner: kiosk, group: kiosk, mode: '0750'}
+    - {path: /home/kiosk/.config, owner: kiosk, group: kiosk, mode: '0700'}
+    - {path: /home/kiosk/.cache, owner: kiosk, group: kiosk, mode: '0700'}
+    - {path: /home/kiosk/.pki/nssdb, owner: kiosk, group: kiosk, mode: '0700'}
+    - {path: /etc/systemd/system/pulse-agent.service.d, owner: root, group: root, mode: '0755'}
+    - {path: /etc/ssh/sshd_config.d, owner: root, group: root, mode: '0755'}
+    - {path: /var/lib/boetticher/credentials, owner: root, group: root, mode: '0700'}
+    - {path: /var/lib/boetticher/pulse-agent, owner: root, group: root, mode: '0700'}
+    - {path: /etc/systemd/system/pulse-kiosk.service.d, owner: root, group: root, mode: '0755'}
+
+- name: Install the kiosk visualizer
+  ansible.builtin.copy:
+    src: "{{ kiosk_source_dir }}/visualizer/index.html"
+    dest: /home/kiosk/visualizer/index.html
+    owner: kiosk
+    group: kiosk
+    mode: '0644'
+
+- name: Install the local kiosk telemetry helper
+  ansible.builtin.copy:
+    src: "{{ kiosk_source_dir }}/libexec/pulse-kiosk-stats"
+    dest: /usr/local/libexec/pulse-kiosk-stats
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the kiosk refresh extension
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: kiosk
+    group: kiosk
+    mode: '0644'
+  loop:
+    - {src: "{{ kiosk_source_dir }}/pulse-refresh-extension/manifest.json", dest: /home/kiosk/pulse-refresh-extension/manifest.json}
+    - {src: "{{ kiosk_source_dir }}/pulse-refresh-extension/reload.js", dest: /home/kiosk/pulse-refresh-extension/reload.js}
+
+- name: Install the kiosk statistics systemd units
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - {src: "{{ kiosk_source_dir }}/systemd/pulse-kiosk-stats.service", dest: /etc/systemd/system/pulse-kiosk-stats.service}
+    - {src: "{{ kiosk_source_dir }}/systemd/pulse-kiosk-stats.timer", dest: /etc/systemd/system/pulse-kiosk-stats.timer}
+
+- name: Install the CAGE PAM session
+  ansible.builtin.copy:
+    dest: /etc/pam.d/cage
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      auth           required        pam_unix.so nullok
+      account        required        pam_unix.so
+      session        required        pam_unix.so
+      session        required        pam_systemd.so
+
+- name: Install the Pulse kiosk systemd service
+  ansible.builtin.template:
+    src: pulse-kiosk.service.j2
+    dest: /etc/systemd/system/pulse-kiosk.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd
+
+- name: Install the Pulse kiosk service drop-in
+  ansible.builtin.template:
+    src: pulse-kiosk-dashboard.conf.j2
+    dest: /etc/systemd/system/pulse-kiosk.service.d/20-pulse-dashboard.conf
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd
+
+- name: Install the SSH hardening drop-in
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/60-boetticher-kiosk.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin prohibit-password
+      X11Forwarding no
+      AllowTcpForwarding no
+      MaxAuthTries 3
+      LoginGraceTime 20
+    validate: /usr/sbin/sshd -t -f %s
+  notify: restart ssh
+
+- name: Initialize the kiosk NSS database with an empty profile password
+  become_user: kiosk
+  ansible.builtin.command:
+    argv:
+      - certutil
+      - -N
+      - -d
+      - sql:/home/kiosk/.pki/nssdb
+      - --empty-password
+  args:
+    creates: /home/kiosk/.pki/nssdb/cert9.db
+
+- name: Check for the Boetticher root CA in the kiosk NSS database
+  become_user: kiosk
+  ansible.builtin.command:
+    argv:
+      - certutil
+      - -L
+      - -d
+      - sql:/home/kiosk/.pki/nssdb
+      - -n
+      - Boetticher Root CA
+  register: kiosk_root_ca
+  changed_when: false
+  failed_when: false
+
+- name: Import the Boetticher root CA into the kiosk NSS database
+  become_user: kiosk
+  ansible.builtin.command:
+    argv:
+      - certutil
+      - -A
+      - -d
+      - sql:/home/kiosk/.pki/nssdb
+      - -n
+      - Boetticher Root CA
+      - -t
+      - 'C,,,'
+      - -a
+      - -i
+      - /run/boetticher-kiosk/root-ca.pem
+  when: kiosk_root_ca.rc != 0
+  no_log: true
+
+- name: Check for the Boetticher issuing CA in the kiosk NSS database
+  become_user: kiosk
+  ansible.builtin.command:
+    argv:
+      - certutil
+      - -L
+      - -d
+      - sql:/home/kiosk/.pki/nssdb
+      - -n
+      - Boetticher Issuing CA
+  register: kiosk_issuing_ca
+  changed_when: false
+  failed_when: false
+
+- name: Import the Boetticher issuing CA into the kiosk NSS database
+  become_user: kiosk
+  ansible.builtin.command:
+    argv:
+      - certutil
+      - -A
+      - -d
+      - sql:/home/kiosk/.pki/nssdb
+      - -n
+      - Boetticher Issuing CA
+      - -t
+      - 'C,,,'
+      - -a
+      - -i
+      - /run/boetticher-kiosk/issuing-ca.pem
+  when: kiosk_issuing_ca.rc != 0
+  no_log: true
+
+- name: Check for the kiosk client certificate in the NSS database
+  become_user: kiosk
+  ansible.builtin.command:
+    argv: [certutil, -L, -d, sql:/home/kiosk/.pki/nssdb, -n, "{{ kiosk_client_nickname }}"]
+  register: kiosk_client_certificate
+  changed_when: false
+  failed_when: false
+
+- name: Import the controller-issued kiosk identity into NSS
+  when: kiosk_client_certificate.rc != 0
+  block:
+    - name: Stage kiosk identity material for NSS import
+      ansible.builtin.file:
+        path: /run/boetticher-kiosk
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Write the kiosk identity material to a root-only runtime directory
+      ansible.builtin.copy:
+        dest: "{{ item.dest }}"
+        content: "{{ item.content }}"
+        owner: root
+        group: root
+        mode: '0600'
+      loop:
+        - {dest: /run/boetticher-kiosk/client.key.pem, content: "{{ kiosk_client_key_pem }}"}
+        - {dest: /run/boetticher-kiosk/client.crt.pem, content: "{{ kiosk_client_cert_pem }}"}
+        - {dest: /run/boetticher-kiosk/root-ca.pem, content: "{{ kiosk_root_ca_pem }}"}
+        - {dest: /run/boetticher-kiosk/issuing-ca.pem, content: "{{ kiosk_issuing_ca_pem }}"}
+        - {dest: /run/boetticher-kiosk/p12-password, content: "{{ kiosk_pkcs12_password }}"}
+      no_log: true
+
+    - name: Build a temporary PKCS#12 identity for NSS import
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - pkcs12
+          - -export
+          - -out
+          - /run/boetticher-kiosk/client.p12
+          - -inkey
+          - /run/boetticher-kiosk/client.key.pem
+          - -in
+          - /run/boetticher-kiosk/client.crt.pem
+          - -certfile
+          - /run/boetticher-kiosk/issuing-ca.pem
+          - -name
+          - "{{ kiosk_client_nickname }}"
+          - -passout
+          - file:/run/boetticher-kiosk/p12-password
+      no_log: true
+
+    - name: Import the controller-issued kiosk identity into NSS
+      become_user: kiosk
+      ansible.builtin.command:
+        argv:
+          - pk12util
+          - -i
+          - /run/boetticher-kiosk/client.p12
+          - -d
+          - sql:/home/kiosk/.pki/nssdb
+          - -W
+          - /run/boetticher-kiosk/p12-password
+      no_log: true
+  always:
+    - name: Remove staged kiosk identity material
+      ansible.builtin.file:
+        path: /run/boetticher-kiosk
+        state: absent
+
+- name: Set graphical target as the kiosk boot target
+  ansible.builtin.command: systemctl set-default graphical.target
+  register: kiosk_default_target
+  changed_when: "'Created symlink' in kiosk_default_target.stdout or 'Removed' in kiosk_default_target.stdout"
+
+- name: Enable seatd and baseline maintenance timers
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - seatd.service
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+    - fstrim.timer
+    - log2ram.service
+    - log2ram-daily.timer
+
+- name: Enable and start the kiosk services
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop:
+    - pulse-kiosk-stats.timer
+    - pulse-kiosk.service
+    - pulse-agent.service

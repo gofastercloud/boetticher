@@ -17,6 +17,12 @@ without taking the other one down.
   every two seconds.
 - `systemd/pulse-kiosk.service` runs the browser as the non-root `kiosk` user
   under Cage/seatd.
+- The Ansible kiosk setup enables unattended APT upgrades, bounds persistent
+  journald storage, and configures log2ram to keep `/var/log` in RAM with a
+  daily disk sync.
+- The pinned ARM64 Pulse host agent runs as a separate root-owned systemd
+  service with its report token supplied through an encrypted systemd
+  credential; it reports host telemetry only and does not self-update.
 - `systemd/pulse-kiosk.service.d/20-pulse-dashboard.conf` selects the kiosk's
   dedicated mTLS client certificate for the Pulse origin. The private key
   remains in the Pi's NSS database and is never copied into this repository.

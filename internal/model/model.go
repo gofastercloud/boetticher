@@ -98,6 +98,11 @@ const (
 	TagMonitoringAgent          = "monitoring-agent"
 )
 
+const (
+	PulseAgentARM64ReleaseURL    = "https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-agent-linux-arm64"
+	PulseAgentARM64ReleaseSHA256 = "20d956ccc93ca5fc8273b0f9c37398cf19271604b40dc6fe3ed8cbd39bef7185"
+)
+
 var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
 var networkPortPattern = regexp.MustCompile(`^[0-9]{1,5}(?:-[0-9]{1,5})?$`)
 var providerModelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$`)

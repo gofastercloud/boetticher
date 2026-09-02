@@ -441,6 +441,17 @@ func RunWithMutationPhase(ctx context.Context, playbook, inventory string, varia
 	return run(ctx, playbook, inventory, variables, "", phase)
 }
 
+// RunExternal configures one external appliance through an operator-supplied
+// temporary SSH configuration. The configuration must already pin the target
+// host key and identity; this runner never falls back to the user's global
+// SSH configuration.
+func RunExternal(ctx context.Context, playbook, inventory string, variables []byte, sshConfig, user string) (RunResult, error) {
+	if !safeInventoryIdentity(user) {
+		return RunResult{}, errors.New("external Ansible user must be one safe inventory identity")
+	}
+	return runWithSSHConfig(ctx, playbook, inventory, variables, "", PhaseFull, sshConfig, user)
+}
+
 // RunLimited executes the same generated playbook against one known inventory
 // identity. The limit is validated before it becomes an Ansible argument so a
 // readiness stage cannot turn into an arbitrary command or host selector.
@@ -469,11 +480,15 @@ func RunLimitedWithMutationPhase(ctx context.Context, playbook, inventory string
 }
 
 func run(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string) (RunResult, error) {
+	return runWithSSHConfig(ctx, playbook, inventory, variables, limit, phase, generatedSSHConfigPath(inventory), "root")
+}
+
+func runWithSSHConfig(ctx context.Context, playbook, inventory string, variables []byte, limit, phase, sshConfig, user string) (RunResult, error) {
 	var empty RunResult
-	if playbook == "" || inventory == "" {
-		return empty, errors.New("Ansible playbook and inventory are required")
+	if playbook == "" || inventory == "" || sshConfig == "" || user == "" {
+		return empty, errors.New("Ansible playbook, inventory, SSH configuration, and user are required")
 	}
-	if err := sshconfig.ValidateExecutionConfig(generatedSSHConfigPath(inventory)); err != nil {
+	if err := sshconfig.ValidateExecutionConfig(sshConfig); err != nil {
 		return empty, fmt.Errorf("validate Ansible SSH configuration: %w", err)
 	}
 	executable, err := exec.LookPath("ansible-playbook")
@@ -484,7 +499,7 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	if err != nil {
 		return empty, err
 	}
-	args := []string{"-i", inventory, "--user", "root", playbook, "--extra-vars", "@/dev/stdin", "--ssh-common-args", "-F " + generatedSSHConfigPath(inventory)}
+	args := []string{"-i", inventory, "--user", user, playbook, "--extra-vars", "@/dev/stdin", "--ssh-common-args", "-F " + sshConfig}
 	if limit != "" {
 		args = append(args, "--limit", limit)
 	}

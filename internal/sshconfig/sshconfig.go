@@ -20,6 +20,38 @@ func Render(s model.Site, generatedAt time.Time) (string, error) {
 	return render(s, generatedAt, "")
 }
 
+// RenderDirect renders a short-lived, host-key-pinned SSH configuration for
+// one external appliance. It deliberately has no include, proxy, command, or
+// forwarding directives so Ansible cannot inherit a user's broader SSH
+// configuration while configuring a fresh Raspberry Pi.
+func RenderDirect(address, user, identity, knownHosts string, port int) (string, error) {
+	if err := ValidateBootstrapAddress(address); err != nil {
+		return "", fmt.Errorf("external appliance address: %w", err)
+	}
+	if !validSSHUser(user) {
+		return "", fmt.Errorf("SSH user %q is not a valid Unix account name", user)
+	}
+	if port < 1 || port > 65535 {
+		return "", fmt.Errorf("SSH port %d is outside 1-65535", port)
+	}
+	identity, err := quoteOpenSSHPath("SSH identity file", model.ExpandUserPath(identity))
+	if err != nil {
+		return "", err
+	}
+	knownHosts, err = quoteOpenSSHPath("SSH known-hosts file", model.ExpandUserPath(knownHosts))
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	b.WriteString("# Temporary Boetticher Raspberry Pi setup transport. Do not edit.\n")
+	b.WriteString("Host boetticher-kiosk\n")
+	fmt.Fprintf(&b, "    HostName %s\n    Port %d\n    User %s\n", address, port, user)
+	b.WriteString("    ConnectTimeout 10\n    BatchMode yes\n    PasswordAuthentication no\n    KbdInteractiveAuthentication no\n    PubkeyAuthentication yes\n    StrictHostKeyChecking yes\n")
+	fmt.Fprintf(&b, "    UserKnownHostsFile %s\n    IdentityFile %s\n", knownHosts, identity)
+	b.WriteString("    IdentitiesOnly yes\n    ControlMaster no\n    ForwardAgent no\n    ForwardX11 no\n    RequestTTY no\n")
+	return b.String(), nil
+}
+
 // RenderWithKnownHosts renders an SSH projection using a site-scoped trust
 // file. Keeping appliance host keys out of the controller's global known-hosts
 // file allows a fresh site to enroll its new identities without weakening
@@ -448,6 +480,18 @@ func ValidateBootstrapAddress(address string) error {
 		return fmt.Errorf("bootstrap endpoint must be an IPv4 address")
 	}
 	return nil
+}
+
+func validSSHUser(user string) bool {
+	if user == "" || len(user) > 32 || (user[0] >= '0' && user[0] <= '9') {
+		return false
+	}
+	for _, character := range user {
+		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '_' || character == '-' || character == '.') {
+			return false
+		}
+	}
+	return true
 }
 
 func writeHost(b *strings.Builder, aliases []string, hostName, user, hostKeyAlias, identity, knownHosts string, throughBastion, bastion bool) {

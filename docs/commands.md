@@ -23,6 +23,7 @@ boetticher bootstrap-endpoint show|set ADDRESS [--site DIR]
 boetticher network trunk status|attach|detach [INTERFACE] [--site DIR] [--confirm] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher network test [--site DIR] [--zones ZONE,...] [--capture] [--cleanup-only] [--json] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
+boetticher kiosk setup ADDRESS [--site DIR] [--age-identity PATH] [--user USER] [--identity-file PATH] [--known-hosts PATH] [--host-key KEY] [--port PORT] [--confirm] [--dry-run]
 boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]
 boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]
 boetticher firewall status|show|diff|counters|logs|verify|rule add|list|remove [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N] [--source SOURCE] [--destination DESTINATION] [--vmid VMID] [--protocol PROTOCOL] [--ports PORTS] [--id ID] [--dry-run] [--confirm]
@@ -904,6 +905,22 @@ Safety: Bindings cannot name device paths, VMIDs, or user workloads. Live identi
 Examples: `boetticher hardware usb bind printer serial 1-2.4 --confirm --site ./my-boetticher`
 
 Related commands: module, deploy, preflight
+
+### kiosk setup
+
+Purpose: Configure one 64-bit Debian-based Raspberry Pi as the Boetticher CAGE Pulse kiosk and host-monitoring agent.
+
+Usage: `boetticher kiosk setup ADDRESS [--site DIR] [--age-identity PATH] [--user USER] [--identity-file PATH] [--known-hosts PATH] [--host-key KEY] [--port PORT] [--confirm] [--dry-run]`
+
+Arguments: ADDRESS is a canonical IPv4 address for the Raspberry Pi.
+
+Options: --site selects the private site; --age-identity selects the operator-owned Age identity; --user selects the existing Pi SSH account; --identity-file selects the owner-only SSH private key; --known-hosts selects the strict host-key file; --host-key enrolls an independently verified host key; --port selects SSH port; --dry-run renders checks only; --confirm authorizes remote mutation.
+
+Safety: Advanced and live. Requires an owner-only SSH key, an exact enrolled host key, and the encrypted pulse_agent_token created by a qualified boetticher deploy; no password or global SSH configuration fallback is used. The command changes the Pi, writes or reuses the separate kiosk PKI identity in external runtime state, and requires passwordless sudo for non-root SSH users. Live deployment, monitoring, and display acceptance remain separate qualification gates.
+
+Examples: `boetticher kiosk setup 192.0.2.50 --site ./my-boetticher --identity-file ~/.ssh/id_ed25519 --known-hosts ./my-boetticher/generated/ssh/kiosk_known_hosts --confirm`
+
+Related commands: pki client create, pki trust export, status, doctor
 
 ### module configure
 

@@ -51,6 +51,7 @@ var advancedCommandSpecs = []commandSpec{
 	{Usage: "boetticher network trunk status|attach|detach [INTERFACE] [--site DIR] [--confirm] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
 	{Usage: "boetticher network test [--site DIR] [--zones ZONE,...] [--capture] [--cleanup-only] [--json] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
 	{Usage: "boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
+	{Usage: "boetticher kiosk setup ADDRESS [--site DIR] [--age-identity PATH] [--user USER] [--identity-file PATH] [--known-hosts PATH] [--host-key KEY] [--port PORT] [--confirm] [--dry-run]"},
 	{Usage: "boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]"},
 	{Usage: "boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]"},
 	{Usage: "boetticher firewall status|show|diff|counters|logs|verify|rule add|list|remove [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N] [--source SOURCE] [--destination DESTINATION] [--vmid VMID] [--protocol PROTOCOL] [--ports PORTS] [--id ID] [--dry-run] [--confirm]"},
@@ -139,6 +140,9 @@ var helpSpecs = map[string]helpSpec{
 	"hardware": {
 		Usage: "boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]", Purpose: "Inspect observed USB hardware and manage stable bindings for compiled-in module requirements.", Arguments: "status optionally filters MODULE REQUIREMENT; bind requires MODULE REQUIREMENT PORT; unbind requires MODULE REQUIREMENT.", Options: "--live reads parent usb_device identities from Proxmox; --confirm is required to change desired state and invoke deploy; connection options select the target trust path.", Safety: "Bindings cannot name device paths, VMIDs, or user workloads. Live identity and the compiled requirement allow-list are verified before mutation.", Examples: "boetticher hardware usb bind printer serial 1-2.4 --confirm --site ./my-boetticher", Related: "module, deploy, preflight",
 	},
+	"kiosk setup": {
+		Usage: "boetticher kiosk setup ADDRESS [--site DIR] [--age-identity PATH] [--user USER] [--identity-file PATH] [--known-hosts PATH] [--host-key KEY] [--port PORT] [--confirm] [--dry-run]", Purpose: "Configure one 64-bit Debian-based Raspberry Pi as the Boetticher CAGE Pulse kiosk and host-monitoring agent.", Arguments: "ADDRESS is a canonical IPv4 address for the Raspberry Pi.", Options: "--site selects the private site; --age-identity selects the operator-owned Age identity; --user selects the existing Pi SSH account; --identity-file selects the owner-only SSH private key; --known-hosts selects the strict host-key file; --host-key enrolls an independently verified host key; --port selects SSH port; --dry-run renders checks only; --confirm authorizes remote mutation.", Safety: "Advanced and live. Requires an owner-only SSH key, an exact enrolled host key, and the encrypted pulse_agent_token created by a qualified boetticher deploy; no password or global SSH configuration fallback is used. The command changes the Pi, writes or reuses the separate kiosk PKI identity in external runtime state, and requires passwordless sudo for non-root SSH users. Live deployment, monitoring, and display acceptance remain separate qualification gates.", Examples: "boetticher kiosk setup 192.0.2.50 --site ./my-boetticher --identity-file ~/.ssh/id_ed25519 --known-hosts ./my-boetticher/generated/ssh/kiosk_known_hosts --confirm", Related: "pki client create, pki trust export, status, doctor",
+	},
 	"pki": {
 		Usage: "boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]", Purpose: "Manage bounded client certificates from the controller-side PKI authority.", Arguments: "NAME is a validated client identity; trust export has no client NAME.", Options: "--output selects an export path; --age-identity selects the external recovery identity; --site selects local state.", Safety: "Private keys are never written to stdout and certificate actions update local generated state.", Examples: "boetticher pki client create operator --site ./my-boetticher", Related: "access, deploy, verify",
 	},
@@ -206,6 +210,7 @@ var helpSpecs = map[string]helpSpec{
 
 var nestedHelpSpecs = map[string]helpSpec{
 	"aiops status":             helpSpecs["aiops"],
+	"kiosk setup":              helpSpecs["kiosk setup"],
 	"portal build":             helpSpecs["portal"],
 	"bootstrap-endpoint show":  helpSpecs["bootstrap-endpoint"],
 	"bootstrap-endpoint set":   helpSpecs["bootstrap-endpoint"],
