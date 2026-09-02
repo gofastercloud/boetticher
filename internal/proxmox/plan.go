@@ -1942,7 +1942,7 @@ func releaseLegacyLXCLoopMapping(ctx context.Context, plan Plan, guest GuestPlan
 	if _, err := plan.PrivilegedRunner.RunArgs(ctx, plan.PrivilegedAddress, plan.PrivilegedUser, []string{"/usr/sbin/losetup", "--detach", loops[0]}); err != nil {
 		return fmt.Errorf("HOLD: detach inactive legacy loop mapping %s for persistent volume %s: %w", loops[0], volumeID, err)
 	}
-	return waitForLegacyLXCLoopRelease(ctx, plan, volumeID, volumePath, loops[0], 10, time.Second)
+	return waitForLegacyLXCLoopRelease(ctx, plan, volumeID, volumePath, loops[0], 30, time.Second)
 }
 
 // waitForLegacyLXCLoopRelease accounts for losetup's deferred autoclear
