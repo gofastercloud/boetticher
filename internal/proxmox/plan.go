@@ -1096,13 +1096,13 @@ func AttachTrunk(ctx context.Context, client *Client, node, physicalInterface, b
 	}
 	var after []NetworkInterface
 	if err := client.NodeNetwork(ctx, node, &after); err != nil {
-		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"type": {"bridge"}, "bridge_ports": {"none"}, "bridge_vlan_aware": {"1"}}); rollbackErr != nil {
+		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", virtualOnlyBridgeParams()); rollbackErr != nil {
 			return fmt.Errorf("HOLD: trunk attach verification failed and rollback failed: %v; verification: %w", rollbackErr, err)
 		}
 		return fmt.Errorf("trunk attach verification failed; rollback completed: %w", err)
 	}
 	if !bridgeHasPort(after, "vmbr1", physicalInterface) {
-		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"type": {"bridge"}, "bridge_ports": {"none"}, "bridge_vlan_aware": {"1"}}); rollbackErr != nil {
+		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", virtualOnlyBridgeParams()); rollbackErr != nil {
 			return fmt.Errorf("HOLD: trunk attach was not observed and rollback failed: %v", rollbackErr)
 		}
 		return fmt.Errorf("trunk attach was not observed after mutation; rollback completed")
@@ -1137,7 +1137,7 @@ func DetachTrunk(ctx context.Context, client *Client, node, physicalInterface, b
 	if bridge == nil || bridge.Type != "bridge" || !bridge.BridgeVLANAware || !containsBridgePort(bridge.BridgePorts, physicalInterface) {
 		return fmt.Errorf("refusing to detach %s: it is not the current vmbr1 physical member", physicalInterface)
 	}
-	if err := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"type": {"bridge"}, "bridge_ports": {"none"}, "bridge_vlan_aware": {"1"}}); err != nil {
+	if err := client.UpdateNodeNetwork(ctx, node, "vmbr1", virtualOnlyBridgeParams()); err != nil {
 		return fmt.Errorf("detach %s from vmbr1: %w", physicalInterface, err)
 	}
 	if err := client.ReloadNodeNetwork(ctx, node); err != nil {
@@ -1166,6 +1166,14 @@ func bridgeHasPort(interfaces []NetworkInterface, bridgeName, port string) bool 
 		}
 	}
 	return false
+}
+
+// virtualOnlyBridgeParams clears bridge ports through the Proxmox API's
+// supported delete field. PVE 9 rejects the old literal bridge_ports=none as
+// an interface name, while --delete bridge_ports preserves the desired empty
+// virtual-only bridge across supported releases.
+func virtualOnlyBridgeParams() url.Values {
+	return url.Values{"type": {"bridge"}, "delete": {"bridge_ports"}, "bridge_vlan_aware": {"1"}}
 }
 
 // ValidatePhysicalBinding checks only the boetticher-owned vmbr0/vmbr1

@@ -204,7 +204,7 @@ func TestEnsureVirtualOnlyBridgeDetachesOneStaleMember(t *testing.T) {
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
 			}
-			if r.Form.Get("type") != "bridge" || r.Form.Get("bridge_ports") != "none" || r.Form.Get("bridge_vlan_aware") != "1" {
+			if r.Form.Get("type") != "bridge" || r.Form.Get("delete") != "bridge_ports" || r.Form.Get("bridge_ports") != "" || r.Form.Get("bridge_vlan_aware") != "1" {
 				t.Fatalf("unexpected virtual-only detach form: %v", r.Form)
 			}
 			detached = true
