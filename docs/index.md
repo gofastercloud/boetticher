@@ -1,60 +1,79 @@
-# Boetticher documentation
+---
+layout: default
+title: Boetticher
+section: home
+description: Turn a clean Proxmox host into a useful, friendly, properly wired homelab.
+---
 
-Choose the smallest guide that answers your question.
+<section class="hero">
+  <div>
+    <p class="eyebrow">Automated homelab builder</p>
+    <h1>Turn a clean Proxmox host into a very good little lab.</h1>
+    <p class="lede">Boetticher takes care of the plumbing—networking, names, clocks, monitoring, logs, backups, and a few excellent extras—so you can get on with building the fun stuff.</p>
+    <div class="actions">
+      <a class="button" href="start.html">Start a fresh lab →</a>
+      <a class="button button--quiet" href="https://github.com/gofastercloud/boetticher">Browse the source ↗</a>
+    </div>
+  </div>
+  <figure class="hero__art">
+    <img src="images/workbench-hero.webp" alt="Illustrated homelab workbench with a compact server, switch, and control panel">
+  </figure>
+</section>
 
-## Getting started
+## The bits nobody should have to rebuild every weekend
 
-- [Installation](installation.md) walks through the first deployment on a
-  fresh Proxmox host.
-- [Operations](operations.md) covers the normal `deploy` → `status` workflow,
-  updates, modules, backups, and safe next actions.
-- [Troubleshooting](troubleshooting.md) explains common stops and where to
-  look next.
-- The advanced `network test` command checks bounded paths from temporary
-  probes when you need to investigate reachability without changing policy.
+<section class="card-grid">
+  <article class="card">
+    <h3>A dependable backbone</h3>
+    <p>A fixed six-zone network, a Debian gateway when you want one, DNS, DHCP, time, monitoring, logs, and a private portal.</p>
+  </article>
+  <article class="card">
+    <h3>A small daily loop</h3>
+    <p>Change your saved settings, preview with <code>deploy --dry-run</code>, deploy, then check <code>status</code>. No always-on controller lurking in the corner.</p>
+  </article>
+  <article class="card">
+    <h3>Your workloads stay yours</h3>
+    <p>Boetticher builds its own platform guests. Your VMs and Linux Containers (LXCs) remain firmly in your Proxmox lane.</p>
+  </article>
+  <article class="card card--feature">
+    <div>
+      <h3>A little chemistry-show wink, not a costume party</h3>
+      <p>The name is a nod to breaking out the good gear. The aim is wonderfully ordinary: a homelab that feels considered, useful, and fun to come back to.</p>
+    </div>
+    <img src="images/boetticher-cover.jpg" alt="Boetticher illustrated project mark">
+  </article>
+</section>
 
-## Using your homelab
+## Pick the thing in front of you
 
-- [Module configuration](modules/configuration.md) explains the operator
-  configuration model and the shared module commands.
-- [Module overview](modules/architecture.md) describes the built-in modules,
-  including the optional [StreamDeck host display](modules/streamdeck.md).
-- [Networking](networking/dhcp-dns-ntp.md), [physical trunks](networking/physical-trunk.md),
-  and [external-firewall mode](networking/external-firewall.md) cover the
-  decisions that belong to the operator.
-- [Access](access/client-certificates.md) and [logs](operations/logs.md)
-  explain supported interfaces.
-- [Storage and recovery](storage/recovery.md) and the [recovery guide](recovery/recovery.md)
-  explain what to preserve and how to rebuild.
-- [Adding a workload](workloads/adding-a-workload.md) explains how
-  operator-owned guests fit beside the platform.
+| When you want to… | Head here |
+| --- | --- |
+| Build your first lab or learn the everyday rhythm | [Start here](start.html) |
+| See how the zones, guests, storage, access, and recovery fit together | [The lab](lab.html) |
+| Add a printer, dashboard, AI helper, AirVPN exit, or StreamDeck display | [Modules](modules.html) |
+| Look up a flag or browse the CLI menu | [Commands](commands.html) |
 
-## How it works
+<aside class="callout">
+  <p><strong>Good fit:</strong> a fresh, supported Proxmox VE host on amd64 hardware and a desire for a home lab with less plumbing homework. One Ethernet port is enough to begin; a second port and a VLAN-aware switch unlock a physical trunk or an external firewall later.</p>
+</aside>
 
-- [Architecture](architecture.md) describes the fixed network and platform
-  services.
-- [Security model](security-model.md) describes trust, privilege, and module
-  boundaries.
-- [Platform ownership](platform-ownership.md) explains what Boetticher manages
-  and what remains yours.
-- [State and determinism](state-model.md) explains desired state, generated
-  projections, and live observations.
-- [Command reference](commands.md) is generated from the CLI metadata. The
-  `tui` command is experimental; the regular commands remain the supported
-  path for automation and recovery.
+<aside class="callout">
+  <p><strong>A pleasingly nerdy speed note:</strong> on a disposable warm lab, a deploy recently dropped from 5 minutes 56 seconds to 4 minutes 51 seconds—about 18% quicker. First runs and image rebuilds have more honest work to do, so treat that as a happy bench result, not a stopwatch promise.</p>
+</aside>
 
-## Maintainers and qualification
+## A quick glossary
 
-[Appliance images](modules/images.md), the [hardware checklist](hardware-test-checklist.md),
-and the detailed security, storage, networking, and recovery pages are useful
-when building, testing, or recovering the platform. They intentionally use
-more precise implementation and verification language than the getting-started
-guides.
+<dl class="glossary">
+  <dt>Proxmox VE</dt>
+  <dd>The virtualisation host for your VMs and Linux Containers. Its <a href="https://pve.proxmox.com/pve-docs/">documentation</a> is superb.</dd>
+  <dt>VLAN</dt>
+  <dd>A virtual local-area network: one physical cable can carry several separate networks. This <a href="https://www.cloudflare.com/learning/network-layer/what-is-a-vlan/">VLAN explainer</a> makes it pleasantly concrete.</dd>
+  <dt>mTLS</dt>
+  <dd>Mutual Transport Layer Security: both your browser or device and the service present certificates. It is a tidy fit for a private lab.</dd>
+  <dt>SOPS and age</dt>
+  <dd>The encrypted-secret file format and its small encryption tool. Meet <a href="https://github.com/getsops/sops">SOPS</a> and <a href="https://github.com/FiloSottile/age">age</a>.</dd>
+</dl>
 
-The Pi companions have their own entry points: [kiosk](../pi/kiosk/README.md),
-[StreamDeck](../pi/streamdeck/README.md), and [shared Pi configuration](../pi/base/README.md).
-The Ansible directory documents its [configuration boundary](../ansible/README.md).
+## Built by a lot of clever people
 
-Future extension notes, such as the [Cloudflare](access/cloudflare.md) and
-[WireGuard](access/wireguard.md) pages, are design notes rather than supported
-0.4 installation paths.
+Boetticher is the small connector between a pile of fantastic open-source work. Huge thanks to the maintainers of [Proxmox VE](https://www.proxmox.com/), [Debian](https://www.debian.org/), [Ansible](https://www.ansible.com/), [Pulse](https://github.com/rcourtman/Pulse), [Blocky](https://github.com/0xERR0R/blocky), [PowerDNS](https://www.powerdns.com/), [Chrony](https://chrony-project.org/), [WireGuard](https://www.wireguard.com/), and every project in the [third-party notices](https://github.com/gofastercloud/boetticher/blob/main/THIRD_PARTY_NOTICES.md). They did the hard work; this project is delighted to stand on it.

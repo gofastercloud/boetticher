@@ -7,15 +7,15 @@ import (
 	"strings"
 )
 
-// Run dispatches the small, intentionally explicit operator command surface.
-// Command implementations live in focused files; this file owns only the
-// public entry point and top-level help.
+// Run dispatches Boetticher's small, intentionally clear command menu.
+// Command implementations live in focused files; this file owns the public
+// entry point and the top-level help.
 func Run(args []string, out, errOut io.Writer) error {
 	return RunWithInput(args, os.Stdin, out, errOut)
 }
 
-// RunWithInput is the testable/operator-facing dispatcher variant used by
-// secret prompts. The input stream is never passed as a command argument.
+// RunWithInput is the input-aware dispatcher used for hidden secret prompts.
+// The input stream is never passed as a command argument.
 func RunWithInput(args []string, input io.Reader, out, errOut io.Writer) error {
 	return operatorErrorForHuman(run(args, input, out, errOut))
 }
@@ -126,7 +126,7 @@ func commandHelp(args []string, out io.Writer) {
 		usage(out)
 		return
 	}
-	fmt.Fprintf(out, "Purpose:\n  %s\n\nUsage:\n  %s\n\nArguments:\n  %s\n\nOptions:\n  %s\n\nSafety:\n  %s\n\nExamples:\n  %s\n\nRelated commands:\n  %s\n", spec.Purpose, spec.Usage, spec.Arguments, spec.Options, spec.Safety, spec.Examples, spec.Related)
+	fmt.Fprintf(out, "What it does:\n  %s\n\nUsage:\n  %s\n\nArguments:\n  %s\n\nOptions:\n  %s\n\nWorth knowing:\n  %s\n\nTry it:\n  %s\n\nRelated commands:\n  %s\n", spec.Purpose, spec.Usage, spec.Arguments, spec.Options, spec.Safety, spec.Examples, spec.Related)
 }
 
 func normalizedHelpPath(pathParts []string) string {
@@ -145,14 +145,14 @@ func normalizedHelpPath(pathParts []string) string {
 }
 
 func usage(out io.Writer) {
-	fmt.Fprintln(out, "boetticher operator CLI\n\nUsage:")
+	fmt.Fprintln(out, "boetticher — your automated homelab helper\n\nStart here:")
 	for _, spec := range commandSpecs {
 		fmt.Fprintln(out, "  "+spec.Usage)
 	}
 }
 
 func advancedUsage(out io.Writer) {
-	fmt.Fprintln(out, "boetticher advanced CLI\n\nUsage:")
+	fmt.Fprintln(out, "boetticher — the bigger toolbox\n\nCommand menu:")
 	for _, spec := range advancedCommandSpecs {
 		fmt.Fprintln(out, "  "+spec.Usage)
 	}

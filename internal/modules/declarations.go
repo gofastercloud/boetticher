@@ -74,7 +74,7 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		if IsEnabled(site, "aiops") {
 			declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "log-query." + site.Network.Domain, SANs: []string{"logs." + site.Network.Domain, "lab-log-01." + site.Network.Domain}, Consumer: "boetticher-log-query"})
 		}
-		declaration.Portal = []model.PortalEntry{{Name: "logging", Description: "Central systemd journal collection", Docs: []string{"docs/operations/logs.md"}}}
+		declaration.Portal = []model.PortalEntry{{Name: "logging", Description: "Central systemd journal collection", Docs: []string{"docs/modules.md"}}}
 	case "tailnet-router":
 		declaration.Secrets = []model.SecretDeclaration{{Name: "tailscale_auth_key", Purpose: "initial Tailscale registration or re-registration", Consumer: "tailscaled", Generation: "operator-supplied", Rotation: "replaceable", Delivery: "systemd-credential-to-ephemeral-secret-file", Lifecycle: model.SecretLifecycleBootstrap}}
 		declaration.AdvertisedRoutes = []string{"10.10.0.0/16"}
@@ -106,7 +106,7 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-tailnet-01", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"})
 		}
 		declaration.Monitoring = append(declaration.Monitoring, model.MonitoringDeclaration{Name: "tailscaled", Kind: "service", Target: "lab-tailnet-01", Checks: []string{"tailscaled", "route-advertisement"}, Description: "Tailscale daemon and advertised subnet route health"})
-		declaration.Portal = []model.PortalEntry{{Name: "tailnet-router", Description: "Tailscale subnet router; Internet exit-node behavior is not enabled", Docs: []string{"docs/modules/tailnet-router.md"}}}
+		declaration.Portal = []model.PortalEntry{{Name: "tailnet-router", Description: "Tailscale subnet router; Internet exit-node behavior is not enabled", Docs: []string{"docs/modules.md"}}}
 	case "airvpn":
 		declaration.Secrets = []model.SecretDeclaration{{Name: "airvpn_wireguard_config", Purpose: "retained AirVPN IPv4 WireGuard profile", Consumer: "boetticher-airvpn", Generation: "api-generated", Rotation: "explicit", Delivery: "systemd-credential", Lifecycle: model.SecretLifecycleRuntime, Persistent: true}}
 		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true, Devices: []model.DeviceRequirement{{Name: "tun", Path: "/dev/net/tun", Type: "c", Major: 10, Minor: 200, Access: "rwm"}}}
@@ -116,7 +116,7 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		}
 		declaration.ReturnRouting = []string{"AirVPN-selected module traffic uses the TRANSIT gateway 10.10.5.1 and returns only through the AirVPN tunnel"}
 		declaration.Monitoring = append(declaration.Monitoring, model.MonitoringDeclaration{Name: "boetticher-airvpn", Kind: "service", Target: "lab-airvpn-01", Checks: []string{"wireguard", "forwarding", "kill-switch"}, Description: "AirVPN WireGuard transit and fail-closed forwarding health"})
-		declaration.Portal = []model.PortalEntry{{Name: "airvpn", Description: "AirVPN WireGuard external egress transit", Docs: []string{"docs/modules/airvpn.md"}}}
+		declaration.Portal = []model.PortalEntry{{Name: "airvpn", Description: "AirVPN WireGuard external egress transit", Docs: []string{"docs/modules.md"}}}
 	case "bifrost":
 		config := site.ModuleConfig[name]
 		for _, upstream := range config.Upstreams {
@@ -135,7 +135,7 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 			model.MonitoringDeclaration{Name: "nginx", Kind: "service", Target: "lab-bifrost-01", Checks: []string{"nginx", "https", "mtls"}, Description: "Bifrost mTLS frontend health"},
 			model.MonitoringDeclaration{Name: "bifrost", Kind: "service", Target: "lab-bifrost-01", Checks: []string{"bifrost", "loopback"}, Description: "Bifrost loopback backend health"},
 		)
-		declaration.Portal = []model.PortalEntry{{Name: "bifrost", Description: "mTLS-protected provider-neutral AI API aliases", URLs: []string{"https://bifrost." + site.Network.Domain}, Docs: []string{"docs/modules/bifrost.md"}}}
+		declaration.Portal = []model.PortalEntry{{Name: "bifrost", Description: "mTLS-protected provider-neutral AI API aliases", URLs: []string{"https://bifrost." + site.Network.Domain}, Docs: []string{"docs/modules.md"}}}
 	case "printer":
 		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true}
 		declaration.DNSRecords = []model.DNSRecord{{Name: "octoprint." + site.Network.Domain, Type: "A", Address: "10.10.20.80", Owner: "printer"}, {Name: "printer." + site.Network.Domain, Type: "A", Address: "10.10.20.80", Owner: "printer"}}
@@ -151,7 +151,7 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 			model.MonitoringDeclaration{Name: "nginx", Kind: "service", Target: "lab-printer-01", Checks: []string{"nginx", "https", "mtls"}, Description: "OctoPrint mTLS frontend health"},
 			model.MonitoringDeclaration{Name: "octoprint", Kind: "service", Target: "lab-printer-01", Checks: []string{"octoprint", "loopback", "serial"}, Description: "OctoPrint backend and printer serial availability"},
 		)
-		declaration.Portal = []model.PortalEntry{{Name: "printer", Description: "mTLS-protected OctoPrint management for the Ender-3 V3 SE", URLs: []string{"https://octoprint." + site.Network.Domain}, Docs: []string{"docs/modules/printer.md"}}}
+		declaration.Portal = []model.PortalEntry{{Name: "printer", Description: "mTLS-protected OctoPrint management for the Ender-3 V3 SE", URLs: []string{"https://octoprint." + site.Network.Domain}, Docs: []string{"docs/modules.md"}}}
 	case "streamdeck":
 		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true}
 		declaration.Secrets = []model.SecretDeclaration{{Name: "pulse_api_token", Purpose: "read-only Pulse monitoring API integration", Consumer: "streamdeck-status", Generation: "dependency", Rotation: "replaceable", Delivery: "systemd-credential", Lifecycle: model.SecretLifecycleRuntime}}
@@ -193,11 +193,11 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 			model.MonitoringDeclaration{Name: "boetticher-aiops", Kind: "service", Target: "lab-aiops-01", Checks: []string{"https", "queue", "budgets"}, Description: "durable incident adapter health"},
 			model.MonitoringDeclaration{Name: "holmes", Kind: "service", Target: "lab-aiops-01", Checks: []string{"loopback"}, Description: "loopback-only HolmesGPT health"},
 		)
-		declaration.Portal = []model.PortalEntry{{Name: "aiops", Description: "Read-only HolmesGPT incident investigation", URLs: []string{"https://aiops." + site.Network.Domain}, Docs: []string{"docs/modules/aiops.md"}}}
+		declaration.Portal = []model.PortalEntry{{Name: "aiops", Description: "Read-only HolmesGPT incident investigation", URLs: []string{"https://aiops." + site.Network.Domain}, Docs: []string{"docs/modules.md"}}}
 	case "gatus":
 		declaration.NetworkIntents = []model.NetworkIntent{{Source: "lab-gatus-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Direction: "egress", Purpose: "Gatus DNS resolution"}, {Source: "lab-gatus-01", Destination: "dns", Protocol: "udp", Ports: []string{"123"}, Direction: "egress", Purpose: "Gatus time synchronisation"}}
 		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "gatus." + site.Network.Domain, SANs: []string{"gatus." + site.Network.Domain, "lab-gatus-01." + site.Network.Domain}, Consumer: "nginx"})
-		declaration.Portal = []model.PortalEntry{{Name: "gatus", Description: "Generated status page for declared services; user endpoints are not supported", URLs: []string{"https://gatus." + site.Network.Domain}, Docs: []string{"docs/modules/gatus.md"}}}
+		declaration.Portal = []model.PortalEntry{{Name: "gatus", Description: "Generated status page for declared services; user endpoints are not supported", URLs: []string{"https://gatus." + site.Network.Domain}, Docs: []string{"docs/modules.md"}}}
 	default:
 		return model.ModuleDeclaration{}, fmt.Errorf("no declaration implementation for first-party module %q", name)
 	}
