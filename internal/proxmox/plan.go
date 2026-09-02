@@ -1898,6 +1898,31 @@ func lxcDeviceParam(device model.DeviceRequirement) string {
 	return fmt.Sprintf("path=%s,mode=0666", device.Path)
 }
 
+// releaseLegacyLXCLoopMappings uses Proxmox's own stopped-container lifecycle
+// to release directory-storage raw-volume loop mappings. Proxmox 9 otherwise
+// reuses a writable loop device when move_volume needs a read-only source,
+// which prevents a safe local-to-thin copy. The bounded mount is always
+// followed by unmount; cleanup failure remains blocking.
+func releaseLegacyLXCLoopMappings(ctx context.Context, plan Plan, guest GuestPlan) (err error) {
+	if plan.PrivilegedRunner == nil || net.ParseIP(plan.PrivilegedAddress) == nil || plan.PrivilegedUser != "root" || guest.VMID <= 0 {
+		return fmt.Errorf("HOLD: guest %s requires the authorized root bootstrap path to release legacy LXC loop mappings", guest.Name)
+	}
+	vmid := strconv.Itoa(guest.VMID)
+	if _, err := plan.PrivilegedRunner.RunArgs(ctx, plan.PrivilegedAddress, plan.PrivilegedUser, []string{"/usr/sbin/pct", "mount", vmid}); err != nil {
+		return fmt.Errorf("mount stopped guest %s before legacy persistent-volume migration: %w", guest.Name, err)
+	}
+	defer func() {
+		if _, cleanupErr := plan.PrivilegedRunner.RunArgs(ctx, plan.PrivilegedAddress, plan.PrivilegedUser, []string{"/usr/sbin/pct", "unmount", vmid}); cleanupErr != nil {
+			if err == nil {
+				err = fmt.Errorf("HOLD: release legacy LXC loop mappings for %s: %w", guest.Name, cleanupErr)
+			} else {
+				err = fmt.Errorf("%w; additionally failed to release legacy LXC loop mappings for %s: %v", err, guest.Name, cleanupErr)
+			}
+		}
+	}()
+	return nil
+}
+
 // replaceLXC detaches only proven persistent mount-point volumes, retains
 // their exact volume references, and removes the disposable rootfs. The caller
 // must pass those references back to creation; size-only parameters would
@@ -2191,6 +2216,7 @@ func migrateLXCPersistentVolumes(ctx context.Context, client *Client, plan Plan,
 		volume     model.PersistentVolumeDeclaration
 	}
 	migrations := make([]migration, 0, len(guest.Volumes))
+	requiresLegacyLoopRelease := false
 	for index, volume := range guest.Volumes {
 		expected, expectedErr := persistentVolumeParam(volume)
 		if expectedErr != nil {
@@ -2208,6 +2234,9 @@ func migrateLXCPersistentVolumes(ctx context.Context, client *Client, plan Plan,
 		}
 		if !lxcVolumeMatchesPersistentIdentity(observed, expected) {
 			return fmt.Errorf("HOLD: refusing to migrate guest %s persistent volume %s=%q; its mount path, backup setting, or size does not prove the declared contract %q", guest.Name, mountpoint, observed, expected)
+		}
+		if observedStorage == "local" {
+			requiresLegacyLoopRelease = true
 		}
 		migrations = append(migrations, migration{mountpoint: mountpoint, storage: expectedStorage, volume: volume})
 	}
@@ -2236,6 +2265,11 @@ func migrateLXCPersistentVolumes(ctx context.Context, client *Client, plan Plan,
 				}
 			}
 		}()
+	}
+	if requiresLegacyLoopRelease {
+		if err := releaseLegacyLXCLoopMappings(ctx, plan, guest); err != nil {
+			return err
+		}
 	}
 
 	for _, migration := range migrations {

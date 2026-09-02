@@ -28,6 +28,7 @@ type recordingArgsRunner struct {
 	user    string
 	args    [][]string
 	err     error
+	errs    []error
 }
 
 func TestEnsureBuilderCacheVolumeAllocatesOnlyReservedCanonicalVolume(t *testing.T) {
@@ -84,6 +85,11 @@ func (r *recordingArgsRunner) RunArgs(_ context.Context, address, user string, a
 	r.address = address
 	r.user = user
 	r.args = append(r.args, append([]string(nil), args...))
+	if len(r.errs) > 0 {
+		err := r.errs[0]
+		r.errs = r.errs[1:]
+		return nil, err
+	}
 	return nil, r.err
 }
 
@@ -882,6 +888,7 @@ func TestEnsureLXCMigratesVerifiedPersistentVolumesToDeclaredStorage(t *testing.
 	before := "local:110/vm-110-disk-1.raw,mp=/var/lib/powerdns,backup=1,size=8G"
 	after := modelStorageIDForTest + ":vm-110-disk-1,mp=/var/lib/powerdns,backup=1,size=8G"
 	moved := false
+	privilegedRunner := &recordingArgsRunner{}
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/110/config":
@@ -919,11 +926,15 @@ func TestEnsureLXCMigratesVerifiedPersistentVolumesToDeclaredStorage(t *testing.
 		}
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	if err := ensureLXC(context.Background(), client, Plan{Node: "node"}, guest); err != nil {
+	plan := Plan{Node: "node", PrivilegedRunner: privilegedRunner, PrivilegedAddress: "192.0.2.10", PrivilegedUser: "root"}
+	if err := ensureLXC(context.Background(), client, plan, guest); err != nil {
 		t.Fatalf("ensureLXC() = %v", err)
 	}
 	if !moved {
 		t.Fatal("verified LXC persistent volume was not migrated")
+	}
+	if got, want := privilegedRunner.args, [][]string{{"/usr/sbin/pct", "mount", "110"}, {"/usr/sbin/pct", "unmount", "110"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("legacy loop cleanup commands = %#v, want %#v", got, want)
 	}
 }
 
@@ -969,6 +980,7 @@ func TestMigrateLXCPersistentVolumesRestoresRunningGuestAfterMoveFailure(t *test
 	}}}
 	before := "local:110/vm-110-disk-1.raw,mp=/var/lib/powerdns,backup=1,size=8G"
 	stopped, restored := false, false
+	privilegedRunner := &recordingArgsRunner{}
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/current":
@@ -993,12 +1005,29 @@ func TestMigrateLXCPersistentVolumesRestoresRunningGuestAfterMoveFailure(t *test
 		}
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	err := migrateLXCPersistentVolumes(context.Background(), client, Plan{Node: "node"}, guest, map[string]any{"mp0": before})
+	plan := Plan{Node: "node", PrivilegedRunner: privilegedRunner, PrivilegedAddress: "192.0.2.10", PrivilegedUser: "root"}
+	err := migrateLXCPersistentVolumes(context.Background(), client, plan, guest, map[string]any{"mp0": before})
 	if err == nil || !strings.Contains(err.Error(), "copy failed") {
 		t.Fatalf("failed LXC persistent-volume move = %v", err)
 	}
 	if !stopped || !restored {
 		t.Fatalf("running LXC was not safely restored: stopped=%t restored=%t", stopped, restored)
+	}
+	if got, want := privilegedRunner.args, [][]string{{"/usr/sbin/pct", "mount", "110"}, {"/usr/sbin/pct", "unmount", "110"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("legacy loop cleanup commands = %#v, want %#v", got, want)
+	}
+}
+
+func TestReleaseLegacyLXCLoopMappingsFailsClosedWhenUnmountFails(t *testing.T) {
+	runner := &recordingArgsRunner{errs: []error{nil, fmt.Errorf("unmount failed")}}
+	guest := GuestPlan{VMID: 110, Name: "test-dns"}
+	plan := Plan{Node: "node", PrivilegedRunner: runner, PrivilegedAddress: "192.0.2.10", PrivilegedUser: "root"}
+	err := releaseLegacyLXCLoopMappings(context.Background(), plan, guest)
+	if err == nil || !strings.Contains(err.Error(), "release legacy LXC loop mappings") {
+		t.Fatalf("failed loop cleanup was not held: %v", err)
+	}
+	if got, want := runner.args, [][]string{{"/usr/sbin/pct", "mount", "110"}, {"/usr/sbin/pct", "unmount", "110"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("legacy loop cleanup commands = %#v, want %#v", got, want)
 	}
 }
 
