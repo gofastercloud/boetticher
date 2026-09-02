@@ -421,6 +421,39 @@ func safePersistentQEMUDiskKey(value string) bool {
 	return err == nil && index > 0 && index <= 30 && value == "scsi"+strconv.Itoa(index)
 }
 
+// MoveLXCPersistentVolume moves one declared LXC mount-point volume to the
+// requested storage. Its caller proves the mount point, backup policy, mount
+// path, and exact size before this operation is allowed to delete the source.
+func (c *Client) MoveLXCPersistentVolume(ctx context.Context, node string, vmid int, volume, storage, digest string) error {
+	if c == nil || !safeNodeID(node) || vmid <= 0 || !safePersistentLXCMountpointKey(volume) || !safeNodeID(storage) || len(digest) != 40 || !isHex(digest) {
+		return errors.New("Proxmox node, positive VMID, persistent LXC mount point, storage, and config digest are required")
+	}
+	var upid string
+	if err := c.Post(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "move_volume"), url.Values{
+		"volume":  {volume},
+		"storage": {storage},
+		"digest":  {digest},
+		"delete":  {"1"},
+	}, &upid); err != nil {
+		return fmt.Errorf("move LXC persistent volume: %w", err)
+	}
+	if upid == "" {
+		return errors.New("Proxmox did not return an LXC volume move task")
+	}
+	if err := c.WaitTask(ctx, node, upid); err != nil {
+		return fmt.Errorf("wait for LXC persistent volume move: %w", err)
+	}
+	return nil
+}
+
+func safePersistentLXCMountpointKey(value string) bool {
+	if !strings.HasPrefix(value, "mp") {
+		return false
+	}
+	index, err := strconv.Atoi(strings.TrimPrefix(value, "mp"))
+	return err == nil && index >= 0 && index <= 30 && value == "mp"+strconv.Itoa(index)
+}
+
 func (c *Client) StartVM(ctx context.Context, node string, vmid int) error {
 	var upid string
 	if err := c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "status", "start"), nil, &upid); err != nil {

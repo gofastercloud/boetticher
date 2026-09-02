@@ -1700,7 +1700,23 @@ func replaceQEMUConfig(current, refreshed map[string]any) {
 	}
 }
 
+func replaceLXCConfig(current, refreshed map[string]any) {
+	for key := range current {
+		delete(current, key)
+	}
+	for key, value := range refreshed {
+		current[key] = value
+	}
+}
+
 func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
+	return ensureLXCWithRetainedVolumes(ctx, client, plan, guest, nil)
+}
+
+// ensureLXCWithRetainedVolumes carries already-proven persistent mount-point
+// references through an explicitly confirmed rootfs replacement. It never
+// turns a retained volume into a size-only allocation request.
+func ensureLXCWithRetainedVolumes(ctx context.Context, client *Client, plan Plan, guest GuestPlan, retained map[string]string) error {
 	if err := validateLXCDeviceContract(guest); err != nil {
 		return err
 	}
@@ -1709,6 +1725,12 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		if kind != KindLXC {
 			return fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, expected LXC %s", guest.VMID, kind, guest.Name)
 		}
+		if err := validateNoUndeclaredLXCVolumes(current, guest); err != nil {
+			return err
+		}
+		if err := migrateLXCPersistentVolumes(ctx, client, plan, guest, current); err != nil {
+			return err
+		}
 		if err := validateExistingGuestVolumes(current, guest); err != nil {
 			return err
 		}
@@ -1716,10 +1738,11 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 			if !plan.DestructiveConfirmed {
 				return fmt.Errorf("HOLD: guest %s has artifact identity mismatch; appliance replacement requires --confirm", guest.Name)
 			}
-			if err := replaceLXC(ctx, client, plan, guest); err != nil {
+			retainedVolumes, err := replaceLXC(ctx, client, plan, guest, current)
+			if err != nil {
 				return err
 			}
-			return ensureLXC(ctx, client, plan, guest)
+			return ensureLXCWithRetainedVolumes(ctx, client, plan, guest, retainedVolumes)
 		}
 		if err := validateExistingGuestIdentity(current, guest); err != nil {
 			return err
@@ -1775,11 +1798,30 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		}
 	}
 	for index, volume := range guest.Volumes {
+		key := fmt.Sprintf("mp%d", index)
+		if retained != nil {
+			value, ok := retained[key]
+			if !ok {
+				return fmt.Errorf("HOLD: retained persistent volume %s for %s is absent", key, guest.Name)
+			}
+			expected, err := persistentVolumeParam(volume)
+			if err != nil {
+				return fmt.Errorf("validate retained persistent volume %s for %s: %w", volume.Name, guest.Name, err)
+			}
+			if !lxcPersistentVolumeMatches(value, expected) {
+				return fmt.Errorf("HOLD: retained persistent volume %s for %s does not prove the declared storage, mount path, backup setting, and size", key, guest.Name)
+			}
+			params.Set(key, value)
+			continue
+		}
 		value, err := persistentVolumeParam(volume)
 		if err != nil {
 			return fmt.Errorf("validate persistent volume %s for %s: %w", volume.Name, guest.Name, err)
 		}
-		params.Set(fmt.Sprintf("mp%d", index), value)
+		params.Set(key, value)
+	}
+	if retained != nil && len(retained) != len(guest.Volumes) {
+		return fmt.Errorf("HOLD: retained persistent volumes for %s do not match the declared volume count", guest.Name)
 	}
 	if err := client.CreateLXC(ctx, plan.Node, guest.VMID, params); err != nil {
 		return fmt.Errorf("create container %s: %w", guest.Name, err)
@@ -1856,15 +1898,34 @@ func lxcDeviceParam(device model.DeviceRequirement) string {
 	return fmt.Sprintf("path=%s,mode=0666", device.Path)
 }
 
-func replaceLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
+// replaceLXC detaches only proven persistent mount-point volumes, retains
+// their exact volume references, and removes the disposable rootfs. The caller
+// must pass those references back to creation; size-only parameters would
+// allocate fresh volumes and silently discard retained state.
+func replaceLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) (retained map[string]string, err error) {
+	retained, err = retainedLXCPersistentVolumeAttachments(current, guest)
+	if err != nil {
+		return nil, err
+	}
 	status, err := client.LXCStatus(ctx, plan.Node, guest.VMID)
 	if err != nil {
-		return fmt.Errorf("inspect %s status before appliance replacement: %w", guest.Name, err)
+		return nil, fmt.Errorf("inspect %s status before appliance replacement: %w", guest.Name, err)
+	}
+	if status != "running" && status != "stopped" {
+		return nil, fmt.Errorf("HOLD: guest %s is %q; refusing appliance replacement outside a running or stopped state", guest.Name, status)
 	}
 	if status == "running" {
 		if err := client.StopLXC(ctx, plan.Node, guest.VMID); err != nil {
-			return fmt.Errorf("stop %s before appliance replacement: %w", guest.Name, err)
+			return nil, fmt.Errorf("stop %s before appliance replacement: %w", guest.Name, err)
 		}
+		defer func() {
+			if err == nil {
+				return
+			}
+			if startErr := client.StartLXC(ctx, plan.Node, guest.VMID); startErr != nil {
+				err = fmt.Errorf("%w; additionally failed to restore %s after appliance replacement failure: %v", err, guest.Name, startErr)
+			}
+		}()
 	}
 	detach := url.Values{}
 	for index := range guest.Volumes {
@@ -1872,13 +1933,13 @@ func replaceLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 	}
 	if len(detach) > 0 {
 		if err := client.SetLXCConfig(ctx, plan.Node, guest.VMID, detach); err != nil {
-			return fmt.Errorf("detach persistent volumes from %s before appliance replacement: %w", guest.Name, err)
+			return nil, fmt.Errorf("detach persistent volumes from %s before appliance replacement: %w", guest.Name, err)
 		}
 	}
 	if err := client.destroyLXCForReplacement(ctx, plan.Node, guest.VMID); err != nil {
-		return fmt.Errorf("destroy %s rootfs for appliance replacement: %w", guest.Name, err)
+		return nil, fmt.Errorf("destroy %s rootfs for appliance replacement: %w", guest.Name, err)
 	}
-	return nil
+	return retained, nil
 }
 
 // lxcBootstrapKeyParams is the only operator-key input accepted by appliance
@@ -2118,6 +2179,138 @@ func qemuVolumeMatchesSerial(observed, expected, serial string) bool {
 		(options["size"] == "" || options["size"] == expectedSize+"G")
 }
 
+// migrateLXCPersistentVolumes reconciles a prior supported storage profile
+// with the storage now declared for an LXC. A mount point has no QEMU-style
+// serial, so its fixed slot, storage identity, mount path, backup policy, and
+// exact size together establish ownership before Core asks Proxmox to delete
+// the source after a successful copy.
+func migrateLXCPersistentVolumes(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) (err error) {
+	type migration struct {
+		mountpoint string
+		storage    string
+		volume     model.PersistentVolumeDeclaration
+	}
+	migrations := make([]migration, 0, len(guest.Volumes))
+	for index, volume := range guest.Volumes {
+		expected, expectedErr := persistentVolumeParam(volume)
+		if expectedErr != nil {
+			return expectedErr
+		}
+		mountpoint := fmt.Sprintf("mp%d", index)
+		observed, _ := current[mountpoint].(string)
+		observedStorage := lxcVolumeStorageID(observed)
+		expectedStorage := lxcVolumeStorageID(expected)
+		if observedStorage == "" || expectedStorage == "" {
+			return fmt.Errorf("HOLD: refusing to migrate guest %s persistent volume %s with malformed storage identity", guest.Name, mountpoint)
+		}
+		if observedStorage == expectedStorage {
+			continue
+		}
+		if !lxcVolumeMatchesPersistentIdentity(observed, expected) {
+			return fmt.Errorf("HOLD: refusing to migrate guest %s persistent volume %s=%q; its mount path, backup setting, or size does not prove the declared contract %q", guest.Name, mountpoint, observed, expected)
+		}
+		migrations = append(migrations, migration{mountpoint: mountpoint, storage: expectedStorage, volume: volume})
+	}
+	if len(migrations) == 0 {
+		return nil
+	}
+
+	status, err := client.LXCStatus(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("inspect %s status before persistent-volume migration: %w", guest.Name, err)
+	}
+	if status != "running" && status != "stopped" {
+		return fmt.Errorf("HOLD: guest %s is %q; refusing persistent-volume migration outside a running or stopped state", guest.Name, status)
+	}
+	wasRunning := status == "running"
+	if wasRunning {
+		if err := client.StopLXC(ctx, plan.Node, guest.VMID); err != nil {
+			return fmt.Errorf("stop %s before persistent-volume migration: %w", guest.Name, err)
+		}
+		defer func() {
+			if startErr := client.StartLXC(ctx, plan.Node, guest.VMID); startErr != nil {
+				if err == nil {
+					err = fmt.Errorf("restore %s after persistent-volume migration: %w", guest.Name, startErr)
+				} else {
+					err = fmt.Errorf("%w; additionally failed to restore %s after persistent-volume migration: %v", err, guest.Name, startErr)
+				}
+			}
+		}()
+	}
+
+	for _, migration := range migrations {
+		refreshed := map[string]any{}
+		if err := client.LXCConfig(ctx, plan.Node, guest.VMID, &refreshed); err != nil {
+			return fmt.Errorf("inspect %s before moving persistent volume %s: %w", guest.Name, migration.mountpoint, err)
+		}
+		expected, expectedErr := persistentVolumeParam(migration.volume)
+		if expectedErr != nil {
+			return expectedErr
+		}
+		observed, _ := refreshed[migration.mountpoint].(string)
+		if lxcVolumeStorageID(observed) == migration.storage {
+			continue
+		}
+		if !lxcVolumeMatchesPersistentIdentity(observed, expected) {
+			return fmt.Errorf("HOLD: guest %s persistent volume %s changed before migration", guest.Name, migration.mountpoint)
+		}
+		digest, _ := refreshed["digest"].(string)
+		if err := client.MoveLXCPersistentVolume(ctx, plan.Node, guest.VMID, migration.mountpoint, migration.storage, digest); err != nil {
+			return fmt.Errorf("migrate persistent volume %s for %s: %w", migration.mountpoint, guest.Name, err)
+		}
+	}
+
+	refreshed := map[string]any{}
+	if err := client.LXCConfig(ctx, plan.Node, guest.VMID, &refreshed); err != nil {
+		return fmt.Errorf("verify %s persistent-volume migration: %w", guest.Name, err)
+	}
+	replaceLXCConfig(current, refreshed)
+	return nil
+}
+
+func lxcVolumeStorageID(value string) string {
+	first, _, _ := strings.Cut(value, ",")
+	storage, volume, ok := strings.Cut(first, ":")
+	if !ok || storage == "" || volume == "" {
+		return ""
+	}
+	return storage
+}
+
+func lxcVolumeMatchesPersistentIdentity(observed, expected string) bool {
+	observedParts := strings.Split(observed, ",")
+	expectedParts := strings.Split(expected, ",")
+	if len(observedParts) == 0 || len(expectedParts) == 0 {
+		return false
+	}
+	_, expectedSize, expectedOK := strings.Cut(expectedParts[0], ":")
+	if !expectedOK || expectedSize == "" || lxcVolumeStorageID(observed) == "" {
+		return false
+	}
+	observedOptions := qemuVolumeOptions(observedParts[1:])
+	expectedOptions := qemuVolumeOptions(expectedParts[1:])
+	return observedOptions["mp"] == expectedOptions["mp"] &&
+		observedOptions["backup"] == expectedOptions["backup"] &&
+		observedOptions["size"] == expectedSize+"G"
+}
+
+func retainedLXCPersistentVolumeAttachments(current map[string]any, guest GuestPlan) (map[string]string, error) {
+	retained := make(map[string]string, len(guest.Volumes))
+	for index, volume := range guest.Volumes {
+		expected, err := persistentVolumeParam(volume)
+		if err != nil {
+			return nil, err
+		}
+		mountpoint := fmt.Sprintf("mp%d", index)
+		observed, _ := current[mountpoint].(string)
+		if !lxcPersistentVolumeMatches(observed, expected) {
+			return nil, fmt.Errorf("HOLD: refusing to retain guest %s persistent volume %s because its storage, mount path, backup setting, or size no longer proves the declared contract", guest.Name, mountpoint)
+		}
+		retained[mountpoint] = observed
+	}
+	return retained, nil
+}
+
 func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) error {
 	for index, volume := range expected.Volumes {
 		wanted, err := persistentVolumeParam(volume)
@@ -2130,11 +2323,18 @@ func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) er
 			return fmt.Errorf("HOLD: guest %s has persistent volume %s=%q, expected %q", expected.Name, key, observed, wanted)
 		}
 	}
+	return validateNoUndeclaredLXCVolumes(current, expected)
+}
+
+func validateNoUndeclaredLXCVolumes(current map[string]any, expected GuestPlan) error {
 	for key := range current {
-		if !strings.HasPrefix(key, "mp") || len(key) <= len("mp") || key[2] < '0' || key[2] > '9' {
+		if !strings.HasPrefix(key, "mp") {
 			continue
 		}
-		index := int(key[2] - '0')
+		if !safePersistentLXCMountpointKey(key) {
+			return fmt.Errorf("HOLD: guest %s has malformed persistent volume key %s", expected.Name, key)
+		}
+		index, _ := strconv.Atoi(strings.TrimPrefix(key, "mp"))
 		if index >= len(expected.Volumes) {
 			return fmt.Errorf("HOLD: guest %s has an undeclared persistent volume %s", expected.Name, key)
 		}
@@ -2143,33 +2343,9 @@ func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) er
 }
 
 func lxcPersistentVolumeMatches(observed, wanted string) bool {
-	observedParts := strings.Split(observed, ",")
-	wantedParts := strings.Split(wanted, ",")
-	if len(observedParts) == 0 || len(wantedParts) == 0 {
-		return false
-	}
-	observedStorage, _, observedOK := strings.Cut(observedParts[0], ":")
-	wantedStorage, wantedSize, wantedOK := strings.Cut(wantedParts[0], ":")
-	if !observedOK || !wantedOK || observedStorage != wantedStorage || wantedSize == "" {
-		return false
-	}
-	observedOptions := make(map[string]string, len(observedParts)-1)
-	for _, option := range observedParts[1:] {
-		name, value, ok := strings.Cut(option, "=")
-		if ok {
-			observedOptions[name] = value
-		}
-	}
-	wantedOptions := make(map[string]string, len(wantedParts)-1)
-	for _, option := range wantedParts[1:] {
-		name, value, ok := strings.Cut(option, "=")
-		if ok {
-			wantedOptions[name] = value
-		}
-	}
-	return observedOptions["mp"] == wantedOptions["mp"] &&
-		observedOptions["backup"] == wantedOptions["backup"] &&
-		observedOptions["size"] == wantedSize+"G"
+	return lxcVolumeStorageID(observed) != "" &&
+		lxcVolumeStorageID(observed) == lxcVolumeStorageID(wanted) &&
+		lxcVolumeMatchesPersistentIdentity(observed, wanted)
 }
 
 func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage, content, filename, checksum, source string) error {

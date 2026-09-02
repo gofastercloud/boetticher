@@ -869,6 +869,234 @@ func TestEnsureQEMURestoresRunningGuestAfterPersistentVolumeMigrationFailure(t *
 	}
 }
 
+func TestEnsureLXCMigratesVerifiedPersistentVolumesToDeclaredStorage(t *testing.T) {
+	guest := GuestPlan{
+		VMID: 110, Name: "test-dns", Hostname: "test-dns", Owner: "boetticher/module/dns",
+		Tags:     []string{"boetticher-module-dns"},
+		Artifact: model.Artifact{Name: "boetticher-dns-blocky", Version: "1.0.0", Architecture: "amd64", ContentSHA256: "content"},
+		Volumes: []model.PersistentVolumeDeclaration{{
+			Name: "powerdns-database", Module: "dns", Guest: "test-dns", SizeGiB: 8,
+			MountPath: "/var/lib/powerdns", Storage: modelStorageIDForTest, Backup: true,
+		}},
+	}
+	before := "local:110/vm-110-disk-1.raw,mp=/var/lib/powerdns,backup=1,size=8G"
+	after := modelStorageIDForTest + ":vm-110-disk-1,mp=/var/lib/powerdns,backup=1,size=8G"
+	moved := false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/110/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
+			mount := before
+			digest := "0123456789abcdef0123456789abcdef01234567"
+			if moved {
+				mount = after
+				digest = "0123456789abcdef0123456789abcdef01234568"
+			}
+			return response([]byte(`{"data":{"name":"test-dns","hostname":"test-dns","description":"` + artifactDescription(guest.Artifact) + `","tags":"boetticher-module-dns","digest":"` + digest + `","mp0":"` + mount + `"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/current":
+			return response([]byte(`{"data":{"status":"stopped"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/110/move_volume":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if got, want := r.Form.Get("volume"), "mp0"; got != want {
+				t.Fatalf("volume = %q, want %q", got, want)
+			}
+			if got, want := r.Form.Get("storage"), modelStorageIDForTest; got != want {
+				t.Fatalf("storage = %q, want %q", got, want)
+			}
+			if got, want := r.Form.Get("delete"), "1"; got != want {
+				t.Fatalf("delete = %q, want %q", got, want)
+			}
+			moved = true
+			return response([]byte(`{"data":"UPID:pve:move-volume"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:move-volume/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		default:
+			t.Fatalf("unexpected LXC persistent-volume migration request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := ensureLXC(context.Background(), client, Plan{Node: "node"}, guest); err != nil {
+		t.Fatalf("ensureLXC() = %v", err)
+	}
+	if !moved {
+		t.Fatal("verified LXC persistent volume was not migrated")
+	}
+}
+
+func TestEnsureLXCRefusesPersistentVolumeMigrationWithoutExactIdentity(t *testing.T) {
+	guest := GuestPlan{
+		VMID: 110, Name: "test-dns", Hostname: "test-dns", Owner: "boetticher/module/dns",
+		Tags:     []string{"boetticher-module-dns"},
+		Artifact: model.Artifact{Name: "boetticher-dns-blocky", Version: "1.0.0", Architecture: "amd64", ContentSHA256: "content"},
+		Volumes: []model.PersistentVolumeDeclaration{{
+			Name: "powerdns-database", Module: "dns", Guest: "test-dns", SizeGiB: 8,
+			MountPath: "/var/lib/powerdns", Storage: modelStorageIDForTest, Backup: true,
+		}},
+	}
+	moved := false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/110/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
+			return response([]byte(`{"data":{"name":"test-dns","hostname":"test-dns","description":"` + artifactDescription(guest.Artifact) + `","tags":"boetticher-module-dns","mp0":"local:110/vm-110-disk-1.raw,mp=/var/lib/not-powerdns,backup=1,size=8G"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/110/move_volume":
+			moved = true
+			return nil
+		default:
+			t.Fatalf("unexpected request while rejecting LXC persistent-volume migration: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err := ensureLXC(context.Background(), client, Plan{Node: "node"}, guest)
+	if err == nil || !strings.Contains(err.Error(), "refusing to migrate") {
+		t.Fatalf("unproven LXC persistent volume migration = %v", err)
+	}
+	if moved {
+		t.Fatal("unproven LXC persistent volume was moved")
+	}
+}
+
+func TestMigrateLXCPersistentVolumesRestoresRunningGuestAfterMoveFailure(t *testing.T) {
+	guest := GuestPlan{VMID: 110, Name: "test-dns", Volumes: []model.PersistentVolumeDeclaration{{
+		Name: "powerdns-database", Module: "dns", Guest: "test-dns", SizeGiB: 8,
+		MountPath: "/var/lib/powerdns", Storage: modelStorageIDForTest, Backup: true,
+	}}}
+	before := "local:110/vm-110-disk-1.raw,mp=/var/lib/powerdns,backup=1,size=8G"
+	stopped, restored := false, false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/current":
+			return response([]byte(`{"data":{"status":"running"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/stop":
+			stopped = true
+			return response([]byte(`{"data":"UPID:pve:stop"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:stop/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
+			return response([]byte(`{"data":{"digest":"0123456789abcdef0123456789abcdef01234567","mp0":"` + before + `"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/110/move_volume":
+			return response([]byte(`{"data":"UPID:pve:move-volume"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:move-volume/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"ERROR: copy failed"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/start":
+			restored = true
+			return response([]byte(`{"data":"UPID:pve:start"}`))
+		default:
+			t.Fatalf("unexpected LXC persistent-volume recovery request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err := migrateLXCPersistentVolumes(context.Background(), client, Plan{Node: "node"}, guest, map[string]any{"mp0": before})
+	if err == nil || !strings.Contains(err.Error(), "copy failed") {
+		t.Fatalf("failed LXC persistent-volume move = %v", err)
+	}
+	if !stopped || !restored {
+		t.Fatalf("running LXC was not safely restored: stopped=%t restored=%t", stopped, restored)
+	}
+}
+
+func TestEnsureLXCRejectsUndeclaredPersistentVolumeBeforeMigration(t *testing.T) {
+	guest := GuestPlan{
+		VMID: 110, Name: "test-dns", Hostname: "test-dns", Owner: "boetticher/module/dns",
+		Tags:     []string{"boetticher-module-dns"},
+		Artifact: model.Artifact{Name: "boetticher-dns-blocky", Version: "1.0.0", Architecture: "amd64", ContentSHA256: "content"},
+		Volumes: []model.PersistentVolumeDeclaration{{
+			Name: "powerdns-database", Module: "dns", Guest: "test-dns", SizeGiB: 8,
+			MountPath: "/var/lib/powerdns", Storage: modelStorageIDForTest, Backup: true,
+		}},
+	}
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/110/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
+			return response([]byte(`{"data":{"name":"test-dns","hostname":"test-dns","description":"` + artifactDescription(guest.Artifact) + `","tags":"boetticher-module-dns","mp0":"local:110/vm-110-disk-1.raw,mp=/var/lib/powerdns,backup=1,size=8G","mp1":"local:110/vm-110-disk-2.raw,mp=/unexpected,backup=1,size=1G"}}`))
+		default:
+			t.Fatalf("unexpected request while rejecting undeclared LXC volume: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err := ensureLXC(context.Background(), client, Plan{Node: "node"}, guest)
+	if err == nil || !strings.Contains(err.Error(), "undeclared persistent volume") {
+		t.Fatalf("undeclared LXC persistent volume was not held before migration: %v", err)
+	}
+}
+
+func TestEnsureLXCRetainsVerifiedPersistentVolumeAcrossRootReplacement(t *testing.T) {
+	guest := GuestPlan{
+		VMID: 110, Name: "test-dns", Hostname: "test-dns", Owner: "boetticher/module/dns",
+		Tags:     []string{"boetticher-module-dns"},
+		Artifact: model.Artifact{Name: "boetticher-dns-blocky", Version: "1.0.0", Architecture: "amd64", DefinitionSHA256: strings.Repeat("a", 64), ContentSHA256: strings.Repeat("b", 64)},
+		Volumes: []model.PersistentVolumeDeclaration{{
+			Name: "powerdns-database", Module: "dns", Guest: "test-dns", SizeGiB: 8,
+			MountPath: "/var/lib/powerdns", Storage: modelStorageIDForTest, Backup: true,
+		}},
+	}
+	oldDescription := artifactDescription(model.Artifact{Name: "boetticher-dns-blocky", Version: "1.0.0", Architecture: "amd64", DefinitionSHA256: strings.Repeat("a", 64), ContentSHA256: strings.Repeat("c", 64)})
+	retained := modelStorageIDForTest + ":vm-110-disk-1,mp=/var/lib/powerdns,backup=1,size=8G"
+	destroyed := false
+	created := false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/110/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
+			if !destroyed {
+				return response([]byte(`{"data":{"name":"test-dns","hostname":"test-dns","description":"` + oldDescription + `","tags":"boetticher-module-dns","mp0":"` + retained + `"}}`))
+			}
+			if !created {
+				return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+			}
+			return response([]byte(`{"data":{"name":"test-dns","hostname":"test-dns","description":"` + artifactDescription(guest.Artifact) + `","tags":"boetticher-module-dns","mp0":"` + retained + `"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/current":
+			return response([]byte(`{"data":{"status":"stopped"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+			if got, want := r.URL.Query().Get("content"), "vztmpl"; got != want {
+				t.Fatalf("storage content filter = %q, want %q", got, want)
+			}
+			return response([]byte(`{"data":[{"volid":"local:vztmpl/boetticher-dns-blocky-1.0.0-amd64.tar.zst","checksum":"` + guest.Artifact.ContentSHA256 + `"}]}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if got, want := r.Form["delete"], []string{"mp0"}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("detached mount points = %#v, want %#v", got, want)
+			}
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api2/json/nodes/node/lxc/110":
+			if got, want := r.URL.Query().Get("destroy-unreferenced-disks"), "0"; got != want {
+				t.Fatalf("destroy-unreferenced-disks = %q, want %q", got, want)
+			}
+			destroyed = true
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if got, want := r.Form.Get("mp0"), retained; got != want {
+				t.Fatalf("retained mount = %q, want exact existing reference %q", got, want)
+			}
+			created = true
+			return response([]byte(`{"data":null}`))
+		default:
+			t.Fatalf("unexpected LXC root replacement request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := ensureLXC(context.Background(), client, Plan{Node: "node", Storage: modelStorageIDForTest, DestructiveConfirmed: true}, guest); err != nil {
+		t.Fatalf("ensureLXC() = %v", err)
+	}
+}
+
 func TestEnsureQEMUReconcilesDeclaredNetworkInterfacesBeforeStart(t *testing.T) {
 	guest := GuestPlan{VMID: 100, Name: "test-fw", NICs: []GuestNIC{{
 		Name: "wan0", Bridge: "vmbr0", Method: "dhcp", MAC: "02:00:00:00:01:01",
@@ -1269,14 +1497,56 @@ func TestReplaceLXCDetachesPersistentVolumesBeforeDestroy(t *testing.T) {
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
 	guest := GuestPlan{VMID: 110, Name: "test-dns", Volumes: []model.PersistentVolumeDeclaration{
-		{Name: "powerdns-database", Guest: "lab-dns-01", Module: "dns", SizeGiB: 8, MountPath: "/var/lib/powerdns"},
-		{Name: "ssh-identity", Guest: "lab-dns-01", Module: "dns", SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/ssh"},
+		{Name: "powerdns-database", Guest: "lab-dns-01", Module: "dns", Storage: modelStorageIDForTest, SizeGiB: 8, MountPath: "/var/lib/powerdns", Backup: true},
+		{Name: "ssh-identity", Guest: "lab-dns-01", Module: "dns", Storage: modelStorageIDForTest, SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/ssh", Backup: true},
 	}}
-	if err := replaceLXC(context.Background(), client, Plan{Node: "node"}, guest); err != nil {
+	current := map[string]any{
+		"mp0": modelStorageIDForTest + ":vm-110-disk-1,mp=/var/lib/powerdns,backup=1,size=8G",
+		"mp1": modelStorageIDForTest + ":vm-110-disk-2,mp=/var/lib/boetticher/identity/ssh,backup=1,size=1G",
+	}
+	if _, err := replaceLXC(context.Background(), client, Plan{Node: "node"}, guest, current); err != nil {
 		t.Fatalf("replaceLXC() = %v", err)
 	}
 	if !reflect.DeepEqual(detached, []string{"mp0", "mp1"}) {
 		t.Fatalf("detached mount points = %#v, want [mp0 mp1]", detached)
+	}
+}
+
+func TestReplaceLXCRestoresRunningGuestAfterDetachFailure(t *testing.T) {
+	guest := GuestPlan{VMID: 110, Name: "test-dns", Volumes: []model.PersistentVolumeDeclaration{{
+		Name: "powerdns-database", Guest: "lab-dns-01", Module: "dns", Storage: modelStorageIDForTest,
+		SizeGiB: 8, MountPath: "/var/lib/powerdns", Backup: true,
+	}}}
+	current := map[string]any{
+		"mp0": modelStorageIDForTest + ":vm-110-disk-1,mp=/var/lib/powerdns,backup=1,size=8G",
+	}
+	stopped, restored := false, false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/current":
+			return response([]byte(`{"data":{"status":"running"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/stop":
+			stopped = true
+			return response([]byte(`{"data":"UPID:pve:stop"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:stop/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
+			return apiResponse(http.StatusInternalServerError, `{"errors":{"delete":"failure"}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/start":
+			restored = true
+			return response([]byte(`{"data":"UPID:pve:start"}`))
+		default:
+			t.Fatalf("unexpected LXC root replacement recovery request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	_, err := replaceLXC(context.Background(), client, Plan{Node: "node"}, guest, current)
+	if err == nil || !strings.Contains(err.Error(), "detach persistent volumes") {
+		t.Fatalf("failed LXC persistent-volume detach = %v", err)
+	}
+	if !stopped || !restored {
+		t.Fatalf("running LXC was not restored after detach failure: stopped=%t restored=%t", stopped, restored)
 	}
 }
 
