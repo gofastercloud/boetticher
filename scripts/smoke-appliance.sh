@@ -268,7 +268,8 @@ case "$name" in
     test -f "$rootfs/etc/systemd/system/gatus.service"
     grep -Fq -- 'User=gatus' "$rootfs/etc/systemd/system/gatus.service"
     grep -Fxq 'Group=gatus' "$rootfs/etc/systemd/system/gatus.service"
-    grep -Fxq 'ExecStart=/usr/local/bin/gatus --config-path /etc/boetticher/gatus/config.yaml' "$rootfs/etc/systemd/system/gatus.service"
+    grep -Fxq 'Environment=GATUS_CONFIG_PATH=/etc/boetticher/gatus/config.yaml' "$rootfs/etc/systemd/system/gatus.service"
+    grep -Fxq 'ExecStart=/usr/local/bin/gatus' "$rootfs/etc/systemd/system/gatus.service"
     chroot "$rootfs" runuser -u gatus -- test -x /usr/local/bin/gatus
     test ! -e "$rootfs/etc/boetticher/gatus/config.yaml"
     ;;

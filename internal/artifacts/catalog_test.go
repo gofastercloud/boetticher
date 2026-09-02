@@ -844,6 +844,8 @@ func TestGatusArtifactSmokeContractUsesSupportedChecks(t *testing.T) {
 		"test -x \"$rootfs/usr/local/bin/gatus\"",
 		"test -f \"$rootfs/etc/systemd/system/gatus.service\"",
 		"User=gatus",
+		"Environment=GATUS_CONFIG_PATH=/etc/boetticher/gatus/config.yaml",
+		"ExecStart=/usr/local/bin/gatus",
 		"test ! -e \"$rootfs/etc/boetticher/gatus/config.yaml\"",
 	} {
 		if !strings.Contains(text, required) {
@@ -852,6 +854,9 @@ func TestGatusArtifactSmokeContractUsesSupportedChecks(t *testing.T) {
 	}
 	if strings.Contains(text, "run /usr/local/bin/gatus version") {
 		t.Fatal("Gatus smoke contract invokes an unsupported version subcommand")
+	}
+	if strings.Contains(text, "--config-path") {
+		t.Fatal("Gatus smoke contract invokes an unsupported config-path argument")
 	}
 }
 
