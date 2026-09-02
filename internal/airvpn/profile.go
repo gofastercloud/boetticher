@@ -76,44 +76,114 @@ func (c Client) Generate(ctx context.Context, apiKey, servers string) (Profile, 
 	if err == nil {
 		return profile, nil
 	}
-	if attempt.ParseError && providerResponseShape(attempt.Data) == "json-provider-error" {
-		available, statusErr := c.selectorHasLiveServer(ctx, baseURL, servers, httpClient)
-		if statusErr == nil && !available {
-			return Profile{}, fmt.Errorf("AirVPN selector %q currently has no live provider servers; choose a current AirVPN server, country, or continent", servers)
-		}
-		readiness, readinessErr := c.providerReadiness(ctx, baseURL, apiKey, httpClient)
-		if readinessErr != nil {
-			return Profile{}, fmt.Errorf("AirVPN account readiness check failed after an opaque generator error: %w", readinessErr)
-		}
-		if !readiness.APIKeyAccepted {
-			return Profile{}, errors.New("AirVPN API key was not accepted; replace the controller key with an active AirVPN API key")
-		}
-		if readiness.SubscriptionKnown && !readiness.SubscriptionActive {
-			return Profile{}, errors.New("AirVPN account has no active premium access; renew or activate it before deploying")
-		}
-		if readiness.DeviceCount == 0 {
-			return Profile{}, errors.New("AirVPN API key is accepted but the account has no AirVPN devices; create a WireGuard-capable device before deploying")
-		}
-		if !readiness.HasReadyDevice {
-			return Profile{}, errors.New("AirVPN account has no ready WireGuard device; wait for it to become ready or renew it before deploying")
-		}
-		managedDevice, managedDeviceErr := c.ensureManagedDevice(ctx, baseURL, apiKey, httpClient)
-		if managedDeviceErr != nil {
-			return Profile{}, managedDeviceErr
-		}
-		profile, managedAttempt, managedErr := c.generateProfile(ctx, baseURL, apiKey, servers, managedDevice, httpClient, "generate_managed_profile")
-		if managedErr == nil {
-			return profile, nil
-		}
-		if !managedAttempt.ParseError {
-			return Profile{}, managedErr
-		}
-		return Profile{}, fmt.Errorf("AirVPN generator rejected the Boetticher-managed device profile (%s): %w", providerResponseSummary(managedAttempt.ContentType, managedAttempt.Data), managedErr)
+	if attempt.ParseError && providerResponseIsJSON(attempt.Data) {
+		return c.handleGeneratorJSONFailure(ctx, baseURL, apiKey, servers, httpClient, attempt)
 	}
 	if !attempt.ParseError {
 		return Profile{}, err
 	}
 	return Profile{}, fmt.Errorf("AirVPN generator returned an invalid WireGuard profile (%s): %w", providerResponseSummary(attempt.ContentType, attempt.Data), err)
+}
+
+// handleGeneratorJSONFailure applies only safe, bounded remediation to an
+// AirVPN JSON result. In particular, an opaque response must never cause an
+// account-device mutation: only a device-specific result may use the
+// product-owned managed device fallback.
+func (c Client) handleGeneratorJSONFailure(ctx context.Context, baseURL, apiKey, servers string, httpClient *http.Client, attempt providerProfileAttempt) (Profile, error) {
+	if !providerJSONHasResult(attempt.Data) {
+		return c.handleLegacyGeneratorJSONFailure(ctx, baseURL, apiKey, servers, httpClient, attempt)
+	}
+	category := providerJSONErrorCategory(attempt.Data)
+	summary := providerResponseSummary(attempt.ContentType, attempt.Data)
+	switch category {
+	case "authorization", "api-key":
+		readiness, err := c.providerReadiness(ctx, baseURL, apiKey, httpClient)
+		if err != nil {
+			return Profile{}, fmt.Errorf("AirVPN account readiness check failed after a generator authorization result: %w", err)
+		}
+		if !readiness.APIKeyAccepted {
+			return Profile{}, errors.New("AirVPN did not authorize the controller API key; confirm it is activated for API access or replace it before deploying")
+		}
+		return Profile{}, errors.New("AirVPN accepted the controller API key but did not authorize it for the configuration generator; confirm its API access is activated before deploying")
+	case "server-selector":
+		available, err := c.selectorHasLiveServer(ctx, baseURL, servers, httpClient)
+		if err == nil && !available {
+			return Profile{}, fmt.Errorf("AirVPN selector %q currently has no live provider servers; choose a current AirVPN server, country, or continent", servers)
+		}
+		return Profile{}, fmt.Errorf("AirVPN rejected the current server selector despite public status (%s); no AirVPN device changes were made", summary)
+	case "request":
+		return Profile{}, fmt.Errorf("AirVPN rejected Boetticher's fixed WireGuard generator request (%s); no AirVPN device changes were made", summary)
+	case "device":
+		return c.retryWithManagedDevice(ctx, baseURL, apiKey, servers, httpClient, summary)
+	default:
+		return Profile{}, fmt.Errorf("AirVPN generator returned an unclassified provider result (%s); no AirVPN device changes were made", summary)
+	}
+}
+
+// handleLegacyGeneratorJSONFailure retains read-only prerequisites for the
+// older error-only documents used by earlier provider versions. It deliberately
+// does not create a managed device unless the error is explicitly device
+// related.
+func (c Client) handleLegacyGeneratorJSONFailure(ctx context.Context, baseURL, apiKey, servers string, httpClient *http.Client, attempt providerProfileAttempt) (Profile, error) {
+	available, statusErr := c.selectorHasLiveServer(ctx, baseURL, servers, httpClient)
+	if statusErr == nil && !available {
+		return Profile{}, fmt.Errorf("AirVPN selector %q currently has no live provider servers; choose a current AirVPN server, country, or continent", servers)
+	}
+	readiness, readinessErr := c.providerReadiness(ctx, baseURL, apiKey, httpClient)
+	if readinessErr != nil {
+		return Profile{}, fmt.Errorf("AirVPN account readiness check failed after an opaque generator error: %w", readinessErr)
+	}
+	if !readiness.APIKeyAccepted {
+		return Profile{}, errors.New("AirVPN API key was not accepted; replace the controller key with an active AirVPN API key")
+	}
+	if readiness.SubscriptionKnown && !readiness.SubscriptionActive {
+		return Profile{}, errors.New("AirVPN account has no active premium access; renew or activate it before deploying")
+	}
+	if readiness.DeviceCount == 0 {
+		return Profile{}, errors.New("AirVPN API key is accepted but the account has no AirVPN devices; create a WireGuard-capable device before deploying")
+	}
+	if !readiness.HasReadyDevice {
+		return Profile{}, errors.New("AirVPN account has no ready WireGuard device; wait for it to become ready or renew it before deploying")
+	}
+	if providerJSONErrorCategory(attempt.Data) != "device" {
+		return Profile{}, fmt.Errorf("AirVPN generator returned an unclassified provider result (%s); no AirVPN device changes were made", providerResponseSummary(attempt.ContentType, attempt.Data))
+	}
+	return c.retryWithManagedDeviceAfterReadiness(ctx, baseURL, apiKey, servers, httpClient, readiness, providerResponseSummary(attempt.ContentType, attempt.Data))
+}
+
+func (c Client) retryWithManagedDevice(ctx context.Context, baseURL, apiKey, servers string, httpClient *http.Client, summary string) (Profile, error) {
+	readiness, err := c.providerReadiness(ctx, baseURL, apiKey, httpClient)
+	if err != nil {
+		return Profile{}, fmt.Errorf("AirVPN account readiness check failed after a device-specific generator result: %w", err)
+	}
+	return c.retryWithManagedDeviceAfterReadiness(ctx, baseURL, apiKey, servers, httpClient, readiness, summary)
+}
+
+func (c Client) retryWithManagedDeviceAfterReadiness(ctx context.Context, baseURL, apiKey, servers string, httpClient *http.Client, readiness providerReadiness, summary string) (Profile, error) {
+	if !readiness.APIKeyAccepted {
+		return Profile{}, errors.New("AirVPN API key was not accepted; replace the controller key with an active AirVPN API key")
+	}
+	if readiness.SubscriptionKnown && !readiness.SubscriptionActive {
+		return Profile{}, errors.New("AirVPN account has no active premium access; renew or activate it before deploying")
+	}
+	if readiness.DeviceCount == 0 {
+		return Profile{}, errors.New("AirVPN API key is accepted but the account has no AirVPN devices; create a WireGuard-capable device before deploying")
+	}
+	if !readiness.HasReadyDevice {
+		return Profile{}, errors.New("AirVPN account has no ready WireGuard device; wait for it to become ready or renew it before deploying")
+	}
+	managedDevice, err := c.ensureManagedDevice(ctx, baseURL, apiKey, httpClient)
+	if err != nil {
+		return Profile{}, err
+	}
+	profile, managedAttempt, err := c.generateProfile(ctx, baseURL, apiKey, servers, managedDevice, httpClient, "generate_managed_profile")
+	if err == nil {
+		return profile, nil
+	}
+	if !managedAttempt.ParseError {
+		return Profile{}, err
+	}
+	return Profile{}, fmt.Errorf("AirVPN generator rejected the Boetticher-managed device profile after a device-specific result (%s; initial=%s): %w", providerResponseSummary(managedAttempt.ContentType, managedAttempt.Data), summary, err)
 }
 
 type providerProfileAttempt struct {
@@ -223,10 +293,11 @@ type providerReadiness struct {
 // for index zero returns the actual WireGuard profile.
 func providerProfileManifest(data []byte) bool {
 	var response struct {
+		Result  string            `json:"result"`
 		Files   []json.RawMessage `json:"files"`
 		Options json.RawMessage   `json:"options"`
 	}
-	if err := json.Unmarshal(data, &response); err != nil || len(response.Files) == 0 || len(response.Options) == 0 {
+	if err := json.Unmarshal(data, &response); err != nil || !strings.EqualFold(strings.TrimSpace(response.Result), "ok") || len(response.Files) == 0 || len(response.Options) == 0 {
 		return false
 	}
 	var options map[string]json.RawMessage
@@ -608,6 +679,15 @@ func providerJSONHasError(data []byte) (bool, error) {
 	return len(errorValue) > 0 && !bytes.Equal(errorValue, []byte("null")), nil
 }
 
+func providerJSONHasResult(data []byte) bool {
+	var response map[string]json.RawMessage
+	if err := json.Unmarshal(data, &response); err != nil {
+		return false
+	}
+	_, ok := response["result"]
+	return ok
+}
+
 func providerUserinfoStatus(data []byte) (authenticated, subscriptionKnown, subscriptionActive bool) {
 	var response map[string]json.RawMessage
 	if err := json.Unmarshal(data, &response); err != nil {
@@ -661,6 +741,10 @@ func providerResponseShape(data []byte) string {
 		}
 	}
 	return "empty"
+}
+
+func providerResponseIsJSON(data []byte) bool {
+	return strings.HasPrefix(providerResponseShape(data), "json-")
 }
 
 func providerJSONErrorCategory(data []byte) string {

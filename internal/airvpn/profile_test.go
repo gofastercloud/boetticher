@@ -89,7 +89,7 @@ func TestGenerateDownloadsFirstProfileFromProviderManifest(t *testing.T) {
 		switch r.URL.Query().Get("download") {
 		case "":
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"files":["provider-private.conf"],"options":{"protocols":"wireguard_1_udp_1637","servers":"japan","device":"default"}}`))
+			_, _ = w.Write([]byte(`{"result":"ok","files":["provider-private.conf"],"options":{"protocols":"wireguard_1_udp_1637","servers":"japan","device":"default"}}`))
 		case "0":
 			w.Header().Set("Content-Type", "text/plain")
 			_, _ = w.Write([]byte(testProfile()))
@@ -125,7 +125,7 @@ func TestGenerateRetriesOpaqueProviderErrorWithManagedAirVPNDevice(t *testing.T)
 			switch r.URL.Query().Get("device") {
 			case defaultDeviceName:
 				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"error":"provider-private-error"}`))
+				_, _ = w.Write([]byte(`{"error":"device default is unavailable"}`))
 			case managedDeviceName:
 				w.Header().Set("Content-Type", "text/plain")
 				_, _ = w.Write([]byte(testProfile()))
@@ -156,6 +156,48 @@ func TestGenerateRetriesOpaqueProviderErrorWithManagedAirVPNDevice(t *testing.T)
 	profile, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(context.Background(), "controller-key", "japan")
 	if err != nil || deviceLists != 2 || profile.Metadata.EndpointPort != DefaultPort {
 		t.Fatalf("managed AirVPN retry failed: profile=%#v device-lists=%d error=%v", profile.Metadata, deviceLists, err)
+	}
+}
+
+func TestGenerateExplainsGeneratorAuthorizationWithoutCreatingAirVPNDevice(t *testing.T) {
+	requests := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		switch r.URL.Path {
+		case "/generator/":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"result":"Authorization required"}`))
+		case "/userinfo/":
+			_, _ = w.Write([]byte(`{"user":null}`))
+		case "/devices/", "/status/":
+			t.Fatalf("authorization failure must not inspect devices or public status: %s", r.URL.Path)
+		default:
+			t.Fatalf("unexpected AirVPN request: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	_, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(context.Background(), "controller-key", "japan")
+	if err == nil || !strings.Contains(err.Error(), "did not authorize the controller API key") || strings.Contains(err.Error(), "Authorization required") || strings.Contains(err.Error(), "controller-key") || requests != 2 {
+		t.Fatalf("generator authorization was not safely explained: requests=%d error=%v", requests, err)
+	}
+}
+
+func TestGenerateDoesNotCreateAirVPNDeviceForUnclassifiedProviderJSON(t *testing.T) {
+	requests := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/generator/" {
+			t.Fatalf("unclassified provider result must not trigger follow-up requests: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"result":"provider-private-condition"}`))
+	}))
+	defer server.Close()
+
+	_, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(context.Background(), "controller-key", "japan")
+	if err == nil || !strings.Contains(err.Error(), "unclassified provider result") || strings.Contains(err.Error(), "provider-private-condition") || strings.Contains(err.Error(), "controller-key") || requests != 1 {
+		t.Fatalf("unclassified provider result was not safely contained: requests=%d error=%v", requests, err)
 	}
 }
 
@@ -239,27 +281,17 @@ func TestGenerateDescribesInvalidProviderResponseWithoutLeakingIt(t *testing.T) 
 	}
 }
 
-func TestGenerateClassifiesJSONProviderErrorWithoutLeakingIt(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"message":"device default is unavailable for controller-key"}`))
-	}))
-	defer server.Close()
-	_, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(context.Background(), "controller-key", "europe")
-	if err == nil || !strings.Contains(err.Error(), "content_type=application/json") || !strings.Contains(err.Error(), "shape=json-device") || strings.Contains(err.Error(), "device default") || strings.Contains(err.Error(), "controller-key") {
-		t.Fatalf("JSON provider error was not safely classified: %v", err)
+func TestProviderResponseSummaryClassifiesJSONProviderErrorWithoutLeakingIt(t *testing.T) {
+	summary := providerResponseSummary("application/json", []byte(`{"message":"device default is unavailable for controller-key"}`))
+	if !strings.Contains(summary, "content_type=application/json") || !strings.Contains(summary, "shape=json-device") || strings.Contains(summary, "device default") || strings.Contains(summary, "controller-key") {
+		t.Fatalf("JSON provider error was not safely classified: %q", summary)
 	}
 }
 
-func TestGenerateClassifiesNestedJSONProviderErrorWithoutLeakingIt(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"error":{"detail":"server selector is unavailable for controller-key"}}`))
-	}))
-	defer server.Close()
-	_, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(context.Background(), "controller-key", "europe")
-	if err == nil || !strings.Contains(err.Error(), "shape=json-server-selector") || strings.Contains(err.Error(), "server selector") || strings.Contains(err.Error(), "controller-key") {
-		t.Fatalf("nested JSON provider error was not safely classified: %v", err)
+func TestProviderResponseSummaryClassifiesNestedJSONProviderErrorWithoutLeakingIt(t *testing.T) {
+	summary := providerResponseSummary("application/json", []byte(`{"error":{"detail":"server selector is unavailable for controller-key"}}`))
+	if !strings.Contains(summary, "shape=json-server-selector") || strings.Contains(summary, "server selector") || strings.Contains(summary, "controller-key") {
+		t.Fatalf("nested JSON provider error was not safely classified: %q", summary)
 	}
 }
 
