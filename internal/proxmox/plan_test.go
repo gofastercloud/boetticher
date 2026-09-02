@@ -1528,6 +1528,76 @@ func TestValidateLegacyLXCRecreationRequiresExactOwnedRawState(t *testing.T) {
 	}
 }
 
+func TestLegacyLXCRecreationAcceptsOnlyExactRetiredLiteLLMPredecessor(t *testing.T) {
+	guest := GuestPlan{
+		VMID: 210, Name: "lab-bifrost-01", Hostname: "lab-bifrost-01", Owner: "boetticher/module/bifrost", DiskGiB: 8,
+		Tags:     []string{"boetticher", "managed", "module", "module-bifrost", "boetticher-module-bifrost", "backup"},
+		Artifact: model.Artifact{Name: "boetticher-bifrost"}, Security: model.GuestSecurityDeclaration{Unprivileged: true},
+		Volumes: []model.PersistentVolumeDeclaration{
+			{Name: "ssh-identity", Module: "bifrost", Guest: "lab-bifrost-01", Storage: modelStorageIDForTest, SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/ssh", Backup: true},
+			{Name: "tls-identity", Module: "bifrost", Guest: "lab-bifrost-01", Storage: modelStorageIDForTest, SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/tls", Backup: true},
+		},
+	}
+	current := map[string]any{
+		"name": "lab-litellm-01", "hostname": "lab-litellm-01", "unprivileged": 1,
+		"tags":        "backup;boetticher;boetticher-module-litellm;managed;module;module-litellm",
+		"description": "boetticher-artifact=boetticher-litellm@1.0.0 definition=" + strings.Repeat("a", 64) + " content=" + strings.Repeat("b", 64),
+		"rootfs":      "local:210/vm-210-disk-0.raw,size=8G",
+		"mp0":         "local:210/vm-210-disk-1.raw,mp=/var/lib/boetticher/identity/ssh,backup=1,size=1G",
+		"mp1":         "local:210/vm-210-disk-2.raw,mp=/var/lib/boetticher/identity/tls,backup=1,size=1G",
+	}
+	recreate, err := legacyLXCRecreationRequired(current, guest)
+	if err != nil || !recreate {
+		t.Fatalf("exact retired LiteLLM predecessor recreation = %t, %v", recreate, err)
+	}
+	current["description"] = "boetticher-artifact=boetticher-bifrost@1.0.0 definition=" + strings.Repeat("a", 64) + " content=" + strings.Repeat("b", 64)
+	if _, err := legacyLXCRecreationRequired(current, guest); err == nil || !strings.Contains(err.Error(), "retired LiteLLM") {
+		t.Fatalf("non-LiteLLM artifact predecessor was accepted: %v", err)
+	}
+	current["description"] = "boetticher-artifact=boetticher-litellm@1.0.0 definition=" + strings.Repeat("a", 64) + " content=" + strings.Repeat("b", 64)
+	current["tags"] = "backup;boetticher;boetticher-module-bifrost;managed;module;module-bifrost"
+	if _, err := legacyLXCRecreationRequired(current, guest); err == nil || !strings.Contains(err.Error(), "retired LiteLLM") {
+		t.Fatalf("noncanonical LiteLLM predecessor was accepted: %v", err)
+	}
+}
+
+func TestValidateLegacyLXCRecreationChecksEveryCandidateBeforeDiscard(t *testing.T) {
+	legacyGuest := func(vmid int, name, module string) GuestPlan {
+		return GuestPlan{
+			VMID: vmid, Name: name, Hostname: name, Kind: KindLXC, Owner: "boetticher/module/" + module, DiskGiB: 8,
+			Tags:     []string{"boetticher", "managed", "module", "module-" + module, "boetticher-module-" + module, "backup"},
+			Security: model.GuestSecurityDeclaration{Unprivileged: true},
+			Volumes: []model.PersistentVolumeDeclaration{{
+				Name: "ssh-identity", Module: module, Guest: name, Storage: modelStorageIDForTest,
+				SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/ssh", Backup: true,
+			}},
+		}
+	}
+	dns := legacyGuest(110, "lab-dns-01", "dns")
+	streamdeck := legacyGuest(220, "lab-streamdeck-01", "streamdeck")
+	legacyConfig := func(guest GuestPlan) string {
+		return `{"data":{"name":"` + guest.Name + `","hostname":"` + guest.Hostname + `","unprivileged":1,"tags":"` + strings.Join(guest.Tags, ";") + `","rootfs":"local:` + strconv.Itoa(guest.VMID) + `/vm-` + strconv.Itoa(guest.VMID) + `-disk-0.raw,size=8G","mp0":"local:` + strconv.Itoa(guest.VMID) + `/vm-` + strconv.Itoa(guest.VMID) + `-disk-1.raw,mp=/var/lib/boetticher/identity/ssh,backup=1,size=1G"}}`
+	}
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && (r.URL.Path == "/api2/json/nodes/node/qemu/110/config" || r.URL.Path == "/api2/json/nodes/node/qemu/220/config"):
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
+			return response([]byte(legacyConfig(dns)))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/220/config":
+			return response([]byte(strings.Replace(legacyConfig(streamdeck), `"hostname":"lab-streamdeck-01"`, `"hostname":"unexpected-host"`, 1)))
+		default:
+			t.Fatalf("legacy recovery preflight must not mutate guests: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	_, err := ValidateLegacyLXCRecreation(context.Background(), client, Plan{Node: "node", ForceLegacyLXCRecreation: true, Guests: []GuestPlan{dns, streamdeck}})
+	if err == nil || !strings.Contains(err.Error(), "lab-streamdeck-01") {
+		t.Fatalf("later legacy LXC mismatch did not stop the full recovery preflight: %v", err)
+	}
+}
+
 func TestLegacyLXCRecreationSkipsAlreadyMigratedState(t *testing.T) {
 	guest := GuestPlan{
 		VMID: 110, Name: "lab-dns-01", Hostname: "lab-dns-01", Owner: "boetticher/module/dns", DiskGiB: 8,

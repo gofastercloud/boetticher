@@ -1922,15 +1922,49 @@ func legacyLXCRecreationRequired(current map[string]any, guest GuestPlan) (bool,
 	return true, nil
 }
 
+// ValidateLegacyLXCRecreation proves the complete set of currently existing
+// legacy LXC recovery candidates before deployment stops or deletes any
+// appliance. It is read-only: artifact staging and destructive recovery stay
+// in ensureLXCWithRetainedVolumes after this ownership gate has passed.
+func ValidateLegacyLXCRecreation(ctx context.Context, client *Client, plan Plan) ([]string, error) {
+	if !plan.ForceLegacyLXCRecreation {
+		return nil, nil
+	}
+	if client == nil || plan.Node == "" {
+		return nil, errors.New("Proxmox client and node are required for legacy LXC recovery validation")
+	}
+	targets := make([]string, 0)
+	for _, guest := range plan.Guests {
+		if guest.Kind != KindLXC {
+			continue
+		}
+		kind, current, err := client.GuestConfig(ctx, plan.Node, guest.VMID)
+		if IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("inspect %s before legacy LXC recovery: %w", guest.Name, err)
+		}
+		if kind != KindLXC {
+			return nil, fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, expected LXC %s", guest.VMID, kind, guest.Name)
+		}
+		recreate, err := legacyLXCRecreationRequired(current, guest)
+		if err != nil {
+			return nil, fmt.Errorf("validate legacy LXC recovery for %s: %w", guest.Name, err)
+		}
+		if recreate {
+			targets = append(targets, guest.Name)
+		}
+	}
+	return targets, nil
+}
+
 func validateLegacyLXCRecreation(current map[string]any, guest GuestPlan) error {
 	if guest.VMID <= 0 || guest.DiskGiB <= 0 {
 		return fmt.Errorf("HOLD: guest %s lacks a valid legacy LXC recovery identity", guest.Name)
 	}
-	if err := validateExistingGuestIdentityFields(current, guest); err != nil {
+	if err := validateLegacyLXCIdentity(current, guest); err != nil {
 		return err
-	}
-	if got, _ := current["tags"].(string); canonicalTags(got) != canonicalTags(strings.Join(guest.Tags, ";")) {
-		return fmt.Errorf("HOLD: guest %s has unexpected tags %q before legacy LXC recreation", guest.Name, got)
 	}
 	if err := validateNoUndeclaredLXCVolumes(current, guest); err != nil {
 		return err
@@ -1951,6 +1985,63 @@ func validateLegacyLXCRecreation(current map[string]any, guest GuestPlan) error 
 		}
 	}
 	return nil
+}
+
+func validateLegacyLXCIdentity(current map[string]any, guest GuestPlan) error {
+	if err := validateExistingGuestIdentityFields(current, guest); err == nil {
+		if got, _ := current["tags"].(string); canonicalTags(got) != canonicalTags(strings.Join(guest.Tags, ";")) {
+			return fmt.Errorf("HOLD: guest %s has unexpected tags %q before legacy LXC recreation", guest.Name, got)
+		}
+		return nil
+	}
+	predecessor, ok := retiredLiteLLMPredecessor(guest)
+	if !ok {
+		return validateExistingGuestIdentityFields(current, guest)
+	}
+	if !retiredLiteLLMArtifactIdentity(current) {
+		return fmt.Errorf("HOLD: guest %s is not the exact retired LiteLLM predecessor: artifact identity is not a qualified LiteLLM 1.0.0 appliance", guest.Name)
+	}
+	if err := validateExistingGuestIdentityFields(current, predecessor); err != nil {
+		return fmt.Errorf("HOLD: guest %s is not the exact retired LiteLLM predecessor: %w", guest.Name, err)
+	}
+	if got, _ := current["tags"].(string); canonicalTags(got) != canonicalTags(strings.Join(predecessor.Tags, ";")) {
+		return fmt.Errorf("HOLD: guest %s is not the exact retired LiteLLM predecessor: unexpected tags %q", guest.Name, got)
+	}
+	return nil
+}
+
+// retiredLiteLLMPredecessor is deliberately a single exact migration bridge.
+// It applies only while a legacy raw LXC at the Bifrost VMID still carries the
+// former LiteLLM identity. Ordinary convergence remains strict and never
+// treats a renamed or unowned guest as replaceable.
+func retiredLiteLLMPredecessor(guest GuestPlan) (GuestPlan, bool) {
+	if guest.VMID != 210 || guest.Name != "lab-bifrost-01" || guest.Hostname != "lab-bifrost-01" || guest.Owner != "boetticher/module/bifrost" || guest.Artifact.Name != "boetticher-bifrost" {
+		return GuestPlan{}, false
+	}
+	predecessor := guest
+	predecessor.Name = "lab-litellm-01"
+	predecessor.Hostname = "lab-litellm-01"
+	predecessor.Owner = "boetticher/module/litellm"
+	predecessor.Tags = []string{model.TagBoetticher, model.TagManaged, model.TagModule, "module-litellm", model.ModuleOwnershipTag("litellm"), model.TagBackup}
+	return predecessor, true
+}
+
+func retiredLiteLLMArtifactIdentity(current map[string]any) bool {
+	description, _ := current["description"].(string)
+	fields := strings.Fields(normalizeArtifactDescription(description))
+	if len(fields) != 3 || fields[0] != "boetticher-artifact=boetticher-litellm@1.0.0" {
+		return false
+	}
+	return exactArtifactDigestField(fields[1], "definition=") && exactArtifactDigestField(fields[2], "content=")
+}
+
+func exactArtifactDigestField(value, prefix string) bool {
+	digest, ok := strings.CutPrefix(value, prefix)
+	if !ok || len(digest) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(digest)
+	return err == nil
 }
 
 func legacyLXCRawVolumeID(vmid, disk int) string {

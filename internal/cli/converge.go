@@ -469,8 +469,22 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return fmt.Errorf("resolve live Proxmox node: %w", err)
 	}
 	proxmoxPlan.Node = node
+	proxmoxPlan.DestructiveConfirmed = *confirm
+	proxmoxPlan.ForceFirewallRootReplacement = *replaceFirewall
+	proxmoxPlan.ForceLegacyLXCRecreation = *recreateLegacyLXCs
 	if err := validateLiveDeploymentPrerequisitesWithResolver(ctx, proxmoxClient, rootRunner, *siteDir, s, proxmoxPlan, storagePlan, endpointLookup); err != nil {
 		return fmt.Errorf("live preflight failed before Proxmox mutation: %w", err)
+	}
+	if *recreateLegacyLXCs {
+		var legacyLXCTargets []string
+		if err := report.timed("proxmox", "preflight", "legacy-lxc-recovery", func() error {
+			var validateErr error
+			legacyLXCTargets, validateErr = proxmox.ValidateLegacyLXCRecreation(ctx, proxmoxClient, proxmoxPlan)
+			return validateErr
+		}); err != nil {
+			return fmt.Errorf("live preflight failed before legacy LXC recovery: %w", err)
+		}
+		fmt.Fprintf(out, "Legacy LXC recovery preflight: PASS %d exact legacy appliance(s)\n", len(legacyLXCTargets))
 	}
 	var pulseProxmoxToken string
 	if monitoringEnabled {
@@ -488,9 +502,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return fmt.Errorf("load encrypted Pulse Proxmox token: %w", err)
 		}
 	}
-	proxmoxPlan.DestructiveConfirmed = *confirm
-	proxmoxPlan.ForceFirewallRootReplacement = *replaceFirewall
-	proxmoxPlan.ForceLegacyLXCRecreation = *recreateLegacyLXCs
 	if backupPlan.StorageTarget == backup.DedicatedStorageID {
 		changed, err := proxmoxClient.EnsureLVMThinStorageWithMutation(ctx, storage.GuestStorageID, storage.VolumeGroup, storage.ThinPool)
 		if changed {
