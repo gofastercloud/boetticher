@@ -44,7 +44,9 @@ func Compose(config model.SiteConfig) (model.Site, []ResolvedModule, error) {
 			DependsOn: append([]string(nil), definition.DependsOn...), Requires: requires, Provides: provides,
 		})
 	}
-	addGatusEndpointIntents(&site)
+	if err := addGatusEndpointIntents(&site); err != nil {
+		return model.Site{}, nil, fmt.Errorf("compose Gatus network contract: %w", err)
+	}
 	if err := site.Validate(); err != nil {
 		return model.Site{}, nil, fmt.Errorf("compose canonical site: %w", err)
 	}
@@ -55,9 +57,9 @@ func Compose(config model.SiteConfig) (model.Site, []ResolvedModule, error) {
 // product-owned service metadata that feeds Gatus. It does not introduce a
 // second endpoint configuration surface or grant Gatus access to same-zone
 // services that do not cross the firewall boundary.
-func addGatusEndpointIntents(site *model.Site) {
+func addGatusEndpointIntents(site *model.Site) error {
 	if !IsEnabled(*site, "gatus") {
-		return
+		return nil
 	}
 	var gatus *model.ModuleDeclaration
 	for index := range site.Declarations {
@@ -67,11 +69,11 @@ func addGatusEndpointIntents(site *model.Site) {
 		}
 	}
 	if gatus == nil {
-		return
+		return nil
 	}
 	gatusGuest, ok := moduleComponentReference(*site, "lab-gatus-01")
 	if !ok {
-		return
+		return nil
 	}
 	seen := map[string]bool{}
 	for _, declaration := range site.Declarations {
@@ -83,8 +85,8 @@ func addGatusEndpointIntents(site *model.Site) {
 				continue
 			}
 			parsed, err := url.Parse(guest.URL)
-			if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" {
-				continue
+			if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil {
+				return fmt.Errorf("Gatus endpoint for %s must be an HTTPS URL with a hostname", guest.Name)
 			}
 			key := guest.Name + "\x00" + parsed.Hostname()
 			if seen[key] {
@@ -104,6 +106,7 @@ func addGatusEndpointIntents(site *model.Site) {
 		}
 		return gatus.NetworkIntents[i].Purpose < gatus.NetworkIntents[j].Purpose
 	})
+	return nil
 }
 
 func moduleComponentReference(site model.Site, name string) (model.Component, bool) {

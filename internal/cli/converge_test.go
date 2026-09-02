@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -155,6 +156,33 @@ func TestPublishedServicesActivateAtTheEndOfDNSModule(t *testing.T) {
 	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report); err != nil`)
 	if publicationActivation < 0 || allHostsConvergence < 0 || publicationActivation > allHostsConvergence {
 		t.Fatal("published services are not activated immediately after the DNS module")
+	}
+}
+
+func TestPublishedFirewallIsNotRepeatedInTheAllHostNetworkPhase(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	finalFirewall := strings.Index(text, `runtimeVariables["boetticher_skip_firewall"] = true`)
+	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report); err != nil`)
+	if finalFirewall < 0 || allHostsConvergence < 0 || finalFirewall > allHostsConvergence {
+		t.Fatal("all-host network convergence does not skip the already published firewall")
+	}
+}
+
+func TestAllHostNetworkConvergenceFollowsRuntimeReadiness(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report); err != nil`)
+	gatewayReadiness := strings.Index(text, `return verifyGatewayReadiness(ctx, firewallRunner, "10.10.99.1")`)
+	dnsReadiness := strings.Index(text, `return verifyDNSReadiness(ctx, guestRunner, guest.Address)`)
+	if allHostsConvergence < 0 || gatewayReadiness < 0 || dnsReadiness < 0 || gatewayReadiness > allHostsConvergence || dnsReadiness > allHostsConvergence {
+		t.Fatal("all-host network convergence does not follow gateway and DNS runtime readiness")
 	}
 }
 
@@ -321,6 +349,39 @@ func TestDeploymentRootCleanupTracksAuthorityEstablishedDuringRearm(t *testing.T
 	}
 }
 
+func TestTemporaryRootCleanupAttemptsEveryTargetAfterFailure(t *testing.T) {
+	operatorKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA operator"
+	guests := []proxmox.GuestPlan{
+		{Name: "lab-dns-01", Address: "10.10.10.10", Owner: "boetticher/module/dns"},
+		{Name: "lab-monitor-01", Address: "10.10.10.20", Owner: "boetticher/module/monitoring"},
+	}
+	var mu sync.Mutex
+	seen := make(map[string]bool)
+	sentinel := errors.New("guest unavailable")
+	revoke := func(_ context.Context, _ proxmox.CommandRunner, address, _ string, _ string, host bool) error {
+		mu.Lock()
+		defer mu.Unlock()
+		key := address
+		if host {
+			key = "host:" + address
+		}
+		seen[key] = true
+		if address == "10.10.10.10" {
+			return sentinel
+		}
+		return nil
+	}
+	err := revokeTemporaryRootAccessForGuestsWith(context.Background(), model.Site{BootstrapAddress: "192.0.2.10"}, t.TempDir(), guests, operatorKey, true, revoke)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("cleanup error = %v, want the failed guest error", err)
+	}
+	for _, key := range []string{"10.10.10.10", "10.10.10.20", "host:192.0.2.10"} {
+		if !seen[key] {
+			t.Fatalf("cleanup did not attempt %s; seen=%v", key, seen)
+		}
+	}
+}
+
 type deploymentRootTestRunner struct {
 	calls             int
 	lastCommand       string
@@ -412,6 +473,8 @@ func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 	for _, required := range []string{
 		"readTokenRefreshed := false",
 		`pki.IssueClient(authority, "boetticher-pulse-read"`,
+		"pulse.NewReadClient(pulse.ClientConfig{",
+		"pulseRead.StateSummary(ctx)",
 		"modules.IsEnabled(s, \"streamdeck\") && pulse.IsForbidden(err)",
 		"pulse.IsUnauthorized(err)",
 		"pulseAdmin.CreateReadToken(ctx, \"boetticher monitoring read\")",
@@ -421,6 +484,9 @@ func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 		if !strings.Contains(text, required) {
 			t.Fatalf("Pulse read-token recovery is missing %q", required)
 		}
+	}
+	if strings.Contains(text, "pulseAdmin.ValidateReadToken(ctx, readToken)") {
+		t.Fatal("AIOps Pulse token validation must use the dedicated read client")
 	}
 }
 

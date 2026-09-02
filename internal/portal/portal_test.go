@@ -1,6 +1,12 @@
 package portal
 
 import (
+	"archive/tar"
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,6 +58,19 @@ func TestPortalHomeUsesCanonicalSemanticStatus(t *testing.T) {
 	}
 	if !strings.Contains(content, "Model revision: <code>revision</code>") {
 		t.Fatalf("portal home omitted the model revision: %s", content)
+	}
+}
+
+func TestPortalHomeDoesNotChurnWithGenerationTime(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	evidence := Evidence{GeneratedAt: "2026-08-29T00:00:00Z"}
+	first := home(site, "revision", evidence, time.Unix(1, 0))
+	second := home(site, "revision", evidence, time.Unix(2, 0))
+	if first != second {
+		t.Fatal("portal home changed when only the generation time changed")
+	}
+	if !strings.Contains(first, "observed: 2026-08-29T00:00:00Z") {
+		t.Fatalf("portal home omitted the recorded observation time: %s", first)
 	}
 }
 
@@ -163,6 +182,150 @@ func TestContentDigestRejectsSymlink(t *testing.T) {
 	}
 	if _, err := ContentDigest(root); err == nil {
 		t.Fatal("content digest accepted a symlink")
+	}
+}
+
+func TestContentDigestUsesGlobalRelativePathOrder(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "portal")
+	if err := os.MkdirAll(filepath.Join(root, "docs", "operations"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"docs/operations.html":      "sibling",
+		"docs/operations/logs.html": "nested",
+	}
+	for relative, content := range files {
+		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(relative)), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hash := sha256.New()
+	for _, relative := range []string{"docs/operations.html", "docs/operations/logs.html"} {
+		fmt.Fprintf(hash, "%s\x00", relative)
+		content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = hash.Write(content)
+	}
+	want := hex.EncodeToString(hash.Sum(nil))
+	got, err := ContentDigest(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("content digest = %q, want globally sorted path digest %q", got, want)
+	}
+}
+
+func TestContentArchiveIsDeterministicAndRootless(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "portal")
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("index"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "docs", "readme.html"), []byte("readme"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	firstPath := filepath.Join(dir, "first.tar")
+	secondPath := filepath.Join(dir, "second.tar")
+	if err := ContentArchive(root, firstPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := ContentArchive(root, secondPath); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(firstPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(secondPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Fatal("portal archives were not deterministic")
+	}
+	reader := tar.NewReader(bytes.NewReader(first))
+	seen := map[string]string{}
+	for {
+		header, err := reader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if filepath.IsAbs(header.Name) || strings.HasPrefix(header.Name, "../") {
+			t.Fatalf("portal archive contains an unsafe path %q", header.Name)
+		}
+		if header.Name != "docs" && header.Name != "docs/readme.html" && header.Name != "index.html" {
+			t.Fatalf("portal archive contains unexpected path %q", header.Name)
+		}
+		if header.Name == "docs" && header.Mode != 0755 {
+			t.Fatalf("portal archive directory mode = %o, want 0755", header.Mode)
+		}
+		if header.Typeflag == tar.TypeReg && header.Mode != 0644 {
+			t.Fatalf("portal archive file %q mode = %o, want 0644", header.Name, header.Mode)
+		}
+		if header.Typeflag == tar.TypeReg {
+			content, err := io.ReadAll(reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			seen[header.Name] = string(content)
+		}
+	}
+	if seen["index.html"] != "index" || seen["docs/readme.html"] != "readme" {
+		t.Fatalf("portal archive contents = %#v", seen)
+	}
+}
+
+func TestContentArchiveRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "portal")
+	if err := os.Mkdir(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "outside.html")
+	if err := os.WriteFile(target, []byte("outside"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "index.html")); err != nil {
+		t.Fatal(err)
+	}
+	if err := ContentArchive(root, filepath.Join(dir, "portal.tar")); err == nil {
+		t.Fatal("portal archive accepted a symlink")
+	}
+}
+
+func TestContentArchiveRejectsSymlinkedDestinationParent(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "portal")
+	if err := os.Mkdir(root, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "index.html"), []byte("index"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(dir, "outside")
+	if err := os.Mkdir(outside, 0755); err != nil {
+		t.Fatal(err)
+	}
+	linkedParent := filepath.Join(dir, "archive")
+	if err := os.Symlink(outside, linkedParent); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ContentArchive(root, filepath.Join(linkedParent, "portal.tar")); err == nil {
+		t.Fatal("portal archive followed a symlinked destination parent")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "portal.tar")); !os.IsNotExist(err) {
+		t.Fatalf("portal archive was written outside the controller-owned tree: %v", err)
 	}
 }
 

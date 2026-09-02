@@ -35,11 +35,19 @@
     fail_msg: "The installed PowerDNS version is not the qualified 4.9.17 release"
   when: inventory_hostname in groups.get('dns', [])
 
+- name: Check whether the PowerDNS database exists
+  ansible.builtin.stat:
+    path: /var/lib/powerdns/pdns.sqlite3
+  register: powerdns_database
+  when: inventory_hostname in groups.get('dns', [])
+
 - name: Stop PowerDNS before initializing its local database
   ansible.builtin.service:
     name: pdns
     state: stopped
-  when: inventory_hostname in groups.get('dns', [])
+  when:
+    - inventory_hostname in groups.get('dns', [])
+    - not powerdns_database.stat.exists
 
 - name: Create the PowerDNS data directory
   ansible.builtin.file:
@@ -108,24 +116,39 @@
   ansible.builtin.shell: |
     set -eu
     records="$(pdnsutil list-zone {{ item }})"
-    if printf '%s\n' "$records" | awk '$1 == "{{ item }}.{{ item }}" && $3 == "NS" && ($4 == "lab-dns-01.{{ dns_plan.static_zone }}." || $4 == "lab-dns-02.{{ dns_plan.static_zone }}.") { found=1 } END { exit !found }'; then
-      pdnsutil delete-rrset {{ item }} {{ item }} NS
+    updated=0
+    if printf '%s\n' "$records" | awk '$1 == "{{ item }}.{{ item }}" && $4 == "NS" && ($5 == "lab-dns-01.{{ dns_plan.static_zone }}." || $5 == "lab-dns-02.{{ dns_plan.static_zone }}.") { found=1 } END { exit !found }'; then
+      pdnsutil delete-rrset {{ item | quote }} {{ item | quote }} NS
+      updated=1
+    fi
+    if [ "$updated" -eq 1 ]; then
+      printf 'updated\n'
     fi
   args:
     executable: /bin/sh
   loop: "{{ [dns_plan.static_zone] + (dns_plan.dynamic_zones | map(attribute='name') | list) + (dns_plan.reverse_zones | map(attribute='name') | list) }}"
+  register: malformed_ns_rrsets
+  changed_when: "'updated' in malformed_ns_rrsets.stdout"
   when: inventory_hostname == 'lab-dns-01'
 
 - name: Remove exact malformed PowerDNS static rrsets from the prior boetticher attempt
   ansible.builtin.shell: |
     set -eu
     records="$(pdnsutil list-zone {{ dns_plan.static_zone }})"
-    if printf '%s\n' "$records" | awk '$1 == "{{ item.name }}.{{ dns_plan.static_zone }}" && $3 == "{{ item.type }}" && $4 == "{{ item.value }}" { found=1 } END { exit !found }'; then
-      pdnsutil delete-rrset {{ dns_plan.static_zone }} {{ item.name }} {{ item.type }}
+    updated=0
+    {% for item in dns_plan.static_records %}
+    if printf '%s\n' "$records" | awk -v wanted_name={{ (item.name ~ '.' ~ dns_plan.static_zone) | quote }} -v wanted_type={{ item.type | quote }} -v wanted_value={{ item.value | quote }} '$1 == wanted_name && $4 == wanted_type && $5 == wanted_value { found=1 } END { exit !found }'; then
+      pdnsutil delete-rrset {{ dns_plan.static_zone | quote }} {{ item.name | quote }} {{ item.type | quote }}
+      updated=1
+    fi
+    {% endfor %}
+    if [ "$updated" -eq 1 ]; then
+      printf 'updated\n'
     fi
   args:
     executable: /bin/sh
-  loop: "{{ dns_plan.static_records }}"
+  register: malformed_static_rrsets
+  changed_when: "'updated' in malformed_static_rrsets.stdout"
   when: inventory_hostname == 'lab-dns-01'
 
 - name: Initialize authoritative NS records on the primary when changed
@@ -134,7 +157,7 @@
     zone={{ item | quote }}
     current="$(pdnsutil list-zone "$zone" | awk -v zone="$zone" '
       function normalized(value) { sub(/\.$/, "", value); return value }
-      $3 == "NS" && (normalized($1) == normalized(zone) || $1 == "@") { print normalized($4) }
+      $4 == "NS" && (normalized($1) == normalized(zone) || $1 == "@") { print normalized($5) }
     ' | LC_ALL=C sort)"
     expected="$(printf '%s\n' {{ ('lab-dns-01.' ~ dns_plan.static_zone) | quote }} {{ ('lab-dns-02.' ~ dns_plan.static_zone) | quote }} | LC_ALL=C sort)"
     if [ "$current" != "$expected" ]; then
@@ -157,7 +180,7 @@
     record_value={{ item.value | quote }}
     current="$(printf '%s\n' "$records" | awk -v name="$record_name" -v record_type="$record_type" -v wanted="$record_value" '
       function normalized(value) { sub(/\.$/, "", value); return value }
-      normalized($1) == normalized(name) && $3 == record_type && normalized($4) == normalized(wanted) { print normalized($4) }
+      normalized($1) == normalized(name) && $4 == record_type && normalized($5) == normalized(wanted) { print normalized($5) }
     ' | LC_ALL=C sort)"
     expected="$(printf '%s\n' "$record_value" | LC_ALL=C sort)"
     if [ "$current" != "$expected" ]; then
@@ -175,30 +198,74 @@
   loop: "{{ dns_plan.pending_deletions | default([]) }}"
   when: inventory_hostname == 'lab-dns-01'
 
-- name: Authorize Kea DDNS updates for dynamic forward zones
-  ansible.builtin.shell: >-
-    pdnsutil set-meta {{ item.forward_zone }} ALLOW-DNSUPDATE-FROM
-    {{ dns_plan.ddns.update_sources | join(' ') }} &&
-    pdnsutil set-meta {{ item.forward_zone }} NOTIFY-DNSUPDATE 1 &&
-    pdnsutil set-meta {{ item.forward_zone }} TSIG-ALLOW-DNSUPDATE {{ item.tsig_key_name }}
+- name: Reconcile Kea DDNS metadata on the primary when changed
+  ansible.builtin.shell: |
+    set -eu
+    metadata_values() {
+      pdnsutil get-meta "$1" "$2" 2>/dev/null |
+        sed -n 's/^[^=]*=[[:space:]]*//p' |
+        tr ',' ' ' |
+        tr -s '[:space:]' '\n' |
+        awk 'NF' |
+        LC_ALL=C sort |
+        paste -sd ' ' -
+    }
+    metadata_token_metrics() {
+      printf '%s\n' "$1" |
+        awk '{ for (i = 1; i <= NF; i++) print $i }' |
+        while IFS= read -r token; do
+          [ -n "$token" ] || continue
+          token_length="$(printf '%s' "$token" | wc -c | tr -d '[:space:]')"
+          token_digest="$(printf '%s' "$token" | sha256sum | cut -c1-8)"
+          printf '%s:%s\n' "$token_length" "$token_digest"
+        done |
+        paste -sd ',' -
+    }
+    expected_sources="$(printf '%s\n' {% for source in dns_plan.ddns.update_sources %}{{ source | quote }} {% endfor %} | tr -s '[:space:]' '\n' | awk 'NF' | LC_ALL=C sort | paste -sd ' ' -)"
+    updated=0
+    for zone in {{ item.forward_zone | quote }} {{ item.reverse_zone | quote }}; do
+      current_sources="$(metadata_values "$zone" ALLOW-DNSUPDATE-FROM)"
+      if [ "$current_sources" != "$expected_sources" ]; then
+        current_length="$(printf '%s' "$current_sources" | wc -c | tr -d '[:space:]')"
+        current_count="$(printf '%s\n' "$current_sources" | awk '{print NF}')"
+        current_digest="$(printf '%s' "$current_sources" | sha256sum | cut -c1-16)"
+        current_tokens="$(metadata_token_metrics "$current_sources")"
+        [ -n "$current_tokens" ] || current_tokens=none
+        printf 'boetticher-observation dns-metadata-drift %s ALLOW-DNSUPDATE-FROM %s %s %s %s\n' "$zone" "$current_length" "$current_count" "$current_digest" "$current_tokens"
+        pdnsutil set-meta "$zone" ALLOW-DNSUPDATE-FROM {% for source in dns_plan.ddns.update_sources %}{{ source | quote }} {% endfor %};
+        updated=1
+      fi
+      current_notify="$(metadata_values "$zone" NOTIFY-DNSUPDATE)"
+      if [ "$current_notify" != "1" ]; then
+        current_length="$(printf '%s' "$current_notify" | wc -c | tr -d '[:space:]')"
+        current_count="$(printf '%s\n' "$current_notify" | awk '{print NF}')"
+        current_digest="$(printf '%s' "$current_notify" | sha256sum | cut -c1-16)"
+        current_tokens="$(metadata_token_metrics "$current_notify")"
+        [ -n "$current_tokens" ] || current_tokens=none
+        printf 'boetticher-observation dns-metadata-drift %s NOTIFY-DNSUPDATE %s %s %s %s\n' "$zone" "$current_length" "$current_count" "$current_digest" "$current_tokens"
+        pdnsutil set-meta "$zone" NOTIFY-DNSUPDATE 1
+        updated=1
+      fi
+      current_tsig="$(metadata_values "$zone" TSIG-ALLOW-DNSUPDATE)"
+      if [ "$current_tsig" != {{ item.tsig_key_name | quote }} ]; then
+        current_length="$(printf '%s' "$current_tsig" | wc -c | tr -d '[:space:]')"
+        current_count="$(printf '%s\n' "$current_tsig" | awk '{print NF}')"
+        current_digest="$(printf '%s' "$current_tsig" | sha256sum | cut -c1-16)"
+        current_tokens="$(metadata_token_metrics "$current_tsig")"
+        [ -n "$current_tokens" ] || current_tokens=none
+        printf 'boetticher-observation dns-metadata-drift %s TSIG-ALLOW-DNSUPDATE %s %s %s %s\n' "$zone" "$current_length" "$current_count" "$current_digest" "$current_tokens"
+        pdnsutil set-meta "$zone" TSIG-ALLOW-DNSUPDATE {{ item.tsig_key_name | quote }}
+        updated=1
+      fi
+    done
+    if [ "$updated" -eq 1 ]; then
+      printf 'updated\n'
+    fi
   args:
     executable: /bin/sh
   loop: "{{ dns_plan.ddns.zones }}"
-  changed_when: false
-  when:
-    - inventory_hostname == 'lab-dns-01'
-    - dns_plan.ddns.enabled | bool
-
-- name: Authorize Kea DDNS updates for reverse zones
-  ansible.builtin.shell: >-
-    pdnsutil set-meta {{ item.reverse_zone }} ALLOW-DNSUPDATE-FROM
-    {{ dns_plan.ddns.update_sources | join(' ') }} &&
-    pdnsutil set-meta {{ item.reverse_zone }} NOTIFY-DNSUPDATE 1 &&
-    pdnsutil set-meta {{ item.reverse_zone }} TSIG-ALLOW-DNSUPDATE {{ item.tsig_key_name }}
-  args:
-    executable: /bin/sh
-  loop: "{{ dns_plan.ddns.zones }}"
-  changed_when: false
+  register: ddns_metadata
+  changed_when: "'updated' in ddns_metadata.stdout"
   when:
     - inventory_hostname == 'lab-dns-01'
     - dns_plan.ddns.enabled | bool

@@ -131,6 +131,29 @@ func TestGatusCrossZoneHTTPSIntentsFollowManagedServiceMetadata(t *testing.T) {
 	}
 }
 
+func TestGatusInvalidCrossZoneEndpointFailsComposition(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	enabled := true
+	config.Modules.Gatus = &model.ToggleModuleConfig{Enabled: &enabled}
+	site, _, err := Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range site.Declarations {
+		if site.Declarations[index].Module != "monitoring" {
+			continue
+		}
+		for guestIndex := range site.Declarations[index].Guests {
+			if site.Declarations[index].Guests[guestIndex].Name == "lab-monitor-01" {
+				site.Declarations[index].Guests[guestIndex].URL = "http://monitor.lab.home.arpa"
+			}
+		}
+	}
+	if err := addGatusEndpointIntents(&site); err == nil || !strings.Contains(err.Error(), "HTTPS URL") {
+		t.Fatalf("invalid Gatus endpoint was accepted: %v", err)
+	}
+}
+
 func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *testing.T) {
 	registry := FirstPartyRegistry()
 	if err := registry.Validate(); err != nil {

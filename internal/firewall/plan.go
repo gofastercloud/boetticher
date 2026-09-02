@@ -61,6 +61,14 @@ func sha256Hex(value string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// RulesetDigest returns the stable content digest used by the convergence
+// role to avoid transferring and validating an unchanged nftables artifact.
+// The live ruleset is still applied on every convergence so this digest is a
+// transfer optimization, not a substitute for runtime activation.
+func RulesetDigest(ruleset string) string {
+	return sha256Hex(ruleset)
+}
+
 type PolicyRule struct {
 	Sequence        int      `json:"sequence"`
 	Name            string   `json:"name"`

@@ -113,7 +113,7 @@ func page(title, body string) string {
 	return "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>" + html.EscapeString(title) + " · boetticher</title><style>body{font:16px system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#17202a}nav{display:flex;gap:1rem;flex-wrap:wrap}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccd;padding:.5rem;text-align:left}code{background:#eef;padding:.1rem .3rem}pre{white-space:pre-wrap;background:#f5f7f9;padding:1rem}.pass{color:#087f23}.fail{color:#b00020}.notice{color:#8a5b00}</style></head><body><nav><a href=\"/index.html\">Home</a><a href=\"/inventory.html\">Inventory</a><a href=\"/network.html\">Network</a><a href=\"/services.html\">Services</a><a href=\"/access.html\">Access</a><a href=\"/pki.html\">PKI</a><a href=\"/security.html\">Security</a><a href=\"/recovery.html\">Recovery</a><a href=\"/docs/index.html\">Runbooks</a></nav><main><h1>" + html.EscapeString(title) + "</h1>" + body + "</main></body></html>\n"
 }
 
-func home(s model.Site, revision string, evidence Evidence, now time.Time) string {
+func home(s model.Site, revision string, evidence Evidence, _ time.Time) string {
 	checks := make([]statusmodel.LegacyCheck, 0, len(evidence.Results))
 	for _, result := range evidence.Results {
 		checks = append(checks, statusmodel.LegacyCheck{
@@ -144,7 +144,14 @@ func home(s model.Site, revision string, evidence Evidence, now time.Time) strin
 	if semantic.OverallState != statusmodel.Healthy {
 		action = "Action required: open the <a href=\"/security.html\">Security page</a> for the reason and suggested next step."
 	}
-	return fmt.Sprintf("<p>This is a snapshot of your Boetticher platform. Use the links above for services, recovery, and detailed runbooks.</p><p>Model revision: <code>%s</code></p><h2>Platform result: %s</h2><p>Gateway: %s · observed: %s</p><p>%s</p>%s<h2>Important links</h2><p><a href=\"%s\">Proxmox</a> · <a href=\"https://monitor.%s\">Pulse monitoring</a> · <a href=\"https://portal.%s\">Portal</a> · <a href=\"https://dns.%s\">DNS</a></p>", html.EscapeString(revision), html.EscapeString(humanOverallResult(semantic.OverallState)), html.EscapeString(gateway), now.UTC().Format(time.RFC3339), action, moduleTable.String(), html.EscapeString("https://proxmox."+s.Network.Domain+":8006"), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain))
+	observedAt := strings.TrimSpace(evidence.GeneratedAt)
+	if evidence.Status != nil && strings.TrimSpace(evidence.Status.ObservedAt) != "" {
+		observedAt = strings.TrimSpace(evidence.Status.ObservedAt)
+	}
+	if observedAt == "" {
+		observedAt = "not recorded"
+	}
+	return fmt.Sprintf("<p>This is a snapshot of your Boetticher platform. Use the links above for services, recovery, and detailed runbooks.</p><p>Model revision: <code>%s</code></p><h2>Platform result: %s</h2><p>Gateway: %s · observed: %s</p><p>%s</p>%s<h2>Important links</h2><p><a href=\"%s\">Proxmox</a> · <a href=\"https://monitor.%s\">Pulse monitoring</a> · <a href=\"https://portal.%s\">Portal</a> · <a href=\"https://dns.%s\">DNS</a></p>", html.EscapeString(revision), html.EscapeString(humanOverallResult(semantic.OverallState)), html.EscapeString(gateway), html.EscapeString(observedAt), action, moduleTable.String(), html.EscapeString("https://proxmox."+s.Network.Domain+":8006"), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain))
 }
 
 func loggingSummary(s model.Site, evidence Evidence) string {

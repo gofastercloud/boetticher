@@ -13,6 +13,7 @@ type measurementBucket struct {
 	Count      int   `json:"count"`
 	Failures   int   `json:"failures,omitempty"`
 	Changed    int   `json:"changed,omitempty"`
+	Bytes      int64 `json:"bytes,omitempty"`
 	DurationMS int64 `json:"duration_ms"`
 }
 
@@ -20,6 +21,7 @@ type measurementSummary struct {
 	Count      int                          `json:"count"`
 	Failures   int                          `json:"failures,omitempty"`
 	Changed    int                          `json:"changed,omitempty"`
+	Bytes      int64                        `json:"bytes,omitempty"`
 	DurationMS int64                        `json:"duration_ms"`
 	ByKey      map[string]measurementBucket `json:"by_key,omitempty"`
 }
@@ -29,6 +31,7 @@ type operationMeasurements struct {
 	ProviderAPI measurementSummary `json:"provider_api"`
 	SSH         measurementSummary `json:"ssh"`
 	Ansible     measurementSummary `json:"ansible"`
+	Artifact    measurementSummary `json:"artifact_transfer"`
 }
 
 func (m *operationMeasurements) Observe(event telemetry.Event) {
@@ -45,6 +48,8 @@ func (m *operationMeasurements) Observe(event telemetry.Event) {
 		summary = &m.SSH
 	case "ansible":
 		summary = &m.Ansible
+	case "artifact_transfer":
+		summary = &m.Artifact
 	default:
 		return
 	}
@@ -58,6 +63,9 @@ func (m *operationMeasurements) Observe(event telemetry.Event) {
 	if event.Changed {
 		summary.Changed++
 	}
+	if event.Bytes > 0 {
+		summary.Bytes += event.Bytes
+	}
 	durationMS := event.Duration.Milliseconds()
 	summary.DurationMS += durationMS
 	key := measurementKey(event)
@@ -68,6 +76,9 @@ func (m *operationMeasurements) Observe(event telemetry.Event) {
 	}
 	if event.Changed {
 		bucket.Changed++
+	}
+	if event.Bytes > 0 {
+		bucket.Bytes += event.Bytes
 	}
 	bucket.DurationMS += durationMS
 	summary.ByKey[key] = bucket
@@ -110,6 +121,10 @@ func isDecimal(value string) bool {
 }
 
 func (m operationMeasurements) summaryLine() string {
-	return fmt.Sprintf("Measured operations: Proxmox API %d (%dms), Provider API %d (%dms), SSH %d (%dms), Ansible %d (%dms)",
+	line := fmt.Sprintf("Measured operations: Proxmox API %d (%dms), Provider API %d (%dms), SSH %d (%dms), Ansible %d (%dms)",
 		m.ProxmoxAPI.Count, m.ProxmoxAPI.DurationMS, m.ProviderAPI.Count, m.ProviderAPI.DurationMS, m.SSH.Count, m.SSH.DurationMS, m.Ansible.Count, m.Ansible.DurationMS)
+	if m.Artifact.Count > 0 {
+		line += fmt.Sprintf(", artifact transfer %d (%d bytes, %dms)", m.Artifact.Count, m.Artifact.Bytes, m.Artifact.DurationMS)
+	}
+	return line
 }

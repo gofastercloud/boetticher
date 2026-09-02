@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 
 from ansible.plugins.callback import CallbackBase
@@ -15,6 +16,14 @@ CALLBACK_NAME = "boetticher_timing"
 CALLBACK_NEEDS_WHITELIST = True
 
 _MAX_TEXT = 512
+_MAX_MARKERS = 64
+_MARKER_RE = re.compile(
+    r"^boetticher-observation dns-metadata-drift "
+    r"([A-Za-z0-9.-]+) "
+    r"(ALLOW-DNSUPDATE-FROM|NOTIFY-DNSUPDATE|TSIG-ALLOW-DNSUPDATE) "
+    r"([0-9]+) ([0-9]+) ([0-9a-f]{16}) "
+    r"((?:[0-9]+:[0-9a-f]{8}(?:,[0-9]+:[0-9a-f]{8})*)|none)$"
+)
 
 
 class CallbackModule(CallbackBase):
@@ -29,6 +38,24 @@ class CallbackModule(CallbackBase):
     @staticmethod
     def _text(value, limit=_MAX_TEXT):
         return str(value or "")[:limit]
+
+    @staticmethod
+    def _markers(result):
+        markers = []
+        results = result._result.get("results")
+        if not isinstance(results, list):
+            results = [result._result]
+        for item in results:
+            for line in item.get("stdout_lines", []) or []:
+                match = _MARKER_RE.fullmatch(str(line).strip())
+                if not match:
+                    continue
+                marker = f"dns-metadata-drift:{match.group(1)}:{match.group(2)}:{match.group(3)}:{match.group(4)}:{match.group(5)}:{match.group(6)}"
+                if marker not in markers:
+                    markers.append(marker)
+                if len(markers) >= _MAX_MARKERS:
+                    return markers
+        return markers
 
     def v2_runner_on_start(self, host, task):
         if not self._path:
@@ -86,6 +113,9 @@ class CallbackModule(CallbackBase):
             "duration_ms": duration_ms,
             "changed": bool(result._result.get("changed", False)),
         }
+        markers = self._markers(result)
+        if markers:
+            entry["markers"] = markers
         self._write(entry)
 
     def v2_runner_on_ok(self, result):

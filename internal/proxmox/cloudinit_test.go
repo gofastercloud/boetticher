@@ -219,6 +219,7 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 		"https://snapshot.debian.org/archive/debian-security/20260825T000000Z/",
 		"apt-get -o Acquire::Check-Valid-Until=false update",
 		"apt-get install --yes --no-install-recommends ca-certificates curl jq libguestfs-tools mmdebstrap",
+		"qemu-utils sudo tar time util-linux zstd",
 	} {
 		if !strings.Contains(files.UserData, required) {
 			t.Fatalf("builder cloud-init does not pin package bootstrap input %q", required)

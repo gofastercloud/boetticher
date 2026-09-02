@@ -31,6 +31,23 @@ func TestDeploymentReportRendersSuccessfulBinarySummary(t *testing.T) {
 	assertNoHumanEvidenceStates(t, text)
 }
 
+func TestDeploymentReportLabelsSuccessfulMutationsAsApplied(t *testing.T) {
+	var output bytes.Buffer
+	report := newDeploymentReport(&output)
+	report.start("proxmox", "Reconcile Proxmox platform and storage")
+	report.recordMutation("Proxmox", "lab-fw-01", "guest created", true)
+	report.complete()
+	report.finalize(nil)
+
+	text := output.String()
+	if !strings.Contains(text, "Changes applied:\n") {
+		t.Fatalf("successful deployment report omitted applied-mutation label:\n%s", text)
+	}
+	if strings.Contains(text, "Changes before failure:") {
+		t.Fatalf("successful deployment report used failure label:\n%s", text)
+	}
+}
+
 func TestDeploymentReportRendersFailureAfterCoarseMutation(t *testing.T) {
 	var output bytes.Buffer
 	report := newDeploymentReport(&output)

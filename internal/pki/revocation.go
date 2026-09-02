@@ -1,6 +1,7 @@
 package pki
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
@@ -64,6 +65,147 @@ func GenerateCRL(authority Authority, revocations []Revocation, now time.Time) (
 		return "", fmt.Errorf("create root CA CRL: %w", err)
 	}
 	return issuingCRL + rootCRL, nil
+}
+
+// ValidateCRL verifies the complete controller-issued CRL bundle against the
+// current authority and exact revocation set. It is used before a cached CRL
+// is reused; a cache hit must not bypass trust or revocation validation.
+func ValidateCRL(authority Authority, crlPEM string, revocations []Revocation, now time.Time) error {
+	root, err := parseCert(authority.RootCertPEM)
+	if err != nil {
+		return fmt.Errorf("parse root certificate: %w", err)
+	}
+	issuing, err := parseCert(authority.IssuingCertPEM)
+	if err != nil {
+		return fmt.Errorf("parse issuing certificate: %w", err)
+	}
+	rootKey, err := parseECKey(authority.RootKeyPEM)
+	if err != nil {
+		return fmt.Errorf("parse root key: %w", err)
+	}
+	if !samePublicKey(rootKey.Public(), root.PublicKey) {
+		return errors.New("root private key does not match the root certificate")
+	}
+	issuingKey, err := parseECKey(authority.IssuingKeyPEM)
+	if err != nil {
+		return fmt.Errorf("parse issuing key: %w", err)
+	}
+	if !samePublicKey(issuingKey.Public(), issuing.PublicKey) {
+		return errors.New("issuing private key does not match the issuing certificate")
+	}
+
+	crls, err := parseCRLBundle(crlPEM)
+	if err != nil {
+		return err
+	}
+	if err := validateParsedCRL(crls[0], issuing, now); err != nil {
+		return fmt.Errorf("validate issuing CRL: %w", err)
+	}
+	if err := validateParsedCRL(crls[1], root, now); err != nil {
+		return fmt.Errorf("validate root CRL: %w", err)
+	}
+	if len(crls[1].RevokedCertificateEntries) != 0 {
+		return errors.New("root CRL unexpectedly contains revoked certificates")
+	}
+
+	expected, err := normalizedRevocations(revocations, now)
+	if err != nil {
+		return err
+	}
+	actual := crls[0].RevokedCertificateEntries
+	if len(actual) != len(expected) {
+		return fmt.Errorf("issuing CRL contains %d revoked certificates, expected %d", len(actual), len(expected))
+	}
+	for index, entry := range actual {
+		if entry.SerialNumber == nil || entry.SerialNumber.Cmp(expected[index].serial) != 0 {
+			return fmt.Errorf("issuing CRL serial at index %d does not match the requested revocation set", index)
+		}
+		if !entry.RevocationTime.Equal(expected[index].revokedAt) {
+			return fmt.Errorf("issuing CRL revocation time for serial %s does not match", entry.SerialNumber.Text(16))
+		}
+	}
+	return nil
+}
+
+type normalizedRevocation struct {
+	serial    *big.Int
+	revokedAt time.Time
+}
+
+func normalizedRevocations(revocations []Revocation, now time.Time) ([]normalizedRevocation, error) {
+	sorted := append([]Revocation(nil), revocations...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return strings.ToLower(strings.TrimSpace(sorted[i].Serial)) < strings.ToLower(strings.TrimSpace(sorted[j].Serial))
+	})
+	expected := make([]normalizedRevocation, 0, len(sorted))
+	seen := map[string]struct{}{}
+	for _, revocation := range sorted {
+		serial, err := ParseSerial(revocation.Serial)
+		if err != nil {
+			return nil, fmt.Errorf("revocation %s: %w", revocation.Name, err)
+		}
+		key := serial.Text(16)
+		if _, exists := seen[key]; exists {
+			return nil, fmt.Errorf("duplicate revoked certificate serial %s", key)
+		}
+		seen[key] = struct{}{}
+		revokedAt := revocation.RevokedAt.UTC()
+		if revokedAt.IsZero() {
+			revokedAt = now.UTC()
+		}
+		expected = append(expected, normalizedRevocation{
+			serial:    serial,
+			revokedAt: revokedAt.Truncate(time.Second),
+		})
+	}
+	return expected, nil
+}
+
+func parseCRLBundle(value string) ([]*x509.RevocationList, error) {
+	rest := []byte(value)
+	crls := make([]*x509.RevocationList, 0, 2)
+	for range 2 {
+		block, remaining := pem.Decode(rest)
+		if block == nil || block.Type != "X509 CRL" {
+			return nil, errors.New("CRL bundle must contain an issuing and root CRL")
+		}
+		crl, err := x509.ParseRevocationList(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse CRL bundle: %w", err)
+		}
+		crls = append(crls, crl)
+		rest = remaining
+	}
+	if len(bytes.TrimSpace(rest)) != 0 {
+		return nil, errors.New("CRL bundle contains unexpected trailing data")
+	}
+	return crls, nil
+}
+
+func validateParsedCRL(crl *x509.RevocationList, issuer *x509.Certificate, now time.Time) error {
+	if !bytes.Equal(crl.RawIssuer, issuer.RawSubject) {
+		return errors.New("CRL issuer does not match its signing certificate")
+	}
+	if err := crl.CheckSignatureFrom(issuer); err != nil {
+		return fmt.Errorf("verify CRL signature: %w", err)
+	}
+	now = now.UTC()
+	if crl.ThisUpdate.After(now.Add(5 * time.Minute)) {
+		return errors.New("CRL is issued in the future")
+	}
+	if !crl.NextUpdate.After(now) {
+		return errors.New("CRL is expired")
+	}
+	return nil
+}
+
+func samePublicKey(left, right any) bool {
+	leftDER, err := x509.MarshalPKIXPublicKey(left)
+	if err != nil {
+		return false
+	}
+	rightDER, err := x509.MarshalPKIXPublicKey(right)
+	return err == nil && bytes.Equal(leftDER, rightDER)
 }
 
 func generateCARevocationList(certPEM, keyPEM string, revocations []Revocation, now time.Time) (string, error) {

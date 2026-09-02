@@ -17,6 +17,7 @@ type Event struct {
 	Target    string
 	Method    string
 	Status    int
+	Bytes     int64
 	Duration  time.Duration
 	Success   bool
 	Changed   bool

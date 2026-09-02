@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/model"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 	"github.com/gofastercloud/boetticher/internal/storage"
+	"github.com/gofastercloud/boetticher/internal/telemetry"
 	"github.com/gofastercloud/boetticher/internal/usbexport"
 )
 
@@ -1767,8 +1769,18 @@ func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage,
 	if !strings.EqualFold(actual, checksum) {
 		return fmt.Errorf("local artifact %s checksum %s does not match qualified %s", filename, actual, checksum)
 	}
-	if err := client.UploadStorageFile(ctx, node, storage, content, source, filename, checksum); err != nil {
-		return fmt.Errorf("upload %s: %w", filename, err)
+	info, err := os.Stat(source)
+	if err != nil {
+		return fmt.Errorf("inspect qualified artifact %s: %w", source, err)
+	}
+	transferStarted := time.Now()
+	uploadErr := client.UploadStorageFile(ctx, node, storage, content, source, filename, checksum)
+	telemetry.Record(ctx, telemetry.Event{
+		Category: "artifact_transfer", Operation: "controller_to_proxmox", Target: content,
+		Bytes: info.Size(), Duration: time.Since(transferStarted), Success: uploadErr == nil, Changed: true,
+	})
+	if uploadErr != nil {
+		return fmt.Errorf("upload %s: %w", filename, uploadErr)
 	}
 	entries, err = client.StorageContent(ctx, node, storage, content)
 	if err != nil {

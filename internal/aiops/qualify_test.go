@@ -2,6 +2,7 @@ package aiops
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -27,9 +28,16 @@ func TestModelCanaryRequiresExactToolAndResponseSchema(t *testing.T) {
 	client := &http.Client{Transport: qualifyTransport(func(request *http.Request) (*http.Response, error) {
 		requests++
 		data, _ := io.ReadAll(request.Body)
+		var payload map[string]any
+		if err := json.Unmarshal(data, &payload); err != nil {
+			t.Fatalf("invalid canary request: %v", err)
+		}
+		if payload["max_tokens"] != float64(canaryMaxTokens) {
+			t.Fatalf("canary max_tokens = %#v, want %d", payload["max_tokens"], canaryMaxTokens)
+		}
 		body := ""
 		if requests == 1 {
-			if !strings.Contains(string(data), `"tool_choice"`) || strings.Contains(string(data), `"response_format"`) {
+			if !strings.Contains(string(data), `"tool_choice"`) || !strings.Contains(string(data), `"parallel_tool_calls":false`) || strings.Contains(string(data), `"response_format"`) {
 				t.Fatalf("first canary request did not isolate tool calling: %s", data)
 			}
 			body = `{"choices":[{"message":{"content":"","tool_calls":[{"id":"call-1","type":"function","function":{"name":"qualification_probe","arguments":"{\"nonce\":\"boetticher-aiops-v1\"}"}}]}}]}`

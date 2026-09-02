@@ -10,11 +10,11 @@
   roles:
     - base
     - role: chrony
-      when: boetticher_deploy_phase | default('full') != 'services'
+      when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
     - role: dns
       when:
         - inventory_hostname in groups.get('dns', [])
-        - boetticher_deploy_phase | default('full') != 'services'
+        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
     - role: monitor
       when: inventory_hostname in groups.get('monitor', [])
     - role: logging
@@ -22,15 +22,18 @@
     - role: firewall
       when:
         - inventory_hostname in groups.get('firewall', [])
-        - boetticher_deploy_phase | default('full') != 'services'
+        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
+        - not (boetticher_skip_firewall | default(false) | bool)
     - role: portal
       when: inventory_hostname == 'lab-portal-01'
     - role: tailnet-router
       when:
         - inventory_hostname in groups.get('tailnet-router', [])
-        - boetticher_deploy_phase | default('full') != 'services'
+        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
     - role: airvpn
-      when: inventory_hostname in groups.get('airvpn', [])
+      when:
+        - inventory_hostname in groups.get('airvpn', [])
+        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
     - role: litellm
       when: inventory_hostname in groups.get('litellm', [])
     - role: printer
@@ -48,6 +51,6 @@
   gather_facts: false
   roles:
     - role: usb-export-host
-      when: boetticher_deploy_phase | default('full') != 'services'
+      when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
     - role: network-probe-host
-      when: boetticher_deploy_phase | default('full') != 'services'
+      when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']

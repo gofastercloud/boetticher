@@ -37,12 +37,15 @@ func runStatus(args []string, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("Problem: calculate model revision: %w", err)
 	}
-	results, observedAt := collectHealthResults(healthOptions{
+	results, observedAt, err := collectHealthResults(healthOptions{
 		siteDir:    *siteDir,
 		sshPath:    *sshPath,
 		sshJourney: *sshJourney,
 		live:       *live,
 	}, s)
+	if err != nil {
+		return fmt.Errorf("collect health results: %w", err)
+	}
 	report := healthStatusReport(revision, observedAt, results)
 
 	if *jsonOutput {

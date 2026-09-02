@@ -189,6 +189,32 @@ func TestGenerateCRLRevokesExactCertificateSerial(t *testing.T) {
 	}
 }
 
+func TestValidateCRLRequiresCurrentAuthorityAndExactRevocations(t *testing.T) {
+	now := time.Date(2026, time.August, 29, 0, 0, 0, 0, time.UTC)
+	authority, err := GenerateAuthority(now, "lab.home.arpa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate, err := IssueClient(authority, "first", "lab.home.arpa", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revocations := []Revocation{{Name: certificate.Name, Serial: certificate.Serial, RevokedAt: now.Add(-time.Minute)}}
+	crl, err := GenerateCRL(authority, revocations, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateCRL(authority, crl, revocations, now.Add(time.Minute)); err != nil {
+		t.Fatalf("valid CRL rejected: %v", err)
+	}
+	if err := ValidateCRL(authority, crl, nil, now.Add(time.Minute)); err == nil {
+		t.Fatal("CRL with an unexpected revocation set was accepted")
+	}
+	if err := ValidateCRL(authority, crl+"tampered", revocations, now.Add(time.Minute)); err == nil {
+		t.Fatal("tampered CRL was accepted")
+	}
+}
+
 func TestSignedServerCertificateUsesServerAuthAndSANs(t *testing.T) {
 	authority, err := GenerateAuthority(time.Unix(0, 0), "lab.home.arpa")
 	if err != nil {
@@ -222,5 +248,83 @@ func TestSignedServerCertificateUsesServerAuthAndSANs(t *testing.T) {
 	}
 	if len(parsed.DNSNames) != 2 || parsed.DNSNames[0] != "monitor.lab.home.arpa" {
 		t.Fatalf("unexpected server SANs: %v", parsed.DNSNames)
+	}
+}
+
+func TestValidateCachedCertificateRequiresCurrentIdentityAndLifetime(t *testing.T) {
+	now := time.Unix(0, 0)
+	authority, err := GenerateAuthority(now, "lab.home.arpa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject:  pkix.Name{CommonName: "monitor.lab.home.arpa"},
+		DNSNames: []string{"monitor.lab.home.arpa", "lab-monitor-01.lab.home.arpa"},
+	}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: request}))
+	issued, err := SignServerCSR(authority, requestPEM, "monitor", "lab.home.arpa", []string{"lab-monitor-01.lab.home.arpa"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reused, err := ValidateServerCertificate(authority, issued.ChainPEM, requestPEM, "monitor", "lab.home.arpa", []string{"lab-monitor-01.lab.home.arpa"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reused.Fingerprint != issued.Fingerprint || reused.ChainPEM != issued.ChainPEM {
+		t.Fatalf("validated certificate changed: reused=%#v issued=%#v", reused, issued)
+	}
+
+	otherKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherRequest, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject:  pkix.Name{CommonName: "monitor.lab.home.arpa"},
+		DNSNames: []string{"monitor.lab.home.arpa", "lab-monitor-01.lab.home.arpa"},
+	}, otherKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherRequestPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: otherRequest}))
+	if _, err := ValidateServerCertificate(authority, issued.ChainPEM, otherRequestPEM, "monitor", "lab.home.arpa", []string{"lab-monitor-01.lab.home.arpa"}, now); err == nil {
+		t.Fatal("cached certificate with a different CSR key was accepted")
+	}
+	if _, err := ValidateServerCertificate(authority, issued.ChainPEM, requestPEM, "monitor", "lab.home.arpa", []string{"lab-monitor-01.lab.home.arpa"}, now.AddDate(10, 0, 0).Add(-15*24*time.Hour)); err == nil {
+		t.Fatal("cached certificate inside the renewal window was accepted")
+	}
+}
+
+func TestValidateCachedServiceClientCertificate(t *testing.T) {
+	now := time.Unix(0, 0)
+	authority, err := GenerateAuthority(now, "lab.home.arpa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: "aiops-pulse-read"}}, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: request}))
+	issued, err := SignServiceClientCSR(authority, requestPEM, "aiops-pulse-read", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reused, err := ValidateServiceClientCertificate(authority, issued.ChainPEM, requestPEM, "aiops-pulse-read", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reused.Fingerprint != issued.Fingerprint || reused.Serial != issued.Serial {
+		t.Fatalf("validated service certificate changed: reused=%#v issued=%#v", reused, issued)
 	}
 }

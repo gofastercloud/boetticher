@@ -106,7 +106,10 @@ download_cached() {
   fi
 }
 
-zstd_level=${BOETTICHER_ZSTD_LEVEL:-19}
+# Level 3 keeps the qualified artifact format and integrity checks while
+# avoiding the disproportionate CPU cost of the historical level-19 default.
+# The environment override remains available for measured release trials.
+zstd_level=${BOETTICHER_ZSTD_LEVEL:-3}
 case "$zstd_level" in
   ''|*[!0-9]*)
     echo "HOLD: BOETTICHER_ZSTD_LEVEL must be an integer from 1 through 22" >&2
@@ -118,12 +121,16 @@ if [ "$zstd_level" -lt 1 ] || [ "$zstd_level" -gt 22 ]; then
   exit 2
 fi
 
-for tool in mmdebstrap tar zstd sha256sum curl chroot go jq stat; do
+for tool in mmdebstrap tar zstd sha256sum curl chroot go jq stat du find wc awk tr; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "HOLD: required Linux image-build tool is unavailable: $tool" >&2
     exit 2
   fi
 done
+if [ ! -x /usr/bin/time ]; then
+  echo "HOLD: required Linux image-build tool is unavailable: /usr/bin/time" >&2
+  exit 2
+fi
 
 output_root=${BOETTICHER_ARTIFACT_OUTPUT:-generated/artifacts}
 work_root=${BOETTICHER_IMAGE_WORK:-/tmp/boetticher-image-build}
@@ -411,6 +418,9 @@ package_lxc() {
   name=$1
   rootfs=$(rootfs_for "$name")
   rm -f "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
+  rootfs_apparent_bytes=$(du -sx --apparent-size --block-size=1 "$rootfs" | awk '{print $1}')
+  rootfs_allocated_bytes=$(du -sx --block-size=1 "$rootfs" | awk '{print $1}')
+  rootfs_file_count=$(find "$rootfs" -xdev -type f -printf '.' | wc -c | tr -d ' ')
   printf '%s\n' "boetticher package stage: $name smoke"
   destination="$output_root/$name"
   mkdir -p "$destination"
@@ -418,12 +428,23 @@ package_lxc() {
   printf '%s\n' "boetticher package stage: $name manifest"
   chroot "$rootfs" dpkg-query -W -f='${binary:Package}\t${Version}\n' | sort > "$destination/package-manifest.txt"
   printf '%s\n' "boetticher package stage: $name archive"
-  compression_started=$(timing_now_ms)
   artifact_path=$(artifact_for "$name")
-  tar --numeric-owner --xattrs --acls -C "$rootfs" -cf - . | zstd -T0 "-$zstd_level" -o "$artifact_path"
+  compression_timing="$work_root/$name-compression.time"
+  /usr/bin/time -f '%e %U %S' -o "$compression_timing" \
+    sh -c 'tar --numeric-owner --xattrs --acls -C "$1" -cf - . | zstd -T0 "-$2" -o "$3"' \
+    sh "$rootfs" "$zstd_level" "$artifact_path"
   compression_finished=$(timing_now_ms)
   artifact_size=$(stat -c '%s' "$artifact_path")
-  measurement_emit "artifact_compression" "artifact=$name" "codec=zstd" "level=$zstd_level" "duration_ms=$((compression_finished - compression_started))" "size_bytes=$artifact_size"
+  compression_wall_ms=$(awk '{printf "%d", $1 * 1000}' "$compression_timing")
+  compression_user_ms=$(awk '{printf "%d", $2 * 1000}' "$compression_timing")
+  compression_system_ms=$(awk '{printf "%d", $3 * 1000}' "$compression_timing")
+  compression_ratio=$(awk -v raw="$rootfs_apparent_bytes" -v compressed="$artifact_size" 'BEGIN { if (compressed > 0) printf "%.6f", raw / compressed; else print "0" }')
+  build_duration_ms=
+  if [ -n "${artifact_build_start_ms:-}" ]; then
+    build_duration_ms=$((compression_finished - artifact_build_start_ms))
+  fi
+  measurement_emit "artifact_inventory" "artifact=$name" "rootfs_apparent_bytes=$rootfs_apparent_bytes" "rootfs_allocated_bytes=$rootfs_allocated_bytes" "file_count=$rootfs_file_count" "compressed_bytes=$artifact_size"
+  measurement_emit "artifact_compression" "artifact=$name" "codec=zstd" "level=$zstd_level" "duration_ms=$compression_wall_ms" "cpu_user_ms=$compression_user_ms" "cpu_system_ms=$compression_system_ms" "size_bytes=$artifact_size" "compression_ratio=$compression_ratio" "build_duration_ms=${build_duration_ms:-0}"
   printf '%s\n' "boetticher package stage: $name checksum"
   sha256sum "$artifact_path" > "$destination/content.sha256"
 }
@@ -854,6 +875,7 @@ run_timed_image_target() {
   timed_target=$1
   shift
   timed_start=$(timing_now_ms)
+  artifact_build_start_ms=$timed_start
   "$@"
   timed_finish=$(timing_now_ms)
   timing_emit "artifact_build" "$((timed_finish - timed_start))" "$(image_artifact_name "$timed_target")"

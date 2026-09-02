@@ -267,8 +267,16 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err != nil {
 		return fmt.Errorf("digest generated portal: %w", err)
 	}
+	portalArchiveDir := filepath.Join(site.RuntimeDir(s), "portal")
+	portalSourceArchive := filepath.Join(portalArchiveDir, portalContentDigest+".tar")
+	if err := report.timed("credentials-pki", "local", "portal-archive", func() error {
+		return portal.ContentArchive(portalSourceDir, portalSourceArchive)
+	}); err != nil {
+		return fmt.Errorf("archive generated portal: %w", err)
+	}
 	runtimeVariables["portal_source_dir"] = portalSourceDir
 	runtimeVariables["portal_content_digest"] = portalContentDigest
+	runtimeVariables["portal_source_archive"] = portalSourceArchive
 	runtimeVariables["boetticher_appliance_artifact"] = true
 	// Agent installation is enabled only in the post-Pulse bootstrap pass,
 	// after the scoped report token and encrypted credential projection exist.
@@ -296,6 +304,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return renderErr
 		}
 		runtimeVariables["firewall_ruleset"] = ruleset
+		runtimeVariables["firewall_ruleset_sha256"] = firewall.RulesetDigest(ruleset)
 	}
 	authority, err := site.LoadAuthority(*siteDir, s, *ageIdentity)
 	if err != nil {
@@ -305,8 +314,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err != nil {
 		return fmt.Errorf("HOLD: load client revocations: %w", err)
 	}
-	clientCRL, err := pki.GenerateCRL(authority, revocations, time.Now().UTC())
-	if err != nil {
+	var clientCRL string
+	if err := report.timed("credentials-pki", "local", "client-crl", func() error {
+		var crlErr error
+		clientCRL, crlErr = generateOrReuseClientCRL(authority, revocations, site.RuntimeDir(s), time.Now().UTC())
+		return crlErr
+	}); err != nil {
 		return fmt.Errorf("HOLD: generate enforceable client revocation list: %w", err)
 	}
 	runtimeVariables["client_crl_pem"] = clientCRL
@@ -510,12 +523,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	report.complete()
 	report.start("appliances", "Reconcile appliance guests")
-	var firewallRunner proxmox.CommandRunner
+	var firewallRunner proxmox.SSHRunner
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		firewallRunner = applianceSSHRunner(s, *siteDir, "lab-fw-01")
 		firewallGuest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
 		if err := report.timed("appliances", "readiness", firewallGuest.Name, func() error {
-			return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, firewallRunner, firewallGuest, operatorPublicKey, deploymentKnownHosts(*siteDir), firewallGuest.Hostname+"."+s.Network.Domain, func() {
+			return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, firewallRunner.FreshConnection(), firewallGuest, operatorPublicKey, deploymentKnownHosts(*siteDir), firewallGuest.Hostname+"."+s.Network.Domain, func() {
 				rootCleanup.guestEstablished(firewallGuest)
 			})
 		}); err != nil {
@@ -603,7 +616,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			}
 			guestRunner := applianceSSHRunner(s, *siteDir, guest.Name)
 			if err := report.timed("appliances", "readiness", guest.Name, func() error {
-				return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, guestRunner, guest, operatorPublicKey, deploymentKnownHosts(*siteDir), guest.Hostname+"."+s.Network.Domain, func() {
+				return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, guestRunner.FreshConnection(), guest, operatorPublicKey, deploymentKnownHosts(*siteDir), guest.Hostname+"."+s.Network.Domain, func() {
 					rootCleanup.guestEstablished(guest)
 				})
 			}); err != nil {
@@ -693,6 +706,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			runtimeVariables["firewall_plan"] = finalVariableDocument["firewall_plan"]
 			runtimeVariables["firewall_interface_config_digests"] = finalVariableDocument["firewall_interface_config_digests"]
 			runtimeVariables["firewall_ruleset"] = finalRuleset
+			runtimeVariables["firewall_ruleset_sha256"] = firewall.RulesetDigest(finalRuleset)
 			variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
 			if err != nil {
 				return fmt.Errorf("HOLD: encode published service Ansible variables: %w", err)
@@ -707,6 +721,15 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 				return fmt.Errorf("HOLD: managed gateway did not pass publication readiness: %w", err)
 			}
 			firewallPlan = finalFirewallPlan
+			// The final limited pass has already converged the firewall using the
+			// observed upstream lease. Do not immediately run that same role
+			// again in the all-host network phase.
+			runtimeVariables["boetticher_skip_firewall"] = true
+			variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
+			if err != nil {
+				return fmt.Errorf("HOLD: encode network-phase Ansible variables: %w", err)
+			}
+			variables = append(variables, '\n')
 		}
 	}
 	for _, guest := range retainedGuests {
@@ -717,6 +740,10 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	report.complete()
 	report.start("network", "Reconcile network and DNS")
+	// The managed gateway and both DNS guests have passed their runtime
+	// readiness checks above before this all-host bootstrap/network pass. That
+	// foundation barrier makes independent host progress safe; the later
+	// health phase remains the final live gate.
 	if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report); err != nil {
 		return err
 	}
@@ -745,7 +772,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		if readErr != nil {
 			return fmt.Errorf("read endpoint-generated monitor CSR: %w", readErr)
 		}
-		monitorCertificate, err = pki.SignServerCSR(authority, string(monitorCSR), "monitor", s.Network.Domain, []string{"lab-monitor-01." + s.Network.Domain}, time.Now().UTC())
+		monitorCertificate, err = signOrReuseServerCertificate(authority, string(monitorCSR), csrDir, "monitor", "monitor", s.Network.Domain, []string{"lab-monitor-01." + s.Network.Domain})
 		if err != nil {
 			return fmt.Errorf("sign monitor endpoint CSR: %w", err)
 		}
@@ -755,7 +782,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		if readErr != nil {
 			return fmt.Errorf("read endpoint-generated LiteLLM CSR: %w", readErr)
 		}
-		litellmCertificate, err = pki.SignServerCSR(authority, string(litellmCSR), "litellm", s.Network.Domain, []string{"ai." + s.Network.Domain, "lab-litellm-01." + s.Network.Domain}, time.Now().UTC())
+		litellmCertificate, err = signOrReuseServerCertificate(authority, string(litellmCSR), csrDir, "litellm", "litellm", s.Network.Domain, []string{"ai." + s.Network.Domain, "lab-litellm-01." + s.Network.Domain})
 		if err != nil {
 			return fmt.Errorf("sign LiteLLM endpoint CSR: %w", err)
 		}
@@ -765,7 +792,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		if readErr != nil {
 			return fmt.Errorf("read endpoint-generated OctoPrint CSR: %w", readErr)
 		}
-		octoprintCertificate, err = pki.SignServerCSR(authority, string(octoprintCSR), "octoprint", s.Network.Domain, []string{"printer." + s.Network.Domain, "lab-printer-01." + s.Network.Domain}, time.Now().UTC())
+		octoprintCertificate, err = signOrReuseServerCertificate(authority, string(octoprintCSR), csrDir, "octoprint", "octoprint", s.Network.Domain, []string{"printer." + s.Network.Domain, "lab-printer-01." + s.Network.Domain})
 		if err != nil {
 			return fmt.Errorf("sign OctoPrint endpoint CSR: %w", err)
 		}
@@ -775,7 +802,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		if readErr != nil {
 			return fmt.Errorf("read endpoint-generated StreamDeck CSR: %w", readErr)
 		}
-		streamDeckCertificate, err = pki.SignServiceClientCSR(authority, string(streamDeckCSR), "lab-streamdeck-01", time.Now().UTC())
+		streamDeckCertificate, err = signOrReuseServiceClientCertificate(authority, string(streamDeckCSR), csrDir, "streamdeck", "lab-streamdeck-01")
 		if err != nil {
 			return fmt.Errorf("sign StreamDeck client CSR: %w", err)
 		}
@@ -791,12 +818,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		if readErr != nil {
 			return fmt.Errorf("read endpoint-generated Gatus CSR: %w", readErr)
 		}
-		gatusCertificate, err = pki.SignServerCSR(authority, string(csr), "gatus", s.Network.Domain, []string{"lab-gatus-01." + s.Network.Domain}, time.Now().UTC())
+		gatusCertificate, err = signOrReuseServerCertificate(authority, string(csr), csrDir, "gatus", "gatus", s.Network.Domain, []string{"lab-gatus-01." + s.Network.Domain})
 		if err != nil {
 			return fmt.Errorf("sign Gatus endpoint CSR: %w", err)
 		}
 	}
-	portalCertificate, err := pki.SignServerCSR(authority, string(portalCSR), "portal", s.Network.Domain, []string{"lab-portal-01." + s.Network.Domain}, time.Now().UTC())
+	portalCertificate, err := signOrReuseServerCertificate(authority, string(portalCSR), csrDir, "portal", "portal", s.Network.Domain, []string{"lab-portal-01." + s.Network.Domain})
 	if err != nil {
 		return fmt.Errorf("sign portal endpoint CSR: %w", err)
 	}
@@ -867,7 +894,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			if err != nil {
 				return fmt.Errorf("open AI Router canary tunnel through Proxmox bastion: %w", err)
 			}
-			if err := qualifyAndConfigureAIOps(ctx, *siteDir, *ageIdentity, s, authority, clientCertificate, pulseAdmin, aiRouterForward.Address(), runtimeVariables, ansiblePlaybook, inventoryPath, report); err != nil {
+			if err := qualifyAndConfigureAIOps(ctx, *siteDir, *ageIdentity, s, authority, clientCertificate, pulseAdmin, pulseBaseURL, aiRouterForward.Address(), runtimeVariables, ansiblePlaybook, inventoryPath, report); err != nil {
 				return fmt.Errorf("HOLD: AIOps qualification failed: %w", err)
 			}
 		}
@@ -1073,11 +1100,8 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 				return marshalErr
 			}
 			streamDeckVariables = append(streamDeckVariables, '\n')
-			streamDeckStarted := time.Now()
-			streamDeckErr := ansible.RunLimited(ctx, ansiblePlaybook, inventoryPath, streamDeckVariables, "lab-streamdeck-01")
-			report.recordTiming("health", "ansible", "lab-streamdeck-01", streamDeckStarted)
-			if streamDeckErr != nil {
-				return fmt.Errorf("install StreamDeck runtime: %w", streamDeckErr)
+			if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, streamDeckVariables, "lab-streamdeck-01", ansible.PhaseHealth, report); err != nil {
+				return fmt.Errorf("install StreamDeck runtime: %w", err)
 			}
 		}
 	}
@@ -1388,7 +1412,7 @@ func signLoggingCertificates(authority pki.Authority, s model.Site, csrDir strin
 		if err != nil {
 			return nil, "", fmt.Errorf("read %s logging CSR: %w", component.Name, err)
 		}
-		certificate, err := pki.SignClientCSR(authority, string(csr), component.Name, s.Network.Domain, time.Now().UTC())
+		certificate, err := signOrReuseEndpointClientCertificate(authority, string(csr), csrDir, "logging-"+component.Name, component.Name, s.Network.Domain)
 		if err != nil {
 			return nil, "", fmt.Errorf("sign %s logging CSR: %w", component.Name, err)
 		}
@@ -1398,7 +1422,7 @@ func signLoggingCertificates(authority pki.Authority, s model.Site, csrDir strin
 	if err != nil {
 		return nil, "", fmt.Errorf("read logging collector CSR: %w", err)
 	}
-	collector, err := pki.SignServerCSR(authority, string(collectorCSR), "logs", s.Network.Domain, []string{"lab-log-01." + s.Network.Domain}, time.Now().UTC())
+	collector, err := signOrReuseServerCertificate(authority, string(collectorCSR), csrDir, "logging-collector", "logs", s.Network.Domain, []string{"lab-log-01." + s.Network.Domain})
 	if err != nil {
 		return nil, "", fmt.Errorf("sign logging collector CSR: %w", err)
 	}
@@ -1406,7 +1430,6 @@ func signLoggingCertificates(authority pki.Authority, s model.Site, csrDir strin
 }
 
 func signAIOpsCertificates(authority pki.Authority, s model.Site, csrDir string) (map[string]string, error) {
-	now := time.Now().UTC()
 	readCSR := func(name string) (string, error) {
 		data, err := os.ReadFile(filepath.Join(csrDir, name+".csr.pem"))
 		if err != nil {
@@ -1427,7 +1450,7 @@ func signAIOpsCertificates(authority pki.Authority, s model.Site, csrDir string)
 		if err != nil {
 			return nil, err
 		}
-		certificate, err := pki.SignServerCSR(authority, csr, request.identity, s.Network.Domain, request.aliases, now)
+		certificate, err := signOrReuseServerCertificate(authority, csr, csrDir, request.file, request.identity, s.Network.Domain, request.aliases)
 		if err != nil {
 			return nil, fmt.Errorf("sign %s CSR: %w", request.file, err)
 		}
@@ -1444,7 +1467,7 @@ func signAIOpsCertificates(authority pki.Authority, s model.Site, csrDir string)
 		if err != nil {
 			return nil, err
 		}
-		certificate, err := pki.SignServiceClientCSR(authority, csr, request.identity, now)
+		certificate, err := signOrReuseServiceClientCertificate(authority, csr, csrDir, request.file, request.identity)
 		if err != nil {
 			return nil, fmt.Errorf("sign %s CSR: %w", request.file, err)
 		}
@@ -1453,7 +1476,7 @@ func signAIOpsCertificates(authority pki.Authority, s model.Site, csrDir string)
 	return result, nil
 }
 
-func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, s model.Site, authority pki.Authority, controllerCertificate pki.ClientCertificate, pulseAdmin *pulse.Client, routerForwardAddress string, runtimeVariables map[string]any, ansiblePlaybook, inventoryPath string, report *deploymentReport) error {
+func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, s model.Site, authority pki.Authority, controllerCertificate pki.ClientCertificate, pulseAdmin *pulse.Client, pulseBaseURL, routerForwardAddress string, runtimeVariables map[string]any, ansiblePlaybook, inventoryPath string, report *deploymentReport) error {
 	modelConfig, err := selectedAIOpsModel(s)
 	if err != nil {
 		return err
@@ -1496,7 +1519,19 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 	if err != nil {
 		return err
 	}
-	if err := pulseAdmin.ValidateReadToken(ctx, readToken); err != nil {
+	pulseReadCertificate, err := pki.IssueClient(authority, "boetticher-pulse-read", s.Network.Domain, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("issue AIOps Pulse read client certificate: %w", err)
+	}
+	pulseRead, err := pulse.NewReadClient(pulse.ClientConfig{
+		BaseURL: pulseBaseURL, APIToken: readToken,
+		CAPEM: authority.IssuingCertPEM, ClientCertPEM: pulseReadCertificate.CertPEM, ClientKeyPEM: pulseReadCertificate.KeyPEM,
+		ServerName: "monitor." + s.Network.Domain,
+	})
+	if err != nil {
+		return fmt.Errorf("configure AIOps Pulse read client: %w", err)
+	}
+	if _, err := pulseRead.StateSummary(ctx); err != nil {
 		if !pulse.IsUnauthorized(err) {
 			return fmt.Errorf("validate AIOps Pulse read token: %w", err)
 		}
@@ -1508,6 +1543,17 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 			return fmt.Errorf("store refreshed AIOps Pulse read token: %w", err)
 		}
 		report.recordMutation("Secrets", "aiops_pulse_read_token", "credential refreshed", true)
+		pulseRead, err = pulse.NewReadClient(pulse.ClientConfig{
+			BaseURL: pulseBaseURL, APIToken: readToken,
+			CAPEM: authority.IssuingCertPEM, ClientCertPEM: pulseReadCertificate.CertPEM, ClientKeyPEM: pulseReadCertificate.KeyPEM,
+			ServerName: "monitor." + s.Network.Domain,
+		})
+		if err != nil {
+			return fmt.Errorf("reconfigure AIOps Pulse read client: %w", err)
+		}
+		if _, err := pulseRead.StateSummary(ctx); err != nil {
+			return fmt.Errorf("validate refreshed AIOps Pulse read token: %w", err)
+		}
 	}
 	if created {
 		report.recordMutation("Secrets", "aiops_pulse_read_token", "credential stored", true)
@@ -1556,7 +1602,7 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 	if err != nil {
 		return err
 	}
-	return runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, append(variables, '\n'), "lab-aiops-01", report)
+	return runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, append(variables, '\n'), "lab-aiops-01", ansible.PhaseHealth, report)
 }
 
 func selectedAIOpsModel(s model.Site) (model.LiteLLMModelConfig, error) {
@@ -1737,22 +1783,49 @@ func (c *temporaryRootCleanup) revoke(ctx context.Context) error {
 }
 
 func revokeTemporaryRootAccessForGuests(ctx context.Context, s model.Site, siteDir string, guests []proxmox.GuestPlan, operatorPublicKey string, host bool) error {
+	return revokeTemporaryRootAccessForGuestsWith(ctx, s, siteDir, guests, operatorPublicKey, host, proxmox.RevokeTemporaryRootAccess)
+}
+
+type temporaryRootRevoker func(context.Context, proxmox.CommandRunner, string, string, string, bool) error
+
+func revokeTemporaryRootAccessForGuestsWith(ctx context.Context, s model.Site, siteDir string, guests []proxmox.GuestPlan, operatorPublicKey string, host bool, revoke temporaryRootRevoker) error {
+	type target struct {
+		name    string
+		address string
+		isHost  bool
+		runner  proxmox.CommandRunner
+	}
+	targets := make([]target, 0, len(guests)+1)
 	for _, guest := range guests {
 		if guest.Owner == "" || guest.Address == "" {
 			continue
 		}
-		runner := applianceSSHRunner(s, siteDir, guest.Name)
-		if err := proxmox.RevokeTemporaryRootAccess(ctx, runner, guest.Address, "root", operatorPublicKey, false); err != nil {
-			return fmt.Errorf("revoke root access on %s: %w", guest.Name, err)
-		}
+		targets = append(targets, target{name: guest.Name, address: guest.Address, runner: applianceSSHRunner(s, siteDir, guest.Name)})
 	}
 	if host {
-		hostRunner := proxmoxRootSSHRunner(s, siteDir)
-		if err := proxmox.RevokeTemporaryRootAccess(ctx, hostRunner, s.BootstrapAddress, "root", operatorPublicKey, true); err != nil {
-			return fmt.Errorf("revoke root access on %s: %w", model.LogicalProxmoxIdentity, err)
-		}
+		targets = append(targets, target{name: model.LogicalProxmoxIdentity, address: s.BootstrapAddress, isHost: true, runner: proxmoxRootSSHRunner(s, siteDir)})
 	}
-	return nil
+	if len(targets) == 0 {
+		return nil
+	}
+
+	// Cleanup is a security boundary, not a best-effort loop. An unreachable
+	// guest must not prevent attempts against every other exact target,
+	// especially the Proxmox host. Run the independent revocations together so
+	// one slow SSH failure cannot consume the entire bounded cleanup window.
+	errs := make([]error, len(targets))
+	var wg sync.WaitGroup
+	for index, item := range targets {
+		wg.Add(1)
+		go func(index int, item target) {
+			defer wg.Done()
+			if err := revoke(ctx, item.runner, item.address, "root", operatorPublicKey, item.isHost); err != nil {
+				errs[index] = fmt.Errorf("revoke root access on %s: %w", item.name, err)
+			}
+		}(index, item)
+	}
+	wg.Wait()
+	return errors.Join(errs...)
 }
 
 func retainedGuestPlans(s model.Site) ([]proxmox.GuestPlan, error) {
@@ -1978,6 +2051,11 @@ func runTrackedAnsiblePhase(ctx context.Context, playbook, inventory string, var
 	if report != nil {
 		report.recordAnsibleTaskTimings(phase, result.TaskTimings)
 		report.recordAnsibleTaskBatches(phase, result.TaskBatchTimings)
+		for _, timing := range result.TaskTimings {
+			for _, marker := range timing.Markers {
+				fmt.Fprintf(report.out, "      Observation: %s (%s)\n", marker, timing.Host)
+			}
+		}
 		target := limit
 		if target == "" {
 			target = "all managed targets"

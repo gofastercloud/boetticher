@@ -272,7 +272,10 @@ func TestConfigureSensitiveFieldIsStructurallyRedacted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	changes := configureChanges("litellm", before, after, current, proposed, fields, nil)
+	changes, err := configureChanges("litellm", before, after, current, proposed, fields, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	data, _ := json.Marshal(changes)
 	if strings.Contains(string(data), "super-secret") {
 		t.Fatalf("sensitive field leaked into change report: %s", data)

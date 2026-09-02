@@ -30,6 +30,10 @@ func TestOperationMeasurementsAggregateLowCardinalityKeys(t *testing.T) {
 		Category: "ansible", Operation: "playbook", Target: "all",
 		Status: 0, Duration: 2 * time.Second, Success: true, Changed: true,
 	})
+	measurements.Observe(telemetry.Event{
+		Category: "artifact_transfer", Operation: "controller_to_proxmox", Target: "import",
+		Bytes: 4096, Duration: 50 * time.Millisecond, Success: true, Changed: true,
+	})
 
 	if measurements.ProxmoxAPI.Count != 2 || measurements.ProxmoxAPI.DurationMS != 200 {
 		t.Fatalf("unexpected Proxmox measurements: %+v", measurements.ProxmoxAPI)
@@ -40,6 +44,9 @@ func TestOperationMeasurementsAggregateLowCardinalityKeys(t *testing.T) {
 	if measurements.Ansible.Count != 1 || measurements.Ansible.Changed != 1 {
 		t.Fatalf("unexpected Ansible measurements: %+v", measurements.Ansible)
 	}
+	if measurements.Artifact.Count != 1 || measurements.Artifact.Bytes != 4096 || measurements.Artifact.DurationMS != 50 || measurements.Artifact.Changed != 1 {
+		t.Fatalf("unexpected artifact transfer measurements: %+v", measurements.Artifact)
+	}
 	if measurements.ProviderAPI.Count != 1 || measurements.ProviderAPI.DurationMS != 40 {
 		t.Fatalf("unexpected provider measurements: %+v", measurements.ProviderAPI)
 	}
@@ -48,7 +55,7 @@ func TestOperationMeasurementsAggregateLowCardinalityKeys(t *testing.T) {
 			t.Fatalf("measurement key retained high-cardinality identity: %q", key)
 		}
 	}
-	if got := measurements.summaryLine(); !strings.Contains(got, "Proxmox API 2") || !strings.Contains(got, "Provider API 1") || !strings.Contains(got, "SSH 1") || !strings.Contains(got, "Ansible 1") {
+	if got := measurements.summaryLine(); !strings.Contains(got, "Proxmox API 2") || !strings.Contains(got, "Provider API 1") || !strings.Contains(got, "SSH 1") || !strings.Contains(got, "Ansible 1") || !strings.Contains(got, "artifact transfer 1") {
 		t.Fatalf("unexpected measurement summary: %s", got)
 	}
 }

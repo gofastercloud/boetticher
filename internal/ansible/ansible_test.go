@@ -44,6 +44,9 @@ func TestPhaseVariablesExposeOnlySafeDeploymentPhaseMetadata(t *testing.T) {
 	if _, err := phaseVariables([]byte(`{}`), "unexpected"); err == nil {
 		t.Fatal("unsupported phase was accepted")
 	}
+	if _, err := phaseVariables([]byte(`{}`), PhaseHealth); err != nil {
+		t.Fatalf("health phase was rejected: %v", err)
+	}
 }
 
 func TestServicePhaseSkipsNetworkOnlyRoles(t *testing.T) {
@@ -53,12 +56,13 @@ func TestServicePhaseSkipsNetworkOnlyRoles(t *testing.T) {
 	}
 	text := string(contents)
 	for _, expected := range []string{
-		"- role: dns\n      when:\n        - inventory_hostname in groups.get('dns', [])\n        - boetticher_deploy_phase | default('full') != 'services'",
-		"- role: firewall\n      when:\n        - inventory_hostname in groups.get('firewall', [])\n        - boetticher_deploy_phase | default('full') != 'services'",
-		"- role: tailnet-router\n      when:\n        - inventory_hostname in groups.get('tailnet-router', [])\n        - boetticher_deploy_phase | default('full') != 'services'",
-		"- role: chrony\n      when: boetticher_deploy_phase | default('full') != 'services'",
-		"- role: usb-export-host\n      when: boetticher_deploy_phase | default('full') != 'services'",
-		"- role: network-probe-host\n      when: boetticher_deploy_phase | default('full') != 'services'",
+		"- role: dns\n      when:\n        - inventory_hostname in groups.get('dns', [])\n        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']",
+		"- role: firewall\n      when:\n        - inventory_hostname in groups.get('firewall', [])\n        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']",
+		"- role: firewall\n      when:\n        - inventory_hostname in groups.get('firewall', [])\n        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']\n        - not (boetticher_skip_firewall | default(false) | bool)",
+		"- role: tailnet-router\n      when:\n        - inventory_hostname in groups.get('tailnet-router', [])\n        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']",
+		"- role: chrony\n      when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']",
+		"- role: usb-export-host\n      when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']",
+		"- role: network-probe-host\n      when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("site playbook is missing service-phase guard block %q", expected)
@@ -84,11 +88,19 @@ func TestStableBaseTasksSkipServicesButFinalTasksRemain(t *testing.T) {
 		"Generate endpoint-local logging CSR",
 		"Install the asynchronous journal-upload configuration skeleton",
 		"Install bounded journal-upload retry policy",
+	} {
+		block := ansibleTaskBlock(text, name)
+		if block == "" || !strings.Contains(block, "boetticher_deploy_phase | default('full') in ['full', 'bootstrap']") {
+			t.Fatalf("stable base task %q is not guarded from the services phase", name)
+		}
+	}
+	for _, name := range []string{
+		"Create declared systemd credential drop-in directories",
 		"Install declared systemd credential drop-ins",
 	} {
 		block := ansibleTaskBlock(text, name)
 		if block == "" || !strings.Contains(block, "boetticher_deploy_phase | default('full') != 'services'") {
-			t.Fatalf("stable base task %q is not guarded from the services phase", name)
+			t.Fatalf("runtime base task %q is not available outside the services phase", name)
 		}
 	}
 	for _, name := range []string{
@@ -114,6 +126,12 @@ func TestPortalPublicationIsDeferredToServicesPhase(t *testing.T) {
 	if !strings.Contains(block, "portal_publication_state.rc | default(1) != 0") {
 		t.Fatal("portal publication does not have a live content and metadata drift gate")
 	}
+	if !strings.Contains(string(contents), "portal_source_archive") || !strings.Contains(block, "ansible.builtin.unarchive") || !strings.Contains(block, "Atomically activate the new portal current link") {
+		t.Fatal("portal publication is not content-addressed and transactional")
+	}
+	if strings.Contains(block, "mode: \"0644\"") || !strings.Contains(block, "-type d \\( ! -user root") {
+		t.Fatal("portal publication must preserve and validate executable directory modes separately from file modes")
+	}
 }
 
 func TestFirewallInterfaceTemplatesUseOneLiveDriftProbe(t *testing.T) {
@@ -130,6 +148,25 @@ func TestFirewallInterfaceTemplatesUseOneLiveDriftProbe(t *testing.T) {
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("firewall role is missing live interface drift guard %q", expected)
+		}
+	}
+}
+
+func TestFirewallRulesetTransferIsGatedByLiveContentDigest(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, expected := range []string{
+		"firewall_ruleset_sha256 is match('^[0-9a-f]{64}$')",
+		"Check the managed gateway nftables ruleset for drift",
+		"sha256sum \"$path\"",
+		"firewall_ruleset_state.rc != 0",
+		"Apply the validated ruleset before enabling forwarding",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("firewall role is missing content-addressed ruleset guard %q", expected)
 		}
 	}
 }
@@ -426,6 +463,32 @@ func TestGeneratedSSHConfigPathIsBoundToInventoryProjection(t *testing.T) {
 	}
 }
 
+func TestAnsibleStrategyAllowsParallelConvergenceOnlyAfterFoundation(t *testing.T) {
+	t.Setenv("ANSIBLE_STRATEGY", "free")
+	for _, test := range []struct {
+		phase string
+		want  string
+	}{
+		{phase: PhaseFull, want: defaultAnsibleStrategy},
+		{phase: PhaseBootstrap, want: parallelAnsibleStrategy},
+		{phase: PhaseServices, want: parallelAnsibleStrategy},
+		{phase: PhaseHealth, want: defaultAnsibleStrategy},
+	} {
+		environment := ansibleEnvironment("ansible/site.yml", "", test.phase)
+		prefix := "ANSIBLE_STRATEGY="
+		got := ""
+		for _, entry := range environment {
+			if strings.HasPrefix(entry, prefix) {
+				got = strings.TrimPrefix(entry, prefix)
+				break
+			}
+		}
+		if got != test.want {
+			t.Fatalf("ANSIBLE_STRATEGY for phase %q = %q, want %q", test.phase, got, test.want)
+		}
+	}
+}
+
 func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	tempDir := t.TempDir()
 	inventoryPath := filepath.Join(tempDir, "site", "generated", "ansible", "inventory.ini")
@@ -440,7 +503,7 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	forksPath := filepath.Join(tempDir, "forks")
 	inputPath := filepath.Join(tempDir, "input")
 	scriptPath := filepath.Join(tempDir, "ansible-playbook")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ANSIBLE_ARGS_FILE\"\nprintf '%s' \"$ANSIBLE_FORKS\" > \"$ANSIBLE_FORKS_FILE\"\ncat > \"$ANSIBLE_INPUT_FILE\"\nif [ -n \"$BOETTICHER_ANSIBLE_TIMING_FILE\" ]; then printf '%s\\n' '{\"host\":\"lab-fw-01\",\"task\":\"fake task\",\"path\":\"fake.yml:1\",\"status\":\"ok\",\"duration_ms\":3,\"changed\":false}' '{\"event\":\"task_batch\",\"task\":\"fake batch\",\"path\":\"fake.yml:2\",\"duration_ms\":7}' >> \"$BOETTICHER_ANSIBLE_TIMING_FILE\"; fi\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ANSIBLE_ARGS_FILE\"\nprintf '%s' \"$ANSIBLE_FORKS\" > \"$ANSIBLE_FORKS_FILE\"\ncat > \"$ANSIBLE_INPUT_FILE\"\nif [ -n \"$BOETTICHER_ANSIBLE_TIMING_FILE\" ]; then printf '%s\\n' '{\"host\":\"lab-fw-01\",\"task\":\"fake task\",\"path\":\"fake.yml:1\",\"status\":\"ok\",\"duration_ms\":3,\"changed\":false,\"markers\":[\"dns-metadata-drift:servers.lab.home.arpa:ALLOW-DNSUPDATE-FROM:20:1:27ee1412f884f2f2:20:27ee1412\"]}' '{\"event\":\"task_batch\",\"task\":\"fake batch\",\"path\":\"fake.yml:2\",\"duration_ms\":7}' >> \"$BOETTICHER_ANSIBLE_TIMING_FILE\"; fi\n"
 	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -466,6 +529,9 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	}
 	if len(result.TaskTimings) != 1 || result.TaskTimings[0].Task != "fake task" {
 		t.Fatalf("Ansible task timings = %+v, want one fake task timing", result.TaskTimings)
+	}
+	if len(result.TaskTimings[0].Markers) != 1 || result.TaskTimings[0].Markers[0] != "dns-metadata-drift:servers.lab.home.arpa:ALLOW-DNSUPDATE-FROM:20:1:27ee1412f884f2f2:20:27ee1412" {
+		t.Fatalf("Ansible task markers = %+v, want the safe DNS observation marker", result.TaskTimings[0].Markers)
 	}
 	if len(result.TaskBatchTimings) != 1 || result.TaskBatchTimings[0].Task != "fake batch" || result.TaskBatchTimings[0].DurationMS != 7 {
 		t.Fatalf("Ansible task batch timings = %+v, want one fake batch timing", result.TaskBatchTimings)
@@ -1273,14 +1339,52 @@ func TestDNSAuthoritativeUpdatesAreGatedByLiveRRsetState(t *testing.T) {
 	}
 	text := string(data)
 	for _, expected := range []string{
+		"Check whether the PowerDNS database exists",
+		"not powerdns_database.stat.exists",
 		"Initialize authoritative NS records on the primary when changed",
 		"Publish model-owned static DNS records to the primary when changed",
 		"pdnsutil list-zone",
+		"Remove exact malformed PowerDNS static rrsets from the prior boetticher attempt",
+		"updated=0",
+		"changed_when: \"'updated' in malformed_static_rrsets.stdout\"",
+		"changed_when: \"'updated' in malformed_ns_rrsets.stdout\"",
 		"changed_when: \"'updated' in static_dns_records.stdout\"",
+		"$4 == \"NS\"",
+		"$5 == \"lab-dns-01.{{ dns_plan.static_zone }}.\"",
+		"pdnsutil delete-rrset {{ item | quote }} {{ item | quote }} NS",
+		"$4 == record_type",
+		"normalized($5) == normalized(wanted)",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("DNS role is missing live RRset convergence guard %q", expected)
 		}
+	}
+	if strings.Contains(text, "loop: \"{{ dns_plan.static_records }}\"") {
+		t.Fatal("DNS role still runs one malformed static-record probe per record")
+	}
+}
+
+func TestDNSDDNSMetadataIsReconciledAgainstLivePowerDNSState(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, expected := range []string{
+		"Reconcile Kea DDNS metadata on the primary when changed",
+		"pdnsutil get-meta",
+		"metadata_values()",
+		"tr ',' ' '",
+		"pdnsutil set-meta \"$zone\" ALLOW-DNSUPDATE-FROM {% for source in dns_plan.ddns.update_sources %}{{ source | quote }} {% endfor %};",
+		"changed_when: \"'updated' in ddns_metadata.stdout\"",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("DNS role is missing DDNS metadata convergence guard %q", expected)
+		}
+	}
+	if strings.Contains(text, "Authorize Kea DDNS updates for dynamic forward zones") || strings.Contains(text, "Authorize Kea DDNS updates for reverse zones") {
+		t.Fatal("DNS role retains unconditional forward or reverse DDNS metadata tasks")
 	}
 }
 
@@ -1309,10 +1413,13 @@ func TestApplianceRolesDoNotMutateModuleSoftware(t *testing.T) {
 			t.Fatal(err)
 		}
 		text := string(data)
-		for _, forbidden := range []string{"ansible.builtin.apt:", "ansible.builtin.apt_repository:", "ansible.builtin.get_url:", "ansible.builtin.unarchive:"} {
+		for _, forbidden := range []string{"ansible.builtin.apt:", "ansible.builtin.apt_repository:", "ansible.builtin.get_url:"} {
 			if strings.Contains(text, forbidden) {
 				t.Fatalf("%s appliance role retains software mutation task %q", role, forbidden)
 			}
+		}
+		if role != "portal" && strings.Contains(text, "ansible.builtin.unarchive:") {
+			t.Fatalf("%s appliance role retains software mutation task %q", role, "ansible.builtin.unarchive:")
 		}
 		if !strings.Contains(text, "boetticher_appliance_artifact") {
 			t.Fatalf("%s appliance role does not require the qualified artifact path", role)
@@ -1477,6 +1584,9 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 				"ssl_verify_client on;",
 				"proxy_pass http://127.0.0.1:5000;",
 				"listen 10.10.20.80:443 ssl;",
+				"Wait for the OctoPrint backend before advertising the endpoint",
+				"url: http://127.0.0.1:5000/",
+				"until: octoprint_backend.status | default(0) == 200",
 				"Verify a client without a certificate is rejected before OctoPrint",
 				"ca_path: /var/lib/boetticher/identity/tls/client-ca.pem",
 				"status_code: 400",

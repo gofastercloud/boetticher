@@ -4,12 +4,12 @@
     that: boetticher_appliance_artifact | default(false) | bool
     fail_msg: "Portal runtime configuration requires a qualified boetticher appliance artifact"
 
-- name: Require a controller-built portal artifact
+- name: Require a controller-built portal archive
   ansible.builtin.assert:
     that:
-      - portal_source_dir is defined
-      - portal_source_dir | length > 0
-    fail_msg: "portal_source_dir must point to the controller-built static portal"
+      - portal_source_archive is defined
+      - portal_source_archive | length > 0
+    fail_msg: "portal_source_archive must point to the controller-built static portal archive"
 
 - name: Require the controller portal content digest
   ansible.builtin.assert:
@@ -36,12 +36,29 @@
     group: root
     mode: "0755"
 
+- name: Create content-addressed portal release root
+  ansible.builtin.file:
+    path: /var/www/boetticher/releases
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Check the published portal content and metadata
   ansible.builtin.shell: |
     set -eu
-    root=/var/www/boetticher
+    current=/var/www/boetticher/current
+    [ -L "$current" ] || exit 1
+    root="$(readlink -f "$current")"
+    case "$root" in
+      /var/www/boetticher/releases/*) ;;
+      *) exit 1 ;;
+    esac
     [ -d "$root" ] || exit 1
     if find "$root" -type l -print -quit | grep -q .; then
+      exit 1
+    fi
+    if find "$root" -type d \( ! -user root -o ! -group root -o ! -perm 0755 \) -print -quit | grep -q .; then
       exit 1
     fi
     if find "$root" -type f \( ! -user root -o ! -group root -o ! -perm 0644 \) -print -quit | grep -q .; then
@@ -61,13 +78,127 @@
   failed_when: false
   when: boetticher_deploy_phase | default('full') != 'bootstrap'
 
-- name: Publish generated portal when content or metadata changed
-  ansible.builtin.copy:
-    src: "{{ portal_source_dir }}/"
-    dest: /var/www/boetticher/
-    owner: root
-    group: root
-    mode: "0644"
+- name: Publish generated portal transactionally when content or metadata changed
+  block:
+    - name: Refuse an unmanaged portal current path
+      ansible.builtin.shell: |
+        set -eu
+        current=/var/www/boetticher/current
+        if [ -e "$current" ] && [ ! -L "$current" ]; then
+          exit 1
+        fi
+      args:
+        executable: /bin/sh
+      changed_when: false
+
+    - name: Remove abandoned portal staging paths
+      ansible.builtin.file:
+        path: "/var/www/boetticher/.staging-{{ portal_content_digest }}"
+        state: absent
+
+    - name: Create portal staging path
+      ansible.builtin.file:
+        path: "/var/www/boetticher/.staging-{{ portal_content_digest }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Extract the deterministic portal archive into staging
+      ansible.builtin.unarchive:
+        src: "{{ portal_source_archive }}"
+        dest: "/var/www/boetticher/.staging-{{ portal_content_digest }}"
+        remote_src: false
+        owner: root
+        group: root
+
+    - name: Validate staged portal content and metadata
+      ansible.builtin.shell: |
+        set -eu
+        root=/var/www/boetticher/.staging-{{ portal_content_digest }}
+        if find "$root" -type l -print -quit | grep -q .; then
+          exit 1
+        fi
+        if find "$root" -type d \( ! -user root -o ! -group root -o ! -perm 0755 \) -print -quit | grep -q .; then
+          exit 1
+        fi
+        if find "$root" -type f \( ! -user root -o ! -group root -o ! -perm 0644 \) -print -quit | grep -q .; then
+          exit 1
+        fi
+        actual="$({
+          find "$root" -type f -printf '%P\n' | LC_ALL=C sort
+        } | while IFS= read -r relative; do
+          printf '%s\0' "$relative"
+          cat "$root/$relative"
+        done | sha256sum | awk '{print $1}')"
+        [ "$actual" = "{{ portal_content_digest }}" ]
+      args:
+        executable: /bin/sh
+      changed_when: false
+
+    - name: Refuse an unmanaged existing portal release
+      ansible.builtin.shell: |
+        set -eu
+        root=/var/www/boetticher/releases/{{ portal_content_digest }}
+        if [ ! -e "$root" ] && [ ! -L "$root" ]; then
+          exit 0
+        fi
+        [ -d "$root" ] && [ ! -L "$root" ] || exit 1
+        if find "$root" -type l -print -quit | grep -q .; then
+          exit 1
+        fi
+        if find "$root" -type d \( ! -user root -o ! -group root -o ! -perm 0755 \) -print -quit | grep -q .; then
+          exit 1
+        fi
+        if find "$root" -type f \( ! -user root -o ! -group root -o ! -perm 0644 \) -print -quit | grep -q .; then
+          exit 1
+        fi
+      args:
+        executable: /bin/sh
+      changed_when: false
+
+    - name: Replace the exact content-addressed portal release
+      ansible.builtin.file:
+        path: "/var/www/boetticher/releases/{{ portal_content_digest }}"
+        state: absent
+
+    - name: Install the validated portal release
+      ansible.builtin.command:
+        argv:
+          - mv
+          - -T
+          - "/var/www/boetticher/.staging-{{ portal_content_digest }}"
+          - "/var/www/boetticher/releases/{{ portal_content_digest }}"
+
+    - name: Remove the temporary portal current link
+      ansible.builtin.file:
+        path: "/var/www/boetticher/.current-{{ portal_content_digest }}"
+        state: absent
+
+    - name: Create the new portal current link
+      ansible.builtin.command:
+        argv:
+          - ln
+          - -s
+          - "/var/www/boetticher/releases/{{ portal_content_digest }}"
+          - "/var/www/boetticher/.current-{{ portal_content_digest }}"
+
+    - name: Atomically activate the new portal current link
+      ansible.builtin.command:
+        argv:
+          - mv
+          - -T
+          - "/var/www/boetticher/.current-{{ portal_content_digest }}"
+          - /var/www/boetticher/current
+  always:
+    - name: Remove portal staging path after publication attempt
+      ansible.builtin.file:
+        path: "/var/www/boetticher/.staging-{{ portal_content_digest }}"
+        state: absent
+    - name: Remove portal temporary current link after publication attempt
+      ansible.builtin.file:
+        path: "/var/www/boetticher/.current-{{ portal_content_digest }}"
+        state: absent
   when:
     - boetticher_deploy_phase | default('full') != 'bootstrap'
     - portal_publication_state.rc | default(1) != 0
@@ -169,7 +300,7 @@
       server {
           listen 10.10.10.30:443 ssl;
           server_name portal.lab.home.arpa;
-          root /var/www/boetticher;
+          root /var/www/boetticher/current;
           index index.html;
 
           ssl_certificate /etc/boetticher/tls/portal.crt.pem;

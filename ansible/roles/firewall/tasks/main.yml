@@ -11,6 +11,8 @@
       - firewall_plan.mode == 'managed'
       - firewall_ruleset is defined
       - firewall_ruleset | length > 0
+      - firewall_ruleset_sha256 is defined
+      - firewall_ruleset_sha256 is match('^[0-9a-f]{64}$')
   no_log: true
 
 - name: Allow Kea DDNS to read its systemd credential
@@ -212,6 +214,25 @@
     group: root
     mode: '0755'
 
+- name: Check the managed gateway nftables ruleset for drift
+  ansible.builtin.shell: |
+    set -u
+    path=/etc/nftables.d/boetticher.nft
+    if [ -L "$path" ]; then
+      exit 1
+    fi
+    actual="$(sha256sum "$path" 2>/dev/null | awk '{print $1}' || true)"
+    metadata="$(stat -c '%U:%G:%a' "$path" 2>/dev/null || true)"
+    if [ "$actual" = {{ firewall_ruleset_sha256 | quote }} ] && [ "$metadata" = "root:root:600" ]; then
+      exit 0
+    fi
+    exit 1
+  args:
+    executable: /bin/sh
+  register: firewall_ruleset_state
+  changed_when: false
+  failed_when: false
+
 - name: Install the candidate boetticher nftables ruleset
   ansible.builtin.copy:
     content: "{{ firewall_ruleset }}"
@@ -219,11 +240,13 @@
     owner: root
     group: root
     mode: '0600'
+  when: firewall_ruleset_state.rc != 0
 
 - name: Validate the candidate boetticher nftables ruleset
   ansible.builtin.command:
     argv: [nft, -c, -f, /run/boetticher.nft.new]
   changed_when: false
+  when: firewall_ruleset_state.rc != 0
 
 - name: Keep the last known-good boetticher nftables ruleset
   ansible.builtin.copy:
@@ -234,6 +257,7 @@
     group: root
     mode: '0600'
   failed_when: false
+  when: firewall_ruleset_state.rc != 0
 
 - name: Install the validated boetticher nftables ruleset atomically
   ansible.builtin.copy:
@@ -244,6 +268,7 @@
     group: root
     mode: '0600'
   notify: reload boetticher nftables
+  when: firewall_ruleset_state.rc != 0
 
 - name: Configure nftables to load the boetticher ruleset
   ansible.builtin.copy:

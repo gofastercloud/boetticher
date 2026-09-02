@@ -36,23 +36,35 @@ const maxAnsibleDiagnosticBytes = 16 * 1024
 const defaultAnsibleForks = "8"
 
 const (
+	// The converge orchestrator establishes the network foundation before its
+	// all-host bootstrap pass, and the services pass follows it. Both passes
+	// can progress independent guests without waiting at every task barrier.
+	// Full and health remain linear to preserve ordered limited gates.
+	defaultAnsibleStrategy  = "linear"
+	parallelAnsibleStrategy = "free"
+)
+
+const (
 	PhaseFull      = "full"
 	PhaseBootstrap = "bootstrap"
 	PhaseServices  = "services"
+	PhaseHealth    = "health"
 )
 
 const maxAnsibleTaskTimings = 4096
 
-// TaskTiming is deliberately limited to task identity and duration. Ansible
-// results can contain credentials, rendered configuration, and command
-// output; none of that belongs in a deployment timing report.
+// TaskTiming is deliberately limited to task identity, duration, and a small
+// allow-listed set of secret-free observation markers. Ansible results can
+// contain credentials, rendered configuration, and command output; none of
+// that belongs in a deployment timing report.
 type TaskTiming struct {
-	Host       string `json:"host"`
-	Task       string `json:"task"`
-	Path       string `json:"path"`
-	Status     string `json:"status"`
-	DurationMS int64  `json:"duration_ms"`
-	Changed    bool   `json:"changed"`
+	Host       string   `json:"host"`
+	Task       string   `json:"task"`
+	Path       string   `json:"path"`
+	Status     string   `json:"status"`
+	DurationMS int64    `json:"duration_ms"`
+	Changed    bool     `json:"changed"`
+	Markers    []string `json:"markers,omitempty"`
 }
 
 type TaskBatchTiming struct {
@@ -480,7 +492,7 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	command.Stdin = strings.NewReader(string(variables))
 	timingPath, timingCleanup := prepareTaskTiming(playbook)
 	defer timingCleanup()
-	command.Env = ansibleEnvironment(playbook, timingPath)
+	command.Env = ansibleEnvironment(playbook, timingPath, phase)
 	var output boundedOutput
 	command.Stdout = &output
 	command.Stderr = &output
@@ -507,7 +519,7 @@ func phaseVariables(variables []byte, phase string) ([]byte, error) {
 	if phase == "" {
 		phase = PhaseFull
 	}
-	if phase != PhaseFull && phase != PhaseBootstrap && phase != PhaseServices {
+	if phase != PhaseFull && phase != PhaseBootstrap && phase != PhaseServices && phase != PhaseHealth {
 		return nil, fmt.Errorf("unsupported Ansible deployment phase %q", phase)
 	}
 	var values map[string]any
@@ -525,11 +537,19 @@ func phaseVariables(variables []byte, phase string) ([]byte, error) {
 	return append(data, '\n'), nil
 }
 
-func ansibleEnvironment(playbook, timingPath string) []string {
+func ansibleEnvironment(playbook, timingPath, phase string) []string {
 	environment := os.Environ()
 	if _, ok := os.LookupEnv("ANSIBLE_FORKS"); !ok {
 		environment = append(environment, "ANSIBLE_FORKS="+defaultAnsibleForks)
 	}
+	strategy := defaultAnsibleStrategy
+	if phase == PhaseBootstrap || phase == PhaseServices {
+		strategy = parallelAnsibleStrategy
+	}
+	// Keep the strategy deterministic for every deploy phase. In particular,
+	// an ambient ANSIBLE_STRATEGY=free must not weaken ordering in the network
+	// foundation or health phases.
+	environment = setEnvironmentValue(environment, "ANSIBLE_STRATEGY", strategy)
 	environment = setEnvironmentValue(environment, "ANSIBLE_HOST_KEY_CHECKING", "True")
 	environment = setEnvironmentValue(environment, "ANSIBLE_SSH_PIPELINING", "True")
 	pluginDir := filepath.Join(filepath.Dir(playbook), "callback_plugins")
@@ -607,13 +627,14 @@ func readTaskTimings(path string) ([]TaskTiming, []TaskBatchTiming) {
 	batchTimings := make([]TaskBatchTiming, 0)
 	for scanner.Scan() && (len(timings) < maxAnsibleTaskTimings || len(batchTimings) < maxAnsibleTaskTimings) {
 		var event struct {
-			Event      string `json:"event"`
-			Host       string `json:"host"`
-			Task       string `json:"task"`
-			Path       string `json:"path"`
-			Status     string `json:"status"`
-			DurationMS int64  `json:"duration_ms"`
-			Changed    bool   `json:"changed"`
+			Event      string   `json:"event"`
+			Host       string   `json:"host"`
+			Task       string   `json:"task"`
+			Path       string   `json:"path"`
+			Status     string   `json:"status"`
+			DurationMS int64    `json:"duration_ms"`
+			Changed    bool     `json:"changed"`
+			Markers    []string `json:"markers"`
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			continue
@@ -627,7 +648,7 @@ func readTaskTimings(path string) ([]TaskTiming, []TaskBatchTiming) {
 			if event.Host == "" || event.Task == "" || event.Status == "" || event.DurationMS < 0 || len(timings) >= maxAnsibleTaskTimings {
 				continue
 			}
-			timings = append(timings, TaskTiming{Host: event.Host, Task: event.Task, Path: event.Path, Status: event.Status, DurationMS: event.DurationMS, Changed: event.Changed})
+			timings = append(timings, TaskTiming{Host: event.Host, Task: event.Task, Path: event.Path, Status: event.Status, DurationMS: event.DurationMS, Changed: event.Changed, Markers: event.Markers})
 		}
 	}
 	return timings, batchTimings

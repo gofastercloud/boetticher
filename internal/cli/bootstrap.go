@@ -448,6 +448,18 @@ func emitTiming(out io.Writer, stage string, started time.Time) {
 	fmt.Fprintf(out, "timing stage=%s duration_ms=%d\n", stage, time.Since(started).Milliseconds())
 }
 
+func emitTransferMeasurement(out io.Writer, stage, transport string, bytes int64, started time.Time) {
+	if out == nil || stage == "" || transport == "" || bytes < 0 || started.IsZero() {
+		return
+	}
+	duration := time.Since(started).Milliseconds()
+	throughput := int64(0)
+	if duration > 0 {
+		throughput = bytes * 1000 / duration
+	}
+	fmt.Fprintf(out, "measurement stage=%s transport=%s bytes=%d duration_ms=%d throughput_bytes_per_second=%d\n", stage, transport, bytes, duration, throughput)
+}
+
 func builderArtifactReturnCommand(compression string) (string, error) {
 	switch strings.ToLower(strings.TrimSpace(compression)) {
 	case "", "gzip":
@@ -585,7 +597,7 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	progress.emitTiming(out, "builder_cloud_init_readiness", readinessStarted)
 	readinessFinished = true
 	sourceRoot, sourceErr := applianceBuildSourceRoot()
-	sourceStarted := time.Now()
+	sourcePrepareStarted := time.Now()
 	var archive []byte
 	if sourceErr == nil {
 		archive, err = artifacts.BuildSourceArchive(sourceRoot)
@@ -595,10 +607,13 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if err != nil {
 		return fmt.Errorf("prepare public appliance build inputs: %w", err)
 	}
+	progress.emitTiming(out, "builder_source_archive_prepare", sourcePrepareStarted)
+	sourceTransferStarted := time.Now()
 	if _, err := builderRunner.RunWithStdin(ctx, builderAddress, builderSSHUser, "set -eu; install -d -m 0755 -o labadmin -g labadmin /home/labadmin/build; tar -xzf - -C /home/labadmin/build", bytes.NewReader(archive)); err != nil {
 		return fmt.Errorf("transfer public appliance build definitions: %w", err)
 	}
-	progress.emitTiming(out, "builder_source_transfer", sourceStarted)
+	progress.emitTiming(out, "builder_source_transfer", sourceTransferStarted)
+	emitTransferMeasurement(out, "builder_source_transfer", "gzip", int64(len(archive)), sourceTransferStarted)
 	var buildOutputBuffer boundedBuilderOutput
 	buildStarted := time.Now()
 	buildStreamOutput := io.MultiWriter(&buildOutputBuffer, &builderProgressWriter{out: out})
@@ -632,7 +647,7 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 	if err != nil {
 		return fmt.Errorf("stat qualified appliance evidence: %w", err)
 	}
-	fmt.Fprintf(out, "measurement stage=builder_artifact_return transport=%s bytes=%d\n", transportCompression, archiveInfo.Size())
+	emitTransferMeasurement(out, "builder_artifact_return", transportCompression, archiveInfo.Size(), returnStarted)
 	extractionStarted := time.Now()
 	if err := artifacts.ExtractBuildArchiveFile(archivePath, siteDir); err != nil {
 		return fmt.Errorf("extract qualified appliance evidence: %w", err)
@@ -641,6 +656,7 @@ func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan pro
 		return fmt.Errorf("bind qualified evidence to controller artifact bytes: %w", err)
 	}
 	progress.emitTiming(out, "builder_artifact_return_extraction", extractionStarted)
+	emitTransferMeasurement(out, "builder_artifact_return_extraction", "controller-disk", archiveInfo.Size(), extractionStarted)
 	buildSucceeded = true
 	return nil
 }
