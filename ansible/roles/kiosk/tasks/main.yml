@@ -154,11 +154,14 @@
 
 - name: Install the Boetticher CA for Pulse host-agent HTTPS
   ansible.builtin.copy:
-    content: "{{ kiosk_root_ca_pem }}{{ kiosk_issuing_ca_pem }}"
-    dest: /usr/local/share/ca-certificates/boetticher-pulse.crt
+    content: "{{ item.content }}"
+    dest: "{{ item.dest }}"
     owner: root
     group: root
     mode: '0644'
+  loop:
+    - {dest: /usr/local/share/ca-certificates/boetticher-pulse-root.crt, content: "{{ kiosk_root_ca_pem }}"}
+    - {dest: /usr/local/share/ca-certificates/boetticher-pulse-issuing.crt, content: "{{ kiosk_issuing_ca_pem }}"}
 
 - name: Refresh system CA trust for Pulse host-agent HTTPS
   ansible.builtin.command: update-ca-certificates
@@ -412,7 +415,7 @@
       - 'C,,,'
       - -a
       - -i
-      - /run/boetticher-kiosk/root-ca.pem
+      - /usr/local/share/ca-certificates/boetticher-pulse-root.crt
   when: kiosk_root_ca.rc != 0
   no_log: true
 
@@ -444,7 +447,7 @@
       - 'C,,,'
       - -a
       - -i
-      - /run/boetticher-kiosk/issuing-ca.pem
+      - /usr/local/share/ca-certificates/boetticher-pulse-issuing.crt
   when: kiosk_issuing_ca.rc != 0
   no_log: true
 
