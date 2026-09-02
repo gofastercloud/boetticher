@@ -46,6 +46,19 @@ func runDeploy(args []string, out io.Writer) error {
 	return runDeployWithContext(ctx, args, out)
 }
 
+func validateDeployRecoveryOptions(gatewayMode string, replaceFirewall, confirm, dryRun bool) error {
+	if !replaceFirewall {
+		return nil
+	}
+	if gatewayMode != model.GatewayModeManaged {
+		return errors.New("--replace-firewall is available only in managed gateway mode")
+	}
+	if !confirm && !dryRun {
+		return errors.New("--replace-firewall requires --confirm; use --dry-run to inspect the recovery plan")
+	}
+	return nil
+}
+
 func runDeployWithContext(ctx context.Context, args []string, out io.Writer) error {
 	report := newDeploymentReport(out)
 	ctx = telemetry.WithObserver(ctx, report)
@@ -80,15 +93,18 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS")
 	dryRun := fs.Bool("dry-run", false, "render and validate policy without connecting")
 	rotateAirVPN := fs.Bool("rotate-airvpn-profile", false, "explicitly regenerate and retain the AirVPN WireGuard profile")
+	replaceFirewall := fs.Bool("replace-firewall", false, "replace only the managed firewall root disk after proving its persistent volumes")
 	confirm := fs.Bool("confirm", false, "confirm destructive appliance replacement or purge actions")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	report.dryRun = *dryRun
-	_ = confirm // replacement confirmation is enforced by the shared provider plan
 	report.start("validate", "Validate desired state")
 	s, err := site.Load(*siteDir)
 	if err != nil {
+		return err
+	}
+	if err := validateDeployRecoveryOptions(s.Gateway.Mode, *replaceFirewall, *confirm, *dryRun); err != nil {
 		return err
 	}
 	modelRevision, err := s.Revision()
@@ -128,6 +144,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		report.start("artifacts", "Resolve qualified artifacts")
 		fmt.Fprintf(out, "Deployment plan: PASS model %s\n", firewallPlan.ModelRevision)
 		fmt.Fprintf(out, "  Mode: %s\n  Engine: %s\n  DHCP subnets: %d\n  Policy rules: %d\n", firewallPlan.Mode, firewallPlan.Engine, len(firewallPlan.DHCP), len(firewallPlan.Rules))
+		if *replaceFirewall {
+			fmt.Fprintln(out, "  Firewall root recovery: requested (dry-run; declared persistent volumes remain attached)")
+		}
 		if s.Gateway.Mode == model.GatewayModeManaged {
 			ruleset, renderErr := renderDeploymentNFT(firewallPlan)
 			if renderErr != nil {
@@ -464,6 +483,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		}
 	}
 	proxmoxPlan.DestructiveConfirmed = *confirm
+	proxmoxPlan.ForceFirewallRootReplacement = *replaceFirewall
 	if backupPlan.StorageTarget == backup.DedicatedStorageID {
 		changed, err := proxmoxClient.EnsureLVMThinStorageWithMutation(ctx, storage.GuestStorageID, storage.VolumeGroup, storage.ThinPool)
 		if changed {
@@ -503,6 +523,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		firewallExisted, firewallReplaced, stateErr := proxmox.InspectGuestArtifact(ctx, proxmoxClient, proxmoxPlan.Node, firewallGuest)
 		if stateErr != nil {
 			return stateErr
+		}
+		if *replaceFirewall && firewallExisted {
+			firewallReplaced = true
 		}
 		if err := report.timed("proxmox", "reconcile", firewallGuest.Name, func() error {
 			return proxmox.EnsureFirewallVM(ctx, proxmoxClient, proxmoxPlan)

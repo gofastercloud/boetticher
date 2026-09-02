@@ -93,6 +93,11 @@ type Plan struct {
 	// its own smoke, scan, and qualification gates to every selected target.
 	BuilderArtifactTargets []string `json:"-"`
 	DestructiveConfirmed   bool     `json:"-"`
+	// ForceFirewallRootReplacement is a deliberately narrow recovery action.
+	// It replaces only the managed firewall root disk after the attached
+	// declared persistent volumes have been proven, and never applies to any
+	// other appliance.
+	ForceFirewallRootReplacement bool `json:"-"`
 	// PrivilegedRunner is the already-authorized, bounded root bootstrap path.
 	// Proxmox rejects /dev/net/tun on the scoped API identity, so device-bearing
 	// LXC creation applies the exact device setting through this path after the
@@ -1282,9 +1287,18 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 		if err := validateExistingGuestIdentityFields(current, guest); err != nil {
 			return err
 		}
-		if guestArtifactNeedsReplacement(current, guest) {
+		forceFirewallRootReplacement := plan.ForceFirewallRootReplacement && guest.Name == "lab-fw-01"
+		if guestArtifactNeedsReplacement(current, guest) || forceFirewallRootReplacement {
 			if !plan.DestructiveConfirmed {
+				if forceFirewallRootReplacement {
+					return fmt.Errorf("HOLD: managed firewall root replacement requires --confirm")
+				}
 				return fmt.Errorf("HOLD: guest %s has artifact identity mismatch; appliance replacement requires --confirm", guest.Name)
+			}
+			if forceFirewallRootReplacement {
+				if err := validateForcedFirewallRootReplacementVolumes(current, plan, guest); err != nil {
+					return err
+				}
 			}
 			if err := replaceQEMURootDisk(ctx, client, plan, guest); err != nil {
 				return err
@@ -1439,6 +1453,45 @@ func validateExistingQEMUVolumes(current map[string]any, plan Plan, guest GuestP
 		}
 	}
 	return nil
+}
+
+// validateForcedFirewallRootReplacementVolumes proves that a manual firewall
+// root recovery cannot detach, overwrite, or silently adopt a persistent disk.
+// Storage migration remains permitted afterwards, so the source storage does
+// not need to equal the current declaration; its stable volume identity does.
+func validateForcedFirewallRootReplacementVolumes(current map[string]any, plan Plan, guest GuestPlan) error {
+	for key := range current {
+		index, ok := qemuSCSIIndex(key)
+		if !ok || index == 0 {
+			continue
+		}
+		if index > len(guest.Volumes) {
+			return fmt.Errorf("HOLD: refusing forced firewall root replacement; guest %s has undeclared persistent volume %s", guest.Name, key)
+		}
+	}
+	for index, volume := range guest.Volumes {
+		expected, err := qemuPersistentVolumeParam(plan, volume)
+		if err != nil {
+			return err
+		}
+		key := fmt.Sprintf("scsi%d", index+1)
+		observed, _ := current[key].(string)
+		if !qemuVolumeMatchesPersistentIdentity(observed, expected) {
+			return fmt.Errorf("HOLD: refusing forced firewall root replacement; persistent volume %s=%q does not prove the declared contract %q", key, observed, expected)
+		}
+	}
+	return nil
+}
+
+func qemuSCSIIndex(value string) (int, bool) {
+	if !strings.HasPrefix(value, "scsi") {
+		return 0, false
+	}
+	index, err := strconv.Atoi(strings.TrimPrefix(value, "scsi"))
+	if err != nil || index < 0 || value != "scsi"+strconv.Itoa(index) {
+		return 0, false
+	}
+	return index, true
 }
 
 func qemuPersistentVolumeParam(plan Plan, volume model.PersistentVolumeDeclaration) (string, error) {
@@ -2374,15 +2427,27 @@ func normalizeArtifactDescription(value string) string {
 	return strings.TrimSuffix(value, "\n")
 }
 
-func replaceQEMURootDisk(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
+func replaceQEMURootDisk(ctx context.Context, client *Client, plan Plan, guest GuestPlan) (err error) {
 	status, err := client.QEMUStatus(ctx, plan.Node, guest.VMID)
 	if err != nil {
 		return fmt.Errorf("inspect gateway status before appliance replacement: %w", err)
 	}
-	if status == "running" {
+	if status != "running" && status != "stopped" {
+		return fmt.Errorf("HOLD: guest %s is %q; refusing appliance replacement outside a running or stopped state", guest.Name, status)
+	}
+	wasRunning := status == "running"
+	if wasRunning {
 		if err := client.StopVM(ctx, plan.Node, guest.VMID); err != nil {
 			return fmt.Errorf("stop gateway before appliance replacement: %w", err)
 		}
+		defer func() {
+			if err == nil {
+				return
+			}
+			if startErr := client.StartVM(ctx, plan.Node, guest.VMID); startErr != nil {
+				err = fmt.Errorf("%w; additionally failed to restore %s after appliance replacement: %v", err, guest.Name, startErr)
+			}
+		}()
 	}
 	if guest.Name == "lab-fw-01" {
 		if err := uploadFirewallCloudInit(ctx, client, plan, guest.VMID); err != nil {

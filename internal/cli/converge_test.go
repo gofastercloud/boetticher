@@ -597,7 +597,7 @@ func TestDeployDryRunDoesNotWriteLocalProjections(t *testing.T) {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	if err := runDeploy([]string{"--site", siteDir, "--dry-run"}, &output); err == nil {
+	if err := runDeploy([]string{"--site", siteDir, "--dry-run", "--replace-firewall"}, &output); err == nil {
 		t.Fatal("dry-run unexpectedly passed without qualified artifacts")
 	}
 	if !strings.Contains(output.String(), "Artifact qualification: FAIL") {
@@ -606,8 +606,39 @@ func TestDeployDryRunDoesNotWriteLocalProjections(t *testing.T) {
 	if !strings.Contains(output.String(), "Deployment: FAIL") || !strings.Contains(output.String(), "Infrastructure changed: NO") {
 		t.Fatalf("dry-run omitted binary deployment summary: %s", output.String())
 	}
+	if !strings.Contains(output.String(), "Firewall root recovery: requested (dry-run; declared persistent volumes remain attached)") {
+		t.Fatalf("dry-run omitted requested firewall recovery: %s", output.String())
+	}
 	if _, err := os.Stat(filepath.Join(siteDir, "generated", "model.json")); !os.IsNotExist(err) {
 		t.Fatalf("deploy dry-run wrote a local model projection: %v", err)
+	}
+}
+
+func TestValidateDeployRecoveryOptions(t *testing.T) {
+	tests := []struct {
+		name            string
+		mode            string
+		replaceFirewall bool
+		confirm         bool
+		dryRun          bool
+		want            string
+	}{
+		{name: "ordinary deployment", mode: model.GatewayModeManaged},
+		{name: "managed dry run", mode: model.GatewayModeManaged, replaceFirewall: true, dryRun: true},
+		{name: "managed confirmed", mode: model.GatewayModeManaged, replaceFirewall: true, confirm: true},
+		{name: "managed unconfirmed", mode: model.GatewayModeManaged, replaceFirewall: true, want: "requires --confirm"},
+		{name: "external gateway", mode: model.GatewayModeExternal, replaceFirewall: true, confirm: true, want: "managed gateway mode"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateDeployRecoveryOptions(test.mode, test.replaceFirewall, test.confirm, test.dryRun)
+			if test.want == "" && err != nil {
+				t.Fatalf("validateDeployRecoveryOptions() = %v", err)
+			}
+			if test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)) {
+				t.Fatalf("validateDeployRecoveryOptions() = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 

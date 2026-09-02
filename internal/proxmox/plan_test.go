@@ -989,6 +989,204 @@ func TestEnsureQEMURequiresConfirmationToReplaceOwnedArtifact(t *testing.T) {
 	}
 }
 
+func TestEnsureQEMURequiresConfirmationToForceFirewallRootReplacement(t *testing.T) {
+	guest := GuestPlan{VMID: 100, Name: "lab-fw-01", Artifact: model.Artifact{
+		Name: "boetticher-firewall", Version: "1.0.0", Architecture: "amd64", ContentSHA256: "content",
+	}}
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/config" {
+			return response([]byte(`{"data":{"name":"lab-fw-01","description":"` + artifactDescription(guest.Artifact) + `"}}`))
+		}
+		t.Fatalf("unexpected request before forced replacement confirmation: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err := ensureQEMU(context.Background(), client, Plan{Node: "node", ForceFirewallRootReplacement: true}, guest)
+	if err == nil || !strings.Contains(err.Error(), "firewall root replacement requires --confirm") {
+		t.Fatalf("forced firewall replacement without confirmation = %v", err)
+	}
+}
+
+func TestEnsureQEMUForceFirewallRootReplacementPreservesVerifiedPersistentVolumes(t *testing.T) {
+	artifactPath := filepath.Join(t.TempDir(), "firewall.qcow2")
+	content := []byte("qualified firewall bytes")
+	if err := os.WriteFile(artifactPath, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	checksum := fmt.Sprintf("%x", sha256.Sum256(content))
+	guest := GuestPlan{
+		VMID: 100, Name: "lab-fw-01",
+		Artifact: model.Artifact{Name: "boetticher-firewall", Version: "1.0.0", Architecture: "amd64", ContentSHA256: checksum},
+		Volumes: []model.PersistentVolumeDeclaration{
+			{Name: "ssh-identity", Module: "firewall", Guest: "lab-fw-01", SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/ssh", Storage: modelStorageIDForTest, Backup: true},
+			{Name: "kea-leases", Module: "firewall", Guest: "lab-fw-01", SizeGiB: 4, MountPath: "/var/lib/kea", Storage: modelStorageIDForTest, Backup: true},
+			{Name: "firewall-telemetry", Module: "firewall", Guest: "lab-fw-01", SizeGiB: 2, MountPath: "/var/lib/boetticher/firewall-telemetry", Storage: modelStorageIDForTest, Backup: true},
+		},
+	}
+	plan := Plan{
+		Node: "node", Storage: modelStorageIDForTest, DestructiveConfirmed: true, ForceFirewallRootReplacement: true,
+		ArtifactFiles:  map[string]string{artifactKey(guest.Artifact): artifactPath},
+		CloudInitFiles: CloudInitFiles{MetaData: "meta", UserData: "user", NetworkConfig: "network"},
+	}
+	persistent, err := qemuPersistentVolumeParams(plan, guest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := map[string]any{"name": guest.Name, "description": artifactDescription(guest.Artifact)}
+	for index, volume := range guest.Volumes {
+		key := fmt.Sprintf("scsi%d", index+1)
+		config[key] = strings.Replace(persistent[key], fmt.Sprintf("%s:%d", modelStorageIDForTest, volume.SizeGiB), fmt.Sprintf("%s:100/vm-100-disk-%d", modelStorageIDForTest, index+1), 1) + fmt.Sprintf(",size=%dG", volume.SizeGiB)
+	}
+	encodedConfig, err := json.Marshal(map[string]any{"data": config})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cloudInitUploads := 0
+	rootReplaced := false
+	descriptionUpdated := false
+	persistentMutation := false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/config":
+			return response(encodedConfig)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/status/current":
+			return response([]byte(`{"data":{"status":"stopped"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
+			cloudInitUploads++
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+			return response([]byte(`{"data":[{"volid":"local:import/boetticher-firewall-1.0.0-amd64.qcow2","filename":"boetticher-firewall-1.0.0-amd64.qcow2","checksum":"` + checksum + `"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/100/config":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			for index := range guest.Volumes {
+				if r.Form.Get(fmt.Sprintf("scsi%d", index+1)) != "" {
+					persistentMutation = true
+				}
+			}
+			if r.Form.Get("scsi0") != "" {
+				rootReplaced = true
+				return response([]byte(`{"data":"UPID:pve:replace-root"}`))
+			}
+			if r.Form.Get("description") != "" {
+				descriptionUpdated = true
+				return response([]byte(`{"data":null}`))
+			}
+			t.Fatalf("unexpected QEMU config mutation: %v", r.Form)
+			return nil
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:replace-root/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		default:
+			t.Fatalf("unexpected forced firewall replacement request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := ensureQEMU(context.Background(), client, plan, guest); err != nil {
+		t.Fatalf("ensureQEMU() = %v", err)
+	}
+	if !rootReplaced || !descriptionUpdated || cloudInitUploads != 3 {
+		t.Fatalf("forced root replacement incomplete: root=%t description=%t cloud-init=%d", rootReplaced, descriptionUpdated, cloudInitUploads)
+	}
+	if persistentMutation {
+		t.Fatal("forced firewall root replacement changed a persistent volume")
+	}
+}
+
+func TestEnsureQEMUForceFirewallRootReplacementHoldsWithoutVerifiedPersistentVolumes(t *testing.T) {
+	guest := GuestPlan{
+		VMID: 100, Name: "lab-fw-01", Artifact: model.Artifact{Name: "boetticher-firewall", Version: "1.0.0", Architecture: "amd64", ContentSHA256: "content"},
+		Volumes: []model.PersistentVolumeDeclaration{{Name: "kea-leases", Module: "firewall", Guest: "lab-fw-01", SizeGiB: 4, MountPath: "/var/lib/kea", Storage: modelStorageIDForTest, Backup: true}},
+	}
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/config" {
+			return response([]byte(`{"data":{"name":"lab-fw-01","description":"` + artifactDescription(guest.Artifact) + `","scsi1":"boetticher-thin:100/vm-100-disk-1,backup=1,serial=boetticher-other,size=4G"}}`))
+		}
+		t.Fatalf("unverified persistent volume allowed a replacement request: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err := ensureQEMU(context.Background(), client, Plan{Node: "node", DestructiveConfirmed: true, ForceFirewallRootReplacement: true}, guest)
+	if err == nil || !strings.Contains(err.Error(), "does not prove the declared contract") {
+		t.Fatalf("unverified persistent volume was accepted for forced root replacement: %v", err)
+	}
+}
+
+func TestEnsureQEMUForceFirewallRootReplacementHoldsUndeclaredPersistentVolumes(t *testing.T) {
+	volume := model.PersistentVolumeDeclaration{Name: "kea-leases", Module: "firewall", Guest: "lab-fw-01", SizeGiB: 4, MountPath: "/var/lib/kea", Storage: modelStorageIDForTest, Backup: true}
+	serial, err := persistentVolumeSerial(volume)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guest := GuestPlan{
+		VMID: 100, Name: "lab-fw-01", Artifact: model.Artifact{Name: "boetticher-firewall", Version: "1.0.0", Architecture: "amd64", ContentSHA256: "content"},
+		Volumes: []model.PersistentVolumeDeclaration{volume},
+	}
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/config" {
+			return response([]byte(`{"data":{"name":"lab-fw-01","description":"` + artifactDescription(guest.Artifact) + `","scsi1":"boetticher-thin:100/vm-100-disk-1,backup=1,serial=` + serial + `,size=4G","scsi2":"boetticher-thin:100/vm-100-disk-2,backup=1,serial=boetticher-unknown,size=1G"}}`))
+		}
+		t.Fatalf("undeclared persistent volume allowed a replacement request: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err = ensureQEMU(context.Background(), client, Plan{Node: "node", DestructiveConfirmed: true, ForceFirewallRootReplacement: true}, guest)
+	if err == nil || !strings.Contains(err.Error(), "undeclared persistent volume scsi2") {
+		t.Fatalf("undeclared persistent volume was accepted for forced root replacement: %v", err)
+	}
+}
+
+func TestEnsureQEMUForceFirewallRootReplacementDoesNotTargetOtherGuests(t *testing.T) {
+	guest := GuestPlan{VMID: 101, Name: "test-fw", Artifact: model.Artifact{Name: "boetticher-firewall", Version: "1.0.0", Architecture: "amd64", ContentSHA256: "content"}}
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/101/config" {
+			return response([]byte(`{"data":{"name":"test-fw","description":"` + artifactDescription(guest.Artifact) + `"}}`))
+		}
+		t.Fatalf("forced firewall root replacement targeted another guest: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := ensureQEMU(context.Background(), client, Plan{Node: "node", DestructiveConfirmed: true, ForceFirewallRootReplacement: true}, guest); err != nil {
+		t.Fatalf("ensureQEMU() targeted a non-firewall guest: %v", err)
+	}
+}
+
+func TestReplaceQEMURootDiskRestoresRunningGuestAfterFailure(t *testing.T) {
+	guest := GuestPlan{VMID: 100, Name: "test-fw", Artifact: model.Artifact{Name: "boetticher-firewall", Version: "1.0.0", Architecture: "amd64", ContentSHA256: "content"}}
+	stopped := false
+	restored := false
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/100/status/current":
+			return response([]byte(`{"data":{"status":"running"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/100/status/stop":
+			stopped = true
+			return response([]byte(`{"data":"UPID:pve:stop"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:stop/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+			return response([]byte(`{"data":[]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/100/status/start":
+			restored = true
+			return response([]byte(`{"data":"UPID:pve:start"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:start/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		default:
+			t.Fatalf("unexpected root-replacement recovery request: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err := replaceQEMURootDisk(context.Background(), client, Plan{Node: "node", Storage: modelStorageIDForTest}, guest)
+	if err == nil || !strings.Contains(err.Error(), "no local artifact bytes") {
+		t.Fatalf("replacement preparation failure = %v", err)
+	}
+	if !stopped || !restored {
+		t.Fatalf("running guest was not restored after root replacement failure: stopped=%t restored=%t", stopped, restored)
+	}
+}
+
 func TestEnsureLXCRequiresConfirmationToReplaceOwnedArtifact(t *testing.T) {
 	guest := GuestPlan{VMID: 110, Name: "test-dns", Hostname: "test-dns", Artifact: model.Artifact{
 		Name: "boetticher-dns-blocky", Version: "1.0.0", Architecture: "amd64", ContentSHA256: "new-content",
