@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -123,7 +124,43 @@ func (c Client) Generate(ctx context.Context, apiKey, servers string) (profile P
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return Profile{}, fmt.Errorf("AirVPN generator returned HTTP %d", response.StatusCode)
 	}
-	return ParseProfile(data)
+	profile, err = ParseProfile(data)
+	if err != nil {
+		return Profile{}, fmt.Errorf("AirVPN generator returned an invalid WireGuard profile (%s): %w", providerResponseSummary(response.Header.Get("Content-Type"), data), err)
+	}
+	return profile, nil
+}
+
+// providerResponseSummary exposes only the small diagnostics needed to
+// distinguish an API error document from malformed WireGuard output. It must
+// never include response content because a provider profile contains keys.
+func providerResponseSummary(contentType string, data []byte) string {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil || mediaType == "" {
+		mediaType = "unspecified"
+	}
+	return fmt.Sprintf("content_type=%s bytes=%d shape=%s", mediaType, len(data), providerResponseShape(data))
+}
+
+func providerResponseShape(data []byte) string {
+	profileText := strings.TrimPrefix(strings.ReplaceAll(string(data), "\r\n", "\n"), "\ufeff")
+	for _, raw := range strings.Split(profileText, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "#") {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "[Interface]"):
+			return "wireguard"
+		case strings.HasPrefix(line, "<"):
+			return "markup"
+		case strings.HasPrefix(line, "{") || strings.HasPrefix(line, "["):
+			return "structured"
+		default:
+			return "plain"
+		}
+	}
+	return "empty"
 }
 
 func ParseProfile(data []byte) (Profile, error) {

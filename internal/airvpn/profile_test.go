@@ -90,6 +90,18 @@ func TestGenerateDoesNotIncludeProviderResponseInError(t *testing.T) {
 	}
 }
 
+func TestGenerateDescribesInvalidProviderResponseWithoutLeakingIt(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<html>secret-provider-response</html>"))
+	}))
+	defer server.Close()
+	_, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(context.Background(), "controller-key", "europe")
+	if err == nil || !strings.Contains(err.Error(), "content_type=text/html") || !strings.Contains(err.Error(), "shape=markup") || strings.Contains(err.Error(), "secret-provider-response") || strings.Contains(err.Error(), "controller-key") {
+		t.Fatalf("invalid provider response was not safely described: %v", err)
+	}
+}
+
 func TestGenerateDoesNotFollowRedirects(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "https://example.invalid/leak", http.StatusFound)
