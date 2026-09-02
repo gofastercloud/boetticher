@@ -1388,28 +1388,6 @@ func TestDNSDDNSMetadataIsReconciledAgainstLivePowerDNSState(t *testing.T) {
 	}
 }
 
-func TestDNSDDNSMetadataIsReconciledAgainstLivePowerDNSState(t *testing.T) {
-	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(data)
-	for _, expected := range []string{
-		"Reconcile Kea DDNS metadata on the primary when changed",
-		"pdnsutil get-meta",
-		"metadata_values()",
-		"changed_when: \"'updated' in ddns_metadata.stdout\"",
-	} {
-		if !strings.Contains(text, expected) {
-			t.Fatalf("DNS role is missing DDNS metadata convergence guard %q", expected)
-		}
-	}
-	if strings.Contains(text, "Authorize Kea DDNS updates for dynamic forward zones") || strings.Contains(text, "Authorize Kea DDNS updates for reverse zones") {
-		t.Fatal("DNS role retains unconditional forward or reverse DDNS metadata tasks")
-	}
-}
-
 func TestDNSAppliancePathCannotInstallAResolver(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
