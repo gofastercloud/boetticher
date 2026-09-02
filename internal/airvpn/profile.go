@@ -123,6 +123,13 @@ func (c Client) Generate(ctx context.Context, apiKey, servers string) (profile P
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return Profile{}, fmt.Errorf("AirVPN generator returned HTTP %d", response.StatusCode)
 	}
+	contentType := response.Header.Get("Content-Type")
+	if providerProfileManifest(data) {
+		data, contentType, err = downloadManifestProfile(ctx, httpClient, parsed, apiKey)
+		if err != nil {
+			return Profile{}, err
+		}
+	}
 	profile, err = ParseProfile(data)
 	if err != nil {
 		if providerResponseShape(data) == "json-provider-error" {
@@ -140,7 +147,7 @@ func (c Client) Generate(ctx context.Context, apiKey, servers string) (profile P
 				}
 			}
 		}
-		return Profile{}, fmt.Errorf("AirVPN generator returned an invalid WireGuard profile (%s): %w", providerResponseSummary(response.Header.Get("Content-Type"), data), err)
+		return Profile{}, fmt.Errorf("AirVPN generator returned an invalid WireGuard profile (%s): %w", providerResponseSummary(contentType, data), err)
 	}
 	return profile, nil
 }
@@ -160,6 +167,74 @@ type providerServer struct {
 type providerReadiness struct {
 	APIKeyAccepted bool
 	DeviceCount    int
+}
+
+// providerProfileManifest recognizes the provider's successful JSON index
+// response without retaining its file names or options. A follow-up request
+// for index zero returns the actual WireGuard profile.
+func providerProfileManifest(data []byte) bool {
+	var response struct {
+		Files   []json.RawMessage `json:"files"`
+		Options json.RawMessage   `json:"options"`
+	}
+	if err := json.Unmarshal(data, &response); err != nil || len(response.Files) == 0 || len(response.Options) == 0 {
+		return false
+	}
+	var options map[string]json.RawMessage
+	if err := json.Unmarshal(response.Options, &options); err != nil || options == nil {
+		return false
+	}
+	for _, raw := range response.Files {
+		var name string
+		if err := json.Unmarshal(raw, &name); err != nil || name == "" {
+			return false
+		}
+	}
+	return true
+}
+
+// downloadManifestProfile retrieves only the first profile from a successful
+// provider manifest. The manifest's untrusted file names and options are
+// deliberately not used or surfaced.
+func downloadManifestProfile(ctx context.Context, httpClient *http.Client, generatorURL *url.URL, apiKey string) (data []byte, contentType string, err error) {
+	if generatorURL == nil {
+		return nil, "", errors.New("AirVPN generator URL is missing")
+	}
+	downloadURL := *generatorURL
+	query := downloadURL.Query()
+	query.Set("download", "0")
+	downloadURL.RawQuery = query.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL.String(), nil)
+	if err != nil {
+		return nil, "", fmt.Errorf("create AirVPN profile download request: %w", err)
+	}
+	request.Header.Set("Api-Key", apiKey)
+	requestStarted := time.Now()
+	status := 0
+	defer func() {
+		telemetry.Record(ctx, telemetry.Event{
+			Category: "provider_api", Operation: "download_profile", Target: "airvpn-generator",
+			Method: http.MethodGet, Status: status, Duration: time.Since(requestStarted), Success: err == nil,
+		})
+	}()
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return nil, "", fmt.Errorf("request AirVPN WireGuard profile download: %w", err)
+	}
+	defer response.Body.Close()
+	status = response.StatusCode
+	contentType = response.Header.Get("Content-Type")
+	profile, err := io.ReadAll(io.LimitReader(response.Body, maxProfileBytes+1))
+	if err != nil {
+		return nil, "", fmt.Errorf("read AirVPN WireGuard profile download: %w", err)
+	}
+	if len(profile) > maxProfileBytes {
+		return nil, "", errors.New("AirVPN WireGuard profile download exceeds the safe size limit")
+	}
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return nil, "", fmt.Errorf("AirVPN profile download returned HTTP %d", response.StatusCode)
+	}
+	return profile, contentType, nil
 }
 
 // selectorHasLiveServer checks the public provider status only after a JSON

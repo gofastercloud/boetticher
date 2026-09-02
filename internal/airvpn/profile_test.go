@@ -76,6 +76,47 @@ func TestGenerateBuildsBoundedAirVPNRequestAndRedactsFailures(t *testing.T) {
 	}
 }
 
+func TestGenerateDownloadsFirstProfileFromProviderManifest(t *testing.T) {
+	requests := 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/generator/" || r.Header.Get("Api-Key") != "controller-key" {
+			t.Fatalf("unexpected generator request: path=%q api-key=%q", r.URL.Path, r.Header.Get("Api-Key"))
+		}
+		if r.URL.Query().Get("protocols") != "wireguard_1_udp_1637" || r.URL.Query().Get("servers") != "japan" || r.URL.Query().Get("device") != "default" {
+			t.Fatalf("unexpected generator query: %q", r.URL.RawQuery)
+		}
+		requests++
+		switch r.URL.Query().Get("download") {
+		case "":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"files":["provider-private.conf"],"options":{"protocols":"wireguard_1_udp_1637","servers":"japan","device":"default"}}`))
+		case "0":
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte(testProfile()))
+		default:
+			t.Fatalf("unexpected manifest download index: %q", r.URL.Query().Get("download"))
+		}
+	}))
+	defer server.Close()
+
+	observer := &eventObserver{}
+	ctx := telemetry.WithObserver(context.Background(), observer)
+	profile, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(ctx, "controller-key", "japan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 || profile.Metadata.EndpointPort != DefaultPort || strings.Contains(profile.Config, "provider-private") {
+		t.Fatalf("manifest profile was not fetched safely: requests=%d profile=%#v", requests, profile.Metadata)
+	}
+	operations := map[string]bool{}
+	for _, event := range observer.events {
+		operations[event.Operation] = event.Success
+	}
+	if len(observer.events) != 2 || !operations["generate_profile"] || !operations["download_profile"] {
+		t.Fatalf("unexpected provider telemetry: %+v", observer.events)
+	}
+}
+
 func TestGenerateDoesNotIncludeProviderResponseInError(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
