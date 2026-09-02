@@ -8,7 +8,7 @@ if ! command -v trivy >/dev/null 2>&1; then
   exit 2
 fi
 
-default_scan_names="boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-firewall boetticher-portal boetticher-tailnet-router boetticher-airvpn boetticher-litellm boetticher-printer boetticher-streamdeck boetticher-aiops boetticher-gatus boetticher-network-probe"
+default_scan_names="boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-firewall boetticher-portal boetticher-tailnet-router boetticher-airvpn boetticher-bifrost boetticher-printer boetticher-streamdeck boetticher-aiops boetticher-gatus boetticher-network-probe"
 case "$target" in
   scan-base) names="boetticher-base" ;;
   scan-dns-blocky) names="boetticher-dns-blocky" ;;
@@ -18,7 +18,7 @@ case "$target" in
   scan-portal) names="boetticher-portal" ;;
   scan-tailnet-router) names="boetticher-tailnet-router" ;;
   scan-airvpn) names="boetticher-airvpn" ;;
-  scan-litellm) names="boetticher-litellm" ;;
+  scan-bifrost) names="boetticher-bifrost" ;;
   scan-printer) names="boetticher-printer" ;;
   scan-streamdeck) names="boetticher-streamdeck" ;;
   scan-aiops) names="boetticher-aiops" ;;
@@ -34,7 +34,7 @@ case "$target" in
 esac
 for name in $names; do
   case "$name" in
-    boetticher-base|boetticher-dns-blocky|boetticher-logging|boetticher-monitoring|boetticher-firewall|boetticher-portal|boetticher-tailnet-router|boetticher-airvpn|boetticher-litellm|boetticher-printer|boetticher-streamdeck|boetticher-aiops|boetticher-gatus|boetticher-network-probe) ;;
+    boetticher-base|boetticher-dns-blocky|boetticher-logging|boetticher-monitoring|boetticher-firewall|boetticher-portal|boetticher-tailnet-router|boetticher-airvpn|boetticher-bifrost|boetticher-printer|boetticher-streamdeck|boetticher-aiops|boetticher-gatus|boetticher-network-probe) ;;
     *) echo "unknown selected scan artifact: $name" >&2; exit 2 ;;
   esac
 done
@@ -156,7 +156,7 @@ scan_one() {
     boetticher-portal) module=portal ;;
     boetticher-tailnet-router) module=tailnet-router ;;
     boetticher-airvpn) module=airvpn ;;
-    boetticher-litellm) module=litellm ;;
+    boetticher-bifrost) module=bifrost ;;
     boetticher-printer) module=printer ;;
     boetticher-streamdeck) module=streamdeck ;;
     boetticher-aiops) module=aiops ;;

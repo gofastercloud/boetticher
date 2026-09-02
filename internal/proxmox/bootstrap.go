@@ -811,7 +811,7 @@ func RestoreTemporaryRootAccess(ctx context.Context, runner CommandRunner, addre
 
 var retainedModuleServices = map[string][]string{
 	"tailnet-router": {"tailscaled"},
-	"litellm":        {"litellm", "nginx"},
+	"bifrost":        {"bifrost", "nginx"},
 	"printer":        {"octoprint", "nginx"},
 	"streamdeck":     {"streamdeck-status.service"},
 	"aiops":          {"boetticher-aiops", "boetticher-aiops.socket", "holmes"},

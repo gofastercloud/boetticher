@@ -54,11 +54,11 @@ func TestStaticCredentialReadinessFailsForMissingRequiredProviderCredential(t *t
 	s := model.NewDefaultSite("credentials", recipient)
 	s.Modules = []model.ResolvedModule{
 		{Name: "monitoring", Enabled: true},
-		{Name: "litellm", Enabled: true},
+		{Name: "bifrost", Enabled: true},
 		{Name: "aiops", Enabled: true},
 	}
 	s.ModuleConfig = map[string]model.ModuleConfig{
-		"litellm": {Upstreams: []model.LiteLLMUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key"}}},
+		"bifrost": {Upstreams: []model.BifrostUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key"}}},
 	}
 	values := map[string]string{"ddns_tsig_secret": "ddns", "pulse_admin_password": "pulse"}
 	if err := site.StoreEncryptedDocument(siteDir, recipient, "secrets/boetticher.sops.yaml", values); err != nil {

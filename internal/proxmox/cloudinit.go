@@ -44,7 +44,7 @@ func builderArtifactTargets(plan Plan) ([]string, error) {
 		selected[guest.Artifact.Name] = true
 	}
 	targets := make([]string, 0, len(selected))
-	for _, name := range []string{"base", "dns", "logging", "monitoring", "firewall", "portal", "tailnet-router", "litellm", "printer", "streamdeck", "aiops", "gatus", "network-probe"} {
+	for _, name := range []string{"base", "dns", "logging", "monitoring", "firewall", "portal", "tailnet-router", "bifrost", "printer", "streamdeck", "aiops", "gatus", "network-probe"} {
 		definition, ok := artifacts.Lookup(name)
 		if ok && selected[definition.ArtifactName] {
 			targets = append(targets, definition.BuildTarget)
@@ -96,7 +96,7 @@ func BuilderArtifactTargetsForMissing(root string, plan Plan) ([]string, error) 
 		}
 	}
 	targets := make([]string, 0, len(selected))
-	for _, name := range []string{"base", "dns", "logging", "monitoring", "firewall", "portal", "tailnet-router", "litellm", "printer", "streamdeck", "aiops", "gatus", "network-probe"} {
+	for _, name := range []string{"base", "dns", "logging", "monitoring", "firewall", "portal", "tailnet-router", "bifrost", "printer", "streamdeck", "aiops", "gatus", "network-probe"} {
 		definition, ok := artifacts.Lookup(name)
 		if ok && selected[definition.ArtifactName] {
 			targets = append(targets, definition.BuildTarget)

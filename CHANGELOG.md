@@ -19,7 +19,7 @@ Boetticher. It is not a deployment or qualification report.
 - Add atomic desired-state `update` and a semantic `status` view.
 - Bundle the controller's SOPS and age implementations, with encrypted secret
   handling kept outside ordinary configuration and command output.
-- Keep monitoring, firewall, logging, DNS, Gatus, LiteLLM, AIOps, printer,
+- Keep monitoring, firewall, logging, DNS, Gatus, Bifrost, AIOps, printer,
   and Tailnet Router as bounded first-party capabilities with explicit defaults.
 - Improve ownership checks, host trust, appliance replacement, persistent
   storage handling, and guarded physical-network transitions.

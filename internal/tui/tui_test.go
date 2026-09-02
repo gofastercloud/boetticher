@@ -61,14 +61,14 @@ func TestCommandItemHighlightsNetworkTestAsLiveDiagnostic(t *testing.T) {
 
 func TestSensitiveCommandsUseSecureHandoff(t *testing.T) {
 	for _, args := range [][]string{
-		{"module", "secrets", "set", "litellm"},
-		{"module", "configure", "litellm", "--secret", "openrouter_api_key"},
+		{"module", "secrets", "set", "bifrost"},
+		{"module", "configure", "bifrost", "--secret", "openrouter_api_key"},
 	} {
 		if !containsSensitiveInput(args) {
 			t.Errorf("containsSensitiveInput(%q) = false", args)
 		}
 	}
-	if containsSensitiveInput([]string{"module", "status", "litellm"}) {
+	if containsSensitiveInput([]string{"module", "status", "bifrost"}) {
 		t.Fatal("read-only module status was treated as sensitive input")
 	}
 }

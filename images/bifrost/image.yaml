@@ -1,4 +1,4 @@
-name: boetticher-litellm
+name: boetticher-bifrost
 version: 1.0.0
 kind: lxc
 base: boetticher-base
@@ -6,7 +6,7 @@ base_version: 0.4.0
 architecture: amd64
 runtime:
   router: bifrost
-  router_contract: litellm-openai-compatible
+  router_contract: bifrost-openai-compatible
   nginx: 1.26.3-3+deb13u7
   backend_bind: 127.0.0.1:4000
   frontend_bind: 443

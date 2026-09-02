@@ -533,7 +533,7 @@ func applyConfigurationField(config *model.SiteConfig, name string, field model.
 	case "model_alias":
 		moduleConfig.ModelAlias = value
 	case "upstreams":
-		var values []model.LiteLLMUpstreamConfig
+		var values []model.BifrostUpstreamConfig
 		if err := decodeObjectList(value, &values); err != nil {
 			return fmt.Errorf("%s must be a valid typed list", field.Key)
 		}
@@ -542,7 +542,7 @@ func applyConfigurationField(config *model.SiteConfig, name string, field model.
 		}
 		moduleConfig.Upstreams = values
 	case "models":
-		var values []model.LiteLLMModelConfig
+		var values []model.BifrostModelConfig
 		if err := decodeObjectList(value, &values); err != nil {
 			return fmt.Errorf("%s must be a valid typed list", field.Key)
 		}
