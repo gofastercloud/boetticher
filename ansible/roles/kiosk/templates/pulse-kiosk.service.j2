@@ -1,0 +1,46 @@
+[Unit]
+Description=Boetticher Pulse dashboard Chromium kiosk
+After=network-online.target systemd-user-sessions.service dbus.socket systemd-logind.service
+Wants=network-online.target dbus.socket systemd-logind.service
+Before=graphical.target getty@tty1.service
+Conflicts=getty@tty1.service
+ConditionPathExists=/dev/tty0
+
+[Service]
+Type=simple
+User=kiosk
+Group=kiosk
+SupplementaryGroups=video render input
+WorkingDirectory=/home/kiosk
+Environment=HOME=/home/kiosk
+Environment=XDG_RUNTIME_DIR=/run/kiosk
+Environment=LIBSEAT_BACKEND=seatd
+Environment=WLR_RENDERER=pixman
+Environment=XDG_CONFIG_HOME=/home/kiosk/.config
+Environment=XDG_CACHE_HOME=/home/kiosk/.cache
+RuntimeDirectory=kiosk
+RuntimeDirectoryMode=0700
+TTYPath=/dev/tty1
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+PAMName=cage
+ExecStart=/usr/bin/cage -- /usr/bin/chromium --kiosk --no-first-run --no-default-browser-check --noerrdialogs --disable-session-crashed-bubble --disable-infobars --disable-pinch --overscroll-history-navigation=0 --disable-features=Translate --ozone-platform=wayland --user-data-dir=/home/kiosk/.config/chromium-kiosk --disable-extensions-except=/home/kiosk/pulse-refresh-extension --load-extension=/home/kiosk/pulse-refresh-extension {{ kiosk_certificate_selector }} {{ kiosk_pulse_url }}
+Restart=always
+RestartSec=5s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/kiosk/.cache /home/kiosk/.config /home/kiosk/.pki/nssdb
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=
+LockPersonality=yes
+RestrictSUIDSGID=yes
+UMask=0077
+
+[Install]
+WantedBy=graphical.target

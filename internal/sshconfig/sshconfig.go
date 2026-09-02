@@ -14,10 +14,43 @@ import (
 	"unicode"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/pathguard"
 )
 
 func Render(s model.Site, generatedAt time.Time) (string, error) {
 	return render(s, generatedAt, "")
+}
+
+// RenderDirect renders a short-lived, host-key-pinned SSH configuration for
+// one external appliance. It deliberately has no include, proxy, command, or
+// forwarding directives so Ansible cannot inherit a user's broader SSH
+// configuration while configuring a fresh Raspberry Pi.
+func RenderDirect(address, user, identity, knownHosts string, port int) (string, error) {
+	if err := ValidateBootstrapAddress(address); err != nil {
+		return "", fmt.Errorf("external appliance address: %w", err)
+	}
+	if !validSSHUser(user) {
+		return "", fmt.Errorf("SSH user %q is not a valid Unix account name", user)
+	}
+	if port < 1 || port > 65535 {
+		return "", fmt.Errorf("SSH port %d is outside 1-65535", port)
+	}
+	identity, err := quoteOpenSSHPath("SSH identity file", model.ExpandUserPath(identity))
+	if err != nil {
+		return "", err
+	}
+	knownHosts, err = quoteOpenSSHPath("SSH known-hosts file", model.ExpandUserPath(knownHosts))
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	b.WriteString("# Temporary Boetticher Raspberry Pi setup transport. Do not edit.\n")
+	fmt.Fprintf(&b, "Host boetticher-kiosk %s\n", address)
+	fmt.Fprintf(&b, "    HostName %s\n    Port %d\n    User %s\n", address, port, user)
+	b.WriteString("    ConnectTimeout 10\n    BatchMode yes\n    PasswordAuthentication no\n    KbdInteractiveAuthentication no\n    PubkeyAuthentication yes\n    StrictHostKeyChecking yes\n")
+	fmt.Fprintf(&b, "    UserKnownHostsFile %s\n    IdentityFile %s\n", knownHosts, identity)
+	b.WriteString("    IdentitiesOnly yes\n    ControlMaster no\n    ForwardAgent no\n    ForwardX11 no\n    RequestTTY no\n")
+	return b.String(), nil
 }
 
 // RenderWithKnownHosts renders an SSH projection using a site-scoped trust
@@ -153,7 +186,7 @@ func appendBastionDestinations(destinations []string, component model.Component)
 		port = 22
 	}
 	destinations = append(destinations, fmt.Sprintf("%s:%d", component.Address, port))
-	if component.Name == "lab-monitor-01" || component.Name == "lab-litellm-01" || component.Name == "lab-portal-01" {
+	if component.Name == "lab-monitor-01" || component.Name == "lab-bifrost-01" || component.Name == "lab-portal-01" {
 		destinations = append(destinations, fmt.Sprintf("%s:443", component.Address))
 	}
 	return destinations
@@ -206,7 +239,7 @@ func RemoveHostKey(path, host string) error {
 	if path == "" || host == "" || strings.ContainsAny(host, " \t\r\n") {
 		return errors.New("known-hosts path and exact host are required")
 	}
-	content, err := os.ReadFile(path)
+	content, err := pathguard.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -251,7 +284,7 @@ func RemoveHostKey(path, host string) error {
 	if !changed {
 		return nil
 	}
-	return Write(path, []byte(strings.Join(kept, "")), true)
+	return pathguard.WriteFile(path, []byte(strings.Join(kept, "")), 0600)
 }
 
 // ReadHostKey returns the first plain host-key entry for the exact alias.
@@ -262,7 +295,7 @@ func ReadHostKey(path, host string) (string, error) {
 	if path == "" || host == "" || strings.ContainsAny(host, " \t\r\n,|*?!") {
 		return "", errors.New("known-hosts path and exact host are required")
 	}
-	content, err := os.ReadFile(path)
+	content, err := pathguard.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("host key for %s is not enrolled: %w", host, err)
 	}
@@ -333,7 +366,7 @@ func addHostKey(path, host, publicKey string, normalize func(string) (string, er
 	if len(content) > 0 && !strings.HasSuffix(string(content), "\n") {
 		separator = "\n"
 	}
-	return Write(path, append(append(append([]byte{}, content...), []byte(separator)...), []byte(host+" "+canonicalKey+"\n")...), true)
+	return pathguard.WriteFile(path, append(append(append([]byte{}, content...), []byte(separator)...), []byte(host+" "+canonicalKey+"\n")...), 0600)
 }
 
 func normalizeKnownHostKey(publicKey string) (string, error) {
@@ -448,6 +481,18 @@ func ValidateBootstrapAddress(address string) error {
 		return fmt.Errorf("bootstrap endpoint must be an IPv4 address")
 	}
 	return nil
+}
+
+func validSSHUser(user string) bool {
+	if user == "" || len(user) > 32 || (user[0] >= '0' && user[0] <= '9') {
+		return false
+	}
+	for _, character := range user {
+		if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '_' || character == '-' || character == '.') {
+			return false
+		}
+	}
+	return true
 }
 
 func writeHost(b *strings.Builder, aliases []string, hostName, user, hostKeyAlias, identity, knownHosts string, throughBastion, bastion bool) {

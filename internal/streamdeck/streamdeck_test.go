@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -34,15 +35,15 @@ func TestPulseFetchIsBoundedAndPaginates(t *testing.T) {
 		case "/api/state/summary":
 			_, _ = writer.Write([]byte(`{}`))
 		case "/api/resources":
-			if request.URL.Query().Get("offset") == "0" {
+			if request.URL.Query().Get("page") == "1" {
 				items := make([]map[string]any, pageSize)
 				for i := range items {
-					items[i] = map[string]any{"name": "node-a", "type": "node", "status": "up", "metrics": map[string]any{"cpu": 10, "memory": 20}}
+					items[i] = map[string]any{"name": "node-a", "type": "agent", "platformType": "proxmox", "status": "up", "metrics": map[string]any{"cpu": 10, "memory": 20}}
 				}
 				_ = json.NewEncoder(writer).Encode(map[string]any{"resources": items})
 				return
 			}
-			_ = json.NewEncoder(writer).Encode(map[string]any{"resources": []map[string]any{{"name": "node-b", "type": "node", "status": "down", "metrics": map[string]any{"cpu": 101}}}})
+			_ = json.NewEncoder(writer).Encode(map[string]any{"resources": []map[string]any{{"name": "node-b", "type": "agent", "platformType": "proxmox", "status": "down", "metrics": map[string]any{"cpu": 101}}}})
 		default:
 			http.NotFound(writer, request)
 		}
@@ -59,8 +60,121 @@ func TestPulseFetchIsBoundedAndPaginates(t *testing.T) {
 	if len(state.Resources) != 101 || state.Resources[0].CPU == nil || *state.Resources[0].CPU != 10 || state.Resources[100].CPU != nil {
 		t.Fatalf("unexpected Pulse state: %#v", state)
 	}
-	if len(requests) != 4 || !strings.Contains(requests[2], "offset=0") || !strings.Contains(requests[3], "offset=100") {
+	if len(requests) != 4 || !strings.Contains(requests[2], "page=1") || !strings.Contains(requests[3], "page=2") {
 		t.Fatalf("unexpected Pulse requests: %#v", requests)
+	}
+}
+
+func TestDecodeResourceAcceptsStructuredPulseMetrics(t *testing.T) {
+	resource, err := decodeResource(json.RawMessage(`{
+		"name":"lab-fw-01",
+		"type":"vm",
+		"sources":["proxmox"],
+		"platformScopes":["proxmox-pve"],
+		"status":"warning",
+		"metrics":{
+			"cpu":{"value":1.25,"percent":1.25,"unit":"percent"},
+			"memory":{"value":0,"used":449294336,"total":2147483648,"percent":20.921897888183594,"unit":"bytes"}
+		}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resource.CPU == nil || *resource.CPU != 1.25 {
+		t.Fatalf("structured CPU = %#v, want 1.25", resource.CPU)
+	}
+	if resource.Memory == nil || *resource.Memory != 20.921897888183594 {
+		t.Fatalf("structured memory = %#v, want 20.921897888183594", resource.Memory)
+	}
+	if got := optionalPercent(map[string]any{"value": 449294336.0, "unit": "bytes"}); got != nil {
+		t.Fatalf("byte metric was interpreted as a percent: %#v", got)
+	}
+}
+
+func TestPulseFetchUsesCurrentProxmoxResourceProvenance(t *testing.T) {
+	var sourceQuery string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/api/health":
+			_, _ = writer.Write([]byte(`{"status":"healthy"}`))
+		case "/api/state/summary":
+			_, _ = writer.Write([]byte(`{}`))
+		case "/api/resources":
+			sourceQuery = request.URL.Query().Get("source")
+			if sourceQuery != "" {
+				_ = json.NewEncoder(writer).Encode(map[string]any{"resources": []map[string]any{}})
+				return
+			}
+			_ = json.NewEncoder(writer).Encode(map[string]any{"resources": []map[string]any{
+				{"name": "lab-dns-01", "type": "system-container", "sources": []string{"proxmox"}, "platformScopes": []string{"proxmox-pve"}, "status": "online"},
+				{"name": "lab-fw-01", "type": "vm", "sources": []string{"proxmox"}, "platformScopes": []string{"proxmox-pve"}, "status": "online"},
+				{"name": "foreign-container", "type": "system-container", "sources": []string{"other"}, "platformScopes": []string{"other-platform"}, "status": "online"},
+			}})
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	client, err := newPulseClient(server.URL, "read-token", server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := client.Fetch(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sourceQuery != "" {
+		t.Fatalf("Pulse fetch retained obsolete source query %q", sourceQuery)
+	}
+	hosts := ProxmoxHosts(state.Resources)
+	if len(hosts) != 2 || hosts[0].Name != "lab-dns-01" || hosts[1].Name != "lab-fw-01" {
+		t.Fatalf("current Pulse Proxmox resources = %#v", hosts)
+	}
+}
+
+func TestProxmoxHostsAcceptsLegacyHostAndAgentShapes(t *testing.T) {
+	hosts := ProxmoxHosts([]Resource{
+		{Name: "standalone-agent", Kind: "agent", PlatformType: "linux"},
+		{Name: "pve-node", Kind: "agent", PlatformType: "proxmox"},
+		{Name: "legacy-node", Kind: "node"},
+	})
+	if len(hosts) != 2 || hosts[0].Name != "legacy-node" || hosts[1].Name != "pve-node" {
+		t.Fatalf("unexpected Proxmox hosts: %#v", hosts)
+	}
+}
+
+func TestProxmoxHostsAcceptsPulseGuestResourceTypes(t *testing.T) {
+	resources := make([]Resource, 0, 3)
+	for _, raw := range []json.RawMessage{
+		json.RawMessage(`{"name":"lab-storage","type":"storage","sources":["proxmox"],"platformScopes":["proxmox-pve"]}`),
+		json.RawMessage(`{"name":"lab-dns-01","type":"system-container","sources":["proxmox"],"platformScopes":["proxmox-pve"],"status":"online"}`),
+		json.RawMessage(`{"name":"lab-fw-01","type":"vm","sources":["proxmox"],"platformScopes":["proxmox-pve"],"status":"online"}`),
+	} {
+		resource, err := decodeResource(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resources = append(resources, resource)
+	}
+	hosts := ProxmoxHosts(resources)
+	if len(hosts) != 2 || hosts[0].Name != "lab-dns-01" || hosts[1].Name != "lab-fw-01" {
+		t.Fatalf("live Pulse Proxmox guests were not accepted: %#v", hosts)
+	}
+}
+
+func TestProxmoxHostsRejectsCurrentNonProxmoxResources(t *testing.T) {
+	proxmox, err := decodeResource(json.RawMessage(`{"name":"lab-dns-01","type":"system-container","sources":["proxmox"],"platformScopes":["proxmox-pve"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := decodeResource(json.RawMessage(`{"name":"foreign-container","type":"system-container","sources":["other"],"platformScopes":["other-platform"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hosts := ProxmoxHosts([]Resource{proxmox, foreign})
+	if len(hosts) != 1 || hosts[0].Name != "lab-dns-01" {
+		t.Fatalf("current non-Proxmox resource was rendered: %#v", hosts)
 	}
 }
 
@@ -112,6 +226,13 @@ func TestRenderWaitAndNoHostsAreFailSafe(t *testing.T) {
 		if len(deck.images) != 2 {
 			t.Fatalf("rendered %d buttons", len(deck.images))
 		}
+	}
+}
+
+func TestErrorNameExplainsSyscallErrorsWithoutContextualData(t *testing.T) {
+	got := errorName(syscall.ENODATA)
+	if !strings.HasPrefix(got, "errno=") || !strings.Contains(got, syscall.ENODATA.Error()) {
+		t.Fatalf("errno error name = %q", got)
 	}
 }
 

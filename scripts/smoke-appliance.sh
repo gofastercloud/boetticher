@@ -164,22 +164,22 @@ case "$name" in
       exit 1
     fi
     ;;
-  boetticher-litellm)
-    require_executable 'litellm nginx executable is missing' "$rootfs/usr/sbin/nginx"
+  boetticher-bifrost)
+    require_executable 'bifrost nginx executable is missing' "$rootfs/usr/sbin/nginx"
     require_executable 'Bifrost executable is missing' "$rootfs/usr/local/libexec/boetticher-bifrost"
-    require_executable 'LiteLLM-compatible capabilities executable is missing' "$rootfs/usr/local/libexec/boetticher-litellm-model-capabilities"
+    require_executable 'Bifrost-compatible capabilities executable is missing' "$rootfs/usr/local/libexec/boetticher-bifrost-model-capabilities"
     chroot "$rootfs" getent passwd bifrost | grep -Eq '^bifrost:'
     chroot "$rootfs" dpkg-query -W -f='${Version}' nginx | grep -Fxq '1.26.3-3+deb13u7'
-    test -f "$rootfs/etc/systemd/system/litellm.service"
-    grep -Fq -- 'ExecStart=/usr/local/libexec/boetticher-bifrost serve --config /etc/boetticher/litellm/config.json' "$rootfs/etc/systemd/system/litellm.service"
-    grep -Fxq 'User=bifrost' "$rootfs/etc/systemd/system/litellm.service"
-    grep -Fxq 'Group=bifrost' "$rootfs/etc/systemd/system/litellm.service"
-    grep -Fxq 'CapabilityBoundingSet=' "$rootfs/etc/systemd/system/litellm.service"
-    test ! -e "$rootfs/etc/boetticher/litellm/config.json"
+    test -f "$rootfs/etc/systemd/system/bifrost.service"
+    grep -Fq -- 'ExecStart=/usr/local/libexec/boetticher-bifrost serve --config /etc/boetticher/bifrost/config.json' "$rootfs/etc/systemd/system/bifrost.service"
+    grep -Fxq 'User=bifrost' "$rootfs/etc/systemd/system/bifrost.service"
+    grep -Fxq 'Group=bifrost' "$rootfs/etc/systemd/system/bifrost.service"
+    grep -Fxq 'CapabilityBoundingSet=' "$rootfs/etc/systemd/system/bifrost.service"
+    test ! -e "$rootfs/etc/boetticher/bifrost/config.json"
     test ! -e "$rootfs/etc/nginx/sites-enabled/default"
     test ! -e "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
     if find "$rootfs/etc/nginx" -type f \( -name '*.pem' -o -name '*.key' \) -print -quit | grep -q .; then
-      echo "litellm artifact contains generated TLS material" >&2
+      echo "bifrost artifact contains generated TLS material" >&2
       exit 1
     fi
     ;;
@@ -205,6 +205,29 @@ case "$name" in
     test ! -e "$rootfs/etc/nginx/sites-enabled/default"
     if find "$rootfs/etc/nginx" -type f \( -name '*.pem' -o -name '*.key' \) -print -quit | grep -q .; then
       echo "printer artifact contains generated TLS material" >&2
+      exit 1
+    fi
+    ;;
+  boetticher-arr)
+    test -x "$rootfs/usr/sbin/nginx"
+    test -x "$rootfs/opt/sonarr/Sonarr"
+    test -x "$rootfs/opt/radarr/Radarr"
+    chroot "$rootfs" getent passwd sonarr | grep -Fq ':2200:2200:'
+    chroot "$rootfs" getent passwd radarr | grep -Fq ':2201:2200:'
+    chroot "$rootfs" dpkg-query -W -f='${Version}' nginx | grep -Fxq '1.26.3-3+deb13u7'
+    test -f "$rootfs/etc/systemd/system/sonarr.service"
+    test -f "$rootfs/etc/systemd/system/radarr.service"
+    grep -Fq 'ExecStart=/opt/sonarr/Sonarr -nobrowser -data=/var/lib/arr/sonarr' "$rootfs/etc/systemd/system/sonarr.service"
+    grep -Fq 'ExecStart=/opt/radarr/Radarr -nobrowser -data=/var/lib/arr/radarr' "$rootfs/etc/systemd/system/radarr.service"
+    grep -Fq 'ProtectSystem=strict' "$rootfs/etc/systemd/system/sonarr.service"
+    grep -Fq 'ProtectSystem=strict' "$rootfs/etc/systemd/system/radarr.service"
+    if grep -Fq 'MemoryDenyWriteExecute' "$rootfs/etc/systemd/system/sonarr.service" "$rootfs/etc/systemd/system/radarr.service"; then
+      echo "arr artifact blocks the .NET JIT with MemoryDenyWriteExecute" >&2
+      exit 1
+    fi
+    test ! -e "$rootfs/etc/nginx/sites-enabled/default"
+    if find "$rootfs/etc/nginx" -type f \( -name '*.pem' -o -name '*.key' \) -print -quit | grep -q .; then
+      echo "arr artifact contains generated TLS material" >&2
       exit 1
     fi
     ;;
@@ -245,7 +268,8 @@ case "$name" in
     test -f "$rootfs/etc/systemd/system/gatus.service"
     grep -Fq -- 'User=gatus' "$rootfs/etc/systemd/system/gatus.service"
     grep -Fxq 'Group=gatus' "$rootfs/etc/systemd/system/gatus.service"
-    grep -Fxq 'ExecStart=/usr/local/bin/gatus --config-path /etc/boetticher/gatus/config.yaml' "$rootfs/etc/systemd/system/gatus.service"
+    grep -Fxq 'Environment=GATUS_CONFIG_PATH=/etc/boetticher/gatus/config.yaml' "$rootfs/etc/systemd/system/gatus.service"
+    grep -Fxq 'ExecStart=/usr/local/bin/gatus' "$rootfs/etc/systemd/system/gatus.service"
     chroot "$rootfs" runuser -u gatus -- test -x /usr/local/bin/gatus
     test ! -e "$rootfs/etc/boetticher/gatus/config.yaml"
     ;;

@@ -1,0 +1,163 @@
+---
+- name: Require the pinned arr appliance artifact
+  ansible.builtin.assert:
+    that:
+      - boetticher_appliance_artifact | default(false) | bool
+      - module_configs.arr is defined
+    fail_msg: "arr requires a qualified pinned Sonarr/Radarr appliance artifact"
+
+- name: Create the arr TLS identity directory
+  ansible.builtin.file:
+    path: /var/lib/boetticher/identity/tls
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Generate the arr endpoint private key
+  ansible.builtin.command:
+    argv: [openssl, genpkey, -algorithm, EC, -pkeyopt, ec_paramgen_curve:P-256, -out, /var/lib/boetticher/identity/tls/arr.key.pem]
+  args:
+    creates: /var/lib/boetticher/identity/tls/arr.key.pem
+
+- name: Restrict the arr endpoint private key
+  ansible.builtin.file:
+    path: /var/lib/boetticher/identity/tls/arr.key.pem
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Generate the arr endpoint CSR
+  ansible.builtin.command:
+    argv:
+      - openssl
+      - req
+      - -new
+      - -sha256
+      - -key
+      - /var/lib/boetticher/identity/tls/arr.key.pem
+      - -subj
+      - "/CN=sonarr.{{ domain }}"
+      - -addext
+      - "subjectAltName=DNS:sonarr.{{ domain }},DNS:radarr.{{ domain }},DNS:lab-arr-01.{{ domain }}"
+      - -out
+      - /var/lib/boetticher/identity/tls/arr.csr.pem
+  args:
+    creates: /var/lib/boetticher/identity/tls/arr.csr.pem
+
+- name: Fetch the arr CSR during PKI bootstrap
+  ansible.builtin.fetch:
+    src: /var/lib/boetticher/identity/tls/arr.csr.pem
+    dest: "{{ pki_csr_output_dir }}/arr.csr.pem"
+    flat: true
+  when: pki_bootstrap_phase | default(false) | bool
+
+- name: Require controller-issued arr endpoint identity before activation
+  ansible.builtin.assert:
+    that:
+      - client_ca_pem | default('') | length > 0
+      - client_crl_pem | default('') | length > 0
+      - (pki_bootstrap_phase | default(false) | bool) or (arr_server_cert_pem | default('') | length > 0)
+    fail_msg: arr nginx requires the existing Boetticher PKI server certificate and client CA
+  no_log: true
+
+- name: Install arr endpoint certificate material
+  ansible.builtin.copy:
+    dest: "{{ item.dest }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - {dest: /var/lib/boetticher/identity/tls/arr.crt.pem, content: "{{ arr_server_cert_pem | default('') }}"}
+    - {dest: /var/lib/boetticher/identity/tls/client-ca.pem, content: "{{ client_ca_pem | default('') }}"}
+    - {dest: /var/lib/boetticher/identity/tls/client-ca.crl.pem, content: "{{ client_crl_pem | default('') }}"}
+  no_log: true
+  when: arr_server_cert_pem | default('') | length > 0
+
+- name: Create persistent arr application state directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: arr
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: /var/lib/arr/sonarr, owner: sonarr, mode: '0750'}
+    - {path: /var/lib/arr/radarr, owner: radarr, mode: '0750'}
+    - {path: /var/lib/arr/downloads, owner: root, mode: '2770'}
+
+- name: Bind Sonarr and Radarr to loopback with no native login
+  ansible.builtin.copy:
+    dest: "{{ item.dest }}"
+    owner: "{{ item.owner }}"
+    group: arr
+    mode: '0640'
+    force: false
+    content: |
+      <Config>
+        <BindAddress>127.0.0.1</BindAddress>
+        <Port>{{ item.port }}</Port>
+        <EnableSsl>False</EnableSsl>
+        <LaunchBrowser>False</LaunchBrowser>
+        <AuthenticationMethod>None</AuthenticationMethod>
+        <AuthenticationRequired>DisabledForLocalAddresses</AuthenticationRequired>
+      </Config>
+  loop:
+    - {dest: /var/lib/arr/sonarr/config.xml, owner: sonarr, port: 8989}
+    - {dest: /var/lib/arr/radarr/config.xml, owner: radarr, port: 7878}
+  when: arr_server_cert_pem | default('') | length > 0
+
+- name: Configure nginx as the only arr network listener
+  ansible.builtin.copy:
+    dest: /etc/nginx/sites-available/arr.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      server {
+          listen 10.10.20.110:443 ssl;
+          server_name sonarr.{{ domain }};
+          ssl_certificate /var/lib/boetticher/identity/tls/arr.crt.pem;
+          ssl_certificate_key /var/lib/boetticher/identity/tls/arr.key.pem;
+          ssl_client_certificate /var/lib/boetticher/identity/tls/client-ca.pem;
+          ssl_crl /var/lib/boetticher/identity/tls/client-ca.crl.pem;
+          ssl_verify_client on;
+          ssl_protocols TLSv1.2 TLSv1.3;
+          location / {
+              proxy_pass http://127.0.0.1:8989;
+              proxy_set_header Host $host;
+              proxy_set_header X-Forwarded-Proto https;
+          }
+      }
+      server {
+          listen 10.10.20.110:443 ssl;
+          server_name radarr.{{ domain }};
+          ssl_certificate /var/lib/boetticher/identity/tls/arr.crt.pem;
+          ssl_certificate_key /var/lib/boetticher/identity/tls/arr.key.pem;
+          ssl_client_certificate /var/lib/boetticher/identity/tls/client-ca.pem;
+          ssl_crl /var/lib/boetticher/identity/tls/client-ca.crl.pem;
+          ssl_verify_client on;
+          ssl_protocols TLSv1.2 TLSv1.3;
+          location / {
+              proxy_pass http://127.0.0.1:7878;
+              proxy_set_header Host $host;
+              proxy_set_header X-Forwarded-Proto https;
+          }
+      }
+  when: arr_server_cert_pem | default('') | length > 0
+
+- name: Enable arr nginx site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/arr.conf
+    dest: /etc/nginx/sites-enabled/arr.conf
+    state: link
+  when: arr_server_cert_pem | default('') | length > 0
+
+- name: Enable and start the arr services behind nginx
+  ansible.builtin.service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: [sonarr, radarr, nginx]
+  when: arr_server_cert_pem | default('') | length > 0

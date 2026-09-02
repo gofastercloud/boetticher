@@ -1,0 +1,11 @@
+---
+- name: restart bifrost
+  ansible.builtin.service:
+    name: bifrost
+    state: restarted
+
+- name: restart nginx
+  ansible.builtin.systemd_service:
+    name: nginx
+    state: restarted
+    daemon_reload: true

@@ -13,18 +13,18 @@ import (
 
 func TestModuleSecretMutationRejectsPlatformAndSharedNames(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
-	litellmEnabled, tailnetEnabled := true, true
-	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
-		Enabled:   &litellmEnabled,
-		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "root_key_pem_b64"}},
-		Models:    []model.LiteLLMModelConfig{{Alias: "qwen", Upstream: "openrouter", Model: "some/model"}},
+	bifrostEnabled, tailnetEnabled := true, true
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
+		Enabled:   &bifrostEnabled,
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "root_key_pem_b64"}},
+		Models:    []model.BifrostModelConfig{{Alias: "qwen", Upstream: "openrouter", Model: "some/model"}},
 	}
 	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
-	if err := validateModuleSecretMutation(config, "litellm", "root_key_pem_b64"); err == nil || !strings.Contains(err.Error(), "platform-owned") {
+	if err := validateModuleSecretMutation(config, "bifrost", "root_key_pem_b64"); err == nil || !strings.Contains(err.Error(), "platform-owned") {
 		t.Fatalf("platform-owned module secret was accepted: %v", err)
 	}
-	config.Modules.LiteLLM.Upstreams[0].APIKeySecret = "tailscale_auth_key"
-	if err := validateModuleSecretMutation(config, "litellm", "tailscale_auth_key"); err == nil || !strings.Contains(err.Error(), "tailnet-router") {
+	config.Modules.Bifrost.Upstreams[0].APIKeySecret = "tailscale_auth_key"
+	if err := validateModuleSecretMutation(config, "bifrost", "tailscale_auth_key"); err == nil || !strings.Contains(err.Error(), "tailnet-router") {
 		t.Fatalf("shared module secret was accepted: %v", err)
 	}
 }
@@ -34,7 +34,7 @@ func TestBootstrapSecretRequirementIsSkippedForRetainedModuleState(t *testing.T)
 	if !hasRetainedModuleState(retained, "tailnet-router") {
 		t.Fatal("retained module state was not recognized")
 	}
-	if hasRetainedModuleState(retained, "litellm") {
+	if hasRetainedModuleState(retained, "bifrost") {
 		t.Fatal("unrelated retained module state was accepted")
 	}
 }
@@ -73,10 +73,10 @@ func TestModuleSecretCLIListSetAndRemoveNeverPrintsValue(t *testing.T) {
 	identityPath, recipient := writeTestAgeIdentity(t)
 	config := model.ConfigFromSite(model.NewSite("installation", recipient, model.GatewayModeManaged))
 	falseValue := false
-	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
 		Enabled:   &falseValue,
-		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
-		Models:    []model.LiteLLMModelConfig{{Alias: "qwen", Upstream: "openrouter", Model: "some/model"}},
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
+		Models:    []model.BifrostModelConfig{{Alias: "qwen", Upstream: "openrouter", Model: "some/model"}},
 	}
 	data, err := model.RenderSiteConfig(config)
 	if err != nil {
@@ -93,7 +93,7 @@ func TestModuleSecretCLIListSetAndRemoveNeverPrintsValue(t *testing.T) {
 	}
 
 	var output bytes.Buffer
-	if err := Run([]string{"module", "secrets", "litellm", "list", "--site", siteDir, "--age-identity", identityPath}, &output, &output); err != nil {
+	if err := Run([]string{"module", "secrets", "bifrost", "list", "--site", siteDir, "--age-identity", identityPath}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(output.String(), "openrouter_api_key\t runtime") && !strings.Contains(output.String(), "openrouter_api_key\truntime") {
@@ -101,21 +101,21 @@ func TestModuleSecretCLIListSetAndRemoveNeverPrintsValue(t *testing.T) {
 	}
 	output.Reset()
 	secret := "super-secret-value"
-	if err := RunWithInput([]string{"module", "secrets", "litellm", "set", "openrouter_api_key", "--site", siteDir, "--age-identity", identityPath}, strings.NewReader(secret+"\n"), &output, &output); err != nil {
+	if err := RunWithInput([]string{"module", "secrets", "bifrost", "set", "openrouter_api_key", "--site", siteDir, "--age-identity", identityPath}, strings.NewReader(secret+"\n"), &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(output.String(), secret) {
 		t.Fatalf("secret value leaked from set output: %q", output.String())
 	}
 	output.Reset()
-	if err := Run([]string{"module", "status", "litellm", "--site", siteDir, "--age-identity", identityPath}, &output, &output); err != nil {
+	if err := Run([]string{"module", "status", "bifrost", "--site", siteDir, "--age-identity", identityPath}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(output.String(), "openrouter_api_key\truntime\toperator-supplied\tPASS present") || strings.Contains(output.String(), secret) {
 		t.Fatalf("status did not report redacted secret presence: %q", output.String())
 	}
 	output.Reset()
-	if err := Run([]string{"module", "secrets", "litellm", "remove", "openrouter_api_key", "--confirm", "--site", siteDir, "--age-identity", identityPath}, &output, &output); err != nil {
+	if err := Run([]string{"module", "secrets", "bifrost", "remove", "openrouter_api_key", "--confirm", "--site", siteDir, "--age-identity", identityPath}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(output.String(), secret) {

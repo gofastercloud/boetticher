@@ -1,17 +1,17 @@
-// Package status defines the one semantic status contract shared by the CLI,
-// generated status JSON, verification presentation, and the portal.
+// Package status defines the shared result shape used by the CLI, generated
+// status JSON, verification display, and the portal.
 package status
 
 import "strings"
 
-// ModelVersion identifies the machine-readable status contract.
+// ModelVersion identifies the machine-readable status format.
 const ModelVersion = "boetticher/status/v1"
 
-// EvidenceStatus describes the result available for one check.
+// EvidenceStatus describes the result recorded for one check.
 type EvidenceStatus string
 
 const (
-	// PASS means the check completed successfully at its stated evidence level.
+	// PASS means the check completed successfully.
 	PASS EvidenceStatus = "PASS"
 	// FAIL means the check ran and found a failure.
 	FAIL EvidenceStatus = "FAIL"
@@ -23,7 +23,7 @@ const (
 	INCONCLUSIVE EvidenceStatus = "INCONCLUSIVE"
 )
 
-// OperatorState is the plain-language state shown to operators.
+// OperatorState is the plain-language state shown by Boetticher.
 type OperatorState string
 
 const (
@@ -34,7 +34,7 @@ const (
 	ActionRequired OperatorState = "ACTION REQUIRED"
 )
 
-// EvidenceTier identifies the boundary at which a check was performed.
+// EvidenceTier identifies where a check was performed.
 type EvidenceTier string
 
 const (
@@ -66,7 +66,7 @@ type Report struct {
 }
 
 // LegacyCheck is the small internal bridge used while existing verification
-// evidence is presented through the v1 semantic status model.
+// results are presented through the v1 status model.
 type LegacyCheck struct {
 	Name       string
 	Status     string
@@ -77,7 +77,7 @@ type LegacyCheck struct {
 	NextAction string
 }
 
-// FromLegacy converts the existing verification results into the semantic status model.
+// FromLegacy converts existing verification results into the status model.
 func FromLegacy(modelRevision, observedAt string, checks []LegacyCheck) Report {
 	result := Report{
 		StatusModelVersion: ModelVersion,
@@ -126,7 +126,7 @@ func FromLegacy(modelRevision, observedAt string, checks []LegacyCheck) Report {
 	return result
 }
 
-// Overall returns the most serious active operator state in checks.
+// Overall returns the most serious current state in checks.
 func Overall(checks []Check) OperatorState {
 	state := Healthy
 	for _, check := range checks {
@@ -167,14 +167,14 @@ func nextAction(evidence EvidenceStatus) string {
 	case PASS:
 		return "No action required"
 	case FAIL:
-		return "Review the detailed evidence and correct the failed check"
+		return "Review the details and correct the failed check"
 	case HOLD:
 		return "Resolve the stated prerequisite before continuing"
 	case NOTTESTED:
 		return "Run the corresponding live or acceptance check"
 	case INCONCLUSIVE:
-		return "Collect complete evidence and repeat the check"
+		return "Gather the missing details and repeat the check"
 	default:
-		return "Review the detailed evidence"
+		return "Review the details"
 	}
 }

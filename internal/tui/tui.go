@@ -1,6 +1,6 @@
-// Package tui contains the experimental interactive operator interface.
-// Domain mutations remain owned by internal/cli; this package only owns
-// navigation, presentation, and bounded command orchestration.
+// Package tui contains the experimental interactive dashboard. Changes remain
+// in internal/cli; this package owns navigation, presentation, and the small
+// set of commands it can launch.
 package tui
 
 import (

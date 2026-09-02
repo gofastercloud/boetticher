@@ -43,14 +43,7 @@ func builderArtifactTargets(plan Plan) ([]string, error) {
 		}
 		selected[guest.Artifact.Name] = true
 	}
-	targets := make([]string, 0, len(selected))
-	for _, name := range []string{"base", "dns", "logging", "monitoring", "firewall", "portal", "tailnet-router", "litellm", "printer", "streamdeck", "aiops", "gatus", "network-probe"} {
-		definition, ok := artifacts.Lookup(name)
-		if ok && selected[definition.ArtifactName] {
-			targets = append(targets, definition.BuildTarget)
-		}
-	}
-	return targets, nil
+	return orderedBuilderArtifactTargets(selected), nil
 }
 
 // BuilderArtifactTargetsForMissing returns the smallest builder workload that
@@ -95,14 +88,20 @@ func BuilderArtifactTargetsForMissing(root string, plan Plan) ([]string, error) 
 			break
 		}
 	}
+	return orderedBuilderArtifactTargets(selected), nil
+}
+
+// orderedBuilderArtifactTargets derives the build order from the canonical
+// artifact catalog.  Both initial and cache-miss builder paths use it, so a
+// newly registered module cannot be silently omitted from one path.
+func orderedBuilderArtifactTargets(selected map[string]bool) []string {
 	targets := make([]string, 0, len(selected))
-	for _, name := range []string{"base", "dns", "logging", "monitoring", "firewall", "portal", "tailnet-router", "litellm", "printer", "streamdeck", "aiops", "gatus", "network-probe"} {
-		definition, ok := artifacts.Lookup(name)
-		if ok && selected[definition.ArtifactName] {
+	for _, definition := range artifacts.Definitions() {
+		if selected[definition.ArtifactName] {
 			targets = append(targets, definition.BuildTarget)
 		}
 	}
-	return targets, nil
+	return targets
 }
 
 func builderScanTargets(buildTargets []string) ([]string, error) {

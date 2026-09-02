@@ -32,9 +32,16 @@ type Deck interface {
 func ProxmoxHosts(resources []Resource) []Resource {
 	hosts := make([]Resource, 0, len(resources))
 	for _, resource := range resources {
-		switch strings.ToLower(resource.Kind) {
-		case "node", "host", "proxmox-host", "pve":
+		if !hasProxmoxProvenance(resource) {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(resource.Kind)) {
+		case "node", "host", "proxmox-host", "pve", "vm", "system-container":
 			hosts = append(hosts, resource)
+		case "agent":
+			if isProxmoxPlatform(resource.PlatformType) {
+				hosts = append(hosts, resource)
+			}
 		}
 	}
 	for i := 1; i < len(hosts); i++ {
@@ -43,6 +50,32 @@ func ProxmoxHosts(resources []Resource) []Resource {
 		}
 	}
 	return hosts
+}
+
+func hasProxmoxProvenance(resource Resource) bool {
+	if resource.sourceMetadata || len(resource.Sources) > 0 || len(resource.PlatformScopes) > 0 {
+		for _, source := range resource.Sources {
+			if strings.EqualFold(strings.TrimSpace(source), "proxmox") {
+				return true
+			}
+		}
+		for _, scope := range resource.PlatformScopes {
+			if isProxmoxPlatform(scope) {
+				return true
+			}
+		}
+		return false
+	}
+	return strings.TrimSpace(resource.PlatformType) == "" || isProxmoxPlatform(resource.PlatformType)
+}
+
+func isProxmoxPlatform(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "proxmox", "proxmox-ve", "pve":
+		return true
+	default:
+		return false
+	}
 }
 
 func hostLess(left, right Resource) bool {

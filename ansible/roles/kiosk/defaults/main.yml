@@ -1,0 +1,5 @@
+---
+kiosk_log2ram_size: 128M
+kiosk_log2ram_size_mb: 128
+kiosk_log2ram_system_max_use: 64M
+kiosk_log2ram_runtime_max_use: 32M

@@ -37,12 +37,12 @@ func SecretDeclarations(config model.SiteConfig, name string) ([]model.SecretDec
 		}
 		base.Modules = append(base.Modules, model.ResolvedModule{Name: definition.Name, Enabled: enabled})
 	}
-	if name == "litellm" {
+	if name == "bifrost" {
 		configured, exists := base.ModuleConfig[name]
 		if !exists || len(configured.Upstreams) == 0 || len(configured.Models) == 0 {
-			return nil, fmt.Errorf("module litellm requires configured upstreams and model aliases before its secret names are known")
+			return nil, fmt.Errorf("module bifrost requires configured upstreams and model aliases before its secret names are known")
 		}
-		if err := model.ValidateLiteLLMConfig(configured); err != nil {
+		if err := model.ValidateBifrostConfig(configured); err != nil {
 			return nil, err
 		}
 	}
@@ -57,7 +57,7 @@ func SecretDeclarations(config model.SiteConfig, name string) ([]model.SecretDec
 // AllSecretDeclarations returns the composed secret contracts for active
 // modules plus explicitly configured inactive modules. Default-off modules
 // with no configuration have no legal secret names until their configuration
-// supplies a declaration (LiteLLM is the notable example).
+// supplies a declaration (Bifrost is the notable example).
 func AllSecretDeclarations(config model.SiteConfig) ([]model.ModuleDeclaration, error) {
 	resolvedSite, _, err := Compose(config)
 	if err != nil {

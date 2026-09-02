@@ -33,22 +33,24 @@ type PlacementRequirement struct {
 }
 
 type ModuleDefinition struct {
-	Name              string
-	Description       string
-	Version           string
-	Policy            EnablementPolicy
-	DependsOn         []string
-	Requires          []Capability
-	Provides          []Capability
-	GuestIDs          []int
-	ReservedVMIDStart int
-	ReservedVMIDEnd   int
-	Placement         PlacementRequirement
-	Guests            []model.Component
-	USBRequirements   []model.USBRequirement
-	Configuration     []model.ModuleConfigField
-	StaticDeviceSlots int
-	NetworkCapable    bool
+	Name                string
+	Description         string
+	Version             string
+	Policy              EnablementPolicy
+	DependsOn           []string
+	Requires            []Capability
+	Provides            []Capability
+	GuestIDs            []int
+	ReservedVMIDStart   int
+	ReservedVMIDEnd     int
+	Placement           PlacementRequirement
+	Guests              []model.Component
+	USBRequirements     []model.USBRequirement
+	Configuration       []model.ModuleConfigField
+	StaticDeviceSlots   int
+	NetworkCapable      bool
+	AllowedNetworkModes []model.ModuleNetworkMode
+	DefaultNetworkMode  model.ModuleNetworkMode
 }
 
 type Registry struct {
@@ -111,8 +113,16 @@ func FirstPartyRegistry() Registry {
 				{Name: "lab-airvpn-01", VMID: model.AirVPNGuestVMID, Hostname: "lab-airvpn-01", Address: model.AirVPNGuestAddress, Role: "AirVPN WireGuard transit", DNSAliases: []string{"airvpn"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
-		"litellm": {
-			Name: "litellm", Description: "mTLS-protected LiteLLM AI API router", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
+		"arr": {
+			Name: "arr", Description: "AirVPN-routed Sonarr and Radarr video services", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
+			AllowedNetworkModes: []model.ModuleNetworkMode{model.ModuleNetworkAirVPN}, DefaultNetworkMode: model.ModuleNetworkAirVPN,
+			DependsOn: []string{"airvpn"}, Requires: []Capability{CapabilityAirVPNTransit, CapabilityDNS, CapabilityNTP}, GuestIDs: []int{model.ArrVMID}, ReservedVMIDStart: 270, ReservedVMIDEnd: 279,
+			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
+				{Name: "lab-arr-01", VMID: model.ArrVMID, Hostname: "lab-arr-01", Address: model.ArrGuestAddress, MAC: model.ArrGuestMAC, Role: "Sonarr and Radarr video services", DNSAliases: []string{"sonarr", "radarr"}, URL: "https://sonarr." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+			},
+		},
+		"bifrost": {
+			Name: "bifrost", Description: "mTLS-protected Bifrost AI API router", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
 			Configuration: []model.ModuleConfigField{
 				{Key: "upstreams", Type: model.ModuleConfigObjectList, Prompt: "AI Router upstreams", Description: "HTTPS provider endpoints and their SOPS secret references", Required: true, MinItems: 1, MaxItems: 16, ItemFields: []model.ModuleConfigField{
 					{Key: "name", Type: model.ModuleConfigString, Prompt: "Upstream name", Required: true},
@@ -121,13 +131,13 @@ func FirstPartyRegistry() Registry {
 				}},
 				{Key: "models", Type: model.ModuleConfigObjectList, Prompt: "AI Router model aliases", Description: "Provider-neutral aliases exposed to dependent modules", Required: true, MinItems: 1, MaxItems: 32, ItemFields: []model.ModuleConfigField{
 					{Key: "alias", Type: model.ModuleConfigString, Prompt: "Public alias", Required: true},
-					{Key: "upstream", Type: model.ModuleConfigEnum, Prompt: "Upstream", Required: true, Resolver: "litellm-upstream-name"},
+					{Key: "upstream", Type: model.ModuleConfigEnum, Prompt: "Upstream", Required: true, Resolver: "bifrost-upstream-name"},
 					{Key: "model", Type: model.ModuleConfigString, Prompt: "Provider model identifier", Required: true},
 				}},
 			},
 			Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityAIAPI}, GuestIDs: []int{210}, ReservedVMIDStart: 210, ReservedVMIDEnd: 219,
 			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
-				{Name: "lab-litellm-01", VMID: 210, Hostname: "lab-litellm-01", Address: "10.10.20.60", Role: "LiteLLM AI API router", DNSAliases: []string{"litellm", "ai"}, URL: "https://litellm." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+				{Name: "lab-bifrost-01", VMID: 210, Hostname: "lab-bifrost-01", Address: "10.10.20.60", Role: "Bifrost AI API router", DNSAliases: []string{"bifrost", "ai"}, URL: "https://bifrost." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 		"printer": {
@@ -148,8 +158,8 @@ func FirstPartyRegistry() Registry {
 		},
 		"aiops": {
 			Name: "aiops", Description: "Read-only HolmesGPT incident investigation", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
-			Configuration: []model.ModuleConfigField{{Key: "model_alias", Type: model.ModuleConfigModelAlias, Prompt: "AI Router model alias", Description: "An alias explicitly declared by the LiteLLM module", Required: true, Resolver: "litellm-model-alias"}},
-			DependsOn:     []string{"monitoring", "logging", "litellm"}, Requires: []Capability{CapabilityMonitoring, CapabilityLogging, CapabilityAIAPI, CapabilityDNS, CapabilityNTP}, GuestIDs: []int{240}, ReservedVMIDStart: 240, ReservedVMIDEnd: 249,
+			Configuration: []model.ModuleConfigField{{Key: "model_alias", Type: model.ModuleConfigModelAlias, Prompt: "AI Router model alias", Description: "An alias explicitly declared by the Bifrost module", Required: true, Resolver: "bifrost-model-alias"}},
+			DependsOn:     []string{"monitoring", "logging", "bifrost"}, Requires: []Capability{CapabilityMonitoring, CapabilityLogging, CapabilityAIAPI, CapabilityDNS, CapabilityNTP}, GuestIDs: []int{240}, ReservedVMIDStart: 240, ReservedVMIDEnd: 249,
 			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
 				{Name: "lab-aiops-01", VMID: 240, Hostname: "lab-aiops-01", Zone: "SERVERS", Address: "10.10.20.90", Role: "HolmesGPT AIOps investigation", DNSAliases: []string{"aiops"}, URL: "https://aiops." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
@@ -182,18 +192,30 @@ func (r Registry) ConfigurationFields(name string, config model.SiteConfig) ([]m
 	}
 	fields := cloneConfigurationFields(definition.Configuration)
 	if definition.NetworkCapable {
-		fields = append([]model.ModuleConfigField{{Key: "network", Type: model.ModuleConfigEnum, Prompt: "Network egress mode", Description: "Route declared external application egress directly or through the AirVPN transit node", Default: string(model.ModuleNetworkDirect), AllowedValues: []string{string(model.ModuleNetworkDirect), string(model.ModuleNetworkAirVPN)}}}, fields...)
+		allowed := definition.AllowedNetworkModes
+		if len(allowed) == 0 {
+			allowed = []model.ModuleNetworkMode{model.ModuleNetworkDirect, model.ModuleNetworkAirVPN}
+		}
+		defaultMode := definition.DefaultNetworkMode
+		if defaultMode == "" {
+			defaultMode = model.ModuleNetworkDirect
+		}
+		allowedValues := make([]string, 0, len(allowed))
+		for _, mode := range allowed {
+			allowedValues = append(allowedValues, string(mode))
+		}
+		fields = append([]model.ModuleConfigField{{Key: "network", Type: model.ModuleConfigEnum, Prompt: "Network egress mode", Description: "Route declared external application egress through the selected network path", Default: string(defaultMode), AllowedValues: allowedValues}}, fields...)
 	}
 	var resolve func([]model.ModuleConfigField)
 	resolve = func(values []model.ModuleConfigField) {
 		for index := range values {
 			switch values[index].Resolver {
-			case "litellm-model-alias":
-				for _, item := range config.Modules.Map()["litellm"].Models {
+			case "bifrost-model-alias":
+				for _, item := range config.Modules.Map()["bifrost"].Models {
 					values[index].AllowedValues = append(values[index].AllowedValues, item.Alias)
 				}
-			case "litellm-upstream-name":
-				for _, item := range config.Modules.Map()["litellm"].Upstreams {
+			case "bifrost-upstream-name":
+				for _, item := range config.Modules.Map()["bifrost"].Upstreams {
 					values[index].AllowedValues = append(values[index].AllowedValues, item.Name)
 				}
 			}
@@ -314,6 +336,18 @@ func (r Registry) Validate() error {
 		if definition.Placement.ZoneType != "" && !supportedPlacementZoneType(definition.Placement.ZoneType) {
 			return fmt.Errorf("module %s has unknown placement zone type %q", definition.Name, definition.Placement.ZoneType)
 		}
+		if !definition.NetworkCapable && len(definition.AllowedNetworkModes) > 0 {
+			return fmt.Errorf("module %s declares network modes but is not network-capable", definition.Name)
+		}
+		if definition.NetworkCapable {
+			allowed := definition.AllowedNetworkModes
+			if len(allowed) == 0 {
+				allowed = []model.ModuleNetworkMode{model.ModuleNetworkDirect, model.ModuleNetworkAirVPN}
+			}
+			if definition.DefaultNetworkMode != "" && !containsNetworkMode(allowed, definition.DefaultNetworkMode) {
+				return fmt.Errorf("module %s has a default network mode that is not allowed", definition.Name)
+			}
+		}
 		if err := validateConfigurationFields(definition.Name, definition.Configuration); err != nil {
 			return err
 		}
@@ -378,7 +412,7 @@ func validateConfigurationFields(module string, fields []model.ModuleConfigField
 				return fmt.Errorf("module %s configuration field %s has a resolver for a non-choice type", module, field.Key)
 			}
 			switch field.Resolver {
-			case "litellm-model-alias", "litellm-upstream-name":
+			case "bifrost-model-alias", "bifrost-upstream-name":
 			default:
 				return fmt.Errorf("module %s configuration field %s has unknown resolver %q", module, field.Key, field.Resolver)
 			}
@@ -458,9 +492,12 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 			return nil, fmt.Errorf("modules.airvpn.servers: selector contains unsafe characters")
 		}
 	}
+	if arr, ok := configs["arr"]; ok && arr.Enabled != nil && *arr.Enabled && arr.Network != model.ModuleNetworkAirVPN {
+		return nil, fmt.Errorf("modules.arr.network: arr requires AirVPN egress; set network: airvpn")
+	}
 	for name, moduleConfig := range configs {
-		if name == "litellm" && (moduleConfig.Enabled != nil && *moduleConfig.Enabled || len(moduleConfig.Upstreams) > 0 || len(moduleConfig.Models) > 0) {
-			if err := model.ValidateLiteLLMConfig(moduleConfig); err != nil {
+		if name == "bifrost" && (moduleConfig.Enabled != nil && *moduleConfig.Enabled || len(moduleConfig.Upstreams) > 0 || len(moduleConfig.Models) > 0) {
+			if err := model.ValidateBifrostConfig(moduleConfig); err != nil {
 				return nil, err
 			}
 		}
@@ -468,11 +505,11 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 			if !modelToken(moduleConfig.ModelAlias) {
 				return nil, fmt.Errorf("modules.aiops.model_alias: a safe declared AI Router alias is required")
 			}
-			litellm, ok := configs["litellm"]
+			bifrost, ok := configs["bifrost"]
 			if !ok {
-				return nil, fmt.Errorf("modules.aiops.model_alias: LiteLLM configuration is required")
+				return nil, fmt.Errorf("modules.aiops.model_alias: Bifrost configuration is required")
 			}
-			if _, err := model.ResolveLiteLLMAlias(litellm, moduleConfig.ModelAlias); err != nil {
+			if _, err := model.ResolveBifrostAlias(bifrost, moduleConfig.ModelAlias); err != nil {
 				return nil, fmt.Errorf("modules.aiops.model_alias: %w", err)
 			}
 		}
@@ -608,11 +645,8 @@ func validateModuleConfigNames(r Registry, configs map[string]model.ModuleConfig
 
 func validateModuleNetworkModes(r Registry, configs map[string]model.ModuleConfig) error {
 	for name, config := range configs {
-		if config.Network == "" || config.Network == model.ModuleNetworkDirect {
+		if config.Network == "" {
 			continue
-		}
-		if config.Network != model.ModuleNetworkAirVPN {
-			return fmt.Errorf("modules.%s.network: unsupported mode %q", name, config.Network)
 		}
 		definition, ok := r.Definition(name)
 		if !ok {
@@ -621,8 +655,24 @@ func validateModuleNetworkModes(r Registry, configs map[string]model.ModuleConfi
 		if !definition.NetworkCapable {
 			return fmt.Errorf("modules.%s.network: module is not network-capable", name)
 		}
+		allowed := definition.AllowedNetworkModes
+		if len(allowed) == 0 {
+			allowed = []model.ModuleNetworkMode{model.ModuleNetworkDirect, model.ModuleNetworkAirVPN}
+		}
+		if !containsNetworkMode(allowed, config.Network) {
+			return fmt.Errorf("modules.%s.network: unsupported mode %q", name, config.Network)
+		}
 	}
 	return nil
+}
+
+func containsNetworkMode(values []model.ModuleNetworkMode, wanted model.ModuleNetworkMode) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func modelToken(value string) bool {

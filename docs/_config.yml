@@ -1,0 +1,5 @@
+title: Boetticher
+description: An automated homelab builder for people who would rather run the lab than endlessly rebuild its plumbing.
+markdown: kramdown
+kramdown:
+  input: GFM

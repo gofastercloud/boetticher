@@ -75,4 +75,47 @@ func TestEmbeddedSchemaProjectsTypedModuleConstraints(t *testing.T) {
 	if loggingRef.Ref != "#/$defs/MandatoryModuleConfig" {
 		t.Fatalf("logging module schema ref = %q", loggingRef.Ref)
 	}
+	for _, name := range []string{"monitoring", "firewall", "tailnet-router"} {
+		var ref struct {
+			Ref string `json:"$ref"`
+		}
+		if err := json.Unmarshal(modules.Properties[name], &ref); err != nil {
+			t.Fatalf("decode %s module schema ref: %v", name, err)
+		}
+		if ref.Ref != "#/$defs/ToggleModuleConfig" {
+			t.Fatalf("%s module schema ref = %q", name, ref.Ref)
+		}
+	}
+	for _, name := range []string{"printer", "streamdeck", "gatus"} {
+		var ref struct {
+			Ref string `json:"$ref"`
+		}
+		if err := json.Unmarshal(modules.Properties[name], &ref); err != nil {
+			t.Fatalf("decode %s module schema ref: %v", name, err)
+		}
+		if ref.Ref != "#/$defs/NetworkToggleModuleConfig" {
+			t.Fatalf("%s module schema ref = %q", name, ref.Ref)
+		}
+	}
+	var arrRef struct {
+		Ref string `json:"$ref"`
+	}
+	if err := json.Unmarshal(modules.Properties["arr"], &arrRef); err != nil {
+		t.Fatalf("decode arr module schema ref: %v", err)
+	}
+	if arrRef.Ref != "#/$defs/ArrModuleConfig" {
+		t.Fatalf("arr module schema ref = %q", arrRef.Ref)
+	}
+	if _, ok := document.Definitions["ToggleModuleConfig"].Properties["network"]; ok {
+		t.Fatal("non-network toggle schema exposes network")
+	}
+	var arrNetwork struct {
+		Enum []string `json:"enum"`
+	}
+	if err := json.Unmarshal(document.Definitions["ArrModuleConfig"].Properties["network"], &arrNetwork); err != nil {
+		t.Fatalf("decode arr network schema: %v", err)
+	}
+	if len(arrNetwork.Enum) != 1 || arrNetwork.Enum[0] != "airvpn" {
+		t.Fatalf("arr network schema = %#v, want only airvpn", arrNetwork.Enum)
+	}
 }

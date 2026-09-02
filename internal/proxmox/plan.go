@@ -38,6 +38,7 @@ type GuestPlan struct {
 	Hostname        string                              `json:"hostname"`
 	Zone            string                              `json:"zone"`
 	Address         string                              `json:"address"`
+	MAC             string                              `json:"mac,omitempty"`
 	Gateway         string                              `json:"gateway"`
 	VLAN            int                                 `json:"vlan"`
 	Cores           int                                 `json:"cores"`
@@ -92,6 +93,16 @@ type Plan struct {
 	// its own smoke, scan, and qualification gates to every selected target.
 	BuilderArtifactTargets []string `json:"-"`
 	DestructiveConfirmed   bool     `json:"-"`
+	// ForceFirewallRootReplacement is a deliberately narrow recovery action.
+	// It replaces only the managed firewall root disk after the attached
+	// declared persistent volumes have been proven, and never applies to any
+	// other appliance.
+	ForceFirewallRootReplacement bool `json:"-"`
+	// ForceLegacyLXCRecreation is a separately confirmed recovery action for
+	// Boetticher-owned LXCs that still use the exact legacy local raw layout.
+	// It discards their declared state and recreates them on the planned
+	// storage; QEMU guests and non-legacy LXCs are never selected.
+	ForceLegacyLXCRecreation bool `json:"-"`
 	// PrivilegedRunner is the already-authorized, bounded root bootstrap path.
 	// Proxmox rejects /dev/net/tun on the scoped API identity, so device-bearing
 	// LXC creation applies the exact device setting through this path after the
@@ -398,7 +409,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		}
 		guest := GuestPlan{
 			VMID: component.VMID, Name: component.Name, Hostname: component.Hostname, Zone: component.Zone,
-			Address: component.Address, Gateway: gatewayFor(component.Zone), VLAN: vlanFor(s, component.Zone),
+			Address: component.Address, MAC: component.MAC, Gateway: gatewayFor(component.Zone), VLAN: vlanFor(s, component.Zone),
 			Kind: KindLXC, Cores: 2, MemoryMiB: 1024, DiskGiB: 8,
 			Monitoring: component.Monitoring, Backup: component.Backup, Tags: componentTags(s, component.Name), ManagedUSBSlots: usbSlots[component.VMID],
 		}
@@ -628,6 +639,13 @@ func vlanFor(s model.Site, zoneName string) int {
 		}
 	}
 	return 0
+}
+
+func lxcNetworkParam(guest GuestPlan) string {
+	if guest.MAC != "" {
+		return fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,macaddr=%s,ip=dhcp", guest.VLAN, guest.MAC)
+	}
+	return fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,ip=%s/24,gw=%s", guest.VLAN, guest.Address, gatewayFor(guest.Zone))
 }
 
 func componentTags(s model.Site, name string) []string {
@@ -1005,6 +1023,37 @@ func EnsureVirtualBridge(ctx context.Context, client *Client, node string) error
 	return nil
 }
 
+// EnsureVirtualOnlyBridge keeps the Boetticher-owned vmbr1 bridge present but
+// deliberately unclaimed. It removes a single stale physical member only
+// after DetachTrunk has proved that member is neither the HOME/bootstrap path
+// nor vmbr0's upstream. Ambiguous multi-port bridges remain a hard failure.
+func EnsureVirtualOnlyBridge(ctx context.Context, client *Client, node, bootstrapAddress string) error {
+	if err := EnsureVirtualBridge(ctx, client, node); err != nil {
+		return err
+	}
+	var interfaces []NetworkInterface
+	if err := client.NodeNetwork(ctx, node, &interfaces); err != nil {
+		return fmt.Errorf("inspect virtual-only vmbr1: %w", err)
+	}
+	for _, iface := range interfaces {
+		if iface.Iface != "vmbr1" {
+			continue
+		}
+		members := strings.Fields(iface.BridgePorts)
+		if len(members) == 0 || (len(members) == 1 && members[0] == "none") {
+			return nil
+		}
+		if len(members) != 1 || !safeInterfaceName(members[0]) {
+			return fmt.Errorf("HOLD: virtual-only vmbr1 has ambiguous physical members %q", iface.BridgePorts)
+		}
+		if err := DetachTrunk(ctx, client, node, members[0], bootstrapAddress); err != nil {
+			return fmt.Errorf("detach stale virtual-only vmbr1 member %s: %w", members[0], err)
+		}
+		return nil
+	}
+	return errors.New("vmbr1 is absent after virtual-only bridge reconciliation")
+}
+
 func AttachTrunk(ctx context.Context, client *Client, node, physicalInterface, bootstrapAddress string) error {
 	if client == nil {
 		return errors.New("Proxmox client is required")
@@ -1057,13 +1106,13 @@ func AttachTrunk(ctx context.Context, client *Client, node, physicalInterface, b
 	}
 	var after []NetworkInterface
 	if err := client.NodeNetwork(ctx, node, &after); err != nil {
-		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"type": {"bridge"}, "bridge_ports": {"none"}, "bridge_vlan_aware": {"1"}}); rollbackErr != nil {
+		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", virtualOnlyBridgeParams()); rollbackErr != nil {
 			return fmt.Errorf("HOLD: trunk attach verification failed and rollback failed: %v; verification: %w", rollbackErr, err)
 		}
 		return fmt.Errorf("trunk attach verification failed; rollback completed: %w", err)
 	}
 	if !bridgeHasPort(after, "vmbr1", physicalInterface) {
-		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"type": {"bridge"}, "bridge_ports": {"none"}, "bridge_vlan_aware": {"1"}}); rollbackErr != nil {
+		if rollbackErr := client.UpdateNodeNetwork(ctx, node, "vmbr1", virtualOnlyBridgeParams()); rollbackErr != nil {
 			return fmt.Errorf("HOLD: trunk attach was not observed and rollback failed: %v", rollbackErr)
 		}
 		return fmt.Errorf("trunk attach was not observed after mutation; rollback completed")
@@ -1098,7 +1147,7 @@ func DetachTrunk(ctx context.Context, client *Client, node, physicalInterface, b
 	if bridge == nil || bridge.Type != "bridge" || !bridge.BridgeVLANAware || !containsBridgePort(bridge.BridgePorts, physicalInterface) {
 		return fmt.Errorf("refusing to detach %s: it is not the current vmbr1 physical member", physicalInterface)
 	}
-	if err := client.UpdateNodeNetwork(ctx, node, "vmbr1", url.Values{"type": {"bridge"}, "bridge_ports": {"none"}, "bridge_vlan_aware": {"1"}}); err != nil {
+	if err := client.UpdateNodeNetwork(ctx, node, "vmbr1", virtualOnlyBridgeParams()); err != nil {
 		return fmt.Errorf("detach %s from vmbr1: %w", physicalInterface, err)
 	}
 	if err := client.ReloadNodeNetwork(ctx, node); err != nil {
@@ -1127,6 +1176,14 @@ func bridgeHasPort(interfaces []NetworkInterface, bridgeName, port string) bool 
 		}
 	}
 	return false
+}
+
+// virtualOnlyBridgeParams clears bridge ports through the Proxmox API's
+// supported delete field. PVE 9 rejects the old literal bridge_ports=none as
+// an interface name, while --delete bridge_ports preserves the desired empty
+// virtual-only bridge across supported releases.
+func virtualOnlyBridgeParams() url.Values {
+	return url.Values{"type": {"bridge"}, "delete": {"bridge_ports"}, "bridge_vlan_aware": {"1"}}
 }
 
 // ValidatePhysicalBinding checks only the boetticher-owned vmbr0/vmbr1
@@ -1235,9 +1292,18 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 		if err := validateExistingGuestIdentityFields(current, guest); err != nil {
 			return err
 		}
-		if guestArtifactNeedsReplacement(current, guest) {
+		forceFirewallRootReplacement := plan.ForceFirewallRootReplacement && guest.Name == "lab-fw-01"
+		if guestArtifactNeedsReplacement(current, guest) || forceFirewallRootReplacement {
 			if !plan.DestructiveConfirmed {
+				if forceFirewallRootReplacement {
+					return fmt.Errorf("HOLD: managed firewall root replacement requires --confirm")
+				}
 				return fmt.Errorf("HOLD: guest %s has artifact identity mismatch; appliance replacement requires --confirm", guest.Name)
+			}
+			if forceFirewallRootReplacement {
+				if err := validateForcedFirewallRootReplacementVolumes(current, plan, guest); err != nil {
+					return err
+				}
 			}
 			if err := replaceQEMURootDisk(ctx, client, plan, guest); err != nil {
 				return err
@@ -1248,7 +1314,13 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 				return err
 			}
 		}
+		if err := reconcileQEMUNetworkInterfaces(ctx, client, plan, guest, current); err != nil {
+			return err
+		}
 		if err := migrateLegacyQEMUPersistentVolumeSerials(ctx, client, plan, guest, current); err != nil {
+			return err
+		}
+		if err := migrateQEMUPersistentVolumes(ctx, client, plan, guest, current); err != nil {
 			return err
 		}
 		if err := validateExistingQEMUVolumes(current, plan, guest); err != nil {
@@ -1302,12 +1374,12 @@ func ensureQEMU(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 	for key, value := range volumeParams {
 		params.Set(key, value)
 	}
-	for index, nic := range guest.NICs {
-		value := fmt.Sprintf("virtio,bridge=%s,firewall=1,macaddr=%s", nic.Bridge, nic.MAC)
-		if nic.VLAN != 0 {
-			value += fmt.Sprintf(",tag=%d", nic.VLAN)
-		}
-		params.Set(fmt.Sprintf("net%d", index), value)
+	nicParams, err := qemuNICParams(guest)
+	if err != nil {
+		return fmt.Errorf("validate network interfaces for %s: %w", guest.Name, err)
+	}
+	for key, value := range nicParams {
+		params.Set(key, value)
 	}
 	if err := client.CreateVM(ctx, plan.Node, guest.VMID, params); err != nil {
 		return fmt.Errorf("create gateway VM %s: %w", guest.Name, err)
@@ -1388,6 +1460,45 @@ func validateExistingQEMUVolumes(current map[string]any, plan Plan, guest GuestP
 	return nil
 }
 
+// validateForcedFirewallRootReplacementVolumes proves that a manual firewall
+// root recovery cannot detach, overwrite, or silently adopt a persistent disk.
+// Storage migration remains permitted afterwards, so the source storage does
+// not need to equal the current declaration; its stable volume identity does.
+func validateForcedFirewallRootReplacementVolumes(current map[string]any, plan Plan, guest GuestPlan) error {
+	for key := range current {
+		index, ok := qemuSCSIIndex(key)
+		if !ok || index == 0 {
+			continue
+		}
+		if index > len(guest.Volumes) {
+			return fmt.Errorf("HOLD: refusing forced firewall root replacement; guest %s has undeclared persistent volume %s", guest.Name, key)
+		}
+	}
+	for index, volume := range guest.Volumes {
+		expected, err := qemuPersistentVolumeParam(plan, volume)
+		if err != nil {
+			return err
+		}
+		key := fmt.Sprintf("scsi%d", index+1)
+		observed, _ := current[key].(string)
+		if !qemuVolumeMatchesPersistentIdentity(observed, expected) {
+			return fmt.Errorf("HOLD: refusing forced firewall root replacement; persistent volume %s=%q does not prove the declared contract %q", key, observed, expected)
+		}
+	}
+	return nil
+}
+
+func qemuSCSIIndex(value string) (int, bool) {
+	if !strings.HasPrefix(value, "scsi") {
+		return 0, false
+	}
+	index, err := strconv.Atoi(strings.TrimPrefix(value, "scsi"))
+	if err != nil || index < 0 || value != "scsi"+strconv.Itoa(index) {
+		return 0, false
+	}
+	return index, true
+}
+
 func qemuPersistentVolumeParam(plan Plan, volume model.PersistentVolumeDeclaration) (string, error) {
 	params, err := qemuPersistentVolumeParams(plan, GuestPlan{Volumes: []model.PersistentVolumeDeclaration{volume}})
 	if err != nil {
@@ -1396,7 +1507,221 @@ func qemuPersistentVolumeParam(plan Plan, volume model.PersistentVolumeDeclarati
 	return params["scsi1"], nil
 }
 
+func qemuNICParams(guest GuestPlan) (map[string]string, error) {
+	params := map[string]string{}
+	for index, nic := range guest.NICs {
+		value, err := qemuNICParam(nic)
+		if err != nil {
+			return nil, err
+		}
+		params[fmt.Sprintf("net%d", index)] = value
+	}
+	return params, nil
+}
+
+func qemuNICParam(nic GuestNIC) (string, error) {
+	if !safeInterfaceName(nic.Name) || !safeInterfaceName(nic.Bridge) || nic.VLAN < 0 || nic.VLAN > 4094 {
+		return "", fmt.Errorf("network interface %q has an unsafe name, bridge, or VLAN", nic.Name)
+	}
+	mac, err := net.ParseMAC(nic.MAC)
+	if err != nil || len(mac) != 6 {
+		return "", fmt.Errorf("network interface %q has an invalid MAC identity", nic.Name)
+	}
+	value := fmt.Sprintf("virtio,bridge=%s,firewall=1,macaddr=%s", nic.Bridge, strings.ToLower(mac.String()))
+	if nic.VLAN != 0 {
+		value += fmt.Sprintf(",tag=%d", nic.VLAN)
+	}
+	return value, nil
+}
+
+// reconcileQEMUNetworkInterfaces keeps the owned appliance's Proxmox NIC
+// contract aligned with the cloud-init transport contract. This prevents an
+// old VM MAC from making a replacement firewall unbootable. Unknown NICs are
+// held rather than removed, and a previously running guest is restored if a
+// configuration update fails.
+func reconcileQEMUNetworkInterfaces(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) (err error) {
+	params, err := qemuNICReconciliationParams(current, guest)
+	if err != nil {
+		return err
+	}
+	if len(params) == 0 {
+		return nil
+	}
+
+	refreshed := map[string]any{}
+	if err := client.QEMUConfig(ctx, plan.Node, guest.VMID, &refreshed); err != nil {
+		return fmt.Errorf("inspect %s before network reconciliation: %w", guest.Name, err)
+	}
+	params, err = qemuNICReconciliationParams(refreshed, guest)
+	if err != nil {
+		return err
+	}
+	if len(params) == 0 {
+		replaceQEMUConfig(current, refreshed)
+		return nil
+	}
+
+	status, err := client.QEMUStatus(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("inspect %s status before network reconciliation: %w", guest.Name, err)
+	}
+	if status != "running" && status != "stopped" {
+		return fmt.Errorf("HOLD: guest %s is %q; refusing network reconciliation outside a running or stopped state", guest.Name, status)
+	}
+	wasRunning := status == "running"
+	if wasRunning {
+		if err := client.StopVM(ctx, plan.Node, guest.VMID); err != nil {
+			return fmt.Errorf("stop %s before network reconciliation: %w", guest.Name, err)
+		}
+		defer func() {
+			if startErr := client.StartVM(ctx, plan.Node, guest.VMID); startErr != nil {
+				if err == nil {
+					err = fmt.Errorf("restore %s after network reconciliation: %w", guest.Name, startErr)
+				} else {
+					err = fmt.Errorf("%w; additionally failed to restore %s after network reconciliation: %v", err, guest.Name, startErr)
+				}
+			}
+		}()
+	}
+
+	refreshed = map[string]any{}
+	if err := client.QEMUConfig(ctx, plan.Node, guest.VMID, &refreshed); err != nil {
+		return fmt.Errorf("inspect %s before applying network reconciliation: %w", guest.Name, err)
+	}
+	params, err = qemuNICReconciliationParams(refreshed, guest)
+	if err != nil {
+		return err
+	}
+	if len(params) == 0 {
+		replaceQEMUConfig(current, refreshed)
+		return nil
+	}
+	if err := client.SetVMConfig(ctx, plan.Node, guest.VMID, params); err != nil {
+		return fmt.Errorf("reconcile network interfaces for %s: %w", guest.Name, err)
+	}
+
+	refreshed = map[string]any{}
+	if err := client.QEMUConfig(ctx, plan.Node, guest.VMID, &refreshed); err != nil {
+		return fmt.Errorf("verify %s network reconciliation: %w", guest.Name, err)
+	}
+	if err := validateExistingQEMUNetworkInterfaces(refreshed, guest); err != nil {
+		return err
+	}
+	replaceQEMUConfig(current, refreshed)
+	return nil
+}
+
+func qemuNICReconciliationParams(current map[string]any, guest GuestPlan) (url.Values, error) {
+	if err := validateNoUndeclaredQEMUNetworkInterfaces(current, guest); err != nil {
+		return nil, err
+	}
+	params := url.Values{}
+	for index, nic := range guest.NICs {
+		key := fmt.Sprintf("net%d", index)
+		observed, _ := current[key].(string)
+		if qemuNICMatches(observed, nic) {
+			continue
+		}
+		value, err := qemuNICParam(nic)
+		if err != nil {
+			return nil, err
+		}
+		params.Set(key, value)
+	}
+	return params, nil
+}
+
+func validateExistingQEMUNetworkInterfaces(current map[string]any, guest GuestPlan) error {
+	if err := validateNoUndeclaredQEMUNetworkInterfaces(current, guest); err != nil {
+		return err
+	}
+	for index, nic := range guest.NICs {
+		key := fmt.Sprintf("net%d", index)
+		observed, _ := current[key].(string)
+		if !qemuNICMatches(observed, nic) {
+			return fmt.Errorf("HOLD: guest %s has network interface %s=%q, expected the declared %s contract", guest.Name, key, observed, nic.Name)
+		}
+	}
+	return nil
+}
+
+func validateNoUndeclaredQEMUNetworkInterfaces(current map[string]any, guest GuestPlan) error {
+	for key := range current {
+		if !strings.HasPrefix(key, "net") {
+			continue
+		}
+		index, ok := qemuNICIndex(key)
+		if !ok || index >= len(guest.NICs) {
+			return fmt.Errorf("HOLD: guest %s has undeclared network interface %s", guest.Name, key)
+		}
+	}
+	return nil
+}
+
+func qemuNICIndex(value string) (int, bool) {
+	if !strings.HasPrefix(value, "net") {
+		return 0, false
+	}
+	index, err := strconv.Atoi(strings.TrimPrefix(value, "net"))
+	if err != nil || index < 0 || value != "net"+strconv.Itoa(index) {
+		return 0, false
+	}
+	return index, true
+}
+
+func qemuNICMatches(observed string, nic GuestNIC) bool {
+	parts := strings.Split(observed, ",")
+	if len(parts) == 0 {
+		return false
+	}
+	model, inlineMAC, hasInlineMAC := strings.Cut(parts[0], "=")
+	if model != "virtio" {
+		return false
+	}
+	options := qemuVolumeOptions(parts[1:])
+	optionMAC := options["macaddr"]
+	if hasInlineMAC && optionMAC != "" && !strings.EqualFold(inlineMAC, optionMAC) {
+		return false
+	}
+	observedMAC := inlineMAC
+	if observedMAC == "" {
+		observedMAC = optionMAC
+	}
+	if !strings.EqualFold(observedMAC, nic.MAC) || options["bridge"] != nic.Bridge || options["firewall"] != "1" {
+		return false
+	}
+	if nic.VLAN == 0 {
+		return options["tag"] == ""
+	}
+	return options["tag"] == strconv.Itoa(nic.VLAN)
+}
+
+func replaceQEMUConfig(current, refreshed map[string]any) {
+	for key := range current {
+		delete(current, key)
+	}
+	for key, value := range refreshed {
+		current[key] = value
+	}
+}
+
+func replaceLXCConfig(current, refreshed map[string]any) {
+	for key := range current {
+		delete(current, key)
+	}
+	for key, value := range refreshed {
+		current[key] = value
+	}
+}
+
 func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
+	return ensureLXCWithRetainedVolumes(ctx, client, plan, guest, nil)
+}
+
+// ensureLXCWithRetainedVolumes carries already-proven persistent mount-point
+// references through an explicitly confirmed rootfs replacement. It never
+// turns a retained volume into a size-only allocation request.
+func ensureLXCWithRetainedVolumes(ctx context.Context, client *Client, plan Plan, guest GuestPlan, retained map[string]string) error {
 	if err := validateLXCDeviceContract(guest); err != nil {
 		return err
 	}
@@ -1405,6 +1730,32 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		if kind != KindLXC {
 			return fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, expected LXC %s", guest.VMID, kind, guest.Name)
 		}
+		if plan.ForceLegacyLXCRecreation {
+			recreate, err := legacyLXCRecreationRequired(current, guest)
+			if err != nil {
+				return err
+			}
+			if recreate {
+				if !plan.DestructiveConfirmed {
+					return fmt.Errorf("HOLD: legacy LXC recreation requires --confirm")
+				}
+				if err := prepareLegacyLXCRecreation(ctx, client, plan, guest); err != nil {
+					return err
+				}
+				if err := discardLegacyLXC(ctx, client, plan, guest); err != nil {
+					return err
+				}
+				recreatedPlan := plan
+				recreatedPlan.ForceLegacyLXCRecreation = false
+				return ensureLXCWithRetainedVolumes(ctx, client, recreatedPlan, guest, nil)
+			}
+		}
+		if err := validateNoUndeclaredLXCVolumes(current, guest); err != nil {
+			return err
+		}
+		if err := migrateLXCPersistentVolumes(ctx, client, plan, guest, current); err != nil {
+			return err
+		}
 		if err := validateExistingGuestVolumes(current, guest); err != nil {
 			return err
 		}
@@ -1412,10 +1763,11 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 			if !plan.DestructiveConfirmed {
 				return fmt.Errorf("HOLD: guest %s has artifact identity mismatch; appliance replacement requires --confirm", guest.Name)
 			}
-			if err := replaceLXC(ctx, client, plan, guest); err != nil {
+			retainedVolumes, err := replaceLXC(ctx, client, plan, guest, current)
+			if err != nil {
 				return err
 			}
-			return ensureLXC(ctx, client, plan, guest)
+			return ensureLXCWithRetainedVolumes(ctx, client, plan, guest, retainedVolumes)
 		}
 		if err := validateExistingGuestIdentity(current, guest); err != nil {
 			return err
@@ -1428,20 +1780,13 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 	if !IsNotFound(err) {
 		return fmt.Errorf("inspect container %s: %w", guest.Name, err)
 	}
-	if guest.Artifact.Name == "" || guest.Artifact.DefinitionSHA256 == "" {
-		return fmt.Errorf("HOLD: guest %s has no resolved appliance artifact", guest.Name)
-	}
-	if guest.Artifact.ContentSHA256 == "" {
-		return fmt.Errorf("NOT BUILT: guest %s artifact %s has no qualified content checksum", guest.Name, guest.Artifact.Name)
-	}
 	if err := validateLXCPrivilegedDeviceAuthority(plan, guest); err != nil {
 		return err
 	}
-	filename := guest.Artifact.Name + "-" + guest.Artifact.Version + "-" + guest.Artifact.Architecture + ".tar.zst"
-	if err := ensureArtifactInStorage(ctx, client, plan.Node, "local", "vztmpl", filename, guest.Artifact.ContentSHA256, plan.ArtifactFiles[artifactKey(guest.Artifact)]); err != nil {
-		return fmt.Errorf("prepare appliance template for %s: %w", guest.Name, err)
+	template, err := lxcTemplate(ctx, client, plan, guest)
+	if err != nil {
+		return err
 	}
-	template := "local:vztmpl/" + filename
 	params := url.Values{
 		"hostname":     {guest.Hostname},
 		"description":  {artifactDescription(guest.Artifact)},
@@ -1453,7 +1798,7 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		"features":     {"nesting=0"},
 		"rootfs":       {fmt.Sprintf("%s:%d", plan.Storage, guest.DiskGiB)},
 		"tags":         {strings.Join(guest.Tags, ";")},
-		"net0":         {fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,ip=%s/24,gw=%s", guest.VLAN, guest.Address, gatewayFor(guest.Zone))},
+		"net0":         {lxcNetworkParam(guest)},
 	}
 	if len(plan.Nameservers) > 0 {
 		params.Set("nameserver", strings.Join(plan.Nameservers, " "))
@@ -1471,11 +1816,30 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 		}
 	}
 	for index, volume := range guest.Volumes {
+		key := fmt.Sprintf("mp%d", index)
+		if retained != nil {
+			value, ok := retained[key]
+			if !ok {
+				return fmt.Errorf("HOLD: retained persistent volume %s for %s is absent", key, guest.Name)
+			}
+			expected, err := persistentVolumeParam(volume)
+			if err != nil {
+				return fmt.Errorf("validate retained persistent volume %s for %s: %w", volume.Name, guest.Name, err)
+			}
+			if !lxcPersistentVolumeMatches(value, expected) {
+				return fmt.Errorf("HOLD: retained persistent volume %s for %s does not prove the declared storage, mount path, backup setting, and size", key, guest.Name)
+			}
+			params.Set(key, value)
+			continue
+		}
 		value, err := persistentVolumeParam(volume)
 		if err != nil {
 			return fmt.Errorf("validate persistent volume %s for %s: %w", volume.Name, guest.Name, err)
 		}
-		params.Set(fmt.Sprintf("mp%d", index), value)
+		params.Set(key, value)
+	}
+	if retained != nil && len(retained) != len(guest.Volumes) {
+		return fmt.Errorf("HOLD: retained persistent volumes for %s do not match the declared volume count", guest.Name)
 	}
 	if err := client.CreateLXC(ctx, plan.Node, guest.VMID, params); err != nil {
 		return fmt.Errorf("create container %s: %w", guest.Name, err)
@@ -1499,6 +1863,227 @@ func ensureLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) 
 	}
 	if err := validateExistingGuestVolumes(current, guest); err != nil {
 		return fmt.Errorf("HOLD: verify created container %s persistent volumes: %w", guest.Name, err)
+	}
+	return nil
+}
+
+func lxcTemplate(ctx context.Context, client *Client, plan Plan, guest GuestPlan) (string, error) {
+	if guest.Artifact.Name == "" || guest.Artifact.DefinitionSHA256 == "" {
+		return "", fmt.Errorf("HOLD: guest %s has no resolved appliance artifact", guest.Name)
+	}
+	if guest.Artifact.ContentSHA256 == "" {
+		return "", fmt.Errorf("NOT BUILT: guest %s artifact %s has no qualified content checksum", guest.Name, guest.Artifact.Name)
+	}
+	filename := guest.Artifact.Name + "-" + guest.Artifact.Version + "-" + guest.Artifact.Architecture + ".tar.zst"
+	if err := ensureArtifactInStorage(ctx, client, plan.Node, "local", "vztmpl", filename, guest.Artifact.ContentSHA256, plan.ArtifactFiles[artifactKey(guest.Artifact)]); err != nil {
+		return "", fmt.Errorf("prepare appliance template for %s: %w", guest.Name, err)
+	}
+	return "local:vztmpl/" + filename, nil
+}
+
+func prepareLegacyLXCRecreation(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
+	if err := validateLXCPrivilegedDeviceAuthority(plan, guest); err != nil {
+		return err
+	}
+	if _, err := lxcBootstrapKeyParams(plan.OperatorPublicKey); err != nil {
+		return fmt.Errorf("validate appliance bootstrap key for %s before legacy LXC recreation: %w", guest.Name, err)
+	}
+	for _, volume := range guest.Volumes {
+		if _, err := persistentVolumeParam(volume); err != nil {
+			return fmt.Errorf("validate persistent volume %s for %s before legacy LXC recreation: %w", volume.Name, guest.Name, err)
+		}
+	}
+	_, err := lxcTemplate(ctx, client, plan, guest)
+	return err
+}
+
+func legacyLXCRecreationRequired(current map[string]any, guest GuestPlan) (bool, error) {
+	rootfs, _ := current["rootfs"].(string)
+	rootfsStorage := lxcVolumeStorageID(rootfs)
+	if rootfsStorage == "" {
+		return false, fmt.Errorf("HOLD: guest %s has malformed rootfs identity", guest.Name)
+	}
+	legacy := rootfsStorage == "local"
+	for index := range guest.Volumes {
+		mountpoint := fmt.Sprintf("mp%d", index)
+		observed, _ := current[mountpoint].(string)
+		storage := lxcVolumeStorageID(observed)
+		if storage == "" {
+			return false, fmt.Errorf("HOLD: guest %s has malformed persistent volume %s", guest.Name, mountpoint)
+		}
+		legacy = legacy || storage == "local"
+	}
+	if !legacy {
+		return false, nil
+	}
+	if err := validateLegacyLXCRecreation(current, guest); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// ValidateLegacyLXCRecreation proves the complete set of currently existing
+// legacy LXC recovery candidates before deployment stops or deletes any
+// appliance. It is read-only: artifact staging and destructive recovery stay
+// in ensureLXCWithRetainedVolumes after this ownership gate has passed.
+func ValidateLegacyLXCRecreation(ctx context.Context, client *Client, plan Plan) ([]string, error) {
+	if !plan.ForceLegacyLXCRecreation {
+		return nil, nil
+	}
+	if client == nil || plan.Node == "" {
+		return nil, errors.New("Proxmox client and node are required for legacy LXC recovery validation")
+	}
+	targets := make([]string, 0)
+	for _, guest := range plan.Guests {
+		if guest.Kind != KindLXC {
+			continue
+		}
+		kind, current, err := client.GuestConfig(ctx, plan.Node, guest.VMID)
+		if IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("inspect %s before legacy LXC recovery: %w", guest.Name, err)
+		}
+		if kind != KindLXC {
+			return nil, fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, expected LXC %s", guest.VMID, kind, guest.Name)
+		}
+		recreate, err := legacyLXCRecreationRequired(current, guest)
+		if err != nil {
+			return nil, fmt.Errorf("validate legacy LXC recovery for %s: %w", guest.Name, err)
+		}
+		if recreate {
+			targets = append(targets, guest.Name)
+		}
+	}
+	return targets, nil
+}
+
+func validateLegacyLXCRecreation(current map[string]any, guest GuestPlan) error {
+	if guest.VMID <= 0 || guest.DiskGiB <= 0 {
+		return fmt.Errorf("HOLD: guest %s lacks a valid legacy LXC recovery identity", guest.Name)
+	}
+	if err := validateLegacyLXCIdentity(current, guest); err != nil {
+		return err
+	}
+	if err := validateNoUndeclaredLXCVolumes(current, guest); err != nil {
+		return err
+	}
+	rootfs, _ := current["rootfs"].(string)
+	if !legacyLXCRootfsMatches(rootfs, guest) {
+		return fmt.Errorf("HOLD: guest %s rootfs does not have the exact legacy raw layout", guest.Name)
+	}
+	for index, volume := range guest.Volumes {
+		expected, err := persistentVolumeParam(volume)
+		if err != nil {
+			return err
+		}
+		mountpoint := fmt.Sprintf("mp%d", index)
+		observed, _ := current[mountpoint].(string)
+		if !exactLegacyLXCRawVolume(observed, guest.VMID, index+1) || !lxcVolumeMatchesPersistentIdentity(observed, expected) {
+			return fmt.Errorf("HOLD: guest %s persistent volume %s does not have the exact legacy raw layout", guest.Name, mountpoint)
+		}
+	}
+	return nil
+}
+
+func validateLegacyLXCIdentity(current map[string]any, guest GuestPlan) error {
+	if err := validateExistingGuestIdentityFields(current, guest); err == nil {
+		if got, _ := current["tags"].(string); canonicalTags(got) != canonicalTags(strings.Join(guest.Tags, ";")) {
+			return fmt.Errorf("HOLD: guest %s has unexpected tags %q before legacy LXC recreation", guest.Name, got)
+		}
+		return nil
+	}
+	predecessor, ok := retiredLiteLLMPredecessor(guest)
+	if !ok {
+		return validateExistingGuestIdentityFields(current, guest)
+	}
+	if !retiredLiteLLMArtifactIdentity(current) {
+		return fmt.Errorf("HOLD: guest %s is not the exact retired LiteLLM predecessor: artifact identity is not a qualified LiteLLM 1.0.0 appliance", guest.Name)
+	}
+	if err := validateExistingGuestIdentityFields(current, predecessor); err != nil {
+		return fmt.Errorf("HOLD: guest %s is not the exact retired LiteLLM predecessor: %w", guest.Name, err)
+	}
+	if got, _ := current["tags"].(string); canonicalTags(got) != canonicalTags(strings.Join(predecessor.Tags, ";")) {
+		return fmt.Errorf("HOLD: guest %s is not the exact retired LiteLLM predecessor: unexpected tags %q", guest.Name, got)
+	}
+	return nil
+}
+
+// retiredLiteLLMPredecessor is deliberately a single exact migration bridge.
+// It applies only while a legacy raw LXC at the Bifrost VMID still carries the
+// former LiteLLM identity. Ordinary convergence remains strict and never
+// treats a renamed or unowned guest as replaceable.
+func retiredLiteLLMPredecessor(guest GuestPlan) (GuestPlan, bool) {
+	if guest.VMID != 210 || guest.Name != "lab-bifrost-01" || guest.Hostname != "lab-bifrost-01" || guest.Owner != "boetticher/module/bifrost" || guest.Artifact.Name != "boetticher-bifrost" {
+		return GuestPlan{}, false
+	}
+	predecessor := guest
+	predecessor.Name = "lab-litellm-01"
+	predecessor.Hostname = "lab-litellm-01"
+	predecessor.Owner = "boetticher/module/litellm"
+	predecessor.Tags = []string{model.TagBoetticher, model.TagManaged, model.TagModule, "module-litellm", model.ModuleOwnershipTag("litellm"), model.TagBackup}
+	return predecessor, true
+}
+
+func retiredLiteLLMArtifactIdentity(current map[string]any) bool {
+	description, _ := current["description"].(string)
+	fields := strings.Fields(normalizeArtifactDescription(description))
+	if len(fields) != 3 || fields[0] != "boetticher-artifact=boetticher-litellm@1.0.0" {
+		return false
+	}
+	return exactArtifactDigestField(fields[1], "definition=") && exactArtifactDigestField(fields[2], "content=")
+}
+
+func exactArtifactDigestField(value, prefix string) bool {
+	digest, ok := strings.CutPrefix(value, prefix)
+	if !ok || len(digest) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(digest)
+	return err == nil
+}
+
+func legacyLXCRawVolumeID(vmid, disk int) string {
+	return fmt.Sprintf("local:%d/vm-%d-disk-%d.raw", vmid, vmid, disk)
+}
+
+func exactLegacyLXCRawVolume(observed string, vmid, disk int) bool {
+	first, _, _ := strings.Cut(observed, ",")
+	return first == legacyLXCRawVolumeID(vmid, disk)
+}
+
+func legacyLXCRootfsMatches(observed string, guest GuestPlan) bool {
+	if !exactLegacyLXCRawVolume(observed, guest.VMID, 0) {
+		return false
+	}
+	_, options, _ := strings.Cut(observed, ",")
+	return qemuVolumeOptions(strings.Split(options, ","))["size"] == strconv.Itoa(guest.DiskGiB)+"G"
+}
+
+func discardLegacyLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) (err error) {
+	status, err := client.LXCStatus(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("inspect %s status before legacy LXC recreation: %w", guest.Name, err)
+	}
+	if status != "running" && status != "stopped" {
+		return fmt.Errorf("HOLD: guest %s is %q; refusing legacy LXC recreation outside a running or stopped state", guest.Name, status)
+	}
+	if status == "running" {
+		if err = client.StopLXC(ctx, plan.Node, guest.VMID); err != nil {
+			return fmt.Errorf("stop %s before legacy LXC recreation: %w", guest.Name, err)
+		}
+		defer func() {
+			if err == nil {
+				return
+			}
+			if startErr := client.StartLXC(ctx, plan.Node, guest.VMID); startErr != nil {
+				err = fmt.Errorf("%w; additionally failed to restore %s after legacy LXC recreation failure: %v", err, guest.Name, startErr)
+			}
+		}()
+	}
+	if err = client.DestroyLXC(ctx, plan.Node, guest.VMID); err != nil {
+		return fmt.Errorf("discard legacy state for %s before recreation: %w", guest.Name, err)
 	}
 	return nil
 }
@@ -1552,15 +2137,142 @@ func lxcDeviceParam(device model.DeviceRequirement) string {
 	return fmt.Sprintf("path=%s,mode=0666", device.Path)
 }
 
-func replaceLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
+// releaseLegacyLXCLoopMapping detaches the one inactive loop device that
+// Proxmox retains for a proven legacy local raw LXC volume. Proxmox's LXC
+// copy worker mounts its source read-only in a private namespace; a retained
+// writable loop mapping causes that mount to fail. The guest is already
+// stopped by the caller. Every identity is re-proven through pvesm and
+// losetup immediately before the bounded detach, which also fails when the
+// device is still busy.
+func releaseLegacyLXCLoopMapping(ctx context.Context, plan Plan, guest GuestPlan, observed string) error {
+	if plan.PrivilegedRunner == nil || net.ParseIP(plan.PrivilegedAddress) == nil || plan.PrivilegedUser != "root" || guest.VMID <= 0 {
+		return fmt.Errorf("HOLD: guest %s requires the authorized root bootstrap path to release a legacy LXC loop mapping", guest.Name)
+	}
+	volumeID, err := legacyLXCLocalRawVolumeID(observed, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("HOLD: %w", err)
+	}
+	volumePathOutput, err := plan.PrivilegedRunner.RunArgs(ctx, plan.PrivilegedAddress, plan.PrivilegedUser, []string{"/usr/sbin/pvesm", "path", volumeID})
+	if err != nil {
+		return fmt.Errorf("resolve legacy persistent volume %s for %s: %w", volumeID, guest.Name, err)
+	}
+	volumePath := strings.TrimSpace(string(volumePathOutput))
+	if !strings.HasPrefix(volumePath, "/") || strings.ContainsAny(volumePath, "\r\n") {
+		return fmt.Errorf("HOLD: Proxmox returned an unsafe path for legacy persistent volume %s", volumeID)
+	}
+	loopOutput, err := plan.PrivilegedRunner.RunArgs(ctx, plan.PrivilegedAddress, plan.PrivilegedUser, []string{"/usr/sbin/losetup", "--noheadings", "--output", "NAME", "--associated", volumePath})
+	if err != nil {
+		return fmt.Errorf("inspect legacy loop mapping for %s: %w", volumeID, err)
+	}
+	loops := strings.Fields(string(loopOutput))
+	if len(loops) == 0 {
+		return nil
+	}
+	if len(loops) != 1 || !isLoopDevice(loops[0]) {
+		return fmt.Errorf("HOLD: legacy persistent volume %s has ambiguous loop mappings %q", volumeID, strings.TrimSpace(string(loopOutput)))
+	}
+	backingOutput, err := plan.PrivilegedRunner.RunArgs(ctx, plan.PrivilegedAddress, plan.PrivilegedUser, []string{"/usr/sbin/losetup", "--noheadings", "--output", "BACK-FILE", loops[0]})
+	if err != nil {
+		return fmt.Errorf("re-verify legacy loop mapping %s for %s: %w", loops[0], volumeID, err)
+	}
+	if strings.TrimSpace(string(backingOutput)) != volumePath {
+		return fmt.Errorf("HOLD: legacy loop mapping %s no longer belongs to persistent volume %s", loops[0], volumeID)
+	}
+	if _, err := plan.PrivilegedRunner.RunArgs(ctx, plan.PrivilegedAddress, plan.PrivilegedUser, []string{"/usr/sbin/losetup", "--detach", loops[0]}); err != nil {
+		return fmt.Errorf("HOLD: detach inactive legacy loop mapping %s for persistent volume %s: %w", loops[0], volumeID, err)
+	}
+	return waitForLegacyLXCLoopRelease(ctx, plan, volumeID, volumePath, loops[0], 30, time.Second)
+}
+
+// waitForLegacyLXCLoopRelease accounts for losetup's deferred autoclear
+// behavior. A successful detach can remain visible until the stopped LXC's
+// old mount namespace drains; handing it to Proxmox before then recreates the
+// read-only mount conflict. A changed or still-attached mapping is blocking.
+func waitForLegacyLXCLoopRelease(ctx context.Context, plan Plan, volumeID, volumePath, expectedLoop string, attempts int, interval time.Duration) error {
+	if attempts < 1 || interval < 0 {
+		return errors.New("legacy LXC loop-release wait is invalid")
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
+		loopOutput, err := plan.PrivilegedRunner.RunArgs(ctx, plan.PrivilegedAddress, plan.PrivilegedUser, []string{"/usr/sbin/losetup", "--noheadings", "--output", "NAME", "--associated", volumePath})
+		if err != nil {
+			return fmt.Errorf("re-check legacy loop mapping for %s: %w", volumeID, err)
+		}
+		loops := strings.Fields(string(loopOutput))
+		if len(loops) == 0 {
+			return nil
+		}
+		if len(loops) != 1 || !isLoopDevice(loops[0]) || loops[0] != expectedLoop {
+			return fmt.Errorf("HOLD: legacy persistent volume %s has changed loop mappings %q after detach", volumeID, strings.TrimSpace(string(loopOutput)))
+		}
+		if attempt+1 == attempts {
+			break
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("wait for legacy loop mapping %s to release: %w", expectedLoop, ctx.Err())
+		case <-timer.C:
+		}
+	}
+	return fmt.Errorf("HOLD: legacy loop mapping %s for persistent volume %s remained attached after detach", expectedLoop, volumeID)
+}
+
+func legacyLXCLocalRawVolumeID(observed string, vmid int) (string, error) {
+	first, _, _ := strings.Cut(observed, ",")
+	storageID, volume, ok := strings.Cut(first, ":")
+	if !ok || storageID != "local" || vmid <= 0 {
+		return "", fmt.Errorf("refusing legacy LXC loop release for malformed local volume %q", first)
+	}
+	prefix := fmt.Sprintf("%d/vm-%d-disk-", vmid, vmid)
+	if !strings.HasPrefix(volume, prefix) || !strings.HasSuffix(volume, ".raw") {
+		return "", fmt.Errorf("refusing legacy LXC loop release for non-canonical local volume %q", first)
+	}
+	diskNumber := strings.TrimSuffix(strings.TrimPrefix(volume, prefix), ".raw")
+	diskIndex, err := strconv.Atoi(diskNumber)
+	if err != nil || diskNumber == "" || diskIndex < 0 {
+		return "", fmt.Errorf("refusing legacy LXC loop release for non-canonical local volume %q", first)
+	}
+	return first, nil
+}
+
+func isLoopDevice(value string) bool {
+	if !strings.HasPrefix(value, "/dev/loop") {
+		return false
+	}
+	index := strings.TrimPrefix(value, "/dev/loop")
+	parsed, err := strconv.Atoi(index)
+	return err == nil && index != "" && parsed >= 0
+}
+
+// replaceLXC detaches only proven persistent mount-point volumes, retains
+// their exact volume references, and removes the disposable rootfs. The caller
+// must pass those references back to creation; size-only parameters would
+// allocate fresh volumes and silently discard retained state.
+func replaceLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) (retained map[string]string, err error) {
+	retained, err = retainedLXCPersistentVolumeAttachments(current, guest)
+	if err != nil {
+		return nil, err
+	}
 	status, err := client.LXCStatus(ctx, plan.Node, guest.VMID)
 	if err != nil {
-		return fmt.Errorf("inspect %s status before appliance replacement: %w", guest.Name, err)
+		return nil, fmt.Errorf("inspect %s status before appliance replacement: %w", guest.Name, err)
+	}
+	if status != "running" && status != "stopped" {
+		return nil, fmt.Errorf("HOLD: guest %s is %q; refusing appliance replacement outside a running or stopped state", guest.Name, status)
 	}
 	if status == "running" {
 		if err := client.StopLXC(ctx, plan.Node, guest.VMID); err != nil {
-			return fmt.Errorf("stop %s before appliance replacement: %w", guest.Name, err)
+			return nil, fmt.Errorf("stop %s before appliance replacement: %w", guest.Name, err)
 		}
+		defer func() {
+			if err == nil {
+				return
+			}
+			if startErr := client.StartLXC(ctx, plan.Node, guest.VMID); startErr != nil {
+				err = fmt.Errorf("%w; additionally failed to restore %s after appliance replacement failure: %v", err, guest.Name, startErr)
+			}
+		}()
 	}
 	detach := url.Values{}
 	for index := range guest.Volumes {
@@ -1568,13 +2280,13 @@ func replaceLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan)
 	}
 	if len(detach) > 0 {
 		if err := client.SetLXCConfig(ctx, plan.Node, guest.VMID, detach); err != nil {
-			return fmt.Errorf("detach persistent volumes from %s before appliance replacement: %w", guest.Name, err)
+			return nil, fmt.Errorf("detach persistent volumes from %s before appliance replacement: %w", guest.Name, err)
 		}
 	}
 	if err := client.destroyLXCForReplacement(ctx, plan.Node, guest.VMID); err != nil {
-		return fmt.Errorf("destroy %s rootfs for appliance replacement: %w", guest.Name, err)
+		return nil, fmt.Errorf("destroy %s rootfs for appliance replacement: %w", guest.Name, err)
 	}
-	return nil
+	return retained, nil
 }
 
 // lxcBootstrapKeyParams is the only operator-key input accepted by appliance
@@ -1659,6 +2371,132 @@ func migrateLegacyQEMUPersistentVolumeSerials(ctx context.Context, client *Clien
 	return nil
 }
 
+// migrateQEMUPersistentVolumes reconciles a prior supported storage profile
+// with the currently declared one. It moves only disks whose attached slot,
+// stable serial, backup setting, and exact size prove that the volume belongs
+// to this declared guest. An active gateway is stopped for the short move and
+// restored even if a later move fails.
+func migrateQEMUPersistentVolumes(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) (err error) {
+	type migration struct {
+		disk    string
+		storage string
+		volume  model.PersistentVolumeDeclaration
+	}
+	migrations := make([]migration, 0, len(guest.Volumes))
+	for index, volume := range guest.Volumes {
+		expected, expectedErr := qemuPersistentVolumeParam(plan, volume)
+		if expectedErr != nil {
+			return expectedErr
+		}
+		disk := fmt.Sprintf("scsi%d", index+1)
+		observed, _ := current[disk].(string)
+		observedStorage := qemuVolumeStorageID(observed)
+		expectedStorage := qemuVolumeStorageID(expected)
+		if observedStorage == "" || expectedStorage == "" {
+			return fmt.Errorf("HOLD: refusing to migrate guest %s persistent volume %s with malformed storage identity", guest.Name, disk)
+		}
+		if observedStorage == expectedStorage {
+			continue
+		}
+		if !qemuVolumeMatchesPersistentIdentity(observed, expected) {
+			return fmt.Errorf("HOLD: refusing to migrate guest %s persistent volume %s=%q; its serial, backup setting, or size does not prove the declared contract %q", guest.Name, disk, observed, expected)
+		}
+		migrations = append(migrations, migration{disk: disk, storage: expectedStorage, volume: volume})
+	}
+	if len(migrations) == 0 {
+		return nil
+	}
+
+	status, err := client.QEMUStatus(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("inspect %s status before persistent-volume migration: %w", guest.Name, err)
+	}
+	if status != "running" && status != "stopped" {
+		return fmt.Errorf("HOLD: guest %s is %q; refusing persistent-volume migration outside a running or stopped state", guest.Name, status)
+	}
+	wasRunning := status == "running"
+	if wasRunning {
+		if err := client.StopVM(ctx, plan.Node, guest.VMID); err != nil {
+			return fmt.Errorf("stop %s before persistent-volume migration: %w", guest.Name, err)
+		}
+		defer func() {
+			if startErr := client.StartVM(ctx, plan.Node, guest.VMID); startErr != nil {
+				if err == nil {
+					err = fmt.Errorf("restore %s after persistent-volume migration: %w", guest.Name, startErr)
+				} else {
+					err = fmt.Errorf("%w; additionally failed to restore %s after persistent-volume migration: %v", err, guest.Name, startErr)
+				}
+			}
+		}()
+	}
+
+	for _, migration := range migrations {
+		refreshed := map[string]any{}
+		if err := client.QEMUConfig(ctx, plan.Node, guest.VMID, &refreshed); err != nil {
+			return fmt.Errorf("inspect %s before moving persistent volume %s: %w", guest.Name, migration.disk, err)
+		}
+		expected, expectedErr := qemuPersistentVolumeParam(plan, migration.volume)
+		if expectedErr != nil {
+			return expectedErr
+		}
+		observed, _ := refreshed[migration.disk].(string)
+		if qemuVolumeStorageID(observed) == migration.storage {
+			continue
+		}
+		if !qemuVolumeMatchesPersistentIdentity(observed, expected) {
+			return fmt.Errorf("HOLD: guest %s persistent volume %s changed before migration", guest.Name, migration.disk)
+		}
+		digest, _ := refreshed["digest"].(string)
+		if err := client.MoveQEMUPersistentDisk(ctx, plan.Node, guest.VMID, migration.disk, migration.storage, digest); err != nil {
+			return fmt.Errorf("migrate persistent volume %s for %s: %w", migration.disk, guest.Name, err)
+		}
+	}
+
+	refreshed := map[string]any{}
+	if err := client.QEMUConfig(ctx, plan.Node, guest.VMID, &refreshed); err != nil {
+		return fmt.Errorf("verify %s persistent-volume migration: %w", guest.Name, err)
+	}
+	replaceQEMUConfig(current, refreshed)
+	return nil
+}
+
+func qemuVolumeStorageID(value string) string {
+	first, _, _ := strings.Cut(value, ",")
+	storage, volume, ok := strings.Cut(first, ":")
+	if !ok || storage == "" || volume == "" {
+		return ""
+	}
+	return storage
+}
+
+func qemuVolumeMatchesPersistentIdentity(observed, expected string) bool {
+	observedParts := strings.Split(observed, ",")
+	expectedParts := strings.Split(expected, ",")
+	if len(observedParts) == 0 || len(expectedParts) == 0 {
+		return false
+	}
+	_, expectedSize, expectedOK := strings.Cut(expectedParts[0], ":")
+	if !expectedOK || expectedSize == "" || qemuVolumeStorageID(observed) == "" {
+		return false
+	}
+	observedOptions := qemuVolumeOptions(observedParts[1:])
+	expectedOptions := qemuVolumeOptions(expectedParts[1:])
+	return observedOptions["backup"] == expectedOptions["backup"] &&
+		observedOptions["serial"] == expectedOptions["serial"] &&
+		observedOptions["size"] == expectedSize+"G"
+}
+
+func qemuVolumeOptions(parts []string) map[string]string {
+	options := make(map[string]string, len(parts))
+	for _, option := range parts {
+		name, value, ok := strings.Cut(option, "=")
+		if ok {
+			options[name] = value
+		}
+	}
+	return options
+}
+
 func qemuVolumeMatchesSerial(observed, expected, serial string) bool {
 	observedParts := strings.Split(observed, ",")
 	expectedParts := strings.Split(expected, ",")
@@ -1688,6 +2526,146 @@ func qemuVolumeMatchesSerial(observed, expected, serial string) bool {
 		(options["size"] == "" || options["size"] == expectedSize+"G")
 }
 
+// migrateLXCPersistentVolumes reconciles a prior supported storage profile
+// with the storage now declared for an LXC. A mount point has no QEMU-style
+// serial, so its fixed slot, storage identity, mount path, backup policy, and
+// exact size together establish ownership before Core asks Proxmox to delete
+// the source after a successful copy.
+func migrateLXCPersistentVolumes(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) (err error) {
+	type migration struct {
+		mountpoint string
+		storage    string
+		volume     model.PersistentVolumeDeclaration
+		observed   string
+	}
+	migrations := make([]migration, 0, len(guest.Volumes))
+	for index, volume := range guest.Volumes {
+		expected, expectedErr := persistentVolumeParam(volume)
+		if expectedErr != nil {
+			return expectedErr
+		}
+		mountpoint := fmt.Sprintf("mp%d", index)
+		observed, _ := current[mountpoint].(string)
+		observedStorage := lxcVolumeStorageID(observed)
+		expectedStorage := lxcVolumeStorageID(expected)
+		if observedStorage == "" || expectedStorage == "" {
+			return fmt.Errorf("HOLD: refusing to migrate guest %s persistent volume %s with malformed storage identity", guest.Name, mountpoint)
+		}
+		if observedStorage == expectedStorage {
+			continue
+		}
+		if !lxcVolumeMatchesPersistentIdentity(observed, expected) {
+			return fmt.Errorf("HOLD: refusing to migrate guest %s persistent volume %s=%q; its mount path, backup setting, or size does not prove the declared contract %q", guest.Name, mountpoint, observed, expected)
+		}
+		migrations = append(migrations, migration{mountpoint: mountpoint, storage: expectedStorage, volume: volume, observed: observed})
+	}
+	if len(migrations) == 0 {
+		return nil
+	}
+
+	status, err := client.LXCStatus(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("inspect %s status before persistent-volume migration: %w", guest.Name, err)
+	}
+	if status != "running" && status != "stopped" {
+		return fmt.Errorf("HOLD: guest %s is %q; refusing persistent-volume migration outside a running or stopped state", guest.Name, status)
+	}
+	wasRunning := status == "running"
+	if wasRunning {
+		if err := client.StopLXC(ctx, plan.Node, guest.VMID); err != nil {
+			return fmt.Errorf("stop %s before persistent-volume migration: %w", guest.Name, err)
+		}
+		defer func() {
+			if startErr := client.StartLXC(ctx, plan.Node, guest.VMID); startErr != nil {
+				if err == nil {
+					err = fmt.Errorf("restore %s after persistent-volume migration: %w", guest.Name, startErr)
+				} else {
+					err = fmt.Errorf("%w; additionally failed to restore %s after persistent-volume migration: %v", err, guest.Name, startErr)
+				}
+			}
+		}()
+	}
+	for _, migration := range migrations {
+		if lxcVolumeStorageID(migration.observed) == "local" {
+			if err := releaseLegacyLXCLoopMapping(ctx, plan, guest, migration.observed); err != nil {
+				return err
+			}
+		}
+	}
+
+	for _, migration := range migrations {
+		refreshed := map[string]any{}
+		if err := client.LXCConfig(ctx, plan.Node, guest.VMID, &refreshed); err != nil {
+			return fmt.Errorf("inspect %s before moving persistent volume %s: %w", guest.Name, migration.mountpoint, err)
+		}
+		expected, expectedErr := persistentVolumeParam(migration.volume)
+		if expectedErr != nil {
+			return expectedErr
+		}
+		observed, _ := refreshed[migration.mountpoint].(string)
+		if lxcVolumeStorageID(observed) == migration.storage {
+			continue
+		}
+		if !lxcVolumeMatchesPersistentIdentity(observed, expected) {
+			return fmt.Errorf("HOLD: guest %s persistent volume %s changed before migration", guest.Name, migration.mountpoint)
+		}
+		digest, _ := refreshed["digest"].(string)
+		if err := client.MoveLXCPersistentVolume(ctx, plan.Node, guest.VMID, migration.mountpoint, migration.storage, digest); err != nil {
+			return fmt.Errorf("migrate persistent volume %s for %s: %w", migration.mountpoint, guest.Name, err)
+		}
+	}
+
+	refreshed := map[string]any{}
+	if err := client.LXCConfig(ctx, plan.Node, guest.VMID, &refreshed); err != nil {
+		return fmt.Errorf("verify %s persistent-volume migration: %w", guest.Name, err)
+	}
+	replaceLXCConfig(current, refreshed)
+	return nil
+}
+
+func lxcVolumeStorageID(value string) string {
+	first, _, _ := strings.Cut(value, ",")
+	storage, volume, ok := strings.Cut(first, ":")
+	if !ok || storage == "" || volume == "" {
+		return ""
+	}
+	return storage
+}
+
+func lxcVolumeMatchesPersistentIdentity(observed, expected string) bool {
+	observedParts := strings.Split(observed, ",")
+	expectedParts := strings.Split(expected, ",")
+	if len(observedParts) == 0 || len(expectedParts) == 0 {
+		return false
+	}
+	_, expectedSize, expectedOK := strings.Cut(expectedParts[0], ":")
+	if !expectedOK || expectedSize == "" || lxcVolumeStorageID(observed) == "" {
+		return false
+	}
+	observedOptions := qemuVolumeOptions(observedParts[1:])
+	expectedOptions := qemuVolumeOptions(expectedParts[1:])
+	return observedOptions["mp"] == expectedOptions["mp"] &&
+		observedOptions["backup"] == expectedOptions["backup"] &&
+		observedOptions["size"] == expectedSize+"G"
+}
+
+func retainedLXCPersistentVolumeAttachments(current map[string]any, guest GuestPlan) (map[string]string, error) {
+	retained := make(map[string]string, len(guest.Volumes))
+	for index, volume := range guest.Volumes {
+		expected, err := persistentVolumeParam(volume)
+		if err != nil {
+			return nil, err
+		}
+		mountpoint := fmt.Sprintf("mp%d", index)
+		observed, _ := current[mountpoint].(string)
+		if !lxcPersistentVolumeMatches(observed, expected) {
+			return nil, fmt.Errorf("HOLD: refusing to retain guest %s persistent volume %s because its storage, mount path, backup setting, or size no longer proves the declared contract", guest.Name, mountpoint)
+		}
+		retained[mountpoint] = observed
+	}
+	return retained, nil
+}
+
 func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) error {
 	for index, volume := range expected.Volumes {
 		wanted, err := persistentVolumeParam(volume)
@@ -1700,11 +2678,18 @@ func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) er
 			return fmt.Errorf("HOLD: guest %s has persistent volume %s=%q, expected %q", expected.Name, key, observed, wanted)
 		}
 	}
+	return validateNoUndeclaredLXCVolumes(current, expected)
+}
+
+func validateNoUndeclaredLXCVolumes(current map[string]any, expected GuestPlan) error {
 	for key := range current {
-		if !strings.HasPrefix(key, "mp") || len(key) <= len("mp") || key[2] < '0' || key[2] > '9' {
+		if !strings.HasPrefix(key, "mp") {
 			continue
 		}
-		index := int(key[2] - '0')
+		if !safePersistentLXCMountpointKey(key) {
+			return fmt.Errorf("HOLD: guest %s has malformed persistent volume key %s", expected.Name, key)
+		}
+		index, _ := strconv.Atoi(strings.TrimPrefix(key, "mp"))
 		if index >= len(expected.Volumes) {
 			return fmt.Errorf("HOLD: guest %s has an undeclared persistent volume %s", expected.Name, key)
 		}
@@ -1713,33 +2698,9 @@ func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) er
 }
 
 func lxcPersistentVolumeMatches(observed, wanted string) bool {
-	observedParts := strings.Split(observed, ",")
-	wantedParts := strings.Split(wanted, ",")
-	if len(observedParts) == 0 || len(wantedParts) == 0 {
-		return false
-	}
-	observedStorage, _, observedOK := strings.Cut(observedParts[0], ":")
-	wantedStorage, wantedSize, wantedOK := strings.Cut(wantedParts[0], ":")
-	if !observedOK || !wantedOK || observedStorage != wantedStorage || wantedSize == "" {
-		return false
-	}
-	observedOptions := make(map[string]string, len(observedParts)-1)
-	for _, option := range observedParts[1:] {
-		name, value, ok := strings.Cut(option, "=")
-		if ok {
-			observedOptions[name] = value
-		}
-	}
-	wantedOptions := make(map[string]string, len(wantedParts)-1)
-	for _, option := range wantedParts[1:] {
-		name, value, ok := strings.Cut(option, "=")
-		if ok {
-			wantedOptions[name] = value
-		}
-	}
-	return observedOptions["mp"] == wantedOptions["mp"] &&
-		observedOptions["backup"] == wantedOptions["backup"] &&
-		observedOptions["size"] == wantedSize+"G"
+	return lxcVolumeStorageID(observed) != "" &&
+		lxcVolumeStorageID(observed) == lxcVolumeStorageID(wanted) &&
+		lxcVolumeMatchesPersistentIdentity(observed, wanted)
 }
 
 func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage, content, filename, checksum, source string) error {
@@ -1997,15 +2958,27 @@ func normalizeArtifactDescription(value string) string {
 	return strings.TrimSuffix(value, "\n")
 }
 
-func replaceQEMURootDisk(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
+func replaceQEMURootDisk(ctx context.Context, client *Client, plan Plan, guest GuestPlan) (err error) {
 	status, err := client.QEMUStatus(ctx, plan.Node, guest.VMID)
 	if err != nil {
 		return fmt.Errorf("inspect gateway status before appliance replacement: %w", err)
 	}
-	if status == "running" {
+	if status != "running" && status != "stopped" {
+		return fmt.Errorf("HOLD: guest %s is %q; refusing appliance replacement outside a running or stopped state", guest.Name, status)
+	}
+	wasRunning := status == "running"
+	if wasRunning {
 		if err := client.StopVM(ctx, plan.Node, guest.VMID); err != nil {
 			return fmt.Errorf("stop gateway before appliance replacement: %w", err)
 		}
+		defer func() {
+			if err == nil {
+				return
+			}
+			if startErr := client.StartVM(ctx, plan.Node, guest.VMID); startErr != nil {
+				err = fmt.Errorf("%w; additionally failed to restore %s after appliance replacement: %v", err, guest.Name, startErr)
+			}
+		}()
 	}
 	if guest.Name == "lab-fw-01" {
 		if err := uploadFirewallCloudInit(ctx, client, plan, guest.VMID); err != nil {

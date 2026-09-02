@@ -334,6 +334,19 @@ func TestUserNetworkIntentValidatesReservationsAndDNSOwnership(t *testing.T) {
 	}
 }
 
+func TestConfigFromSiteExcludesGeneratedModuleReservations(t *testing.T) {
+	user := DHCPReservation{Zone: "SERVERS", Hostname: "app-01", Address: "10.10.20.61", MAC: "02:00:00:00:02:61", VMID: 550}
+	module := DHCPReservation{Zone: "SERVERS", Hostname: "lab-arr-01", Address: ArrGuestAddress, MAC: ArrGuestMAC, VMID: ArrVMID}
+	site := NewSite("installation", "age1example", GatewayModeManaged)
+	site.DHCPReservations = []DHCPReservation{user, module}
+	site.Declarations = []ModuleDeclaration{{Module: "arr", DHCPReservations: []DHCPReservation{module}}}
+
+	config := ConfigFromSite(site)
+	if len(config.DHCPReservations) != 1 || config.DHCPReservations[0] != user {
+		t.Fatalf("derived module reservation leaked into desired configuration: %#v", config.DHCPReservations)
+	}
+}
+
 func TestUserCNAMECyclesAreRejected(t *testing.T) {
 	site := NewDefaultSite("installation", "age1example")
 	site.DNSRecords = []UserDNSRecord{

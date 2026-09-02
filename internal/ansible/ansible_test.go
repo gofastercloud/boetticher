@@ -26,6 +26,20 @@ func TestGatusRolePreparesConfigDirectoryAndReloadsNginx(t *testing.T) {
 	}
 }
 
+func TestARRRoleSeedsConfigurationWithoutOverwritingApplicationState(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "arr", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := ansibleTaskBlock(string(contents), "Bind Sonarr and Radarr to loopback with no native login")
+	if block == "" {
+		t.Fatal("ARR role is missing its initial Sonarr/Radarr configuration task")
+	}
+	if !strings.Contains(block, "force: false") {
+		t.Fatal("ARR role overwrites application-managed configuration on every deploy")
+	}
+}
+
 func TestPhaseVariablesExposeOnlySafeDeploymentPhaseMetadata(t *testing.T) {
 	data, err := phaseVariables([]byte(`{"example":"value"}`), PhaseBootstrap)
 	if err != nil {
@@ -669,26 +683,26 @@ func TestPulseRestartsAfterCredentialProjectionOrUnhealthyStart(t *testing.T) {
 	}
 }
 
-func TestLiteLLMRestartsWhenAnyRuntimeCredentialIsMissing(t *testing.T) {
-	path := filepath.Join("..", "..", "ansible", "roles", "litellm", "tasks", "main.yml")
+func TestBifrostRestartsWhenAnyRuntimeCredentialIsMissing(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "bifrost", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(data)
 	for _, required := range []string{
-		"test -s /run/credentials/litellm.service/{{ upstream.api_key_secret | lower | replace('_', '-') | replace('.', '-') }}",
-		"register: litellm_runtime_credentials",
-		"litellm_runtime_credentials.results | default([]) | selectattr('rc', 'ne', 0) | list | length > 0",
-		"register: litellm_service_start",
-		"systemctl show litellm",
+		"test -s /run/credentials/bifrost.service/{{ upstream.api_key_secret | lower | replace('_', '-') | replace('.', '-') }}",
+		"register: bifrost_runtime_credentials",
+		"bifrost_runtime_credentials.results | default([]) | selectattr('rc', 'ne', 0) | list | length > 0",
+		"register: bifrost_service_start",
+		"systemctl show bifrost",
 		"ExecMainStatus,StatusText,ExecMainStartTimestamp",
-		"register: litellm_service_diagnostics",
-		"register: litellm_final_service_state",
-		"litellm_final_service_state.stdout_lines | default([]) == ['active', 'running']",
+		"register: bifrost_service_diagnostics",
+		"register: bifrost_final_service_state",
+		"bifrost_final_service_state.stdout_lines | default([]) == ['active', 'running']",
 	} {
 		if !strings.Contains(text, required) {
-			t.Fatalf("LiteLLM credential recovery contract is missing %q", required)
+			t.Fatalf("Bifrost credential recovery contract is missing %q", required)
 		}
 	}
 }
@@ -1549,13 +1563,13 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 			forbidden: []string{"ListenStream=19532"},
 		},
 		{
-			role: "litellm",
+			role: "bifrost",
 			required: []string{
 				"boetticher_appliance_artifact",
 				"no_log: true",
-				"dest: /etc/boetticher/litellm/config.json",
+				"dest: /etc/boetticher/bifrost/config.json",
 				"group: bifrost",
-				"path: /etc/boetticher/litellm",
+				"path: /etc/boetticher/bifrost",
 				"mode: '0751'",
 				"ssl_verify_client on;",
 				"proxy_pass http://127.0.0.1:4000;",
@@ -1568,10 +1582,10 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 				"After=network-online.target",
 				"Wants=network-online.target",
 				"notify: restart nginx",
-				"Restart LiteLLM after credential projection or an unhealthy start",
-				"systemctl show litellm --property=ActiveState --property=SubState --value",
+				"Restart Bifrost after credential projection or an unhealthy start",
+				"systemctl show bifrost --property=ActiveState --property=SubState --value",
 				"daemon_reload: true",
-				"/run/credentials/litellm.service/{{ upstream.api_key_secret | lower | replace('_', '-') | replace('.', '-') }}",
+				"/run/credentials/bifrost.service/{{ upstream.api_key_secret | lower | replace('_', '-') | replace('.', '-') }}",
 			},
 			forbidden: []string{"listen 10.10.20.60:80", "api_key: {{", "ansible.builtin.get_url:"},
 		},
@@ -1746,6 +1760,26 @@ func TestPiKioskUsesDedicatedPulseClientCertificate(t *testing.T) {
 	for _, forbidden := range []string{"<all_urls>", "permissions", "host_permissions", "X-API-Token", "-----BEGIN"} {
 		if strings.Contains(manifestText+scriptText, forbidden) {
 			t.Fatalf("Pi kiosk refresh extension contains forbidden capability or credential material %q", forbidden)
+		}
+	}
+}
+
+func TestKioskRoleUpdatesCredentialsAndIdentityOnlyOnDrift(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "kiosk", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, required := range []string{
+		"Calculate the desired Pulse agent credential revision",
+		"kiosk_pulse_agent_credential_needs_update",
+		"Record the applied Pulse agent credential revision",
+		"Read the kiosk client certificate serial from the NSS database",
+		"Remove an outdated kiosk client certificate from NSS",
+		"kiosk_nss_client_certificate_serial",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("kiosk role is missing idempotent update guard %q", required)
 		}
 	}
 }

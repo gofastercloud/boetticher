@@ -7,12 +7,12 @@ set -eu
 target=${1:-images}
 shift || true
 case "$target" in
-  image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-streamdeck|image-gatus|image-network-probe|images) ;;
+  image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-arr|image-streamdeck|image-gatus|image-network-probe|images) ;;
   image-airvpn) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
-default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-airvpn image-litellm image-printer image-streamdeck image-aiops image-gatus image-network-probe image-firewall"
+default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-streamdeck image-aiops image-gatus image-network-probe image-firewall"
 if [ "$target" = images ]; then
   selected_image_targets="$*"
   if [ -z "$selected_image_targets" ]; then
@@ -20,7 +20,7 @@ if [ "$target" = images ]; then
   fi
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
-      image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-litellm|image-aiops|image-printer|image-streamdeck|image-gatus|image-network-probe) ;;
+      image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-arr|image-streamdeck|image-gatus|image-network-probe) ;;
       image-airvpn) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac
@@ -162,16 +162,22 @@ tailscale_package_version=1.76.6
 tailscale_key_url=https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg
 tailscale_key_sha256=3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39
 tailscale_keyring=/usr/share/keyrings/tailscale-archive-keyring.gpg
-litellm_version=1.74.9
-litellm_python_package_version=3.13.5-1
-litellm_python_venv_package_version=3.13.5-1
-litellm_pip_package_version=25.1.1+dfsg-1
-litellm_nginx_package_version=1.26.3-3+deb13u7
+aiops_python_package_version=3.13.5-1
+aiops_python_venv_package_version=3.13.5-1
+aiops_pip_package_version=25.1.1+dfsg-1
+bifrost_nginx_package_version=1.26.3-3+deb13u7
 holmes_source_url=https://codeload.github.com/HolmesGPT/holmesgpt/tar.gz/3d201559c0f3648a6c567aece09662f4f407bcc9
 holmes_source_sha256=7016d3335a7f81810de35d9030a63bc38204d94991e3343d6cdbbcaf77a755be
 holmes_source_root=holmesgpt-3d201559c0f3648a6c567aece09662f4f407bcc9
 gatus_source_url=https://github.com/TwiN/gatus/archive/refs/tags/v5.36.0.tar.gz
 gatus_source_sha256=b5543af591e602281406049ee2f822a6529a8f14be0cd54df5a31c210520159a
+arr_nginx_package_version=1.26.3-3+deb13u7
+sonarr_version=4.0.19.2979
+sonarr_release_url=https://github.com/Sonarr/Sonarr/releases/download/v4.0.19.2979/Sonarr.main.4.0.19.2979.linux-x64.tar.gz
+sonarr_release_sha256=b691b3584c31c0b5514058dee81071c923f63d59a37d19e32f92fa13eaa153db
+radarr_version=6.3.0.10514
+radarr_release_url=https://github.com/Radarr/Radarr/releases/download/v6.3.0.10514/Radarr.master.6.3.0.10514.linux-core-x64.tar.gz
+radarr_release_sha256=41d6455c037ff267c5ad5a0f0de4502cebe8f89ec3d051da97851933d48a4047
 mkdir -p "$output_root" "$work_root" "$cache_root/apt" "$cache_root/downloads" "$cache_root/base"
 
 provenance_path="$(dirname "$output_root")/builder-provenance.json"
@@ -567,18 +573,18 @@ build_airvpn() {
   package_lxc boetticher-airvpn
 }
 
-build_litellm() {
-  printf '%s\n' 'boetticher build stage: litellm'
-  rootfs=$(prepare_rootfs boetticher-litellm)
-  install_packages "$rootfs" "nginx=$litellm_nginx_package_version"
+build_bifrost() {
+  printf '%s\n' 'boetticher build stage: bifrost'
+  rootfs=$(prepare_rootfs boetticher-bifrost)
+  install_packages "$rootfs" "nginx=$bifrost_nginx_package_version"
   chroot "$rootfs" useradd --system --home-dir /var/lib/bifrost --create-home --shell /usr/sbin/nologin bifrost
   chroot "$rootfs" install -d -o bifrost -g bifrost -m 0750 /var/lib/bifrost
   rm -f "$rootfs/etc/nginx/sites-enabled/default" "$rootfs/etc/nginx/sites-available/default" "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
-  install -D -m 0644 images/litellm/runtime/litellm.service "$rootfs/etc/systemd/system/litellm.service"
+  install -D -m 0644 images/bifrost/runtime/bifrost.service "$rootfs/etc/systemd/system/bifrost.service"
   CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/libexec/boetticher-bifrost" ./cmd/boetticher-bifrost
-  ln -s boetticher-bifrost "$rootfs/usr/local/libexec/boetticher-litellm-model-capabilities"
-  write_artifact_identity "$rootfs" litellm
-  package_lxc boetticher-litellm
+  ln -s boetticher-bifrost "$rootfs/usr/local/libexec/boetticher-bifrost-model-capabilities"
+  write_artifact_identity "$rootfs" bifrost
+  package_lxc boetticher-bifrost
 }
 
 build_printer() {
@@ -597,6 +603,38 @@ build_printer() {
   rm -f "$rootfs/tmp/octoprint-requirements.lock" "$rootfs/etc/nginx/sites-enabled/default"
   write_artifact_identity "$rootfs" printer
   package_lxc boetticher-printer
+}
+
+build_arr() {
+  printf '%s\n' 'boetticher build stage: arr'
+  rootfs=$(prepare_rootfs boetticher-arr)
+  install_packages "$rootfs" "nginx=$arr_nginx_package_version" ca-certificates
+  sonarr_archive="$cache_root/downloads/Sonarr.main.$sonarr_version.linux-x64.tar.gz"
+  radarr_archive="$cache_root/downloads/Radarr.master.$radarr_version.linux-core-x64.tar.gz"
+  download_cached "$sonarr_archive" "$sonarr_release_url" "$sonarr_release_sha256" sha256sum
+  download_cached "$radarr_archive" "$radarr_release_url" "$radarr_release_sha256" sha256sum
+  sonarr_root="$work_root/sonarr-$sonarr_version"; radarr_root="$work_root/radarr-$radarr_version"
+  rm -rf "$sonarr_root" "$radarr_root"
+  mkdir -p "$sonarr_root" "$radarr_root"
+  tar -xzf "$sonarr_archive" -C "$sonarr_root" --strip-components=1
+  tar -xzf "$radarr_archive" -C "$radarr_root" --strip-components=1
+  install -d -m 0755 "$rootfs/opt/sonarr" "$rootfs/opt/radarr"
+  cp -a "$sonarr_root/." "$rootfs/opt/sonarr/"
+  cp -a "$radarr_root/." "$rootfs/opt/radarr/"
+  chroot "$rootfs" groupadd --system --gid 2200 arr
+  chroot "$rootfs" useradd --system --uid 2200 --gid 2200 --home-dir /var/lib/arr/sonarr --create-home --shell /usr/sbin/nologin sonarr
+  chroot "$rootfs" useradd --system --uid 2201 --gid 2200 --home-dir /var/lib/arr/radarr --create-home --shell /usr/sbin/nologin radarr
+  chroot "$rootfs" install -d -o sonarr -g arr -m 0750 /var/lib/arr/sonarr
+  chroot "$rootfs" install -d -o radarr -g arr -m 0750 /var/lib/arr/radarr
+  chroot "$rootfs" chown -R root:root /opt/sonarr /opt/radarr
+  chroot "$rootfs" chmod -R u+rwX,go+rX,go-w /opt/sonarr /opt/radarr
+  install -D -m 0644 images/arr/runtime/sonarr.service "$rootfs/etc/systemd/system/sonarr.service"
+  install -D -m 0644 images/arr/runtime/radarr.service "$rootfs/etc/systemd/system/radarr.service"
+  rm -f "$rootfs/etc/nginx/sites-enabled/default" "$rootfs/etc/ssl/private/ssl-cert-snakeoil.key"
+  chroot "$rootfs" apt-get clean
+  rm -rf "$rootfs/var/lib/apt/lists/"*
+  write_artifact_identity "$rootfs" arr
+  package_lxc boetticher-arr
 }
 
 build_streamdeck() {
@@ -618,9 +656,9 @@ build_aiops() {
   printf '%s\n' 'boetticher build stage: aiops'
   rootfs=$(prepare_rootfs boetticher-aiops)
   install_packages "$rootfs" \
-    "python3=$litellm_python_package_version" \
-    "python3-venv=$litellm_python_venv_package_version" \
-    "python3-pip=$litellm_pip_package_version"
+    "python3=$aiops_python_package_version" \
+    "python3-venv=$aiops_python_venv_package_version" \
+    "python3-pip=$aiops_pip_package_version"
   chroot "$rootfs" python3 -m venv /opt/holmes
   install -D -m 0644 images/aiops/runtime/requirements.lock "$rootfs/tmp/aiops-requirements.lock"
   pip_install "$rootfs" /opt/holmes/bin/pip install --require-hashes --requirement /tmp/aiops-requirements.lock
@@ -911,14 +949,19 @@ build_airvpn_target() {
   build_airvpn
 }
 
-build_litellm_target() {
+build_bifrost_target() {
   [ -f "$(artifact_for boetticher-base)" ] || build_base
-  build_litellm
+  build_bifrost
 }
 
 build_printer_target() {
   [ -f "$(artifact_for boetticher-base)" ] || build_base
   build_printer
+}
+
+build_arr_target() {
+  [ -f "$(artifact_for boetticher-base)" ] || build_base
+  build_arr
 }
 
 build_streamdeck_target() {
@@ -965,8 +1008,9 @@ case "$target" in
   image-portal) run_timed_image_target "$target" build_portal_target ;;
   image-tailnet-router) run_timed_image_target "$target" build_tailnet_router_target ;;
   image-airvpn) run_timed_image_target "$target" build_airvpn_target ;;
-  image-litellm) run_timed_image_target "$target" build_litellm_target ;;
+  image-bifrost) run_timed_image_target "$target" build_bifrost_target ;;
   image-printer) run_timed_image_target "$target" build_printer_target ;;
+  image-arr) run_timed_image_target "$target" build_arr_target ;;
   image-streamdeck) run_timed_image_target "$target" build_streamdeck_target ;;
   image-aiops) run_timed_image_target "$target" build_aiops_target ;;
   image-gatus) run_timed_image_target "$target" build_gatus_target ;;

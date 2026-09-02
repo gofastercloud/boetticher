@@ -24,11 +24,16 @@ const (
 )
 
 type Resource struct {
-	Name   string
-	Kind   string
-	Status string
-	CPU    *float64
-	Memory *float64
+	Name           string
+	Kind           string
+	PlatformType   string
+	Sources        []string
+	PlatformScopes []string
+	Status         string
+	CPU            *float64
+	Memory         *float64
+
+	sourceMetadata bool
 }
 
 type State struct {
@@ -114,8 +119,8 @@ func (c *PulseClient) Fetch(ctx context.Context) (State, error) {
 	}
 
 	resources := make([]Resource, 0, pageSize)
-	for offset := 0; len(resources) < maxResources; offset += pageSize {
-		path := "/api/resources?source=proxmox&limit=" + strconv.Itoa(pageSize) + "&offset=" + strconv.Itoa(offset) + "&sort=name&order=asc"
+	for pageNumber := 1; len(resources) < maxResources; pageNumber++ {
+		path := "/api/resources?limit=" + strconv.Itoa(pageSize) + "&page=" + strconv.Itoa(pageNumber) + "&sort=name&order=asc"
 		body, err := c.json(ctx, path)
 		if err != nil {
 			return State{}, err
@@ -175,10 +180,13 @@ func (c *PulseClient) json(ctx context.Context, path string) ([]byte, error) {
 
 func decodeResource(raw json.RawMessage) (Resource, error) {
 	var value struct {
-		Name    string         `json:"name"`
-		Kind    string         `json:"type"`
-		Status  string         `json:"status"`
-		Metrics map[string]any `json:"metrics"`
+		Name           string          `json:"name"`
+		Kind           string          `json:"type"`
+		PlatformType   string          `json:"platformType"`
+		Sources        json.RawMessage `json:"sources"`
+		PlatformScopes json.RawMessage `json:"platformScopes"`
+		Status         string          `json:"status"`
+		Metrics        map[string]any  `json:"metrics"`
 	}
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return Resource{}, fmt.Errorf("decode Pulse resource: %w", err)
@@ -186,13 +194,26 @@ func decodeResource(raw json.RawMessage) (Resource, error) {
 	if value.Name == "" {
 		return Resource{}, errors.New("malformed Pulse resource")
 	}
-	return Resource{
-		Name:   value.Name,
-		Kind:   defaultString(value.Kind, "guest"),
-		Status: defaultString(value.Status, "unknown"),
-		CPU:    optionalPercent(value.Metrics["cpu"]),
-		Memory: optionalPercent(value.Metrics["memory"]),
-	}, nil
+	resource := Resource{
+		Name:           value.Name,
+		Kind:           defaultString(value.Kind, "guest"),
+		PlatformType:   value.PlatformType,
+		Status:         defaultString(value.Status, "unknown"),
+		CPU:            optionalPercent(value.Metrics["cpu"]),
+		Memory:         optionalPercent(value.Metrics["memory"]),
+		sourceMetadata: value.Sources != nil || value.PlatformScopes != nil,
+	}
+	if value.Sources != nil && string(value.Sources) != "null" {
+		if err := json.Unmarshal(value.Sources, &resource.Sources); err != nil {
+			return Resource{}, fmt.Errorf("decode Pulse resource sources: %w", err)
+		}
+	}
+	if value.PlatformScopes != nil && string(value.PlatformScopes) != "null" {
+		if err := json.Unmarshal(value.PlatformScopes, &resource.PlatformScopes); err != nil {
+			return Resource{}, fmt.Errorf("decode Pulse resource platform scopes: %w", err)
+		}
+	}
+	return resource, nil
 }
 
 func defaultString(value, fallback string) string {
@@ -203,9 +224,26 @@ func defaultString(value, fallback string) string {
 }
 
 func optionalPercent(value any) *float64 {
-	number, ok := value.(float64)
-	if !ok || number < 0 || number > 100 {
+	switch value := value.(type) {
+	case float64:
+		return boundedPercent(value)
+	case map[string]any:
+		if percent, ok := value["percent"].(float64); ok {
+			return boundedPercent(percent)
+		}
+		unit, _ := value["unit"].(string)
+		if strings.EqualFold(strings.TrimSpace(unit), "percent") {
+			if percent, ok := value["value"].(float64); ok {
+				return boundedPercent(percent)
+			}
+		}
+	}
+	return nil
+}
+
+func boundedPercent(value float64) *float64 {
+	if value < 0 || value > 100 {
 		return nil
 	}
-	return &number
+	return &value
 }

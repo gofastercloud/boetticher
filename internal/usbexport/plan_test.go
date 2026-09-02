@@ -10,7 +10,7 @@ import (
 func TestPrinterSerialExportUsesDeterministicSlot(t *testing.T) {
 	config := model.ConfigFromSite(model.NewDefaultSite("installation", "age1example"))
 	enabled := true
-	config.Modules.Printer = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.Printer = &model.NetworkToggleModuleConfig{Enabled: &enabled}
 	config.USBExports = []model.USBExportBinding{{Module: "printer", Requirement: "serial", Port: "1-2.4", VendorID: "1a86", ProductID: "7523"}}
 	site, _, err := modules.Compose(config)
 	if err != nil {
@@ -32,7 +32,7 @@ func TestPrinterSerialExportUsesDeterministicSlot(t *testing.T) {
 func TestEnabledPrinterRequiresSerialBinding(t *testing.T) {
 	config := model.ConfigFromSite(model.NewDefaultSite("installation", "age1example"))
 	enabled := true
-	config.Modules.Printer = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.Printer = &model.NetworkToggleModuleConfig{Enabled: &enabled}
 	if _, _, err := modules.Compose(config); err == nil {
 		t.Fatal("enabled printer accepted without required serial binding")
 	}

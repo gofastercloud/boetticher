@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/site"
 )
 
 func TestQuickstartCommandsMatchPublicCLI(t *testing.T) {
@@ -50,6 +51,17 @@ func TestQuickstartOfflineCommandsExecute(t *testing.T) {
 	}
 
 	run("init", "--site-dir", siteDir, "--age-identity", identity)
+	initialized, err := site.Load(siteDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	presence, err := site.PlatformSecretPresence(siteDir, initialized, identity, []string{"pulse_proxy_auth_secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !presence["pulse_proxy_auth_secret"] {
+		t.Fatal("init did not create the Core-owned Pulse proxy credential")
+	}
 	run("bootstrap-endpoint", "set", "192.0.2.10", "--site", siteDir)
 	run("config", "validate", "--site", siteDir)
 	run("module", "list", "--site", siteDir)
@@ -70,6 +82,22 @@ func TestQuickstartOfflineCommandsExecute(t *testing.T) {
 	}
 	if strings.Contains(statusOutput.String(), "NOT TESTED") || strings.Contains(statusOutput.String(), "ACTION REQUIRED") {
 		t.Fatalf("status reported an unknowable check: %s", statusOutput.String())
+	}
+}
+
+func TestInitConfiguresDedicatedDataDiskWithoutManualSiteEdits(t *testing.T) {
+	siteDir := filepath.Join(t.TempDir(), "my-boetticher")
+	identity := filepath.Join(t.TempDir(), "age-identity.txt")
+	var output bytes.Buffer
+	if err := Run([]string{"init", "--site-dir", siteDir, "--age-identity", identity, "--storage-profile", "dedicated-data-disk", "--storage-device", "/dev/disk/by-id/ata-example-data"}, &output, &output); err != nil {
+		t.Fatalf("init dedicated storage: %v\n%s", err, output.String())
+	}
+	configured, err := site.Load(siteDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configured.StorageProfile != "dedicated-data-disk" || configured.StorageDevice != "/dev/disk/by-id/ata-example-data" {
+		t.Fatalf("dedicated storage was not saved: %#v", configured)
 	}
 }
 
@@ -129,7 +157,7 @@ func TestPluralModuleNamespaceUsesGenericLifecycleAndRejectsUnknownCommands(t *t
 	if err := os.WriteFile(filepath.Join(dir, "site.yml"), config, 0600); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"tailnet-router", "litellm", "aiops"} {
+	for _, name := range []string{"tailnet-router", "bifrost", "aiops"} {
 		var output bytes.Buffer
 		if err := Run([]string{"modules", name, "show", "--site", dir}, &output, &output); err != nil {
 			t.Fatal(err)
@@ -161,7 +189,7 @@ func TestNestedHelpPathsArePathAwareAndSubstantive(t *testing.T) {
 				t.Fatal(err)
 			}
 			text := output.String()
-			for _, section := range []string{"Purpose:", "Usage:", "Arguments:", "Options:", "Safety:", "Examples:", "Related commands:"} {
+			for _, section := range []string{"What it does:", "Usage:", "Arguments:", "Options:", "Worth knowing:", "Try it:", "Related commands:"} {
 				if !strings.Contains(text, section) {
 					t.Errorf("nested help %q is missing %s: %s", path, section, text)
 				}
@@ -228,11 +256,11 @@ func validateCommandForm(t *testing.T, fields []string) {
 		t.Fatalf("invalid command form: %q", fields)
 	}
 	known := map[string]map[string]bool{
-		"init":               {"--site-dir": true, "--age-identity": true, "--external-firewall": true},
+		"init":               {"--site-dir": true, "--age-identity": true, "--external-firewall": true, "--storage-profile": true, "--storage-device": true},
 		"bootstrap-endpoint": {"--site": true},
 		"preflight":          {"--site": true, "--live": true, "--record": true, "--bootstrap-address": true, "--trunk-interface": true},
-		"bootstrap":          {"--site": true, "--recovery-confirmed": true, "--trunk-interface": true, "--dry-run": true, "--proxmox-ca": true, "--insecure": true},
-		"deploy":             {"--site": true, "--dry-run": true, "--confirm": true, "--proxmox-ca": true, "--insecure": true},
+		"bootstrap":          {"--site": true, "--recovery-confirmed": true, "--replace-scoped-credentials": true, "--trunk-interface": true, "--dry-run": true, "--proxmox-ca": true, "--insecure": true},
+		"deploy":             {"--site": true, "--dry-run": true, "--confirm": true, "--replace-firewall": true, "--recreate-legacy-lxcs": true, "--proxmox-ca": true, "--insecure": true},
 		"status":             {"--site": true, "--live": true, "--verbose": true, "--json": true},
 		"update":             {"--site": true, "--dry-run": true, "--confirm": true},
 		"logs":               {"--site": true, "--unit": true, "--since": true, "--priority": true, "--limit": true},
@@ -246,7 +274,7 @@ func validateCommandForm(t *testing.T, fields []string) {
 		"pki":                {"--site": true},
 		"firewall":           {"--site": true, "--live": true, "--json": true},
 		"dhcp":               {"--site": true, "--live": true, "--json": true},
-		"storage":            {"--site": true, "--live": true, "--storage-confirmed": true},
+		"storage":            {"--site": true, "--live": true, "--storage-confirmed": true, "--reinitialize": true, "--reboot": true, "--allow-shared-usb-bridge-quirk": true},
 		"module":             {"--site": true, "--dry-run": true, "--confirm": true, "--purge": true, "--age-identity": true, "--proxmox-ca": true, "--insecure": true},
 		"config":             {"--site": true},
 	}

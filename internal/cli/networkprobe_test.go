@@ -8,6 +8,7 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/networktest"
 )
 
@@ -67,6 +68,34 @@ func TestPolicyAllowsBuiltInHTTPSForDynamicTrustedProbeAddress(t *testing.T) {
 	for _, address := range []string{"10.10.30.106", "10.10.30.199"} {
 		if !policyAllows(plan, "TRUSTED", "INFRA", "tcp", 443, address, "10.10.10.20") {
 			t.Fatalf("Pulse HTTPS was denied for dynamic TRUSTED probe address %s", address)
+		}
+	}
+}
+
+func TestAirVPNNetworkTestRequiresDeclaredARRAndAirVPNContracts(t *testing.T) {
+	if err := validateAirVPNNetworkTestSite(model.NewDefaultSite("installation", "age1example")); err == nil {
+		t.Fatal("AirVPN test accepted a site without enabled AirVPN and ARR modules")
+	}
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	enabled := true
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "australia"}
+	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAirVPNNetworkTestSite(site); err != nil {
+		t.Fatalf("AirVPN test rejected the declared ARR and AirVPN contracts: %v", err)
+	}
+}
+
+func TestParsePublicIPv4RejectsNonPublicAndMalformedValues(t *testing.T) {
+	if got, err := parsePublicIPv4("8.8.8.8\n"); err != nil || got != "8.8.8.8" {
+		t.Fatalf("public IPv4 = %q, %v", got, err)
+	}
+	for _, value := range []string{"", "10.10.20.110", "127.0.0.1", "169.254.1.1", "2001:db8::1", "8.8.8.8 extra"} {
+		if _, err := parsePublicIPv4(value); err == nil {
+			t.Fatalf("non-public or malformed probe output %q was accepted", value)
 		}
 	}
 }

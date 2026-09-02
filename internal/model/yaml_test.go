@@ -185,7 +185,7 @@ modules:
   airvpn:
     enabled: true
     servers: europe
-  litellm:
+  bifrost:
     enabled: true
     network: airvpn
     upstreams:
@@ -203,8 +203,23 @@ modules:
 	if config.Modules.AirVPN == nil || config.Modules.AirVPN.Servers != "europe" || config.Modules.AirVPN.Enabled == nil || !*config.Modules.AirVPN.Enabled {
 		t.Fatalf("unexpected AirVPN configuration: %#v", config.Modules.AirVPN)
 	}
-	if config.Modules.LiteLLM == nil || config.Modules.LiteLLM.Network != ModuleNetworkAirVPN {
-		t.Fatalf("unexpected typed client network mode: %#v", config.Modules.LiteLLM)
+	if config.Modules.Bifrost == nil || config.Modules.Bifrost.Network != ModuleNetworkAirVPN {
+		t.Fatalf("unexpected typed client network mode: %#v", config.Modules.Bifrost)
+	}
+}
+
+func TestParseSiteConfigAllowsArrAirVPNEgress(t *testing.T) {
+	config, err := ParseSiteConfig([]byte(`api_version: boetticher/v3
+modules:
+  arr:
+    enabled: true
+    network: airvpn
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Modules.Arr == nil || config.Modules.Arr.Enabled == nil || !*config.Modules.Arr.Enabled || config.Modules.Arr.Network != ModuleNetworkAirVPN {
+		t.Fatalf("unexpected ARR configuration: %#v", config.Modules.Arr)
 	}
 }
 
@@ -215,10 +230,10 @@ func TestParseSiteConfigRejectsNetworkModeOnIneligibleModule(t *testing.T) {
 	}
 }
 
-func TestLiteLLMConfigIsStrictAndProviderNeutral(t *testing.T) {
+func TestBifrostConfigIsStrictAndProviderNeutral(t *testing.T) {
 	valid := []byte(`api_version: boetticher/v3
 modules:
-  litellm:
+  bifrost:
     upstreams:
       - name: openrouter
         base_url: https://openrouter.ai/api/v1
@@ -238,16 +253,16 @@ secret_metadata:
 	if err := config.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	model, err := ResolveLiteLLMAlias(config.Modules.Map()["litellm"], "selected-alias")
+	model, err := ResolveBifrostAlias(config.Modules.Map()["bifrost"], "selected-alias")
 	if err != nil || model.Model != "selected/openrouter-model" {
 		t.Fatalf("declared alias resolution = %#v, %v", model, err)
 	}
-	if _, err := ResolveLiteLLMAlias(config.Modules.Map()["litellm"], "selected/openrouter-model"); err == nil {
+	if _, err := ResolveBifrostAlias(config.Modules.Map()["bifrost"], "selected/openrouter-model"); err == nil {
 		t.Fatal("provider model identifier was accepted as a public alias")
 	}
 	if _, err := ParseSiteConfig([]byte(`api_version: boetticher/v3
 modules:
-  litellm:
+  bifrost:
     upstreams:
       - name: openrouter
         base_url: https://openrouter.ai/api/v1
@@ -258,64 +273,64 @@ modules:
         model: selected/openrouter-model
         unknown: true
 `)); err == nil || !strings.Contains(err.Error(), "unknown") {
-		t.Fatalf("unknown LiteLLM model field was accepted: %v", err)
+		t.Fatalf("unknown Bifrost model field was accepted: %v", err)
 	}
 }
 
-func TestLiteLLMConfigRejectsInvalidReferencesAndDuplicates(t *testing.T) {
+func TestBifrostConfigRejectsInvalidReferencesAndDuplicates(t *testing.T) {
 	cases := []string{
 		`api_version: boetticher/v3
 modules:
-  litellm:
+  bifrost:
     upstreams: []
     models: [{alias: selected, upstream: openrouter, model: model}]`,
 		`api_version: boetticher/v3
 modules:
-  litellm:
+  bifrost:
     upstreams:
       - {name: openrouter, base_url: http://openrouter.ai/api/v1, api_key_secret: key}
     models: [{alias: selected, upstream: openrouter, model: model}]`,
 		`api_version: boetticher/v3
 modules:
-  litellm:
+  bifrost:
     upstreams:
       - {name: openrouter, base_url: https://openrouter.ai/api/v1, api_key_secret: key}
       - {name: openrouter, base_url: https://other.example/api/v1, api_key_secret: key2}
     models: [{alias: selected, upstream: openrouter, model: model}]`,
 		`api_version: boetticher/v3
 modules:
-  litellm:
+  bifrost:
     upstreams:
       - {name: openrouter, base_url: https://openrouter.ai/api/v1, api_key_secret: key}
     models: [{alias: selected, upstream: missing, model: model}]`,
 		`api_version: boetticher/v3
 modules:
-  litellm:
+  bifrost:
     upstreams:
       - {name: openrouter, base_url: https://openrouter.ai/api/v1, api_key_secret: key}
     models: []`,
 		`api_version: boetticher/v3
 modules:
-  litellm:
+  bifrost:
     upstreams:
       - {name: openrouter, base_url: https://openrouter.ai/api/v1, api_key_secret: ../key}
     models: [{alias: selected, upstream: openrouter, model: model}]`,
 		`api_version: boetticher/v3
 modules:
-  litellm:
+  bifrost:
     upstreams:
       - {name: openrouter, base_url: "https://openrouter.ai/api/v1?token=bad", api_key_secret: key}
     models: [{alias: selected, upstream: openrouter, model: model}]`,
 		`api_version: boetticher/v3
 modules:
-  litellm:
+  bifrost:
     upstreams:
       - {name: openrouter, base_url: https://openrouter.ai/api/v1, api_key_secret: key}
     models:
       - {alias: "selected alias", upstream: openrouter, model: model}`,
 		`api_version: boetticher/v3
 modules:
-  litellm:
+  bifrost:
     upstreams:
       - {name: openrouter, base_url: https://openrouter.ai/api/v1, api_key_secret: key}
     models:
@@ -329,31 +344,31 @@ modules:
 				t.Fatal(err)
 			}
 			if err := config.Validate(); err == nil {
-				t.Fatal("invalid LiteLLM configuration was accepted")
+				t.Fatal("invalid Bifrost configuration was accepted")
 			}
 		})
 	}
 }
 
-func TestLiteLLMConfigRejectsCredentialProjectionCollisions(t *testing.T) {
+func TestBifrostConfigRejectsCredentialProjectionCollisions(t *testing.T) {
 	for _, pair := range [][2]string{{"provider_key", "provider-key"}, {"provider.key", "provider-key"}, {"Provider_key", "provider-key"}} {
 		config := ModuleConfig{
-			Upstreams: []LiteLLMUpstreamConfig{
+			Upstreams: []BifrostUpstreamConfig{
 				{Name: "one", BaseURL: "https://one.example.test/api", APIKeySecret: pair[0]},
 				{Name: "two", BaseURL: "https://two.example.test/api", APIKeySecret: pair[1]},
 			},
-			Models: []LiteLLMModelConfig{{Alias: "one", Upstream: "one", Model: "provider/model"}},
+			Models: []BifrostModelConfig{{Alias: "one", Upstream: "one", Model: "provider/model"}},
 		}
-		if err := ValidateLiteLLMConfig(config); err == nil {
-			t.Fatalf("colliding LiteLLM references %q and %q were accepted", pair[0], pair[1])
+		if err := ValidateBifrostConfig(config); err == nil {
+			t.Fatalf("colliding Bifrost references %q and %q were accepted", pair[0], pair[1])
 		}
 	}
 }
 
-func TestDisabledLiteLLMMayOmitRuntimeConfiguration(t *testing.T) {
+func TestDisabledBifrostMayOmitRuntimeConfiguration(t *testing.T) {
 	config, err := ParseSiteConfig([]byte(`api_version: boetticher/v3
 modules:
-  litellm:
+  bifrost:
     enabled: false
 secret_metadata:
   installation_id: test
@@ -363,7 +378,7 @@ secret_metadata:
 		t.Fatal(err)
 	}
 	if err := config.Validate(); err != nil {
-		t.Fatalf("default-off LiteLLM should not require unused runtime config: %v", err)
+		t.Fatalf("default-off Bifrost should not require unused runtime config: %v", err)
 	}
 }
 

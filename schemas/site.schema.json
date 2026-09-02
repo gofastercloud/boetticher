@@ -37,6 +37,89 @@
       ],
       "type": "object"
     },
+    "ArrModuleConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "network": {
+          "enum": [
+            "airvpn"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "BifrostModelConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "alias": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "upstream": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "alias",
+        "upstream",
+        "model"
+      ],
+      "type": "object"
+    },
+    "BifrostModuleConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "models": {
+          "items": {
+            "$ref": "#/$defs/BifrostModelConfig"
+          },
+          "type": "array"
+        },
+        "network": {
+          "enum": [
+            "direct",
+            "airvpn"
+          ],
+          "type": "string"
+        },
+        "upstreams": {
+          "items": {
+            "$ref": "#/$defs/BifrostUpstreamConfig"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "BifrostUpstreamConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "api_key_secret": {
+          "type": "string"
+        },
+        "base_url": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "base_url",
+        "api_key_secret"
+      ],
+      "type": "object"
+    },
     "DHCPReservation": {
       "additionalProperties": false,
       "properties": {
@@ -131,74 +214,6 @@
       ],
       "type": "object"
     },
-    "LiteLLMModelConfig": {
-      "additionalProperties": false,
-      "properties": {
-        "alias": {
-          "type": "string"
-        },
-        "model": {
-          "type": "string"
-        },
-        "upstream": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "alias",
-        "upstream",
-        "model"
-      ],
-      "type": "object"
-    },
-    "LiteLLMModuleConfig": {
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "models": {
-          "items": {
-            "$ref": "#/$defs/LiteLLMModelConfig"
-          },
-          "type": "array"
-        },
-        "network": {
-          "enum": [
-            "direct",
-            "airvpn"
-          ],
-          "type": "string"
-        },
-        "upstreams": {
-          "items": {
-            "$ref": "#/$defs/LiteLLMUpstreamConfig"
-          },
-          "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "LiteLLMUpstreamConfig": {
-      "additionalProperties": false,
-      "properties": {
-        "api_key_secret": {
-          "type": "string"
-        },
-        "base_url": {
-          "type": "string"
-        },
-        "name": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "name",
-        "base_url",
-        "api_key_secret"
-      ],
-      "type": "object"
-    },
     "MandatoryModuleConfig": {
       "additionalProperties": false,
       "properties": {},
@@ -213,6 +228,12 @@
         "airvpn": {
           "$ref": "#/$defs/AirVPNModuleConfig"
         },
+        "arr": {
+          "$ref": "#/$defs/ArrModuleConfig"
+        },
+        "bifrost": {
+          "$ref": "#/$defs/BifrostModuleConfig"
+        },
         "dns": {
           "$ref": "#/$defs/DNSModuleConfig"
         },
@@ -220,10 +241,7 @@
           "$ref": "#/$defs/ToggleModuleConfig"
         },
         "gatus": {
-          "$ref": "#/$defs/ToggleModuleConfig"
-        },
-        "litellm": {
-          "$ref": "#/$defs/LiteLLMModuleConfig"
+          "$ref": "#/$defs/NetworkToggleModuleConfig"
         },
         "logging": {
           "$ref": "#/$defs/MandatoryModuleConfig"
@@ -232,10 +250,10 @@
           "$ref": "#/$defs/ToggleModuleConfig"
         },
         "printer": {
-          "$ref": "#/$defs/ToggleModuleConfig"
+          "$ref": "#/$defs/NetworkToggleModuleConfig"
         },
         "streamdeck": {
-          "$ref": "#/$defs/ToggleModuleConfig"
+          "$ref": "#/$defs/NetworkToggleModuleConfig"
         },
         "tailnet-router": {
           "$ref": "#/$defs/ToggleModuleConfig"
@@ -260,6 +278,22 @@
         "domain",
         "zones"
       ],
+      "type": "object"
+    },
+    "NetworkToggleModuleConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "network": {
+          "enum": [
+            "direct",
+            "airvpn"
+          ],
+          "type": "string"
+        }
+      },
       "type": "object"
     },
     "OwnershipPolicy": {
@@ -407,13 +441,6 @@
       "properties": {
         "enabled": {
           "type": "boolean"
-        },
-        "network": {
-          "enum": [
-            "direct",
-            "airvpn"
-          ],
-          "type": "string"
         }
       },
       "type": "object"
@@ -560,7 +587,7 @@
   "properties": {
     "api_version": {
       "const": "boetticher/v3",
-      "description": "Operator-facing configuration contract identifier.",
+      "description": "Version marker for this site file.",
       "type": "string"
     },
     "bootstrap_address": {
@@ -586,15 +613,15 @@
     },
     "gateway": {
       "$ref": "#/$defs/Gateway",
-      "description": "Gateway mode and the existing upstream connection contract."
+      "description": "Gateway mode and the existing upstream connection."
     },
     "modules": {
       "$ref": "#/$defs/ModulesConfig",
-      "description": "Authoritative typed configuration for built-in modules."
+      "description": "Typed settings for built-in modules."
     },
     "network": {
       "$ref": "#/$defs/Network",
-      "description": "Private domain and fixed network-zone contract."
+      "description": "Private domain and fixed network-zone layout."
     },
     "ownership": {
       "$ref": "#/$defs/OwnershipPolicy"
@@ -613,7 +640,7 @@
     },
     "schema_version": {
       "const": 3,
-      "description": "Shape version of the operator-authored site file.",
+      "description": "Shape version of this site file.",
       "type": "integer"
     },
     "secret_metadata": {

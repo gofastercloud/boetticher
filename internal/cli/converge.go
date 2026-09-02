@@ -46,6 +46,21 @@ func runDeploy(args []string, out io.Writer) error {
 	return runDeployWithContext(ctx, args, out)
 }
 
+func validateDeployRecoveryOptions(gatewayMode string, replaceFirewall, recreateLegacyLXCs, confirm, dryRun bool) error {
+	if replaceFirewall {
+		if gatewayMode != model.GatewayModeManaged {
+			return errors.New("--replace-firewall is available only in managed gateway mode")
+		}
+		if !confirm && !dryRun {
+			return errors.New("--replace-firewall requires --confirm; use --dry-run to inspect the recovery plan")
+		}
+	}
+	if recreateLegacyLXCs && !confirm && !dryRun {
+		return errors.New("--recreate-legacy-lxcs requires --confirm outside --dry-run")
+	}
+	return nil
+}
+
 func runDeployWithContext(ctx context.Context, args []string, out io.Writer) error {
 	report := newDeploymentReport(out)
 	ctx = telemetry.WithObserver(ctx, report)
@@ -80,15 +95,19 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS")
 	dryRun := fs.Bool("dry-run", false, "render and validate policy without connecting")
 	rotateAirVPN := fs.Bool("rotate-airvpn-profile", false, "explicitly regenerate and retain the AirVPN WireGuard profile")
+	replaceFirewall := fs.Bool("replace-firewall", false, "replace only the managed firewall root disk after proving its persistent volumes")
+	recreateLegacyLXCs := fs.Bool("recreate-legacy-lxcs", false, "discard only proven legacy local-raw LXC state and recreate those appliances on planned storage")
 	confirm := fs.Bool("confirm", false, "confirm destructive appliance replacement or purge actions")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	report.dryRun = *dryRun
-	_ = confirm // replacement confirmation is enforced by the shared provider plan
 	report.start("validate", "Validate desired state")
 	s, err := site.Load(*siteDir)
 	if err != nil {
+		return err
+	}
+	if err := validateDeployRecoveryOptions(s.Gateway.Mode, *replaceFirewall, *recreateLegacyLXCs, *confirm, *dryRun); err != nil {
 		return err
 	}
 	modelRevision, err := s.Revision()
@@ -128,6 +147,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		report.start("artifacts", "Resolve qualified artifacts")
 		fmt.Fprintf(out, "Deployment plan: PASS model %s\n", firewallPlan.ModelRevision)
 		fmt.Fprintf(out, "  Mode: %s\n  Engine: %s\n  DHCP subnets: %d\n  Policy rules: %d\n", firewallPlan.Mode, firewallPlan.Engine, len(firewallPlan.DHCP), len(firewallPlan.Rules))
+		if *replaceFirewall {
+			fmt.Fprintln(out, "  Firewall root recovery: requested (dry-run; declared persistent volumes remain attached)")
+		}
+		if *recreateLegacyLXCs {
+			fmt.Fprintln(out, "  Legacy LXC recovery: requested (dry-run; no appliance state is discarded)")
+		}
 		if s.Gateway.Mode == model.GatewayModeManaged {
 			ruleset, renderErr := renderDeploymentNFT(firewallPlan)
 			if renderErr != nil {
@@ -331,6 +356,14 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return fmt.Errorf("load encrypted Pulse administrative password: %w", loadErr)
 		}
 		secretValues["pulse_admin_password"] = pulseAdminPassword
+		pulseProxyAuthSecret, created, loadErr := loadOrCreateRandomSecret(*siteDir, *ageIdentity, s, "pulse_proxy_auth_secret")
+		if loadErr != nil {
+			return loadErr
+		}
+		if created {
+			report.recordMutation("Secrets", "pulse_proxy_auth_secret", "credential stored", true)
+		}
+		secretValues["pulse_proxy_auth_secret"] = pulseProxyAuthSecret
 	}
 	activeCredentialBindings := make([]deploymentCredential, 0, len(credentialBindings))
 	for _, binding := range credentialBindings {
@@ -436,14 +469,28 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return fmt.Errorf("resolve live Proxmox node: %w", err)
 	}
 	proxmoxPlan.Node = node
+	proxmoxPlan.DestructiveConfirmed = *confirm
+	proxmoxPlan.ForceFirewallRootReplacement = *replaceFirewall
+	proxmoxPlan.ForceLegacyLXCRecreation = *recreateLegacyLXCs
 	if err := validateLiveDeploymentPrerequisitesWithResolver(ctx, proxmoxClient, rootRunner, *siteDir, s, proxmoxPlan, storagePlan, endpointLookup); err != nil {
 		return fmt.Errorf("live preflight failed before Proxmox mutation: %w", err)
+	}
+	if *recreateLegacyLXCs {
+		var legacyLXCTargets []string
+		if err := report.timed("proxmox", "preflight", "legacy-lxc-recovery", func() error {
+			var validateErr error
+			legacyLXCTargets, validateErr = proxmox.ValidateLegacyLXCRecreation(ctx, proxmoxClient, proxmoxPlan)
+			return validateErr
+		}); err != nil {
+			return fmt.Errorf("live preflight failed before legacy LXC recovery: %w", err)
+		}
+		fmt.Fprintf(out, "Legacy LXC recovery preflight: PASS %d exact legacy appliance(s)\n", len(legacyLXCTargets))
 	}
 	var pulseProxmoxToken string
 	if monitoringEnabled {
 		pulseProxmoxToken, err = site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_proxmox_token")
 		if errors.Is(err, site.ErrPlatformSecretMissing) {
-			pulseProxmoxToken, err = proxmox.CreatePulseMonitoringCredentials(ctx, rootRunner, s.BootstrapAddress, "root")
+			pulseProxmoxToken, err = proxmox.ReplacePulseMonitoringCredentials(ctx, rootRunner, s.BootstrapAddress, "root")
 			if err != nil {
 				return err
 			}
@@ -455,7 +502,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return fmt.Errorf("load encrypted Pulse Proxmox token: %w", err)
 		}
 	}
-	proxmoxPlan.DestructiveConfirmed = *confirm
 	if backupPlan.StorageTarget == backup.DedicatedStorageID {
 		changed, err := proxmoxClient.EnsureLVMThinStorageWithMutation(ctx, storage.GuestStorageID, storage.VolumeGroup, storage.ThinPool)
 		if changed {
@@ -495,6 +541,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		firewallExisted, firewallReplaced, stateErr := proxmox.InspectGuestArtifact(ctx, proxmoxClient, proxmoxPlan.Node, firewallGuest)
 		if stateErr != nil {
 			return stateErr
+		}
+		if *replaceFirewall && firewallExisted {
+			firewallReplaced = true
 		}
 		if err := report.timed("proxmox", "reconcile", firewallGuest.Name, func() error {
 			return proxmox.EnsureFirewallVM(ctx, proxmoxClient, proxmoxPlan)
@@ -762,8 +811,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return fmt.Errorf("read endpoint-generated portal CSR: %w", err)
 	}
 	var monitorCertificate pki.ServerCertificate
-	var litellmCertificate pki.ServerCertificate
+	var bifrostCertificate pki.ServerCertificate
 	var octoprintCertificate pki.ServerCertificate
+	var arrCertificate pki.ServerCertificate
 	var streamDeckCertificate pki.ClientCertificate
 	var gatusCertificate pki.ServerCertificate
 	var aiopsCertificates map[string]string
@@ -777,14 +827,14 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return fmt.Errorf("sign monitor endpoint CSR: %w", err)
 		}
 	}
-	if modules.IsEnabled(s, "litellm") {
-		litellmCSR, readErr := os.ReadFile(filepath.Join(csrDir, "litellm.csr.pem"))
+	if modules.IsEnabled(s, "bifrost") {
+		bifrostCSR, readErr := os.ReadFile(filepath.Join(csrDir, "bifrost.csr.pem"))
 		if readErr != nil {
-			return fmt.Errorf("read endpoint-generated LiteLLM CSR: %w", readErr)
+			return fmt.Errorf("read endpoint-generated Bifrost CSR: %w", readErr)
 		}
-		litellmCertificate, err = signOrReuseServerCertificate(authority, string(litellmCSR), csrDir, "litellm", "litellm", s.Network.Domain, []string{"ai." + s.Network.Domain, "lab-litellm-01." + s.Network.Domain})
+		bifrostCertificate, err = signOrReuseServerCertificate(authority, string(bifrostCSR), csrDir, "bifrost", "bifrost", s.Network.Domain, []string{"ai." + s.Network.Domain, "lab-bifrost-01." + s.Network.Domain})
 		if err != nil {
-			return fmt.Errorf("sign LiteLLM endpoint CSR: %w", err)
+			return fmt.Errorf("sign Bifrost endpoint CSR: %w", err)
 		}
 	}
 	if modules.IsEnabled(s, "printer") {
@@ -795,6 +845,16 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		octoprintCertificate, err = signOrReuseServerCertificate(authority, string(octoprintCSR), csrDir, "octoprint", "octoprint", s.Network.Domain, []string{"printer." + s.Network.Domain, "lab-printer-01." + s.Network.Domain})
 		if err != nil {
 			return fmt.Errorf("sign OctoPrint endpoint CSR: %w", err)
+		}
+	}
+	if modules.IsEnabled(s, "arr") {
+		arrCSR, readErr := os.ReadFile(filepath.Join(csrDir, "arr.csr.pem"))
+		if readErr != nil {
+			return fmt.Errorf("read endpoint-generated arr CSR: %w", readErr)
+		}
+		arrCertificate, err = signOrReuseServerCertificate(authority, string(arrCSR), csrDir, "arr", "sonarr", s.Network.Domain, []string{"radarr." + s.Network.Domain, "lab-arr-01." + s.Network.Domain})
+		if err != nil {
+			return fmt.Errorf("sign arr endpoint CSR: %w", err)
 		}
 	}
 	if modules.IsEnabled(s, "streamdeck") {
@@ -831,11 +891,14 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if monitoringEnabled {
 		runtimeVariables["monitor_server_cert_pem"] = monitorCertificate.ChainPEM
 	}
-	if modules.IsEnabled(s, "litellm") {
-		runtimeVariables["litellm_server_cert_pem"] = litellmCertificate.ChainPEM
+	if modules.IsEnabled(s, "bifrost") {
+		runtimeVariables["bifrost_server_cert_pem"] = bifrostCertificate.ChainPEM
 	}
 	if modules.IsEnabled(s, "printer") {
 		runtimeVariables["octoprint_server_cert_pem"] = octoprintCertificate.ChainPEM
+	}
+	if modules.IsEnabled(s, "arr") {
+		runtimeVariables["arr_server_cert_pem"] = arrCertificate.ChainPEM
 	}
 	if modules.IsEnabled(s, "streamdeck") {
 		runtimeVariables["streamdeck_client_cert_pem"] = streamDeckCertificate.ChainPEM
@@ -1481,15 +1544,15 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 	if err != nil {
 		return err
 	}
-	runner := applianceSSHRunner(s, siteDir, "lab-litellm-01")
+	runner := applianceSSHRunner(s, siteDir, "lab-bifrost-01")
 	var metadata []byte
-	err = report.timed("health", "health", "litellm", func() error {
+	err = report.timed("health", "health", "bifrost", func() error {
 		var metadataErr error
-		metadata, metadataErr = runner.RunArgs(ctx, "10.10.20.60", "root", []string{"/usr/local/libexec/boetticher-litellm-model-capabilities", modelConfig.Alias})
+		metadata, metadataErr = runner.RunArgs(ctx, "10.10.20.60", "root", []string{"/usr/local/libexec/boetticher-bifrost-model-capabilities", modelConfig.Alias})
 		return metadataErr
 	})
 	if err != nil {
-		return fmt.Errorf("read pinned LiteLLM model metadata: %w", err)
+		return fmt.Errorf("read pinned Bifrost model metadata: %w", err)
 	}
 	if _, err := aiopsmodel.DecodeModelCapabilities(metadata); err != nil {
 		return err
@@ -1506,7 +1569,7 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 		return err
 	}
 
-	webhookSecret, created, err := loadOrCreateAIOpsSecret(siteDir, ageIdentity, s, "aiops_webhook_secret")
+	webhookSecret, created, err := loadOrCreateRandomSecret(siteDir, ageIdentity, s, "aiops_webhook_secret")
 	if err != nil {
 		return err
 	}
@@ -1605,20 +1668,20 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 	return runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, append(variables, '\n'), "lab-aiops-01", ansible.PhaseHealth, report)
 }
 
-func selectedAIOpsModel(s model.Site) (model.LiteLLMModelConfig, error) {
+func selectedAIOpsModel(s model.Site) (model.BifrostModelConfig, error) {
 	alias := s.ModuleConfig["aiops"].ModelAlias
-	var selected model.LiteLLMModelConfig
-	for _, candidate := range s.ModuleConfig["litellm"].Models {
+	var selected model.BifrostModelConfig
+	for _, candidate := range s.ModuleConfig["bifrost"].Models {
 		if candidate.Alias != alias {
 			continue
 		}
 		if selected.Alias != "" {
-			return model.LiteLLMModelConfig{}, errors.New("AIOps model alias is ambiguous")
+			return model.BifrostModelConfig{}, errors.New("AIOps model alias is ambiguous")
 		}
 		selected = candidate
 	}
 	if selected.Alias == "" {
-		return model.LiteLLMModelConfig{}, errors.New("AIOps model alias is undeclared")
+		return model.BifrostModelConfig{}, errors.New("AIOps model alias is undeclared")
 	}
 	return selected, nil
 }
@@ -1646,7 +1709,7 @@ func controllerMTLSClient(authority pki.Authority, certificate pki.ClientCertifi
 	return &http.Client{Transport: transport, Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("AI Router redirects are forbidden") }}, nil
 }
 
-func loadOrCreateAIOpsSecret(siteDir, ageIdentity string, s model.Site, key string) (string, bool, error) {
+func loadOrCreateRandomSecret(siteDir, ageIdentity string, s model.Site, key string) (string, bool, error) {
 	value, err := site.LoadPlatformSecret(siteDir, s, ageIdentity, key)
 	if err == nil {
 		return value, false, nil

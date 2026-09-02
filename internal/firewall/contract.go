@@ -69,11 +69,13 @@ func RenderExternalContract(s model.Site, plan Plan) (string, error) {
 	for _, declaration := range s.Declarations {
 		switch declaration.Module {
 		case "tailnet-router":
-			b.WriteString("### tailnet-router\n\n- Address: `10.10.5.10` on TRANSIT (`10.10.5.0/24`, gateway `10.10.5.1`).\n- Advertised route: `10.10.0.0/16`; Tailscale route approval is an operator action.\n- Subnet-route SNAT: enabled.\n- Tailscale runtime: `accept-dns=false`.\n- Permitted internal destinations: LiteLLM HTTPS, portal HTTPS, and monitoring HTTPS only, plus DNS/NTP and required Tailscale control/DERP egress.\n- Explicit deny expectations: TRUSTED, SANDBOX, MGMT, Proxmox API, SSH, arbitrary SERVERS workloads, and Internet exit-node behavior remain denied.\n- Required return routing: Tailnet traffic for `10.10.0.0/16` returns through the TRANSIT gateway.\n\n")
-		case "litellm":
-			b.WriteString("### litellm\n\n- Address: `10.10.20.60` in SERVERS.\n- Frontend: HTTPS on `443` with required client certificate; no plaintext listener.\n- Backend: loopback-only `127.0.0.1:4000`.\n- Outbound: only the configured upstream HTTPS endpoint(s), plus DNS/NTP as required; unknown Internet destinations remain denied.\n\n")
+			b.WriteString("### tailnet-router\n\n- Address: `10.10.5.10` on TRANSIT (`10.10.5.0/24`, gateway `10.10.5.1`).\n- Advertised route: `10.10.0.0/16`; Tailscale route approval is an operator action.\n- Subnet-route SNAT: enabled.\n- Tailscale runtime: `accept-dns=false`.\n- Permitted internal destinations: Bifrost HTTPS, portal HTTPS, and monitoring HTTPS only, plus DNS/NTP and required Tailscale control/DERP egress.\n- Explicit deny expectations: TRUSTED, SANDBOX, MGMT, Proxmox API, SSH, arbitrary SERVERS workloads, and Internet exit-node behavior remain denied.\n- Required return routing: Tailnet traffic for `10.10.0.0/16` returns through the TRANSIT gateway.\n\n")
+		case "bifrost":
+			b.WriteString("### bifrost\n\n- Address: `10.10.20.60` in SERVERS.\n- Frontend: HTTPS on `443` with required client certificate; no plaintext listener.\n- Backend: loopback-only `127.0.0.1:4000`.\n- Outbound: only the configured upstream HTTPS endpoint(s), plus DNS/NTP as required; unknown Internet destinations remain denied.\n\n")
 		case "airvpn":
 			b.WriteString("### airvpn\n\n- Address: `10.10.5.20` on TRANSIT.\n- The guest is an unprivileged LXC with `/dev/net/tun` and no added Linux capabilities.\n- The guest kill switch permits selected client sources to `airvpn0`, permits only the exact provider handshake on `eth0`, and drops direct-WAN and internal fallback paths.\n- The WireGuard profile is controller-generated, retained as an encrypted site secret, and never included in this contract.\n\n")
+		case "arr":
+			b.WriteString("### arr\n\n- Address: `10.10.20.110` in SERVERS, using its declaration-owned DHCP reservation.\n- Sonarr and Radarr are loopback-only services behind one nginx HTTPS frontend.\n- Frontend access requires the existing Boetticher client certificate; no plaintext listener or HOME-network path is permitted.\n- All external application egress is AirVPN-selected; direct-WAN fallback and LAB-to-HOME NAT remain denied.\n\n")
 		}
 	}
 	b.WriteString("\n## Required behavior\n\n")

@@ -63,6 +63,48 @@ func TestRenderWithKnownHostsUsesSiteScopedTrustFile(t *testing.T) {
 	}
 }
 
+func TestRenderDirectPinsFreshApplianceTransport(t *testing.T) {
+	content, err := RenderDirect("192.0.2.50", "piadmin", "/tmp/operator key", "/tmp/kiosk known_hosts", 22)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"Host boetticher-kiosk 192.0.2.50",
+		"HostName 192.0.2.50",
+		"Port 22",
+		"User piadmin",
+		"StrictHostKeyChecking yes",
+		`UserKnownHostsFile "/tmp/kiosk known_hosts"`,
+		`IdentityFile "/tmp/operator key"`,
+		"IdentitiesOnly yes",
+		"ForwardAgent no",
+		"RequestTTY no",
+	} {
+		if !strings.Contains(content, expected) {
+			t.Errorf("direct SSH configuration missing %q: %s", expected, content)
+		}
+	}
+	if strings.Contains(content, "ProxyCommand") || strings.Contains(content, "StrictHostKeyChecking no") {
+		t.Fatal("direct SSH configuration weakened or redirected transport")
+	}
+}
+
+func TestRenderDirectRejectsUnsafeTransportInputs(t *testing.T) {
+	for _, address := range []string{"pi.example", "192.0.2.50:22", "2001:db8::50", "192.0.2.050"} {
+		if _, err := RenderDirect(address, "pi", "/tmp/key", "/tmp/known_hosts", 22); err == nil {
+			t.Fatalf("non-canonical address %q was accepted", address)
+		}
+	}
+	for _, user := range []string{"pi;id", "pi user", "1pi"} {
+		if _, err := RenderDirect("192.0.2.50", user, "/tmp/key", "/tmp/known_hosts", 22); err == nil {
+			t.Fatalf("unsafe SSH user %q was accepted", user)
+		}
+	}
+	if _, err := RenderDirect("192.0.2.50", "pi", "/tmp/key\nProxyCommand sh -c id", "/tmp/known_hosts", 22); err == nil {
+		t.Fatal("control-character SSH identity path was accepted")
+	}
+}
+
 func TestRenderIncludesRetainedProductOwnedGuestForCleanup(t *testing.T) {
 	s := model.NewDefaultSite("installation", "age1example")
 	s.TestedVersions.Gateway = model.QualifiedGatewayImage
@@ -172,6 +214,30 @@ func TestReadAndCopyKnownHostKeyBindsBootstrapAlias(t *testing.T) {
 	}
 }
 
+func TestAddKnownHostKeyRejectsSymlinkedParent(t *testing.T) {
+	dir := t.TempDir()
+	external := t.TempDir()
+	sentinel := filepath.Join(external, "sentinel")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(dir, "generated")); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "generated", "ssh", "kiosk_known_hosts")
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	if err := AddKnownHostKey(path, "lab-display-01", key); err == nil {
+		t.Fatal("known-host enrollment followed a symlinked parent")
+	}
+	if _, err := os.Stat(filepath.Join(external, "ssh", "kiosk_known_hosts")); !os.IsNotExist(err) {
+		t.Fatalf("known-host enrollment wrote outside its trusted tree: %v", err)
+	}
+	data, err := os.ReadFile(sentinel)
+	if err != nil || string(data) != "keep" {
+		t.Fatalf("external sentinel changed: %q, %v", data, err)
+	}
+}
+
 func TestValidateBootstrapAddressRequiresCanonicalIPv4(t *testing.T) {
 	for _, address := range []string{"proxmox.example", "192.0.2.10:8006", " 192.0.2.10", "2001:db8::10", "192.0.2.010"} {
 		if err := ValidateBootstrapAddress(address); err == nil {
@@ -240,15 +306,15 @@ func TestRenderComposedSiteIncludesDeclaredModuleGuests(t *testing.T) {
 	}
 }
 
-func TestBastionPolicyAllowsLiteLLMHTTPSForControllerCanary(t *testing.T) {
+func TestBastionPolicyAllowsBifrostHTTPSForControllerCanary(t *testing.T) {
 	enabled := true
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
-	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
 		Enabled: &enabled,
-		Upstreams: []model.LiteLLMUpstreamConfig{{
+		Upstreams: []model.BifrostUpstreamConfig{{
 			Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key",
 		}},
-		Models: []model.LiteLLMModelConfig{{Alias: "operations", Upstream: "provider", Model: "provider/model"}},
+		Models: []model.BifrostModelConfig{{Alias: "operations", Upstream: "provider", Model: "provider/model"}},
 	}
 	site, _, err := modules.Compose(config)
 	if err != nil {
@@ -259,6 +325,6 @@ func TestBastionPolicyAllowsLiteLLMHTTPSForControllerCanary(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(policy, "10.10.20.60:443") {
-		t.Fatalf("LiteLLM HTTPS endpoint is missing from the restricted bastion policy: %s", policy)
+		t.Fatalf("Bifrost HTTPS endpoint is missing from the restricted bastion policy: %s", policy)
 	}
 }

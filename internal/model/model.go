@@ -54,6 +54,9 @@ const (
 	PrinterVMID                 = 230
 	StreamDeckVMID              = 220
 	AirVPNGuestVMID             = 260
+	ArrVMID                     = 270
+	ArrDownloadsVolumeGiB       = 500
+	ArrDownloadsMountPath       = "/var/lib/arr/downloads"
 	BuilderCores                = 4
 	BuilderMemoryMiB            = 8192
 	BuilderDiskGiB              = 32
@@ -67,6 +70,8 @@ const (
 	TransitNetwork              = "10.10.5.0/24"
 	TransitGateway              = "10.10.5.1"
 	AirVPNGuestAddress          = "10.10.5.20"
+	ArrGuestAddress             = "10.10.20.110"
+	ArrGuestMAC                 = "02:00:00:00:02:10"
 	InfraVLAN                   = 10
 	InfraNetwork                = "10.10.10.0/24"
 	InfraGateway                = "10.10.10.1"
@@ -98,13 +103,18 @@ const (
 	TagMonitoringAgent          = "monitoring-agent"
 )
 
+const (
+	PulseAgentARM64ReleaseURL    = "https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-agent-linux-arm64"
+	PulseAgentARM64ReleaseSHA256 = "20d956ccc93ca5fc8273b0f9c37398cf19271604b40dc6fe3ed8cbd39bef7185"
+)
+
 var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
 var networkPortPattern = regexp.MustCompile(`^[0-9]{1,5}(?:-[0-9]{1,5})?$`)
 var providerModelPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$`)
 var usbPortPattern = regexp.MustCompile(`^[0-9]+-[0-9]+(?:\.[0-9]+)*$`)
 var usbIDPattern = regexp.MustCompile(`^[0-9a-f]{4}$`)
 
-var liteLLMSecretReferencePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
+var bifrostSecretReferencePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 
 // ValidateStableDevice accepts only one direct stable-device entry. Keeping
 // the suffix to a single path component prevents lexical dot segments or
@@ -127,10 +137,10 @@ func IsDNSLabel(value string) bool {
 	return dnsLabelPattern.MatchString(strings.ToLower(value))
 }
 
-// LiteLLMSecretReferenceID is the one credential identity used by the
+// BifrostSecretReferenceID is the one credential identity used by the
 // controller-side credential path and the Ansible environment projection.
 // Validation rejects distinct source references that share this identity.
-func LiteLLMSecretReferenceID(reference string) string {
+func BifrostSecretReferenceID(reference string) string {
 	var b strings.Builder
 	for _, character := range strings.ToLower(reference) {
 		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
@@ -368,6 +378,7 @@ type Component struct {
 	ProductOwned bool     `json:"product_owned"`
 	Module       string   `json:"module,omitempty"`
 	Logging      bool     `json:"logging"`
+	MAC          string   `json:"mac,omitempty"`
 }
 
 type ModuleConfig struct {
@@ -375,8 +386,8 @@ type ModuleConfig struct {
 	Network    ModuleNetworkMode       `yaml:"network,omitempty" json:"network,omitempty"`
 	Servers    string                  `yaml:"servers,omitempty" json:"servers,omitempty"`
 	ModelAlias string                  `yaml:"model_alias,omitempty" json:"model_alias,omitempty"`
-	Upstreams  []LiteLLMUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
-	Models     []LiteLLMModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
+	Upstreams  []BifrostUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	Models     []BifrostModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
 }
 
 type USBExportBinding struct {
@@ -574,6 +585,7 @@ type ModuleDeclaration struct {
 	Secrets          []SecretDeclaration           `json:"secrets,omitempty"`
 	NetworkIntents   []NetworkIntent               `json:"network_intents,omitempty"`
 	DNSRecords       []DNSRecord                   `json:"dns_records,omitempty"`
+	DHCPReservations []DHCPReservation             `json:"dhcp_reservations,omitempty"`
 	Certificates     []CertificateRequest          `json:"certificates,omitempty"`
 	Monitoring       []MonitoringDeclaration       `json:"monitoring,omitempty"`
 	Backups          []BackupDeclaration           `json:"backups,omitempty"`
@@ -728,6 +740,9 @@ func (s Site) Normalize() Site {
 		sort.Slice(copySite.Declarations[i].DNSRecords, func(a, b int) bool {
 			return copySite.Declarations[i].DNSRecords[a].Name < copySite.Declarations[i].DNSRecords[b].Name
 		})
+		sort.Slice(copySite.Declarations[i].DHCPReservations, func(a, b int) bool {
+			return copySite.Declarations[i].DHCPReservations[a].Hostname < copySite.Declarations[i].DHCPReservations[b].Hostname
+		})
 	}
 	return copySite
 }
@@ -773,6 +788,7 @@ func cloneModuleDeclarations(input []ModuleDeclaration) []ModuleDeclaration {
 			declaration.NetworkIntents[j].Ports = append([]string(nil), input[i].NetworkIntents[j].Ports...)
 		}
 		declaration.DNSRecords = append([]DNSRecord(nil), input[i].DNSRecords...)
+		declaration.DHCPReservations = append([]DHCPReservation(nil), input[i].DHCPReservations...)
 		declaration.Certificates = append([]CertificateRequest(nil), input[i].Certificates...)
 		for j := range declaration.Certificates {
 			declaration.Certificates[j].SANs = append([]string(nil), input[i].Certificates[j].SANs...)
@@ -952,8 +968,8 @@ func (s Site) Validate() error {
 	if s.SecretMetadata.InstallationID == "" || s.SecretMetadata.AgeRecipient == "" {
 		return fmt.Errorf("secret_metadata must contain installation_id and public age_recipient")
 	}
-	if litellm, ok := s.ModuleConfig["litellm"]; ok && (litellm.Enabled != nil && *litellm.Enabled || len(litellm.Upstreams) > 0 || len(litellm.Models) > 0) {
-		if err := ValidateLiteLLMConfig(litellm); err != nil {
+	if bifrost, ok := s.ModuleConfig["bifrost"]; ok && (bifrost.Enabled != nil && *bifrost.Enabled || len(bifrost.Upstreams) > 0 || len(bifrost.Models) > 0) {
+		if err := ValidateBifrostConfig(bifrost); err != nil {
 			return err
 		}
 	}
@@ -1360,7 +1376,16 @@ func validateDHCPReservations(s Site) error {
 		}
 		canonicalAddress := address.To4().String()
 		if _, exists := platformAddresses[canonicalAddress]; exists {
-			return fmt.Errorf("DHCP reservation %s address %s collides with an existing platform address", reservation.Hostname, canonicalAddress)
+			ownedMatch := false
+			for _, component := range s.PlatformComponents() {
+				if component.ProductOwned && component.Module != "" && component.Address == canonicalAddress && component.Hostname == reservation.Hostname && strings.EqualFold(component.MAC, reservation.MAC) {
+					ownedMatch = true
+					break
+				}
+			}
+			if !ownedMatch {
+				return fmt.Errorf("DHCP reservation %s address %s collides with an existing platform address", reservation.Hostname, canonicalAddress)
+			}
 		}
 		if _, exists := seenAddresses[canonicalAddress]; exists {
 			return fmt.Errorf("duplicate DHCP reservation address %s", canonicalAddress)
@@ -1380,7 +1405,16 @@ func validateDHCPReservations(s Site) error {
 		seenHostnames[strings.ToLower(reservation.Hostname)] = struct{}{}
 		seenMACs[canonicalMAC] = struct{}{}
 		if reservation.VMID != 0 && (reservation.VMID < UserGuestIDMin || reservation.VMID > UserGuestIDMax) {
-			return fmt.Errorf("DHCP reservation %s uses VMID %d outside the user-workload range", reservation.Hostname, reservation.VMID)
+			ownedMatch := false
+			for _, component := range s.PlatformComponents() {
+				if component.ProductOwned && component.Module != "" && component.VMID == reservation.VMID && component.Hostname == reservation.Hostname && component.Address == canonicalAddress && strings.EqualFold(component.MAC, reservation.MAC) {
+					ownedMatch = true
+					break
+				}
+			}
+			if !ownedMatch {
+				return fmt.Errorf("DHCP reservation %s uses VMID %d outside the user-workload range", reservation.Hostname, reservation.VMID)
+			}
 		}
 	}
 	return nil

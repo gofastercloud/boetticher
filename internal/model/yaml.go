@@ -39,7 +39,7 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 		return SiteConfig{}, fmt.Errorf("decode site.yml: %w", err)
 	}
 	for name := range config.Modules.Map() {
-		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "litellm" && name != "printer" && name != "streamdeck" && name != "aiops" && name != "gatus" && name != "airvpn" {
+		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "bifrost" && name != "printer" && name != "streamdeck" && name != "aiops" && name != "gatus" && name != "airvpn" && name != "arr" {
 			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s is not a registered first-party module", name)
 		}
 	}
@@ -77,12 +77,12 @@ func validateModuleConfigShape(data []byte) error {
 			// Logging is mandatory and has no persisted lifecycle fields.
 		case "tailnet-router":
 			allowed["enabled"] = true
-		case "litellm":
+		case "bifrost":
 			allowed["enabled"] = true
 			allowed["network"] = true
 			allowed["upstreams"] = true
 			allowed["models"] = true
-		case "aiops", "gatus":
+		case "aiops", "gatus", "arr":
 			allowed["enabled"] = true
 			allowed["network"] = true
 			if name == "aiops" {
@@ -115,8 +115,8 @@ func validateModuleConfigShape(data []byte) error {
 			if name == "airvpn" && field == "servers" && fieldValue.Tag != "!!str" {
 				return fmt.Errorf("site.yml: modules.airvpn.servers: expected a string")
 			}
-			if name == "litellm" && (field == "upstreams" || field == "models") && fieldValue.Kind != yaml.SequenceNode {
-				return fmt.Errorf("site.yml: modules.litellm.%s: expected a list", field)
+			if name == "bifrost" && (field == "upstreams" || field == "models") && fieldValue.Kind != yaml.SequenceNode {
+				return fmt.Errorf("site.yml: modules.bifrost.%s: expected a list", field)
 			}
 			if name == "aiops" && field == "model_alias" && fieldValue.Tag != "!!str" {
 				return fmt.Errorf("site.yml: modules.aiops.model_alias: expected a string")

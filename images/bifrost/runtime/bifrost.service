@@ -1,0 +1,20 @@
+[Unit]
+Description=Boetticher Bifrost-compatible loopback backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bifrost
+Group=bifrost
+ExecStart=/usr/local/libexec/boetticher-bifrost serve --config /etc/boetticher/bifrost/config.json
+Restart=on-failure
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

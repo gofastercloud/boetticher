@@ -230,7 +230,7 @@ func runModuleStatusWithInput(args []string, input io.Reader, out, errOut io.Wri
 		declarations, err := modules.SecretDeclarations(config, name)
 		if err != nil {
 			configured := config.Modules.Map()[name]
-			if name != "litellm" || module.Enabled || len(configured.Upstreams) > 0 || len(configured.Models) > 0 {
+			if name != "bifrost" || module.Enabled || len(configured.Upstreams) > 0 || len(configured.Models) > 0 {
 				return err
 			}
 			declarations = nil
@@ -244,9 +244,9 @@ func runModuleStatusWithInput(args []string, input io.Reader, out, errOut io.Wri
 			}
 		}
 		fmt.Fprintf(out, "Module %s\n\nConfiguration\n  State       %s\n  Enabled     %s\n  Reason      %s\n", module.Name, module.State, yesNo(module.Enabled), module.Reason)
-		if name == "litellm" {
-			litellm := config.Modules.Map()[name]
-			fmt.Fprintf(out, "  Upstreams   %d\n  Model aliases %d\n", len(litellm.Upstreams), len(litellm.Models))
+		if name == "bifrost" {
+			bifrost := config.Modules.Map()[name]
+			fmt.Fprintf(out, "  Upstreams   %d\n  Model aliases %d\n", len(bifrost.Upstreams), len(bifrost.Models))
 		}
 		fmt.Fprintln(out, "\nSecrets\nNAME\tLIFECYCLE\tMANAGEMENT\tSTATUS")
 		for _, declaration := range declarations {

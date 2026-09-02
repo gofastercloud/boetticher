@@ -237,12 +237,12 @@ func TestManagedGatewayAllowsDiagnosticICMPEchoFromInternalZones(t *testing.T) {
 
 func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
-	tailnetEnabled, litellmEnabled := true, true
+	tailnetEnabled, bifrostEnabled := true, true
 	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
-	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
-		Enabled:   &litellmEnabled,
-		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
-		Models:    []model.LiteLLMModelConfig{{Alias: "selected-alias", Upstream: "openrouter", Model: "selected/openrouter-model"}},
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
+		Enabled:   &bifrostEnabled,
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
+		Models:    []model.BifrostModelConfig{{Alias: "selected-alias", Upstream: "openrouter", Model: "selected/openrouter-model"}},
 	}
 	site, _, err := modules.Compose(config)
 	if err != nil {
@@ -287,7 +287,7 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 		}
 	}
 	if strings.Index(ruleset, "10.10.5.10/32 ip daddr 10.10.20.60/32") > strings.Index(ruleset, "TRANSIT-SERVERS-DROP") {
-		t.Fatal("narrow tailnet-to-LiteLLM allow occurs after the TRANSIT default deny")
+		t.Fatal("narrow tailnet-to-Bifrost allow occurs after the TRANSIT default deny")
 	}
 	if strings.Contains(ruleset, `iifname "transit0" ip daddr @servers_net accept`) {
 		t.Fatal("managed module policy contains a broad TRANSIT-to-SERVERS allow")
@@ -303,16 +303,16 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 	}
 }
 
-func TestDistinctLiteLLMUpstreamsHaveDistinctSemanticCounterIDs(t *testing.T) {
+func TestDistinctBifrostUpstreamsHaveDistinctSemanticCounterIDs(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
-	litellmEnabled := true
-	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
-		Enabled: &litellmEnabled,
-		Upstreams: []model.LiteLLMUpstreamConfig{
+	bifrostEnabled := true
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
+		Enabled: &bifrostEnabled,
+		Upstreams: []model.BifrostUpstreamConfig{
 			{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"},
 			{Name: "anthropic", BaseURL: "https://api.anthropic.com/v1", APIKeySecret: "anthropic_api_key"},
 		},
-		Models: []model.LiteLLMModelConfig{
+		Models: []model.BifrostModelConfig{
 			{Alias: "openrouter-model", Upstream: "openrouter", Model: "openrouter/model"},
 			{Alias: "anthropic-model", Upstream: "anthropic", Model: "anthropic/model"},
 		},
@@ -339,22 +339,22 @@ func TestDistinctLiteLLMUpstreamsHaveDistinctSemanticCounterIDs(t *testing.T) {
 	}
 	var upstreamRules []string
 	for _, line := range strings.Split(ruleset, "\n") {
-		if strings.Contains(line, "boetticher:allow:module-module_litellm_configured_litellm_upstream_https_access_") {
+		if strings.Contains(line, "boetticher:allow:module-module_bifrost_configured_bifrost_upstream_https_access_") {
 			upstreamRules = append(upstreamRules, line)
 		}
 	}
 	if len(upstreamRules) != 2 || upstreamRules[0] == upstreamRules[1] {
-		t.Fatalf("LiteLLM upstream semantic counter rules = %v", upstreamRules)
+		t.Fatalf("Bifrost upstream semantic counter rules = %v", upstreamRules)
 	}
 }
 
 func TestEndpointResolutionFailsClosed(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
-	litellmEnabled := true
-	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
-		Enabled:   &litellmEnabled,
-		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
-		Models:    []model.LiteLLMModelConfig{{Alias: "selected-alias", Upstream: "openrouter", Model: "selected/openrouter-model"}},
+	bifrostEnabled := true
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
+		Enabled:   &bifrostEnabled,
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
+		Models:    []model.BifrostModelConfig{{Alias: "selected-alias", Upstream: "openrouter", Model: "selected/openrouter-model"}},
 	}
 	site, _, err := modules.Compose(config)
 	if err != nil {
@@ -408,12 +408,12 @@ func TestCoreModuleGuestsRetainBaselinePolicy(t *testing.T) {
 
 func TestModuleGuestSourcesRequireSourceSpecificIntent(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
-	tailnetEnabled, litellmEnabled := true, true
+	tailnetEnabled, bifrostEnabled := true, true
 	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
-	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
-		Enabled:   &litellmEnabled,
-		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
-		Models:    []model.LiteLLMModelConfig{{Alias: "selected-alias", Upstream: "openrouter", Model: "selected/openrouter-model"}},
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
+		Enabled:   &bifrostEnabled,
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
+		Models:    []model.BifrostModelConfig{{Alias: "selected-alias", Upstream: "openrouter", Model: "selected/openrouter-model"}},
 	}
 	site, _, err := modules.Compose(config)
 	if err != nil {
@@ -431,13 +431,13 @@ func TestModuleGuestSourcesRequireSourceSpecificIntent(t *testing.T) {
 
 func TestExternalComposedContractCarriesModuleRouteAndOperatorBoundary(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeExternal))
-	firewallDisabled, tailnetEnabled, litellmEnabled := false, true, true
+	firewallDisabled, tailnetEnabled, bifrostEnabled := false, true, true
 	config.Modules.Firewall = &model.ToggleModuleConfig{Enabled: &firewallDisabled}
 	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
-	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
-		Enabled:   &litellmEnabled,
-		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
-		Models:    []model.LiteLLMModelConfig{{Alias: "selected-alias", Upstream: "openrouter", Model: "selected/openrouter-model"}},
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
+		Enabled:   &bifrostEnabled,
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
+		Models:    []model.BifrostModelConfig{{Alias: "selected-alias", Upstream: "openrouter", Model: "selected/openrouter-model"}},
 	}
 	site, _, err := modules.Compose(config)
 	if err != nil {
@@ -451,7 +451,7 @@ func TestExternalComposedContractCarriesModuleRouteAndOperatorBoundary(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"10.10.0.0/16", "10.10.5.10", "10.10.5.0/24", "10.10.5.1", "subnet-route", "route approval", "accept-dns=false", "LiteLLM HTTPS", "portal HTTPS", "monitoring HTTPS", "openrouter.ai", "required return routing", "Proxmox API", "SSH", "enforcement is NOT ACTIVE", "operator implementation responsibility"} {
+	for _, expected := range []string{"10.10.0.0/16", "10.10.5.10", "10.10.5.0/24", "10.10.5.1", "subnet-route", "route approval", "accept-dns=false", "Bifrost HTTPS", "portal HTTPS", "monitoring HTTPS", "openrouter.ai", "required return routing", "Proxmox API", "SSH", "enforcement is NOT ACTIVE", "operator implementation responsibility"} {
 		if !strings.Contains(strings.ToLower(contract), strings.ToLower(expected)) {
 			t.Errorf("external module contract missing %q", expected)
 		}
@@ -631,12 +631,12 @@ func TestLogicalDNSIntentExpandsToAllManagedDNSEndpoints(t *testing.T) {
 
 func TestAirVPNSelectedSourcesUseTransitWithoutDirectWANFallback(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("airvpn", "age1airvpn", model.GatewayModeManaged))
-	airvpnEnabled, litellmEnabled := true, true
+	airvpnEnabled, bifrostEnabled := true, true
 	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &airvpnEnabled, Servers: "europe"}
-	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
-		Enabled: &litellmEnabled, Network: model.ModuleNetworkAirVPN,
-		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key"}},
-		Models:    []model.LiteLLMModelConfig{{Alias: "selected", Upstream: "provider", Model: "provider/model"}},
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
+		Enabled: &bifrostEnabled, Network: model.ModuleNetworkAirVPN,
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key"}},
+		Models:    []model.BifrostModelConfig{{Alias: "selected", Upstream: "provider", Model: "provider/model"}},
 	}
 	site, _, err := modules.Compose(config)
 	if err != nil {
@@ -684,7 +684,7 @@ func TestAirVPNSelectedSourcesUseTransitWithoutDirectWANFallback(t *testing.T) {
 	}
 	for _, expected := range []string{
 		`ip saddr @airvpn_sources oifname "wan0" counter log prefix "boetticher AIRVPN-DIRECT-DROP " drop`,
-		"oifname \"transit0\" ip saddr @airvpn_sources counter accept comment \"boetticher:allow:airvpn-selected-transit\"",
+		`iifname "servers0" oifname "transit0" ip saddr 10.10.20.60/32 ip daddr @boetticher_endpoint_1 tcp dport 443 counter accept`,
 		"oifname \"wan0\" ip saddr != @airvpn_sources ip saddr 10.10.20.0/24 masquerade comment \"boetticher:nat-servers\"",
 		"oifname \"wan0\" ip saddr 10.10.5.20/32 ip daddr @boetticher_endpoint_0 udp dport 1637 masquerade comment \"boetticher:nat-airvpn-handshake\"",
 		`iifname "transit0" oifname "wan0" counter log prefix "boetticher TRANSIT-INTERNET-DROP " drop`,
@@ -693,7 +693,69 @@ func TestAirVPNSelectedSourcesUseTransitWithoutDirectWANFallback(t *testing.T) {
 			t.Errorf("AirVPN ruleset is missing %q:\n%s", expected, ruleset)
 		}
 	}
+	if strings.Contains(ruleset, `oifname "transit0" ip saddr @airvpn_sources counter accept comment "boetticher:allow:airvpn-selected-transit"`) {
+		t.Fatal("AirVPN selected source has a source-wide transit allow")
+	}
 	if strings.Contains(ruleset, `oifname "wan0" ip saddr 10.10.20.60/32 masquerade`) {
 		t.Fatal("selected AirVPN source has a direct WAN NAT rule")
+	}
+}
+
+func TestArrAirVPNEgressIsBoundedAndFailClosed(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("arr-airvpn", "age1arr", model.GatewayModeManaged))
+	enabled := true
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "australia"}
+	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := AirVPNProfile{EndpointHost: "airvpn.example", EndpointPort: 1637, TunnelAddress: "10.64.12.3", SHA256: strings.Repeat("a", 64)}
+	plan, err := PlanFromSiteWithAirVPN(site, profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var egress PolicyRule
+	for _, rule := range plan.Rules {
+		if rule.Name == "ARR media acquisition through AirVPN" {
+			egress = rule
+			break
+		}
+	}
+	if egress.From != "SERVERS" || egress.To != "TRANSIT" || egress.Action != "allow" || egress.Protocol != "any" || egress.SourceCIDR != model.ArrGuestAddress+"/32" || egress.DestinationCIDR != "0.0.0.0/0" || egress.NAT || egress.Route != "airvpn" {
+		t.Fatalf("ARR AirVPN egress rule = %#v", egress)
+	}
+	if !reflect.DeepEqual(plan.AirVPNSources, []string{model.ArrGuestAddress + "/32"}) {
+		t.Fatalf("ARR AirVPN source set = %#v", plan.AirVPNSources)
+	}
+	plan, err = BindAirVPNEndpoint(plan, func(host string) ([]net.IP, error) {
+		if host == "airvpn.example" {
+			return []net.IP{net.ParseIP("198.51.100.44")}, nil
+		}
+		return nil, fmt.Errorf("unexpected endpoint %s", host)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ruleset, err := RenderNFTWithResolver(plan, func(host string) ([]net.IP, error) {
+		if host == "airvpn.example" {
+			return []net.IP{net.ParseIP("198.51.100.44")}, nil
+		}
+		return nil, fmt.Errorf("unexpected endpoint %s", host)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`iifname "servers0" oifname "transit0" ip saddr 10.10.20.110/32 ip daddr 0.0.0.0/0 counter accept`,
+		`ip saddr @airvpn_sources oifname "wan0" counter log prefix "boetticher AIRVPN-DIRECT-DROP " drop`,
+		`oifname "wan0" ip saddr != @airvpn_sources ip saddr 10.10.20.0/24 masquerade comment "boetticher:nat-servers"`,
+	} {
+		if !strings.Contains(ruleset, want) {
+			t.Errorf("ARR AirVPN ruleset is missing %q:\n%s", want, ruleset)
+		}
+	}
+	if strings.Contains(ruleset, `oifname "wan0" ip saddr 10.10.20.110/32 masquerade`) {
+		t.Fatal("ARR AirVPN source has a direct WAN NAT rule")
 	}
 }

@@ -10,7 +10,7 @@ import (
 func TestRenderConfigurationIsManagedOnlyDeterministicAndEphemeral(t *testing.T) {
 	c := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	on := true
-	c.Modules.Gatus = &model.ToggleModuleConfig{Enabled: &on}
+	c.Modules.Gatus = &model.NetworkToggleModuleConfig{Enabled: &on}
 	s, _, err := modules.Compose(c)
 	if err != nil {
 		t.Fatal(err)

@@ -1,0 +1,29 @@
+---
+- name: reload systemd
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
+- name: restart journald
+  ansible.builtin.systemd_service:
+    name: systemd-journald
+    state: restarted
+
+- name: restart pulse-agent
+  ansible.builtin.systemd_service:
+    name: pulse-agent
+    state: restarted
+
+- name: restart pulse-kiosk
+  ansible.builtin.systemd_service:
+    name: pulse-kiosk
+    state: restarted
+
+- name: restart log2ram
+  ansible.builtin.systemd_service:
+    name: log2ram
+    state: restarted
+
+- name: restart ssh
+  ansible.builtin.systemd_service:
+    name: ssh
+    state: restarted

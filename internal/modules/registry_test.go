@@ -17,7 +17,7 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantOrder := []string{"firewall", "dns", "logging", "monitoring", "aiops", "airvpn", "gatus", "litellm", "printer", "streamdeck", "tailnet-router"}
+	wantOrder := []string{"firewall", "dns", "logging", "monitoring", "aiops", "airvpn", "arr", "bifrost", "gatus", "printer", "streamdeck", "tailnet-router"}
 	if len(modules) != len(wantOrder) {
 		t.Fatalf("unexpected module resolution: %#v", modules)
 	}
@@ -107,10 +107,83 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	}
 }
 
+func TestArrRequiresAirVPNAndComposesOwnedDHCPReservation(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	enabled := true
+	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
+	airvpnEnabled := true
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &airvpnEnabled, Servers: "europe"}
+	site, _, err := Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	declaration, ok := findDeclaration(site, "arr")
+	if !ok || len(declaration.DHCPReservations) != 1 {
+		t.Fatalf("arr declaration reservation missing: %#v", declaration)
+	}
+	reservation := declaration.DHCPReservations[0]
+	if reservation.Hostname != "lab-arr-01" || reservation.Address != model.ArrGuestAddress || reservation.MAC != model.ArrGuestMAC || reservation.VMID != model.ArrVMID {
+		t.Fatalf("unexpected arr DHCP reservation: %#v", reservation)
+	}
+	if len(site.DHCPReservations) != 1 || site.DHCPReservations[0] != reservation {
+		t.Fatalf("module reservation was not projected into canonical DHCP state: %#v", site.DHCPReservations)
+	}
+	var downloadsVolume model.PersistentVolumeDeclaration
+	for _, volume := range declaration.Volumes {
+		if volume.Name == "downloads" {
+			downloadsVolume = volume
+			break
+		}
+	}
+	if downloadsVolume.Guest != "lab-arr-01" || downloadsVolume.MountPath != "/var/lib/arr/downloads" || downloadsVolume.SizeGiB != 500 || downloadsVolume.Backup || downloadsVolume.Placement != model.StorageRequireDataDisk {
+		t.Fatalf("ARR downloads volume contract is incomplete: %#v", downloadsVolume)
+	}
+	var downloadsState model.PersistentState
+	for _, state := range declaration.Persistent {
+		if state.Name == "downloads" {
+			downloadsState = state
+			break
+		}
+	}
+	if downloadsState.Path != "/var/lib/arr/downloads" || downloadsState.Kind != "media-downloads" || downloadsState.Backup || downloadsState.Sensitive || downloadsState.Replacement != "retain-across-rootfs-replacement" {
+		t.Fatalf("ARR downloads persistent-state contract is incomplete: %#v", downloadsState)
+	}
+}
+
+func TestArrReservationRemainsUniqueWithOtherOptionalModules(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	enabled := true
+	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.Gatus = &model.NetworkToggleModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkDirect}
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "australia"}
+	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
+		Enabled: &enabled, Network: model.ModuleNetworkDirect,
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
+		Models:    []model.BifrostModelConfig{{Alias: "operations-investigator", Upstream: "openrouter", Model: "openai/gpt-5-mini"}},
+	}
+	site, _, err := Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(site.DHCPReservations) != 1 || site.DHCPReservations[0].Address != model.ArrGuestAddress {
+		t.Fatalf("ARR reservation was duplicated or missing: %#v", site.DHCPReservations)
+	}
+}
+
+func TestArrRejectsNonAirVPNNetwork(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	enabled := true
+	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkDirect}
+	if _, _, err := Compose(config); err == nil || !strings.Contains(err.Error(), "modules.arr.network") {
+		t.Fatalf("arr direct network mode was accepted: %v", err)
+	}
+}
+
 func TestGatusCrossZoneHTTPSIntentsFollowManagedServiceMetadata(t *testing.T) {
 	config := testConfig(model.GatewayModeManaged)
 	enabled := true
-	config.Modules.Gatus = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.Gatus = &model.NetworkToggleModuleConfig{Enabled: &enabled}
 	site, _, err := Compose(config)
 	if err != nil {
 		t.Fatal(err)
@@ -134,7 +207,7 @@ func TestGatusCrossZoneHTTPSIntentsFollowManagedServiceMetadata(t *testing.T) {
 func TestGatusInvalidCrossZoneEndpointFailsComposition(t *testing.T) {
 	config := testConfig(model.GatewayModeManaged)
 	enabled := true
-	config.Modules.Gatus = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.Gatus = &model.NetworkToggleModuleConfig{Enabled: &enabled}
 	site, _, err := Compose(config)
 	if err != nil {
 		t.Fatal(err)
@@ -159,7 +232,7 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	if err := registry.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"tailnet-router", "airvpn", "litellm", "printer", "streamdeck", "aiops", "gatus"} {
+	for _, name := range []string{"tailnet-router", "airvpn", "bifrost", "printer", "streamdeck", "aiops", "gatus"} {
 		definition, ok := registry.Definition(name)
 		if !ok || definition.Policy != DefaultOff {
 			t.Fatalf("%s is not a default-off first-party module: %#v", name, definition)
@@ -169,9 +242,9 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	if tailnet.ReservedVMIDStart != 200 || tailnet.ReservedVMIDEnd != 209 || tailnet.Guests[0].VMID != 200 || tailnet.Placement.ZoneType != model.ZoneTypeTransit {
 		t.Fatalf("tailnet-router identity contract is incomplete: %#v", tailnet)
 	}
-	litellm, _ := registry.Definition("litellm")
-	if litellm.ReservedVMIDStart != 210 || litellm.ReservedVMIDEnd != 219 || litellm.Guests[0].VMID != 210 || litellm.Placement.ZoneType != model.ZoneTypeServers {
-		t.Fatalf("litellm identity contract is incomplete: %#v", litellm)
+	bifrost, _ := registry.Definition("bifrost")
+	if bifrost.ReservedVMIDStart != 210 || bifrost.ReservedVMIDEnd != 219 || bifrost.Guests[0].VMID != 210 || bifrost.Placement.ZoneType != model.ZoneTypeServers {
+		t.Fatalf("bifrost identity contract is incomplete: %#v", bifrost)
 	}
 	printer, _ := registry.Definition("printer")
 	if printer.ReservedVMIDStart != 230 || printer.ReservedVMIDEnd != 239 || printer.Guests[0].VMID != model.PrinterVMID || printer.Placement.ZoneType != model.ZoneTypeServers {
@@ -197,13 +270,13 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 func TestAirVPNNetworkSelectionRequiresExplicitProviderAndOrdersTransitFirst(t *testing.T) {
 	config := testConfig(model.GatewayModeManaged)
 	clientEnabled, airvpnEnabled := true, false
-	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
 		Enabled: &clientEnabled, Network: model.ModuleNetworkAirVPN,
-		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key"}},
-		Models:    []model.LiteLLMModelConfig{{Alias: "selected", Upstream: "provider", Model: "provider/model"}},
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key"}},
+		Models:    []model.BifrostModelConfig{{Alias: "selected", Upstream: "provider", Model: "provider/model"}},
 	}
 	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &airvpnEnabled, Servers: "europe"}
-	if _, _, err := Compose(config); err == nil || !strings.Contains(err.Error(), "modules.litellm.network") {
+	if _, _, err := Compose(config); err == nil || !strings.Contains(err.Error(), "modules.bifrost.network") {
 		t.Fatalf("AirVPN client was accepted without an enabled provider: %v", err)
 	}
 	airvpnEnabled = true
@@ -215,17 +288,17 @@ func TestAirVPNNetworkSelectionRequiresExplicitProviderAndOrdersTransitFirst(t *
 	for index, module := range resolved {
 		positions[module.Definition.Name] = index
 	}
-	if positions["airvpn"] >= positions["litellm"] || site.ModuleConfig["litellm"].Network != model.ModuleNetworkAirVPN {
-		t.Fatalf("AirVPN provider was not ordered before its selected client: positions=%v config=%#v", positions, site.ModuleConfig["litellm"])
+	if positions["airvpn"] >= positions["bifrost"] || site.ModuleConfig["bifrost"].Network != model.ModuleNetworkAirVPN {
+		t.Fatalf("AirVPN provider was not ordered before its selected client: positions=%v config=%#v", positions, site.ModuleConfig["bifrost"])
 	}
 }
 
 func TestFirstPartyConfigurationFieldsAreTypedAndResolvedFromDeclarations(t *testing.T) {
 	registry := FirstPartyRegistry()
 	config := testConfig(model.GatewayModeManaged)
-	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
-		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_key"}},
-		Models:    []model.LiteLLMModelConfig{{Alias: "operations", Upstream: "provider", Model: "provider/model"}},
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_key"}},
+		Models:    []model.BifrostModelConfig{{Alias: "operations", Upstream: "provider", Model: "provider/model"}},
 	}
 	fields, err := registry.ConfigurationFields("aiops", config)
 	if err != nil {
@@ -234,21 +307,28 @@ func TestFirstPartyConfigurationFieldsAreTypedAndResolvedFromDeclarations(t *tes
 	if len(fields) != 2 || fields[0].Key != "network" || fields[0].Type != model.ModuleConfigEnum || fields[1].Type != model.ModuleConfigModelAlias || len(fields[1].AllowedValues) != 1 || fields[1].AllowedValues[0] != "operations" {
 		t.Fatalf("unexpected AIOps configuration schema: %#v", fields)
 	}
-	litellm, err := registry.ConfigurationFields("litellm", config)
+	bifrost, err := registry.ConfigurationFields("bifrost", config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(litellm) != 3 || litellm[0].Key != "network" || litellm[1].Type != model.ModuleConfigObjectList || litellm[2].Type != model.ModuleConfigObjectList {
-		t.Fatalf("unexpected LiteLLM configuration schema: %#v", litellm)
+	if len(bifrost) != 3 || bifrost[0].Key != "network" || bifrost[1].Type != model.ModuleConfigObjectList || bifrost[2].Type != model.ModuleConfigObjectList {
+		t.Fatalf("unexpected Bifrost configuration schema: %#v", bifrost)
 	}
 	secretField := model.ModuleConfigField{}
-	for _, field := range litellm[1].ItemFields {
+	for _, field := range bifrost[1].ItemFields {
 		if field.Key == "api_key_secret" {
 			secretField = field
 		}
 	}
 	if !secretField.Sensitive {
-		t.Fatalf("LiteLLM secret reference is not structurally classified: %#v", litellm[1])
+		t.Fatalf("Bifrost secret reference is not structurally classified: %#v", bifrost[1])
+	}
+	arr, err := registry.ConfigurationFields("arr", config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(arr) != 1 || arr[0].Key != "network" || arr[0].Default != string(model.ModuleNetworkAirVPN) || len(arr[0].AllowedValues) != 1 || arr[0].AllowedValues[0] != string(model.ModuleNetworkAirVPN) {
+		t.Fatalf("unexpected ARR configuration schema: %#v", arr)
 	}
 }
 
@@ -272,13 +352,13 @@ func TestRegistryRejectsDuplicateModuleDefinitions(t *testing.T) {
 	}
 }
 
-func TestAIOpsRequiresDeclaredLiteLLMAliasAndComposesReadOnlyBoundary(t *testing.T) {
+func TestAIOpsRequiresDeclaredBifrostAliasAndComposesReadOnlyBoundary(t *testing.T) {
 	config := testConfig(model.GatewayModeManaged)
 	enabled := true
 	config.Modules.AIOps = &model.AIOpsModuleConfig{Enabled: &enabled, ModelAlias: "operations-investigator"}
-	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
-		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key"}},
-		Models:    []model.LiteLLMModelConfig{{Alias: "operations-investigator", Upstream: "provider", Model: "provider/model"}},
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key"}},
+		Models:    []model.BifrostModelConfig{{Alias: "operations-investigator", Upstream: "provider", Model: "provider/model"}},
 	}
 	site, _, err := Compose(config)
 	if err != nil {
@@ -308,11 +388,11 @@ func TestAIOpsRejectsUndeclaredAliasAndExplicitlyDisabledDependency(t *testing.T
 	config := testConfig(model.GatewayModeManaged)
 	enabled, disabled := true, false
 	config.Modules.AIOps = &model.AIOpsModuleConfig{Enabled: &enabled, ModelAlias: "missing"}
-	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{Upstreams: []model.LiteLLMUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key"}}, Models: []model.LiteLLMModelConfig{{Alias: "other", Upstream: "provider", Model: "provider/model"}}}
-	if _, _, err := Compose(config); err == nil || !strings.Contains(err.Error(), "undeclared LiteLLM model alias") {
+	config.Modules.Bifrost = &model.BifrostModuleConfig{Upstreams: []model.BifrostUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key"}}, Models: []model.BifrostModelConfig{{Alias: "other", Upstream: "provider", Model: "provider/model"}}}
+	if _, _, err := Compose(config); err == nil || !strings.Contains(err.Error(), "undeclared Bifrost model alias") {
 		t.Fatalf("undeclared alias was accepted: %v", err)
 	}
-	config.Modules.LiteLLM.Enabled = &disabled
+	config.Modules.Bifrost.Enabled = &disabled
 	config.Modules.AIOps.ModelAlias = "other"
 	if _, _, err := Compose(config); err == nil || !strings.Contains(err.Error(), "explicitly disabled") {
 		t.Fatalf("disabled dependency was accepted: %v", err)
@@ -322,7 +402,7 @@ func TestAIOpsRejectsUndeclaredAliasAndExplicitlyDisabledDependency(t *testing.T
 func TestPrinterComposesMinimalOctoPrintDeclaration(t *testing.T) {
 	config := testConfig(model.GatewayModeManaged)
 	enabled := true
-	config.Modules.Printer = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.Printer = &model.NetworkToggleModuleConfig{Enabled: &enabled}
 	config.USBExports = []model.USBExportBinding{{Module: "printer", Requirement: "serial", Port: "1-2.4", VendorID: "1a86", ProductID: "7523"}}
 	site, _, err := Compose(config)
 	if err != nil {
@@ -354,7 +434,7 @@ func TestPrinterComposesMinimalOctoPrintDeclaration(t *testing.T) {
 func TestStreamDeckComposesReadOnlyPulseDisplayDeclaration(t *testing.T) {
 	config := testConfig(model.GatewayModeManaged)
 	enabled := true
-	config.Modules.StreamDeck = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.StreamDeck = &model.NetworkToggleModuleConfig{Enabled: &enabled}
 	config.USBExports = []model.USBExportBinding{{Module: "streamdeck", Requirement: "display", Port: "1-2.5", VendorID: "0fd9", ProductID: "006d"}}
 	site, _, err := Compose(config)
 	if err != nil {
@@ -405,14 +485,14 @@ func TestRegistryRejectsUnsupportedUSBDeviceType(t *testing.T) {
 	}
 }
 
-func TestTailnetAndLiteLLMComposeTypedDeclarations(t *testing.T) {
+func TestTailnetAndBifrostComposeTypedDeclarations(t *testing.T) {
 	config := testConfig(model.GatewayModeManaged)
-	tailnetEnabled, litellmEnabled := true, true
+	tailnetEnabled, bifrostEnabled := true, true
 	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
-	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
-		Enabled:   &litellmEnabled,
-		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
-		Models:    []model.LiteLLMModelConfig{{Alias: "selected-alias", Upstream: "openrouter", Model: "selected/openrouter-model"}},
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
+		Enabled:   &bifrostEnabled,
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
+		Models:    []model.BifrostModelConfig{{Alias: "selected-alias", Upstream: "openrouter", Model: "selected/openrouter-model"}},
 	}
 	site, _, err := Compose(config)
 	if err != nil {
@@ -425,12 +505,12 @@ func TestTailnetAndLiteLLMComposeTypedDeclarations(t *testing.T) {
 	if tailnet.Guests[0].Zone != "TRANSIT" || tailnet.Guests[0].Address != "10.10.5.10" || !tailnet.Security.Unprivileged || tailnet.Security.Devices[0].Path != "/dev/net/tun" || tailnet.AdvertisedRoutes[0] != "10.10.0.0/16" {
 		t.Fatalf("tailnet-router declaration is incomplete: %#v", tailnet)
 	}
-	litellm, ok := findDeclaration(site, "litellm")
+	bifrost, ok := findDeclaration(site, "bifrost")
 	if !ok {
-		t.Fatal("litellm declaration is missing")
+		t.Fatal("bifrost declaration is missing")
 	}
-	if litellm.Guests[0].Address != "10.10.20.60" || !litellm.Guests[0].MTLS || len(litellm.Secrets) != 1 || litellm.Secrets[0].Name != "openrouter_api_key" {
-		t.Fatalf("litellm declaration is incomplete: %#v", litellm)
+	if bifrost.Guests[0].Address != "10.10.20.60" || !bifrost.Guests[0].MTLS || len(bifrost.Secrets) != 1 || bifrost.Secrets[0].Name != "openrouter_api_key" {
+		t.Fatalf("bifrost declaration is incomplete: %#v", bifrost)
 	}
 }
 
@@ -576,6 +656,14 @@ func TestLoggingConfigurationHasNoLifecycleToggle(t *testing.T) {
 	}
 }
 
+func TestNonNetworkModuleRejectsNetworkConfiguration(t *testing.T) {
+	var config model.ModulesConfig
+	enabled := true
+	if err := config.Set("monitoring", model.ModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}); err == nil || !strings.Contains(err.Error(), "modules.monitoring.network") {
+		t.Fatalf("monitoring network configuration was accepted: %v", err)
+	}
+}
+
 func TestExternalGatewayRequiresExplicitManagedFirewallDisable(t *testing.T) {
 	config := testConfig(model.GatewayModeExternal)
 	if _, _, err := Compose(config); err == nil || !strings.Contains(err.Error(), "modules.firewall.enabled") {
@@ -634,7 +722,7 @@ func TestDependencyCycleIsRejected(t *testing.T) {
 	}
 }
 
-func TestMonitoringDeclaresOperatorSuppliedPulseProxySecret(t *testing.T) {
+func TestMonitoringDeclaresCoreGeneratedPulseProxySecret(t *testing.T) {
 	site, _, err := Compose(testConfig(model.GatewayModeManaged))
 	if err != nil {
 		t.Fatal(err)
@@ -647,7 +735,7 @@ func TestMonitoringDeclaresOperatorSuppliedPulseProxySecret(t *testing.T) {
 		if secret.Name != "pulse_proxy_auth_secret" {
 			continue
 		}
-		if secret.Generation != "operator-supplied" || secret.Delivery != "systemd-credential" || secret.Consumer != "pulse-server/nginx" || secret.Lifecycle != model.SecretLifecycleRuntime {
+		if secret.Generation != "random" || secret.Delivery != "systemd-credential" || secret.Consumer != "pulse-server/nginx" || secret.Lifecycle != model.SecretLifecycleRuntime {
 			t.Fatalf("Pulse proxy-auth secret contract is incomplete: %#v", secret)
 		}
 		return

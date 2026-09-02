@@ -68,7 +68,7 @@ func Build(s model.Site, outputDir, docsDir string, evidence Evidence, physical 
 	if err := writePage(filepath.Join(stage, "access.html"), page("Access", access(s, revision, physical))); err != nil {
 		return err
 	}
-	if err := writePage(filepath.Join(stage, "security.html"), page("Security", security(revision, evidence))); err != nil {
+	if err := writePage(filepath.Join(stage, "security.html"), page("Lab checks", security(revision, evidence))); err != nil {
 		return err
 	}
 	if err := writePage(filepath.Join(stage, "pki.html"), page("PKI", pki(s, revision))); err != nil {
@@ -110,7 +110,7 @@ func publish(outputDir, stage string) error {
 }
 
 func page(title, body string) string {
-	return "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>" + html.EscapeString(title) + " · boetticher</title><style>body{font:16px system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#17202a}nav{display:flex;gap:1rem;flex-wrap:wrap}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccd;padding:.5rem;text-align:left}code{background:#eef;padding:.1rem .3rem}pre{white-space:pre-wrap;background:#f5f7f9;padding:1rem}.pass{color:#087f23}.fail{color:#b00020}.notice{color:#8a5b00}</style></head><body><nav><a href=\"/index.html\">Home</a><a href=\"/inventory.html\">Inventory</a><a href=\"/network.html\">Network</a><a href=\"/services.html\">Services</a><a href=\"/access.html\">Access</a><a href=\"/pki.html\">PKI</a><a href=\"/security.html\">Security</a><a href=\"/recovery.html\">Recovery</a><a href=\"/docs/index.html\">Runbooks</a></nav><main><h1>" + html.EscapeString(title) + "</h1>" + body + "</main></body></html>\n"
+	return "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>" + html.EscapeString(title) + " · boetticher</title><style>body{font:16px system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;color:#17202a}nav{display:flex;gap:1rem;flex-wrap:wrap}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccd;padding:.5rem;text-align:left}code{background:#eef;padding:.1rem .3rem}pre{white-space:pre-wrap;background:#f5f7f9;padding:1rem}.pass{color:#087f23}.fail{color:#b00020}.notice{color:#8a5b00}</style></head><body><nav><a href=\"/index.html\">Home</a><a href=\"/inventory.html\">Inventory</a><a href=\"/network.html\">Network</a><a href=\"/services.html\">Services</a><a href=\"/access.html\">Access</a><a href=\"/pki.html\">Certificates</a><a href=\"/security.html\">Checks</a><a href=\"/recovery.html\">Recovery</a><a href=\"/docs/index.html\">Guides</a></nav><main><h1>" + html.EscapeString(title) + "</h1>" + body + "</main></body></html>\n"
 }
 
 func home(s model.Site, revision string, evidence Evidence, _ time.Time) string {
@@ -131,7 +131,7 @@ func home(s model.Site, revision string, evidence Evidence, _ time.Time) string 
 		gateway = "managed Debian firewall"
 	}
 	var moduleTable strings.Builder
-	moduleTable.WriteString("<h2>Enabled modules</h2><table><tr><th>Name</th><th>Policy</th><th>State</th><th>Reason</th></tr>")
+	moduleTable.WriteString("<h2>Enabled modules</h2><table><tr><th>Name</th><th>Starts as</th><th>State</th><th>Note</th></tr>")
 	for _, module := range s.Modules {
 		if !module.Enabled {
 			continue
@@ -142,7 +142,7 @@ func home(s model.Site, revision string, evidence Evidence, _ time.Time) string 
 	moduleTable.WriteString("</table>")
 	action := "No action required."
 	if semantic.OverallState != statusmodel.Healthy {
-		action = "Action required: open the <a href=\"/security.html\">Security page</a> for the reason and suggested next step."
+		action = "Action required: open <a href=\"/security.html\">Lab checks</a> for the reason and suggested next step."
 	}
 	observedAt := strings.TrimSpace(evidence.GeneratedAt)
 	if evidence.Status != nil && strings.TrimSpace(evidence.Status.ObservedAt) != "" {
@@ -151,7 +151,7 @@ func home(s model.Site, revision string, evidence Evidence, _ time.Time) string 
 	if observedAt == "" {
 		observedAt = "not recorded"
 	}
-	return fmt.Sprintf("<p>This is a snapshot of your Boetticher platform. Use the links above for services, recovery, and detailed runbooks.</p><p>Model revision: <code>%s</code></p><h2>Platform result: %s</h2><p>Gateway: %s · observed: %s</p><p>%s</p>%s<h2>Important links</h2><p><a href=\"%s\">Proxmox</a> · <a href=\"https://monitor.%s\">Pulse monitoring</a> · <a href=\"https://portal.%s\">Portal</a> · <a href=\"https://dns.%s\">DNS</a></p>", html.EscapeString(revision), html.EscapeString(humanOverallResult(semantic.OverallState)), html.EscapeString(gateway), html.EscapeString(observedAt), action, moduleTable.String(), html.EscapeString("https://proxmox."+s.Network.Domain+":8006"), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain))
+	return fmt.Sprintf("<p>Here is your Boetticher lab at a glance. Use the links above for services, recovery, and the guides.</p><p>Lab revision: <code>%s</code></p><h2>Lab result: %s</h2><p>Gateway: %s · observed: %s</p><p>%s</p>%s<h2>Useful links</h2><p><a href=\"%s\">Proxmox</a> · <a href=\"https://monitor.%s\">Pulse monitoring</a> · <a href=\"https://portal.%s\">Portal</a> · <a href=\"https://dns.%s\">DNS</a></p>", html.EscapeString(revision), html.EscapeString(humanOverallResult(semantic.OverallState)), html.EscapeString(gateway), html.EscapeString(observedAt), action, moduleTable.String(), html.EscapeString("https://proxmox."+s.Network.Domain+":8006"), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain), html.EscapeString(s.Network.Domain))
 }
 
 func loggingSummary(s model.Site, evidence Evidence) string {
@@ -177,16 +177,16 @@ func loggingSummary(s model.Site, evidence Evidence) string {
 			break
 		}
 	}
-	return fmt.Sprintf("<h2>Logging</h2><table><tr><th>Collector</th><td>%s (%s)</td></tr><tr><th>Receiver</th><td><code>https://logs.%s:%d</code> with mTLS</td></tr><tr><th>Persistent storage</th><td><code>%s</code> · %d GiB · prefer-data-disk · backup=false</td></tr><tr><th>Retention</th><td>SplitMode=host · MaxUse=%s · KeepFree=%s</td></tr><tr><th>Expected upload sources</th><td>%d</td></tr><tr><th>Observed evidence</th><td>%s</td></tr></table>", html.EscapeString(collector), html.EscapeString(address), html.EscapeString(s.Network.Domain), logging.CollectorPort, html.EscapeString(logging.RemoteJournalPath), logging.CollectorVolumeGiB, html.EscapeString(logging.CollectorMaxUse), html.EscapeString(logging.CollectorKeepFree), expectedSources, html.EscapeString(observed))
+	return fmt.Sprintf("<h2>Logging</h2><table><tr><th>Collector</th><td>%s (%s)</td></tr><tr><th>Receiver</th><td><code>https://logs.%s:%d</code> with mTLS</td></tr><tr><th>Persistent storage</th><td><code>%s</code> · %d GiB · prefer-data-disk · backup=false</td></tr><tr><th>Retention</th><td>SplitMode=host · MaxUse=%s · KeepFree=%s</td></tr><tr><th>Expected upload sources</th><td>%d</td></tr><tr><th>Latest result</th><td>%s</td></tr></table>", html.EscapeString(collector), html.EscapeString(address), html.EscapeString(s.Network.Domain), logging.CollectorPort, html.EscapeString(logging.RemoteJournalPath), logging.CollectorVolumeGiB, html.EscapeString(logging.CollectorMaxUse), html.EscapeString(logging.CollectorKeepFree), expectedSources, html.EscapeString(observed))
 }
 
 func inventory(s model.Site, revision string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Platform guests are managed by boetticher. Any user-managed entries shown here are informational only.</p><table><tr><th>Host</th><th>Ownership</th><th>Zone</th><th>Address</th><th>Role</th><th>Tags</th><th>Monitoring</th><th>Backup</th></tr>", html.EscapeString(revision))
+	fmt.Fprintf(&b, "<p>Lab revision: <code>%s</code></p><p>Boetticher looks after its platform guests. Your own entries are shown here for context only.</p><table><tr><th>Host</th><th>Looked after by</th><th>Zone</th><th>Address</th><th>Role</th><th>Tags</th><th>Monitoring</th><th>Backup</th></tr>", html.EscapeString(revision))
 	for _, m := range sortedComponents(s) {
-		ownership := "user-managed / informational"
+		ownership := "you / shown for context"
 		if m.ProductOwned {
-			ownership = "boetticher platform"
+			ownership = "Boetticher platform"
 		}
 		fmt.Fprintf(&b, "<tr><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td><code>%s</code></td><td>%s</td><td>%s</td></tr>", html.EscapeString(m.Hostname), html.EscapeString(ownership), html.EscapeString(m.Zone), html.EscapeString(m.Address), html.EscapeString(m.Role), html.EscapeString(strings.Join(m.Tags, ";")), checkMark(m.Monitoring), checkMark(m.Backup))
 	}
@@ -202,7 +202,7 @@ func network(s model.Site, revision string) string {
 		gateway = "Debian lab-fw-01 (nftables + Kea)"
 		diagram = "HOME / upstream\n  |\nProxmox (MGMT 10.10.99.5)\n  +-- managed gateway vNICs: WAN, TRANSIT, INFRA, SERVERS, TRUSTED, SANDBOX, MGMT\n  `-- vmbr1 (VLAN-aware internal bridge)\n      +-- TRANSIT VLAN 5\n      +-- INFRA VLAN 10\n      +-- SERVERS VLAN 20\n      +-- TRUSTED VLAN 30\n      +-- SANDBOX VLAN 40\n      `-- MGMT VLAN 99"
 	}
-	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Gateway: <strong>%s</strong>.</p><pre>%s</pre><table><tr><th>Zone</th><th>VLAN</th><th>Network</th><th>Gateway</th><th>DHCP mode</th></tr>", html.EscapeString(revision), html.EscapeString(gateway), html.EscapeString(diagram))
+	fmt.Fprintf(&b, "<p>Lab revision: <code>%s</code></p><p>Gateway: <strong>%s</strong>.</p><pre>%s</pre><table><tr><th>Zone</th><th>VLAN</th><th>Network</th><th>Gateway</th><th>DHCP mode</th></tr>", html.EscapeString(revision), html.EscapeString(gateway), html.EscapeString(diagram))
 	for _, z := range s.Network.Zones {
 		fmt.Fprintf(&b, "<tr><td>%s</td><td>%d</td><td>%s</td><td>%s</td><td>%s</td></tr>", html.EscapeString(z.Name), z.VLAN, html.EscapeString(z.Network), html.EscapeString(z.Gateway), html.EscapeString(z.AddressMode))
 	}
@@ -212,7 +212,7 @@ func network(s model.Site, revision string) string {
 
 func services(s model.Site, revision string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Core appliances are administered through Boetticher and their native product interfaces. Appliance SSH is an internal controller transport, not a supported routine operator interface.</p><table><tr><th>Service</th><th>URL</th><th>mTLS</th></tr>", html.EscapeString(revision))
+	fmt.Fprintf(&b, "<p>Lab revision: <code>%s</code></p><p>Use Boetticher and each product's own UI for normal administration. Appliance SSH is an internal deployment path, not an everyday service interface.</p><table><tr><th>Service</th><th>URL</th><th>mTLS</th></tr>", html.EscapeString(revision))
 	for _, m := range sortedComponents(s) {
 		if !m.ProductOwned || (m.URL == "" && !m.SSHManaged) {
 			continue
@@ -229,11 +229,11 @@ func services(s model.Site, revision string) string {
 
 func access(s model.Site, revision string, physical networkmodel.Discovery) string {
 	var b strings.Builder
-	boundary := "<p>Routine operator SSH and hand mutation of Core-managed appliances are unsupported. SSH/Ansible remains an internal controller transport during deployment.</p>"
+	boundary := "<p>Normal SSH and hands-on changes to Boetticher appliances are not part of the everyday workflow. SSH and Ansible are internal deployment plumbing.</p>"
 	if s.Gateway.Mode == model.GatewayModeExternal {
-		boundary = "<p>The external firewall appliance is operator-managed. Configure, administer, and recover it through its own supported interface; Boetticher publishes the contract and does not manage that appliance.</p>"
+		boundary = "<p>The external firewall is yours to run. Configure, administer, and recover it through its own interface; Boetticher gives you the settings it needs but does not manage the appliance.</p>"
 	}
-	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><h2>Supported operator access</h2><ul><li>Use the Boetticher CLI for platform-owned configuration, lifecycle, logs, and verification.</li><li>Use the native product UI/API where a platform service provides one.</li><li>Use generated portal/status surfaces for platform state and evidence.</li><li>Use explicit Proxmox console/exec access as the break-glass path for recovery.</li></ul>%s", html.EscapeString(revision), boundary)
+	fmt.Fprintf(&b, "<p>Lab revision: <code>%s</code></p><h2>Your usual ways in</h2><ul><li>Use the Boetticher CLI for platform settings, lifecycle, and logs.</li><li>Use the native product UI or API where a service provides one.</li><li>Use this portal for a quick lab overview and the latest check results.</li><li>Use Proxmox console or exec access as the recovery route when needed.</li></ul>%s", html.EscapeString(revision), boundary)
 	if s.BootstrapAddress == "" {
 		b.WriteString("<p class=\"notice\">Break-glass Proxmox endpoint: not configured.</p>")
 	} else {
@@ -254,7 +254,7 @@ func access(s model.Site, revision string, physical networkmodel.Discovery) stri
 		}
 		fmt.Fprintf(&b, "<p>Physical network: <code>%s</code> attached to vmbr1.</p>", html.EscapeString(trunkName))
 	}
-	fmt.Fprintf(&b, "<h2>Physical network evidence</h2><p>Upstream address: <code>%s</code></p><table><tr><th>Role</th><th>Interface</th><th>Permanent MAC</th><th>PCI</th><th>Driver</th><th>Model</th><th>Speed</th><th>Carrier</th><th>Bridge</th><th>Addresses</th></tr>", html.EscapeString(physical.BootstrapAddress))
+	fmt.Fprintf(&b, "<h2>Physical network details</h2><p>Upstream address: <code>%s</code></p><table><tr><th>Role</th><th>Interface</th><th>Permanent MAC</th><th>PCI</th><th>Driver</th><th>Model</th><th>Speed</th><th>Carrier</th><th>Bridge</th><th>Addresses</th></tr>", html.EscapeString(physical.BootstrapAddress))
 	writePhysicalRow(&b, "upstream/bootstrap", physical.Upstream)
 	if physical.Trunk != nil {
 		writePhysicalRow(&b, "internal trunk", *physical.Trunk)
@@ -287,14 +287,14 @@ func unique(values []string) []string {
 
 func security(revision string, evidence Evidence) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "<p>Model revision: <code>%s</code></p><p>Expected security properties and latest available conformance evidence. Live telemetry belongs to the Pulse monitoring appliance.</p><table><tr><th>Property</th><th>Status</th><th>Detail</th></tr>", html.EscapeString(revision))
+	fmt.Fprintf(&b, "<p>Lab revision: <code>%s</code></p><p>A small checklist of the platform's protective settings and latest checks. Live telemetry belongs to Pulse monitoring.</p><table><tr><th>Check</th><th>Status</th><th>Detail</th></tr>", html.EscapeString(revision))
 	for _, result := range evidence.Results {
 		resultStatus := humanResult(result.Status)
 		class := strings.ToLower(resultStatus)
 		fmt.Fprintf(&b, "<tr><td>%s</td><td class=\"%s\">%s</td><td>%s</td></tr>", html.EscapeString(result.Name), html.EscapeString(class), html.EscapeString(resultStatus), html.EscapeString(result.Detail))
 	}
 	if len(evidence.Results) == 0 {
-		b.WriteString("<tr><td colspan=\"3\">FAIL — no verification evidence has been generated; run boetticher verify.</td></tr>")
+		b.WriteString("<tr><td colspan=\"3\">FAIL — no recent check results are available; run boetticher verify.</td></tr>")
 	}
 	b.WriteString("</table>")
 	return b.String()
@@ -316,7 +316,7 @@ func humanOverallResult(value statusmodel.OperatorState) string {
 }
 
 func pki(s model.Site, revision string) string {
-	return fmt.Sprintf("<p>Model revision: <code>%s</code></p><table><tr><th>Authority</th><th>Common name</th><th>Fingerprint</th><th>Expiry</th></tr><tr><td>Root CA</td><td>%s</td><td><code>%s</code></td><td>%s</td></tr><tr><td>Issuing CA</td><td>%s</td><td><code>%s</code></td><td>%s</td></tr></table><p>Endpoint private keys and CA private keys are not rendered here.</p>", html.EscapeString(revision), html.EscapeString(s.PKI.RootCommonName), html.EscapeString(s.PKI.RootFingerprint), html.EscapeString(s.PKI.RootExpiry), html.EscapeString(s.PKI.IssuingCommonName), html.EscapeString(s.PKI.IssuingFingerprint), html.EscapeString(s.PKI.IssuingExpiry))
+	return fmt.Sprintf("<p>Lab revision: <code>%s</code></p><table><tr><th>Certificate issuer</th><th>Common name</th><th>Fingerprint</th><th>Expiry</th></tr><tr><td>Root CA</td><td>%s</td><td><code>%s</code></td><td>%s</td></tr><tr><td>Issuing CA</td><td>%s</td><td><code>%s</code></td><td>%s</td></tr></table><p>Endpoint and CA private keys are not rendered here.</p>", html.EscapeString(revision), html.EscapeString(s.PKI.RootCommonName), html.EscapeString(s.PKI.RootFingerprint), html.EscapeString(s.PKI.RootExpiry), html.EscapeString(s.PKI.IssuingCommonName), html.EscapeString(s.PKI.IssuingFingerprint), html.EscapeString(s.PKI.IssuingExpiry))
 }
 
 func recovery(s model.Site, revision string, evidence Evidence) string {
@@ -327,7 +327,7 @@ func recovery(s model.Site, revision string, evidence Evidence) string {
 		}
 	}
 	sort.Strings(ids)
-	return fmt.Sprintf("<p>Model revision: <code>%s</code></p><h2>Preserve</h2><ul><li>Private site repository containing desired state and encrypted secrets.</li><li>Independent recovery copy of the Age private identity.</li></ul><h2>Profiles</h2><p>Storage profile: <code>%s</code>. Same-disk backups are not disaster recovery.</p><p>Platform backup job: <code>boetticher-platform</code> for managed guest IDs %s. User workloads remain outside the platform guarantee.</p><p>Age recovery and backup freshness are reported only when current evidence exists.</p>", html.EscapeString(revision), html.EscapeString(s.StorageProfile), html.EscapeString(strings.Join(ids, ", ")))
+	return fmt.Sprintf("<p>Lab revision: <code>%s</code></p><h2>Keep these</h2><ul><li>Private site repository with your lab settings and encrypted secrets.</li><li>An independent recovery copy of the age private identity.</li></ul><h2>Storage</h2><p>Storage profile: <code>%s</code>. Same-disk backups are not disaster recovery.</p><p>Platform backup job: <code>boetticher-platform</code> for Boetticher guest IDs %s. Your workloads use their own backup plan.</p><p>Age recovery and backup freshness appear here when the running lab can report them.</p>", html.EscapeString(revision), html.EscapeString(s.StorageProfile), html.EscapeString(strings.Join(ids, ", ")))
 }
 
 func copyDocs(outputDir, docsDir, revision string) error {
@@ -366,13 +366,28 @@ func copyDocs(outputDir, docsDir, revision string) error {
 			return err
 		}
 		pagePath := filepath.Join(destination, filepath.FromSlash(name))
-		if err := writePage(pagePath, page(filepath.ToSlash(rel), "<pre>"+html.EscapeString(string(data))+"</pre>")); err != nil {
+		if err := writePage(pagePath, page(filepath.ToSlash(rel), "<pre>"+html.EscapeString(stripFrontMatter(string(data)))+"</pre>")); err != nil {
 			return err
 		}
 		fmt.Fprintf(&index, "<li><a href=\"%s\">%s</a></li>", html.EscapeString(filepath.ToSlash(name)), html.EscapeString(filepath.ToSlash(rel)))
 	}
 	index.WriteString("</ul>")
-	return writePage(filepath.Join(destination, "index.html"), page("Runbooks", index.String()))
+	return writePage(filepath.Join(destination, "index.html"), page("Guides", index.String()))
+}
+
+// stripFrontMatter keeps the portal's plain-text guide view useful when the
+// same Markdown file also acts as a Jekyll page for the public docs site.
+func stripFrontMatter(document string) string {
+	const delimiter = "---\n"
+	if !strings.HasPrefix(document, delimiter) {
+		return document
+	}
+	rest := document[len(delimiter):]
+	end := strings.Index(rest, "\n"+delimiter)
+	if end < 0 {
+		return document
+	}
+	return rest[end+len("\n"+delimiter):]
 }
 
 func sortedComponents(s model.Site) []model.Component {

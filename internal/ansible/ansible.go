@@ -216,7 +216,7 @@ func Inventory(s model.Site) (string, error) {
 	b.WriteString(revision + "\n\n")
 	groups := map[string][]model.Component{
 		"dns": {}, "monitor": {}, "portal": {}, "logging": {},
-		"tailnet-router": {}, "airvpn": {}, "litellm": {}, "printer": {}, "streamdeck": {}, "aiops": {}, "gatus": {},
+		"tailnet-router": {}, "airvpn": {}, "bifrost": {}, "printer": {}, "arr": {}, "streamdeck": {}, "aiops": {}, "gatus": {},
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		groups["firewall"] = nil
@@ -240,7 +240,7 @@ func Inventory(s model.Site) (string, error) {
 			groups["logging"] = append(groups["logging"], component)
 		}
 		switch component.Module {
-		case "tailnet-router", "airvpn", "litellm", "printer", "streamdeck", "aiops", "gatus":
+		case "tailnet-router", "airvpn", "bifrost", "printer", "arr", "streamdeck", "aiops", "gatus":
 			groups[component.Module] = append(groups[component.Module], component)
 		}
 	}
@@ -261,14 +261,14 @@ func Inventory(s model.Site) (string, error) {
 		address = s.BootstrapAddress
 	}
 	writeHostAt(&b, *proxmoxComponent, address)
-	for _, group := range []string{"dns", "monitor", "portal", "logging", "tailnet-router", "airvpn", "litellm", "printer", "streamdeck", "aiops"} {
+	for _, group := range []string{"dns", "monitor", "portal", "logging", "tailnet-router", "airvpn", "bifrost", "printer", "arr", "streamdeck", "aiops"} {
 		writeInventoryGroup(&b, group, groups[group])
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		writeInventoryGroup(&b, "firewall", groups["firewall"])
 	}
 	writeInventoryGroup(&b, "gatus", groups["gatus"])
-	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\ntailnet-router\nairvpn\nlitellm\nprinter\nstreamdeck\naiops\ngatus\n")
+	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\ntailnet-router\nairvpn\nbifrost\nprinter\narr\nstreamdeck\naiops\ngatus\n")
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		b.WriteString("firewall\n")
 	}
@@ -441,6 +441,17 @@ func RunWithMutationPhase(ctx context.Context, playbook, inventory string, varia
 	return run(ctx, playbook, inventory, variables, "", phase)
 }
 
+// RunExternal configures one external appliance through an operator-supplied
+// temporary SSH configuration. The configuration must already pin the target
+// host key and identity; this runner never falls back to the user's global
+// SSH configuration.
+func RunExternal(ctx context.Context, playbook, inventory string, variables []byte, sshConfig, user string) (RunResult, error) {
+	if !safeInventoryIdentity(user) {
+		return RunResult{}, errors.New("external Ansible user must be one safe inventory identity")
+	}
+	return runWithSSHConfig(ctx, playbook, inventory, variables, "", PhaseFull, sshConfig, user)
+}
+
 // RunLimited executes the same generated playbook against one known inventory
 // identity. The limit is validated before it becomes an Ansible argument so a
 // readiness stage cannot turn into an arbitrary command or host selector.
@@ -469,11 +480,15 @@ func RunLimitedWithMutationPhase(ctx context.Context, playbook, inventory string
 }
 
 func run(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string) (RunResult, error) {
+	return runWithSSHConfig(ctx, playbook, inventory, variables, limit, phase, generatedSSHConfigPath(inventory), "root")
+}
+
+func runWithSSHConfig(ctx context.Context, playbook, inventory string, variables []byte, limit, phase, sshConfig, user string) (RunResult, error) {
 	var empty RunResult
-	if playbook == "" || inventory == "" {
-		return empty, errors.New("Ansible playbook and inventory are required")
+	if playbook == "" || inventory == "" || sshConfig == "" || user == "" {
+		return empty, errors.New("Ansible playbook, inventory, SSH configuration, and user are required")
 	}
-	if err := sshconfig.ValidateExecutionConfig(generatedSSHConfigPath(inventory)); err != nil {
+	if err := sshconfig.ValidateExecutionConfig(sshConfig); err != nil {
 		return empty, fmt.Errorf("validate Ansible SSH configuration: %w", err)
 	}
 	executable, err := exec.LookPath("ansible-playbook")
@@ -484,7 +499,7 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	if err != nil {
 		return empty, err
 	}
-	args := []string{"-i", inventory, "--user", "root", playbook, "--extra-vars", "@/dev/stdin", "--ssh-common-args", "-F " + generatedSSHConfigPath(inventory)}
+	args := []string{"-i", inventory, "--user", user, playbook, "--extra-vars", "@/dev/stdin", "--ssh-common-args", "-F " + sshConfig}
 	if limit != "" {
 		args = append(args, "--limit", limit)
 	}
@@ -683,7 +698,7 @@ func failureDiagnosticWithSupplement(output, supplement []byte) string {
 	}
 	selected := make([]string, 0, 3)
 	for _, line := range lines {
-		if strings.Contains(line, "[ERROR]:") || strings.Contains(line, "fatal:") || strings.Contains(line, "unreachable=") {
+		if strings.Contains(line, "[ERROR]:") || strings.Contains(line, "ERROR!") || strings.Contains(line, "fatal:") || strings.Contains(line, "FAILED!") || strings.Contains(line, "unreachable=") || strings.Contains(line, "no hosts matched") {
 			selected = append(selected, strings.TrimSpace(line))
 		}
 	}

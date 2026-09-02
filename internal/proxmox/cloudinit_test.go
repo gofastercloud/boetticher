@@ -181,7 +181,7 @@ func TestRenderBuilderCloudInitUsesPublicBuildInputsOnly(t *testing.T) {
 	if !strings.Contains(files.UserData, "./scripts/build-images.sh images image-base image-dns-blocky image-logging image-monitoring image-portal image-firewall") || !strings.Contains(files.UserData, "./scripts/scan-images.sh scan-images boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-portal boetticher-firewall") {
 		t.Fatalf("builder cloud-init does not select the default core artifact set: %s", files.UserData)
 	}
-	if strings.Contains(files.UserData, "image-tailnet-router") || strings.Contains(files.UserData, "image-litellm") {
+	if strings.Contains(files.UserData, "image-tailnet-router") || strings.Contains(files.UserData, "image-bifrost") {
 		t.Fatal("default builder cloud-init selects disabled optional artifacts")
 	}
 	for _, required := range []string{
@@ -328,12 +328,14 @@ func TestBuilderArtifactTargetsFollowResolvedPlan(t *testing.T) {
 		{Artifact: model.Artifact{Name: "boetticher-monitoring"}},
 		{Artifact: model.Artifact{Name: "boetticher-portal"}},
 		{Artifact: model.Artifact{Name: "boetticher-firewall"}},
+		{Artifact: model.Artifact{Name: "boetticher-airvpn"}},
+		{Artifact: model.Artifact{Name: "boetticher-arr"}},
 	}}
 	targets, err := builderArtifactTargets(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"image-base", "image-dns-blocky", "image-logging", "image-monitoring", "image-firewall", "image-portal", "image-network-probe"}
+	want := []string{"image-base", "image-dns-blocky", "image-logging", "image-monitoring", "image-portal", "image-firewall", "image-airvpn", "image-arr", "image-network-probe"}
 	if strings.Join(targets, ",") != strings.Join(want, ",") {
 		t.Fatalf("builder targets = %#v, want %#v", targets, want)
 	}
@@ -341,11 +343,31 @@ func TestBuilderArtifactTargetsFollowResolvedPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(strings.Join(scans, " "), "tailnet") || strings.Contains(strings.Join(scans, " "), "litellm") {
+	if strings.Contains(strings.Join(scans, " "), "tailnet") || strings.Contains(strings.Join(scans, " "), "bifrost") {
 		t.Fatalf("disabled optional scans selected: %#v", scans)
 	}
 	if _, err := builderArtifactTargets(Plan{Guests: []GuestPlan{{Name: "unknown", Artifact: model.Artifact{Name: "unknown"}}}}); err == nil {
 		t.Fatal("unknown builder artifact was accepted")
+	}
+}
+
+func TestBuilderArtifactTargetsForMissingIncludesAirVPNAndArr(t *testing.T) {
+	root := t.TempDir()
+	airVPN, err := artifacts.ArtifactFor("airvpn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	arr, err := artifacts.ArtifactFor("arr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets, err := BuilderArtifactTargetsForMissing(root, Plan{Guests: []GuestPlan{{Artifact: airVPN}, {Artifact: arr}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"image-base", "image-airvpn", "image-arr", "image-network-probe"}
+	if strings.Join(targets, ",") != strings.Join(want, ",") {
+		t.Fatalf("missing builder targets = %#v, want %#v", targets, want)
 	}
 }
 

@@ -29,7 +29,7 @@ func TestConfigureJSONDryRunIsRedactedAndDoesNotMutate(t *testing.T) {
 	dir := t.TempDir()
 	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
 	disabled := false
-	config.Modules.Printer = &model.ToggleModuleConfig{Enabled: &disabled}
+	config.Modules.Printer = &model.NetworkToggleModuleConfig{Enabled: &disabled}
 	config.USBExports = []model.USBExportBinding{{Module: "printer", Requirement: "serial", Port: "1-2.3", VendorID: "1a86", ProductID: "7523"}}
 	writeConfigureSite(t, dir, config)
 	original, err := os.ReadFile(filepath.Join(dir, "site.yml"))
@@ -60,7 +60,7 @@ func TestConfigureJSONApplyIsDesiredStateOnlyAndIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
 	disabled := false
-	config.Modules.Printer = &model.ToggleModuleConfig{Enabled: &disabled}
+	config.Modules.Printer = &model.NetworkToggleModuleConfig{Enabled: &disabled}
 	config.USBExports = []model.USBExportBinding{{Module: "printer", Requirement: "serial", Port: "1-2.3", VendorID: "1a86", ProductID: "7523"}}
 	writeConfigureSite(t, dir, config)
 	var output bytes.Buffer
@@ -84,6 +84,44 @@ func TestConfigureJSONApplyIsDesiredStateOnlyAndIdempotent(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), `"status":"NO_CHANGES"`) {
 		t.Fatalf("configure rerun was not idempotent: %s", output.String())
+	}
+}
+
+func TestConfigureBifrostWithARRKeepsOwnedReservationUnique(t *testing.T) {
+	dir := t.TempDir()
+	identityPath, recipient := writeTestAgeIdentity(t)
+	config := model.ConfigFromSite(model.NewSite("installation", recipient, model.GatewayModeManaged))
+	enabled := true
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "australia"}
+	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
+	writeConfigureSite(t, dir, config)
+	if err := os.MkdirAll(filepath.Join(dir, "secrets"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := site.StoreEncryptedDocument(dir, recipient, "secrets/boetticher.sops.yaml", map[string]string{"placeholder": "present"}); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	err := RunWithInput([]string{
+		"module", "configure", "bifrost", "--site", dir, "--age-identity", identityPath,
+		"--non-interactive", "--enabled", "true", "--set", "network=direct",
+		"--set", `upstreams=[{"name":"openrouter","base_url":"https://openrouter.ai/api/v1","api_key_secret":"openrouter_api_key"}]`,
+		"--set", `models=[{"alias":"operations-investigator","upstream":"openrouter","model":"openai/gpt-5-mini"}]`,
+		"--secret", "openrouter_api_key", "--confirm",
+	}, strings.NewReader("test-openrouter-key\n"), &output, &output)
+	if err != nil {
+		t.Fatalf("configure Bifrost alongside ARR: %v\n%s", err, output.String())
+	}
+	loaded, err := site.LoadConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, _, err := modules.Compose(loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved.DHCPReservations) != 1 || resolved.DHCPReservations[0].Address != model.ArrGuestAddress {
+		t.Fatalf("ARR reservation was duplicated or missing: %#v", resolved.DHCPReservations)
 	}
 }
 
@@ -128,10 +166,10 @@ func TestConfigureRejectsObjectListAboveSchemaMaximum(t *testing.T) {
 		{
 			name:  "upstreams",
 			field: "upstreams",
-			value: func() []model.LiteLLMUpstreamConfig {
-				values := make([]model.LiteLLMUpstreamConfig, 17)
+			value: func() []model.BifrostUpstreamConfig {
+				values := make([]model.BifrostUpstreamConfig, 17)
 				for index := range values {
-					values[index] = model.LiteLLMUpstreamConfig{Name: fmt.Sprintf("provider-%d", index), BaseURL: "https://provider.example/v1", APIKeySecret: "provider_key"}
+					values[index] = model.BifrostUpstreamConfig{Name: fmt.Sprintf("provider-%d", index), BaseURL: "https://provider.example/v1", APIKeySecret: "provider_key"}
 				}
 				return values
 			}(),
@@ -140,10 +178,10 @@ func TestConfigureRejectsObjectListAboveSchemaMaximum(t *testing.T) {
 		{
 			name:  "models",
 			field: "models",
-			value: func() []model.LiteLLMModelConfig {
-				values := make([]model.LiteLLMModelConfig, 33)
+			value: func() []model.BifrostModelConfig {
+				values := make([]model.BifrostModelConfig, 33)
 				for index := range values {
-					values[index] = model.LiteLLMModelConfig{Alias: fmt.Sprintf("model-%d", index), Upstream: "provider", Model: "provider/model"}
+					values[index] = model.BifrostModelConfig{Alias: fmt.Sprintf("model-%d", index), Upstream: "provider", Model: "provider/model"}
 				}
 				return values
 			}(),
@@ -159,7 +197,7 @@ func TestConfigureRejectsObjectListAboveSchemaMaximum(t *testing.T) {
 				t.Fatal(err)
 			}
 			var output bytes.Buffer
-			err = Run([]string{"module", "configure", "litellm", "--site", dir, "--enabled", "true", "--set", tc.field + "=" + string(value), "--json"}, &output, &output)
+			err = Run([]string{"module", "configure", "bifrost", "--site", dir, "--enabled", "true", "--set", tc.field + "=" + string(value), "--json"}, &output, &output)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("oversized %s was accepted: %v; output=%s", tc.field, err, output.String())
 			}
@@ -171,9 +209,9 @@ func TestConfigureAIOpsUsesOnlyDeclaredRouterAlias(t *testing.T) {
 	dir := t.TempDir()
 	identityPath, recipient := writeTestAgeIdentity(t)
 	config := model.ConfigFromSite(model.NewSite("installation", recipient, model.GatewayModeManaged))
-	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
-		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_key"}},
-		Models:    []model.LiteLLMModelConfig{{Alias: "operations", Upstream: "provider", Model: "provider/model"}},
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_key"}},
+		Models:    []model.BifrostModelConfig{{Alias: "operations", Upstream: "provider", Model: "provider/model"}},
 	}
 	writeConfigureSite(t, dir, config)
 	if err := os.MkdirAll(filepath.Join(dir, "secrets"), 0700); err != nil {
@@ -190,7 +228,7 @@ func TestConfigureAIOpsUsesOnlyDeclaredRouterAlias(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
 		t.Fatalf("AIOps configure JSON is invalid: %v: %s", err, output.String())
 	}
-	if report.Status != "PLAN_ONLY" || len(report.Dependencies) != 1 || report.Dependencies[0] != "litellm" {
+	if report.Status != "PLAN_ONLY" || len(report.Dependencies) != 1 || report.Dependencies[0] != "bifrost" {
 		t.Fatalf("unexpected AIOps configure report: %#v", report)
 	}
 	if strings.Contains(output.String(), "present") {
@@ -226,16 +264,16 @@ func TestConfigureDependencyPlanUsesRegistryDependencies(t *testing.T) {
 	config := model.ConfigFromSite(current)
 	enabled := true
 	config.Modules.AIOps = &model.AIOpsModuleConfig{Enabled: &enabled, ModelAlias: "operations"}
-	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
-		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_key"}},
-		Models:    []model.LiteLLMModelConfig{{Alias: "operations", Upstream: "provider", Model: "provider/model"}},
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_key"}},
+		Models:    []model.BifrostModelConfig{{Alias: "operations", Upstream: "provider", Model: "provider/model"}},
 	}
 	proposed, _, err := modules.Compose(config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	dependencies := newlyEnabledDependencies(current, proposed, "aiops")
-	for _, wanted := range []string{"litellm"} {
+	for _, wanted := range []string{"bifrost"} {
 		found := false
 		for _, dependency := range dependencies {
 			found = found || dependency == wanted
@@ -259,8 +297,8 @@ func TestConfigureUSBObservationRejectsAmbiguousPort(t *testing.T) {
 func TestConfigureSensitiveFieldIsStructurallyRedacted(t *testing.T) {
 	before := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
 	after := before
-	after.Modules.LiteLLM = &model.LiteLLMModuleConfig{Upstreams: []model.LiteLLMUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "super-secret"}}, Models: []model.LiteLLMModelConfig{{Alias: "ops", Upstream: "provider", Model: "provider/model"}}}
-	fields, err := modules.FirstPartyRegistry().ConfigurationFields("litellm", after)
+	after.Modules.Bifrost = &model.BifrostModuleConfig{Upstreams: []model.BifrostUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "super-secret"}}, Models: []model.BifrostModelConfig{{Alias: "ops", Upstream: "provider", Model: "provider/model"}}}
+	fields, err := modules.FirstPartyRegistry().ConfigurationFields("bifrost", after)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +310,7 @@ func TestConfigureSensitiveFieldIsStructurallyRedacted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	changes, err := configureChanges("litellm", before, after, current, proposed, fields, nil)
+	changes, err := configureChanges("bifrost", before, after, current, proposed, fields, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,16 +323,16 @@ func TestConfigureSensitiveFieldIsStructurallyRedacted(t *testing.T) {
 func TestConfigureRejectsPlatformOwnedSecretReference(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
 	enabled := true
-	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
 		Enabled:   &enabled,
-		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "root_key_pem_b64"}},
-		Models:    []model.LiteLLMModelConfig{{Alias: "ops", Upstream: "provider", Model: "provider/model"}},
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "root_key_pem_b64"}},
+		Models:    []model.BifrostModelConfig{{Alias: "ops", Upstream: "provider", Model: "provider/model"}},
 	}
 	proposed, _, err := modules.Compose(config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = configureSecrets(t.TempDir(), proposed, proposed, "identity", "litellm", nil, strings.NewReader(""), &bytes.Buffer{}, true, nil)
+	_, _, err = configureSecrets(t.TempDir(), proposed, proposed, "identity", "bifrost", nil, strings.NewReader(""), &bytes.Buffer{}, true, nil)
 	if err == nil || !strings.Contains(err.Error(), "platform-owned") {
 		t.Fatalf("platform-owned secret reference was accepted: %v", err)
 	}
@@ -306,10 +344,10 @@ func TestConfigureSecretsIgnoreUnrelatedModuleSecrets(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", recipient, model.GatewayModeManaged))
 	enabled := true
 	config.Modules.Monitoring = &model.ToggleModuleConfig{Enabled: &enabled}
-	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
 		Enabled:   &enabled,
-		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_key"}},
-		Models:    []model.LiteLLMModelConfig{{Alias: "operations", Upstream: "provider", Model: "provider/model"}},
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_key"}},
+		Models:    []model.BifrostModelConfig{{Alias: "operations", Upstream: "provider", Model: "provider/model"}},
 	}
 	current, _, err := modules.Compose(config)
 	if err != nil {
@@ -323,7 +361,7 @@ func TestConfigureSecretsIgnoreUnrelatedModuleSecrets(t *testing.T) {
 	}
 	updates, missing, err := configureSecrets(dir, current, current, identityPath, "monitoring", nil, strings.NewReader(""), &bytes.Buffer{}, true, nil)
 	if err != nil {
-		t.Fatalf("unrelated LiteLLM secret blocked monitoring configure: %v", err)
+		t.Fatalf("unrelated Bifrost secret blocked monitoring configure: %v", err)
 	}
 	if len(updates) != 0 || len(missing) != 0 {
 		t.Fatalf("unrelated module secret was included: updates=%v missing=%v", updates, missing)

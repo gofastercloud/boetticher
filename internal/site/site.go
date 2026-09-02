@@ -374,16 +374,21 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 	if err != nil {
 		return err
 	}
+	pulseProxyAuthSecret, err := randomSecret()
+	if err != nil {
+		return err
+	}
 	// Plaintext exists only in process memory and is piped directly to SOPS.
 	document := map[string]string{
-		"installation_id":      s.SecretMetadata.InstallationID,
-		"bootstrap_secret":     secret,
-		"root_key_pem_b64":     pki.Encode(authority.RootKeyPEM),
-		"root_cert_pem_b64":    pki.Encode(authority.RootCertPEM),
-		"issuing_key_pem_b64":  pki.Encode(authority.IssuingKeyPEM),
-		"issuing_cert_pem_b64": pki.Encode(authority.IssuingCertPEM),
-		"ddns_tsig_secret":     ddnsSecret,
-		"pulse_admin_password": pulseAdminPassword,
+		"installation_id":         s.SecretMetadata.InstallationID,
+		"bootstrap_secret":        secret,
+		"root_key_pem_b64":        pki.Encode(authority.RootKeyPEM),
+		"root_cert_pem_b64":       pki.Encode(authority.RootCertPEM),
+		"issuing_key_pem_b64":     pki.Encode(authority.IssuingKeyPEM),
+		"issuing_cert_pem_b64":    pki.Encode(authority.IssuingCertPEM),
+		"ddns_tsig_secret":        ddnsSecret,
+		"pulse_admin_password":    pulseAdminPassword,
+		"pulse_proxy_auth_secret": pulseProxyAuthSecret,
 	}
 	return StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), document)
 }

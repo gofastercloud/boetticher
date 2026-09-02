@@ -27,6 +27,9 @@ func Compose(config model.SiteConfig) (model.Site, []ResolvedModule, error) {
 		return model.Site{}, nil, err
 	}
 	site.Declarations = declarations
+	for _, declaration := range declarations {
+		site.DHCPReservations = append(site.DHCPReservations, declaration.DHCPReservations...)
+	}
 	site.Modules = make([]model.ResolvedModule, 0, len(resolved))
 	for _, module := range resolved {
 		definition := module.Definition

@@ -76,12 +76,12 @@ func TestDeploymentCredentialProjectionContainsOnlyEncryptedPaths(t *testing.T) 
 
 func TestFirstPartyModuleCredentialsUseEphemeralSystemdPaths(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
-	tailnetEnabled, litellmEnabled := true, true
+	tailnetEnabled, bifrostEnabled := true, true
 	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
-	config.Modules.LiteLLM = &model.LiteLLMModuleConfig{
-		Enabled:   &litellmEnabled,
-		Upstreams: []model.LiteLLMUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
-		Models:    []model.LiteLLMModelConfig{{Alias: "selected-alias", Upstream: "openrouter", Model: "selected/openrouter-model"}},
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
+		Enabled:   &bifrostEnabled,
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
+		Models:    []model.BifrostModelConfig{{Alias: "selected-alias", Upstream: "openrouter", Model: "selected/openrouter-model"}},
 	}
 	site, _, err := modules.Compose(config)
 	if err != nil {
@@ -98,10 +98,10 @@ func TestFirstPartyModuleCredentialsUseEphemeralSystemdPaths(t *testing.T) {
 	if !strings.Contains(dropIns["lab-tailnet-01"]["tailscaled.service"], "LoadCredentialEncrypted=tailscale-auth-key:/var/lib/boetticher/credentials/tailscale-auth-key.cred") {
 		t.Fatalf("Tailscale credential projection is incomplete: %#v", dropIns)
 	}
-	if !strings.Contains(dropIns["lab-litellm-01"]["litellm.service"], "openrouter-api-key:/var/lib/boetticher/credentials/openrouter-api-key.cred") {
-		t.Fatalf("LiteLLM credential projection is incomplete: %#v", dropIns)
+	if !strings.Contains(dropIns["lab-bifrost-01"]["bifrost.service"], "openrouter-api-key:/var/lib/boetticher/credentials/openrouter-api-key.cred") {
+		t.Fatalf("Bifrost credential projection is incomplete: %#v", dropIns)
 	}
-	if strings.Contains(strings.Join([]string{dropIns["lab-tailnet-01"]["tailscaled.service"], dropIns["lab-litellm-01"]["litellm.service"]}, "\n"), "synthetic-secret") {
+	if strings.Contains(strings.Join([]string{dropIns["lab-tailnet-01"]["tailscaled.service"], dropIns["lab-bifrost-01"]["bifrost.service"]}, "\n"), "synthetic-secret") {
 		t.Fatal("module credential projection contains a secret value")
 	}
 }
@@ -131,7 +131,7 @@ func TestAirVPNCredentialUsesOnlyItsServiceRuntimePath(t *testing.T) {
 func TestStreamDeckUsesSharedPulseTokenOnlyInPostPulseProjection(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	enabled := true
-	config.Modules.StreamDeck = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.StreamDeck = &model.NetworkToggleModuleConfig{Enabled: &enabled}
 	config.USBExports = []model.USBExportBinding{{Module: "streamdeck", Requirement: "display", Port: "1-2.5", VendorID: "0fd9", ProductID: "006d"}}
 	site, _, err := modules.Compose(config)
 	if err != nil {

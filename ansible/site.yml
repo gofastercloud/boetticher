@@ -34,10 +34,12 @@
       when:
         - inventory_hostname in groups.get('airvpn', [])
         - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
-    - role: litellm
-      when: inventory_hostname in groups.get('litellm', [])
+    - role: bifrost
+      when: inventory_hostname in groups.get('bifrost', [])
     - role: printer
       when: inventory_hostname in groups.get('printer', [])
+    - role: arr
+      when: inventory_hostname in groups.get('arr', [])
     - role: streamdeck
       when: inventory_hostname in groups.get('streamdeck', [])
     - role: aiops

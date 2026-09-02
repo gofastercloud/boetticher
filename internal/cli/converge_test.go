@@ -234,6 +234,56 @@ func TestProjectionCleanupRejectsSymlinkedGeneratedRoot(t *testing.T) {
 	}
 }
 
+func TestWriteStorageProjectionDoesNotRequireAirVPNProfile(t *testing.T) {
+	config := model.ConfigFromSite(model.NewDefaultSite("installation", "age1example"))
+	config.StorageProfile = "dedicated-data-disk"
+	config.StorageDevice = "/dev/disk/by-id/ata-example-data"
+	enabled := true
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "australia"}
+	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
+	s, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	if err := writeStorageProjection(dir, s); err != nil {
+		t.Fatalf("write storage projection before AirVPN profile exists: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "generated", "storage", "desired-state.json")); err != nil {
+		t.Fatalf("storage projection was not written: %v", err)
+	}
+}
+
+func TestWriteBootstrapProjectionsDefersAirVPNRuntimeProjections(t *testing.T) {
+	config := model.ConfigFromSite(model.NewDefaultSite("installation", "age1example"))
+	config.StorageProfile = "dedicated-data-disk"
+	config.StorageDevice = "/dev/disk/by-id/ata-example-data"
+	enabled := true
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "australia"}
+	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
+	s, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	if err := writeBootstrapProjections(dir, s); err != nil {
+		t.Fatalf("write bootstrap projections before AirVPN profile exists: %v", err)
+	}
+	for _, path := range []string{
+		filepath.Join(dir, "generated", "model.json"),
+		filepath.Join(dir, "generated", "storage", "desired-state.json"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("safe bootstrap projection %s was not written: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "generated", "firewall", "boetticher.nft")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("bootstrap wrote a firewall projection without AirVPN metadata: %v", err)
+	}
+}
+
 func TestProjectionCleanupRejectsSymlinkedModuleRoot(t *testing.T) {
 	dir := t.TempDir()
 	moduleRootParent := filepath.Join(dir, "generated")
@@ -283,10 +333,10 @@ func TestPulseCredentialBootstrapUsesTemporaryRootAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, `CreatePulseMonitoringCredentials(ctx, rootRunner, s.BootstrapAddress, "root")`) {
+	if !strings.Contains(text, `ReplacePulseMonitoringCredentials(ctx, rootRunner, s.BootstrapAddress, "root")`) {
 		t.Fatal("Pulse Proxmox credential bootstrap does not use the temporary root authority")
 	}
-	if strings.Contains(text, `CreatePulseMonitoringCredentials(context.Background(), proxmoxRunner, s.BootstrapAddress, model.DefaultAdminSSHUser)`) {
+	if strings.Contains(text, `ReplacePulseMonitoringCredentials(context.Background(), proxmoxRunner, s.BootstrapAddress, model.DefaultAdminSSHUser)`) {
 		t.Fatal("Pulse Proxmox credential bootstrap depends on durable labadmin sudo")
 	}
 }
@@ -432,17 +482,17 @@ func TestPulseReconciliationForwardUsesRestrictedBastion(t *testing.T) {
 	}
 }
 
-func TestAIOpsModelCapabilitiesUseTheLiteLLMAlias(t *testing.T) {
+func TestAIOpsModelCapabilitiesUseTheBifrostAlias(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, `"/usr/local/libexec/boetticher-litellm-model-capabilities", modelConfig.Alias`) {
-		t.Fatal("AIOps model capability lookup does not use the declared LiteLLM alias")
+	if !strings.Contains(text, `"/usr/local/libexec/boetticher-bifrost-model-capabilities", modelConfig.Alias`) {
+		t.Fatal("AIOps model capability lookup does not use the declared Bifrost alias")
 	}
-	if strings.Contains(text, `"/usr/local/libexec/boetticher-litellm-model-capabilities", modelConfig.Model`) {
-		t.Fatal("AIOps model capability lookup passes the provider model instead of the LiteLLM alias")
+	if strings.Contains(text, `"/usr/local/libexec/boetticher-bifrost-model-capabilities", modelConfig.Model`) {
+		t.Fatal("AIOps model capability lookup passes the provider model instead of the Bifrost alias")
 	}
 }
 
@@ -547,7 +597,7 @@ func TestDeployDryRunDoesNotWriteLocalProjections(t *testing.T) {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	if err := runDeploy([]string{"--site", siteDir, "--dry-run"}, &output); err == nil {
+	if err := runDeploy([]string{"--site", siteDir, "--dry-run", "--replace-firewall"}, &output); err == nil {
 		t.Fatal("dry-run unexpectedly passed without qualified artifacts")
 	}
 	if !strings.Contains(output.String(), "Artifact qualification: FAIL") {
@@ -556,8 +606,43 @@ func TestDeployDryRunDoesNotWriteLocalProjections(t *testing.T) {
 	if !strings.Contains(output.String(), "Deployment: FAIL") || !strings.Contains(output.String(), "Infrastructure changed: NO") {
 		t.Fatalf("dry-run omitted binary deployment summary: %s", output.String())
 	}
+	if !strings.Contains(output.String(), "Firewall root recovery: requested (dry-run; declared persistent volumes remain attached)") {
+		t.Fatalf("dry-run omitted requested firewall recovery: %s", output.String())
+	}
 	if _, err := os.Stat(filepath.Join(siteDir, "generated", "model.json")); !os.IsNotExist(err) {
 		t.Fatalf("deploy dry-run wrote a local model projection: %v", err)
+	}
+}
+
+func TestValidateDeployRecoveryOptions(t *testing.T) {
+	tests := []struct {
+		name               string
+		mode               string
+		replaceFirewall    bool
+		recreateLegacyLXCs bool
+		confirm            bool
+		dryRun             bool
+		want               string
+	}{
+		{name: "ordinary deployment", mode: model.GatewayModeManaged},
+		{name: "managed dry run", mode: model.GatewayModeManaged, replaceFirewall: true, dryRun: true},
+		{name: "managed confirmed", mode: model.GatewayModeManaged, replaceFirewall: true, confirm: true},
+		{name: "managed unconfirmed", mode: model.GatewayModeManaged, replaceFirewall: true, want: "requires --confirm"},
+		{name: "external gateway", mode: model.GatewayModeExternal, replaceFirewall: true, confirm: true, want: "managed gateway mode"},
+		{name: "legacy LXC dry run", mode: model.GatewayModeManaged, recreateLegacyLXCs: true, dryRun: true},
+		{name: "legacy LXC confirmed", mode: model.GatewayModeManaged, recreateLegacyLXCs: true, confirm: true},
+		{name: "legacy LXC unconfirmed", mode: model.GatewayModeManaged, recreateLegacyLXCs: true, want: "--recreate-legacy-lxcs requires --confirm"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateDeployRecoveryOptions(test.mode, test.replaceFirewall, test.recreateLegacyLXCs, test.confirm, test.dryRun)
+			if test.want == "" && err != nil {
+				t.Fatalf("validateDeployRecoveryOptions() = %v", err)
+			}
+			if test.want != "" && (err == nil || !strings.Contains(err.Error(), test.want)) {
+				t.Fatalf("validateDeployRecoveryOptions() = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 

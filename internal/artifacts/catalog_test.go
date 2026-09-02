@@ -500,7 +500,7 @@ func TestArtifactDefinitionDigestBindsBuildInputs(t *testing.T) {
 
 func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	root := filepath.Join("..", "..", "images")
-	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "portal/image.yaml", "tailnet-router/image.yaml", "litellm/image.yaml", "printer/image.yaml", "streamdeck/image.yaml", "aiops/image.yaml"}
+	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "portal/image.yaml", "tailnet-router/image.yaml", "bifrost/image.yaml", "printer/image.yaml", "streamdeck/image.yaml", "aiops/image.yaml"}
 	for _, relative := range paths {
 		data, err := os.ReadFile(filepath.Join(root, relative))
 		if err != nil {
@@ -626,21 +626,21 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	if !strings.Contains(string(buildScript), `install_packages "$rootfs" dbus "tailscale=$tailscale_package_version"`) {
 		t.Fatal("tailnet-router build does not install the system D-Bus required by its systemd lifecycle")
 	}
-	litellm, err := os.ReadFile(filepath.Join(root, "litellm", "image.yaml"))
+	bifrost, err := os.ReadFile(filepath.Join(root, "bifrost", "image.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, required := range []string{
-		"name: boetticher-litellm",
+		"name: boetticher-bifrost",
 		"version: 1.0.0",
 		"router: bifrost",
-		"router_contract: litellm-openai-compatible",
+		"router_contract: bifrost-openai-compatible",
 		"nginx: 1.26.3-3+deb13u7",
 		"backend_bind: 127.0.0.1:4000",
 		"mtls_required: true",
 	} {
-		if !strings.Contains(string(litellm), required) {
-			t.Fatalf("LiteLLM image definition is missing %q", required)
+		if !strings.Contains(string(bifrost), required) {
+			t.Fatalf("Bifrost image definition is missing %q", required)
 		}
 	}
 	smokeScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "smoke-appliance.sh"))
@@ -651,20 +651,20 @@ func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	smokeText := string(smokeScript)
 	for _, required := range []string{
 		"build_tailnet_router",
-		"build_litellm",
+		"build_bifrost",
 		"CGO_ENABLED=0 go build",
 		"getent passwd bifrost | grep -Eq '^bifrost:'",
-		"grep -Fxq 'User=bifrost' \"$rootfs/etc/systemd/system/litellm.service\"",
-		"grep -Fxq 'CapabilityBoundingSet=' \"$rootfs/etc/systemd/system/litellm.service\"",
+		"grep -Fxq 'User=bifrost' \"$rootfs/etc/systemd/system/bifrost.service\"",
+		"grep -Fxq 'CapabilityBoundingSet=' \"$rootfs/etc/systemd/system/bifrost.service\"",
 		"boetticher-bifrost",
 		"rm -f \"$rootfs/etc/nginx/sites-enabled/default\"",
 	} {
 		if !strings.Contains(buildText+smokeText, required) {
-			t.Fatalf("LiteLLM build hygiene is missing %q", required)
+			t.Fatalf("Bifrost build hygiene is missing %q", required)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(root, "litellm", "runtime", "litellm-start")); !os.IsNotExist(err) {
-		t.Fatalf("LiteLLM artifact retains the removed Python launcher: %v", err)
+	if _, err := os.Stat(filepath.Join(root, "bifrost", "runtime", "bifrost-start")); !os.IsNotExist(err) {
+		t.Fatalf("Bifrost artifact retains the removed Python launcher: %v", err)
 	}
 }
 
@@ -685,7 +685,7 @@ func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *tes
 	if !strings.Contains(buildText, `timing_emit "artifact_build_all"`) || !strings.Contains(buildText, "pid_a=") || !strings.Contains(buildText, "pid_b=") || !strings.Contains(buildText, "memory-heavy") {
 		t.Fatal("image construction is missing explicit bounded worker scheduling")
 	}
-	if strings.Count(buildText, "image-tailnet-router|image-litellm|image-aiops") != 2 {
+	if strings.Count(buildText, "image-tailnet-router|image-bifrost|image-aiops") != 2 {
 		t.Fatal("AIOps is not accepted by both direct and selected image target validation")
 	}
 	benchmarkScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "benchmark-artifact-compression.sh"))
@@ -720,6 +720,15 @@ func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *tes
 	}
 	if !strings.Contains(scanText, "timing_artifact=${3:-}") || strings.Contains(scanText, "timing_emit() {\n  stage=$1\n  duration_ms=$2\n  artifact=${3:-}") {
 		t.Fatal("qualification timing helper must not overwrite the artifact path")
+	}
+	for _, required := range []string{
+		"module=${name#boetticher-}",
+		"[ \"$module\" = dns-blocky ] && module=dns",
+		"if ! GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact",
+	} {
+		if !strings.Contains(scanText, required) {
+			t.Fatalf("qualification does not derive or fail-closed validate artifact module identity: missing %q", required)
+		}
 	}
 	if strings.Contains(buildText, "build_dns_blocky() {\n  printf '%s\\n' 'boetticher build stage: dns blocky'\n  rootfs=$(prepare_rootfs boetticher-dns-blocky)\n  install_powerdns \"$rootfs\"\n  install_packages \"$rootfs\" chrony") {
 		t.Fatal("DNS construction still performs a redundant package-index transaction")
@@ -844,6 +853,8 @@ func TestGatusArtifactSmokeContractUsesSupportedChecks(t *testing.T) {
 		"test -x \"$rootfs/usr/local/bin/gatus\"",
 		"test -f \"$rootfs/etc/systemd/system/gatus.service\"",
 		"User=gatus",
+		"Environment=GATUS_CONFIG_PATH=/etc/boetticher/gatus/config.yaml",
+		"ExecStart=/usr/local/bin/gatus",
 		"test ! -e \"$rootfs/etc/boetticher/gatus/config.yaml\"",
 	} {
 		if !strings.Contains(text, required) {
@@ -852,6 +863,9 @@ func TestGatusArtifactSmokeContractUsesSupportedChecks(t *testing.T) {
 	}
 	if strings.Contains(text, "run /usr/local/bin/gatus version") {
 		t.Fatal("Gatus smoke contract invokes an unsupported version subcommand")
+	}
+	if strings.Contains(text, "--config-path") {
+		t.Fatal("Gatus smoke contract invokes an unsupported config-path argument")
 	}
 }
 

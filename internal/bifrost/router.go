@@ -18,7 +18,7 @@ import (
 
 const (
 	DefaultListen           = "127.0.0.1:4000"
-	DefaultConfigPath       = "/etc/boetticher/litellm/config.json"
+	DefaultConfigPath       = "/etc/boetticher/bifrost/config.json"
 	DefaultCredentialDirEnv = "CREDENTIALS_DIRECTORY"
 	MaxRequestBytes         = 2 * 1024 * 1024
 	MaxResponseBytes        = 4 * 1024 * 1024

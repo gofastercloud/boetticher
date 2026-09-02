@@ -1,5 +1,5 @@
-// Package telemetry carries bounded, non-secret operation measurements through
-// the deployment call graph. It deliberately has no dependency on reporting,
+// Package telemetry carries small, non-secret timing measurements through the
+// deployment call graph. It deliberately has no dependency on reporting,
 // configuration, or provider packages.
 package telemetry
 
