@@ -513,7 +513,7 @@
           - /run/boetticher-kiosk/client.p12
           - -d
           - sql:/home/kiosk/.pki/nssdb
-          - -W
+          - -w
           - /run/boetticher-kiosk/p12-password
       no_log: true
   always:
@@ -521,6 +521,26 @@
       ansible.builtin.file:
         path: /run/boetticher-kiosk
         state: absent
+
+- name: Set kiosk ownership on the NSS database
+  ansible.builtin.file:
+    path: /home/kiosk/.pki/nssdb
+    state: directory
+    owner: kiosk
+    group: kiosk
+    mode: '0700'
+
+- name: Set kiosk ownership on NSS database files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: file
+    owner: kiosk
+    group: kiosk
+    mode: '0600'
+  loop:
+    - /home/kiosk/.pki/nssdb/cert9.db
+    - /home/kiosk/.pki/nssdb/key4.db
+    - /home/kiosk/.pki/nssdb/pkcs11.txt
 
 - name: Set graphical target as the kiosk boot target
   ansible.builtin.command: systemctl set-default graphical.target
