@@ -13,6 +13,11 @@
     name: pulse-agent
     state: restarted
 
+- name: restart pulse-kiosk
+  ansible.builtin.systemd_service:
+    name: pulse-kiosk
+    state: restarted
+
 - name: restart log2ram
   ansible.builtin.systemd_service:
     name: log2ram

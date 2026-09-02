@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,29 @@ func TestKioskCertificateSelectorPinsPulseIdentity(t *testing.T) {
 	}
 	if !strings.HasPrefix(selector, "'") || !strings.HasSuffix(selector, "'") {
 		t.Fatalf("certificate selector is not shell-safe: %s", selector)
+	}
+}
+
+func TestKioskCertificatePolicyUsesStringifiedChromeEntries(t *testing.T) {
+	policy, err := kioskCertificatePolicy("https://monitor.lab.home.arpa", "lab.home.arpa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var outer struct {
+		Entries []string `json:"AutoSelectCertificateForUrls"`
+	}
+	if err := json.Unmarshal([]byte(`{"AutoSelectCertificateForUrls":`+policy+`}`), &outer); err != nil {
+		t.Fatalf("policy is not valid JSON: %v", err)
+	}
+	if len(outer.Entries) != 1 {
+		t.Fatalf("policy entries = %d, want 1", len(outer.Entries))
+	}
+	var entry map[string]any
+	if err := json.Unmarshal([]byte(outer.Entries[0]), &entry); err != nil {
+		t.Fatalf("policy entry is not stringified JSON: %v", err)
+	}
+	if entry["pattern"] != "https://monitor.lab.home.arpa" {
+		t.Fatalf("policy pattern = %v", entry["pattern"])
 	}
 }
 

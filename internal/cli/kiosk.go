@@ -102,6 +102,10 @@ func runKioskSetup(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	certificatePolicy, err := kioskCertificatePolicy(pulseURL, s.Network.Domain)
+	if err != nil {
+		return err
+	}
 	fmt.Fprintf(out, "Kiosk target: %s@%s:%d\n", *user, address, *port)
 	fmt.Fprintf(out, "Pulse URL: %s\n", pulseURL)
 	fmt.Fprintf(out, "Kiosk source: %s\n", filepath.Join(sourceRoot, "pi", "kiosk"))
@@ -158,6 +162,7 @@ func runKioskSetup(args []string, out io.Writer) error {
 		"kiosk_pulse_agent_release_sha256": model.PulseAgentARM64ReleaseSHA256,
 		"kiosk_pulse_agent_token":          pulseAgentToken,
 		"kiosk_certificate_selector":       certificateSelector,
+		"kiosk_certificate_policy":         certificatePolicy,
 		"kiosk_client_subject":             "client-" + kioskClientName + "." + s.Network.Domain,
 		"kiosk_client_nickname":            "Boetticher Pulse kiosk",
 		"kiosk_client_key_pem":             certificate.KeyPEM,
@@ -285,17 +290,33 @@ func kioskSourceRoot() (string, error) {
 }
 
 func kioskCertificateSelector(pulseURL, domain string) (string, error) {
-	selector, err := json.Marshal([]map[string]any{{
+	selector, err := kioskCertificateSelectorJSON(pulseURL, domain)
+	if err != nil {
+		return "", err
+	}
+	return "'--auto-select-certificate-for-urls=" + string(selector) + "'", nil
+}
+
+func kioskCertificatePolicy(pulseURL, domain string) (string, error) {
+	selector, err := kioskCertificateSelectorJSON(pulseURL, domain)
+	if err != nil {
+		return "", err
+	}
+	policy, err := json.Marshal([]string{string(selector)})
+	if err != nil {
+		return "", err
+	}
+	return string(policy), nil
+}
+
+func kioskCertificateSelectorJSON(pulseURL, domain string) ([]byte, error) {
+	return json.Marshal(map[string]any{
 		"pattern": pulseURL,
 		"filter": map[string]any{
 			"ISSUER":  map[string]string{"CN": "boetticher Issuing CA"},
 			"SUBJECT": map[string]string{"CN": "client-" + kioskClientName + "." + domain},
 		},
-	}})
-	if err != nil {
-		return "", err
-	}
-	return "'--auto-select-certificate-for-urls=" + string(selector) + "'", nil
+	})
 }
 
 func kioskImportPassword() (string, error) {

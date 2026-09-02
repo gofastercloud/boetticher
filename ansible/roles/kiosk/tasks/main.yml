@@ -287,6 +287,7 @@
     - {path: /home/kiosk/.config, owner: kiosk, group: kiosk, mode: '0700'}
     - {path: /home/kiosk/.cache, owner: kiosk, group: kiosk, mode: '0700'}
     - {path: /home/kiosk/.pki/nssdb, owner: kiosk, group: kiosk, mode: '0700'}
+    - {path: /etc/chromium/policies/managed, owner: root, group: root, mode: '0755'}
     - {path: /etc/ssh/sshd_config.d, owner: root, group: root, mode: '0755'}
     - {path: /etc/systemd/system/pulse-kiosk.service.d, owner: root, group: root, mode: '0755'}
 
@@ -356,6 +357,15 @@
     group: root
     mode: '0644'
   notify: reload systemd
+
+- name: Install Chromium kiosk certificate auto-selection policy
+  ansible.builtin.template:
+    src: chromium-policy.json.j2
+    dest: /etc/chromium/policies/managed/boetticher-kiosk.json
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart pulse-kiosk
 
 - name: Install the SSH hardening drop-in
   ansible.builtin.copy:
