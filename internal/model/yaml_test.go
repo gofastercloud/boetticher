@@ -208,6 +208,21 @@ modules:
 	}
 }
 
+func TestParseSiteConfigAllowsArrAirVPNEgress(t *testing.T) {
+	config, err := ParseSiteConfig([]byte(`api_version: boetticher/v3
+modules:
+  arr:
+    enabled: true
+    network: airvpn
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Modules.Arr == nil || config.Modules.Arr.Enabled == nil || !*config.Modules.Arr.Enabled || config.Modules.Arr.Network != ModuleNetworkAirVPN {
+		t.Fatalf("unexpected ARR configuration: %#v", config.Modules.Arr)
+	}
+}
+
 func TestParseSiteConfigRejectsNetworkModeOnIneligibleModule(t *testing.T) {
 	_, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  monitoring:\n    network: airvpn\n"))
 	if err == nil || !strings.Contains(err.Error(), "modules.monitoring.network") {
