@@ -270,6 +270,31 @@ func TestGenerateExplainsInactiveAirVPNSubscriptionWithoutLeakingProviderData(t 
 	}
 }
 
+func TestGenerateExplainsUnreadableAirVPNDeviceReadinessWithoutLeakingProviderData(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/generator/":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"error":"provider-private-error"}`))
+		case "/status/":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"servers":[{"public_name":"Ainalrami","country_name":"Japan","country_code":"jp","continent":"Asia","health":"ok"}]}`))
+		case "/userinfo/":
+			_, _ = w.Write([]byte(`{"user":{"premium":true,"private":"provider-private-data"}}`))
+		case "/devices/":
+			_, _ = w.Write([]byte(`{"devices":"provider-private-data"}`))
+		default:
+			t.Fatalf("unexpected AirVPN readiness request: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	_, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(context.Background(), "controller-key", "japan")
+	if err == nil || !strings.Contains(err.Error(), "account readiness check failed") || !strings.Contains(err.Error(), "parse AirVPN devices") || strings.Contains(err.Error(), "provider-private") || strings.Contains(err.Error(), "controller-key") {
+		t.Fatalf("unreadable AirVPN device readiness was not safely explained: %v", err)
+	}
+}
+
 func TestGenerateExplainsUnavailableSelectorAgainstLiveStatus(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

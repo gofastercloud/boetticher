@@ -138,19 +138,20 @@ func (c Client) Generate(ctx context.Context, apiKey, servers string) (profile P
 				return Profile{}, fmt.Errorf("AirVPN selector %q currently has no live provider servers; choose a current AirVPN server, country, or continent", servers)
 			}
 			readiness, readinessErr := c.providerReadiness(ctx, baseURL, apiKey, httpClient)
-			if readinessErr == nil {
-				if !readiness.APIKeyAccepted {
-					return Profile{}, errors.New("AirVPN API key was not accepted; replace the controller key with an active AirVPN API key")
-				}
-				if readiness.SubscriptionKnown && !readiness.SubscriptionActive {
-					return Profile{}, errors.New("AirVPN account has no active premium access; renew or activate it before deploying")
-				}
-				if readiness.DeviceCount == 0 {
-					return Profile{}, errors.New("AirVPN API key is accepted but the account has no AirVPN devices; create a WireGuard-capable device before deploying")
-				}
-				if !readiness.HasReadyDevice {
-					return Profile{}, errors.New("AirVPN account has no ready WireGuard device; wait for it to become ready or renew it before deploying")
-				}
+			if readinessErr != nil {
+				return Profile{}, fmt.Errorf("AirVPN account readiness check failed after an opaque generator error: %w", readinessErr)
+			}
+			if !readiness.APIKeyAccepted {
+				return Profile{}, errors.New("AirVPN API key was not accepted; replace the controller key with an active AirVPN API key")
+			}
+			if readiness.SubscriptionKnown && !readiness.SubscriptionActive {
+				return Profile{}, errors.New("AirVPN account has no active premium access; renew or activate it before deploying")
+			}
+			if readiness.DeviceCount == 0 {
+				return Profile{}, errors.New("AirVPN API key is accepted but the account has no AirVPN devices; create a WireGuard-capable device before deploying")
+			}
+			if !readiness.HasReadyDevice {
+				return Profile{}, errors.New("AirVPN account has no ready WireGuard device; wait for it to become ready or renew it before deploying")
 			}
 		}
 		return Profile{}, fmt.Errorf("AirVPN generator returned an invalid WireGuard profile (%s): %w", providerResponseSummary(contentType, data), err)
