@@ -11,15 +11,16 @@ import (
 )
 
 const (
-	VolumeGroup      = "vg_boetticher"
-	ThinPool         = "thinpool"
-	BackupLogicalVol = "backup"
-	BackupMount      = "/srv/boetticher/backups"
-	BackupFilesystem = "ext4"
-	GuestStorageID   = "boetticher-thin"
-	BackupStorageID  = "boetticher-backups"
-	ThinPoolPercent  = "70%VG"
-	BackupLVPercent  = "20%VG"
+	VolumeGroup                     = "vg_boetticher"
+	ThinPool                        = "thinpool"
+	BackupLogicalVol                = "backup"
+	BackupMount                     = "/srv/boetticher/backups"
+	BackupFilesystem                = "ext4"
+	GuestStorageID                  = "boetticher-thin"
+	BackupStorageID                 = "boetticher-backups"
+	ThinPoolPercent                 = "70%VG"
+	BackupLVPercent                 = "20%VG"
+	USBTransportCompatibilityConfig = "/etc/default/grub.d/99-boetticher-usb-storage-compat.cfg"
 )
 
 // LocalStorageContent is the fixed content contract for Proxmox's built-in
@@ -227,6 +228,94 @@ func InitializationCommand(device string, confirmed, reinitialize bool) (string,
 		"pvesm status --storage " + GuestStorageID + " >/dev/null",
 		"pvesm status --storage " + BackupStorageID + " >/dev/null",
 	}...)
+	return strings.Join(lines, "\n"), nil
+}
+
+// ConfigureUSBTransportCompatibility writes a narrowly scoped, persistent
+// fallback for a USB bridge which drops the configured data disk while using
+// UAS. It discovers the bridge from the stable configured device rather than
+// accepting a volatile block path or a caller-supplied USB ID. The fallback is
+// reversible by removing only the Boetticher-owned GRUB drop-in and regenerating
+// GRUB; rebooting is separately explicit.
+func ConfigureUSBTransportCompatibility(ctx context.Context, runner InitializeRunner, address, user, device string, reboot, allowSharedBridge bool) error {
+	if runner == nil {
+		return errors.New("storage USB transport compatibility runner is required")
+	}
+	command, err := USBTransportCompatibilityCommand(device, reboot, allowSharedBridge)
+	if err != nil {
+		return err
+	}
+	if user != "root" {
+		command = "sudo -n sh -c " + shellQuote(command)
+	}
+	if _, err := runner.Run(ctx, address, user, command); err != nil {
+		return fmt.Errorf("configure dedicated storage USB transport compatibility: %w", err)
+	}
+	return nil
+}
+
+// USBTransportCompatibilityCommand returns the advanced, fixed recovery
+// command for a UAS transport failure. It owns exactly one GRUB drop-in,
+// validates the generated GRUB configuration, and refuses a shared bridge
+// identifier unless the caller deliberately acknowledges that scope.
+func USBTransportCompatibilityCommand(device string, reboot, allowSharedBridge bool) (string, error) {
+	if err := validateDevice(device); err != nil {
+		return "", err
+	}
+	sharedConfirmation := "no"
+	if allowSharedBridge {
+		sharedConfirmation = "yes"
+	}
+	quoted := shellQuote(device)
+	lines := []string{
+		"set -eu",
+		"device=" + quoted,
+		"test -e \"$device\" && test -b \"$(readlink -f \"$device\")\"",
+		"resolved=\"$(readlink -f \"$device\")\"",
+		"block=\"$(basename \"$resolved\")\"",
+		"sys=\"/sys/class/block/$block/device\"",
+		"vendor=\"\"",
+		"product=\"\"",
+		"while [ \"$sys\" != / ] && [ -n \"$sys\" ]; do",
+		"  if [ -r \"$sys/idVendor\" ] && [ -r \"$sys/idProduct\" ]; then",
+		"    vendor=\"$(tr '[:upper:]' '[:lower:]' < \"$sys/idVendor\" | tr -d '[:space:]')\"",
+		"    product=\"$(tr '[:upper:]' '[:lower:]' < \"$sys/idProduct\" | tr -d '[:space:]')\"",
+		"    break",
+		"  fi",
+		"  next=\"$(readlink -f \"$sys/..\")\"",
+		"  [ \"$next\" != \"$sys\" ] || break",
+		"  sys=\"$next\"",
+		"done",
+		"printf '%s\\n' \"$vendor\" | grep -Eq '^[[:xdigit:]]{4}$' || { echo 'configured storage device does not resolve to a USB vendor ID' >&2; exit 60; }",
+		"printf '%s\\n' \"$product\" | grep -Eq '^[[:xdigit:]]{4}$' || { echo 'configured storage device does not resolve to a USB product ID' >&2; exit 61; }",
+		"allow_shared=" + shellQuote(sharedConfirmation),
+		"matches=\"$(lsusb -d \"$vendor:$product\" 2>/dev/null | wc -l | tr -d '[:space:]')\"",
+		"case \"$matches\" in ''|*[!0-9]*) echo 'cannot determine matching USB bridge count' >&2; exit 62;; esac",
+		"if [ \"$matches\" -gt 1 ] && [ \"$allow_shared\" != yes ]; then echo 'USB transport recovery would affect multiple identical bridges; repeat with --allow-shared-usb-bridge-quirk' >&2; exit 63; fi",
+		"config=" + USBTransportCompatibilityConfig,
+		"line=\"GRUB_CMDLINE_LINUX_DEFAULT=\\\"\\$GRUB_CMDLINE_LINUX_DEFAULT usb-storage.quirks=$vendor:$product:u\\\"\"",
+		"install -d -m 0755 /etc/default/grub.d",
+		"if [ -e \"$config\" ] && ! grep -qxF \"$line\" \"$config\"; then echo 'existing Boetticher USB transport configuration is not the expected content' >&2; exit 64; fi",
+		"tmp=\"$(mktemp /etc/default/grub.d/.boetticher-storage-compat.XXXXXX)\"",
+		"trap 'rm -f \"$tmp\"' EXIT",
+		"printf '%s\\n' \"$line\" > \"$tmp\"",
+		"chmod 0644 \"$tmp\"",
+		"mv -f \"$tmp\" \"$config\"",
+		"update-grub",
+		"grub-script-check /boot/grub/grub.cfg",
+		"grep -Fq \"usb-storage.quirks=$vendor:$product:u\" /boot/grub/grub.cfg || { echo 'generated GRUB configuration is missing the USB storage compatibility quirk' >&2; exit 65; }",
+		"printf 'usb_storage_quirk=%s\\n' \"$vendor:$product:u\"",
+		"printf 'matching_usb_bridges=%s\\n' \"$matches\"",
+	}
+	if reboot {
+		lines = append(lines,
+			"command -v systemd-run >/dev/null 2>&1 || { echo 'systemd-run is required to schedule the controlled reboot' >&2; exit 66; }",
+			"systemd-run --unit=boetticher-storage-reboot --on-active=5s --collect /usr/bin/systemctl reboot",
+			"printf 'reboot=scheduled\\n'",
+		)
+	} else {
+		lines = append(lines, "printf 'reboot=required\\n'")
+	}
 	return strings.Join(lines, "\n"), nil
 }
 

@@ -274,7 +274,7 @@ func validateCommandForm(t *testing.T, fields []string) {
 		"pki":                {"--site": true},
 		"firewall":           {"--site": true, "--live": true, "--json": true},
 		"dhcp":               {"--site": true, "--live": true, "--json": true},
-		"storage":            {"--site": true, "--live": true, "--storage-confirmed": true, "--reinitialize": true},
+		"storage":            {"--site": true, "--live": true, "--storage-confirmed": true, "--reinitialize": true, "--reboot": true, "--allow-shared-usb-bridge-quirk": true},
 		"module":             {"--site": true, "--dry-run": true, "--confirm": true, "--purge": true, "--age-identity": true, "--proxmox-ca": true, "--insecure": true},
 		"config":             {"--site": true},
 	}

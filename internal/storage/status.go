@@ -45,8 +45,9 @@ func StatusCommand(device string) (string, error) {
 		"printf 'filesystem=%s\\n' \"${filesystem:-missing}\"",
 		"mount=\"$(findmnt -no TARGET /dev/" + VolumeGroup + "/" + BackupLogicalVol + " 2>/dev/null || true)\"",
 		"printf 'mount=%s\\n' \"${mount:-missing}\"",
-		"printf 'guest_storage=%s\\n' \"$(pvesm status --storage " + GuestStorageID + " >/dev/null 2>&1 && printf active || printf missing)\"",
-		"printf 'backup_storage=%s\\n' \"$(pvesm status --storage " + BackupStorageID + " >/dev/null 2>&1 && printf active || printf missing)\"",
+		"storage_state() { storage_id=\"$1\"; state=\"$(pvesm status --storage \"$storage_id\" 2>/dev/null | awk -v id=\"$storage_id\" '$1 == id { print $3; exit }')\"; case \"$state\" in active|inactive) printf '%s' \"$state\";; *) printf missing;; esac; }",
+		"printf 'guest_storage=%s\\n' \"$(storage_state " + GuestStorageID + ")\"",
+		"printf 'backup_storage=%s\\n' \"$(storage_state " + BackupStorageID + ")\"",
 		"capacity=\"$(df -hP " + BackupMount + " 2>/dev/null | tail -n 1 | xargs)\"",
 		"printf 'capacity=%s\\n' \"${capacity:-unavailable}\"",
 	}, "\n"), nil

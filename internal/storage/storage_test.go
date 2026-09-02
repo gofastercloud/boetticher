@@ -131,6 +131,65 @@ func TestInitializationCommandRequiresExplicitReinitializeForOldLayouts(t *testi
 	}
 }
 
+func TestUSBTransportCompatibilityCommandIsScopedAndRebootGuarded(t *testing.T) {
+	command, err := USBTransportCompatibilityCommand("/dev/disk/by-id/ata-example-data", false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"device='/dev/disk/by-id/ata-example-data'",
+		"/sys/class/block/$block/device",
+		"idVendor",
+		"idProduct",
+		"usb-storage.quirks=$vendor:$product:u",
+		"/etc/default/grub.d/99-boetticher-usb-storage-compat.cfg",
+		"update-grub",
+		"grub-script-check /boot/grub/grub.cfg",
+		"allow-shared-usb-bridge-quirk",
+	} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("USB transport compatibility command does not contain %q:\n%s", want, command)
+		}
+	}
+	if strings.Contains(command, "systemd-run") {
+		t.Fatal("USB transport compatibility scheduled a reboot without --reboot")
+	}
+	if strings.Contains(command, "wipefs") || strings.Contains(command, "mkfs") || strings.Contains(command, "pvcreate") {
+		t.Fatal("USB transport compatibility command contains a storage-destructive operation")
+	}
+	if strings.Contains(command, "/dev/sd") || strings.Contains(command, "/dev/nvme") {
+		t.Fatal("USB transport compatibility command embedded a transient device identity")
+	}
+
+	rebootCommand, err := USBTransportCompatibilityCommand("/dev/disk/by-id/ata-example-data", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rebootCommand, "systemd-run --unit=boetticher-storage-reboot") {
+		t.Fatalf("rebooting USB transport recovery did not schedule a bounded reboot:\n%s", rebootCommand)
+	}
+	if _, err := USBTransportCompatibilityCommand("/dev/sdb", false, false); err == nil {
+		t.Fatal("USB transport compatibility accepted a transient device path")
+	}
+}
+
+func TestConfigureUSBTransportCompatibilityUsesNonInteractiveSudo(t *testing.T) {
+	runner := &recordingInitializeRunner{}
+	if err := ConfigureUSBTransportCompatibility(context.Background(), runner, "192.0.2.10", "labadmin", "/dev/disk/by-id/ata-example-data", false, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(runner.command, "sudo -n sh -c ") {
+		t.Fatalf("USB transport compatibility did not use non-interactive sudo: %q", runner.command)
+	}
+	rootRunner := &recordingInitializeRunner{}
+	if err := ConfigureUSBTransportCompatibility(context.Background(), rootRunner, "192.0.2.10", "root", "/dev/disk/by-id/ata-example-data", true, true); err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(rootRunner.command, "sudo -n ") {
+		t.Fatalf("root USB transport compatibility unexpectedly used sudo: %q", rootRunner.command)
+	}
+}
+
 func TestInitializationCommandHasValidShellSyntax(t *testing.T) {
 	for _, reinitialize := range []bool{false, true} {
 		command, err := InitializationCommand("/dev/disk/by-id/ata-example-data", true, reinitialize)
@@ -141,6 +200,20 @@ func TestInitializationCommandHasValidShellSyntax(t *testing.T) {
 		check.Stdin = strings.NewReader(command)
 		if output, err := check.CombinedOutput(); err != nil {
 			t.Fatalf("storage command syntax (reinitialize=%t): %v\n%s\n%s", reinitialize, err, output, command)
+		}
+	}
+}
+
+func TestUSBTransportCompatibilityCommandHasValidShellSyntax(t *testing.T) {
+	for _, reboot := range []bool{false, true} {
+		command, err := USBTransportCompatibilityCommand("/dev/disk/by-id/ata-example-data", reboot, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		check := exec.Command("sh", "-n")
+		check.Stdin = strings.NewReader(command)
+		if output, err := check.CombinedOutput(); err != nil {
+			t.Fatalf("USB transport compatibility command syntax (reboot=%t): %v\n%s\n%s", reboot, err, output, command)
 		}
 	}
 }
@@ -207,7 +280,7 @@ func TestStatusCommandAndParserUseFixedReadOnlyFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"vgs --noheadings", "lvs --noheadings", "blkid -s TYPE", "findmnt -no TARGET", "pvesm status --storage boetticher-thin", "pvesm status --storage boetticher-backups", "df -hP /srv/boetticher/backups"} {
+	for _, want := range []string{"vgs --noheadings", "lvs --noheadings", "blkid -s TYPE", "findmnt -no TARGET", "storage_state()", "pvesm status --storage \"$storage_id\"", "df -hP /srv/boetticher/backups"} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("status command does not contain %q:\n%s", want, command)
 		}
@@ -255,5 +328,39 @@ func TestStatusCommandReportsAbsentDedicatedStorageWithoutMalformedFields(t *tes
 	}
 	if status.VolumeGroup != "missing" || status.ThinPool != "missing" || status.BackupLV != "missing" || status.Capacity != "unavailable" {
 		t.Fatalf("unexpected absent storage status: %#v", status)
+	}
+}
+
+func TestStatusCommandPreservesInactiveProxmoxStorage(t *testing.T) {
+	command, err := StatusCommand("/dev/disk/by-id/ata-example-data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	for name, script := range map[string]string{
+		"readlink": "#!/bin/sh\nprintf '%s\\n' /dev/example-data\n",
+		"vgs":      "#!/bin/sh\nprintf '%s\\n' vg_boetticher\n",
+		"lvs":      "#!/bin/sh\nprintf '%s\\n' thinpool\n",
+		"blkid":    "#!/bin/sh\nprintf '%s\\n' ext4\n",
+		"findmnt":  "#!/bin/sh\nprintf '%s\\n' /srv/boetticher/backups\n",
+		"pvesm":    "#!/bin/sh\nprintf '%s\\n' 'Name Type Status'\nif [ \"$3\" = boetticher-thin ]; then printf '%s\\n' 'boetticher-thin lvmthin inactive'; else printf '%s\\n' 'boetticher-backups dir active'; fi\n",
+		"df":       "#!/bin/sh\nprintf '%s\\n' 'Filesystem Size Used Avail Use% Mounted on' '/dev/mapper/vg_boetticher-backup 100G 1G 99G 1% /srv/boetticher/backups'\n",
+	} {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run := exec.Command("sh", "-c", command)
+	run.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"))
+	output, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("status command failed: %v\n%s\n%s", err, output, command)
+	}
+	status, err := ParseStatus(string(output))
+	if err != nil {
+		t.Fatalf("status parser rejected inactive storage: %v\n%s", err, output)
+	}
+	if status.GuestStorage != "inactive" || status.BackupStorage != "active" {
+		t.Fatalf("storage status discarded the live Proxmox state: %#v", status)
 	}
 }
