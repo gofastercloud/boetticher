@@ -24,11 +24,12 @@ const (
 )
 
 type Resource struct {
-	Name   string
-	Kind   string
-	Status string
-	CPU    *float64
-	Memory *float64
+	Name         string
+	Kind         string
+	PlatformType string
+	Status       string
+	CPU          *float64
+	Memory       *float64
 }
 
 type State struct {
@@ -114,8 +115,8 @@ func (c *PulseClient) Fetch(ctx context.Context) (State, error) {
 	}
 
 	resources := make([]Resource, 0, pageSize)
-	for offset := 0; len(resources) < maxResources; offset += pageSize {
-		path := "/api/resources?source=proxmox&limit=" + strconv.Itoa(pageSize) + "&offset=" + strconv.Itoa(offset) + "&sort=name&order=asc"
+	for pageNumber := 1; len(resources) < maxResources; pageNumber++ {
+		path := "/api/resources?source=proxmox&limit=" + strconv.Itoa(pageSize) + "&page=" + strconv.Itoa(pageNumber) + "&sort=name&order=asc"
 		body, err := c.json(ctx, path)
 		if err != nil {
 			return State{}, err
@@ -175,10 +176,11 @@ func (c *PulseClient) json(ctx context.Context, path string) ([]byte, error) {
 
 func decodeResource(raw json.RawMessage) (Resource, error) {
 	var value struct {
-		Name    string         `json:"name"`
-		Kind    string         `json:"type"`
-		Status  string         `json:"status"`
-		Metrics map[string]any `json:"metrics"`
+		Name         string         `json:"name"`
+		Kind         string         `json:"type"`
+		PlatformType string         `json:"platformType"`
+		Status       string         `json:"status"`
+		Metrics      map[string]any `json:"metrics"`
 	}
 	if err := json.Unmarshal(raw, &value); err != nil {
 		return Resource{}, fmt.Errorf("decode Pulse resource: %w", err)
@@ -187,11 +189,12 @@ func decodeResource(raw json.RawMessage) (Resource, error) {
 		return Resource{}, errors.New("malformed Pulse resource")
 	}
 	return Resource{
-		Name:   value.Name,
-		Kind:   defaultString(value.Kind, "guest"),
-		Status: defaultString(value.Status, "unknown"),
-		CPU:    optionalPercent(value.Metrics["cpu"]),
-		Memory: optionalPercent(value.Metrics["memory"]),
+		Name:         value.Name,
+		Kind:         defaultString(value.Kind, "guest"),
+		PlatformType: value.PlatformType,
+		Status:       defaultString(value.Status, "unknown"),
+		CPU:          optionalPercent(value.Metrics["cpu"]),
+		Memory:       optionalPercent(value.Metrics["memory"]),
 	}, nil
 }
 

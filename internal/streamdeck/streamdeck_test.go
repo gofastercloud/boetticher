@@ -34,15 +34,15 @@ func TestPulseFetchIsBoundedAndPaginates(t *testing.T) {
 		case "/api/state/summary":
 			_, _ = writer.Write([]byte(`{}`))
 		case "/api/resources":
-			if request.URL.Query().Get("offset") == "0" {
+			if request.URL.Query().Get("page") == "1" {
 				items := make([]map[string]any, pageSize)
 				for i := range items {
-					items[i] = map[string]any{"name": "node-a", "type": "node", "status": "up", "metrics": map[string]any{"cpu": 10, "memory": 20}}
+					items[i] = map[string]any{"name": "node-a", "type": "agent", "platformType": "proxmox", "status": "up", "metrics": map[string]any{"cpu": 10, "memory": 20}}
 				}
 				_ = json.NewEncoder(writer).Encode(map[string]any{"resources": items})
 				return
 			}
-			_ = json.NewEncoder(writer).Encode(map[string]any{"resources": []map[string]any{{"name": "node-b", "type": "node", "status": "down", "metrics": map[string]any{"cpu": 101}}}})
+			_ = json.NewEncoder(writer).Encode(map[string]any{"resources": []map[string]any{{"name": "node-b", "type": "agent", "platformType": "proxmox", "status": "down", "metrics": map[string]any{"cpu": 101}}}})
 		default:
 			http.NotFound(writer, request)
 		}
@@ -59,8 +59,19 @@ func TestPulseFetchIsBoundedAndPaginates(t *testing.T) {
 	if len(state.Resources) != 101 || state.Resources[0].CPU == nil || *state.Resources[0].CPU != 10 || state.Resources[100].CPU != nil {
 		t.Fatalf("unexpected Pulse state: %#v", state)
 	}
-	if len(requests) != 4 || !strings.Contains(requests[2], "offset=0") || !strings.Contains(requests[3], "offset=100") {
+	if len(requests) != 4 || !strings.Contains(requests[2], "page=1") || !strings.Contains(requests[3], "page=2") {
 		t.Fatalf("unexpected Pulse requests: %#v", requests)
+	}
+}
+
+func TestProxmoxHostsAcceptsProxmoxAgentsOnly(t *testing.T) {
+	hosts := ProxmoxHosts([]Resource{
+		{Name: "standalone-agent", Kind: "agent", PlatformType: "linux"},
+		{Name: "pve-node", Kind: "agent", PlatformType: "proxmox"},
+		{Name: "legacy-node", Kind: "node"},
+	})
+	if len(hosts) != 2 || hosts[0].Name != "legacy-node" || hosts[1].Name != "pve-node" {
+		t.Fatalf("unexpected Proxmox hosts: %#v", hosts)
 	}
 }
 
