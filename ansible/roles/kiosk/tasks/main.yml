@@ -186,6 +186,18 @@
       - kiosk_pulse_agent_version in kiosk_pulse_agent_version_result.stdout
     fail_msg: "Installed Pulse host-agent did not report the pinned version"
 
+- name: Create Pulse agent credential and state directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: /etc/systemd/system/pulse-agent.service.d, mode: '0755'}
+    - {path: /var/lib/boetticher/credentials, mode: '0700'}
+    - {path: /var/lib/boetticher/pulse-agent, mode: '0700'}
+
 - name: Encrypt the Pulse agent report token into the systemd credential store
   block:
     - name: Create the temporary Pulse credential staging directory
@@ -272,10 +284,7 @@
     - {path: /home/kiosk/.config, owner: kiosk, group: kiosk, mode: '0700'}
     - {path: /home/kiosk/.cache, owner: kiosk, group: kiosk, mode: '0700'}
     - {path: /home/kiosk/.pki/nssdb, owner: kiosk, group: kiosk, mode: '0700'}
-    - {path: /etc/systemd/system/pulse-agent.service.d, owner: root, group: root, mode: '0755'}
     - {path: /etc/ssh/sshd_config.d, owner: root, group: root, mode: '0755'}
-    - {path: /var/lib/boetticher/credentials, owner: root, group: root, mode: '0700'}
-    - {path: /var/lib/boetticher/pulse-agent, owner: root, group: root, mode: '0700'}
     - {path: /etc/systemd/system/pulse-kiosk.service.d, owner: root, group: root, mode: '0755'}
 
 - name: Install the kiosk visualizer
