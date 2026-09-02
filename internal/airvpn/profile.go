@@ -165,21 +165,12 @@ func providerResponseShape(data []byte) string {
 }
 
 func providerJSONErrorCategory(data []byte) string {
-	var response map[string]json.RawMessage
+	var response any
 	if err := json.Unmarshal(data, &response); err != nil {
 		return "invalid"
 	}
 	var details []string
-	for _, field := range []string{"error", "message", "detail", "reason", "code"} {
-		value, ok := response[field]
-		if !ok {
-			continue
-		}
-		var text string
-		if json.Unmarshal(value, &text) == nil {
-			details = append(details, text)
-		}
-	}
+	collectProviderJSONStrings(response, &details, 0)
 	message := strings.ToLower(strings.Join(details, " "))
 	switch {
 	case strings.Contains(message, "api") && strings.Contains(message, "key"):
@@ -196,6 +187,24 @@ func providerJSONErrorCategory(data []byte) string {
 		return "unspecified"
 	default:
 		return "provider-error"
+	}
+}
+
+func collectProviderJSONStrings(value any, details *[]string, depth int) {
+	if depth > 8 || len(*details) >= 32 {
+		return
+	}
+	switch typed := value.(type) {
+	case string:
+		*details = append(*details, typed)
+	case []any:
+		for _, child := range typed {
+			collectProviderJSONStrings(child, details, depth+1)
+		}
+	case map[string]any:
+		for _, child := range typed {
+			collectProviderJSONStrings(child, details, depth+1)
+		}
 	}
 }
 

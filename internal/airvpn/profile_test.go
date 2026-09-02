@@ -114,6 +114,18 @@ func TestGenerateClassifiesJSONProviderErrorWithoutLeakingIt(t *testing.T) {
 	}
 }
 
+func TestGenerateClassifiesNestedJSONProviderErrorWithoutLeakingIt(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"error":{"detail":"server selector is unavailable for controller-key"}}`))
+	}))
+	defer server.Close()
+	_, err := (Client{BaseURL: server.URL, HTTPClient: server.Client()}).Generate(context.Background(), "controller-key", "europe")
+	if err == nil || !strings.Contains(err.Error(), "shape=json-server-selector") || strings.Contains(err.Error(), "server selector") || strings.Contains(err.Error(), "controller-key") {
+		t.Fatalf("nested JSON provider error was not safely classified: %v", err)
+	}
+}
+
 func TestGenerateDoesNotFollowRedirects(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "https://example.invalid/leak", http.StatusFound)
