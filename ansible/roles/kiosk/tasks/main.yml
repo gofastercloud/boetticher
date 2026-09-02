@@ -201,7 +201,42 @@
     - {path: /var/lib/boetticher/credentials, mode: '0700'}
     - {path: /var/lib/boetticher/pulse-agent, mode: '0700'}
 
+- name: Inspect the existing encrypted Pulse agent credential
+  ansible.builtin.stat:
+    path: /var/lib/boetticher/credentials/pulse-agent-token.cred
+  register: kiosk_pulse_agent_credential
+  changed_when: false
+  no_log: true
+
+- name: Inspect the applied Pulse agent credential revision
+  ansible.builtin.stat:
+    path: /var/lib/boetticher/credentials/pulse-agent-token.sha256
+  register: kiosk_pulse_agent_credential_revision
+  changed_when: false
+  no_log: true
+
+- name: Read the applied Pulse agent credential revision
+  ansible.builtin.slurp:
+    src: /var/lib/boetticher/credentials/pulse-agent-token.sha256
+  register: kiosk_pulse_agent_credential_revision_content
+  when: kiosk_pulse_agent_credential_revision.stat.exists
+  no_log: true
+
+- name: Calculate the desired Pulse agent credential revision
+  ansible.builtin.set_fact:
+    kiosk_pulse_agent_credential_revision_wanted: "{{ kiosk_pulse_agent_token | hash('sha256') }}"
+  no_log: true
+
+- name: Determine whether the Pulse agent credential needs an update
+  ansible.builtin.set_fact:
+    kiosk_pulse_agent_credential_needs_update: >-
+      {{ not kiosk_pulse_agent_credential.stat.exists
+         or not kiosk_pulse_agent_credential_revision.stat.exists
+         or (kiosk_pulse_agent_credential_revision_content.content | default('') | b64decode | trim) != kiosk_pulse_agent_credential_revision_wanted }}
+  no_log: true
+
 - name: Encrypt the Pulse agent report token into the systemd credential store
+  when: kiosk_pulse_agent_credential_needs_update | bool
   block:
     - name: Create the temporary Pulse credential staging directory
       ansible.builtin.file:
@@ -231,6 +266,15 @@
       notify:
         - reload systemd
         - restart pulse-agent
+      no_log: true
+
+    - name: Record the applied Pulse agent credential revision
+      ansible.builtin.copy:
+        dest: /var/lib/boetticher/credentials/pulse-agent-token.sha256
+        content: "{{ kiosk_pulse_agent_credential_revision_wanted }}\n"
+        owner: root
+        group: root
+        mode: '0600'
       no_log: true
   always:
     - name: Remove the staged Pulse agent report token
@@ -468,8 +512,35 @@
   changed_when: false
   failed_when: false
 
+- name: Read the kiosk client certificate serial from the NSS database
+  become_user: kiosk
+  ansible.builtin.shell: |
+    set -o pipefail
+    certutil -L -d sql:/home/kiosk/.pki/nssdb -n {{ kiosk_client_nickname | quote }} -a |
+      openssl x509 -noout -serial |
+      cut -d= -f2 |
+      tr 'A-F' 'a-f'
+  args:
+    executable: /bin/bash
+  register: kiosk_nss_client_certificate_serial
+  changed_when: false
+  failed_when: false
+  when: kiosk_client_certificate.rc == 0
+  no_log: true
+
+- name: Remove an outdated kiosk client certificate from NSS
+  become_user: kiosk
+  ansible.builtin.command:
+    argv: [certutil, -D, -d, sql:/home/kiosk/.pki/nssdb, -n, "{{ kiosk_client_nickname }}"]
+  when:
+    - kiosk_client_certificate.rc == 0
+    - (kiosk_nss_client_certificate_serial.stdout | default('') | trim | lower) != (kiosk_client_certificate_serial | lower)
+  no_log: true
+
 - name: Import the controller-issued kiosk identity into NSS
-  when: kiosk_client_certificate.rc != 0
+  when: >-
+    kiosk_client_certificate.rc != 0 or
+    (kiosk_nss_client_certificate_serial.stdout | default('') | trim | lower) != (kiosk_client_certificate_serial | lower)
   block:
     - name: Stage kiosk identity material for NSS import
       ansible.builtin.file:
@@ -525,6 +596,7 @@
           - -w
           - /run/boetticher-kiosk/p12-password
       no_log: true
+      notify: restart pulse-kiosk
   always:
     - name: Remove staged kiosk identity material
       ansible.builtin.file:

@@ -3,8 +3,12 @@ package cli
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -327,7 +331,29 @@ func kioskImportPassword() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(data), nil
 }
 
+func validateKioskClientCertificate(authority pki.Authority, keyPEM, certPEM, chainPEM, domain string, now time.Time) (pki.ClientCertificate, error) {
+	identity, err := tls.X509KeyPair([]byte(chainPEM), []byte(keyPEM))
+	if err != nil {
+		return pki.ClientCertificate{}, fmt.Errorf("parse kiosk client identity: %w", err)
+	}
+	request, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: "client-" + kioskClientName + "." + domain},
+	}, identity.PrivateKey)
+	if err != nil {
+		return pki.ClientCertificate{}, fmt.Errorf("create kiosk client certificate request: %w", err)
+	}
+	certificate, err := pki.ValidateClientCertificate(authority, chainPEM, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: request})), kioskClientName, domain, now)
+	if err != nil {
+		return pki.ClientCertificate{}, fmt.Errorf("validate kiosk client certificate: %w", err)
+	}
+	if strings.TrimSpace(certificate.CertPEM) != strings.TrimSpace(certPEM) {
+		return pki.ClientCertificate{}, errors.New("kiosk client certificate does not match its chain")
+	}
+	return certificate, nil
+}
+
 func ensureKioskClientCertificate(siteDir string, s model.Site, authority pki.Authority) (pki.ClientCertificate, error) {
+	now := time.Now().UTC()
 	runtimeDir := filepath.Join(site.RuntimeDir(s), "pki", kioskClientName)
 	paths := []string{
 		filepath.Join(runtimeDir, "client.key.pem"),
@@ -351,14 +377,13 @@ func ensureKioskClientCertificate(siteDir string, s model.Site, authority pki.Au
 		return pki.ClientCertificate{}, errors.New("kiosk PKI runtime is incomplete; refusing to replace partial identity material")
 	}
 	if present == len(paths) {
-		serial, err := pki.CertificateSerial(string(existing[1]))
-		if err != nil {
-			return pki.ClientCertificate{}, fmt.Errorf("read kiosk certificate serial: %w", err)
+		certificate, err := validateKioskClientCertificate(authority, string(existing[0]), string(existing[1]), string(existing[2]), s.Network.Domain, now)
+		if err == nil {
+			return certificate, nil
 		}
-		return pki.ClientCertificate{Name: kioskClientName, KeyPEM: string(existing[0]), CertPEM: string(existing[1]), ChainPEM: string(existing[2]), Serial: serial}, nil
 	}
 
-	certificate, err := pki.IssueClient(authority, kioskClientName, s.Network.Domain, time.Now().UTC())
+	certificate, err := pki.IssueClient(authority, kioskClientName, s.Network.Domain, now)
 	if err != nil {
 		return pki.ClientCertificate{}, fmt.Errorf("issue kiosk client certificate: %w", err)
 	}

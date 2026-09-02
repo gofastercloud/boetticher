@@ -1750,6 +1750,26 @@ func TestPiKioskUsesDedicatedPulseClientCertificate(t *testing.T) {
 	}
 }
 
+func TestKioskRoleUpdatesCredentialsAndIdentityOnlyOnDrift(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "kiosk", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, required := range []string{
+		"Calculate the desired Pulse agent credential revision",
+		"kiosk_pulse_agent_credential_needs_update",
+		"Record the applied Pulse agent credential revision",
+		"Read the kiosk client certificate serial from the NSS database",
+		"Remove an outdated kiosk client certificate from NSS",
+		"kiosk_nss_client_certificate_serial",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("kiosk role is missing idempotent update guard %q", required)
+		}
+	}
+}
+
 func TestAnsibleOutputChangedUsesRecapOnly(t *testing.T) {
 	for _, test := range []struct {
 		name    string

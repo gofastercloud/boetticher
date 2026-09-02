@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/pki"
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
@@ -109,5 +111,46 @@ func TestKioskSetupRequiresConfirmationForMutation(t *testing.T) {
 	}, &output)
 	if err == nil || !strings.Contains(err.Error(), "--confirm") {
 		t.Fatalf("mutation without confirmation error = %v", err)
+	}
+}
+
+func TestEnsureKioskClientCertificateReplacesMismatchedCachedLeaf(t *testing.T) {
+	now := time.Now().UTC()
+	authority, err := pki.GenerateAuthority(now, "lab.home.arpa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued, err := pki.IssueClient(authority, kioskClientName, "lab.home.arpa", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := pki.IssueClient(authority, "different-client", "lab.home.arpa", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runtime := filepath.Join(t.TempDir(), "runtime")
+	t.Setenv("BOETTICHER_RUNTIME_DIR", runtime)
+	s := model.NewDefaultSite("installation", "age1example")
+	runtimeDir := filepath.Join(site.RuntimeDir(s), "pki", kioskClientName)
+	if err := os.MkdirAll(runtimeDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, "client.key.pem"), []byte(issued.KeyPEM), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, "client.crt.pem"), []byte(other.CertPEM), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, "chain.crt.pem"), []byte(issued.ChainPEM), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ensureKioskClientCertificate(t.TempDir(), s, authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CertPEM == issued.CertPEM || got.CertPEM == other.CertPEM {
+		t.Fatal("mismatched cached kiosk certificate was reused")
 	}
 }
