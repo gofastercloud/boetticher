@@ -64,7 +64,7 @@ func TestPulseFetchIsBoundedAndPaginates(t *testing.T) {
 	}
 }
 
-func TestProxmoxHostsAcceptsProxmoxAgentsOnly(t *testing.T) {
+func TestProxmoxHostsAcceptsLegacyHostAndAgentShapes(t *testing.T) {
 	hosts := ProxmoxHosts([]Resource{
 		{Name: "standalone-agent", Kind: "agent", PlatformType: "linux"},
 		{Name: "pve-node", Kind: "agent", PlatformType: "proxmox"},
@@ -72,6 +72,17 @@ func TestProxmoxHostsAcceptsProxmoxAgentsOnly(t *testing.T) {
 	})
 	if len(hosts) != 2 || hosts[0].Name != "legacy-node" || hosts[1].Name != "pve-node" {
 		t.Fatalf("unexpected Proxmox hosts: %#v", hosts)
+	}
+}
+
+func TestProxmoxHostsAcceptsPulseGuestResourceTypes(t *testing.T) {
+	hosts := ProxmoxHosts([]Resource{
+		{Name: "lab-storage", Kind: "storage"},
+		{Name: "lab-dns-01", Kind: "system-container", Status: "online"},
+		{Name: "lab-fw-01", Kind: "vm", Status: "online"},
+	})
+	if len(hosts) != 2 || hosts[0].Name != "lab-dns-01" || hosts[1].Name != "lab-fw-01" {
+		t.Fatalf("live Pulse Proxmox guests were not accepted: %#v", hosts)
 	}
 }
 

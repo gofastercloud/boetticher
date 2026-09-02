@@ -33,7 +33,7 @@ func ProxmoxHosts(resources []Resource) []Resource {
 	hosts := make([]Resource, 0, len(resources))
 	for _, resource := range resources {
 		switch strings.ToLower(strings.TrimSpace(resource.Kind)) {
-		case "node", "host", "proxmox-host", "pve":
+		case "node", "host", "proxmox-host", "pve", "vm", "system-container":
 			hosts = append(hosts, resource)
 		case "agent":
 			if isProxmoxPlatform(resource.PlatformType) {
