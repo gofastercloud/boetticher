@@ -2,7 +2,9 @@ package storage
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -213,5 +215,39 @@ func TestStatusCommandAndParserUseFixedReadOnlyFields(t *testing.T) {
 	}
 	if status.VolumeGroup != VolumeGroup || status.Filesystem != BackupFilesystem || status.Mount != BackupMount {
 		t.Fatalf("unexpected parsed storage status: %#v", status)
+	}
+}
+
+func TestStatusCommandReportsAbsentDedicatedStorageWithoutMalformedFields(t *testing.T) {
+	command, err := StatusCommand("/dev/disk/by-id/ata-example-data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	for name, script := range map[string]string{
+		"readlink": "#!/bin/sh\nexit 1\n",
+		"vgs":      "#!/bin/sh\nexit 0\n",
+		"lvs":      "#!/bin/sh\nexit 0\n",
+		"blkid":    "#!/bin/sh\nexit 1\n",
+		"findmnt":  "#!/bin/sh\nexit 1\n",
+		"pvesm":    "#!/bin/sh\nexit 1\n",
+		"df":       "#!/bin/sh\nexit 1\n",
+	} {
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run := exec.Command("sh", "-c", command)
+	run.Env = append(os.Environ(), "PATH="+binDir+":"+os.Getenv("PATH"))
+	output, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("status command failed: %v\n%s\n%s", err, output, command)
+	}
+	status, err := ParseStatus(string(output))
+	if err != nil {
+		t.Fatalf("status parser rejected absent dedicated storage: %v\n%s", err, output)
+	}
+	if status.VolumeGroup != "missing" || status.ThinPool != "missing" || status.BackupLV != "missing" || status.Capacity != "unavailable" {
+		t.Fatalf("unexpected absent storage status: %#v", status)
 	}
 }
