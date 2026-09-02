@@ -29,6 +29,7 @@ type recordingArgsRunner struct {
 	args    [][]string
 	err     error
 	errs    []error
+	outputs [][]byte
 }
 
 func TestEnsureBuilderCacheVolumeAllocatesOnlyReservedCanonicalVolume(t *testing.T) {
@@ -85,12 +86,17 @@ func (r *recordingArgsRunner) RunArgs(_ context.Context, address, user string, a
 	r.address = address
 	r.user = user
 	r.args = append(r.args, append([]string(nil), args...))
+	var output []byte
+	if len(r.outputs) > 0 {
+		output = r.outputs[0]
+		r.outputs = r.outputs[1:]
+	}
 	if len(r.errs) > 0 {
 		err := r.errs[0]
 		r.errs = r.errs[1:]
-		return nil, err
+		return output, err
 	}
-	return nil, r.err
+	return output, r.err
 }
 
 func TestInspectGuestArtifactReadsExistingGuestConfigOnce(t *testing.T) {
@@ -888,7 +894,8 @@ func TestEnsureLXCMigratesVerifiedPersistentVolumesToDeclaredStorage(t *testing.
 	before := "local:110/vm-110-disk-1.raw,mp=/var/lib/powerdns,backup=1,size=8G"
 	after := modelStorageIDForTest + ":vm-110-disk-1,mp=/var/lib/powerdns,backup=1,size=8G"
 	moved := false
-	privilegedRunner := &recordingArgsRunner{}
+	legacyPath := "/var/lib/vz/images/110/vm-110-disk-1.raw"
+	privilegedRunner := &recordingArgsRunner{outputs: [][]byte{[]byte(legacyPath + "\n"), []byte("/dev/loop15\n"), []byte(legacyPath + "\n")}}
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/110/config":
@@ -933,8 +940,8 @@ func TestEnsureLXCMigratesVerifiedPersistentVolumesToDeclaredStorage(t *testing.
 	if !moved {
 		t.Fatal("verified LXC persistent volume was not migrated")
 	}
-	if got, want := privilegedRunner.args, [][]string{{"/usr/sbin/pct", "mount", "110"}, {"/usr/sbin/pct", "unmount", "110"}}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("legacy loop cleanup commands = %#v, want %#v", got, want)
+	if got, want := privilegedRunner.args, [][]string{{"/usr/sbin/pvesm", "path", "local:110/vm-110-disk-1.raw"}, {"/usr/sbin/losetup", "--noheadings", "--output", "NAME", "--associated", legacyPath}, {"/usr/sbin/losetup", "--noheadings", "--output", "BACK-FILE", "/dev/loop15"}, {"/usr/sbin/losetup", "--detach", "/dev/loop15"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("legacy loop release commands = %#v, want %#v", got, want)
 	}
 }
 
@@ -980,7 +987,8 @@ func TestMigrateLXCPersistentVolumesRestoresRunningGuestAfterMoveFailure(t *test
 	}}}
 	before := "local:110/vm-110-disk-1.raw,mp=/var/lib/powerdns,backup=1,size=8G"
 	stopped, restored := false, false
-	privilegedRunner := &recordingArgsRunner{}
+	legacyPath := "/var/lib/vz/images/110/vm-110-disk-1.raw"
+	privilegedRunner := &recordingArgsRunner{outputs: [][]byte{[]byte(legacyPath + "\n"), []byte("/dev/loop15\n"), []byte(legacyPath + "\n")}}
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/current":
@@ -1013,21 +1021,38 @@ func TestMigrateLXCPersistentVolumesRestoresRunningGuestAfterMoveFailure(t *test
 	if !stopped || !restored {
 		t.Fatalf("running LXC was not safely restored: stopped=%t restored=%t", stopped, restored)
 	}
-	if got, want := privilegedRunner.args, [][]string{{"/usr/sbin/pct", "mount", "110"}, {"/usr/sbin/pct", "unmount", "110"}}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("legacy loop cleanup commands = %#v, want %#v", got, want)
+	if got, want := privilegedRunner.args, [][]string{{"/usr/sbin/pvesm", "path", "local:110/vm-110-disk-1.raw"}, {"/usr/sbin/losetup", "--noheadings", "--output", "NAME", "--associated", legacyPath}, {"/usr/sbin/losetup", "--noheadings", "--output", "BACK-FILE", "/dev/loop15"}, {"/usr/sbin/losetup", "--detach", "/dev/loop15"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("legacy loop release commands = %#v, want %#v", got, want)
 	}
 }
 
-func TestReleaseLegacyLXCLoopMappingsFailsClosedWhenUnmountFails(t *testing.T) {
-	runner := &recordingArgsRunner{errs: []error{nil, fmt.Errorf("unmount failed")}}
+func TestReleaseLegacyLXCLoopMappingFailsClosedWhenDetachFails(t *testing.T) {
+	legacyPath := "/var/lib/vz/images/110/vm-110-disk-1.raw"
+	runner := &recordingArgsRunner{
+		outputs: [][]byte{[]byte(legacyPath + "\n"), []byte("/dev/loop15\n"), []byte(legacyPath + "\n")},
+		errs:    []error{nil, nil, nil, fmt.Errorf("device busy")},
+	}
 	guest := GuestPlan{VMID: 110, Name: "test-dns"}
 	plan := Plan{Node: "node", PrivilegedRunner: runner, PrivilegedAddress: "192.0.2.10", PrivilegedUser: "root"}
-	err := releaseLegacyLXCLoopMappings(context.Background(), plan, guest)
-	if err == nil || !strings.Contains(err.Error(), "release legacy LXC loop mappings") {
-		t.Fatalf("failed loop cleanup was not held: %v", err)
+	err := releaseLegacyLXCLoopMapping(context.Background(), plan, guest, "local:110/vm-110-disk-1.raw,mp=/var/lib/powerdns,backup=1,size=8G")
+	if err == nil || !strings.Contains(err.Error(), "detach inactive legacy loop mapping") {
+		t.Fatalf("failed loop release was not held: %v", err)
 	}
-	if got, want := runner.args, [][]string{{"/usr/sbin/pct", "mount", "110"}, {"/usr/sbin/pct", "unmount", "110"}}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("legacy loop cleanup commands = %#v, want %#v", got, want)
+	if got, want := runner.args, [][]string{{"/usr/sbin/pvesm", "path", "local:110/vm-110-disk-1.raw"}, {"/usr/sbin/losetup", "--noheadings", "--output", "NAME", "--associated", legacyPath}, {"/usr/sbin/losetup", "--noheadings", "--output", "BACK-FILE", "/dev/loop15"}, {"/usr/sbin/losetup", "--detach", "/dev/loop15"}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("legacy loop release commands = %#v, want %#v", got, want)
+	}
+}
+
+func TestLegacyLXCLocalRawVolumeIDRejectsUnprovenVolume(t *testing.T) {
+	for _, observed := range []string{
+		"local:110/vm-111-disk-1.raw,mp=/var/lib/powerdns,backup=1,size=8G",
+		"local:110/not-a-managed-volume.raw,mp=/var/lib/powerdns,backup=1,size=8G",
+		"local:110/vm-110-disk--1.raw,mp=/var/lib/powerdns,backup=1,size=8G",
+		"boetticher-thin:vm-110-disk-1,mp=/var/lib/powerdns,backup=1,size=8G",
+	} {
+		if _, err := legacyLXCLocalRawVolumeID(observed, 110); err == nil {
+			t.Fatalf("unproven legacy volume %q was accepted", observed)
+		}
 	}
 }
 

@@ -1898,29 +1898,78 @@ func lxcDeviceParam(device model.DeviceRequirement) string {
 	return fmt.Sprintf("path=%s,mode=0666", device.Path)
 }
 
-// releaseLegacyLXCLoopMappings uses Proxmox's own stopped-container lifecycle
-// to release directory-storage raw-volume loop mappings. Proxmox 9 otherwise
-// reuses a writable loop device when move_volume needs a read-only source,
-// which prevents a safe local-to-thin copy. The bounded mount is always
-// followed by unmount; cleanup failure remains blocking.
-func releaseLegacyLXCLoopMappings(ctx context.Context, plan Plan, guest GuestPlan) (err error) {
+// releaseLegacyLXCLoopMapping detaches the one inactive loop device that
+// Proxmox retains for a proven legacy local raw LXC volume. Proxmox's LXC
+// copy worker mounts its source read-only in a private namespace; a retained
+// writable loop mapping causes that mount to fail. The guest is already
+// stopped by the caller. Every identity is re-proven through pvesm and
+// losetup immediately before the bounded detach, which also fails when the
+// device is still busy.
+func releaseLegacyLXCLoopMapping(ctx context.Context, plan Plan, guest GuestPlan, observed string) error {
 	if plan.PrivilegedRunner == nil || net.ParseIP(plan.PrivilegedAddress) == nil || plan.PrivilegedUser != "root" || guest.VMID <= 0 {
-		return fmt.Errorf("HOLD: guest %s requires the authorized root bootstrap path to release legacy LXC loop mappings", guest.Name)
+		return fmt.Errorf("HOLD: guest %s requires the authorized root bootstrap path to release a legacy LXC loop mapping", guest.Name)
 	}
-	vmid := strconv.Itoa(guest.VMID)
-	if _, err := plan.PrivilegedRunner.RunArgs(ctx, plan.PrivilegedAddress, plan.PrivilegedUser, []string{"/usr/sbin/pct", "mount", vmid}); err != nil {
-		return fmt.Errorf("mount stopped guest %s before legacy persistent-volume migration: %w", guest.Name, err)
+	volumeID, err := legacyLXCLocalRawVolumeID(observed, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("HOLD: %w", err)
 	}
-	defer func() {
-		if _, cleanupErr := plan.PrivilegedRunner.RunArgs(ctx, plan.PrivilegedAddress, plan.PrivilegedUser, []string{"/usr/sbin/pct", "unmount", vmid}); cleanupErr != nil {
-			if err == nil {
-				err = fmt.Errorf("HOLD: release legacy LXC loop mappings for %s: %w", guest.Name, cleanupErr)
-			} else {
-				err = fmt.Errorf("%w; additionally failed to release legacy LXC loop mappings for %s: %v", err, guest.Name, cleanupErr)
-			}
-		}
-	}()
+	volumePathOutput, err := plan.PrivilegedRunner.RunArgs(ctx, plan.PrivilegedAddress, plan.PrivilegedUser, []string{"/usr/sbin/pvesm", "path", volumeID})
+	if err != nil {
+		return fmt.Errorf("resolve legacy persistent volume %s for %s: %w", volumeID, guest.Name, err)
+	}
+	volumePath := strings.TrimSpace(string(volumePathOutput))
+	if !strings.HasPrefix(volumePath, "/") || strings.ContainsAny(volumePath, "\r\n") {
+		return fmt.Errorf("HOLD: Proxmox returned an unsafe path for legacy persistent volume %s", volumeID)
+	}
+	loopOutput, err := plan.PrivilegedRunner.RunArgs(ctx, plan.PrivilegedAddress, plan.PrivilegedUser, []string{"/usr/sbin/losetup", "--noheadings", "--output", "NAME", "--associated", volumePath})
+	if err != nil {
+		return fmt.Errorf("inspect legacy loop mapping for %s: %w", volumeID, err)
+	}
+	loops := strings.Fields(string(loopOutput))
+	if len(loops) == 0 {
+		return nil
+	}
+	if len(loops) != 1 || !isLoopDevice(loops[0]) {
+		return fmt.Errorf("HOLD: legacy persistent volume %s has ambiguous loop mappings %q", volumeID, strings.TrimSpace(string(loopOutput)))
+	}
+	backingOutput, err := plan.PrivilegedRunner.RunArgs(ctx, plan.PrivilegedAddress, plan.PrivilegedUser, []string{"/usr/sbin/losetup", "--noheadings", "--output", "BACK-FILE", loops[0]})
+	if err != nil {
+		return fmt.Errorf("re-verify legacy loop mapping %s for %s: %w", loops[0], volumeID, err)
+	}
+	if strings.TrimSpace(string(backingOutput)) != volumePath {
+		return fmt.Errorf("HOLD: legacy loop mapping %s no longer belongs to persistent volume %s", loops[0], volumeID)
+	}
+	if _, err := plan.PrivilegedRunner.RunArgs(ctx, plan.PrivilegedAddress, plan.PrivilegedUser, []string{"/usr/sbin/losetup", "--detach", loops[0]}); err != nil {
+		return fmt.Errorf("HOLD: detach inactive legacy loop mapping %s for persistent volume %s: %w", loops[0], volumeID, err)
+	}
 	return nil
+}
+
+func legacyLXCLocalRawVolumeID(observed string, vmid int) (string, error) {
+	first, _, _ := strings.Cut(observed, ",")
+	storageID, volume, ok := strings.Cut(first, ":")
+	if !ok || storageID != "local" || vmid <= 0 {
+		return "", fmt.Errorf("refusing legacy LXC loop release for malformed local volume %q", first)
+	}
+	prefix := fmt.Sprintf("%d/vm-%d-disk-", vmid, vmid)
+	if !strings.HasPrefix(volume, prefix) || !strings.HasSuffix(volume, ".raw") {
+		return "", fmt.Errorf("refusing legacy LXC loop release for non-canonical local volume %q", first)
+	}
+	diskNumber := strings.TrimSuffix(strings.TrimPrefix(volume, prefix), ".raw")
+	diskIndex, err := strconv.Atoi(diskNumber)
+	if err != nil || diskNumber == "" || diskIndex < 0 {
+		return "", fmt.Errorf("refusing legacy LXC loop release for non-canonical local volume %q", first)
+	}
+	return first, nil
+}
+
+func isLoopDevice(value string) bool {
+	if !strings.HasPrefix(value, "/dev/loop") {
+		return false
+	}
+	index := strings.TrimPrefix(value, "/dev/loop")
+	parsed, err := strconv.Atoi(index)
+	return err == nil && index != "" && parsed >= 0
 }
 
 // replaceLXC detaches only proven persistent mount-point volumes, retains
@@ -2214,9 +2263,9 @@ func migrateLXCPersistentVolumes(ctx context.Context, client *Client, plan Plan,
 		mountpoint string
 		storage    string
 		volume     model.PersistentVolumeDeclaration
+		observed   string
 	}
 	migrations := make([]migration, 0, len(guest.Volumes))
-	requiresLegacyLoopRelease := false
 	for index, volume := range guest.Volumes {
 		expected, expectedErr := persistentVolumeParam(volume)
 		if expectedErr != nil {
@@ -2235,10 +2284,7 @@ func migrateLXCPersistentVolumes(ctx context.Context, client *Client, plan Plan,
 		if !lxcVolumeMatchesPersistentIdentity(observed, expected) {
 			return fmt.Errorf("HOLD: refusing to migrate guest %s persistent volume %s=%q; its mount path, backup setting, or size does not prove the declared contract %q", guest.Name, mountpoint, observed, expected)
 		}
-		if observedStorage == "local" {
-			requiresLegacyLoopRelease = true
-		}
-		migrations = append(migrations, migration{mountpoint: mountpoint, storage: expectedStorage, volume: volume})
+		migrations = append(migrations, migration{mountpoint: mountpoint, storage: expectedStorage, volume: volume, observed: observed})
 	}
 	if len(migrations) == 0 {
 		return nil
@@ -2266,9 +2312,11 @@ func migrateLXCPersistentVolumes(ctx context.Context, client *Client, plan Plan,
 			}
 		}()
 	}
-	if requiresLegacyLoopRelease {
-		if err := releaseLegacyLXCLoopMappings(ctx, plan, guest); err != nil {
-			return err
+	for _, migration := range migrations {
+		if lxcVolumeStorageID(migration.observed) == "local" {
+			if err := releaseLegacyLXCLoopMapping(ctx, plan, guest, migration.observed); err != nil {
+				return err
+			}
 		}
 	}
 
