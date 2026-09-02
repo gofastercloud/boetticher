@@ -150,6 +150,27 @@ func TestArrRequiresAirVPNAndComposesOwnedDHCPReservation(t *testing.T) {
 	}
 }
 
+func TestArrReservationRemainsUniqueWithOtherOptionalModules(t *testing.T) {
+	config := testConfig(model.GatewayModeManaged)
+	enabled := true
+	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.Gatus = &model.NetworkToggleModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkDirect}
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "australia"}
+	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
+		Enabled: &enabled, Network: model.ModuleNetworkDirect,
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
+		Models:    []model.BifrostModelConfig{{Alias: "operations-investigator", Upstream: "openrouter", Model: "openai/gpt-5-mini"}},
+	}
+	site, _, err := Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(site.DHCPReservations) != 1 || site.DHCPReservations[0].Address != model.ArrGuestAddress {
+		t.Fatalf("ARR reservation was duplicated or missing: %#v", site.DHCPReservations)
+	}
+}
+
 func TestArrRejectsNonAirVPNNetwork(t *testing.T) {
 	config := testConfig(model.GatewayModeManaged)
 	enabled := true

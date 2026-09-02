@@ -87,6 +87,44 @@ func TestConfigureJSONApplyIsDesiredStateOnlyAndIdempotent(t *testing.T) {
 	}
 }
 
+func TestConfigureBifrostWithARRKeepsOwnedReservationUnique(t *testing.T) {
+	dir := t.TempDir()
+	identityPath, recipient := writeTestAgeIdentity(t)
+	config := model.ConfigFromSite(model.NewSite("installation", recipient, model.GatewayModeManaged))
+	enabled := true
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "australia"}
+	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
+	writeConfigureSite(t, dir, config)
+	if err := os.MkdirAll(filepath.Join(dir, "secrets"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := site.StoreEncryptedDocument(dir, recipient, "secrets/boetticher.sops.yaml", map[string]string{"placeholder": "present"}); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	err := RunWithInput([]string{
+		"module", "configure", "bifrost", "--site", dir, "--age-identity", identityPath,
+		"--non-interactive", "--enabled", "true", "--set", "network=direct",
+		"--set", `upstreams=[{"name":"openrouter","base_url":"https://openrouter.ai/api/v1","api_key_secret":"openrouter_api_key"}]`,
+		"--set", `models=[{"alias":"operations-investigator","upstream":"openrouter","model":"openai/gpt-5-mini"}]`,
+		"--secret", "openrouter_api_key", "--confirm",
+	}, strings.NewReader("test-openrouter-key\n"), &output, &output)
+	if err != nil {
+		t.Fatalf("configure Bifrost alongside ARR: %v\n%s", err, output.String())
+	}
+	loaded, err := site.LoadConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, _, err := modules.Compose(loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved.DHCPReservations) != 1 || resolved.DHCPReservations[0].Address != model.ArrGuestAddress {
+		t.Fatalf("ARR reservation was duplicated or missing: %#v", resolved.DHCPReservations)
+	}
+}
+
 func TestConfigureNonInteractiveHoldsForMissingUSB(t *testing.T) {
 	dir := t.TempDir()
 	config := model.ConfigFromSite(model.NewSite("installation", "age1test", model.GatewayModeManaged))
