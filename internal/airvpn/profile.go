@@ -76,8 +76,6 @@ func (c Client) Generate(ctx context.Context, apiKey, servers string) (profile P
 	query.Set("system", "other")
 	query.Set("resolve", "on")
 	query.Set("iplayer_entry", "ipv4")
-	query.Set("wireguard_mtu", "0")
-	query.Set("wireguard_persistent_keepalive", strconv.Itoa(DefaultKeepalive))
 	parsed.RawQuery = query.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
 	if err != nil {

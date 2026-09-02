@@ -33,18 +33,21 @@ func TestGenerateBuildsBoundedAirVPNRequestAndRedactsFailures(t *testing.T) {
 			t.Fatalf("unexpected generator request: path=%q api-key=%q accept=%q", r.URL.Path, r.Header.Get("Api-Key"), r.Header.Get("Accept"))
 		}
 		want := map[string]string{
-			"protocols":                      "wireguard_1_udp_1637",
-			"servers":                        "europe",
-			"device":                         "default",
-			"system":                         "other",
-			"resolve":                        "on",
-			"iplayer_entry":                  "ipv4",
-			"wireguard_mtu":                  "0",
-			"wireguard_persistent_keepalive": "25",
+			"protocols":     "wireguard_1_udp_1637",
+			"servers":       "europe",
+			"device":        "default",
+			"system":        "other",
+			"resolve":       "on",
+			"iplayer_entry": "ipv4",
 		}
 		for key, value := range want {
 			if r.URL.Query().Get(key) != value {
 				t.Fatalf("query %s=%q, want %q", key, r.URL.Query().Get(key), value)
+			}
+		}
+		for _, key := range []string{"wireguard_mtu", "wireguard_persistent_keepalive"} {
+			if value := r.URL.Query().Get(key); value != "" {
+				t.Fatalf("query %s=%q, want it omitted", key, value)
 			}
 		}
 		w.Header().Set("Content-Type", "text/plain")
