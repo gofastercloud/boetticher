@@ -451,7 +451,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if monitoringEnabled {
 		pulseProxmoxToken, err = site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_proxmox_token")
 		if errors.Is(err, site.ErrPlatformSecretMissing) {
-			pulseProxmoxToken, err = proxmox.CreatePulseMonitoringCredentials(ctx, rootRunner, s.BootstrapAddress, "root")
+			pulseProxmoxToken, err = proxmox.ReplacePulseMonitoringCredentials(ctx, rootRunner, s.BootstrapAddress, "root")
 			if err != nil {
 				return err
 			}

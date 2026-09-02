@@ -333,10 +333,10 @@ func TestPulseCredentialBootstrapUsesTemporaryRootAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, `CreatePulseMonitoringCredentials(ctx, rootRunner, s.BootstrapAddress, "root")`) {
+	if !strings.Contains(text, `ReplacePulseMonitoringCredentials(ctx, rootRunner, s.BootstrapAddress, "root")`) {
 		t.Fatal("Pulse Proxmox credential bootstrap does not use the temporary root authority")
 	}
-	if strings.Contains(text, `CreatePulseMonitoringCredentials(context.Background(), proxmoxRunner, s.BootstrapAddress, model.DefaultAdminSSHUser)`) {
+	if strings.Contains(text, `ReplacePulseMonitoringCredentials(context.Background(), proxmoxRunner, s.BootstrapAddress, model.DefaultAdminSSHUser)`) {
 		t.Fatal("Pulse Proxmox credential bootstrap depends on durable labadmin sudo")
 	}
 }

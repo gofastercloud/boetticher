@@ -27,6 +27,11 @@ type staleScopedTokenRunner struct {
 	removed  bool
 }
 
+type stalePulseMonitoringTokenRunner struct {
+	commands []string
+	removed  bool
+}
+
 func (r *staleScopedTokenRunner) Run(_ context.Context, _ string, _ string, command string) ([]byte, error) {
 	r.commands = append(r.commands, command)
 	switch command {
@@ -41,6 +46,32 @@ func (r *staleScopedTokenRunner) Run(_ context.Context, _ string, _ string, comm
 		return []byte(`[{"tokenid":"boetticher"}]`), nil
 	case "pvesh delete /access/users/'labadmin@pve'/token/'boetticher'":
 		r.removed = true
+		return nil, nil
+	default:
+		return nil, errors.New("unexpected command: " + command)
+	}
+}
+
+func (r *stalePulseMonitoringTokenRunner) Run(_ context.Context, _ string, _ string, command string) ([]byte, error) {
+	r.commands = append(r.commands, command)
+	switch command {
+	case "pvesh get /access/roles --output-format json":
+		return []byte(`[{"roleid":"PVEAuditor","privs":"Datastore.Audit Mapping.Audit Pool.Audit SDN.Audit Sys.Audit VM.Audit VM.GuestAgent.Audit","special":1}]`), nil
+	case "pvesh get /access/users --output-format json":
+		return []byte(`[{"comment":"Pulse API-only monitoring identity","enable":1,"expire":0,"userid":"pulse-monitor@pve"}]`), nil
+	case "pvesh get /access/users/'pulse-monitor@pve'/token --output-format json":
+		if r.removed {
+			return []byte(`[]`), nil
+		}
+		return []byte(`[{"expire":0,"privsep":1,"tokenid":"boetticher-monitoring"}]`), nil
+	case "pvesh get /access/acl --output-format json":
+		return []byte(`[{"path":"/","propagate":1,"roleid":"PVEAuditor","type":"user","ugid":"pulse-monitor@pve"},{"path":"/","propagate":1,"roleid":"PVEAuditor","type":"token","ugid":"pulse-monitor@pve!boetticher-monitoring"}]`), nil
+	case "pvesh delete /access/users/'pulse-monitor@pve'/token/'boetticher-monitoring'":
+		r.removed = true
+		return nil, nil
+	case "pvesh create /access/users/'pulse-monitor@pve'/token/'boetticher-monitoring' --privsep 1 --output-format json":
+		return []byte(`{"value":"recreated-monitoring-secret"}`), nil
+	case "pvesh set /access/acl --path '/' --users 'pulse-monitor@pve' --roles 'PVEAuditor' --propagate 1", "pvesh set /access/acl --path '/' --tokens 'pulse-monitor@pve!boetticher-monitoring' --roles 'PVEAuditor' --propagate 1":
 		return nil, nil
 	default:
 		return nil, errors.New("unexpected command: " + command)
@@ -521,6 +552,69 @@ func TestCreatePulseMonitoringCredentialsUsesBoundedAPIOnlyIdentity(t *testing.T
 	for _, forbidden := range []string{"root@pam", "BoetticherProvisioner", "VM.Monitor", "VM.GuestAgent", "PVEDatastoreAdmin", "/storage", "ssh", "opaque-monitoring-secret"} {
 		if strings.Contains(joined, forbidden) {
 			t.Fatalf("Pulse monitoring bootstrap contains forbidden %q:\n%s", forbidden, joined)
+		}
+	}
+}
+
+func TestCreatePulseMonitoringCredentialsRefusesUnexpectedExistingUser(t *testing.T) {
+	runner := &fakeRunner{responses: map[string][]byte{
+		"pvesh get /access/roles --output-format json": []byte(`[{"roleid":"PVEAuditor","privs":"Datastore.Audit Mapping.Audit Pool.Audit SDN.Audit Sys.Audit VM.Audit VM.GuestAgent.Audit","special":1}]`),
+		"pvesh get /access/users --output-format json": []byte(`[{"comment":"unexpected","enable":1,"expire":0,"userid":"pulse-monitor@pve"}]`),
+	}}
+	if _, err := CreatePulseMonitoringCredentials(context.Background(), runner, "192.0.2.10", "root"); err == nil || !strings.Contains(err.Error(), "ownership") {
+		t.Fatalf("unexpected existing Pulse monitoring user was accepted: %v", err)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "pvesh create /access/users/'pulse-monitor@pve'/token") {
+			t.Fatalf("unexpected existing Pulse monitoring user triggered token creation: %s", command)
+		}
+	}
+}
+
+func TestReplacePulseMonitoringCredentialsRemovesOnlyVerifiedOwnedToken(t *testing.T) {
+	runner := &stalePulseMonitoringTokenRunner{}
+	secret, err := ReplacePulseMonitoringCredentials(context.Background(), runner, "192.0.2.10", "root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secret != "recreated-monitoring-secret" {
+		t.Fatalf("ReplacePulseMonitoringCredentials() = %q", secret)
+	}
+	if !runner.removed {
+		t.Fatal("verified stale Pulse monitoring token was not removed")
+	}
+	joined := strings.Join(runner.commands, "\n")
+	for _, required := range []string{
+		"pvesh get /access/acl --output-format json",
+		"pvesh delete /access/users/'pulse-monitor@pve'/token/'boetticher-monitoring'",
+		"pvesh create /access/users/'pulse-monitor@pve'/token/'boetticher-monitoring' --privsep 1 --output-format json",
+	} {
+		if !strings.Contains(joined, required) {
+			t.Fatalf("Pulse token replacement is missing %q:\n%s", required, joined)
+		}
+	}
+	if containsString(runner.commands, "pvesh delete /access/users/'pulse-monitor@pve'") {
+		t.Fatalf("Pulse token replacement removed the monitoring user:\n%s", joined)
+	}
+	for _, forbidden := range []string{"pvesh delete /access/roles", "recreated-monitoring-secret"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("Pulse token replacement contains forbidden %q:\n%s", forbidden, joined)
+		}
+	}
+}
+
+func TestReplacePulseMonitoringCredentialsRefusesUnexpectedOwnership(t *testing.T) {
+	runner := &fakeRunner{responses: map[string][]byte{
+		"pvesh get /access/roles --output-format json":                           []byte(`[{"roleid":"PVEAuditor","privs":"Datastore.Audit Mapping.Audit Pool.Audit SDN.Audit Sys.Audit VM.Audit VM.GuestAgent.Audit","special":1}]`),
+		"pvesh get /access/users --output-format json":                           []byte(`[{"comment":"unexpected","enable":1,"expire":0,"userid":"pulse-monitor@pve"}]`),
+		"pvesh get /access/users/'pulse-monitor@pve'/token --output-format json": []byte(`[{"expire":0,"privsep":1,"tokenid":"boetticher-monitoring"}]`),
+	}}
+	if _, err := ReplacePulseMonitoringCredentials(context.Background(), runner, "192.0.2.10", "root"); err == nil || !strings.Contains(err.Error(), "ownership") {
+		t.Fatalf("unexpected Pulse monitoring ownership was accepted: %v", err)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "pvesh delete") {
+			t.Fatalf("unexpected Pulse monitoring ownership triggered deletion: %s", command)
 		}
 	}
 }

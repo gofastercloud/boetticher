@@ -1182,6 +1182,8 @@ func CreatePulseMonitoringCredentials(ctx context.Context, runner CommandRunner,
 		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, createUser)); err != nil {
 			return "", fmt.Errorf("create Pulse monitoring user: %w", err)
 		}
+	} else if err := validatePulseMonitoringUserOwnership(usersOutput); err != nil {
+		return "", fmt.Errorf("HOLD: Pulse monitoring user ownership is not the expected Boetticher identity: %w", err)
 	}
 	tokensPath := "pvesh get /access/users/" + shellQuote(PulseMonitoringUser) + "/token --output-format json"
 	tokensOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, tokensPath))
@@ -1230,6 +1232,164 @@ func CreatePulseMonitoringCredentials(ctx context.Context, runner CommandRunner,
 		}
 	}
 	return response.Value, nil
+}
+
+// ReplacePulseMonitoringCredentials rotates the one-time Pulse monitoring
+// token when the encrypted token value was deliberately removed with a prior
+// site reset. It proves the exact user, privilege-separated token, and both
+// read-only ACLs before deleting only that token, then delegates creation to
+// the ordinary bounded credential path. It never removes the service user,
+// built-in role, or any unrelated token.
+func ReplacePulseMonitoringCredentials(ctx context.Context, runner CommandRunner, address, initialUser string) (string, error) {
+	if runner == nil || address == "" || initialUser == "" {
+		return "", errors.New("Pulse monitoring credential replacement inputs are invalid")
+	}
+	rolesOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/roles --output-format json"))
+	if err != nil {
+		return "", fmt.Errorf("HOLD: inspect Proxmox monitoring roles before token replacement: %w", err)
+	}
+	if err := requireBuiltInRole(rolesOutput, PulseMonitoringRole, pulseMonitoringPrivileges); err != nil {
+		return "", fmt.Errorf("HOLD: Proxmox monitoring role %q is unavailable before token replacement: %w", PulseMonitoringRole, err)
+	}
+	usersOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users --output-format json"))
+	if err != nil {
+		return "", fmt.Errorf("HOLD: inspect Pulse monitoring users before token replacement: %w", err)
+	}
+	tokensCommand := "pvesh get /access/users/" + shellQuote(PulseMonitoringUser) + "/token --output-format json"
+	tokensOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, tokensCommand))
+	if err != nil {
+		return "", fmt.Errorf("HOLD: inspect Pulse monitoring tokens before token replacement: %w", err)
+	}
+	tokens, err := accessIDs(tokensOutput, "tokenid", "id")
+	if err != nil {
+		return "", fmt.Errorf("HOLD: decode Pulse monitoring tokens before token replacement: %w", err)
+	}
+	if !tokens[PulseMonitoringToken] {
+		return CreatePulseMonitoringCredentials(ctx, runner, address, initialUser)
+	}
+	aclOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/acl --output-format json"))
+	if err != nil {
+		return "", fmt.Errorf("HOLD: inspect Pulse monitoring ACLs before token replacement: %w", err)
+	}
+	if err := validatePulseMonitoringTokenOwnership(usersOutput, tokensOutput, aclOutput); err != nil {
+		return "", fmt.Errorf("HOLD: Pulse monitoring token ownership is not the expected Boetticher identity: %w", err)
+	}
+	removeToken := "pvesh delete /access/users/" + shellQuote(PulseMonitoringUser) + "/token/" + shellQuote(PulseMonitoringToken)
+	if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, removeToken)); err != nil {
+		return "", fmt.Errorf("remove exact stale Pulse monitoring token: %w", err)
+	}
+	remainingOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, tokensCommand))
+	if err != nil {
+		return "", fmt.Errorf("verify Pulse monitoring token removal: %w", err)
+	}
+	remaining, err := accessIDs(remainingOutput, "tokenid", "id")
+	if err != nil {
+		return "", fmt.Errorf("HOLD: decode Pulse monitoring tokens after replacement: %w", err)
+	}
+	if remaining[PulseMonitoringToken] {
+		return "", errors.New("HOLD: exact stale Pulse monitoring token remains after deletion")
+	}
+	return CreatePulseMonitoringCredentials(ctx, runner, address, initialUser)
+}
+
+type pulseMonitoringUserEntry struct {
+	Comment string `json:"comment"`
+	Enable  int    `json:"enable"`
+	Expire  int    `json:"expire"`
+	UserID  string `json:"userid"`
+}
+
+type pulseMonitoringTokenEntry struct {
+	Expire  int    `json:"expire"`
+	Privsep int    `json:"privsep"`
+	TokenID string `json:"tokenid"`
+}
+
+type pulseMonitoringACLEntry struct {
+	Path      string `json:"path"`
+	Propagate int    `json:"propagate"`
+	RoleID    string `json:"roleid"`
+	Type      string `json:"type"`
+	UGID      string `json:"ugid"`
+}
+
+func validatePulseMonitoringUserOwnership(usersOutput []byte) error {
+	var users []pulseMonitoringUserEntry
+	if err := decodePulseMonitoringList(usersOutput, &users); err != nil {
+		return fmt.Errorf("decode Pulse monitoring users: %w", err)
+	}
+	userFound := false
+	for _, user := range users {
+		if user.UserID != PulseMonitoringUser {
+			continue
+		}
+		if user.Comment != "Pulse API-only monitoring identity" || user.Enable != 1 || user.Expire != 0 {
+			return errors.New("Pulse monitoring user metadata is unexpected")
+		}
+		userFound = true
+	}
+	if !userFound {
+		return errors.New("Pulse monitoring user is absent")
+	}
+	return nil
+}
+
+func validatePulseMonitoringTokenOwnership(usersOutput, tokensOutput, aclOutput []byte) error {
+	if err := validatePulseMonitoringUserOwnership(usersOutput); err != nil {
+		return err
+	}
+	var tokens []pulseMonitoringTokenEntry
+	if err := decodePulseMonitoringList(tokensOutput, &tokens); err != nil {
+		return fmt.Errorf("decode Pulse monitoring tokens: %w", err)
+	}
+	tokenFound := false
+	for _, token := range tokens {
+		if token.TokenID != PulseMonitoringToken {
+			continue
+		}
+		if token.Privsep != 1 || token.Expire != 0 {
+			return errors.New("Pulse monitoring token metadata is unexpected")
+		}
+		tokenFound = true
+	}
+	if !tokenFound {
+		return errors.New("Pulse monitoring token is absent")
+	}
+	var acls []pulseMonitoringACLEntry
+	if err := decodePulseMonitoringList(aclOutput, &acls); err != nil {
+		return fmt.Errorf("decode Pulse monitoring ACLs: %w", err)
+	}
+	expected := map[string]string{
+		PulseMonitoringUser: "user",
+		PulseMonitoringUser + "!" + PulseMonitoringToken: "token",
+	}
+	seen := make(map[string]bool, len(expected))
+	for _, acl := range acls {
+		expectedType, relevant := expected[acl.UGID]
+		if !relevant {
+			continue
+		}
+		if seen[acl.UGID] || acl.Path != "/" || acl.Propagate != 1 || acl.RoleID != PulseMonitoringRole || acl.Type != expectedType {
+			return errors.New("Pulse monitoring ACL is unexpected")
+		}
+		seen[acl.UGID] = true
+	}
+	for ugid := range expected {
+		if !seen[ugid] {
+			return fmt.Errorf("Pulse monitoring ACL %q is absent", ugid)
+		}
+	}
+	return nil
+}
+
+func decodePulseMonitoringList(output []byte, destination any) error {
+	var envelope struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(output, &envelope); err == nil && len(envelope.Data) > 0 {
+		return json.Unmarshal(envelope.Data, destination)
+	}
+	return json.Unmarshal(output, destination)
 }
 
 func requireBuiltInRole(output []byte, wanted, wantedPrivileges string) error {
