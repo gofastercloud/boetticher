@@ -12,6 +12,7 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/model"
+	"golang.org/x/crypto/ssh"
 )
 
 // release-bundle deliberately has no build or network behavior. The release
@@ -122,7 +123,20 @@ func readPrivateKey(path string) (ed25519.PrivateKey, error) {
 	if len(data) == ed25519.PrivateKeySize {
 		return ed25519.PrivateKey(data), nil
 	}
-	return nil, errors.New("signing key must contain a raw or base64 Ed25519 private key")
+	parsed, parseErr := ssh.ParseRawPrivateKey(data)
+	if parseErr == nil {
+		switch key := parsed.(type) {
+		case ed25519.PrivateKey:
+			if len(key) == ed25519.PrivateKeySize {
+				return key, nil
+			}
+		case *ed25519.PrivateKey:
+			if len(*key) == ed25519.PrivateKeySize {
+				return *key, nil
+			}
+		}
+	}
+	return nil, errors.New("signing key must contain a raw, base64, or OpenSSH Ed25519 private key")
 }
 
 func fatal(format string, args ...any) {
