@@ -124,6 +124,7 @@ jobs:
           set -euo pipefail
           umask 077
           signing_key="$RUNNER_TEMP/boetticher-release-signing-key"
+          trap 'rm -f "$signing_key"' EXIT
           printf '%s' "$RELEASE_SIGNING_PRIVATE_KEY" > "$signing_key"
           mkdir -p dist
           make release-bundle \
@@ -133,7 +134,6 @@ jobs:
             WORKFLOW="$GITHUB_WORKFLOW_REF" \
             KEY_ID="$RELEASE_KEY_ID" \
             PRIVATE_KEY="$signing_key"
-          rm -f "$signing_key"
           cp "$RUNNER_TEMP/boetticher-${RELEASE_VERSION}.tar.gz" "dist/boetticher-${RELEASE_VERSION}.tar.gz"
 
       - name: Build the controller with the release trust root
