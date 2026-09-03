@@ -10,7 +10,11 @@
       - openssl
       - systemd-journal-remote
     state: present
-    update_cache: true
+    # The Proxmox host may have the vendor enterprise repository enabled
+    # without a subscription. Host bootstrap owns the required package
+    # baseline; do not make routine convergence depend on that repository's
+    # authenticated index.
+    update_cache: "{{ inventory_hostname not in groups.get('proxmox', []) }}"
     cache_valid_time: 3600
   when:
     - inventory_hostname in groups.get('proxmox', [])
@@ -321,7 +325,7 @@
       - lm-sensors
       - smartmontools
     state: present
-    update_cache: true
+    update_cache: "{{ inventory_hostname not in groups.get('proxmox', []) }}"
     cache_valid_time: 3600
   when:
     - pulse_agent_install_enabled | default(false) | bool

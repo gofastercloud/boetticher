@@ -134,6 +134,7 @@ func RebindEvidencePaths(root string) error {
 		if verified.ContentSHA256 != evidence.ContentSHA256 {
 			return fmt.Errorf("transferred artifact %s content checksum differs from evidence", evidence.Artifact.Name)
 		}
+		evidence.Artifact.ContentSHA256 = evidence.ContentSHA256
 		evidence.ArtifactPath = artifactPath
 		if !evidence.Qualified {
 			return fmt.Errorf("transferred evidence %s is not qualified", evidence.Artifact.Name)

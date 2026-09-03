@@ -267,6 +267,9 @@ func DiscoverPhysicalNetworkViaSSH(ctx context.Context, runner CommandRunner, ad
 	if err := json.Unmarshal(output, &interfaces); err != nil {
 		return SSHPhysicalNetworkDiscovery{}, fmt.Errorf("HOLD: decode Proxmox physical network evidence: %w", err)
 	}
+	if err := enrichNetworkInterfaceHardware(ctx, runner, address, initialUser, interfaces); err != nil {
+		return SSHPhysicalNetworkDiscovery{}, fmt.Errorf("HOLD: enrich Proxmox physical network evidence: %w", err)
+	}
 	routeOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "ip -j route show default"))
 	if err != nil {
 		return SSHPhysicalNetworkDiscovery{}, fmt.Errorf("discover Proxmox default route: %w", err)
@@ -743,9 +746,36 @@ func ConfigureIdentities(ctx context.Context, runner CommandRunner, address, ini
 	// Public keys and destination addresses are the only values interpolated;
 	// credentials are never placed in this command.
 	jumpKey := "restrict,port-forwarding,permitopen=\"" + strings.Join(allowedDestinations, "\",permitopen=\"") + "\" " + publicKeyLine(adminPublicKey)
-	command := "set -eu; id -u labadmin >/dev/null 2>&1 || useradd --create-home --shell /bin/bash labadmin; passwd --lock labadmin; gpasswd --delete labadmin sudo >/dev/null 2>&1 || true; id -u lab-jump >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin lab-jump; install -d -m 700 -o lab-jump -g lab-jump /home/lab-jump; install -d -m 700 /root/.ssh /home/labadmin/.ssh /etc/ssh/sshd_config.d; touch /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /root/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /root/.ssh/authorized_keys; install -m 600 /dev/null /home/labadmin/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /home/labadmin/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /home/labadmin/.ssh/authorized_keys; install -m 600 /dev/null /home/lab-jump.authorized_keys; printf '%s\\n' " + shellQuote(jumpKey) + " > /home/lab-jump.authorized_keys; chown lab-jump:lab-jump /home/lab-jump.authorized_keys; chown -R labadmin:labadmin /home/labadmin/.ssh; rm -f /etc/sudoers.d/boetticher-labadmin; cat > /etc/ssh/sshd_config.d/90-boetticher-jump.conf <<'EOF'\nAllowUsers root labadmin lab-jump lab-netprobe\nMatch User lab-jump\n    AuthorizedKeysFile /home/lab-jump.authorized_keys\n    PermitTTY no\n    X11Forwarding no\n    AllowAgentForwarding no\n    AllowTcpForwarding local\n    PermitOpen " + strings.Join(allowedDestinations, " ") + "\nEOF\nvisudo -cf /etc/sudoers\nsshd -t\nsystemctl reload ssh || systemctl reload sshd"
+	command := "set -eu; if ! command -v visudo >/dev/null 2>&1; then apt_sources=\"$(mktemp /run/boetticher-apt-sources.XXXXXX)\"; trap 'rm -f \"$apt_sources\"' EXIT; printf '%s\\n' 'deb http://deb.debian.org/debian trixie main' 'deb http://deb.debian.org/debian trixie-updates main' 'deb http://security.debian.org/debian-security trixie-security main' > \"$apt_sources\"; apt-get -o Dir::Etc::sourcelist=\"$apt_sources\" -o Dir::Etc::sourceparts=- -o Acquire::Retries=3 update; apt-get -o Dir::Etc::sourcelist=\"$apt_sources\" -o Dir::Etc::sourceparts=- -o Acquire::Retries=3 install --yes --no-install-recommends sudo; fi; id -u labadmin >/dev/null 2>&1 || useradd --create-home --shell /bin/bash labadmin; passwd --lock labadmin; gpasswd --delete labadmin sudo >/dev/null 2>&1 || true; id -u lab-jump >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin lab-jump; install -d -m 700 -o lab-jump -g lab-jump /home/lab-jump; install -d -m 700 /root/.ssh /home/labadmin/.ssh /etc/ssh/sshd_config.d; touch /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /root/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /root/.ssh/authorized_keys; install -m 600 /dev/null /home/labadmin/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /home/labadmin/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /home/labadmin/.ssh/authorized_keys; install -m 600 /dev/null /home/lab-jump.authorized_keys; printf '%s\\n' " + shellQuote(jumpKey) + " > /home/lab-jump.authorized_keys; chown lab-jump:lab-jump /home/lab-jump.authorized_keys; chown -R labadmin:labadmin /home/labadmin/.ssh; rm -f /etc/sudoers.d/boetticher-labadmin; cat > /etc/ssh/sshd_config.d/90-boetticher-jump.conf <<'EOF'\nAllowUsers root labadmin lab-jump lab-netprobe\nMatch User lab-jump\n    AuthorizedKeysFile /home/lab-jump.authorized_keys\n    PermitTTY no\n    X11Forwarding no\n    AllowAgentForwarding no\n    AllowTcpForwarding local\n    PermitOpen " + strings.Join(allowedDestinations, " ") + "\nEOF\nvisudo -cf /etc/sudoers\nsshd -t\nsystemctl reload ssh || systemctl reload sshd"
 	_, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, command))
 	return err
+}
+
+// ConfigureHeadlessPowerPolicy makes a Proxmox host safe to operate as an
+// unattended appliance on laptop-class hardware. The policy is explicit so a
+// distribution default or a vendor-specific laptop setting cannot suspend the
+// host when its lid closes or when no interactive session is present.
+func ConfigureHeadlessPowerPolicy(ctx context.Context, runner CommandRunner, address, user string) error {
+	if runner == nil {
+		return errors.New("headless power policy runner is required")
+	}
+	command := "set -eu; dir=/etc/systemd/logind.conf.d; file=$dir/90-boetticher-headless.conf; install -d -m 755 \"$dir\"; tmp=$(mktemp \"$file.XXXXXX\"); trap 'rm -f \"$tmp\"' EXIT; printf '%s\\n' '[Login]' 'HandleLidSwitch=ignore' 'HandleLidSwitchExternalPower=ignore' 'HandleLidSwitchDocked=ignore' 'HandleSuspendKey=ignore' 'HandleHibernateKey=ignore' 'IdleAction=ignore' >\"$tmp\"; install -m 644 \"$tmp\" \"$file\"; systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target; systemctl restart systemd-logind"
+	if _, err := runner.Run(ctx, address, user, privilegedCommand(user, command)); err != nil {
+		return fmt.Errorf("configure headless power policy: %w", err)
+	}
+	return nil
+}
+
+// CheckHeadlessPowerPolicy verifies the host policy without changing it.
+func CheckHeadlessPowerPolicy(ctx context.Context, runner CommandRunner, address, user string) error {
+	if runner == nil {
+		return errors.New("headless power policy check runner is required")
+	}
+	command := "set -eu; file=/etc/systemd/logind.conf.d/90-boetticher-headless.conf; for setting in 'HandleLidSwitch=ignore' 'HandleLidSwitchExternalPower=ignore' 'HandleLidSwitchDocked=ignore' 'HandleSuspendKey=ignore' 'HandleHibernateKey=ignore' 'IdleAction=ignore'; do grep -qxF \"$setting\" \"$file\"; done; for unit in sleep.target suspend.target hibernate.target hybrid-sleep.target; do systemctl is-enabled \"$unit\" 2>&1 | grep -qxF masked; done"
+	if _, err := runner.Run(ctx, address, user, privilegedCommand(user, command)); err != nil {
+		return fmt.Errorf("headless power policy is not active: %w", err)
+	}
+	return nil
 }
 
 // RestoreTemporaryRootAccess re-arms the deployment-only root key inside one
@@ -962,10 +992,11 @@ func normalizeGuestHostKey(value string) (string, error) {
 	return strings.Join(fields[:2], " "), nil
 }
 
-// RevokeTemporaryRootAccess removes the deployment-only root SSH identity
-// without deleting unrelated operator or recovery keys.
-// The host form also removes root from the explicit AllowUsers contract before
-// deleting its key, and both forms are idempotent for retry-safe cleanup.
+// RevokeTemporaryRootAccess removes a deployment-only root SSH identity from
+// an owned guest. The host form is deliberately non-destructive: the operator
+// key installed during bootstrap is also the independent host recovery key,
+// so host cleanup must preserve root's AllowUsers entry, authorized keys, and
+// password state. Both forms are idempotent for retry-safe cleanup.
 func RevokeTemporaryRootAccess(ctx context.Context, runner CommandRunner, address, user, publicKey string, host bool) error {
 	if runner == nil {
 		return errors.New("temporary root cleanup runner is required")
@@ -976,10 +1007,13 @@ func RevokeTemporaryRootAccess(ctx context.Context, runner CommandRunner, addres
 	if err := validatePublicKey(publicKey); err != nil {
 		return fmt.Errorf("temporary root cleanup key: %w", err)
 	}
-	removeKey := "file=/root/.ssh/authorized_keys; tmp=/root/.ssh/authorized_keys.boetticher-cleanup; trap 'rm -f \"$tmp\"' EXIT; if [ -f \"$file\" ]; then if grep -Fvx -- " + shellQuote(publicKey) + " \"$file\" >\"$tmp\"; then install -m 600 -o root -g root \"$tmp\" \"$file\"; else status=$?; [ \"$status\" -eq 1 ] || exit \"$status\"; rm -f \"$file\"; fi; fi; passwd --lock root"
+	removeKey := "file=/root/.ssh/authorized_keys; tmp=/root/.ssh/authorized_keys.boetticher-cleanup; trap 'rm -f \"$tmp\"' EXIT; if [ -f \"$file\" ]; then if grep -Fvx -- " + shellQuote(publicKey) + " \"$file\" >\"$tmp\"; then install -m 600 -o root -g root \"$tmp\" \"$file\"; else status=$?; [ \"$status\" -eq 1 ] || exit \"$status\"; rm -f \"$file\"; fi; fi"
 	command := "set -eu; " + removeKey
 	if host {
-		command = "set -eu; file=/etc/ssh/sshd_config.d/90-boetticher-jump.conf; if grep -qxF 'AllowUsers root labadmin lab-jump lab-netprobe' \"$file\"; then sed -i 's/^AllowUsers root labadmin lab-jump lab-netprobe$/AllowUsers labadmin lab-jump lab-netprobe/' \"$file\"; elif ! grep -qxF 'AllowUsers labadmin lab-jump lab-netprobe' \"$file\"; then exit 74; fi; sshd -t; systemctl reload ssh || systemctl reload sshd; " + removeKey
+		// The host operator key is persistent recovery authority. Verify the
+		// expected SSH contract but never alter host authentication during
+		// deployment cleanup.
+		command = "set -eu; file=/etc/ssh/sshd_config.d/90-boetticher-jump.conf; grep -qxF 'AllowUsers root labadmin lab-jump lab-netprobe' \"$file\"; sshd -t"
 	}
 	if _, err := runner.Run(ctx, address, user, command); err != nil {
 		return fmt.Errorf("revoke temporary root access: %w", err)
@@ -1262,6 +1296,13 @@ func ReplacePulseMonitoringCredentials(ctx context.Context, runner CommandRunner
 	usersOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users --output-format json"))
 	if err != nil {
 		return "", fmt.Errorf("HOLD: inspect Pulse monitoring users before token replacement: %w", err)
+	}
+	users, err := accessIDs(usersOutput, "userid", "id")
+	if err != nil {
+		return "", fmt.Errorf("HOLD: decode Pulse monitoring users before token replacement: %w", err)
+	}
+	if !users[PulseMonitoringUser] {
+		return CreatePulseMonitoringCredentials(ctx, runner, address, initialUser)
 	}
 	tokensCommand := "pvesh get /access/users/" + shellQuote(PulseMonitoringUser) + "/token --output-format json"
 	tokensOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, tokensCommand))

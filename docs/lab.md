@@ -40,8 +40,35 @@ member and your switch can stay exactly as it is.
 If you later choose a physical trunk, use a separate NIC and a VLAN-aware
 switch port that permits those same six tagged VLANs. Keep the existing HOME
 connection on `vmbr0`; it is not part of the internal trunk. The StreamDeck
-move to the companion Pi is a USB and service-boundary change, not a switch or
-VLAN change.
+move to the companion Pi is a USB and service-boundary change. The companion's
+network placement is a separate physical-network decision described below.
+
+### The companion Pi physical placement
+
+The companion's Pulse endpoint lives on the internal INFRA network, so a Pi
+that remains only on HOME Wi-Fi cannot resolve or reach it. For the physical
+companion arrangement used by this lab:
+
+* the Proxmox second NIC is connected to a tagged switch trunk permitting
+  VLANs 5, 10, 20, 30, 40, and 99;
+* the Pi's switch port is an untagged/access port in SERVERS, VLAN 20;
+* the Pi uses a SERVERS DHCP reservation and a narrow SERVERS-to-Pulse HTTPS
+  allowance; and
+* `wlan0` remains the Pi's HOME default route while `eth0` carries the lab
+  route for `10.10.0.0/16` via the SERVERS gateway.
+
+The Pi port is an access port, not a tagged trunk. After the switch ports and
+cabling are ready, attach the Proxmox side with the native guarded command:
+
+```text
+boetticher network trunk attach NIC --live --confirm --site ./my-boetticher
+boetticher dhcp reservation add --hostname lab-display-01 --address SERVERS_PI_ADDRESS --mac PI_ETH0_MAC --site ./my-boetticher
+boetticher firewall rule add --source SERVERS_PI_ADDRESS/32 --destination 10.10.10.20/32 --protocol tcp --ports 443 --id ufr-lab-display-pulse --confirm --site ./my-boetticher
+```
+
+Review the observed interface and exact reservation before deployment. The
+trunk command refuses the HOME member, ambiguous interfaces, and unproved
+physical identities.
 
 ## The platform guests
 
@@ -112,7 +139,12 @@ boetticher doctor --site ./my-boetticher --live
 
 Then recover the site repository and age identity, restore the Proxmox management path if needed, run `preflight --live`, and deploy to rebuild Boetticher’s own platform pieces. Reattach or restore persistent application data, check the services you care about, then take a fresh off-host backup. Do not delete an unfamiliar VM, LXC, volume, or network device just to make a later run quieter.
 
-If Proxmox itself is fresh or the bootstrap path is lost, use the guarded recovery sequence instead of jumping straight to deploy:
+If Proxmox itself is fresh or the bootstrap path is lost, use the guarded recovery sequence instead of jumping straight to deploy.
+
+The Proxmox installer hostname is not an operator configuration requirement.
+Bootstrap discovers the one standalone node returned by Proxmox and binds the
+live API operations to that node. Use a stable, valid hostname during the
+Proxmox install and do not rename an existing node after installation:
 
 ```text
 boetticher bootstrap-endpoint set PROXMOX_HOME_IP --site ./my-boetticher
@@ -122,6 +154,13 @@ boetticher bundle import ./boetticher-0.5.0.tar.gz --site ./my-boetticher
 boetticher plan --site ./my-boetticher --live --json
 boetticher deploy --plan sha256:PLAN_DIGEST --site ./my-boetticher
 ```
+
+Bootstrap also applies the headless host power policy. It configures
+`systemd-logind` to ignore lid, suspend-key, hibernate-key, and idle actions,
+and masks the sleep, suspend, hibernate, and hybrid-sleep targets. This is
+important when Proxmox runs on a laptop or other device that may be closed or
+left without an interactive session. It does not mask deliberate poweroff or
+reboot operations.
 
 Use `--storage-confirmed` as well when the site uses the dedicated-data-disk profile, after checking the stable device identity.
 

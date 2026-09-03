@@ -23,6 +23,54 @@
     fail_msg: "The companion requires validated Boetticher identities and an HTTPS Pulse URL"
   no_log: true
 
+- name: Create the companion configuration directory
+  ansible.builtin.file:
+    path: /etc/boetticher
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Permit unprivileged companion services to traverse their state parent
+  ansible.builtin.file:
+    path: /var/lib/boetticher
+    state: directory
+    owner: root
+    group: root
+    mode: '0751'
+
+- name: Require the standard NetworkManager eth0 profile for the lab route
+  ansible.builtin.command:
+    argv: [nmcli, connection, show, netplan-eth0]
+  register: kiosk_eth0_profile
+  changed_when: false
+
+- name: Configure the dual-homed companion lab route
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - connection
+      - modify
+      - netplan-eth0
+      - connection.interface-name
+      - eth0
+      - ipv4.method
+      - auto
+      - ipv4.never-default
+      - 'yes'
+      - ipv4.ignore-auto-dns
+      - 'yes'
+      - ipv4.dns
+      - 10.10.10.10,10.10.10.11
+      - ipv4.dns-priority
+      - '-50'
+      - ipv4.dns-search
+      - '~lab.home.arpa'
+      - ipv4.routes
+      - 10.10.0.0/16 10.10.20.1
+  changed_when: false
+  when: kiosk_eth0_profile.rc == 0
+
 - name: Measure the existing log footprint before enabling log2ram
   ansible.builtin.command: du -smx /var/log
   register: kiosk_var_log_size
@@ -842,6 +890,20 @@
 
 - name: Reload exact StreamDeck udev permissions
   ansible.builtin.command: udevadm control --reload-rules
+  changed_when: false
+  when:
+    - kiosk_streamdeck_enabled | default(true) | bool
+    - companion_streamdeck_udev_rule is changed
+
+- name: Apply exact StreamDeck udev permissions to connected devices
+  ansible.builtin.command: udevadm trigger --action=change --subsystem-match=hidraw
+  changed_when: false
+  when:
+    - kiosk_streamdeck_enabled | default(true) | bool
+    - companion_streamdeck_udev_rule is changed
+
+- name: Apply exact StreamDeck USB permissions to connected devices
+  ansible.builtin.command: udevadm trigger --action=change --subsystem-match=usb
   changed_when: false
   when:
     - kiosk_streamdeck_enabled | default(true) | bool

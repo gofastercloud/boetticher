@@ -1,6 +1,7 @@
 package proxmox
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -129,6 +130,50 @@ type NetworkInterface struct {
 	Bond            string `json:"bond"`
 	SpeedMbps       int    `json:"speed"`
 	Active          bool   `json:"active"`
+}
+
+type ipLinkHardware struct {
+	Iface    string `json:"ifname"`
+	LinkType string `json:"link_type"`
+	Address  string `json:"address"`
+}
+
+// enrichNetworkInterfaceHardware fills the stable hardware identity that
+// some Proxmox versions omit for an otherwise valid physical interface. The
+// read-only Linux link evidence is joined by the exact interface name and is
+// accepted only for Ethernet devices with a six-byte MAC address.
+func enrichNetworkInterfaceHardware(ctx context.Context, runner CommandRunner, address, user string, interfaces []NetworkInterface) error {
+	if runner == nil || len(interfaces) == 0 {
+		return nil
+	}
+	output, err := runner.Run(ctx, address, user, "ip -j link show")
+	if err != nil {
+		return fmt.Errorf("read Linux physical interface identity: %w", err)
+	}
+	if len(bytes.TrimSpace(output)) == 0 {
+		return nil
+	}
+	var links []ipLinkHardware
+	if err := json.Unmarshal(output, &links); err != nil {
+		return fmt.Errorf("decode Linux physical interface identity: %w", err)
+	}
+	byName := make(map[string]string, len(links))
+	for _, link := range links {
+		if link.Iface == "" || link.LinkType != "ether" {
+			continue
+		}
+		mac, err := net.ParseMAC(link.Address)
+		if err != nil || len(mac) != 6 {
+			continue
+		}
+		byName[link.Iface] = strings.ToLower(mac.String())
+	}
+	for index := range interfaces {
+		if interfaces[index].Type == "eth" && interfaces[index].HWAddr == "" {
+			interfaces[index].HWAddr = byName[interfaces[index].Iface]
+		}
+	}
+	return nil
 }
 
 func (n *NetworkInterface) UnmarshalJSON(data []byte) error {

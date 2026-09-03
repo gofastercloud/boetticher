@@ -142,7 +142,7 @@ func TestCheckRevisionFileRequiresTheAuthoritativeRevisionField(t *testing.T) {
 		{name: "inventory prefix mismatch", ext: ".ini", content: "# Model revision: sha256:expected-old\n", wantErr: true},
 		{name: "ssh exact", ext: ".conf", content: "# boetticher-model-revision: sha256:expected\n"},
 		{name: "ssh prefix mismatch", ext: ".conf", content: "# boetticher-model-revision: sha256:expected-old\n", wantErr: true},
-		{name: "portal exact", ext: ".html", content: "<p>Model revision: <code>sha256:expected</code></p>"},
+		{name: "portal exact", ext: ".html", content: "<p>Lab revision: <code>sha256:expected</code></p>"},
 		{name: "portal unrelated occurrence", ext: ".html", content: "<p>sha256:expected</p>", wantErr: true},
 	}
 	for _, test := range cases {

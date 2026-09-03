@@ -922,6 +922,19 @@ func TestProxmoxJournalUploadPinsTheCollectorWithoutChangingHomeDNS(t *testing.T
 	}
 }
 
+func TestProxmoxBaseConvergenceDoesNotRequireEnterpriseRepositoryRefresh(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	want := `update_cache: "{{ inventory_hostname not in groups.get('proxmox', []) }}"`
+	if strings.Count(text, want) < 2 {
+		t.Fatalf("Proxmox base apt tasks do not avoid unauthenticated enterprise refreshes: %s", text)
+	}
+}
+
 func TestPulseAgentPinsTheMonitoringHostnameForTaggedTargets(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
 	data, err := os.ReadFile(path)

@@ -105,6 +105,7 @@ func QualifyEvidence(evidence Evidence, scan ScanSummary) (Evidence, error) {
 	evidence.QualificationEvaluator = QualificationEvaluator
 	evidence.ScanCompleted = true
 	evidence.Qualified = true
+	evidence.Artifact.ContentSHA256 = evidence.ContentSHA256
 	evidence.qualifiedByEvaluator = true
 	return evidence, nil
 }
@@ -148,11 +149,14 @@ func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artif
 	if evidence.QualificationEvaluator != QualificationEvaluator {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s qualification evaluator is not authorized", requested.Name)
 	}
-	if evidence.DefinitionSHA256 != requested.DefinitionSHA256 || evidence.Artifact != requested {
+	if evidence.DefinitionSHA256 != requested.DefinitionSHA256 || !artifactIdentityMatches(evidence.Artifact, requested) {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact evidence does not match requested definition for %s", requested.Name)
 	}
 	if evidence.ContentSHA256 == "" {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s has no content checksum", requested.Name)
+	}
+	if evidence.Artifact.ContentSHA256 != "" && evidence.Artifact.ContentSHA256 != evidence.ContentSHA256 {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s nested content checksum differs from evidence", requested.Name)
 	}
 	if evidence.ArtifactPath == "" {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s qualification evidence has no artifact path", requested.Name)
@@ -185,6 +189,15 @@ func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artif
 	resolved := requested
 	resolved.ContentSHA256 = evidence.ContentSHA256
 	return resolved, evidence, nil
+}
+
+func artifactIdentityMatches(observed, requested model.Artifact) bool {
+	if observed.ContentSHA256 != "" && requested.ContentSHA256 != "" && observed.ContentSHA256 != requested.ContentSHA256 {
+		return false
+	}
+	observed.ContentSHA256 = ""
+	requested.ContentSHA256 = ""
+	return observed == requested
 }
 
 // verifyQualificationInputs checks any qualification outputs that were

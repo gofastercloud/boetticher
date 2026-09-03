@@ -25,6 +25,7 @@ MemoryDenyWriteExecute=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 DevicePolicy=closed
 DeviceAllow=char-usb_device rw
+DeviceAllow=char-hidraw rw
 ReadWritePaths=/var/lib/boetticher/streamdeck
 StateDirectory=boetticher/streamdeck
 UMask=0077

@@ -667,6 +667,17 @@ func (c *Client) ListLXCs(ctx context.Context, node string) ([]GuestSummary, err
 }
 
 func (c *Client) NodeNetwork(ctx context.Context, node string, out any) error {
+	if interfaces, ok := out.(*[]NetworkInterface); ok {
+		if err := c.Get(ctx, path.Join("/nodes", node, "network"), nil, interfaces); err != nil {
+			return err
+		}
+		if c.snippetRunner != nil && c.snippetAddr != "" && c.snippetUser != "" {
+			if err := enrichNetworkInterfaceHardware(ctx, c.snippetRunner, c.snippetAddr, c.snippetUser, *interfaces); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	return c.Get(ctx, path.Join("/nodes", node, "network"), nil, out)
 }
 

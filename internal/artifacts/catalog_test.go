@@ -127,6 +127,9 @@ func TestResolveArtifactEvidenceRejectsChangedBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if evidence.Artifact.ContentSHA256 != evidence.ContentSHA256 {
+		t.Fatal("qualified evidence did not bind the content digest into its artifact identity")
+	}
 	if err := WriteEvidence(root, artifact.Name, evidence); err != nil {
 		t.Fatal(err)
 	}

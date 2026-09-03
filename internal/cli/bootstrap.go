@@ -261,6 +261,10 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	if err := proxmox.ConfigureIdentities(ctx, runner, s.BootstrapAddress, *initialUser, publicKey, allowedDestinations); err != nil {
 		return fmt.Errorf("configure Proxmox administrative and bastion identities: %w", err)
 	}
+	if err := proxmox.ConfigureHeadlessPowerPolicy(ctx, runner, s.BootstrapAddress, *initialUser); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, "Headless power policy: PASS lid and idle suspend paths disabled")
 	trustClient, err := proxmox.NewClient(proxmox.Config{
 		BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", CAFile: *proxmoxCA, CAPEM: proxmoxCAPEM, Insecure: *insecure,
 	})
@@ -400,6 +404,7 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 		return fmt.Errorf("HOLD: recompute platform plan after physical binding: %w", err)
 	}
 	plan.Node = apiNode
+	progress.complete()
 	progress.start("persist", "Persist bootstrap state")
 	if err := writeBootstrapProjections(*siteDir, s); err != nil {
 		return fmt.Errorf("HOLD: bootstrap network binding was persisted but projections could not be regenerated: %w", err)

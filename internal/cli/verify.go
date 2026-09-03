@@ -492,6 +492,16 @@ func runDoctorRequest(request doctorRequest, out io.Writer) error {
 	} else {
 		fmt.Fprintf(out, "Bootstrap endpoint    PASS %s and SSH host key\n", s.BootstrapAddress)
 	}
+	if request.live && s.BootstrapAddress != "" {
+		if err := proxmox.CheckHeadlessPowerPolicy(context.Background(), proxmoxRootSSHRunner(s, siteDir), s.BootstrapAddress, "root"); err != nil {
+			failed = true
+			fmt.Fprintf(out, "Headless power       FAIL %v\n", err)
+		} else {
+			fmt.Fprintln(out, "Headless power       PASS lid and idle suspend paths disabled")
+		}
+	} else if !request.live {
+		fmt.Fprintln(out, "Headless power       NOT TESTED (use --live)")
+	}
 	if request.live {
 		plan, planErr := qualifiedProxmoxPlan(siteDir, s)
 		if planErr != nil {
@@ -555,7 +565,7 @@ func runDoctorRequest(request doctorRequest, out io.Writer) error {
 			} else {
 				fmt.Fprintf(out, "Platform storage     PASS %s active total=%.0f used=%.0f available=%.0f\n", status.Storage, status.Total, status.Used, status.Avail)
 				if storagePlan.Profile == "dedicated-data-disk" {
-					if err := reportDedicatedStorageHost(context.Background(), s, storagePlan, out); err != nil {
+					if err := reportDedicatedStorageHost(context.Background(), siteDir, s, storagePlan, out); err != nil {
 						failed = true
 						fmt.Fprintf(out, "Storage layout       FAIL %v\n", err)
 					}
@@ -580,12 +590,20 @@ func bindPlanToLiveNode(ctx context.Context, client *proxmox.Client, plan proxmo
 	return plan, nil
 }
 
-func reportDedicatedStorageHost(ctx context.Context, s model.Site, plan storage.Plan, out io.Writer) error {
+func reportDedicatedStorageHost(ctx context.Context, siteDir string, s model.Site, plan storage.Plan, out io.Writer) error {
 	command, err := storage.StatusCommand(plan.Device)
 	if err != nil {
 		return err
 	}
-	data, err := (proxmox.SSHRunner{HostKeyAlias: model.LogicalProxmoxIdentity}).Run(ctx, s.BootstrapAddress, model.DefaultAdminSSHUser, command)
+	runner := proxmox.SSHRunner{
+		IdentityFile:  operatorIdentityFile(s),
+		ConfigFile:    filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"),
+		KnownHosts:    deploymentKnownHosts(siteDir),
+		StrictHostKey: "yes",
+		HostAlias:     model.LogicalProxmoxIdentity,
+		HostKeyAlias:  model.LogicalProxmoxIdentity,
+	}
+	data, err := runner.Run(ctx, s.BootstrapAddress, "root", command)
 	if err != nil {
 		return fmt.Errorf("read dedicated storage state: %w", err)
 	}

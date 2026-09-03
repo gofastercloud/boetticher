@@ -389,7 +389,7 @@ func checkRevisionFile(path, revision string) error {
 			return fmt.Errorf("model revision is not current")
 		}
 	case ".html":
-		if !strings.Contains(text, "Model revision: <code>"+html.EscapeString(revision)+"</code>") {
+		if !strings.Contains(text, "Lab revision: <code>"+html.EscapeString(revision)+"</code>") {
 			return fmt.Errorf("model revision is not current")
 		}
 	default:

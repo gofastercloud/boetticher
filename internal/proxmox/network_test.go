@@ -1,6 +1,7 @@
 package proxmox
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -32,6 +33,30 @@ func TestNetworkInterfaceDerivesHardwareEvidenceFromStableMACName(t *testing.T) 
 	}
 	if enx.HWAddr != "a0:ce:c8:a2:b2:10" {
 		t.Fatalf("enx interface name was not treated as stable hardware evidence: %#v", enx)
+	}
+}
+
+func TestEnrichNetworkInterfaceHardwareUsesLinuxLinkEvidence(t *testing.T) {
+	runner := &fakeRunner{responses: map[string][]byte{
+		"ip -j link show": []byte(`[
+  {"ifname":"nic0","link_type":"ether","address":"a0:ce:c8:a2:b2:10"},
+  {"ifname":"vmbr1","link_type":"ether","address":"66:78:67:f6:3a:f4"},
+  {"ifname":"bad","link_type":"ether","address":"not-a-mac"}
+]`),
+	}}
+	interfaces := []NetworkInterface{
+		{Iface: "nic0", Type: "eth"},
+		{Iface: "vmbr1", Type: "bridge"},
+		{Iface: "bad", Type: "eth"},
+	}
+	if err := enrichNetworkInterfaceHardware(context.Background(), runner, "192.0.2.10", "root", interfaces); err != nil {
+		t.Fatal(err)
+	}
+	if interfaces[0].HWAddr != "a0:ce:c8:a2:b2:10" {
+		t.Fatalf("Linux hardware evidence was not joined to nic0: %#v", interfaces)
+	}
+	if interfaces[1].HWAddr != "" || interfaces[2].HWAddr != "" {
+		t.Fatalf("non-physical or malformed hardware evidence was accepted: %#v", interfaces)
 	}
 }
 

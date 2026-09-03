@@ -671,6 +671,32 @@ func TestReplacePulseMonitoringCredentialsRefusesUnexpectedOwnership(t *testing.
 	}
 }
 
+func TestReplacePulseMonitoringCredentialsCreatesAbsentUser(t *testing.T) {
+	runner := &fakeRunner{responses: map[string][]byte{
+		"pvesh get /access/roles --output-format json":                                                                  []byte(`[{"roleid":"PVEAuditor","privs":"Datastore.Audit Mapping.Audit Pool.Audit SDN.Audit Sys.Audit VM.Audit VM.GuestAgent.Audit","special":1}]`),
+		"pvesh get /access/users --output-format json":                                                                  []byte(`[]`),
+		"pvesh create /access/users --userid 'pulse-monitor@pve' --comment 'Pulse API-only monitoring identity'":        []byte(`{}`),
+		"pvesh get /access/users/'pulse-monitor@pve'/token --output-format json":                                        []byte(`[]`),
+		"pvesh create /access/users/'pulse-monitor@pve'/token/'boetticher-monitoring' --privsep 1 --output-format json": []byte(`{"value":"fresh-monitoring-secret"}`),
+	}}
+	secret, err := ReplacePulseMonitoringCredentials(context.Background(), runner, "192.0.2.10", "root")
+	if err != nil || secret != "fresh-monitoring-secret" {
+		t.Fatalf("absent Pulse monitoring user was not created: secret=%q err=%v", secret, err)
+	}
+	created := false
+	for _, command := range runner.commands {
+		if strings.Contains(command, "pvesh create /access/users --userid 'pulse-monitor@pve'") {
+			created = true
+		}
+		if strings.Contains(command, "pvesh get /access/users/'pulse-monitor@pve'/token") && !created {
+			t.Fatalf("absent Pulse monitoring user queried a token endpoint before creation: %s", command)
+		}
+	}
+	if !created {
+		t.Fatal("absent Pulse monitoring user did not trigger exact user creation")
+	}
+}
+
 func TestCreatePulseMonitoringCredentialsFailsClosedWhenAuditorRoleIsMissing(t *testing.T) {
 	runner := &fakeRunner{responses: map[string][]byte{
 		"pvesh get /access/roles --output-format json": []byte(`[]`),
@@ -765,7 +791,7 @@ func TestConfigureIdentitiesInstallsTemporaryRootAccessWithoutLabadminSudo(t *te
 	if err := ConfigureIdentities(context.Background(), runner, "192.0.2.10", "root", key, []string{"10.10.99.1:22", "10.10.10.20:443"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"passwd --lock labadmin", "/root/.ssh/authorized_keys", "rm -f /etc/sudoers.d/boetticher-labadmin", "visudo -cf /etc/sudoers", "install -d -m 700 -o lab-jump -g lab-jump /home/lab-jump", "chown lab-jump:lab-jump /home/lab-jump.authorized_keys", "AllowUsers root labadmin lab-jump", "Match User lab-jump"} {
+	for _, required := range []string{"command -v visudo", "deb http://deb.debian.org/debian trixie main", "apt-get -o Dir::Etc::sourcelist=", "install --yes --no-install-recommends sudo", "passwd --lock labadmin", "/root/.ssh/authorized_keys", "rm -f /etc/sudoers.d/boetticher-labadmin", "visudo -cf /etc/sudoers", "install -d -m 700 -o lab-jump -g lab-jump /home/lab-jump", "chown lab-jump:lab-jump /home/lab-jump.authorized_keys", "AllowUsers root labadmin lab-jump", "Match User lab-jump"} {
 		if !strings.Contains(runner.command, required) {
 			t.Fatalf("identity bootstrap missing %q: %s", required, runner.command)
 		}
@@ -859,17 +885,71 @@ func TestRevokeTemporaryRootAccessIsFixedAndIdempotent(t *testing.T) {
 		if strings.Contains(runner.command, "sudo") || strings.Contains(runner.command, "pvesh") || strings.Contains(runner.command, "pvesm") || strings.Contains(runner.command, "sh -c") {
 			t.Fatalf("temporary cleanup exposed an unrelated privilege path: %s", runner.command)
 		}
-		if host && !strings.Contains(runner.command, "AllowUsers root labadmin lab-jump") {
-			t.Fatalf("host cleanup does not verify the temporary AllowUsers state: %s", runner.command)
-		}
-		for _, required := range []string{"grep -Fvx --", "authorized_keys.boetticher-cleanup", "passwd --lock root"} {
-			if !strings.Contains(runner.command, required) {
-				t.Fatalf("temporary cleanup does not remove only the injected key: missing %q in %s", required, runner.command)
+		if host {
+			if !strings.Contains(runner.command, "AllowUsers root labadmin lab-jump lab-netprobe") {
+				t.Fatalf("host cleanup does not verify the persistent AllowUsers state: %s", runner.command)
 			}
+			for _, forbidden := range []string{"authorized_keys.boetticher-cleanup", "grep -Fvx", "passwd --lock", "sed -i", "systemctl reload"} {
+				if strings.Contains(runner.command, forbidden) {
+					t.Fatalf("host cleanup mutates persistent authentication through %q: %s", forbidden, runner.command)
+				}
+			}
+		} else {
+			for _, required := range []string{"grep -Fvx --", "authorized_keys.boetticher-cleanup"} {
+				if !strings.Contains(runner.command, required) {
+					t.Fatalf("guest cleanup does not remove only the injected key: missing %q in %s", required, runner.command)
+				}
+			}
+		}
+		if strings.Contains(runner.command, "passwd --lock root") {
+			t.Fatalf("temporary cleanup must never change root password state: %s", runner.command)
 		}
 	}
 	if err := RevokeTemporaryRootAccess(context.Background(), &fakeRunner{}, "192.0.2.10", "labadmin", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator", false); err == nil {
 		t.Fatal("temporary cleanup accepted a non-root transport")
+	}
+}
+
+func TestConfigureHeadlessPowerPolicyUsesExplicitUnattendedContract(t *testing.T) {
+	runner := &fakeRunner{}
+	if err := ConfigureHeadlessPowerPolicy(context.Background(), runner, "192.0.2.10", "root"); err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"dir=/etc/systemd/logind.conf.d",
+		"file=$dir/90-boetticher-headless.conf",
+		"HandleLidSwitch=ignore",
+		"HandleLidSwitchExternalPower=ignore",
+		"HandleLidSwitchDocked=ignore",
+		"HandleSuspendKey=ignore",
+		"HandleHibernateKey=ignore",
+		"IdleAction=ignore",
+		"systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target",
+		"systemctl restart systemd-logind",
+	} {
+		if !strings.Contains(runner.command, required) {
+			t.Fatalf("headless power policy missing %q: %s", required, runner.command)
+		}
+	}
+	if strings.Contains(runner.command, "systemctl mask poweroff.target") {
+		t.Fatalf("headless power policy must not mask controlled poweroff: %s", runner.command)
+	}
+}
+
+func TestCheckHeadlessPowerPolicyUsesReadOnlyVerification(t *testing.T) {
+	runner := &fakeRunner{}
+	if err := CheckHeadlessPowerPolicy(context.Background(), runner, "192.0.2.10", "root"); err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"install ", "systemctl mask", "systemctl restart", "mktemp"} {
+		if strings.Contains(runner.command, forbidden) {
+			t.Fatalf("headless power check mutates the host through %q: %s", forbidden, runner.command)
+		}
+	}
+	for _, required := range []string{"90-boetticher-headless.conf", "systemctl is-enabled", "grep -qxF masked"} {
+		if !strings.Contains(runner.command, required) {
+			t.Fatalf("headless power check missing %q: %s", required, runner.command)
+		}
 	}
 }
 
@@ -899,7 +979,7 @@ func TestDiscoverPhysicalNetworkViaSSHUsesReadOnlyPveshEvidence(t *testing.T) {
 	if err != nil || discovery.Node != "proxmox" || discovery.Discovery.Mode != "physical-trunk" || discovery.Discovery.Trunk == nil || discovery.Discovery.Trunk.Name != "enp5s0" {
 		t.Fatalf("unexpected SSH discovery: %#v, %v", discovery, err)
 	}
-	if len(runner.commands) != 3 || runner.commands[0] != "pvesh get /nodes --output-format json" || runner.commands[1] != "pvesh get /nodes/proxmox/network --output-format json" || runner.commands[2] != "ip -j route show default" {
+	if len(runner.commands) != 4 || runner.commands[0] != "pvesh get /nodes --output-format json" || runner.commands[1] != "pvesh get /nodes/proxmox/network --output-format json" || runner.commands[2] != "ip -j link show" || runner.commands[3] != "ip -j route show default" {
 		t.Fatalf("unexpected discovery commands: %#v", runner.commands)
 	}
 }
