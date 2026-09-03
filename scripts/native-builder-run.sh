@@ -79,6 +79,7 @@ mount -t proc proc "$native_root/proc"
 mounted_proc=1
 
 chroot "$native_root" /usr/bin/env \
+  GOROOT=/opt/boetticher/go/current \
   PATH=/opt/boetticher/go/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
   XDG_RUNTIME_DIR=/tmp/boetticher-runtime \
   BOETTICHER_CACHE_ROOT=/var/cache/boetticher \

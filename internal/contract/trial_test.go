@@ -36,6 +36,10 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 			t.Fatalf("native builder storage contract is missing %s", required)
 		}
 	}
+	nativeRun := string(mustRead(t, filepath.Join(repoRoot, "scripts", "native-builder-run.sh")))
+	if !strings.Contains(nativeRun, "GOROOT=/opt/boetticher/go/current") {
+		t.Fatal("native builder does not provide GOROOT for the trimmed Go toolchain")
+	}
 	if !strings.Contains(buildText, `if [ "$(id -u)" -ne 0 ]`) || !strings.Contains(buildText, "requires root in the supported Linux builder environment") {
 		t.Fatal("real appliance construction does not fail closed when mount/build privileges are unavailable")
 	}

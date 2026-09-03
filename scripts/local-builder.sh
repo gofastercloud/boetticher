@@ -70,7 +70,8 @@ run_linux() {
     scan) script=./scripts/scan-images.sh ;;
     *) fail "unsupported local builder operation: $runner" ;;
   esac
-  export PATH="/opt/boetticher/go/current/bin:$PATH"
+  export GOROOT=/opt/boetticher/go/current
+  export PATH="$GOROOT/bin:$PATH"
   export BOETTICHER_CACHE_ROOT="$cache_root"
   export BOETTICHER_IMAGE_WORK="$work_root"
   export BOETTICHER_ARTIFACT_OUTPUT="$artifact_output"

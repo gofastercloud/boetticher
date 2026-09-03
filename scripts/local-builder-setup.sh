@@ -22,6 +22,22 @@ native_builder=${BOETTICHER_LOCAL_NATIVE:-0}
 native_stage=${BOETTICHER_LOCAL_NATIVE_STAGE:-host}
 native_root=${BOETTICHER_LOCAL_NATIVE_ROOT:-/var/lib/boetticher/local-builder/root}
 source_root=${BOETTICHER_SOURCE_ROOT:-$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)}
+
+cleanup_native_mounts() {
+  cleanup_root=$1
+  [ -d "$cleanup_root" ] || return 0
+  for cleanup_path in "$cleanup_root/dev" "$cleanup_root/proc" "$cleanup_root/run" "$cleanup_root/sys"; do
+    if mountpoint -q "$cleanup_path" && ! umount -R "$cleanup_path"; then
+      printf 'HOLD: could not remove temporary native builder mount %s\n' "$cleanup_path" >&2
+      return 1
+    fi
+  done
+  if findmnt -R -n -o TARGET "$cleanup_root" 2>/dev/null | grep -q .; then
+    printf 'HOLD: unexpected mount remains below native builder root %s\n' "$cleanup_root" >&2
+    return 1
+  fi
+}
+
 case "$native_builder" in
   0) kernel_package=linux-image-virtual ;;
   1)
@@ -40,6 +56,7 @@ case "$native_builder" in
       host_apt_options="-o Dir::Etc::sourcelist=$apt_source_override -o Dir::Etc::sourceparts=-"
       apt-get $host_apt_options -o Acquire::Retries=3 update
       apt-get $host_apt_options -o Acquire::Retries=3 install --yes --no-install-recommends mmdebstrap
+      cleanup_native_mounts "$native_root" || exit 2
       if [ ! -x "$native_root/usr/bin/virt-customize" ]; then
         native_temporary="$native_root.tmp.$$"
         rm -rf -- "$native_temporary"
@@ -48,6 +65,7 @@ case "$native_builder" in
           --include=ca-certificates,curl,debian-archive-keyring,git,jq,libguestfs-tools,mmdebstrap,qemu-utils,time,zstd,linux-image-amd64 \
           --aptopt=Acquire::Retries=3 \
           trixie "$native_temporary" http://deb.debian.org/debian
+        cleanup_native_mounts "$native_temporary" || exit 2
         mv -- "$native_temporary" "$native_root"
       fi
       install -d -m 0755 "$native_root/var/lib/boetticher/local-builder/source"
@@ -62,7 +80,7 @@ case "$native_builder" in
       else
         native_setup_status=$?
       fi
-      umount "$native_root/proc"
+      cleanup_native_mounts "$native_root" || exit 2
       if [ "$native_setup_status" -ne 0 ]; then
         exit "$native_setup_status"
       fi
@@ -144,7 +162,8 @@ install -d -m 0755 "$go_root"
 ln -sfn "$go_install" "$go_root/current"
 install -d -m 0755 /var/cache/boetticher /var/tmp/boetticher-image-build
 
-PATH="$go_root/current/bin:$PATH" go version
+export GOROOT="$go_root/current"
+PATH="$GOROOT/bin:$PATH" go version
 trivy --version | sed -n '1p'
 printf '%s\n' 'Local builder: PASS dependencies and pinned Go toolchain installed'
 printf '%s\n' 'Local builder cache: /var/cache/boetticher'
