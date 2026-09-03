@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -18,6 +19,24 @@ func TestApplianceBuildSourceRootIsIndependentOfCallerDirectory(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(root, relative)); err != nil {
 			t.Fatalf("build source root %q is missing %s: %v", root, relative, err)
 		}
+	}
+}
+
+func TestRuntimeProvisioningUsesEmbeddedAnsibleSources(t *testing.T) {
+	root, cleanup, err := ansibleSourceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	repositoryRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root == repositoryRoot || strings.HasPrefix(root, repositoryRoot+string(filepath.Separator)) {
+		t.Fatalf("runtime Ansible source came from the filesystem checkout: %s", root)
+	}
+	if _, err := os.Stat(filepath.Join(root, "ansible", "site.yml")); err != nil {
+		t.Fatalf("embedded Ansible source is incomplete: %v", err)
 	}
 }
 

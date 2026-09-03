@@ -33,6 +33,26 @@ func TestKioskCertificateSelectorPinsPulseIdentity(t *testing.T) {
 	}
 }
 
+func TestCompanionProvisioningUsesEmbeddedSources(t *testing.T) {
+	root, cleanup, err := kioskSourceRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	repositoryRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root == repositoryRoot || strings.HasPrefix(root, repositoryRoot+string(filepath.Separator)) {
+		t.Fatalf("companion provisioning source came from the filesystem checkout: %s", root)
+	}
+	for _, relative := range []string{"ansible/companion.yml", "pi/kiosk/visualizer/index.html"} {
+		if _, err := os.Stat(filepath.Join(root, relative)); err != nil {
+			t.Fatalf("embedded companion source is incomplete: %v", err)
+		}
+	}
+}
+
 func TestKioskCertificatePolicyUsesStringifiedChromeEntries(t *testing.T) {
 	policy, err := kioskCertificatePolicy("https://monitor.lab.home.arpa", "lab.home.arpa")
 	if err != nil {

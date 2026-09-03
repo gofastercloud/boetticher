@@ -536,33 +536,9 @@ func validateKioskSSHInputs(identity, knownHosts string, dryRun bool) error {
 }
 
 func kioskSourceRoot() (string, func(), error) {
-	root, err := applianceBuildSourceRoot()
-	if err == nil {
-		var incomplete error
-		for _, relative := range []string{
-			"ansible/companion.yml",
-			"ansible/roles/kiosk/tasks/main.yml",
-			"ansible/roles/kiosk/templates/pulse-kiosk.service.j2",
-			"pi/kiosk/visualizer/index.html",
-			"pi/kiosk/libexec/pulse-kiosk-stats",
-			"pi/kiosk/pulse-refresh-extension/manifest.json",
-			"pi/kiosk/pulse-refresh-extension/reload.js",
-			"pi/kiosk/systemd/pulse-kiosk-stats.service",
-			"pi/kiosk/systemd/pulse-kiosk-stats.timer",
-		} {
-			if _, err := os.Stat(filepath.Join(root, relative)); err != nil {
-				incomplete = fmt.Errorf("companion source is incomplete at %s: %w", filepath.Join(root, relative), err)
-				break
-			}
-		}
-		if incomplete == nil {
-			return root, func() {}, nil
-		}
-		err = incomplete
-	}
 	archive, archiveErr := artifacts.BuildEmbeddedCompanionSourceArchive()
 	if archiveErr != nil {
-		return "", func() {}, fmt.Errorf("resolve companion Ansible source: %w (source checkout: %v)", archiveErr, err)
+		return "", func() {}, fmt.Errorf("resolve embedded companion source: %w", archiveErr)
 	}
 	workspace, workspaceErr := os.MkdirTemp("", ".boetticher-companion-source-*")
 	if workspaceErr != nil {

@@ -483,20 +483,13 @@ func buildSourceRoot(root string) bool {
 	return true
 }
 
-// ansibleSourceRoot resolves the deployment playbook from the source
-// checkout when present, or from the release controller's embedded public
-// Ansible tree. The returned cleanup is a no-op for a checkout.
+// ansibleSourceRoot resolves the deployment playbook from the release
+// controller's embedded public Ansible tree. A release operation must not
+// execute an unauthenticated filesystem checkout found near the binary.
 func ansibleSourceRoot() (string, func(), error) {
-	root, err := applianceBuildSourceRoot()
-	if err == nil {
-		if _, statErr := os.Stat(filepath.Join(root, "ansible", "site.yml")); statErr == nil {
-			return root, func() {}, nil
-		}
-		err = fmt.Errorf("Ansible deployment playbook is missing from %s", root)
-	}
 	archive, archiveErr := artifacts.BuildEmbeddedAnsibleSourceArchive()
 	if archiveErr != nil {
-		return "", func() {}, fmt.Errorf("resolve embedded Ansible source: %w (source checkout: %v)", archiveErr, err)
+		return "", func() {}, fmt.Errorf("resolve embedded Ansible source: %w", archiveErr)
 	}
 	workspace, workspaceErr := os.MkdirTemp("", ".boetticher-ansible-source-*")
 	if workspaceErr != nil {
