@@ -466,7 +466,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err := proxmox.InstallTemporaryRootAccess(ctx, recoveryRunner, s.BootstrapAddress, "root", deploymentPublicKey); err != nil {
 		return fmt.Errorf("acquire temporary Apply authority: %w", err)
 	}
-	rootRunner = recoveryRunner.WithIdentityData(temporaryPrivateKey)
+	rootRunner = recoveryRunner.WithIdentityData(temporaryPrivateKey).FreshConnection()
 	// Host operations use the HOME-side address directly. Removing the
 	// generated host alias also prevents its durable operator IdentityFile from
 	// entering the temporary-root authentication set.
@@ -2047,7 +2047,7 @@ func applianceSSHRunner(s model.Site, siteDir, hostAlias string) proxmox.SSHRunn
 func applianceSSHRunnerWithIdentity(s model.Site, siteDir, hostAlias string, identityData []byte) proxmox.SSHRunner {
 	runner := applianceSSHRunner(s, siteDir, hostAlias)
 	if len(identityData) > 0 {
-		runner = runner.WithIdentityData(identityData)
+		runner = runner.WithIdentityData(identityData).FreshConnection()
 	}
 	return runner
 }

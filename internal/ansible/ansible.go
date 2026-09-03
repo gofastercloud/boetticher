@@ -493,7 +493,7 @@ func runWithSSHConfig(ctx context.Context, playbook, inventory string, variables
 		// operation identity. IdentitiesOnly=no lets OpenSSH obtain that key
 		// from the agent while the generated bastion host block retains its
 		// durable, independently enrolled identity.
-		sshArgs += " -o IdentitiesOnly=no"
+		sshArgs += " -o IdentitiesOnly=no -o ControlMaster=no -o ControlPath=none"
 	}
 	args := []string{"-i", inventory, "--user", user, playbook, "--extra-vars", "@/dev/stdin", "--ssh-common-args", sshArgs}
 	if limit != "" {

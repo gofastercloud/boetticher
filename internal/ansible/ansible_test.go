@@ -617,7 +617,7 @@ func TestRunWithIdentityUsesAndCleansTemporarySSHAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(args), "-o IdentitiesOnly=no") || strings.Contains(string(args), "temporary private key") {
+	if !strings.Contains(string(args), "-o IdentitiesOnly=no -o ControlMaster=no -o ControlPath=none") || strings.Contains(string(args), "temporary private key") {
 		t.Fatalf("Ansible arguments did not select the temporary agent without exposing key material: %s", args)
 	}
 }
