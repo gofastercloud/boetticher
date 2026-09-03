@@ -4,7 +4,7 @@ This is the short, human-readable history of the project: the things likely to
 matter when you run or contribute to a lab. It is not a tutorial; the current
 guide lives at [gofastercloud.github.io/boetticher](https://gofastercloud.github.io/boetticher/).
 
-## Unreleased
+## 0.5.0 — 2026-09-03
 
 - Replace the sprawling guide collection with a small GitHub Pages site, a
   short README, and a generated command menu.
