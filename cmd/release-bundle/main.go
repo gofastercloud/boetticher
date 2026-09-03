@@ -40,6 +40,9 @@ func main() {
 	if *companionBinary == "" {
 		*companionBinary = filepath.Join(*siteDir, "bin", "boetticher-streamdeck-linux-arm64")
 	}
+	if err := artifacts.RebindEvidencePaths(*siteDir); err != nil {
+		fatal("bind qualification evidence to local artifact bytes: %v", err)
+	}
 	privateKey, err := readPrivateKey(*privateKeyPath)
 	if err != nil {
 		fatal("read signing key: %v", err)
