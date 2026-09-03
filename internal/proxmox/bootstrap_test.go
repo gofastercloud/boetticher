@@ -933,19 +933,27 @@ func TestRestoreTemporaryRootAccessRejectsGuestAgentFailure(t *testing.T) {
 
 func TestInactivateRetainedModuleUsesBoundedGuestServiceContract(t *testing.T) {
 	for _, guest := range []struct {
-		kind GuestKind
-		want string
+		kind     GuestKind
+		module   string
+		want     string
+		services []string
 	}{
-		{kind: KindQEMU, want: "/usr/sbin/qm guest exec 200 -- /bin/sh -c"},
-		{kind: KindLXC, want: "/usr/sbin/pct exec 200 -- /bin/sh -c"},
+		{kind: KindQEMU, module: "tailnet-router", want: "/usr/sbin/qm guest exec 200 -- /bin/sh -c", services: []string{"tailscaled"}},
+		{kind: KindLXC, module: "airvpn", want: "/usr/sbin/pct exec 200 -- /bin/sh -c", services: []string{"boetticher-airvpn.service"}},
+		{kind: KindLXC, module: "arr", want: "/usr/sbin/pct exec 200 -- /bin/sh -c", services: []string{"sonarr", "radarr", "nginx"}},
 	} {
-		t.Run(string(guest.kind), func(t *testing.T) {
+		t.Run(string(guest.kind)+"/"+guest.module, func(t *testing.T) {
 			runner := &fakeRunner{output: []byte("{\"exitcode\":0,\"exited\":1}")}
-			if err := InactivateRetainedModule(context.Background(), runner, "192.0.2.10", "root", guest.kind, 200, "tailnet-router"); err != nil {
+			if err := InactivateRetainedModule(context.Background(), runner, "192.0.2.10", "root", guest.kind, 200, guest.module); err != nil {
 				t.Fatal(err)
 			}
-			if runner.user != "root" || !strings.Contains(runner.command, guest.want) || !strings.Contains(runner.command, "systemctl disable --now") || !strings.Contains(runner.command, "tailscaled") {
+			if runner.user != "root" || !strings.Contains(runner.command, guest.want) || !strings.Contains(runner.command, "systemctl disable --now") {
 				t.Fatalf("retained inactivation used unexpected command: %#v", runner)
+			}
+			for _, service := range guest.services {
+				if !strings.Contains(runner.command, service) {
+					t.Fatalf("retained %s inactivation omitted service %q: %s", guest.module, service, runner.command)
+				}
 			}
 			for _, forbidden := range []string{"systemctl disable --now '*'", "rm -rf", "sudo", "ssh ", "ansible"} {
 				if strings.Contains(runner.command, forbidden) {
