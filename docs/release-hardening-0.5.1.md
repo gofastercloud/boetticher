@@ -122,6 +122,21 @@ identity. SOPS/Age cloud/KMS transitive surface is unchanged because a smaller
 replacement was not shown to preserve the current encryption and recovery
 contract.
 
+## Live qualification status
+
+The 2026-09-04 read-only lab inspection is a qualification hold, not release
+evidence. The Proxmox host is reachable and has the headless power policy
+active, but still contains the prior six-guest deployment: VMIDs 100, 110,
+111, 120, 130, and 140. That is not a clean 0.5.1 installation. The physical
+bridges and internal management route are present.
+
+The Companion reports `eth0` on SERVERS, `wlan0` as the HOME default route,
+NetworkManager active, and the StreamDeck service active. Its kiosk and Pulse
+agent services are not active in this prequalification state. No 0.5.1 source
+revision or release bundle has been deployed, so the enroll/plan/Apply/revoke/
+commit lifecycle, interruption cleanup, recovery usability, and idempotent
+second deployment remain NOT TESTED.
+
 ## 0.5.1 target lifecycle
 
 The supported normal journey is:
