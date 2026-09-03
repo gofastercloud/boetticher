@@ -17,6 +17,7 @@ import (
 	"time"
 
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
+	"github.com/gofastercloud/boetticher/internal/pathguard"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
 	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
@@ -602,6 +603,14 @@ func waitForSSHProcess(ctx context.Context, process *exec.Cmd, done chan<- error
 }
 
 func (r SSHRunner) validateConfig() error {
+	for label, path := range map[string]string{"known-hosts": r.KnownHosts, "identity": r.IdentityFile} {
+		if path == "" {
+			continue
+		}
+		if err := pathguard.ValidateNoSymlinkComponents(path); err != nil {
+			return fmt.Errorf("validate SSH %s path: %w", label, err)
+		}
+	}
 	if r.ConfigFile == "" {
 		return nil
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -245,6 +246,25 @@ func TestSSHRunnerRestrictsAuthenticationToConfiguredIdentity(t *testing.T) {
 	}
 	if !containsString(args, "IdentitiesOnly=yes") || !containsString(args, "-i") || !containsString(args, "/tmp/operator") {
 		t.Fatalf("SSH runner did not restrict authentication to the configured identity: %#v", args)
+	}
+}
+
+func TestSSHRunnerRejectsSymlinkedTrustPaths(t *testing.T) {
+	dir := t.TempDir()
+	external := t.TempDir()
+	if err := os.Symlink(external, filepath.Join(dir, "known-hosts")); err != nil {
+		t.Fatal(err)
+	}
+	runner := SSHRunner{KnownHosts: filepath.Join(dir, "known-hosts", "hosts"), StrictHostKey: "yes"}
+	if err := runner.validateConfig(); err == nil || !strings.Contains(err.Error(), "known-hosts") {
+		t.Fatalf("symlinked known-hosts parent was accepted: %v", err)
+	}
+	if err := os.Symlink(external, filepath.Join(dir, "identity")); err != nil {
+		t.Fatal(err)
+	}
+	runner = SSHRunner{IdentityFile: filepath.Join(dir, "identity", "id_ed25519"), StrictHostKey: "yes"}
+	if err := runner.validateConfig(); err == nil || !strings.Contains(err.Error(), "identity") {
+		t.Fatalf("symlinked identity parent was accepted: %v", err)
 	}
 }
 
