@@ -28,7 +28,7 @@ boetticher deploy --plan DIGEST [--site DIR] [--age-identity PATH] [--confirm]
 boetticher status [--site DIR] [--live] [--details] [--json]
 boetticher module list|configure|enable|disable NAME [--site DIR] [--confirm] [--json]
 boetticher network reservation|record add|remove|list [--site DIR]
-boetticher update --bundle PATH [--site DIR]
+boetticher update [--bundle PATH] [--site DIR] [--dry-run] [--confirm]
 boetticher help --advanced
 ```
 
