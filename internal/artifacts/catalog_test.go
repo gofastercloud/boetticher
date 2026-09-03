@@ -1213,6 +1213,44 @@ func TestEmbeddedCompanionSourceArchiveContainsOnlyProvisioningAssets(t *testing
 	}
 }
 
+func TestEmbeddedAnsibleSourceArchiveContainsDeploymentRolesOnly(t *testing.T) {
+	archiveBytes, err := BuildEmbeddedAnsibleSourceArchive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := gzip.NewReader(strings.NewReader(string(archiveBytes)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := tar.NewReader(reader)
+	entries := map[string]bool{}
+	for {
+		header, err := archive.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries[header.Name] = true
+	}
+	for _, required := range []string{
+		"ansible/site.yml",
+		"ansible/roles/base/tasks/main.yml",
+		"ansible/roles/monitor/templates/pulse-loopback.conf.j2",
+		"ansible/roles/kiosk/templates/boetticher-streamdeck.service.j2",
+	} {
+		if !entries[required] {
+			t.Fatalf("embedded Ansible archive omitted %s", required)
+		}
+	}
+	for _, forbidden := range []string{"site.yml", "generated/model.json", "secrets.yaml", "identity.txt", "pi/kiosk/visualizer/index.html"} {
+		if entries[forbidden] {
+			t.Fatalf("embedded Ansible archive included forbidden source or state %s", forbidden)
+		}
+	}
+}
+
 func TestBuildSourceArchiveContainsBlockyRendererDependencies(t *testing.T) {
 	archive, err := BuildSourceArchive(filepath.Join("..", ".."))
 	if err != nil {

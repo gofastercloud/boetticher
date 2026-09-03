@@ -288,10 +288,11 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return nil
 	}
 	report.start("artifacts", "Resolve qualified artifacts")
-	ansibleRoot, err := applianceBuildSourceRoot()
+	ansibleRoot, cleanupAnsibleSource, err := ansibleSourceRoot()
 	if err != nil {
 		return fmt.Errorf("resolve Ansible playbook source: %w", err)
 	}
+	defer cleanupAnsibleSource()
 	ansiblePlaybook := filepath.Join(ansibleRoot, "ansible", "site.yml")
 	endpointLookup := net.LookupIP
 	rootRunner := proxmoxRootSSHRunner(s, *siteDir)

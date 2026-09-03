@@ -98,6 +98,14 @@ var CompanionSourceInputs = []string{
 	"pi/kiosk",
 }
 
+// AnsibleSourceInputs are the deployment playbook and roles required by an
+// installed release controller. They contain no site state, credentials, or
+// private keys.
+var AnsibleSourceInputs = []string{
+	"ansible/site.yml",
+	"ansible/roles",
+}
+
 // BuildSourceArchive returns a deterministic gzip-compressed tar stream of
 // the public build inputs. It rejects symlinks so a source checkout cannot
 // smuggle a site file or credential into the temporary builder through a
@@ -150,6 +158,13 @@ func BuildEmbeddedSourceArchive() ([]byte, error) {
 // public companion provisioning assets embedded in a release controller.
 func BuildEmbeddedCompanionSourceArchive() ([]byte, error) {
 	return buildEmbeddedArchive(CompanionSourceInputs)
+}
+
+// BuildEmbeddedAnsibleSourceArchive returns the deployment playbook and
+// first-party roles embedded in a release controller. Deployment still reads
+// site-specific variables and secrets from the operator's private site.
+func BuildEmbeddedAnsibleSourceArchive() ([]byte, error) {
+	return buildEmbeddedArchive(AnsibleSourceInputs)
 }
 
 func buildEmbeddedArchive(inputs []string) ([]byte, error) {
@@ -306,14 +321,29 @@ func ExtractBuildArchiveFile(archivePath, root string) error {
 // retains path, link, entry-count, and total-output protections while writing
 // each regular file atomically beneath the generated artifact directory.
 func ExtractBuildArchiveReader(reader io.Reader, root string) error {
+	return extractArchiveReader(reader, root, func(clean string) bool {
+		return clean == "generated/artifacts" || strings.HasPrefix(clean, "generated/artifacts/")
+	}, "builder artifact", 64<<30, 16<<30)
+}
+
+// ExtractSourceArchiveReader extracts only the built-in deployment and
+// companion source trees. It is separate from artifact extraction so a source
+// archive cannot write into generated state, and a builder artifact archive
+// cannot be repurposed as a source tree.
+func ExtractSourceArchiveReader(reader io.Reader, root string) error {
+	return extractArchiveReader(reader, root, func(clean string) bool {
+		return strings.HasPrefix(clean, "ansible/") || strings.HasPrefix(clean, "pi/kiosk/")
+	}, "embedded source", 256<<20, 64<<20)
+}
+
+func extractArchiveReader(reader io.Reader, root string, allowed func(string) bool, label string, maxBytes, maxArchiveEntrySize int64) error {
 	if reader == nil || root == "" {
 		return fmt.Errorf("builder artifact archive and destination root are required")
 	}
-	const (
-		maxEntries          = 8192
-		maxBytes            = int64(64 << 30)
-		maxArchiveEntrySize = int64(16 << 30)
-	)
+	if allowed == nil || label == "" || maxBytes <= 0 || maxArchiveEntrySize <= 0 {
+		return fmt.Errorf("archive extraction policy is invalid")
+	}
+	const maxEntries = 8192
 	buffered := bufio.NewReader(reader)
 	var tarReader *tar.Reader
 	header, err := buffered.Peek(2)
@@ -345,15 +375,15 @@ func ExtractBuildArchiveReader(reader io.Reader, root string) error {
 		}
 		entries++
 		if entries > maxEntries {
-			return fmt.Errorf("builder artifact archive contains too many entries")
+			return fmt.Errorf("%s archive contains too many entries", label)
 		}
 		if header.Size < 0 || header.Size > maxBytes-totalBytes || header.Size > maxArchiveEntrySize {
-			return fmt.Errorf("builder artifact archive exceeds bounded output size")
+			return fmt.Errorf("%s archive exceeds bounded output size", label)
 		}
 		totalBytes += header.Size
 		clean := path.Clean(header.Name)
-		if clean != "generated/artifacts" && !strings.HasPrefix(clean, "generated/artifacts/") {
-			return fmt.Errorf("builder artifact archive contains unexpected path %q", header.Name)
+		if !allowed(clean) {
+			return fmt.Errorf("%s archive contains unexpected path %q", label, header.Name)
 		}
 		target := filepath.Join(root, filepath.FromSlash(clean))
 		switch header.Typeflag {
@@ -373,7 +403,7 @@ func ExtractBuildArchiveReader(reader io.Reader, root string) error {
 				return fmt.Errorf("builder artifact archive entry %q ended early", header.Name)
 			}
 		default:
-			return fmt.Errorf("builder artifact archive contains unsupported entry %q", header.Name)
+			return fmt.Errorf("%s archive contains unsupported entry %q", label, header.Name)
 		}
 	}
 	return nil

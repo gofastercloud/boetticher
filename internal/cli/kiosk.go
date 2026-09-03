@@ -571,7 +571,7 @@ func kioskSourceRoot() (string, func(), error) {
 	if workspaceErr != nil {
 		return "", func() {}, fmt.Errorf("create embedded companion source workspace: %w", workspaceErr)
 	}
-	if extractErr := artifacts.ExtractBuildArchiveReader(bytes.NewReader(archive), workspace); extractErr != nil {
+	if extractErr := artifacts.ExtractSourceArchiveReader(bytes.NewReader(archive), workspace); extractErr != nil {
 		_ = os.RemoveAll(workspace)
 		return "", func() {}, fmt.Errorf("extract embedded companion source: %w", extractErr)
 	}
