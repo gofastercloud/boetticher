@@ -152,11 +152,11 @@ boetticher companion status 192.0.2.50 --site ./my-boetticher
 
 ### Names, dashboards, and logs
 
-DNS and logging are always present. Blocky answers client DNS queries,
-PowerDNS owns Boetticher's private names, and Chrony supplies Network Time
-Protocol (NTP). Add your own private A or CNAME records with `boetticher dns
-record`, then deploy. Pulse is on by default; Gatus is an optional, lighter
-status page for the HTTPS services Boetticher knows about.
+DNS is mandatory; logging is optional and off by default. Blocky answers client
+DNS queries, PowerDNS owns Boetticher's private names, and Chrony supplies
+Network Time Protocol (NTP). Add your own private A or CNAME records with
+`boetticher dns record`, then deploy. Pulse is on by default; Gatus is an
+optional, lighter status page for the HTTPS services Boetticher knows about.
 
 ## The small print, without the legalese
 
