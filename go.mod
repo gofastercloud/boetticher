@@ -8,7 +8,6 @@ require (
 	charm.land/lipgloss/v2 v2.0.5
 	filippo.io/age v1.3.1
 	github.com/getsops/sops/v3 v3.13.3
-	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/invopop/jsonschema v0.14.0
 	github.com/matthewpi/streamdeck v0.0.0-20240226234722-6586ce762db3
 	golang.org/x/image v0.15.0
@@ -92,6 +91,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
+	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.18 // indirect
 	github.com/googleapis/gax-go/v2 v2.23.0 // indirect
