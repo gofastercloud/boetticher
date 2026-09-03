@@ -1535,10 +1535,17 @@ func needsInitialDNSConfiguration(state deploymentGuestArtifactState) bool {
 func deploymentGuestPlans(s model.Site, plan proxmox.Plan) []proxmox.GuestPlan {
 	seen := make(map[int]bool)
 	guests := make([]proxmox.GuestPlan, 0, len(plan.Guests))
+	for _, guest := range plan.Guests {
+		if guest.Owner != "boetticher/module/firewall" {
+			continue
+		}
+		seen[guest.VMID] = true
+		guests = append(guests, guest)
+	}
 	for _, module := range deploymentModuleNames(s) {
 		for _, guest := range plan.Guests {
 			matches := guest.Owner == "boetticher/module/"+module
-			if !matches || guest.Kind != proxmox.KindLXC || seen[guest.VMID] {
+			if !matches || seen[guest.VMID] {
 				continue
 			}
 			seen[guest.VMID] = true

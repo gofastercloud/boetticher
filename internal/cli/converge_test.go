@@ -675,6 +675,32 @@ func TestDeploymentLockInputsRecognizeSiteAndDryRunFlags(t *testing.T) {
 	}
 }
 
+func TestLiveDeploymentObservesManagedFirewallAndModuleGuests(t *testing.T) {
+	s := model.NewDefaultSite("deployment-observations", "age1observations")
+	composed, _, err := modules.Compose(model.ConfigFromSite(s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s = composed
+	plan, err := proxmox.PlanFromSite(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guests := deploymentGuestPlans(s, plan)
+	if len(guests) != 3 {
+		t.Fatalf("live deployment observed %d guests, want the firewall and two default module guests: %#v", len(guests), guests)
+	}
+	foundFirewall := false
+	for _, guest := range guests {
+		if guest.Name == "lab-fw-01" && guest.Kind == proxmox.KindQEMU {
+			foundFirewall = true
+		}
+	}
+	if !foundFirewall {
+		t.Fatalf("live deployment observations omitted the managed firewall QEMU: %#v", guests)
+	}
+}
+
 func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
 	if err != nil {
