@@ -85,18 +85,18 @@ One evidence level does not prove a higher level.
 
 ## 0.5.1 source checkpoint measurements
 
-These are measured after the source simplification and before clean-install
+These are measured after the source hardening and before clean-install
 qualification. They are not live or hosted release evidence. The generated
 projection count is from a fresh default `init` output; the final table must be
 repeated after clean-install deployment using the same exclusions.
 
 | Measure | 0.5.0 baseline | 0.5.1 source checkpoint |
 | --- | ---: | ---: |
-| Controller source LOC | 45,629 | 42,585 |
-| Controller test LOC | 23,065 | 21,645 |
+| Controller source LOC | 45,629 | 42,865 |
+| Controller test LOC | 23,065 | 22,079 |
 | Compiled repository packages | 49 | 48 |
 | Controller dependency closure | 1,140 | 1,139 |
-| Release controller size, local trust-data build | 53,899,362 bytes | 53,666,306 bytes |
+| Release controller size, local trust-data build | 53,899,362 bytes | 53,715,810 bytes |
 | Default Proxmox guests | 6 | 3 |
 | Public command menu entries | 9 | 9 |
 | Advanced command entries | 33 | 21 |
@@ -112,9 +112,9 @@ repeated after clean-install deployment using the same exclusions.
 | AWS SDK v2 modules | 19 | 19 |
 | Azure SDK modules | 6 | 6 |
 | KMS-named modules | 2 | 2 |
-| Lines added in `origin/0.5.0...HEAD` | — | 2,378 |
-| Lines deleted in `origin/0.5.0...HEAD` | — | 6,617 |
-| Net repository change | — | -4,239 |
+| Lines added in `origin/0.5.0...HEAD` | — | 3,252 |
+| Lines deleted in `origin/0.5.0...HEAD` | — | 6,741 |
+| Net repository change | — | -3,489 |
 
 The direct-requirement increase is the explicit declaration of the already
 transitive `golang.org/x/crypto` dependency used for the in-memory Apply
