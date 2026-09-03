@@ -129,6 +129,11 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err != nil {
 		return err
 	}
+	if !*dryRun {
+		if err := recoverInterruptedDeployment(ctx, *siteDir, s, out); err != nil {
+			return err
+		}
+	}
 	releaseManifest := artifacts.ReleaseManifest{ReleaseVersion: model.ReleaseVersion}
 	releaseDigest := ""
 	if !*dryRun {
@@ -382,15 +387,27 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if *planDigestFlag != "" && *planDigestFlag != planDigest {
 		return fmt.Errorf("stale deployment plan: supplied %s, current live plan is %s", *planDigestFlag, planDigest)
 	}
-	if err := site.SaveOperationState(*siteDir, operationState); err != nil {
-		return fmt.Errorf("record deployment APPLY phase before mutation: %w", err)
-	}
 	if registerCleanup == nil {
 		return errors.New("deployment cleanup registration is required before Apply authority")
 	}
 	temporaryPrivateKey, deploymentPublicKey, err := newTemporaryRootIdentity()
 	if err != nil {
 		return err
+	}
+	cleanupGuests, err := operationCleanupGuests(proxmoxPlan)
+	if err != nil {
+		for index := range temporaryPrivateKey {
+			temporaryPrivateKey[index] = 0
+		}
+		return err
+	}
+	operationState.TemporaryPublicKey = deploymentPublicKey
+	operationState.TemporaryCleanupGuests = cleanupGuests
+	if err := site.SaveOperationState(*siteDir, operationState); err != nil {
+		for index := range temporaryPrivateKey {
+			temporaryPrivateKey[index] = 0
+		}
+		return fmt.Errorf("journal temporary Apply authority before mutation: %w", err)
 	}
 	rootCleanup := newTemporaryRootCleanup(s, *siteDir, deploymentPublicKey, temporaryPrivateKey)
 	// Mark the host as owned before the first remote authority mutation. If key
@@ -1329,6 +1346,107 @@ func waitForDeploymentRoot(ctx context.Context, hostRunner proxmox.CommandRunner
 		}
 	}
 	return fmt.Errorf("initial root transport failed after bounded guest re-arm attempts: %w", lastErr)
+}
+
+type interruptedDeploymentCleanup func(context.Context, string, model.Site, []proxmox.GuestPlan, string) error
+
+// recoverInterruptedDeployment removes authority left by a controller crash.
+// It runs before a new deploy operation is journaled and uses only the
+// independent operator/root transport; no private temporary key is needed for
+// this recovery because the host can remove the exact public-key line from
+// each bounded guest.
+func recoverInterruptedDeployment(ctx context.Context, siteDir string, s model.Site, out io.Writer) error {
+	return recoverInterruptedDeploymentWith(ctx, siteDir, s, out, func(cleanupCtx context.Context, cleanupSiteDir string, cleanupSite model.Site, guests []proxmox.GuestPlan, publicKey string) error {
+		return revokeTemporaryRootAccessForGuestsWithFallback(cleanupCtx, cleanupSite, cleanupSiteDir, guests, publicKey, true, proxmox.RevokeTemporaryRootAccess, proxmox.RevokeTemporaryRootAccessThroughHost)
+	})
+}
+
+func recoverInterruptedDeploymentWith(ctx context.Context, siteDir string, s model.Site, out io.Writer, cleanup interruptedDeploymentCleanup) error {
+	state, found, err := site.LoadOperationState(siteDir)
+	if err != nil {
+		return fmt.Errorf("HOLD: load interrupted deployment state: %w", err)
+	}
+	if !found {
+		return nil
+	}
+	if state.TemporaryPublicKey == "" {
+		if state.Phase != site.PhasePlan && state.Phase != site.PhaseFailed {
+			return fmt.Errorf("HOLD: interrupted deployment phase %s has no recoverable temporary public key; use independent operator/root recovery before retrying", state.Phase)
+		}
+		if err := site.ClearOperationState(siteDir); err != nil {
+			return fmt.Errorf("HOLD: clear interrupted pre-Apply journal: %w", err)
+		}
+		if out != nil {
+			fmt.Fprintln(out, "Interrupted deployment cleanup: PASS no temporary Apply authority was armed")
+		}
+		return nil
+	}
+	if cleanup == nil {
+		return errors.New("HOLD: interrupted deployment cleanup is not configured")
+	}
+	guests, err := operationGuestPlans(state.TemporaryCleanupGuests)
+	if err != nil {
+		return fmt.Errorf("HOLD: decode interrupted deployment cleanup targets: %w", err)
+	}
+	journalErr := saveDeployOperationPhase(siteDir, &state, site.PhaseCleanup, nil)
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	cleanupErr := cleanup(cleanupCtx, siteDir, s, guests, state.TemporaryPublicKey)
+	cancel()
+	if cleanupErr != nil {
+		recoveryErr := fmt.Errorf("HOLD: interrupted deployment cleanup failed: %w", cleanupErr)
+		if journalErr != nil {
+			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("record cleanup phase: %w", journalErr))
+		}
+		if failureJournalErr := saveDeployOperationPhase(siteDir, &state, site.PhaseFailed, cleanupErr); failureJournalErr != nil {
+			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("record cleanup failure: %w", failureJournalErr))
+		}
+		return recoveryErr
+	}
+	if journalErr != nil {
+		return fmt.Errorf("HOLD: temporary Apply authority was removed but cleanup journal could not be recorded: %w", journalErr)
+	}
+	if err := site.ClearOperationState(siteDir); err != nil {
+		return fmt.Errorf("HOLD: temporary Apply authority was removed but interrupted deployment journal could not be cleared: %w", err)
+	}
+	if out != nil {
+		fmt.Fprintln(out, "Interrupted deployment cleanup: PASS temporary Apply authority removed")
+	}
+	return nil
+}
+
+func operationCleanupGuests(plan proxmox.Plan) ([]site.OperationGuest, error) {
+	guests := make([]site.OperationGuest, 0, len(plan.Guests))
+	for _, guest := range plan.Guests {
+		if guest.Owner == "" {
+			continue
+		}
+		if guest.Name == "" || guest.VMID <= 0 || guest.Address == "" {
+			return nil, fmt.Errorf("guest %s has incomplete identity for temporary cleanup", guest.Name)
+		}
+		kind := string(guest.Kind)
+		if kind != string(proxmox.KindQEMU) && kind != string(proxmox.KindLXC) {
+			return nil, fmt.Errorf("guest %s has unsupported kind %q for temporary cleanup", guest.Name, kind)
+		}
+		guests = append(guests, site.OperationGuest{Name: guest.Name, Kind: kind, VMID: guest.VMID, Address: guest.Address})
+	}
+	return guests, nil
+}
+
+func operationGuestPlans(guests []site.OperationGuest) ([]proxmox.GuestPlan, error) {
+	plans := make([]proxmox.GuestPlan, 0, len(guests))
+	for _, guest := range guests {
+		var kind proxmox.GuestKind
+		switch guest.Kind {
+		case string(proxmox.KindQEMU):
+			kind = proxmox.KindQEMU
+		case string(proxmox.KindLXC):
+			kind = proxmox.KindLXC
+		default:
+			return nil, fmt.Errorf("unsupported temporary cleanup guest kind %q", guest.Kind)
+		}
+		plans = append(plans, proxmox.GuestPlan{Name: guest.Name, Kind: kind, VMID: guest.VMID, Address: guest.Address, Owner: "boetticher/recovery"})
+	}
+	return plans, nil
 }
 
 func artifactQualificationStatus(artifact model.Artifact) string {

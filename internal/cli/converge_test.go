@@ -17,6 +17,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
+	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
 
@@ -385,6 +386,96 @@ func TestTemporaryRootCleanupFallsBackThroughIndependentHost(t *testing.T) {
 	}
 }
 
+func TestInterruptedDeploymentCleanupUsesPersistedTargets(t *testing.T) {
+	dir := t.TempDir()
+	publicKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA boetticher-apply"
+	state := site.OperationState{
+		ID: "run-1", Kind: "deploy", Phase: site.PhaseVerify, ModelRevision: "model-1", PlanDigest: strings.Repeat("a", 64),
+		TemporaryPublicKey:     publicKey,
+		TemporaryCleanupGuests: []site.OperationGuest{{Name: "lab-fw-01", Kind: "qemu", VMID: 100, Address: "10.10.99.1"}},
+	}
+	if err := site.SaveOperationState(dir, state); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	if err := recoverInterruptedDeploymentWith(context.Background(), dir, model.Site{BootstrapAddress: "192.0.2.10"}, io.Discard, func(_ context.Context, siteDir string, cleanupSite model.Site, guests []proxmox.GuestPlan, gotKey string) error {
+		called = true
+		if siteDir != dir || cleanupSite.BootstrapAddress != "192.0.2.10" || gotKey != publicKey || len(guests) != 1 || guests[0].Name != "lab-fw-01" || guests[0].Kind != proxmox.KindQEMU || guests[0].VMID != 100 || guests[0].Address != "10.10.99.1" {
+			t.Fatalf("unexpected interrupted cleanup: dir=%s site=%#v guests=%#v key=%q", siteDir, cleanupSite, guests, gotKey)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("interrupted deployment cleanup was not invoked")
+	}
+	if _, found, err := site.LoadOperationState(dir); err != nil || found {
+		t.Fatalf("successful interrupted cleanup left operation state: err=%v found=%t", err, found)
+	}
+}
+
+func TestInterruptedDeploymentCleanupFailureLeavesFailedJournal(t *testing.T) {
+	dir := t.TempDir()
+	publicKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA boetticher-apply"
+	if err := site.SaveOperationState(dir, site.OperationState{
+		ID: "run-1", Kind: "deploy", Phase: site.PhaseApply, ModelRevision: "model-1", PlanDigest: strings.Repeat("a", 64), TemporaryPublicKey: publicKey,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cleanupErr := errors.New("independent host unavailable")
+	err := recoverInterruptedDeploymentWith(context.Background(), dir, model.Site{BootstrapAddress: "192.0.2.10"}, io.Discard, func(context.Context, string, model.Site, []proxmox.GuestPlan, string) error {
+		return cleanupErr
+	})
+	if err == nil || !strings.Contains(err.Error(), "HOLD: interrupted deployment cleanup failed") {
+		t.Fatalf("cleanup failure did not produce a HOLD: %v", err)
+	}
+	state, found, loadErr := site.LoadOperationState(dir)
+	if loadErr != nil || !found || state.Phase != site.PhaseFailed || state.TemporaryPublicKey != publicKey {
+		t.Fatalf("failed cleanup journal = %#v, found=%t, err=%v", state, found, loadErr)
+	}
+}
+
+func TestInterruptedPreApplyJournalIsClearedWithoutCleanup(t *testing.T) {
+	dir := t.TempDir()
+	if err := site.SaveOperationState(dir, site.OperationState{ID: "run-1", Kind: "deploy", Phase: site.PhasePlan, ModelRevision: "model-1"}); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	if err := recoverInterruptedDeploymentWith(context.Background(), dir, model.Site{}, io.Discard, func(context.Context, string, model.Site, []proxmox.GuestPlan, string) error {
+		called = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("pre-Apply journal attempted temporary-authority cleanup")
+	}
+	if _, found, err := site.LoadOperationState(dir); err != nil || found {
+		t.Fatalf("pre-Apply journal was not cleared: err=%v found=%t", err, found)
+	}
+}
+
+func TestInterruptedPreApplyFailureJournalIsClearedWithoutCleanup(t *testing.T) {
+	dir := t.TempDir()
+	if err := site.SaveOperationState(dir, site.OperationState{ID: "run-1", Kind: "deploy", Phase: site.PhaseFailed, ModelRevision: "model-1", Error: "live plan was stale"}); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	if err := recoverInterruptedDeploymentWith(context.Background(), dir, model.Site{}, io.Discard, func(context.Context, string, model.Site, []proxmox.GuestPlan, string) error {
+		called = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("pre-Apply failure journal attempted temporary-authority cleanup")
+	}
+	if _, found, err := site.LoadOperationState(dir); err != nil || found {
+		t.Fatalf("pre-Apply failure journal was not cleared: err=%v found=%t", err, found)
+	}
+}
+
 type deploymentRootTestRunner struct {
 	calls             int
 	lastCommand       string
@@ -486,6 +577,18 @@ func TestDeployAcquiresTemporaryRootOnlyAfterExactPlanAcceptance(t *testing.T) {
 	}
 	if !strings.Contains(text[acquire:], "temporaryPrivateKey") {
 		t.Fatal("temporary Apply identity is not retained for the bounded Apply lifecycle")
+	}
+	journalKey := strings.Index(text, "operationState.TemporaryPublicKey = deploymentPublicKey")
+	journalGuests := strings.Index(text, "operationState.TemporaryCleanupGuests = cleanupGuests")
+	journalSave := -1
+	if journalGuests >= 0 {
+		journalSaveOffset := strings.Index(text[journalGuests:], "site.SaveOperationState(*siteDir, operationState)")
+		if journalSaveOffset >= 0 {
+			journalSave = journalGuests + journalSaveOffset
+		}
+	}
+	if journalKey < accept || journalGuests < journalKey || journalSave < journalGuests || journalSave > acquire {
+		t.Fatalf("temporary Apply authority was not journaled before installation: key=%d guests=%d save=%d acquire=%d", journalKey, journalGuests, journalSave, acquire)
 	}
 	guestRegistration := strings.Index(text, "rootCleanup.guestEstablished(firewallGuest)")
 	guestReadiness := strings.Index(text, "return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, firewallRunner.FreshConnection()")

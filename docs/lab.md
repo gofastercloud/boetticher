@@ -132,9 +132,11 @@ not alternate configuration authorities.
 
 The trust lifecycle distinguishes three identities. Enrollment stores durable
 read-only/scoped Proxmox API authority. Apply re-observes and accepts the
-exact plan, then creates one in-memory temporary root identity for bounded
-privileged mutation and cleanup. Independent operator/root recovery access is
-never removed, locked, overwritten, or used as Boetticher cleanup ownership.
+exact plan, then creates one temporary root identity whose private material
+exists only in memory. Its public key and bounded cleanup targets are recorded
+in the immutable operation journal before privileged mutation. Independent
+operator/root recovery access is never removed, locked, overwritten, or used
+as Boetticher cleanup ownership.
 
 ## Release and maintainer builds
 

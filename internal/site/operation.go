@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,16 +34,28 @@ const (
 // It records what a running deployment intended to apply and where it
 // stopped, so retry and diagnosis do not infer intent from partial files.
 type OperationState struct {
-	Version       int            `json:"version"`
-	ID            string         `json:"id"`
-	Kind          string         `json:"kind"`
-	Phase         OperationPhase `json:"phase"`
-	ModelRevision string         `json:"model_revision"`
-	PlanDigest    string         `json:"plan_digest"`
-	BundleDigest  string         `json:"bundle_digest,omitempty"`
-	StartedAt     string         `json:"started_at"`
-	UpdatedAt     string         `json:"updated_at"`
-	Error         string         `json:"error,omitempty"`
+	Version                int              `json:"version"`
+	ID                     string           `json:"id"`
+	Kind                   string           `json:"kind"`
+	Phase                  OperationPhase   `json:"phase"`
+	ModelRevision          string           `json:"model_revision"`
+	PlanDigest             string           `json:"plan_digest"`
+	BundleDigest           string           `json:"bundle_digest,omitempty"`
+	StartedAt              string           `json:"started_at"`
+	UpdatedAt              string           `json:"updated_at"`
+	Error                  string           `json:"error,omitempty"`
+	TemporaryPublicKey     string           `json:"temporary_public_key,omitempty"`
+	TemporaryCleanupGuests []OperationGuest `json:"temporary_cleanup_guests,omitempty"`
+}
+
+// OperationGuest is the bounded public identity needed to remove a temporary
+// deployment key after a controller interruption. It is not desired state;
+// it records only the exact guest targets that may have received the key.
+type OperationGuest struct {
+	Name    string `json:"name"`
+	Kind    string `json:"kind"`
+	VMID    int    `json:"vmid"`
+	Address string `json:"address"`
 }
 
 // LastAppliedState is the narrow commit record used to distinguish desired
@@ -122,6 +135,32 @@ func LoadLastAppliedState(dir string) (LastAppliedState, bool, error) {
 func validateOperationState(state OperationState) error {
 	if state.Version != OperationStateVersion || state.ID == "" || state.Kind != "deploy" || state.ModelRevision == "" || state.StartedAt == "" || state.UpdatedAt == "" {
 		return errors.New("operation state is incomplete")
+	}
+	if state.TemporaryPublicKey == "" && len(state.TemporaryCleanupGuests) > 0 {
+		return errors.New("operation state has cleanup guests without a temporary public key")
+	}
+	if strings.ContainsAny(state.TemporaryPublicKey, "\r\n\x00") {
+		return errors.New("operation state temporary public key contains control characters")
+	}
+	seenGuests := make(map[int]struct{}, len(state.TemporaryCleanupGuests))
+	for _, guest := range state.TemporaryCleanupGuests {
+		if guest.Name == "" || guest.VMID <= 0 || guest.Address == "" {
+			return errors.New("operation state has an incomplete temporary cleanup guest")
+		}
+		if guest.Kind != "qemu" && guest.Kind != "lxc" {
+			return fmt.Errorf("operation state has unsupported temporary cleanup guest kind %q", guest.Kind)
+		}
+		if strings.ContainsAny(guest.Name+guest.Address, "\r\n\x00") {
+			return errors.New("operation state temporary cleanup guest contains control characters")
+		}
+		address := net.ParseIP(guest.Address)
+		if address == nil || address.To4() == nil || address.To4().String() != guest.Address {
+			return fmt.Errorf("operation state temporary cleanup guest address %q is not a canonical IPv4 address", guest.Address)
+		}
+		if _, ok := seenGuests[guest.VMID]; ok {
+			return fmt.Errorf("operation state contains duplicate temporary cleanup guest VMID %d", guest.VMID)
+		}
+		seenGuests[guest.VMID] = struct{}{}
 	}
 	switch state.Phase {
 	case PhasePlan:

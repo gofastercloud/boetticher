@@ -165,9 +165,12 @@ files, and documentation are disposable deterministic projections. They are
 regenerated from authoritative state and are not additional lifecycle state.
 
 Boetticher authority is deliberately separated into durable read-only/scoped
-enrollment authority and temporary Apply authority. Independent operator/root
-recovery authority is not Boetticher-owned and must survive enrollment, Apply,
-revoke, interruption, and cleanup failure.
+enrollment authority and temporary Apply authority. Apply keeps private
+temporary-key material in memory while journaling the public key and bounded
+cleanup targets before mutation, allowing an interrupted operation to use the
+independent root path for cleanup. Independent operator/root recovery authority
+is not Boetticher-owned and must survive enrollment, Apply, revoke,
+interruption, and cleanup failure.
 
 ## Default topology decision record
 
