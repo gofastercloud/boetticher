@@ -112,6 +112,28 @@ func TestResponseDetailPreservesProbeOutputWhenExecutionFails(t *testing.T) {
 	}
 }
 
+func TestNetworkProbeOwnershipUsesExactTagsAndDescriptionFields(t *testing.T) {
+	if !hasExactProxmoxTag("boetticher;managed;boetticher-network-probe", "boetticher-network-probe") {
+		t.Fatal("canonical network-probe tag was not recognized")
+	}
+	for _, tags := range []string{"boetticher;managed;not-boetticher-network-probe", "boetticher-network-probe-foreign"} {
+		if hasExactProxmoxTag(tags, "boetticher-network-probe") {
+			t.Fatalf("foreign tag %q was accepted", tags)
+		}
+	}
+	if !hasExactDescriptionField("boetticher-network-probe installation=installation-01 run=run-01", "installation", "installation-01") {
+		t.Fatal("canonical installation description field was not recognized")
+	}
+	for _, description := range []string{
+		"boetticher-network-probe installation=installation-01-foreign",
+		"boetticher-network-probe preinstallation=installation-01",
+	} {
+		if hasExactDescriptionField(description, "installation", "installation-01") {
+			t.Fatalf("foreign description %q was accepted", description)
+		}
+	}
+}
+
 func TestFinishNetworkTestRendersBinaryOperatorResults(t *testing.T) {
 	report := networktest.Report{
 		RunID:   "run-1",

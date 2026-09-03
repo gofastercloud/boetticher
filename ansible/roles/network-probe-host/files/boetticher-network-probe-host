@@ -46,15 +46,26 @@ config = subprocess.run(["/usr/sbin/pct", "config", str(vmid)], capture_output=T
 if config.returncode != 0:
     fail("reserved network probe guest could not be inspected")
 config_text = config.stdout
-required = [
-    "hostname: boetticher-netprobe-" + zone.lower(),
+config_fields = {}
+for line in config_text.splitlines():
+    key, separator, value = line.partition(":")
+    if separator:
+        config_fields[key.strip()] = value.strip()
+description_fields = set(config_fields.get("description", "").split())
+expected_hostname = "boetticher-netprobe-" + zone.lower()
+expected_description_fields = {
     "boetticher-network-probe",
     "installation=" + installation,
     "run=" + run_id,
     "zone=" + zone,
     "artifact=" + artifact,
-]
-if any(value not in config_text for value in required):
+}
+tags = {value.strip() for value in config_fields.get("tags", "").split(";")}
+if (
+    config_fields.get("hostname") != expected_hostname
+    or not expected_description_fields.issubset(description_fields)
+    or "boetticher-network-probe" not in tags
+):
     fail("network probe guest ownership proof does not match")
 if "unprivileged: 1" not in config_text or "nesting=0" not in config_text or "onboot: 0" not in config_text:
     fail("network probe guest security contract does not match")

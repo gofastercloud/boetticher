@@ -964,7 +964,9 @@ func cleanupNetworkProbes(ctx context.Context, client *proxmox.Client, node stri
 			}
 			return fmt.Errorf("inspect reserved VMID %d: %w", id, err)
 		}
-		if kind != proxmox.KindLXC || !strings.Contains(fmt.Sprint(current["tags"]), networktest.HarnessTag) || !strings.Contains(fmt.Sprint(current["description"]), "installation="+s.SecretMetadata.InstallationID) {
+		tags, _ := current["tags"].(string)
+		description, _ := current["description"].(string)
+		if kind != proxmox.KindLXC || !hasExactProxmoxTag(tags, networktest.HarnessTag) || !hasExactDescriptionField(description, "installation", s.SecretMetadata.InstallationID) {
 			return fmt.Errorf("reserved VMID %d is occupied by an unknown guest", id)
 		}
 		status, statusErr := client.LXCStatus(ctx, node, id)
@@ -984,6 +986,25 @@ func cleanupNetworkProbes(ctx context.Context, client *proxmox.Client, node stri
 		}
 	}
 	return nil
+}
+
+func hasExactProxmoxTag(tags, wanted string) bool {
+	for _, tag := range strings.Split(tags, ";") {
+		if strings.TrimSpace(tag) == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func hasExactDescriptionField(description, key, wanted string) bool {
+	want := key + "=" + wanted
+	for _, field := range strings.Fields(description) {
+		if field == want {
+			return true
+		}
+	}
+	return false
 }
 
 func mapToValues(values map[string]string) (result url.Values) {
