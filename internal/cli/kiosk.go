@@ -37,7 +37,7 @@ const companionStreamDeckIdentity = "companion-streamdeck"
 
 func runCompanion(args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: boetticher companion setup|status ADDRESS [options]")
+		return errors.New("usage: boetticher companion setup|status|migrate ADDRESS [options]")
 	}
 	switch args[0] {
 	case "setup":
