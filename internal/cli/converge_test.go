@@ -666,6 +666,15 @@ func TestOperatorPublicKeyForSiteUsesDurablePublicIdentity(t *testing.T) {
 	}
 }
 
+func TestDeploymentLockInputsRecognizeSiteAndDryRunFlags(t *testing.T) {
+	if siteDir, dryRun := deploymentLockInputs([]string{"--site", "/tmp/site", "--dry-run"}); siteDir != "/tmp/site" || !dryRun {
+		t.Fatalf("deployment lock inputs = %q, %t", siteDir, dryRun)
+	}
+	if siteDir, dryRun := deploymentLockInputs([]string{"--site=/tmp/site"}); siteDir != "/tmp/site" || dryRun {
+		t.Fatalf("deployment lock inputs = %q, %t", siteDir, dryRun)
+	}
+}
+
 func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
 	if err != nil {

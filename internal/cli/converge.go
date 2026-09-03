@@ -63,9 +63,23 @@ func validateDeployRecoveryOptions(gatewayMode string, replaceFirewall, recreate
 	return nil
 }
 
-func runDeployWithContext(ctx context.Context, args []string, out io.Writer) error {
+func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (resultErr error) {
 	report := newDeploymentReport(out)
 	ctx = telemetry.WithObserver(ctx, report)
+	lockSiteDir, dryRun := deploymentLockInputs(args)
+	var operationLock *site.OperationLock
+	if !dryRun {
+		var lockErr error
+		operationLock, lockErr = site.AcquireOperationLock(lockSiteDir)
+		if lockErr != nil {
+			return lockErr
+		}
+		defer func() {
+			if unlockErr := operationLock.Release(); unlockErr != nil {
+				resultErr = combineDeploymentErrors(resultErr, unlockErr)
+			}
+		}()
+	}
 	var cleanup func(context.Context) error
 	var commit func() error
 	var markOperationFailure func(error)
@@ -102,7 +116,32 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) err
 		}
 	}
 	operationErr = report.finalize(operationErr)
-	return deploymentErrorForOperator(operationErr)
+	resultErr = deploymentErrorForOperator(operationErr)
+	return resultErr
+}
+
+func deploymentLockInputs(args []string) (string, bool) {
+	siteDir := "."
+	dryRun := false
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--dry-run":
+			dryRun = true
+		case "--site":
+			if index+1 < len(args) {
+				index++
+				siteDir = args[index]
+			}
+		default:
+			if strings.HasPrefix(args[index], "--site=") {
+				siteDir = strings.TrimPrefix(args[index], "--site=")
+			}
+		}
+	}
+	if siteDir == "" {
+		siteDir = "."
+	}
+	return siteDir, dryRun
 }
 
 func runDeployOperation(ctx context.Context, args []string, out io.Writer, report *deploymentReport, registerCleanup deploymentCleanupRegistrar, registerCommit func(func() error), registerOperationFailure func(func(error))) (err error) {

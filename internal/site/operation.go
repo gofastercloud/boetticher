@@ -11,11 +11,13 @@ import (
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/pathguard"
+	"golang.org/x/sys/unix"
 )
 
 const (
 	OperationStateVersion = 1
 	operationStatePath    = "generated/operation.json"
+	operationLockPath     = "generated/operation.lock"
 	lastAppliedStatePath  = "generated/last-applied.json"
 )
 
@@ -71,6 +73,51 @@ type LastAppliedState struct {
 
 func OperationStatePath(dir string) string   { return filepath.Join(dir, operationStatePath) }
 func LastAppliedStatePath(dir string) string { return filepath.Join(dir, lastAppliedStatePath) }
+
+// OperationLock is an advisory per-site lock held for the complete deploy
+// lifecycle. The kernel releases it if the controller exits, so an
+// interrupted deployment can still be recovered on the next invocation.
+type OperationLock struct {
+	file *os.File
+}
+
+func AcquireOperationLock(dir string) (*OperationLock, error) {
+	path := filepath.Join(dir, operationLockPath)
+	if err := pathguard.ValidateNoSymlinkComponents(path); err != nil {
+		return nil, fmt.Errorf("validate deployment lock path: %w", err)
+	}
+	if err := pathguard.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return nil, fmt.Errorf("create deployment lock directory: %w", err)
+	}
+	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("open deployment lock: %w", err)
+	}
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		_ = file.Close()
+		if errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN) {
+			return nil, errors.New("deployment is already in progress for this site")
+		}
+		return nil, fmt.Errorf("acquire deployment lock: %w", err)
+	}
+	return &OperationLock{file: file}, nil
+}
+
+func (lock *OperationLock) Release() error {
+	if lock == nil || lock.file == nil {
+		return nil
+	}
+	file := lock.file
+	lock.file = nil
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_UN); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("release deployment lock: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close deployment lock: %w", err)
+	}
+	return nil
+}
 
 func SaveOperationState(dir string, state OperationState) error {
 	if state.Version == 0 {

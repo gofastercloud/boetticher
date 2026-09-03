@@ -52,3 +52,25 @@ func TestOperationStateRejectsCleanupTargetsWithoutAuthority(t *testing.T) {
 		t.Fatalf("cleanup target without authority was accepted: %v", err)
 	}
 }
+
+func TestOperationLockSerializesDeploymentsAndReleases(t *testing.T) {
+	dir := t.TempDir()
+	first, err := AcquireOperationLock(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Release()
+	if _, err := AcquireOperationLock(dir); err == nil || !strings.Contains(err.Error(), "already in progress") {
+		t.Fatalf("concurrent deployment was not rejected: %v", err)
+	}
+	if err := first.Release(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := AcquireOperationLock(dir)
+	if err != nil {
+		t.Fatalf("deployment lock was not released: %v", err)
+	}
+	if err := second.Release(); err != nil {
+		t.Fatal(err)
+	}
+}
