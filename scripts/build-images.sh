@@ -178,6 +178,11 @@ sonarr_release_sha256=b691b3584c31c0b5514058dee81071c923f63d59a37d19e32f92fa13ea
 radarr_version=6.3.0.10514
 radarr_release_url=https://github.com/Radarr/Radarr/releases/download/v6.3.0.10514/Radarr.master.6.3.0.10514.linux-core-x64.tar.gz
 radarr_release_sha256=41d6455c037ff267c5ad5a0f0de4502cebe8f89ec3d051da97851933d48a4047
+firewall_package_names='nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony openssh-server sudo cloud-init systemd-journal-remote curl jq openssl qemu-guest-agent'
+case "${BOETTICHER_LOCAL_FAST:-0}" in
+  0|1) firewall_upgrade_command='DEBIAN_FRONTEND=noninteractive apt-get --no-download upgrade --yes --no-install-recommends' ;;
+  *) echo 'HOLD: BOETTICHER_LOCAL_FAST must be 0 or 1' >&2; exit 2 ;;
+esac
 mkdir -p "$output_root" "$work_root" "$cache_root/apt" "$cache_root/downloads" "$cache_root/base"
 
 provenance_path="$(dirname "$output_root")/builder-provenance.json"
@@ -254,6 +259,7 @@ create_base_rootfs() {
   mkdir -p "$rootfs"
   mmdebstrap --variant=minbase --architectures=amd64 \
     --aptopt=Acquire::Check-Valid-Until=false \
+    --aptopt=Acquire::Retries=3 \
     --aptopt=Acquire::Languages=none \
     --include="$base_packages" \
     "$base_release" "$rootfs" "$mirror"
@@ -353,7 +359,7 @@ install_packages() {
   mount -t proc proc "$rootfs/proc"
   mount --rbind /sys "$rootfs/sys"
   mount --bind "$package_cache" "$rootfs/var/cache/apt/archives"
-  if ! chroot "$rootfs" apt-get update || ! chroot "$rootfs" env DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends "$@"; then
+  if ! chroot "$rootfs" apt-get -o Acquire::Retries=3 update || ! chroot "$rootfs" env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install --yes --no-install-recommends "$@"; then
     umount -R "$rootfs/var/cache/apt/archives" || true
     umount -R "$rootfs/dev" || true
     umount -R "$rootfs/proc" || true
@@ -435,10 +441,16 @@ package_lxc() {
   chroot "$rootfs" dpkg-query -W -f='${binary:Package}\t${Version}\n' | sort > "$destination/package-manifest.txt"
   printf '%s\n' "boetticher package stage: $name archive"
   artifact_path=$(artifact_for "$name")
+  artifact_temporary="$artifact_path.tmp.$$"
+  rm -f -- "$artifact_temporary"
   compression_timing="$work_root/$name-compression.time"
-  /usr/bin/time -f '%e %U %S' -o "$compression_timing" \
+  if ! /usr/bin/time -f '%e %U %S' -o "$compression_timing" \
     sh -c 'tar --numeric-owner --xattrs --acls -C "$1" -cf - . | zstd -T0 "-$2" -o "$3"' \
-    sh "$rootfs" "$zstd_level" "$artifact_path"
+    sh "$rootfs" "$zstd_level" "$artifact_temporary"; then
+    rm -f -- "$artifact_temporary"
+    return 1
+  fi
+  mv -f -- "$artifact_temporary" "$artifact_path"
   compression_finished=$(timing_now_ms)
   artifact_size=$(stat -c '%s' "$artifact_path")
   compression_wall_ms=$(awk '{printf "%d", $1 * 1000}' "$compression_timing")
@@ -664,6 +676,34 @@ build_aiops() {
   package_lxc boetticher-aiops
 }
 
+prepare_firewall_package_cache() {
+  input=$1
+  package_cache="$cache_root/apt/boetticher-firewall"
+  archive_cache="$package_cache/archives"
+  lists_cache="$package_cache/lists"
+  state_root="$work_root/firewall-apt-state"
+  package_key=$(printf '%s\n' "$firewall_package_names" "$base_release" "$mirror" images/base/runtime/debian-snapshot.sources images/base/runtime/debian-security-snapshot.sources | sha256sum | awk '{print $1}')
+  if [ -f "$package_cache/.complete-$package_key" ] && [ -d "$archive_cache" ] && [ -d "$lists_cache" ]; then
+    printf '%s\n' "measurement stage=package_cache kind=firewall status=hit key=$package_key"
+    return
+  fi
+  rm -rf -- "$package_cache" "$state_root"
+  mkdir -p "$archive_cache" "$lists_cache" "$state_root/lists"
+  virt-cat -a "$input" /var/lib/dpkg/status > "$state_root/status"
+  printf '%s\n' \
+    'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260825T000000Z/ trixie main' \
+    'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20260825T000000Z/ trixie-security main' \
+    > "$state_root/sources.list"
+  apt_options="-o Dir::Etc::sourcelist=$state_root/sources.list -o Dir::Etc::sourceparts=- -o Dir::State=$state_root/ -o Dir::State::status=$state_root/status -o Dir::State::lists=$state_root/lists/ -o Dir::Cache::archives=$archive_cache/ -o APT::Architecture=amd64 -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3"
+  apt-get $apt_options update
+  apt-get $apt_options --download-only install --yes --no-install-recommends $firewall_package_names
+  apt-get $apt_options --download-only upgrade --yes --no-install-recommends
+  cp -a "$state_root/lists/." "$lists_cache/"
+  test -n "$(find "$archive_cache" -type f -name '*.deb' -print -quit)"
+  touch "$package_cache/.complete-$package_key"
+  printf '%s\n' "measurement stage=package_cache kind=firewall status=stored key=$package_key"
+}
+
 build_firewall() {
   printf '%s\n' 'boetticher build stage: firewall'
   for tool in qemu-img virt-customize virt-cat sha512sum; do
@@ -681,15 +721,25 @@ build_firewall() {
   telemetry_binary="$work_root/boetticher-firewall-telemetry"
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$telemetry_binary" ./cmd/boetticher-firewall-telemetry
   go run ./cmd/artifact-identity -module firewall > "$artifact_identity"
+  prepare_firewall_package_cache "$input"
+  package_cache="$cache_root/apt/boetticher-firewall"
+  package_archive_tar="$work_root/firewall-package-archives.tar"
+  package_lists_tar="$work_root/firewall-package-lists.tar"
+  rm -f -- "$package_archive_tar" "$package_lists_tar"
+  tar -C "$package_cache/archives" -cf "$package_archive_tar" .
+  tar -C "$package_cache/lists" -cf "$package_lists_tar" .
   cp "$input" "$image"
-  virt-customize -a "$image" \
-    --network \
+  virt-customize -a "$image" --smp 4 --memsize 4096 \
+    --no-network \
     --upload images/base/runtime/debian-snapshot.sources:/etc/apt/sources.list.d/boetticher-debian.sources \
     --upload images/base/runtime/debian-security-snapshot.sources:/etc/apt/sources.list.d/boetticher-debian-security.sources \
-    --run-command 'rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; apt-get -o Acquire::Check-Valid-Until=false update' \
-    --run-command 'DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes --no-install-recommends' \
-    --run-command 'DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony openssh-server sudo cloud-init systemd-journal-remote curl jq openssl qemu-guest-agent' \
-    --run-command 'apt-get clean; rm -rf /var/lib/apt/lists/*' \
+    --mkdir /var/cache/apt/archives \
+    --mkdir /var/lib/apt/lists \
+    --tar-in "$package_archive_tar":/var/cache/apt/archives \
+    --tar-in "$package_lists_tar":/var/lib/apt/lists \
+    --run-command "rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; $firewall_upgrade_command" \
+    --run-command 'DEBIAN_FRONTEND=noninteractive apt-get --no-download install --yes --no-install-recommends nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony openssh-server sudo cloud-init systemd-journal-remote curl jq openssl qemu-guest-agent' \
+    --run-command 'apt-get clean; rm -rf /var/lib/apt/lists/*; rm -f /etc/resolv.conf' \
     --mkdir /etc/boetticher \
     --mkdir /usr/lib/boetticher \
     --mkdir /var/lib/boetticher/identity/ssh \
@@ -747,6 +797,7 @@ launch_image_worker() {
   worker_root="$work_root/workers/$worker_name"
   worker_log="$output_root/$worker_artifact/build.log"
   mkdir -p "$worker_root" "$(dirname "$worker_log")"
+  : > "$worker_root/timings.log"
   BOETTICHER_IMAGE_WORK="$worker_root" \
   BOETTICHER_BASE_ROOTFS="$base_rootfs" \
   BOETTICHER_SKIP_PROVENANCE=1 \

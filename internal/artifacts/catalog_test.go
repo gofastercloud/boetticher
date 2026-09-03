@@ -679,7 +679,7 @@ func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *tes
 	}
 	buildText := string(buildScript)
 	scanText := string(scanScript)
-	if !strings.Contains(buildText, "BOETTICHER_BASE_ROOTFS") || !strings.Contains(buildText, "BOETTICHER_SKIP_PROVENANCE=1") || !strings.Contains(buildText, `timing_emit "artifact_build"`) {
+	if !strings.Contains(buildText, "BOETTICHER_BASE_ROOTFS") || !strings.Contains(buildText, "BOETTICHER_SKIP_PROVENANCE=1") || !strings.Contains(buildText, `timing_emit "artifact_build"`) || !strings.Contains(buildText, "artifact_temporary=") || !strings.Contains(buildText, "mv -f -- \"$artifact_temporary\" \"$artifact_path\"") {
 		t.Fatal("bounded image workers do not isolate their base rootfs, provenance, and timing contract")
 	}
 	if !strings.Contains(buildText, `timing_emit "artifact_build_all"`) || !strings.Contains(buildText, "pid_a=") || !strings.Contains(buildText, "pid_b=") || !strings.Contains(buildText, "memory-heavy") {
@@ -770,7 +770,7 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(buildScript), "base_packages=$(awk") || !strings.Contains(string(buildScript), "--include=\"$base_packages\"") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Check-Valid-Until=false") || !strings.Contains(string(buildScript), "debian-security-snapshot.sources") || !strings.Contains(string(buildScript), "apt-get upgrade --yes --no-install-recommends") {
+	if !strings.Contains(string(buildScript), "base_packages=$(awk") || !strings.Contains(string(buildScript), "--include=\"$base_packages\"") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Check-Valid-Until=false") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Retries=3") || !strings.Contains(string(buildScript), "debian-security-snapshot.sources") || !strings.Contains(string(buildScript), "apt-get --no-download upgrade --yes --no-install-recommends") {
 		t.Fatal("base builder does not use the pinned Debian snapshot")
 	}
 	if !strings.Contains(string(buildScript), `dpkg-query -W -f='\${binary:Package}\\t\${Version}\\n'`) {
@@ -778,6 +778,19 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	}
 	if strings.Contains(string(buildScript), "systemctl disable --now systemd-networkd-wait-online.service") {
 		t.Fatal("firewall image customization tries to start or stop systemd in an offline image")
+	}
+	for _, required := range []string{
+		"prepare_firewall_package_cache",
+		"virt-cat -a \"$input\" /var/lib/dpkg/status",
+		"--no-network",
+		"BOETTICHER_LOCAL_FAST",
+		"--tar-in \"$package_archive_tar\":/var/cache/apt/archives",
+		"--tar-in \"$package_lists_tar\":/var/lib/apt/lists",
+		"apt-get --no-download install",
+	} {
+		if !strings.Contains(string(buildScript), required) {
+			t.Fatalf("firewall local package-cache build is missing %q", required)
+		}
 	}
 	smokeFirewall, err := os.ReadFile(filepath.Join("..", "..", "scripts", "smoke-firewall-image.sh"))
 	if err != nil {

@@ -40,6 +40,14 @@ require_executable() {
   fi
 }
 
+require_chroot_executable() {
+  label=$1
+  path=$2
+  if ! chroot "$rootfs" test -x "$path"; then
+    fail_check "$label: $path"
+  fi
+}
+
 printf '%s\n' 'boetticher smoke check: module descriptor absence'
 test ! -e "$rootfs/etc/boetticher/module.yaml"
 printf '%s\n' 'boetticher smoke check: artifact identity presence'
@@ -263,10 +271,12 @@ case "$name" in
     ;;
   boetticher-network-probe)
     for path in /usr/sbin/arping /usr/bin/dig /usr/bin/iperf3 /usr/bin/nc /usr/bin/nmap /usr/bin/tcpdump /usr/bin/curl /usr/bin/openssl /usr/bin/jq; do
-      test -x "$rootfs$path"
+      require_chroot_executable "network-probe dependency is missing" "$path"
     done
-    test -x "$rootfs/usr/local/libexec/boetticher-network-probe"
-    test ! -e "$rootfs/etc/systemd/system/boetticher-network-probe.service"
+    require_chroot_executable 'network-probe executable is missing' /usr/local/libexec/boetticher-network-probe
+    if [ -e "$rootfs/etc/systemd/system/boetticher-network-probe.service" ]; then
+      fail_check "network-probe artifact contains an unexpected systemd service: $rootfs/etc/systemd/system/boetticher-network-probe.service"
+    fi
     ;;
   *)
     echo "unknown smoke target: $name" >&2

@@ -125,6 +125,13 @@ boetticher deploy --plan sha256:PLAN_DIGEST --site ./my-boetticher
 
 Use `--storage-confirmed` as well when the site uses the dedicated-data-disk profile, after checking the stable device identity.
 
+The dedicated layout is safe to adopt after a boot-disk reinstall when the
+configured stable device still resolves to the same disk. If the disk contains
+known disposable state from an earlier Boetticher test, add `--reinitialize`;
+that guarded operation refuses configured guests and conflicting Boetticher
+storage definitions before recreating the fixed layout. Do not use it for an
+unreviewed disk or for an unknown Proxmox workload.
+
 ## When you want to go bigger
 
 ### Add a physical VLAN trunk

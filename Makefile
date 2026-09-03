@@ -1,4 +1,4 @@
-.PHONY: ci test build release-bundle companion-binary companion-check vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-portal image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-aiops image-gatus image-network-probe images scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-airvpn scan-bifrost scan-printer scan-arr scan-aiops scan-gatus scan-network-probe command-docs command-docs-check race streamdeck-check
+.PHONY: ci test build release-bundle companion-binary companion-check vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-portal image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-aiops image-gatus image-network-probe images local-builder-init local-image local-images local-image-scan scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-airvpn scan-bifrost scan-printer scan-arr scan-aiops scan-gatus scan-network-probe command-docs command-docs-check race streamdeck-check
 
 GOCACHE ?= /tmp/boetticher-gocache
 GOMODCACHE ?= /tmp/boetticher-gomodcache
@@ -6,6 +6,9 @@ ANSIBLE_LOCAL_TEMP ?= /tmp/boetticher-ansible-tmp
 ANSIBLE_REMOTE_TEMP ?= /tmp/boetticher-ansible-tmp
 UV_CACHE_DIR ?= /tmp/boetticher-uv-cache
 RELEASE_VERSION ?= 0.5.0
+LOCAL_IMAGE_TARGET ?= image-base
+LOCAL_IMAGE_TARGETS ?= image-base
+LOCAL_SCAN_TARGET ?= scan-base
 
 fmt:
 	gofmt -w cmd internal
@@ -66,9 +69,21 @@ command-docs-check:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run ./cmd/command-docs > /tmp/boetticher-commands.md
 	cmp -s /tmp/boetticher-commands.md docs/commands.md
 
+local-builder-init:
+	./scripts/local-builder.sh init
+
+local-image:
+	./scripts/local-builder.sh build "$(LOCAL_IMAGE_TARGET)"
+
+local-images:
+	./scripts/local-builder.sh build images $(LOCAL_IMAGE_TARGETS)
+
+local-image-scan:
+	./scripts/local-builder.sh scan "$(LOCAL_SCAN_TARGET)"
+
 image-check:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./internal/artifacts
-	sh -n scripts/benchmark-artifact-compression.sh scripts/build-images.sh scripts/scan-images.sh scripts/smoke-appliance.sh scripts/smoke-firewall-image.sh images/base/first-boot/boetticher-first-boot.sh images/base/runtime/install-runtime-state.sh
+	sh -n scripts/benchmark-artifact-compression.sh scripts/build-images.sh scripts/scan-images.sh scripts/local-builder.sh scripts/local-builder-setup.sh scripts/install-debian-archive-keyring.sh scripts/native-builder-run.sh scripts/smoke-appliance.sh scripts/smoke-firewall-image.sh images/base/first-boot/boetticher-first-boot.sh images/base/runtime/install-runtime-state.sh
 	@test -z "$$(rg -n 'BOETTICHER_IMAGE_BUILD_COMMAND|exec sh -c' scripts || true)"
 
 image-base image-dns-blocky image-logging image-monitoring image-firewall image-portal image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-aiops image-gatus image-network-probe images:

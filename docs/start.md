@@ -16,6 +16,44 @@ make a live plan, deploy the exact digest you reviewed, then check the lab.
 StreamDeck is now an external companion-Pi capability, so a new install does
 not create a StreamDeck guest in Proxmox.
 
+## Fast local image iteration
+
+The controller and source checks run quickly on macOS. Appliance image
+construction needs Linux root, `mmdebstrap`, and libguestfs, so use the
+persistent local builder for focused image work:
+
+```text
+make local-builder-init
+make local-image LOCAL_IMAGE_TARGET=image-firewall
+make local-images LOCAL_IMAGE_TARGETS="image-dns-blocky image-monitoring"
+```
+
+On macOS, `local-builder-init` creates an amd64 OrbStack Ubuntu builder and
+keeps verified downloads and the base rootfs in its persistent Linux cache.
+The local targets are for development iteration; the full image build,
+Trivy qualification, signed bundle, and release publication still run in the
+official CI workflow.
+
+If an x86 firewall image build is too slow under Apple Silicon emulation, use
+a native amd64 Linux host instead. The source checkout is copied to a fixed
+builder directory, while the cache stays on that host:
+
+```text
+BOETTICHER_LOCAL_BUILDER_MODE=ssh BOETTICHER_LOCAL_BUILDER_SSH=root@192.0.2.73 make local-builder-init
+BOETTICHER_LOCAL_BUILDER_MODE=ssh BOETTICHER_LOCAL_BUILDER_SSH=root@192.0.2.73 make local-image LOCAL_IMAGE_TARGET=image-firewall
+```
+
+The SSH builder receives source files only; it does not receive the private
+site directory or encrypted secrets. Use a dedicated native Linux builder
+where possible rather than installing build tooling on a production host.
+
+For a reinstallable three-drive Proxmox host, keep the operating system on the
+boot disk, mount the separate build disk at `/var/lib/boetticher/local-builder`,
+and keep the appliance data layout on the dedicated data disk. The build disk
+holds the native builder root, downloads, caches, and generated artifacts; the
+data disk is managed by the site’s `dedicated-data-disk` profile and survives a
+boot-disk reinstall.
+
 ## The happy path
 
 Replace <code>PROXMOX_HOME_IP</code> and the certificate path with your real values. The HOME address is the one your existing router gave Proxmox; it is not a new lab address.
@@ -32,6 +70,19 @@ boetticher status --site my-boetticher --live
 ```
 
 `init` makes your little private site repository and its age recovery identity. Keep an independent copy of that identity somewhere sensible before you need it. If you choose the dedicated-data storage profile, pause at the confirmation and make sure the selected disk really is the spare one.
+
+Select and initialize the dedicated data disk through Boetticher so its stable
+identity, fixed LVM layout, Proxmox storage IDs, and backup mount are recorded
+together:
+
+```text
+boetticher init --site-dir my-boetticher --storage-profile dedicated-data-disk --storage-device /dev/disk/by-id/DEVICE
+boetticher storage initialize --site my-boetticher --storage-confirmed
+```
+
+Use `--reinitialize` only when the exact existing `vg_boetticher` layout is
+known to be disposable previous-test state. It refuses configured guests and
+conflicting storage definitions before erasing the Boetticher-owned layout.
 
 <aside class="callout">
   <p><strong>Bring your own firewall?</strong> Add <code>--external-firewall</code> to <code>init</code>, then select and record the physical trunk explicitly during live preflight and bootstrap:</p>

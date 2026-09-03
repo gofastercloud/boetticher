@@ -74,7 +74,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            debian-archive-keyring curl jq libguestfs-tools mmdebstrap qemu-utils zstd
+            debian-archive-keyring curl jq libguestfs-tools mmdebstrap qemu-utils time zstd
+          sudo ./scripts/install-debian-archive-keyring.sh
 
       - name: Run the complete source and contract gate
         run: make ci

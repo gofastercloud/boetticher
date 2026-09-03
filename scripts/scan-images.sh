@@ -171,6 +171,7 @@ launch_scan_worker() {
   worker_log="$scan_log_root/$worker_name.log"
   worker_timing="$scan_log_root/$worker_name.timing"
   mkdir -p "$scan_log_root"
+  : > "$worker_timing"
   (
     timing_log="$worker_timing"
     scan_one "$worker_name"
