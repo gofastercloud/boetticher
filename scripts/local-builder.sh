@@ -33,6 +33,9 @@ remote_output="$remote_root/output"
 remote_native_root="$remote_root/root"
 remote_native_output="$remote_native_root$remote_output"
 
+case "$builder_ssh" in
+  *[![:alnum:]@._:-]*) fail 'BOETTICHER_LOCAL_BUILDER_SSH contains unsupported characters' ;;
+esac
 case "$cache_root$work_root$artifact_output" in
   *[![:alnum:]_./:-]*) fail 'local builder paths may contain only letters, digits, _, ., /, :, and -' ;;
 esac
@@ -63,13 +66,13 @@ run_linux() {
 
 native_ssh() {
   if [ -n "$builder_identity" ] && [ -n "$builder_known_hosts" ]; then
-    ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$builder_known_hosts" -o IdentitiesOnly=yes -i "$builder_identity" "$builder_ssh" "$@"
+    ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o ForwardAgent=no -o ForwardX11=no -o UserKnownHostsFile="$builder_known_hosts" -o IdentitiesOnly=yes -i "$builder_identity" "$builder_ssh" "$@"
   elif [ -n "$builder_identity" ]; then
-    ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -i "$builder_identity" "$builder_ssh" "$@"
+    ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o ForwardAgent=no -o ForwardX11=no -o IdentitiesOnly=yes -i "$builder_identity" "$builder_ssh" "$@"
   elif [ -n "$builder_known_hosts" ]; then
-    ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$builder_known_hosts" "$builder_ssh" "$@"
+    ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o ForwardAgent=no -o ForwardX11=no -o UserKnownHostsFile="$builder_known_hosts" "$builder_ssh" "$@"
   else
-    ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes "$builder_ssh" "$@"
+    ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o ForwardAgent=no -o ForwardX11=no "$builder_ssh" "$@"
   fi
 }
 
@@ -77,6 +80,9 @@ require_native_mount() {
   [ -n "$builder_ssh" ] || fail 'BOETTICHER_LOCAL_BUILDER_SSH is required for the native Linux build host'
   if [ -n "$builder_identity" ] && [ ! -f "$builder_identity" ]; then
     fail 'BOETTICHER_LOCAL_BUILDER_IDENTITY does not name a regular file'
+  fi
+  if [ -n "$builder_known_hosts" ] && [ ! -f "$builder_known_hosts" ]; then
+    fail 'BOETTICHER_LOCAL_BUILDER_KNOWN_HOSTS does not name a regular file'
   fi
   if ! native_ssh 'test -d /var/lib/boetticher/local-builder && mountpoint -q /var/lib/boetticher/local-builder && test -w /var/lib/boetticher/local-builder'; then
     fail 'native build host must mount the dedicated build disk at /var/lib/boetticher/local-builder'
@@ -98,9 +104,6 @@ validate_remote_target() {
 sync_native_source() {
   require_native_mount
   [ -n "$builder_ssh" ] || fail 'BOETTICHER_LOCAL_BUILDER_SSH is required for the native Linux build host'
-  case "$builder_ssh" in
-    *[![:alnum:]@._:-]*) fail 'BOETTICHER_LOCAL_BUILDER_SSH contains unsupported characters' ;;
-  esac
   native_ssh 'rm -rf -- /var/lib/boetticher/local-builder/source; install -d -m 0755 /var/lib/boetticher/local-builder/source'
   tar -C "$repo_root" \
     --no-xattrs \
