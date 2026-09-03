@@ -1,4 +1,4 @@
-.PHONY: ci test build vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-portal image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-streamdeck image-aiops image-gatus image-network-probe images scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-airvpn scan-bifrost scan-printer scan-arr scan-streamdeck scan-aiops scan-gatus scan-network-probe command-docs command-docs-check race streamdeck-check
+.PHONY: ci test build release-bundle vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-portal image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-streamdeck image-aiops image-gatus image-network-probe images scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-airvpn scan-bifrost scan-printer scan-arr scan-streamdeck scan-aiops scan-gatus scan-network-probe command-docs command-docs-check race streamdeck-check
 
 GOCACHE ?= /tmp/boetticher-gocache
 GOMODCACHE ?= /tmp/boetticher-gomodcache
@@ -31,6 +31,10 @@ vet:
 
 build:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go build -o bin/boetticher ./cmd/boetticher
+
+release-bundle:
+	@test -n "$(OUTPUT)" -a -n "$(SOURCE_COMMIT)" -a -n "$(WORKFLOW)" -a -n "$(KEY_ID)" -a -n "$(PRIVATE_KEY)"
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run ./cmd/release-bundle -output "$(OUTPUT)" -source-commit "$(SOURCE_COMMIT)" -workflow "$(WORKFLOW)" -key-id "$(KEY_ID)" -private-key "$(PRIVATE_KEY)"
 
 ansible-check:
 	mkdir -p "$(ANSIBLE_LOCAL_TEMP)" "$(ANSIBLE_REMOTE_TEMP)"
