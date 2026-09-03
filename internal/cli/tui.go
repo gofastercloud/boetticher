@@ -65,7 +65,10 @@ func (applicationExecutor) Execute(ctx context.Context, request application.Requ
 	case application.OperationModuleList:
 		err = runModuleListRequest(siteDir, &output)
 	case application.OperationDiagnose:
-		err = runDoctorRequest(doctorRequest{siteDir: siteDir, live: request.Live}, &output)
+		result.Report, err = evaluateStatusRequest(statusRequest{siteDir: siteDir, live: request.Live, verbose: true})
+		if result.Report.StatusModelVersion != "" {
+			printStatus(&output, result.Report, true)
+		}
 	case application.OperationNetworkStatus:
 		err = runNetworkTrunkStatusRequest(networkTrunkStatusRequest{siteDir: siteDir, live: request.Live}, &output)
 	default:

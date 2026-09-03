@@ -16,7 +16,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -30,56 +29,6 @@ type recordingArgsRunner struct {
 	err     error
 	errs    []error
 	outputs [][]byte
-}
-
-func TestEnsureBuilderCacheVolumeAllocatesOnlyReservedCanonicalVolume(t *testing.T) {
-	storageReads := 0
-	runner := &recordingArgsRunner{}
-	transport := roundTripFunc(func(r *http.Request) *http.Response {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/191/config":
-			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/191/config":
-			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local-lvm/content":
-			storageReads++
-			if got := r.URL.Query().Get("content"); got != "images" {
-				t.Fatalf("storage content filter = %q, want images", got)
-			}
-			if storageReads == 1 {
-				return response([]byte(`{"data":[]}`))
-			}
-			return response([]byte(`{"data":[{"volid":"local-lvm:vm-191-boetticher-builder-cache"}]}`))
-		default:
-			t.Fatalf("unexpected builder cache request: %s %s", r.Method, r.URL.Path)
-			return nil
-		}
-	})
-	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	volume, err := EnsureBuilderCacheVolume(context.Background(), client, "node", runner, "192.0.2.10", "labadmin")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if volume != model.BuilderCacheStorage+":"+model.BuilderCacheVolumeName {
-		t.Fatalf("cache volume = %q, want canonical volume", volume)
-	}
-	if len(runner.args) != 1 || !reflect.DeepEqual(runner.args[0], []string{"sudo", "-n", "pvesm", "alloc", "local-lvm", "191", "vm-191-boetticher-builder-cache", "64G", "--format", "raw"}) {
-		t.Fatalf("cache allocation command = %#v", runner.args)
-	}
-}
-
-func TestEnsureBuilderCacheVolumeHoldsWhenReservedOwnerIsOccupied(t *testing.T) {
-	transport := roundTripFunc(func(r *http.Request) *http.Response {
-		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/191/config" {
-			return response([]byte(`{"data":{"name":"unrelated-guest"}}`))
-		}
-		t.Fatalf("unexpected occupied cache owner request: %s %s", r.Method, r.URL.Path)
-		return nil
-	})
-	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	if _, err := EnsureBuilderCacheVolume(context.Background(), client, "node", &recordingArgsRunner{}, "192.0.2.10", "root"); err == nil || !strings.Contains(err.Error(), "VMID 191 is occupied") {
-		t.Fatalf("occupied cache owner was not held: %v", err)
-	}
 }
 
 func (r *recordingArgsRunner) RunArgs(_ context.Context, address, user string, args []string) ([]byte, error) {
@@ -137,28 +86,14 @@ func TestFoundationPlanIsDeterministic(t *testing.T) {
 	if string(left) != string(right) {
 		t.Fatal("identical sites generated different Proxmox plans")
 	}
-	if len(first.Guests) != 6 || first.Guests[0].VMID != model.ProxmoxVMID {
+	if len(first.Guests) != 3 || first.Guests[0].VMID != model.ProxmoxVMID {
 		t.Fatalf("unexpected foundation plan: %#v", first.Guests)
 	}
 	if first.GatewayImageURL != model.QualifiedGatewayImageURL || first.GatewaySHA512 != model.QualifiedGatewayImageSHA512 {
 		t.Fatalf("gateway image pin is incomplete: %#v", first)
 	}
-	if !reflect.DeepEqual(first.Nameservers, []string{"10.10.10.10", "10.10.10.11"}) {
-		t.Fatalf("platform nameservers = %#v, want the INFRA DNS pair", first.Nameservers)
-	}
-}
-
-func TestWaitForQEMUIPv4UsesRoutableGuestAgentAddress(t *testing.T) {
-	transport := roundTripFunc(func(r *http.Request) *http.Response {
-		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/node/qemu/190/agent/network-get-interfaces" {
-			t.Fatalf("unexpected guest-agent request: %s %s", r.Method, r.URL.Path)
-		}
-		return response([]byte(`{"data":{"result":[{"name":"ens18","ip-addresses":[{"ip-address":"127.0.0.1","ip-address-type":"ipv4"},{"ip-address":"192.168.4.36","ip-address-type":"ipv4"}]}]}}`))
-	})
-	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	address, err := WaitForQEMUIPv4(context.Background(), client, "node", 190, 1, time.Millisecond)
-	if err != nil || address != "192.168.4.36" {
-		t.Fatalf("WaitForQEMUIPv4() = %q, %v", address, err)
+	if !reflect.DeepEqual(first.Nameservers, []string{"10.10.10.10"}) {
+		t.Fatalf("platform nameservers = %#v, want the single INFRA DNS service", first.Nameservers)
 	}
 }
 
@@ -293,7 +228,7 @@ func TestFoundationPlanUsesGatewayFirstDeploymentOrder(t *testing.T) {
 	for _, guest := range plan.Guests {
 		order = append(order, guest.Name)
 	}
-	want := []string{"lab-fw-01", "lab-dns-01", "lab-dns-02", "lab-log-01", "lab-monitor-01", "lab-portal-01"}
+	want := []string{"lab-fw-01", "lab-dns-01", "lab-monitor-01"}
 	if !reflect.DeepEqual(order, want) {
 		t.Fatalf("deployment order = %#v, want %#v", order, want)
 	}
@@ -313,7 +248,7 @@ func TestComposedPlanUsesResolvedCapabilityOrder(t *testing.T) {
 	for index, guest := range plan.Guests {
 		order[guest.Name] = index
 	}
-	for _, pair := range [][2]string{{"lab-fw-01", "lab-dns-01"}, {"lab-dns-01", "lab-log-01"}, {"lab-dns-01", "lab-monitor-01"}, {"lab-log-01", "lab-portal-01"}} {
+	for _, pair := range [][2]string{{"lab-fw-01", "lab-dns-01"}, {"lab-dns-01", "lab-monitor-01"}} {
 		if order[pair[0]] >= order[pair[1]] {
 			t.Fatalf("deployment order %q before %q was not respected: %#v", pair[0], pair[1], order)
 		}
@@ -357,7 +292,7 @@ func TestComposedDNSGuestsReceiveOnlyTheirOwnPersistentVolumes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, guest := range plan.Guests {
-		if guest.Name != "lab-dns-01" && guest.Name != "lab-dns-02" {
+		if guest.Name != "lab-dns-01" {
 			continue
 		}
 		if len(guest.Persistent) != 2 || len(guest.Volumes) != 2 {
@@ -513,137 +448,12 @@ func TestLXCBootstrapKeyCanBeOmittedForPlanRendering(t *testing.T) {
 	}
 }
 
-func TestEnsureBuilderArmsCleanupWhenCreateTaskFails(t *testing.T) {
-	plan := Plan{
-		Node:               "node",
-		Storage:            "local",
-		GatewayImage:       "debian-13-builder-input",
-		GatewayImageURL:    "https://example.invalid/debian-13-builder-input.qcow2",
-		GatewaySHA512:      strings.Repeat("a", 128),
-		BuilderCacheVolume: model.BuilderCacheStorage + ":" + model.BuilderCacheVolumeName,
-	}
-	snippetsDeleted := 0
-	createSSHKeys := ""
-	bootOrder := ""
-	builderNet0 := ""
-	builderSCSIHW := ""
-	builderCacheDisk := ""
-	transport := roundTripFunc(func(r *http.Request) *http.Response {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/190/config":
-			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/190/config":
-			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
-		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
-			return response([]byte(`{"data":[{"volid":"local:iso/debian-13-builder-input.qcow2","filename":"debian-13-builder-input.qcow2","checksum":"` + strings.Repeat("a", 128) + `"}]}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
-			_, _ = io.Copy(io.Discard, r.Body)
-			return response([]byte(`{"data":null}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu":
-			if err := r.ParseForm(); err != nil {
-				t.Fatal(err)
-			}
-			createSSHKeys = r.Form.Get("sshkeys")
-			bootOrder = r.Form.Get("boot")
-			builderNet0 = r.Form.Get("net0")
-			builderSCSIHW = r.Form.Get("scsihw")
-			builderCacheDisk = r.Form.Get("scsi1")
-			return response([]byte(`{"data":"UPID:pve:create-builder"}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:create-builder/status":
-			return response([]byte(`{"data":{"status":"stopped","exitstatus":"create failed"}}`))
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api2/json/nodes/node/storage/local/content/snippets/boetticher-190-"):
-			snippetsDeleted++
-			return response([]byte(`{"data":null}`))
-		default:
-			t.Fatalf("unexpected builder creation request: %s %s", r.Method, r.URL.Path)
-			return nil
-		}
-	})
-	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	created, err := EnsureBuilderVM(context.Background(), client, plan, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator")
-	if err == nil || !strings.Contains(err.Error(), "create temporary builder") {
-		t.Fatalf("EnsureBuilderVM() error = %v, want create-task failure", err)
-	}
-	if !created {
-		t.Fatal("EnsureBuilderVM did not arm caller cleanup after submitting a potentially-created VM")
-	}
-	if snippetsDeleted != 3 {
-		t.Fatalf("builder snippets deleted = %d, want 3", snippetsDeleted)
-	}
-	if createSSHKeys != "" {
-		t.Fatalf("builder create unexpectedly sent sshkeys outside custom user-data: %q", createSSHKeys)
-	}
-	if bootOrder != "order=scsi0;ide2;net0" {
-		t.Fatalf("builder boot order = %q, want scsi0 before cloud-init and network", bootOrder)
-	}
-	if builderNet0 != "virtio,bridge=vmbr0,macaddr="+model.BuilderMAC {
-		t.Fatalf("builder network = %q, want no Proxmox firewall bridge", builderNet0)
-	}
-	if builderSCSIHW != "virtio-scsi-single" {
-		t.Fatalf("builder SCSI controller = %q, want virtio-scsi-single", builderSCSIHW)
-	}
-	if builderCacheDisk != model.BuilderCacheStorage+":"+model.BuilderCacheVolumeName+",format=raw,serial=boetticher-builder-cache" {
-		t.Fatalf("builder cache disk = %q, want canonical persistent volume", builderCacheDisk)
-	}
-}
-
-func TestEnsureBuilderCleansPartialSnippetUploads(t *testing.T) {
-	for failAt := 1; failAt <= 3; failAt++ {
-		t.Run(fmt.Sprintf("upload-%d", failAt), func(t *testing.T) {
-			plan := Plan{
-				Node:               "node",
-				Storage:            "local",
-				GatewayImage:       "debian-13-builder-input",
-				GatewayImageURL:    "https://example.invalid/debian-13-builder-input.qcow2",
-				GatewaySHA512:      strings.Repeat("a", 128),
-				BuilderCacheVolume: model.BuilderCacheStorage + ":" + model.BuilderCacheVolumeName,
-			}
-			uploads := 0
-			deletes := 0
-			transport := roundTripFunc(func(r *http.Request) *http.Response {
-				switch {
-				case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/190/config":
-					return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
-				case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/190/config":
-					return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
-				case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
-					return response([]byte(`{"data":[{"volid":"local:iso/debian-13-builder-input.qcow2","filename":"debian-13-builder-input.qcow2","checksum":"` + strings.Repeat("a", 128) + `"}]}`))
-				case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/storage/local/upload":
-					uploads++
-					_, _ = io.Copy(io.Discard, r.Body)
-					if uploads == failAt {
-						return apiResponse(http.StatusInternalServerError, `{"errors":{"upload":"failed"}}`)
-					}
-					return response([]byte(`{"data":null}`))
-				case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api2/json/nodes/node/storage/local/content/snippets/boetticher-190-"):
-					deletes++
-					return response([]byte(`{"data":null}`))
-				default:
-					t.Fatalf("unexpected builder request: %s %s", r.Method, r.URL.Path)
-					return nil
-				}
-			})
-			client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-			_, err := EnsureBuilderVM(context.Background(), client, plan, "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator")
-			if err == nil {
-				t.Fatal("partial snippet upload unexpectedly succeeded")
-			}
-			if uploads != failAt {
-				t.Fatalf("snippet uploads = %d, want failure at %d", uploads, failAt)
-			}
-			if deletes != 3 {
-				t.Fatalf("snippet cleanup requests = %d, want all 3 exact names", deletes)
-			}
-		})
-	}
-}
-
 func TestManagedFirewallUsesTaggedPerZoneVNICs(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Guests) != 6 || plan.Guests[0].Kind != KindQEMU {
+	if len(plan.Guests) != 3 || plan.Guests[0].Kind != KindQEMU {
 		t.Fatalf("unexpected managed guest plan: %#v", plan.Guests)
 	}
 	want := []struct {
@@ -669,8 +479,8 @@ func TestExternalGatewayOmitsFirewallGuest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Guests) != 1 {
-		t.Fatalf("uncomposed external gateway plan has %d guests, want 1", len(plan.Guests))
+	if len(plan.Guests) != 0 {
+		t.Fatalf("uncomposed external gateway plan has %d guests, want none", len(plan.Guests))
 	}
 	for _, guest := range plan.Guests {
 		if guest.VMID == model.ProxmoxVMID {
@@ -699,7 +509,7 @@ func TestUserWorkloadNeverEntersPlatformPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(plan.Guests) != 6 {
+	if len(plan.Guests) != 3 {
 		t.Fatalf("user workload changed platform guest count: %#v", plan.Guests)
 	}
 	for _, guest := range plan.Guests {
@@ -1742,7 +1552,7 @@ func TestEnsureLXCRecreatesExactLegacyStateBeforePersistentVolumeMigration(t *te
 }
 
 func TestExistingLXCReconcilesPlatformNameservers(t *testing.T) {
-	plan := Plan{Node: "node", Nameservers: []string{"10.10.10.10", "10.10.10.11"}}
+	plan := Plan{Node: "node", Nameservers: []string{"10.10.10.10"}}
 	guest := GuestPlan{
 		VMID: 110, Name: "test-dns", Hostname: "test-dns", Owner: "boetticher/module/dns",
 		Tags: []string{"boetticher-module-dns"},
@@ -1758,7 +1568,7 @@ func TestExistingLXCReconcilesPlatformNameservers(t *testing.T) {
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
 			}
-			if got := r.Form.Get("nameserver"); got != "10.10.10.10 10.10.10.11" {
+			if got := r.Form.Get("nameserver"); got != "10.10.10.10" {
 				t.Fatalf("nameserver update = %q", got)
 			}
 			updated = true

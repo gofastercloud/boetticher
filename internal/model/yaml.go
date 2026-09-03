@@ -104,7 +104,7 @@ func validateModuleConfigShape(data []byte) error {
 				allowed["network"] = true
 			}
 		case "logging":
-			// Logging is mandatory and has no persisted lifecycle fields.
+			allowed["enabled"] = true
 		case "tailnet-router":
 			allowed["enabled"] = true
 		case "bifrost":
@@ -131,7 +131,7 @@ func validateModuleConfigShape(data []byte) error {
 			field := value.Content[fieldIndex].Value
 			fieldValue := value.Content[fieldIndex+1]
 			if !allowed[field] {
-				if (name == "dns" || name == "logging") && field == "enabled" {
+				if name == "dns" && field == "enabled" {
 					return fmt.Errorf("site.yml: modules.%s.enabled: mandatory module cannot be disabled", name)
 				}
 				return fmt.Errorf("site.yml: modules.%s.%s: unknown field", name, field)

@@ -108,6 +108,20 @@ func NewClient(config Config) (*Client, error) {
 	}, nil
 }
 
+// SetSnippetRunner installs the already-authorized host path used for the
+// small set of Proxmox operations that need host-local snippet access. The
+// caller must invoke this only after the exact immutable plan has been
+// accepted and temporary Apply authority has been acquired.
+func (c *Client) SetSnippetRunner(runner StdinCommandRunner, address, user string) error {
+	if c == nil || runner == nil || net.ParseIP(address) == nil || user == "" {
+		return errors.New("authorized snippet runner, IPv4 address, and user are required")
+	}
+	c.snippetRunner = runner
+	c.snippetAddr = address
+	c.snippetUser = user
+	return nil
+}
+
 func (c *Client) Get(ctx context.Context, endpoint string, query url.Values, out any) error {
 	return c.request(ctx, http.MethodGet, endpoint, query, nil, out)
 }
@@ -129,27 +143,16 @@ func (c *Client) Delete(ctx context.Context, endpoint string) error {
 // invoking this destructive operation; the API client deliberately does not
 // infer ownership from a VMID.
 func (c *Client) DestroyQEMU(ctx context.Context, node string, vmid int) error {
-	return c.destroyQEMU(ctx, node, vmid, true)
+	return c.destroyQEMU(ctx, node, vmid)
 }
 
-// DestroyQEMUKeepingUnreferencedDisks removes a guest while retaining disks
-// which are not owned by that guest. It is reserved for the disposable
-// builder, whose separately-owned cache volume must survive VM teardown.
-func (c *Client) DestroyQEMUKeepingUnreferencedDisks(ctx context.Context, node string, vmid int) error {
-	return c.destroyQEMU(ctx, node, vmid, false)
-}
-
-func (c *Client) destroyQEMU(ctx context.Context, node string, vmid int, destroyUnreferencedDisks bool) error {
+func (c *Client) destroyQEMU(ctx context.Context, node string, vmid int) error {
 	if node == "" || vmid <= 0 {
 		return errors.New("Proxmox node and positive VMID are required")
 	}
-	destroy := "0"
-	if destroyUnreferencedDisks {
-		destroy = "1"
-	}
 	return c.request(ctx, http.MethodDelete, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid)), url.Values{
 		"purge":                      {"1"},
-		"destroy-unreferenced-disks": {destroy},
+		"destroy-unreferenced-disks": {"1"},
 	}, nil, nil)
 }
 
@@ -365,25 +368,6 @@ func (c *Client) SetVMConfig(ctx context.Context, node string, vmid int, params 
 		return errors.New("Proxmox node and positive VMID are required")
 	}
 	return c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "config"), params, nil)
-}
-
-// ResizeQEMUDisk grows one QEMU disk by the requested number of GiB. The
-// builder starts from a pinned cloud image and receives an additional bounded
-// growth operation; this never selects or formats a physical device.
-func (c *Client) ResizeQEMUDisk(ctx context.Context, node string, vmid int, disk string, sizeGiB int) error {
-	if node == "" || vmid <= 0 || disk == "" || sizeGiB <= 0 || strings.ContainsAny(disk, "/\\\r\n") {
-		return errors.New("node, positive VMID, disk, and positive size are required")
-	}
-	var upid string
-	if err := c.Put(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "resize"), url.Values{
-		"disk": {disk}, "size": {fmt.Sprintf("+%dG", sizeGiB)},
-	}, &upid); err != nil {
-		return fmt.Errorf("resize QEMU disk: %w", err)
-	}
-	if upid != "" {
-		return c.WaitTask(ctx, node, upid)
-	}
-	return nil
 }
 
 // MoveQEMUPersistentDisk moves one attached Boetticher persistent SCSI disk
@@ -625,8 +609,8 @@ func (c *Client) GuestConfig(ctx context.Context, node string, vmid int) (GuestK
 }
 
 // QEMUAgentNetworkInterfaces reads only guest-agent network evidence. It is
-// used to discover the temporary DHCP-backed builder address; no operator or
-// module identity is inferred from a hostname or arbitrary user address.
+// used by explicit firewall recovery checks; no operator or module identity is
+// inferred from a hostname or arbitrary user address.
 func (c *Client) QEMUAgentNetworkInterfaces(ctx context.Context, node string, vmid int) ([]GuestAgentInterface, error) {
 	if node == "" || vmid <= 0 {
 		return nil, errors.New("node and positive VMID are required")

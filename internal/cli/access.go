@@ -29,7 +29,7 @@ func runAccess(args []string, out io.Writer) error {
 		fmt.Fprintf(out, "  Proxmox       ssh proxmox\n                https://%s:8006\n", s.BootstrapAddress)
 	}
 	fmt.Fprintln(out, "Supported operator access")
-	fmt.Fprintln(out, "  Platform      boetticher CLI and generated portal/status surfaces")
+	fmt.Fprintln(out, "  Platform      boetticher CLI and status --details")
 	fmt.Fprintln(out, "  Web           native product UI/API where provided")
 	fmt.Fprintln(out, "  Break-glass   Proxmox console/exec for explicit recovery")
 	if s.Gateway.Mode == model.GatewayModeManaged {

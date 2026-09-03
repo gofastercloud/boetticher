@@ -241,11 +241,6 @@
       ],
       "type": "object"
     },
-    "MandatoryModuleConfig": {
-      "additionalProperties": false,
-      "properties": {},
-      "type": "object"
-    },
     "ModulesConfig": {
       "additionalProperties": false,
       "properties": {
@@ -271,7 +266,7 @@
           "$ref": "#/$defs/NetworkToggleModuleConfig"
         },
         "logging": {
-          "$ref": "#/$defs/MandatoryModuleConfig"
+          "$ref": "#/$defs/ToggleModuleConfig"
         },
         "monitoring": {
           "$ref": "#/$defs/ToggleModuleConfig"
@@ -662,7 +657,7 @@
       "$ref": "#/$defs/PKIMetadata"
     },
     "platform_version": {
-      "const": "0.5.0",
+      "const": "0.5.1",
       "description": "Boetticher platform release targeted by this site.",
       "type": "string"
     },

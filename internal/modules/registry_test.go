@@ -17,7 +17,7 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantOrder := []string{"firewall", "dns", "logging", "monitoring", "aiops", "airvpn", "arr", "bifrost", "gatus", "printer", "tailnet-router"}
+	wantOrder := []string{"firewall", "dns", "monitoring", "aiops", "airvpn", "arr", "bifrost", "gatus", "logging", "printer", "tailnet-router"}
 	if len(modules) != len(wantOrder) {
 		t.Fatalf("unexpected module resolution: %#v", modules)
 	}
@@ -26,7 +26,7 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 			t.Fatalf("module %d = %s, want %s", index, modules[index].Definition.Name, name)
 		}
 	}
-	if len(site.PlatformComponents()) != 7 {
+	if len(site.PlatformComponents()) != 4 {
 		t.Fatalf("default composition produced %d platform components", len(site.PlatformComponents()))
 	}
 	if !IsEnabled(site, "dns") || !IsEnabled(site, "monitoring") || !IsEnabled(site, "firewall") {
@@ -47,7 +47,7 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 			t.Fatalf("active module %s reported unexpected desired state %q", module.Definition.Name, module.State)
 		}
 	}
-	if len(site.Declarations) != 4 || site.Declarations[0].Artifact.DefinitionSHA256 == "" {
+	if len(site.Declarations) != 3 || site.Declarations[0].Artifact.DefinitionSHA256 == "" {
 		t.Fatalf("default module declarations are incomplete: %#v", site.Declarations)
 	}
 	monitoring, ok := findDeclaration(site, "monitoring")
@@ -66,20 +66,6 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	}
 	if len(monitoring.NetworkIntents) != 1 || monitoring.NetworkIntents[0].Source != "lab-monitor-01" || monitoring.NetworkIntents[0].Destination != model.LogicalProxmoxIdentity || monitoring.NetworkIntents[0].Protocol != "tcp" || strings.Join(monitoring.NetworkIntents[0].Ports, ",") != "8006" {
 		t.Fatalf("Pulse Proxmox API network intent is incomplete: %#v", monitoring.NetworkIntents)
-	}
-	logging, ok := findDeclaration(site, "logging")
-	if !ok {
-		t.Fatal("logging declaration is missing")
-	}
-	var proxmoxLoggingIntent model.NetworkIntent
-	for _, intent := range logging.NetworkIntents {
-		if intent.Source == model.LogicalProxmoxIdentity {
-			proxmoxLoggingIntent = intent
-			break
-		}
-	}
-	if proxmoxLoggingIntent.Destination != "logs.lab.home.arpa" || proxmoxLoggingIntent.Protocol != "tcp" || strings.Join(proxmoxLoggingIntent.Ports, ",") != "19532" || proxmoxLoggingIntent.Purpose != "native Proxmox journal upload" {
-		t.Fatalf("Proxmox journal upload network intent is incomplete: %#v", proxmoxLoggingIntent)
 	}
 	for _, declaration := range site.Declarations {
 		for _, guest := range declaration.Guests {
@@ -602,11 +588,11 @@ func TestDNSConfigurationHasNoLifecycleToggle(t *testing.T) {
 	}
 }
 
-func TestLoggingConfigurationHasNoLifecycleToggle(t *testing.T) {
+func TestLoggingConfigurationCanBeDisabled(t *testing.T) {
 	var config model.ModulesConfig
 	disabled := false
-	if err := config.Set("logging", model.ModuleConfig{Enabled: &disabled}); err == nil || !strings.Contains(err.Error(), "modules.logging.enabled") {
-		t.Fatalf("logging lifecycle toggle was accepted: %v", err)
+	if err := config.Set("logging", model.ModuleConfig{Enabled: &disabled}); err != nil {
+		t.Fatalf("logging disable was rejected: %v", err)
 	}
 }
 

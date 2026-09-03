@@ -117,7 +117,7 @@
     set -eu
     records="$(pdnsutil list-zone {{ item }})"
     updated=0
-    if printf '%s\n' "$records" | awk '$1 == "{{ item }}.{{ item }}" && $4 == "NS" && ($5 == "lab-dns-01.{{ dns_plan.static_zone }}." || $5 == "lab-dns-02.{{ dns_plan.static_zone }}.") { found=1 } END { exit !found }'; then
+    if printf '%s\n' "$records" | awk '$1 == "{{ item }}.{{ item }}" && $4 == "NS" && $5 == "lab-dns-01.{{ dns_plan.static_zone }}." { found=1 } END { exit !found }'; then
       pdnsutil delete-rrset {{ item | quote }} {{ item | quote }} NS
       updated=1
     fi
@@ -159,9 +159,9 @@
       function normalized(value) { sub(/\.$/, "", value); return value }
       $4 == "NS" && (normalized($1) == normalized(zone) || $1 == "@") { print normalized($5) }
     ' | LC_ALL=C sort)"
-    expected="$(printf '%s\n' {{ ('lab-dns-01.' ~ dns_plan.static_zone) | quote }} {{ ('lab-dns-02.' ~ dns_plan.static_zone) | quote }} | LC_ALL=C sort)"
+    expected="$(printf '%s\n' {{ ('lab-dns-01.' ~ dns_plan.static_zone) | quote }} | LC_ALL=C sort)"
     if [ "$current" != "$expected" ]; then
-      pdnsutil replace-rrset "$zone" @ NS 300 {{ ('lab-dns-01.' ~ dns_plan.static_zone ~ '.') | quote }} {{ ('lab-dns-02.' ~ dns_plan.static_zone ~ '.') | quote }}
+      pdnsutil replace-rrset "$zone" @ NS 300 {{ ('lab-dns-01.' ~ dns_plan.static_zone ~ '.') | quote }}
       printf 'updated\n'
     fi
   loop: "{{ [dns_plan.static_zone] + (dns_plan.dynamic_zones | map(attribute='name') | list) + (dns_plan.reverse_zones | map(attribute='name') | list) }}"
@@ -269,20 +269,6 @@
   when:
     - inventory_hostname == 'lab-dns-01'
     - dns_plan.ddns.enabled | bool
-
-- name: Read current PowerDNS zones on the secondary
-  ansible.builtin.command: pdnsutil list-all-zones
-  register: secondary_zones
-  changed_when: false
-  when: inventory_hostname == 'lab-dns-02'
-
-- name: Configure secondary transfer for each platform zone
-  ansible.builtin.command: >-
-    pdnsutil create-secondary-zone {{ item }} 10.10.10.10:5353
-  loop: "{{ [dns_plan.static_zone] + (dns_plan.dynamic_zones | map(attribute='name') | list) + (dns_plan.reverse_zones | map(attribute='name') | list) }}"
-  when:
-    - inventory_hostname == 'lab-dns-02'
-    - item not in secondary_zones.stdout
 
 - name: Assert the qualified Blocky binary is present
   ansible.builtin.command: blocky version

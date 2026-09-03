@@ -20,13 +20,12 @@ import (
 	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/logging"
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/modules"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 	"github.com/gofastercloud/boetticher/internal/pathguard"
-	"github.com/gofastercloud/boetticher/internal/portal"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
-	statusmodel "github.com/gofastercloud/boetticher/internal/status"
 	"github.com/gofastercloud/boetticher/internal/storage"
 )
 
@@ -183,21 +182,23 @@ func writeModelProjectionsWithResolverAndAirVPN(dir string, s model.Site, endpoi
 	if err := writeStorageProjection(dir, s); err != nil {
 		return err
 	}
-	loggingPlan, err := logging.PlanFromSite(s)
-	if err != nil {
-		return err
-	}
-	if err := writeProjection(filepath.Join(dir, "generated", "logging", "desired-state.json"), loggingPlan); err != nil {
-		return err
-	}
-	if err := writePublic(filepath.Join(dir, "generated", "logging", "journal-remote.conf"), []byte(logging.CollectorConfiguration(loggingPlan))); err != nil {
-		return err
-	}
-	if err := writePublic(filepath.Join(dir, "generated", "logging", "journal-remote.service.d", "boetticher.conf"), []byte(logging.CollectorServiceOverride(loggingPlan))); err != nil {
-		return err
-	}
-	if err := writePublic(filepath.Join(dir, "generated", "logging", "journal-remote.socket.d", "boetticher.conf"), []byte(logging.CollectorSocketOverride(loggingPlan))); err != nil {
-		return err
+	if modules.IsEnabled(s, "logging") {
+		loggingPlan, err := logging.PlanFromSite(s)
+		if err != nil {
+			return err
+		}
+		if err := writeProjection(filepath.Join(dir, "generated", "logging", "desired-state.json"), loggingPlan); err != nil {
+			return err
+		}
+		if err := writePublic(filepath.Join(dir, "generated", "logging", "journal-remote.conf"), []byte(logging.CollectorConfiguration(loggingPlan))); err != nil {
+			return err
+		}
+		if err := writePublic(filepath.Join(dir, "generated", "logging", "journal-remote.service.d", "boetticher.conf"), []byte(logging.CollectorServiceOverride(loggingPlan))); err != nil {
+			return err
+		}
+		if err := writePublic(filepath.Join(dir, "generated", "logging", "journal-remote.socket.d", "boetticher.conf"), []byte(logging.CollectorSocketOverride(loggingPlan))); err != nil {
+			return err
+		}
 	}
 	blockyConfig, renderErr := dns.RenderBlockyConfig(dnsPlan)
 	if renderErr != nil {
@@ -238,7 +239,7 @@ func writeModelProjectionsWithResolverAndAirVPN(dir string, s model.Site, endpoi
 	if err := writePublic(filepath.Join(dir, "generated", "ansible", "variables.json"), variables); err != nil {
 		return err
 	}
-	sshContent := "# Managed by boetticher. Do not edit.\n# boetticher-model-revision: " + revision + "\n# Bootstrap endpoint is not configured; run boetticher bootstrap-endpoint set ADDRESS.\n"
+	sshContent := "# Managed by boetticher. Do not edit.\n# boetticher-model-revision: " + revision + "\n# Bootstrap endpoint is not configured; pass --bootstrap-address to boetticher enroll.\n"
 	if s.BootstrapAddress != "" {
 		sshContent, err = sshconfig.RenderWithKnownHosts(s, time.Now().UTC(), filepath.Join(dir, "generated", "ssh", "known_hosts"))
 		if err != nil {
@@ -272,7 +273,7 @@ func physicalDiscoveryFromSite(s model.Site) networkmodel.Discovery {
 		value := networkmodel.Interface{Name: s.PhysicalNetwork.Trunk.Name, PermanentMAC: s.PhysicalNetwork.Trunk.PermanentMAC, PCIAddress: s.PhysicalNetwork.Trunk.PCIAddress, PhysicalEthernet: true}
 		trunk = &value
 	}
-	return networkmodel.Discovery{Mode: s.PhysicalNetwork.Mode, BootstrapAddress: s.BootstrapAddress, Upstream: upstream, Trunk: trunk, Status: "MODEL", Explanation: "persisted installation binding; live hardware evidence requires preflight or doctor --live"}
+	return networkmodel.Discovery{Mode: s.PhysicalNetwork.Mode, BootstrapAddress: s.BootstrapAddress, Upstream: upstream, Trunk: trunk, Status: "MODEL", Explanation: "persisted installation binding; live hardware evidence requires plan --live or status --details --live"}
 }
 
 func writePhysicalDiscovery(dir string, s model.Site, discovery networkmodel.Discovery) error {
@@ -329,14 +330,6 @@ func temporarySSHConfig(s model.Site, siteDir string) (string, func(), error) {
 		return "", func() {}, fmt.Errorf("close temporary SSH configuration: %w", err)
 	}
 	return path, cleanup, nil
-}
-
-func rebuildPortal(dir string, s model.Site) error {
-	revision, err := s.Revision()
-	if err != nil {
-		return err
-	}
-	return portal.Build(s, filepath.Join(dir, "generated", "portal"), "docs", loadEvidence(dir, revision), loadPhysicalDiscovery(dir, s), time.Now().UTC())
 }
 
 func loadPhysicalDiscovery(dir string, s model.Site) networkmodel.Discovery {
@@ -405,25 +398,6 @@ func hasRevisionLine(text, expected string) bool {
 		}
 	}
 	return false
-}
-
-func loadEvidence(dir, expectedRevision string) portal.Evidence {
-	data, err := os.ReadFile(filepath.Join(dir, "generated", "verification.json"))
-	if err != nil {
-		return portal.Evidence{}
-	}
-	var document struct {
-		ModelRevision string          `json:"model_revision"`
-		Evidence      portal.Evidence `json:"evidence"`
-	}
-	if json.Unmarshal(data, &document) == nil && document.ModelRevision == expectedRevision {
-		report := loadStatusReport(dir, expectedRevision)
-		if report.StatusModelVersion == statusmodel.ModelVersion && report.ModelRevision == expectedRevision {
-			document.Evidence.Status = &report
-		}
-		return document.Evidence
-	}
-	return portal.Evidence{}
 }
 
 func writeCurrentStatus(dir string, s model.Site) error {

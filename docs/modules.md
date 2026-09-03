@@ -13,7 +13,6 @@ than downloaded at runtime, so `module list` always shows the complete menu.
 
 ```text
 boetticher module list --site ./my-boetticher
-boetticher module show printer --site ./my-boetticher
 boetticher module configure printer --site ./my-boetticher
 boetticher plan --site ./my-boetticher --live --json
 boetticher deploy --plan sha256:PLAN_DIGEST --site ./my-boetticher
@@ -22,7 +21,8 @@ boetticher deploy --plan sha256:PLAN_DIGEST --site ./my-boetticher
 `module configure`, `module enable`, and `module disable` change the desired
 settings in your site directory; deployment remains a separate, deliberate
 step. Make a live plan after the change, then deploy the digest you reviewed.
-Try `--dry-run` whenever you want a preview without saving anything.
+`status --details` is the consolidated read-only operational view. Try
+`--dry-run` whenever you want a preview without saving anything.
 
 <figure>
   <img class="section-art" src="images/build-bench.webp" alt="Illustrated compact server and little rack on a warm homelab workbench">
@@ -34,7 +34,7 @@ Try `--dry-run` whenever you want a preview without saving anything.
 | Module | Starts as | What it brings to the lab |
 | --- | --- | --- |
 | `dns` | always on | [Blocky](https://0xerr0r.github.io/blocky/) for client DNS, [PowerDNS](https://doc.powerdns.com/authoritative/) for names Boetticher owns, and [Chrony](https://chrony-project.org/) for time. |
-| `logging` | always on | A central, searchable systemd journal. |
+| `logging` | off | An optional central, searchable systemd journal for sites that need retained cross-host logs. |
 | `monitoring` | on | [Pulse Community](https://github.com/rcourtman/Pulse) dashboards, Proxmox monitoring, and host telemetry. |
 | `firewall` | on in managed-gateway mode | The Debian gateway, DHCP, dynamic DNS, routing, NAT, and zone rules. |
 | `gatus` | off | A tidy status page for supported Boetticher services. |

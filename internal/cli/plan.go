@@ -206,13 +206,6 @@ func addLivePlanObservations(ctx context.Context, siteDir string, s model.Site, 
 		return fmt.Errorf("required storage is not ready: %w", err)
 	}
 	endpointLookup := net.LookupIP
-	if s.Gateway.Mode == model.GatewayModeManaged {
-		rootRunner := proxmoxRootSSHRunner(s, siteDir)
-		if err := proxmox.WaitForSSH(ctx, rootRunner, s.BootstrapAddress, "root", 1, 0); err != nil {
-			return fmt.Errorf("observe authenticated bootstrap path: %w", err)
-		}
-		endpointLookup = endpointLookupWithFallback(net.LookupIP, remoteEndpointResolver(ctx, rootRunner, s.BootstrapAddress, "root"))
-	}
 	guestPlans := deploymentGuestPlans(s, plan.Proxmox)
 	guestStates, err := inspectDeploymentGuestStates(ctx, client, node, guestPlans)
 	if err != nil {

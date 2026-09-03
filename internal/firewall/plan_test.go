@@ -269,10 +269,8 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"10.10.5.10/32 ip daddr 10.10.20.60/32 tcp dport 443",
-		"10.10.5.10/32 ip daddr 10.10.10.30/32 tcp dport 443",
 		"10.10.5.10/32 ip daddr 10.10.10.20/32 tcp dport 443",
 		"10.10.10.20/32 ip daddr 10.10.99.5/32 tcp dport 8006",
-		"10.10.99.5/32 ip daddr 10.10.10.40/32 tcp dport 19532",
 		"10.10.99.5/32 ip daddr 10.10.5.10/32 tcp dport 22",
 		"set boetticher_endpoint_29 { type ipv4_addr; elements = { 198.51.100.10, 198.51.100.11 } }",
 		"10.10.20.60/32 ip daddr @boetticher_endpoint_29 tcp dport 443",
@@ -373,8 +371,15 @@ func TestEndpointResolutionFailsClosed(t *testing.T) {
 }
 
 func TestQualifiedModuleLoggingIntentResolvesCollector(t *testing.T) {
-	rule := policyRuleForIntent(model.NewDefaultSite("installation", "age1example"), "logging", model.NetworkIntent{
-		Source: "lab-portal-01", Destination: "logs.lab.home.arpa", Protocol: "tcp", Ports: []string{"19532"}, Purpose: "native journal upload",
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	enabled := true
+	config.Modules.Logging = &model.ToggleModuleConfig{Enabled: &enabled}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule := policyRuleForIntent(site, "logging", model.NetworkIntent{
+		Source: "lab-monitor-01", Destination: "logs.lab.home.arpa", Protocol: "tcp", Ports: []string{"19532"}, Purpose: "native journal upload",
 	})
 	if rule.DestinationCIDR != "10.10.10.40/32" || rule.To != "INFRA" {
 		t.Fatalf("qualified logging destination resolved incorrectly: %#v", rule)
@@ -451,7 +456,7 @@ func TestExternalComposedContractCarriesModuleRouteAndOperatorBoundary(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"10.10.0.0/16", "10.10.5.10", "10.10.5.0/24", "10.10.5.1", "subnet-route", "route approval", "accept-dns=false", "Bifrost HTTPS", "portal HTTPS", "monitoring HTTPS", "openrouter.ai", "required return routing", "Proxmox API", "SSH", "enforcement is NOT ACTIVE", "operator implementation responsibility"} {
+	for _, expected := range []string{"10.10.0.0/16", "10.10.5.10", "10.10.5.0/24", "10.10.5.1", "subnet-route", "route approval", "accept-dns=false", "Bifrost HTTPS", "monitoring HTTPS", "openrouter.ai", "required return routing", "Proxmox API", "SSH", "enforcement is NOT ACTIVE", "operator implementation responsibility"} {
 		if !strings.Contains(strings.ToLower(contract), strings.ToLower(expected)) {
 			t.Errorf("external module contract missing %q", expected)
 		}
@@ -566,30 +571,7 @@ func TestExternalPlanHasPolicyButNoManagedInterfaces(t *testing.T) {
 	}
 }
 
-func TestPortalHTTPSIsAllowedFromModeledClientZones(t *testing.T) {
-	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ruleset, err := RenderNFT(plan)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, expected := range []string{
-		"iifname \"transit0\" oifname \"infra0\" ip saddr 10.10.5.0/24 ip daddr 10.10.10.30/32 tcp dport 443 counter accept",
-		"iifname \"servers0\" oifname \"infra0\" ip saddr 10.10.20.0/24 ip daddr 10.10.10.30/32 tcp dport 443 counter accept",
-		"iifname \"trusted0\" oifname \"infra0\" ip saddr 10.10.30.0/24 ip daddr 10.10.10.30/32 tcp dport 443 counter accept",
-	} {
-		if !strings.Contains(ruleset, expected) {
-			t.Errorf("Portal client-zone rule missing %q:\\n%s", expected, ruleset)
-		}
-	}
-	if strings.Index(ruleset, "iifname \"transit0\" oifname \"infra0\" ip saddr 10.10.5.0/24 ip daddr 10.10.10.30/32") > strings.Index(ruleset, "TRANSIT-INFRA-DROP") {
-		t.Fatal("TRANSIT-to-Portal allow occurs after the TRANSIT default deny")
-	}
-}
-
-func TestTailnetRouterUsesBothDNSAndNTPEndpoints(t *testing.T) {
+func TestTailnetRouterUsesTheSingleDNSAndNTPService(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	enabled := true
 	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &enabled}
@@ -607,8 +589,8 @@ func TestTailnetRouterUsesBothDNSAndNTPEndpoints(t *testing.T) {
 		}
 	}
 	for purpose, destinations := range seen {
-		if len(destinations) != 2 || !destinations["10.10.10.10/32"] || !destinations["10.10.10.11/32"] {
-			t.Fatalf("Tailnet %s destinations = %v, want both DNS endpoints", purpose, destinations)
+		if len(destinations) != 1 || !destinations["10.10.10.10/32"] {
+			t.Fatalf("Tailnet %s destinations = %v, want the single DNS endpoint", purpose, destinations)
 		}
 	}
 }
@@ -624,8 +606,8 @@ func TestLogicalDNSIntentExpandsToAllManagedDNSEndpoints(t *testing.T) {
 		seen[rule.DestinationCIDR] = true
 		names[rule.Name] = true
 	}
-	if len(seen) != 2 || len(names) != 2 || !seen["10.10.10.10/32"] || !seen["10.10.10.11/32"] {
-		t.Fatalf("logical DNS intent destinations = %v, names = %v, want both managed DNS endpoints with unique names", seen, names)
+	if len(seen) != 1 || len(names) != 1 || !seen["10.10.10.10/32"] {
+		t.Fatalf("logical DNS intent destinations = %v, names = %v, want the managed DNS endpoint", seen, names)
 	}
 }
 

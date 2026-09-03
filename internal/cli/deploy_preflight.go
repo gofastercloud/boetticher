@@ -38,24 +38,6 @@ func validateStaticDeploymentReadiness(siteDir string, s model.Site, ageIdentity
 	return nil
 }
 
-// validateConfiguredModuleReadiness is the pre-bootstrap subset of static
-// readiness. It deliberately does not require qualified artifact files: the
-// bootstrap command is the operation that creates those artifacts. Deploy
-// performs the stricter artifact-bound check above before any live mutation.
-func validateConfiguredModuleReadiness(siteDir string, s model.Site, ageIdentity string) error {
-	plan, err := firewall.PlanFromSite(s)
-	if err != nil {
-		return fmt.Errorf("firewall plan: %w", err)
-	}
-	if err := firewall.ValidateNetworkIntentCoverage(s, plan); err != nil {
-		return fmt.Errorf("network contract: %w", err)
-	}
-	if _, err := usbexport.PlanFromSite(s); err != nil {
-		return fmt.Errorf("device contract: %w", err)
-	}
-	return staticCredentialReadiness(siteDir, s, ageIdentity)
-}
-
 func staticCredentialReadiness(siteDir string, s model.Site, ageIdentity string) error {
 	keys := make([]string, 0, 4)
 	if s.Gateway.Mode == model.GatewayModeManaged {
@@ -109,8 +91,8 @@ func validateLiveDeploymentPrerequisites(ctx context.Context, client *proxmox.Cl
 }
 
 func validateLiveDeploymentPrerequisitesWithResolver(ctx context.Context, client *proxmox.Client, rootRunner proxmox.CommandRunner, siteDir string, s model.Site, plan proxmox.Plan, storagePlan storage.Plan, endpointLookup func(string) ([]net.IP, error)) error {
-	if client == nil || rootRunner == nil {
-		return errors.New("live deployment preflight requires the authenticated Proxmox and bootstrap paths")
+	if client == nil {
+		return errors.New("live deployment preflight requires the authenticated Proxmox path")
 	}
 	if endpointLookup == nil {
 		endpointLookup = net.LookupIP
@@ -123,13 +105,15 @@ func validateLiveDeploymentPrerequisitesWithResolver(ctx context.Context, client
 		return fmt.Errorf("required existing storage is unavailable: %w", err)
 	}
 
-	for _, guest := range plan.Guests {
-		for _, device := range guest.Security.Devices {
-			if !strings.HasPrefix(device.Path, "/dev/") || strings.ContainsAny(device.Path, "\r\n") {
-				return fmt.Errorf("module guest %s declares an unsafe host device path %q", guest.Name, device.Path)
-			}
-			if _, err := rootRunner.Run(ctx, s.BootstrapAddress, "root", "test -c "+shellQuote(device.Path)); err != nil {
-				return fmt.Errorf("required host device %s for %s is unavailable: %w", device.Path, guest.Name, err)
+	if rootRunner != nil {
+		for _, guest := range plan.Guests {
+			for _, device := range guest.Security.Devices {
+				if !strings.HasPrefix(device.Path, "/dev/") || strings.ContainsAny(device.Path, "\r\n") {
+					return fmt.Errorf("module guest %s declares an unsafe host device path %q", guest.Name, device.Path)
+				}
+				if _, err := rootRunner.Run(ctx, s.BootstrapAddress, "root", "test -c "+shellQuote(device.Path)); err != nil {
+					return fmt.Errorf("required host device %s for %s is unavailable: %w", device.Path, guest.Name, err)
+				}
 			}
 		}
 	}
@@ -141,7 +125,7 @@ func validateLiveDeploymentPrerequisitesWithResolver(ctx context.Context, client
 	for _, manifest := range usbManifests {
 		needsUSBObservation = needsUSBObservation || len(manifest.Exports) > 0
 	}
-	if needsUSBObservation {
+	if needsUSBObservation && rootRunner != nil {
 		observed, observeErr := observeUSB(ctx, s, siteDir)
 		if observeErr != nil {
 			return fmt.Errorf("inspect required USB devices: %w", observeErr)

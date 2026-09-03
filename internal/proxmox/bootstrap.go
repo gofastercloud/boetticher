@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -24,41 +23,6 @@ import (
 
 type CommandRunner interface {
 	Run(ctx context.Context, address, user, command string) ([]byte, error)
-}
-
-// CheckBuilderCapacity verifies the disposable builder has enough free space
-// for the full appliance construction before any build work starts.
-func CheckBuilderCapacity(ctx context.Context, runner CommandRunner, address, user string, minimumFreeGiB int) error {
-	if runner == nil || minimumFreeGiB <= 0 {
-		return errors.New("builder capacity check requires a runner and positive minimum")
-	}
-	output, err := runner.Run(ctx, address, user, "df -Pk /")
-	if err != nil {
-		return fmt.Errorf("inspect temporary builder capacity: %w", err)
-	}
-	availableKiB, err := parseAvailableKiB(output)
-	if err != nil {
-		return fmt.Errorf("inspect temporary builder capacity: %w", err)
-	}
-	wantedKiB := int64(minimumFreeGiB) * 1024 * 1024
-	if availableKiB < wantedKiB {
-		return fmt.Errorf("HOLD: temporary builder has %d GiB free, need at least %d GiB", availableKiB/(1024*1024), minimumFreeGiB)
-	}
-	return nil
-}
-
-func parseAvailableKiB(output []byte) (int64, error) {
-	for _, line := range strings.Split(string(output), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 5 || fields[0] == "Filesystem" {
-			continue
-		}
-		available, err := strconv.ParseInt(fields[3], 10, 64)
-		if err == nil && available >= 0 {
-			return available, nil
-		}
-	}
-	return 0, errors.New("df output did not contain a valid available-space value")
 }
 
 // ArgsCommandRunner executes a fixed remote executable with separate
@@ -153,52 +117,6 @@ func WaitForCommand(ctx context.Context, runner CommandRunner, address, user, co
 	return fmt.Errorf("HOLD: command readiness failed for %s@%s after %d attempts: %w", user, address, attempts, lastErr)
 }
 
-// WaitForQEMUIPv4ViaNeighbor discovers a DHCP-backed temporary guest before
-// cloud-init can install qemu-guest-agent. The exact builder MAC is the only
-// accepted identity; unrelated HOME neighbors are never returned.
-func WaitForQEMUIPv4ViaNeighbor(ctx context.Context, runner CommandRunner, address, user, mac string, attempts int, interval time.Duration) (string, error) {
-	if runner == nil || address == "" || user == "" || attempts < 1 {
-		return "", errors.New("builder neighbor readiness inputs are invalid")
-	}
-	parsedMAC, err := net.ParseMAC(mac)
-	if err != nil || len(parsedMAC) != 6 {
-		return "", errors.New("builder neighbor readiness requires a valid MAC")
-	}
-	if interval <= 0 {
-		interval = time.Second
-	}
-	var lastErr error
-	for attempt := 0; attempt < attempts; attempt++ {
-		output, runErr := runner.Run(ctx, address, user, "/usr/sbin/ip -4 neigh show dev vmbr0")
-		if runErr != nil {
-			lastErr = runErr
-		} else {
-			for _, line := range strings.Split(string(output), "\n") {
-				fields := strings.Fields(line)
-				if len(fields) < 4 || fields[1] != "lladdr" {
-					continue
-				}
-				candidateIP := net.ParseIP(fields[0]).To4()
-				candidateMAC, parseErr := net.ParseMAC(fields[2])
-				if candidateIP != nil && parseErr == nil && len(candidateMAC) == 6 && candidateMAC.String() == parsedMAC.String() {
-					return candidateIP.String(), nil
-				}
-			}
-			lastErr = errors.New("builder MAC is not present in the Proxmox HOME neighbor table")
-		}
-		if attempt+1 < attempts {
-			timer := time.NewTimer(interval)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return "", fmt.Errorf("builder neighbor readiness cancelled: %w", ctx.Err())
-			case <-timer.C:
-			}
-		}
-	}
-	return "", fmt.Errorf("HOLD: builder DHCP address was not observed for MAC %s after %d attempts: %w", parsedMAC, attempts, lastErr)
-}
-
 type SSHRunner struct {
 	Port            int
 	KnownHosts      string
@@ -213,6 +131,9 @@ type SSHRunner struct {
 	// network target remains the supplied address. It is used for bootstrap
 	// connections whose address is not resolvable through HOME DNS.
 	HostKeyAlias string
+	// identityData is an operation-scoped private key supplied through an
+	// inherited file descriptor. It is never written to disk or put in argv.
+	identityData []byte
 }
 
 // FreshConnection returns a runner that bypasses OpenSSH connection
@@ -222,6 +143,28 @@ type SSHRunner struct {
 func (r SSHRunner) FreshConnection() SSHRunner {
 	r.freshConnection = true
 	return r
+}
+
+// WithIdentityData returns a runner that supplies an operation-scoped private
+// key from memory. The caller owns the byte slice and must wipe it after the
+// bounded operation and its cleanup have completed.
+func (r SSHRunner) WithIdentityData(identityData []byte) SSHRunner {
+	r.IdentityFile = ""
+	r.identityData = identityData
+	return r
+}
+
+// ClearIdentityData wipes the operation-scoped private key held by the runner.
+// Copies of SSHRunner share the same backing slice, so this also clears copies
+// retained by short-lived clients or interfaces.
+func (r *SSHRunner) ClearIdentityData() {
+	if r == nil {
+		return
+	}
+	for index := range r.identityData {
+		r.identityData[index] = 0
+	}
+	r.identityData = nil
 }
 
 type SSHPhysicalNetworkDiscovery struct {
@@ -566,10 +509,35 @@ func (r SSHRunner) runArgsStream(ctx context.Context, address, user string, comm
 	process := newSSHProcess(args)
 	process.Stdin = stdin
 	process.Stdout = stdout
+	var identityReader, identityWriter *os.File
+	if len(r.identityData) > 0 {
+		var pipeErr error
+		identityReader, identityWriter, pipeErr = os.Pipe()
+		if pipeErr != nil {
+			return fmt.Errorf("prepare in-memory SSH identity: %w", pipeErr)
+		}
+		process.ExtraFiles = []*os.File{identityReader}
+		defer identityReader.Close()
+	}
 	stderr := &boundedOutput{limit: 64 << 10}
 	process.Stderr = stderr
 	if err := process.Start(); err != nil {
+		if identityWriter != nil {
+			_ = identityWriter.Close()
+		}
 		return fmt.Errorf("start SSH command: %w", err)
+	}
+	if identityWriter != nil {
+		if _, err := identityWriter.Write(r.identityData); err != nil {
+			_ = identityWriter.Close()
+			if process.Process != nil {
+				_ = syscall.Kill(-process.Process.Pid, syscall.SIGKILL)
+			}
+			return fmt.Errorf("stream in-memory SSH identity: %w", err)
+		}
+		if err := identityWriter.Close(); err != nil {
+			return fmt.Errorf("close in-memory SSH identity: %w", err)
+		}
 	}
 	done := make(chan error, 1)
 	go waitForSSHProcess(ctx, process, done)
@@ -701,6 +669,8 @@ func (r SSHRunner) connectionArgs(address, user, batchMode string) ([]string, st
 		// not let an unrelated local agent identity consume the server's
 		// authentication budget before that key is tried.
 		args = append(args, "-o", "IdentitiesOnly=yes", "-i", r.IdentityFile)
+	} else if len(r.identityData) > 0 {
+		args = append(args, "-o", "IdentitiesOnly=yes", "-i", "/dev/fd/3")
 	}
 	if r.HostKeyAlias != "" {
 		if !safeNodeID(r.HostKeyAlias) {
@@ -730,6 +700,28 @@ func InstallOperatorKey(ctx context.Context, runner CommandRunner, address, init
 	return err
 }
 
+// InstallTemporaryRootAccess installs one exact operation-scoped root key on
+// the host. The caller must authenticate this one mutation with independent
+// operator recovery authority, only after the immutable Apply plan is
+// accepted. Cleanup removes this exact public-key line and does not alter any
+// other root key, password, or SSH policy.
+func InstallTemporaryRootAccess(ctx context.Context, runner CommandRunner, address, user, publicKey string) error {
+	if runner == nil {
+		return errors.New("temporary root acquisition runner is required")
+	}
+	if user != "root" {
+		return errors.New("temporary root acquisition requires the root recovery transport")
+	}
+	if err := validatePublicKey(publicKey); err != nil {
+		return fmt.Errorf("temporary root acquisition key: %w", err)
+	}
+	command := "set -eu; umask 077; install -d -m 700 -o root -g root /root/.ssh; touch /root/.ssh/authorized_keys; chown root:root /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys; grep -qxF -- " + shellQuote(publicKey) + " /root/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(publicKey) + " >> /root/.ssh/authorized_keys"
+	if _, err := runner.Run(ctx, address, user, command); err != nil {
+		return fmt.Errorf("install temporary root access: %w", err)
+	}
+	return nil
+}
+
 func ConfigureIdentities(ctx context.Context, runner CommandRunner, address, initialUser, adminPublicKey string, allowedDestinations []string) error {
 	if err := validatePublicKey(adminPublicKey); err != nil {
 		return err
@@ -746,9 +738,33 @@ func ConfigureIdentities(ctx context.Context, runner CommandRunner, address, ini
 	// Public keys and destination addresses are the only values interpolated;
 	// credentials are never placed in this command.
 	jumpKey := "restrict,port-forwarding,permitopen=\"" + strings.Join(allowedDestinations, "\",permitopen=\"") + "\" " + publicKeyLine(adminPublicKey)
-	command := "set -eu; if ! command -v visudo >/dev/null 2>&1; then apt_sources=\"$(mktemp /run/boetticher-apt-sources.XXXXXX)\"; trap 'rm -f \"$apt_sources\"' EXIT; printf '%s\\n' 'deb http://deb.debian.org/debian trixie main' 'deb http://deb.debian.org/debian trixie-updates main' 'deb http://security.debian.org/debian-security trixie-security main' > \"$apt_sources\"; apt-get -o Dir::Etc::sourcelist=\"$apt_sources\" -o Dir::Etc::sourceparts=- -o Acquire::Retries=3 update; apt-get -o Dir::Etc::sourcelist=\"$apt_sources\" -o Dir::Etc::sourceparts=- -o Acquire::Retries=3 install --yes --no-install-recommends sudo; fi; id -u labadmin >/dev/null 2>&1 || useradd --create-home --shell /bin/bash labadmin; passwd --lock labadmin; gpasswd --delete labadmin sudo >/dev/null 2>&1 || true; id -u lab-jump >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin lab-jump; install -d -m 700 -o lab-jump -g lab-jump /home/lab-jump; install -d -m 700 /root/.ssh /home/labadmin/.ssh /etc/ssh/sshd_config.d; touch /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /root/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /root/.ssh/authorized_keys; install -m 600 /dev/null /home/labadmin/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /home/labadmin/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /home/labadmin/.ssh/authorized_keys; install -m 600 /dev/null /home/lab-jump.authorized_keys; printf '%s\\n' " + shellQuote(jumpKey) + " > /home/lab-jump.authorized_keys; chown lab-jump:lab-jump /home/lab-jump.authorized_keys; chown -R labadmin:labadmin /home/labadmin/.ssh; rm -f /etc/sudoers.d/boetticher-labadmin; cat > /etc/ssh/sshd_config.d/90-boetticher-jump.conf <<'EOF'\nAllowUsers root labadmin lab-jump lab-netprobe\nMatch User lab-jump\n    AuthorizedKeysFile /home/lab-jump.authorized_keys\n    PermitTTY no\n    X11Forwarding no\n    AllowAgentForwarding no\n    AllowTcpForwarding local\n    PermitOpen " + strings.Join(allowedDestinations, " ") + "\nEOF\nvisudo -cf /etc/sudoers\nsshd -t\nsystemctl reload ssh || systemctl reload sshd"
+	command := "set -eu; if ! command -v visudo >/dev/null 2>&1; then apt_sources=\"$(mktemp /run/boetticher-apt-sources.XXXXXX)\"; trap 'rm -f \"$apt_sources\"' EXIT; printf '%s\\n' 'deb http://deb.debian.org/debian trixie main' 'deb http://deb.debian.org/debian trixie-updates main' 'deb http://security.debian.org/debian-security trixie-security main' > \"$apt_sources\"; apt-get -o Dir::Etc::sourcelist=\"$apt_sources\" -o Dir::Etc::sourceparts=- -o Acquire::Retries=3 update; apt-get -o Dir::Etc::sourcelist=\"$apt_sources\" -o Dir::Etc::sourceparts=- -o Acquire::Retries=3 install --yes --no-install-recommends sudo; fi; id -u labadmin >/dev/null 2>&1 || useradd --create-home --shell /bin/bash labadmin; passwd --lock labadmin; gpasswd --delete labadmin sudo >/dev/null 2>&1 || true; id -u lab-jump >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin lab-jump; install -d -m 700 -o lab-jump -g lab-jump /home/lab-jump; install -d -m 700 /home/labadmin/.ssh /etc/ssh/sshd_config.d; install -m 600 /dev/null /home/labadmin/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /home/labadmin/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /home/labadmin/.ssh/authorized_keys; install -m 600 /dev/null /home/lab-jump.authorized_keys; printf '%s\\n' " + shellQuote(jumpKey) + " > /home/lab-jump.authorized_keys; chown lab-jump:lab-jump /home/lab-jump.authorized_keys; chown -R labadmin:labadmin /home/labadmin/.ssh; rm -f /etc/sudoers.d/boetticher-labadmin; cat > /etc/ssh/sshd_config.d/90-boetticher-jump.conf <<'EOF'\nAllowUsers root labadmin lab-jump lab-netprobe\nMatch User lab-jump\n    AuthorizedKeysFile /home/lab-jump.authorized_keys\n    PermitTTY no\n    X11Forwarding no\n    AllowAgentForwarding no\n    AllowTcpForwarding local\n    PermitOpen " + strings.Join(allowedDestinations, " ") + "\nEOF\nvisudo -cf /etc/sudoers\nsshd -t\nsystemctl reload ssh || systemctl reload sshd"
 	_, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, command))
 	return err
+}
+
+// ConfigureBastionPolicy reconciles only the host-side restricted jump policy.
+// It deliberately does not install or modify any user key, so Apply can
+// refresh the policy while its temporary root key remains the only
+// deployment-owned root identity.
+func ConfigureBastionPolicy(ctx context.Context, runner CommandRunner, address, user string, allowedDestinations []string) error {
+	if runner == nil {
+		return errors.New("bastion policy runner is required")
+	}
+	if len(allowedDestinations) == 0 {
+		return errors.New("at least one bastion destination is required")
+	}
+	for _, destination := range allowedDestinations {
+		host, port, splitErr := net.SplitHostPort(destination)
+		if splitErr != nil || net.ParseIP(host) == nil || (port != "22" && port != "443") || strings.ContainsAny(destination, "'\n\r") {
+			return fmt.Errorf("invalid bastion destination %q", destination)
+		}
+	}
+	command := "set -eu; install -d -m 700 /etc/ssh/sshd_config.d; cat > /etc/ssh/sshd_config.d/90-boetticher-jump.conf <<'EOF'\nAllowUsers root labadmin lab-jump lab-netprobe\nMatch User lab-jump\n    AuthorizedKeysFile /home/lab-jump.authorized_keys\n    PermitTTY no\n    X11Forwarding no\n    AllowAgentForwarding no\n    AllowTcpForwarding local\n    PermitOpen " + strings.Join(allowedDestinations, " ") + "\nEOF\nsshd -t\nsystemctl reload ssh || systemctl reload sshd"
+	if _, err := runner.Run(ctx, address, user, privilegedCommand(user, command)); err != nil {
+		return fmt.Errorf("configure host bastion policy: %w", err)
+	}
+	return nil
 }
 
 // ConfigureHeadlessPowerPolicy makes a Proxmox host safe to operate as an
@@ -915,7 +931,6 @@ func InactivateRetainedModule(ctx context.Context, runner CommandRunner, address
 }
 
 const guestHostPublicKeyPath = "/var/lib/boetticher/identity/ssh/ssh_host_ed25519_key.pub"
-const builderHostPublicKeyPath = "/etc/ssh/ssh_host_ed25519_key.pub"
 
 // ReadGuestHostKey obtains the appliance's generated host key through the
 // already-authenticated Proxmox host boundary. It is intentionally separate
@@ -923,14 +938,6 @@ const builderHostPublicKeyPath = "/etc/ssh/ssh_host_ed25519_key.pub"
 // for the subsequent root or credential-bearing connection.
 func ReadGuestHostKey(ctx context.Context, runner CommandRunner, address, user string, kind GuestKind, vmid int) (string, error) {
 	return readGuestHostKey(ctx, runner, address, user, kind, vmid, guestHostPublicKeyPath, true)
-}
-
-// ReadBuilderHostKey obtains the temporary builder's host key through the
-// already-authenticated Proxmox host boundary. The key is enrolled before the
-// builder's first network SSH connection; ssh-keyscan is deliberately not a
-// trust source.
-func ReadBuilderHostKey(ctx context.Context, runner CommandRunner, address, user string, vmid int) (string, error) {
-	return readGuestHostKey(ctx, runner, address, user, KindQEMU, vmid, builderHostPublicKeyPath, false)
 }
 
 func readGuestHostKey(ctx context.Context, runner CommandRunner, address, user string, kind GuestKind, vmid int, publicKeyPath string, rootOnly bool) (string, error) {
@@ -992,11 +999,10 @@ func normalizeGuestHostKey(value string) (string, error) {
 	return strings.Join(fields[:2], " "), nil
 }
 
-// RevokeTemporaryRootAccess removes a deployment-only root SSH identity from
-// an owned guest. The host form is deliberately non-destructive: the operator
-// key installed during bootstrap is also the independent host recovery key,
-// so host cleanup must preserve root's AllowUsers entry, authorized keys, and
-// password state. Both forms are idempotent for retry-safe cleanup.
+// RevokeTemporaryRootAccess removes one exact deployment-only root SSH
+// identity from an owned host or guest. It never changes independent operator
+// recovery keys, root password state, or the host's root AllowUsers contract.
+// The operation is idempotent for retry-safe cleanup.
 func RevokeTemporaryRootAccess(ctx context.Context, runner CommandRunner, address, user, publicKey string, host bool) error {
 	if runner == nil {
 		return errors.New("temporary root cleanup runner is required")
@@ -1010,10 +1016,7 @@ func RevokeTemporaryRootAccess(ctx context.Context, runner CommandRunner, addres
 	removeKey := "file=/root/.ssh/authorized_keys; tmp=/root/.ssh/authorized_keys.boetticher-cleanup; trap 'rm -f \"$tmp\"' EXIT; if [ -f \"$file\" ]; then if grep -Fvx -- " + shellQuote(publicKey) + " \"$file\" >\"$tmp\"; then install -m 600 -o root -g root \"$tmp\" \"$file\"; else status=$?; [ \"$status\" -eq 1 ] || exit \"$status\"; rm -f \"$file\"; fi; fi"
 	command := "set -eu; " + removeKey
 	if host {
-		// The host operator key is persistent recovery authority. Verify the
-		// expected SSH contract but never alter host authentication during
-		// deployment cleanup.
-		command = "set -eu; file=/etc/ssh/sshd_config.d/90-boetticher-jump.conf; grep -qxF 'AllowUsers root labadmin lab-jump lab-netprobe' \"$file\"; sshd -t"
+		command += "; file=/etc/ssh/sshd_config.d/90-boetticher-jump.conf; grep -qxF 'AllowUsers root labadmin lab-jump lab-netprobe' \"$file\"; sshd -t"
 	}
 	if _, err := runner.Run(ctx, address, user, command); err != nil {
 		return fmt.Errorf("revoke temporary root access: %w", err)

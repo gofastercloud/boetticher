@@ -75,9 +75,8 @@ func FirstPartyRegistry() Registry {
 			Name: "dns", Description: "Mandatory DNS and NTP platform capability", Version: "1.0.0", Policy: Mandatory,
 			Configuration: nil,
 
-			Requires: []Capability{CapabilityGateway}, Provides: []Capability{CapabilityDNS, CapabilityNTP}, GuestIDs: []int{model.DNS01VMID, model.DNS02VMID}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeInfrastructure}, Guests: []model.Component{
+			Requires: []Capability{CapabilityGateway}, Provides: []Capability{CapabilityDNS, CapabilityNTP}, GuestIDs: []int{model.DNS01VMID}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeInfrastructure}, Guests: []model.Component{
 				{Name: "lab-dns-01", VMID: model.DNS01VMID, Hostname: "lab-dns-01", Zone: "INFRA", Address: "10.10.10.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-				{Name: "lab-dns-02", VMID: model.DNS02VMID, Hostname: "lab-dns-02", Zone: "INFRA", Address: "10.10.10.11", Role: "DNS/NTP", DNSAliases: []string{"dns02"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 		"monitoring": {
@@ -93,7 +92,7 @@ func FirstPartyRegistry() Registry {
 			},
 		},
 		"logging": {
-			Name: "logging", Description: "Central systemd journal collection", Version: "1.0.0", Policy: Mandatory,
+			Name: "logging", Description: "Optional central systemd journal collection", Version: "1.0.0", Policy: DefaultOff,
 			DependsOn: []string{"dns"}, Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityLogging}, GuestIDs: []int{model.LoggingVMID}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeInfrastructure}, Guests: []model.Component{
 				{Name: "lab-log-01", VMID: model.LoggingVMID, Hostname: "lab-log-01", Zone: "INFRA", Address: "10.10.10.40", Role: "Central systemd journal", DNSAliases: []string{"logs"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},

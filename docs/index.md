@@ -9,7 +9,7 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
   <div>
     <p class="eyebrow">Automated homelab builder</p>
     <h1>Turn a clean Proxmox host into a very good little lab.</h1>
-    <p class="lede">Boetticher takes care of the plumbing—networking, names, clocks, monitoring, logs, backups, and a few excellent extras—so you can get on with building the fun stuff.</p>
+    <p class="lede">Boetticher takes care of the plumbing—networking, names, clocks, monitoring, backups, and a few excellent extras—so you can get on with building the fun stuff.</p>
     <div class="actions">
       <a class="button" href="start.html">Start a fresh lab →</a>
       <a class="button button--quiet" href="https://github.com/gofastercloud/boetticher">Browse the source ↗</a>
@@ -25,7 +25,7 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
 <section class="card-grid">
   <article class="card">
     <h3>A dependable backbone</h3>
-    <p>A fixed six-zone network, a Debian gateway when you want one, DNS, DHCP, time, monitoring, logs, and a private portal.</p>
+    <p>A fixed six-zone network, a Debian gateway when you want one, single-host DNS, DHCP, time, monitoring, and optional capabilities.</p>
   </article>
   <article class="card">
     <h3>A small daily loop</h3>
@@ -58,7 +58,7 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
 </aside>
 
 <aside class="callout">
-  <p><strong>The pleasantly boring 0.5.0 network answer:</strong> the simplification keeps all six zones and their existing numbers—VLANs 5, 10, 20, 30, 40, and 99. The default virtual-only setup needs no switch reconfiguration; a physical trunk is still an optional later step.</p>
+  <p><strong>The pleasantly boring 0.5.1 network answer:</strong> the simplification keeps all six zones and their existing numbers—VLANs 5, 10, 20, 30, 40, and 99. The default virtual-only setup needs no switch reconfiguration; a physical trunk is still an optional later step.</p>
 </aside>
 
 <aside class="callout">

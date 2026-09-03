@@ -139,7 +139,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	ddns := DDNSPlan{
 		Enabled: true, Source: "Kea D2 on lab-fw-01", UpdateTarget: "10.10.10.10:" + AuthoritativePort, DNSResponseTimeoutMS: DNSResponseTimeoutMS,
 		UpdateSources: []string{"10.10.10.1"}, TSIGSecretReference: TSIGSecretReference,
-		ConflictPolicy: ConflictPolicy, LeaseFailurePolicy: "lease-continues-without-DNS-registration", Replication: "PowerDNS AXFR/IXFR lab-dns-01 primary to lab-dns-02 secondary on port " + AuthoritativePort,
+		ConflictPolicy: ConflictPolicy, LeaseFailurePolicy: "lease-continues-without-DNS-registration", Replication: "single authoritative lab-dns-01 service on port " + AuthoritativePort,
 		TSIGAlgorithm: "hmac-sha256", Zones: ddnsZones,
 	}
 	if s.Gateway.Mode == model.GatewayModeExternal {
@@ -153,7 +153,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	return Plan{
 		ModelRevision: revision, Implementation: AuthoritativeImplementation, ImplementationVersion: AuthoritativeVersion, PackageVersion: model.AuthoritativePackageVersion, AuthoritativePort: AuthoritativePort,
 		AuthoritativeListenAddresses: listenAddresses, AuthoritativeForwardTarget: listenAddresses[0] + ":" + AuthoritativePort,
-		StaticZone: s.Network.Domain, Nameservers: []string{"10.10.10.10", "10.10.10.11"},
+		StaticZone: s.Network.Domain, Nameservers: []string{"10.10.10.10"},
 		DynamicZones: dynamic, ReverseZones: reverse, StaticRecords: static, PendingDeletions: pendingDeletions(s, static),
 		DDNS:                    ddns,
 		RecursiveImplementation: "blocky", RecursiveUpstreams: append([]string(nil), PublicUpstreams...),

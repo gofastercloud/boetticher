@@ -327,7 +327,7 @@ func TestPowerDNSCommandPlanUsesZoneRelativeSyntaxAndNeverEmbedsARealSecret(t *t
 			if command.Args[3] == "@" {
 				seenApex = true
 			}
-			if command.Args[2] == plan.StaticZone && command.Args[3] == "portal" {
+			if command.Args[2] == plan.StaticZone && command.Args[3] == "dns" {
 				seenRelativeRecord = true
 			}
 		}

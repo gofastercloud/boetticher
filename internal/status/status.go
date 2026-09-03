@@ -1,5 +1,5 @@
-// Package status defines the shared result shape used by the CLI, generated
-// status JSON, verification display, and the portal.
+// Package status defines the shared result shape used by the CLI and generated
+// status JSON.
 package status
 
 import "strings"
@@ -56,13 +56,35 @@ type Check struct {
 	NextAction string         `json:"next_action"`
 }
 
-// Report is the versioned status document shared by CLI, JSON, and portal views.
+// Report is the versioned status document shared by CLI and JSON output.
 type Report struct {
 	StatusModelVersion string        `json:"status_model_version"`
 	ModelRevision      string        `json:"model_revision"`
 	ObservedAt         string        `json:"observed_at"`
 	OverallState       OperatorState `json:"overall_state"`
 	Checks             []Check       `json:"checks"`
+}
+
+// CheckResult is the legacy-shaped internal result collected by the read-only
+// status checks before it is converted into Report. It is kept here because
+// status collection and semantic reporting share the shape; it is not a web
+// page or a separate persisted authority.
+type CheckResult struct {
+	Name       string       `json:"name"`
+	Status     string       `json:"status"`
+	Detail     string       `json:"detail,omitempty"`
+	Tier       EvidenceTier `json:"evidence_tier,omitempty"`
+	ObservedAt string       `json:"observed_at,omitempty"`
+	Reason     string       `json:"reason,omitempty"`
+	NextAction string       `json:"next_action,omitempty"`
+}
+
+// Evidence is the local status-check input used to build the semantic report.
+// It is not a deployment input or component-specific projection.
+type Evidence struct {
+	GeneratedAt string        `json:"generated_at"`
+	Results     []CheckResult `json:"results"`
+	Status      *Report       `json:"-"`
 }
 
 // LegacyCheck is the small internal bridge used while existing verification

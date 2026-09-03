@@ -93,17 +93,6 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	for _, declaration := range s.Declarations {
 		declarations = append(declarations, declaration.Volumes...)
 	}
-	// Portal is a Core-owned appliance, not a module, but its endpoint identity
-	// still follows the same independent-volume replacement contract.
-	for _, component := range s.PlatformComponents() {
-		if component.Name == "lab-portal-01" {
-			declarations = append(declarations, model.PersistentVolumeDeclaration{
-				Name: "ssh-identity", Module: "portal", Guest: component.Name,
-				SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/ssh",
-				Placement: model.StorageDefault, Backup: true,
-			})
-		}
-	}
 	for _, volume := range declarations {
 		selected := plan.GuestStorage
 		switch volume.Placement {

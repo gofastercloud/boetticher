@@ -24,7 +24,6 @@ func runStatus(args []string, out io.Writer) error {
 	sshPath := fs.String("ssh-config", sshconfig.DefaultPath(), "generated SSH configuration to inspect")
 	sshJourney := fs.Bool("ssh-journey", false, "run an authenticated internal SSH journey through the bastion")
 	live := fs.Bool("live", false, "inspect the managed gateway over the generated SSH path")
-	verbose := fs.Bool("verbose", false, "include reasons and safe next actions")
 	details := fs.Bool("details", false, "include reasons and safe next actions")
 	jsonOutput := fs.Bool("json", false, "write the versioned semantic status model")
 	if err := fs.Parse(args); err != nil {
@@ -32,7 +31,7 @@ func runStatus(args []string, out io.Writer) error {
 	}
 	return runStatusRequest(statusRequest{
 		siteDir: *siteDir, sshPath: *sshPath, sshJourney: *sshJourney,
-		live: *live, verbose: *verbose || *details, json: *jsonOutput,
+		live: *live, verbose: *details, json: *jsonOutput,
 	}, out)
 }
 
@@ -110,7 +109,6 @@ var healthCheckNames = map[string]struct{}{
 	"storage projection":                            {},
 	"qualified appliance evidence":                  {},
 	"SSH bastion allow-list":                        {},
-	"portal artifact":                               {},
 	"generated SSH configuration":                   {},
 	"authenticated SSH journey via Proxmox bastion": {},
 	"managed gateway DHCP/DDNS":                     {},

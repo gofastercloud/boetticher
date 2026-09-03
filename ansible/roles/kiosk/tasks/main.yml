@@ -61,7 +61,7 @@
       - ipv4.ignore-auto-dns
       - 'yes'
       - ipv4.dns
-      - 10.10.10.10,10.10.10.11
+      - 10.10.10.10
       - ipv4.dns-priority
       - '-50'
       - ipv4.dns-search

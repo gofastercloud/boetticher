@@ -10,7 +10,6 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
-	"github.com/gofastercloud/boetticher/internal/portal"
 	statusmodel "github.com/gofastercloud/boetticher/internal/status"
 )
 
@@ -85,7 +84,7 @@ func TestOfflineVerificationPreservesEndpointResolutionHold(t *testing.T) {
 }
 
 func TestVerificationEvidenceUsesExplicitTiers(t *testing.T) {
-	results, err := annotateVerificationEvidence([]portal.CheckResult{
+	results, err := annotateVerificationEvidence([]statusmodel.CheckResult{
 		{Name: "canonical platform model validates", Status: "PASS", Detail: "journey evidence in prose must not change this"},
 		{Name: "authenticated SSH journey via Proxmox bastion", Status: "NOT TESTED", Detail: "local wording"},
 		{Name: "managed gateway upstream DHCP", Status: "NOT TESTED", Detail: "requires a live query"},
@@ -105,7 +104,7 @@ func TestVerificationEvidenceUsesExplicitTiers(t *testing.T) {
 }
 
 func TestVerificationEvidenceRejectsUnknownChecks(t *testing.T) {
-	if _, err := annotateVerificationEvidence([]portal.CheckResult{{Name: "unrecognized check", Status: "PASS"}}, "2026-08-29T00:00:00Z"); err == nil || !strings.Contains(err.Error(), "not in the evidence contract") {
+	if _, err := annotateVerificationEvidence([]statusmodel.CheckResult{{Name: "unrecognized check", Status: "PASS"}}, "2026-08-29T00:00:00Z"); err == nil || !strings.Contains(err.Error(), "not in the evidence contract") {
 		t.Fatalf("unknown verification check was accepted: %v", err)
 	}
 }
@@ -121,7 +120,7 @@ func TestHealthResultsOmitQualificationOnlyChecks(t *testing.T) {
 			t.Fatalf("health result was left unknowable: %#v", result)
 		}
 		switch result.Name {
-		case "DNS01/DNS02 reachable", "NTP01/NTP02 synchronized", "Proxmox API least privilege", "portal requires client certificate", "Pulse requires client certificate", "latest VM/LXC backup", "Age recovery fixture", "SANDBOX cannot access TRUSTED", "SANDBOX cannot access SERVERS", "SANDBOX cannot access MGMT", "TRANSIT/INFRA/MGMT are static-only; SERVERS is reservation-only":
+		case "DNS01 reachable", "NTP01 synchronized", "Proxmox API least privilege", "Pulse requires client certificate", "latest VM/LXC backup", "Age recovery fixture", "SANDBOX cannot access TRUSTED", "SANDBOX cannot access SERVERS", "SANDBOX cannot access MGMT", "TRANSIT/INFRA/MGMT are static-only; SERVERS is reservation-only":
 			t.Fatalf("qualification-only check was included: %#v", result)
 		}
 	}
@@ -142,8 +141,6 @@ func TestCheckRevisionFileRequiresTheAuthoritativeRevisionField(t *testing.T) {
 		{name: "inventory prefix mismatch", ext: ".ini", content: "# Model revision: sha256:expected-old\n", wantErr: true},
 		{name: "ssh exact", ext: ".conf", content: "# boetticher-model-revision: sha256:expected\n"},
 		{name: "ssh prefix mismatch", ext: ".conf", content: "# boetticher-model-revision: sha256:expected-old\n", wantErr: true},
-		{name: "portal exact", ext: ".html", content: "<p>Lab revision: <code>sha256:expected</code></p>"},
-		{name: "portal unrelated occurrence", ext: ".html", content: "<p>sha256:expected</p>", wantErr: true},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {

@@ -1,20 +1,13 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
-	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/model"
-	networkmodel "github.com/gofastercloud/boetticher/internal/network"
-	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
@@ -59,9 +52,6 @@ func runInit(args []string, out io.Writer) error {
 	if err := writeModelProjections(*siteDir, created); err != nil {
 		return err
 	}
-	if err := rebuildPortal(*siteDir, created); err != nil {
-		return err
-	}
 	fmt.Fprintf(out, "Initialization: PASS private site repository created at %s\n", *siteDir)
 	fmt.Fprintf(out, "Age identity: %s (outside Git)\n", model.ExpandUserPath(*ageIdentity))
 	fmt.Fprintf(out, "Model: PASS revision %s\n", revision)
@@ -75,153 +65,6 @@ func runInit(args []string, out io.Writer) error {
 		fmt.Fprintln(out, "Physical network prerequisite: external mode requires a distinct physical vmbr1 trunk before bootstrap")
 	}
 	fmt.Fprintln(out, "Bootstrap prerequisite: independent Age recovery copy required before destructive bootstrap")
-	fmt.Fprintln(out, "Next action: secure the independent Age recovery copy, then run boetticher preflight --site <site>")
+	fmt.Fprintln(out, "Next action: secure the independent Age recovery copy, then run boetticher enroll --site <site> --bootstrap-address ADDRESS")
 	return nil
-}
-
-func runPreflight(args []string, out io.Writer) error {
-	fs := flag.NewFlagSet("preflight", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	siteDir := fs.String("site", ".", "private site repository directory")
-	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
-	live := fs.Bool("live", false, "inspect the fresh Proxmox host over the recorded bootstrap path")
-	record := fs.Bool("record", false, "persist approved physical discovery from --live")
-	bootstrapAddress := fs.String("bootstrap-address", "", "fresh Proxmox HOME-side address when it is not yet recorded")
-	initialUser := fs.String("initial-user", "root", "initial SSH user on the fresh Proxmox host")
-	knownHosts := fs.String("known-hosts", "", "optional SSH known-hosts file for discovery")
-	trunkInterface := fs.String("trunk-interface", "", "explicit trunk selection when multiple eligible NICs exist")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *record && !*live {
-		return errors.New("--record requires --live; inspection is read-only without explicit recording")
-	}
-	s, err := site.Load(*siteDir)
-	if err != nil {
-		return err
-	}
-	if (runtime.GOOS != "darwin" && runtime.GOOS != "linux") || (runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64") {
-		return fmt.Errorf("unsupported controller platform %s/%s; Boetticher 0.5 supports macOS and Linux on amd64/arm64", runtime.GOOS, runtime.GOARCH)
-	}
-	if runtime.GOOS == "linux" && looksLikeProxmoxController("/") {
-		return errors.New("boetticher 0.5 must run from a separate controller; run it from macOS or Linux, not on the target Proxmox host")
-	}
-	fmt.Fprintf(out, "Controller: PASS %s/%s\n", runtime.GOOS, runtime.GOARCH)
-	sopsVersion, ageVersion := site.BundledEncryptionVersions()
-	fmt.Fprintf(out, "Encryption: PASS bundled SOPS %s / age %s\n", sopsVersion, ageVersion)
-	fmt.Fprintf(out, "Gateway upstream MAC: %s (create the matching upstream DHCP reservation)\n", s.Gateway.Upstream.MAC)
-	allPass := true
-	for _, tool := range []string{"ssh", "ansible", "ansible-playbook"} {
-		path, err := exec.LookPath(tool)
-		if err != nil {
-			allPass = false
-			fmt.Fprintf(out, "Tool %-12s FAIL missing\n", tool)
-			continue
-		}
-		version := toolVersion(tool)
-		if err := validateToolVersion(tool, version); err != nil {
-			allPass = false
-			fmt.Fprintf(out, "Tool %-12s FAIL %s (%s)\n", tool, err, version)
-			continue
-		}
-		fmt.Fprintf(out, "Tool %-12s PASS %s (%s)\n", tool, path, version)
-	}
-	if !allPass {
-		return fmt.Errorf("preflight failed: required tooling is missing")
-	}
-	if err := validateConfiguredModuleReadiness(*siteDir, s, *ageIdentity); err != nil {
-		fmt.Fprintf(out, "Module readiness: FAIL %v\n", err)
-		return fmt.Errorf("preflight failed: module readiness is not satisfied: %w", err)
-	}
-	fmt.Fprintln(out, "Module readiness: PASS configured module contracts and credentials are ready")
-	if !*live {
-		fmt.Fprintln(out, "Physical discovery: use --live after recording the HOME-side Proxmox address")
-		return nil
-	}
-	address := *bootstrapAddress
-	if address == "" {
-		address = s.BootstrapAddress
-	}
-	if address == "" {
-		return errors.New("preflight failed: upstream interface identity is ambiguous; set bootstrap-endpoint or pass --bootstrap-address")
-	}
-	runner := proxmox.SSHRunner{KnownHosts: *knownHosts, HostKeyAlias: model.LogicalProxmoxIdentity}
-	discovered, err := proxmox.DiscoverPhysicalNetworkViaSSH(context.Background(), runner, address, *initialUser, address, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
-	if err != nil {
-		return err
-	}
-	discovery := discovered.Discovery
-	discovery = honorRequestedPhysicalMode(discovery, s.PhysicalNetwork.Mode, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
-	credentialsPath := filepath.Join(*siteDir, site.ProxmoxSecretsPath)
-	credentialsExist, err := proxmoxCredentialsExist(credentialsPath)
-	if err != nil {
-		return fmt.Errorf("inspect existing Proxmox API credentials: %w", err)
-	}
-	if credentialsExist {
-		credentials, err := site.LoadProxmoxCredentials(*siteDir, s, *ageIdentity)
-		if err != nil {
-			return fmt.Errorf("preflight failed: load existing Proxmox API credentials: %w", err)
-		}
-		if credentials.APIUser != "labadmin@pve" || credentials.TokenID != "boetticher" {
-			return fmt.Errorf("preflight failed: encrypted Proxmox credentials identify %s!%s, expected labadmin@pve!boetticher", credentials.APIUser, credentials.TokenID)
-		}
-		if err := proxmox.CheckScopedCredentialReuse(context.Background(), runner, address, *initialUser, credentials.APIUser, credentials.TokenID, "BoetticherProvisioner"); err != nil {
-			return err
-		}
-	} else if err := proxmox.CheckScopedCredentialAvailability(context.Background(), runner, address, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
-		return err
-	}
-	fmt.Fprintf(out, "Proxmox node: PASS %s (discovered from /nodes)\n", discovered.Node)
-	printPhysicalDiscovery(out, discovery)
-	fmt.Fprintln(out, "Proxmox credential reservation: PASS")
-	if discovery.Mode == networkmodel.ModeSelectionNeeded {
-		return errors.New("preflight failed: multiple eligible trunk interfaces require explicit selection")
-	}
-	if s.Gateway.Mode == model.GatewayModeExternal && discovery.Mode != networkmodel.ModePhysicalTrunk {
-		return errors.New("external gateway mode requires a distinct physical vmbr1 trunk")
-	}
-	if *record {
-		if err := writePhysicalDiscovery(*siteDir, s, discovery); err != nil {
-			return err
-		}
-		if err := rebuildPortal(*siteDir, s); err != nil {
-			return err
-		}
-		fmt.Fprintln(out, "Physical discovery: recorded with --live --record")
-	} else {
-		fmt.Fprintln(out, "Physical discovery: PASS (not persisted; use --live --record to approve recording)")
-	}
-	return nil
-}
-
-// looksLikeProxmoxController deliberately requires several independent local
-// markers. A generic Linux controller must remain supported; only a host with
-// the Proxmox cluster filesystem, cluster state directory, and pveversion
-// executable is confidently identified as the target platform host.
-
-func looksLikeProxmoxController(root string) bool {
-	if !directoryExists(filepath.Join(root, "etc", "pve")) || !directoryExists(filepath.Join(root, "var", "lib", "pve-cluster")) {
-		return false
-	}
-	pveversion, err := exec.LookPath("pveversion")
-	if err != nil {
-		return false
-	}
-	return looksLikeProxmoxControllerAt(root, pveversion)
-}
-
-func looksLikeProxmoxControllerAt(root, pveversion string) bool {
-	return directoryExists(filepath.Join(root, "etc", "pve")) &&
-		directoryExists(filepath.Join(root, "var", "lib", "pve-cluster")) &&
-		fileExists(filepath.Join(root, strings.TrimPrefix(pveversion, "/")))
-}
-
-func directoryExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
-}
-
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
 }

@@ -56,7 +56,7 @@ func runNetwork(args []string, out io.Writer) error {
 			return fmt.Errorf("network trunk %s requires an interface name", command)
 		}
 		if s.BootstrapAddress == "" {
-			return fmt.Errorf("cannot prove the interface is not the HOME/bootstrap path until bootstrap-endpoint is set")
+			return fmt.Errorf("cannot prove the interface is not the HOME/bootstrap path until the enroll bootstrap address is set")
 		}
 		client, _, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
 		if err != nil {
@@ -137,9 +137,6 @@ func runNetwork(args []string, out io.Writer) error {
 			if err := writePhysicalDiscovery(*siteDir, s, *observedDiscovery); err != nil {
 				return fmt.Errorf("HOLD: trunk changed but physical evidence could not be written: %w", err)
 			}
-		}
-		if err := rebuildPortal(*siteDir, s); err != nil {
-			return fmt.Errorf("HOLD: trunk changed but portal could not be regenerated: %w", err)
 		}
 		fmt.Fprintf(out, "Physical trunk: PASS %s %s vmbr1\n", command, interfaceName)
 		return nil

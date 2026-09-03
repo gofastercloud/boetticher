@@ -7,8 +7,8 @@ unsafe or generic control-plane changes.
 ## Product
 
 - Boetticher is an opinionated Proxmox homelab appliance, not a generic
-  orchestrator. Keep normal operation small: `init`, `deploy`, `status`,
-  `module configure`, `doctor`, and `update`.
+  orchestrator. Keep normal operation small: `init`, `enroll`, `plan`,
+  `deploy`, `status --details`, `module configure`, and `update`.
 - Prefer fixed, safe defaults, derivation, and deletion over optionality.
   Keep recovery, physical-network, destructive, and debug paths advanced and
   explicitly guarded.
@@ -46,14 +46,13 @@ unsafe or generic control-plane changes.
   not expose `HOLD`, `NOT TESTED`, `INCONCLUSIVE`, `PARTIAL`, `UNKNOWN`, or
   equivalent evidence states as operator results.
 - Preserve strict SSH host identity and authenticated bootstrap enrollment.
-  Preserve SOPS/Age ownership; secrets never enter argv, logs, JSON, portal
+  Preserve SOPS/Age ownership; secrets never enter argv, logs, JSON, generated
   output, generated public docs, or plaintext temporary files.
 - Use atomic writes and path/symlink containment for desired state, generated
   state, archives, and sensitive files. Prove exact Boetticher ownership before
   destructive Proxmox or storage operations.
 - `deploy` is the sole normal live-application command. `update` changes
-  desired state only. `preflight --live` is read-only; persistence requires
-  `--record`.
+  desired state only. `plan --live` and `status --details` are read-only.
 - Temporary privilege requires bounded lifetime, cancellation, and cleanup.
   Cleanup failure is blocking evidence. Live claims require live evidence;
   source tests and generated configuration do not prove deployment, journey,

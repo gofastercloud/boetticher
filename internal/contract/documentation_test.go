@@ -59,8 +59,8 @@ func TestPublicDocumentationMatchesV03Model(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"boetticher deploy --plan DIGEST [--site DIR] [--age-identity PATH] [--dry-run] [--replace-firewall] [--recreate-legacy-lxcs] [--confirm]",
-		"boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--replace-scoped-credentials] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run] [--cleanup]",
+		"boetticher deploy --plan DIGEST [--site DIR] [--age-identity PATH] [--confirm]",
+		"boetticher enroll [--site DIR] [--bootstrap-address ADDRESS] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed]",
 	} {
 		if !strings.Contains(commands, want) {
 			t.Errorf("command reference is missing %q", want)

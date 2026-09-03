@@ -75,9 +75,6 @@ func runUpdate(args []string, out io.Writer) error {
 	if err := writeModelProjections(*siteDir, resolved); err != nil {
 		return rollbackUpdate(*siteDir, original, originalSite, fmt.Errorf("refresh generated projections: %w", err))
 	}
-	if err := rebuildPortal(*siteDir, resolved); err != nil {
-		return rollbackUpdate(*siteDir, original, originalSite, fmt.Errorf("refresh portal projection: %w", err))
-	}
 	fmt.Fprintln(out, "Updated desired configuration atomically. No deployment was performed; run boetticher deploy, then boetticher status.")
 	return nil
 }
@@ -88,9 +85,6 @@ func rollbackUpdate(dir string, originalConfig []byte, originalSite model.Site, 
 	}
 	if err := writeModelProjections(dir, originalSite); err != nil {
 		return fmt.Errorf("Problem: %w; desired configuration was restored but generated projections could not be restored: %v", cause, err)
-	}
-	if err := rebuildPortal(dir, originalSite); err != nil {
-		return fmt.Errorf("Problem: %w; desired configuration and model projections were restored but portal could not be restored: %v", cause, err)
 	}
 	return fmt.Errorf("Problem: %w; desired configuration and generated projections were restored", cause)
 }

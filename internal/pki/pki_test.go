@@ -57,7 +57,7 @@ func TestSignServerCSRAcceptsOnlyApprovedSANs(t *testing.T) {
 	if certificate.CertPEM == "" {
 		t.Fatal("signed endpoint certificate missing")
 	}
-	_, err = SignServerCSR(authority, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: request})), "portal", "lab.home.arpa", []string{"lab-portal-01.lab.home.arpa"}, time.Unix(0, 0))
+	_, err = SignServerCSR(authority, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: request})), "rogue", "lab.home.arpa", []string{"lab-rogue-01.lab.home.arpa"}, time.Unix(0, 0))
 	if err == nil {
 		t.Fatal("controller signed a CSR for an unapproved identity")
 	}

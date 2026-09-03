@@ -123,8 +123,8 @@ validate_remote_target() {
   shift
   for target in "$@"; do
     case "$runner:$target" in
-      build:image-base|build:image-dns-blocky|build:image-logging|build:image-monitoring|build:image-firewall|build:image-portal|build:image-tailnet-router|build:image-airvpn|build:image-bifrost|build:image-printer|build:image-arr|build:image-aiops|build:image-gatus|build:image-network-probe|build:images) ;;
-      scan:scan-base|scan:scan-dns-blocky|scan:scan-logging|scan:scan-monitoring|scan:scan-firewall|scan:scan-portal|scan:scan-tailnet-router|scan:scan-airvpn|scan:scan-bifrost|scan:scan-printer|scan:scan-arr|scan:scan-aiops|scan:scan-gatus|scan:scan-network-probe|scan:scan-images) ;;
+	  build:image-base|build:image-dns-blocky|build:image-logging|build:image-monitoring|build:image-firewall|build:image-tailnet-router|build:image-airvpn|build:image-bifrost|build:image-printer|build:image-arr|build:image-aiops|build:image-gatus|build:image-network-probe|build:images) ;;
+	  scan:scan-base|scan:scan-dns-blocky|scan:scan-logging|scan:scan-monitoring|scan:scan-firewall|scan:scan-tailnet-router|scan:scan-airvpn|scan:scan-bifrost|scan:scan-printer|scan:scan-arr|scan:scan-aiops|scan:scan-gatus|scan:scan-network-probe|scan:scan-images) ;;
       *) fail "unsupported native builder target: $target" ;;
     esac
   done

@@ -43,8 +43,8 @@ func TestProbeDNSNameRespectsSANDBOXNamespaceIsolation(t *testing.T) {
 	if got := probeDNSName("SANDBOX", "lab.home.arpa"); got != "example.com" {
 		t.Fatalf("SANDBOX DNS probe name = %q, want example.com", got)
 	}
-	if got := probeDNSName("TRUSTED", "lab.home.arpa"); got != "portal.lab.home.arpa" {
-		t.Fatalf("private-zone DNS probe name = %q, want portal.lab.home.arpa", got)
+	if got := probeDNSName("TRUSTED", "lab.home.arpa"); got != "monitor.lab.home.arpa" {
+		t.Fatalf("private-zone DNS probe name = %q, want monitor.lab.home.arpa", got)
 	}
 }
 
@@ -118,7 +118,7 @@ func TestFinishNetworkTestRendersBinaryOperatorResults(t *testing.T) {
 		Overall: "INCONCLUSIVE",
 		Cleanup: "HOLD: reserved VMID 910 is occupied by an unknown guest",
 		Results: []networktest.Result{
-			{Name: "tcp/TRUSTED/portal", Status: "INCONCLUSIVE", Detail: "HOLD: the path could not be established"},
+			{Name: "tcp/TRUSTED/monitor", Status: "INCONCLUSIVE", Detail: "HOLD: the path could not be established"},
 		},
 	}
 	var output bytes.Buffer
@@ -131,7 +131,7 @@ func TestFinishNetworkTestRendersBinaryOperatorResults(t *testing.T) {
 			t.Fatalf("human output exposed %q: %s", forbidden, text)
 		}
 	}
-	for _, want := range []string{"Network test run-1: FAIL", "FAIL         tcp/TRUSTED/portal", "Cleanup: FAIL", "Reason:"} {
+	for _, want := range []string{"Network test run-1: FAIL", "FAIL         tcp/TRUSTED/monitor", "Cleanup: FAIL", "Reason:"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("human output missing %q: %s", want, text)
 		}

@@ -535,7 +535,7 @@ func probeDNSName(zone, domain string) string {
 		// its gateway resolver is a public forwarder with a local sandbox zone.
 		return "example.com"
 	}
-	return "portal." + domain
+	return "monitor." + domain
 }
 
 func policyAllows(policy firewall.Plan, source, target, protocol string, port int, sourceAddress, destinationAddress string) bool {

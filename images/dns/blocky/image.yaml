@@ -2,7 +2,7 @@ name: boetticher-dns-blocky
 version: 1.0.0
 kind: lxc
 base: boetticher-base
-base_version: 0.5.0
+base_version: 0.5.1
 common: ../image.yaml
 implementation: blocky
 implementation_version: 0.34.0

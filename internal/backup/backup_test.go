@@ -12,7 +12,7 @@ func TestPlanOwnsOnlyPlatformGuests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.JobName != PlatformJobName || !plan.PlatformOnly || plan.UserWorkloadsManaged || plan.SelectionTag != model.TagBackup || len(plan.GuestVMIDs) != 6 || plan.VMIDList() != "100,110,111,120,130,140" {
+	if plan.JobName != PlatformJobName || !plan.PlatformOnly || plan.UserWorkloadsManaged || plan.SelectionTag != model.TagBackup || len(plan.GuestVMIDs) != 3 || plan.VMIDList() != "100,110,120" {
 		t.Fatalf("unexpected backup ownership plan: %#v", plan)
 	}
 	if plan.StorageTarget != "local" || plan.Schedule != "daily" || plan.Retention != "keep-last=7" {
@@ -22,16 +22,11 @@ func TestPlanOwnsOnlyPlatformGuests(t *testing.T) {
 
 func TestPlanFollowsComponentBackupIntent(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
-	for i := range site.Components {
-		if site.Components[i].Name == "lab-portal-01" {
-			site.Components[i].Backup = false
-		}
-	}
 	plan, err := PlanFromSite(site)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.VMIDList() != "100,110,111,120,140" {
+	if plan.VMIDList() != "100,110,120" {
 		t.Fatalf("backup plan ignored component backup intent: %#v", plan)
 	}
 }
@@ -46,7 +41,7 @@ func TestUserGuestTagDoesNotEnterBackupPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.VMIDList() != "100,110,111,120,130,140" {
+	if plan.VMIDList() != "100,110,120" {
 		t.Fatalf("user guest tag changed platform backup selection: %#v", plan)
 	}
 }

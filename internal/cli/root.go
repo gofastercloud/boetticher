@@ -47,18 +47,10 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runPlan(args[1:], out)
 	case "bundle":
 		return runBundle(args[1:], out)
-	case "preflight":
-		return runPreflight(args[1:], out)
 	case "ssh-config":
 		return runSSHConfig(args[1:], out)
 	case "access":
 		return runAccess(args[1:], out)
-	case "portal":
-		if len(args) > 1 && args[1] == "build" {
-			return runPortalBuild(args[2:], out)
-		}
-	case "bootstrap-endpoint":
-		return runBootstrapEndpoint(args[1:], out)
 	case "pki":
 		return runPKI(args[1:], out)
 	case "firewall":
@@ -79,16 +71,8 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runHardware(args[1:], out)
 	case "companion":
 		return runCompanion(args[1:], out)
-	case "verify":
-		return runVerify(args[1:], out)
-	case "doctor":
-		return runDoctor(args[1:], out)
-	case "diagnose":
-		return runDoctor(args[1:], out)
 	case "recover":
 		return runRecovery(args[1:], out)
-	case "bootstrap":
-		return runBootstrap(args[1:], out)
 	case "deploy":
 		return runDeploy(args[1:], out)
 	case "status":
@@ -99,8 +83,6 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runLogs(args[1:], out)
 	case "aiops":
 		return runAIOps(args[1:], out)
-	case "upgrade":
-		return runIntegrationGate(args[0], args[1:], out)
 	}
 	fmt.Fprintln(errOut, "usage: boetticher <command>")
 	return fmt.Errorf("unknown or incomplete command %q", strings.Join(args, " "))

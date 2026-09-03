@@ -38,7 +38,6 @@ func TestNormalizeDoesNotMutateNestedInputSlices(t *testing.T) {
 		Guests:          []Component{{Name: "guest", DNSAliases: []string{"z", "a"}}},
 		NetworkIntents:  []NetworkIntent{{Ports: []string{"443", "80"}}},
 		Certificates:    []CertificateRequest{{SANs: []string{"z.example", "a.example"}}},
-		Portal:          []PortalEntry{{URLs: []string{"https://z.example", "https://a.example"}, Docs: []string{"z.md", "a.md"}}},
 		Security:        GuestSecurityDeclaration{Devices: []DeviceRequirement{{Name: "device"}}, Capabilities: []string{"CAP_B", "CAP_A"}},
 		USBRequirements: []USBRequirement{{AllowedIdentities: []USBIdentity{{VendorID: "0002", ProductID: "0002"}}}},
 	}}
@@ -255,10 +254,7 @@ func TestCoreInfrastructureUsesInfraAddresses(t *testing.T) {
 	site := NewDefaultSite("installation", "age1example")
 	want := map[string]string{
 		"lab-dns-01":     "10.10.10.10",
-		"lab-dns-02":     "10.10.10.11",
 		"lab-monitor-01": "10.10.10.20",
-		"lab-log-01":     "10.10.10.40",
-		"lab-portal-01":  "10.10.10.30",
 	}
 	found := make(map[string]bool, len(want))
 	for _, component := range site.Components {

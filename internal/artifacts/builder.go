@@ -17,39 +17,10 @@ import (
 	"time"
 
 	buildbundle "github.com/gofastercloud/boetticher"
-	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/pathguard"
 )
 
-// BuilderPlan describes the ephemeral Core build environment. It receives
-// public build inputs only and is never a module or a runtime secret holder.
-type BuilderPlan struct {
-	VMID           int
-	Hostname       string
-	Platform       string
-	Temporary      bool
-	Network        string
-	Cores          int
-	MemoryMiB      int
-	DiskGiB        int
-	MinimumFreeGiB int
-}
-
-func Builder() BuilderPlan {
-	return BuilderPlan{
-		VMID:           model.BuilderVMID,
-		Hostname:       "lab-builder-01",
-		Platform:       "debian-13-amd64",
-		Temporary:      true,
-		Network:        "bootstrap-upstream-only",
-		Cores:          model.BuilderCores,
-		MemoryMiB:      model.BuilderMemoryMiB,
-		DiskGiB:        model.BuilderDiskGiB,
-		MinimumFreeGiB: model.BuilderMinimumFreeGiB,
-	}
-}
-
-// PublicBuildInputs is the allow-list for the temporary Linux builder. The
+// PublicBuildInputs is the allow-list for the maintainer Linux image build. The
 // builder receives only reproducible build definitions and the small Go
 // qualification helper; site repositories, generated state, and credentials
 // are intentionally outside this set.
@@ -108,7 +79,7 @@ var AnsibleSourceInputs = []string{
 
 // BuildSourceArchive returns a deterministic gzip-compressed tar stream of
 // the public build inputs. It rejects symlinks so a source checkout cannot
-// smuggle a site file or credential into the temporary builder through a
+// smuggle a site file or credential into the maintainer image build through a
 // path traversal or linked file.
 func BuildSourceArchive(root string) ([]byte, error) {
 	if root == "" {
@@ -294,36 +265,6 @@ func addEmbeddedArchiveFile(relative string, entry fs.DirEntry, writer *tar.Writ
 	}
 	_, err = io.Copy(writer, file)
 	return err
-}
-
-// ExtractBuildArchiveFile streams a builder archive from a controller-side
-// temporary file. The complete archive is never held in memory.
-func ExtractBuildArchiveFile(archivePath, root string) error {
-	if archivePath == "" || root == "" {
-		return fmt.Errorf("builder artifact archive and destination root are required")
-	}
-	file, err := os.Open(archivePath)
-	if err != nil {
-		return fmt.Errorf("open builder artifact archive: %w", err)
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return fmt.Errorf("stat builder artifact archive: %w", err)
-	}
-	if !info.Mode().IsRegular() || info.Size() == 0 {
-		return fmt.Errorf("builder artifact archive must be a non-empty regular file")
-	}
-	return ExtractBuildArchiveReader(file, root)
-}
-
-// ExtractBuildArchiveReader accepts a streamed generated artifact tree. It
-// retains path, link, entry-count, and total-output protections while writing
-// each regular file atomically beneath the generated artifact directory.
-func ExtractBuildArchiveReader(reader io.Reader, root string) error {
-	return extractArchiveReader(reader, root, func(clean string) bool {
-		return clean == "generated/artifacts" || strings.HasPrefix(clean, "generated/artifacts/")
-	}, "builder artifact", 64<<30, 16<<30)
 }
 
 // ExtractSourceArchiveReader extracts only the built-in deployment and

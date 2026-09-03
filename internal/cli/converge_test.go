@@ -85,7 +85,7 @@ func TestDeploymentModuleNamesFollowResolvedManagedGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := deploymentModuleNames(resolved)
-	want := []string{"dns", "logging", "monitoring", "portal"}
+	want := []string{"dns", "monitoring"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("managed deployment order = %v, want %v", got, want)
 	}
@@ -193,16 +193,6 @@ func TestAnsiblePlaybookIsAvailableFromControllerSource(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "ansible", "site.yml")); err != nil {
 		t.Fatalf("controller source does not contain the Ansible playbook: %v", err)
-	}
-}
-
-func TestPortalSourceDirectoryIsAbsoluteForAnsible(t *testing.T) {
-	got, err := absolutePortalSourceDir("relative-site")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !filepath.IsAbs(got) || !strings.HasSuffix(got, filepath.Join("relative-site", "generated", "portal")) {
-		t.Fatalf("portal source directory = %q, want absolute generated portal path", got)
 	}
 }
 
@@ -503,7 +493,7 @@ func TestDeployReconcilesLiveBastionPolicyFromCanonicalDestinations(t *testing.T
 	}
 	text := string(data)
 	for _, required := range []string{
-		`proxmox.ConfigureIdentities(ctx, rootRunner, s.BootstrapAddress, "root", operatorPublicKey, jumpDestinations(s))`,
+		`proxmox.ConfigureBastionPolicy(ctx, rootRunner, s.BootstrapAddress, "root", jumpDestinations(s))`,
 		`Reconcile the live host-side jump policy`,
 		`proxmox.InactivateRetainedModule(ctx, rootRunner, s.BootstrapAddress, "root", guest.Kind, guest.VMID, module)`,
 		`context.WithTimeout(ctx, deploymentRootTimeout)`,
@@ -511,6 +501,27 @@ func TestDeployReconcilesLiveBastionPolicyFromCanonicalDestinations(t *testing.T
 		if !strings.Contains(text, required) {
 			t.Fatalf("deploy does not reconcile the live bastion policy: missing %q", required)
 		}
+	}
+}
+
+func TestDeployAcquiresTemporaryRootOnlyAfterExactPlanAcceptance(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	digest := strings.Index(text, "planDigest, err := digestDeploymentPlan")
+	accept := strings.Index(text, "if *planDigestFlag != \"\" && *planDigestFlag != planDigest")
+	acquire := strings.Index(text, "proxmox.InstallTemporaryRootAccess(ctx, recoveryRunner")
+	bind := strings.Index(text, "proxmoxClient.SetSnippetRunner(rootRunner")
+	if digest < 0 || accept < digest || acquire < accept || bind < acquire {
+		t.Fatalf("temporary Apply authority sequencing is not digest-gated: digest=%d accept=%d acquire=%d bind=%d", digest, accept, acquire, bind)
+	}
+	if strings.Contains(text[:accept], "WaitForSSH(ctx, rootRunner") || strings.Contains(text[:accept], "ConfigureIdentities(ctx, rootRunner") {
+		t.Fatal("deployment uses deployment root authority before exact plan acceptance")
+	}
+	if !strings.Contains(text[acquire:], "temporaryPrivateKey") {
+		t.Fatal("temporary Apply identity is not retained for the bounded Apply lifecycle")
 	}
 }
 
@@ -568,7 +579,7 @@ func TestDeploymentModuleNamesFollowResolvedExternalGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := deploymentModuleNames(resolved)
-	want := []string{"dns", "logging", "monitoring", "portal"}
+	want := []string{"dns", "monitoring"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("external deployment order = %v, want %v", got, want)
 	}

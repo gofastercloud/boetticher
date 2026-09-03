@@ -142,9 +142,6 @@ case "$name" in
       exit 1
     fi
     ;;
-  boetticher-portal)
-    test -x "$rootfs/usr/sbin/nginx"
-    ;;
   boetticher-tailnet-router)
     test -x "$rootfs/usr/bin/tailscale"
     test -x "$rootfs/usr/sbin/tailscaled"

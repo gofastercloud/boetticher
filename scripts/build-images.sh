@@ -7,12 +7,12 @@ set -eu
 target=${1:-images}
 shift || true
 case "$target" in
-  image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-arr|image-gatus|image-network-probe|images) ;;
+	image-base|image-dns-blocky|image-logging|image-monitoring|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-arr|image-gatus|image-network-probe|images) ;;
   image-airvpn) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
-default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-aiops image-gatus image-network-probe image-firewall"
+default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-aiops image-gatus image-network-probe image-firewall"
 if [ "$target" = images ]; then
   selected_image_targets="$*"
   if [ -z "$selected_image_targets" ]; then
@@ -20,7 +20,7 @@ if [ "$target" = images ]; then
   fi
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
-      image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-arr|image-gatus|image-network-probe) ;;
+	  image-base|image-dns-blocky|image-logging|image-monitoring|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-arr|image-gatus|image-network-probe) ;;
       image-airvpn) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac
@@ -206,7 +206,7 @@ write_builder_provenance() {
     --arg libguestfs "$(version_or_unavailable guestfish)" \
     --arg qemu_img "$(version_or_unavailable qemu-img)" \
     --arg architecture amd64 \
-    --arg boetticher_version "${BOETTICHER_RELEASE_VERSION:-0.5.0}" \
+    --arg boetticher_version "${BOETTICHER_RELEASE_VERSION:-0.5.1}" \
     '{platform:$platform,input_image:$input_image,kernel:$kernel,go:$go,trivy:$trivy,mmdebstrap:$mmdebstrap,libguestfs:$libguestfs,qemu_img:$qemu_img,architecture:$architecture,boetticher_version:$boetticher_version}' \
     > "$provenance_path"
   chmod 0644 "$provenance_path"
@@ -237,7 +237,7 @@ artifact_for() {
 	name=$1
 	version=1.0.0
 	if [ "$name" = boetticher-base ]; then
-		version=0.5.0
+		version=0.5.1
 	fi
 	printf '%s/%s/%s-%s-amd64.tar.zst' "$output_root" "$name" "$name" "$version"
 }
@@ -543,14 +543,6 @@ build_monitoring() {
   install -D -m 0644 images/monitoring/runtime/pulse.service "$rootfs/etc/systemd/system/pulse.service"
   write_artifact_identity "$rootfs" monitoring
   package_lxc boetticher-monitoring
-}
-
-build_portal() {
-  printf '%s\n' 'boetticher build stage: portal'
-  rootfs=$(prepare_rootfs boetticher-portal)
-  install_packages "$rootfs" nginx
-  write_artifact_identity "$rootfs" portal
-  package_lxc boetticher-portal
 }
 
 build_tailnet_router() {
@@ -970,11 +962,6 @@ build_monitoring_target() {
   build_monitoring
 }
 
-build_portal_target() {
-  [ -f "$(artifact_for boetticher-base)" ] || build_base
-  build_portal
-}
-
 build_tailnet_router_target() {
   [ -f "$(artifact_for boetticher-base)" ] || build_base
   build_tailnet_router
@@ -1036,7 +1023,6 @@ case "$target" in
   image-dns-blocky) run_timed_image_target "$target" build_dns_blocky_target ;;
   image-logging) run_timed_image_target "$target" build_logging_target ;;
   image-monitoring) run_timed_image_target "$target" build_monitoring_target ;;
-  image-portal) run_timed_image_target "$target" build_portal_target ;;
   image-tailnet-router) run_timed_image_target "$target" build_tailnet_router_target ;;
   image-airvpn) run_timed_image_target "$target" build_airvpn_target ;;
   image-bifrost) run_timed_image_target "$target" build_bifrost_target ;;

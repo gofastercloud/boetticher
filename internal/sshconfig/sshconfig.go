@@ -186,7 +186,7 @@ func appendBastionDestinations(destinations []string, component model.Component)
 		port = 22
 	}
 	destinations = append(destinations, fmt.Sprintf("%s:%d", component.Address, port))
-	if component.Name == "lab-monitor-01" || component.Name == "lab-bifrost-01" || component.Name == "lab-portal-01" {
+	if component.Name == "lab-monitor-01" || component.Name == "lab-bifrost-01" {
 		destinations = append(destinations, fmt.Sprintf("%s:443", component.Address))
 	}
 	return destinations

@@ -592,29 +592,6 @@ func policyRules(s model.Site) []PolicyRule {
 			}
 		}
 	}
-	// Portal is a Core service with its own fixed mTLS-protected frontend.
-	if portal, ok := componentReference(s, "portal"); ok && portal.Address != "" {
-		for _, source := range []string{"TRANSIT", "SERVERS", "TRUSTED"} {
-			for _, zone := range s.Network.Zones {
-				if zone.Name != source {
-					continue
-				}
-				rules = append(rules, PolicyRule{
-					Sequence:        len(rules) + 1,
-					Name:            source + " HTTPS to Portal",
-					From:            source,
-					To:              "INFRA",
-					Action:          "allow",
-					Protocol:        "tcp",
-					Ports:           []string{"443"},
-					Counter:         "boetticher_" + strings.ToLower(source) + "_https_to_portal",
-					Description:     "boetticher " + source + " HTTPS to Portal",
-					SourceCIDR:      zone.Network,
-					DestinationCIDR: portal.Address + "/32",
-				})
-			}
-		}
-	}
 	// These are gateway-local services. Forwarding rules below deliberately
 	// place internal denies before any Internet egress rule.
 	for _, zone := range []string{"TRUSTED", "SERVERS", "SANDBOX"} {
@@ -804,7 +781,7 @@ func moduleNetworkMode(s model.Site, module string) model.ModuleNetworkMode {
 
 // componentReferences expands logical service aliases that intentionally name
 // a redundant platform service. In particular, "dns" means every managed DNS
-// endpoint, while dns01/dns02 retain their single-component meaning.
+// endpoint, while dns01 retains its single-component meaning.
 func componentReferences(s model.Site, reference string) []model.Component {
 	reference = strings.TrimSuffix(strings.ToLower(reference), ".")
 	if reference == "dns" {

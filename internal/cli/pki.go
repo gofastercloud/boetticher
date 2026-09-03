@@ -75,11 +75,6 @@ func runPKI(args []string, out io.Writer) error {
 		if err := writePublic(filepath.Join(*siteDir, "generated", "pki", name+".yaml"), []byte(metadata)); err != nil {
 			return err
 		}
-		if s.BootstrapAddress != "" {
-			if err := rebuildPortal(*siteDir, s); err != nil {
-				return err
-			}
-		}
 		fmt.Fprintf(out, "Created client certificate %s\nPrivate key: %s\nCertificate: %s\n", name, filepath.Join(runtimeDir, "client.key.pem"), filepath.Join(runtimeDir, "client.crt.pem"))
 		return nil
 	case "export":
@@ -135,11 +130,6 @@ func revokeClient(siteDir, runtimeDir, name string, out io.Writer) error {
 	path := filepath.Join(siteDir, "generated", "pki", "revoked", name+".yaml")
 	if err := writePublic(path, []byte(revocation)); err != nil {
 		return err
-	}
-	if s, err := site.Load(siteDir); err == nil && s.BootstrapAddress != "" {
-		if err := rebuildPortal(siteDir, s); err != nil {
-			return err
-		}
 	}
 	fmt.Fprintf(out, "Recorded client revocation: %s\n", name)
 	return nil

@@ -184,26 +184,6 @@ func TestStableBaseTasksSkipServicesButFinalTasksRemain(t *testing.T) {
 	}
 }
 
-func TestPortalPublicationIsDeferredToServicesPhase(t *testing.T) {
-	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "portal", "tasks", "main.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	block := ansibleTaskBlock(string(contents), "Publish generated portal")
-	if block == "" || !strings.Contains(block, "boetticher_deploy_phase | default('full') != 'bootstrap'") {
-		t.Fatal("portal publication is not deferred from the bootstrap phase")
-	}
-	if !strings.Contains(block, "portal_publication_state.rc | default(1) != 0") {
-		t.Fatal("portal publication does not have a live content and metadata drift gate")
-	}
-	if !strings.Contains(string(contents), "portal_source_archive") || !strings.Contains(block, "ansible.builtin.unarchive") || !strings.Contains(block, "Atomically activate the new portal current link") {
-		t.Fatal("portal publication is not content-addressed and transactional")
-	}
-	if strings.Contains(block, "mode: \"0644\"") || !strings.Contains(block, "-type d \\( ! -user root") {
-		t.Fatal("portal publication must preserve and validate executable directory modes separately from file modes")
-	}
-}
-
 func TestFirewallInterfaceTemplatesUseOneLiveDriftProbe(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "firewall", "tasks", "main.yml"))
 	if err != nil {
@@ -285,8 +265,6 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 		"lab-dns-01 ansible_host=10.10.10.10",
 		"ansible_remote_tmp=/tmp/boetticher-ansible",
 		"[managed:children]",
-		"[logging]",
-		"lab-log-01 ansible_host=10.10.10.40",
 	} {
 		if !strings.Contains(first, expected) {
 			t.Errorf("inventory missing %q", expected)
@@ -319,7 +297,7 @@ func TestMonitoringAgentTargetsAreTagDrivenAndDefaultToProxmox(t *testing.T) {
 		t.Fatalf("default monitoring-agent targets = %v, want only %q", got, model.LogicalProxmoxIdentity)
 	}
 	for _, component := range site.PlatformComponents() {
-		if component.Name == "lab-monitor-01" || component.Name == "lab-dns-01" || component.Name == "lab-portal-01" {
+		if component.Name == "lab-monitor-01" || component.Name == "lab-dns-01" {
 			for _, tag := range component.Tags {
 				if tag == model.TagMonitoringAgent {
 					t.Fatalf("untargeted component %s carries the monitoring-agent tag", component.Name)
@@ -444,18 +422,6 @@ func TestAIOpsServiceAllowsDeclaredDNSResolvers(t *testing.T) {
 	} {
 		if !strings.Contains(string(service), expected) {
 			t.Fatalf("AIOps service missing %q", expected)
-		}
-	}
-}
-
-func TestPortalServiceAllowsTheCompleteClientCertificateChain(t *testing.T) {
-	service, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "portal", "tasks", "main.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, expected := range []string{"ssl_client_certificate /etc/boetticher/tls/client-ca.pem;", "ssl_crl /etc/boetticher/tls/client-ca.crl.pem;", "ssl_verify_client on;", "ssl_verify_depth 3;"} {
-		if !strings.Contains(string(service), expected) {
-			t.Fatalf("portal mTLS contract is missing %q", expected)
 		}
 	}
 }
@@ -753,7 +719,7 @@ func TestMonitoringFrontendHandlersFlushBeforeReconciliation(t *testing.T) {
 }
 
 func TestEndpointTLSKeysAreGeneratedLocallyAndNeverSuppliedByController(t *testing.T) {
-	for _, role := range []string{"monitor", "portal"} {
+	for _, role := range []string{"monitor"} {
 		path := filepath.Join("..", "..", "ansible", "roles", role, "tasks", "main.yml")
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -769,13 +735,6 @@ func TestEndpointTLSKeysAreGeneratedLocallyAndNeverSuppliedByController(t *testi
 		if !strings.Contains(text, "ansible.builtin.fetch:") || !strings.Contains(text, role+".csr.pem") {
 			t.Fatalf("%s role does not return its CSR to the controller", role)
 		}
-	}
-	portal, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "portal", "tasks", "main.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(portal), "Enable and reload the portal nginx service") || !strings.Contains(string(portal), "state: reloaded") {
-		t.Fatal("portal role does not enable and reload nginx after installing its certificate")
 	}
 }
 
@@ -1062,7 +1021,7 @@ func TestDNSRoleUsesPowerDNS49CommandNames(t *testing.T) {
 			t.Fatalf("DNS role retains obsolete PowerDNS command namespace %q", forbidden)
 		}
 	}
-	for _, expected := range []string{"pdnsutil list-all-zones", "pdnsutil create-zone", "pdnsutil set-kind {{ item }} MASTER", "pdnsutil replace-rrset", "pdnsutil delete-rrset", "pdnsutil set-meta", "NOTIFY-DNSUPDATE 1", "pdnsutil create-secondary-zone", "pdnsutil replace-rrset \"$zone\" @ NS", "item.name | replace('.' ~ dns_plan.static_zone, '')", "item.value"} {
+	for _, expected := range []string{"pdnsutil list-all-zones", "pdnsutil create-zone", "pdnsutil set-kind {{ item }} MASTER", "pdnsutil replace-rrset", "pdnsutil delete-rrset", "pdnsutil set-meta", "NOTIFY-DNSUPDATE 1", "pdnsutil replace-rrset \"$zone\" @ NS", "item.name | replace('.' ~ dns_plan.static_zone, '')", "item.value"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("DNS role missing qualified PowerDNS command %q", expected)
 		}
@@ -1115,7 +1074,7 @@ func TestDNSRoleAllowsBlockyToTraverseFilteringPolicy(t *testing.T) {
 	}
 }
 
-func TestPowerDNSTemplateUsesCurrentPrimarySecondarySettings(t *testing.T) {
+func TestPowerDNSTemplateUsesCurrentPrimarySetting(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "dns", "templates", "pdns.conf.j2")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -1127,7 +1086,7 @@ func TestPowerDNSTemplateUsesCurrentPrimarySecondarySettings(t *testing.T) {
 			t.Fatalf("PowerDNS template retains obsolete setting %q", forbidden)
 		}
 	}
-	for _, expected := range []string{"secondary=", "primary="} {
+	for _, expected := range []string{"primary=yes"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("PowerDNS template missing current setting %q", expected)
 		}
@@ -1466,7 +1425,7 @@ func TestDNSAppliancePathCannotInstallAResolver(t *testing.T) {
 }
 
 func TestApplianceRolesDoNotMutateModuleSoftware(t *testing.T) {
-	for _, role := range []string{"dns", "monitor", "firewall", "logging", "portal"} {
+	for _, role := range []string{"dns", "monitor", "firewall", "logging"} {
 		path := filepath.Join("..", "..", "ansible", "roles", role, "tasks", "main.yml")
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -1478,7 +1437,7 @@ func TestApplianceRolesDoNotMutateModuleSoftware(t *testing.T) {
 				t.Fatalf("%s appliance role retains software mutation task %q", role, forbidden)
 			}
 		}
-		if role != "portal" && strings.Contains(text, "ansible.builtin.unarchive:") {
+		if strings.Contains(text, "ansible.builtin.unarchive:") {
 			t.Fatalf("%s appliance role retains software mutation task %q", role, "ansible.builtin.unarchive:")
 		}
 		if !strings.Contains(text, "boetticher_appliance_artifact") {

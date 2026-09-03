@@ -2,202 +2,168 @@
 layout: default
 title: The lab
 section: lab
-description: The Boetticher network, platform guests, access routes, storage, recovery, and the bigger experiments.
+description: The Boetticher network, platform guests, access routes, storage, recovery, and physical lab contract.
 ---
 
 # Your lab, demystified
 
-Boetticher has opinions on purpose. A fixed shape means less time wondering what an address is for and more time making the services you actually wanted to run.
+Boetticher manages a deliberately small platform around your Proxmox
+workloads. The default topology is virtual-only: `vmbr0` remains on HOME and
+`vmbr1` is a VLAN-aware internal bridge with no physical member.
 
-<section class="split">
-  <div>
-    <h2>The network at a glance</h2>
-    <p><code>vmbr0</code> stays on your existing HOME or upstream network. <code>vmbr1</code> is the VLAN-aware internal bridge. In the default setup it has no physical member, so one network port is enough.</p>
-    <p>The managed gateway is <code>lab-fw-01</code> at <code>10.10.99.1</code>. It handles routing, DHCP (Dynamic Host Configuration Protocol), network address translation (NAT), dynamic DNS, time for SANDBOX, and the boundaries between zones.</p>
-  </div>
-  <figure>
-    <img class="section-art" src="images/network-lab.webp" alt="Illustrated compact homelab nodes connected by ordered glowing paths and laboratory glassware">
-    <figcaption class="art-caption">A much calmer network diagram than the one in your head at 1 a.m.</figcaption>
-  </figure>
-</section>
+## Fixed network
 
-| Zone | Network | What it is for |
+The managed gateway is `lab-fw-01` at `10.10.99.1`. It owns routing, NAT,
+Kea DHCP/DDNS, nftables, and the zone boundary. Blocky answers client DNS;
+PowerDNS owns the private names; Chrony supplies NTP.
+The managed gateway appliance is pinned to
+`debian-13-genericcloud-amd64-20260327-2429`.
+
+| Zone | Network | Purpose |
 | --- | --- | --- |
-| **VLAN 5 TRANSIT** | `10.10.5.0/24` | Small transit services, including the optional AirVPN exit. |
-| **VLAN 10 INFRA** | `10.10.10.0/24` | DNS, monitoring, logs, and the portal. |
-| **VLAN 20 SERVERS** | `10.10.20.0/24` | Reserved-address servers and application guests. |
-| **VLAN 30 TRUSTED** | `10.10.30.0/24` | Laptops, desktops, and other familiar clients. |
+| **VLAN 5 TRANSIT** | `10.10.5.0/24` | Transit services, including optional AirVPN. |
+| **VLAN 10 INFRA** | `10.10.10.0/24` | DNS, NTP, and monitoring. |
+| **VLAN 20 SERVERS** | `10.10.20.0/24` | Reserved-address servers and applications. |
+| **VLAN 30 TRUSTED** | `10.10.30.0/24` | Trusted client devices. |
 | **VLAN 40 SANDBOX** | `10.10.40.0/24` | Disposable devices and experiments. |
-| **VLAN 99 MGMT** | `10.10.99.0/24` | Proxmox and the gateway’s management side. |
+| **VLAN 99 MGMT** | `10.10.99.0/24` | Proxmox and gateway management. |
 
-### The 0.5.0 switch answer
-
-The simplification did not reduce or renumber the network. The fixed map is
-still VLANs 5, 10, 20, 30, 40, and 99, with the same names and subnets shown
-above. If you are using the default virtual-only mode, `vmbr1` has no physical
-member and your switch can stay exactly as it is.
-
-If you later choose a physical trunk, use a separate NIC and a VLAN-aware
-switch port that permits those same six tagged VLANs. Keep the existing HOME
-connection on `vmbr0`; it is not part of the internal trunk. The StreamDeck
-move to the companion Pi is a USB and service-boundary change. The companion's
-network placement is a separate physical-network decision described below.
-
-### The companion Pi physical placement
-
-The companion's Pulse endpoint lives on the internal INFRA network, so a Pi
-that remains only on HOME Wi-Fi cannot resolve or reach it. For the physical
-companion arrangement used by this lab:
-
-* the Proxmox second NIC is connected to a tagged switch trunk permitting
-  VLANs 5, 10, 20, 30, 40, and 99;
-* the Pi's switch port is an untagged/access port in SERVERS, VLAN 20;
-* the Pi uses a SERVERS DHCP reservation and a narrow SERVERS-to-Pulse HTTPS
-  allowance; and
-* `wlan0` remains the Pi's HOME default route while `eth0` carries the lab
-  route for `10.10.0.0/16` via the SERVERS gateway.
-
-The Pi port is an access port, not a tagged trunk. After the switch ports and
-cabling are ready, attach the Proxmox side with the native guarded command:
-
-```text
-boetticher network trunk attach NIC --live --confirm --site ./my-boetticher
-boetticher dhcp reservation add --hostname lab-display-01 --address SERVERS_PI_ADDRESS --mac PI_ETH0_MAC --site ./my-boetticher
-boetticher firewall rule add --source SERVERS_PI_ADDRESS/32 --destination 10.10.10.20/32 --protocol tcp --ports 443 --id ufr-lab-display-pulse --confirm --site ./my-boetticher
-```
-
-Review the observed interface and exact reservation before deployment. The
-trunk command refuses the HOME member, ambiguous interfaces, and unproved
-physical identities.
-
-## The platform guests
-
-The names are intentionally boring enough to remember at 2 a.m.
-
-| Guest | Address / URL | Job |
-| --- | --- | --- |
-| `lab-proxmox-01` | `10.10.99.5` · `https://proxmox.lab.home.arpa:8006` | The Proxmox host. |
-| `lab-fw-01` | `10.10.99.1` | The managed Debian firewall. |
-| `lab-dns-01` | `10.10.10.10` | Primary DNS and Network Time Protocol (NTP). |
-| `lab-dns-02` | `10.10.10.11` | Secondary DNS and NTP. |
-| `lab-monitor-01` | `10.10.10.20` · `https://monitor.lab.home.arpa` | Pulse Community 6.1.2 monitoring. |
-| `lab-portal-01` | `10.10.10.30` · `https://portal.lab.home.arpa` | The generated platform portal. |
-| `lab-log-01` | `10.10.10.40` | Central systemd journal. |
-
-The private domain is `lab.home.arpa`. [Blocky](https://0xerr0r.github.io/blocky/) answers client DNS queries, [PowerDNS](https://doc.powerdns.com/authoritative/) owns Boetticher’s private names, and [Chrony](https://chrony-project.org/) keeps clocks in step. The gateway image is pinned as `debian-13-genericcloud-amd64-20260327-2429`, so a new deployment starts from the same known operating-system image every time.
-
-## Built to get out of your way
-
-Boetticher makes the pinned Debian base and the platform appliances it actually needs. The short-lived builder gets approved public build inputs and a separately owned cache of verified downloads; it does not receive your site settings, encrypted secrets, CA keys, or Git write access. Matching images are reused on later deploys, while stale or changed ones are rebuilt from scratch.
-
-The big base and firewall stages go first; independent smaller appliances can be built in a bounded pair. The builder records short build and scan timings for anyone who enjoys a good before-and-after, but the ordinary routine remains delightfully simple: deploy, check the lab, carry on.
-
-## Your workloads have their own lane
-
-Create your own VMs and LXCs in Proxmox. Put their NIC on <code>vmbr1</code>, tag it with the zone you want, and let DHCP do the ordinary network setup. A SERVERS reservation gives you a stable address and friendly private name. You can add your own A and CNAME records with <code>boetticher dns record</code>.
-
-Boetticher reserves these guest-number ranges:
-
-- `100–199` for core platform guests;
-- `200–499` for optional Boetticher modules; and
-- `500–899` for your VMs and LXCs.
-
-It does not adopt a guest just because the name or address looks familiar. That leaves plenty of room for the inventive, slightly chaotic part of a homelab without turning the platform into a generic VM manager.
-
-## Getting in
-
-Most browser-facing platform services use a client certificate. The friendly shorthand is mTLS: mutual Transport Layer Security, where your browser or device and the service both present certificates. A quick primer is [Cloudflare’s mTLS overview](https://www.cloudflare.com/learning/access-management/what-is-mutual-tls/).
-
-```text
-boetticher pki client create dave-laptop --site ./my-boetticher
-boetticher pki client export dave-laptop --site ./my-boetticher --output ./dave-laptop.p12
-boetticher ssh-config --site ./my-boetticher --output ./boetticher-ssh.conf
-```
-
-Import the `.p12` file into your browser or operating system, then visit a service such as `https://monitor.lab.home.arpa`. The generated SSH config knows the platform names and the route through the bastion. The everyday front doors are the Boetticher CLI, Proxmox, and each service’s own web UI; direct console access is the recovery tool when the ordinary route is unavailable.
-
-[Tailscale](https://tailscale.com/) is optional and can make selected lab networks reachable from your tailnet. It is a subnet router, not an Internet exit node. Cloudflare Tunnel and a separate WireGuard gateway are not first-party ingress paths in this release.
-
-## Recovery without drama
-
-Keep your private site repository, the independent age identity that unlocks its encrypted secrets, certificate/recovery material, and any off-host backups in separate safe places. The site describes the lab; temporary runtime files, generated config, and image caches can all be made again.
-
-The default single-disk storage profile is the easiest way to start. With a spare disk, Boetticher can make a separate LVM layout:
-
-| Name | Job |
-| --- | --- |
-| `vg_boetticher` | The volume group on the chosen disk. |
-| `boetticher-thin` | Thin storage for guest images and root filesystems. |
-| `boetticher-backups` | Local backup storage. |
-
-If a deployment stops or a service disappears, begin here:
-
-```text
-boetticher status --site ./my-boetticher --live
-boetticher doctor --site ./my-boetticher --live
-```
-
-Then recover the site repository and age identity, restore the Proxmox management path if needed, run `preflight --live`, and deploy to rebuild Boetticher’s own platform pieces. Reattach or restore persistent application data, check the services you care about, then take a fresh off-host backup. Do not delete an unfamiliar VM, LXC, volume, or network device just to make a later run quieter.
-
-If Proxmox itself is fresh or the bootstrap path is lost, use the guarded recovery sequence instead of jumping straight to deploy.
-
-The Proxmox installer hostname is not an operator configuration requirement.
-Bootstrap discovers the one standalone node returned by Proxmox and binds the
-live API operations to that node. Use a stable, valid hostname during the
-Proxmox install and do not rename an existing node after installation:
-
-```text
-boetticher bootstrap-endpoint set PROXMOX_HOME_IP --site ./my-boetticher
-boetticher preflight --site ./my-boetticher --live --record --trunk-interface IFACE
-boetticher bootstrap --site ./my-boetticher --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem --trunk-interface IFACE
-boetticher bundle import ./boetticher-0.5.0.tar.gz --site ./my-boetticher
-boetticher plan --site ./my-boetticher --live --json
-boetticher deploy --plan sha256:PLAN_DIGEST --site ./my-boetticher
-```
-
-Bootstrap also applies the headless host power policy. It configures
-`systemd-logind` to ignore lid, suspend-key, hibernate-key, and idle actions,
-and masks the sleep, suspend, hibernate, and hybrid-sleep targets. This is
-important when Proxmox runs on a laptop or other device that may be closed or
-left without an interactive session. It does not mask deliberate poweroff or
-reboot operations.
-
-Use `--storage-confirmed` as well when the site uses the dedicated-data-disk profile, after checking the stable device identity.
-
-The dedicated layout is safe to adopt after a boot-disk reinstall when the
-configured stable device still resolves to the same disk. If the disk contains
-known disposable state from an earlier Boetticher test, add `--reinitialize`;
-that guarded operation refuses configured guests and conflicting Boetticher
-storage definitions before recreating the fixed layout. Do not use it for an
-unreviewed disk or for an unknown Proxmox workload.
-
-## When you want to go bigger
-
-### Add a physical VLAN trunk
-
-With a suitable second NIC and a VLAN-aware switch, inspect the candidate and attach it explicitly:
+The default single-port installation requires no switch change. A physical
+trunk is an explicit advanced choice and carries VLANs 5, 10, 20, 30, 40,
+and 99. Keep HOME on `vmbr0`; do not move the existing management member to
+the internal bridge.
 
 ```text
 boetticher network trunk status --site ./my-boetticher --live
-boetticher network trunk attach IFACE --confirm --site ./my-boetticher
+boetticher network trunk attach IFACE --live --confirm --site ./my-boetticher
 ```
 
-The trunk carries VLANs 5, 10, 20, 30, 40, and 99. HOME stays on `vmbr0`; do not put it on the internal trunk. Use `network trunk detach` to reverse the choice just as deliberately.
+The trunk operation verifies the observed interface and permanent hardware
+identity before changing the Proxmox bridge. Detach is equally explicit.
 
-### Run your own firewall
+## Default platform
 
-Start with <code>boetticher init --external-firewall</code> when you want your own firewall appliance to be the gateway. Boetticher still produces the lab layout and the settings your appliance needs; your firewall supplies the six VLANs, gateway addresses, DHCP where applicable, DNS and NTP routes, NAT, and the same separation between zones.
+The default installation creates exactly three Proxmox guests. The Proxmox
+host itself is not a guest and uses the fixed management identity
+`lab-proxmox-01` at `10.10.99.5` (`https://proxmox.lab.home.arpa:8006`).
 
-### Give the lab a shakedown
+| Guest | Address / URL | Job |
+| --- | --- | --- |
+| `lab-fw-01` | `10.10.99.1` | Managed Debian gateway. |
+| `lab-dns-01` | `10.10.10.10` | Blocky, PowerDNS, and Chrony. |
+| `lab-monitor-01` | `10.10.10.20` · `https://monitor.lab.home.arpa` | Pulse Community 6.1.2 monitoring. |
+
+DNS2 is not a default guest because two guests on one Proxmox host share the
+same physical host, storage, power, and network failure domains. A second DNS
+guest would add operational work without providing host-level resilience.
+
+Central logging is an optional module and is off by default. Gatus is also an
+optional module; it is not part of the core status path. Pulse remains because
+it supplies historical telemetry, Proxmox and guest health, an externally
+consumable health API, and the Companion integration without placing Proxmox
+credentials on the Companion. Pulse access is scoped and read-only.
+
+Core platform guests use the `100–199` guest range. Optional modules use the
+`200–499` guest range. Your workloads use
+`500–899`. Boetticher never adopts or deletes an unknown VM, LXC, volume, or
+network device merely because its name or address looks familiar.
+
+## Companion Pi placement
+
+The Companion is outside the Proxmox module model. In the physical lab layout:
+
+* the Proxmox second NIC connects to a tagged switch trunk carrying VLANs 5,
+  10, 20, 30, 40, and 99;
+* the Pi's `eth0` connects to an untagged SERVERS access port, VLAN 20;
+* `wlan0` connects to HOME and remains the Pi's default route; and
+* `eth0` carries the deterministic route to the lab networks and Pulse.
+
+The Pi's SERVERS address should be a DHCP reservation. The Companion setup
+installs only the display, StreamDeck, and optional Pulse-agent capability;
+the Pi receives no Proxmox credentials. Direct USB permissions are limited to
+the configured device identity and unrelated USB configuration is preserved.
+
+## Storage and headless operation
+
+The single-disk profile is the default. The dedicated-data-disk profile uses
+the exact stable `/dev/disk/by-id/` identity selected during initialization
+and creates the Boetticher-owned LVM layout:
+
+| Name | Job |
+| --- | --- |
+| `vg_boetticher` | Volume group on the selected data disk. |
+| `boetticher-thin` | Thin storage for guest images and filesystems. |
+| `boetticher-backups` | Local backup storage. |
+
+Use `storage initialize` only after reviewing the exact device. It is the
+guarded destructive operation for a disposable, known-owned layout.
+
+Enrollment also installs and verifies the headless Proxmox power policy:
+lid-close, suspend-key, hibernate-key, and idle actions are ignored, and the
+sleep targets are masked. Deliberate poweroff and reboot remain available.
+
+## Access and state
+
+The usual operator loop is:
 
 ```text
-boetticher network test --site ./my-boetticher --zones TRUSTED,SANDBOX
-boetticher firewall counters --site ./my-boetticher --live
+boetticher init --site-dir ./my-boetticher
+boetticher enroll --site ./my-boetticher --bootstrap-address PROXMOX_HOME_IP --operator-key ~/.ssh/id_ed25519.pub --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem
+boetticher bundle import ./boetticher-0.5.1.tar.gz --site ./my-boetticher
+boetticher plan --site ./my-boetticher --live --json
+boetticher deploy --plan sha256:PLAN_DIGEST --site ./my-boetticher
+boetticher status --site ./my-boetticher --details --live
 ```
 
-`network test` makes tiny temporary LXCs in VMIDs 910–919, checks selected paths, then cleans up its own probes. Use `--capture` only while chasing one route; `--cleanup-only` is there for a probe interrupted mid-test. With enabled ARR and AirVPN, `--airvpn` also proves the declared ARR source has public tunnel egress, cannot reach Proxmox management, and loses public egress while the exact AirVPN LXC is stopped and restored.
+`status --details` is the consolidated read-only operational view. It never
+repairs infrastructure. `module configure`, reservations, and `update` alter
+desired state only; `deploy` is the normal live mutation boundary.
 
-StreamDeck is a capability of a Boetticher companion device, not a Proxmox
-module. Attach it directly to the companion Pi; the Pi can also provide the
-kiosk display and optional Pulse host agent. Generic Proxmox USB export remains
-available for actual guest peripherals.
+Boetticher keeps four authoritative state classes:
+
+1. desired state: what the operator requested;
+2. observed state: read-only facts from the controller and target;
+3. immutable operation state: the approved plan and bounded Apply journal; and
+4. last-applied state: the plan and model revision that completed successfully.
+
+Ansible inventory, DNS, firewall, SSH, and service files are deterministic,
+disposable projections. They can be regenerated from desired state and are
+not alternate configuration authorities.
+
+The trust lifecycle distinguishes three identities. Enrollment stores durable
+read-only/scoped Proxmox API authority. Apply re-observes and accepts the
+exact plan, then creates one in-memory temporary root identity for bounded
+privileged mutation and cleanup. Independent operator/root recovery access is
+never removed, locked, overwritten, or used as Boetticher cleanup ownership.
+
+## Release and maintainer builds
+
+Operators use a signed release bundle. The controller verifies the exact
+manifest bytes, artifact digests, trust root, qualification evidence, and
+bundle compatibility before deployment. Runtime deployment has no image-builder
+guest, builder VMID, builder cache lifecycle, or controller-to-builder source
+transfer.
+
+Maintainers may use `make local-builder-init`, `make local-image`, and
+`make local-images` for isolated native/Linux image construction. That path is
+development tooling and does not change the operator lifecycle or substitute
+for official hosted release evidence. The official workflow builds all
+supported artifacts, scans and qualifies their final bytes, binds evidence to
+those bytes, and assembles the signed bundle from one exact source revision.
+
+## Recovery
+
+Keep the private site repository, independent Age identity, certificate
+material, and off-host backups separate from the Proxmox host. Start recovery
+with the read-only view:
+
+```text
+boetticher status --site ./my-boetticher --details --live
+boetticher plan --site ./my-boetticher --live --json
+```
+
+Use `boetticher recover` only for its documented, exact recovery target.
+Unknown guests and storage are not cleanup targets. Reinstalling the boot disk
+does not authorize reinitializing the separate data disk; select the same
+stable device deliberately and use `--reinitialize` only for known disposable
+Boetticher state.

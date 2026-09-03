@@ -57,7 +57,7 @@ func TestUpdateDryRunDoesNotMutateAndConfirmRefreshesDesiredState(t *testing.T) 
 	if err := runUpdate([]string{"--site", dir, "--dry-run"}, &dryRun); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(dryRun.String(), "0.3.34 -> 0.5.0") || !strings.Contains(dryRun.String(), "deploy has not been called") {
+	if !strings.Contains(dryRun.String(), "0.3.34 -> 0.5.1") || !strings.Contains(dryRun.String(), "deploy has not been called") {
 		t.Fatalf("dry-run did not explain the guarded update: %s", dryRun.String())
 	}
 	if got, err := os.ReadFile(filepath.Join(dir, "site.yml")); err != nil || !bytes.Equal(got, original) {
@@ -172,12 +172,5 @@ func TestLoadStatusReportDropsQualificationOnlyChecks(t *testing.T) {
 	got := loadStatusReport(dir, revision)
 	if len(got.Checks) != 1 || got.Checks[0].Component != "canonical platform model validates" || got.OverallState != statusmodel.Healthy {
 		t.Fatalf("qualification-only check was not filtered: %#v", got)
-	}
-}
-
-func TestPreflightRecordRequiresLive(t *testing.T) {
-	var output bytes.Buffer
-	if err := runPreflight([]string{"--record"}, &output); err == nil || !strings.Contains(err.Error(), "requires --live") {
-		t.Fatalf("preflight accepted persistence without live inspection: %v", err)
 	}
 }

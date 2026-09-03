@@ -12,7 +12,7 @@ type SiteConfig struct {
 	// APIVersion identifies the site-file format.
 	APIVersion string `yaml:"api_version" json:"api_version" jsonschema:"const=boetticher/v3" jsonschema_description:"Version marker for this site file."`
 	// PlatformVersion is the Boetticher release targeted by this site.
-	PlatformVersion string `yaml:"platform_version" json:"platform_version,omitempty" jsonschema:"const=0.5.0" jsonschema_description:"Boetticher platform release targeted by this site."`
+	PlatformVersion string `yaml:"platform_version" json:"platform_version,omitempty" jsonschema:"const=0.5.1" jsonschema_description:"Boetticher platform release targeted by this site."`
 	// SchemaVersion identifies the shape of the site file.
 	SchemaVersion int `yaml:"schema_version" json:"schema_version,omitempty" jsonschema:"const=3" jsonschema_description:"Shape version of this site file."`
 	// StorageProfile chooses the fixed single-disk or dedicated-data-disk layout.
@@ -58,7 +58,7 @@ type ModulesConfig struct {
 	DNS           *DNSModuleConfig           `yaml:"dns,omitempty" json:"dns,omitempty"`
 	Monitoring    *ToggleModuleConfig        `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
 	Firewall      *ToggleModuleConfig        `yaml:"firewall,omitempty" json:"firewall,omitempty"`
-	Logging       *MandatoryModuleConfig     `yaml:"logging,omitempty" json:"logging,omitempty"`
+	Logging       *ToggleModuleConfig        `yaml:"logging,omitempty" json:"logging,omitempty"`
 	TailnetRouter *ToggleModuleConfig        `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
 	Bifrost       *BifrostModuleConfig       `yaml:"bifrost,omitempty" json:"bifrost,omitempty"`
 	Printer       *NetworkToggleModuleConfig `yaml:"printer,omitempty" json:"printer,omitempty"`
@@ -150,11 +150,6 @@ const (
 // implementation, so there is no provider selector to configure.
 type DNSModuleConfig struct{}
 
-// MandatoryModuleConfig intentionally has no enable field. Its empty shape
-// makes modules.logging: {} valid while rejecting attempts to turn off a
-// module the platform needs.
-type MandatoryModuleConfig struct{}
-
 // ToggleModuleConfig is the on/off setting for an optional module without
 // application egress configuration.
 type ToggleModuleConfig struct {
@@ -235,7 +230,7 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 		result["firewall"] = ModuleConfig{Enabled: cloneBool(m.Firewall.Enabled)}
 	}
 	if m.Logging != nil {
-		result["logging"] = ModuleConfig{}
+		result["logging"] = ModuleConfig{Enabled: cloneBool(m.Logging.Enabled)}
 	}
 	if m.TailnetRouter != nil {
 		result["tailnet-router"] = ModuleConfig{Enabled: cloneBool(m.TailnetRouter.Enabled)}
@@ -276,8 +271,8 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 	if config, ok := input["firewall"]; ok {
 		result.Firewall = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	}
-	if _, ok := input["logging"]; ok {
-		result.Logging = &MandatoryModuleConfig{}
+	if config, ok := input["logging"]; ok {
+		result.Logging = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	}
 	if config, ok := input["tailnet-router"]; ok {
 		result.TailnetRouter = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
@@ -321,10 +316,7 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 		}
 		m.Firewall = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	case "logging":
-		if config.Enabled != nil {
-			return errors.New("modules.logging.enabled: mandatory module cannot be disabled")
-		}
-		m.Logging = &MandatoryModuleConfig{}
+		m.Logging = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	case "tailnet-router":
 		if config.Network != "" {
 			return errors.New("modules.tailnet-router.network: module is not network-capable")

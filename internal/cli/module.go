@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
@@ -18,23 +17,17 @@ import (
 
 func runModuleWithInput(args []string, input io.Reader, out, errOut io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: boetticher module list|show|plan|configure|enable|disable|status|secrets")
+		return errors.New("usage: boetticher module list|configure|enable|disable|secrets")
 	}
 	switch args[0] {
 	case "list":
 		return runModuleList(args[1:], out)
-	case "show":
-		return runModuleShow(args[1:], out)
-	case "plan":
-		return runModulePlan(args[1:], out)
 	case "configure":
 		return runModuleConfigure(args[1:], input, out, errOut)
 	case "enable":
 		return runModuleChangeWithInput(args[1:], input, out, errOut, true)
 	case "disable":
 		return runModuleChangeWithInput(args[1:], input, out, errOut, false)
-	case "status":
-		return runModuleStatusWithInput(args[1:], input, out, errOut)
 	case "secrets":
 		return runModuleSecrets(args[1:], input, out, errOut)
 	default:
@@ -76,162 +69,6 @@ func runModuleListRequest(siteDir string, out io.Writer) error {
 		fmt.Fprintf(out, "%s\t%s\t%s\t%s\t%s\n", module.Name, module.Policy, yesNo(module.Enabled), module.Reason, module.State)
 	}
 	return nil
-}
-
-func runModuleShow(args []string, out io.Writer) error {
-	if len(args) == 0 {
-		return errors.New("usage: boetticher module show NAME [--site DIR]")
-	}
-	name := args[0]
-	siteDir, _, _, _, err := moduleSite(args[1:], "module show")
-	if err != nil {
-		return err
-	}
-	s, err := site.Load(siteDir)
-	if err != nil {
-		return err
-	}
-	registry := modules.FirstPartyRegistry()
-	definition, ok := registry.Definition(name)
-	if !ok {
-		return fmt.Errorf("unknown first-party module %q", name)
-	}
-	resolved, ok := findResolvedModule(s, name)
-	if !ok {
-		return fmt.Errorf("module %q is not resolved", name)
-	}
-	fmt.Fprintf(out, "Module %s\n  Description  %s\n  Version      %s\n  Policy       %s\n  Enabled      %s\n  Reason       %s\n  State        %s\n  Depends on   %s\n  Requires     %s\n  Provides     %s\n  Guest IDs    %s\n", definition.Name, definition.Description, definition.Version, definition.Policy, yesNo(resolved.Enabled), resolved.Reason, resolved.State, strings.Join(definition.DependsOn, ", "), strings.Join(capabilityNames(definition.Requires), ", "), strings.Join(capabilityNames(definition.Provides), ", "), ints(definition.GuestIDs))
-	for _, declaration := range s.Declarations {
-		if declaration.Module != name {
-			continue
-		}
-		fmt.Fprintf(out, "  Artifact     %s %s (%s, definition sha256 %s)\n", declaration.Artifact.Name, declaration.Artifact.Version, declaration.Artifact.Kind, declaration.Artifact.DefinitionSHA256)
-		fmt.Fprintf(out, "  Guests       %s\n  Persistent   %s\n  Volumes      %s\n  Secrets      %s\n", guestNames(declaration.Guests), persistentNames(declaration.Persistent), volumeNames(declaration.Volumes), secretNames(declaration.Secrets))
-	}
-	return nil
-}
-
-func volumeNames(volumes []model.PersistentVolumeDeclaration) string {
-	parts := make([]string, 0, len(volumes))
-	for _, volume := range volumes {
-		parts = append(parts, volume.Name+"@"+volume.MountPath+"/"+string(volume.Placement))
-	}
-	return strings.Join(parts, ", ")
-}
-
-func runModulePlan(args []string, out io.Writer) error {
-	if len(args) == 0 {
-		return errors.New("usage: boetticher module plan NAME [--site DIR]")
-	}
-	name := args[0]
-	siteDir, _, _, _, err := moduleSite(args[1:], "module plan")
-	if err != nil {
-		return err
-	}
-	s, err := site.Load(siteDir)
-	if err != nil {
-		return err
-	}
-	if _, ok := modules.FirstPartyRegistry().Definition(name); !ok {
-		return fmt.Errorf("unknown first-party module %q", name)
-	}
-	for _, module := range s.Modules {
-		if module.Name == name {
-			fmt.Fprintf(out, "Module %s\n  Enabled  %s\n  Reason   %s\n  State    %s\n", name, yesNo(module.Enabled), module.Reason, module.State)
-		}
-	}
-	for _, declaration := range s.Declarations {
-		if declaration.Module != name {
-			continue
-		}
-		fmt.Fprintf(out, "Artifact\n  %s %s (%s)\nCreate/retain\n", declaration.Artifact.Name, declaration.Artifact.Version, declaration.Artifact.Kind)
-		for _, guest := range declaration.Guests {
-			fmt.Fprintf(out, "  guest %d %s\n", guest.VMID, guest.Name)
-		}
-		for _, persistent := range declaration.Persistent {
-			fmt.Fprintf(out, "Persistent\n  retain %s at %s\n", persistent.Name, persistent.Path)
-		}
-	}
-	if _, ok := findDeclaration(s, name); !ok {
-		fmt.Fprintln(out, "No active resources")
-	}
-	return nil
-}
-
-func runModuleStatus(args []string, out io.Writer) error {
-	return runModuleStatusWithInput(args, os.Stdin, out, os.Stderr)
-}
-
-func runModuleStatusWithInput(args []string, input io.Reader, out, errOut io.Writer) error {
-	name := ""
-	remaining := args
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		name = args[0]
-		remaining = args[1:]
-	}
-	siteDir := "."
-	ageIdentity := model.DefaultAgeIdentity
-	if name != "" {
-		fs := flag.NewFlagSet("module status", flag.ContinueOnError)
-		fs.SetOutput(os.Stderr)
-		fs.StringVar(&siteDir, "site", ".", "private site repository directory")
-		fs.StringVar(&ageIdentity, "age-identity", model.DefaultAgeIdentity, "external Age identity path")
-		if err := fs.Parse(remaining); err != nil {
-			return err
-		}
-	} else {
-		var err error
-		siteDir, _, _, _, err = moduleSite(remaining, "module status")
-		if err != nil {
-			return err
-		}
-	}
-	s, err := site.Load(siteDir)
-	if err != nil {
-		return err
-	}
-	if name != "" {
-		module, ok := findResolvedModule(s, name)
-		if !ok {
-			return fmt.Errorf("unknown module %q", name)
-		}
-		config, err := site.LoadConfig(siteDir)
-		if err != nil {
-			return err
-		}
-		declarations, err := modules.SecretDeclarations(config, name)
-		if err != nil {
-			configured := config.Modules.Map()[name]
-			if name != "bifrost" || module.Enabled || len(configured.Upstreams) > 0 || len(configured.Models) > 0 {
-				return err
-			}
-			declarations = nil
-		}
-		keys := secretNamesOnly(declarations)
-		presence := map[string]bool{}
-		if len(keys) > 0 {
-			presence, err = site.PlatformSecretPresence(siteDir, s, ageIdentity, keys)
-			if err != nil {
-				return fmt.Errorf("inspect encrypted platform secrets: %w", err)
-			}
-		}
-		fmt.Fprintf(out, "Module %s\n\nConfiguration\n  State       %s\n  Enabled     %s\n  Reason      %s\n", module.Name, module.State, yesNo(module.Enabled), module.Reason)
-		if name == "bifrost" {
-			bifrost := config.Modules.Map()[name]
-			fmt.Fprintf(out, "  Upstreams   %d\n  Model aliases %d\n", len(bifrost.Upstreams), len(bifrost.Models))
-		}
-		fmt.Fprintln(out, "\nSecrets\nNAME\tLIFECYCLE\tMANAGEMENT\tSTATUS")
-		for _, declaration := range declarations {
-			status := "FAIL missing"
-			if presence[declaration.Name] {
-				status = "PASS present"
-			}
-			fmt.Fprintf(out, "%s\t%s\t%s\t%s\n", declaration.Name, lifecycleName(declaration), declaration.Generation, status)
-		}
-		fmt.Fprintln(out, "\nRuntime\n  use boetticher doctor --live for the runtime assertion")
-		return nil
-	}
-	return runModuleList(remaining, out)
 }
 
 func runModuleChange(args []string, out io.Writer, enable bool) error {
@@ -369,6 +206,15 @@ func purgeIntentForPlan(plan proxmox.Plan, module string) site.PurgeIntent {
 	return intent
 }
 
+func findResolvedModule(s model.Site, name string) (model.ResolvedModule, bool) {
+	for _, module := range s.Modules {
+		if module.Name == name {
+			return module, true
+		}
+	}
+	return model.ResolvedModule{}, false
+}
+
 func purgeIntentMatches(existing, current site.PurgeIntent) bool {
 	if existing.ModelRevision != current.ModelRevision || len(existing.Guests) != len(current.Guests) {
 		return false
@@ -438,15 +284,6 @@ func modulePurgeSite(s model.Site, name string) (model.Site, error) {
 	return purgeSite, nil
 }
 
-func findResolvedModule(s model.Site, name string) (model.ResolvedModule, bool) {
-	for _, module := range s.Modules {
-		if module.Name == name {
-			return module, true
-		}
-	}
-	return model.ResolvedModule{}, false
-}
-
 func findDeclaration(s model.Site, name string) (model.ModuleDeclaration, bool) {
 	for _, declaration := range s.Declarations {
 		if declaration.Module == name {
@@ -456,14 +293,6 @@ func findDeclaration(s model.Site, name string) (model.ModuleDeclaration, bool) 
 	return model.ModuleDeclaration{}, false
 }
 
-func capabilityNames(values []modules.Capability) []string {
-	result := make([]string, len(values))
-	for i, value := range values {
-		result[i] = string(value)
-	}
-	return result
-}
-
 func yesNo(value bool) string {
 	if value {
 		return "yes"
@@ -471,35 +300,10 @@ func yesNo(value bool) string {
 	return "no"
 }
 
-func ints(values []int) string {
-	result := make([]string, len(values))
-	for i, value := range values {
-		result[i] = fmt.Sprint(value)
-	}
-	return strings.Join(result, ", ")
-}
-
 func guestNames(values []model.Component) string {
 	result := make([]string, len(values))
 	for i, value := range values {
 		result[i] = fmt.Sprintf("%d:%s", value.VMID, value.Name)
-	}
-	return strings.Join(result, ", ")
-}
-
-func persistentNames(values []model.PersistentState) string {
-	result := make([]string, len(values))
-	for i, value := range values {
-		result[i] = value.Name
-	}
-	sort.Strings(result)
-	return strings.Join(result, ", ")
-}
-
-func secretNames(values []model.SecretDeclaration) string {
-	result := make([]string, len(values))
-	for i, value := range values {
-		result[i] = value.Name + " (metadata only)"
 	}
 	return strings.Join(result, ", ")
 }

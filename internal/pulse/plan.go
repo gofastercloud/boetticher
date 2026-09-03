@@ -49,7 +49,6 @@ func PlanFromSite(s model.Site) (Plan, error) {
 func platformAvailabilityChecks(managedFirewall bool) []AvailabilityCheck {
 	checks := []AvailabilityCheck{
 		{Name: "dns01-authoritative", URL: "tcp://10.10.10.10:5353", Protocol: "tcp", Description: "Primary authoritative DNS listener availability"},
-		{Name: "dns02-authoritative", URL: "tcp://10.10.10.11:5353", Protocol: "tcp", Description: "Secondary authoritative DNS listener availability"},
 	}
 	if managedFirewall {
 		checks = append(checks, AvailabilityCheck{

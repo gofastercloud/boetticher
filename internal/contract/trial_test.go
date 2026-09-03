@@ -8,7 +8,6 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/appliance"
 	"github.com/gofastercloud/boetticher/internal/artifacts"
-	"github.com/gofastercloud/boetticher/internal/logging"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
@@ -39,7 +38,7 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 			t.Fatalf("hosted qualification contract is missing %s", required)
 		}
 	}
-	for _, artifact := range []string{"boetticher-base", "boetticher-firewall", "boetticher-dns-blocky", "boetticher-logging", "boetticher-monitoring", "boetticher-portal"} {
+	for _, artifact := range []string{"boetticher-base", "boetticher-firewall", "boetticher-dns-blocky", "boetticher-monitoring"} {
 		if !strings.Contains(buildText, artifact) {
 			t.Fatalf("default trial builder does not produce %s", artifact)
 		}
@@ -58,20 +57,18 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	bootstrapText := string(bootstrapSource)
-	runBootstrapText := bootstrapText
-	if end := strings.Index(runBootstrapText, "func builderArtifactReturnCommand"); end >= 0 {
-		runBootstrapText = runBootstrapText[:end]
-	}
-	if strings.Contains(runBootstrapText, "buildDefaultArtifacts") || strings.Contains(runBootstrapText, "EnsureBuilderVM") {
-		t.Fatal("normal bootstrap still invokes the temporary in-lab artifact builder")
+	for _, forbidden := range []string{"buildDefaultArtifacts", "EnsureBuilderVM", "builderBuildCommand", "runBootstrapCleanup", "BuilderArtifactTargets"} {
+		if strings.Contains(bootstrapText, forbidden) {
+			t.Fatalf("controller retains runtime builder machinery %s", forbidden)
+		}
 	}
 	builderSource, err := os.ReadFile(filepath.Join(repoRoot, "internal", "proxmox", "plan.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"BuilderVMID", "DestroyBuilderVM", "WaitForGuestAbsent", "cleanupBuilderSnippets", "ResizeQEMUDisk"} {
-		if !strings.Contains(string(builderSource), required) {
-			t.Fatalf("temporary builder lifecycle is missing %s", required)
+	for _, forbidden := range []string{"BuilderVMID", "DestroyBuilderVM", "WaitForGuestAbsent", "cleanupBuilderSnippets", "ResizeQEMUDisk"} {
+		if strings.Contains(string(builderSource), forbidden) {
+			t.Fatalf("temporary builder lifecycle remains in product code: %s", forbidden)
 		}
 	}
 	deploySource, err := os.ReadFile(filepath.Join(repoRoot, "internal", "cli", "converge.go"))
@@ -145,10 +142,6 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	if resolved.Guests[0].Name != "lab-fw-01" {
 		t.Fatalf("trial plan did not begin with the firewall dependency: %s", resolved.Guests[0].Name)
 	}
-	loggingPlan, err := logging.PlanFromSite(site)
-	if err != nil || loggingPlan.Collector != logging.CollectorName || !loggingPlan.MTLS {
-		t.Fatalf("logging vertical slice is not present: %#v %v", loggingPlan, err)
-	}
 	for _, component := range site.PlatformComponents() {
 		if component.Module != "" && !contains(component.Tags, model.ModuleOwnershipTag(component.Module)) {
 			t.Fatalf("module guest %s lacks canonical ownership tag", component.Name)
@@ -169,13 +162,6 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	runtimeConfig, err := appliance.RenderRuntimeConfig(site, dnsGuest, dnsDeclaration)
 	if err != nil || !strings.Contains(string(runtimeConfig), "boetticher-dns-blocky") {
 		t.Fatalf("default Blocky runtime contract missing: %v", err)
-	}
-	loggingConfig, err := logging.PlanFromSite(site)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(logging.CollectorConfiguration(loggingConfig), "MaxUse=8G") || !strings.Contains(logging.CollectorServiceOverride(loggingConfig), "/var/log/journal/remote") {
-		t.Fatal("logging collector does not have the executable bounded journal contract")
 	}
 	if _, err := proxmox.RenderFirewallCloudInitWithKey(plan.Guests[0], "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator"); err != nil {
 		t.Fatalf("firewall first-boot SSH contract is not renderable: %v", err)

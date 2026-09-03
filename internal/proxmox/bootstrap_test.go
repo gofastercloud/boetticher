@@ -197,21 +197,6 @@ func TestReadGuestHostKeyUsesAuthenticatedProxmoxBoundary(t *testing.T) {
 	}
 }
 
-func TestReadBuilderHostKeyUsesAuthenticatedHostBoundaryForNonRoot(t *testing.T) {
-	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA builder\n"
-	runner := &fakeRunner{output: []byte(`{"exited":1,"exitcode":0,"out-data":"` + strings.TrimSuffix(key, " builder\n") + `\n"}`)}
-	got, err := ReadBuilderHostKey(context.Background(), runner, "192.0.2.10", "labadmin", 190)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != strings.TrimSuffix(key, " builder\n") {
-		t.Fatalf("ReadBuilderHostKey() = %q", got)
-	}
-	if !strings.Contains(runner.command, "sudo -n /usr/sbin/qm guest exec 190 -- /bin/cat /etc/ssh/ssh_host_ed25519_key.pub") {
-		t.Fatalf("builder host key was not read through the authenticated host boundary: %q", runner.command)
-	}
-}
-
 func TestSSHRunnerRejectsExecutableConfigBeforeStartingSSH(t *testing.T) {
 	path := t.TempDir() + "/boetticher.conf"
 	if err := os.WriteFile(path, []byte("Host lab-dns-01\n    LocalCommand id\n"), 0600); err != nil {
@@ -337,23 +322,8 @@ func (f *fakeRunner) Run(_ context.Context, address, user, command string) ([]by
 	return f.output, nil
 }
 
-func TestWaitForQEMUIPv4ViaNeighborMatchesOnlyBuilderMAC(t *testing.T) {
-	runner := &fakeRunner{responses: map[string][]byte{
-		"/usr/sbin/ip -4 neigh show dev vmbr0": []byte("192.168.4.50 lladdr aa:bb:cc:dd:ee:ff STALE\n192.168.4.51 lladdr 02:00:00:00:01:90 REACHABLE\n"),
-	}}
-	address, err := WaitForQEMUIPv4ViaNeighbor(context.Background(), runner, "192.168.4.5", "root", "02:00:00:00:01:90", 1, time.Millisecond)
-	if err != nil || address != "192.168.4.51" {
-		t.Fatalf("WaitForQEMUIPv4ViaNeighbor() = %q, %v", address, err)
-	}
-}
-
-func TestWaitForQEMUIPv4ViaNeighborRejectsMissingBuilderMAC(t *testing.T) {
-	runner := &fakeRunner{responses: map[string][]byte{
-		"/usr/sbin/ip -4 neigh show dev vmbr0": []byte("192.168.4.50 lladdr aa:bb:cc:dd:ee:ff STALE\n"),
-	}}
-	if address, err := WaitForQEMUIPv4ViaNeighbor(context.Background(), runner, "192.168.4.5", "root", "02:00:00:00:01:90", 1, time.Millisecond); err == nil || address != "" || !strings.Contains(err.Error(), "HOLD") {
-		t.Fatalf("WaitForQEMUIPv4ViaNeighbor() = %q, %v", address, err)
-	}
+func (f *fakeRunner) RunWithStdin(ctx context.Context, address, user, command string, _ io.Reader) ([]byte, error) {
+	return f.Run(ctx, address, user, command)
 }
 
 func containsString(values []string, wanted string) bool {
@@ -363,12 +333,6 @@ func containsString(values []string, wanted string) bool {
 		}
 	}
 	return false
-}
-
-func (f *fakeRunner) RunWithStdin(_ context.Context, address, user, command string, _ io.Reader) ([]byte, error) {
-	f.address, f.user, f.command = address, user, command
-	f.commands = append(f.commands, command)
-	return f.output, nil
 }
 
 func TestInstallOperatorKeyUsesSafeConstantRemoteCommand(t *testing.T) {
@@ -382,6 +346,20 @@ func TestInstallOperatorKeyUsesSafeConstantRemoteCommand(t *testing.T) {
 	}
 	if strings.Contains(runner.command, "StrictHostKeyChecking=no") || strings.Contains(runner.command, "password") {
 		t.Fatalf("bootstrap command weakened SSH or accepted a password argument: %s", runner.command)
+	}
+}
+
+func TestInstallTemporaryRootAccessUsesIndependentRecoveryTransport(t *testing.T) {
+	runner := &fakeRunner{}
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample boetticher-apply"
+	if err := InstallTemporaryRootAccess(context.Background(), runner, "192.0.2.10", "root", key); err != nil {
+		t.Fatal(err)
+	}
+	if runner.user != "root" || !strings.Contains(runner.command, "/root/.ssh/authorized_keys") || !strings.Contains(runner.command, "grep -qxF") {
+		t.Fatalf("temporary root acquisition used unexpected command: %#v", runner)
+	}
+	if strings.Contains(runner.command, "passwd") || strings.Contains(runner.command, "AllowUsers") || strings.Contains(runner.command, "sudo") {
+		t.Fatalf("temporary root acquisition changed durable recovery policy: %s", runner.command)
 	}
 }
 
@@ -785,16 +763,19 @@ func TestValidateScopedRoleJSONRequiresExactPrivileges(t *testing.T) {
 	}
 }
 
-func TestConfigureIdentitiesInstallsTemporaryRootAccessWithoutLabadminSudo(t *testing.T) {
+func TestConfigureIdentitiesLeavesRootRecoveryUntouched(t *testing.T) {
 	runner := &fakeRunner{}
 	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator"
 	if err := ConfigureIdentities(context.Background(), runner, "192.0.2.10", "root", key, []string{"10.10.99.1:22", "10.10.10.20:443"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"command -v visudo", "deb http://deb.debian.org/debian trixie main", "apt-get -o Dir::Etc::sourcelist=", "install --yes --no-install-recommends sudo", "passwd --lock labadmin", "/root/.ssh/authorized_keys", "rm -f /etc/sudoers.d/boetticher-labadmin", "visudo -cf /etc/sudoers", "install -d -m 700 -o lab-jump -g lab-jump /home/lab-jump", "chown lab-jump:lab-jump /home/lab-jump.authorized_keys", "AllowUsers root labadmin lab-jump", "Match User lab-jump"} {
+	for _, required := range []string{"command -v visudo", "deb http://deb.debian.org/debian trixie main", "apt-get -o Dir::Etc::sourcelist=", "install --yes --no-install-recommends sudo", "passwd --lock labadmin", "/home/labadmin/.ssh/authorized_keys", "rm -f /etc/sudoers.d/boetticher-labadmin", "visudo -cf /etc/sudoers", "install -d -m 700 -o lab-jump -g lab-jump /home/lab-jump", "chown lab-jump:lab-jump /home/lab-jump.authorized_keys", "AllowUsers root labadmin lab-jump", "Match User lab-jump"} {
 		if !strings.Contains(runner.command, required) {
 			t.Fatalf("identity bootstrap missing %q: %s", required, runner.command)
 		}
+	}
+	if strings.Contains(runner.command, "/root/.ssh/authorized_keys") || strings.Contains(runner.command, "grep -qxF '"+key+"' /root") {
+		t.Fatalf("durable identity setup modified root recovery authorization: %s", runner.command)
 	}
 	for _, forbidden := range []string{"NOPASSWD", "/usr/bin/pvesh *", "/usr/bin/pvesm *", "/bin/sh -c *", "/usr/bin/install *", "/usr/bin/chown *", "/usr/bin/chmod *"} {
 		if strings.Contains(runner.command, forbidden) {
@@ -889,9 +870,14 @@ func TestRevokeTemporaryRootAccessIsFixedAndIdempotent(t *testing.T) {
 			if !strings.Contains(runner.command, "AllowUsers root labadmin lab-jump lab-netprobe") {
 				t.Fatalf("host cleanup does not verify the persistent AllowUsers state: %s", runner.command)
 			}
-			for _, forbidden := range []string{"authorized_keys.boetticher-cleanup", "grep -Fvx", "passwd --lock", "sed -i", "systemctl reload"} {
+			for _, required := range []string{"authorized_keys.boetticher-cleanup", "grep -Fvx", "sshd -t"} {
+				if !strings.Contains(runner.command, required) {
+					t.Fatalf("host cleanup does not remove the exact temporary key: missing %q in %s", required, runner.command)
+				}
+			}
+			for _, forbidden := range []string{"passwd --lock", "sed -i", "systemctl reload"} {
 				if strings.Contains(runner.command, forbidden) {
-					t.Fatalf("host cleanup mutates persistent authentication through %q: %s", forbidden, runner.command)
+					t.Fatalf("host cleanup changes independent recovery state through %q: %s", forbidden, runner.command)
 				}
 			}
 		} else {
@@ -950,17 +936,6 @@ func TestCheckHeadlessPowerPolicyUsesReadOnlyVerification(t *testing.T) {
 		if !strings.Contains(runner.command, required) {
 			t.Fatalf("headless power check missing %q: %s", required, runner.command)
 		}
-	}
-}
-
-func TestCheckBuilderCapacityHoldsBelowMinimum(t *testing.T) {
-	runner := &fakeRunner{output: []byte("Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/vda1 33554432 12582912 20971520 38% /\n")}
-	if err := CheckBuilderCapacity(context.Background(), runner, "192.0.2.10", "labadmin", 20); err != nil {
-		t.Fatalf("expected exact minimum builder capacity to pass: %v", err)
-	}
-	runner.output = []byte("Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/vda1 33554432 12582912 10485760 69% /\n")
-	if err := CheckBuilderCapacity(context.Background(), runner, "192.0.2.10", "labadmin", 20); err == nil || !strings.Contains(err.Error(), "HOLD") {
-		t.Fatalf("insufficient builder capacity was not held: %v", err)
 	}
 }
 

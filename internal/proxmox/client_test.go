@@ -210,22 +210,6 @@ func TestWaitTaskAcceptsProxmoxWarningCompletion(t *testing.T) {
 	}
 }
 
-func TestResizeQEMUDiskUsesExplicitBoundedGrowth(t *testing.T) {
-	transport := roundTripFunc(func(r *http.Request) *http.Response {
-		if r.Method != http.MethodPut || r.URL.Path != "/api2/json/nodes/node/qemu/190/resize" {
-			t.Fatalf("unexpected resize request: %s %s", r.Method, r.URL.Path)
-		}
-		if err := r.ParseForm(); err != nil || r.Form.Get("disk") != "scsi0" || r.Form.Get("size") != "+32G" {
-			t.Fatalf("unexpected resize form: %v", r.Form)
-		}
-		return response([]byte(`{"data":""}`))
-	})
-	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	if err := client.ResizeQEMUDisk(context.Background(), "node", 190, "scsi0", 32); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestMoveQEMUPersistentDiskWaitsForVerifiedCopyBeforeDeletingSource(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		switch {
@@ -318,25 +302,6 @@ func TestDeleteStorageSnippetRejectsPathsAndUsesExactEndpoint(t *testing.T) {
 	}
 }
 
-func TestDestroyQEMUPurgesBuilderConfigurationAndUnreferencedDisks(t *testing.T) {
-	transport := roundTripFunc(func(r *http.Request) *http.Response {
-		if r.Method != http.MethodDelete || r.URL.Path != "/api2/json/nodes/node/qemu/190" {
-			t.Fatalf("unexpected QEMU destruction request: %s %s", r.Method, r.URL.Path)
-		}
-		if r.URL.Query().Get("purge") != "1" || r.URL.Query().Get("destroy-unreferenced-disks") != "1" {
-			t.Fatalf("QEMU destruction did not request bounded cleanup: %v", r.URL.Query())
-		}
-		return response([]byte(`{"data":null}`))
-	})
-	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	if err := client.DestroyQEMU(context.Background(), "node", 190); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.DestroyQEMU(context.Background(), "node", 0); err == nil {
-		t.Fatal("invalid QEMU destruction identity was accepted")
-	}
-}
-
 func TestDestroyLXCPurgesConfigurationAndUnreferencedVolumes(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method != http.MethodDelete || r.URL.Path != "/api2/json/nodes/node/lxc/200" {
@@ -410,103 +375,6 @@ func TestEnsureLXCRunningDoesNotRestartRunningContainer(t *testing.T) {
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
 	if err := client.EnsureLXCRunning(context.Background(), "node", 110); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestDestroyBuilderStopsRunningOwnedVMBeforeRemoval(t *testing.T) {
-	stopped := false
-	removed := false
-	transport := roundTripFunc(func(r *http.Request) *http.Response {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/190/config":
-			if removed {
-				return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
-			}
-			return response([]byte(`{"data":{"name":"lab-builder-01","tags":"boetticher;boetticher-builder"}}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/190/status/current":
-			if stopped {
-				return response([]byte(`{"data":{"status":"stopped"}}`))
-			}
-			return response([]byte(`{"data":{"status":"running"}}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/190/status/stop":
-			stopped = true
-			return response([]byte(`{"data":null}`))
-		case r.Method == http.MethodDelete && r.URL.Path == "/api2/json/nodes/node/qemu/190":
-			if !stopped {
-				t.Fatalf("builder removal was requested before stop")
-			}
-			removed = true
-			return response([]byte(`{"data":null}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/190/config":
-			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api2/json/nodes/node/storage/local/content/snippets/boetticher-190-"):
-			return response([]byte(`{"data":null}`))
-		default:
-			t.Fatalf("unexpected builder cleanup request: %s %s", r.Method, r.URL.Path)
-			return nil
-		}
-	})
-	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	if err := DestroyBuilderVM(context.Background(), client, "node"); err != nil {
-		t.Fatalf("DestroyBuilderVM() = %v", err)
-	}
-	if !stopped || !removed {
-		t.Fatalf("builder cleanup state stopped=%t removed=%t", stopped, removed)
-	}
-}
-
-func TestDestroyBuilderDetachesOnlyCanonicalCacheAndPreservesUnreferencedDisks(t *testing.T) {
-	stopped := false
-	removed := false
-	detached := false
-	transport := roundTripFunc(func(r *http.Request) *http.Response {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/190/config":
-			if removed {
-				return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
-			}
-			return response([]byte(`{"data":{"name":"lab-builder-01","tags":"boetticher;boetticher-builder","scsi1":"local-lvm:vm-191-boetticher-builder-cache,format=raw,serial=boetticher-builder-cache"}}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/190/status/current":
-			if stopped {
-				return response([]byte(`{"data":{"status":"stopped"}}`))
-			}
-			return response([]byte(`{"data":{"status":"running"}}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/190/status/stop":
-			stopped = true
-			return response([]byte(`{"data":null}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/qemu/190/config":
-			if err := r.ParseForm(); err != nil {
-				t.Fatal(err)
-			}
-			if r.Form.Get("delete") != "scsi1" {
-				t.Fatalf("unexpected builder disk detach form: %v", r.Form)
-			}
-			detached = true
-			return response([]byte(`{"data":null}`))
-		case r.Method == http.MethodDelete && r.URL.Path == "/api2/json/nodes/node/qemu/190":
-			if !stopped || !detached {
-				t.Fatalf("builder removal occurred before stop/detach: stopped=%t detached=%t", stopped, detached)
-			}
-			if r.URL.Query().Get("purge") != "1" || r.URL.Query().Get("destroy-unreferenced-disks") != "0" {
-				t.Fatalf("builder removal would destroy unreferenced disks: %s", r.URL.RawQuery)
-			}
-			removed = true
-			return response([]byte(`{"data":null}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/190/config":
-			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
-		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/api2/json/nodes/node/storage/local/content/snippets/boetticher-190-"):
-			return response([]byte(`{"data":null}`))
-		default:
-			t.Fatalf("unexpected builder cache cleanup request: %s %s", r.Method, r.URL.Path)
-			return nil
-		}
-	})
-	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	if err := DestroyBuilderVM(context.Background(), client, "node"); err != nil {
-		t.Fatalf("DestroyBuilderVM() = %v", err)
-	}
-	if !stopped || !detached || !removed {
-		t.Fatalf("builder cleanup state stopped=%t detached=%t removed=%t", stopped, detached, removed)
 	}
 }
 

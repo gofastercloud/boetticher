@@ -62,11 +62,11 @@ func TestCommandSucceededRequiresSuccessfulDNSAnswer(t *testing.T) {
 }
 
 func TestCurlArgumentsPinModeledEndpointWhilePreservingTLSHost(t *testing.T) {
-	args, err := curlArguments(request{Kind: "mtls", URL: "https://portal.lab.home.arpa", Target: "10.10.10.30", CA: "ca", Cert: "cert", Key: "key"})
+	args, err := curlArguments(request{Kind: "mtls", URL: "https://monitor.lab.home.arpa", Target: "10.10.10.20", CA: "ca", Cert: "cert", Key: "key"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantResolve := []string{"--resolve", "portal.lab.home.arpa:443:10.10.10.30"}
+	wantResolve := []string{"--resolve", "monitor.lab.home.arpa:443:10.10.10.20"}
 	for i := range args {
 		if i+1 < len(args) && args[i] == wantResolve[0] && args[i+1] == wantResolve[1] {
 			return

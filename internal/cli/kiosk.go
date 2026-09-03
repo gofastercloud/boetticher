@@ -142,9 +142,6 @@ func runCompanionMigrate(args []string, out io.Writer) error {
 	if err := writeModelProjections(*siteDir, migrated); err != nil {
 		return fmt.Errorf("refresh migrated projections: %w; migration state is committed and the old guest was not removed", err)
 	}
-	if err := rebuildPortal(*siteDir, migrated); err != nil {
-		return fmt.Errorf("refresh migrated portal: %w; migration state is committed and the old guest was not removed", err)
-	}
 	rootRunner := proxmoxRootSSHRunner(migrated, *siteDir)
 	if _, err := rootRunner.RunArgs(context.Background(), migrated.BootstrapAddress, "root", proxmox.LegacyStreamDeckUSBRemovalArgs()); err != nil {
 		return fmt.Errorf("remove exact legacy StreamDeck USB mapping before guest removal: %w; migration state is committed and the old guest was not removed", err)
@@ -678,11 +675,6 @@ func ensureKioskClientCertificate(siteDir string, s model.Site, authority pki.Au
 	metadata := fmt.Sprintf("name: %s\nfingerprint: %s\nserial: %s\ncreated_at: %s\n", kioskClientName, certificate.Fingerprint, certificate.Serial, time.Now().UTC().Format(time.RFC3339))
 	if err := writePublic(filepath.Join(siteDir, "generated", "pki", kioskClientName+".yaml"), []byte(metadata)); err != nil {
 		return pki.ClientCertificate{}, err
-	}
-	if s.BootstrapAddress != "" {
-		if err := rebuildPortal(siteDir, s); err != nil {
-			return pki.ClientCertificate{}, err
-		}
 	}
 	return certificate, nil
 }

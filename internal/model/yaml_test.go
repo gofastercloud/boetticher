@@ -157,8 +157,8 @@ func TestDNSHasNoProviderSelection(t *testing.T) {
 	if _, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  dns:\n    enabled: false\n")); err == nil || !strings.Contains(err.Error(), "mandatory module") {
 		t.Fatalf("DNS disable was accepted: %v", err)
 	}
-	if _, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  logging:\n    enabled: false\n")); err == nil || !strings.Contains(err.Error(), "modules.logging.enabled") {
-		t.Fatalf("logging disable was accepted: %v", err)
+	if _, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules:\n  logging:\n    enabled: false\n")); err != nil {
+		t.Fatalf("optional logging disable was rejected: %v", err)
 	}
 }
 

@@ -503,7 +503,7 @@ func TestArtifactDefinitionDigestBindsBuildInputs(t *testing.T) {
 
 func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	root := filepath.Join("..", "..", "images")
-	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "portal/image.yaml", "tailnet-router/image.yaml", "bifrost/image.yaml", "printer/image.yaml", "aiops/image.yaml"}
+	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "tailnet-router/image.yaml", "bifrost/image.yaml", "printer/image.yaml", "aiops/image.yaml"}
 	for _, relative := range paths {
 		data, err := os.ReadFile(filepath.Join(root, relative))
 		if err != nil {
@@ -896,7 +896,6 @@ func TestApplianceBuildEmbedsDefinitionIdentityWithoutContentEvidence(t *testing
 		"write_artifact_identity \"$rootfs\" dns",
 		"write_artifact_identity \"$rootfs\" logging",
 		"write_artifact_identity \"$rootfs\" monitoring",
-		"write_artifact_identity \"$rootfs\" portal",
 		"ConditionPathExists=/etc/blocky/config.yml",
 		"-upload \"$artifact_identity:/usr/lib/boetticher/artifact.json\"",
 	} {
