@@ -1196,6 +1196,22 @@ func validateExistingQEMUVolumes(current map[string]any, plan Plan, guest GuestP
 	return nil
 }
 
+func validateNoUndeclaredQEMUPersistentVolumes(current map[string]any, expected GuestPlan) error {
+	for key := range current {
+		if !strings.HasPrefix(key, "scsi") {
+			continue
+		}
+		index, ok := qemuSCSIIndex(key)
+		if !ok || index == 0 {
+			continue
+		}
+		if index > len(expected.Volumes) {
+			return fmt.Errorf("HOLD: guest %s has an undeclared persistent volume %s", expected.Name, key)
+		}
+	}
+	return nil
+}
+
 // validateForcedFirewallRootReplacementVolumes proves that a manual firewall
 // root recovery cannot detach, overwrite, or silently adopt a persistent disk.
 // Storage migration remains permitted afterwards, so the source storage does

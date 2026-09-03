@@ -45,6 +45,19 @@ func PurgeModule(ctx context.Context, client *Client, plan Plan, module string) 
 		if err := validateExistingGuest(current, guest); err != nil {
 			return fmt.Errorf("refusing to purge %s: ownership proof failed: %w", guest.Name, err)
 		}
+		switch guest.Kind {
+		case KindQEMU:
+			if err := validateNoUndeclaredQEMUPersistentVolumes(current, guest); err != nil {
+				return fmt.Errorf("refusing to purge %s: persistent-volume ownership proof failed: %w", guest.Name, err)
+			}
+			if err := validateExistingQEMUVolumes(current, plan, guest); err != nil {
+				return fmt.Errorf("refusing to purge %s: persistent-volume ownership proof failed: %w", guest.Name, err)
+			}
+		case KindLXC:
+			if err := validateExistingGuestVolumes(current, guest); err != nil {
+				return fmt.Errorf("refusing to purge %s: persistent-volume ownership proof failed: %w", guest.Name, err)
+			}
+		}
 		var purgeErr error
 		switch guest.Kind {
 		case KindQEMU:
