@@ -99,6 +99,12 @@ func TestReleaseBundleSignsAndAtomicallyImportsQualifiedArtifacts(t *testing.T) 
 	if resolvedCompanion != filepath.Join(root, "generated", "release", filepath.FromSlash(CompanionStreamDeckPath)) {
 		t.Fatalf("resolved companion path = %q", resolvedCompanion)
 	}
+	if err := os.WriteFile(filepath.Join(destination, "evidence", artifact.Name, "sbom.json"), []byte("tampered"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveImportedArtifact(root, artifact); err == nil || !strings.Contains(err.Error(), "signed digest verification") {
+		t.Fatalf("mutated imported qualification sidecar was accepted: %v", err)
+	}
 	reformatted := filepath.Join(root, "reformatted.tar.gz")
 	rewriteReleaseManifest(t, bundlePath, reformatted)
 	if _, err := ImportReleaseBundle(reformatted, filepath.Join(root, "reformatted-import"), []TrustedReleaseKey{{ID: "release-2026", PublicKey: public}}, "0.5.0", model.APIVersion, model.SchemaVersion); err == nil {

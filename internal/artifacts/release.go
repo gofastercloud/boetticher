@@ -751,7 +751,11 @@ func ResolveImportedArtifact(root string, requested model.Artifact) (model.Artif
 	releaseRoot := filepath.Join(root, "generated", "release")
 	artifactPath := filepath.Join(releaseRoot, filepath.FromSlash(selected.ArtifactPath))
 	evidencePath := filepath.Join(releaseRoot, filepath.FromSlash(selected.EvidencePath))
-	artifactData, err := readReleaseFile(artifactPath)
+	manifestFiles := make(map[string]ReleaseFile, len(manifest.Files))
+	for _, file := range manifest.Files {
+		manifestFiles[file.Path] = file
+	}
+	artifactData, err := readImportedReleaseMember(artifactPath, manifestFiles, selected.ArtifactPath)
 	if err != nil {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("read imported artifact %s: %w", requested.Name, err)
 	}
@@ -759,7 +763,7 @@ func ResolveImportedArtifact(root string, requested model.Artifact) (model.Artif
 	if hex.EncodeToString(artifactSum[:]) != selected.Artifact.ContentSHA256 {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("imported artifact %s content digest differs from manifest", requested.Name)
 	}
-	evidenceData, err := pathguard.ReadFileLimited(evidencePath, maxEvidenceJSONBytes)
+	evidenceData, err := readImportedReleaseMember(evidencePath, manifestFiles, selected.EvidencePath)
 	if err != nil {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("read imported evidence %s: %w", requested.Name, err)
 	}
@@ -784,7 +788,7 @@ func ResolveImportedArtifact(root string, requested model.Artifact) (model.Artif
 			continue
 		}
 		memberPath := filepath.Join(releaseRoot, "evidence", requested.Name, required.suffix)
-		data, readErr := pathguard.ReadFileLimited(memberPath, MaxReleaseFileBytes)
+		data, readErr := readImportedReleaseMember(memberPath, manifestFiles, filepath.ToSlash(filepath.Join("evidence", requested.Name, required.suffix)))
 		if readErr != nil {
 			return model.Artifact{}, Evidence{}, fmt.Errorf("read imported %s: %w", required.suffix, readErr)
 		}
@@ -795,6 +799,22 @@ func ResolveImportedArtifact(root string, requested model.Artifact) (model.Artif
 	}
 	evidence.ArtifactPath = artifactPath
 	return selected.Artifact, evidence, nil
+}
+
+func readImportedReleaseMember(path string, manifestFiles map[string]ReleaseFile, manifestPath string) ([]byte, error) {
+	declared, ok := manifestFiles[manifestPath]
+	if !ok {
+		return nil, fmt.Errorf("release member %q is not declared", manifestPath)
+	}
+	data, err := pathguard.ReadFileLimited(path, MaxReleaseFileBytes)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(data)
+	if int64(len(data)) != declared.SizeBytes || hex.EncodeToString(sum[:]) != declared.SHA256 {
+		return nil, fmt.Errorf("release member %q failed signed digest verification", manifestPath)
+	}
+	return data, nil
 }
 
 // ResolveImportedCompanion binds the StreamDeck runtime to the authenticated
