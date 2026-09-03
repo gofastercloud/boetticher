@@ -257,10 +257,12 @@ func validateCommandForm(t *testing.T, fields []string) {
 	}
 	known := map[string]map[string]bool{
 		"init":               {"--site-dir": true, "--age-identity": true, "--external-firewall": true, "--storage-profile": true, "--storage-device": true},
+		"bundle":             {"--site": true, "--json": true},
 		"bootstrap-endpoint": {"--site": true},
+		"plan":               {"--site": true, "--live": true, "--json": true},
 		"preflight":          {"--site": true, "--live": true, "--record": true, "--bootstrap-address": true, "--trunk-interface": true},
 		"bootstrap":          {"--site": true, "--recovery-confirmed": true, "--replace-scoped-credentials": true, "--trunk-interface": true, "--dry-run": true, "--proxmox-ca": true, "--insecure": true},
-		"deploy":             {"--site": true, "--dry-run": true, "--confirm": true, "--replace-firewall": true, "--recreate-legacy-lxcs": true, "--proxmox-ca": true, "--insecure": true},
+		"deploy":             {"--plan": true, "--site": true, "--dry-run": true, "--confirm": true, "--replace-firewall": true, "--recreate-legacy-lxcs": true},
 		"status":             {"--site": true, "--live": true, "--verbose": true, "--json": true},
 		"update":             {"--site": true, "--dry-run": true, "--confirm": true},
 		"logs":               {"--site": true, "--unit": true, "--since": true, "--priority": true, "--limit": true},

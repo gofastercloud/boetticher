@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"sort"
 
 	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/backup"
@@ -27,18 +28,35 @@ const deploymentPlanFormatVersion = 1
 // are included when --live is requested and are never written as desired
 // state.
 type deploymentPlan struct {
-	Version         int           `json:"version"`
-	ReleaseVersion  string        `json:"release_version"`
-	ReleaseDigest   string        `json:"release_digest"`
-	ModelRevision   string        `json:"model_revision"`
-	Live            bool          `json:"live"`
-	Proxmox         proxmox.Plan  `json:"proxmox"`
-	Firewall        firewall.Plan `json:"firewall"`
-	Storage         storage.Plan  `json:"storage"`
-	Backup          backup.Plan   `json:"backup"`
-	ReplaceFirewall bool          `json:"replace_firewall,omitempty"`
-	RecreateLegacy  bool          `json:"recreate_legacy_lxcs,omitempty"`
-	Digest          string        `json:"digest"`
+	Version         int                    `json:"version"`
+	ReleaseVersion  string                 `json:"release_version"`
+	ReleaseDigest   string                 `json:"release_digest"`
+	ModelRevision   string                 `json:"model_revision"`
+	Live            bool                   `json:"live"`
+	Proxmox         proxmox.Plan           `json:"proxmox"`
+	Firewall        firewall.Plan          `json:"firewall"`
+	Storage         storage.Plan           `json:"storage"`
+	Backup          backup.Plan            `json:"backup"`
+	Observations    deploymentObservations `json:"observations,omitempty"`
+	ReplaceFirewall bool                   `json:"replace_firewall,omitempty"`
+	RecreateLegacy  bool                   `json:"recreate_legacy_lxcs,omitempty"`
+	Digest          string                 `json:"digest"`
+}
+
+// deploymentObservations are read-only facts captured alongside a live plan.
+// They are part of the digest so APPLY cannot silently use a plan made for a
+// different set of existing guests. Desired state remains in the typed plans;
+// these facts never become configuration.
+type deploymentObservations struct {
+	Node   string                       `json:"node,omitempty"`
+	Guests []deploymentGuestObservation `json:"guests,omitempty"`
+}
+
+type deploymentGuestObservation struct {
+	VMID        int    `json:"vmid"`
+	Name        string `json:"name"`
+	Exists      bool   `json:"exists"`
+	Replacement bool   `json:"replacement"`
 }
 
 func runPlan(args []string, out io.Writer) error {
@@ -164,18 +182,41 @@ func addLivePlanObservations(ctx context.Context, siteDir string, s model.Site, 
 	if _, err := expectedStorageStatus(statuses, plan.Storage); err != nil {
 		return fmt.Errorf("required storage is not ready: %w", err)
 	}
-	if _, err := inspectDeploymentGuestStates(ctx, client, node, deploymentGuestPlans(s, plan.Proxmox)); err != nil {
+	endpointLookup := net.LookupIP
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		rootRunner := proxmoxRootSSHRunner(s, siteDir)
+		if err := proxmox.WaitForSSH(ctx, rootRunner, s.BootstrapAddress, "root", 1, 0); err != nil {
+			return fmt.Errorf("observe authenticated bootstrap path: %w", err)
+		}
+		endpointLookup = endpointLookupWithFallback(net.LookupIP, remoteEndpointResolver(ctx, rootRunner, s.BootstrapAddress, "root"))
+	}
+	guestPlans := deploymentGuestPlans(s, plan.Proxmox)
+	guestStates, err := inspectDeploymentGuestStates(ctx, client, node, guestPlans)
+	if err != nil {
 		return fmt.Errorf("observe planned guest state: %w", err)
 	}
+	plan.Observations = deploymentObservations{Node: node, Guests: deploymentGuestObservations(guestPlans, guestStates)}
 	if plan.Firewall.AirVPN != nil {
-		resolved, err := firewall.BindAirVPNEndpoint(plan.Firewall, net.LookupIP)
+		resolved, err := firewall.BindAirVPNEndpoint(plan.Firewall, endpointLookup)
 		if err != nil {
 			return err
 		}
 		plan.Firewall = resolved
 	}
-	if err := validateExternalEndpointReadiness(s, net.LookupIP); err != nil {
+	if err := validateExternalEndpointReadiness(s, endpointLookup); err != nil {
 		return err
 	}
 	return nil
+}
+
+func deploymentGuestObservations(guests []proxmox.GuestPlan, states map[int]deploymentGuestArtifactState) []deploymentGuestObservation {
+	observations := make([]deploymentGuestObservation, 0, len(guests))
+	for _, guest := range guests {
+		state := states[guest.VMID]
+		observations = append(observations, deploymentGuestObservation{
+			VMID: guest.VMID, Name: guest.Name, Exists: state.exists, Replacement: state.replacement,
+		})
+	}
+	sort.Slice(observations, func(i, j int) bool { return observations[i].VMID < observations[j].VMID })
+	return observations
 }

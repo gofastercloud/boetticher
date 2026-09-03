@@ -28,11 +28,12 @@ const (
 	ReleaseSignatureName       = "manifest.sig"
 	MaxReleaseManifestBytes    = 1 << 20
 	MaxReleaseFileBytes        = int64(8 << 30)
+	MaxReleaseBundleBytes      = int64(32 << 30)
 )
 
 // ReleaseManifest is the compatibility and integrity contract for a
 // prepared release. It contains no workstation paths, timestamps, or secret
-// values; the signature covers its canonical JSON representation.
+// values; the signature covers the exact manifest.json bytes.
 type ReleaseManifest struct {
 	FormatVersion              string            `json:"format_version"`
 	ReleaseVersion             string            `json:"release_version"`
@@ -169,7 +170,8 @@ func BuildReleaseBundleWithMetadata(output string, metadata ReleaseBuildMetadata
 	if manifest.QualificationPolicyVersion == "" {
 		manifest.QualificationPolicyVersion = QualificationPolicyVersion
 	}
-	members := make(map[string][]byte)
+	members := make([]releaseMember, 0, len(inputs)*2)
+	var totalMemberBytes int64
 	seenArtifacts := make(map[string]struct{}, len(inputs))
 	for _, input := range inputs {
 		if err := validateReleaseInput(input); err != nil {
@@ -179,16 +181,20 @@ func BuildReleaseBundleWithMetadata(output string, metadata ReleaseBuildMetadata
 			return ReleaseManifest{}, fmt.Errorf("release bundle repeats artifact %q", input.Artifact.Name)
 		}
 		seenArtifacts[input.Artifact.Name] = struct{}{}
-		artifactBytes, err := readReleaseFile(input.ArtifactPath)
+		artifactPath := filepath.ToSlash(filepath.Join("artifacts", input.Artifact.Name, filepath.Base(input.ArtifactPath)))
+		artifactMember, err := newReleaseMember(artifactPath, input.ArtifactPath, "artifact", input.Artifact.Name)
 		if err != nil {
 			return ReleaseManifest{}, fmt.Errorf("read artifact %s: %w", input.Artifact.Name, err)
 		}
-		artifactPath := filepath.ToSlash(filepath.Join("artifacts", input.Artifact.Name, filepath.Base(input.ArtifactPath)))
-		artifactSum := sha256.Sum256(artifactBytes)
-		if input.Artifact.ContentSHA256 != hex.EncodeToString(artifactSum[:]) {
+		if input.Artifact.ContentSHA256 != artifactMember.SHA256 {
 			return ReleaseManifest{}, fmt.Errorf("artifact %s content checksum does not match its qualified identity", input.Artifact.Name)
 		}
-		members[artifactPath] = artifactBytes
+		totalMemberBytes += artifactMember.Size
+		if totalMemberBytes > MaxReleaseBundleBytes {
+			return ReleaseManifest{}, errors.New("release bundle exceeds the permitted uncompressed size")
+		}
+		members = append(members, artifactMember)
+		artifactPath = artifactMember.Path
 		manifest.Artifacts = append(manifest.Artifacts, ReleaseArtifact{Artifact: input.Artifact, ArtifactPath: artifactPath, EvidencePath: filepath.ToSlash(filepath.Join("evidence", input.Artifact.Name+".json"))})
 
 		evidenceBytes, err := pathguard.ReadFileLimited(input.EvidencePath, maxEvidenceJSONBytes)
@@ -202,13 +208,46 @@ func BuildReleaseBundleWithMetadata(output string, metadata ReleaseBuildMetadata
 		if !evidence.Qualified || evidence.Artifact != input.Artifact || evidence.ContentSHA256 != input.Artifact.ContentSHA256 {
 			return ReleaseManifest{}, fmt.Errorf("qualification evidence for %s is not bound to the requested artifact", input.Artifact.Name)
 		}
+		if err := validateReleaseQualification(evidence); err != nil {
+			return ReleaseManifest{}, fmt.Errorf("qualification evidence for %s: %w", input.Artifact.Name, err)
+		}
 		evidence.ArtifactPath = artifactPath
 		rewrittenEvidence, err := json.MarshalIndent(evidence, "", "  ")
 		if err != nil {
 			return ReleaseManifest{}, fmt.Errorf("encode qualification evidence %s: %w", input.Artifact.Name, err)
 		}
 		evidencePath := filepath.ToSlash(filepath.Join("evidence", input.Artifact.Name+".json"))
-		members[evidencePath] = append(rewrittenEvidence, '\n')
+		evidenceMember, err := newInlineReleaseMember(evidencePath, append(rewrittenEvidence, '\n'), "evidence", input.Artifact.Name)
+		if err != nil {
+			return ReleaseManifest{}, fmt.Errorf("prepare qualification evidence %s: %w", input.Artifact.Name, err)
+		}
+		totalMemberBytes += evidenceMember.Size
+		if totalMemberBytes > MaxReleaseBundleBytes {
+			return ReleaseManifest{}, errors.New("release bundle exceeds the permitted uncompressed size")
+		}
+		members = append(members, evidenceMember)
+		for _, required := range releaseQualificationFiles() {
+			name := filepath.ToSlash(filepath.Join("evidence", input.Artifact.Name, required.filename))
+			source, exists := input.QualificationFiles[name]
+			if !exists {
+				return ReleaseManifest{}, fmt.Errorf("qualification file %s is missing mandatory %s evidence", name, required.name)
+			}
+			member, memberErr := newReleaseMember(name, source, "evidence", input.Artifact.Name)
+			if memberErr != nil {
+				return ReleaseManifest{}, fmt.Errorf("read qualification file %s: %w", name, memberErr)
+			}
+			if member.SHA256 != required.digest(evidence) {
+				return ReleaseManifest{}, fmt.Errorf("qualification file %s does not match its evidence digest", name)
+			}
+			if releaseMemberExists(members, name) {
+				return ReleaseManifest{}, fmt.Errorf("release bundle repeats file %q", name)
+			}
+			totalMemberBytes += member.Size
+			if totalMemberBytes > MaxReleaseBundleBytes {
+				return ReleaseManifest{}, errors.New("release bundle exceeds the permitted uncompressed size")
+			}
+			members = append(members, member)
+		}
 		for name, source := range input.QualificationFiles {
 			if err := validateBundlePath(name); err != nil {
 				return ReleaseManifest{}, err
@@ -217,37 +256,25 @@ func BuildReleaseBundleWithMetadata(output string, metadata ReleaseBuildMetadata
 			if name != filepath.ToSlash(filepath.Join("evidence", input.Artifact.Name, filepath.Base(name))) {
 				return ReleaseManifest{}, fmt.Errorf("qualification file %q must be beneath evidence/%s/", name, input.Artifact.Name)
 			}
-			data, readErr := readReleaseFile(source)
-			if readErr != nil {
-				return ReleaseManifest{}, fmt.Errorf("read qualification file %s: %w", name, readErr)
+			if releaseMemberExists(members, name) {
+				continue
 			}
-			if _, exists := members[name]; exists {
+			member, memberErr := newReleaseMember(name, source, "evidence", input.Artifact.Name)
+			if memberErr != nil {
+				return ReleaseManifest{}, fmt.Errorf("read qualification file %s: %w", name, memberErr)
+			}
+			if releaseMemberExists(members, name) {
 				return ReleaseManifest{}, fmt.Errorf("release bundle repeats file %q", name)
 			}
-			members[name] = data
+			totalMemberBytes += member.Size
+			if totalMemberBytes > MaxReleaseBundleBytes {
+				return ReleaseManifest{}, errors.New("release bundle exceeds the permitted uncompressed size")
+			}
+			members = append(members, member)
 		}
 	}
-	for path, data := range members {
-		kind, artifact := "artifact", ""
-		if strings.HasPrefix(path, "evidence/") {
-			kind = "evidence"
-			parts := strings.Split(path, "/")
-			if len(parts) == 2 {
-				artifact = strings.TrimSuffix(parts[1], ".json")
-			} else if len(parts) >= 3 {
-				artifact = parts[1]
-			} else {
-				return ReleaseManifest{}, fmt.Errorf("evidence member path %q is incomplete", path)
-			}
-		} else if strings.HasPrefix(path, "artifacts/") {
-			parts := strings.Split(path, "/")
-			if len(parts) < 3 {
-				return ReleaseManifest{}, fmt.Errorf("artifact member path %q is incomplete", path)
-			}
-			artifact = parts[1]
-		}
-		sum := sha256.Sum256(data)
-		manifest.Files = append(manifest.Files, ReleaseFile{Path: path, SHA256: hex.EncodeToString(sum[:]), SizeBytes: int64(len(data)), Kind: kind, Artifact: artifact})
+	for _, member := range members {
+		manifest.Files = append(manifest.Files, ReleaseFile{Path: member.Path, SHA256: member.SHA256, SizeBytes: member.Size, Kind: member.Kind, Artifact: member.Artifact})
 	}
 	sort.Slice(manifest.Artifacts, func(i, j int) bool { return manifest.Artifacts[i].Artifact.Name < manifest.Artifacts[j].Artifact.Name })
 	sort.Slice(manifest.Files, func(i, j int) bool { return manifest.Files[i].Path < manifest.Files[j].Path })
@@ -305,6 +332,12 @@ func ImportReleaseBundle(bundlePath, destination string, trusted []TrustedReleas
 	if err != nil {
 		return ReleaseManifest{}, fmt.Errorf("open release bundle compression: %w", err)
 	}
+	gzipClosed := false
+	defer func() {
+		if !gzipClosed {
+			_ = gzipReader.Close()
+		}
+	}()
 	tarReader := tar.NewReader(gzipReader)
 	manifestHeader, err := tarReader.Next()
 	if err != nil || manifestHeader.Name != ReleaseManifestName || manifestHeader.Typeflag != tar.TypeReg {
@@ -313,16 +346,6 @@ func ImportReleaseBundle(bundlePath, destination string, trusted []TrustedReleas
 	manifestBytes, err := io.ReadAll(io.LimitReader(tarReader, MaxReleaseManifestBytes+1))
 	if err != nil || int64(len(manifestBytes)) > MaxReleaseManifestBytes {
 		return ReleaseManifest{}, errors.New("release manifest is invalid or too large")
-	}
-	var manifest ReleaseManifest
-	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-		return ReleaseManifest{}, fmt.Errorf("decode release manifest: %w", err)
-	}
-	if err := validateReleaseManifest(manifest); err != nil {
-		return ReleaseManifest{}, err
-	}
-	if manifest.ReleaseVersion == "" || manifest.ReleaseVersion != platformVersion || manifest.SiteAPIVersion != siteAPIVersion || manifest.SchemaVersion != schemaVersion || manifest.Architecture != Architecture {
-		return ReleaseManifest{}, errors.New("release bundle compatibility does not match this controller")
 	}
 	signatureHeader, err := tarReader.Next()
 	if err != nil || signatureHeader.Name != ReleaseSignatureName || signatureHeader.Typeflag != tar.TypeReg {
@@ -336,8 +359,18 @@ func ImportReleaseBundle(bundlePath, destination string, trusted []TrustedReleas
 	if err := json.Unmarshal(signatureBytes, &signature); err != nil {
 		return ReleaseManifest{}, fmt.Errorf("decode release signature: %w", err)
 	}
-	if err := verifyManifest(manifest, signature, trusted); err != nil {
+	if err := verifyManifest(manifestBytes, signature, trusted); err != nil {
 		return ReleaseManifest{}, err
+	}
+	var manifest ReleaseManifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		return ReleaseManifest{}, fmt.Errorf("decode release manifest: %w", err)
+	}
+	if err := validateReleaseManifest(manifest); err != nil {
+		return ReleaseManifest{}, err
+	}
+	if manifest.ReleaseVersion == "" || manifest.ReleaseVersion != platformVersion || manifest.SiteAPIVersion != siteAPIVersion || manifest.SchemaVersion != schemaVersion || manifest.Architecture != Architecture {
+		return ReleaseManifest{}, errors.New("release bundle compatibility does not match this controller")
 	}
 
 	parent := filepath.Dir(destination)
@@ -354,6 +387,7 @@ func ImportReleaseBundle(bundlePath, destination string, trusted []TrustedReleas
 		expected[member.Path] = member
 	}
 	seen := make(map[string]struct{}, len(expected))
+	var totalMemberBytes int64
 	for {
 		header, nextErr := tarReader.Next()
 		if errors.Is(nextErr, io.EOF) {
@@ -375,6 +409,10 @@ func ImportReleaseBundle(bundlePath, destination string, trusted []TrustedReleas
 		if header.Size != member.SizeBytes || header.Size < 0 || header.Size > MaxReleaseFileBytes {
 			return ReleaseManifest{}, fmt.Errorf("release member %q has unexpected size", header.Name)
 		}
+		if totalMemberBytes > MaxReleaseBundleBytes-header.Size {
+			return ReleaseManifest{}, errors.New("release exceeds the permitted uncompressed size")
+		}
+		totalMemberBytes += header.Size
 		if err := validateBundlePath(header.Name); err != nil {
 			return ReleaseManifest{}, err
 		}
@@ -400,6 +438,10 @@ func ImportReleaseBundle(bundlePath, destination string, trusted []TrustedReleas
 			return ReleaseManifest{}, fmt.Errorf("release member %q failed digest verification", path)
 		}
 	}
+	if err := gzipReader.Close(); err != nil {
+		return ReleaseManifest{}, fmt.Errorf("verify release compression: %w", err)
+	}
+	gzipClosed = true
 	if err := pathguard.Rename(stage, destination); err != nil {
 		return ReleaseManifest{}, fmt.Errorf("install release bundle: %w", err)
 	}
@@ -446,17 +488,13 @@ func canonicalManifest(manifest ReleaseManifest) ([]byte, error) {
 	return json.Marshal(manifest)
 }
 
-func verifyManifest(manifest ReleaseManifest, signature ManifestSignature, trusted []TrustedReleaseKey) error {
+func verifyManifest(manifestBytes []byte, signature ManifestSignature, trusted []TrustedReleaseKey) error {
 	if signature.Algorithm != "ed25519" || signature.KeyID == "" {
 		return errors.New("release signature algorithm or key id is invalid")
 	}
 	raw, err := base64.StdEncoding.DecodeString(signature.Signature)
 	if err != nil || len(raw) != ed25519.SignatureSize {
 		return errors.New("release signature encoding is invalid")
-	}
-	manifestBytes, err := canonicalManifest(manifest)
-	if err != nil {
-		return err
 	}
 	for _, key := range trusted {
 		if key.ID == signature.KeyID && len(key.PublicKey) == ed25519.PublicKeySize && ed25519.Verify(key.PublicKey, manifestBytes, raw) {
@@ -484,6 +522,13 @@ func validateReleaseManifest(manifest ReleaseManifest) error {
 		if _, exists := files[file.Path]; exists {
 			return fmt.Errorf("release manifest repeats file %q", file.Path)
 		}
+		artifact, err := releaseFileArtifact(file.Path, file.Kind)
+		if err != nil {
+			return err
+		}
+		if file.Artifact != artifact {
+			return fmt.Errorf("release member %q is not bound to artifact %q", file.Path, file.Artifact)
+		}
 		files[file.Path] = file
 	}
 	seenArtifacts := map[string]struct{}{}
@@ -497,16 +542,90 @@ func validateReleaseManifest(manifest ReleaseManifest) error {
 		if err := validateBundlePath(artifact.EvidencePath); err != nil {
 			return err
 		}
+		if got, err := releaseFileArtifact(artifact.ArtifactPath, "artifact"); err != nil || got != artifact.Artifact.Name {
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("release artifact %s has an invalid content path", artifact.Artifact.Name)
+		}
+		if artifact.EvidencePath != filepath.ToSlash(filepath.Join("evidence", artifact.Artifact.Name+".json")) {
+			return fmt.Errorf("release artifact %s has an invalid evidence path", artifact.Artifact.Name)
+		}
 		if files[artifact.ArtifactPath].Kind != "artifact" || files[artifact.EvidencePath].Kind != "evidence" {
 			return fmt.Errorf("release artifact %s is missing its mandatory members", artifact.Artifact.Name)
 		}
 		if files[artifact.ArtifactPath].SHA256 != artifact.Artifact.ContentSHA256 || files[artifact.ArtifactPath].Artifact != artifact.Artifact.Name {
 			return fmt.Errorf("release artifact %s content member is not bound to its identity", artifact.Artifact.Name)
 		}
+		for _, required := range releaseQualificationFiles() {
+			path := filepath.ToSlash(filepath.Join("evidence", artifact.Artifact.Name, required.filename))
+			member, exists := files[path]
+			if !exists || member.Kind != "evidence" || member.Artifact != artifact.Artifact.Name {
+				return fmt.Errorf("release artifact %s is missing mandatory %s evidence", artifact.Artifact.Name, required.name)
+			}
+		}
 		if _, exists := seenArtifacts[artifact.Artifact.Name]; exists {
 			return fmt.Errorf("release manifest repeats artifact %q", artifact.Artifact.Name)
 		}
 		seenArtifacts[artifact.Artifact.Name] = struct{}{}
+	}
+	for path, file := range files {
+		if _, ok := seenArtifacts[file.Artifact]; !ok {
+			return fmt.Errorf("release member %q references an unknown artifact", path)
+		}
+	}
+	return nil
+}
+
+func releaseFileArtifact(path, kind string) (string, error) {
+	parts := strings.Split(path, "/")
+	switch kind {
+	case "artifact":
+		if len(parts) != 3 || parts[0] != "artifacts" || parts[1] == "" || parts[2] == "" {
+			return "", fmt.Errorf("artifact member path %q is incomplete", path)
+		}
+		return parts[1], nil
+	case "evidence":
+		if len(parts) == 2 && strings.HasSuffix(parts[1], ".json") {
+			artifact := strings.TrimSuffix(parts[1], ".json")
+			if artifact == "" {
+				return "", fmt.Errorf("evidence member path %q is incomplete", path)
+			}
+			return artifact, nil
+		}
+		if len(parts) >= 3 && parts[0] == "evidence" && parts[1] != "" && parts[2] != "" {
+			return parts[1], nil
+		}
+		return "", fmt.Errorf("evidence member path %q is incomplete", path)
+	default:
+		return "", fmt.Errorf("release member path %q has unknown kind %q", path, kind)
+	}
+}
+
+type releaseQualificationFile struct {
+	name     string
+	filename string
+	digest   func(Evidence) string
+}
+
+func releaseQualificationFiles() []releaseQualificationFile {
+	return []releaseQualificationFile{
+		{name: "package manifest", filename: "package-manifest.txt", digest: func(e Evidence) string { return e.PackageManifestSHA }},
+		{name: "SBOM", filename: "sbom.json", digest: func(e Evidence) string { return e.SBOMSHA256 }},
+		{name: "Trivy report", filename: "trivy.json", digest: func(e Evidence) string { return e.TrivyReportSHA256 }},
+		{name: "builder provenance", filename: "builder-provenance.json", digest: func(e Evidence) string { return e.BuilderProvenanceSHA256 }},
+		{name: "smoke", filename: "smoke.txt", digest: func(e Evidence) string { return e.SmokeReportSHA256 }},
+	}
+}
+
+func validateReleaseQualification(evidence Evidence) error {
+	if !evidence.Qualified || evidence.QualificationEvaluator != QualificationEvaluator || evidence.QualificationPolicyVersion != QualificationPolicyVersion || !evidence.ScanCompleted {
+		return errors.New("release artifact qualification evidence is not complete and authorized")
+	}
+	for _, required := range releaseQualificationFiles() {
+		if !sha256Pattern.MatchString(required.digest(evidence)) {
+			return fmt.Errorf("release qualification requires a %s digest", required.name)
+		}
 	}
 	return nil
 }
@@ -524,18 +643,30 @@ func ImportedReleaseManifest(root string) (ReleaseManifest, string, error) {
 	if err != nil {
 		return ReleaseManifest{}, "", err
 	}
+	signaturePath := filepath.Join(root, "generated", "release", ReleaseSignatureName)
+	signatureData, err := pathguard.ReadFileLimited(signaturePath, MaxReleaseManifestBytes)
+	if err != nil {
+		return ReleaseManifest{}, "", fmt.Errorf("read imported release signature: %w", err)
+	}
+	var signature ManifestSignature
+	if err := json.Unmarshal(signatureData, &signature); err != nil {
+		return ReleaseManifest{}, "", fmt.Errorf("decode imported release signature: %w", err)
+	}
+	trusted, err := TrustedReleaseKeys()
+	if err != nil {
+		return ReleaseManifest{}, "", err
+	}
+	if err := verifyManifest(data, signature, trusted); err != nil {
+		return ReleaseManifest{}, "", fmt.Errorf("verify imported release signature: %w", err)
+	}
 	var manifest ReleaseManifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		return ReleaseManifest{}, "", err
+		return ReleaseManifest{}, "", fmt.Errorf("decode imported release manifest: %w", err)
 	}
 	if err := validateReleaseManifest(manifest); err != nil {
 		return ReleaseManifest{}, "", err
 	}
-	canonical, err := canonicalManifest(manifest)
-	if err != nil {
-		return ReleaseManifest{}, "", err
-	}
-	sum := sha256.Sum256(canonical)
+	sum := sha256.Sum256(data)
 	return manifest, hex.EncodeToString(sum[:]), nil
 }
 
@@ -584,10 +715,15 @@ func ResolveImportedArtifact(root string, requested model.Artifact) (model.Artif
 	if !evidence.Qualified || evidence.Artifact != requested || evidence.ContentSHA256 != requested.ContentSHA256 || evidence.DefinitionSHA256 != requested.DefinitionSHA256 || evidence.ArtifactPath != selected.ArtifactPath {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("imported evidence for %s is not bound to the manifest", requested.Name)
 	}
+	if err := validateReleaseQualification(evidence); err != nil {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("imported evidence for %s: %w", requested.Name, err)
+	}
 	for _, required := range []struct{ digest, suffix string }{
 		{evidence.PackageManifestSHA, "package-manifest.txt"},
 		{evidence.SBOMSHA256, "sbom.json"},
 		{evidence.TrivyReportSHA256, "trivy.json"},
+		{evidence.BuilderProvenanceSHA256, "builder-provenance.json"},
+		{evidence.SmokeReportSHA256, "smoke.txt"},
 	} {
 		if required.digest == "" {
 			continue
@@ -639,6 +775,9 @@ func validateReleaseInput(input ReleaseInput) error {
 	if input.Artifact.Name == "" || input.Artifact.ContentSHA256 == "" || !isSHA256(input.Artifact.ContentSHA256) || input.ArtifactPath == "" || input.EvidencePath == "" {
 		return errors.New("release input has incomplete artifact identity")
 	}
+	if strings.ContainsAny(input.Artifact.Name, "/\\\x00") || input.Artifact.Name == "." || input.Artifact.Name == ".." {
+		return fmt.Errorf("release artifact name %q is unsafe", input.Artifact.Name)
+	}
 	if err := validateSourcePath(input.ArtifactPath); err != nil {
 		return err
 	}
@@ -646,6 +785,72 @@ func validateReleaseInput(input ReleaseInput) error {
 		return err
 	}
 	return nil
+}
+
+type releaseMember struct {
+	Path     string
+	Source   string
+	Data     []byte
+	Inline   bool
+	SHA256   string
+	Size     int64
+	Kind     string
+	Artifact string
+}
+
+func newReleaseMember(path, source, kind, artifact string) (releaseMember, error) {
+	if err := validateBundlePath(path); err != nil {
+		return releaseMember{}, err
+	}
+	if err := validateSourcePath(source); err != nil {
+		return releaseMember{}, err
+	}
+	sum, size, err := hashReleaseFile(source)
+	if err != nil {
+		return releaseMember{}, err
+	}
+	return releaseMember{Path: filepath.ToSlash(path), Source: source, SHA256: sum, Size: size, Kind: kind, Artifact: artifact}, nil
+}
+
+func newInlineReleaseMember(path string, data []byte, kind, artifact string) (releaseMember, error) {
+	if err := validateBundlePath(path); err != nil {
+		return releaseMember{}, err
+	}
+	if int64(len(data)) > MaxReleaseFileBytes {
+		return releaseMember{}, errors.New("release member exceeds the permitted size")
+	}
+	sum := sha256.Sum256(data)
+	return releaseMember{Path: filepath.ToSlash(path), Data: data, Inline: true, SHA256: hex.EncodeToString(sum[:]), Size: int64(len(data)), Kind: kind, Artifact: artifact}, nil
+}
+
+func hashReleaseFile(source string) (string, int64, error) {
+	file, err := os.Open(source)
+	if err != nil {
+		return "", 0, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > MaxReleaseFileBytes {
+		return "", 0, errors.New("release source has an invalid size or type")
+	}
+	hash := sha256.New()
+	written, err := io.Copy(hash, io.LimitReader(file, MaxReleaseFileBytes+1))
+	if err != nil {
+		return "", 0, err
+	}
+	if info.Size() > MaxReleaseFileBytes || written != info.Size() {
+		return "", 0, errors.New("release source exceeds the permitted size")
+	}
+	return hex.EncodeToString(hash.Sum(nil)), info.Size(), nil
+}
+
+func releaseMemberExists(members []releaseMember, path string) bool {
+	for _, member := range members {
+		if member.Path == path {
+			return true
+		}
+	}
+	return false
 }
 
 func readReleaseFile(path string) ([]byte, error) {
@@ -665,10 +870,10 @@ func readReleaseFile(path string) ([]byte, error) {
 	return pathguard.ReadFile(path)
 }
 
-func writeReleaseArchive(output string, manifest, signature []byte, members map[string][]byte) error {
-	// The archive is assembled in memory only for the manifest-sized release
-	// metadata and member framing. Artifact bytes are written directly to the
-	// destination stream below to avoid a second full copy.
+func writeReleaseArchive(output string, manifest, signature []byte, members []releaseMember) error {
+	// Artifact bytes stay on disk until they are streamed into the archive.
+	// Only the small manifest, signature, and rewritten evidence are retained
+	// in memory, so a release-sized image cannot double controller memory use.
 	file, err := os.CreateTemp(filepath.Dir(output), ".release-bundle-")
 	if err != nil {
 		return err
@@ -681,33 +886,48 @@ func writeReleaseArchive(output string, manifest, signature []byte, members map[
 	}
 	gzipWriter := gzip.NewWriter(file)
 	tarWriter := tar.NewWriter(gzipWriter)
-	writeMember := func(name string, data []byte) error {
-		header := &tar.Header{Name: name, Mode: 0600, Size: int64(len(data)), ModTime: time.Unix(0, 0).UTC(), Typeflag: tar.TypeReg}
+	writeMember := func(member releaseMember) error {
+		header := &tar.Header{Name: member.Path, Mode: 0600, Size: member.Size, ModTime: time.Unix(0, 0).UTC(), Typeflag: tar.TypeReg}
 		if err := tarWriter.WriteHeader(header); err != nil {
 			return err
 		}
-		_, err := tarWriter.Write(data)
-		return err
+		if member.Inline {
+			_, err := tarWriter.Write(member.Data)
+			return err
+		}
+		file, err := os.Open(member.Source)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		hash := sha256.New()
+		written, err := io.CopyN(io.MultiWriter(tarWriter, hash), file, member.Size)
+		if err != nil {
+			return err
+		}
+		if written != member.Size {
+			return io.ErrUnexpectedEOF
+		}
+		if hex.EncodeToString(hash.Sum(nil)) != member.SHA256 {
+			return fmt.Errorf("release source %q changed while the archive was assembled", member.Source)
+		}
+		return nil
 	}
-	if err := writeMember(ReleaseManifestName, manifest); err != nil {
+	if err := writeMember(releaseMember{Path: ReleaseManifestName, Data: manifest, Inline: true, Size: int64(len(manifest))}); err != nil {
 		_ = tarWriter.Close()
 		_ = gzipWriter.Close()
 		_ = file.Close()
 		return err
 	}
-	if err := writeMember(ReleaseSignatureName, signature); err != nil {
+	if err := writeMember(releaseMember{Path: ReleaseSignatureName, Data: signature, Inline: true, Size: int64(len(signature))}); err != nil {
 		_ = tarWriter.Close()
 		_ = gzipWriter.Close()
 		_ = file.Close()
 		return err
 	}
-	paths := make([]string, 0, len(members))
-	for path := range members {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	for _, path := range paths {
-		if err := writeMember(path, members[path]); err != nil {
+	sort.Slice(members, func(i, j int) bool { return members[i].Path < members[j].Path })
+	for _, member := range members {
+		if err := writeMember(member); err != nil {
 			_ = tarWriter.Close()
 			_ = gzipWriter.Close()
 			_ = file.Close()

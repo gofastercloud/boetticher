@@ -105,7 +105,9 @@ If Proxmox itself is fresh or the bootstrap path is lost, use the guarded recove
 boetticher bootstrap-endpoint set PROXMOX_HOME_IP --site ./my-boetticher
 boetticher preflight --site ./my-boetticher --live --record --trunk-interface IFACE
 boetticher bootstrap --site ./my-boetticher --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem --trunk-interface IFACE
-boetticher deploy --site ./my-boetticher --proxmox-ca /path/to/pve-root-ca.pem
+boetticher bundle import ./boetticher-0.5.0.tar.gz --site ./my-boetticher
+boetticher plan --site ./my-boetticher --live --json
+boetticher deploy --plan sha256:PLAN_DIGEST --site ./my-boetticher
 ```
 
 Use `--storage-confirmed` as well when the site uses the dedicated-data-disk profile, after checking the stable device identity.

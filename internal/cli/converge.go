@@ -110,19 +110,13 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
 	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
-	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
-	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS")
 	dryRun := fs.Bool("dry-run", false, "render and validate policy without connecting")
 	planDigestFlag := fs.String("plan", "", "exact immutable plan digest produced by boetticher plan --live")
-	rotateAirVPN := fs.Bool("rotate-airvpn-profile", false, "explicitly regenerate and retain the AirVPN WireGuard profile")
 	replaceFirewall := fs.Bool("replace-firewall", false, "replace only the managed firewall root disk after proving its persistent volumes")
 	recreateLegacyLXCs := fs.Bool("recreate-legacy-lxcs", false, "discard only proven legacy local-raw LXC state and recreate those appliances on planned storage")
 	confirm := fs.Bool("confirm", false, "confirm destructive appliance replacement or purge actions")
 	if err := fs.Parse(args); err != nil {
 		return err
-	}
-	if *rotateAirVPN {
-		return errors.New("AirVPN profile rotation is a separate desired-state operation; run boetticher module secrets airvpn rotate --confirm")
 	}
 	if !*dryRun && *planDigestFlag == "" {
 		return errors.New("deploy requires --plan DIGEST; run boetticher plan --live first")
@@ -301,33 +295,8 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	ansiblePlaybook := filepath.Join(ansibleRoot, "ansible", "site.yml")
 	endpointLookup := net.LookupIP
 	rootRunner := proxmoxRootSSHRunner(s, *siteDir)
-	if s.Gateway.Mode == model.GatewayModeManaged {
-		if err := proxmox.WaitForSSH(ctx, rootRunner, s.BootstrapAddress, "root", 1, 0); err != nil {
-			return fmt.Errorf("HOLD: temporary root deployment authority is unavailable; rerun bootstrap or recovery: %w", err)
-		}
-		endpointLookup = endpointLookupWithFallback(net.LookupIP, remoteEndpointResolver(ctx, rootRunner, s.BootstrapAddress, "root"))
-	}
-	if airvpnMetadata != nil {
-		if err := report.timed("artifacts", "provider", "airvpn-endpoint", func() error {
-			var bindErr error
-			firewallPlan, bindErr = firewall.BindAirVPNEndpoint(firewallPlan, endpointLookup)
-			return bindErr
-		}); err != nil {
-			return err
-		}
-		// Carry the resolved, non-secret endpoint addresses into every later
-		// variables/projection render. The profile pointer in the plan is the
-		// runtime-only metadata authority for this deployment.
-		airvpnMetadata = firewallPlan.AirVPN
-	}
-	backupPlan, err := backup.PlanFromSite(s)
-	if err != nil {
-		return err
-	}
-	storagePlan, err := storage.PlanFromSite(s)
-	if err != nil {
-		return err
-	}
+	var backupPlan backup.Plan
+	var storagePlan storage.Plan
 	var proxmoxPlan proxmox.Plan
 	if err := report.timed("artifacts", "local", "proxmox-plan", func() error {
 		var planErr error
@@ -343,6 +312,93 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}); err != nil {
 		return err
 	}
+	operatorPublicKey, err := loadBootstrapOperatorKey(*siteDir)
+	if err != nil {
+		return err
+	}
+	var proxmoxClient *proxmox.Client
+	var node string
+	var guestStates map[int]deploymentGuestArtifactState
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		if err := proxmox.WaitForSSH(ctx, rootRunner, s.BootstrapAddress, "root", 1, 0); err != nil {
+			return fmt.Errorf("HOLD: temporary root deployment authority is unavailable; rerun bootstrap or recovery: %w", err)
+		}
+		endpointLookup = endpointLookupWithFallback(net.LookupIP, remoteEndpointResolver(ctx, rootRunner, s.BootstrapAddress, "root"))
+	}
+	if airvpnMetadata != nil {
+		if err := report.timed("artifacts", "provider", "airvpn-endpoint", func() error {
+			var bindErr error
+			firewallPlan, bindErr = firewall.BindAirVPNEndpoint(firewallPlan, endpointLookup)
+			return bindErr
+		}); err != nil {
+			return err
+		}
+		airvpnMetadata = firewallPlan.AirVPN
+	}
+	if backupPlan, err = backup.PlanFromSite(s); err != nil {
+		return err
+	}
+	if storagePlan, err = storage.PlanFromSite(s); err != nil {
+		return err
+	}
+	proxmoxClient, _, err = loadProxmoxClientWithSnippetUser(*siteDir, s, *ageIdentity, "", false, "root")
+	if err != nil {
+		return fmt.Errorf("load Proxmox client for platform deployment: %w", err)
+	}
+	node, err = proxmoxClient.SingleNode(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve live Proxmox node: %w", err)
+	}
+	proxmoxPlan.Node = node
+	proxmoxPlan.DestructiveConfirmed = *confirm
+	proxmoxPlan.ForceFirewallRootReplacement = *replaceFirewall
+	proxmoxPlan.ForceLegacyLXCRecreation = *recreateLegacyLXCs
+	if err := validateLiveDeploymentPrerequisitesWithResolver(ctx, proxmoxClient, rootRunner, *siteDir, s, proxmoxPlan, storagePlan, endpointLookup); err != nil {
+		return fmt.Errorf("live preflight failed before Proxmox mutation: %w", err)
+	}
+	guestPlans := deploymentGuestPlans(s, proxmoxPlan)
+	guestStates, err = inspectDeploymentGuestStates(ctx, proxmoxClient, node, guestPlans)
+	if err != nil {
+		return fmt.Errorf("observe planned guest state: %w", err)
+	}
+	if *recreateLegacyLXCs {
+		var legacyLXCTargets []string
+		if err := report.timed("artifacts", "preflight", "legacy-lxc-recovery", func() error {
+			var validateErr error
+			legacyLXCTargets, validateErr = proxmox.ValidateLegacyLXCRecreation(ctx, proxmoxClient, proxmoxPlan)
+			return validateErr
+		}); err != nil {
+			return fmt.Errorf("live preflight failed before legacy LXC recovery: %w", err)
+		}
+		fmt.Fprintf(out, "Legacy LXC recovery preflight: PASS %d exact legacy appliance(s)\n", len(legacyLXCTargets))
+	}
+	planDigest, err := digestDeploymentPlan(deploymentPlan{
+		Version: deploymentPlanFormatVersion, ReleaseVersion: releaseManifest.ReleaseVersion,
+		ReleaseDigest: releaseDigest, ModelRevision: modelRevision, Live: true,
+		Proxmox: proxmoxPlan, Firewall: firewallPlan, Storage: storagePlan, Backup: backupPlan,
+		Observations:    deploymentObservations{Node: node, Guests: deploymentGuestObservations(guestPlans, guestStates)},
+		ReplaceFirewall: *replaceFirewall, RecreateLegacy: *recreateLegacyLXCs,
+	})
+	if err != nil {
+		return fmt.Errorf("digest immutable deployment plan: %w", err)
+	}
+	operationState.PlanDigest = planDigest
+	operationState.BundleDigest = releaseDigest
+	operationState.Phase = site.PhaseApply
+	if *planDigestFlag != "" && *planDigestFlag != planDigest {
+		return fmt.Errorf("stale deployment plan: supplied %s, current live plan is %s", *planDigestFlag, planDigest)
+	}
+	if err := site.SaveOperationState(*siteDir, operationState); err != nil {
+		return fmt.Errorf("record deployment APPLY phase before mutation: %w", err)
+	}
+	rootCleanup := newTemporaryRootCleanup(s, *siteDir, operatorPublicKey)
+	if registerCleanup != nil {
+		registerCleanup(func(cleanupCtx context.Context) error {
+			journalErr := saveDeployOperationPhase(*siteDir, &operationState, site.PhaseCleanup, nil)
+			cleanupErr := rootCleanup.revoke(cleanupCtx)
+			return combineDeploymentErrors(journalErr, cleanupErr)
+		})
+	}
 	report.complete()
 	report.start("credentials-pki", "Prepare credentials and PKI")
 	if err := report.timed("credentials-pki", "local", "static-readiness", func() error {
@@ -351,10 +407,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return fmt.Errorf("static preflight failed: %w", err)
 	}
 	retainedGuests, err := retainedGuestPlans(s)
-	if err != nil {
-		return err
-	}
-	operatorPublicKey, err := loadBootstrapOperatorKey(*siteDir)
 	if err != nil {
 		return err
 	}
@@ -489,13 +541,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	runtimeVariables["client_ca_pem"] = authority.RootCertPEM + authority.IssuingCertPEM
 	runtimeVariables["pulse_server_ca_pem"] = authority.RootCertPEM + authority.IssuingCertPEM
-	if *proxmoxCA != "" {
-		proxmoxCAPEM, readErr := os.ReadFile(*proxmoxCA)
-		if readErr != nil {
-			return fmt.Errorf("read Proxmox API CA file: %w", readErr)
-		}
-		runtimeVariables["proxmox_ca_pem"] = string(proxmoxCAPEM)
-	} else if proxmoxCredentials, loadErr := site.LoadProxmoxCredentials(*siteDir, s, *ageIdentity); loadErr != nil {
+	if proxmoxCredentials, loadErr := site.LoadProxmoxCredentials(*siteDir, s, *ageIdentity); loadErr != nil {
 		return fmt.Errorf("load encrypted Proxmox credentials for API trust projection: %w", loadErr)
 	} else if proxmoxCredentials.CAPEM != "" {
 		runtimeVariables["proxmox_ca_pem"] = proxmoxCredentials.CAPEM
@@ -536,56 +582,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	proxmoxPlan.PrivilegedRunner = rootRunner
 	proxmoxPlan.PrivilegedAddress = s.BootstrapAddress
 	proxmoxPlan.PrivilegedUser = "root"
-	rootCleanup := newTemporaryRootCleanup(s, *siteDir, operatorPublicKey)
-	registerCleanup(rootCleanup.revoke)
 	report.start("proxmox", "Reconcile Proxmox platform and storage")
-	if err := proxmox.WaitForSSH(ctx, rootRunner, s.BootstrapAddress, "root", 1, 0); err != nil {
-		return fmt.Errorf("HOLD: temporary root deployment authority is unavailable; rerun bootstrap or recovery: %w", err)
-	}
-	proxmoxClient, _, err := loadProxmoxClientWithSnippetUser(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure, "root")
-	if err != nil {
-		return fmt.Errorf("load Proxmox client for platform deployment: %w", err)
-	}
-	node, err := proxmoxClient.SingleNode(ctx)
-	if err != nil {
-		return fmt.Errorf("resolve live Proxmox node: %w", err)
-	}
-	proxmoxPlan.Node = node
-	proxmoxPlan.DestructiveConfirmed = *confirm
-	proxmoxPlan.ForceFirewallRootReplacement = *replaceFirewall
-	proxmoxPlan.ForceLegacyLXCRecreation = *recreateLegacyLXCs
-	if err := validateLiveDeploymentPrerequisitesWithResolver(ctx, proxmoxClient, rootRunner, *siteDir, s, proxmoxPlan, storagePlan, endpointLookup); err != nil {
-		return fmt.Errorf("live preflight failed before Proxmox mutation: %w", err)
-	}
-	if *recreateLegacyLXCs {
-		var legacyLXCTargets []string
-		if err := report.timed("proxmox", "preflight", "legacy-lxc-recovery", func() error {
-			var validateErr error
-			legacyLXCTargets, validateErr = proxmox.ValidateLegacyLXCRecreation(ctx, proxmoxClient, proxmoxPlan)
-			return validateErr
-		}); err != nil {
-			return fmt.Errorf("live preflight failed before legacy LXC recovery: %w", err)
-		}
-		fmt.Fprintf(out, "Legacy LXC recovery preflight: PASS %d exact legacy appliance(s)\n", len(legacyLXCTargets))
-	}
-	planDigest, err := digestDeploymentPlan(deploymentPlan{
-		Version: deploymentPlanFormatVersion, ReleaseVersion: releaseManifest.ReleaseVersion,
-		ReleaseDigest: releaseDigest, ModelRevision: modelRevision, Live: true,
-		Proxmox: proxmoxPlan, Firewall: firewallPlan, Storage: storagePlan, Backup: backupPlan,
-		ReplaceFirewall: *replaceFirewall, RecreateLegacy: *recreateLegacyLXCs,
-	})
-	if err != nil {
-		return fmt.Errorf("digest immutable deployment plan: %w", err)
-	}
-	operationState.PlanDigest = planDigest
-	operationState.BundleDigest = releaseDigest
-	operationState.Phase = site.PhaseApply
-	if *planDigestFlag != "" && *planDigestFlag != planDigest {
-		return fmt.Errorf("stale deployment plan: supplied %s, current live plan is %s", *planDigestFlag, planDigest)
-	}
-	if err := site.SaveOperationState(*siteDir, operationState); err != nil {
-		return fmt.Errorf("record deployment APPLY phase before mutation: %w", err)
-	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		// Host identity reconciliation is an apply action. Keep it behind the
 		// durable plan journal so every live mutation has a recoverable owner.
@@ -728,11 +725,11 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return fmt.Errorf("HOLD: managed gateway did not pass runtime readiness before dependent appliances: %w", err)
 		}
 	}
-	guestStates := map[int]deploymentGuestArtifactState{}
 	if err := report.timed("appliances", "preflight", "guest-state", func() error {
-		var err error
-		guestStates, err = inspectDeploymentGuestStates(ctx, proxmoxClient, proxmoxPlan.Node, deploymentGuestPlans(s, proxmoxPlan))
-		return err
+		if guestStates == nil {
+			return errors.New("live guest observations were not captured before APPLY")
+		}
+		return nil
 	}); err != nil {
 		return err
 	}
@@ -1308,9 +1305,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		pulseForward = nil
 	}
 	report.complete()
-	if err := saveDeployOperationPhase(*siteDir, &operationState, site.PhaseCleanup, nil); err != nil {
-		return fmt.Errorf("record deployment cleanup phase: %w", err)
-	}
 	report.start("persist", "Persist final state")
 	backupChanged, err := proxmoxClient.ApplyBackupJobWithMutation(ctx, node, proxmox.BackupJob{
 		JobName: backupPlan.JobName, ModelRevision: backupPlan.ModelRevision, StorageTarget: backupPlan.StorageTarget,

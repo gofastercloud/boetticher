@@ -466,18 +466,6 @@ func runDoctor(args []string, out io.Writer) error {
 		fmt.Fprintf(out, "Bootstrap endpoint    PASS %s and SSH host key\n", s.BootstrapAddress)
 	}
 	if *live {
-		if builder, builderErr := inspectBuilder(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure); builderErr != nil {
-			fmt.Fprintf(out, "Artifact builder       NOT TESTED (%v)\n", builderErr)
-		} else if builder.Exists {
-			failed = true
-			if builder.Owned {
-				fmt.Fprintf(out, "Artifact builder       HOLD stale owned builder VMID %d status=%s; bootstrap cleanup or diagnosis is required\n", model.BuilderVMID, valueOrPlaceholder(builder.Status))
-			} else {
-				fmt.Fprintf(out, "Artifact builder       HOLD VMID %d is occupied without canonical builder ownership (name=%s)\n", model.BuilderVMID, valueOrPlaceholder(builder.Name))
-			}
-		} else {
-			fmt.Fprintln(out, "Artifact builder       PASS temporary builder absent")
-		}
 		plan, planErr := qualifiedProxmoxPlan(*siteDir, s)
 		if planErr != nil {
 			failed = true
@@ -554,18 +542,6 @@ func runDoctor(args []string, out io.Writer) error {
 		return fmt.Errorf("doctor found absent or inconsistent projections")
 	}
 	return nil
-}
-
-func inspectBuilder(siteDir string, s model.Site, ageIdentity, proxmoxCA string, insecure bool) (proxmox.BuilderAudit, error) {
-	client, _, err := loadProxmoxClient(siteDir, s, ageIdentity, proxmoxCA, insecure)
-	if err != nil {
-		return proxmox.BuilderAudit{}, err
-	}
-	node, err := client.SingleNode(context.Background())
-	if err != nil {
-		return proxmox.BuilderAudit{}, err
-	}
-	return proxmox.InspectBuilder(context.Background(), client, node)
 }
 
 func bindPlanToLiveNode(ctx context.Context, client *proxmox.Client, plan proxmox.Plan) (proxmox.Plan, error) {

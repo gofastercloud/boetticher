@@ -47,6 +47,7 @@ type Evidence struct {
 	SBOMSHA256                 string            `json:"sbom_sha256,omitempty"`
 	TrivyReportSHA256          string            `json:"trivy_report_sha256,omitempty"`
 	BuilderProvenanceSHA256    string            `json:"builder_provenance_sha256,omitempty"`
+	SmokeReportSHA256          string            `json:"smoke_report_sha256,omitempty"`
 	QualificationPolicyVersion string            `json:"qualification_policy_version,omitempty"`
 	QualificationEvaluator     string            `json:"qualification_evaluator,omitempty"`
 	ScanCompleted              bool              `json:"scan_completed"`
@@ -202,6 +203,8 @@ func verifyQualificationInputs(evidence Evidence) error {
 		{name: "package manifest", filename: "package-manifest.txt", expected: evidence.PackageManifestSHA},
 		{name: "SBOM", filename: "sbom.json", expected: evidence.SBOMSHA256},
 		{name: "Trivy report", filename: "trivy.json", expected: evidence.TrivyReportSHA256},
+		{name: "builder provenance", filename: "builder-provenance.json", expected: evidence.BuilderProvenanceSHA256},
+		{name: "smoke report", filename: "smoke.txt", expected: evidence.SmokeReportSHA256},
 	}
 	for _, input := range inputs {
 		if input.expected == "" {
@@ -225,9 +228,11 @@ func validateQualificationDigests(evidence Evidence) error {
 		return fmt.Errorf("content_sha256 must be a SHA-256 digest")
 	}
 	for name, value := range map[string]string{
-		"package_manifest_sha256": evidence.PackageManifestSHA,
-		"sbom_sha256":             evidence.SBOMSHA256,
-		"trivy_report_sha256":     evidence.TrivyReportSHA256,
+		"package_manifest_sha256":   evidence.PackageManifestSHA,
+		"sbom_sha256":               evidence.SBOMSHA256,
+		"trivy_report_sha256":       evidence.TrivyReportSHA256,
+		"builder_provenance_sha256": evidence.BuilderProvenanceSHA256,
+		"smoke_report_sha256":       evidence.SmokeReportSHA256,
 	} {
 		if value == "" {
 			continue

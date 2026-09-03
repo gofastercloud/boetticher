@@ -5,6 +5,7 @@ GOMODCACHE ?= /tmp/boetticher-gomodcache
 ANSIBLE_LOCAL_TEMP ?= /tmp/boetticher-ansible-tmp
 ANSIBLE_REMOTE_TEMP ?= /tmp/boetticher-ansible-tmp
 UV_CACHE_DIR ?= /tmp/boetticher-uv-cache
+RELEASE_VERSION ?= 0.5.0
 
 fmt:
 	gofmt -w cmd internal
@@ -34,7 +35,7 @@ build:
 
 release-bundle:
 	@test -n "$(OUTPUT)" -a -n "$(SOURCE_COMMIT)" -a -n "$(WORKFLOW)" -a -n "$(KEY_ID)" -a -n "$(PRIVATE_KEY)"
-	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run ./cmd/release-bundle -output "$(OUTPUT)" -source-commit "$(SOURCE_COMMIT)" -workflow "$(WORKFLOW)" -key-id "$(KEY_ID)" -private-key "$(PRIVATE_KEY)"
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run ./cmd/release-bundle -output "$(OUTPUT)" -release "$(RELEASE_VERSION)" -source-commit "$(SOURCE_COMMIT)" -workflow "$(WORKFLOW)" -key-id "$(KEY_ID)" -private-key "$(PRIVATE_KEY)"
 
 ansible-check:
 	mkdir -p "$(ANSIBLE_LOCAL_TEMP)" "$(ANSIBLE_REMOTE_TEMP)"

@@ -96,6 +96,7 @@ scan_one() {
   summary="$root/$name/trivy.txt"
   manifest="$root/$name/package-manifest.txt"
   sbom="$root/$name/sbom.json"
+  smoke="$root/$name/smoke.txt"
   if [ ! -f "$artifact" ]; then
     echo "HOLD: artifact is not built: $artifact" >&2
     exit 2
@@ -104,10 +105,17 @@ scan_one() {
   if [ -s "$provenance" ]; then
     cp "$provenance" "$root/$name/builder-provenance.json"
     provenance_arg="-provenance $root/$name/builder-provenance.json"
+  else
+    echo "HOLD: builder provenance is missing: $provenance" >&2
+    exit 2
   fi
   mkdir -p "$(dirname "$report")"
   if [ ! -s "$manifest" ]; then
     echo "HOLD: package manifest is missing for $name: $manifest" >&2
+    exit 2
+  fi
+  if [ ! -s "$smoke" ]; then
+    echo "HOLD: boot/smoke evidence is missing for $name: $smoke" >&2
     exit 2
   fi
   rm -rf "$scan_root"
@@ -151,7 +159,7 @@ scan_one() {
   [ "$module" = dns-blocky ] && module=dns
   if ! GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact \
     -artifact "$artifact" -report "$report" -manifest "$manifest" -sbom "$sbom" \
-    $provenance_arg \
+    -smoke "$smoke" $provenance_arg \
     -evidence-root "$evidence_root" -module "$module"; then
     exit 1
   fi

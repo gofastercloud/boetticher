@@ -7,15 +7,15 @@ description: A generated menu of every public Boetticher command form.
 
 # Command reference
 
-This page is generated from the same usage menu as `boetticher help`. Most days you will use `deploy`, `status`, `doctor`, and `module configure`. Add `--help` to any command for the friendly, full explanation.
+This page is generated from the same usage menu as `boetticher help`. Most days you will use the plan, deploy, status, and module commands. Add `--help` to any command for the friendly, full explanation.
 
 ## The usual loop
 
 ```text
-boetticher deploy --site ./my-boetticher --dry-run
-boetticher deploy --site ./my-boetticher
+boetticher bundle import ./boetticher-0.5.0.tar.gz --site ./my-boetticher
+boetticher plan --site ./my-boetticher --live --json
+boetticher deploy --plan sha256:... --site ./my-boetticher
 boetticher status --site ./my-boetticher --live
-boetticher doctor --site ./my-boetticher --live
 ```
 
 ## Full command menu
@@ -29,7 +29,7 @@ boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall] [--
 boetticher tui [--site DIR] [--offline]
 boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--record] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]
 boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--replace-scoped-credentials] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run] [--cleanup]
-boetticher deploy [--site DIR] [--age-identity PATH] [--dry-run] [--replace-firewall] [--recreate-legacy-lxcs] [--confirm]
+boetticher deploy --plan DIGEST [--site DIR] [--age-identity PATH] [--dry-run] [--replace-firewall] [--recreate-legacy-lxcs] [--confirm]
 boetticher status [--site DIR] [--ssh-config PATH] [--ssh-journey] [--live] [--verbose] [--json]
 boetticher update [--site DIR] [--dry-run] [--confirm]
 boetticher logs [HOST] [--site DIR] [--unit UNIT] [--since DURATION] [--priority LEVEL] [--limit N]

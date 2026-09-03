@@ -1,11 +1,15 @@
 package artifacts
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,6 +37,7 @@ func TestReleaseBundleSignsAndAtomicallyImportsQualifiedArtifacts(t *testing.T) 
 		QualificationPolicyVersion: QualificationPolicyVersion, QualificationEvaluator: QualificationEvaluator,
 		ScanCompleted: true, Qualified: true, qualifiedByEvaluator: true,
 	}
+	qualificationFiles := addCompleteReleaseEvidence(t, artifactPath, &evidence)
 	data, err := json.MarshalIndent(evidence, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -45,11 +50,11 @@ func TestReleaseBundleSignsAndAtomicallyImportsQualifiedArtifacts(t *testing.T) 
 		t.Fatal(err)
 	}
 	bundlePath := filepath.Join(root, "release.tar.gz")
-	manifest, err := BuildReleaseBundle(bundlePath, "0.5.0", model.APIVersion, model.SchemaVersion, private, "release-2026", []ReleaseInput{{Artifact: artifact, ArtifactPath: artifactPath, EvidencePath: evidencePath}})
+	manifest, err := BuildReleaseBundle(bundlePath, "0.5.0", model.APIVersion, model.SchemaVersion, private, "release-2026", []ReleaseInput{{Artifact: artifact, ArtifactPath: artifactPath, EvidencePath: evidencePath, QualificationFiles: qualificationFiles}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(manifest.Files) != 2 || len(manifest.Artifacts) != 1 {
+	if len(manifest.Files) != 7 || len(manifest.Artifacts) != 1 {
 		t.Fatalf("unexpected release manifest: %#v", manifest)
 	}
 	destination := filepath.Join(root, "imported")
@@ -73,6 +78,11 @@ func TestReleaseBundleSignsAndAtomicallyImportsQualifiedArtifacts(t *testing.T) 
 	if !strings.Contains(string(importedEvidence), "artifacts/"+artifact.Name) {
 		t.Fatal("release evidence was not rebound to its bundle path")
 	}
+	reformatted := filepath.Join(root, "reformatted.tar.gz")
+	rewriteReleaseManifest(t, bundlePath, reformatted)
+	if _, err := ImportReleaseBundle(reformatted, filepath.Join(root, "reformatted-import"), []TrustedReleaseKey{{ID: "release-2026", PublicKey: public}}, "0.5.0", model.APIVersion, model.SchemaVersion); err == nil {
+		t.Fatal("reformatted manifest was accepted without re-signing")
+	}
 }
 
 func TestReleaseBundleRejectsUntrustedKeyBeforeCreatingDestination(t *testing.T) {
@@ -88,6 +98,7 @@ func TestReleaseBundleRejectsUntrustedKeyBeforeCreatingDestination(t *testing.T)
 	artifact.ContentSHA256 = fmtSHA256([]byte("artifact"))
 	evidencePath := filepath.Join(root, "evidence")
 	evidence := Evidence{Artifact: artifact, ArtifactPath: artifactPath, ContentSHA256: artifact.ContentSHA256, DefinitionSHA256: artifact.DefinitionSHA256, QualificationPolicyVersion: QualificationPolicyVersion, QualificationEvaluator: QualificationEvaluator, ScanCompleted: true, Qualified: true, qualifiedByEvaluator: true}
+	qualificationFiles := addCompleteReleaseEvidence(t, artifactPath, &evidence)
 	data, err := json.Marshal(evidence)
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +111,7 @@ func TestReleaseBundleRejectsUntrustedKeyBeforeCreatingDestination(t *testing.T)
 		t.Fatal(err)
 	}
 	bundle := filepath.Join(root, "bundle.tar.gz")
-	if _, err := BuildReleaseBundle(bundle, "0.5.0", model.APIVersion, model.SchemaVersion, private, "trusted", []ReleaseInput{{Artifact: artifact, ArtifactPath: artifactPath, EvidencePath: evidencePath}}); err != nil {
+	if _, err := BuildReleaseBundle(bundle, "0.5.0", model.APIVersion, model.SchemaVersion, private, "trusted", []ReleaseInput{{Artifact: artifact, ArtifactPath: artifactPath, EvidencePath: evidencePath, QualificationFiles: qualificationFiles}}); err != nil {
 		t.Fatal(err)
 	}
 	destination := filepath.Join(root, "destination")
@@ -112,7 +123,127 @@ func TestReleaseBundleRejectsUntrustedKeyBeforeCreatingDestination(t *testing.T)
 	}
 }
 
+func TestReleaseBundleRejectsIncompleteQualificationEvidence(t *testing.T) {
+	root := t.TempDir()
+	artifactPath := filepath.Join(root, "artifact")
+	if err := os.WriteFile(artifactPath, []byte("artifact"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := ArtifactFor("monitoring")
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact.ContentSHA256 = fmtSHA256([]byte("artifact"))
+	evidence := Evidence{Artifact: artifact, ArtifactPath: artifactPath, ContentSHA256: artifact.ContentSHA256, DefinitionSHA256: artifact.DefinitionSHA256, QualificationPolicyVersion: QualificationPolicyVersion, QualificationEvaluator: QualificationEvaluator, ScanCompleted: true, Qualified: true, qualifiedByEvaluator: true}
+	qualificationFiles := addCompleteReleaseEvidence(t, artifactPath, &evidence)
+	delete(qualificationFiles, filepath.ToSlash(filepath.Join("evidence", artifact.Name, "smoke.txt")))
+	evidencePath := filepath.Join(root, "evidence.json")
+	data, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(evidencePath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BuildReleaseBundle(filepath.Join(root, "bundle.tar.gz"), "0.5.0", model.APIVersion, model.SchemaVersion, private, "trusted", []ReleaseInput{{Artifact: artifact, ArtifactPath: artifactPath, EvidencePath: evidencePath, QualificationFiles: qualificationFiles}}); err == nil || !strings.Contains(err.Error(), "mandatory smoke") {
+		t.Fatalf("incomplete release evidence was accepted: %v", err)
+	}
+}
+
 func fmtSHA256(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+func addCompleteReleaseEvidence(t *testing.T, artifactPath string, evidence *Evidence) map[string]string {
+	t.Helper()
+	root := filepath.Dir(artifactPath)
+	files := map[string]struct {
+		name   string
+		assign func(string)
+	}{
+		"package-manifest.txt": {name: "package manifest", assign: func(digest string) { evidence.PackageManifestSHA = digest }},
+		"sbom.json":            {name: "SBOM", assign: func(digest string) { evidence.SBOMSHA256 = digest }},
+		"trivy.json":           {name: "Trivy report", assign: func(digest string) { evidence.TrivyReportSHA256 = digest }},
+		"builder-provenance.json": {name: "builder provenance", assign: func(digest string) {
+			evidence.BuilderProvenanceSHA256 = digest
+		}},
+		"smoke.txt": {name: "smoke report", assign: func(digest string) { evidence.SmokeReportSHA256 = digest }},
+	}
+	qualificationFiles := make(map[string]string, len(files))
+	for filename, file := range files {
+		path := filepath.Join(root, filename)
+		if err := os.WriteFile(path, []byte(file.name+" evidence\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		digest, err := QualificationInputSHA256(path, file.name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file.assign(digest)
+		qualificationFiles[filepath.ToSlash(filepath.Join("evidence", evidence.Artifact.Name, filename))] = path
+	}
+	return qualificationFiles
+}
+
+func rewriteReleaseManifest(t *testing.T, source, destination string) {
+	t.Helper()
+	input, err := os.Open(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	reader, err := gzip.NewReader(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tarReader := tar.NewReader(reader)
+	var archive bytes.Buffer
+	gzipWriter := gzip.NewWriter(&archive)
+	tarWriter := tar.NewWriter(gzipWriter)
+	for {
+		header, nextErr := tarReader.Next()
+		if nextErr == io.EOF {
+			break
+		}
+		if nextErr != nil {
+			t.Fatal(nextErr)
+		}
+		data, readErr := io.ReadAll(tarReader)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if header.Name == ReleaseManifestName {
+			var manifest ReleaseManifest
+			if err := json.Unmarshal(data, &manifest); err != nil {
+				t.Fatal(err)
+			}
+			data, err = json.MarshalIndent(manifest, "", "\t")
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = append(data, '\n')
+		}
+		copyHeader := *header
+		copyHeader.Size = int64(len(data))
+		if err := tarWriter.WriteHeader(&copyHeader); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tarWriter.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destination, archive.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }

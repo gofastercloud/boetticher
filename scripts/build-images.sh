@@ -430,7 +430,7 @@ package_lxc() {
   printf '%s\n' "boetticher package stage: $name smoke"
   destination="$output_root/$name"
   mkdir -p "$destination"
-  ./scripts/smoke-appliance.sh "$name" "$rootfs"
+  ./scripts/smoke-appliance.sh "$name" "$rootfs" > "$destination/smoke.txt"
   printf '%s\n' "boetticher package stage: $name manifest"
   chroot "$rootfs" dpkg-query -W -f='${binary:Package}\t${Version}\n' | sort > "$destination/package-manifest.txt"
   printf '%s\n' "boetticher package stage: $name archive"
@@ -748,7 +748,7 @@ build_firewall() {
     --run-command 'if systemctl list-unit-files systemd-networkd-wait-online.service >/dev/null 2>&1; then systemctl disable systemd-networkd-wait-online.service; fi'
   sha256sum "$image" > "$destination/content.sha256"
   virt-cat -a "$image" /var/lib/boetticher/package-manifest.txt > "$destination/package-manifest.txt"
-  ./scripts/smoke-firewall-image.sh "$image"
+  ./scripts/smoke-firewall-image.sh "$image" > "$destination/smoke.txt"
 }
 
 image_artifact_name() {

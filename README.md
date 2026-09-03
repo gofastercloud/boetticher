@@ -32,8 +32,9 @@ boetticher init --site-dir my-boetticher
 boetticher bootstrap-endpoint set PROXMOX_HOME_IP --site my-boetticher
 boetticher preflight --site my-boetticher --live
 boetticher bootstrap --site my-boetticher --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem
-boetticher deploy --site my-boetticher --dry-run --proxmox-ca /path/to/pve-root-ca.pem
-boetticher deploy --site my-boetticher --proxmox-ca /path/to/pve-root-ca.pem
+boetticher bundle import ./boetticher-0.5.0.tar.gz --site my-boetticher
+boetticher plan --site my-boetticher --live --json
+boetticher deploy --plan sha256:PLAN_DIGEST --site my-boetticher
 boetticher status --site my-boetticher --live
 ```
 

@@ -54,10 +54,20 @@ func main() {
 			fatal("artifact %s is not qualified", artifact.Name)
 		}
 		qualificationFiles := map[string]string{}
-		addQualificationFile(qualificationFiles, artifact.Name, "package-manifest.txt", evidence.PackageManifestSHA, *artifactRoot)
-		addQualificationFile(qualificationFiles, artifact.Name, "sbom.json", evidence.SBOMSHA256, *artifactRoot)
-		addQualificationFile(qualificationFiles, artifact.Name, "trivy.json", evidence.TrivyReportSHA256, *artifactRoot)
-		addQualificationFile(qualificationFiles, artifact.Name, "builder-provenance.json", evidence.BuilderProvenanceSHA256, *artifactRoot)
+		for _, required := range []struct {
+			name   string
+			digest string
+		}{
+			{name: "package-manifest.txt", digest: evidence.PackageManifestSHA},
+			{name: "sbom.json", digest: evidence.SBOMSHA256},
+			{name: "trivy.json", digest: evidence.TrivyReportSHA256},
+			{name: "builder-provenance.json", digest: evidence.BuilderProvenanceSHA256},
+			{name: "smoke.txt", digest: evidence.SmokeReportSHA256},
+		} {
+			if err := addQualificationFile(qualificationFiles, artifact.Name, required.name, required.digest, *artifactRoot); err != nil {
+				fatal("artifact %s: %v", artifact.Name, err)
+			}
+		}
 		inputs = append(inputs, artifacts.ReleaseInput{
 			Artifact: artifact, ArtifactPath: artifactPath,
 			EvidencePath: artifacts.EvidencePath(*siteDir, artifact.Name), QualificationFiles: qualificationFiles,
@@ -81,11 +91,12 @@ func artifactFilename(artifact model.Artifact) string {
 	return fmt.Sprintf("%s-%s-%s.tar.zst", artifact.Name, artifact.Version, artifact.Architecture)
 }
 
-func addQualificationFile(files map[string]string, artifact, name, digest, root string) {
+func addQualificationFile(files map[string]string, artifact, name, digest, root string) error {
 	if digest == "" {
-		return
+		return fmt.Errorf("mandatory qualification evidence %s is missing", name)
 	}
 	files[filepath.ToSlash(filepath.Join("evidence", artifact, name))] = filepath.Join(root, artifact, name)
+	return nil
 }
 
 func readPrivateKey(path string) (ed25519.PrivateKey, error) {

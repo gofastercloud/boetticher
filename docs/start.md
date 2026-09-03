@@ -20,8 +20,9 @@ boetticher init --site-dir my-boetticher
 boetticher bootstrap-endpoint set PROXMOX_HOME_IP --site my-boetticher
 boetticher preflight --site my-boetticher --live
 boetticher bootstrap --site my-boetticher --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem
-boetticher deploy --site my-boetticher --dry-run --proxmox-ca /path/to/pve-root-ca.pem
-boetticher deploy --site my-boetticher --proxmox-ca /path/to/pve-root-ca.pem
+boetticher bundle import ./boetticher-0.5.0.tar.gz --site my-boetticher
+boetticher plan --site my-boetticher --live --json
+boetticher deploy --plan sha256:PLAN_DIGEST --site my-boetticher
 boetticher status --site my-boetticher --live
 ```
 
@@ -39,10 +40,10 @@ boetticher bootstrap --site my-boetticher --recovery-confirmed --proxmox-ca /pat
 Once the lab is up, the regular loop stays boring in the best possible way:
 
 ```text
-boetticher deploy --site ./my-boetticher --dry-run
-boetticher deploy --site ./my-boetticher
+boetticher plan --site ./my-boetticher --live --json
+boetticher deploy --plan sha256:PLAN_DIGEST --site ./my-boetticher
 boetticher status --site ./my-boetticher --live
-boetticher doctor --site ./my-boetticher --live
+boetticher diagnose --site ./my-boetticher --live
 ```
 
 Without <code>--live</code>, a command reads the site directory on your controller. With it, the command also asks the running lab what is happening. <code>status --live</code> is the quick “is the lab okay?” view; <code>doctor --live</code> is the useful “what should I do next?” companion.
@@ -63,8 +64,8 @@ Start with the final line from the command that stopped, then work the small lad
 
 1. `boetticher status --site ./my-boetticher --live`
 2. `boetticher doctor --site ./my-boetticher --live`
-3. `boetticher deploy --site ./my-boetticher --dry-run`
-4. Fix the one thing it calls out, then deploy again.
+3. `boetticher plan --site ./my-boetticher --live --json`
+4. Fix the one thing it calls out, refresh the plan, then deploy with its digest.
 
 For a changed Proxmox HOME address, use the address you already know:
 

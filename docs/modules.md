@@ -118,7 +118,8 @@ Later deployments reuse that profile. Rotate it only when you mean to:
 
 ```text
 boetticher module secrets airvpn rotate --confirm --site ./my-boetticher
-boetticher deploy --site ./my-boetticher --rotate-airvpn-profile
+boetticher plan --site ./my-boetticher --live --json
+boetticher deploy --plan sha256:PLAN_DIGEST --site ./my-boetticher
 ```
 
 Traffic from an AirVPN-selected module leaves through `lab-airvpn-01`

@@ -20,14 +20,6 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	if base.PhysicalNetwork.Mode != model.ModeVirtualOnly {
 		t.Fatalf("default trial is not virtual-only: %q", base.PhysicalNetwork.Mode)
 	}
-	builder := artifacts.Builder()
-	if builder.VMID != model.BuilderVMID || builder.Hostname != "lab-builder-01" || !builder.Temporary || builder.Network != "bootstrap-upstream-only" {
-		t.Fatalf("default trial builder contract is incomplete: %#v", builder)
-	}
-	buildCloudInit := proxmox.RenderBuilderCloudInit()
-	if !strings.Contains(buildCloudInit.UserData, "./scripts/build-images.sh images") || !strings.Contains(buildCloudInit.UserData, "./scripts/scan-images.sh scan-images") || strings.Contains(strings.ToLower(buildCloudInit.UserData), "age identity") {
-		t.Fatal("temporary builder does not run the first-party build/qualification path with public inputs only")
-	}
 	buildScript, err := os.ReadFile(filepath.Join(repoRoot, "scripts", "build-images.sh"))
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +48,7 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"module=${name#boetticher-}", "[ \"$module\" = dns-blocky ] && module=dns", "if ! GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact"} {
+	for _, required := range []string{"module=${name#boetticher-}", "[ \"$module\" = dns-blocky ] && module=dns", "-smoke \"$smoke\"", "if ! GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact"} {
 		if !strings.Contains(string(scanSource), required) {
 			t.Fatalf("artifact qualification does not derive and fail-closed validate module identity: %s", required)
 		}
@@ -66,10 +58,12 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	bootstrapText := string(bootstrapSource)
-	for _, required := range []string{"EnsureBuilderVM", "RebindEvidencePaths", "DestroyBuilderVM", "createBuilderKnownHosts", "CheckBuilderCapacity", "RunStream", "ExtractBuildArchiveFile"} {
-		if !strings.Contains(bootstrapText, required) {
-			t.Fatalf("bootstrap does not complete the builder qualification lifecycle: %s", required)
-		}
+	runBootstrapText := bootstrapText
+	if end := strings.Index(runBootstrapText, "func builderArtifactReturnCommand"); end >= 0 {
+		runBootstrapText = runBootstrapText[:end]
+	}
+	if strings.Contains(runBootstrapText, "buildDefaultArtifacts") || strings.Contains(runBootstrapText, "EnsureBuilderVM") {
+		t.Fatal("normal bootstrap still invokes the temporary in-lab artifact builder")
 	}
 	builderSource, err := os.ReadFile(filepath.Join(repoRoot, "internal", "proxmox", "plan.go"))
 	if err != nil {
