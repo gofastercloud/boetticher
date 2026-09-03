@@ -32,7 +32,7 @@ var commandSpecs = []commandSpec{
 
 var advancedCommandSpecs = []commandSpec{
 	{Usage: "boetticher bundle inspect|import PATH [--site DIR] [--json]"},
-	{Usage: "boetticher recover host|storage|guest ..."},
+	{Usage: "boetticher recover storage ..."},
 	{Usage: "boetticher companion setup|status|migrate ..."},
 	{Usage: "boetticher tui [--site DIR] [--offline]"},
 	{Usage: "boetticher logs [HOST] [--site DIR] [--unit UNIT] [--since DURATION] [--priority LEVEL] [--limit N]"},
@@ -74,7 +74,7 @@ var helpSpecs = map[string]helpSpec{
 		Usage: "boetticher bundle inspect|import PATH [--site DIR] [--json]", Purpose: "Inspect or install a signed, release-built appliance bundle.", Arguments: "PATH is a local release bundle file.", Options: "inspect reads only the unsigned manifest for diagnostics; import verifies the signature, compatibility, every digest, and every declared file before activation.", Safety: "Import is local and atomic. A missing trust root, invalid signature, mismatched controller, or incomplete bundle is rejected before activation.", Examples: "boetticher bundle inspect ./boetticher-0.5.1.tar.gz; boetticher bundle import ./boetticher-0.5.1.tar.gz --site ./my-boetticher", Related: "update, plan, deploy",
 	},
 	"recover": {
-		Usage: "boetticher recover host|storage|guest ...", Purpose: "Run an explicitly guarded recovery operation for a known Boetticher-owned target.", Arguments: "The recovery subcommand identifies the bounded recovery path and its exact target.", Options: "Recovery-specific options are shown by the selected subcommand.", Safety: "Advanced and destructive where stated. Recovery proves ownership, requires explicit confirmation, and records cleanup failures.", Examples: "boetticher recover storage --help", Related: "status --details, deploy",
+		Usage: "boetticher recover storage ...", Purpose: "Run the explicitly guarded recovery operation for the known Boetticher-owned storage path.", Arguments: "The storage subcommand identifies the bounded recovery operation and its exact configured device.", Options: "Recovery-specific options are shown by the selected storage operation.", Safety: "Advanced and destructive where stated. Recovery proves ownership, requires explicit confirmation, and records cleanup failures.", Examples: "boetticher recover storage --help", Related: "status --details, deploy",
 	},
 	"companion": {
 		Usage: "boetticher companion setup|status|migrate ...", Purpose: "Manage capabilities on an external Boetticher companion device.", Arguments: "Companion setup, status, and 0.4 migration arguments are defined by the companion capability.", Options: "Companion operations are separate from Proxmox module deployment.", Safety: "The companion remains outside the Proxmox module and credential boundary. Migration deletes only the exact verified legacy StreamDeck LXC after explicit confirmation.", Examples: "boetticher companion status --help", Related: "status, module list",

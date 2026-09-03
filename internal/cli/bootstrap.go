@@ -33,11 +33,9 @@ func runEnroll(args []string, out io.Writer) error {
 
 func runRecovery(args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: boetticher recover host|storage|guest ...")
+		return errors.New("usage: boetticher recover storage ...")
 	}
 	switch args[0] {
-	case "host":
-		return runEnrollOperation(args[1:], out)
 	case "storage":
 		return runStorage(args[1:], out)
 	default:
