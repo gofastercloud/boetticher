@@ -144,10 +144,14 @@ bundle compatibility before deployment. Runtime deployment has no image-builder
 guest, builder VMID, builder cache lifecycle, or controller-to-builder source
 transfer.
 
-Maintainers may use `make local-builder-init`, `make local-image`, and
-`make local-images` for isolated native/Linux image construction. That path is
-development tooling and does not change the operator lifecycle or substitute
-for official hosted release evidence. The official workflow builds all
+Maintainers may use `BOETTICHER_LOCAL_BUILDER_SSH`,
+`BOETTICHER_LOCAL_BUILDER_IDENTITY`, and
+`BOETTICHER_LOCAL_BUILDER_KNOWN_HOSTS` with `make local-builder-init`,
+`make local-image`, and `make local-images` for isolated native/Linux image
+construction. The native host must mount the dedicated build disk at
+`/var/lib/boetticher/local-builder`. This path is development tooling and does
+not change the operator lifecycle or substitute for official hosted release
+evidence. The official workflow builds all
 supported artifacts, scans and qualifies their final bytes, binds evidence to
 those bytes, and assembles the signed bundle from one exact source revision.
 

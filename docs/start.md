@@ -66,18 +66,23 @@ before recording last-applied state.
 
 ## Local maintainer image builds
 
-Image construction remains available for maintainers, isolated from the
-operator lifecycle:
+Image construction remains available for maintainers on a native Linux build
+host, isolated from the operator lifecycle. On macOS, configure the explicit
+SSH route first; the remote path must be mounted at
+`/var/lib/boetticher/local-builder`:
 
 ```text
+export BOETTICHER_LOCAL_BUILDER_SSH=root@BUILD_HOST
+export BOETTICHER_LOCAL_BUILDER_IDENTITY=/path/to/operator-key
+export BOETTICHER_LOCAL_BUILDER_KNOWN_HOSTS=/path/to/build-host-known_hosts
 make local-builder-init
 make local-image LOCAL_IMAGE_TARGET=image-firewall
 make local-images LOCAL_IMAGE_TARGETS="image-dns-blocky image-monitoring"
 ```
 
-On macOS this uses the configured Linux environment for amd64 image tooling
-and keeps its downloads and base cache persistent. These targets are useful
-for local iteration; they do not create Proxmox guests and do not replace the
+The native host keeps its downloads, build root, cache, and generated
+maintainer artifacts on the dedicated build disk. These targets are useful for
+local iteration; they do not create Proxmox guests and do not replace the
 official hosted build, scan, qualification, signed-bundle, and exact-source
 release gates.
 

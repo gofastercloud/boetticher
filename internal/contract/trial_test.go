@@ -30,6 +30,15 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	if !strings.Contains(buildText, "export GOTOOLCHAIN=local") {
 		t.Fatal("builder does not pin construction to its installed Debian Go toolchain")
 	}
+	localBuilder, err := os.ReadFile(filepath.Join(repoRoot, "scripts", "local-builder.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"Orb" + "Stack", "orb" + "ctl", "orb" + " -m", "BOETTICHER_LOCAL_BUILDER_" + "MODE"} {
+		if strings.Contains(string(localBuilder), forbidden) {
+			t.Fatalf("maintainer build path retains removed local integration %q", forbidden)
+		}
+	}
 	if !strings.Contains(buildText, `if [ "$(id -u)" -ne 0 ]`) || !strings.Contains(buildText, "requires root in the supported Linux builder environment") {
 		t.Fatal("real appliance construction does not fail closed when mount/build privileges are unavailable")
 	}

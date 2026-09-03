@@ -9,10 +9,9 @@ scripts/local-builder.sh build image-TARGET
 scripts/local-builder.sh build images [image-TARGET ...]
 scripts/local-builder.sh scan scan-TARGET
 
-On macOS, init creates or starts the amd64 OrbStack machine named by
-BOETTICHER_LOCAL_BUILDER_MACHINE. Set
-BOETTICHER_LOCAL_BUILDER_MODE=ssh and BOETTICHER_LOCAL_BUILDER_SSH to use a
-native amd64 Linux builder instead. Builds use a persistent Linux cache.
+On macOS, set BOETTICHER_LOCAL_BUILDER_SSH to the native amd64 Linux build
+host. On Linux, this script runs the native builder directly. The build host
+must provide the persistent cache and output mount.
 USAGE
 }
 
@@ -22,9 +21,9 @@ fail() {
 }
 
 repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || fail 'run from inside the Boetticher checkout'
-machine=${BOETTICHER_LOCAL_BUILDER_MACHINE:-boetticher-builder}
-builder_mode=${BOETTICHER_LOCAL_BUILDER_MODE:-orbstack}
 builder_ssh=${BOETTICHER_LOCAL_BUILDER_SSH:-}
+builder_identity=${BOETTICHER_LOCAL_BUILDER_IDENTITY:-}
+builder_known_hosts=${BOETTICHER_LOCAL_BUILDER_KNOWN_HOSTS:-}
 cache_root=${BOETTICHER_LOCAL_CACHE_ROOT:-/var/cache/boetticher}
 work_root=${BOETTICHER_LOCAL_IMAGE_WORK:-/var/tmp/boetticher-image-build}
 artifact_output=${BOETTICHER_LOCAL_ARTIFACT_OUTPUT:-generated/artifacts}
@@ -34,36 +33,17 @@ remote_output="$remote_root/output"
 remote_native_root="$remote_root/root"
 remote_native_output="$remote_native_root$remote_output"
 
-case "$builder_mode" in
-  orbstack|ssh) ;;
-  *) fail "unsupported local builder mode: $builder_mode" ;;
-esac
-
 case "$cache_root$work_root$artifact_output" in
   *[![:alnum:]_./:-]*) fail 'local builder paths may contain only letters, digits, _, ., /, :, and -' ;;
+esac
+case "$builder_identity$builder_known_hosts" in
+  *[![:alnum:]_./:-]*) fail 'native builder identity and known-hosts paths may contain only letters, digits, _, ., /, :, and -' ;;
 esac
 
 if [ "$#" -lt 1 ]; then
   usage
   exit 2
 fi
-
-setup_orbstack_machine() {
-  command -v orbctl >/dev/null 2>&1 || fail 'orbctl is required on macOS; install and start OrbStack first'
-  if ! orbctl status >/dev/null 2>&1; then
-    fail 'OrbStack is not running; start OrbStack and rerun make local-builder-init'
-  fi
-  if ! orbctl list -q | grep -Fxq "$machine"; then
-    orbctl create --arch amd64 --cpus 4 --memory 8G --disk 80G ubuntu:24.04 "$machine"
-  else
-    orbctl start "$machine"
-  fi
-  linux_repo_root=$repo_root
-  case "$repo_root" in
-    /Users/*) linux_repo_root="/mnt/mac$repo_root" ;;
-  esac
-  orb -m "$machine" -u root env BOETTICHER_SOURCE_ROOT="$linux_repo_root" sh "$linux_repo_root/scripts/local-builder-setup.sh"
-}
 
 run_linux() {
   runner=$1
@@ -81,41 +61,26 @@ run_linux() {
   exec "$repo_root/$script" "$@"
 }
 
-run_orbstack() {
-  runner=$1
-  shift
-  command -v orb >/dev/null 2>&1 || fail 'orb is required on macOS; install and start OrbStack first'
-  if ! orbctl status >/dev/null 2>&1; then
-    fail 'OrbStack is not running; start OrbStack and rerun the local builder'
+native_ssh() {
+  if [ -n "$builder_identity" ] && [ -n "$builder_known_hosts" ]; then
+    ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$builder_known_hosts" -o IdentitiesOnly=yes -i "$builder_identity" "$builder_ssh" "$@"
+  elif [ -n "$builder_identity" ]; then
+    ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -i "$builder_identity" "$builder_ssh" "$@"
+  elif [ -n "$builder_known_hosts" ]; then
+    ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$builder_known_hosts" "$builder_ssh" "$@"
+  else
+    ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes "$builder_ssh" "$@"
   fi
-  if ! orbctl list -q | grep -Fxq "$machine"; then
-    fail "OrbStack machine $machine is missing; run make local-builder-init"
+}
+
+require_native_mount() {
+  [ -n "$builder_ssh" ] || fail 'BOETTICHER_LOCAL_BUILDER_SSH is required for the native Linux build host'
+  if [ -n "$builder_identity" ] && [ ! -f "$builder_identity" ]; then
+    fail 'BOETTICHER_LOCAL_BUILDER_IDENTITY does not name a regular file'
   fi
-  orbctl start "$machine" >/dev/null
-  linux_repo_root=$repo_root
-  case "$repo_root" in
-    /Users/*) linux_repo_root="/mnt/mac$repo_root" ;;
-  esac
-  orb -m "$machine" -u root sh -s -- "$linux_repo_root" "$cache_root" "$work_root" "$artifact_output" "$runner" "$@" <<'LINUX_RUN'
-set -eu
-repo_root=$1
-cache_root=$2
-work_root=$3
-artifact_output=$4
-runner=$5
-shift 5
-cd "$repo_root"
-export PATH="/opt/boetticher/go/current/bin:$PATH"
-export BOETTICHER_CACHE_ROOT="$cache_root"
-export BOETTICHER_IMAGE_WORK="$work_root"
-export BOETTICHER_ARTIFACT_OUTPUT="$artifact_output"
-export BOETTICHER_LOCAL_FAST=1
-case "$runner" in
-  build) exec ./scripts/build-images.sh "$@" ;;
-  scan) exec ./scripts/scan-images.sh "$@" ;;
-  *) printf 'HOLD: unsupported local builder operation: %s\n' "$runner" >&2; exit 2 ;;
-esac
-LINUX_RUN
+  if ! native_ssh 'test -d /var/lib/boetticher/local-builder && mountpoint -q /var/lib/boetticher/local-builder && test -w /var/lib/boetticher/local-builder'; then
+    fail 'native build host must mount the dedicated build disk at /var/lib/boetticher/local-builder'
+  fi
 }
 
 validate_remote_target() {
@@ -131,11 +96,12 @@ validate_remote_target() {
 }
 
 sync_native_source() {
-  [ -n "$builder_ssh" ] || fail 'BOETTICHER_LOCAL_BUILDER_SSH is required for the ssh builder mode'
+  require_native_mount
+  [ -n "$builder_ssh" ] || fail 'BOETTICHER_LOCAL_BUILDER_SSH is required for the native Linux build host'
   case "$builder_ssh" in
     *[![:alnum:]@._:-]*) fail 'BOETTICHER_LOCAL_BUILDER_SSH contains unsupported characters' ;;
   esac
-  ssh -o BatchMode=yes -o ConnectTimeout=10 "$builder_ssh" 'rm -rf -- /var/lib/boetticher/local-builder/source; install -d -m 0755 /var/lib/boetticher/local-builder/source'
+  native_ssh 'rm -rf -- /var/lib/boetticher/local-builder/source; install -d -m 0755 /var/lib/boetticher/local-builder/source'
   tar -C "$repo_root" \
     --no-xattrs \
     --no-mac-metadata \
@@ -144,26 +110,26 @@ sync_native_source() {
     --exclude secrets \
     --exclude generated/artifacts \
     --exclude generated/runtime \
-    -cf - . | ssh -o BatchMode=yes -o ConnectTimeout=10 "$builder_ssh" 'tar -xf - -C /var/lib/boetticher/local-builder/source'
+    -cf - . | native_ssh 'tar -xf - -C /var/lib/boetticher/local-builder/source'
 }
 
 setup_native_builder() {
-  [ "$artifact_output" = generated/artifacts ] || fail 'ssh builder mode requires the default generated/artifacts output path'
+  [ "$artifact_output" = generated/artifacts ] || fail 'native builder mode requires the default generated/artifacts output path'
   sync_native_source
-  ssh -o BatchMode=yes -o ConnectTimeout=10 "$builder_ssh" \
+  native_ssh \
     "env BOETTICHER_LOCAL_NATIVE=1 BOETTICHER_SOURCE_ROOT=$remote_source sh $remote_source/scripts/local-builder-setup.sh"
 }
 
 pull_native_output() {
   mkdir -p "$repo_root/generated"
-  ssh -o BatchMode=yes -o ConnectTimeout=10 "$builder_ssh" \
+  native_ssh \
     "tar -C $remote_native_output -cf - generated" | tar -C "$repo_root" -xf -
 }
 
 run_native_builder() {
   runner=$1
   shift
-  [ "$artifact_output" = generated/artifacts ] || fail 'ssh builder mode requires the default generated/artifacts output path'
+  [ "$artifact_output" = generated/artifacts ] || fail 'native builder mode requires the default generated/artifacts output path'
   validate_remote_target "$runner" "$@"
   sync_native_source
   case "$runner" in
@@ -175,7 +141,7 @@ run_native_builder() {
   for target in "$@"; do
     remote_args="$remote_args $target"
   done
-  if ssh -o BatchMode=yes -o ConnectTimeout=10 "$builder_ssh" \
+  if native_ssh \
     "env BOETTICHER_NATIVE_SOURCE=$remote_source BOETTICHER_NATIVE_ROOT=$remote_native_root BOETTICHER_NATIVE_OUTPUT=$remote_native_output sh $remote_source/scripts/native-builder-run.sh $runner$remote_args"; then
     pull_native_output
   else
@@ -190,18 +156,9 @@ case "$operation" in
   init)
     [ "$#" -eq 0 ] || { usage; exit 2; }
     case "$(uname -s)" in
-      Darwin)
-        case "$builder_mode" in
-          orbstack) setup_orbstack_machine ;;
-          ssh) setup_native_builder ;;
-        esac
-        ;;
+      Darwin) setup_native_builder ;;
       Linux)
-        if [ "$builder_mode" = ssh ]; then
-          setup_native_builder
-        else
-          exec "$repo_root/scripts/local-builder-setup.sh"
-        fi
+        exec "$repo_root/scripts/local-builder-setup.sh"
         ;;
       *) fail 'local builder supports macOS or Linux only' ;;
     esac
@@ -209,18 +166,9 @@ case "$operation" in
   build|scan)
     [ "$#" -gt 0 ] || { usage; exit 2; }
     case "$(uname -s)" in
-      Darwin)
-        case "$builder_mode" in
-          orbstack) run_orbstack "$operation" "$@" ;;
-          ssh) run_native_builder "$operation" "$@" ;;
-        esac
-        ;;
+      Darwin) run_native_builder "$operation" "$@" ;;
       Linux)
-        if [ "$builder_mode" = ssh ]; then
-          run_native_builder "$operation" "$@"
-        else
-          run_linux "$operation" "$@"
-        fi
+        run_linux "$operation" "$@"
         ;;
       *) fail 'local builder supports macOS or Linux only' ;;
     esac
