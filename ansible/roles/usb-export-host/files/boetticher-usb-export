@@ -178,10 +178,35 @@ def reconcile(manifest_path):
         if changed and running:
             run("pct", "reboot", str(vmid))
 
+def remove_manifest(vmid):
+    if vmid <= 0: raise Hold("VMID must be positive")
+    LOCK_DIR.mkdir(parents=True, exist_ok=True, mode=0o755)
+    lock_path = LOCK_DIR / f"boetticher-usb-export-{vmid}.lock"
+    with lock_path.open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        _remove_manifest_locked(vmid)
+
+def _remove_manifest_locked(vmid):
+    manifest_path = MANIFEST_DIR / f"{vmid}.json"
+    state_path = STATE_DIR / f"{vmid}.json"
+    if manifest_path.exists():
+        manifest = load_json(manifest_path)
+        if int(manifest.get("vmid", -1)) != vmid:
+            raise Hold("USB manifest VMID does not match its filename")
+        manifest_path.unlink()
+    if state_path.exists():
+        state = load_json(state_path)
+        if int(state.get("vmid", -1)) != vmid:
+            raise Hold("USB state VMID does not match its filename")
+        state_path.unlink()
+
 def main(argv):
+    if len(argv) == 2 and argv[0] == "--remove":
+        remove_manifest(int(argv[1]))
+        return
     paths = sorted(MANIFEST_DIR.glob("*.json")) if argv == ["--all"] else [MANIFEST_DIR / f"{int(argv[0])}.json"] if len(argv) == 1 else []
     if argv == ["--all"] and not paths: return
-    if not paths: raise Hold("usage: boetticher-usb-export VMID | --all")
+    if not paths: raise Hold("usage: boetticher-usb-export VMID | --all | --remove VMID")
     for path in paths:
         if not path.is_file(): raise Hold(f"missing USB export manifest: {path}")
         reconcile(path)

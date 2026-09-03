@@ -60,12 +60,9 @@ func NewPulseClient(config Config, token string) (*PulseClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read StreamDeck Pulse CA: %w", err)
 	}
-	roots, err := x509.SystemCertPool()
+	roots, err := privateCAPool(caPEM)
 	if err != nil {
-		roots = x509.NewCertPool()
-	}
-	if !roots.AppendCertsFromPEM(caPEM) {
-		return nil, errors.New("load StreamDeck Pulse CA: no certificates found")
+		return nil, err
 	}
 	certificate, err := tls.LoadX509KeyPair(config.ClientCertificate, config.ClientKey)
 	if err != nil {
@@ -84,6 +81,17 @@ func NewPulseClient(config Config, token string) (*PulseClient, error) {
 			return http.ErrUseLastResponse
 		},
 	})
+}
+
+func privateCAPool(caPEM []byte) (*x509.CertPool, error) {
+	// The companion talks to one private Pulse endpoint. Trusting the host's
+	// public roots here would allow a public certificate to satisfy the same
+	// connection contract if DNS or routing is ever misdirected.
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(caPEM) {
+		return nil, errors.New("load StreamDeck Pulse CA: no certificates found")
+	}
+	return roots, nil
 }
 
 func newPulseClient(baseURL, token string, client *http.Client) (*PulseClient, error) {

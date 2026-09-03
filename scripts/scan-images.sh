@@ -8,7 +8,7 @@ if ! command -v trivy >/dev/null 2>&1; then
   exit 2
 fi
 
-default_scan_names="boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-firewall boetticher-portal boetticher-tailnet-router boetticher-airvpn boetticher-bifrost boetticher-printer boetticher-arr boetticher-streamdeck boetticher-aiops boetticher-gatus boetticher-network-probe"
+default_scan_names="boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-firewall boetticher-portal boetticher-tailnet-router boetticher-airvpn boetticher-bifrost boetticher-printer boetticher-arr boetticher-aiops boetticher-gatus boetticher-network-probe"
 case "$target" in
   scan-base) names="boetticher-base" ;;
   scan-dns-blocky) names="boetticher-dns-blocky" ;;
@@ -21,7 +21,6 @@ case "$target" in
   scan-bifrost) names="boetticher-bifrost" ;;
   scan-printer) names="boetticher-printer" ;;
   scan-arr) names="boetticher-arr" ;;
-  scan-streamdeck) names="boetticher-streamdeck" ;;
   scan-aiops) names="boetticher-aiops" ;;
   scan-gatus) names="boetticher-gatus" ;;
   scan-network-probe) names="boetticher-network-probe" ;;
@@ -35,7 +34,7 @@ case "$target" in
 esac
 for name in $names; do
   case "$name" in
-    boetticher-base|boetticher-dns-blocky|boetticher-logging|boetticher-monitoring|boetticher-firewall|boetticher-portal|boetticher-tailnet-router|boetticher-airvpn|boetticher-bifrost|boetticher-printer|boetticher-arr|boetticher-streamdeck|boetticher-aiops|boetticher-gatus|boetticher-network-probe) ;;
+    boetticher-base|boetticher-dns-blocky|boetticher-logging|boetticher-monitoring|boetticher-firewall|boetticher-portal|boetticher-tailnet-router|boetticher-airvpn|boetticher-bifrost|boetticher-printer|boetticher-arr|boetticher-aiops|boetticher-gatus|boetticher-network-probe) ;;
     *) echo "unknown selected scan artifact: $name" >&2; exit 2 ;;
   esac
 done

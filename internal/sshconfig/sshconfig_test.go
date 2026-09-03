@@ -69,7 +69,7 @@ func TestRenderDirectPinsFreshApplianceTransport(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, expected := range []string{
-		"Host boetticher-kiosk 192.0.2.50",
+		"Host boetticher-companion 192.0.2.50",
 		"HostName 192.0.2.50",
 		"Port 22",
 		"User piadmin",

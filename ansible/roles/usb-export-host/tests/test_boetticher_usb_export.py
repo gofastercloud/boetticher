@@ -272,6 +272,30 @@ class USBExportHostTest(unittest.TestCase):
         self.assertFalse(any(call[:2] == ("pct", "reboot") for call in calls))
         self.assertFalse((usb_export.STATE_DIR / "230.json").exists())
 
+    def test_remove_manifest_removes_only_the_exact_vmid_state(self):
+        self.write_manifest()
+        (usb_export.STATE_DIR / "230.json").write_text(json.dumps({"vmid": 230, "managed": {}}))
+        other_manifest = usb_export.MANIFEST_DIR / "231.json"
+        other_manifest.write_text(json.dumps({"vmid": 231}))
+        other_state = usb_export.STATE_DIR / "231.json"
+        other_state.write_text(json.dumps({"vmid": 231, "managed": {}}))
+
+        usb_export.remove_manifest(230)
+
+        self.assertFalse((usb_export.MANIFEST_DIR / "230.json").exists())
+        self.assertFalse((usb_export.STATE_DIR / "230.json").exists())
+        self.assertTrue(other_manifest.exists())
+        self.assertTrue(other_state.exists())
+
+    def test_remove_manifest_rejects_filename_identity_mismatch(self):
+        path = usb_export.MANIFEST_DIR / "230.json"
+        path.write_text(json.dumps({"vmid": 231}))
+
+        with self.assertRaisesRegex(usb_export.Hold, "does not match"):
+            usb_export.remove_manifest(230)
+
+        self.assertTrue(path.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

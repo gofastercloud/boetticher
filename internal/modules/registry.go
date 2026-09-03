@@ -148,14 +148,6 @@ func FirstPartyRegistry() Registry {
 			},
 			USBRequirements: []model.USBRequirement{{Name: "serial", Guest: "lab-printer-01", DeviceType: "serial", Access: "rw", Required: true, AllowedIdentities: []model.USBIdentity{{VendorID: "1a86", ProductID: "7523"}}}},
 		},
-		"streamdeck": {
-			Name: "streamdeck", Description: "Read-only Proxmox host status display backed by Pulse", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
-			DependsOn: []string{"monitoring"}, Requires: []Capability{CapabilityDNS, CapabilityMonitoring}, GuestIDs: []int{model.StreamDeckVMID}, ReservedVMIDStart: 220, ReservedVMIDEnd: 229,
-			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
-				{Name: "lab-streamdeck-01", VMID: model.StreamDeckVMID, Hostname: "lab-streamdeck-01", Address: "10.10.20.70", Role: "Pulse Proxmox host status display", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
-			},
-			USBRequirements: []model.USBRequirement{{Name: "display", Guest: "lab-streamdeck-01", DeviceType: "raw-usb", Access: "rw", Required: true, AllowedIdentities: []model.USBIdentity{{VendorID: "0fd9", ProductID: "006d"}}}},
-		},
 		"aiops": {
 			Name: "aiops", Description: "Read-only HolmesGPT incident investigation", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
 			Configuration: []model.ModuleConfigField{{Key: "model_alias", Type: model.ModuleConfigModelAlias, Prompt: "AI Router model alias", Description: "An alias explicitly declared by the Bifrost module", Required: true, Resolver: "bifrost-model-alias"}},

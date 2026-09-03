@@ -457,6 +457,31 @@ func IssueClient(authority Authority, name, domain string, now time.Time) (Clien
 	}, nil
 }
 
+// IssueServiceClient creates a client certificate for an explicitly named
+// external service identity. Service identities are not endpoint names and
+// carry no DNS SANs, which keeps the Pulse authorization mapping narrow.
+func IssueServiceClient(authority Authority, identity string, now time.Time) (ClientCertificate, error) {
+	if err := ValidateClientName(identity); err != nil {
+		return ClientCertificate{}, err
+	}
+	clientKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return ClientCertificate{}, err
+	}
+	request, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject: pkix.Name{CommonName: identity},
+	}, clientKey)
+	if err != nil {
+		return ClientCertificate{}, fmt.Errorf("create service client CSR: %w", err)
+	}
+	certificate, err := SignServiceClientCSR(authority, string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: request})), identity, now)
+	if err != nil {
+		return ClientCertificate{}, err
+	}
+	certificate.KeyPEM = marshalECKey(clientKey)
+	return certificate, nil
+}
+
 func PublicMetadata(authority Authority) (map[string]string, error) {
 	root, err := parseCert(authority.RootCertPEM)
 	if err != nil {

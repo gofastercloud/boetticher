@@ -45,19 +45,27 @@ func TestReleaseBundleSignsAndAtomicallyImportsQualifiedArtifacts(t *testing.T) 
 	if err := os.WriteFile(evidencePath, append(data, '\n'), 0600); err != nil {
 		t.Fatal(err)
 	}
+	companionPath := filepath.Join(root, "boetticher-streamdeck-linux-arm64")
+	companionBytes := []byte("release-built companion StreamDeck binary")
+	if err := os.WriteFile(companionPath, companionBytes, 0700); err != nil {
+		t.Fatal(err)
+	}
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 	bundlePath := filepath.Join(root, "release.tar.gz")
-	manifest, err := BuildReleaseBundle(bundlePath, "0.5.0", model.APIVersion, model.SchemaVersion, private, "release-2026", []ReleaseInput{{Artifact: artifact, ArtifactPath: artifactPath, EvidencePath: evidencePath, QualificationFiles: qualificationFiles}})
+	manifest, err := BuildReleaseBundleWithMetadataAndCompanion(bundlePath, ReleaseBuildMetadata{
+		ReleaseVersion: "0.5.0", SourceCommit: "local-build", BuildWorkflow: "local",
+		ControllerMin: "0.5.0", ControllerMax: "0.5.0", QualificationPolicyVersion: QualificationPolicyVersion,
+	}, model.APIVersion, model.SchemaVersion, private, "release-2026", []ReleaseInput{{Artifact: artifact, ArtifactPath: artifactPath, EvidencePath: evidencePath, QualificationFiles: qualificationFiles}}, companionPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(manifest.Files) != 7 || len(manifest.Artifacts) != 1 {
+	if len(manifest.Files) != 8 || len(manifest.Artifacts) != 1 || manifest.CompanionBinary == nil {
 		t.Fatalf("unexpected release manifest: %#v", manifest)
 	}
-	destination := filepath.Join(root, "imported")
+	destination := filepath.Join(root, "generated", "release")
 	imported, err := ImportReleaseBundle(bundlePath, destination, []TrustedReleaseKey{{ID: "release-2026", PublicKey: public}}, "0.5.0", model.APIVersion, model.SchemaVersion)
 	if err != nil {
 		t.Fatal(err)
@@ -68,6 +76,9 @@ func TestReleaseBundleSignsAndAtomicallyImportsQualifiedArtifacts(t *testing.T) 
 	if got, err := os.ReadFile(filepath.Join(destination, "artifacts", artifact.Name, filepath.Base(artifactPath))); err != nil || string(got) != string(artifactBytes) {
 		t.Fatalf("imported artifact = %q, err=%v", got, err)
 	}
+	if got, err := os.ReadFile(filepath.Join(destination, filepath.FromSlash(CompanionStreamDeckPath))); err != nil || string(got) != string(companionBytes) {
+		t.Fatalf("imported companion = %q, err=%v", got, err)
+	}
 	importedEvidence, err := os.ReadFile(filepath.Join(destination, "evidence", artifact.Name+".json"))
 	if err != nil {
 		t.Fatal(err)
@@ -77,6 +88,16 @@ func TestReleaseBundleSignsAndAtomicallyImportsQualifiedArtifacts(t *testing.T) 
 	}
 	if !strings.Contains(string(importedEvidence), "artifacts/"+artifact.Name) {
 		t.Fatal("release evidence was not rebound to its bundle path")
+	}
+	previousKeys := EmbeddedTrustedReleaseKeys
+	EmbeddedTrustedReleaseKeys = []TrustedReleaseKey{{ID: "release-2026", PublicKey: public}}
+	defer func() { EmbeddedTrustedReleaseKeys = previousKeys }()
+	resolvedCompanion, err := ResolveImportedCompanion(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolvedCompanion != filepath.Join(root, "generated", "release", filepath.FromSlash(CompanionStreamDeckPath)) {
+		t.Fatalf("resolved companion path = %q", resolvedCompanion)
 	}
 	reformatted := filepath.Join(root, "reformatted.tar.gz")
 	rewriteReleaseManifest(t, bundlePath, reformatted)

@@ -7,12 +7,12 @@ set -eu
 target=${1:-images}
 shift || true
 case "$target" in
-  image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-arr|image-streamdeck|image-gatus|image-network-probe|images) ;;
+  image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-arr|image-gatus|image-network-probe|images) ;;
   image-airvpn) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
-default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-streamdeck image-aiops image-gatus image-network-probe image-firewall"
+default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-aiops image-gatus image-network-probe image-firewall"
 if [ "$target" = images ]; then
   selected_image_targets="$*"
   if [ -z "$selected_image_targets" ]; then
@@ -20,7 +20,7 @@ if [ "$target" = images ]; then
   fi
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
-      image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-arr|image-streamdeck|image-gatus|image-network-probe) ;;
+      image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-arr|image-gatus|image-network-probe) ;;
       image-airvpn) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac
@@ -637,21 +637,6 @@ build_arr() {
   package_lxc boetticher-arr
 }
 
-build_streamdeck() {
-  printf '%s\n' 'boetticher build stage: streamdeck'
-  rootfs=$(prepare_rootfs boetticher-streamdeck)
-  chroot "$rootfs" groupadd --system --gid 2200 streamdeck
-  chroot "$rootfs" useradd --system --uid 2200 --gid 2200 --home-dir /var/lib/streamdeck --create-home --shell /usr/sbin/nologin streamdeck
-  CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/libexec/boetticher-streamdeck" ./cmd/boetticher-streamdeck
-  chroot "$rootfs" chown root:root /usr/local/libexec/boetticher-streamdeck
-  chroot "$rootfs" chmod 0755 /usr/local/libexec/boetticher-streamdeck
-  chroot "$rootfs" apt-get clean
-  rm -rf "$rootfs/var/lib/apt/lists/"*
-  install -D -m 0644 images/streamdeck/runtime/streamdeck-status.service "$rootfs/etc/systemd/system/streamdeck-status.service"
-  write_artifact_identity "$rootfs" streamdeck
-  package_lxc boetticher-streamdeck
-}
-
 build_aiops() {
   printf '%s\n' 'boetticher build stage: aiops'
   rootfs=$(prepare_rootfs boetticher-aiops)
@@ -964,11 +949,6 @@ build_arr_target() {
   build_arr
 }
 
-build_streamdeck_target() {
-  [ -f "$(artifact_for boetticher-base)" ] || build_base
-  build_streamdeck
-}
-
 build_aiops_target() {
   [ -f "$(artifact_for boetticher-base)" ] || build_base
   build_aiops
@@ -1011,7 +991,6 @@ case "$target" in
   image-bifrost) run_timed_image_target "$target" build_bifrost_target ;;
   image-printer) run_timed_image_target "$target" build_printer_target ;;
   image-arr) run_timed_image_target "$target" build_arr_target ;;
-  image-streamdeck) run_timed_image_target "$target" build_streamdeck_target ;;
   image-aiops) run_timed_image_target "$target" build_aiops_target ;;
   image-gatus) run_timed_image_target "$target" build_gatus_target ;;
   image-network-probe) run_timed_image_target "$target" build_network_probe_target ;;

@@ -49,6 +49,24 @@ func ApplyModuleState(dir string, config model.SiteConfig, retained []model.Reta
 	return applyModuleStateFiles(files)
 }
 
+// ApplyLegacyStreamDeckMigration commits the migrated desired configuration
+// and retained-resource projection together. Existing purge intents are left
+// untouched because the migration must not cancel an unrelated operation.
+func ApplyLegacyStreamDeckMigration(dir string, config model.SiteConfig, retained []model.RetainedModule) error {
+	configData, err := model.RenderSiteConfig(config)
+	if err != nil {
+		return err
+	}
+	retainedData, err := marshalRetainedModules(retained)
+	if err != nil {
+		return err
+	}
+	return applyModuleStateFiles([]moduleStateFile{
+		{path: filepath.Join(dir, "site.yml"), data: configData, mode: 0600},
+		{path: filepath.Join(dir, retainedModulesPath), data: append(retainedData, '\n'), mode: 0600},
+	})
+}
+
 func applyModuleStateFiles(files []moduleStateFile) error {
 	snapshots := make([]moduleStateSnapshot, len(files))
 	for index, file := range files {

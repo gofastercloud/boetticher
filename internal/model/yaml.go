@@ -39,7 +39,7 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 		return SiteConfig{}, fmt.Errorf("decode site.yml: %w", err)
 	}
 	for name := range config.Modules.Map() {
-		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "bifrost" && name != "printer" && name != "streamdeck" && name != "aiops" && name != "gatus" && name != "airvpn" && name != "arr" {
+		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "bifrost" && name != "printer" && name != "aiops" && name != "gatus" && name != "airvpn" && name != "arr" {
 			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s is not a registered first-party module", name)
 		}
 	}
@@ -56,6 +56,36 @@ func validateModuleConfigShape(data []byte) error {
 	}
 	root := document.Content[0]
 	modules := mappingValue(root, "modules")
+	if companion := mappingValue(root, "companion"); companion != nil {
+		if companion.Kind != yaml.MappingNode {
+			return errors.New("site.yml: companion expected a mapping")
+		}
+		for index := 0; index+1 < len(companion.Content); index += 2 {
+			name := companion.Content[index].Value
+			value := companion.Content[index+1]
+			if name == "enabled" {
+				if value.Tag != "!!bool" && value.Tag != "!!null" {
+					return errors.New("site.yml: companion.enabled: expected a boolean")
+				}
+				continue
+			}
+			if name != "display" && name != "streamdeck" && name != "pulse_agent" {
+				return fmt.Errorf("site.yml: companion.%s: unknown field", name)
+			}
+			if value.Kind != yaml.MappingNode {
+				return fmt.Errorf("site.yml: companion.%s expected a mapping", name)
+			}
+			for fieldIndex := 0; fieldIndex+1 < len(value.Content); fieldIndex += 2 {
+				if value.Content[fieldIndex].Value != "enabled" {
+					return fmt.Errorf("site.yml: companion.%s.%s: unknown field", name, value.Content[fieldIndex].Value)
+				}
+				fieldValue := value.Content[fieldIndex+1]
+				if fieldValue.Tag != "!!bool" && fieldValue.Tag != "!!null" {
+					return fmt.Errorf("site.yml: companion.%s.enabled: expected a boolean", name)
+				}
+			}
+		}
+	}
 	if modules == nil {
 		return nil
 	}
@@ -68,9 +98,9 @@ func validateModuleConfigShape(data []byte) error {
 		allowed := map[string]bool{}
 		switch name {
 		case "dns":
-		case "monitoring", "firewall", "printer", "streamdeck":
+		case "monitoring", "firewall", "printer":
 			allowed["enabled"] = true
-			if name == "printer" || name == "streamdeck" {
+			if name == "printer" {
 				allowed["network"] = true
 			}
 		case "logging":

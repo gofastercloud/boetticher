@@ -32,13 +32,24 @@ func (d *nativeDeck) SetButton(ctx context.Context, index int, data []byte) erro
 }
 func (d *nativeDeck) Close(ctx context.Context) error { return d.deck.Close(ctx) }
 
-func openDeck(ctx context.Context, _ string) (streamdeck.Deck, error) {
-	device, err := openRawDeck(ctx, decklib.Open, reconnectStreamDeckUSB)
+func openDeck(ctx context.Context, config streamdeck.Config) (streamdeck.Deck, error) {
+	open := func(ctx context.Context) (*decklib.Device, error) {
+		path, err := streamDeckDevicePath(config)
+		if err != nil {
+			return nil, err
+		}
+		return decklib.OpenPath(ctx, path)
+	}
+	device, err := openRawDeck(ctx, open, func() error { return reconnectStreamDeckUSB(config) })
 	if err != nil {
 		return nil, err
 	}
 	if device == nil {
 		return nil, errors.New("no supported StreamDeck found")
+	}
+	if device.Name != config.Model {
+		_ = device.Close(context.Background())
+		return nil, fmt.Errorf("StreamDeck model %q does not match configured model %q", device.Name, config.Model)
 	}
 	deck, err := decklib.NewFromDevice(ctx, device)
 	if err != nil {

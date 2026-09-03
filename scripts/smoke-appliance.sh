@@ -231,18 +231,6 @@ case "$name" in
       exit 1
     fi
     ;;
-  boetticher-streamdeck)
-    test -x "$rootfs/usr/local/libexec/boetticher-streamdeck"
-    test ! -e "$rootfs/opt/streamdeck"
-    test ! -e "$rootfs/usr/src/boetticher-streamdeck"
-    chroot "$rootfs" getent passwd streamdeck | grep -Fq ':2200:2200:'
-    test -f "$rootfs/etc/systemd/system/streamdeck-status.service"
-    grep -Fq 'User=streamdeck' "$rootfs/etc/systemd/system/streamdeck-status.service"
-    grep -Fq 'DevicePolicy=closed' "$rootfs/etc/systemd/system/streamdeck-status.service"
-    grep -Fq 'DeviceAllow=char-usb_device rw' "$rootfs/etc/systemd/system/streamdeck-status.service"
-    grep -Fq 'ProtectSystem=strict' "$rootfs/etc/systemd/system/streamdeck-status.service"
-    grep -Fq 'MemoryDenyWriteExecute=yes' "$rootfs/etc/systemd/system/streamdeck-status.service"
-    ;;
   boetticher-aiops)
     test -x "$rootfs/usr/local/libexec/boetticher-aiops"
     test -f "$rootfs/etc/systemd/system/boetticher-aiops.service"

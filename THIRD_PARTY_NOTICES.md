@@ -40,9 +40,7 @@ The image definitions pin or fetch these components:
 | [OctoPrint](https://github.com/OctoPrint/OctoPrint) | 1.11.8 | Optional printer image | Retain the application licence and locked Python dependency notices. |
 | [Tailscale](https://tailscale.com/) | 1.76.6 | Optional Tailnet Router image | Retain the package licence and repository notices. |
 | [Ansible Core](https://github.com/ansible/ansible) | 2.19.1 | Controller runtime | [GPLv3 copying terms](https://github.com/ansible/ansible/blob/devel/COPYING) |
-| [matthewpi/streamdeck](https://github.com/matthewpi/streamdeck) | commit `6586ce762db315c6633567f9a10ed4ef14fcd33e` | StreamDeck LXC | [MIT licence](https://github.com/matthewpi/streamdeck/blob/6586ce762db315c6633567f9a10ed4ef14fcd33e/LICENSE); retain exact Go dependency notices. |
-| [python-elgato-streamdeck](https://github.com/abcminiuser/python-elgato-streamdeck) | pinned commit; runtime 0.10.0 | External Pi StreamDeck companion | Retain the source licence and notices for the pinned archive. |
-| [Pillow](https://python-pillow.github.io/) and [HTTPX](https://www.python-httpx.org/) | 12.3.0 / 0.28.1 | External Pi StreamDeck companion | Retain their package licences and notices. |
+| [matthewpi/streamdeck](https://github.com/matthewpi/streamdeck) | commit `6586ce762db315c6633567f9a10ed4ef14fcd33e` | Companion StreamDeck runtime | [MIT licence](https://github.com/matthewpi/streamdeck/blob/6586ce762db315c6633567f9a10ed4ef14fcd33e/LICENSE); retain exact Go dependency notices. |
 
 The AI Router is Boetticher's in-tree Bifrost implementation. It provides the
 OpenAI-compatible endpoint used by AIOps and does not bundle a separate router

@@ -76,7 +76,7 @@ func TestKioskSetupDryRunDoesNotTouchPKIOrPi(t *testing.T) {
 	}
 
 	var output bytes.Buffer
-	err := runKioskSetup([]string{
+	err := runCompanionSetup([]string{
 		"192.0.2.50",
 		"--site", dir,
 		"--identity-file", filepath.Join(dir, "missing-identity"),
@@ -85,7 +85,7 @@ func TestKioskSetupDryRunDoesNotTouchPKIOrPi(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "Kiosk setup: PASS dry-run only") {
+	if !strings.Contains(output.String(), "Companion setup: PASS dry-run only") {
 		t.Fatalf("unexpected dry-run output: %s", output.String())
 	}
 	if _, err := os.Stat(filepath.Join(os.Getenv("BOETTICHER_RUNTIME_DIR"), "installation", "pki", kioskClientName)); !os.IsNotExist(err) {
@@ -104,7 +104,7 @@ func TestKioskSetupRequiresConfirmationForMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	err := runKioskSetup([]string{
+	err := runCompanionSetup([]string{
 		"192.0.2.50",
 		"--site", dir,
 		"--identity-file", identity,
@@ -124,7 +124,7 @@ func TestValidateKioskSSHInputsRejectsSymlinkedKnownHostsParent(t *testing.T) {
 	if err := os.Symlink(external, filepath.Join(dir, "generated")); err != nil {
 		t.Fatal(err)
 	}
-	err := validateKioskSSHInputs(identity, filepath.Join(dir, "generated", "ssh", "kiosk_known_hosts"), false)
+	err := validateKioskSSHInputs(identity, filepath.Join(dir, "generated", "ssh", "companion_known_hosts"), false)
 	if err == nil {
 		t.Fatal("symlinked kiosk known-hosts parent was accepted")
 	}

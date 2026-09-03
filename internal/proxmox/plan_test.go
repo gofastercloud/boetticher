@@ -1574,26 +1574,26 @@ func TestValidateLegacyLXCRecreationChecksEveryCandidateBeforeDiscard(t *testing
 		}
 	}
 	dns := legacyGuest(110, "lab-dns-01", "dns")
-	streamdeck := legacyGuest(220, "lab-streamdeck-01", "streamdeck")
+	printer := legacyGuest(230, "lab-printer-01", "printer")
 	legacyConfig := func(guest GuestPlan) string {
 		return `{"data":{"name":"` + guest.Name + `","hostname":"` + guest.Hostname + `","unprivileged":1,"tags":"` + strings.Join(guest.Tags, ";") + `","rootfs":"local:` + strconv.Itoa(guest.VMID) + `/vm-` + strconv.Itoa(guest.VMID) + `-disk-0.raw,size=8G","mp0":"local:` + strconv.Itoa(guest.VMID) + `/vm-` + strconv.Itoa(guest.VMID) + `-disk-1.raw,mp=/var/lib/boetticher/identity/ssh,backup=1,size=1G"}}`
 	}
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		switch {
-		case r.Method == http.MethodGet && (r.URL.Path == "/api2/json/nodes/node/qemu/110/config" || r.URL.Path == "/api2/json/nodes/node/qemu/220/config"):
+		case r.Method == http.MethodGet && (r.URL.Path == "/api2/json/nodes/node/qemu/110/config" || r.URL.Path == "/api2/json/nodes/node/qemu/230/config"):
 			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
 			return response([]byte(legacyConfig(dns)))
-		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/220/config":
-			return response([]byte(strings.Replace(legacyConfig(streamdeck), `"hostname":"lab-streamdeck-01"`, `"hostname":"unexpected-host"`, 1)))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/230/config":
+			return response([]byte(strings.Replace(legacyConfig(printer), `"hostname":"lab-printer-01"`, `"hostname":"unexpected-host"`, 1)))
 		default:
 			t.Fatalf("legacy recovery preflight must not mutate guests: %s %s", r.Method, r.URL.Path)
 			return nil
 		}
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	_, err := ValidateLegacyLXCRecreation(context.Background(), client, Plan{Node: "node", ForceLegacyLXCRecreation: true, Guests: []GuestPlan{dns, streamdeck}})
-	if err == nil || !strings.Contains(err.Error(), "lab-streamdeck-01") {
+	_, err := ValidateLegacyLXCRecreation(context.Background(), client, Plan{Node: "node", ForceLegacyLXCRecreation: true, Guests: []GuestPlan{dns, printer}})
+	if err == nil || !strings.Contains(err.Error(), "lab-printer-01") {
 		t.Fatalf("later legacy LXC mismatch did not stop the full recovery preflight: %v", err)
 	}
 }

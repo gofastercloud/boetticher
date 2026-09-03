@@ -11,7 +11,7 @@ guide lives at [gofastercloud.github.io/boetticher](https://gofastercloud.github
 - Add the optional AirVPN transit module for explicit module egress.
 - Keep the AI-router client contract while replacing its heavy runtime with
   the in-tree Bifrost implementation for AIOps.
-- Run the StreamDeck module in Go with `matthewpi/streamdeck`.
+- Run the companion StreamDeck capability in Go with `matthewpi/streamdeck`.
 
 ## 0.4.0 — 2026-08-29
 

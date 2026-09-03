@@ -1,6 +1,7 @@
-# Standalone Raspberry Pi kiosk configuration entry point.
+---
+# Standalone Raspberry Pi companion configuration entry point.
 # Secret values are streamed as Ansible extra-vars over stdin by the CLI.
-- name: Configure the Boetticher Raspberry Pi kiosk
+- name: Configure the Boetticher companion Pi
   hosts: kiosk
   become: "{{ kiosk_become | default(true) | bool }}"
   gather_facts: true

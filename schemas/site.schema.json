@@ -120,6 +120,33 @@
       ],
       "type": "object"
     },
+    "CompanionCapabilityConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "CompanionConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "display": {
+          "$ref": "#/$defs/CompanionCapabilityConfig"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "pulse_agent": {
+          "$ref": "#/$defs/CompanionCapabilityConfig"
+        },
+        "streamdeck": {
+          "$ref": "#/$defs/CompanionCapabilityConfig"
+        }
+      },
+      "type": "object"
+    },
     "DHCPReservation": {
       "additionalProperties": false,
       "properties": {
@@ -250,9 +277,6 @@
           "$ref": "#/$defs/ToggleModuleConfig"
         },
         "printer": {
-          "$ref": "#/$defs/NetworkToggleModuleConfig"
-        },
-        "streamdeck": {
           "$ref": "#/$defs/NetworkToggleModuleConfig"
         },
         "tailnet-router": {
@@ -592,6 +616,10 @@
     },
     "bootstrap_address": {
       "type": "string"
+    },
+    "companion": {
+      "$ref": "#/$defs/CompanionConfig",
+      "description": "Optional capabilities of an external Boetticher companion device."
     },
     "dhcp_reservations": {
       "items": {

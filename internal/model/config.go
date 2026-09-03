@@ -39,6 +39,9 @@ type SiteConfig struct {
 	Ownership OwnershipPolicy `yaml:"ownership" json:"ownership,omitempty"`
 	// Modules contains typed settings for built-in modules.
 	Modules ModulesConfig `yaml:"modules,omitempty" json:"modules,omitempty" jsonschema_description:"Typed settings for built-in modules."`
+	// Companion contains the optional capabilities of an external Pi. It is
+	// deliberately separate from Modules because it is not a Proxmox workload.
+	Companion *CompanionConfig `yaml:"companion,omitempty" json:"companion,omitempty" jsonschema_description:"Optional capabilities of an external Boetticher companion device."`
 	// USBExports records stable physical-port bindings for declared module requirements.
 	USBExports []USBExportBinding `yaml:"usb_exports,omitempty" json:"usb_exports,omitempty"`
 	// DHCPReservations records explicit SERVERS reservations for user workloads.
@@ -59,11 +62,51 @@ type ModulesConfig struct {
 	TailnetRouter *ToggleModuleConfig        `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
 	Bifrost       *BifrostModuleConfig       `yaml:"bifrost,omitempty" json:"bifrost,omitempty"`
 	Printer       *NetworkToggleModuleConfig `yaml:"printer,omitempty" json:"printer,omitempty"`
-	StreamDeck    *NetworkToggleModuleConfig `yaml:"streamdeck,omitempty" json:"streamdeck,omitempty"`
 	AIOps         *AIOpsModuleConfig         `yaml:"aiops,omitempty" json:"aiops,omitempty"`
 	Gatus         *NetworkToggleModuleConfig `yaml:"gatus,omitempty" json:"gatus,omitempty"`
 	AirVPN        *AirVPNModuleConfig        `yaml:"airvpn,omitempty" json:"airvpn,omitempty"`
 	Arr           *ArrModuleConfig           `yaml:"arr,omitempty" json:"arr,omitempty"`
+}
+
+// CompanionConfig is the fixed capability contract for an external Pi. New
+// capability types are intentionally added here rather than through a generic
+// daemon or plugin mechanism.
+type CompanionConfig struct {
+	Enabled    *bool                      `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Display    *CompanionCapabilityConfig `yaml:"display,omitempty" json:"display,omitempty"`
+	StreamDeck *CompanionCapabilityConfig `yaml:"streamdeck,omitempty" json:"streamdeck,omitempty"`
+	PulseAgent *CompanionCapabilityConfig `yaml:"pulse_agent,omitempty" json:"pulse_agent,omitempty"`
+}
+
+type CompanionCapabilityConfig struct {
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+type CompanionCapabilities struct {
+	Enabled    bool
+	Display    bool
+	StreamDeck bool
+	PulseAgent bool
+}
+
+// Capabilities applies one simple rule: a disabled companion disables every
+// capability. An omitted companion keeps the pre-0.5 kiosk setup usable while
+// sites migrate to the explicit typed section.
+func (c *CompanionConfig) Capabilities() CompanionCapabilities {
+	if c == nil {
+		return CompanionCapabilities{Enabled: true, Display: true, StreamDeck: true, PulseAgent: true}
+	}
+	enabled := c.Enabled == nil || *c.Enabled
+	return CompanionCapabilities{
+		Enabled:    enabled,
+		Display:    enabled && capabilityEnabled(c.Display),
+		StreamDeck: enabled && capabilityEnabled(c.StreamDeck),
+		PulseAgent: enabled && capabilityEnabled(c.PulseAgent),
+	}
+}
+
+func capabilityEnabled(c *CompanionCapabilityConfig) bool {
+	return c != nil && (c.Enabled == nil || *c.Enabled)
 }
 
 // ModuleNetworkMode selects the Internet route for a module that supports it.
@@ -203,9 +246,6 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 	if m.Printer != nil {
 		result["printer"] = ModuleConfig{Enabled: cloneBool(m.Printer.Enabled), Network: m.Printer.Network}
 	}
-	if m.StreamDeck != nil {
-		result["streamdeck"] = ModuleConfig{Enabled: cloneBool(m.StreamDeck.Enabled), Network: m.StreamDeck.Network}
-	}
 	if m.AIOps != nil {
 		result["aiops"] = ModuleConfig{Enabled: cloneBool(m.AIOps.Enabled), Network: m.AIOps.Network, ModelAlias: m.AIOps.ModelAlias}
 	}
@@ -247,9 +287,6 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 	}
 	if config, ok := input["printer"]; ok {
 		result.Printer = &NetworkToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
-	}
-	if config, ok := input["streamdeck"]; ok {
-		result.StreamDeck = &NetworkToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	}
 	if config, ok := input["aiops"]; ok {
 		result.AIOps = &AIOpsModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, ModelAlias: config.ModelAlias}
@@ -303,8 +340,6 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 		m.Bifrost = &BifrostModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Upstreams: cloneBifrostUpstreams(upstreams), Models: cloneBifrostModels(models)}
 	case "printer":
 		m.Printer = &NetworkToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
-	case "streamdeck":
-		m.StreamDeck = &NetworkToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	case "aiops":
 		alias := config.ModelAlias
 		if alias == "" && m.AIOps != nil {
@@ -334,12 +369,33 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 	return nil
 }
 
+func cloneCompanionConfig(value *CompanionConfig) *CompanionConfig {
+	if value == nil {
+		return nil
+	}
+	result := &CompanionConfig{Enabled: cloneBool(value.Enabled)}
+	if value.Display != nil {
+		result.Display = &CompanionCapabilityConfig{Enabled: cloneBool(value.Display.Enabled)}
+	}
+	if value.StreamDeck != nil {
+		result.StreamDeck = &CompanionCapabilityConfig{Enabled: cloneBool(value.StreamDeck.Enabled)}
+	}
+	if value.PulseAgent != nil {
+		result.PulseAgent = &CompanionCapabilityConfig{Enabled: cloneBool(value.PulseAgent.Enabled)}
+	}
+	return result
+}
+
 func cloneBool(value *bool) *bool {
 	if value == nil {
 		return nil
 	}
 	copy := *value
 	return &copy
+}
+
+func boolPointer(value bool) *bool {
+	return &value
 }
 
 func cloneBifrostUpstreams(values []BifrostUpstreamConfig) []BifrostUpstreamConfig {
@@ -430,6 +486,7 @@ func ConfigFromSite(s Site) SiteConfig {
 		TestedVersions: s.TestedVersions, Network: s.Network, PKI: s.PKI,
 		SecretMetadata: s.SecretMetadata, Ownership: s.Ownership,
 		Modules: ModulesConfigFromMap(s.ModuleConfig), DHCPReservations: configuredDHCPReservations(s),
+		Companion:         cloneCompanionConfig(s.Companion),
 		USBExports:        append([]USBExportBinding(nil), s.USBExports...),
 		DNSRecords:        append([]UserDNSRecord(nil), s.DNSRecords...),
 		UserFirewallRules: append([]UserFirewallRule(nil), s.UserFirewallRules...),
@@ -561,6 +618,7 @@ func (c SiteConfig) BaseSite() Site {
 	s.DNSRecords = append([]UserDNSRecord(nil), c.DNSRecords...)
 	s.UserFirewallRules = append([]UserFirewallRule(nil), c.UserFirewallRules...)
 	s.USBExports = append([]USBExportBinding(nil), c.USBExports...)
+	s.Companion = cloneCompanionConfig(c.Companion)
 	s.ModuleConfig = c.Modules.Map()
 	return s
 }

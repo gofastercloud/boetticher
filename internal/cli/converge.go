@@ -451,9 +451,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	// Agent installation is enabled only in the post-Pulse bootstrap pass,
 	// after the scoped report token and encrypted credential projection exist.
 	runtimeVariables["pulse_agent_install_enabled"] = false
-	// StreamDeck activation is enabled only in the post-Pulse pass, after its
-	// shared read token and encrypted credential projection exist.
-	runtimeVariables["streamdeck_runtime_credentials_ready"] = false
 	monitoringEnabled := modules.IsEnabled(s, "monitoring")
 	aiopsEnabled := modules.IsEnabled(s, "aiops")
 	secretValues := map[string]string{}
@@ -941,7 +938,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	var bifrostCertificate pki.ServerCertificate
 	var octoprintCertificate pki.ServerCertificate
 	var arrCertificate pki.ServerCertificate
-	var streamDeckCertificate pki.ClientCertificate
 	var gatusCertificate pki.ServerCertificate
 	var aiopsCertificates map[string]string
 	if monitoringEnabled {
@@ -984,16 +980,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return fmt.Errorf("sign arr endpoint CSR: %w", err)
 		}
 	}
-	if modules.IsEnabled(s, "streamdeck") {
-		streamDeckCSR, readErr := os.ReadFile(filepath.Join(csrDir, "streamdeck.csr.pem"))
-		if readErr != nil {
-			return fmt.Errorf("read endpoint-generated StreamDeck CSR: %w", readErr)
-		}
-		streamDeckCertificate, err = signOrReuseServiceClientCertificate(authority, string(streamDeckCSR), csrDir, "streamdeck", "lab-streamdeck-01")
-		if err != nil {
-			return fmt.Errorf("sign StreamDeck client CSR: %w", err)
-		}
-	}
 	if modules.IsEnabled(s, "aiops") {
 		aiopsCertificates, err = signAIOpsCertificates(authority, s, csrDir)
 		if err != nil {
@@ -1026,9 +1012,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	if modules.IsEnabled(s, "arr") {
 		runtimeVariables["arr_server_cert_pem"] = arrCertificate.ChainPEM
-	}
-	if modules.IsEnabled(s, "streamdeck") {
-		runtimeVariables["streamdeck_client_cert_pem"] = streamDeckCertificate.ChainPEM
 	}
 	if modules.IsEnabled(s, "gatus") {
 		runtimeVariables["gatus_server_cert_pem"] = gatusCertificate.ChainPEM
@@ -1156,20 +1139,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return healthErr
 		})
 		if err != nil {
-			if !(modules.IsEnabled(s, "streamdeck") && pulse.IsForbidden(err)) {
-				return fmt.Errorf("verify Pulse health: %w", err)
-			}
-			if refreshErr := refreshPulseReadToken(); refreshErr != nil {
-				return fmt.Errorf("refresh Pulse read token after forbidden health response: %w", refreshErr)
-			}
-			err = report.timed("health", "health", "pulse-refresh", func() error {
-				var healthErr error
-				health, healthErr = pulseRead.Health(ctx)
-				return healthErr
-			})
-			if err != nil {
-				return fmt.Errorf("verify Pulse health after read-token refresh: %w", err)
-			}
+			return fmt.Errorf("verify Pulse health: %w", err)
 		}
 		if !strings.EqualFold(health.Status, "healthy") {
 			return fmt.Errorf("verify Pulse health: unexpected status %q", health.Status)
@@ -1261,42 +1231,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			}
 		}
 
-		streamDeckBindings, bindingErr := streamDeckCredentialBindings(s)
-		if bindingErr != nil {
-			return bindingErr
-		}
-		if len(streamDeckBindings) > 0 {
-			streamDeckRunner := applianceSSHRunner(s, *siteDir, "lab-streamdeck-01")
-			if err := installCredentialsForGuest(ctx, streamDeckRunner, "lab-streamdeck-01", streamDeckBindings, map[string]string{"pulse_api_token": readToken}); err != nil {
-				return fmt.Errorf("install StreamDeck Pulse credential: %w", err)
-			}
-			streamDeckDropIns, dropInErr := credentialDropIns(streamDeckBindings)
-			if dropInErr != nil {
-				return dropInErr
-			}
-			existingDropIns, ok := runtimeVariables["credential_dropins"].(map[string]map[string]string)
-			if !ok {
-				existingDropIns = map[string]map[string]string{}
-			}
-			for guest, dropIns := range streamDeckDropIns {
-				if existingDropIns[guest] == nil {
-					existingDropIns[guest] = map[string]string{}
-				}
-				for unit, content := range dropIns {
-					existingDropIns[guest][unit] = content
-				}
-			}
-			runtimeVariables["credential_dropins"] = existingDropIns
-			runtimeVariables["streamdeck_runtime_credentials_ready"] = true
-			streamDeckVariables, marshalErr := json.MarshalIndent(runtimeVariables, "", "  ")
-			if marshalErr != nil {
-				return marshalErr
-			}
-			streamDeckVariables = append(streamDeckVariables, '\n')
-			if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, streamDeckVariables, "lab-streamdeck-01", ansible.PhaseHealth, report); err != nil {
-				return fmt.Errorf("install StreamDeck runtime: %w", err)
-			}
-		}
 	}
 	if pulseForward != nil {
 		if err := pulseForward.Close(); err != nil {

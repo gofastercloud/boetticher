@@ -1,4 +1,4 @@
-.PHONY: ci test build release-bundle vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-portal image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-streamdeck image-aiops image-gatus image-network-probe images scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-airvpn scan-bifrost scan-printer scan-arr scan-streamdeck scan-aiops scan-gatus scan-network-probe command-docs command-docs-check race streamdeck-check
+.PHONY: ci test build release-bundle companion-binary companion-check vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-portal image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-aiops image-gatus image-network-probe images scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-airvpn scan-bifrost scan-printer scan-arr scan-aiops scan-gatus scan-network-probe command-docs command-docs-check race streamdeck-check
 
 GOCACHE ?= /tmp/boetticher-gocache
 GOMODCACHE ?= /tmp/boetticher-gomodcache
@@ -21,7 +21,9 @@ race:
 
 streamdeck-check:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./internal/streamdeck ./cmd/boetticher-streamdeck
-	UV_CACHE_DIR=$(UV_CACHE_DIR) uv run --project pi/streamdeck --frozen --with pytest pytest pi/streamdeck/tests
+
+companion-check:
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o /tmp/boetticher-streamdeck-linux-arm64-check ./cmd/boetticher-streamdeck
 
 usb-export-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ansible/roles/usb-export-host/tests -p 'test_*.py' -v
@@ -33,14 +35,18 @@ vet:
 build:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go build -o bin/boetticher ./cmd/boetticher
 
-release-bundle:
+release-bundle: companion-binary
 	@test -n "$(OUTPUT)" -a -n "$(SOURCE_COMMIT)" -a -n "$(WORKFLOW)" -a -n "$(KEY_ID)" -a -n "$(PRIVATE_KEY)"
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run ./cmd/release-bundle -output "$(OUTPUT)" -release "$(RELEASE_VERSION)" -source-commit "$(SOURCE_COMMIT)" -workflow "$(WORKFLOW)" -key-id "$(KEY_ID)" -private-key "$(PRIVATE_KEY)"
+
+companion-binary:
+	mkdir -p bin
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o bin/boetticher-streamdeck-linux-arm64 ./cmd/boetticher-streamdeck
 
 ansible-check:
 	mkdir -p "$(ANSIBLE_LOCAL_TEMP)" "$(ANSIBLE_REMOTE_TEMP)"
 	ANSIBLE_LOCAL_TEMP="$(ANSIBLE_LOCAL_TEMP)" ANSIBLE_REMOTE_TEMP="$(ANSIBLE_REMOTE_TEMP)" ansible-playbook --syntax-check -i ansible/inventory.syntax.ini ansible/site.yml
-	ANSIBLE_LOCAL_TEMP="$(ANSIBLE_LOCAL_TEMP)" ANSIBLE_REMOTE_TEMP="$(ANSIBLE_REMOTE_TEMP)" ansible-playbook --syntax-check -i ansible/inventory.kiosk.syntax.ini ansible/kiosk.yml
+	ANSIBLE_LOCAL_TEMP="$(ANSIBLE_LOCAL_TEMP)" ANSIBLE_REMOTE_TEMP="$(ANSIBLE_REMOTE_TEMP)" ansible-playbook --syntax-check -i ansible/inventory.kiosk.syntax.ini ansible/companion.yml
 
 diff-check:
 	git diff --check
@@ -65,10 +71,10 @@ image-check:
 	sh -n scripts/benchmark-artifact-compression.sh scripts/build-images.sh scripts/scan-images.sh scripts/smoke-appliance.sh scripts/smoke-firewall-image.sh images/base/first-boot/boetticher-first-boot.sh images/base/runtime/install-runtime-state.sh
 	@test -z "$$(rg -n 'BOETTICHER_IMAGE_BUILD_COMMAND|exec sh -c' scripts || true)"
 
-image-base image-dns-blocky image-logging image-monitoring image-firewall image-portal image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-streamdeck image-aiops image-gatus image-network-probe images:
+image-base image-dns-blocky image-logging image-monitoring image-firewall image-portal image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-aiops image-gatus image-network-probe images:
 	./scripts/build-images.sh $@
 
-scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-airvpn scan-bifrost scan-printer scan-arr scan-streamdeck scan-aiops scan-gatus scan-network-probe scan-images:
+scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-portal scan-tailnet-router scan-airvpn scan-bifrost scan-printer scan-arr scan-aiops scan-gatus scan-network-probe scan-images:
 	./scripts/scan-images.sh $@
 
 naming-check:
@@ -82,4 +88,4 @@ vuln-check:
 
 security-check: naming-check actionlint vuln-check
 
-ci: fmt-check image-check schema-check command-docs-check test usb-export-test race streamdeck-check vet build ansible-check security-check diff-check
+ci: fmt-check image-check schema-check command-docs-check test usb-export-test race streamdeck-check companion-check vet build ansible-check security-check diff-check

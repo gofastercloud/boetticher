@@ -2,9 +2,15 @@ package streamdeck
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"image"
 	"image/color"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -22,6 +28,53 @@ func TestConfigRejectsUnknownFieldsAndUnsafePulseURL(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("unknown configuration field error = %v", err)
 	}
+}
+
+func TestConfigPinsSupportedStreamDeckIdentity(t *testing.T) {
+	config, err := LoadConfig(strings.NewReader(`{"pulse_url":"https://monitor.example","vendor_id":4057,"product_id":109,"model":"Stream Deck MK.2","client_certificate":"cert","client_key":"key","ca_certificate":"ca"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.VendorID != DefaultVendorID || config.ProductID != DefaultProductID || config.Model != DefaultModel {
+		t.Fatalf("loaded StreamDeck identity = %#v", config)
+	}
+	if _, err := LoadConfig(strings.NewReader(`{"pulse_url":"https://monitor.example","vendor_id":4660,"product_id":109,"model":"Stream Deck MK.2","client_certificate":"cert","client_key":"key","ca_certificate":"ca"}`)); err == nil || !strings.Contains(err.Error(), "unsupported StreamDeck identity") {
+		t.Fatalf("unsupported StreamDeck identity was accepted: %v", err)
+	}
+}
+
+func TestPrivateCAPoolExcludesOtherTrustRoots(t *testing.T) {
+	privateCert, privatePEM := testRootCertificate(t, "private.example")
+	publicCert, _ := testRootCertificate(t, "public.example")
+	roots, err := privateCAPool(privatePEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := privateCert.Verify(x509.VerifyOptions{Roots: roots, DNSName: "private.example"}); err != nil {
+		t.Fatalf("private CA certificate was not trusted: %v", err)
+	}
+	if _, err := publicCert.Verify(x509.VerifyOptions{Roots: roots, DNSName: "public.example"}); err == nil {
+		t.Fatal("certificate outside the configured private CA was trusted")
+	}
+}
+
+func testRootCertificate(t *testing.T, name string) (*x509.Certificate, []byte) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: name}, DNSNames: []string{name}, NotBefore: now.Add(-time.Minute), NotAfter: now.Add(time.Hour), IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificate, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return certificate, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
 
 func TestPulseFetchIsBoundedAndPaginates(t *testing.T) {

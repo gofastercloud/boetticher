@@ -48,6 +48,7 @@ type ReleaseManifest struct {
 	QualificationPolicyVersion string            `json:"qualification_policy_version"`
 	Artifacts                  []ReleaseArtifact `json:"artifacts"`
 	Files                      []ReleaseFile     `json:"files"`
+	CompanionBinary            *ReleaseFile      `json:"companion_binary,omitempty"`
 }
 
 // ReleaseBuildMetadata is supplied by the Linux release workflow. It keeps
@@ -85,6 +86,11 @@ type ReleaseInput struct {
 	EvidencePath       string
 	QualificationFiles map[string]string
 }
+
+const (
+	CompanionStreamDeckPath = "companion/streamdeck/boetticher-streamdeck-linux-arm64"
+	CompanionStreamDeckKind = "companion"
+)
 
 type ManifestSignature struct {
 	Algorithm string `json:"algorithm"`
@@ -143,6 +149,13 @@ func BuildReleaseBundle(output string, platformVersion, siteAPIVersion string, s
 }
 
 func BuildReleaseBundleWithMetadata(output string, metadata ReleaseBuildMetadata, siteAPIVersion string, schemaVersion int, privateKey ed25519.PrivateKey, keyID string, inputs []ReleaseInput) (ReleaseManifest, error) {
+	return BuildReleaseBundleWithMetadataAndCompanion(output, metadata, siteAPIVersion, schemaVersion, privateKey, keyID, inputs, "")
+}
+
+// BuildReleaseBundleWithMetadataAndCompanion adds the release-built external
+// companion binary to the signed bundle. The companion is deliberately not an
+// appliance artifact: it is a capability installed on a physical Pi.
+func BuildReleaseBundleWithMetadataAndCompanion(output string, metadata ReleaseBuildMetadata, siteAPIVersion string, schemaVersion int, privateKey ed25519.PrivateKey, keyID string, inputs []ReleaseInput, companionBinaryPath string) (ReleaseManifest, error) {
 	if output == "" || metadata.ReleaseVersion == "" || metadata.SourceCommit == "" || metadata.BuildWorkflow == "" || metadata.ControllerMin == "" || metadata.ControllerMax == "" || siteAPIVersion == "" || schemaVersion <= 0 {
 		return ReleaseManifest{}, errors.New("release bundle output and compatibility versions are required")
 	}
@@ -273,6 +286,24 @@ func BuildReleaseBundleWithMetadata(output string, metadata ReleaseBuildMetadata
 			members = append(members, member)
 		}
 	}
+	if strings.TrimSpace(companionBinaryPath) != "" {
+		companionMember, err := newReleaseMember(CompanionStreamDeckPath, companionBinaryPath, CompanionStreamDeckKind, "")
+		if err != nil {
+			return ReleaseManifest{}, fmt.Errorf("read companion StreamDeck binary: %w", err)
+		}
+		if releaseMemberExists(members, companionMember.Path) {
+			return ReleaseManifest{}, fmt.Errorf("release bundle repeats file %q", companionMember.Path)
+		}
+		if totalMemberBytes > MaxReleaseBundleBytes-companionMember.Size {
+			return ReleaseManifest{}, errors.New("release bundle exceeds the permitted uncompressed size")
+		}
+		totalMemberBytes += companionMember.Size
+		members = append(members, companionMember)
+		manifest.CompanionBinary = &ReleaseFile{
+			Path: companionMember.Path, SHA256: companionMember.SHA256, SizeBytes: companionMember.Size,
+			Kind: companionMember.Kind,
+		}
+	}
 	for _, member := range members {
 		manifest.Files = append(manifest.Files, ReleaseFile{Path: member.Path, SHA256: member.SHA256, SizeBytes: member.Size, Kind: member.Kind, Artifact: member.Artifact})
 	}
@@ -382,6 +413,12 @@ func ImportReleaseBundle(bundlePath, destination string, trusted []TrustedReleas
 		return ReleaseManifest{}, fmt.Errorf("create release staging directory: %w", err)
 	}
 	defer pathguard.RemoveAll(stage)
+	if err := pathguard.WriteFile(filepath.Join(stage, ReleaseManifestName), manifestBytes, 0600); err != nil {
+		return ReleaseManifest{}, fmt.Errorf("stage release manifest: %w", err)
+	}
+	if err := pathguard.WriteFile(filepath.Join(stage, ReleaseSignatureName), signatureBytes, 0600); err != nil {
+		return ReleaseManifest{}, fmt.Errorf("stage release signature: %w", err)
+	}
 	expected := make(map[string]ReleaseFile, len(manifest.Files))
 	for _, member := range manifest.Files {
 		expected[member.Path] = member
@@ -516,20 +553,35 @@ func validateReleaseManifest(manifest ReleaseManifest) error {
 		if err := validateBundlePath(file.Path); err != nil {
 			return err
 		}
-		if file.SHA256 == "" || !isSHA256(file.SHA256) || file.SizeBytes < 0 || file.SizeBytes > MaxReleaseFileBytes || (file.Kind != "artifact" && file.Kind != "evidence") {
+		if file.SHA256 == "" || !isSHA256(file.SHA256) || file.SizeBytes < 0 || file.SizeBytes > MaxReleaseFileBytes || (file.Kind != "artifact" && file.Kind != "evidence" && file.Kind != CompanionStreamDeckKind) {
 			return fmt.Errorf("release member %q has invalid metadata", file.Path)
 		}
 		if _, exists := files[file.Path]; exists {
 			return fmt.Errorf("release manifest repeats file %q", file.Path)
 		}
-		artifact, err := releaseFileArtifact(file.Path, file.Kind)
-		if err != nil {
-			return err
-		}
-		if file.Artifact != artifact {
-			return fmt.Errorf("release member %q is not bound to artifact %q", file.Path, file.Artifact)
+		if file.Kind == CompanionStreamDeckKind {
+			if manifest.CompanionBinary == nil || *manifest.CompanionBinary != file || file.Path != CompanionStreamDeckPath || file.Artifact != "" {
+				return fmt.Errorf("release companion member %q is not bound to the declared companion binary", file.Path)
+			}
+		} else {
+			artifact, err := releaseFileArtifact(file.Path, file.Kind)
+			if err != nil {
+				return err
+			}
+			if file.Artifact != artifact {
+				return fmt.Errorf("release member %q is not bound to artifact %q", file.Path, file.Artifact)
+			}
 		}
 		files[file.Path] = file
+	}
+	if manifest.CompanionBinary != nil {
+		companion := *manifest.CompanionBinary
+		if companion.Kind != CompanionStreamDeckKind || companion.Path != CompanionStreamDeckPath || companion.Artifact != "" || companion.SHA256 == "" || !isSHA256(companion.SHA256) || companion.SizeBytes < 0 || companion.SizeBytes > MaxReleaseFileBytes {
+			return errors.New("release companion binary metadata is invalid")
+		}
+		if declared, ok := files[companion.Path]; !ok || declared != companion {
+			return errors.New("release companion binary is missing its declared member")
+		}
 	}
 	seenArtifacts := map[string]struct{}{}
 	for _, artifact := range manifest.Artifacts {
@@ -570,6 +622,9 @@ func validateReleaseManifest(manifest ReleaseManifest) error {
 		seenArtifacts[artifact.Artifact.Name] = struct{}{}
 	}
 	for path, file := range files {
+		if file.Kind == CompanionStreamDeckKind {
+			continue
+		}
 		if _, ok := seenArtifacts[file.Artifact]; !ok {
 			return fmt.Errorf("release member %q references an unknown artifact", path)
 		}
@@ -740,6 +795,33 @@ func ResolveImportedArtifact(root string, requested model.Artifact) (model.Artif
 	}
 	evidence.ArtifactPath = artifactPath
 	return selected.Artifact, evidence, nil
+}
+
+// ResolveImportedCompanion binds the StreamDeck runtime to the authenticated
+// release tree. It never falls back to a workstation build or an arbitrary
+// path supplied through the environment.
+func ResolveImportedCompanion(root string) (string, error) {
+	manifest, _, err := ImportedReleaseManifest(root)
+	if err != nil {
+		return "", fmt.Errorf("load imported release: %w", err)
+	}
+	if manifest.CompanionBinary == nil {
+		return "", errors.New("authenticated release does not contain the companion StreamDeck binary")
+	}
+	companion := *manifest.CompanionBinary
+	if companion.Kind != CompanionStreamDeckKind || companion.Path != CompanionStreamDeckPath || companion.Artifact != "" {
+		return "", errors.New("authenticated release contains an invalid companion StreamDeck binding")
+	}
+	path := filepath.Join(root, "generated", "release", filepath.FromSlash(companion.Path))
+	data, err := readReleaseFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read imported companion StreamDeck binary: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	if int64(len(data)) != companion.SizeBytes || hex.EncodeToString(sum[:]) != companion.SHA256 {
+		return "", errors.New("imported companion StreamDeck binary failed digest verification")
+	}
+	return path, nil
 }
 
 // ActivateImportedRelease replaces the active release tree only after a
@@ -1012,8 +1094,8 @@ func validateBundlePath(name string) error {
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(name) || strings.Contains(clean, "\\") || clean != name {
 		return fmt.Errorf("release member path %q is unsafe", name)
 	}
-	if !strings.HasPrefix(clean, "artifacts/") && !strings.HasPrefix(clean, "evidence/") {
-		return fmt.Errorf("release member path %q is outside the artifact/evidence trees", name)
+	if !strings.HasPrefix(clean, "artifacts/") && !strings.HasPrefix(clean, "evidence/") && !strings.HasPrefix(clean, "companion/") {
+		return fmt.Errorf("release member path %q is outside the release content trees", name)
 	}
 	return nil
 }

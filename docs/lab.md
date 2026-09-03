@@ -138,4 +138,7 @@ boetticher firewall counters --site ./my-boetticher --live
 
 `network test` makes tiny temporary LXCs in VMIDs 910–919, checks selected paths, then cleans up its own probes. Use `--capture` only while chasing one route; `--cleanup-only` is there for a probe interrupted mid-test. With enabled ARR and AirVPN, `--airvpn` also proves the declared ARR source has public tunnel egress, cannot reach Proxmox management, and loses public egress while the exact AirVPN LXC is stopped and restored.
 
-The optional StreamDeck module is a small USB display for Proxmox host health. The separate `pi/` companion can show a Pulse dashboard on a Raspberry Pi kiosk. Both are bench-friendly extras, not requirements for a satisfying one-NIC lab.
+StreamDeck is a capability of a Boetticher companion device, not a Proxmox
+module. Attach it directly to the companion Pi; the Pi can also provide the
+kiosk display and optional Pulse host agent. Generic Proxmox USB export remains
+available for actual guest peripherals.

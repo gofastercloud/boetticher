@@ -89,6 +89,15 @@ var PublicBuildInputs = []string{
 	"scripts/smoke-firewall-image.sh",
 }
 
+// CompanionSourceInputs are the public provisioning assets needed by a
+// release controller to configure an external companion without a source
+// checkout. They contain no site state, credentials, or private keys.
+var CompanionSourceInputs = []string{
+	"ansible/companion.yml",
+	"ansible/roles/kiosk",
+	"pi/kiosk",
+}
+
 // BuildSourceArchive returns a deterministic gzip-compressed tar stream of
 // the public build inputs. It rejects symlinks so a source checkout cannot
 // smuggle a site file or credential into the temporary builder through a
@@ -134,7 +143,17 @@ func BuildSourceArchive(root string) ([]byte, error) {
 // This keeps bootstrap usable from an installed controller binary without
 // embedding any site repository or secret material.
 func BuildEmbeddedSourceArchive() ([]byte, error) {
-	paths := append([]string(nil), PublicBuildInputs...)
+	return buildEmbeddedArchive(PublicBuildInputs)
+}
+
+// BuildEmbeddedCompanionSourceArchive returns a deterministic archive of the
+// public companion provisioning assets embedded in a release controller.
+func BuildEmbeddedCompanionSourceArchive() ([]byte, error) {
+	return buildEmbeddedArchive(CompanionSourceInputs)
+}
+
+func buildEmbeddedArchive(inputs []string) ([]byte, error) {
+	paths := append([]string(nil), inputs...)
 	sort.Strings(paths)
 	return deterministicArchive(func(tarWriter *tar.Writer) error {
 		for _, relative := range paths {

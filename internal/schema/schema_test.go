@@ -86,7 +86,7 @@ func TestEmbeddedSchemaProjectsTypedModuleConstraints(t *testing.T) {
 			t.Fatalf("%s module schema ref = %q", name, ref.Ref)
 		}
 	}
-	for _, name := range []string{"printer", "streamdeck", "gatus"} {
+	for _, name := range []string{"printer", "gatus"} {
 		var ref struct {
 			Ref string `json:"$ref"`
 		}

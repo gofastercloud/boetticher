@@ -813,7 +813,6 @@ var retainedModuleServices = map[string][]string{
 	"tailnet-router": {"tailscaled"},
 	"bifrost":        {"bifrost", "nginx"},
 	"printer":        {"octoprint", "nginx"},
-	"streamdeck":     {"streamdeck-status.service"},
 	"aiops":          {"boetticher-aiops", "boetticher-aiops.socket", "holmes"},
 	"gatus":          {"gatus", "nginx"},
 }

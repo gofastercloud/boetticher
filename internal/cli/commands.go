@@ -34,7 +34,7 @@ var advancedCommandSpecs = []commandSpec{
 	{Usage: "boetticher bundle inspect|import PATH [--site DIR] [--json]"},
 	{Usage: "boetticher diagnose [--site DIR] [--live]"},
 	{Usage: "boetticher recover host|storage|guest ..."},
-	{Usage: "boetticher companion setup|status ..."},
+	{Usage: "boetticher companion setup|status|migrate ..."},
 	{Usage: "boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall] [--storage-profile single-disk|dedicated-data-disk] [--storage-device /dev/disk/by-id/DEVICE]"},
 	{Usage: "boetticher tui [--site DIR] [--offline]"},
 	{Usage: "boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--record] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]"},
@@ -53,7 +53,7 @@ var advancedCommandSpecs = []commandSpec{
 	{Usage: "boetticher network trunk status|attach|detach [INTERFACE] [--site DIR] [--confirm] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
 	{Usage: "boetticher network test [--site DIR] [--zones ZONE,...] [--capture] [--airvpn] [--cleanup-only] [--json] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
 	{Usage: "boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
-	{Usage: "boetticher kiosk setup ADDRESS [--site DIR] [--age-identity PATH] [--user USER] [--identity-file PATH] [--known-hosts PATH] [--host-key KEY] [--port PORT] [--confirm] [--dry-run]"},
+	{Usage: "boetticher companion setup|status ADDRESS [--site DIR] [--age-identity PATH] [--user USER] [--identity-file PATH] [--known-hosts PATH] [--host-key KEY] [--port PORT] [--confirm] [--dry-run] [--json]"},
 	{Usage: "boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]"},
 	{Usage: "boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]"},
 	{Usage: "boetticher firewall status|show|diff|counters|logs|verify|rule add|list|remove [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N] [--source SOURCE] [--destination DESTINATION] [--vmid VMID] [--protocol PROTOCOL] [--ports PORTS] [--id ID] [--dry-run] [--confirm]"},
@@ -107,7 +107,16 @@ var helpSpecs = map[string]helpSpec{
 		Usage: "boetticher recover host|storage|guest ...", Purpose: "Run an explicitly guarded recovery operation for a known Boetticher-owned target.", Arguments: "The recovery subcommand identifies the bounded recovery path and its exact target.", Options: "Recovery-specific options are shown by the selected subcommand.", Safety: "Advanced and destructive where stated. Recovery proves ownership, requires explicit confirmation, and records cleanup failures.", Examples: "boetticher recover storage --help", Related: "diagnose, deploy",
 	},
 	"companion": {
-		Usage: "boetticher companion setup|status ...", Purpose: "Manage capabilities on an external Boetticher companion device.", Arguments: "Companion setup and status arguments are defined by the companion capability.", Options: "Companion operations are separate from Proxmox module deployment.", Safety: "The companion remains outside the Proxmox module and credential boundary.", Examples: "boetticher companion status --help", Related: "status, module list",
+		Usage: "boetticher companion setup|status|migrate ...", Purpose: "Manage capabilities on an external Boetticher companion device.", Arguments: "Companion setup, status, and 0.4 migration arguments are defined by the companion capability.", Options: "Companion operations are separate from Proxmox module deployment.", Safety: "The companion remains outside the Proxmox module and credential boundary. Migration deletes only the exact verified legacy StreamDeck LXC after explicit confirmation.", Examples: "boetticher companion status --help", Related: "status, module list",
+	},
+	"companion setup": {
+		Usage: "boetticher companion setup ADDRESS [--site DIR] [--age-identity PATH] [--user USER] [--identity-file PATH] [--known-hosts PATH] [--host-key KEY] [--port PORT] [--confirm] [--dry-run]", Purpose: "Configure the fixed display, StreamDeck, and optional Pulse-agent capabilities on an external Raspberry Pi.", Arguments: "ADDRESS is the canonical IPv4 address of the companion.", Options: "--site selects the private site; --age-identity selects the operator-owned Age identity; --user, --identity-file, --known-hosts, --host-key, and --port define the strict SSH route; --dry-run validates without changes; --confirm authorizes remote mutation.", Safety: "Advanced and live. The companion receives only its configured capability files, a read-only Pulse credential for StreamDeck, and the exact USB permissions required by the local device. It receives no Proxmox credentials. Setup is idempotent and requires an enrolled host key.", Examples: "boetticher companion setup 192.0.2.50 --site ./my-boetticher --identity-file ~/.ssh/id_ed25519 --known-hosts ./my-boetticher/generated/ssh/companion_known_hosts --confirm", Related: "companion status, bundle import, deploy",
+	},
+	"companion status": {
+		Usage: "boetticher companion status ADDRESS [--site DIR] [--user USER] [--identity-file PATH] [--known-hosts PATH] [--port PORT] [--json]", Purpose: "Read the fixed companion service status over its enrolled SSH route.", Arguments: "ADDRESS is the canonical IPv4 address of the companion.", Options: "--site selects the private site; --user, --identity-file, --known-hosts, and --port define the strict SSH route; --json emits machine-readable service status.", Safety: "Read-only. It requires an enrolled host key and does not change the companion, Proxmox, or site state.", Examples: "boetticher companion status 192.0.2.50 --site ./my-boetticher --json", Related: "companion setup, status, doctor",
+	},
+	"companion migrate": {
+		Usage: "boetticher companion migrate ADDRESS [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--confirm] [--dry-run]", Purpose: "Move an existing 0.4 StreamDeck installation out of Proxmox and into the companion capability.", Arguments: "ADDRESS is the configured Proxmox IPv4 address.", Options: "--site and --age-identity select local state; --proxmox-ca and --insecure select the authenticated API TLS policy; --dry-run previews local cleanup; --confirm authorizes exact remote removal.", Safety: "Advanced and destructive. It accepts only VMID 220 with the exact lab-streamdeck-01 name, hostname, and Boetticher ownership tags, removes only its USB-export manifest, and verifies the guest is absent. Unknown or mismatched guests stop the migration.", Examples: "boetticher companion migrate 192.0.2.10 --site ./my-boetticher --confirm", Related: "companion setup, bundle import, deploy",
 	},
 	"preflight": {
 		Usage: "boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--record] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]", Purpose: "Check the controller and, with --live, the existing Proxmox host before setup.", Arguments: "No positional arguments.", Options: "--live looks at the target; --record saves the discovered physical details and requires --live; --site selects your site directory; bootstrap and SSH options identify the host.", Safety: "Read-only unless you explicitly add --live --record. A normal live check does not change the site.", Examples: "boetticher preflight --site ./my-boetticher --live; boetticher preflight --site ./my-boetticher --live --record", Related: "bootstrap, deploy --dry-run",
@@ -153,9 +162,6 @@ var helpSpecs = map[string]helpSpec{
 	},
 	"hardware": {
 		Usage: "boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]", Purpose: "Inspect USB hardware and bind a module to a stable physical port.", Arguments: "status can filter MODULE REQUIREMENT; bind needs MODULE REQUIREMENT PORT; unbind needs MODULE REQUIREMENT.", Options: "--live reads parent USB identities from Proxmox; --confirm saves the binding and invokes deploy; connection options select the certificate path.", Safety: "Bindings use a physical port and known device identity, never a changing device path, VMID, or your workload.", Examples: "boetticher hardware usb bind printer serial 1-2.4 --confirm --site ./my-boetticher", Related: "module, deploy, preflight",
-	},
-	"kiosk setup": {
-		Usage: "boetticher kiosk setup ADDRESS [--site DIR] [--age-identity PATH] [--user USER] [--identity-file PATH] [--known-hosts PATH] [--host-key KEY] [--port PORT] [--confirm] [--dry-run]", Purpose: "Configure one 64-bit Debian-based Raspberry Pi as the Boetticher CAGE Pulse kiosk and host-monitoring agent.", Arguments: "ADDRESS is a canonical IPv4 address for the Raspberry Pi.", Options: "--site selects the private site; --age-identity selects the operator-owned Age identity; --user selects the existing Pi SSH account; --identity-file selects the owner-only SSH private key; --known-hosts selects the strict host-key file; --host-key enrolls an independently verified host key; --port selects SSH port; --dry-run renders checks only; --confirm authorizes remote mutation.", Safety: "Advanced and live. Requires an owner-only SSH key, an exact enrolled host key, and the encrypted pulse_agent_token created by a qualified boetticher deploy; no password or global SSH configuration fallback is used. The command changes the Pi, writes or reuses the separate kiosk PKI identity in external runtime state, and requires passwordless sudo for non-root SSH users. Live deployment, monitoring, and display acceptance remain separate qualification gates.", Examples: "boetticher kiosk setup 192.0.2.50 --site ./my-boetticher --identity-file ~/.ssh/id_ed25519 --known-hosts ./my-boetticher/generated/ssh/kiosk_known_hosts --confirm", Related: "pki client create, pki trust export, status, doctor",
 	},
 	"pki": {
 		Usage: "boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]", Purpose: "Create, export, or revoke browser and device client certificates.", Arguments: "NAME is a short client name; certificate-chain export has no client name.", Options: "--output selects an export path; --age-identity selects the independent recovery identity; --site selects local settings.", Safety: "Private keys are never printed to stdout. Certificate actions update local generated config only.", Examples: "boetticher pki client create operator --site ./my-boetticher", Related: "access, deploy, verify",
@@ -221,7 +227,9 @@ var helpSpecs = map[string]helpSpec{
 
 var nestedHelpSpecs = map[string]helpSpec{
 	"aiops status":            helpSpecs["aiops"],
-	"kiosk setup":             helpSpecs["kiosk setup"],
+	"companion setup":         helpSpecs["companion setup"],
+	"companion status":        helpSpecs["companion status"],
+	"companion migrate":       helpSpecs["companion migrate"],
 	"portal build":            helpSpecs["portal"],
 	"bootstrap-endpoint show": helpSpecs["bootstrap-endpoint"],
 	"bootstrap-endpoint set":  helpSpecs["bootstrap-endpoint"],

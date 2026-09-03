@@ -40,7 +40,6 @@ want a preview first.
 | `bifrost` | off | A lightweight, OpenAI-compatible AI endpoint. It currently serves AIOps. |
 | `aiops` | off | [HolmesGPT](https://github.com/robusta-dev/holmesgpt) investigations that read alerts and journals, then leave a Pulse incident note. |
 | `printer` | off | [OctoPrint](https://octoprint.org/) for one supported USB-connected printer. |
-| `streamdeck` | off | A read-only USB StreamDeck display for Proxmox host health, CPU, and RAM. |
 | `tailnet-router` | off | A small [Tailscale](https://tailscale.com/) subnet router for selected lab networks. |
 | `airvpn` | off | An [AirVPN](https://airvpn.org/) WireGuard exit for a module that explicitly asks to use it. |
 
@@ -56,7 +55,6 @@ can; it knows which questions each module actually needs.
 ```text
 boetticher module configure gatus --site ./my-boetticher
 boetticher module configure aiops --site ./my-boetticher
-boetticher module configure streamdeck --site ./my-boetticher
 ```
 
 For automation, use `--non-interactive` with the required `--set`, `--usb`, and
@@ -129,11 +127,15 @@ not up, the guest has no direct-Internet escape hatch.
 
 ### Hardware helpers
 
-The printer and StreamDeck modules bind a named need to a stable physical USB
-port, rather than to a device name that can change after a reboot. `module
-configure` will show compatible choices. The printer module keeps OctoPrint's
-data; the StreamDeck module is a small read-only display and needs no writable
-application data.
+The printer module binds a named need to a stable physical USB port, rather
+than to a device name that can change after a reboot. `module configure` will
+show compatible choices. Generic USB export remains available for actual guest
+peripherals such as printers and serial hardware.
+
+StreamDeck is a capability of a Boetticher companion device, not a Proxmox
+module. Attach the supported StreamDeck directly to the companion Pi and use
+`boetticher companion setup` and `boetticher companion status`; the companion
+receives no Proxmox credentials or USB passthrough configuration.
 
 ### Names, dashboards, and logs
 

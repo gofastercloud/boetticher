@@ -525,7 +525,6 @@ func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 		`pki.IssueClient(authority, "boetticher-pulse-read"`,
 		"pulse.NewReadClient(pulse.ClientConfig{",
 		"pulseRead.StateSummary(ctx)",
-		"modules.IsEnabled(s, \"streamdeck\") && pulse.IsForbidden(err)",
 		"pulse.IsUnauthorized(err)",
 		"pulseAdmin.CreateReadToken(ctx, \"boetticher monitoring read\")",
 		"site.StorePlatformSecret(*siteDir, s, *ageIdentity, \"pulse_api_token\", readToken)",

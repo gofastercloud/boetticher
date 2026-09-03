@@ -20,6 +20,7 @@ import (
 func main() {
 	siteDir := flag.String("site", ".", "site directory containing generated/artifacts")
 	artifactRoot := flag.String("artifact-root", "", "qualified artifact directory; defaults to <site>/generated/artifacts")
+	companionBinary := flag.String("companion-binary", "", "release-built ARM64 companion StreamDeck binary; defaults to <site>/bin/boetticher-streamdeck-linux-arm64")
 	output := flag.String("output", "", "signed release bundle output path")
 	releaseVersion := flag.String("release", model.ReleaseVersion, "release version")
 	sourceCommit := flag.String("source-commit", "", "source commit included in provenance")
@@ -30,10 +31,13 @@ func main() {
 	privateKeyPath := flag.String("private-key", "", "0600 file containing base64 or raw Ed25519 private key")
 	flag.Parse()
 	if *output == "" || *sourceCommit == "" || *workflow == "" || *keyID == "" || *privateKeyPath == "" || flag.NArg() != 0 {
-		fatal("usage: release-bundle -output PATH -source-commit COMMIT -workflow NAME -key-id ID -private-key PATH [-site DIR]")
+		fatal("usage: release-bundle -output PATH -source-commit COMMIT -workflow NAME -key-id ID -private-key PATH [-site DIR] [-companion-binary PATH]")
 	}
 	if *artifactRoot == "" {
 		*artifactRoot = filepath.Join(*siteDir, "generated", "artifacts")
+	}
+	if *companionBinary == "" {
+		*companionBinary = filepath.Join(*siteDir, "bin", "boetticher-streamdeck-linux-arm64")
 	}
 	privateKey, err := readPrivateKey(*privateKeyPath)
 	if err != nil {
@@ -73,11 +77,11 @@ func main() {
 			EvidencePath: artifacts.EvidencePath(*siteDir, artifact.Name), QualificationFiles: qualificationFiles,
 		})
 	}
-	manifest, err := artifacts.BuildReleaseBundleWithMetadata(*output, artifacts.ReleaseBuildMetadata{
+	manifest, err := artifacts.BuildReleaseBundleWithMetadataAndCompanion(*output, artifacts.ReleaseBuildMetadata{
 		ReleaseVersion: *releaseVersion, SourceCommit: *sourceCommit, BuildWorkflow: *workflow,
 		ControllerMin: *controllerMin, ControllerMax: *controllerMax,
 		QualificationPolicyVersion: artifacts.QualificationPolicyVersion,
-	}, model.APIVersion, model.ConfigSchemaVersion, privateKey, *keyID, inputs)
+	}, model.APIVersion, model.ConfigSchemaVersion, privateKey, *keyID, inputs, *companionBinary)
 	if err != nil {
 		fatal("build release bundle: %v", err)
 	}

@@ -500,7 +500,7 @@ func TestArtifactDefinitionDigestBindsBuildInputs(t *testing.T) {
 
 func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	root := filepath.Join("..", "..", "images")
-	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "portal/image.yaml", "tailnet-router/image.yaml", "bifrost/image.yaml", "printer/image.yaml", "streamdeck/image.yaml", "aiops/image.yaml"}
+	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "portal/image.yaml", "tailnet-router/image.yaml", "bifrost/image.yaml", "printer/image.yaml", "aiops/image.yaml"}
 	for _, relative := range paths {
 		data, err := os.ReadFile(filepath.Join(root, relative))
 		if err != nil {
@@ -1123,7 +1123,7 @@ func TestBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {
 		}
 		entries[header.Name] = true
 	}
-	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "images/tailnet-router/image.yaml", "cmd/boetticher-bifrost/main.go", "internal/bifrost/router.go", "images/streamdeck/runtime/streamdeck-status.service", "cmd/boetticher-streamdeck/main.go", "internal/streamdeck/pulse.go", "cmd/qualify-artifact/main.go", "cmd/boetticher-aiops/main.go", "cmd/boetticher-log-query/main.go", "internal/aiops/aiops.go", "internal/gatus/gatus.go", "internal/usbexport/plan.go"} {
+	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "images/tailnet-router/image.yaml", "cmd/boetticher-bifrost/main.go", "internal/bifrost/router.go", "cmd/boetticher-streamdeck/main.go", "internal/streamdeck/pulse.go", "cmd/qualify-artifact/main.go", "cmd/boetticher-aiops/main.go", "cmd/boetticher-log-query/main.go", "internal/aiops/aiops.go", "internal/gatus/gatus.go", "internal/usbexport/plan.go"} {
 		if !entries[required] {
 			t.Fatalf("archive omitted public build input %s", required)
 		}
@@ -1171,6 +1171,44 @@ func TestEmbeddedBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {
 	for _, forbidden := range []string{"site.yml", "generated/model.json", "secrets.yaml", "identity.txt"} {
 		if entries[forbidden] {
 			t.Fatalf("embedded archive included forbidden build input %s", forbidden)
+		}
+	}
+}
+
+func TestEmbeddedCompanionSourceArchiveContainsOnlyProvisioningAssets(t *testing.T) {
+	archiveBytes, err := BuildEmbeddedCompanionSourceArchive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := gzip.NewReader(strings.NewReader(string(archiveBytes)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := tar.NewReader(reader)
+	entries := map[string]bool{}
+	for {
+		header, err := archive.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries[header.Name] = true
+	}
+	for _, required := range []string{
+		"ansible/companion.yml",
+		"ansible/roles/kiosk/tasks/main.yml",
+		"ansible/roles/kiosk/templates/boetticher-streamdeck.service.j2",
+		"pi/kiosk/visualizer/index.html",
+	} {
+		if !entries[required] {
+			t.Fatalf("embedded companion archive omitted %s", required)
+		}
+	}
+	for _, forbidden := range []string{"site.yml", "generated/model.json", "secrets.yaml", "identity.txt"} {
+		if entries[forbidden] {
+			t.Fatalf("embedded companion archive included forbidden state %s", forbidden)
 		}
 	}
 }

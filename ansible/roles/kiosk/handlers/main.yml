@@ -18,6 +18,11 @@
     name: pulse-kiosk
     state: restarted
 
+- name: restart companion streamdeck
+  ansible.builtin.systemd_service:
+    name: boetticher-streamdeck
+    state: restarted
+
 - name: restart log2ram
   ansible.builtin.systemd_service:
     name: log2ram

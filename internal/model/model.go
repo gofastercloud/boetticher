@@ -58,7 +58,7 @@ const (
 	BuilderCacheVolumeName      = "vm-191-boetticher-builder-cache"
 	BuilderCacheDiskGiB         = 64
 	PrinterVMID                 = 230
-	StreamDeckVMID              = 220
+	LegacyStreamDeckVMID        = 220
 	AirVPNGuestVMID             = 260
 	ArrVMID                     = 270
 	ArrDownloadsVolumeGiB       = 500
@@ -255,6 +255,7 @@ type Site struct {
 	Components             []Component             `json:"components"`
 	Modules                []ResolvedModule        `json:"modules,omitempty"`
 	ModuleConfig           map[string]ModuleConfig `json:"module_config,omitempty"`
+	Companion              *CompanionConfig        `json:"companion,omitempty"`
 	Declarations           []ModuleDeclaration     `json:"declarations,omitempty"`
 	USBExports             []USBExportBinding      `json:"usb_exports,omitempty"`
 	RetainedModules        []RetainedModule        `json:"retained_modules,omitempty"`
@@ -662,6 +663,12 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 			UserGuestIDMin: UserGuestIDMin, UserGuestIDMax: UserGuestIDMax,
 			UserWorkloadsManaged: false,
 		},
+		Companion: &CompanionConfig{
+			Enabled:    boolPointer(true),
+			Display:    &CompanionCapabilityConfig{Enabled: boolPointer(true)},
+			StreamDeck: &CompanionCapabilityConfig{Enabled: boolPointer(true)},
+			PulseAgent: &CompanionCapabilityConfig{Enabled: boolPointer(true)},
+		},
 		Components: []Component{
 			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: ProxmoxManagementAddress, Role: "Proxmox host", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork, TagMonitoringAgent}, URL: "https://proxmox." + DefaultDomain + ":8006", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Logging: true},
 			{Name: "lab-portal-01", VMID: PortalVMID, Hostname: "lab-portal-01", Zone: "INFRA", Address: "10.10.10.30", Role: "Generated platform portal", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagPortal, TagCorePortal, TagBackup}, URL: "https://portal." + DefaultDomain, DNSAliases: []string{"portal"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Logging: true},
@@ -677,6 +684,7 @@ func (s Site) Normalize() Site {
 	copySite.Components = cloneComponents(s.Components)
 	copySite.Modules = cloneResolvedModules(s.Modules)
 	copySite.ModuleConfig = cloneModuleConfig(s.ModuleConfig)
+	copySite.Companion = cloneCompanionConfig(s.Companion)
 	copySite.Declarations = cloneModuleDeclarations(s.Declarations)
 	copySite.USBExports = append([]USBExportBinding(nil), s.USBExports...)
 	copySite.RetainedModules = cloneRetainedModules(s.RetainedModules)

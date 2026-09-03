@@ -50,7 +50,7 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
 | --- | --- |
 | Build your first lab or learn the everyday rhythm | [Start here](start.html) |
 | See how the zones, guests, storage, access, and recovery fit together | [The lab](lab.html) |
-| Add a printer, dashboard, AI helper, AirVPN exit, or StreamDeck display | [Modules](modules.html) |
+| Add a printer, dashboard, AI helper, AirVPN exit, or companion capability | [Modules](modules.html) |
 | Look up a flag or browse the CLI menu | [Commands](commands.html) |
 
 <aside class="callout">

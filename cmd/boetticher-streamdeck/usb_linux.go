@@ -3,20 +3,24 @@
 package main
 
 import (
-	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"unsafe"
 
+	"github.com/gofastercloud/boetticher/internal/streamdeck"
 	"golang.org/x/sys/unix"
 )
 
 const (
-	streamDeckVendorID  = 0x0fd9
-	streamDeckV2Product = 0x006d
-	usbDevFSConnect     = 0x5517
-	usbDevFSIoctl       = 0xc0105512
+	usbSysfsRoot    = "/sys/bus/usb/devices"
+	usbDevFSRoot    = "/dev/bus/usb"
+	usbDevFSConnect = 0x5517
+	usbDevFSIoctl   = 0xc0105512
 )
 
 type usbFSIoctl struct {
@@ -25,29 +29,145 @@ type usbFSIoctl struct {
 	Data      uintptr
 }
 
-func reconnectStreamDeckUSB() error {
-	paths, err := filepath.Glob("/dev/bus/usb/*/*")
-	if err != nil {
-		return fmt.Errorf("list USB devices: %w", err)
-	}
-	for _, path := range paths {
-		descriptor, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("read USB descriptor %s: %w", path, err)
-		}
-		if !streamDeckV2Descriptor(descriptor) {
-			continue
-		}
-		if err := reconnectUSBKernelDriver(path); err != nil {
-			return fmt.Errorf("reconnect StreamDeck USB driver at %s: %w", path, err)
-		}
-		return nil
-	}
-	return fmt.Errorf("no supported StreamDeck USB device is available")
+type streamDeckUSBDevice struct {
+	VendorID  uint16
+	ProductID uint16
+	Bus       int
+	Device    int
+	Serial    string
 }
 
-func streamDeckV2Descriptor(descriptor []byte) bool {
-	return len(descriptor) >= 12 && binary.LittleEndian.Uint16(descriptor[8:10]) == streamDeckVendorID && binary.LittleEndian.Uint16(descriptor[10:12]) == streamDeckV2Product
+// streamDeckDevicePath resolves the device node from sysfs on every open.
+// Device numbers can change after a replug, so a cached /dev path would be
+// both unreliable and unsafe for a recovery operation.
+func streamDeckDevicePath(config streamdeck.Config) (string, error) {
+	if config.VendorID != streamdeck.DefaultVendorID || config.ProductID != streamdeck.DefaultProductID || config.Model != streamdeck.DefaultModel {
+		return "", errors.New("unsupported StreamDeck USB identity")
+	}
+	entries, err := os.ReadDir(usbSysfsRoot)
+	if err != nil {
+		return "", fmt.Errorf("list StreamDeck USB sysfs devices: %w", err)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	devices := make([]streamDeckUSBDevice, 0)
+	for _, entry := range entries {
+		deviceDir := filepath.Join(usbSysfsRoot, entry.Name())
+		vendor, ok, err := readUSBHex(filepath.Join(deviceDir, "idVendor"))
+		if err != nil {
+			return "", err
+		}
+		if !ok || vendor != config.VendorID {
+			continue
+		}
+		product, ok, err := readUSBHex(filepath.Join(deviceDir, "idProduct"))
+		if err != nil {
+			return "", err
+		}
+		if !ok || product != config.ProductID {
+			continue
+		}
+		bus, ok, err := readUSBDecimal(filepath.Join(deviceDir, "busnum"))
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			continue
+		}
+		dev, ok, err := readUSBDecimal(filepath.Join(deviceDir, "devnum"))
+		if err != nil {
+			return "", err
+		}
+		if !ok {
+			continue
+		}
+		serial := readUSBText(filepath.Join(deviceDir, "serial"))
+		if config.Serial != "" && serial != config.Serial {
+			continue
+		}
+		devices = append(devices, streamDeckUSBDevice{VendorID: vendor, ProductID: product, Bus: bus, Device: dev, Serial: serial})
+	}
+	return selectStreamDeckUSBDevice(config, devices)
+}
+
+func selectStreamDeckUSBDevice(config streamdeck.Config, devices []streamDeckUSBDevice) (string, error) {
+	if len(devices) == 0 {
+		return "", fmt.Errorf("no exact StreamDeck device %04x:%04x%s is available", config.VendorID, config.ProductID, serialSuffix(config.Serial))
+	}
+	matches := 0
+	var path string
+	for _, device := range devices {
+		if device.VendorID != config.VendorID || device.ProductID != config.ProductID {
+			continue
+		}
+		if config.Serial != "" && device.Serial != config.Serial {
+			continue
+		}
+		matches++
+		path = fmt.Sprintf("%s/%03d/%03d", usbDevFSRoot, device.Bus, device.Device)
+	}
+	if matches == 0 {
+		return "", fmt.Errorf("no exact StreamDeck device %04x:%04x%s is available", config.VendorID, config.ProductID, serialSuffix(config.Serial))
+	}
+	if matches != 1 {
+		return "", fmt.Errorf("refusing ambiguous StreamDeck identity: %d exact devices matched", matches)
+	}
+	return path, nil
+}
+
+func serialSuffix(serial string) string {
+	if serial == "" {
+		return ""
+	}
+	return " serial " + serial
+}
+
+func readUSBHex(path string) (uint16, bool, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("read USB identity %s: %w", path, err)
+	}
+	value, err := strconv.ParseUint(strings.TrimSpace(string(data)), 16, 16)
+	if err != nil {
+		return 0, false, fmt.Errorf("parse USB identity %s: %w", path, err)
+	}
+	return uint16(value), true, nil
+}
+
+func readUSBDecimal(path string) (int, bool, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("read USB device number %s: %w", path, err)
+	}
+	value, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || value < 1 || value > 255 {
+		return 0, false, fmt.Errorf("invalid USB device number in %s", path)
+	}
+	return value, true, nil
+}
+
+func readUSBText(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func reconnectStreamDeckUSB(config streamdeck.Config) error {
+	path, err := streamDeckDevicePath(config)
+	if err != nil {
+		return err
+	}
+	if err := reconnectUSBKernelDriver(path); err != nil {
+		return fmt.Errorf("reconnect exact StreamDeck USB device: %w", err)
+	}
+	return nil
 }
 
 func reconnectUSBKernelDriver(path string) error {

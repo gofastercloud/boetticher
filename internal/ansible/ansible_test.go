@@ -40,6 +40,62 @@ func TestARRRoleSeedsConfigurationWithoutOverwritingApplicationState(t *testing.
 	}
 }
 
+func TestCompanionStreamDeckUsesDirectUSBAndScopedRuntimeFiles(t *testing.T) {
+	playbook, err := os.ReadFile(filepath.Join("..", "..", "ansible", "companion.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(playbook), "    - kiosk") {
+		t.Fatal("companion playbook does not use the companion role")
+	}
+	tasks, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "kiosk", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "kiosk", "templates", "boetticher-streamdeck.service.j2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(tasks) + string(service)
+	for _, expected := range []string{
+		"name: streamdeck",
+		"dest: /usr/local/libexec/boetticher-streamdeck",
+		"dest: /etc/boetticher/streamdeck.json",
+		"ATTR{idVendor}==\"0fd9\", ATTR{idProduct}==\"006d\"",
+		"LoadCredentialEncrypted=pulse-token:/var/lib/boetticher/credentials/companion-streamdeck-pulse-token.cred",
+		"companion-streamdeck-pulse-token.sha256",
+		"companion_streamdeck_credential_needs_update",
+		"/run/boetticher-companion/pulse-token.cred",
+		"DevicePolicy=closed",
+		"DeviceAllow=char-usb_device rw",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("companion StreamDeck contract is missing %q", expected)
+		}
+	}
+	if strings.Contains(text, "/dev/bus/usb/*/*") || strings.Contains(text, "ansible_user_id: root") {
+		t.Fatal("companion StreamDeck role contains broad USB or root-service handling")
+	}
+}
+
+func TestCompanionCapabilityPackagesAndCleanupAreIndependent(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "kiosk", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	displayPackages := ansibleTaskBlock(text, "Install display-only companion packages")
+	if displayPackages == "" || !strings.Contains(displayPackages, "when: kiosk_display_enabled | default(true) | bool") {
+		t.Fatal("display-only companion packages are not capability-gated")
+	}
+	if !strings.Contains(displayPackages, "- chromium") || !strings.Contains(displayPackages, "- libnss3-tools") {
+		t.Fatal("display-only companion package set is incomplete")
+	}
+	if !strings.Contains(text, "Inspect optional companion capability unit files") || !strings.Contains(text, "companion_capability_units.results") {
+		t.Fatal("disabled companion cleanup can attempt to stop units that were never installed")
+	}
+}
+
 func TestPhaseVariablesExposeOnlySafeDeploymentPhaseMetadata(t *testing.T) {
 	data, err := phaseVariables([]byte(`{"example":"value"}`), PhaseBootstrap)
 	if err != nil {
@@ -208,29 +264,6 @@ func TestGatusServiceUsesSupportedConfigEnvironment(t *testing.T) {
 	}
 	if strings.Contains(text, "--config-path") {
 		t.Fatal("Gatus service invokes an unsupported config-path argument")
-	}
-}
-
-func TestStreamDeckIdentityMaterialUsesServiceOwnedPath(t *testing.T) {
-	path := filepath.Join("..", "..", "ansible", "roles", "streamdeck", "tasks", "main.yml")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(data)
-	for _, expected := range []string{
-		"path: /var/lib/streamdeck/tls",
-		"/var/lib/streamdeck/tls/streamdeck.key.pem",
-		"/var/lib/streamdeck/tls/streamdeck.csr.pem",
-		"/var/lib/streamdeck/tls/streamdeck.crt.pem",
-		"/var/lib/streamdeck/tls/ca.pem",
-	} {
-		if !strings.Contains(text, expected) {
-			t.Fatalf("StreamDeck role is missing service-owned identity path %q", expected)
-		}
-	}
-	if strings.Contains(text, "/var/lib/boetticher/identity/tls/streamdeck") {
-		t.Fatal("StreamDeck role still places identity material in the shared identity tree")
 	}
 }
 
@@ -1646,7 +1679,7 @@ func TestPulseProxyAuthMapsOnlyApprovedClientIdentities(t *testing.T) {
 		"CN=client-operator.{{ domain }},O=boetticher",
 		"CN=client-lab-display-01-kiosk.{{ domain }},O=boetticher",
 		"CN=client-boetticher-reconciler.{{ domain }},O=boetticher",
-		"CN=(?:lab-streamdeck-01|client-boetticher-pulse-read",
+		"CN=(?:companion-streamdeck|client-boetticher-pulse-read",
 		"location = /api/health",
 		"location = /api/state/summary",
 		"location = /api/resources",

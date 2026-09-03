@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -21,31 +22,151 @@ import (
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/ansible"
+	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/pathguard"
 	"github.com/gofastercloud/boetticher/internal/pki"
+	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
+	"github.com/gofastercloud/boetticher/internal/streamdeck"
 )
 
 const kioskClientName = "lab-display-01-kiosk"
+const companionStreamDeckIdentity = "companion-streamdeck"
 
-func runKiosk(args []string, out io.Writer) error {
+func runCompanion(args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: boetticher kiosk setup ADDRESS [options]")
+		return errors.New("usage: boetticher companion setup|status ADDRESS [options]")
 	}
-	if args[0] != "setup" {
-		return fmt.Errorf("unknown kiosk command %q", args[0])
+	switch args[0] {
+	case "setup":
+		return runCompanionSetup(args[1:], out)
+	case "status":
+		return runCompanionStatus(args[1:], out)
+	case "migrate":
+		return runCompanionMigrate(args[1:], out)
+	default:
+		return fmt.Errorf("unknown companion command %q", args[0])
 	}
-	return runKioskSetup(args[1:], out)
 }
 
-func runKioskSetup(args []string, out io.Writer) error {
+func runCompanionMigrate(args []string, out io.Writer) error {
 	args, err := normalizeKioskArgs(args)
 	if err != nil {
 		return err
 	}
-	fs := flag.NewFlagSet("kiosk setup", flag.ContinueOnError)
+	fs := flag.NewFlagSet("companion migrate", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	siteDir := fs.String("site", ".", "private site repository directory")
+	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
+	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
+	insecure := fs.Bool("insecure", false, "allow explicitly untrusted Proxmox API TLS")
+	confirm := fs.Bool("confirm", false, "authorize exact legacy guest and USB mapping removal")
+	dryRun := fs.Bool("dry-run", false, "show the migration without changing the site or Proxmox")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("one legacy Proxmox address is required")
+	}
+	address := fs.Arg(0)
+	if err := sshconfig.ValidateBootstrapAddress(address); err != nil {
+		return err
+	}
+	if *dryRun && *confirm {
+		return errors.New("--dry-run and --confirm cannot be used together")
+	}
+	legacyData, err := pathguard.ReadFile(filepath.Join(*siteDir, "site.yml"))
+	if err != nil {
+		return fmt.Errorf("read site.yml for legacy companion migration: %w", err)
+	}
+	config, removedBindings, _, err := model.MigrateLegacyStreamDeckConfig(legacyData)
+	if err != nil {
+		return err
+	}
+	retained, err := site.LoadRetainedModules(*siteDir)
+	if err != nil {
+		return fmt.Errorf("read retained module state: %w", err)
+	}
+	filteredRetained := make([]model.RetainedModule, 0, len(retained))
+	removedRetained := 0
+	for _, item := range retained {
+		if item.Module == "streamdeck" {
+			removedRetained++
+			continue
+		}
+		filteredRetained = append(filteredRetained, item)
+	}
+	migrated, err := site.ComposeConfig(*siteDir, config)
+	if err != nil {
+		return fmt.Errorf("compose migrated companion state: %w", err)
+	}
+	migrated.RetainedModules = filteredRetained
+	if err := migrated.Validate(); err != nil {
+		return fmt.Errorf("validate migrated companion state: %w", err)
+	}
+	if config.BootstrapAddress != address {
+		return fmt.Errorf("legacy Proxmox address %s does not match site bootstrap_address %s", address, config.BootstrapAddress)
+	}
+	fmt.Fprintf(out, "Legacy StreamDeck: %s VMID %d at %s\n", proxmox.LegacyStreamDeckName, model.LegacyStreamDeckVMID, address)
+	fmt.Fprintf(out, "Local cleanup: %d USB binding(s), %d retained module record(s)\n", removedBindings, removedRetained)
+	fmt.Fprintln(out, "Result: StreamDeck will be a companion capability; no Proxmox guest will be recreated")
+	if *dryRun {
+		fmt.Fprintln(out, "Companion migration: PASS dry-run only; no site, SSH, or Proxmox changes made")
+		return nil
+	}
+	if !*confirm {
+		return errors.New("HOLD: review the exact legacy identity and rerun with --confirm")
+	}
+
+	client, _, err := loadProxmoxClient(*siteDir, migrated, *ageIdentity, *proxmoxCA, *insecure)
+	if err != nil {
+		return fmt.Errorf("load authenticated Proxmox client for companion migration: %w", err)
+	}
+	nodes, err := client.Nodes(context.Background())
+	if err != nil {
+		return fmt.Errorf("discover Proxmox node for companion migration: %w", err)
+	}
+	node, err := proxmox.ResolveSingleNode(nodes)
+	if err != nil {
+		return err
+	}
+	present, err := proxmox.InspectLegacyStreamDeck(context.Background(), client, node)
+	if err != nil {
+		return err
+	}
+	if err := site.ApplyLegacyStreamDeckMigration(*siteDir, config, filteredRetained); err != nil {
+		return fmt.Errorf("commit companion migration state: %w", err)
+	}
+	if err := writeModelProjections(*siteDir, migrated); err != nil {
+		return fmt.Errorf("refresh migrated projections: %w; migration state is committed and the old guest was not removed", err)
+	}
+	if err := rebuildPortal(*siteDir, migrated); err != nil {
+		return fmt.Errorf("refresh migrated portal: %w; migration state is committed and the old guest was not removed", err)
+	}
+	rootRunner := proxmoxRootSSHRunner(migrated, *siteDir)
+	if _, err := rootRunner.RunArgs(context.Background(), migrated.BootstrapAddress, "root", proxmox.LegacyStreamDeckUSBRemovalArgs()); err != nil {
+		return fmt.Errorf("remove exact legacy StreamDeck USB mapping before guest removal: %w; migration state is committed and the old guest was not removed", err)
+	}
+	if err := proxmox.RemoveLegacyStreamDeck(context.Background(), client, node); err != nil {
+		return fmt.Errorf("remove legacy StreamDeck guest: %w; migration state is committed", err)
+	}
+	if present {
+		fmt.Fprintln(out, "Legacy guest: PASS exact owned StreamDeck LXC removed and verified absent")
+	} else {
+		fmt.Fprintln(out, "Legacy guest: PASS exact StreamDeck LXC was already absent")
+	}
+	fmt.Fprintf(out, "Companion migration: PASS %s migrated; unrelated USB mappings were not selected\n", address)
+	return nil
+}
+
+func runCompanionSetup(args []string, out io.Writer) error {
+	args, err := normalizeKioskArgs(args)
+	if err != nil {
+		return err
+	}
+	fs := flag.NewFlagSet("companion setup", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
 	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
@@ -79,6 +200,10 @@ func runKioskSetup(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	capabilities := s.Companion.Capabilities()
+	if !capabilities.Enabled {
+		return errors.New("companion is disabled in site.yml")
+	}
 	if *identity == "" {
 		*identity = s.SSHIdentityFile
 	}
@@ -87,7 +212,7 @@ func runKioskSetup(args []string, out io.Writer) error {
 	}
 	*identity = model.ExpandUserPath(*identity)
 	if *knownHosts == "" {
-		*knownHosts = filepath.Join(*siteDir, "generated", "ssh", "kiosk_known_hosts")
+		*knownHosts = filepath.Join(*siteDir, "generated", "ssh", "companion_known_hosts")
 	}
 	*knownHosts = model.ExpandUserPath(*knownHosts)
 	if err := validateKioskSSHInputs(*identity, *knownHosts, *dryRun); err != nil {
@@ -97,10 +222,11 @@ func runKioskSetup(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	sourceRoot, err := kioskSourceRoot()
+	sourceRoot, cleanupSource, err := kioskSourceRoot()
 	if err != nil {
 		return err
 	}
+	defer cleanupSource()
 	pulseURL := "https://monitor." + s.Network.Domain
 	certificateSelector, err := kioskCertificateSelector(pulseURL, s.Network.Domain)
 	if err != nil {
@@ -110,16 +236,24 @@ func runKioskSetup(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Kiosk target: %s@%s:%d\n", *user, address, *port)
+	streamDeckBinary := ""
+	fmt.Fprintf(out, "Companion target: %s@%s:%d\n", *user, address, *port)
 	fmt.Fprintf(out, "Pulse URL: %s\n", pulseURL)
-	fmt.Fprintf(out, "Kiosk source: %s\n", filepath.Join(sourceRoot, "pi", "kiosk"))
+	fmt.Fprintf(out, "Companion source: %s\n", filepath.Join(sourceRoot, "pi", "kiosk"))
+	fmt.Fprintf(out, "Capabilities: display=%t streamdeck=%t pulse-agent=%t\n", capabilities.Display, capabilities.StreamDeck, capabilities.PulseAgent)
 	fmt.Fprintf(out, "Host-key trust: %s\n", *knownHosts)
 	if *dryRun {
-		fmt.Fprintln(out, "Kiosk setup: PASS dry-run only; no PKI, site, SSH, or remote changes made")
+		fmt.Fprintln(out, "Companion setup: PASS dry-run only; no PKI, site, SSH, or remote changes made")
 		return nil
 	}
 	if !*confirm {
-		return errors.New("kiosk setup changes the remote Pi and local PKI runtime; rerun with --confirm")
+		return errors.New("companion setup changes the remote Pi and local PKI runtime; rerun with --confirm")
+	}
+	if capabilities.StreamDeck {
+		streamDeckBinary, err = companionStreamDeckBinary(*siteDir, false)
+		if err != nil {
+			return err
+		}
 	}
 	if err := validateKioskSSHInputs(*identity, *knownHosts, false); err != nil {
 		return err
@@ -140,17 +274,37 @@ func runKioskSetup(args []string, out io.Writer) error {
 		}
 	}
 
-	pulseAgentToken, err := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_agent_token")
-	if err != nil {
-		return fmt.Errorf("load encrypted Pulse agent token (run boetticher deploy first): %w", err)
+	var pulseAgentToken string
+	if capabilities.PulseAgent {
+		pulseAgentToken, err = site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_agent_token")
+		if err != nil {
+			return fmt.Errorf("load encrypted Pulse agent token (run boetticher deploy first): %w", err)
+		}
+	}
+	var pulseReadToken string
+	var streamDeckCertificate pki.ClientCertificate
+	if capabilities.StreamDeck {
+		pulseReadToken, err = site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_api_token")
+		if err != nil {
+			return fmt.Errorf("load encrypted Pulse read token (run boetticher deploy first): %w", err)
+		}
 	}
 	authority, err := site.LoadAuthority(*siteDir, s, *ageIdentity)
 	if err != nil {
 		return fmt.Errorf("load Boetticher PKI authority: %w", err)
 	}
-	certificate, err := ensureKioskClientCertificate(*siteDir, s, authority)
-	if err != nil {
-		return err
+	certificate := pki.ClientCertificate{}
+	if capabilities.Display {
+		certificate, err = ensureKioskClientCertificate(*siteDir, s, authority)
+		if err != nil {
+			return err
+		}
+	}
+	if capabilities.StreamDeck {
+		streamDeckCertificate, err = ensureCompanionStreamDeckCertificate(*siteDir, s, authority)
+		if err != nil {
+			return err
+		}
 	}
 	password, err := kioskImportPassword()
 	if err != nil {
@@ -158,6 +312,9 @@ func runKioskSetup(args []string, out io.Writer) error {
 	}
 	variables, err := json.MarshalIndent(map[string]any{
 		"kiosk_become":                     *user != "root",
+		"kiosk_display_enabled":            capabilities.Display,
+		"kiosk_streamdeck_enabled":         capabilities.StreamDeck,
+		"kiosk_pulse_agent_enabled":        capabilities.PulseAgent,
 		"kiosk_source_dir":                 filepath.Join(sourceRoot, "pi", "kiosk"),
 		"kiosk_pulse_url":                  pulseURL,
 		"kiosk_pulse_agent_hostname":       kioskClientName,
@@ -165,6 +322,15 @@ func runKioskSetup(args []string, out io.Writer) error {
 		"kiosk_pulse_agent_release_url":    model.PulseAgentARM64ReleaseURL,
 		"kiosk_pulse_agent_release_sha256": model.PulseAgentARM64ReleaseSHA256,
 		"kiosk_pulse_agent_token":          pulseAgentToken,
+		"streamdeck_binary":                streamDeckBinary,
+		"streamdeck_pulse_token":           pulseReadToken,
+		"streamdeck_client_identity":       companionStreamDeckIdentity,
+		"streamdeck_vendor_id":             streamdeck.DefaultVendorID,
+		"streamdeck_product_id":            streamdeck.DefaultProductID,
+		"streamdeck_model":                 streamdeck.DefaultModel,
+		"streamdeck_serial":                "",
+		"streamdeck_client_key_pem":        streamDeckCertificate.KeyPEM,
+		"streamdeck_client_cert_pem":       streamDeckCertificate.ChainPEM,
 		"kiosk_certificate_selector":       certificateSelector,
 		"kiosk_certificate_policy":         certificatePolicy,
 		"kiosk_client_subject":             "client-" + kioskClientName + "." + s.Network.Domain,
@@ -177,32 +343,131 @@ func runKioskSetup(args []string, out io.Writer) error {
 		"kiosk_client_certificate_serial":  certificate.Serial,
 	}, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode kiosk Ansible variables: %w", err)
+		return fmt.Errorf("encode companion Ansible variables: %w", err)
 	}
 	variables = append(variables, '\n')
 
 	workspace, err := os.MkdirTemp("", ".boetticher-kiosk-*")
 	if err != nil {
-		return fmt.Errorf("create temporary kiosk Ansible workspace: %w", err)
+		return fmt.Errorf("create temporary companion Ansible workspace: %w", err)
 	}
 	defer os.RemoveAll(workspace)
 	inventoryPath := filepath.Join(workspace, "inventory.ini")
 	sshConfigPath := filepath.Join(workspace, "ssh.conf")
-	playbook := filepath.Join(sourceRoot, "ansible", "kiosk.yml")
-	inventory := "# Temporary Boetticher Raspberry Pi kiosk inventory.\n[kiosk]\nboetticher-kiosk ansible_host=" + address + "\n\n[kiosk:vars]\nansible_python_interpreter=/usr/bin/python3\n"
+	playbook := filepath.Join(sourceRoot, "ansible", "companion.yml")
+	inventory := "# Temporary Boetticher companion inventory.\n[kiosk]\nboetticher-companion ansible_host=" + address + "\n\n[kiosk:vars]\nansible_python_interpreter=/usr/bin/python3\n"
 	if err := os.WriteFile(inventoryPath, []byte(inventory), 0600); err != nil {
-		return fmt.Errorf("write temporary kiosk inventory: %w", err)
+		return fmt.Errorf("write temporary companion inventory: %w", err)
 	}
 	if err := os.WriteFile(sshConfigPath, []byte(sshContent), 0600); err != nil {
-		return fmt.Errorf("write temporary kiosk SSH configuration: %w", err)
+		return fmt.Errorf("write temporary companion SSH configuration: %w", err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if _, err := ansible.RunExternal(ctx, playbook, inventoryPath, variables, sshConfigPath, *user); err != nil {
-		return fmt.Errorf("configure Raspberry Pi kiosk: %w", err)
+		return fmt.Errorf("configure Raspberry Pi companion: %w", err)
 	}
-	fmt.Fprintf(out, "Kiosk setup: PASS %s configured; client identity %s\n", address, kioskClientName)
+	fmt.Fprintf(out, "Companion setup: PASS %s configured; capabilities display=%t streamdeck=%t pulse-agent=%t\n", address, capabilities.Display, capabilities.StreamDeck, capabilities.PulseAgent)
 	return nil
+}
+
+func runCompanionStatus(args []string, out io.Writer) error {
+	args, err := normalizeKioskArgs(args)
+	if err != nil {
+		return err
+	}
+	fs := flag.NewFlagSet("companion status", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	siteDir := fs.String("site", ".", "private site repository directory")
+	user := fs.String("user", "pi", "SSH user on the Raspberry Pi")
+	identity := fs.String("identity-file", "", "private SSH identity file")
+	knownHosts := fs.String("known-hosts", "", "strict SSH known-hosts file")
+	port := fs.Int("port", 22, "Raspberry Pi SSH port")
+	jsonOutput := fs.Bool("json", false, "emit machine-readable status")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("one Raspberry Pi IPv4 address is required")
+	}
+	address := fs.Arg(0)
+	if err := sshconfig.ValidateBootstrapAddress(address); err != nil {
+		return err
+	}
+	if *port < 1 || *port > 65535 {
+		return fmt.Errorf("SSH port %d is outside 1-65535", *port)
+	}
+	s, err := site.Load(*siteDir)
+	if err != nil {
+		return err
+	}
+	if *identity == "" {
+		*identity = s.SSHIdentityFile
+	}
+	if *identity == "" {
+		*identity = filepath.Join(model.ExpandUserPath("~"), ".ssh", "id_ed25519")
+	}
+	*identity = model.ExpandUserPath(*identity)
+	if *knownHosts == "" {
+		*knownHosts = filepath.Join(*siteDir, "generated", "ssh", "companion_known_hosts")
+	}
+	*knownHosts = model.ExpandUserPath(*knownHosts)
+	if err := validateKioskSSHInputs(*identity, *knownHosts, false); err != nil {
+		return err
+	}
+	if _, err := sshconfig.ReadHostKey(*knownHosts, address); err != nil {
+		return fmt.Errorf("refusing companion status without an enrolled host key: %w", err)
+	}
+	sshContent, err := sshconfig.RenderDirect(address, *user, *identity, *knownHosts, *port)
+	if err != nil {
+		return err
+	}
+	workspace, err := os.MkdirTemp("", ".boetticher-companion-status-*")
+	if err != nil {
+		return fmt.Errorf("create temporary companion status workspace: %w", err)
+	}
+	defer os.RemoveAll(workspace)
+	sshPath := filepath.Join(workspace, "ssh.conf")
+	if err := os.WriteFile(sshPath, []byte(sshContent), 0600); err != nil {
+		return fmt.Errorf("write temporary companion status SSH configuration: %w", err)
+	}
+	runner := proxmox.SSHRunner{ConfigFile: sshPath, HostAlias: "boetticher-companion", HostKeyAlias: "boetticher-companion"}
+	statusOutput, runErr := runner.Run(context.Background(), address, *user, "for unit in boetticher-streamdeck.service pulse-kiosk.service pulse-agent.service; do printf '%s ' \"$unit\"; systemctl is-active \"$unit\" 2>/dev/null || true; done")
+	if runErr != nil {
+		return fmt.Errorf("read companion service status: %w", runErr)
+	}
+	values := map[string]string{"streamdeck": "unknown", "display": "unknown", "pulse_agent": "unknown"}
+	for _, line := range strings.Split(strings.TrimSpace(string(statusOutput)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			continue
+		}
+		switch fields[0] {
+		case "boetticher-streamdeck.service":
+			values["streamdeck"] = fields[1]
+		case "pulse-kiosk.service":
+			values["display"] = fields[1]
+		case "pulse-agent.service":
+			values["pulse_agent"] = fields[1]
+		}
+	}
+	if *jsonOutput {
+		return json.NewEncoder(out).Encode(map[string]any{"address": address, "services": values})
+	}
+	fmt.Fprintf(out, "Companion target: %s@%s:%d\n", *user, address, *port)
+	fmt.Fprintf(out, "Display: %s\nStreamDeck: %s\nPulse agent: %s\n", values["display"], values["streamdeck"], values["pulse_agent"])
+	return nil
+}
+
+func companionStreamDeckBinary(siteDir string, dryRun bool) (string, error) {
+	if dryRun {
+		return filepath.Join(siteDir, "generated", "release", filepath.FromSlash(artifacts.CompanionStreamDeckPath)), nil
+	}
+	path, err := artifacts.ResolveImportedCompanion(siteDir)
+	if err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func normalizeKioskArgs(args []string) ([]string, error) {
@@ -273,27 +538,44 @@ func validateKioskSSHInputs(identity, knownHosts string, dryRun bool) error {
 	return nil
 }
 
-func kioskSourceRoot() (string, error) {
+func kioskSourceRoot() (string, func(), error) {
 	root, err := applianceBuildSourceRoot()
-	if err != nil {
-		return "", fmt.Errorf("resolve kiosk Ansible source: %w", err)
-	}
-	for _, relative := range []string{
-		"ansible/kiosk.yml",
-		"ansible/roles/kiosk/tasks/main.yml",
-		"ansible/roles/kiosk/templates/pulse-kiosk.service.j2",
-		"pi/kiosk/visualizer/index.html",
-		"pi/kiosk/libexec/pulse-kiosk-stats",
-		"pi/kiosk/pulse-refresh-extension/manifest.json",
-		"pi/kiosk/pulse-refresh-extension/reload.js",
-		"pi/kiosk/systemd/pulse-kiosk-stats.service",
-		"pi/kiosk/systemd/pulse-kiosk-stats.timer",
-	} {
-		if _, err := os.Stat(filepath.Join(root, relative)); err != nil {
-			return "", fmt.Errorf("kiosk source is incomplete at %s: %w", filepath.Join(root, relative), err)
+	if err == nil {
+		var incomplete error
+		for _, relative := range []string{
+			"ansible/companion.yml",
+			"ansible/roles/kiosk/tasks/main.yml",
+			"ansible/roles/kiosk/templates/pulse-kiosk.service.j2",
+			"pi/kiosk/visualizer/index.html",
+			"pi/kiosk/libexec/pulse-kiosk-stats",
+			"pi/kiosk/pulse-refresh-extension/manifest.json",
+			"pi/kiosk/pulse-refresh-extension/reload.js",
+			"pi/kiosk/systemd/pulse-kiosk-stats.service",
+			"pi/kiosk/systemd/pulse-kiosk-stats.timer",
+		} {
+			if _, err := os.Stat(filepath.Join(root, relative)); err != nil {
+				incomplete = fmt.Errorf("companion source is incomplete at %s: %w", filepath.Join(root, relative), err)
+				break
+			}
 		}
+		if incomplete == nil {
+			return root, func() {}, nil
+		}
+		err = incomplete
 	}
-	return root, nil
+	archive, archiveErr := artifacts.BuildEmbeddedCompanionSourceArchive()
+	if archiveErr != nil {
+		return "", func() {}, fmt.Errorf("resolve companion Ansible source: %w (source checkout: %v)", archiveErr, err)
+	}
+	workspace, workspaceErr := os.MkdirTemp("", ".boetticher-companion-source-*")
+	if workspaceErr != nil {
+		return "", func() {}, fmt.Errorf("create embedded companion source workspace: %w", workspaceErr)
+	}
+	if extractErr := artifacts.ExtractBuildArchiveReader(bytes.NewReader(archive), workspace); extractErr != nil {
+		_ = os.RemoveAll(workspace)
+		return "", func() {}, fmt.Errorf("extract embedded companion source: %w", extractErr)
+	}
+	return workspace, func() { _ = os.RemoveAll(workspace) }, nil
 }
 
 func kioskCertificateSelector(pulseURL, domain string) (string, error) {
@@ -402,6 +684,70 @@ func ensureKioskClientCertificate(siteDir string, s model.Site, authority pki.Au
 			return pki.ClientCertificate{}, err
 		}
 	}
+	return certificate, nil
+}
+
+func ensureCompanionStreamDeckCertificate(siteDir string, s model.Site, authority pki.Authority) (pki.ClientCertificate, error) {
+	now := time.Now().UTC()
+	runtimeDir := filepath.Join(site.RuntimeDir(s), "pki", companionStreamDeckIdentity)
+	paths := []string{
+		filepath.Join(runtimeDir, "client.key.pem"),
+		filepath.Join(runtimeDir, "client.crt.pem"),
+		filepath.Join(runtimeDir, "chain.crt.pem"),
+	}
+	existing := make([][]byte, len(paths))
+	present := 0
+	for index, path := range paths {
+		data, err := pathguard.ReadFile(path)
+		if err == nil {
+			existing[index] = data
+			present++
+			continue
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return pki.ClientCertificate{}, fmt.Errorf("read companion StreamDeck PKI runtime: %w", err)
+		}
+	}
+	if present == len(paths) {
+		certificate, err := validateCachedServiceClientCertificate(authority, string(existing[0]), string(existing[1]), string(existing[2]), companionStreamDeckIdentity, now)
+		if err == nil {
+			return certificate, nil
+		}
+	}
+	certificate, err := pki.IssueServiceClient(authority, companionStreamDeckIdentity, now)
+	if err != nil {
+		return pki.ClientCertificate{}, fmt.Errorf("issue companion StreamDeck client certificate: %w", err)
+	}
+	if err := publishKioskClientIdentity(runtimeDir, certificate); err != nil {
+		return pki.ClientCertificate{}, err
+	}
+	metadata := fmt.Sprintf("name: %s\nfingerprint: %s\nserial: %s\ncreated_at: %s\n", companionStreamDeckIdentity, certificate.Fingerprint, certificate.Serial, now.Format(time.RFC3339))
+	if err := writePublic(filepath.Join(siteDir, "generated", "pki", companionStreamDeckIdentity+".yaml"), []byte(metadata)); err != nil {
+		return pki.ClientCertificate{}, err
+	}
+	return certificate, nil
+}
+
+func validateCachedServiceClientCertificate(authority pki.Authority, keyPEM, certPEM, chainPEM, identity string, now time.Time) (pki.ClientCertificate, error) {
+	pair, err := tls.X509KeyPair([]byte(chainPEM), []byte(keyPEM))
+	if err != nil {
+		return pki.ClientCertificate{}, err
+	}
+	request, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: identity}}, pair.PrivateKey)
+	if err != nil {
+		return pki.ClientCertificate{}, err
+	}
+	requestPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: request})
+	certificate, err := pki.ValidateServiceClientCertificate(authority, chainPEM, string(requestPEM), identity, now)
+	if err != nil {
+		return pki.ClientCertificate{}, err
+	}
+	if strings.TrimSpace(certificate.CertPEM) != strings.TrimSpace(certPEM) {
+		return pki.ClientCertificate{}, errors.New("cached companion StreamDeck certificate does not match its chain")
+	}
+	certificate.KeyPEM = keyPEM
+	certificate.CertPEM = certPEM
+	certificate.ChainPEM = chainPEM
 	return certificate, nil
 }
 
