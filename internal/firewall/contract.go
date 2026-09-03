@@ -59,7 +59,7 @@ func RenderExternalContract(s model.Site, plan Plan) (string, error) {
 			fmt.Fprintf(&b, "- Provider endpoint: `%s:%d`; resolved IPv4 addresses: `%s`; tunnel address: `%s`; profile digest: `%s`.\n", plan.AirVPN.EndpointHost, plan.AirVPN.EndpointPort, strings.Join(plan.AirVPN.EndpointAddresses, ", "), plan.AirVPN.TunnelAddress, plan.AirVPN.SHA256)
 		}
 		for _, route := range plan.PolicyRoutes {
-			fmt.Fprintf(&b, "- Source `%s` uses routing table `%d` at priority `%d`, with default route via `%s` on `%s`; internal site CIDRs remain direct.\n", route.SourceCIDR, route.Table, route.Priority, route.DefaultGateway, route.DefaultInterface)
+			fmt.Fprintf(&b, "- Source `%s` uses routing table `%d` at priority `%d`, with default route via `%s` on `%s`; the selected appliance source is also bound to its declared interface identity; internal site CIDRs remain direct.\n", route.SourceCIDR, route.Table, route.Priority, route.DefaultGateway, route.DefaultInterface)
 		}
 		b.WriteString("- The external gateway must NAT only the exact AirVPN provider UDP handshake from `10.10.5.20`; all other TRANSIT-to-WAN and TRANSIT-to-HOME forwarding remains blocked.\n")
 	}

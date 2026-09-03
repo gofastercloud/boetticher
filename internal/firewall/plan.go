@@ -85,6 +85,7 @@ type PolicyRule struct {
 	SourceCIDR      string   `json:"source_cidr,omitempty"`
 	DestinationCIDR string   `json:"destination_cidr,omitempty"`
 	DestinationHost string   `json:"destination_host,omitempty"`
+	SourceMAC       string   `json:"source_mac,omitempty"`
 	UserRuleID      string   `json:"user_rule_id,omitempty"`
 }
 
@@ -658,6 +659,7 @@ func policyRules(s model.Site) []PolicyRule {
 			Route:           "airvpn",
 			Description:     "boetticher ARR media acquisition through AirVPN only",
 			SourceCIDR:      arr.Address + "/32",
+			SourceMAC:       arr.MAC,
 			DestinationCIDR: "0.0.0.0/0",
 		})
 	}
@@ -956,6 +958,14 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 		if rule.DestinationCIDR == "" && rule.DestinationHost == "" {
 			continue
 		}
+		sourceMAC := ""
+		if rule.SourceMAC != "" {
+			parsedMAC, parseErr := net.ParseMAC(rule.SourceMAC)
+			if parseErr != nil || len(parsedMAC) != 6 {
+				return "", fmt.Errorf("firewall rule %s has an invalid source MAC", rule.Name)
+			}
+			sourceMAC = " ether saddr " + parsedMAC.String()
+		}
 		destination := rule.DestinationCIDR
 		if destination == "" {
 			destination = "@" + destinationHostSetName(destinationSets, rule.DestinationHost)
@@ -980,7 +990,7 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 			if rule.UserRuleID != "" {
 				comment = "boetticher:user-rule:" + rule.UserRuleID + ":" + protocol
 			}
-			fmt.Fprintf(&b, "    iifname \"%s\" oifname \"%s\" ip saddr %s ip daddr %s%s counter accept comment \"%s\"\n", sourceIface, destinationIface, rule.SourceCIDR, destination, protocolText, comment)
+			fmt.Fprintf(&b, "    iifname \"%s\"%s oifname \"%s\" ip saddr %s ip daddr %s%s counter accept comment \"%s\"\n", sourceIface, sourceMAC, destinationIface, rule.SourceCIDR, destination, protocolText, comment)
 		}
 	}
 	for _, rule := range plan.Rules {

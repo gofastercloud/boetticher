@@ -704,7 +704,7 @@ func TestArrAirVPNEgressIsBoundedAndFailClosed(t *testing.T) {
 			break
 		}
 	}
-	if egress.From != "SERVERS" || egress.To != "TRANSIT" || egress.Action != "allow" || egress.Protocol != "any" || egress.SourceCIDR != model.ArrGuestAddress+"/32" || egress.DestinationCIDR != "0.0.0.0/0" || egress.NAT || egress.Route != "airvpn" {
+	if egress.From != "SERVERS" || egress.To != "TRANSIT" || egress.Action != "allow" || egress.Protocol != "any" || egress.SourceCIDR != model.ArrGuestAddress+"/32" || egress.SourceMAC != model.ArrGuestMAC || egress.DestinationCIDR != "0.0.0.0/0" || egress.NAT || egress.Route != "airvpn" {
 		t.Fatalf("ARR AirVPN egress rule = %#v", egress)
 	}
 	if !reflect.DeepEqual(plan.AirVPNSources, []string{model.ArrGuestAddress + "/32"}) {
@@ -729,7 +729,7 @@ func TestArrAirVPNEgressIsBoundedAndFailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`iifname "servers0" oifname "transit0" ip saddr 10.10.20.110/32 ip daddr 0.0.0.0/0 counter accept`,
+		`iifname "servers0" ether saddr 02:00:00:00:02:10 oifname "transit0" ip saddr 10.10.20.110/32 ip daddr 0.0.0.0/0 counter accept`,
 		`ip saddr @airvpn_sources oifname "wan0" counter log prefix "boetticher AIRVPN-DIRECT-DROP " drop`,
 		`oifname "wan0" ip saddr != @airvpn_sources ip saddr 10.10.20.0/24 masquerade comment "boetticher:nat-servers"`,
 	} {
@@ -739,5 +739,19 @@ func TestArrAirVPNEgressIsBoundedAndFailClosed(t *testing.T) {
 	}
 	if strings.Contains(ruleset, `oifname "wan0" ip saddr 10.10.20.110/32 masquerade`) {
 		t.Fatal("ARR AirVPN source has a direct WAN NAT rule")
+	}
+}
+
+func TestRenderRejectsInvalidSourceMAC(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Rules = []PolicyRule{{
+		Name: "invalid-source-mac", From: "SERVERS", To: "TRANSIT", Action: "allow", Protocol: "any",
+		SourceCIDR: "10.10.20.110/32", DestinationCIDR: "0.0.0.0/0", SourceMAC: "not-a-mac",
+	}}
+	if _, err := RenderNFT(plan); err == nil || !strings.Contains(err.Error(), "invalid source MAC") {
+		t.Fatalf("invalid source MAC was rendered: %v", err)
 	}
 }
