@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -69,10 +68,6 @@ func runModuleListRequest(siteDir string, out io.Writer) error {
 		fmt.Fprintf(out, "%s\t%s\t%s\t%s\t%s\n", module.Name, module.Policy, yesNo(module.Enabled), module.Reason, module.State)
 	}
 	return nil
-}
-
-func runModuleChange(args []string, out io.Writer, enable bool) error {
-	return runModuleChangeWithInput(args, os.Stdin, out, os.Stderr, enable)
 }
 
 func runModuleChangeWithInput(args []string, input io.Reader, out, errOut io.Writer, enable bool) error {
@@ -298,12 +293,4 @@ func yesNo(value bool) string {
 		return "yes"
 	}
 	return "no"
-}
-
-func guestNames(values []model.Component) string {
-	result := make([]string, len(values))
-	for i, value := range values {
-		result[i] = fmt.Sprintf("%d:%s", value.VMID, value.Name)
-	}
-	return strings.Join(result, ", ")
 }

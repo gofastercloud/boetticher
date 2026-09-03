@@ -650,11 +650,6 @@ func volumesForGuest(volumes []model.PersistentVolumeDeclaration, guest string) 
 	return filtered
 }
 
-func fixtureVolumes(module, guest string) []model.PersistentVolumeDeclaration {
-	identity := model.PersistentVolumeDeclaration{Name: "ssh-identity", Module: module, Guest: guest, SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/ssh", Placement: model.StorageDefault, Backup: true}
-	return []model.PersistentVolumeDeclaration{identity}
-}
-
 func gatewayNICs(s model.Site) []GuestNIC {
 	nics := []GuestNIC{{Name: "wan0", Bridge: "vmbr0", Method: "dhcp", MAC: s.Gateway.Upstream.MAC}}
 	for _, zoneType := range []model.ZoneType{model.ZoneTypeTrusted, model.ZoneTypeServers, model.ZoneTypeSandbox, model.ZoneTypeManagement, model.ZoneTypeTransit, model.ZoneTypeInfrastructure} {
@@ -2677,15 +2672,6 @@ func InspectGuestArtifact(ctx context.Context, client *Client, node string, gues
 		return true, false, nil
 	}
 	return true, guestArtifactNeedsReplacement(current, guest), nil
-}
-
-// GuestArtifactNeedsReplacement reports whether one existing guest needs the
-// explicitly confirmed appliance-rootfs replacement. A missing guest is not a
-// replacement, and kind mismatches remain the responsibility of the normal
-// ensure path so its existing HOLD is preserved.
-func GuestArtifactNeedsReplacement(ctx context.Context, client *Client, node string, guest GuestPlan) (bool, error) {
-	_, replacement, err := InspectGuestArtifact(ctx, client, node, guest)
-	return replacement, err
 }
 
 func normalizeArtifactDescription(value string) string {

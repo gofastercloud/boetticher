@@ -247,6 +247,42 @@ func TestSSHRunnerRestrictsAuthenticationToConfiguredIdentity(t *testing.T) {
 	}
 }
 
+func TestSSHRunnerUsesInMemoryIdentityOnInheritedDescriptor(t *testing.T) {
+	identity := []byte("temporary private key")
+	runner := (SSHRunner{StrictHostKey: "yes"}).WithIdentityData(identity)
+	args, err := runner.commandArgs("192.0.2.10", "root", []string{"true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(args, "IdentitiesOnly=yes") || !containsString(args, "/dev/fd/3") {
+		t.Fatalf("in-memory identity did not use the inherited descriptor: %#v", args)
+	}
+	if containsString(args, "temporary private key") || runner.IdentityFile != "" {
+		t.Fatalf("temporary identity leaked into SSH arguments or persistent file configuration: %#v", args)
+	}
+	runner.ClearIdentityData()
+	if len(runner.identityData) != 0 {
+		t.Fatal("ClearIdentityData retained operation-scoped key material")
+	}
+}
+
+func TestSSHRunnerIsolatesTargetIdentityButPreservesProxyJumpIdentity(t *testing.T) {
+	path := t.TempDir() + "/boetticher.conf"
+	config := "Host lab-bastion\n    IdentityFile /tmp/operator\nHost lab-dns-01\n    IdentityFile /tmp/operator\n    ProxyJump lab-bastion\n"
+	if err := os.WriteFile(path, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runner := SSHRunner{ConfigFile: path, HostAlias: "lab-dns-01"}
+	filtered, err := runner.isolatedSSHConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(filtered)
+	if strings.Count(text, "IdentityFile /tmp/operator") != 1 || !strings.Contains(text, "Host lab-bastion") || !strings.Contains(text, "ProxyJump lab-bastion") {
+		t.Fatalf("isolated SSH configuration lost the bastion identity or retained the target identity: %s", text)
+	}
+}
+
 func TestSSHProcessUsesDedicatedProcessGroupForProxyJumpCleanup(t *testing.T) {
 	process := newSSHProcess([]string{"true"})
 	if process.SysProcAttr == nil || !process.SysProcAttr.Setpgid {
@@ -335,20 +371,6 @@ func containsString(values []string, wanted string) bool {
 	return false
 }
 
-func TestInstallOperatorKeyUsesSafeConstantRemoteCommand(t *testing.T) {
-	runner := &fakeRunner{}
-	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator"
-	if err := InstallOperatorKey(context.Background(), runner, "192.0.2.10", "root", key); err != nil {
-		t.Fatal(err)
-	}
-	if runner.address != "192.0.2.10" || runner.user != "root" || !strings.Contains(runner.command, "authorized_keys") {
-		t.Fatalf("unexpected bootstrap request: %#v", runner)
-	}
-	if strings.Contains(runner.command, "StrictHostKeyChecking=no") || strings.Contains(runner.command, "password") {
-		t.Fatalf("bootstrap command weakened SSH or accepted a password argument: %s", runner.command)
-	}
-}
-
 func TestInstallTemporaryRootAccessUsesIndependentRecoveryTransport(t *testing.T) {
 	runner := &fakeRunner{}
 	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample boetticher-apply"
@@ -360,6 +382,29 @@ func TestInstallTemporaryRootAccessUsesIndependentRecoveryTransport(t *testing.T
 	}
 	if strings.Contains(runner.command, "passwd") || strings.Contains(runner.command, "AllowUsers") || strings.Contains(runner.command, "sudo") {
 		t.Fatalf("temporary root acquisition changed durable recovery policy: %s", runner.command)
+	}
+}
+
+func TestRevokeTemporaryRootAccessThroughHostUsesExactOwnedGuestBoundary(t *testing.T) {
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample boetticher-apply"
+	for _, guest := range []struct {
+		kind GuestKind
+		vmid int
+		want string
+	}{
+		{kind: KindQEMU, vmid: 100, want: "/usr/sbin/qm guest exec 100 -- /bin/sh -c"},
+		{kind: KindLXC, vmid: 110, want: "/usr/sbin/pct exec 110 -- /bin/sh -c"},
+	} {
+		runner := &fakeRunner{output: []byte(`{"exitcode":0,"exited":1}`)}
+		if err := RevokeTemporaryRootAccessThroughHost(context.Background(), runner, "192.0.2.10", "root", guest.kind, guest.vmid, key); err != nil {
+			t.Fatalf("guest cleanup %s = %v", guest.kind, err)
+		}
+		if !strings.Contains(runner.command, guest.want) || !strings.Contains(runner.command, "/root/.ssh/authorized_keys") || !strings.Contains(runner.command, "grep -Fvx") {
+			t.Fatalf("guest cleanup %s used an unexpected host command: %s", guest.kind, runner.command)
+		}
+		if strings.Contains(runner.command, "passwd") || strings.Contains(runner.command, "AllowUsers") {
+			t.Fatalf("guest cleanup %s changed unrelated recovery state: %s", guest.kind, runner.command)
+		}
 	}
 }
 

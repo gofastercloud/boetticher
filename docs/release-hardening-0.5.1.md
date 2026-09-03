@@ -107,13 +107,13 @@ revoke, interruption, and cleanup failure.
 
 ## Default topology decision record
 
-This table is completed against the final 0.5.1 source and clean-install
-qualification. Each retained default must have a current operational reason.
+This table records the 0.5.1 source decision. Live qualification still has to
+prove that the resulting topology is the one deployed on the clean host.
 
 | Component | Decision | Reason |
 | --- | --- | --- |
-| Portal | Pending source review | |
-| Gatus | Pending source review | |
-| Central logging | Pending source review | |
-| DNS2 | Pending source review | |
-| Pulse | Pending source review | |
+| Portal | Remove | Its generated page duplicated the CLI/status path and required a dedicated guest and projection lifecycle. |
+| Gatus | Optional | A status-page product is useful to some operators but is not required by the minimum control plane. |
+| Central logging | Optional, default off | Logs remain available when enabled, without forcing a dedicated collector into every install. |
+| DNS2 | Remove from default | A second guest on the same Proxmox host did not add a meaningful failure domain. |
+| Pulse | Keep | It provides historical telemetry, Proxmox/guest health, an external health API, and Companion integration with scoped access. |

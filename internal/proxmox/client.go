@@ -303,10 +303,6 @@ type StorageContent struct {
 	CSum     string `json:"csum"`
 }
 
-func (c *Client) CreateUser(ctx context.Context, userID, comment string) error {
-	return c.Post(ctx, "/access/users", url.Values{"userid": {userID}, "comment": {comment}}, nil)
-}
-
 func (c *Client) CreateToken(ctx context.Context, userID, tokenID string) (string, error) {
 	var result struct {
 		Value string `json:"value"`
@@ -319,10 +315,6 @@ func (c *Client) CreateToken(ctx context.Context, userID, tokenID string) (strin
 		return "", errors.New("Proxmox did not return an API token secret")
 	}
 	return result.Value, nil
-}
-
-func (c *Client) SetACL(ctx context.Context, resource, users, role string) error {
-	return c.Post(ctx, "/access/acl", url.Values{"path": {resource}, "users": {users}, "role": {role}, "propagate": {"1"}}, nil)
 }
 
 func (c *Client) CreateVM(ctx context.Context, node string, vmid int, params url.Values) error {
@@ -626,28 +618,6 @@ func (c *Client) QEMUAgentNetworkInterfaces(ctx context.Context, node string, vm
 
 func (c *Client) LXCConfig(ctx context.Context, node string, vmid int, out any) error {
 	return c.Get(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "config"), nil, out)
-}
-
-func (c *Client) ListVMs(ctx context.Context, node string) ([]GuestSummary, error) {
-	var guests []GuestSummary
-	if err := c.Get(ctx, path.Join("/nodes", node, "qemu"), nil, &guests); err != nil {
-		return nil, err
-	}
-	for i := range guests {
-		guests[i].Kind = KindQEMU
-	}
-	return guests, nil
-}
-
-func (c *Client) ListLXCs(ctx context.Context, node string) ([]GuestSummary, error) {
-	var guests []GuestSummary
-	if err := c.Get(ctx, path.Join("/nodes", node, "lxc"), nil, &guests); err != nil {
-		return nil, err
-	}
-	for i := range guests {
-		guests[i].Kind = KindLXC
-	}
-	return guests, nil
 }
 
 func (c *Client) NodeNetwork(ctx context.Context, node string, out any) error {
@@ -1110,14 +1080,6 @@ func splitContent(value string) map[string]bool {
 		}
 	}
 	return result
-}
-
-// EnsureLVMThinStorage registers the fixed guest-disk storage created by the
-// dedicated-data-disk initializer. It refuses a conflicting Proxmox storage
-// definition and never discovers or adopts arbitrary user storage.
-func (c *Client) EnsureLVMThinStorage(ctx context.Context, storageID, volumeGroup, thinPool string) error {
-	_, err := c.EnsureLVMThinStorageWithMutation(ctx, storageID, volumeGroup, thinPool)
-	return err
 }
 
 // EnsureLVMThinStorageWithMutation is the coarse mutation-aware form of

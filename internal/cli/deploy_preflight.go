@@ -82,14 +82,6 @@ func modulesEnabled(s model.Site, name string) bool {
 	return false
 }
 
-// validateLiveDeploymentPrerequisites is deliberately limited to infrastructure
-// that exists before this deployment. It must never probe a firewall rule,
-// appliance DNS service, or module service that this invocation is about to
-// create; those remain post-deployment health gates.
-func validateLiveDeploymentPrerequisites(ctx context.Context, client *proxmox.Client, rootRunner proxmox.CommandRunner, siteDir string, s model.Site, plan proxmox.Plan, storagePlan storage.Plan) error {
-	return validateLiveDeploymentPrerequisitesWithResolver(ctx, client, rootRunner, siteDir, s, plan, storagePlan, net.LookupIP)
-}
-
 func validateLiveDeploymentPrerequisitesWithResolver(ctx context.Context, client *proxmox.Client, rootRunner proxmox.CommandRunner, siteDir string, s model.Site, plan proxmox.Plan, storagePlan storage.Plan, endpointLookup func(string) ([]net.IP, error)) error {
 	if client == nil {
 		return errors.New("live deployment preflight requires the authenticated Proxmox path")

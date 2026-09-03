@@ -30,7 +30,7 @@ else
 fi
 
 if [ "$(uname -s)" != Linux ]; then
-  echo "HOLD: appliance construction requires the supported Linux builder environment; use boetticher bootstrap on macOS" >&2
+  echo "HOLD: appliance construction requires the supported Linux maintainer environment; use make local-builder-init and make local-image from macOS" >&2
   exit 2
 fi
 

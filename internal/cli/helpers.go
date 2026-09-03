@@ -1,16 +1,12 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"html"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -410,60 +406,6 @@ func writeCurrentStatus(dir string, s model.Site) error {
 	}
 	report := desiredStatusReport(s, revision)
 	return writeProjection(filepath.Join(dir, "generated", "status.json"), report)
-}
-
-func sortedSSHComponents(s model.Site) []model.Component {
-	components := []model.Component{}
-	for _, m := range s.PlatformComponents() {
-		if m.SSHManaged {
-			components = append(components, m)
-		}
-	}
-	sort.Slice(components, func(i, j int) bool { return components[i].Name < components[j].Name })
-	return components
-}
-
-func toolVersion(tool string) string {
-	args := []string{"--version"}
-	if tool == "ssh" {
-		args = []string{"-V"}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	command := exec.CommandContext(ctx, tool, args...)
-	if tool == "ansible" || tool == "ansible-playbook" {
-		preflightTemp := filepath.Join(os.TempDir(), "boetticher-ansible-preflight")
-		_ = os.MkdirAll(preflightTemp, 0700)
-		command.Env = append(os.Environ(), "ANSIBLE_LOCAL_TEMP="+preflightTemp, "ANSIBLE_REMOTE_TEMP="+preflightTemp)
-	}
-	data, err := command.CombinedOutput()
-	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return "version unavailable"
-		}
-		if len(data) == 0 {
-			return "version unavailable"
-		}
-	}
-	line := strings.TrimSpace(strings.Split(string(data), "\n")[0])
-	return line
-}
-
-func validateToolVersion(tool, version string) error {
-	if version == "" || version == "version unavailable" {
-		return fmt.Errorf("version unavailable")
-	}
-	switch tool {
-	case "ssh":
-		if !strings.Contains(version, "OpenSSH") {
-			return fmt.Errorf("unrecognized OpenSSH version")
-		}
-	case "ansible":
-		if !strings.HasPrefix(version, "ansible [core ") {
-			return fmt.Errorf("Ansible Core is required")
-		}
-	}
-	return nil
 }
 
 func valueOrPlaceholder(value string) string {

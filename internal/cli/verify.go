@@ -14,7 +14,6 @@ import (
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/firewall"
 	"github.com/gofastercloud/boetticher/internal/model"
-	"github.com/gofastercloud/boetticher/internal/pathguard"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/site"
@@ -375,55 +374,6 @@ func checkPlatformOwnership(s model.Site) error {
 		if _, ok := wantSet[guest.VMID]; !ok {
 			return fmt.Errorf("platform plan contains unexpected VMID %d", guest.VMID)
 		}
-	}
-	return nil
-}
-
-func checkAgeIdentity(path string) error {
-	path = model.ExpandUserPath(path)
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return errors.New("Age identity must be a regular file, not a symlink or special file")
-	}
-	if info.Mode().Perm()&0077 != 0 {
-		return fmt.Errorf("Age identity permissions are %04o; group/other access must be absent", info.Mode().Perm())
-	}
-	return nil
-}
-
-func checkSOPSBoundary(siteDir string, s model.Site) error {
-	config, err := pathguard.ReadFileLimited(filepath.Join(siteDir, ".sops.yaml"), site.MaxEncryptedDocumentBytes)
-	if err != nil {
-		return err
-	}
-	if !strings.Contains(string(config), s.SecretMetadata.AgeRecipient) || strings.Contains(string(config), "AGE-SECRET-KEY") {
-		return errors.New(".sops.yaml must contain only the public Age recipient")
-	}
-	secretDir := filepath.Join(siteDir, "secrets")
-	entries, err := pathguard.ReadDir(secretDir)
-	if err != nil {
-		return err
-	}
-	found := false
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sops.yaml") {
-			continue
-		}
-		found = true
-		data, err := pathguard.ReadFileLimited(filepath.Join(secretDir, entry.Name()), site.MaxEncryptedDocumentBytes)
-		if err != nil {
-			return err
-		}
-		text := string(data)
-		if !strings.Contains(text, "sops:") || !strings.Contains(text, "ENC[") || strings.Contains(text, "AGE-SECRET-KEY") || strings.Contains(text, "-----BEGIN PRIVATE KEY-----") {
-			return fmt.Errorf("%s is not an encrypted SOPS document", entry.Name())
-		}
-	}
-	if !found {
-		return errors.New("no encrypted SOPS secret document exists")
 	}
 	return nil
 }

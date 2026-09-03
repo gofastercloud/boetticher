@@ -406,6 +406,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return fmt.Errorf("acquire temporary Apply authority: %w", err)
 	}
 	rootRunner = recoveryRunner.WithIdentityData(temporaryPrivateKey)
+	// Host operations use the HOME-side address directly. Removing the
+	// generated host alias also prevents its durable operator IdentityFile from
+	// entering the temporary-root authentication set.
+	rootRunner.ConfigFile = ""
+	rootRunner.HostAlias = ""
+	rootRunner.HostKeyAlias = model.LogicalProxmoxIdentity
 	if err := proxmoxClient.SetSnippetRunner(rootRunner, s.BootstrapAddress, "root"); err != nil {
 		return fmt.Errorf("bind temporary Apply authority to Proxmox host operations: %w", err)
 	}
@@ -695,6 +701,10 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		firewallRunner = applianceSSHRunnerWithIdentity(s, *siteDir, "lab-fw-01", temporaryPrivateKey)
 		firewallGuest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
+		// Cloud-init may have installed the temporary key before SSH becomes
+		// reachable. Register the exact owned guest before the readiness probe
+		// so cleanup can fall back through the Proxmox host if boot stalls.
+		rootCleanup.guestEstablished(firewallGuest)
 		if err := report.timed("appliances", "readiness", firewallGuest.Name, func() error {
 			return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, firewallRunner.FreshConnection(), firewallGuest, operatorPublicKey, deploymentKnownHosts(*siteDir), firewallGuest.Hostname+"."+s.Network.Domain, func() {
 				rootCleanup.guestEstablished(firewallGuest)
@@ -777,6 +787,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 				continue
 			}
 			guestRunner := applianceSSHRunnerWithIdentity(s, *siteDir, guest.Name, temporaryPrivateKey)
+			// Register before waiting for SSH: first boot may already have
+			// accepted the temporary key while the guest service is still down.
+			rootCleanup.guestEstablished(guest)
 			if err := report.timed("appliances", "readiness", guest.Name, func() error {
 				return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, guestRunner.FreshConnection(), guest, operatorPublicKey, deploymentKnownHosts(*siteDir), guest.Hostname+"."+s.Network.Domain, func() {
 					rootCleanup.guestEstablished(guest)
@@ -1443,12 +1456,19 @@ func newTemporaryRootIdentity() ([]byte, string, error) {
 	if len(privatePEM) == 0 {
 		return nil, "", errors.New("encode temporary Apply identity produced no private-key data")
 	}
+	wipePrivatePEM := func() {
+		for index := range privatePEM {
+			privatePEM[index] = 0
+		}
+	}
 	publicKey, err := ssh.NewPublicKey(public)
 	if err != nil {
+		wipePrivatePEM()
 		return nil, "", fmt.Errorf("encode temporary Apply public identity: %w", err)
 	}
 	publicLine := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(publicKey))) + " boetticher-apply"
 	if err := proxmox.ValidatePublicKey(publicLine); err != nil {
+		wipePrivatePEM()
 		return nil, "", fmt.Errorf("validate temporary Apply public identity: %w", err)
 	}
 	return privatePEM, publicLine, nil
@@ -1896,7 +1916,7 @@ func (c *temporaryRootCleanup) revoke(ctx context.Context) error {
 	if !c.host && len(c.guests) == 0 {
 		return nil
 	}
-	return revokeTemporaryRootAccessForGuestsWith(ctx, c.s, c.siteDir, c.guests, c.operatorPublicKey, c.host, proxmox.RevokeTemporaryRootAccess, c.identityData)
+	return revokeTemporaryRootAccessForGuestsWithFallback(ctx, c.s, c.siteDir, c.guests, c.operatorPublicKey, c.host, proxmox.RevokeTemporaryRootAccess, proxmox.RevokeTemporaryRootAccessThroughHost, c.identityData)
 }
 
 func (c *temporaryRootCleanup) clearIdentityData() {
@@ -1909,13 +1929,14 @@ func (c *temporaryRootCleanup) clearIdentityData() {
 	c.identityData = nil
 }
 
-func revokeTemporaryRootAccessForGuests(ctx context.Context, s model.Site, siteDir string, guests []proxmox.GuestPlan, operatorPublicKey string, host bool) error {
-	return revokeTemporaryRootAccessForGuestsWith(ctx, s, siteDir, guests, operatorPublicKey, host, proxmox.RevokeTemporaryRootAccess)
-}
-
 type temporaryRootRevoker func(context.Context, proxmox.CommandRunner, string, string, string, bool) error
+type temporaryRootGuestRevoker func(context.Context, proxmox.CommandRunner, string, string, proxmox.GuestKind, int, string) error
 
 func revokeTemporaryRootAccessForGuestsWith(ctx context.Context, s model.Site, siteDir string, guests []proxmox.GuestPlan, operatorPublicKey string, host bool, revoke temporaryRootRevoker, identityData ...[]byte) error {
+	return revokeTemporaryRootAccessForGuestsWithFallback(ctx, s, siteDir, guests, operatorPublicKey, host, revoke, nil, identityData...)
+}
+
+func revokeTemporaryRootAccessForGuestsWithFallback(ctx context.Context, s model.Site, siteDir string, guests []proxmox.GuestPlan, operatorPublicKey string, host bool, revoke temporaryRootRevoker, hostRevoke temporaryRootGuestRevoker, identityData ...[]byte) error {
 	var guestIdentityData []byte
 	if len(identityData) > 0 {
 		guestIdentityData = identityData[0]
@@ -1923,10 +1944,12 @@ func revokeTemporaryRootAccessForGuestsWith(ctx context.Context, s model.Site, s
 	type target struct {
 		name    string
 		address string
+		kind    proxmox.GuestKind
+		vmid    int
 		isHost  bool
 		runner  proxmox.CommandRunner
 	}
-	targets := make([]target, 0, len(guests)+1)
+	targets := make([]target, 0, len(guests))
 	for _, guest := range guests {
 		if guest.Owner == "" || guest.Address == "" {
 			continue
@@ -1935,19 +1958,17 @@ func revokeTemporaryRootAccessForGuestsWith(ctx context.Context, s model.Site, s
 		if len(guestIdentityData) > 0 {
 			guestRunner = guestRunner.WithIdentityData(guestIdentityData)
 		}
-		targets = append(targets, target{name: guest.Name, address: guest.Address, runner: guestRunner})
+		targets = append(targets, target{name: guest.Name, address: guest.Address, kind: guest.Kind, vmid: guest.VMID, runner: guestRunner})
 	}
-	if host {
-		targets = append(targets, target{name: model.LogicalProxmoxIdentity, address: s.BootstrapAddress, isHost: true, runner: proxmoxRootSSHRunner(s, siteDir)})
-	}
-	if len(targets) == 0 {
+	if len(targets) == 0 && !host {
 		return nil
 	}
 
 	// Cleanup is a security boundary, not a best-effort loop. An unreachable
 	// guest must not prevent attempts against every other exact target,
-	// especially the Proxmox host. Run the independent revocations together so
-	// one slow SSH failure cannot consume the entire bounded cleanup window.
+	// especially the Proxmox host. Try direct guest cleanup concurrently, then
+	// use the independent host recovery path for guests whose SSH is gone. The
+	// host is revoked last so it remains available for those fallback attempts.
 	errs := make([]error, len(targets))
 	var wg sync.WaitGroup
 	for index, item := range targets {
@@ -1955,11 +1976,25 @@ func revokeTemporaryRootAccessForGuestsWith(ctx context.Context, s model.Site, s
 		go func(index int, item target) {
 			defer wg.Done()
 			if err := revoke(ctx, item.runner, item.address, "root", operatorPublicKey, item.isHost); err != nil {
+				if hostRevoke != nil && host {
+					hostRunner := proxmoxRootSSHRunner(s, siteDir)
+					if fallbackErr := hostRevoke(ctx, hostRunner, s.BootstrapAddress, "root", item.kind, item.vmid, operatorPublicKey); fallbackErr == nil {
+						return
+					} else {
+						errs[index] = fmt.Errorf("revoke root access on %s: direct: %w; host fallback: %v", item.name, err, fallbackErr)
+						return
+					}
+				}
 				errs[index] = fmt.Errorf("revoke root access on %s: %w", item.name, err)
 			}
 		}(index, item)
 	}
 	wg.Wait()
+	if host {
+		if err := revoke(ctx, proxmoxRootSSHRunner(s, siteDir), s.BootstrapAddress, "root", operatorPublicKey, true); err != nil {
+			errs = append(errs, fmt.Errorf("revoke root access on %s: %w", model.LogicalProxmoxIdentity, err))
+		}
+	}
 	return errors.Join(errs...)
 }
 

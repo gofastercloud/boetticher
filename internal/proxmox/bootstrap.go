@@ -315,6 +315,9 @@ func (r SSHRunner) StartLocalForward(ctx context.Context, address, user, targetA
 	if ctx == nil {
 		return nil, errors.New("SSH local forward context is required")
 	}
+	if len(r.identityData) > 0 {
+		return nil, errors.New("SSH local forward does not support an in-memory operation identity")
+	}
 	if err := r.validateConfig(); err != nil {
 		return nil, err
 	}
@@ -494,10 +497,6 @@ func (r SSHRunner) runArgsStream(ctx context.Context, address, user string, comm
 	if err := r.validateConfig(); err != nil {
 		return err
 	}
-	args, err := r.commandArgs(address, user, commandArgs)
-	if err != nil {
-		return err
-	}
 	started := time.Now()
 	status := 1
 	defer func() {
@@ -506,6 +505,35 @@ func (r SSHRunner) runArgsStream(ctx context.Context, address, user string, comm
 			Status: status, Duration: time.Since(started), Success: status == 0,
 		})
 	}()
+	var isolatedConfigPath string
+	if len(r.identityData) > 0 && r.ConfigFile != "" && r.HostAlias != "" {
+		configData, configErr := r.isolatedSSHConfig()
+		if configErr != nil {
+			return configErr
+		}
+		configFile, createErr := os.CreateTemp("", "boetticher-ssh-config-")
+		if createErr != nil {
+			return fmt.Errorf("create isolated SSH configuration: %w", createErr)
+		}
+		isolatedConfigPath = configFile.Name()
+		defer os.Remove(isolatedConfigPath)
+		if chmodErr := configFile.Chmod(0600); chmodErr != nil {
+			_ = configFile.Close()
+			return fmt.Errorf("protect isolated SSH configuration: %w", chmodErr)
+		}
+		if _, writeErr := configFile.Write(configData); writeErr != nil {
+			_ = configFile.Close()
+			return fmt.Errorf("write isolated SSH configuration: %w", writeErr)
+		}
+		if closeErr := configFile.Close(); closeErr != nil {
+			return fmt.Errorf("close isolated SSH configuration: %w", closeErr)
+		}
+		r.ConfigFile = isolatedConfigPath
+	}
+	args, err := r.commandArgs(address, user, commandArgs)
+	if err != nil {
+		return err
+	}
 	process := newSSHProcess(args)
 	process.Stdin = stdin
 	process.Stdout = stdout
@@ -581,6 +609,46 @@ func (r SSHRunner) validateConfig() error {
 		return fmt.Errorf("validate SSH execution configuration: %w", err)
 	}
 	return nil
+}
+
+func (r SSHRunner) isolatedSSHConfig() ([]byte, error) {
+	if r.ConfigFile == "" || r.HostAlias == "" {
+		return nil, errors.New("isolated SSH configuration requires a config file and host alias")
+	}
+	data, err := os.ReadFile(r.ConfigFile)
+	if err != nil {
+		return nil, fmt.Errorf("read SSH configuration for temporary identity: %w", err)
+	}
+	lines := strings.SplitAfter(string(data), "\n")
+	inTarget := false
+	foundTarget := false
+	var filtered strings.Builder
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") || trimmed == "" {
+			filtered.WriteString(line)
+			continue
+		}
+		fields := strings.Fields(trimmed)
+		if len(fields) > 1 && strings.EqualFold(strings.TrimSuffix(fields[0], "="), "host") {
+			inTarget = false
+			for _, alias := range fields[1:] {
+				if alias == r.HostAlias {
+					inTarget = true
+					foundTarget = true
+					break
+				}
+			}
+		}
+		if inTarget && len(fields) > 1 && strings.EqualFold(strings.TrimSuffix(fields[0], "="), "identityfile") {
+			continue
+		}
+		filtered.WriteString(line)
+	}
+	if !foundTarget {
+		return nil, fmt.Errorf("isolated SSH configuration has no host alias %q", r.HostAlias)
+	}
+	return []byte(filtered.String()), nil
 }
 
 type boundedOutput struct {
@@ -670,6 +738,9 @@ func (r SSHRunner) connectionArgs(address, user, batchMode string) ([]string, st
 		// authentication budget before that key is tried.
 		args = append(args, "-o", "IdentitiesOnly=yes", "-i", r.IdentityFile)
 	} else if len(r.identityData) > 0 {
+		// runArgsStream supplies an isolated config when a generated host alias
+		// is used. Its target block has no durable operator identity; the
+		// bastion block retains that identity so ProxyJump can still authenticate.
 		args = append(args, "-o", "IdentitiesOnly=yes", "-i", "/dev/fd/3")
 	}
 	if r.HostKeyAlias != "" {
@@ -689,15 +760,6 @@ func (r SSHRunner) connectionArgs(address, user, batchMode string) ([]string, st
 		target = r.HostAlias
 	}
 	return args, user + "@" + target, nil
-}
-
-func InstallOperatorKey(ctx context.Context, runner CommandRunner, address, initialUser, publicKey string) error {
-	if err := validatePublicKey(publicKey); err != nil {
-		return err
-	}
-	command := "umask 077; install -d -m 700 ~/.ssh; touch ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys; grep -qxF " + shellQuote(publicKey) + " ~/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(publicKey) + " >> ~/.ssh/authorized_keys"
-	_, err := runner.Run(ctx, address, initialUser, command)
-	return err
 }
 
 // InstallTemporaryRootAccess installs one exact operation-scoped root key on
@@ -1020,6 +1082,62 @@ func RevokeTemporaryRootAccess(ctx context.Context, runner CommandRunner, addres
 	}
 	if _, err := runner.Run(ctx, address, user, command); err != nil {
 		return fmt.Errorf("revoke temporary root access: %w", err)
+	}
+	return nil
+}
+
+// RevokeTemporaryRootAccessThroughHost removes the exact deployment-only key
+// from one guest through the independent Proxmox root recovery transport. It
+// is the cleanup fallback when the guest network or guest SSH service is no
+// longer available after an interrupted Apply.
+func RevokeTemporaryRootAccessThroughHost(ctx context.Context, runner CommandRunner, address, user string, kind GuestKind, vmid int, publicKey string) error {
+	if runner == nil {
+		return errors.New("temporary guest cleanup runner is required")
+	}
+	if user != "root" {
+		return errors.New("temporary guest cleanup requires the root transport")
+	}
+	if vmid <= 0 {
+		return errors.New("temporary guest cleanup requires a positive guest VMID")
+	}
+	if kind != KindQEMU && kind != KindLXC {
+		return fmt.Errorf("temporary guest cleanup does not support guest kind %q", kind)
+	}
+	if err := validatePublicKey(publicKey); err != nil {
+		return fmt.Errorf("temporary guest cleanup key: %w", err)
+	}
+	guestCommand := "set -eu; file=/root/.ssh/authorized_keys; tmp=/root/.ssh/authorized_keys.boetticher-cleanup; trap 'rm -f \"$tmp\"' EXIT; if [ -f \"$file\" ]; then if grep -Fvx -- " + shellQuote(publicKey) + " \"$file\" >\"$tmp\"; then install -m 600 -o root -g root \"$tmp\" \"$file\"; else status=$?; [ \"$status\" -eq 1 ] || exit \"$status\"; rm -f \"$file\"; fi; fi"
+	var command string
+	switch kind {
+	case KindQEMU:
+		command = fmt.Sprintf("/usr/sbin/qm guest exec %d -- /bin/sh -c %s", vmid, shellQuote(guestCommand))
+	case KindLXC:
+		command = fmt.Sprintf("/usr/sbin/pct exec %d -- /bin/sh -c %s", vmid, shellQuote(guestCommand))
+	}
+	output, err := runner.Run(ctx, address, user, command)
+	if err != nil {
+		return fmt.Errorf("revoke temporary root access in guest %d through Proxmox: %w", vmid, err)
+	}
+	if kind == KindQEMU {
+		var result map[string]json.RawMessage
+		if err := json.Unmarshal(bytes.TrimSpace(output), &result); err != nil {
+			return fmt.Errorf("decode guest-agent cleanup result for guest %d: %w", vmid, err)
+		}
+		var exited, exitCode int
+		if err := json.Unmarshal(result["exited"], &exited); err != nil || exited != 1 {
+			return fmt.Errorf("guest-agent cleanup for guest %d did not finish", vmid)
+		}
+		if err := json.Unmarshal(result["exitcode"], &exitCode); err != nil {
+			return fmt.Errorf("decode guest-agent cleanup exit code for guest %d: %w", vmid, err)
+		}
+		if exitCode != 0 {
+			var errData string
+			_ = json.Unmarshal(result["err-data"], &errData)
+			if errData != "" {
+				return fmt.Errorf("guest-agent cleanup for guest %d exited %d: %s", vmid, exitCode, strings.TrimSpace(errData))
+			}
+			return fmt.Errorf("guest-agent cleanup for guest %d exited %d", vmid, exitCode)
+		}
 	}
 	return nil
 }

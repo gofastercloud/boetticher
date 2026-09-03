@@ -268,9 +268,9 @@ func TestZoneRelativeNameUsesPowerDNSZoneOwners(t *testing.T) {
 		zone string
 		want string
 	}{
-		{name: "portal.lab.home.arpa", zone: "lab.home.arpa", want: "portal"},
+		{name: "custom.lab.home.arpa", zone: "lab.home.arpa", want: "custom"},
 		{name: "lab.home.arpa", zone: "lab.home.arpa", want: "@"},
-		{name: "portal.lab.home.arpa.", zone: "lab.home.arpa.", want: "portal"},
+		{name: "custom.lab.home.arpa.", zone: "lab.home.arpa.", want: "custom"},
 	} {
 		if got := zoneRelativeName(test.name, test.zone); got != test.want {
 			t.Fatalf("zoneRelativeName(%q, %q) = %q, want %q", test.name, test.zone, got, test.want)

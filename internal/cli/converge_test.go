@@ -422,6 +422,35 @@ func TestTemporaryRootCleanupAttemptsEveryTargetAfterFailure(t *testing.T) {
 	}
 }
 
+func TestTemporaryRootCleanupFallsBackThroughIndependentHost(t *testing.T) {
+	operatorKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA operator"
+	guests := []proxmox.GuestPlan{{VMID: 110, Name: "lab-dns-01", Kind: proxmox.KindLXC, Address: "10.10.10.10", Owner: "boetticher/module/dns"}}
+	directCalls := 0
+	hostFallbackCalls := 0
+	hostCleanupCalls := 0
+	direct := func(_ context.Context, _ proxmox.CommandRunner, address, _ string, _ string, host bool) error {
+		if host {
+			hostCleanupCalls++
+			return nil
+		}
+		directCalls++
+		return errors.New("guest SSH unavailable")
+	}
+	hostFallback := func(_ context.Context, _ proxmox.CommandRunner, address, _ string, kind proxmox.GuestKind, vmid int, _ string) error {
+		if address != "192.0.2.10" || kind != proxmox.KindLXC || vmid != 110 {
+			t.Fatalf("unexpected independent host fallback target: %s %s %d", address, kind, vmid)
+		}
+		hostFallbackCalls++
+		return nil
+	}
+	if err := revokeTemporaryRootAccessForGuestsWithFallback(context.Background(), model.Site{BootstrapAddress: "192.0.2.10"}, t.TempDir(), guests, operatorKey, true, direct, hostFallback); err != nil {
+		t.Fatal(err)
+	}
+	if directCalls != 1 || hostFallbackCalls != 1 || hostCleanupCalls != 1 {
+		t.Fatalf("temporary root cleanup calls = direct:%d fallback:%d host:%d", directCalls, hostFallbackCalls, hostCleanupCalls)
+	}
+}
+
 type deploymentRootTestRunner struct {
 	calls             int
 	lastCommand       string
@@ -512,16 +541,41 @@ func TestDeployAcquiresTemporaryRootOnlyAfterExactPlanAcceptance(t *testing.T) {
 	text := string(data)
 	digest := strings.Index(text, "planDigest, err := digestDeploymentPlan")
 	accept := strings.Index(text, "if *planDigestFlag != \"\" && *planDigestFlag != planDigest")
+	register := strings.Index(text, "registerCleanup(func(cleanupCtx context.Context) error")
 	acquire := strings.Index(text, "proxmox.InstallTemporaryRootAccess(ctx, recoveryRunner")
 	bind := strings.Index(text, "proxmoxClient.SetSnippetRunner(rootRunner")
-	if digest < 0 || accept < digest || acquire < accept || bind < acquire {
-		t.Fatalf("temporary Apply authority sequencing is not digest-gated: digest=%d accept=%d acquire=%d bind=%d", digest, accept, acquire, bind)
+	if digest < 0 || accept < digest || register < accept || acquire < register || bind < acquire {
+		t.Fatalf("temporary Apply authority sequencing is not digest-gated: digest=%d accept=%d register=%d acquire=%d bind=%d", digest, accept, register, acquire, bind)
 	}
 	if strings.Contains(text[:accept], "WaitForSSH(ctx, rootRunner") || strings.Contains(text[:accept], "ConfigureIdentities(ctx, rootRunner") {
 		t.Fatal("deployment uses deployment root authority before exact plan acceptance")
 	}
 	if !strings.Contains(text[acquire:], "temporaryPrivateKey") {
 		t.Fatal("temporary Apply identity is not retained for the bounded Apply lifecycle")
+	}
+	guestRegistration := strings.Index(text, "rootCleanup.guestEstablished(firewallGuest)")
+	guestReadiness := strings.Index(text, "return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, firewallRunner.FreshConnection()")
+	if guestRegistration < 0 || guestReadiness < 0 || guestRegistration > guestReadiness {
+		t.Fatal("managed gateway was not registered for cleanup before its temporary-root readiness probe")
+	}
+}
+
+func TestTemporaryRootIdentityIsInMemoryAndScoped(t *testing.T) {
+	privateKey, publicKey, err := newTemporaryRootIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(privateKey), "-----BEGIN OPENSSH PRIVATE KEY-----") {
+		t.Fatal("temporary identity is not an OpenSSH private key")
+	}
+	if !strings.HasSuffix(publicKey, " boetticher-apply") {
+		t.Fatalf("temporary identity is not explicitly scoped: %q", publicKey)
+	}
+	if err := proxmox.ValidatePublicKey(publicKey); err != nil {
+		t.Fatalf("temporary public identity is invalid: %v", err)
+	}
+	for index := range privateKey {
+		privateKey[index] = 0
 	}
 }
 

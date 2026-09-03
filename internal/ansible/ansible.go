@@ -292,10 +292,6 @@ func Variables(s model.Site) ([]byte, error) {
 	return variables(s, nil, "", nil)
 }
 
-func VariablesWithUpstream(s model.Site, upstream firewall.UpstreamObservation) ([]byte, error) {
-	return variables(s, &upstream, "", nil)
-}
-
 func VariablesWithOperatorKey(s model.Site, publicKey string) ([]byte, error) {
 	return variables(s, nil, publicKey, nil)
 }
@@ -429,22 +425,6 @@ func dynamicZoneNames(zones []dns.DynamicZone) []string {
 	return result
 }
 
-// Run executes ansible-playbook with model variables over stdin. This keeps
-// the invocation free of secret values and avoids a plaintext extra-vars
-// file. The playbook itself must obtain any future secret material through an
-// approved runtime mechanism.
-func Run(ctx context.Context, playbook, inventory string, variables []byte) error {
-	_, err := run(ctx, playbook, inventory, variables, "", PhaseFull)
-	return err
-}
-
-// RunWithMutation reports only whether the bounded Ansible recap contained a
-// non-zero changed count. It is intentionally not a per-resource audit log.
-func RunWithMutation(ctx context.Context, playbook, inventory string, variables []byte) (bool, error) {
-	result, err := run(ctx, playbook, inventory, variables, "", PhaseFull)
-	return result.Changed, err
-}
-
 // RunWithMutationPhase is RunWithMutation with an explicit deployment phase
 // exposed to the playbook. The phase is passed as extra-vars over stdin, not
 // as an argv value, so the command line remains free of configuration data.
@@ -461,24 +441,6 @@ func RunExternal(ctx context.Context, playbook, inventory string, variables []by
 		return RunResult{}, errors.New("external Ansible user must be one safe inventory identity")
 	}
 	return runWithSSHConfig(ctx, playbook, inventory, variables, "", PhaseFull, sshConfig, user)
-}
-
-// RunLimited executes the same generated playbook against one known inventory
-// identity. The limit is validated before it becomes an Ansible argument so a
-// readiness stage cannot turn into an arbitrary command or host selector.
-func RunLimited(ctx context.Context, playbook, inventory string, variables []byte, limit string) error {
-	_, err := RunLimitedWithMutation(ctx, playbook, inventory, variables, limit)
-	return err
-}
-
-// RunLimitedWithMutation is RunLimited with the same coarse changed signal as
-// RunWithMutation.
-func RunLimitedWithMutation(ctx context.Context, playbook, inventory string, variables []byte, limit string) (bool, error) {
-	if !safeInventoryIdentity(limit) {
-		return false, errors.New("Ansible limit must be one safe inventory identity")
-	}
-	result, err := run(ctx, playbook, inventory, variables, limit, PhaseFull)
-	return result.Changed, err
 }
 
 // RunLimitedWithMutationPhase is the phase-aware form used by tracked deploy

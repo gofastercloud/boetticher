@@ -96,8 +96,16 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(plan.Guests) != 3 {
+		t.Fatalf("default trial has %d guests, want firewall, DNS, and monitoring only", len(plan.Guests))
+	}
+	for _, guest := range plan.Guests {
+		if guest.Name == "lab-dns-02" || guest.Name == "lab-log-01" || guest.Name == "lab-portal-01" {
+			t.Fatalf("deleted/default-off guest remains in the default plan: %s", guest.Name)
+		}
+	}
 	if _, err := proxmox.ResolveQualifiedArtifacts(t.TempDir(), plan, true); err == nil {
-		t.Fatal("fresh trial unexpectedly accepted without builder qualification evidence")
+		t.Fatal("fresh trial unexpectedly accepted without appliance qualification evidence")
 	}
 
 	evidenceRoot := t.TempDir()
@@ -112,7 +120,7 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		evidence.ArtifactPath = artifactPath
-		for filename, content := range map[string]string{"package-manifest.txt": "package: trial\n", "sbom.json": "{}\n", "trivy.json": "{\"Results\":[]}\n", "builder-provenance.json": "{\"platform\":\"debian-13-amd64\",\"input_image\":\"debian-13-genericcloud-amd64-20260327-2429\",\"kernel\":\"6.1.0\",\"go\":\"go version go1.26.5 linux/amd64\",\"trivy\":\"Version: 0.69.3\",\"mmdebstrap\":\"mmdebstrap 1.5.0\",\"architecture\":\"amd64\",\"boetticher_version\":\"0.5.0\"}\n"} {
+		for filename, content := range map[string]string{"package-manifest.txt": "package: trial\n", "sbom.json": "{}\n", "trivy.json": "{\"Results\":[]}\n", "builder-provenance.json": "{\"platform\":\"debian-13-amd64\",\"input_image\":\"debian-13-genericcloud-amd64-20260327-2429\",\"kernel\":\"6.1.0\",\"go\":\"go version go1.26.5 linux/amd64\",\"trivy\":\"Version: 0.69.3\",\"mmdebstrap\":\"mmdebstrap 1.5.0\",\"architecture\":\"amd64\",\"boetticher_version\":\"0.5.1\"}\n"} {
 			if err := os.WriteFile(filepath.Join(filepath.Dir(artifactPath), filename), []byte(content), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -121,7 +129,7 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 		evidence.SBOMSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactPath), "sbom.json"), "SBOM")
 		evidence.TrivyReportSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactPath), "trivy.json"), "Trivy report")
 		evidence.BuilderProvenanceSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactPath), "builder-provenance.json"), "builder provenance")
-		evidence.Builder = artifacts.BuilderProvenance{Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429", Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3", MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.5.0"}
+		evidence.Builder = artifacts.BuilderProvenance{Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429", Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3", MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.5.1"}
 		evidence, err = artifacts.QualifyEvidence(evidence, artifacts.ScanSummary{Completed: true})
 		if err != nil {
 			t.Fatal(err)

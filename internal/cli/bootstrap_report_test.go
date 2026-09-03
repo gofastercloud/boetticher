@@ -14,18 +14,18 @@ import (
 func TestBootstrapReportRendersProgressAndSuccessfulSummary(t *testing.T) {
 	var output bytes.Buffer
 	report := newBootstrapReport(&output, 2)
-	report.start("validate", "Validate bootstrap request")
+	report.start("validate", "Validate enrollment request")
 	report.complete()
-	report.start("persist", "Persist bootstrap state")
+	report.start("persist", "Persist enrollment state")
 	report.complete()
 	report.finalize(nil)
 
 	text := output.String()
 	for _, want := range []string{
-		"[1/2] Validate bootstrap request",
-		"PASS Validate bootstrap request",
-		"PASS Persist bootstrap state",
-		"Bootstrap: PASS",
+		"[1/2] Validate enrollment request",
+		"PASS Validate enrollment request",
+		"PASS Persist enrollment state",
+		"Enrollment: PASS",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("bootstrap report omitted %q:\n%s", want, text)
@@ -37,7 +37,7 @@ func TestBootstrapReportRendersProgressAndSuccessfulSummary(t *testing.T) {
 func TestBootstrapReportRendersFailureNextAction(t *testing.T) {
 	var output bytes.Buffer
 	report := newBootstrapReport(&output, 2)
-	report.start("validate", "Validate bootstrap request")
+	report.start("validate", "Validate enrollment request")
 	report.complete()
 	report.start("trust", "Establish host trust and scoped access")
 	err := errors.New("HOLD: independent Age recovery copy is not secured")
@@ -45,10 +45,10 @@ func TestBootstrapReportRendersFailureNextAction(t *testing.T) {
 
 	text := output.String()
 	for _, want := range []string{
-		"PASS Validate bootstrap request",
+		"PASS Validate enrollment request",
 		"FAIL Establish host trust and scoped access",
 		"Reason: FAIL: independent Age recovery copy is not secured",
-		"Bootstrap: FAIL",
+		"Enrollment: FAIL",
 		"Next action: Secure and verify the independent Age recovery copy",
 	} {
 		if !strings.Contains(text, want) {
@@ -63,8 +63,8 @@ func TestBootstrapReportPersistsTimingWithoutFailureDetails(t *testing.T) {
 	report := newBootstrapReport(&output, 1)
 	report.setIdentity("0.4.1", "sha256:model")
 	report.setTimingPath(filepath.Join(t.TempDir(), "bootstrap", "timing.json"))
-	report.start("validate", "Validate bootstrap request")
-	report.recordTiming("builder_build_and_qualification", time.Now().Add(-25*time.Millisecond))
+	report.start("validate", "Validate enrollment request")
+	report.recordTiming("physical_network_discovery", time.Now().Add(-25*time.Millisecond))
 	report.complete()
 	report.finalize(nil)
 
@@ -89,10 +89,10 @@ func TestBootstrapReportPersistsTimingWithoutFailureDetails(t *testing.T) {
 	if err := json.Unmarshal(data, &document); err != nil {
 		t.Fatalf("decode bootstrap timing report: %v", err)
 	}
-	if document.Operation != "bootstrap" || document.PlatformVersion != "0.4.1" || document.ModelRevision != "sha256:model" || !document.Succeeded || document.DurationMS < 0 || len(document.Phases) != 1 || len(document.Suboperations) != 1 {
+	if document.Operation != "enroll" || document.PlatformVersion != "0.4.1" || document.ModelRevision != "sha256:model" || !document.Succeeded || document.DurationMS < 0 || len(document.Phases) != 1 || len(document.Suboperations) != 1 {
 		t.Fatalf("unexpected bootstrap timing report: %+v", document)
 	}
-	if document.Suboperations[0].Phase != "artifacts" || document.Suboperations[0].Kind != "artifact" || document.Suboperations[0].Target != "builder_build_and_qualification" || document.Suboperations[0].DurationMS < 0 {
+	if document.Suboperations[0].Phase != "artifacts" || document.Suboperations[0].Kind != "artifact" || document.Suboperations[0].Target != "physical_network_discovery" || document.Suboperations[0].DurationMS < 0 {
 		t.Fatalf("unexpected bootstrap suboperation timing: %+v", document.Suboperations[0])
 	}
 	if strings.Contains(string(data), "failure") {
@@ -108,13 +108,13 @@ func TestBootstrapTimingPersistenceFailureDoesNotFailBootstrap(t *testing.T) {
 		t.Fatal(err)
 	}
 	report.setTimingPath(filepath.Join(blocked, "bootstrap.json"))
-	report.start("persist", "Persist bootstrap state")
+	report.start("persist", "Persist enrollment state")
 	report.complete()
 	if err := report.finalize(nil); err != nil {
 		t.Fatalf("timing persistence failure changed bootstrap result: %v", err)
 	}
 	text := output.String()
-	if !strings.Contains(text, "Bootstrap: PASS") || !strings.Contains(text, "Timing report: unavailable") {
+	if !strings.Contains(text, "Enrollment: PASS") || !strings.Contains(text, "Timing report: unavailable") {
 		t.Fatalf("successful bootstrap did not remain PASS with unavailable timing report:\n%s", text)
 	}
 }

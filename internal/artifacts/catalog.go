@@ -314,22 +314,6 @@ func Lookup(module string) (Definition, bool) {
 	return Definition{}, false
 }
 
-// DefinitionForArtifact resolves the one build/scan mapping for a concrete
-// artifact identity. Consumers use this instead of maintaining a second
-// target table.
-func DefinitionForArtifact(name string) (Definition, bool) {
-	for _, definition := range Definitions() {
-		artifactName := definition.ArtifactName
-		if artifactName == "" {
-			artifactName = "boetticher-" + definition.Name
-		}
-		if artifactName == name {
-			return definition, true
-		}
-	}
-	return Definition{}, false
-}
-
 func ArtifactFor(module string) (model.Artifact, error) {
 	var definition Definition
 	var ok bool
@@ -543,9 +527,4 @@ func ContentSHA256ForFile(path string) (string, error) {
 		return "", err
 	}
 	return evidence.ContentSHA256, nil
-}
-
-func digest(value string) string {
-	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])
 }

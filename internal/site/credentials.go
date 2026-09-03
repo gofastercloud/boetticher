@@ -2,7 +2,6 @@ package site
 
 import (
 	"fmt"
-	"path/filepath"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 )
@@ -54,8 +53,4 @@ func validateProxmoxCredentials(values map[string]any) error {
 		}
 	}
 	return nil
-}
-
-func RuntimeCredentialPath(s model.Site, name string) string {
-	return filepath.Join(RuntimeDir(s), "credentials", name)
 }

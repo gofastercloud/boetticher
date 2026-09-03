@@ -447,50 +447,6 @@ func (c *Client) ConfigureAIOpsWebhook(ctx context.Context, targetURL, bearerSec
 	return nil
 }
 
-type TokenRecord struct {
-	ID     string   `json:"id"`
-	Name   string   `json:"name"`
-	Scopes []string `json:"scopes"`
-}
-
-// RevokeNamedReadToken removes every exact-name monitoring:read token. Exact
-// identity and scope checks prevent purge from deleting unrelated Pulse tokens.
-func (c *Client) RevokeNamedReadToken(ctx context.Context, name string) error {
-	if !c.admin || strings.TrimSpace(name) == "" {
-		return errors.New("Pulse token revocation requires the admin client and an exact name")
-	}
-	var raw json.RawMessage
-	if err := c.adminJSON(ctx, http.MethodGet, "/security/tokens", nil, &raw); err != nil {
-		return fmt.Errorf("list Pulse tokens: %w", err)
-	}
-	var records []TokenRecord
-	if err := json.Unmarshal(raw, &records); err != nil {
-		var envelope struct {
-			Tokens []TokenRecord `json:"tokens"`
-			Data   []TokenRecord `json:"data"`
-		}
-		if envelopeErr := json.Unmarshal(raw, &envelope); envelopeErr != nil {
-			return fmt.Errorf("decode Pulse token inventory: %w", err)
-		}
-		records = envelope.Tokens
-		if records == nil {
-			records = envelope.Data
-		}
-	}
-	for _, record := range records {
-		if record.Name != name {
-			continue
-		}
-		if record.ID == "" || len(record.Scopes) != 1 || record.Scopes[0] != readScope {
-			return fmt.Errorf("refuse to revoke ambiguous Pulse token named %q", name)
-		}
-		if err := c.adminJSON(ctx, http.MethodDelete, "/security/tokens/"+url.PathEscape(record.ID), nil, nil); err != nil {
-			return fmt.Errorf("revoke Pulse token %s: %w", record.ID, err)
-		}
-	}
-	return nil
-}
-
 // CreateAgentReportToken creates the least-privilege token used by tagged
 // Pulse host agents. It deliberately does not grant monitoring-read,
 // settings-write, agent-management, or command scopes.

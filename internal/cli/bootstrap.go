@@ -24,12 +24,11 @@ import (
 	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
 
-// runEnroll is the normal first-host enrollment entry point. The legacy
-// bootstrap implementation remains behind this narrow adapter while its
-// physical-network and scoped-credential flow is retired; it no longer builds
-// appliance images or creates a builder VM.
+// runEnroll is the normal first-host enrollment entry point. It establishes
+// durable host trust and scoped access; appliance deployment remains a
+// separate signed-bundle operation.
 func runEnroll(args []string, out io.Writer) error {
-	return runBootstrap(args, out)
+	return runEnrollOperation(args, out)
 }
 
 func runRecovery(args []string, out io.Writer) error {
@@ -38,20 +37,20 @@ func runRecovery(args []string, out io.Writer) error {
 	}
 	switch args[0] {
 	case "host":
-		return runBootstrap(args[1:], out)
+		return runEnrollOperation(args[1:], out)
 	case "storage":
 		return runStorage(args[1:], out)
 	default:
-		return fmt.Errorf("recovery target %q is not implemented in 0.5", args[0])
+		return fmt.Errorf("recovery target %q is not implemented in 0.5.1", args[0])
 	}
 }
 
-func runBootstrap(args []string, out io.Writer) (runErr error) {
+func runEnrollOperation(args []string, out io.Writer) (runErr error) {
 	progress := newBootstrapReport(out, bootstrapPhaseCount)
 	defer func() { runErr = progress.finalize(runErr) }()
 	totalStarted := time.Now()
-	defer func() { progress.emitTiming(out, "bootstrap_total", totalStarted) }()
-	fs := flag.NewFlagSet("bootstrap", flag.ContinueOnError)
+	defer func() { progress.emitTiming(out, "enroll_total", totalStarted) }()
+	fs := flag.NewFlagSet("enroll", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
 	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
@@ -72,7 +71,7 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	if *dryRun {
 		progress.total = 1
 	}
-	progress.start("validate", "Validate bootstrap request")
+	progress.start("validate", "Validate enrollment request")
 	if *knownHosts == "" {
 		*knownHosts = deploymentKnownHosts(*siteDir)
 	}
@@ -86,7 +85,7 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 		}
 		s.BootstrapAddress = net.ParseIP(*bootstrapAddress).To4().String()
 	}
-	progress.setTimingPath(filepath.Join(site.RuntimeDir(s), "bootstrap", progress.runID+".json"))
+	progress.setTimingPath(filepath.Join(site.RuntimeDir(s), "enroll", progress.runID+".json"))
 	plan, err := proxmox.PlanFromSite(s)
 	if err != nil {
 		return err
@@ -104,10 +103,10 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 			return fmt.Errorf("HOLD: Age identity is not usable for this site: %w", err)
 		}
 		if !*recoveryConfirmed {
-			return errors.New("destructive bootstrap requires --recovery-confirmed after an independent Age recovery copy is secured")
+			return errors.New("destructive enrollment requires --recovery-confirmed after an independent Age recovery copy is secured")
 		}
 		if s.StorageProfile == "dedicated-data-disk" && !*storageConfirmed {
-			return errors.New("dedicated-data-disk bootstrap requires --storage-confirmed after reviewing the configured stable device")
+			return errors.New("dedicated-data-disk enrollment requires --storage-confirmed after reviewing the configured stable device")
 		}
 	}
 	if *operatorKey == "" {
@@ -131,7 +130,7 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	}
 	if *dryRun {
 		progress.complete()
-		fmt.Fprintf(out, "Bootstrap plan: PASS model %s\n", plan.ModelRevision)
+		fmt.Fprintf(out, "Enrollment plan: PASS model %s\n", plan.ModelRevision)
 		fmt.Fprintf(out, "  Proxmox endpoint: %s\n  Gateway mode: %s\n  Gateway upstream MAC: %s\n  Gateway image: %s\n", s.BootstrapAddress, s.Gateway.Mode, s.Gateway.Upstream.MAC, model.QualifiedGatewayImage)
 		fmt.Fprintf(out, "  Storage: %s\n", s.StorageProfile)
 		fmt.Fprintln(out, "  Trust transition: initial administrator → temporary root deployment SSH → scoped API token → durable labadmin")
@@ -157,7 +156,7 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	progress.start("trust", "Establish host trust and scoped access")
 	hostKey, err := enrollBootstrapHostKey(*knownHosts, trustedKnownHosts)
 	if err != nil {
-		return fmt.Errorf("HOLD: bootstrap did not establish an operator-verified Proxmox host key: %w", err)
+		return fmt.Errorf("HOLD: enrollment did not establish an operator-verified Proxmox host key: %w", err)
 	}
 	runner = proxmox.SSHRunner{KnownHosts: trustedKnownHosts, StrictHostKey: "yes", HostKeyAlias: model.LogicalProxmoxIdentity, IdentityFile: operatorIdentityFile(s)}
 	credentialsPath := filepath.Join(*siteDir, site.ProxmoxSecretsPath)
@@ -275,7 +274,7 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	discovery = honorRequestedPhysicalMode(discovery, s.PhysicalNetwork.Mode, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
 	printPhysicalDiscovery(out, discovery)
 	if discovery.Mode == networkmodel.ModeSelectionNeeded {
-		return errors.New("multiple eligible trunk interfaces require --trunk-interface selection before bootstrap can mutate networking")
+		return errors.New("multiple eligible trunk interfaces require --trunk-interface selection before enrollment can mutate networking")
 	}
 	if s.Gateway.Mode == model.GatewayModeExternal && discovery.Trunk == nil {
 		return errors.New("external gateway mode requires a distinct physical vmbr1 trunk interface")
@@ -310,9 +309,9 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	var postInterfaces []proxmox.NetworkInterface
 	if err := client.NodeNetwork(ctx, apiNode, &postInterfaces); err != nil {
 		if trunkChanged {
-			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network mutation could not be re-read", err)
+			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: enrollment network mutation could not be re-read", err)
 		}
-		return fmt.Errorf("HOLD: bootstrap network state could not be re-read: %w", err)
+		return fmt.Errorf("HOLD: enrollment network state could not be re-read: %w", err)
 	}
 	configuredTrunk := ""
 	if discovery.Trunk != nil {
@@ -324,9 +323,9 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	}
 	if err != nil {
 		if trunkChanged {
-			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network mutation failed physical validation", err)
+			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: enrollment network mutation failed physical validation", err)
 		}
-		return fmt.Errorf("HOLD: bootstrap network state failed physical validation: %w", err)
+		return fmt.Errorf("HOLD: enrollment network state failed physical validation: %w", err)
 	}
 	s.PhysicalNetwork.Upstream = model.PhysicalNIC{Name: postDiscovery.Upstream.Name, PermanentMAC: postDiscovery.Upstream.PermanentMAC, PCIAddress: postDiscovery.Upstream.PCIAddress}
 	if postDiscovery.Trunk == nil {
@@ -338,15 +337,15 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	}
 	if _, err := proxmox.ValidatePhysicalBinding(s, postInterfaces); err != nil {
 		if trunkChanged {
-			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network binding validation failed", err)
+			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: enrollment network binding validation failed", err)
 		}
-		return fmt.Errorf("HOLD: bootstrap network binding validation failed: %w", err)
+		return fmt.Errorf("HOLD: enrollment network binding validation failed: %w", err)
 	}
 	if err := site.Save(*siteDir, s); err != nil {
 		if trunkChanged {
-			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network binding could not be persisted", err)
+			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: enrollment network binding could not be persisted", err)
 		}
-		return fmt.Errorf("HOLD: bootstrap network binding could not be persisted: %w", err)
+		return fmt.Errorf("HOLD: enrollment network binding could not be persisted: %w", err)
 	}
 	plan, err = proxmox.PlanFromSite(s)
 	if err != nil {
@@ -354,15 +353,15 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	}
 	plan.Node = apiNode
 	progress.complete()
-	progress.start("persist", "Persist bootstrap state")
+	progress.start("persist", "Persist enrollment state")
 	if err := writeBootstrapProjections(*siteDir, s); err != nil {
-		return fmt.Errorf("HOLD: bootstrap network binding was persisted but projections could not be regenerated: %w", err)
+		return fmt.Errorf("HOLD: enrollment network binding was persisted but projections could not be regenerated: %w", err)
 	}
 	if err := writePhysicalDiscovery(*siteDir, s, postDiscovery); err != nil {
-		return fmt.Errorf("HOLD: bootstrap network binding was persisted but physical evidence could not be written: %w", err)
+		return fmt.Errorf("HOLD: enrollment network binding was persisted but physical evidence could not be written: %w", err)
 	}
 	if err := site.Save(*siteDir, s); err != nil {
-		return fmt.Errorf("HOLD: bootstrap completed network mutation but physical binding could not be persisted: %w", err)
+		return fmt.Errorf("HOLD: enrollment completed network mutation but physical binding could not be persisted: %w", err)
 	}
 	plan, err = proxmox.PlanFromSite(s)
 	if err != nil {
@@ -386,14 +385,14 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 		return err
 	}
 	progress.complete()
-	fmt.Fprintf(out, "Proxmox bootstrap: PASS authenticated with scoped identity on %s\n", version)
+	fmt.Fprintf(out, "Proxmox enrollment: PASS authenticated with scoped identity on %s\n", version)
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		fmt.Fprintln(out, "Managed gateway VM: deferred to boetticher deploy")
 		fmt.Fprintf(out, "Managed gateway upstream MAC: %s (create the matching upstream DHCP reservation)\n", s.Gateway.Upstream.MAC)
 	} else {
 		fmt.Fprintln(out, "External gateway: PASS physical VLAN trunk recorded; appliance remains operator-managed")
 	}
-	fmt.Fprintln(out, "Initial root/bootstrap authentication: no longer required for routine boetticher access")
+	fmt.Fprintln(out, "Initial root enrollment authentication: no longer required for routine boetticher access")
 	return nil
 }
 

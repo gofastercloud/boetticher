@@ -54,20 +54,6 @@ var advancedCommandSpecs = []commandSpec{
 	{Usage: "boetticher config validate|show|schema [--site DIR]"},
 }
 
-// CommandUsages returns the focused set of executable command paths shown by
-// the experimental interactive command palette. They are real command
-// prefixes, not a wall of synopsis alternatives.
-func CommandUsages() []string {
-	return []string{
-		"boetticher plan",
-		"boetticher deploy",
-		"boetticher status",
-		"boetticher module list",
-		"boetticher module configure",
-		"boetticher network reservation list",
-	}
-}
-
 // helpSpecs is keyed by the command path before -h/--help. Keeping nested
 // paths explicit makes every help request useful without making command
 // dispatch depend on a second parser or on a recursive help hint.
