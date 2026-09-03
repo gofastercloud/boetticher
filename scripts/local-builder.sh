@@ -5,13 +5,15 @@ usage() {
   cat >&2 <<'USAGE'
 Usage:
   scripts/local-builder.sh init
-scripts/local-builder.sh build image-TARGET
-scripts/local-builder.sh build images [image-TARGET ...]
-scripts/local-builder.sh scan scan-TARGET
+  scripts/local-builder.sh init-storage
+  scripts/local-builder.sh build image-TARGET
+  scripts/local-builder.sh build images [image-TARGET ...]
+  scripts/local-builder.sh scan scan-TARGET
 
 On macOS, set BOETTICHER_LOCAL_BUILDER_SSH to the native amd64 Linux build
-host. On Linux, this script runs the native builder directly. The build host
-must provide the persistent cache and output mount.
+host. Set BOETTICHER_LOCAL_BUILDER_DEVICE and explicit confirmation before
+init-storage. On Linux, this script runs the native builder directly. The
+build host must provide the persistent cache and output mount.
 USAGE
 }
 
@@ -24,6 +26,9 @@ repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || fail 'run from inside 
 builder_ssh=${BOETTICHER_LOCAL_BUILDER_SSH:-}
 builder_identity=${BOETTICHER_LOCAL_BUILDER_IDENTITY:-}
 builder_known_hosts=${BOETTICHER_LOCAL_BUILDER_KNOWN_HOSTS:-}
+builder_device=${BOETTICHER_LOCAL_BUILDER_DEVICE:-}
+storage_confirmed=${BOETTICHER_LOCAL_BUILDER_STORAGE_CONFIRMED:-0}
+storage_reinitialize=${BOETTICHER_LOCAL_BUILDER_STORAGE_REINITIALIZE:-0}
 cache_root=${BOETTICHER_LOCAL_CACHE_ROOT:-/var/cache/boetticher}
 work_root=${BOETTICHER_LOCAL_IMAGE_WORK:-/var/tmp/boetticher-image-build}
 artifact_output=${BOETTICHER_LOCAL_ARTIFACT_OUTPUT:-generated/artifacts}
@@ -42,6 +47,15 @@ esac
 case "$builder_identity$builder_known_hosts" in
   *[![:alnum:]_./:-]*) fail 'native builder identity and known-hosts paths may contain only letters, digits, _, ., /, :, and -' ;;
 esac
+if [ -n "$builder_device" ]; then
+  case "$builder_device" in
+    /dev/disk/by-id/*) ;;
+    *) fail 'BOETTICHER_LOCAL_BUILDER_DEVICE must be one direct /dev/disk/by-id path' ;;
+  esac
+  case "$builder_device" in
+    *[![:alnum:]_./:+-]*) fail 'BOETTICHER_LOCAL_BUILDER_DEVICE contains unsupported characters' ;;
+  esac
+fi
 
 if [ "$#" -lt 1 ]; then
   usage
@@ -76,7 +90,7 @@ native_ssh() {
   fi
 }
 
-require_native_mount() {
+validate_native_connection() {
   [ -n "$builder_ssh" ] || fail 'BOETTICHER_LOCAL_BUILDER_SSH is required for the native Linux build host'
   if [ -n "$builder_identity" ] && [ ! -f "$builder_identity" ]; then
     fail 'BOETTICHER_LOCAL_BUILDER_IDENTITY does not name a regular file'
@@ -84,9 +98,39 @@ require_native_mount() {
   if [ -n "$builder_known_hosts" ] && [ ! -f "$builder_known_hosts" ]; then
     fail 'BOETTICHER_LOCAL_BUILDER_KNOWN_HOSTS does not name a regular file'
   fi
-  if ! native_ssh 'test -d /var/lib/boetticher/local-builder && mountpoint -q /var/lib/boetticher/local-builder && test -w /var/lib/boetticher/local-builder'; then
+}
+
+require_native_mount() {
+  validate_native_connection
+  mount_check='test -d /var/lib/boetticher/local-builder && mountpoint -q /var/lib/boetticher/local-builder && test -w /var/lib/boetticher/local-builder && test -f /var/lib/boetticher/local-builder/.boetticher-native-builder'
+  if [ -n "$builder_device" ]; then
+    mount_check="$mount_check && [ \"\$(readlink -f \"\$(findmnt -no SOURCE /var/lib/boetticher/local-builder)\")\" = \"\$(readlink -f '$builder_device')\" ]"
+  fi
+  if ! native_ssh "$mount_check"; then
     fail 'native build host must mount the dedicated build disk at /var/lib/boetticher/local-builder'
   fi
+}
+
+run_native_storage_init() {
+  [ -n "$builder_device" ] || fail 'BOETTICHER_LOCAL_BUILDER_DEVICE is required for native builder storage setup'
+  case "$storage_confirmed" in
+    1|yes|true) ;;
+    *) fail 'native builder storage setup is destructive; repeat with explicit confirmation' ;;
+  esac
+  case "$storage_reinitialize" in
+    0|no|false|1|yes|true) ;;
+    *) fail 'BOETTICHER_LOCAL_BUILDER_STORAGE_REINITIALIZE must be 0 or 1' ;;
+  esac
+  case "$(uname -s)" in
+    Darwin)
+      validate_native_connection
+      native_ssh "env BOETTICHER_LOCAL_BUILDER_DEVICE=$builder_device BOETTICHER_LOCAL_BUILDER_STORAGE_CONFIRMED=$storage_confirmed BOETTICHER_LOCAL_BUILDER_STORAGE_REINITIALIZE=$storage_reinitialize sh -s" < "$repo_root/scripts/local-builder-storage.sh"
+      ;;
+    Linux)
+      exec env BOETTICHER_LOCAL_BUILDER_DEVICE="$builder_device" BOETTICHER_LOCAL_BUILDER_STORAGE_CONFIRMED="$storage_confirmed" BOETTICHER_LOCAL_BUILDER_STORAGE_REINITIALIZE="$storage_reinitialize" "$repo_root/scripts/local-builder-storage.sh"
+      ;;
+    *) fail 'local builder supports macOS or Linux only' ;;
+  esac
 }
 
 validate_remote_target() {
@@ -165,6 +209,10 @@ case "$operation" in
         ;;
       *) fail 'local builder supports macOS or Linux only' ;;
     esac
+    ;;
+  init-storage)
+    [ "$#" -eq 0 ] || { usage; exit 2; }
+    run_native_storage_init
     ;;
   build|scan)
     [ "$#" -gt 0 ] || { usage; exit 2; }

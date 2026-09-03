@@ -30,6 +30,12 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	if !strings.Contains(buildText, "export GOTOOLCHAIN=local") {
 		t.Fatal("builder does not pin construction to its installed Debian Go toolchain")
 	}
+	nativeStorage := string(mustRead(t, filepath.Join(repoRoot, "scripts", "local-builder-storage.sh")))
+	for _, required := range []string{"BOETTICHER_LOCAL_BUILDER_DEVICE", "test -b", "lsblk -ndo TYPE", "refusing the Linux system disk", "wipefs -n", "mkfs.ext4 -F -L boetticher-builder", "/etc/fstab", "mountpoint -q", ".boetticher-native-builder"} {
+		if !strings.Contains(nativeStorage, required) {
+			t.Fatalf("native builder storage contract is missing %s", required)
+		}
+	}
 	if !strings.Contains(buildText, `if [ "$(id -u)" -ne 0 ]`) || !strings.Contains(buildText, "requires root in the supported Linux builder environment") {
 		t.Fatal("real appliance construction does not fail closed when mount/build privileges are unavailable")
 	}

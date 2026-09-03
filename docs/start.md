@@ -75,10 +75,19 @@ SSH route first; the remote path must be mounted at
 export BOETTICHER_LOCAL_BUILDER_SSH=root@BUILD_HOST
 export BOETTICHER_LOCAL_BUILDER_IDENTITY=/path/to/operator-key
 export BOETTICHER_LOCAL_BUILDER_KNOWN_HOSTS=/path/to/build-host-known_hosts
+export BOETTICHER_LOCAL_BUILDER_DEVICE=/dev/disk/by-id/BUILD_DISK
+export BOETTICHER_LOCAL_BUILDER_STORAGE_CONFIRMED=1
+make local-builder-storage-init
 make local-builder-init
 make local-image LOCAL_IMAGE_TARGET=image-firewall
 make local-images LOCAL_IMAGE_TARGETS="image-dns-blocky image-monitoring"
 ```
+
+`local-builder-storage-init` is the maintainer-only destructive setup for the
+exact build disk. It creates the fixed ext4 mount and does not touch the
+operator data disk; set `BOETTICHER_LOCAL_BUILDER_STORAGE_REINITIALIZE=1` only
+when deliberately replacing an old build-disk filesystem after reviewing the
+stable identity.
 
 The native host keeps its downloads, build root, cache, and generated
 maintainer artifacts on the dedicated build disk. These targets are useful for
