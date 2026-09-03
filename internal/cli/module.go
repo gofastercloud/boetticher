@@ -42,40 +42,6 @@ func runModuleWithInput(args []string, input io.Reader, out, errOut io.Writer) e
 	}
 }
 
-func runModulesWithInput(args []string, input io.Reader, out, errOut io.Writer) error {
-	if len(args) == 0 {
-		return errors.New("usage: boetticher modules list|MODULE show|plan|configure|enable|disable|status|secrets|purge")
-	}
-	if args[0] == "list" {
-		return runModuleList(args[1:], out)
-	}
-	if len(args) < 2 {
-		return errors.New("usage: boetticher modules MODULE show|plan|configure|enable|disable|status|secrets|purge")
-	}
-	name, command := args[0], args[1]
-	forward := append([]string{name}, args[2:]...)
-	switch command {
-	case "show":
-		return runModuleShow(forward, out)
-	case "plan":
-		return runModulePlan(forward, out)
-	case "configure":
-		return runModuleConfigure(forward, input, out, errOut)
-	case "enable":
-		return runModuleChangeWithInput(forward, input, out, errOut, true)
-	case "disable":
-		return runModuleChangeWithInput(forward, input, out, errOut, false)
-	case "status":
-		return runModuleStatusWithInput(forward, input, out, errOut)
-	case "secrets":
-		return runModuleSecretsForName(forward[1:], input, out, errOut, name)
-	case "purge":
-		return runModuleChange(append(forward, "--purge"), out, false)
-	default:
-		return fmt.Errorf("unknown module command %q", command)
-	}
-}
-
 func moduleSite(args []string, name string) (string, *flag.FlagSet, *bool, *bool, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -93,6 +59,13 @@ func runModuleList(args []string, out io.Writer) error {
 	siteDir, _, _, _, err := moduleSite(args, "module list")
 	if err != nil {
 		return err
+	}
+	return runModuleListRequest(siteDir, out)
+}
+
+func runModuleListRequest(siteDir string, out io.Writer) error {
+	if siteDir == "" {
+		siteDir = "."
 	}
 	s, err := site.Load(siteDir)
 	if err != nil {

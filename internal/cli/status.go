@@ -30,36 +30,62 @@ func runStatus(args []string, out io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	s, err := site.Load(*siteDir)
+	return runStatusRequest(statusRequest{
+		siteDir: *siteDir, sshPath: *sshPath, sshJourney: *sshJourney,
+		live: *live, verbose: *verbose || *details, json: *jsonOutput,
+	}, out)
+}
+
+type statusRequest struct {
+	siteDir    string
+	sshPath    string
+	sshJourney bool
+	live       bool
+	verbose    bool
+	json       bool
+}
+
+func runStatusRequest(request statusRequest, out io.Writer) error {
+	report, err := evaluateStatusRequest(request)
+	if report.StatusModelVersion != "" {
+		if request.json {
+			if err := writeCLIJSON(out, report); err != nil {
+				return err
+			}
+		} else {
+			printStatus(out, report, request.verbose)
+		}
+	}
+	return err
+}
+
+func evaluateStatusRequest(request statusRequest) (statusmodel.Report, error) {
+	siteDir, sshPath := request.siteDir, request.sshPath
+	if siteDir == "" {
+		siteDir = "."
+	}
+	if sshPath == "" {
+		sshPath = sshconfig.DefaultPath()
+	}
+	s, err := site.Load(siteDir)
 	if err != nil {
-		return fmt.Errorf("Problem: load site: %w", err)
+		return statusmodel.Report{}, fmt.Errorf("Problem: load site: %w", err)
 	}
 	revision, err := s.Revision()
 	if err != nil {
-		return fmt.Errorf("Problem: calculate model revision: %w", err)
+		return statusmodel.Report{}, fmt.Errorf("Problem: calculate model revision: %w", err)
 	}
 	results, observedAt, err := collectHealthResults(healthOptions{
-		siteDir:    *siteDir,
-		sshPath:    *sshPath,
-		sshJourney: *sshJourney,
-		live:       *live,
+		siteDir: siteDir, sshPath: sshPath, sshJourney: request.sshJourney, live: request.live,
 	}, s)
 	if err != nil {
-		return fmt.Errorf("collect health results: %w", err)
+		return statusmodel.Report{}, fmt.Errorf("collect health results: %w", err)
 	}
 	report := healthStatusReport(revision, observedAt, results)
-
-	if *jsonOutput {
-		if err := writeCLIJSON(out, report); err != nil {
-			return err
-		}
-	} else {
-		printStatus(out, report, *verbose || *details)
-	}
 	if report.OverallState == statusmodel.Failed || report.OverallState == statusmodel.ActionRequired || report.OverallState == statusmodel.Degraded {
-		return fmt.Errorf("status is %s; review the safe next action", report.OverallState)
+		return report, fmt.Errorf("status is %s; review the safe next action", report.OverallState)
 	}
-	return nil
+	return report, nil
 }
 
 func loadStatusReport(dir, revision string) statusmodel.Report {

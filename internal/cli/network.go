@@ -40,44 +40,17 @@ func runNetwork(args []string, out io.Writer) error {
 	if err := fs.Parse(rest); err != nil {
 		return err
 	}
+	if command == "status" {
+		return runNetworkTrunkStatusRequest(networkTrunkStatusRequest{
+			siteDir: *siteDir, ageIdentity: *ageIdentity, proxmoxCA: *proxmoxCA,
+			insecure: *insecure, live: *live,
+		}, out)
+	}
 	s, err := site.Load(*siteDir)
 	if err != nil {
 		return err
 	}
 	switch command {
-	case "status":
-		if s.PhysicalNetwork.Mode == model.ModeVirtualOnly {
-			fmt.Fprintln(out, "Physical trunk: virtual-only")
-		} else {
-			fmt.Fprintf(out, "Physical trunk: %s attached\n", s.PhysicalNetwork.Trunk.Name)
-		}
-		if !*live {
-			return nil
-		}
-		client, _, err := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
-		if err != nil {
-			return err
-		}
-		node, err := client.SingleNode(context.Background())
-		if err != nil {
-			return err
-		}
-		var interfaces []proxmox.NetworkInterface
-		if err := client.NodeNetwork(context.Background(), node, &interfaces); err != nil {
-			return err
-		}
-		discovery, err := proxmox.DiscoverPhysicalNetwork(context.Background(), client, node, s.BootstrapAddress, s.PhysicalNetwork.Trunk.Name)
-		if err != nil {
-			return err
-		}
-		printPhysicalDiscovery(out, discovery)
-		for _, iface := range interfaces {
-			if iface.Iface == "vmbr1" {
-				fmt.Fprintf(out, "vmbr1: PASS bridge ports=%s vlan-aware=%t\n", iface.BridgePorts, iface.BridgeVLANAware)
-				return nil
-			}
-		}
-		return errors.New("vmbr1 is absent on Proxmox")
 	case "attach", "detach":
 		if interfaceName == "" {
 			return fmt.Errorf("network trunk %s requires an interface name", command)
@@ -173,6 +146,61 @@ func runNetwork(args []string, out io.Writer) error {
 	default:
 		return fmt.Errorf("unknown trunk command %q", command)
 	}
+}
+
+type networkTrunkStatusRequest struct {
+	siteDir     string
+	ageIdentity string
+	proxmoxCA   string
+	insecure    bool
+	live        bool
+}
+
+func runNetworkTrunkStatusRequest(request networkTrunkStatusRequest, out io.Writer) error {
+	siteDir := request.siteDir
+	if siteDir == "" {
+		siteDir = "."
+	}
+	ageIdentity := request.ageIdentity
+	if ageIdentity == "" {
+		ageIdentity = model.DefaultAgeIdentity
+	}
+	s, err := site.Load(siteDir)
+	if err != nil {
+		return err
+	}
+	if s.PhysicalNetwork.Mode == model.ModeVirtualOnly {
+		fmt.Fprintln(out, "Physical trunk: virtual-only")
+	} else {
+		fmt.Fprintf(out, "Physical trunk: %s attached\n", s.PhysicalNetwork.Trunk.Name)
+	}
+	if !request.live {
+		return nil
+	}
+	client, _, err := loadProxmoxClient(siteDir, s, ageIdentity, request.proxmoxCA, request.insecure)
+	if err != nil {
+		return err
+	}
+	node, err := client.SingleNode(context.Background())
+	if err != nil {
+		return err
+	}
+	var interfaces []proxmox.NetworkInterface
+	if err := client.NodeNetwork(context.Background(), node, &interfaces); err != nil {
+		return err
+	}
+	discovery, err := proxmox.DiscoverPhysicalNetwork(context.Background(), client, node, s.BootstrapAddress, s.PhysicalNetwork.Trunk.Name)
+	if err != nil {
+		return err
+	}
+	printPhysicalDiscovery(out, discovery)
+	for _, iface := range interfaces {
+		if iface.Iface == "vmbr1" {
+			fmt.Fprintf(out, "vmbr1: PASS bridge ports=%s vlan-aware=%t\n", iface.BridgePorts, iface.BridgeVLANAware)
+			return nil
+		}
+	}
+	return errors.New("vmbr1 is absent on Proxmox")
 }
 
 func rollbackTrunkChange(ctx context.Context, client *proxmox.Client, node, interfaceName, bootstrapAddress, message string, cause error) error {

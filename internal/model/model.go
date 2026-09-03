@@ -898,7 +898,7 @@ func (s Site) validateUSBExports() error {
 
 func (s Site) Validate() error {
 	if s.APIVersion != APIVersion || s.SchemaVersion != SchemaVersion {
-		return fmt.Errorf("site schema %q/%d is not supported by boetticher v0.4; recreate the site with boetticher init", s.APIVersion, s.SchemaVersion)
+		return fmt.Errorf("site schema %q/%d is not supported by boetticher %s; recreate the site with boetticher init", s.APIVersion, s.SchemaVersion, ReleaseVersion)
 	}
 	if s.PlatformVersion == "" {
 		return errors.New("platform_version is required")
@@ -1008,13 +1008,13 @@ func (s Site) Validate() error {
 		seenVLANs[z.VLAN] = z.Name
 		expected, ok := expectedZones[z.Name]
 		if !ok {
-			return fmt.Errorf("zone %s does not match the fixed 0.4 network contract", z.Name)
+			return fmt.Errorf("zone %s does not match the fixed network contract", z.Name)
 		}
 		if !validZoneType(z.Type) {
 			return fmt.Errorf("zone %s has unknown semantic type %q", z.Name, z.Type)
 		}
 		if z.Type != expected.typ || z.VLAN != expected.vlan || z.Network != expected.network || z.Gateway != expected.gateway {
-			return fmt.Errorf("zone %s does not match the fixed 0.4 network contract", z.Name)
+			return fmt.Errorf("zone %s does not match the fixed network contract", z.Name)
 		}
 		if _, _, err := net.ParseCIDR(z.Network); err != nil {
 			return fmt.Errorf("zone %s has invalid network: %w", z.Name, err)
@@ -1110,7 +1110,7 @@ func (s Site) Validate() error {
 		}
 	}
 	if len(seenZones) != len(expectedZones) {
-		return fmt.Errorf("0.4 requires exactly TRANSIT, INFRA, SERVERS, TRUSTED, SANDBOX, and MGMT zones")
+		return fmt.Errorf("the fixed platform contract requires exactly TRANSIT, INFRA, SERVERS, TRUSTED, SANDBOX, and MGMT zones")
 	}
 	if err := validateDHCPReservations(s); err != nil {
 		return err

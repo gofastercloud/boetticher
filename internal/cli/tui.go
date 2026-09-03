@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -34,7 +33,7 @@ func runTUI(args []string, input io.Reader, out, errOut io.Writer) error {
 	return tui.Run(tui.Options{
 		SiteDir:  *siteDir,
 		Offline:  *offline,
-		Commands: applicationCommands(*siteDir),
+		Commands: applicationCommands(*siteDir, !*offline),
 		Executor: applicationExecutor{},
 	})
 }
@@ -45,12 +44,33 @@ func (applicationExecutor) Execute(ctx context.Context, request application.Requ
 	if err := ctx.Err(); err != nil {
 		return application.Result{Operation: request.Operation}, err
 	}
-	args := applicationArgs(request)
 	var output, errOutput bytes.Buffer
 	if emit == nil {
 		emit = func(application.Event) {}
 	}
-	err := run(args, os.Stdin, &output, &errOutput)
+	result := application.Result{Operation: request.Operation}
+	var err error
+	siteDir := request.SiteDir
+	if siteDir == "" {
+		siteDir = "."
+	}
+	switch request.Operation {
+	case application.OperationStatus:
+		result.Report, err = evaluateStatusRequest(statusRequest{siteDir: siteDir, live: request.Live})
+		if result.Report.StatusModelVersion != "" {
+			printStatus(&output, result.Report, false)
+		}
+	case application.OperationPlan:
+		err = runPlanRequest(planRequest{siteDir: siteDir, live: request.Live}, &output)
+	case application.OperationModuleList:
+		err = runModuleListRequest(siteDir, &output)
+	case application.OperationDiagnose:
+		err = runDoctorRequest(doctorRequest{siteDir: siteDir, live: request.Live}, &output)
+	case application.OperationNetworkStatus:
+		err = runNetworkTrunkStatusRequest(networkTrunkStatusRequest{siteDir: siteDir, live: request.Live}, &output)
+	default:
+		err = fmt.Errorf("TUI operation %q is not supported", request.Operation)
+	}
 	for _, line := range strings.Split(output.String(), "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" {
@@ -60,10 +80,7 @@ func (applicationExecutor) Execute(ctx context.Context, request application.Requ
 	if errOutput.Len() > 0 {
 		output.WriteString(errOutput.String())
 	}
-	result := application.Result{Operation: request.Operation, Output: output.String()}
-	if request.Operation == application.OperationStatus && output.Len() > 0 {
-		_ = json.Unmarshal(output.Bytes(), &result.Report)
-	}
+	result.Output = output.String()
 	if request.Operation == application.OperationStatus && request.Live && err == nil {
 		metrics, metricsErr := readTUIObservability(ctx, request.SiteDir)
 		if metricsErr != nil {
@@ -74,39 +91,13 @@ func (applicationExecutor) Execute(ctx context.Context, request application.Requ
 	return result, err
 }
 
-func applicationArgs(request application.Request) []string {
-	var args []string
-	switch request.Operation {
-	case application.OperationStatus:
-		args = []string{"status"}
-		if request.Live {
-			args = append(args, "--live")
-		}
-		args = append(args, "--json")
-	case application.OperationPlan:
-		args = []string{"deploy", "--dry-run"}
-	case application.OperationModuleList:
-		args = []string{"module", "list"}
-	case application.OperationDiagnose:
-		args = []string{"doctor"}
-	case application.OperationNetworkStatus:
-		args = []string{"network", "trunk", "status"}
-	default:
-		args = []string{"status"}
-	}
-	if request.SiteDir != "" {
-		args = append(args, "--site", request.SiteDir)
-	}
-	return args
-}
-
-func applicationCommands(siteDir string) []application.Command {
+func applicationCommands(siteDir string, live bool) []application.Command {
 	return []application.Command{
-		{Name: "status", Description: "Read platform status", Request: application.Request{Operation: application.OperationStatus, SiteDir: siteDir, Live: true}},
-		{Name: "plan", Description: "Validate the next deployment without changing the lab", Request: application.Request{Operation: application.OperationPlan, SiteDir: siteDir, DryRun: true}},
+		{Name: "status", Description: "Read platform status", Request: application.Request{Operation: application.OperationStatus, SiteDir: siteDir, Live: live}},
+		{Name: "plan", Description: "Validate the next deployment without changing the lab", Request: application.Request{Operation: application.OperationPlan, SiteDir: siteDir, Live: live, DryRun: true}},
 		{Name: "module list", Description: "Inspect enabled first-party modules", Request: application.Request{Operation: application.OperationModuleList, SiteDir: siteDir}},
-		{Name: "diagnose", Description: "Explain local and runtime failures", Request: application.Request{Operation: application.OperationDiagnose, SiteDir: siteDir}},
-		{Name: "network status", Description: "Inspect the physical trunk contract", Request: application.Request{Operation: application.OperationNetworkStatus, SiteDir: siteDir}},
+		{Name: "diagnose", Description: "Explain local and runtime failures", Request: application.Request{Operation: application.OperationDiagnose, SiteDir: siteDir, Live: live}},
+		{Name: "network status", Description: "Inspect the physical trunk contract", Request: application.Request{Operation: application.OperationNetworkStatus, SiteDir: siteDir, Live: live}},
 	}
 }
 

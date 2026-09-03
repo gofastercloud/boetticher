@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
@@ -136,7 +135,7 @@ func TestPublicHelpPathsDoNotFail(t *testing.T) {
 		{"init", "--help"}, {"preflight", "-h"}, {"bootstrap", "--help"}, {"deploy", "--help"}, {"status", "--help"}, {"update", "--help"},
 		{"verify", "--help"}, {"doctor", "--help"}, {"network", "--help"}, {"firewall", "--help"},
 		{"dhcp", "--help"}, {"dns", "--help"}, {"pki", "--help"}, {"access", "--help"}, {"portal", "--help"}, {"network", "test", "--help"},
-		{"module", "--help"}, {"module", "secrets", "--help"}, {"modules", "--help"}, {"config", "--help"}, {"logs", "--help"}, {"aiops", "--help"}, {"upgrade", "--help"},
+		{"module", "--help"}, {"module", "secrets", "--help"}, {"config", "--help"}, {"logs", "--help"}, {"aiops", "--help"}, {"upgrade", "--help"},
 	} {
 		var output bytes.Buffer
 		if err := Run(args, &output, &output); err != nil {
@@ -148,37 +147,10 @@ func TestPublicHelpPathsDoNotFail(t *testing.T) {
 	}
 }
 
-func TestPluralModuleNamespaceUsesGenericLifecycleAndRejectsUnknownCommands(t *testing.T) {
-	dir := t.TempDir()
-	config, err := model.RenderSiteConfig(model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "site.yml"), config, 0600); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"tailnet-router", "bifrost", "aiops"} {
-		var output bytes.Buffer
-		if err := Run([]string{"modules", name, "show", "--site", dir}, &output, &output); err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(output.String(), "Module "+name) || !strings.Contains(output.String(), "Policy       default-off") {
-			t.Fatalf("plural module show did not use the generic module lifecycle output for %s: %s", name, output.String())
-		}
-	}
-	var output bytes.Buffer
-	if err := Run([]string{"modules", "tailnet-router", "routes", "--site", dir}, &output, &output); err == nil || !strings.Contains(err.Error(), "unknown module command") {
-		t.Fatalf("unsupported module-specific command was accepted: %v", err)
-	}
-	if err := Run([]string{"modules", "not-real", "show", "--site", dir}, &output, &output); err == nil || !strings.Contains(err.Error(), "unknown first-party module") {
-		t.Fatalf("unknown module was accepted: %v", err)
-	}
-}
-
 func TestNestedHelpPathsArePathAwareAndSubstantive(t *testing.T) {
 	paths := []string{
 		"firewall diff", "dhcp leases", "network trunk status", "pki trust export",
-		"module disable", "module configure printer", "modules printer configure",
+		"module disable", "module configure printer",
 		"config schema", "portal build",
 	}
 	for _, path := range paths {

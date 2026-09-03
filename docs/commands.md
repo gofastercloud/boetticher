@@ -53,7 +53,6 @@ boetticher dns record add|list|remove [--site DIR] [--name NAME] [--type A|CNAME
 boetticher storage status|initialize|recover [--site DIR] [--live] [--storage-confirmed] [--reinitialize] [--reboot] [--allow-shared-usb-bridge-quirk] [--initial-user USER] [--known-hosts PATH]
 boetticher module list|show|plan|configure|enable|disable|status [NAME] [--site DIR] [--dry-run] [--json] [--confirm] [--purge] [--non-interactive] [--enabled BOOL] [--set KEY=VALUE] [--secret NAME] [--usb REQUIREMENT=PORT] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher module secrets MODULE list|set|remove|rotate [--site DIR] [--age-identity PATH] [--confirm]
-boetticher modules list|MODULE show|plan|configure|enable|disable|status|secrets|purge [--site DIR] [--dry-run] [--json] [--confirm] [--non-interactive] [--enabled BOOL] [--set KEY=VALUE] [--secret NAME] [--usb REQUIREMENT=PORT] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher config validate|show|schema [--site DIR]
 boetticher portal build [--site DIR] [--output DIR] [--docs DIR]
 ```

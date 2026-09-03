@@ -289,7 +289,34 @@ func runDoctor(args []string, out io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	s, err := site.Load(*siteDir)
+	return runDoctorRequest(doctorRequest{
+		siteDir: *siteDir, sshPath: *sshPath, live: *live,
+		ageIdentity: *ageIdentity, proxmoxCA: *proxmoxCA, insecure: *insecure,
+	}, out)
+}
+
+type doctorRequest struct {
+	siteDir     string
+	sshPath     string
+	live        bool
+	ageIdentity string
+	proxmoxCA   string
+	insecure    bool
+}
+
+func runDoctorRequest(request doctorRequest, out io.Writer) error {
+	siteDir, sshPath := request.siteDir, request.sshPath
+	if siteDir == "" {
+		siteDir = "."
+	}
+	if sshPath == "" {
+		sshPath = sshconfig.DefaultPath()
+	}
+	ageIdentity := request.ageIdentity
+	if ageIdentity == "" {
+		ageIdentity = model.DefaultAgeIdentity
+	}
+	s, err := site.Load(siteDir)
 	if err != nil {
 		return err
 	}
@@ -302,76 +329,76 @@ func runDoctor(args []string, out io.Writer) error {
 		path  string
 		check func() error
 	}{
-		{"model projection", filepath.Join(*siteDir, "generated", "model.json"), func() error { return checkRevisionFile(filepath.Join(*siteDir, "generated", "model.json"), revision) }},
-		{"status artifact", filepath.Join(*siteDir, "generated", "status.json"), func() error { return checkRevisionFile(filepath.Join(*siteDir, "generated", "status.json"), revision) }},
-		{"inventory projection", filepath.Join(*siteDir, "generated", "inventory.json"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "inventory.json"), revision)
+		{"model projection", filepath.Join(siteDir, "generated", "model.json"), func() error { return checkRevisionFile(filepath.Join(siteDir, "generated", "model.json"), revision) }},
+		{"status artifact", filepath.Join(siteDir, "generated", "status.json"), func() error { return checkRevisionFile(filepath.Join(siteDir, "generated", "status.json"), revision) }},
+		{"inventory projection", filepath.Join(siteDir, "generated", "inventory.json"), func() error {
+			return checkRevisionFile(filepath.Join(siteDir, "generated", "inventory.json"), revision)
 		}},
-		{"firewall policy", filepath.Join(*siteDir, "generated", "firewall", "desired-state.json"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "firewall", "desired-state.json"), revision)
+		{"firewall policy", filepath.Join(siteDir, "generated", "firewall", "desired-state.json"), func() error {
+			return checkRevisionFile(filepath.Join(siteDir, "generated", "firewall", "desired-state.json"), revision)
 		}},
-		{"DNS/DDNS policy", filepath.Join(*siteDir, "generated", "dns", "desired-state.json"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "dns", "desired-state.json"), revision)
+		{"DNS/DDNS policy", filepath.Join(siteDir, "generated", "dns", "desired-state.json"), func() error {
+			return checkRevisionFile(filepath.Join(siteDir, "generated", "dns", "desired-state.json"), revision)
 		}},
-		{"physical discovery", filepath.Join(*siteDir, "generated", "network", "physical.json"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "network", "physical.json"), revision)
+		{"physical discovery", filepath.Join(siteDir, "generated", "network", "physical.json"), func() error {
+			return checkRevisionFile(filepath.Join(siteDir, "generated", "network", "physical.json"), revision)
 		}},
-		{"backup policy", filepath.Join(*siteDir, "generated", "backup", "desired-policy.json"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "backup", "desired-policy.json"), revision)
+		{"backup policy", filepath.Join(siteDir, "generated", "backup", "desired-policy.json"), func() error {
+			return checkRevisionFile(filepath.Join(siteDir, "generated", "backup", "desired-policy.json"), revision)
 		}},
-		{"storage policy", filepath.Join(*siteDir, "generated", "storage", "desired-state.json"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "storage", "desired-state.json"), revision)
+		{"storage policy", filepath.Join(siteDir, "generated", "storage", "desired-state.json"), func() error {
+			return checkRevisionFile(filepath.Join(siteDir, "generated", "storage", "desired-state.json"), revision)
 		}},
-		{"Proxmox desired state", filepath.Join(*siteDir, "generated", "proxmox", "desired-state.json"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "proxmox", "desired-state.json"), revision)
+		{"Proxmox desired state", filepath.Join(siteDir, "generated", "proxmox", "desired-state.json"), func() error {
+			return checkRevisionFile(filepath.Join(siteDir, "generated", "proxmox", "desired-state.json"), revision)
 		}},
-		{"Monitoring policy", filepath.Join(*siteDir, "generated", "monitoring", "desired-state.json"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "monitoring", "desired-state.json"), revision)
+		{"Monitoring policy", filepath.Join(siteDir, "generated", "monitoring", "desired-state.json"), func() error {
+			return checkRevisionFile(filepath.Join(siteDir, "generated", "monitoring", "desired-state.json"), revision)
 		}},
-		{"Ansible inventory", filepath.Join(*siteDir, "generated", "ansible", "inventory.ini"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "ansible", "inventory.ini"), revision)
+		{"Ansible inventory", filepath.Join(siteDir, "generated", "ansible", "inventory.ini"), func() error {
+			return checkRevisionFile(filepath.Join(siteDir, "generated", "ansible", "inventory.ini"), revision)
 		}},
-		{"bastion policy", filepath.Join(*siteDir, "generated", "ssh", "lab-jump.conf"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "ssh", "lab-jump.conf"), revision)
+		{"bastion policy", filepath.Join(siteDir, "generated", "ssh", "lab-jump.conf"), func() error {
+			return checkRevisionFile(filepath.Join(siteDir, "generated", "ssh", "lab-jump.conf"), revision)
 		}},
-		{"SSH projection", filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "ssh", "boetticher.conf"), revision)
+		{"SSH projection", filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"), func() error {
+			return checkRevisionFile(filepath.Join(siteDir, "generated", "ssh", "boetticher.conf"), revision)
 		}},
-		{"verification evidence", filepath.Join(*siteDir, "generated", "verification.json"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "verification.json"), revision)
+		{"verification evidence", filepath.Join(siteDir, "generated", "verification.json"), func() error {
+			return checkRevisionFile(filepath.Join(siteDir, "generated", "verification.json"), revision)
 		}},
-		{"portal", filepath.Join(*siteDir, "generated", "portal", "index.html"), func() error {
-			return checkRevisionFile(filepath.Join(*siteDir, "generated", "portal", "index.html"), revision)
+		{"portal", filepath.Join(siteDir, "generated", "portal", "index.html"), func() error {
+			return checkRevisionFile(filepath.Join(siteDir, "generated", "portal", "index.html"), revision)
 		}},
-		{"SSH configuration", *sshPath, func() error { return sshconfig.Check(*sshPath, s) }},
+		{"SSH configuration", sshPath, func() error { return sshconfig.Check(sshPath, s) }},
 	}
 	checks = append(checks,
 		struct {
 			name  string
 			path  string
 			check func() error
-		}{"Age identity", model.ExpandUserPath(*ageIdentity), func() error { return checkAgeIdentity(*ageIdentity) }},
+		}{"Age identity", model.ExpandUserPath(ageIdentity), func() error { return checkAgeIdentity(ageIdentity) }},
 		struct {
 			name  string
 			path  string
 			check func() error
-		}{"SOPS boundary", filepath.Join(*siteDir, "secrets"), func() error { return checkSOPSBoundary(*siteDir, s) }},
+		}{"SOPS boundary", filepath.Join(siteDir, "secrets"), func() error { return checkSOPSBoundary(siteDir, s) }},
 		struct {
 			name  string
 			path  string
 			check func() error
-		}{"runtime boundary", site.RuntimeDir(s), func() error { return checkRuntimeBoundary(*siteDir, s) }},
+		}{"runtime boundary", site.RuntimeDir(s), func() error { return checkRuntimeBoundary(siteDir, s) }},
 		struct {
 			name  string
 			path  string
 			check func() error
-		}{"platform ownership plan", filepath.Join(*siteDir, "generated", "proxmox", "desired-state.json"), func() error { return checkPlatformOwnership(s) }},
+		}{"platform ownership plan", filepath.Join(siteDir, "generated", "proxmox", "desired-state.json"), func() error { return checkPlatformOwnership(s) }},
 		struct {
 			name  string
 			path  string
 			check func() error
-		}{"qualified appliance evidence", filepath.Join(*siteDir, "generated", "artifacts"), func() error {
-			_, err := qualifiedProxmoxPlan(*siteDir, s)
+		}{"qualified appliance evidence", filepath.Join(siteDir, "generated", "artifacts"), func() error {
+			_, err := qualifiedProxmoxPlan(siteDir, s)
 			return err
 		}},
 	)
@@ -404,17 +431,17 @@ func runDoctor(args []string, out io.Writer) error {
 		fmt.Fprintln(out)
 	}
 	if modules.IsEnabled(s, "aiops") {
-		if !*live {
+		if !request.live {
 			fmt.Fprintln(out, "AIOps                 NOT TESTED (use --live)")
 		} else {
 			var status bytes.Buffer
-			if err := runAIOps([]string{"status", "--site", *siteDir, "--live", "--json"}, &status); err != nil {
+			if err := runAIOps([]string{"status", "--site", siteDir, "--live", "--json"}, &status); err != nil {
 				failed = true
 				fmt.Fprintf(out, "AIOps                 FAIL %v\n", err)
 			} else {
 				fmt.Fprintln(out, "AIOps                 PASS bounded live status available")
 			}
-			readiness, readinessErr := readAIOpsReadiness(*siteDir, s)
+			readiness, readinessErr := readAIOpsReadiness(siteDir, s)
 			if readinessErr != nil {
 				failed = true
 				fmt.Fprintf(out, "AIOps readiness       FAIL %v\n", readinessErr)
@@ -431,12 +458,12 @@ func runDoctor(args []string, out io.Writer) error {
 		}
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		if !*live {
+		if !request.live {
 			fmt.Fprintln(out, "Managed gateway        NOT TESTED live Debian/nftables qualification requires deployment")
 		} else if plan, planErr := firewall.PlanFromSite(s); planErr != nil {
 			failed = true
 			fmt.Fprintf(out, "Managed gateway        FAIL %v\n", planErr)
-		} else if data, commandErr := gatewayCommand(*siteDir, s, "sudo", gatewayStatusScript, "status"); commandErr != nil {
+		} else if data, commandErr := gatewayCommand(siteDir, s, "sudo", gatewayStatusScript, "status"); commandErr != nil {
 			failed = true
 			fmt.Fprintf(out, "Managed gateway        FAIL %v\n", commandErr)
 		} else if liveStatus, parseErr := parseGatewayStatus(string(data)); parseErr != nil {
@@ -457,20 +484,20 @@ func runDoctor(args []string, out io.Writer) error {
 	}
 	if s.BootstrapAddress == "" {
 		fmt.Fprintln(out, "Bootstrap endpoint    ABSENT (record the HOME-side Proxmox address)")
-	} else if !*live {
+	} else if !request.live {
 		fmt.Fprintf(out, "Bootstrap endpoint    NOT TESTED %s (use --live)\n", s.BootstrapAddress)
-	} else if err := checkBootstrapEndpoint(*siteDir, s); err != nil {
+	} else if err := checkBootstrapEndpoint(siteDir, s); err != nil {
 		failed = true
 		fmt.Fprintf(out, "Bootstrap endpoint    FAIL %v\n", err)
 	} else {
 		fmt.Fprintf(out, "Bootstrap endpoint    PASS %s and SSH host key\n", s.BootstrapAddress)
 	}
-	if *live {
-		plan, planErr := qualifiedProxmoxPlan(*siteDir, s)
+	if request.live {
+		plan, planErr := qualifiedProxmoxPlan(siteDir, s)
 		if planErr != nil {
 			failed = true
 			fmt.Fprintf(out, "Platform guests       FAIL invalid platform plan: %v\n", planErr)
-		} else if client, _, clientErr := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure); clientErr != nil {
+		} else if client, _, clientErr := loadProxmoxClient(siteDir, s, ageIdentity, request.proxmoxCA, request.insecure); clientErr != nil {
 			fmt.Fprintf(out, "Platform guests       NOT TESTED (%v)\n", clientErr)
 		} else if plan, nodeErr := bindPlanToLiveNode(context.Background(), client, plan); nodeErr != nil {
 			failed = true
@@ -615,7 +642,7 @@ func offlineVerificationResults(siteDir string, s model.Site) []portal.CheckResu
 }
 
 func offlineVerificationResultsWithResolver(siteDir string, s model.Site, endpointLookup func(string) ([]net.IP, error)) []portal.CheckResult {
-	results := []portal.CheckResult{{Name: "canonical platform model validates", Status: "PASS", Detail: "fixed 0.4 topology and address contract validated locally"}}
+	results := []portal.CheckResult{{Name: "canonical platform model validates", Status: "PASS", Detail: "fixed 0.5 topology and address contract validated locally"}}
 	checks := []struct {
 		name  string
 		check func() error

@@ -16,7 +16,7 @@ func RenderExternalContract(s model.Site, plan Plan) (string, error) {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# boetticher external firewall contract\n\nModel revision: `%s`\n\n", plan.ModelRevision)
-	b.WriteString("This contract is generated from the boetticher v0.4 site model. It is desired network intent only: enforcement is NOT ACTIVE in boetticher external-gateway mode. The external gateway is operator-managed; boetticher does not configure, authenticate to, back up, or inspect its internal rule set.\n\n")
+	b.WriteString("This contract is generated from the boetticher 0.5 site model. It is desired network intent only: enforcement is NOT ACTIVE in boetticher external-gateway mode. The external gateway is operator-managed; boetticher does not configure, authenticate to, back up, or inspect its internal rule set.\n\n")
 	b.WriteString("## TRANSIT architecture\n\nTRANSIT is a fixed Core network primitive, not a module-owned network. The operator must provide the gateway interface and routing for the contract below.\n\n| Name | Semantic type | VLAN | CIDR | Gateway |\n| --- | --- | ---: | --- | --- |\n")
 	for _, zone := range s.Normalize().Network.Zones {
 		if zone.Type == model.ZoneTypeTransit {

@@ -74,15 +74,38 @@ func runPlan(args []string, out io.Writer) error {
 	if fs.NArg() != 0 {
 		return errors.New("usage: boetticher plan [--site DIR] [--live] [--json]")
 	}
+	return runPlanRequest(planRequest{
+		siteDir: *siteDir, ageIdentity: *ageIdentity, live: *live, json: *jsonOutput,
+		replaceFirewall: *replaceFirewall, recreateLegacy: *recreateLegacy,
+	}, out)
+}
 
-	s, err := site.Load(*siteDir)
+type planRequest struct {
+	siteDir         string
+	ageIdentity     string
+	live            bool
+	json            bool
+	replaceFirewall bool
+	recreateLegacy  bool
+}
+
+func runPlanRequest(request planRequest, out io.Writer) error {
+	siteDir, ageIdentity := request.siteDir, request.ageIdentity
+	if siteDir == "" {
+		siteDir = "."
+	}
+	if ageIdentity == "" {
+		ageIdentity = model.DefaultAgeIdentity
+	}
+
+	s, err := site.Load(siteDir)
 	if err != nil {
 		return err
 	}
 	if err := s.Validate(); err != nil {
 		return fmt.Errorf("validate desired state: %w", err)
 	}
-	manifest, releaseDigest, err := artifacts.ImportedReleaseManifest(*siteDir)
+	manifest, releaseDigest, err := artifacts.ImportedReleaseManifest(siteDir)
 	if err != nil {
 		return fmt.Errorf("authenticated release bundle is required: %w", err)
 	}
@@ -90,7 +113,7 @@ func runPlan(args []string, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("calculate model revision: %w", err)
 	}
-	airvpnProfile, err := prepareAirVPNProfile(context.Background(), *siteDir, s, *ageIdentity, true, false)
+	airvpnProfile, err := prepareAirVPNProfile(context.Background(), siteDir, s, ageIdentity, true, false)
 	if err != nil {
 		return err
 	}
@@ -107,7 +130,7 @@ func runPlan(args []string, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("plan Proxmox guests: %w", err)
 	}
-	proxmoxPlan, err = proxmox.ResolveQualifiedArtifacts(*siteDir, proxmoxPlan, true)
+	proxmoxPlan, err = proxmox.ResolveQualifiedArtifacts(siteDir, proxmoxPlan, true)
 	if err != nil {
 		return fmt.Errorf("resolve signed release artifacts: %w", err)
 	}
@@ -121,12 +144,12 @@ func runPlan(args []string, out io.Writer) error {
 	}
 	plan := deploymentPlan{
 		Version: deploymentPlanFormatVersion, ReleaseVersion: manifest.ReleaseVersion,
-		ReleaseDigest: releaseDigest, ModelRevision: modelRevision, Live: *live,
+		ReleaseDigest: releaseDigest, ModelRevision: modelRevision, Live: request.live,
 		Proxmox: proxmoxPlan, Firewall: firewallPlan, Storage: storagePlan,
-		Backup: backupPlan, ReplaceFirewall: *replaceFirewall, RecreateLegacy: *recreateLegacy,
+		Backup: backupPlan, ReplaceFirewall: request.replaceFirewall, RecreateLegacy: request.recreateLegacy,
 	}
-	if *live {
-		if err := addLivePlanObservations(context.Background(), *siteDir, s, *ageIdentity, &plan); err != nil {
+	if request.live {
+		if err := addLivePlanObservations(context.Background(), siteDir, s, ageIdentity, &plan); err != nil {
 			return err
 		}
 	}
@@ -136,7 +159,7 @@ func runPlan(args []string, out io.Writer) error {
 	}
 	plan.Digest = digest
 
-	if *jsonOutput {
+	if request.json {
 		data, err := json.MarshalIndent(plan, "", "  ")
 		if err != nil {
 			return err
@@ -144,8 +167,8 @@ func runPlan(args []string, out io.Writer) error {
 		_, err = fmt.Fprintln(out, string(data))
 		return err
 	}
-	fmt.Fprintf(out, "Deployment plan: PASS\n  Digest: %s\n  Release: %s (%s)\n  Model revision: %s\n  Mode: %s\n  Guests: %d\n  Firewall rules: %d\n  Artifacts: %d\n", plan.Digest, manifest.ReleaseVersion, releaseDigest, modelRevision, map[bool]string{true: "live read-only", false: "offline"}[*live], len(plan.Proxmox.Guests), len(plan.Firewall.Rules), len(plan.Proxmox.ArtifactFiles))
-	if *live {
+	fmt.Fprintf(out, "Deployment plan: PASS\n  Digest: %s\n  Release: %s (%s)\n  Model revision: %s\n  Mode: %s\n  Guests: %d\n  Firewall rules: %d\n  Artifacts: %d\n", plan.Digest, manifest.ReleaseVersion, releaseDigest, modelRevision, map[bool]string{true: "live read-only", false: "offline"}[request.live], len(plan.Proxmox.Guests), len(plan.Firewall.Rules), len(plan.Proxmox.ArtifactFiles))
+	if request.live {
 		fmt.Fprintln(out, "  Proxmox observations: PASS (read-only)")
 	}
 	fmt.Fprintln(out, "  Mutations: none (PLAN is read-only)")

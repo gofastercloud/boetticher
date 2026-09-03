@@ -6,7 +6,7 @@ import (
 	"net/url"
 )
 
-// SiteConfig is the small v0.4 site file you edit. Boetticher builds the
+// SiteConfig is the small 0.5 site file you edit. Boetticher builds the
 // expanded component list and module details from it, so site.yml stays tidy.
 type SiteConfig struct {
 	// APIVersion identifies the site-file format.

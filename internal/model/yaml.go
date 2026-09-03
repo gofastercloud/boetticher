@@ -12,7 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ParseSiteConfig is the strict v0.4 site.yml decoder. The version probe gives
+// ParseSiteConfig is the strict 0.5 site.yml decoder. The version probe gives
 // operators a concise recreate-site message before strict decoding reports
 // fields that are not part of the v3 configuration.
 func ParseSiteConfig(data []byte) (SiteConfig, error) {
@@ -27,7 +27,7 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 		return SiteConfig{}, fmt.Errorf("site.yml: api_version is required and must be boetticher/v3")
 	}
 	if probe.APIVersion != APIVersion {
-		return SiteConfig{}, fmt.Errorf("site schema %q is not supported by boetticher v0.4; recreate the site with boetticher init", probe.APIVersion)
+		return SiteConfig{}, fmt.Errorf("site schema %q is not supported by boetticher %s; recreate the site with boetticher init", probe.APIVersion, ReleaseVersion)
 	}
 	if err := validateModuleConfigShape(data); err != nil {
 		return SiteConfig{}, err

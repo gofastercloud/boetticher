@@ -71,8 +71,6 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runStorage(args[1:], out)
 	case "module":
 		return runModuleWithInput(args[1:], input, out, errOut)
-	case "modules":
-		return runModulesWithInput(args[1:], input, out, errOut)
 	case "config":
 		return runConfig(args[1:], out)
 	case "network":
@@ -153,10 +151,6 @@ func normalizedHelpPath(pathParts []string) string {
 	switch pathParts[0] {
 	case "module":
 		return strings.Join(pathParts[:2], " ")
-	case "modules":
-		if len(pathParts) >= 3 {
-			return strings.Join([]string{"modules", "MODULE", pathParts[2]}, " ")
-		}
 	}
 	return ""
 }

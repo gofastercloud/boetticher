@@ -37,7 +37,7 @@ func LocalStorageContent(profile string) ([]string, error) {
 	}
 }
 
-// Plan is the complete, fixed 0.4 storage contract. It describes only
+// Plan is the complete, fixed 0.5 storage contract. It describes only
 // boetticher-owned storage and deliberately has no knobs for arbitrary LVM
 // layouts or additional storage backends.
 type Plan struct {
@@ -160,7 +160,7 @@ func Initialize(ctx context.Context, runner InitializeRunner, address, user, dev
 	return nil
 }
 
-// InitializationCommand returns a reviewable shell command for the fixed 0.4
+// InitializationCommand returns a reviewable shell command for the fixed 0.5
 // layout. It contains no credentials and accepts only a stable by-id device.
 // An existing unmounted, non-LVM layout remains a refusal unless both the
 // ordinary destructive confirmation and explicit reinitialization flag are

@@ -101,10 +101,10 @@ func runPreflight(args []string, out io.Writer) error {
 		return err
 	}
 	if (runtime.GOOS != "darwin" && runtime.GOOS != "linux") || (runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64") {
-		return fmt.Errorf("unsupported controller platform %s/%s; Boetticher 0.4 supports macOS and Linux on amd64/arm64", runtime.GOOS, runtime.GOARCH)
+		return fmt.Errorf("unsupported controller platform %s/%s; Boetticher 0.5 supports macOS and Linux on amd64/arm64", runtime.GOOS, runtime.GOARCH)
 	}
 	if runtime.GOOS == "linux" && looksLikeProxmoxController("/") {
-		return errors.New("boetticher 0.4 must run from a separate controller; run it from macOS or Linux, not on the target Proxmox host")
+		return errors.New("boetticher 0.5 must run from a separate controller; run it from macOS or Linux, not on the target Proxmox host")
 	}
 	fmt.Fprintf(out, "Controller: PASS %s/%s\n", runtime.GOOS, runtime.GOARCH)
 	sopsVersion, ageVersion := site.BundledEncryptionVersions()
