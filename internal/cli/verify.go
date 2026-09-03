@@ -34,6 +34,7 @@ type healthOptions struct {
 // not belong in this normal health report.
 func collectHealthResults(options healthOptions, s model.Site) ([]statusmodel.CheckResult, string, error) {
 	results := offlineVerificationResultsWithResolver(options.siteDir, s, net.LookupIP)
+	results = append(results, deploymentOperationHealthResult(options.siteDir))
 
 	sshConfigReady := false
 	if err := sshconfig.Check(options.sshPath, s); err == nil {
@@ -68,6 +69,32 @@ func collectHealthResults(options healthOptions, s model.Site) ([]statusmodel.Ch
 		return nil, "", err
 	}
 	return annotated, observedAt, nil
+}
+
+func deploymentOperationHealthResult(siteDir string) statusmodel.CheckResult {
+	result := statusmodel.CheckResult{Name: "deployment operation state", Tier: statusmodel.TierLocal}
+	state, found, err := site.LoadOperationState(siteDir)
+	if err != nil {
+		result.Status = "FAIL"
+		result.Detail = fmt.Sprintf("cannot read the deployment operation journal: %v", err)
+		result.NextAction = "Repair or restore the private site journal before continuing."
+		return result
+	}
+	if !found {
+		result.Status = "PASS"
+		result.Detail = "no incomplete deployment operation is recorded"
+		return result
+	}
+	if state.TemporaryPublicKey != "" {
+		result.Status = "HOLD"
+		result.Detail = fmt.Sprintf("deployment journal is in %s and records temporary Apply cleanup", state.Phase)
+		result.NextAction = "Run deploy with the reviewed plan to replay cleanup; use independent operator/root recovery if cleanup fails."
+		return result
+	}
+	result.Status = "HOLD"
+	result.Detail = fmt.Sprintf("deployment journal is in %s and stopped before temporary Apply authority", state.Phase)
+	result.NextAction = "Review the failed deployment, then run deploy with a newly reviewed live plan."
+	return result
 }
 
 func liveGatewayHealthResults(siteDir string, s model.Site) []statusmodel.CheckResult {
@@ -172,6 +199,7 @@ func annotateVerificationEvidence(results []statusmodel.CheckResult, observedAt 
 		"platform backup projection":                    statusmodel.TierLocal,
 		"storage projection":                            statusmodel.TierLocal,
 		"qualified appliance evidence":                  statusmodel.TierLocal,
+		"deployment operation state":                    statusmodel.TierLocal,
 		"SSH bastion allow-list":                        statusmodel.TierLocal,
 		"generated SSH configuration":                   statusmodel.TierLocal,
 		"authenticated SSH journey via Proxmox bastion": statusmodel.TierJourney,

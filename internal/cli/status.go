@@ -108,6 +108,7 @@ var healthCheckNames = map[string]struct{}{
 	"platform backup projection":                    {},
 	"storage projection":                            {},
 	"qualified appliance evidence":                  {},
+	"deployment operation state":                    {},
 	"SSH bastion allow-list":                        {},
 	"generated SSH configuration":                   {},
 	"authenticated SSH journey via Proxmox bastion": {},

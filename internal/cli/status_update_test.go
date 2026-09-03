@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/site"
 	statusmodel "github.com/gofastercloud/boetticher/internal/status"
 )
 
@@ -44,6 +45,44 @@ func TestStatusJSONUsesSemanticModelAndDeterministicExit(t *testing.T) {
 		if check.Evidence == statusmodel.NOTTESTED || check.State == statusmodel.ActionRequired {
 			t.Fatalf("status reported unknowable evidence: %#v", check)
 		}
+	}
+}
+
+func TestStatusReportsInterruptedDeploymentJournalReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	writeTestSiteConfig(t, dir, model.ConfigFromSite(model.NewSite("status-operation", "age1statusoperation", model.GatewayModeManaged)))
+	state := site.OperationState{
+		ID: "run-1", Kind: "deploy", Phase: site.PhaseVerify, ModelRevision: "model-1", PlanDigest: strings.Repeat("a", 64),
+		TemporaryPublicKey:   "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA boetticher-apply",
+		TemporaryHostAddress: "192.0.2.10",
+	}
+	if err := site.SaveOperationState(dir, state); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := runStatus([]string{"--site", dir, "--json"}, &output); err == nil {
+		t.Fatal("status unexpectedly reported a healthy platform with an incomplete deployment journal")
+	}
+	var report statusmodel.Report
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatalf("status JSON is invalid: %v\n%s", err, output.String())
+	}
+	found := false
+	for _, check := range report.Checks {
+		if check.Component != "deployment operation state" {
+			continue
+		}
+		found = true
+		if check.State != statusmodel.ActionRequired || check.Evidence != statusmodel.HOLD || !strings.Contains(check.Reason, "temporary Apply cleanup") {
+			t.Fatalf("unexpected interrupted operation check: %#v", check)
+		}
+	}
+	if !found {
+		t.Fatal("status omitted the deployment operation journal check")
+	}
+	loaded, found, err := site.LoadOperationState(dir)
+	if err != nil || !found || loaded.ID != state.ID || loaded.Phase != state.Phase {
+		t.Fatalf("status mutated operation journal: %#v found=%t err=%v", loaded, found, err)
 	}
 }
 
