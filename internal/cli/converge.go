@@ -2343,9 +2343,9 @@ func runTrackedAnsiblePhase(ctx context.Context, playbook, inventory string, var
 		err    error
 	)
 	if limit == "" {
-		result, err = ansible.RunWithMutationPhaseAndIdentity(ctx, playbook, inventory, variables, phase, identityData)
+		result, err = ansible.RunWithMutationPhase(ctx, playbook, inventory, variables, phase, identityData)
 	} else {
-		result, err = ansible.RunLimitedWithMutationPhaseAndIdentity(ctx, playbook, inventory, variables, limit, phase, identityData)
+		result, err = ansible.RunLimitedWithMutationPhase(ctx, playbook, inventory, variables, limit, phase, identityData)
 	}
 	if result.Changed {
 		target := limit

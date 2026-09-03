@@ -425,18 +425,11 @@ func dynamicZoneNames(zones []dns.DynamicZone) []string {
 	return result
 }
 
-// RunWithMutationPhase is RunWithMutation with an explicit deployment phase
-// exposed to the playbook. The phase is passed as extra-vars over stdin, not
-// as an argv value, so the command line remains free of configuration data.
-func RunWithMutationPhase(ctx context.Context, playbook, inventory string, variables []byte, phase string) (RunResult, error) {
-	return run(ctx, playbook, inventory, variables, "", phase, nil)
-}
-
-// RunWithMutationPhaseAndIdentity runs one bounded root convergence phase with
+// RunWithMutationPhase runs one bounded root convergence phase with
 // an operation-scoped private key held only by a short-lived local agent. The
 // key is never written to a file or placed in argv; the agent is destroyed
 // before the phase returns.
-func RunWithMutationPhaseAndIdentity(ctx context.Context, playbook, inventory string, variables []byte, phase string, identityData []byte) (RunResult, error) {
+func RunWithMutationPhase(ctx context.Context, playbook, inventory string, variables []byte, phase string, identityData []byte) (RunResult, error) {
 	return run(ctx, playbook, inventory, variables, "", phase, identityData)
 }
 
@@ -453,14 +446,7 @@ func RunExternal(ctx context.Context, playbook, inventory string, variables []by
 
 // RunLimitedWithMutationPhase is the phase-aware form used by tracked deploy
 // stages that also need to converge a single known inventory identity.
-func RunLimitedWithMutationPhase(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string) (RunResult, error) {
-	if !safeInventoryIdentity(limit) {
-		return RunResult{}, errors.New("Ansible limit must be one safe inventory identity")
-	}
-	return run(ctx, playbook, inventory, variables, limit, phase, nil)
-}
-
-func RunLimitedWithMutationPhaseAndIdentity(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string, identityData []byte) (RunResult, error) {
+func RunLimitedWithMutationPhase(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string, identityData []byte) (RunResult, error) {
 	if !safeInventoryIdentity(limit) {
 		return RunResult{}, errors.New("Ansible limit must be one safe inventory identity")
 	}
