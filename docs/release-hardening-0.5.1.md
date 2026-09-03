@@ -92,11 +92,11 @@ repeated after clean-install deployment using the same exclusions.
 
 | Measure | 0.5.0 baseline | 0.5.1 source checkpoint |
 | --- | ---: | ---: |
-| Controller source LOC | 45,629 | 42,366 |
-| Controller test LOC | 23,065 | 21,416 |
+| Controller source LOC | 45,629 | 42,534 |
+| Controller test LOC | 23,065 | 21,561 |
 | Compiled repository packages | 49 | 48 |
 | Controller dependency closure | 1,140 | 1,139 |
-| Release controller size, local trust-data build | 53,899,362 bytes | 53,649,570 bytes |
+| Release controller size, local trust-data build | 53,899,362 bytes | 53,666,290 bytes |
 | Default Proxmox guests | 6 | 3 |
 | Public command menu entries | 9 | 9 |
 | Advanced command entries | 33 | 21 |
@@ -112,9 +112,9 @@ repeated after clean-install deployment using the same exclusions.
 | AWS SDK v2 modules | 19 | 19 |
 | Azure SDK modules | 6 | 6 |
 | KMS-named modules | 2 | 2 |
-| Lines added in `origin/0.5.0...HEAD` | — | 1,520 |
-| Lines deleted in `origin/0.5.0...HEAD` | — | 6,479 |
-| Net repository change | — | -4,959 |
+| Lines added in `origin/0.5.0...HEAD` | — | 2,203 |
+| Lines deleted in `origin/0.5.0...HEAD` | — | 6,609 |
+| Net repository change | — | -4,406 |
 
 The direct-requirement increase is the explicit declaration of the already
 transitive `golang.org/x/crypto` dependency used for the in-memory Apply
