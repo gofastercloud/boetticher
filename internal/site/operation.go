@@ -120,11 +120,18 @@ func LoadLastAppliedState(dir string) (LastAppliedState, bool, error) {
 }
 
 func validateOperationState(state OperationState) error {
-	if state.Version != OperationStateVersion || state.ID == "" || state.Kind != "deploy" || state.ModelRevision == "" || state.PlanDigest == "" || state.StartedAt == "" || state.UpdatedAt == "" {
+	if state.Version != OperationStateVersion || state.ID == "" || state.Kind != "deploy" || state.ModelRevision == "" || state.StartedAt == "" || state.UpdatedAt == "" {
 		return errors.New("operation state is incomplete")
 	}
 	switch state.Phase {
-	case PhasePlan, PhaseApply, PhaseVerify, PhaseCleanup, PhaseCommit, PhaseFailed:
+	case PhasePlan:
+		// PLAN is written before live reads and therefore may not have a
+		// digest yet. APPLY and later phases must bind to one.
+	case PhaseApply, PhaseVerify, PhaseCleanup, PhaseCommit:
+		if strings.TrimSpace(state.PlanDigest) == "" {
+			return errors.New("operation state has no plan digest after PLAN")
+		}
+	case PhaseFailed:
 	default:
 		return fmt.Errorf("unsupported operation phase %q", state.Phase)
 	}

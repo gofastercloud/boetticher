@@ -121,6 +121,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if *rotateAirVPN {
+		return errors.New("AirVPN profile rotation is a separate desired-state operation; run boetticher module secrets airvpn rotate --confirm")
+	}
 	if !*dryRun && *planDigestFlag == "" {
 		return errors.New("deploy requires --plan DIGEST; run boetticher plan --live first")
 	}
@@ -155,10 +158,58 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	report.setIdentity(model.PlatformVersion, modelRevision)
 	report.setTimingPath(filepath.Join(site.RuntimeDir(s), "deploy", report.runID+".json"))
+	if !*dryRun {
+		operationState = site.OperationState{
+			ID:            report.runID,
+			Kind:          "deploy",
+			Phase:         site.PhasePlan,
+			ModelRevision: modelRevision,
+			BundleDigest:  releaseDigest,
+		}
+		if err := site.SaveOperationState(*siteDir, operationState); err != nil {
+			return fmt.Errorf("record deployment PLAN phase: %w", err)
+		}
+		operationStarted = true
+		if registerOperationFailure != nil {
+			registerOperationFailure(func(cause error) {
+				if !operationStarted {
+					return
+				}
+				if journalErr := saveDeployOperationPhase(*siteDir, &operationState, site.PhaseFailed, cause); journalErr != nil {
+					fmt.Fprintf(out, "      FAIL: could not persist deployment failure journal: %s\n", compactError(journalErr))
+				}
+			})
+		}
+		if registerCommit != nil {
+			registerCommit(func() error {
+				if !operationStarted {
+					return nil
+				}
+				if err := saveDeployOperationPhase(*siteDir, &operationState, site.PhaseCommit, nil); err != nil {
+					return fmt.Errorf("record deployment commit phase: %w", err)
+				}
+				if err := site.SaveLastAppliedState(*siteDir, site.LastAppliedState{
+					ModelRevision: modelRevision,
+					PlanDigest:    operationState.PlanDigest,
+					BundleDigest:  releaseDigest,
+				}); err != nil {
+					return fmt.Errorf("record last-applied deployment state: %w", err)
+				}
+				if err := site.ClearOperationState(*siteDir); err != nil {
+					return fmt.Errorf("clear committed deployment operation: %w", err)
+				}
+				operationStarted = false
+				return nil
+			})
+		}
+	}
 	var airvpnProfile *preparedAirVPNProfile
 	if err := report.timed("validate", "provider", "airvpn-profile", func() error {
 		var profileErr error
-		airvpnProfile, profileErr = prepareAirVPNProfile(ctx, *siteDir, s, *ageIdentity, *dryRun, *rotateAirVPN)
+		// Deployment only consumes the retained encrypted profile. Provider
+		// generation is an explicit operator operation, so PLAN never creates
+		// credentials or depends on WAN access.
+		airvpnProfile, profileErr = prepareAirVPNProfile(ctx, *siteDir, s, *ageIdentity, true, false)
 		return profileErr
 	}); err != nil {
 		return err
@@ -526,50 +577,14 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err != nil {
 		return fmt.Errorf("digest immutable deployment plan: %w", err)
 	}
-	operationState = site.OperationState{
-		ID:            report.runID,
-		Kind:          "deploy",
-		Phase:         site.PhaseApply,
-		ModelRevision: modelRevision,
-		PlanDigest:    planDigest,
-	}
+	operationState.PlanDigest = planDigest
+	operationState.BundleDigest = releaseDigest
+	operationState.Phase = site.PhaseApply
 	if *planDigestFlag != "" && *planDigestFlag != planDigest {
 		return fmt.Errorf("stale deployment plan: supplied %s, current live plan is %s", *planDigestFlag, planDigest)
 	}
 	if err := site.SaveOperationState(*siteDir, operationState); err != nil {
-		return fmt.Errorf("record deployment operation before apply: %w", err)
-	}
-	operationStarted = true
-	if registerOperationFailure != nil {
-		registerOperationFailure(func(cause error) {
-			if !operationStarted {
-				return
-			}
-			if journalErr := saveDeployOperationPhase(*siteDir, &operationState, site.PhaseFailed, cause); journalErr != nil {
-				fmt.Fprintf(out, "      FAIL: could not persist deployment failure journal: %s\n", compactError(journalErr))
-			}
-		})
-	}
-	if registerCommit != nil {
-		registerCommit(func() error {
-			if !operationStarted {
-				return nil
-			}
-			if err := saveDeployOperationPhase(*siteDir, &operationState, site.PhaseCommit, nil); err != nil {
-				return fmt.Errorf("record deployment commit phase: %w", err)
-			}
-			if err := site.SaveLastAppliedState(*siteDir, site.LastAppliedState{
-				ModelRevision: modelRevision,
-				PlanDigest:    planDigest,
-			}); err != nil {
-				return fmt.Errorf("record last-applied deployment state: %w", err)
-			}
-			if err := site.ClearOperationState(*siteDir); err != nil {
-				return fmt.Errorf("clear committed deployment operation: %w", err)
-			}
-			operationStarted = false
-			return nil
-		})
+		return fmt.Errorf("record deployment APPLY phase before mutation: %w", err)
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		// Host identity reconciliation is an apply action. Keep it behind the

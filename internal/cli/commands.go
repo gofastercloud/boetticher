@@ -39,7 +39,7 @@ var advancedCommandSpecs = []commandSpec{
 	{Usage: "boetticher tui [--site DIR] [--offline]"},
 	{Usage: "boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--record] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]"},
 	{Usage: "boetticher bootstrap [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--replace-scoped-credentials] [--operator-key PATH] [--initial-user USER] [--known-hosts PATH] [--proxmox-ca PATH] [--insecure] [--trunk-interface IFACE] [--dry-run] [--cleanup]"},
-	{Usage: "boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--rotate-airvpn-profile] [--replace-firewall] [--recreate-legacy-lxcs] [--confirm]"},
+	{Usage: "boetticher deploy [--site DIR] [--age-identity PATH] [--dry-run] [--replace-firewall] [--recreate-legacy-lxcs] [--confirm]"},
 	{Usage: "boetticher status [--site DIR] [--ssh-config PATH] [--ssh-journey] [--live] [--verbose] [--json]"},
 	{Usage: "boetticher update [--site DIR] [--dry-run] [--confirm]"},
 	{Usage: "boetticher logs [HOST] [--site DIR] [--unit UNIT] [--since DURATION] [--priority LEVEL] [--limit N]"},
