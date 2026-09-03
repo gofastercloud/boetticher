@@ -12,6 +12,7 @@ esac
 native_root=${BOETTICHER_NATIVE_ROOT:-/var/lib/boetticher/local-builder/root}
 native_source=${BOETTICHER_NATIVE_SOURCE:-/var/lib/boetticher/local-builder/source}
 native_output=${BOETTICHER_NATIVE_OUTPUT:-/var/lib/boetticher/local-builder/output}
+native_run_id=${BOETTICHER_NATIVE_RUN_ID:-$$}
 for path in "$native_root" "$native_source" "$native_output"; do
   case "$path" in
     /var/lib/boetticher/local-builder/*) ;;
@@ -26,6 +27,23 @@ install -d -m 0755 "$native_guest_source"
 tar -C "$native_source" -cf - . | tar -C "$native_guest_source" -xf -
 install -d -m 0755 "$native_root/var/lib/boetticher/local-builder/output"
 install -d -m 0700 "$native_root/tmp/boetticher-runtime"
+run_pid_file="$native_output/.native-builder-run.pid"
+if [ -e "$run_pid_file" ]; then
+  IFS=' ' read -r existing_run_id existing_pid < "$run_pid_file" || true
+  : "$existing_run_id"
+  case "$existing_pid" in
+    ''|*[!0-9]*) ;;
+    *)
+      if kill -0 "$existing_pid" 2>/dev/null; then
+        printf '%s\n' 'HOLD: another native builder run is active' >&2
+        exit 2
+      fi
+      rm -f -- "$run_pid_file"
+      ;;
+  esac
+fi
+printf '%s %s\n' "$native_run_id" "$$" > "$run_pid_file"
+chmod 0600 "$run_pid_file"
 
 mounted_dev=0
 mounted_kvm=0
@@ -47,6 +65,12 @@ cleanup() {
   fi
   if [ "$mounted_dev" -eq 1 ]; then
     umount "$native_root/dev" 2>/dev/null || true
+  fi
+  if [ -f "$run_pid_file" ]; then
+    IFS=' ' read -r recorded_run_id recorded_pid < "$run_pid_file" || true
+    if [ "$recorded_pid" = "$$" ] && { [ -z "$native_run_id" ] || [ "$recorded_run_id" = "$native_run_id" ]; }; then
+      rm -f -- "$run_pid_file"
+    fi
   fi
 }
 trap cleanup EXIT HUP INT TERM

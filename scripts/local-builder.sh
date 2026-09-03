@@ -189,11 +189,19 @@ run_native_builder() {
   for target in "$@"; do
     remote_args="$remote_args $target"
   done
+  native_run_id=$$
+  abort_native_builder() {
+    native_ssh "if [ -f $remote_native_output/.native-builder-run.pid ]; then IFS=' ' read -r recorded_run_id recorded_pid < $remote_native_output/.native-builder-run.pid || true; if [ \"\$recorded_run_id\" = \"$native_run_id\" ]; then case \"\$recorded_pid\" in ''|*[!0-9]*) ;; *) kill -TERM -- -\"\$recorded_pid\" 2>/dev/null || kill -TERM \"\$recorded_pid\" 2>/dev/null || true ;; esac; fi; fi" >/dev/null 2>&1 || true
+  }
+  trap abort_native_builder INT TERM HUP
   if native_ssh \
-    "env BOETTICHER_NATIVE_SOURCE=$remote_source BOETTICHER_NATIVE_ROOT=$remote_native_root BOETTICHER_NATIVE_OUTPUT=$remote_native_output sh $remote_source/scripts/native-builder-run.sh $runner$remote_args"; then
+    "env BOETTICHER_NATIVE_RUN_ID=$native_run_id BOETTICHER_NATIVE_SOURCE=$remote_source BOETTICHER_NATIVE_ROOT=$remote_native_root BOETTICHER_NATIVE_OUTPUT=$remote_native_output sh $remote_source/scripts/native-builder-run.sh $runner$remote_args"; then
+    trap - INT TERM HUP
     pull_native_output
   else
     status=$?
+    abort_native_builder
+    trap - INT TERM HUP
     return "$status"
   fi
 }

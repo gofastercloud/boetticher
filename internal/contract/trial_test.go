@@ -40,6 +40,11 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	if !strings.Contains(nativeRun, "GOROOT=/opt/boetticher/go/current") {
 		t.Fatal("native builder does not provide GOROOT for the trimmed Go toolchain")
 	}
+	for _, required := range []string{".native-builder-run.pid", "BOETTICHER_NATIVE_RUN_ID", "another native builder run is active", "kill -0"} {
+		if !strings.Contains(nativeRun+string(mustRead(t, filepath.Join(repoRoot, "scripts", "local-builder.sh"))), required) {
+			t.Fatalf("native builder interruption contract is missing %s", required)
+		}
+	}
 	if !strings.Contains(buildText, `if [ "$(id -u)" -ne 0 ]`) || !strings.Contains(buildText, "requires root in the supported Linux builder environment") {
 		t.Fatal("real appliance construction does not fail closed when mount/build privileges are unavailable")
 	}
