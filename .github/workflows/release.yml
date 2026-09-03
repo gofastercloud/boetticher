@@ -8,7 +8,7 @@ on:
       release_version:
         description: Release version to build
         required: true
-        default: 0.5.0
+        default: 0.5.1
 
 permissions:
   contents: write
@@ -65,6 +65,12 @@ jobs:
             0.5.*) ;;
             *) echo "unsupported release version: $release_version" >&2; exit 1 ;;
           esac
+          source_revision="$(git rev-parse HEAD)"
+          [ "$source_revision" = "$GITHUB_SHA" ] || { echo "checkout is not the exact workflow revision" >&2; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tag_revision="$(git rev-list -n 1 "$GITHUB_REF_NAME")"
+            [ "$tag_revision" = "$GITHUB_SHA" ] || { echo "release tag does not identify the workflow revision" >&2; exit 1; }
+          fi
           [ -n "${RELEASE_KEY_ID:-}" ] || { echo "release signing key id is not configured" >&2; exit 1; }
           [ -n "${RELEASE_TRUSTED_KEY_DATA:-}" ] || { echo "release trusted public key data is not configured" >&2; exit 1; }
           [ -n "${RELEASE_SIGNING_PRIVATE_KEY:-}" ] || { echo "release signing key is not configured" >&2; exit 1; }
@@ -138,6 +144,18 @@ jobs:
             PRIVATE_KEY="$signing_key"
           cp "$RUNNER_TEMP/boetticher-${RELEASE_VERSION}.tar.gz" "dist/boetticher-${RELEASE_VERSION}.tar.gz"
 
+      - name: Verify final manifest identity and artifact binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/boetticher-${RELEASE_VERSION}.tar.gz"
+          manifest="$RUNNER_TEMP/boetticher-${RELEASE_VERSION}-manifest.json"
+          tar -xOzf "$bundle" manifest.json > "$manifest"
+          jq -e --arg release "$RELEASE_VERSION" --arg source "$GITHUB_SHA" \
+            '(.release_version == $release) and (.source_commit == $source) and (.artifacts | length > 0) and (.files | length > 0)' \
+            "$manifest" >/dev/null
+          sha256sum "$bundle" "$manifest"
+
       - name: Build the controller with the release trust root
         shell: bash
         run: |
@@ -145,6 +163,19 @@ jobs:
           mkdir -p dist
           go build -trimpath -ldflags "-s -w -X github.com/gofastercloud/boetticher/internal/artifacts.EmbeddedTrustedReleaseKeyData=${RELEASE_TRUSTED_KEY_DATA}" \
             -o "dist/boetticher-${RELEASE_VERSION}" ./cmd/boetticher
+
+      - name: Prove the release controller imports the exact bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          check_site="$RUNNER_TEMP/boetticher-controller-bundle-check"
+          mkdir -p "$check_site"
+          "dist/boetticher-${RELEASE_VERSION}" bundle import \
+            "$RUNNER_TEMP/boetticher-${RELEASE_VERSION}.tar.gz" \
+            --site "$check_site" --json > "$RUNNER_TEMP/controller-import.json"
+          jq -e --arg release "$RELEASE_VERSION" --arg source "$GITHUB_SHA" \
+            '(.release_version == $release) and (.source_commit == $source)' \
+            "$RUNNER_TEMP/controller-import.json" >/dev/null
 
       - name: Publish the release only for a validated tag
         if: github.ref_type == 'tag'

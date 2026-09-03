@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -29,14 +28,12 @@ type healthOptions struct {
 	live       bool
 }
 
-// collectHealthResults is the single result path shared by status and verify.
+// collectHealthResults is the single result path shared by all status views.
 // It only emits checks the command can perform now. Qualification gates that
 // require an operator, an independent copy, or a separate network journey do
 // not belong in this normal health report.
 func collectHealthResults(options healthOptions, s model.Site) ([]statusmodel.CheckResult, string, error) {
-	endpointLookup, cancelEndpointLookup := verificationEndpointLookup(options.siteDir, s, options.live)
-	defer cancelEndpointLookup()
-	results := offlineVerificationResultsWithResolver(options.siteDir, s, endpointLookup)
+	results := offlineVerificationResultsWithResolver(options.siteDir, s, net.LookupIP)
 
 	sshConfigReady := false
 	if err := sshconfig.Check(options.sshPath, s); err == nil {
@@ -220,15 +217,6 @@ func expectedStorageStatus(statuses []proxmox.StorageStatus, plan storage.Plan) 
 		return status, nil
 	}
 	return found[plan.GuestStorage], nil
-}
-
-func verificationEndpointLookup(siteDir string, s model.Site, live bool) (func(string) ([]net.IP, error), context.CancelFunc) {
-	if !live || s.Gateway.Mode != model.GatewayModeManaged || strings.TrimSpace(s.BootstrapAddress) == "" {
-		return net.LookupIP, func() {}
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	rootRunner := proxmoxRootSSHRunner(s, siteDir)
-	return endpointLookupWithFallback(net.LookupIP, remoteEndpointResolver(ctx, rootRunner, s.BootstrapAddress, "root")), cancel
 }
 
 func offlineVerificationResults(siteDir string, s model.Site) []statusmodel.CheckResult {

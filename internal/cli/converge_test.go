@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -25,53 +24,10 @@ type dnsReadinessRunner struct {
 	commands []string
 }
 
-type endpointArgsRunner struct {
-	output []byte
-	err    error
-	args   [][]string
-}
-
 type convergeRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f convergeRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return f(request)
-}
-
-func (r *endpointArgsRunner) RunArgs(_ context.Context, _ string, _ string, args []string) ([]byte, error) {
-	r.args = append(r.args, args)
-	return r.output, r.err
-}
-
-func TestRemoteEndpointResolverParsesOnlyUniqueIPv4Addresses(t *testing.T) {
-	runner := &endpointArgsRunner{output: []byte("192.0.2.20 STREAM example\n192.0.2.20 DGRAM example\n2001:db8::20 STREAM example\n")}
-	addresses, err := remoteEndpointResolver(context.Background(), runner, "192.0.2.10", "root")("example.test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(addresses) != 1 || addresses[0].String() != "192.0.2.20" {
-		t.Fatalf("remote endpoint addresses = %v, want one unique IPv4 address", addresses)
-	}
-	if len(runner.args) != 1 || strings.Join(runner.args[0], " ") != "getent ahostsv4 example.test" {
-		t.Fatalf("remote resolver args = %v", runner.args)
-	}
-}
-
-func TestEndpointLookupWithFallbackUsesProxmoxOnlyAfterControllerFailure(t *testing.T) {
-	primaryCalls, fallbackCalls := 0, 0
-	lookup := endpointLookupWithFallback(func(string) ([]net.IP, error) {
-		primaryCalls++
-		return nil, errors.New("controller DNS unavailable")
-	}, func(string) ([]net.IP, error) {
-		fallbackCalls++
-		return []net.IP{net.ParseIP("192.0.2.20")}, nil
-	})
-	addresses, err := lookup("example.test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(addresses) != 1 || addresses[0].String() != "192.0.2.20" || primaryCalls != 1 || fallbackCalls != 1 {
-		t.Fatalf("fallback lookup = %v, primary calls=%d, fallback calls=%d", addresses, primaryCalls, fallbackCalls)
-	}
 }
 
 func (r *dnsReadinessRunner) Run(_ context.Context, _ string, _ string, command string) ([]byte, error) {
@@ -224,27 +180,6 @@ func TestProjectionCleanupRejectsSymlinkedGeneratedRoot(t *testing.T) {
 	}
 }
 
-func TestWriteStorageProjectionDoesNotRequireAirVPNProfile(t *testing.T) {
-	config := model.ConfigFromSite(model.NewDefaultSite("installation", "age1example"))
-	config.StorageProfile = "dedicated-data-disk"
-	config.StorageDevice = "/dev/disk/by-id/ata-example-data"
-	enabled := true
-	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "australia"}
-	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
-	s, _, err := modules.Compose(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	dir := t.TempDir()
-	if err := writeStorageProjection(dir, s); err != nil {
-		t.Fatalf("write storage projection before AirVPN profile exists: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "generated", "storage", "desired-state.json")); err != nil {
-		t.Fatalf("storage projection was not written: %v", err)
-	}
-}
-
 func TestWriteBootstrapProjectionsDefersAirVPNRuntimeProjections(t *testing.T) {
 	config := model.ConfigFromSite(model.NewDefaultSite("installation", "age1example"))
 	config.StorageProfile = "dedicated-data-disk"
@@ -263,7 +198,6 @@ func TestWriteBootstrapProjectionsDefersAirVPNRuntimeProjections(t *testing.T) {
 	}
 	for _, path := range []string{
 		filepath.Join(dir, "generated", "model.json"),
-		filepath.Join(dir, "generated", "storage", "desired-state.json"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("safe bootstrap projection %s was not written: %v", path, err)

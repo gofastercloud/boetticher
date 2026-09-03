@@ -1,4 +1,4 @@
-.PHONY: ci test build release-bundle companion-binary companion-check vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-aiops image-gatus image-network-probe images local-builder-init local-image local-images local-image-scan scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-tailnet-router scan-airvpn scan-bifrost scan-printer scan-arr scan-aiops scan-gatus scan-network-probe command-docs command-docs-check race streamdeck-check
+.PHONY: ci test build release-bundle companion-binary companion-check vet fmt fmt-check ansible-check security-check actionlint vuln-check naming-check diff-check schema schema-check image-check image-base image-dns-blocky image-logging image-monitoring image-firewall image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-aiops image-gatus image-network-probe images local-builder-init local-image local-images local-image-scan scan-images scan-base scan-dns-blocky scan-logging scan-monitoring scan-firewall scan-tailnet-router scan-airvpn scan-bifrost scan-printer scan-arr scan-aiops scan-gatus scan-network-probe command-docs command-docs-check deadcode race streamdeck-check
 
 GOCACHE ?= /tmp/boetticher-gocache
 GOMODCACHE ?= /tmp/boetticher-gomodcache
@@ -69,6 +69,9 @@ command-docs-check:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run ./cmd/command-docs > /tmp/boetticher-commands.md
 	cmp -s /tmp/boetticher-commands.md docs/commands.md
 
+deadcode:
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run golang.org/x/tools/cmd/deadcode@v0.47.0 -test ./...
+
 local-builder-init:
 	./scripts/local-builder.sh init
 
@@ -103,4 +106,4 @@ vuln-check:
 
 security-check: naming-check actionlint vuln-check
 
-ci: fmt-check image-check schema-check command-docs-check test usb-export-test race streamdeck-check companion-check vet build ansible-check security-check diff-check
+ci: fmt-check image-check schema-check command-docs-check deadcode test usb-export-test race streamdeck-check companion-check vet build ansible-check security-check diff-check

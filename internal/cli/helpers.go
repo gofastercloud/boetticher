@@ -19,8 +19,6 @@ import (
 	"github.com/gofastercloud/boetticher/internal/modules"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 	"github.com/gofastercloud/boetticher/internal/pathguard"
-	"github.com/gofastercloud/boetticher/internal/proxmox"
-	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
 	"github.com/gofastercloud/boetticher/internal/storage"
 )
@@ -43,28 +41,12 @@ func writeModelProjection(dir string, s model.Site) error {
 	return writePublic(filepath.Join(dir, "generated", "model.json"), append(data, '\n'))
 }
 
-// writeStorageProjection refreshes the storage contract without requiring
-// runtime metadata owned by another deployment phase. In particular, a
-// selected-source AirVPN policy cannot be rendered until deploy has generated
-// and qualified its provider profile, but dedicated storage initialization
-// must remain safe to run before that happens.
-func writeStorageProjection(dir string, s model.Site) error {
-	if err := pathguard.ValidateNoSymlinkComponents(filepath.Join(dir, "generated")); err != nil {
-		return fmt.Errorf("refuse generated projection path: %w", err)
-	}
-	storagePlan, err := storage.PlanFromSite(s)
-	if err != nil {
-		return err
-	}
-	return writeProjection(filepath.Join(dir, "generated", "storage", "desired-state.json"), storagePlan)
-}
-
 // writeBootstrapProjections preserves the complete projection gate for normal
 // sites. An AirVPN selected-source policy is different: its firewall and
 // Ansible projections cannot exist until deploy has generated and qualified a
 // provider profile. Bootstrap only needs the canonical model and storage
 // contract, and must not turn that later deploy-time dependency into an
-// expensive post-artifact bootstrap failure.
+// expensive post-artifact enrollment failure.
 func writeBootstrapProjections(dir string, s model.Site) error {
 	firewallPlan, err := firewall.PlanFromSite(s)
 	if err != nil {
@@ -73,10 +55,16 @@ func writeBootstrapProjections(dir string, s model.Site) error {
 	if len(firewallPlan.PolicyRoutes) == 0 {
 		return writeModelProjections(dir, s)
 	}
+	if err := clearObsoleteGeneratedProjections(dir); err != nil {
+		return err
+	}
 	if err := writeModelProjection(dir, s); err != nil {
 		return err
 	}
-	return writeStorageProjection(dir, s)
+	if _, err := storage.PlanFromSite(s); err != nil {
+		return err
+	}
+	return nil
 }
 
 func writeModelProjections(dir string, s model.Site) error {
@@ -98,11 +86,6 @@ func writeModelProjectionsWithResolverAndAirVPN(dir string, s model.Site, endpoi
 	if err != nil {
 		return err
 	}
-	normalized := s.Normalize()
-	proxmoxPlan, err := proxmox.PlanFromSite(s)
-	if err != nil {
-		return err
-	}
 	var firewallPlan firewall.Plan
 	if airvpnProfile == nil {
 		firewallPlan, err = firewall.PlanFromSite(s)
@@ -119,29 +102,7 @@ func writeModelProjectionsWithResolverAndAirVPN(dir string, s model.Site, endpoi
 		}
 		*airvpnProfile = *firewallPlan.AirVPN
 	}
-	if err := writeProjection(filepath.Join(dir, "generated", "inventory.json"), struct {
-		ModelRevision string            `json:"model_revision"`
-		Components    []model.Component `json:"components"`
-	}{revision, normalized.Components}); err != nil {
-		return err
-	}
-	moduleRoot := filepath.Join(dir, "generated", "modules")
-	if err := pathguard.ValidateNoSymlinkComponents(moduleRoot); err != nil {
-		return fmt.Errorf("refuse generated module projection path: %w", err)
-	}
-	if err := pathguard.RemoveAll(moduleRoot); err != nil {
-		return fmt.Errorf("clear generated module projections: %w", err)
-	}
-	for _, declaration := range normalized.Declarations {
-		moduleDir := filepath.Join(moduleRoot, declaration.Module)
-		if err := writeProjection(filepath.Join(moduleDir, "declaration.json"), struct {
-			ModelRevision string                  `json:"model_revision"`
-			Declaration   model.ModuleDeclaration `json:"declaration"`
-		}{revision, declaration}); err != nil {
-			return err
-		}
-	}
-	if err := writeProjection(filepath.Join(dir, "generated", "firewall", "desired-state.json"), firewallPlan); err != nil {
+	if err := clearObsoleteGeneratedProjections(dir); err != nil {
 		return err
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
@@ -165,25 +126,12 @@ func writeModelProjectionsWithResolverAndAirVPN(dir string, s model.Site, endpoi
 	if err != nil {
 		return err
 	}
-	if err := writeProjection(filepath.Join(dir, "generated", "dns", "desired-state.json"), dnsPlan); err != nil {
-		return err
-	}
-	backupPlan, err := backup.PlanFromSite(s)
-	if err != nil {
-		return err
-	}
-	if err := writeProjection(filepath.Join(dir, "generated", "backup", "desired-policy.json"), backupPlan); err != nil {
-		return err
-	}
-	if err := writeStorageProjection(dir, s); err != nil {
+	if _, err := backup.PlanFromSite(s); err != nil {
 		return err
 	}
 	if modules.IsEnabled(s, "logging") {
 		loggingPlan, err := logging.PlanFromSite(s)
 		if err != nil {
-			return err
-		}
-		if err := writeProjection(filepath.Join(dir, "generated", "logging", "desired-state.json"), loggingPlan); err != nil {
 			return err
 		}
 		if err := writePublic(filepath.Join(dir, "generated", "logging", "journal-remote.conf"), []byte(logging.CollectorConfiguration(loggingPlan))); err != nil {
@@ -201,16 +149,6 @@ func writeModelProjectionsWithResolverAndAirVPN(dir string, s model.Site, endpoi
 		return renderErr
 	}
 	if err := writePublic(filepath.Join(dir, "generated", "dns", "blocky.yml"), blockyConfig); err != nil {
-		return err
-	}
-	if err := writeProjection(filepath.Join(dir, "generated", "proxmox", "desired-state.json"), proxmoxPlan); err != nil {
-		return err
-	}
-	monitoringPlan, err := pulse.PlanFromSite(s)
-	if err != nil {
-		return err
-	}
-	if err := writeProjection(filepath.Join(dir, "generated", "monitoring", "desired-state.json"), monitoringPlan); err != nil {
 		return err
 	}
 	if err := writeCurrentStatus(dir, s); err != nil {
@@ -235,7 +173,7 @@ func writeModelProjectionsWithResolverAndAirVPN(dir string, s model.Site, endpoi
 	if err := writePublic(filepath.Join(dir, "generated", "ansible", "variables.json"), variables); err != nil {
 		return err
 	}
-	sshContent := "# Managed by boetticher. Do not edit.\n# boetticher-model-revision: " + revision + "\n# Bootstrap endpoint is not configured; pass --bootstrap-address to boetticher enroll.\n"
+	sshContent := "# Managed by boetticher. Do not edit.\n# boetticher-model-revision: " + revision + "\n# Enrollment endpoint is not configured; pass --bootstrap-address to boetticher enroll.\n"
 	if s.BootstrapAddress != "" {
 		sshContent, err = sshconfig.RenderWithKnownHosts(s, time.Now().UTC(), filepath.Join(dir, "generated", "ssh", "known_hosts"))
 		if err != nil {
@@ -249,6 +187,29 @@ func writeModelProjectionsWithResolverAndAirVPN(dir string, s model.Site, endpoi
 		return err
 	}
 	return writePhysicalDiscovery(dir, s, loadPhysicalDiscovery(dir, s))
+}
+
+func clearObsoleteGeneratedProjections(dir string) error {
+	for _, obsolete := range []string{
+		"generated/inventory.json",
+		"generated/modules",
+		"generated/firewall/desired-state.json",
+		"generated/firewall/boetticher.nft",
+		"generated/dns/desired-state.json",
+		"generated/backup/desired-policy.json",
+		"generated/storage",
+		"generated/proxmox/desired-state.json",
+		"generated/monitoring/desired-state.json",
+		"generated/logging",
+		"generated/network/external-firewall-contract.md",
+		"generated/portal",
+		"generated/verification.json",
+	} {
+		if err := pathguard.RemoveAll(filepath.Join(dir, obsolete)); err != nil {
+			return fmt.Errorf("clear obsolete generated projection %s: %w", obsolete, err)
+		}
+	}
+	return nil
 }
 
 func renderDeploymentNFT(plan firewall.Plan) (string, error) {

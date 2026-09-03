@@ -2087,62 +2087,6 @@ func proxmoxBastionSSHRunner(s model.Site, siteDir string) proxmox.SSHRunner {
 	}
 }
 
-func remoteEndpointResolver(ctx context.Context, runner proxmox.ArgsCommandRunner, address, user string) func(string) ([]net.IP, error) {
-	return func(host string) ([]net.IP, error) {
-		if strings.TrimSpace(host) != host || host == "" || strings.ContainsAny(host, " \t\r\n/") {
-			return nil, errors.New("endpoint hostname is invalid")
-		}
-		output, err := runner.RunArgs(ctx, address, user, []string{"getent", "ahostsv4", host})
-		if err != nil {
-			return nil, err
-		}
-		seen := map[string]struct{}{}
-		addresses := make([]net.IP, 0)
-		for _, line := range strings.Split(string(output), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) == 0 {
-				continue
-			}
-			ip := net.ParseIP(fields[0])
-			if ip == nil || ip.To4() == nil {
-				continue
-			}
-			ip = ip.To4()
-			if _, ok := seen[ip.String()]; ok {
-				continue
-			}
-			seen[ip.String()] = struct{}{}
-			addresses = append(addresses, ip)
-		}
-		if len(addresses) == 0 {
-			return nil, fmt.Errorf("remote resolver returned no IPv4 addresses for %s", host)
-		}
-		return addresses, nil
-	}
-}
-
-func endpointLookupWithFallback(primary, fallback func(string) ([]net.IP, error)) func(string) ([]net.IP, error) {
-	return func(host string) ([]net.IP, error) {
-		addresses, primaryErr := primary(host)
-		for _, address := range addresses {
-			if address != nil && address.To4() != nil {
-				return addresses, nil
-			}
-		}
-		if fallback == nil {
-			return nil, primaryErr
-		}
-		fallbackAddresses, fallbackErr := fallback(host)
-		if fallbackErr != nil {
-			if primaryErr != nil {
-				return nil, fmt.Errorf("controller resolver: %v; Proxmox resolver: %w", primaryErr, fallbackErr)
-			}
-			return nil, fallbackErr
-		}
-		return fallbackAddresses, nil
-	}
-}
-
 func deploymentKnownHosts(siteDir string) string {
 	return filepath.Join(siteDir, "generated", "ssh", "known_hosts")
 }

@@ -17,8 +17,8 @@ at the end of the 0.5.1 work. They are comparison metrics, not claims that the
 
 | Measure | 0.5.0 baseline | Measurement definition |
 | --- | ---: | --- |
-| Controller source LOC | 45,500 | `rg --files cmd internal -g '*.go' -g '!**/*_test.go' \| xargs wc -l`; use the `total` row |
-| Controller test LOC | 22,981 | `rg --files cmd internal -g '*_test.go' \| xargs wc -l`; use the `total` row |
+| Controller source LOC | 45,629 | `rg --files cmd internal -g '*.go' -g '!**/*_test.go' \| xargs wc -l`; use the `total` row |
+| Controller test LOC | 23,065 | `rg --files cmd internal -g '*_test.go' \| xargs wc -l`; use the `total` row |
 | Compiled repository packages | 49 | `go list ./... \| wc -l` |
 | Controller dependency closure | 1,140 | `go list -deps ./cmd/boetticher \| sort -u \| wc -l` |
 | Release controller size | 53,899,362 bytes | Size of the stripped release controller built with `-trimpath -s -w` and the release trust root embedded |
@@ -27,7 +27,7 @@ at the end of the 0.5.1 work. They are comparison metrics, not claims that the
 | Advanced command entries | 33 | Number of entries in `advancedCommandSpecs` in `internal/cli/commands.go` |
 | Release bundle artifact identities | 14 | `tar -xOzf BUNDLE manifest.json \| jq '.artifacts \| length'` |
 | Persistent generated site projections | 45 | Files below `SITE_DIR/generated`, excluding `artifacts`, `release`, and `runtime`; measured on the reference live site |
-| Ansible roles | 18 | `find ansible/roles -mindepth 1 -maxdepth 1 -type d \| wc -l` |
+| Ansible roles | 17 | `find ansible/roles -mindepth 1 -maxdepth 1 -type d \| wc -l` |
 | Unreachable functions | 24 | `go run golang.org/x/tools/cmd/deadcode@v0.47.0 -test ./...`; includes test-only and compatibility findings, which must be reviewed rather than blindly deleted |
 | `go.mod` direct requirements | 13 | First parenthesized `require` block |
 | `go.mod` requirement entries | 154 | Direct and indirect entries in `go.mod` |
@@ -38,9 +38,11 @@ at the end of the 0.5.1 work. They are comparison metrics, not claims that the
 | KMS-named modules | 2 | Module graph entries whose module name contains `kms` |
 | Runtime mutation mechanisms | 4 | Local desired-state writes, Proxmox REST API, bounded privileged SSH, and Ansible playbooks |
 
-The controller-size comparison must use the same build flags, embedded trust
-root, Go toolchain, and dependency state. An unstripped development binary is
-not comparable to the release-controller metric.
+The local controller-size comparison uses the same build flags, Go toolchain,
+and source-default empty trust-data value. Hosted release-controller size is
+separate evidence because release public-key material is not kept in this
+repository. An unstripped development binary is not comparable to either
+metric.
 
 ### Repeatable measurement procedure
 
@@ -80,6 +82,42 @@ Claims in this document use these boundaries:
   one exact source revision and its signed artifacts.
 
 One evidence level does not prove a higher level.
+
+## 0.5.1 source checkpoint measurements
+
+These are measured after the source simplification and before clean-install
+qualification. They are not live or hosted release evidence. The generated
+projection count is from a fresh default `init` output; the final table must be
+repeated after clean-install deployment using the same exclusions.
+
+| Measure | 0.5.0 baseline | 0.5.1 source checkpoint |
+| --- | ---: | ---: |
+| Controller source LOC | 45,629 | 42,366 |
+| Controller test LOC | 23,065 | 21,372 |
+| Compiled repository packages | 49 | 48 |
+| Controller dependency closure | 1,140 | 1,139 |
+| Release controller size, local trust-data build | 53,899,362 bytes | 53,649,570 bytes |
+| Default Proxmox guests | 6 | 3 |
+| Public command menu entries | 9 | 9 |
+| Advanced command entries | 33 | 21 |
+| Release bundle artifact identities | 14 | 13 |
+| Persistent generated projections | 45 | 9 |
+| Ansible roles | 17 | 17 |
+| Unreachable functions | 24 | 0 |
+| Runtime mutation mechanisms | 4 | 4 |
+| Direct Go requirements | 13 | 14 |
+| Total Go requirement entries | 154 | 154 |
+| Module graph | 392 | 392 |
+| Google/cloud API modules | 123 | 123 |
+| AWS SDK v2 modules | 19 | 19 |
+| Azure SDK modules | 6 | 6 |
+| KMS-named modules | 2 | 2 |
+
+The direct-requirement increase is the explicit declaration of the already
+transitive `golang.org/x/crypto` dependency used for the in-memory Apply
+identity. SOPS/Age cloud/KMS transitive surface is unchanged because a smaller
+replacement was not shown to preserve the current encryption and recovery
+contract.
 
 ## 0.5.1 target lifecycle
 

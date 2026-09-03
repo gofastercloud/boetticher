@@ -100,9 +100,6 @@ func runStorage(args []string, out io.Writer) error {
 	if err := storage.Initialize(context.Background(), runner, s.BootstrapAddress, *initialUser, plan.Device, true, *reinitialize); err != nil {
 		return err
 	}
-	if err := writeStorageProjection(*siteDir, s); err != nil {
-		return err
-	}
 	fmt.Fprintf(out, "Dedicated storage initialized: %s\n", plan.Device)
 	return nil
 }

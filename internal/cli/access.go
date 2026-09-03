@@ -22,9 +22,9 @@ func runAccess(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "Bootstrap")
+	fmt.Fprintln(out, "Enrollment")
 	if s.BootstrapAddress == "" {
-		fmt.Fprintln(out, "  Proxmox       bootstrap endpoint not configured")
+		fmt.Fprintln(out, "  Proxmox       enrollment endpoint not configured")
 	} else {
 		fmt.Fprintf(out, "  Proxmox       ssh proxmox\n                https://%s:8006\n", s.BootstrapAddress)
 	}
