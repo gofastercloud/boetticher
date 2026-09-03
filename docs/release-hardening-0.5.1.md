@@ -112,8 +112,8 @@ repeated after clean-install deployment using the same exclusions.
 | AWS SDK v2 modules | 19 | 19 |
 | Azure SDK modules | 6 | 6 |
 | KMS-named modules | 2 | 2 |
-| Lines added in `origin/0.5.0...HEAD` | — | 2,203 |
-| Lines deleted in `origin/0.5.0...HEAD` | — | 6,609 |
+| Lines added in `origin/0.5.0...HEAD` | — | 2,204 |
+| Lines deleted in `origin/0.5.0...HEAD` | — | 6,610 |
 | Net repository change | — | -4,406 |
 
 The direct-requirement increase is the explicit declaration of the already
