@@ -392,6 +392,7 @@ func TestInterruptedDeploymentCleanupUsesPersistedTargets(t *testing.T) {
 	state := site.OperationState{
 		ID: "run-1", Kind: "deploy", Phase: site.PhaseVerify, ModelRevision: "model-1", PlanDigest: strings.Repeat("a", 64),
 		TemporaryPublicKey:     publicKey,
+		TemporaryHostAddress:   "192.0.2.10",
 		TemporaryCleanupGuests: []site.OperationGuest{{Name: "lab-fw-01", Kind: "qemu", VMID: 100, Address: "10.10.99.1"}},
 	}
 	if err := site.SaveOperationState(dir, state); err != nil {
@@ -419,7 +420,7 @@ func TestInterruptedDeploymentCleanupFailureLeavesFailedJournal(t *testing.T) {
 	dir := t.TempDir()
 	publicKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA boetticher-apply"
 	if err := site.SaveOperationState(dir, site.OperationState{
-		ID: "run-1", Kind: "deploy", Phase: site.PhaseApply, ModelRevision: "model-1", PlanDigest: strings.Repeat("a", 64), TemporaryPublicKey: publicKey,
+		ID: "run-1", Kind: "deploy", Phase: site.PhaseApply, ModelRevision: "model-1", PlanDigest: strings.Repeat("a", 64), TemporaryPublicKey: publicKey, TemporaryHostAddress: "192.0.2.10",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -433,6 +434,27 @@ func TestInterruptedDeploymentCleanupFailureLeavesFailedJournal(t *testing.T) {
 	state, found, loadErr := site.LoadOperationState(dir)
 	if loadErr != nil || !found || state.Phase != site.PhaseFailed || state.TemporaryPublicKey != publicKey {
 		t.Fatalf("failed cleanup journal = %#v, found=%t, err=%v", state, found, loadErr)
+	}
+}
+
+func TestInterruptedDeploymentCleanupRejectsHostAddressDrift(t *testing.T) {
+	dir := t.TempDir()
+	publicKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA boetticher-apply"
+	if err := site.SaveOperationState(dir, site.OperationState{
+		ID: "run-1", Kind: "deploy", Phase: site.PhaseApply, ModelRevision: "model-1", PlanDigest: strings.Repeat("a", 64), TemporaryPublicKey: publicKey, TemporaryHostAddress: "192.0.2.11",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	err := recoverInterruptedDeploymentWith(context.Background(), dir, model.Site{BootstrapAddress: "192.0.2.10"}, io.Discard, func(context.Context, string, model.Site, []proxmox.GuestPlan, string) error {
+		called = true
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "host address changed") {
+		t.Fatalf("host address drift was accepted: %v", err)
+	}
+	if called {
+		t.Fatal("host address drift attempted cleanup")
 	}
 }
 

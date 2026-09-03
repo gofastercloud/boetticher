@@ -402,6 +402,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return err
 	}
 	operationState.TemporaryPublicKey = deploymentPublicKey
+	operationState.TemporaryHostAddress = s.BootstrapAddress
 	operationState.TemporaryCleanupGuests = cleanupGuests
 	if err := site.SaveOperationState(*siteDir, operationState); err != nil {
 		for index := range temporaryPrivateKey {
@@ -1380,6 +1381,9 @@ func recoverInterruptedDeploymentWith(ctx context.Context, siteDir string, s mod
 			fmt.Fprintln(out, "Interrupted deployment cleanup: PASS no temporary Apply authority was armed")
 		}
 		return nil
+	}
+	if state.TemporaryHostAddress != s.BootstrapAddress {
+		return fmt.Errorf("HOLD: interrupted deployment host address changed from %s to %s; use independent operator/root recovery before retrying", state.TemporaryHostAddress, s.BootstrapAddress)
 	}
 	if cleanup == nil {
 		return errors.New("HOLD: interrupted deployment cleanup is not configured")

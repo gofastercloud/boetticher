@@ -10,13 +10,14 @@ func TestOperationAndLastAppliedStateRoundTrip(t *testing.T) {
 	operation := OperationState{
 		ID: "run-1", Kind: "deploy", Phase: PhaseApply, ModelRevision: "model-1", PlanDigest: strings.Repeat("a", 64),
 		TemporaryPublicKey:     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample boetticher-apply",
+		TemporaryHostAddress:   "192.0.2.10",
 		TemporaryCleanupGuests: []OperationGuest{{Name: "lab-fw-01", Kind: "qemu", VMID: 100, Address: "10.10.99.1"}},
 	}
 	if err := SaveOperationState(dir, operation); err != nil {
 		t.Fatal(err)
 	}
 	loaded, found, err := LoadOperationState(dir)
-	if err != nil || !found || loaded.ID != operation.ID || loaded.Phase != PhaseApply || loaded.TemporaryPublicKey != operation.TemporaryPublicKey || len(loaded.TemporaryCleanupGuests) != 1 {
+	if err != nil || !found || loaded.ID != operation.ID || loaded.Phase != PhaseApply || loaded.TemporaryPublicKey != operation.TemporaryPublicKey || loaded.TemporaryHostAddress != operation.TemporaryHostAddress || len(loaded.TemporaryCleanupGuests) != 1 {
 		t.Fatalf("operation state = %#v, err=%v, found=%t", loaded, err, found)
 	}
 	lastApplied := LastAppliedState{ModelRevision: "model-1", PlanDigest: strings.Repeat("b", 64)}

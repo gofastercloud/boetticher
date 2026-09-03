@@ -45,6 +45,7 @@ type OperationState struct {
 	UpdatedAt              string           `json:"updated_at"`
 	Error                  string           `json:"error,omitempty"`
 	TemporaryPublicKey     string           `json:"temporary_public_key,omitempty"`
+	TemporaryHostAddress   string           `json:"temporary_host_address,omitempty"`
 	TemporaryCleanupGuests []OperationGuest `json:"temporary_cleanup_guests,omitempty"`
 }
 
@@ -139,8 +140,20 @@ func validateOperationState(state OperationState) error {
 	if state.TemporaryPublicKey == "" && len(state.TemporaryCleanupGuests) > 0 {
 		return errors.New("operation state has cleanup guests without a temporary public key")
 	}
+	if state.TemporaryPublicKey == "" && state.TemporaryHostAddress != "" {
+		return errors.New("operation state has a temporary host address without a temporary public key")
+	}
+	if state.TemporaryPublicKey != "" && state.TemporaryHostAddress == "" {
+		return errors.New("operation state has a temporary public key without a host address")
+	}
 	if strings.ContainsAny(state.TemporaryPublicKey, "\r\n\x00") {
 		return errors.New("operation state temporary public key contains control characters")
+	}
+	if state.TemporaryHostAddress != "" {
+		address := net.ParseIP(state.TemporaryHostAddress)
+		if address == nil || address.To4() == nil || address.To4().String() != state.TemporaryHostAddress {
+			return fmt.Errorf("operation state temporary host address %q is not a canonical IPv4 address", state.TemporaryHostAddress)
+		}
 	}
 	seenGuests := make(map[int]struct{}, len(state.TemporaryCleanupGuests))
 	for _, guest := range state.TemporaryCleanupGuests {
