@@ -119,7 +119,7 @@ func TestRootShortHelpListsCurrentCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := output.String()
-	for _, command := range []string{"boetticher init", "boetticher deploy", "boetticher status", "boetticher module", "boetticher doctor", "boetticher update", "boetticher help --advanced"} {
+	for _, command := range []string{"boetticher init", "boetticher enroll", "boetticher plan", "boetticher deploy", "boetticher status", "boetticher module", "boetticher network", "boetticher update", "boetticher help --advanced"} {
 		if !strings.Contains(text, command) {
 			t.Errorf("root short help omitted %s: %s", command, text)
 		}

@@ -20,16 +20,21 @@ type helpSpec struct {
 
 var commandSpecs = []commandSpec{
 	{Usage: "boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall] [--storage-profile single-disk|dedicated-data-disk] [--storage-device /dev/disk/by-id/DEVICE]"},
-	{Usage: "boetticher tui [--site DIR] [--offline]"},
-	{Usage: "boetticher deploy [--site DIR] [--age-identity PATH] [--proxmox-ca PATH] [--insecure] [--dry-run] [--rotate-airvpn-profile] [--replace-firewall] [--recreate-legacy-lxcs] [--confirm]"},
-	{Usage: "boetticher status [--site DIR] [--ssh-config PATH] [--ssh-journey] [--live] [--verbose] [--json]"},
-	{Usage: "boetticher module list|configure NAME|disable NAME [--site DIR] [--dry-run] [--json] [--confirm]"},
-	{Usage: "boetticher doctor [--site DIR] [--ssh-config PATH] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
-	{Usage: "boetticher update [--site DIR] [--dry-run] [--confirm]"},
+	{Usage: "boetticher enroll [--site DIR] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed]"},
+	{Usage: "boetticher plan [--site DIR] [--live] [--json]"},
+	{Usage: "boetticher deploy --plan DIGEST [--site DIR] [--age-identity PATH] [--confirm] [--json]"},
+	{Usage: "boetticher status [--site DIR] [--live] [--details] [--json]"},
+	{Usage: "boetticher module list|configure|enable|disable|purge NAME [--site DIR] [--confirm] [--json]"},
+	{Usage: "boetticher network reservation|record add|remove|list [--site DIR]"},
+	{Usage: "boetticher update --bundle PATH [--site DIR]"},
 	{Usage: "boetticher help --advanced"},
 }
 
 var advancedCommandSpecs = []commandSpec{
+	{Usage: "boetticher bundle inspect|import PATH [--site DIR] [--json]"},
+	{Usage: "boetticher diagnose [--site DIR] [--live]"},
+	{Usage: "boetticher recover host|storage|guest ..."},
+	{Usage: "boetticher companion setup|status ..."},
 	{Usage: "boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall] [--storage-profile single-disk|dedicated-data-disk] [--storage-device /dev/disk/by-id/DEVICE]"},
 	{Usage: "boetticher tui [--site DIR] [--offline]"},
 	{Usage: "boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--record] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]"},
@@ -68,17 +73,12 @@ var advancedCommandSpecs = []commandSpec{
 // prefixes, not a wall of synopsis alternatives.
 func CommandUsages() []string {
 	return []string{
+		"boetticher plan",
 		"boetticher deploy",
 		"boetticher status",
-		"boetticher doctor",
-		"boetticher network test",
 		"boetticher module list",
 		"boetticher module configure",
-		"boetticher module status",
-		"boetticher logs",
-		"boetticher firewall status",
-		"boetticher dhcp leases",
-		"boetticher hardware usb list",
+		"boetticher network reservation list",
 	}
 }
 

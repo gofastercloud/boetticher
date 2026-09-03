@@ -17,6 +17,7 @@ func runUpdate(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
+	bundle := fs.String("bundle", "", "import an authenticated offline release bundle")
 	dryRun := fs.Bool("dry-run", false, "validate and show the desired-state update without writing")
 	confirm := fs.Bool("confirm", false, "authorize the desired-state update")
 	if err := fs.Parse(args); err != nil {
@@ -24,6 +25,12 @@ func runUpdate(args []string, out io.Writer) error {
 	}
 	if *dryRun && *confirm {
 		return errors.New("--dry-run and --confirm cannot be used together")
+	}
+	if *bundle != "" {
+		if *dryRun || *confirm {
+			return errors.New("--bundle cannot be combined with --dry-run or --confirm")
+		}
+		return runBundleImport([]string{*bundle, "--site", *siteDir}, out)
 	}
 
 	original, err := pathguard.ReadFile(filepath.Join(*siteDir, "site.yml"))

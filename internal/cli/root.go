@@ -21,7 +21,10 @@ func RunWithInput(args []string, input io.Reader, out, errOut io.Writer) error {
 }
 
 func run(args []string, input io.Reader, out, errOut io.Writer) error {
-	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+	if len(args) == 0 {
+		return runTUI(nil, input, out, errOut)
+	}
+	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		if len(args) > 1 && args[0] == "help" && args[1] == "--advanced" {
 			advancedUsage(out)
 		} else {
@@ -38,6 +41,12 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runInit(args[1:], out)
 	case "tui":
 		return runTUI(args[1:], input, out, errOut)
+	case "enroll":
+		return runEnroll(args[1:], out)
+	case "plan":
+		return runPlan(args[1:], out)
+	case "bundle":
+		return runBundle(args[1:], out)
 	case "preflight":
 		return runPreflight(args[1:], out)
 	case "ssh-config":
@@ -72,10 +81,16 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runHardware(args[1:], out)
 	case "kiosk":
 		return runKiosk(args[1:], out)
+	case "companion":
+		return runKiosk(args[1:], out)
 	case "verify":
 		return runVerify(args[1:], out)
 	case "doctor":
 		return runDoctor(args[1:], out)
+	case "diagnose":
+		return runDoctor(args[1:], out)
+	case "recover":
+		return runRecovery(args[1:], out)
 	case "bootstrap":
 		return runBootstrap(args[1:], out)
 	case "deploy":

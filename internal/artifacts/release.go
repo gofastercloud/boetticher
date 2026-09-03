@@ -1,0 +1,814 @@
+package artifacts
+
+import (
+	"archive/tar"
+	"compress/gzip"
+	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/pathguard"
+)
+
+const (
+	ReleaseBundleFormatVersion = "boetticher/release-bundle/v1"
+	ArtifactABIVersion         = "boetticher/artifact/v1"
+	ReleaseManifestName        = "manifest.json"
+	ReleaseSignatureName       = "manifest.sig"
+	MaxReleaseManifestBytes    = 1 << 20
+	MaxReleaseFileBytes        = int64(8 << 30)
+)
+
+// ReleaseManifest is the compatibility and integrity contract for a
+// prepared release. It contains no workstation paths, timestamps, or secret
+// values; the signature covers its canonical JSON representation.
+type ReleaseManifest struct {
+	FormatVersion              string            `json:"format_version"`
+	ReleaseVersion             string            `json:"release_version"`
+	SourceCommit               string            `json:"source_commit"`
+	BuildWorkflow              string            `json:"build_workflow"`
+	SiteAPIVersion             string            `json:"site_api_version"`
+	SchemaVersion              int               `json:"schema_version"`
+	ArtifactABIVersion         string            `json:"artifact_abi_version"`
+	Architecture               string            `json:"architecture"`
+	ControllerMin              string            `json:"controller_min_version"`
+	ControllerMax              string            `json:"controller_max_version"`
+	QualificationPolicyVersion string            `json:"qualification_policy_version"`
+	Artifacts                  []ReleaseArtifact `json:"artifacts"`
+	Files                      []ReleaseFile     `json:"files"`
+}
+
+// ReleaseBuildMetadata is supplied by the Linux release workflow. It keeps
+// release provenance and controller compatibility explicit instead of
+// overloading the site platform-version field.
+type ReleaseBuildMetadata struct {
+	ReleaseVersion             string
+	SourceCommit               string
+	BuildWorkflow              string
+	ControllerMin              string
+	ControllerMax              string
+	QualificationPolicyVersion string
+}
+
+type ReleaseArtifact struct {
+	Artifact     model.Artifact `json:"artifact"`
+	ArtifactPath string         `json:"artifact_path"`
+	EvidencePath string         `json:"evidence_path"`
+}
+
+type ReleaseFile struct {
+	Path      string `json:"path"`
+	SHA256    string `json:"sha256"`
+	SizeBytes int64  `json:"size_bytes"`
+	Kind      string `json:"kind"`
+	Artifact  string `json:"artifact"`
+}
+
+// ReleaseInput is the source-side material assembled by CI. Qualification
+// inputs are copied as evidence files and are never re-evaluated from an
+// untrusted path during import.
+type ReleaseInput struct {
+	Artifact           model.Artifact
+	ArtifactPath       string
+	EvidencePath       string
+	QualificationFiles map[string]string
+}
+
+type ManifestSignature struct {
+	Algorithm string `json:"algorithm"`
+	KeyID     string `json:"key_id"`
+	Signature string `json:"signature"`
+}
+
+type TrustedReleaseKey struct {
+	ID        string
+	PublicKey ed25519.PublicKey
+}
+
+// EmbeddedTrustedReleaseKeys is the small compiled trust set used by a
+// release binary. Release builds replace the placeholder with the approved
+// public keys; multiple entries permit overlap during key rotation.
+var EmbeddedTrustedReleaseKeys = []TrustedReleaseKey{}
+
+// EmbeddedTrustedReleaseKeyData is populated by the release build with a
+// comma-separated set of id=base64-public-key entries. Keeping the value
+// injectable permits key overlap during rotation without making the trust
+// root a private or single-use runtime secret.
+var EmbeddedTrustedReleaseKeyData string
+
+func TrustedReleaseKeys() ([]TrustedReleaseKey, error) {
+	keys := append([]TrustedReleaseKey(nil), EmbeddedTrustedReleaseKeys...)
+	if strings.TrimSpace(EmbeddedTrustedReleaseKeyData) == "" {
+		return keys, nil
+	}
+	for _, encoded := range strings.Split(EmbeddedTrustedReleaseKeyData, ",") {
+		parts := strings.SplitN(encoded, "=", 2)
+		if len(parts) != 2 {
+			return nil, errors.New("embedded release key entry must be id=base64-public-key")
+		}
+		if err := validateKeyID(parts[0]); err != nil {
+			return nil, err
+		}
+		data, err := base64.StdEncoding.DecodeString(parts[1])
+		if err != nil || len(data) != ed25519.PublicKeySize {
+			return nil, fmt.Errorf("embedded release key %s is invalid", parts[0])
+		}
+		keys = append(keys, TrustedReleaseKey{ID: parts[0], PublicKey: ed25519.PublicKey(data)})
+	}
+	return keys, nil
+}
+
+// BuildReleaseBundle assembles and signs a release bundle from already
+// qualified artifacts. It does not build software, contact a host, or accept
+// a site directory. The output is gzip-compressed tar for broad offline
+// portability; every member is listed and hashed in the signed manifest.
+func BuildReleaseBundle(output string, platformVersion, siteAPIVersion string, schemaVersion int, privateKey ed25519.PrivateKey, keyID string, inputs []ReleaseInput) (ReleaseManifest, error) {
+	return BuildReleaseBundleWithMetadata(output, ReleaseBuildMetadata{
+		ReleaseVersion: platformVersion, SourceCommit: "local-build", BuildWorkflow: "local",
+		ControllerMin: platformVersion, ControllerMax: platformVersion,
+		QualificationPolicyVersion: QualificationPolicyVersion,
+	}, siteAPIVersion, schemaVersion, privateKey, keyID, inputs)
+}
+
+func BuildReleaseBundleWithMetadata(output string, metadata ReleaseBuildMetadata, siteAPIVersion string, schemaVersion int, privateKey ed25519.PrivateKey, keyID string, inputs []ReleaseInput) (ReleaseManifest, error) {
+	if output == "" || metadata.ReleaseVersion == "" || metadata.SourceCommit == "" || metadata.BuildWorkflow == "" || metadata.ControllerMin == "" || metadata.ControllerMax == "" || siteAPIVersion == "" || schemaVersion <= 0 {
+		return ReleaseManifest{}, errors.New("release bundle output and compatibility versions are required")
+	}
+	if len(privateKey) != ed25519.PrivateKeySize {
+		return ReleaseManifest{}, errors.New("release bundle signing key is invalid")
+	}
+	if err := validateKeyID(keyID); err != nil {
+		return ReleaseManifest{}, err
+	}
+	if len(inputs) == 0 {
+		return ReleaseManifest{}, errors.New("release bundle requires at least one qualified artifact")
+	}
+	if err := validateOutputPath(output); err != nil {
+		return ReleaseManifest{}, err
+	}
+
+	manifest := ReleaseManifest{
+		FormatVersion: ReleaseBundleFormatVersion, ReleaseVersion: metadata.ReleaseVersion,
+		SourceCommit: metadata.SourceCommit, BuildWorkflow: metadata.BuildWorkflow,
+		SiteAPIVersion: siteAPIVersion, SchemaVersion: schemaVersion,
+		ArtifactABIVersion: ArtifactABIVersion, Architecture: Architecture,
+		ControllerMin: metadata.ControllerMin, ControllerMax: metadata.ControllerMax,
+		QualificationPolicyVersion: metadata.QualificationPolicyVersion,
+	}
+	if manifest.QualificationPolicyVersion == "" {
+		manifest.QualificationPolicyVersion = QualificationPolicyVersion
+	}
+	members := make(map[string][]byte)
+	seenArtifacts := make(map[string]struct{}, len(inputs))
+	for _, input := range inputs {
+		if err := validateReleaseInput(input); err != nil {
+			return ReleaseManifest{}, err
+		}
+		if _, exists := seenArtifacts[input.Artifact.Name]; exists {
+			return ReleaseManifest{}, fmt.Errorf("release bundle repeats artifact %q", input.Artifact.Name)
+		}
+		seenArtifacts[input.Artifact.Name] = struct{}{}
+		artifactBytes, err := readReleaseFile(input.ArtifactPath)
+		if err != nil {
+			return ReleaseManifest{}, fmt.Errorf("read artifact %s: %w", input.Artifact.Name, err)
+		}
+		artifactPath := filepath.ToSlash(filepath.Join("artifacts", input.Artifact.Name, filepath.Base(input.ArtifactPath)))
+		artifactSum := sha256.Sum256(artifactBytes)
+		if input.Artifact.ContentSHA256 != hex.EncodeToString(artifactSum[:]) {
+			return ReleaseManifest{}, fmt.Errorf("artifact %s content checksum does not match its qualified identity", input.Artifact.Name)
+		}
+		members[artifactPath] = artifactBytes
+		manifest.Artifacts = append(manifest.Artifacts, ReleaseArtifact{Artifact: input.Artifact, ArtifactPath: artifactPath, EvidencePath: filepath.ToSlash(filepath.Join("evidence", input.Artifact.Name+".json"))})
+
+		evidenceBytes, err := pathguard.ReadFileLimited(input.EvidencePath, maxEvidenceJSONBytes)
+		if err != nil {
+			return ReleaseManifest{}, fmt.Errorf("read qualification evidence %s: %w", input.Artifact.Name, err)
+		}
+		var evidence Evidence
+		if err := json.Unmarshal(evidenceBytes, &evidence); err != nil {
+			return ReleaseManifest{}, fmt.Errorf("decode qualification evidence %s: %w", input.Artifact.Name, err)
+		}
+		if !evidence.Qualified || evidence.Artifact != input.Artifact || evidence.ContentSHA256 != input.Artifact.ContentSHA256 {
+			return ReleaseManifest{}, fmt.Errorf("qualification evidence for %s is not bound to the requested artifact", input.Artifact.Name)
+		}
+		evidence.ArtifactPath = artifactPath
+		rewrittenEvidence, err := json.MarshalIndent(evidence, "", "  ")
+		if err != nil {
+			return ReleaseManifest{}, fmt.Errorf("encode qualification evidence %s: %w", input.Artifact.Name, err)
+		}
+		evidencePath := filepath.ToSlash(filepath.Join("evidence", input.Artifact.Name+".json"))
+		members[evidencePath] = append(rewrittenEvidence, '\n')
+		for name, source := range input.QualificationFiles {
+			if err := validateBundlePath(name); err != nil {
+				return ReleaseManifest{}, err
+			}
+			name = filepath.ToSlash(name)
+			if name != filepath.ToSlash(filepath.Join("evidence", input.Artifact.Name, filepath.Base(name))) {
+				return ReleaseManifest{}, fmt.Errorf("qualification file %q must be beneath evidence/%s/", name, input.Artifact.Name)
+			}
+			data, readErr := readReleaseFile(source)
+			if readErr != nil {
+				return ReleaseManifest{}, fmt.Errorf("read qualification file %s: %w", name, readErr)
+			}
+			if _, exists := members[name]; exists {
+				return ReleaseManifest{}, fmt.Errorf("release bundle repeats file %q", name)
+			}
+			members[name] = data
+		}
+	}
+	for path, data := range members {
+		kind, artifact := "artifact", ""
+		if strings.HasPrefix(path, "evidence/") {
+			kind = "evidence"
+			parts := strings.Split(path, "/")
+			if len(parts) == 2 {
+				artifact = strings.TrimSuffix(parts[1], ".json")
+			} else if len(parts) >= 3 {
+				artifact = parts[1]
+			} else {
+				return ReleaseManifest{}, fmt.Errorf("evidence member path %q is incomplete", path)
+			}
+		} else if strings.HasPrefix(path, "artifacts/") {
+			parts := strings.Split(path, "/")
+			if len(parts) < 3 {
+				return ReleaseManifest{}, fmt.Errorf("artifact member path %q is incomplete", path)
+			}
+			artifact = parts[1]
+		}
+		sum := sha256.Sum256(data)
+		manifest.Files = append(manifest.Files, ReleaseFile{Path: path, SHA256: hex.EncodeToString(sum[:]), SizeBytes: int64(len(data)), Kind: kind, Artifact: artifact})
+	}
+	sort.Slice(manifest.Artifacts, func(i, j int) bool { return manifest.Artifacts[i].Artifact.Name < manifest.Artifacts[j].Artifact.Name })
+	sort.Slice(manifest.Files, func(i, j int) bool { return manifest.Files[i].Path < manifest.Files[j].Path })
+	if err := validateReleaseManifest(manifest); err != nil {
+		return ReleaseManifest{}, err
+	}
+	manifestBytes, err := canonicalManifest(manifest)
+	if err != nil {
+		return ReleaseManifest{}, err
+	}
+	signature := ManifestSignature{Algorithm: "ed25519", KeyID: keyID, Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, manifestBytes))}
+	signatureBytes, err := json.MarshalIndent(signature, "", "  ")
+	if err != nil {
+		return ReleaseManifest{}, err
+	}
+	if err := writeReleaseArchive(output, manifestBytes, append(signatureBytes, '\n'), members); err != nil {
+		return ReleaseManifest{}, err
+	}
+	return manifest, nil
+}
+
+// ImportReleaseBundle verifies the signed compatibility contract before
+// extracting any artifact member. It stages all files in a fresh directory,
+// checks every declared size and digest, and atomically installs the complete
+// tree only after verification succeeds.
+func ImportReleaseBundle(bundlePath, destination string, trusted []TrustedReleaseKey, platformVersion, siteAPIVersion string, schemaVersion int) (ReleaseManifest, error) {
+	if bundlePath == "" || destination == "" {
+		return ReleaseManifest{}, errors.New("release bundle and destination are required")
+	}
+	if len(trusted) == 0 {
+		return ReleaseManifest{}, errors.New("no trusted release signing keys are configured")
+	}
+	if err := validateSourcePath(bundlePath); err != nil {
+		return ReleaseManifest{}, err
+	}
+	if info, err := os.Lstat(destination); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return ReleaseManifest{}, errors.New("release bundle destination must not be a symlink")
+		}
+		return ReleaseManifest{}, fmt.Errorf("release bundle destination already exists")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return ReleaseManifest{}, err
+	}
+
+	file, err := os.Open(bundlePath)
+	if err != nil {
+		return ReleaseManifest{}, fmt.Errorf("open release bundle: %w", err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 {
+		return ReleaseManifest{}, errors.New("release bundle must be a non-empty regular file")
+	}
+	gzipReader, err := gzip.NewReader(file)
+	if err != nil {
+		return ReleaseManifest{}, fmt.Errorf("open release bundle compression: %w", err)
+	}
+	tarReader := tar.NewReader(gzipReader)
+	manifestHeader, err := tarReader.Next()
+	if err != nil || manifestHeader.Name != ReleaseManifestName || manifestHeader.Typeflag != tar.TypeReg {
+		return ReleaseManifest{}, errors.New("release bundle must begin with manifest.json")
+	}
+	manifestBytes, err := io.ReadAll(io.LimitReader(tarReader, MaxReleaseManifestBytes+1))
+	if err != nil || int64(len(manifestBytes)) > MaxReleaseManifestBytes {
+		return ReleaseManifest{}, errors.New("release manifest is invalid or too large")
+	}
+	var manifest ReleaseManifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		return ReleaseManifest{}, fmt.Errorf("decode release manifest: %w", err)
+	}
+	if err := validateReleaseManifest(manifest); err != nil {
+		return ReleaseManifest{}, err
+	}
+	if manifest.ReleaseVersion == "" || manifest.ReleaseVersion != platformVersion || manifest.SiteAPIVersion != siteAPIVersion || manifest.SchemaVersion != schemaVersion || manifest.Architecture != Architecture {
+		return ReleaseManifest{}, errors.New("release bundle compatibility does not match this controller")
+	}
+	signatureHeader, err := tarReader.Next()
+	if err != nil || signatureHeader.Name != ReleaseSignatureName || signatureHeader.Typeflag != tar.TypeReg {
+		return ReleaseManifest{}, errors.New("release bundle must contain manifest.sig after manifest.json")
+	}
+	signatureBytes, err := io.ReadAll(io.LimitReader(tarReader, MaxReleaseManifestBytes+1))
+	if err != nil || int64(len(signatureBytes)) > MaxReleaseManifestBytes {
+		return ReleaseManifest{}, errors.New("release signature is invalid or too large")
+	}
+	var signature ManifestSignature
+	if err := json.Unmarshal(signatureBytes, &signature); err != nil {
+		return ReleaseManifest{}, fmt.Errorf("decode release signature: %w", err)
+	}
+	if err := verifyManifest(manifest, signature, trusted); err != nil {
+		return ReleaseManifest{}, err
+	}
+
+	parent := filepath.Dir(destination)
+	if err := pathguard.MkdirAll(parent, 0700); err != nil {
+		return ReleaseManifest{}, fmt.Errorf("prepare release destination: %w", err)
+	}
+	stage, err := pathguard.MkdirTemp(parent, ".release-import-", 0700)
+	if err != nil {
+		return ReleaseManifest{}, fmt.Errorf("create release staging directory: %w", err)
+	}
+	defer pathguard.RemoveAll(stage)
+	expected := make(map[string]ReleaseFile, len(manifest.Files))
+	for _, member := range manifest.Files {
+		expected[member.Path] = member
+	}
+	seen := make(map[string]struct{}, len(expected))
+	for {
+		header, nextErr := tarReader.Next()
+		if errors.Is(nextErr, io.EOF) {
+			break
+		}
+		if nextErr != nil {
+			return ReleaseManifest{}, fmt.Errorf("read release member: %w", nextErr)
+		}
+		if header.Typeflag != tar.TypeReg {
+			return ReleaseManifest{}, fmt.Errorf("release member %q is not a regular file", header.Name)
+		}
+		member, ok := expected[header.Name]
+		if !ok {
+			return ReleaseManifest{}, fmt.Errorf("release contains undeclared member %q", header.Name)
+		}
+		if _, exists := seen[header.Name]; exists {
+			return ReleaseManifest{}, fmt.Errorf("release repeats member %q", header.Name)
+		}
+		if header.Size != member.SizeBytes || header.Size < 0 || header.Size > MaxReleaseFileBytes {
+			return ReleaseManifest{}, fmt.Errorf("release member %q has unexpected size", header.Name)
+		}
+		if err := validateBundlePath(header.Name); err != nil {
+			return ReleaseManifest{}, err
+		}
+		target := filepath.Join(stage, filepath.FromSlash(header.Name))
+		if err := pathguard.MkdirAll(filepath.Dir(target), 0700); err != nil {
+			return ReleaseManifest{}, err
+		}
+		if _, err := pathguard.WriteFileFrom(target, &exactReleaseReader{reader: tarReader, remaining: header.Size}, 0600, MaxReleaseFileBytes); err != nil {
+			return ReleaseManifest{}, fmt.Errorf("stage release member %q: %w", header.Name, err)
+		}
+		seen[header.Name] = struct{}{}
+	}
+	if len(seen) != len(expected) {
+		return ReleaseManifest{}, errors.New("release is missing one or more declared files")
+	}
+	for path, member := range expected {
+		data, err := pathguard.ReadFile(filepath.Join(stage, filepath.FromSlash(path)))
+		if err != nil {
+			return ReleaseManifest{}, fmt.Errorf("read staged release member %q: %w", path, err)
+		}
+		sum := sha256.Sum256(data)
+		if int64(len(data)) != member.SizeBytes || hex.EncodeToString(sum[:]) != member.SHA256 {
+			return ReleaseManifest{}, fmt.Errorf("release member %q failed digest verification", path)
+		}
+	}
+	if err := pathguard.Rename(stage, destination); err != nil {
+		return ReleaseManifest{}, fmt.Errorf("install release bundle: %w", err)
+	}
+	return manifest, nil
+}
+
+// InspectReleaseBundle reads and validates only the unsigned manifest. It is
+// intentionally suitable for diagnostics; installation still requires
+// ImportReleaseBundle, which verifies the signature before extraction.
+func InspectReleaseBundle(bundlePath string) (ReleaseManifest, error) {
+	if err := validateSourcePath(bundlePath); err != nil {
+		return ReleaseManifest{}, err
+	}
+	file, err := os.Open(bundlePath)
+	if err != nil {
+		return ReleaseManifest{}, err
+	}
+	defer file.Close()
+	gzipReader, err := gzip.NewReader(file)
+	if err != nil {
+		return ReleaseManifest{}, err
+	}
+	defer gzipReader.Close()
+	tarReader := tar.NewReader(gzipReader)
+	header, err := tarReader.Next()
+	if err != nil || header.Name != ReleaseManifestName || header.Typeflag != tar.TypeReg {
+		return ReleaseManifest{}, errors.New("release bundle must begin with manifest.json")
+	}
+	data, err := io.ReadAll(io.LimitReader(tarReader, MaxReleaseManifestBytes+1))
+	if err != nil || int64(len(data)) > MaxReleaseManifestBytes {
+		return ReleaseManifest{}, errors.New("release manifest is invalid or too large")
+	}
+	var manifest ReleaseManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return ReleaseManifest{}, err
+	}
+	if err := validateReleaseManifest(manifest); err != nil {
+		return ReleaseManifest{}, err
+	}
+	return manifest, nil
+}
+
+func canonicalManifest(manifest ReleaseManifest) ([]byte, error) {
+	return json.Marshal(manifest)
+}
+
+func verifyManifest(manifest ReleaseManifest, signature ManifestSignature, trusted []TrustedReleaseKey) error {
+	if signature.Algorithm != "ed25519" || signature.KeyID == "" {
+		return errors.New("release signature algorithm or key id is invalid")
+	}
+	raw, err := base64.StdEncoding.DecodeString(signature.Signature)
+	if err != nil || len(raw) != ed25519.SignatureSize {
+		return errors.New("release signature encoding is invalid")
+	}
+	manifestBytes, err := canonicalManifest(manifest)
+	if err != nil {
+		return err
+	}
+	for _, key := range trusted {
+		if key.ID == signature.KeyID && len(key.PublicKey) == ed25519.PublicKeySize && ed25519.Verify(key.PublicKey, manifestBytes, raw) {
+			return nil
+		}
+	}
+	return fmt.Errorf("release signature was not produced by a trusted key")
+}
+
+func validateReleaseManifest(manifest ReleaseManifest) error {
+	if manifest.FormatVersion != ReleaseBundleFormatVersion || manifest.ReleaseVersion == "" || manifest.SourceCommit == "" || manifest.BuildWorkflow == "" || manifest.SiteAPIVersion == "" || manifest.SchemaVersion <= 0 || manifest.ArtifactABIVersion != ArtifactABIVersion || manifest.Architecture != Architecture || manifest.ControllerMin == "" || manifest.ControllerMax == "" || manifest.QualificationPolicyVersion == "" {
+		return errors.New("release manifest has incomplete or unsupported compatibility fields")
+	}
+	if len(manifest.Artifacts) == 0 || len(manifest.Files) == 0 {
+		return errors.New("release manifest has no artifacts or files")
+	}
+	files := make(map[string]ReleaseFile, len(manifest.Files))
+	for _, file := range manifest.Files {
+		if err := validateBundlePath(file.Path); err != nil {
+			return err
+		}
+		if file.SHA256 == "" || !isSHA256(file.SHA256) || file.SizeBytes < 0 || file.SizeBytes > MaxReleaseFileBytes || (file.Kind != "artifact" && file.Kind != "evidence") {
+			return fmt.Errorf("release member %q has invalid metadata", file.Path)
+		}
+		if _, exists := files[file.Path]; exists {
+			return fmt.Errorf("release manifest repeats file %q", file.Path)
+		}
+		files[file.Path] = file
+	}
+	seenArtifacts := map[string]struct{}{}
+	for _, artifact := range manifest.Artifacts {
+		if artifact.Artifact.Name == "" || artifact.Artifact.ContentSHA256 == "" || !isSHA256(artifact.Artifact.ContentSHA256) || artifact.ArtifactPath == "" || artifact.EvidencePath == "" {
+			return errors.New("release artifact identity is incomplete")
+		}
+		if err := validateBundlePath(artifact.ArtifactPath); err != nil {
+			return err
+		}
+		if err := validateBundlePath(artifact.EvidencePath); err != nil {
+			return err
+		}
+		if files[artifact.ArtifactPath].Kind != "artifact" || files[artifact.EvidencePath].Kind != "evidence" {
+			return fmt.Errorf("release artifact %s is missing its mandatory members", artifact.Artifact.Name)
+		}
+		if files[artifact.ArtifactPath].SHA256 != artifact.Artifact.ContentSHA256 || files[artifact.ArtifactPath].Artifact != artifact.Artifact.Name {
+			return fmt.Errorf("release artifact %s content member is not bound to its identity", artifact.Artifact.Name)
+		}
+		if _, exists := seenArtifacts[artifact.Artifact.Name]; exists {
+			return fmt.Errorf("release manifest repeats artifact %q", artifact.Artifact.Name)
+		}
+		seenArtifacts[artifact.Artifact.Name] = struct{}{}
+	}
+	return nil
+}
+
+// ImportedReleaseManifest reads the manifest from a release tree that has
+// already passed ImportReleaseBundle. The returned digest is the identity
+// bound into deployment plans; callers never infer release identity from a
+// filename or directory timestamp.
+func ImportedReleaseManifest(root string) (ReleaseManifest, string, error) {
+	path := filepath.Join(root, "generated", "release", ReleaseManifestName)
+	if err := pathguard.ValidateNoSymlinkComponents(path); err != nil {
+		return ReleaseManifest{}, "", err
+	}
+	data, err := pathguard.ReadFileLimited(path, MaxReleaseManifestBytes)
+	if err != nil {
+		return ReleaseManifest{}, "", err
+	}
+	var manifest ReleaseManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return ReleaseManifest{}, "", err
+	}
+	if err := validateReleaseManifest(manifest); err != nil {
+		return ReleaseManifest{}, "", err
+	}
+	canonical, err := canonicalManifest(manifest)
+	if err != nil {
+		return ReleaseManifest{}, "", err
+	}
+	sum := sha256.Sum256(canonical)
+	return manifest, hex.EncodeToString(sum[:]), nil
+}
+
+// ResolveImportedArtifact binds an artifact to the paths inside the
+// authenticated release tree. It deliberately does not inspect legacy
+// generated/artifacts output, so a copied or stale local file cannot replace
+// the signed release selected by the operator.
+func ResolveImportedArtifact(root string, requested model.Artifact) (model.Artifact, Evidence, error) {
+	manifest, _, err := ImportedReleaseManifest(root)
+	if err != nil {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("load imported release: %w", err)
+	}
+	var selected *ReleaseArtifact
+	for index := range manifest.Artifacts {
+		candidate := &manifest.Artifacts[index]
+		if candidate.Artifact.Name == requested.Name {
+			selected = candidate
+			break
+		}
+	}
+	if selected == nil {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("release does not contain artifact %s", requested.Name)
+	}
+	if selected.Artifact != requested {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("imported artifact %s does not match requested definition", requested.Name)
+	}
+	releaseRoot := filepath.Join(root, "generated", "release")
+	artifactPath := filepath.Join(releaseRoot, filepath.FromSlash(selected.ArtifactPath))
+	evidencePath := filepath.Join(releaseRoot, filepath.FromSlash(selected.EvidencePath))
+	artifactData, err := readReleaseFile(artifactPath)
+	if err != nil {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("read imported artifact %s: %w", requested.Name, err)
+	}
+	artifactSum := sha256.Sum256(artifactData)
+	if hex.EncodeToString(artifactSum[:]) != selected.Artifact.ContentSHA256 {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("imported artifact %s content digest differs from manifest", requested.Name)
+	}
+	evidenceData, err := pathguard.ReadFileLimited(evidencePath, maxEvidenceJSONBytes)
+	if err != nil {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("read imported evidence %s: %w", requested.Name, err)
+	}
+	var evidence Evidence
+	if err := json.Unmarshal(evidenceData, &evidence); err != nil {
+		return model.Artifact{}, Evidence{}, err
+	}
+	if !evidence.Qualified || evidence.Artifact != requested || evidence.ContentSHA256 != requested.ContentSHA256 || evidence.DefinitionSHA256 != requested.DefinitionSHA256 || evidence.ArtifactPath != selected.ArtifactPath {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("imported evidence for %s is not bound to the manifest", requested.Name)
+	}
+	for _, required := range []struct{ digest, suffix string }{
+		{evidence.PackageManifestSHA, "package-manifest.txt"},
+		{evidence.SBOMSHA256, "sbom.json"},
+		{evidence.TrivyReportSHA256, "trivy.json"},
+	} {
+		if required.digest == "" {
+			continue
+		}
+		memberPath := filepath.Join(releaseRoot, "evidence", requested.Name, required.suffix)
+		data, readErr := pathguard.ReadFileLimited(memberPath, MaxReleaseFileBytes)
+		if readErr != nil {
+			return model.Artifact{}, Evidence{}, fmt.Errorf("read imported %s: %w", required.suffix, readErr)
+		}
+		sum := sha256.Sum256(data)
+		if hex.EncodeToString(sum[:]) != required.digest {
+			return model.Artifact{}, Evidence{}, fmt.Errorf("imported %s digest differs from evidence", required.suffix)
+		}
+	}
+	evidence.ArtifactPath = artifactPath
+	return selected.Artifact, evidence, nil
+}
+
+// ActivateImportedRelease replaces the active release tree only after a
+// complete staged import has succeeded. The old tree is restored if the
+// second rename fails.
+func ActivateImportedRelease(staged, active string) error {
+	if err := validateSourcePath(filepath.Join(staged, ReleaseManifestName)); err != nil {
+		return err
+	}
+	if err := pathguard.ValidateNoSymlinkComponents(active); err != nil {
+		return err
+	}
+	if _, err := os.Stat(active); errors.Is(err, os.ErrNotExist) {
+		return pathguard.Rename(staged, active)
+	} else if err != nil {
+		return err
+	}
+	backup := active + ".previous"
+	if err := pathguard.RemoveAll(backup); err != nil {
+		return err
+	}
+	if err := pathguard.Rename(active, backup); err != nil {
+		return err
+	}
+	if err := pathguard.Rename(staged, active); err != nil {
+		_ = pathguard.Rename(backup, active)
+		return err
+	}
+	return pathguard.RemoveAll(backup)
+}
+
+func validateReleaseInput(input ReleaseInput) error {
+	if input.Artifact.Name == "" || input.Artifact.ContentSHA256 == "" || !isSHA256(input.Artifact.ContentSHA256) || input.ArtifactPath == "" || input.EvidencePath == "" {
+		return errors.New("release input has incomplete artifact identity")
+	}
+	if err := validateSourcePath(input.ArtifactPath); err != nil {
+		return err
+	}
+	if err := validateSourcePath(input.EvidencePath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func readReleaseFile(path string) ([]byte, error) {
+	if err := validateSourcePath(path); err != nil {
+		return nil, err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, errors.New("release source must be a regular non-symlink file")
+	}
+	if info.Size() < 0 || info.Size() > MaxReleaseFileBytes {
+		return nil, errors.New("release source exceeds the permitted size")
+	}
+	return pathguard.ReadFile(path)
+}
+
+func writeReleaseArchive(output string, manifest, signature []byte, members map[string][]byte) error {
+	// The archive is assembled in memory only for the manifest-sized release
+	// metadata and member framing. Artifact bytes are written directly to the
+	// destination stream below to avoid a second full copy.
+	file, err := os.CreateTemp(filepath.Dir(output), ".release-bundle-")
+	if err != nil {
+		return err
+	}
+	temporary := file.Name()
+	defer os.Remove(temporary)
+	if err := file.Chmod(0600); err != nil {
+		_ = file.Close()
+		return err
+	}
+	gzipWriter := gzip.NewWriter(file)
+	tarWriter := tar.NewWriter(gzipWriter)
+	writeMember := func(name string, data []byte) error {
+		header := &tar.Header{Name: name, Mode: 0600, Size: int64(len(data)), ModTime: time.Unix(0, 0).UTC(), Typeflag: tar.TypeReg}
+		if err := tarWriter.WriteHeader(header); err != nil {
+			return err
+		}
+		_, err := tarWriter.Write(data)
+		return err
+	}
+	if err := writeMember(ReleaseManifestName, manifest); err != nil {
+		_ = tarWriter.Close()
+		_ = gzipWriter.Close()
+		_ = file.Close()
+		return err
+	}
+	if err := writeMember(ReleaseSignatureName, signature); err != nil {
+		_ = tarWriter.Close()
+		_ = gzipWriter.Close()
+		_ = file.Close()
+		return err
+	}
+	paths := make([]string, 0, len(members))
+	for path := range members {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		if err := writeMember(path, members[path]); err != nil {
+			_ = tarWriter.Close()
+			_ = gzipWriter.Close()
+			_ = file.Close()
+			return err
+		}
+	}
+	if err := tarWriter.Close(); err != nil {
+		_ = gzipWriter.Close()
+		_ = file.Close()
+		return err
+	}
+	if err := gzipWriter.Close(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return pathguard.Rename(temporary, output)
+}
+
+type exactReleaseReader struct {
+	reader    io.Reader
+	remaining int64
+}
+
+func (reader *exactReleaseReader) Read(p []byte) (int, error) {
+	if reader.remaining == 0 {
+		return 0, io.EOF
+	}
+	if int64(len(p)) > reader.remaining {
+		p = p[:reader.remaining]
+	}
+	n, err := reader.reader.Read(p)
+	reader.remaining -= int64(n)
+	if err == io.EOF && reader.remaining > 0 {
+		return n, io.ErrUnexpectedEOF
+	}
+	return n, err
+}
+
+func validateSourcePath(path string) error {
+	if path == "" || strings.ContainsRune(path, 0) {
+		return errors.New("release path is required")
+	}
+	if err := pathguard.ValidateNoSymlinkComponents(path); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return errors.New("release path must be a regular non-symlink file")
+	}
+	return nil
+}
+
+func validateOutputPath(path string) error {
+	if path == "" || strings.ContainsRune(path, 0) {
+		return errors.New("release output path is required")
+	}
+	if err := pathguard.ValidateNoSymlinkComponents(path); err != nil {
+		return fmt.Errorf("validate release output path: %w", err)
+	}
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return errors.New("release output must be a regular non-symlink file")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func validateBundlePath(name string) error {
+	clean := filepath.ToSlash(filepath.Clean(name))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(name) || strings.Contains(clean, "\\") || clean != name {
+		return fmt.Errorf("release member path %q is unsafe", name)
+	}
+	if !strings.HasPrefix(clean, "artifacts/") && !strings.HasPrefix(clean, "evidence/") {
+		return fmt.Errorf("release member path %q is outside the artifact/evidence trees", name)
+	}
+	return nil
+}
+
+func validateKeyID(keyID string) error {
+	if keyID == "" || len(keyID) > 64 || strings.TrimSpace(keyID) != keyID || strings.ContainsAny(keyID, "/\\\x00") {
+		return errors.New("release signing key id is invalid")
+	}
+	return nil
+}
+
+func isSHA256(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -554,12 +555,27 @@ func ResolveQualifiedArtifacts(root string, plan Plan, require bool) (Plan, erro
 	resolved := plan
 	resolved.Guests = append([]GuestPlan(nil), plan.Guests...)
 	resolved.ArtifactFiles = map[string]string{}
+	_, _, importedErr := artifacts.ImportedReleaseManifest(root)
+	importedRelease := importedErr == nil
+	if importedErr != nil && !errors.Is(importedErr, os.ErrNotExist) {
+		releaseManifestPath := filepath.Join(root, "generated", "release", artifacts.ReleaseManifestName)
+		if _, statErr := os.Stat(releaseManifestPath); statErr == nil {
+			return Plan{}, fmt.Errorf("HOLD: imported release is invalid: %w", importedErr)
+		}
+	}
 	for index := range resolved.Guests {
 		guest := &resolved.Guests[index]
 		if guest.Artifact.Name == "" {
 			continue
 		}
-		artifact, evidence, err := artifacts.ResolveArtifactEvidence(root, guest.Artifact)
+		var artifact model.Artifact
+		var evidence artifacts.Evidence
+		var err error
+		if importedRelease {
+			artifact, evidence, err = artifacts.ResolveImportedArtifact(root, guest.Artifact)
+		} else {
+			artifact, evidence, err = artifacts.ResolveArtifactEvidence(root, guest.Artifact)
+		}
 		if err != nil {
 			if require {
 				return Plan{}, fmt.Errorf("HOLD: %s: %w", guest.Name, err)

@@ -246,7 +246,11 @@ func runModuleConfigure(args []string, input io.Reader, out, errOut io.Writer) e
 			return nil
 		}
 	}
-	if err := site.ApplyConfigAndPlatformSecrets(opts.siteDir, working, resolvedSite, opts.ageIdentity, updates); err != nil {
+	retained, err := retainedAfterModuleConfiguration(opts.siteDir, resolvedSite, name, report.ProposedEnabled)
+	if err != nil {
+		return fail(err)
+	}
+	if err := site.ApplyConfigAndPlatformSecretsAndModuleState(opts.siteDir, working, resolvedSite, opts.ageIdentity, updates, retained); err != nil {
 		return fail(fmt.Errorf("apply module configuration: %w", err))
 	}
 	report.Status = "APPLIED"
@@ -255,6 +259,25 @@ func runModuleConfigure(args []string, input io.Reader, out, errOut io.Writer) e
 	}
 	fmt.Fprintln(out, "Configuration saved. Deployment remains separate: run boetticher deploy when ready.")
 	return nil
+}
+
+func retainedAfterModuleConfiguration(siteDir string, current model.Site, module string, enabled bool) ([]model.RetainedModule, error) {
+	retained, err := site.LoadRetainedModules(siteDir)
+	if err != nil {
+		return nil, fmt.Errorf("load retained module state: %w", err)
+	}
+	filtered := make([]model.RetainedModule, 0, len(retained)+1)
+	for _, item := range retained {
+		if item.Module != module {
+			filtered = append(filtered, item)
+		}
+	}
+	if !enabled {
+		if declaration, ok := findDeclaration(current, module); ok {
+			filtered = append(filtered, model.RetainedModule{Module: module, Disposition: "retained", Guests: declaration.Guests, Persistent: declaration.Persistent})
+		}
+	}
+	return filtered, nil
 }
 
 func parseModuleConfigureOptions(args []string) (moduleConfigureOptions, error) {

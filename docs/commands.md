@@ -21,6 +21,10 @@ boetticher doctor --site ./my-boetticher --live
 ## Full command menu
 
 ```text
+boetticher bundle inspect|import PATH [--site DIR] [--json]
+boetticher diagnose [--site DIR] [--live]
+boetticher recover host|storage|guest ...
+boetticher companion setup|status ...
 boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall] [--storage-profile single-disk|dedicated-data-disk] [--storage-device /dev/disk/by-id/DEVICE]
 boetticher tui [--site DIR] [--offline]
 boetticher preflight [--site DIR] [--age-identity PATH] [--live] [--record] [--bootstrap-address ADDRESS] [--initial-user USER] [--known-hosts PATH] [--trunk-interface IFACE]

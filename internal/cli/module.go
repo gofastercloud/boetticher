@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -279,8 +278,6 @@ func runModuleChangeWithInput(args []string, input io.Reader, out, errOut io.Wri
 	confirm := fs.Bool("confirm", false, "confirm a site configuration mutation")
 	purge := fs.Bool("purge", false, "remove retained module resources; requires --confirm")
 	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
-	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
-	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS")
 	if err := fs.Parse(remaining); err != nil {
 		return err
 	}
@@ -347,6 +344,7 @@ func runModuleChangeWithInput(args []string, input io.Reader, out, errOut io.Wri
 			retained = append(retained, model.RetainedModule{Module: name, Disposition: "retained", Guests: declaration.Guests, Persistent: declaration.Persistent})
 		}
 	}
+	var purgeIntent *site.PurgeIntent
 	if *purge {
 		purgeSite, err := modulePurgeSite(oldSite, name)
 		if err != nil {
@@ -359,78 +357,28 @@ func runModuleChangeWithInput(args []string, input io.Reader, out, errOut io.Wri
 		if err := site.ValidateModuleSecretOwnership(purgeSite, name, declaration); err != nil {
 			return err
 		}
-		client, _, err := loadProxmoxClient(*siteDir, oldSite, *ageIdentity, *proxmoxCA, *insecure)
-		if err != nil {
-			return fmt.Errorf("load Proxmox client for module purge: %w", err)
-		}
-		purgeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
 		oldPlan, err := proxmox.PlanFromSite(purgeSite)
 		if err != nil {
 			return err
 		}
-		oldPlan, err = proxmox.ResolveQualifiedArtifacts(*siteDir, oldPlan, true)
-		if err != nil {
-			return fmt.Errorf("resolve qualified artifacts for module purge: %w", err)
-		}
-		node, err := client.SingleNode(purgeCtx)
-		if err != nil {
-			return fmt.Errorf("resolve live Proxmox node for module purge: %w", err)
-		}
-		oldPlan.Node = node
 		intent := purgeIntentForPlan(oldPlan, name)
 		if existing, found, intentErr := site.LoadPurgeIntent(*siteDir); intentErr != nil {
-			return purgeHold(*siteDir, name, intentErr)
+			return intentErr
 		} else if found {
 			if existing.Module != name || !purgeIntentMatches(existing, intent) {
-				return purgeHold(*siteDir, name, errors.New("the persisted purge intent does not match the current module plan; inspect it before retrying"))
+				return errors.New("the persisted purge intent does not match the current module plan; inspect it before retrying")
 			}
-		} else if intentErr := site.SavePurgeIntent(*siteDir, intent); intentErr != nil {
-			return purgeHold(*siteDir, name, intentErr)
 		}
-		if err := site.SaveConfig(*siteDir, model.ConfigFromSite(resolved)); err != nil {
-			return purgeHold(*siteDir, name, fmt.Errorf("save disabled desired configuration: %w", err))
-		}
-		if err := site.SaveRetainedModules(*siteDir, retained); err != nil {
-			return purgeHold(*siteDir, name, fmt.Errorf("save retained-state update: %w", err))
-		}
-		if err := proxmox.PurgeModule(purgeCtx, client, oldPlan, name); err != nil {
-			return purgeHold(*siteDir, name, err)
-		}
-		if err := site.PurgeModuleSecrets(*siteDir, purgeSite, *ageIdentity, name, declaration); err != nil {
-			return purgeHold(*siteDir, name, fmt.Errorf("remove module secrets: %w", err))
-		}
+		purgeIntent = &intent
 	}
-	if err := site.SaveConfig(*siteDir, model.ConfigFromSite(resolved)); err != nil {
-		if *purge {
-			return purgeHold(*siteDir, name, err)
-		}
+	if err := site.ApplyModuleState(*siteDir, model.ConfigFromSite(resolved), retained, purgeIntent); err != nil {
 		return err
-	}
-	if err := site.SaveRetainedModules(*siteDir, retained); err != nil {
-		if *purge {
-			return purgeHold(*siteDir, name, err)
-		}
-		return err
-	}
-	if *purge {
-		if err := site.ClearPurgeIntent(*siteDir); err != nil {
-			return purgeHold(*siteDir, name, err)
-		}
 	}
 	fmt.Fprintf(out, "  Configuration: saved (model %s)\n", mustRevision(resolved))
-	deployArgs := []string{"--site", *siteDir, "--age-identity", *ageIdentity}
-	if *proxmoxCA != "" {
-		deployArgs = append(deployArgs, "--proxmox-ca", *proxmoxCA)
-	}
-	if *insecure {
-		deployArgs = append(deployArgs, "--insecure")
-	}
-	if *confirm || *purge {
-		deployArgs = append(deployArgs, "--confirm")
-	}
-	if err := runDeploy(deployArgs, out); err != nil {
-		return fmt.Errorf("deploy module change: %w", err)
+	if *purge {
+		fmt.Fprintf(out, "  Purge: pending deployment for %d exact owned guest(s); run deploy --confirm to apply\n", len(purgeIntent.Guests))
+	} else {
+		fmt.Fprintln(out, "  Deployment: pending (module changes never deploy implicitly)")
 	}
 	return nil
 }
@@ -464,8 +412,40 @@ func purgeIntentMatches(existing, current site.PurgeIntent) bool {
 	return true
 }
 
-func purgeHold(siteDir, module string, err error) error {
-	return fmt.Errorf("HOLD: module %s purge incomplete; recoverable intent at %s: %w", module, site.PurgeIntentPath(siteDir), err)
+type pendingModulePurge struct {
+	intent    site.PurgeIntent
+	purgeSite model.Site
+	plan      proxmox.Plan
+}
+
+// loadPendingModulePurge validates the controller-local destructive operation
+// against the currently requested module definition. It is deliberately
+// usable without a Proxmox connection: planning a purge must be safe offline,
+// while the live ownership proof remains in proxmox.PurgeModule.
+func loadPendingModulePurge(siteDir string, s model.Site) (*pendingModulePurge, bool, error) {
+	intent, found, err := site.LoadPurgeIntent(siteDir)
+	if err != nil || !found {
+		return nil, found, err
+	}
+	purgeSite, err := modulePurgeSite(s, intent.Module)
+	if err != nil {
+		return nil, true, err
+	}
+	declaration, ok := findDeclaration(purgeSite, intent.Module)
+	if !ok {
+		return nil, true, fmt.Errorf("module %s purge declaration is missing", intent.Module)
+	}
+	if err := site.ValidateModuleSecretOwnership(purgeSite, intent.Module, declaration); err != nil {
+		return nil, true, err
+	}
+	plan, err := proxmox.PlanFromSite(purgeSite)
+	if err != nil {
+		return nil, true, err
+	}
+	if !purgeIntentMatches(intent, purgeIntentForPlan(plan, intent.Module)) {
+		return nil, true, errors.New("the persisted purge intent does not match the current module plan; inspect it before retrying")
+	}
+	return &pendingModulePurge{intent: intent, purgeSite: purgeSite, plan: plan}, true, nil
 }
 
 // modulePurgeSite reconstructs the disabled module's declaration in memory so

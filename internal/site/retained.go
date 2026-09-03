@@ -36,14 +36,18 @@ func LoadRetainedModules(dir string) ([]model.RetainedModule, error) {
 }
 
 func SaveRetainedModules(dir string, retained []model.RetainedModule) error {
-	if err := validateRetainedModules(retained); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(retained, "", "  ")
+	data, err := marshalRetainedModules(retained)
 	if err != nil {
 		return err
 	}
 	return atomicWrite(filepath.Join(dir, retainedModulesPath), append(data, '\n'), 0600)
+}
+
+func marshalRetainedModules(retained []model.RetainedModule) ([]byte, error) {
+	if err := validateRetainedModules(retained); err != nil {
+		return nil, err
+	}
+	return json.MarshalIndent(retained, "", "  ")
 }
 
 func validateRetainedModules(retained []model.RetainedModule) error {

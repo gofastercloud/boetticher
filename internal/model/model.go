@@ -18,9 +18,15 @@ import (
 )
 
 const (
-	APIVersion                  = "boetticher/v3"
+	APIVersion = "boetticher/v3"
+	// ReleaseVersion identifies the controller/release line. It is distinct
+	// from the persisted configuration schema, artifact ABI, and bundle format.
+	ReleaseVersion              = "0.5.0"
 	SchemaVersion               = 3
-	PlatformVersion             = "0.4.0"
+	ConfigSchemaVersion         = SchemaVersion
+	ArtifactABIVersion          = "boetticher/artifact/v1"
+	BundleFormatVersion         = "boetticher/release-bundle/v1"
+	PlatformVersion             = ReleaseVersion
 	QualifiedGatewayImage       = "debian-13-genericcloud-amd64-20260327-2429"
 	QualifiedGatewayImageURL    = "https://cloud.debian.org/images/cloud/trixie/20260327-2429/debian-13-genericcloud-amd64-20260327-2429.qcow2"
 	QualifiedGatewayImageSHA512 = "09559ec27d263997827dd8cddf76e97ea8e0f1803380aa501ea7eaa4b4968cd76ffef4ec7eb07ef1a9ccbeb0925a5020492ea9ed53eb167d62f3a2285039912c"

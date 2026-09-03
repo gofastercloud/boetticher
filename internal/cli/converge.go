@@ -65,8 +65,14 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) err
 	report := newDeploymentReport(out)
 	ctx = telemetry.WithObserver(ctx, report)
 	var cleanup func(context.Context) error
+	var commit func() error
+	var markOperationFailure func(error)
 	operationErr := runDeployOperation(ctx, args, out, report, func(fn func(context.Context) error) {
 		cleanup = fn
+	}, func(fn func() error) {
+		commit = fn
+	}, func(fn func(error)) {
+		markOperationFailure = fn
 	})
 	if cleanup != nil {
 		report.setCleanup(true, false, nil)
@@ -82,11 +88,24 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) err
 		}
 		operationErr = combineDeploymentErrors(operationErr, cleanupErr)
 	}
+	if operationErr != nil && markOperationFailure != nil {
+		markOperationFailure(operationErr)
+	}
+	if operationErr == nil && commit != nil {
+		if commitErr := commit(); commitErr != nil {
+			if markOperationFailure != nil {
+				markOperationFailure(commitErr)
+			}
+			operationErr = combineDeploymentErrors(operationErr, commitErr)
+		}
+	}
 	operationErr = report.finalize(operationErr)
 	return deploymentErrorForOperator(operationErr)
 }
 
-func runDeployOperation(ctx context.Context, args []string, out io.Writer, report *deploymentReport, registerCleanup deploymentCleanupRegistrar) (err error) {
+func runDeployOperation(ctx context.Context, args []string, out io.Writer, report *deploymentReport, registerCleanup deploymentCleanupRegistrar, registerCommit func(func() error), registerOperationFailure func(func(error))) (err error) {
+	var operationState site.OperationState
+	operationStarted := false
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
@@ -94,6 +113,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
 	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS")
 	dryRun := fs.Bool("dry-run", false, "render and validate policy without connecting")
+	planDigestFlag := fs.String("plan", "", "exact immutable plan digest produced by boetticher plan --live")
 	rotateAirVPN := fs.Bool("rotate-airvpn-profile", false, "explicitly regenerate and retain the AirVPN WireGuard profile")
 	replaceFirewall := fs.Bool("replace-firewall", false, "replace only the managed firewall root disk after proving its persistent volumes")
 	recreateLegacyLXCs := fs.Bool("recreate-legacy-lxcs", false, "discard only proven legacy local-raw LXC state and recreate those appliances on planned storage")
@@ -101,11 +121,30 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if !*dryRun && *planDigestFlag == "" {
+		return errors.New("deploy requires --plan DIGEST; run boetticher plan --live first")
+	}
 	report.dryRun = *dryRun
 	report.start("validate", "Validate desired state")
 	s, err := site.Load(*siteDir)
 	if err != nil {
 		return err
+	}
+	releaseManifest := artifacts.ReleaseManifest{ReleaseVersion: model.ReleaseVersion}
+	releaseDigest := ""
+	if !*dryRun {
+		var releaseErr error
+		releaseManifest, releaseDigest, releaseErr = artifacts.ImportedReleaseManifest(*siteDir)
+		if releaseErr != nil {
+			return fmt.Errorf("authenticated release bundle is required before deployment: %w", releaseErr)
+		}
+	}
+	pendingPurge, hasPendingPurge, err := loadPendingModulePurge(*siteDir, s)
+	if err != nil {
+		return fmt.Errorf("validate pending module purge: %w", err)
+	}
+	if hasPendingPurge && !*dryRun && !*confirm {
+		return fmt.Errorf("module %s purge is pending; deploy requires --confirm to apply the destructive operation", pendingPurge.intent.Module)
 	}
 	if err := validateDeployRecoveryOptions(s.Gateway.Mode, *replaceFirewall, *recreateLegacyLXCs, *confirm, *dryRun); err != nil {
 		return err
@@ -166,6 +205,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			fmt.Fprintln(out, "  External contract: generated")
 		}
 		fmt.Fprintln(out, "  Destructive actions: not applied (dry-run)")
+		if hasPendingPurge {
+			fmt.Fprintf(out, "  Pending purge: PASS %s (%d exact owned guest(s)); deploy --confirm will apply it\n", pendingPurge.intent.Module, len(pendingPurge.intent.Guests))
+		}
 		var plan proxmox.Plan
 		if err := report.timed("artifacts", "local", "proxmox-plan", func() error {
 			var planErr error
@@ -446,17 +488,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	rootCleanup := newTemporaryRootCleanup(s, *siteDir, operatorPublicKey)
 	registerCleanup(rootCleanup.revoke)
 	report.start("proxmox", "Reconcile Proxmox platform and storage")
-	if s.Gateway.Mode == model.GatewayModeManaged {
-		// Reconcile the live host-side jump policy from the same canonical
-		// destination list as the generated projection, including any
-		// product-owned retained guests that remain in the SSH contract.
-		// Arm cleanup before the remote command because the command can make
-		// partial changes before reporting an error.
-		rootCleanup.hostEstablished()
-		if err := proxmox.ConfigureIdentities(ctx, rootRunner, s.BootstrapAddress, "root", operatorPublicKey, jumpDestinations(s)); err != nil {
-			return fmt.Errorf("reconcile Proxmox administrative and bastion identities: %w", err)
-		}
-	}
 	if err := proxmox.WaitForSSH(ctx, rootRunner, s.BootstrapAddress, "root", 1, 0); err != nil {
 		return fmt.Errorf("HOLD: temporary root deployment authority is unavailable; rerun bootstrap or recovery: %w", err)
 	}
@@ -485,6 +516,90 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return fmt.Errorf("live preflight failed before legacy LXC recovery: %w", err)
 		}
 		fmt.Fprintf(out, "Legacy LXC recovery preflight: PASS %d exact legacy appliance(s)\n", len(legacyLXCTargets))
+	}
+	planDigest, err := digestDeploymentPlan(deploymentPlan{
+		Version: deploymentPlanFormatVersion, ReleaseVersion: releaseManifest.ReleaseVersion,
+		ReleaseDigest: releaseDigest, ModelRevision: modelRevision, Live: true,
+		Proxmox: proxmoxPlan, Firewall: firewallPlan, Storage: storagePlan, Backup: backupPlan,
+		ReplaceFirewall: *replaceFirewall, RecreateLegacy: *recreateLegacyLXCs,
+	})
+	if err != nil {
+		return fmt.Errorf("digest immutable deployment plan: %w", err)
+	}
+	operationState = site.OperationState{
+		ID:            report.runID,
+		Kind:          "deploy",
+		Phase:         site.PhaseApply,
+		ModelRevision: modelRevision,
+		PlanDigest:    planDigest,
+	}
+	if *planDigestFlag != "" && *planDigestFlag != planDigest {
+		return fmt.Errorf("stale deployment plan: supplied %s, current live plan is %s", *planDigestFlag, planDigest)
+	}
+	if err := site.SaveOperationState(*siteDir, operationState); err != nil {
+		return fmt.Errorf("record deployment operation before apply: %w", err)
+	}
+	operationStarted = true
+	if registerOperationFailure != nil {
+		registerOperationFailure(func(cause error) {
+			if !operationStarted {
+				return
+			}
+			if journalErr := saveDeployOperationPhase(*siteDir, &operationState, site.PhaseFailed, cause); journalErr != nil {
+				fmt.Fprintf(out, "      FAIL: could not persist deployment failure journal: %s\n", compactError(journalErr))
+			}
+		})
+	}
+	if registerCommit != nil {
+		registerCommit(func() error {
+			if !operationStarted {
+				return nil
+			}
+			if err := saveDeployOperationPhase(*siteDir, &operationState, site.PhaseCommit, nil); err != nil {
+				return fmt.Errorf("record deployment commit phase: %w", err)
+			}
+			if err := site.SaveLastAppliedState(*siteDir, site.LastAppliedState{
+				ModelRevision: modelRevision,
+				PlanDigest:    planDigest,
+			}); err != nil {
+				return fmt.Errorf("record last-applied deployment state: %w", err)
+			}
+			if err := site.ClearOperationState(*siteDir); err != nil {
+				return fmt.Errorf("clear committed deployment operation: %w", err)
+			}
+			operationStarted = false
+			return nil
+		})
+	}
+	if s.Gateway.Mode == model.GatewayModeManaged {
+		// Host identity reconciliation is an apply action. Keep it behind the
+		// durable plan journal so every live mutation has a recoverable owner.
+		// Reconcile the live host-side jump policy from the canonical destinations
+		// only after the read-only preflight and APPLY journal are complete.
+		if err := proxmox.ConfigureIdentities(ctx, rootRunner, s.BootstrapAddress, "root", operatorPublicKey, jumpDestinations(s)); err != nil {
+			return fmt.Errorf("reconcile Proxmox administrative and bastion identities: %w", err)
+		}
+		rootCleanup.hostEstablished()
+	}
+	if hasPendingPurge {
+		pendingPurge.plan.Node = proxmoxPlan.Node
+		if err := report.timed("proxmox", "apply", "module-purge", func() error {
+			return proxmox.PurgeModule(ctx, proxmoxClient, pendingPurge.plan, pendingPurge.intent.Module)
+		}); err != nil {
+			return err
+		}
+		report.recordMutation("Proxmox", pendingPurge.intent.Module, "owned module guests purged", true)
+		declaration, ok := findDeclaration(pendingPurge.purgeSite, pendingPurge.intent.Module)
+		if !ok {
+			return fmt.Errorf("module %s purge declaration disappeared during deployment", pendingPurge.intent.Module)
+		}
+		if err := site.PurgeModuleSecrets(*siteDir, pendingPurge.purgeSite, *ageIdentity, pendingPurge.intent.Module, declaration); err != nil {
+			return fmt.Errorf("remove module secrets after purge: %w", err)
+		}
+		if err := site.ClearPurgeIntent(*siteDir); err != nil {
+			return fmt.Errorf("commit module purge completion: %w", err)
+		}
+		report.recordMutation("Generated state", "module purge intent", "cleared after verified purge", true)
 	}
 	var pulseProxmoxToken string
 	if monitoringEnabled {
@@ -921,6 +1036,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return fmt.Errorf("install endpoint-signed certificates: %w", err)
 	}
 	report.complete()
+	if err := saveDeployOperationPhase(*siteDir, &operationState, site.PhaseVerify, nil); err != nil {
+		return fmt.Errorf("record deployment verify phase: %w", err)
+	}
 	report.start("health", "Run live health gates")
 	var pulseForward *proxmox.SSHLocalForward
 	var aiRouterForward *proxmox.SSHLocalForward
@@ -1175,6 +1293,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		pulseForward = nil
 	}
 	report.complete()
+	if err := saveDeployOperationPhase(*siteDir, &operationState, site.PhaseCleanup, nil); err != nil {
+		return fmt.Errorf("record deployment cleanup phase: %w", err)
+	}
 	report.start("persist", "Persist final state")
 	backupChanged, err := proxmoxClient.ApplyBackupJobWithMutation(ctx, node, proxmox.BackupJob{
 		JobName: backupPlan.JobName, ModelRevision: backupPlan.ModelRevision, StorageTarget: backupPlan.StorageTarget,
@@ -2038,6 +2159,19 @@ func endpointLookupWithFallback(primary, fallback func(string) ([]net.IP, error)
 
 func deploymentKnownHosts(siteDir string) string {
 	return filepath.Join(siteDir, "generated", "ssh", "known_hosts")
+}
+
+func saveDeployOperationPhase(siteDir string, state *site.OperationState, phase site.OperationPhase, cause error) error {
+	if state == nil {
+		return errors.New("deployment operation state is nil")
+	}
+	state.Phase = phase
+	state.Error = ""
+	if cause != nil {
+		state.Error = compactError(cause)
+	}
+	state.UpdatedAt = ""
+	return site.SaveOperationState(siteDir, *state)
 }
 
 func retireReplacedHostKey(siteDir string, s model.Site, guest proxmox.GuestPlan) error {

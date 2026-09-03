@@ -26,6 +26,28 @@ import (
 
 const builderBuildCommand = `sh -c 'tail -n 0 -F /var/log/boetticher-build.log 2>/dev/null & tail_pid=$!; trap "kill $tail_pid 2>/dev/null || true" EXIT; /usr/local/sbin/boetticher-build'`
 
+// runEnroll is the normal first-host enrollment entry point. The legacy
+// bootstrap implementation remains behind this narrow adapter while its
+// physical-network and scoped-credential flow is retired; it no longer builds
+// appliance images or creates a builder VM.
+func runEnroll(args []string, out io.Writer) error {
+	return runBootstrap(args, out)
+}
+
+func runRecovery(args []string, out io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("usage: boetticher recover host|storage|guest ...")
+	}
+	switch args[0] {
+	case "host":
+		return runBootstrap(args[1:], out)
+	case "storage":
+		return runStorage(args[1:], out)
+	default:
+		return fmt.Errorf("recovery target %q is not implemented in 0.5", args[0])
+	}
+}
+
 func runBootstrapEndpoint(args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: boetticher bootstrap-endpoint show|set ADDRESS [--site DIR]")
@@ -161,9 +183,7 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 		fmt.Fprintf(out, "  Proxmox endpoint: %s\n  Gateway mode: %s\n  Gateway upstream MAC: %s\n  Gateway image: %s\n", s.BootstrapAddress, s.Gateway.Mode, s.Gateway.Upstream.MAC, model.QualifiedGatewayImage)
 		fmt.Fprintf(out, "  Storage: %s\n", s.StorageProfile)
 		fmt.Fprintln(out, "  Trust transition: initial administrator → temporary root deployment SSH → scoped API token → durable labadmin")
-		builder := artifacts.Builder()
-		fmt.Fprintf(out, "  Artifact builder: temporary VMID %d (%s, %s)\n", builder.VMID, builder.Hostname, builder.Network)
-		fmt.Fprintln(out, "  Artifact qualification: base, selected appliances, SBOM, Trivy, independent content SHA-256")
+		fmt.Fprintln(out, "  Release source: authenticated offline bundle (no in-lab image builder)")
 		fmt.Fprintln(out, "  Destructive actions: not applied (dry-run)")
 		return nil
 	}
@@ -380,16 +400,6 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 		return fmt.Errorf("HOLD: recompute platform plan after physical binding: %w", err)
 	}
 	plan.Node = apiNode
-	progress.complete()
-	progress.start("artifacts", "Build and qualify appliance artifacts")
-	if err := buildDefaultArtifacts(ctx, client, plan, *siteDir, publicKey, *knownHosts, model.ExpandUserPath(s.SSHIdentityFile), runner, runner, s.BootstrapAddress, *initialUser, out, progress); err != nil {
-		return err
-	}
-	plan, err = proxmox.ResolveQualifiedArtifacts(*siteDir, plan, true)
-	if err != nil {
-		return err
-	}
-	progress.complete()
 	progress.start("persist", "Persist bootstrap state")
 	if err := writeBootstrapProjections(*siteDir, s); err != nil {
 		return fmt.Errorf("HOLD: bootstrap network binding was persisted but projections could not be regenerated: %w", err)
