@@ -146,7 +146,7 @@ func printStatus(out io.Writer, report statusmodel.Report, verbose bool) {
 	fmt.Fprintf(out, "Platform %s\n", report.OverallState)
 	fmt.Fprintf(out, "Observed: %s\n", report.ObservedAt)
 	for _, check := range report.Checks {
-		fmt.Fprintf(out, "%-32s %-16s %s (%s)\n", check.Component, check.State, check.Evidence, check.Tier)
+		fmt.Fprintf(out, "%-32s %-16s %s (%s)\n", check.Component, check.State, operatorEvidenceLabel(check.Evidence), check.Tier)
 		if verbose {
 			fmt.Fprintf(out, "  Reason: %s\n  Next:   %s\n", check.Reason, check.NextAction)
 		}
@@ -154,4 +154,11 @@ func printStatus(out io.Writer, report statusmodel.Report, verbose bool) {
 	if strings.TrimSpace(string(report.OverallState)) == "" {
 		fmt.Fprintln(out, "Platform ACTION REQUIRED")
 	}
+}
+
+func operatorEvidenceLabel(evidence statusmodel.EvidenceStatus) statusmodel.EvidenceStatus {
+	if evidence == statusmodel.PASS {
+		return statusmodel.PASS
+	}
+	return statusmodel.FAIL
 }

@@ -86,6 +86,23 @@ func TestStatusReportsInterruptedDeploymentJournalReadOnly(t *testing.T) {
 	}
 }
 
+func TestHumanStatusMapsRichEvidenceToBinaryOutcome(t *testing.T) {
+	var output bytes.Buffer
+	printStatus(&output, statusmodel.Report{
+		OverallState: statusmodel.ActionRequired,
+		ObservedAt:   "2026-09-04T00:00:00Z",
+		Checks: []statusmodel.Check{{
+			Component: "deployment operation state", State: statusmodel.ActionRequired,
+			Evidence: statusmodel.HOLD, Tier: statusmodel.TierLocal,
+			Reason: "temporary Apply cleanup is pending", NextAction: "replay cleanup",
+		}},
+	}, true)
+	text := output.String()
+	if strings.Contains(text, "HOLD") || !strings.Contains(text, "FAIL") || !strings.Contains(text, "temporary Apply cleanup is pending") {
+		t.Fatalf("human status exposed non-binary evidence or lost details: %s", text)
+	}
+}
+
 func TestUpdateDryRunDoesNotMutateAndConfirmRefreshesDesiredState(t *testing.T) {
 	dir := t.TempDir()
 	config := model.ConfigFromSite(model.NewSite("update-test", "age1update", model.GatewayModeManaged))
