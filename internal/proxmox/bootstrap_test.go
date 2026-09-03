@@ -1,6 +1,7 @@
 package proxmox
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -280,6 +281,49 @@ func TestSSHRunnerIsolatesTargetIdentityButPreservesProxyJumpIdentity(t *testing
 	text := string(filtered)
 	if strings.Count(text, "IdentityFile /tmp/operator") != 1 || !strings.Contains(text, "Host lab-bastion") || !strings.Contains(text, "ProxyJump lab-bastion") {
 		t.Fatalf("isolated SSH configuration lost the bastion identity or retained the target identity: %s", text)
+	}
+}
+
+func TestSSHRunnerStreamsTemporaryIdentityAndConfigToProcess(t *testing.T) {
+	fakeBin := t.TempDir()
+	capture := t.TempDir() + "/capture"
+	fakeSSH := "#!/bin/sh\nset -eu\nconfig=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"-F\" ]; then config=$2; shift; fi\n  shift\ndone\nprintf '%s' \"$config\" > \"$BOETTICHER_TEST_CAPTURE.path\"\ncat /dev/fd/3 > \"$BOETTICHER_TEST_CAPTURE.identity\"\ncat \"$config\" > \"$BOETTICHER_TEST_CAPTURE.config\"\nprintf '%s\\n' ready\n"
+	if err := os.WriteFile(fakeBin+"/ssh", []byte(fakeSSH), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+":"+os.Getenv("PATH"))
+	t.Setenv("BOETTICHER_TEST_CAPTURE", capture)
+	configPath := t.TempDir() + "/boetticher.conf"
+	config := "Host lab-bastion\n    IdentityFile /tmp/operator\nHost lab-dns-01\n    IdentityFile /tmp/operator\n    ProxyJump lab-bastion\n"
+	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	identity := []byte("temporary private key")
+	runner := (SSHRunner{ConfigFile: configPath, HostAlias: "lab-dns-01", StrictHostKey: "yes"}).WithIdentityData(identity)
+	var output bytes.Buffer
+	if err := runner.RunStream(context.Background(), "10.10.10.10", "root", "true", &output); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(output.String()) != "ready" {
+		t.Fatalf("fake SSH process output = %q", output.String())
+	}
+	identityData, err := os.ReadFile(capture + ".identity")
+	if err != nil || string(identityData) != string(identity) {
+		t.Fatalf("temporary identity was not streamed through the inherited descriptor: err=%v", err)
+	}
+	configData, err := os.ReadFile(capture + ".config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(configData), "IdentityFile /tmp/operator") != 1 || !strings.Contains(string(configData), "Host lab-bastion") {
+		t.Fatal("isolated config did not preserve only the bastion identity")
+	}
+	temporaryPath, err := os.ReadFile(capture + ".path")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(string(temporaryPath)); !os.IsNotExist(err) {
+		t.Fatalf("temporary SSH configuration remains after the operation: %v", err)
 	}
 }
 

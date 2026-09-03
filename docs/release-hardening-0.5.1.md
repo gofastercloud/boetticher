@@ -112,6 +112,9 @@ repeated after clean-install deployment using the same exclusions.
 | AWS SDK v2 modules | 19 | 19 |
 | Azure SDK modules | 6 | 6 |
 | KMS-named modules | 2 | 2 |
+| Lines added in `origin/0.5.0...HEAD` | — | 1,473 |
+| Lines deleted in `origin/0.5.0...HEAD` | — | 6,479 |
+| Net repository change | — | -5,006 |
 
 The direct-requirement increase is the explicit declaration of the already
 transitive `golang.org/x/crypto` dependency used for the in-memory Apply
