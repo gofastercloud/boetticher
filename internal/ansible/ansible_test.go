@@ -1746,6 +1746,32 @@ func TestPulseProxyAuthMapsOnlyApprovedClientIdentities(t *testing.T) {
 	}
 }
 
+func TestSharedClientCAFrontendsRestrictClientIdentities(t *testing.T) {
+	checks := []struct {
+		role     string
+		required []string
+	}{
+		{role: "bifrost", required: []string{
+			`if ($ssl_client_s_dn !~ "^(?:CN=client-operator\.{{ domain | regex_escape }},O=boetticher|CN=aiops-router-client,O=boetticher)$") { return 403; }`,
+			`if ($ssl_client_s_dn ~ "CN=aiops-router-client(?:,|$)") { return 403; }`,
+		}},
+		{role: "arr", required: []string{`if ($ssl_client_s_dn != "CN=client-operator.{{ domain }},O=boetticher") { return 403; }`}},
+		{role: "printer", required: []string{`if ($ssl_client_s_dn != "CN=client-operator.{{ domain }},O=boetticher") { return 403; }`}},
+	}
+	for _, check := range checks {
+		data, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", check.role, "tasks", "main.yml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		for _, required := range check.required {
+			if !strings.Contains(text, required) {
+				t.Fatalf("%s frontend is missing exact client identity control %q", check.role, required)
+			}
+		}
+	}
+}
+
 func TestPiKioskUsesDedicatedPulseClientCertificate(t *testing.T) {
 	service, err := os.ReadFile(filepath.Join("..", "..", "pi", "kiosk", "systemd", "pulse-kiosk.service"))
 	if err != nil {

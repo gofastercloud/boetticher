@@ -149,6 +149,7 @@
           ssl_crl /var/lib/boetticher/identity/tls/client-ca.crl.pem;
           ssl_verify_client on;
           ssl_protocols TLSv1.2 TLSv1.3;
+          if ($ssl_client_s_dn !~ "^(?:CN=client-operator\.{{ domain | regex_escape }},O=boetticher|CN=aiops-router-client,O=boetticher)$") { return 403; }
           location = /v1/chat/completions {
               limit_except POST { deny all; }
               proxy_pass http://127.0.0.1:4000;
