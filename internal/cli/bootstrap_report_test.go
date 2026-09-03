@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gofastercloud/boetticher/internal/sshconfig"
 )
 
 func TestBootstrapReportRendersProgressAndSuccessfulSummary(t *testing.T) {
@@ -32,6 +34,22 @@ func TestBootstrapReportRendersProgressAndSuccessfulSummary(t *testing.T) {
 		}
 	}
 	assertNoHumanEvidenceStates(t, text)
+}
+
+func TestEnrollBootstrapHostKeyReadsAddressAndStoresLogicalAlias(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "source-known-hosts")
+	target := filepath.Join(t.TempDir(), "generated", "known_hosts")
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+	if err := os.WriteFile(source, []byte("192.0.2.10 "+key+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := enrollBootstrapHostKey(source, target, "192.0.2.10")
+	if err != nil || got != key {
+		t.Fatalf("enrollBootstrapHostKey() = %q, %v", got, err)
+	}
+	if _, err := sshconfig.ReadHostKey(target, "lab-proxmox-01"); err != nil {
+		t.Fatalf("logical Proxmox host alias was not stored: %v", err)
+	}
 }
 
 func TestBootstrapReportRendersFailureNextAction(t *testing.T) {

@@ -73,7 +73,10 @@ func runEnrollOperation(args []string, out io.Writer) (runErr error) {
 	}
 	progress.start("validate", "Validate enrollment request")
 	if *knownHosts == "" {
-		*knownHosts = deploymentKnownHosts(*siteDir)
+		*knownHosts = defaultSSHKnownHosts()
+		if *knownHosts == "" {
+			return errors.New("operator SSH known-hosts path is unavailable; pass --known-hosts PATH")
+		}
 	}
 	s, err := site.Load(*siteDir)
 	if err != nil {
@@ -144,7 +147,7 @@ func runEnrollOperation(args []string, out io.Writer) (runErr error) {
 	if err != nil {
 		return err
 	}
-	runner := proxmox.SSHRunner{KnownHosts: *knownHosts, StrictHostKey: "ask", HostKeyAlias: model.LogicalProxmoxIdentity, IdentityFile: operatorIdentityFile(s)}
+	runner := proxmox.SSHRunner{ConfigFile: "/dev/null", KnownHosts: *knownHosts, StrictHostKey: "yes", HostKeyAlias: s.BootstrapAddress, IdentityFile: operatorIdentityFile(s)}
 	ctx := context.Background()
 	ctx = telemetry.WithObserver(ctx, progress)
 	sshDiscovery, err := proxmox.DiscoverPhysicalNetworkViaSSH(ctx, runner, s.BootstrapAddress, *initialUser, s.BootstrapAddress, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
@@ -154,11 +157,11 @@ func runEnrollOperation(args []string, out io.Writer) (runErr error) {
 	trustedKnownHosts := deploymentKnownHosts(*siteDir)
 	progress.complete()
 	progress.start("trust", "Establish host trust and scoped access")
-	hostKey, err := enrollBootstrapHostKey(*knownHosts, trustedKnownHosts)
+	hostKey, err := enrollBootstrapHostKey(*knownHosts, trustedKnownHosts, s.BootstrapAddress)
 	if err != nil {
 		return fmt.Errorf("HOLD: enrollment did not establish an operator-verified Proxmox host key: %w", err)
 	}
-	runner = proxmox.SSHRunner{KnownHosts: trustedKnownHosts, StrictHostKey: "yes", HostKeyAlias: model.LogicalProxmoxIdentity, IdentityFile: operatorIdentityFile(s)}
+	runner = proxmox.SSHRunner{ConfigFile: "/dev/null", KnownHosts: trustedKnownHosts, StrictHostKey: "yes", HostKeyAlias: model.LogicalProxmoxIdentity, IdentityFile: operatorIdentityFile(s)}
 	credentialsPath := filepath.Join(*siteDir, site.ProxmoxSecretsPath)
 	credentialsExist, err := proxmoxCredentialsExist(credentialsPath)
 	if err != nil {
@@ -396,8 +399,8 @@ func runEnrollOperation(args []string, out io.Writer) (runErr error) {
 	return nil
 }
 
-func enrollBootstrapHostKey(sourceKnownHosts, trustedKnownHosts string) (string, error) {
-	operatorVerifiedKey, err := sshconfig.ReadHostKey(sourceKnownHosts, model.LogicalProxmoxIdentity)
+func enrollBootstrapHostKey(sourceKnownHosts, trustedKnownHosts, sourceAlias string) (string, error) {
+	operatorVerifiedKey, err := sshconfig.ReadHostKey(sourceKnownHosts, sourceAlias)
 	if err != nil {
 		return "", fmt.Errorf("read operator-known Proxmox host key from %s: %w", sourceKnownHosts, err)
 	}

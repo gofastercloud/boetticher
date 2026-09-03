@@ -109,6 +109,14 @@ func defaultOperatorPublicKey() string {
 	return ""
 }
 
+func defaultSSHKnownHosts() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".ssh", "known_hosts")
+}
+
 func readOperatorPublicKey(path string) (string, error) {
 	if path == "" {
 		return "", errors.New("operator SSH public key is required; use --operator-key PATH")

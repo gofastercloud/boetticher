@@ -22,7 +22,7 @@ boetticher status --site ./my-boetticher --details --live
 
 ```text
 boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall] [--storage-profile single-disk|dedicated-data-disk] [--storage-device /dev/disk/by-id/DEVICE]
-boetticher enroll [--site DIR] [--bootstrap-address ADDRESS] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed]
+boetticher enroll [--site DIR] [--bootstrap-address ADDRESS] [--operator-key PATH] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--known-hosts PATH] [--proxmox-ca PATH] [--initial-user USER] [--insecure] [--trunk-interface IFACE] [--replace-scoped-credentials] [--dry-run]
 boetticher plan [--site DIR] [--live] [--json]
 boetticher deploy --plan DIGEST [--site DIR] [--age-identity PATH] [--confirm]
 boetticher status [--site DIR] [--live] [--details] [--json]
