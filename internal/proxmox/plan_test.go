@@ -385,7 +385,8 @@ func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
 	}
 	plan.Guests = plan.Guests[:1]
 	guest := plan.Guests[0]
-	artifactFile := filepath.Join(t.TempDir(), "appliance.tar.zst")
+	root := t.TempDir()
+	artifactFile := filepath.Join(root, "appliance.tar.zst")
 	if err := os.WriteFile(artifactFile, []byte("qualified appliance"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -408,7 +409,6 @@ func TestResolveQualifiedArtifactsRequiresMatchingEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := t.TempDir()
 	if err := artifacts.WriteEvidence(root, guest.Artifact.Name, evidence); err != nil {
 		t.Fatal(err)
 	}

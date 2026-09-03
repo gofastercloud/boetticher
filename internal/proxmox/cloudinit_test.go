@@ -35,7 +35,7 @@ func TestFirewallCloudInitUsesStableInterfaceIdentities(t *testing.T) {
 	}
 }
 
-func TestFirewallCloudInitInjectsOperatorKeyOnlyAtDeployment(t *testing.T) {
+func TestFirewallCloudInitInjectsDurableOperatorBootstrapKey(t *testing.T) {
 	guest := GuestPlan{Name: "lab-fw-01", Address: "10.10.99.1", NICs: []GuestNIC{{Name: "mgmt0", MAC: "02:00:00:00:01:05", Method: "static", Address: "10.10.99.1"}}}
 	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator #1"
 	files, err := RenderFirewallCloudInitWithKey(guest, key)
@@ -43,7 +43,7 @@ func TestFirewallCloudInitInjectsOperatorKeyOnlyAtDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(files.UserData, "ssh_authorized_keys:") || !strings.Contains(files.UserData, key) {
-		t.Fatalf("firewall bootstrap key was not injected into deployment-only NoCloud data: %s", files.UserData)
+		t.Fatalf("firewall bootstrap key was not injected into NoCloud data: %s", files.UserData)
 	}
 	var document struct {
 		Users       []any `yaml:"users"`
@@ -79,12 +79,12 @@ func TestFirewallCloudInitInjectsOperatorKeyOnlyAtDeployment(t *testing.T) {
 		}
 		keys, ok := user["ssh_authorized_keys"].([]any)
 		if !ok || len(keys) != 1 || keys[0] != key {
-			t.Fatalf("temporary root key was not preserved as one YAML scalar: %#v", user["ssh_authorized_keys"])
+			t.Fatalf("root bootstrap key was not preserved as one YAML scalar: %#v", user["ssh_authorized_keys"])
 		}
 		rootFound = true
 	}
 	if !rootFound {
-		t.Fatal("deployment cloud-init does not configure temporary root access")
+		t.Fatal("bootstrap cloud-init does not configure root access for first boot")
 	}
 	if strings.Contains(files.MetaData+files.NetworkConfig, key) {
 		t.Fatal("operator key leaked into unrelated NoCloud documents")

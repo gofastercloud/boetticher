@@ -390,6 +390,10 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if registerCleanup == nil {
 		return errors.New("deployment cleanup registration is required before Apply authority")
 	}
+	durableOperatorPublicKey, err := operatorPublicKeyForSite(s)
+	if err != nil {
+		return fmt.Errorf("resolve durable operator identity before Apply: %w", err)
+	}
 	temporaryPrivateKey, deploymentPublicKey, err := newTemporaryRootIdentity()
 	if err != nil {
 		return err
@@ -436,7 +440,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err := validateLiveDeploymentPrerequisitesWithResolver(ctx, proxmoxClient, rootRunner, *siteDir, s, proxmoxPlan, storagePlan, endpointLookup); err != nil {
 		return fmt.Errorf("live preflight failed after exact plan acceptance: %w", err)
 	}
-	operatorPublicKey := deploymentPublicKey
 	report.complete()
 	report.start("credentials-pki", "Prepare credentials and PKI")
 	if err := report.timed("credentials-pki", "local", "static-readiness", func() error {
@@ -451,9 +454,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	var variables []byte
 	if err := report.timed("credentials-pki", "local", "ansible-variables", func() error {
 		if airvpnMetadata == nil {
-			variables, err = ansible.VariablesWithOperatorKey(s, operatorPublicKey)
+			variables, err = ansible.VariablesWithOperatorKey(s, durableOperatorPublicKey)
 		} else {
-			variables, err = ansible.VariablesWithOperatorKeyAndAirVPN(s, operatorPublicKey, *airvpnMetadata)
+			variables, err = ansible.VariablesWithOperatorKeyAndAirVPN(s, durableOperatorPublicKey, *airvpnMetadata)
 		}
 		return err
 	}); err != nil {
@@ -582,13 +585,13 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	variables = append(variables, '\n')
 	report.complete()
-	proxmoxPlan.OperatorPublicKey = operatorPublicKey
+	proxmoxPlan.OperatorPublicKey = durableOperatorPublicKey
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		for _, guest := range proxmoxPlan.Guests {
 			if guest.Name != "lab-fw-01" {
 				continue
 			}
-			cloudInit, renderErr := proxmox.RenderFirewallCloudInitWithKey(guest, operatorPublicKey)
+			cloudInit, renderErr := proxmox.RenderFirewallCloudInitWithKey(guest, durableOperatorPublicKey)
 			if renderErr != nil {
 				return fmt.Errorf("render firewall first-boot cloud-init: %w", renderErr)
 			}
@@ -724,7 +727,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		// so cleanup can fall back through the Proxmox host if boot stalls.
 		rootCleanup.guestEstablished(firewallGuest)
 		if err := report.timed("appliances", "readiness", firewallGuest.Name, func() error {
-			return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, firewallRunner.FreshConnection(), firewallGuest, operatorPublicKey, deploymentKnownHosts(*siteDir), firewallGuest.Hostname+"."+s.Network.Domain, func() {
+			return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, firewallRunner.FreshConnection(), firewallGuest, deploymentPublicKey, deploymentKnownHosts(*siteDir), firewallGuest.Hostname+"."+s.Network.Domain, func() {
 				rootCleanup.guestEstablished(firewallGuest)
 			})
 		}); err != nil {
@@ -736,7 +739,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		if err := installCredentialsForGuest(ctx, firewallRunner, "lab-fw-01", credentialBindings, secretValues); err != nil {
 			return fmt.Errorf("install managed gateway credentials: %w", err)
 		}
-		if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, "lab-fw-01", report); err != nil {
+		if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, "lab-fw-01", report, temporaryPrivateKey); err != nil {
 			return fmt.Errorf("HOLD: configure managed gateway before dependent appliances: %w", err)
 		}
 		if err := report.timed("appliances", "readiness", firewallGuest.Name+"/gateway", func() error {
@@ -809,7 +812,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			// accepted the temporary key while the guest service is still down.
 			rootCleanup.guestEstablished(guest)
 			if err := report.timed("appliances", "readiness", guest.Name, func() error {
-				return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, guestRunner.FreshConnection(), guest, operatorPublicKey, deploymentKnownHosts(*siteDir), guest.Hostname+"."+s.Network.Domain, func() {
+				return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, guestRunner.FreshConnection(), guest, deploymentPublicKey, deploymentKnownHosts(*siteDir), guest.Hostname+"."+s.Network.Domain, func() {
 					rootCleanup.guestEstablished(guest)
 				})
 			}); err != nil {
@@ -821,7 +824,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			if module == "dns" {
 				state := guestStates[guest.VMID]
 				if needsInitialDNSConfiguration(state) {
-					if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, guest.Name, report); err != nil {
+					if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, guest.Name, report, temporaryPrivateKey); err != nil {
 						return fmt.Errorf("HOLD: configure DNS guest %s before dependent appliances: %w", guest.Name, err)
 					}
 				}
@@ -885,9 +888,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			var finalVariables []byte
 			var variablesErr error
 			if airvpnMetadata == nil {
-				finalVariables, variablesErr = ansible.VariablesWithOperatorKeyAndUpstream(s, upstream, operatorPublicKey)
+				finalVariables, variablesErr = ansible.VariablesWithOperatorKeyAndUpstream(s, upstream, durableOperatorPublicKey)
 			} else {
-				finalVariables, variablesErr = ansible.VariablesWithOperatorKeyAndUpstreamAndAirVPN(s, upstream, operatorPublicKey, *airvpnMetadata)
+				finalVariables, variablesErr = ansible.VariablesWithOperatorKeyAndUpstreamAndAirVPN(s, upstream, durableOperatorPublicKey, *airvpnMetadata)
 			}
 			if variablesErr != nil {
 				return fmt.Errorf("HOLD: render published service Ansible variables: %w", variablesErr)
@@ -905,7 +908,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 				return fmt.Errorf("HOLD: encode published service Ansible variables: %w", err)
 			}
 			variables = append(variables, '\n')
-			if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, "lab-fw-01", report); err != nil {
+			if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, "lab-fw-01", report, temporaryPrivateKey); err != nil {
 				return fmt.Errorf("HOLD: activate published services on managed gateway: %w", err)
 			}
 			if err := report.timed("network", "readiness", "lab-fw-01/gateway", func() error {
@@ -937,7 +940,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	// readiness checks above before this all-host bootstrap/network pass. That
 	// foundation barrier makes independent host progress safe; the later
 	// health phase remains the final live gate.
-	if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report); err != nil {
+	if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report, temporaryPrivateKey); err != nil {
 		return err
 	}
 	report.complete()
@@ -1042,7 +1045,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return err
 	}
 	variables = append(variables, '\n')
-	if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseServices, report); err != nil {
+	if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseServices, report, temporaryPrivateKey); err != nil {
 		return fmt.Errorf("install endpoint-signed certificates: %w", err)
 	}
 	report.complete()
@@ -1240,7 +1243,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			}
 			agentVariables = append(agentVariables, '\n')
 			for _, target := range ansible.MonitoringAgentTargets(s) {
-				if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, agentVariables, target, report); err != nil {
+				if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, agentVariables, target, report, temporaryPrivateKey); err != nil {
 					return fmt.Errorf("install Pulse agent on %s: %w", target, err)
 				}
 			}
@@ -1847,7 +1850,7 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 	if err != nil {
 		return err
 	}
-	return runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, append(variables, '\n'), "lab-aiops-01", ansible.PhaseHealth, report)
+	return runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, append(variables, '\n'), "lab-aiops-01", ansible.PhaseHealth, report, identityData)
 }
 
 func selectedAIOpsModel(s model.Site) (model.BifrostModelConfig, error) {
@@ -2248,20 +2251,55 @@ func operatorIdentityFile(s model.Site) string {
 	return identity
 }
 
-func runTrackedAnsible(ctx context.Context, playbook, inventory string, variables []byte, limit string, report *deploymentReport) error {
-	return runTrackedAnsiblePhase(ctx, playbook, inventory, variables, limit, ansible.PhaseFull, report)
+func operatorPublicKeyForSite(s model.Site) (string, error) {
+	identity := operatorIdentityFile(s)
+	if identity == "" {
+		return "", errors.New("durable operator SSH identity is not configured")
+	}
+	publicPath := identity + ".pub"
+	publicData, err := os.ReadFile(publicPath)
+	if err == nil {
+		publicKey := strings.TrimSpace(string(publicData))
+		if err := proxmox.ValidatePublicKey(publicKey); err != nil {
+			return "", fmt.Errorf("validate durable operator public key: %w", err)
+		}
+		return publicKey, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("read durable operator public key: %w", err)
+	}
+	privateData, err := os.ReadFile(identity)
+	if err != nil {
+		return "", fmt.Errorf("read durable operator identity: %w", err)
+	}
+	signer, parseErr := ssh.ParsePrivateKey(privateData)
+	for index := range privateData {
+		privateData[index] = 0
+	}
+	if parseErr != nil {
+		return "", fmt.Errorf("derive durable operator public key: %w (provide %s)", parseErr, publicPath)
+	}
+	publicKey := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey())))
+	if err := proxmox.ValidatePublicKey(publicKey); err != nil {
+		return "", fmt.Errorf("validate derived durable operator public key: %w", err)
+	}
+	return publicKey, nil
 }
 
-func runTrackedAnsiblePhase(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string, report *deploymentReport) error {
+func runTrackedAnsible(ctx context.Context, playbook, inventory string, variables []byte, limit string, report *deploymentReport, identityData []byte) error {
+	return runTrackedAnsiblePhase(ctx, playbook, inventory, variables, limit, ansible.PhaseFull, report, identityData)
+}
+
+func runTrackedAnsiblePhase(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string, report *deploymentReport, identityData []byte) error {
 	started := time.Now()
 	var (
 		result ansible.RunResult
 		err    error
 	)
 	if limit == "" {
-		result, err = ansible.RunWithMutationPhase(ctx, playbook, inventory, variables, phase)
+		result, err = ansible.RunWithMutationPhaseAndIdentity(ctx, playbook, inventory, variables, phase, identityData)
 	} else {
-		result, err = ansible.RunLimitedWithMutationPhase(ctx, playbook, inventory, variables, limit, phase)
+		result, err = ansible.RunLimitedWithMutationPhaseAndIdentity(ctx, playbook, inventory, variables, limit, phase, identityData)
 	}
 	if result.Changed {
 		target := limit

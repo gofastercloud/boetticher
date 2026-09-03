@@ -536,7 +536,7 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 		}
 	})
 
-	result, err := run(context.Background(), filepath.Join("..", "..", "ansible", "site.yml"), inventoryPath, []byte("{}"), "lab-fw-01", PhaseFull)
+	result, err := run(context.Background(), filepath.Join("..", "..", "ansible", "site.yml"), inventoryPath, []byte("{}"), "lab-fw-01", PhaseFull, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -573,6 +573,52 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	}
 	if !strings.Contains(string(input), `"boetticher_deploy_phase": "full"`) {
 		t.Fatalf("Ansible variables did not contain the deployment phase: %s", input)
+	}
+}
+
+func TestRunWithIdentityUsesAndCleansTemporarySSHAgent(t *testing.T) {
+	tempDir := t.TempDir()
+	inventoryPath := filepath.Join(tempDir, "site", "generated", "ansible", "inventory.ini")
+	sshConfigPath := filepath.Join(tempDir, "site", "generated", "ssh", "boetticher.conf")
+	if err := os.MkdirAll(filepath.Dir(sshConfigPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sshConfigPath, []byte("Host lab-fw-01\n    HostName 192.0.2.10\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	identityPath := filepath.Join(tempDir, "identity")
+	stopPath := filepath.Join(tempDir, "agent-stopped")
+	argsPath := filepath.Join(tempDir, "ansible-args")
+	if err := os.WriteFile(filepath.Join(tempDir, "ssh-agent"), []byte("#!/bin/sh\nif [ \"$1\" = \"-s\" ]; then printf 'SSH_AUTH_SOCK=%s; export SSH_AUTH_SOCK;\\nSSH_AGENT_PID=4242; export SSH_AGENT_PID;\\n' \"$BOETTICHER_TEST_AGENT_SOCKET\"; else : > \"$BOETTICHER_TEST_AGENT_STOPPED\"; fi\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, "ssh-add"), []byte("#!/bin/sh\ncat > \"$BOETTICHER_TEST_AGENT_IDENTITY\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, "ansible-playbook"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$BOETTICHER_TEST_ANSIBLE_ARGS\"\ncat >/dev/null\nprintf '%s\\n' 'ok changed=0 unreachable=0 failed=0'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tempDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BOETTICHER_TEST_AGENT_SOCKET", filepath.Join(tempDir, "agent.sock"))
+	t.Setenv("BOETTICHER_TEST_AGENT_IDENTITY", identityPath)
+	t.Setenv("BOETTICHER_TEST_AGENT_STOPPED", stopPath)
+	t.Setenv("BOETTICHER_TEST_ANSIBLE_ARGS", argsPath)
+	if _, err := run(context.Background(), filepath.Join("..", "..", "ansible", "site.yml"), inventoryPath, []byte("{}"), "lab-fw-01", PhaseFull, []byte("temporary private key")); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := os.ReadFile(identityPath)
+	if err != nil || string(identity) != "temporary private key" {
+		t.Fatalf("temporary identity was not passed to ssh-add over stdin: err=%v data=%q", err, identity)
+	}
+	if _, err := os.Stat(stopPath); err != nil {
+		t.Fatalf("temporary ssh-agent was not stopped: %v", err)
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "-o IdentitiesOnly=no") || strings.Contains(string(args), "temporary private key") {
+		t.Fatalf("Ansible arguments did not select the temporary agent without exposing key material: %s", args)
 	}
 }
 

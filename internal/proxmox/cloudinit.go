@@ -20,9 +20,10 @@ func RenderFirewallCloudInit(guest GuestPlan) (CloudInitFiles, error) {
 	return renderFirewallCloudInit(guest, "")
 }
 
-// RenderFirewallCloudInitWithKey adds the deployment-time operator key to the
-// NoCloud user configuration. The key is transport state only; it is not part
-// of the firewall artifact or the canonical site model.
+// RenderFirewallCloudInitWithKey adds the durable operator bootstrap key to
+// the NoCloud user configuration. The key is transport state only; it is not
+// part of the firewall artifact or the canonical site model. Temporary Apply
+// authority is installed separately after the immutable plan is accepted.
 func RenderFirewallCloudInitWithKey(guest GuestPlan, operatorPublicKey string) (CloudInitFiles, error) {
 	if err := ValidatePublicKey(operatorPublicKey); err != nil {
 		return CloudInitFiles{}, err

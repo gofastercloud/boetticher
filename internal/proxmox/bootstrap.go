@@ -1061,6 +1061,10 @@ func normalizeGuestHostKey(value string) (string, error) {
 	return strings.Join(fields[:2], " "), nil
 }
 
+func removeTemporaryAuthorizedKeyCommand(publicKey string) string {
+	return "root_file=/root/.ssh/authorized_keys; root_tmp=/root/.ssh/authorized_keys.boetticher-cleanup; admin_file=/home/labadmin/.ssh/authorized_keys; admin_tmp=/home/labadmin/.ssh/authorized_keys.boetticher-cleanup; trap 'rm -f \"$root_tmp\" \"$admin_tmp\"' EXIT; remove_key() { file=\"$1\"; tmp=\"$2\"; owner=\"$3\"; group=\"$4\"; if [ -f \"$file\" ]; then if grep -Fvx -- " + shellQuote(publicKey) + " \"$file\" >\"$tmp\"; then install -m 600 -o \"$owner\" -g \"$group\" \"$tmp\" \"$file\"; else status=$?; [ \"$status\" -eq 1 ] || exit \"$status\"; rm -f \"$file\"; fi; fi; }; remove_key \"$root_file\" \"$root_tmp\" root root; remove_key \"$admin_file\" \"$admin_tmp\" labadmin labadmin"
+}
+
 // RevokeTemporaryRootAccess removes one exact deployment-only root SSH
 // identity from an owned host or guest. It never changes independent operator
 // recovery keys, root password state, or the host's root AllowUsers contract.
@@ -1075,7 +1079,7 @@ func RevokeTemporaryRootAccess(ctx context.Context, runner CommandRunner, addres
 	if err := validatePublicKey(publicKey); err != nil {
 		return fmt.Errorf("temporary root cleanup key: %w", err)
 	}
-	removeKey := "file=/root/.ssh/authorized_keys; tmp=/root/.ssh/authorized_keys.boetticher-cleanup; trap 'rm -f \"$tmp\"' EXIT; if [ -f \"$file\" ]; then if grep -Fvx -- " + shellQuote(publicKey) + " \"$file\" >\"$tmp\"; then install -m 600 -o root -g root \"$tmp\" \"$file\"; else status=$?; [ \"$status\" -eq 1 ] || exit \"$status\"; rm -f \"$file\"; fi; fi"
+	removeKey := removeTemporaryAuthorizedKeyCommand(publicKey)
 	command := "set -eu; " + removeKey
 	if host {
 		command += "; file=/etc/ssh/sshd_config.d/90-boetticher-jump.conf; grep -qxF 'AllowUsers root labadmin lab-jump lab-netprobe' \"$file\"; sshd -t"
@@ -1106,7 +1110,7 @@ func RevokeTemporaryRootAccessThroughHost(ctx context.Context, runner CommandRun
 	if err := validatePublicKey(publicKey); err != nil {
 		return fmt.Errorf("temporary guest cleanup key: %w", err)
 	}
-	guestCommand := "set -eu; file=/root/.ssh/authorized_keys; tmp=/root/.ssh/authorized_keys.boetticher-cleanup; trap 'rm -f \"$tmp\"' EXIT; if [ -f \"$file\" ]; then if grep -Fvx -- " + shellQuote(publicKey) + " \"$file\" >\"$tmp\"; then install -m 600 -o root -g root \"$tmp\" \"$file\"; else status=$?; [ \"$status\" -eq 1 ] || exit \"$status\"; rm -f \"$file\"; fi; fi"
+	guestCommand := "set -eu; " + removeTemporaryAuthorizedKeyCommand(publicKey)
 	var command string
 	switch kind {
 	case KindQEMU:

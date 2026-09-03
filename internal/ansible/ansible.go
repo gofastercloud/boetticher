@@ -429,7 +429,15 @@ func dynamicZoneNames(zones []dns.DynamicZone) []string {
 // exposed to the playbook. The phase is passed as extra-vars over stdin, not
 // as an argv value, so the command line remains free of configuration data.
 func RunWithMutationPhase(ctx context.Context, playbook, inventory string, variables []byte, phase string) (RunResult, error) {
-	return run(ctx, playbook, inventory, variables, "", phase)
+	return run(ctx, playbook, inventory, variables, "", phase, nil)
+}
+
+// RunWithMutationPhaseAndIdentity runs one bounded root convergence phase with
+// an operation-scoped private key held only by a short-lived local agent. The
+// key is never written to a file or placed in argv; the agent is destroyed
+// before the phase returns.
+func RunWithMutationPhaseAndIdentity(ctx context.Context, playbook, inventory string, variables []byte, phase string, identityData []byte) (RunResult, error) {
+	return run(ctx, playbook, inventory, variables, "", phase, identityData)
 }
 
 // RunExternal configures one external appliance through an operator-supplied
@@ -440,7 +448,7 @@ func RunExternal(ctx context.Context, playbook, inventory string, variables []by
 	if !safeInventoryIdentity(user) {
 		return RunResult{}, errors.New("external Ansible user must be one safe inventory identity")
 	}
-	return runWithSSHConfig(ctx, playbook, inventory, variables, "", PhaseFull, sshConfig, user)
+	return runWithSSHConfig(ctx, playbook, inventory, variables, "", PhaseFull, sshConfig, user, nil)
 }
 
 // RunLimitedWithMutationPhase is the phase-aware form used by tracked deploy
@@ -449,14 +457,21 @@ func RunLimitedWithMutationPhase(ctx context.Context, playbook, inventory string
 	if !safeInventoryIdentity(limit) {
 		return RunResult{}, errors.New("Ansible limit must be one safe inventory identity")
 	}
-	return run(ctx, playbook, inventory, variables, limit, phase)
+	return run(ctx, playbook, inventory, variables, limit, phase, nil)
 }
 
-func run(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string) (RunResult, error) {
-	return runWithSSHConfig(ctx, playbook, inventory, variables, limit, phase, generatedSSHConfigPath(inventory), "root")
+func RunLimitedWithMutationPhaseAndIdentity(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string, identityData []byte) (RunResult, error) {
+	if !safeInventoryIdentity(limit) {
+		return RunResult{}, errors.New("Ansible limit must be one safe inventory identity")
+	}
+	return run(ctx, playbook, inventory, variables, limit, phase, identityData)
 }
 
-func runWithSSHConfig(ctx context.Context, playbook, inventory string, variables []byte, limit, phase, sshConfig, user string) (RunResult, error) {
+func run(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string, identityData []byte) (RunResult, error) {
+	return runWithSSHConfig(ctx, playbook, inventory, variables, limit, phase, generatedSSHConfigPath(inventory), "root", identityData)
+}
+
+func runWithSSHConfig(ctx context.Context, playbook, inventory string, variables []byte, limit, phase, sshConfig, user string, identityData []byte) (result RunResult, resultErr error) {
 	var empty RunResult
 	if playbook == "" || inventory == "" || sshConfig == "" || user == "" {
 		return empty, errors.New("Ansible playbook, inventory, SSH configuration, and user are required")
@@ -472,7 +487,29 @@ func runWithSSHConfig(ctx context.Context, playbook, inventory string, variables
 	if err != nil {
 		return empty, err
 	}
-	args := []string{"-i", inventory, "--user", user, playbook, "--extra-vars", "@/dev/stdin", "--ssh-common-args", "-F " + sshConfig}
+	agentEnvironment := make(map[string]string)
+	stopAgent := func() error { return nil }
+	if len(identityData) > 0 {
+		var agentErr error
+		agentEnvironment, stopAgent, agentErr = startTemporarySSHAgent(identityData)
+		if agentErr != nil {
+			return empty, agentErr
+		}
+	}
+	defer func() {
+		if cleanupErr := stopAgent(); cleanupErr != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("stop temporary Ansible SSH agent: %w", cleanupErr))
+		}
+	}()
+	sshArgs := "-F " + sshConfig
+	if len(identityData) > 0 {
+		// The target inventory user is root and must use the temporary
+		// operation identity. IdentitiesOnly=no lets OpenSSH obtain that key
+		// from the agent while the generated bastion host block retains its
+		// durable, independently enrolled identity.
+		sshArgs += " -o IdentitiesOnly=no"
+	}
+	args := []string{"-i", inventory, "--user", user, playbook, "--extra-vars", "@/dev/stdin", "--ssh-common-args", sshArgs}
 	if limit != "" {
 		args = append(args, "--limit", limit)
 	}
@@ -481,6 +518,9 @@ func runWithSSHConfig(ctx context.Context, playbook, inventory string, variables
 	timingPath, timingCleanup := prepareTaskTiming(playbook)
 	defer timingCleanup()
 	command.Env = ansibleEnvironment(playbook, timingPath, phase)
+	for key, value := range agentEnvironment {
+		command.Env = setEnvironmentValue(command.Env, key, value)
+	}
 	var output boundedOutput
 	command.Stdout = &output
 	command.Stderr = &output
@@ -492,7 +532,7 @@ func runWithSSHConfig(ctx context.Context, playbook, inventory string, variables
 		Duration: time.Since(started), Success: err == nil, Changed: changed,
 	})
 	taskTimings, taskBatchTimings := readTaskTimings(timingPath)
-	result := RunResult{Changed: changed, TaskTimings: taskTimings, TaskBatchTimings: taskBatchTimings}
+	result = RunResult{Changed: changed, TaskTimings: taskTimings, TaskBatchTimings: taskBatchTimings}
 	if err != nil {
 		diagnostic := failureDiagnosticWithSupplement(output.Bytes(), output.DiagnosticBytes())
 		if diagnostic == "" {
@@ -501,6 +541,62 @@ func runWithSSHConfig(ctx context.Context, playbook, inventory string, variables
 		return result, fmt.Errorf("ansible-playbook failed: %w: %s", err, diagnostic)
 	}
 	return result, nil
+}
+
+func startTemporarySSHAgent(identityData []byte) (map[string]string, func() error, error) {
+	agent := exec.Command("ssh-agent", "-s")
+	output, err := agent.Output()
+	if err != nil {
+		return nil, func() error { return nil }, fmt.Errorf("start temporary Ansible SSH agent: %w", err)
+	}
+	environment, err := parseSSHAgentEnvironment(output)
+	if err != nil {
+		return nil, func() error { return nil }, err
+	}
+	stop := func() error {
+		kill := exec.Command("ssh-agent", "-k")
+		kill.Env = append(os.Environ(), "SSH_AUTH_SOCK="+environment["SSH_AUTH_SOCK"], "SSH_AGENT_PID="+environment["SSH_AGENT_PID"])
+		if output, err := kill.CombinedOutput(); err != nil {
+			return fmt.Errorf("ssh-agent cleanup failed: %w (%s)", err, strings.TrimSpace(string(output)))
+		}
+		return nil
+	}
+	add := exec.Command("ssh-add", "-")
+	add.Env = append(os.Environ(), "SSH_AUTH_SOCK="+environment["SSH_AUTH_SOCK"], "SSH_AGENT_PID="+environment["SSH_AGENT_PID"])
+	add.Stdin = bytes.NewReader(identityData)
+	if output, err := add.CombinedOutput(); err != nil {
+		_ = stop()
+		return nil, func() error { return nil }, fmt.Errorf("load temporary Ansible SSH identity: %w (%s)", err, strings.TrimSpace(string(output)))
+	}
+	return environment, stop, nil
+}
+
+func parseSSHAgentEnvironment(output []byte) (map[string]string, error) {
+	values := make(map[string]string, 2)
+	for _, line := range strings.Split(string(output), "\n") {
+		for _, key := range []string{"SSH_AUTH_SOCK", "SSH_AGENT_PID"} {
+			prefix := key + "="
+			if !strings.HasPrefix(line, prefix) {
+				continue
+			}
+			value := strings.SplitN(strings.TrimPrefix(line, prefix), ";", 2)[0]
+			if value == "" || strings.IndexFunc(value, func(r rune) bool {
+				return r == '\x00' || r == '\r' || r == '\n' || r == ' ' || r == '\t'
+			}) >= 0 {
+				return nil, errors.New("ssh-agent returned an unsafe environment value")
+			}
+			values[key] = value
+		}
+	}
+	if values["SSH_AUTH_SOCK"] == "" || values["SSH_AGENT_PID"] == "" {
+		return nil, errors.New("ssh-agent did not return SSH_AUTH_SOCK and SSH_AGENT_PID")
+	}
+	for _, r := range values["SSH_AGENT_PID"] {
+		if r < '0' || r > '9' {
+			return nil, errors.New("ssh-agent returned an invalid process id")
+		}
+	}
+	return values, nil
 }
 
 func phaseVariables(variables []byte, phase string) ([]byte, error) {

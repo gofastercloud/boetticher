@@ -959,7 +959,7 @@ func TestRevokeTemporaryRootAccessIsFixedAndIdempotent(t *testing.T) {
 			if !strings.Contains(runner.command, "AllowUsers root labadmin lab-jump lab-netprobe") {
 				t.Fatalf("host cleanup does not verify the persistent AllowUsers state: %s", runner.command)
 			}
-			for _, required := range []string{"authorized_keys.boetticher-cleanup", "grep -Fvx", "sshd -t"} {
+			for _, required := range []string{"authorized_keys.boetticher-cleanup", "/home/labadmin/.ssh/authorized_keys", "grep -Fvx", "sshd -t"} {
 				if !strings.Contains(runner.command, required) {
 					t.Fatalf("host cleanup does not remove the exact temporary key: missing %q in %s", required, runner.command)
 				}
@@ -970,7 +970,7 @@ func TestRevokeTemporaryRootAccessIsFixedAndIdempotent(t *testing.T) {
 				}
 			}
 		} else {
-			for _, required := range []string{"grep -Fvx --", "authorized_keys.boetticher-cleanup"} {
+			for _, required := range []string{"grep -Fvx --", "authorized_keys.boetticher-cleanup", "/home/labadmin/.ssh/authorized_keys"} {
 				if !strings.Contains(runner.command, required) {
 					t.Fatalf("guest cleanup does not remove only the injected key: missing %q in %s", required, runner.command)
 				}

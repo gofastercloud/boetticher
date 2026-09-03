@@ -110,7 +110,7 @@ func TestPublishedServicesActivateAtTheEndOfDNSModule(t *testing.T) {
 	}
 	text := string(data)
 	publicationActivation := strings.Index(text, `if module == "dns" && s.Gateway.Mode == model.GatewayModeManaged && len(firewallPlan.Publications) > 0`)
-	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report); err != nil`)
+	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report, temporaryPrivateKey); err != nil`)
 	if publicationActivation < 0 || allHostsConvergence < 0 || publicationActivation > allHostsConvergence {
 		t.Fatal("published services are not activated immediately after the DNS module")
 	}
@@ -123,7 +123,7 @@ func TestPublishedFirewallIsNotRepeatedInTheAllHostNetworkPhase(t *testing.T) {
 	}
 	text := string(data)
 	finalFirewall := strings.Index(text, `runtimeVariables["boetticher_skip_firewall"] = true`)
-	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report); err != nil`)
+	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report, temporaryPrivateKey); err != nil`)
 	if finalFirewall < 0 || allHostsConvergence < 0 || finalFirewall > allHostsConvergence {
 		t.Fatal("all-host network convergence does not skip the already published firewall")
 	}
@@ -135,7 +135,7 @@ func TestAllHostNetworkConvergenceFollowsRuntimeReadiness(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report); err != nil`)
+	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report, temporaryPrivateKey); err != nil`)
 	gatewayReadiness := strings.Index(text, `return verifyGatewayReadiness(ctx, firewallRunner, "10.10.99.1")`)
 	dnsReadiness := strings.Index(text, `return verifyDNSReadiness(ctx, guestRunner, guest.Address)`)
 	if allHostsConvergence < 0 || gatewayReadiness < 0 || dnsReadiness < 0 || gatewayReadiness > allHostsConvergence || dnsReadiness > allHostsConvergence {
@@ -600,6 +600,16 @@ func TestDeployAcquiresTemporaryRootOnlyAfterExactPlanAcceptance(t *testing.T) {
 	if !strings.Contains(text[acquire:], "temporaryPrivateKey") {
 		t.Fatal("temporary Apply identity is not retained for the bounded Apply lifecycle")
 	}
+	for _, required := range []string{
+		"proxmoxPlan.OperatorPublicKey = durableOperatorPublicKey",
+		"RenderFirewallCloudInitWithKey(guest, durableOperatorPublicKey)",
+		"firewallGuest, deploymentPublicKey",
+		"guest, deploymentPublicKey",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("deployment does not separate durable and temporary identities: missing %q", required)
+		}
+	}
 	journalKey := strings.Index(text, "operationState.TemporaryPublicKey = deploymentPublicKey")
 	journalGuests := strings.Index(text, "operationState.TemporaryCleanupGuests = cleanupGuests")
 	journalSave := -1
@@ -635,6 +645,24 @@ func TestTemporaryRootIdentityIsInMemoryAndScoped(t *testing.T) {
 	}
 	for index := range privateKey {
 		privateKey[index] = 0
+	}
+}
+
+func TestOperatorPublicKeyForSiteUsesDurablePublicIdentity(t *testing.T) {
+	dir := t.TempDir()
+	identity := filepath.Join(dir, "id_ed25519")
+	publicKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator"
+	if err := os.WriteFile(identity+".pub", []byte(publicKey+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := model.NewDefaultSite("installation", "age1example")
+	s.SSHIdentityFile = identity
+	got, err := operatorPublicKeyForSite(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != publicKey {
+		t.Fatalf("durable operator public key = %q, want %q", got, publicKey)
 	}
 }
 
