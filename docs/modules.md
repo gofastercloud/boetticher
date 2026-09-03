@@ -15,13 +15,14 @@ than downloaded at runtime, so `module list` always shows the complete menu.
 boetticher module list --site ./my-boetticher
 boetticher module show printer --site ./my-boetticher
 boetticher module configure printer --site ./my-boetticher
-boetticher deploy --site ./my-boetticher
+boetticher plan --site ./my-boetticher --live --json
+boetticher deploy --plan sha256:PLAN_DIGEST --site ./my-boetticher
 ```
 
-`module configure` saves settings in your site directory; `deploy` puts them to
-work. `module enable` and `module disable` are the convenient exceptions: once
-you confirm them, they run the deployment for you. Try `--dry-run` whenever you
-want a preview first.
+`module configure`, `module enable`, and `module disable` change the desired
+settings in your site directory; deployment remains a separate, deliberate
+step. Make a live plan after the change, then deploy the digest you reviewed.
+Try `--dry-run` whenever you want a preview without saving anything.
 
 <figure>
   <img class="section-art" src="images/build-bench.webp" alt="Illustrated compact server and little rack on a warm homelab workbench">
@@ -136,6 +137,18 @@ StreamDeck is a capability of a Boetticher companion device, not a Proxmox
 module. Attach the supported StreamDeck directly to the companion Pi and use
 `boetticher companion setup` and `boetticher companion status`; the companion
 receives no Proxmox credentials or USB passthrough configuration.
+
+On a 0.4 site, `boetticher companion migrate` can move the exact old
+`lab-streamdeck-01` guest to this arrangement. A fresh 0.5 site has no such
+guest to clean up.
+
+After the platform has been deployed and the Pi's host key is enrolled, set up
+the companion from the signed release you imported during bootstrap:
+
+```text
+boetticher companion setup 192.0.2.50 --site ./my-boetticher --identity-file ~/.ssh/id_ed25519 --known-hosts ./my-boetticher/generated/ssh/companion_known_hosts --confirm
+boetticher companion status 192.0.2.50 --site ./my-boetticher
+```
 
 ### Names, dashboards, and logs
 

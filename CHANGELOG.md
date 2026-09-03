@@ -6,6 +6,12 @@ guide lives at [gofastercloud.github.io/boetticher](https://gofastercloud.github
 
 ## 0.5.0 — 2026-09-03
 
+- Make live deployment consume an authenticated release bundle and an
+  immutable plan digest, while keeping site edits and module changes separate
+  from deployment.
+- Move StreamDeck from the Proxmox module list to the external companion Pi;
+  existing 0.4 installations have an explicit migration path for the old
+  `lab-streamdeck-01` guest.
 - Replace the sprawling guide collection with a small GitHub Pages site, a
   short README, and a generated command menu.
 - Add the optional AirVPN transit module for explicit module egress.

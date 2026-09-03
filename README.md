@@ -15,6 +15,10 @@ VMs and Linux Containers remain yours.
 The name is a tiny chemistry-show wink. The result is less *Breaking Bad* and
 more *breaking out the good gear*.
 
+Version 0.5.0 keeps the everyday rhythm small: import a signed release bundle,
+make a live plan, deploy that exact plan, and check the lab. StreamDeck now
+lives on the external companion Pi rather than in a Proxmox guest.
+
 ## Start here
 
 The [Boetticher guide](https://gofastercloud.github.io/boetticher/) is the nice

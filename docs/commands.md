@@ -7,7 +7,7 @@ description: A generated menu of every public Boetticher command form.
 
 # Command reference
 
-This page is generated from the same usage menu as `boetticher help`. Most days you will use the plan, deploy, status, and module commands. Add `--help` to any command for the friendly, full explanation.
+This page is generated from the same usage menu as `boetticher help`. Most days you will change the site, make a live plan, deploy its digest, and check status. Add `--help` to any command for the friendly, full explanation.
 
 ## The usual loop
 
@@ -43,7 +43,6 @@ boetticher bootstrap-endpoint show|set ADDRESS [--site DIR]
 boetticher network trunk status|attach|detach [INTERFACE] [--site DIR] [--confirm] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher network test [--site DIR] [--zones ZONE,...] [--capture] [--airvpn] [--cleanup-only] [--json] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
 boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]
-boetticher companion setup|status|migrate ...
 boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]
 boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]
 boetticher firewall status|show|diff|counters|logs|verify|rule add|list|remove [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N] [--source SOURCE] [--destination DESTINATION] [--vmid VMID] [--protocol PROTOCOL] [--ports PORTS] [--id ID] [--dry-run] [--confirm]

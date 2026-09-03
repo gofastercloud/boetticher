@@ -53,7 +53,6 @@ var advancedCommandSpecs = []commandSpec{
 	{Usage: "boetticher network trunk status|attach|detach [INTERFACE] [--site DIR] [--confirm] [--live] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
 	{Usage: "boetticher network test [--site DIR] [--zones ZONE,...] [--capture] [--airvpn] [--cleanup-only] [--json] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
 	{Usage: "boetticher hardware usb list|status|bind|unbind [MODULE REQUIREMENT [PORT]] [--site DIR] [--live] [--confirm] [--age-identity PATH] [--proxmox-ca PATH] [--insecure]"},
-	{Usage: "boetticher companion setup|status|migrate ..."},
 	{Usage: "boetticher pki client create|export|revoke NAME [--site DIR] [--output PATH] [--age-identity PATH]"},
 	{Usage: "boetticher pki trust export [--site DIR] [--output PATH| -] [--age-identity PATH]"},
 	{Usage: "boetticher firewall status|show|diff|counters|logs|verify|rule add|list|remove [--site DIR] [--live] [--json] [--format FORMAT] [--zone ZONE] [--limit N] [--source SOURCE] [--destination DESTINATION] [--vmid VMID] [--protocol PROTOCOL] [--ports PORTS] [--id ID] [--dry-run] [--confirm]"},
@@ -286,7 +285,7 @@ func CommandReferenceMarkdown() string {
 	var document strings.Builder
 	document.WriteString("---\nlayout: default\ntitle: Command reference\nsection: commands\ndescription: A generated menu of every public Boetticher command form.\n---\n\n")
 	document.WriteString("# Command reference\n\n")
-	document.WriteString("This page is generated from the same usage menu as `boetticher help`. Most days you will use the plan, deploy, status, and module commands. Add `--help` to any command for the friendly, full explanation.\n\n")
+	document.WriteString("This page is generated from the same usage menu as `boetticher help`. Most days you will change the site, make a live plan, deploy its digest, and check status. Add `--help` to any command for the friendly, full explanation.\n\n")
 	document.WriteString("## The usual loop\n\n```text\nboetticher bundle import ./boetticher-0.5.0.tar.gz --site ./my-boetticher\nboetticher plan --site ./my-boetticher --live --json\nboetticher deploy --plan sha256:... --site ./my-boetticher\nboetticher status --site ./my-boetticher --live\n```\n\n")
 	document.WriteString("## Full command menu\n\n```text\n")
 	for _, spec := range advancedCommandSpecs {

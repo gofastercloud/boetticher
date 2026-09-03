@@ -30,6 +30,19 @@ Boetticher has opinions on purpose. A fixed shape means less time wondering what
 | **VLAN 40 SANDBOX** | `10.10.40.0/24` | Disposable devices and experiments. |
 | **VLAN 99 MGMT** | `10.10.99.0/24` | Proxmox and the gateway’s management side. |
 
+### The 0.5.0 switch answer
+
+The simplification did not reduce or renumber the network. The fixed map is
+still VLANs 5, 10, 20, 30, 40, and 99, with the same names and subnets shown
+above. If you are using the default virtual-only mode, `vmbr1` has no physical
+member and your switch can stay exactly as it is.
+
+If you later choose a physical trunk, use a separate NIC and a VLAN-aware
+switch port that permits those same six tagged VLANs. Keep the existing HOME
+connection on `vmbr0`; it is not part of the internal trunk. The StreamDeck
+move to the companion Pi is a USB and service-boundary change, not a switch or
+VLAN change.
+
 ## The platform guests
 
 The names are intentionally boring enough to remember at 2 a.m.

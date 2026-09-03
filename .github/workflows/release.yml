@@ -74,7 +74,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            curl jq libguestfs-tools mmdebstrap qemu-utils zstd
+            debian-archive-keyring curl jq libguestfs-tools mmdebstrap qemu-utils zstd
 
       - name: Run the complete source and contract gate
         run: make ci

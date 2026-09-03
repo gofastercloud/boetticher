@@ -9,7 +9,12 @@ description: Set up a fresh Boetticher lab, then settle into the day-to-day rhyt
 
 Boetticher starts from a fresh, supported Proxmox VE installation on amd64 hardware. You will also need a macOS or Linux controller with the Boetticher binary, SSH, and Ansible Core; the current HOME-side address for Proxmox; its root CA certificate; and a private place for your site directory.
 
-The default setup needs one Ethernet port. A physical VLAN trunk or an external firewall needs a second port and a VLAN-aware switch—great future experiments, but not a requirement for day one.
+The default virtual-only setup needs one Ethernet port. Version 0.5.0 does not remove or renumber any VLANs, and it does not ask you to reconfigure the switch for a normal fresh install. A physical VLAN trunk or an external firewall needs a second port and a VLAN-aware switch when you are ready for that bigger experiment.
+
+The 0.5.0 rhythm is pleasantly deliberate: import the signed release bundle,
+make a live plan, deploy the exact digest you reviewed, then check the lab.
+StreamDeck is now an external companion-Pi capability, so a new install does
+not create a StreamDeck guest in Proxmox.
 
 ## The happy path
 
@@ -43,7 +48,7 @@ Once the lab is up, the regular loop stays boring in the best possible way:
 boetticher plan --site ./my-boetticher --live --json
 boetticher deploy --plan sha256:PLAN_DIGEST --site ./my-boetticher
 boetticher status --site ./my-boetticher --live
-boetticher diagnose --site ./my-boetticher --live
+boetticher doctor --site ./my-boetticher --live
 ```
 
 Without <code>--live</code>, a command reads the site directory on your controller. With it, the command also asks the running lab what is happening. <code>status --live</code> is the quick “is the lab okay?” view; <code>doctor --live</code> is the useful “what should I do next?” companion.
@@ -53,8 +58,12 @@ To add something new, configure it first and deploy when you like the plan:
 ```text
 boetticher module list --site ./my-boetticher
 boetticher module configure gatus --site ./my-boetticher
-boetticher deploy --site ./my-boetticher
+boetticher plan --site ./my-boetticher --live --json
+boetticher deploy --plan sha256:PLAN_DIGEST --site ./my-boetticher
 ```
+
+Configuration changes stay in the site until you explicitly deploy them. Use
+`--dry-run` when you would like a preview without saving anything.
 
 The [modules guide](modules.html) is where the interesting extras live. The [command menu](commands.html) is there whenever a flag escapes your brain.
 

@@ -29,7 +29,7 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
   </article>
   <article class="card">
     <h3>A small daily loop</h3>
-    <p>Change your saved settings, preview with <code>deploy --dry-run</code>, deploy, then check <code>status</code>. No always-on controller lurking in the corner.</p>
+    <p>Change your saved settings, make a live plan, deploy its digest, then check <code>status</code>. No always-on controller lurking in the corner.</p>
   </article>
   <article class="card">
     <h3>Your workloads stay yours</h3>
@@ -55,6 +55,10 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
 
 <aside class="callout">
   <p><strong>Good fit:</strong> a fresh, supported Proxmox VE host on amd64 hardware and a desire for a home lab with less plumbing homework. One Ethernet port is enough to begin; a second port and a VLAN-aware switch unlock a physical trunk or an external firewall later.</p>
+</aside>
+
+<aside class="callout">
+  <p><strong>The pleasantly boring 0.5.0 network answer:</strong> the simplification keeps all six zones and their existing numbers—VLANs 5, 10, 20, 30, 40, and 99. The default virtual-only setup needs no switch reconfiguration; a physical trunk is still an optional later step.</p>
 </aside>
 
 <aside class="callout">
