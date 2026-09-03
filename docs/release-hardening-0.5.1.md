@@ -130,6 +130,14 @@ active, but still contains the prior six-guest deployment: VMIDs 100, 110,
 111, 120, 130, and 140. That is not a clean 0.5.1 installation. The physical
 bridges and internal management route are present.
 
+The same host is not currently safe for further qualification: the current
+kernel journal reports recurring write I/O failures on the 2 TB USB-backed
+`/dev/sda` data disk, marks the device offline, and propagates buffer errors
+through the legacy guest volumes. The native builder uses the separate 1 TB
+`/dev/sdb` disk; its completed `image-base` build passed, but the subsequent
+multi-artifact build was stopped when the data-disk failures were observed.
+No repair or reinitialization of the data disk has been attempted.
+
 The Companion reports `eth0` on SERVERS, `wlan0` as the HOME default route,
 NetworkManager active, and the StreamDeck service active. Its kiosk and Pulse
 agent services are not active in this prequalification state. No 0.5.1 source
