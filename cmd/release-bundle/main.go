@@ -53,14 +53,11 @@ func main() {
 		if err != nil {
 			fatal("resolve %s artifact: %v", definition.Name, err)
 		}
-		artifactPath := filepath.Join(*artifactRoot, artifact.Name, artifactFilename(artifact))
-		evidence, err := artifacts.LoadEvidence(*siteDir, artifact.Name)
+		resolvedArtifact, evidence, err := artifacts.ResolveArtifactEvidence(*siteDir, artifact)
 		if err != nil {
-			fatal("load %s qualification evidence: %v", artifact.Name, err)
+			fatal("resolve %s qualification evidence: %v", artifact.Name, err)
 		}
-		if !evidence.Qualified {
-			fatal("artifact %s is not qualified", artifact.Name)
-		}
+		artifactPath := filepath.Join(*artifactRoot, resolvedArtifact.Name, artifactFilename(resolvedArtifact))
 		qualificationFiles := map[string]string{}
 		for _, required := range []struct {
 			name   string
@@ -73,12 +70,12 @@ func main() {
 			{name: "smoke.txt", digest: evidence.SmokeReportSHA256},
 		} {
 			if err := addQualificationFile(qualificationFiles, artifact.Name, required.name, required.digest, *artifactRoot); err != nil {
-				fatal("artifact %s: %v", artifact.Name, err)
+				fatal("artifact %s: %v", resolvedArtifact.Name, err)
 			}
 		}
 		inputs = append(inputs, artifacts.ReleaseInput{
-			Artifact: artifact, ArtifactPath: artifactPath,
-			EvidencePath: artifacts.EvidencePath(*siteDir, artifact.Name), QualificationFiles: qualificationFiles,
+			Artifact: resolvedArtifact, ArtifactPath: artifactPath,
+			EvidencePath: artifacts.EvidencePath(*siteDir, resolvedArtifact.Name), QualificationFiles: qualificationFiles,
 		})
 	}
 	manifest, err := artifacts.BuildReleaseBundleWithMetadataAndCompanion(*output, artifacts.ReleaseBuildMetadata{
