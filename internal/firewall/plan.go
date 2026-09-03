@@ -1112,6 +1112,9 @@ func resolveDestinationHostSets(rules []PolicyRule, lookup func(string) ([]net.I
 			if ipv4 == nil {
 				continue
 			}
+			if ipv4.IsPrivate() || ipv4.IsLoopback() || ipv4.IsLinkLocalUnicast() || ipv4.IsUnspecified() || ipv4.IsMulticast() || !ipv4.IsGlobalUnicast() {
+				return nil, fmt.Errorf("HOLD: endpoint %s resolved to a non-public IPv4 address", host)
+			}
 			address := ipv4.String()
 			if _, ok := seen[address]; ok {
 				continue

@@ -370,6 +370,30 @@ func TestEndpointResolutionFailsClosed(t *testing.T) {
 	}
 }
 
+func TestEndpointResolutionRejectsPrivateAddress(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("private-endpoint", "age1privateendpoint", model.GatewayModeManaged))
+	enabled := true
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
+		Enabled:   &enabled,
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key"}},
+		Models:    []model.BifrostModelConfig{{Alias: "selected", Upstream: "provider", Model: "provider/model"}},
+	}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = renderNFTWithResolver(plan, func(string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("10.10.20.1")}, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "non-public IPv4") {
+		t.Fatalf("private endpoint address was accepted: %v", err)
+	}
+}
+
 func TestQualifiedModuleLoggingIntentResolvesCollector(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	enabled := true
