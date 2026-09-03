@@ -155,6 +155,18 @@ func TestBootstrapAddressRequiresCanonicalIPv4(t *testing.T) {
 	}
 }
 
+func TestInstallationIDIsSafeForRuntimePaths(t *testing.T) {
+	for _, installationID := range []string{"../escape", "/absolute", "with/slash", ""} {
+		site := NewDefaultSite(installationID, "age1example")
+		if err := site.Validate(); err == nil {
+			t.Fatalf("unsafe installation ID %q was accepted", installationID)
+		}
+	}
+	if err := NewDefaultSite("installation-01", "age1example").Validate(); err != nil {
+		t.Fatalf("safe installation ID was rejected: %v", err)
+	}
+}
+
 func TestExternalGatewayOmitsManagedFirewall(t *testing.T) {
 	site := NewSite("installation", "age1example", GatewayModeExternal)
 	if err := site.Validate(); err != nil {

@@ -190,6 +190,68 @@ func TestQualifiedArtifactCacheJourneys(t *testing.T) {
 	}
 }
 
+func TestResolveArtifactEvidenceRejectsAbsolutePathOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	external := t.TempDir()
+	artifact, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactPath := filepath.Join(external, "artifact.bin")
+	if err := os.WriteFile(artifactPath, []byte("qualified appliance"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := EvidenceForFile(artifactPath, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = artifactPath
+	evidence = completeQualificationEvidence(t, evidence)
+	evidence, err = QualifyEvidence(evidence, ScanSummary{Completed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteEvidence(root, artifact.Name, evidence); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveArtifactEvidence(root, artifact); err == nil || !strings.Contains(err.Error(), "escapes evidence root") {
+		t.Fatalf("absolute artifact path outside root was accepted: %v", err)
+	}
+}
+
+func TestResolveArtifactEvidenceRejectsSymlinkedPathComponent(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	artifact, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactPath := filepath.Join(outside, "artifact.bin")
+	if err := os.WriteFile(artifactPath, []byte("qualified appliance"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "linked")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := EvidenceForFile(artifactPath, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = filepath.Join(link, "artifact.bin")
+	evidence = completeQualificationEvidence(t, evidence)
+	evidence, err = QualifyEvidence(evidence, ScanSummary{Completed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteEvidence(root, artifact.Name, evidence); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveArtifactEvidence(root, artifact); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("symlinked artifact path component was accepted: %v", err)
+	}
+}
+
 func TestResolveArtifactEvidenceRejectsChangedQualificationInputs(t *testing.T) {
 	root := t.TempDir()
 	artifactPath := filepath.Join(root, "artifact.bin")

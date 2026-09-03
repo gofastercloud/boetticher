@@ -191,13 +191,17 @@ func newClient(config ClientConfig) (*Client, error) {
 		}
 		transport.TLSClientConfig.Certificates = []tls.Certificate{certificate}
 	}
-	httpClient := config.HTTP
-	if httpClient == nil {
+	var httpClient *http.Client
+	if config.HTTP == nil {
 		timeout := config.Timeout
 		if timeout == 0 {
 			timeout = 30 * time.Second
 		}
-		httpClient = &http.Client{Transport: transport, Timeout: timeout}
+		httpClient = &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: rejectPulseRedirects}
+	} else {
+		clientCopy := *config.HTTP
+		clientCopy.CheckRedirect = rejectPulseRedirects
+		httpClient = &clientCopy
 	}
 	if httpClient.Jar == nil {
 		jar, jarErr := cookiejar.New(nil)
@@ -207,6 +211,10 @@ func newClient(config ClientConfig) (*Client, error) {
 		httpClient.Jar = jar
 	}
 	return &Client{baseURL: baseURL, http: httpClient}, nil
+}
+
+func rejectPulseRedirects(_ *http.Request, _ []*http.Request) error {
+	return errors.New("Pulse HTTP redirects are disabled")
 }
 
 func normalizeBaseURL(value string) (string, error) {

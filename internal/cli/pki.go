@@ -44,6 +44,9 @@ func runPKI(args []string, out io.Writer) error {
 	if err := fs.Parse(args[3:]); err != nil {
 		return err
 	}
+	if err := pki.ValidateClientName(name); err != nil {
+		return err
+	}
 	s, err := site.Load(*siteDir)
 	if err != nil {
 		return err
@@ -87,11 +90,11 @@ func runPKI(args []string, out io.Writer) error {
 }
 
 func exportClient(runtimeDir, output string, out io.Writer) error {
-	key, err := os.ReadFile(filepath.Join(runtimeDir, "client.key.pem"))
+	key, err := pathguard.ReadFile(filepath.Join(runtimeDir, "client.key.pem"))
 	if err != nil {
 		return fmt.Errorf("read client private key: %w", err)
 	}
-	cert, err := os.ReadFile(filepath.Join(runtimeDir, "chain.crt.pem"))
+	cert, err := pathguard.ReadFile(filepath.Join(runtimeDir, "chain.crt.pem"))
 	if err != nil {
 		return fmt.Errorf("read client certificate chain: %w", err)
 	}

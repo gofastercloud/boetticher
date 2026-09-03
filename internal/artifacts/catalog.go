@@ -161,18 +161,23 @@ func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artif
 	if evidence.ArtifactPath == "" {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s qualification evidence has no artifact path", requested.Name)
 	}
-	if !filepath.IsAbs(evidence.ArtifactPath) {
-		root, err := filepath.Abs(root)
-		if err != nil {
-			return model.Artifact{}, Evidence{}, fmt.Errorf("resolve artifact evidence root: %w", err)
-		}
-		path := filepath.Join(root, evidence.ArtifactPath)
-		relative, err := filepath.Rel(root, path)
-		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s path escapes evidence root", requested.Name)
-		}
-		evidence.ArtifactPath = path
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("resolve artifact evidence root: %w", err)
 	}
+	path := evidence.ArtifactPath
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, path)
+	}
+	path = filepath.Clean(path)
+	relative, err := filepath.Rel(root, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s path escapes evidence root", requested.Name)
+	}
+	if err := pathguard.ValidateNoSymlinkComponents(path); err != nil {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s path is not controller-owned: %w", requested.Name, err)
+	}
+	evidence.ArtifactPath = path
 	if err := validateQualificationDigests(evidence); err != nil {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s qualification evidence is incomplete: %w", requested.Name, err)
 	}

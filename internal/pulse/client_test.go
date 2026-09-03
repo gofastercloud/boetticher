@@ -129,6 +129,21 @@ func TestReadAPIRejectsMissingTokenAndMalformedResponses(t *testing.T) {
 	}
 }
 
+func TestPulseClientRejectsHTTPRedirects(t *testing.T) {
+	client, err := NewReadClient(ClientConfig{
+		BaseURL: "https://monitor.example.test", APIToken: "read-token",
+		HTTP: &http.Client{Transport: fakeTransport(func(r *http.Request) (*http.Response, error) {
+			return fakeResponse(r, http.StatusFound, "redirect", map[string]string{"Location": "https://other.example.test/api/health"}), nil
+		})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Health(context.Background()); err == nil || !strings.Contains(err.Error(), "redirects are disabled") {
+		t.Fatalf("Pulse redirect was followed or hidden: %v", err)
+	}
+}
+
 func TestCustomHTTPClientCannotOverrideExplicitTLSConfiguration(t *testing.T) {
 	for _, config := range []ClientConfig{
 		{CAPEM: "custom-ca", HTTP: &http.Client{}},

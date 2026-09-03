@@ -30,3 +30,11 @@ func TestRevokeClientUsesDurableMetadataWhenRuntimeCertificateIsMissing(t *testi
 		t.Fatalf("revocation record did not use durable certificate serial: %s", data)
 	}
 }
+
+func TestPKIRejectsUnsafeClientNameBeforeLoadingSite(t *testing.T) {
+	for _, name := range []string{"../outside", "/absolute", "with/slash"} {
+		if err := runPKI([]string{"client", "export", name, "--site", filepath.Join(t.TempDir(), "missing")}, &bytes.Buffer{}); err == nil {
+			t.Fatalf("unsafe client name %q was accepted", name)
+		}
+	}
+}
