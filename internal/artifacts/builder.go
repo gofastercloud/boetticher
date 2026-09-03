@@ -382,7 +382,7 @@ func extractArchiveReader(reader io.Reader, root string, allowed func(string) bo
 		}
 		totalBytes += header.Size
 		clean := path.Clean(header.Name)
-		if !allowed(clean) {
+		if header.Name == "" || clean != header.Name || strings.HasPrefix(clean, "/") || strings.Contains(clean, "\\") || strings.ContainsRune(clean, '\x00') || !allowed(clean) {
 			return fmt.Errorf("%s archive contains unexpected path %q", label, header.Name)
 		}
 		target := filepath.Join(root, filepath.FromSlash(clean))

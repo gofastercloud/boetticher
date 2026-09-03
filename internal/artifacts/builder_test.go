@@ -172,6 +172,18 @@ func TestExtractSourceArchiveReaderAcceptsProvisioningTreesAndRejectsArtifacts(t
 	if err := ExtractSourceArchiveReader(bytes.NewReader(invalid.Bytes()), t.TempDir()); err == nil {
 		t.Fatal("source extractor accepted a generated artifact path")
 	}
+
+	var traversal bytes.Buffer
+	traversalWriter := tar.NewWriter(&traversal)
+	if err := traversalWriter.WriteHeader(&tar.Header{Name: "ansible/../ansible/site.yml", Mode: 0o600, Size: 0}); err != nil {
+		t.Fatal(err)
+	}
+	if err := traversalWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := ExtractSourceArchiveReader(bytes.NewReader(traversal.Bytes()), t.TempDir()); err == nil {
+		t.Fatal("source extractor accepted a non-canonical path")
+	}
 }
 
 func TestBuildSourceArchiveExcludesSiteSecrets(t *testing.T) {
