@@ -239,7 +239,7 @@ func TestStableBaseTasksSkipServicesButFinalTasksRemain(t *testing.T) {
 		"Disable the restricted Chrony service in appliances",
 		"Configure appliances to use the platform DNS pair",
 		"Write bounded local journald configuration",
-		"Generate endpoint-local logging CSR",
+		"Issue and renew the endpoint-local logging client certificate from Smallstep",
 		"Install the asynchronous journal-upload configuration skeleton",
 		"Install bounded journal-upload retry policy",
 	} {
@@ -257,10 +257,7 @@ func TestStableBaseTasksSkipServicesButFinalTasksRemain(t *testing.T) {
 			t.Fatalf("runtime base task %q is not available outside the services phase", name)
 		}
 	}
-	for _, name := range []string{
-		"Install the controller-signed endpoint journal certificate",
-		"Enable asynchronous journal upload after endpoint certificate installation",
-	} {
+	for _, name := range []string{"Enable asynchronous journal upload after endpoint certificate installation"} {
 		block := ansibleTaskBlock(text, name)
 		if block == "" || strings.Contains(block, "boetticher_deploy_phase | default('full') != 'services'") {
 			t.Fatalf("final base task %q was incorrectly skipped from the services phase", name)
@@ -1082,7 +1079,7 @@ func TestLoggingUploadKeyIsReadableByItsServiceGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "Create endpoint-local logging identity directory") || !strings.Contains(text, "group: systemd-journal\n    mode: '0750'") || !strings.Contains(text, "Allow the upload service to read its private key") || !strings.Contains(text, "group: systemd-journal\n    mode: '0640'") {
+	if !strings.Contains(text, "Create endpoint-local logging identity directory") || !strings.Contains(text, "group: systemd-journal\n    mode: '0750'") || !strings.Contains(text, "Issue and renew the endpoint-local logging client certificate from Smallstep") || !strings.Contains(text, "step_ca_endpoint_key_group: systemd-journal") || !strings.Contains(text, "step_ca_endpoint_key_mode: '0640'") {
 		t.Fatal("journal upload private keys are not readable by the systemd-journal service group")
 	}
 }
@@ -2081,7 +2078,7 @@ func TestLoggingUploadRetainsClientIdentityAndPulseWritesUseScopedTokens(t *test
 	for _, required := range []string{
 		"set $boetticher_logging_client_allowed 0;",
 		"logging_upload_configs.keys() | sort",
-		"CN=client-{{ endpoint }}.{{ domain }},O=boetticher",
+		`CN=client-{{ endpoint | regex_escape }}\\.{{ domain | regex_escape }}(?:,O=boetticher)?`,
 		"if ($boetticher_logging_client_allowed = 0) { return 403; }",
 	} {
 		if !strings.Contains(loggingText, required) {

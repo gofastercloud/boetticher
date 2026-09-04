@@ -34,25 +34,6 @@ func signOrReuseServerCertificate(authority pki.Authority, csrPEM, csrDir, cache
 	return certificate, nil
 }
 
-func signOrReuseEndpointClientCertificate(authority pki.Authority, csrPEM, csrDir, cacheName, name, domain string) (pki.ClientCertificate, error) {
-	if err := pki.ValidateClientName(cacheName); err != nil {
-		return pki.ClientCertificate{}, fmt.Errorf("validate certificate cache name: %w", err)
-	}
-	cachePath := managedCertificateCachePath(csrDir, cacheName)
-	if cached, err := pathguard.ReadFileLimited(cachePath, maxManagedCertificateCacheBytes); err == nil {
-		if certificate, validationErr := pki.ValidateClientCertificate(authority, string(cached), csrPEM, name, domain, time.Now().UTC()); validationErr == nil {
-			return certificate, nil
-		}
-	}
-
-	certificate, err := pki.SignClientCSR(authority, csrPEM, name, domain, time.Now().UTC())
-	if err != nil {
-		return pki.ClientCertificate{}, err
-	}
-	persistManagedCertificateCache(cachePath, certificate.ChainPEM)
-	return certificate, nil
-}
-
 func signOrReuseServiceClientCertificate(authority pki.Authority, csrPEM, csrDir, cacheName, identity string) (pki.ClientCertificate, error) {
 	if err := pki.ValidateClientName(cacheName); err != nil {
 		return pki.ClientCertificate{}, fmt.Errorf("validate certificate cache name: %w", err)

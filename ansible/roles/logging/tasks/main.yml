@@ -187,7 +187,7 @@
           ssl_protocols TLSv1.2 TLSv1.3;
           set $boetticher_logging_client_allowed 0;
       {% for endpoint in logging_upload_configs.keys() | sort %}
-          if ($ssl_client_s_dn = "CN=client-{{ endpoint }}.{{ domain }},O=boetticher") { set $boetticher_logging_client_allowed 1; }
+          if ($ssl_client_s_dn ~ "^CN=client-{{ endpoint | regex_escape }}\\.{{ domain | regex_escape }}(?:,O=boetticher)?$") { set $boetticher_logging_client_allowed 1; }
       {% endfor %}
           if ($boetticher_logging_client_allowed = 0) { return 403; }
           location = /upload {

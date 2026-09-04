@@ -186,42 +186,35 @@
     - inventory_hostname in logging_upload_configs
     - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
 
-- name: Generate endpoint-local logging private key
-  ansible.builtin.command:
-    argv: [openssl, genpkey, -algorithm, EC, -pkeyopt, ec_paramgen_curve:P-256, -out, "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key"]
-  args:
-    creates: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key"
+- name: Issue and renew the endpoint-local logging client certificate from Smallstep
+  ansible.builtin.include_tasks: ../../tasks/step-ca-endpoint.yml
+  vars:
+    step_ca_endpoint_name: "logging {{ inventory_hostname }}"
+    step_ca_endpoint_subject: "client-{{ inventory_hostname }}.{{ domain }}"
+    step_ca_endpoint_sans: []
+    step_ca_endpoint_root_path: /var/lib/boetticher/identity/logging/step-ca-root.crt
+    step_ca_endpoint_intermediate_path: /var/lib/boetticher/identity/logging/step-ca-intermediate.crt
+    step_ca_endpoint_certificate_path: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.crt"
+    step_ca_endpoint_key_path: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key"
+    step_ca_endpoint_marker_path: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.step-ca"
+    step_ca_endpoint_renewal_script: "/usr/local/sbin/boetticher-renew-logging-{{ inventory_hostname }}"
+    step_ca_endpoint_renewal_service: "/etc/systemd/system/boetticher-renew-logging-{{ inventory_hostname }}.service"
+    step_ca_endpoint_renewal_timer: "/etc/systemd/system/boetticher-renew-logging-{{ inventory_hostname }}.timer"
+    step_ca_endpoint_reload_service: systemd-journal-upload
+    step_ca_endpoint_write_paths: /var/lib/boetticher/identity/logging /run
+    step_ca_endpoint_certificate_group: systemd-journal
+    step_ca_endpoint_certificate_mode: '0640'
+    step_ca_endpoint_key_group: systemd-journal
+    step_ca_endpoint_key_mode: '0640'
   when:
     - inventory_hostname in logging_upload_configs
     - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
 
-- name: Allow the upload service to read its private key
-  ansible.builtin.file:
-    path: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key"
-    owner: root
-    group: systemd-journal
-    mode: '0640'
-  when:
-    - inventory_hostname in logging_upload_configs
-    - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
-
-- name: Generate endpoint-local logging CSR
-  ansible.builtin.command:
-    argv: [openssl, req, -new, -sha256, -key, "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.key", -subj, "/CN=client-{{ inventory_hostname }}.{{ domain }}", -out, "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.csr"]
-  args:
-    creates: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.csr"
-  when:
-    - inventory_hostname in logging_upload_configs
-    - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
-
-- name: Fetch endpoint-local logging CSR for controller signing
-  ansible.builtin.fetch:
-    src: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.csr"
-    dest: "{{ pki_csr_output_dir }}/logging-{{ inventory_hostname }}.csr.pem"
-    flat: true
-  when:
-    - inventory_hostname in logging_upload_configs
-    - pki_bootstrap_phase | default(false) | bool
+- name: Check whether the endpoint-local logging certificate is ready
+  ansible.builtin.stat:
+    path: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.crt"
+  register: logging_client_certificate_ready
+  when: inventory_hostname in logging_upload_configs
 
 - name: Install the platform CA for endpoint journal upload
   ansible.builtin.copy:
@@ -233,19 +226,6 @@
   when:
     - inventory_hostname in logging_upload_configs
     - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
-
-- name: Install the controller-signed endpoint journal certificate
-  ansible.builtin.copy:
-    content: "{{ logging_client_certificates[inventory_hostname] }}"
-    dest: "/var/lib/boetticher/identity/logging/{{ inventory_hostname }}.crt"
-    owner: root
-    group: root
-    mode: '0644'
-  no_log: true
-  when:
-    - inventory_hostname in logging_upload_configs
-    - logging_client_certificates[inventory_hostname] | default('') | length > 0
-    - boetticher_deploy_phase | default('full') in ['full', 'bootstrap', 'services']
 
 - name: Install the asynchronous journal-upload configuration skeleton
   ansible.builtin.copy:
@@ -290,7 +270,7 @@
     state: started
   when:
     - inventory_hostname in logging_upload_configs
-    - logging_client_certificates[inventory_hostname] | default('') | length > 0
+    - logging_client_certificate_ready.stat.exists
     - boetticher_deploy_phase | default('full') in ['full', 'bootstrap', 'services']
 
 - name: Create declared systemd credential drop-in directories

@@ -410,13 +410,12 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation, operatorPub
 		LoggingServiceOverride         string                                           `json:"logging_collector_service_override"`
 		LoggingSocketOverride          string                                           `json:"logging_collector_socket_override"`
 		LoggingUploadConfigs           map[string]string                                `json:"logging_upload_configs"`
-		LoggingClientCertificates      map[string]string                                `json:"logging_client_certificates"`
 		ModuleConfigs                  map[string]model.ModuleConfig                    `json:"module_configs"`
 		ModuleDeclarations             []model.ModuleDeclaration                        `json:"module_declarations"`
 		GatusConfig                    string                                           `json:"gatus_config"`
 		USBExportManifests             []usbexport.GuestManifest                        `json:"usb_export_manifests"`
 		NetworkProbeOperatorPublicKey  string                                           `json:"network_probe_operator_public_key,omitempty"`
-	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan, firewallPlan, firewall.GatewayInterfaceConfigurationDigests(firewallPlan), monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, loggingCollectorConfig, loggingServiceOverride, loggingSocketOverride, loggingUploads, map[string]string{}, s.ModuleConfig, s.Declarations, string(gatusConfig), usbPlan, operatorPublicKey}
+	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan, firewallPlan, firewall.GatewayInterfaceConfigurationDigests(firewallPlan), monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, loggingCollectorConfig, loggingServiceOverride, loggingSocketOverride, loggingUploads, s.ModuleConfig, s.Declarations, string(gatusConfig), usbPlan, operatorPublicKey}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err

@@ -1071,13 +1071,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	report.complete()
 	report.start("services", "Configure services and runtime credentials")
-	var loggingClientCertificates map[string]string
-	if modules.IsEnabled(s, "logging") {
-		loggingClientCertificates, err = signLoggingCertificates(authority, s, csrDir)
-		if err != nil {
-			return fmt.Errorf("sign logging transport certificates: %w", err)
-		}
-	}
 	if err := installModuleRuntimeConfigs(ctx, *siteDir, s, proxmoxPlan, temporaryPrivateKey); err != nil {
 		return err
 	}
@@ -1093,7 +1086,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	for name, certificate := range aiopsCertificates {
 		runtimeVariables[name] = certificate
 	}
-	runtimeVariables["logging_client_certificates"] = loggingClientCertificates
 	variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
 	if err != nil {
 		return err
@@ -1705,25 +1697,6 @@ func verifyDNSReadiness(ctx context.Context, runner proxmox.CommandRunner, addre
 		return fmt.Errorf("authoritative, NTP, and Blocky resolver checks failed: %w", err)
 	}
 	return nil
-}
-
-func signLoggingCertificates(authority pki.Authority, s model.Site, csrDir string) (map[string]string, error) {
-	clients := map[string]string{}
-	for _, component := range s.PlatformComponents() {
-		if !component.Logging || component.Name == "lab-log-01" {
-			continue
-		}
-		csr, err := os.ReadFile(filepath.Join(csrDir, "logging-"+component.Name+".csr.pem"))
-		if err != nil {
-			return nil, fmt.Errorf("read %s logging CSR: %w", component.Name, err)
-		}
-		certificate, err := signOrReuseEndpointClientCertificate(authority, string(csr), csrDir, "logging-"+component.Name, component.Name, s.Network.Domain)
-		if err != nil {
-			return nil, fmt.Errorf("sign %s logging CSR: %w", component.Name, err)
-		}
-		clients[component.Name] = certificate.ChainPEM
-	}
-	return clients, nil
 }
 
 func signAIOpsCertificates(authority pki.Authority, csrDir string) (map[string]string, error) {
