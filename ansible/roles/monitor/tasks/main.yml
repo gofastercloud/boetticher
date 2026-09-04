@@ -139,9 +139,27 @@
       - https://lab-dns-01.{{ domain }}:9443
       - --root
       - /etc/boetticher/tls/step-ca-root.crt
-      - --bundle
       - --force
   register: monitor_step_ca_issue
+  changed_when: true
+  no_log: true
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - step_ca_root_cert_pem is defined
+    - not monitor_step_ca_marker.stat.exists
+    - not (pki_bootstrap_phase | default(false) | bool)
+
+- name: Bundle the Pulse certificate chain
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/step
+      - certificate
+      - bundle
+      - /etc/boetticher/tls/monitor.crt.pem.new
+      - /etc/boetticher/tls/step-ca-intermediate.crt
+      - /etc/boetticher/tls/monitor.crt.pem.bundle
+      - --force
+  register: monitor_step_ca_bundle
   changed_when: true
   no_log: true
   when:
@@ -154,11 +172,11 @@
   ansible.builtin.shell: >-
     set -eu;
     /usr/local/bin/step certificate verify
-    /etc/boetticher/tls/monitor.crt.pem.new
+    /etc/boetticher/tls/monitor.crt.pem.bundle
     --roots /etc/boetticher/tls/step-ca-root.crt;
     test -s /etc/boetticher/tls/monitor.key.pem.new;
     chmod 0600 /etc/boetticher/tls/monitor.key.pem.new;
-    mv -f /etc/boetticher/tls/monitor.crt.pem.new /etc/boetticher/tls/monitor.crt.pem;
+    mv -f /etc/boetticher/tls/monitor.crt.pem.bundle /etc/boetticher/tls/monitor.crt.pem;
     mv -f /etc/boetticher/tls/monitor.key.pem.new /etc/boetticher/tls/monitor.key.pem;
     install -o root -g root -m 0644 /dev/null /etc/boetticher/tls/monitor.step-ca
   args:
