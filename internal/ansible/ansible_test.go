@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 )
@@ -263,7 +265,7 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 	for _, expected := range []string{
 		"lab-proxmox-01 ansible_host=10.10.99.5",
 		"lab-dns-01 ansible_host=10.10.10.10",
-		"ansible_remote_tmp=/tmp/boetticher-ansible",
+		"ansible_remote_tmp=/var/lib/boetticher/ansible",
 		"[managed:children]",
 	} {
 		if !strings.Contains(first, expected) {
@@ -527,6 +529,19 @@ func TestAnsibleEnvironmentClearsAmbientConfiguration(t *testing.T) {
 		if _, ok := values[key]; ok {
 			t.Fatalf("ambient Ansible/Python setting %s survived environment filtering", key)
 		}
+	}
+}
+
+func TestAnsibleProcessGroupStopsOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	err := runInProcessGroup(ctx, exec.Command("sh", "-c", "sleep 30"))
+	if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Fatalf("cancelled Ansible process returned %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("cancelled Ansible process group took %s to terminate", elapsed)
 	}
 }
 
@@ -1804,6 +1819,31 @@ func TestSharedClientCAFrontendsRestrictClientIdentities(t *testing.T) {
 				t.Fatalf("%s frontend is missing exact client identity control %q", check.role, required)
 			}
 		}
+	}
+}
+
+func TestLoggingAndPulseWriteRoutesRequireExactClientIdentities(t *testing.T) {
+	logging, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "logging", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	loggingText := string(logging)
+	for _, required := range []string{
+		"set $boetticher_logging_client_allowed 0;",
+		"logging_upload_configs.keys() | sort",
+		"CN=client-{{ endpoint }}.{{ domain }},O=boetticher",
+		"if ($boetticher_logging_client_allowed = 0) { return 403; }",
+	} {
+		if !strings.Contains(loggingText, required) {
+			t.Fatalf("logging upload route is missing exact client identity control %q", required)
+		}
+	}
+	frontend, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "pulse-loopback.conf.j2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(frontend), `if ($ssl_client_s_dn != "CN=aiops-pulse-note,O=boetticher") { return 403; }`) {
+		t.Fatal("Pulse incident-note route does not require the exact note client identity")
 	}
 }
 

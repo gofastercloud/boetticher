@@ -1508,8 +1508,8 @@ func TestEnsureLXCRecreatesExactLegacyStateBeforePersistentVolumeMigration(t *te
 				}
 				return jsonResponse(map[string]any{
 					"name": guest.Name, "hostname": guest.Hostname, "description": artifactDescription(artifact), "unprivileged": 1,
-					"tags": strings.Join(guest.Tags, ";"), "rootfs": modelStorageIDForTest + ":8,size=8G",
-					"mp0": modelStorageIDForTest + ":1,mp=/var/lib/boetticher/identity/ssh,backup=1,size=1G",
+					"tags": strings.Join(guest.Tags, ";"), "rootfs": modelStorageIDForTest + ":vm-110-disk-0,size=8G",
+					"mp0": modelStorageIDForTest + ":vm-110-disk-1,mp=/var/lib/boetticher/identity/ssh,backup=1,size=1G",
 				})
 			default:
 				t.Fatalf("unexpected LXC config read %d", lxcConfigReads)
@@ -1743,12 +1743,13 @@ func TestExistingQEMUPersistentVolumesRequireStableIdentity(t *testing.T) {
 
 func TestExistingLXCPersistentVolumesRejectUndeclaredMountpoints(t *testing.T) {
 	guest := GuestPlan{
+		VMID:    200,
 		Name:    "lab-tailnet-01",
 		Volumes: []model.PersistentVolumeDeclaration{{Storage: modelStorageIDForTest, SizeGiB: 4, MountPath: "/var/lib/tailscale", Placement: model.StorageDefault, Backup: true}},
 	}
 	current := map[string]any{
-		"mp0": "boetticher-thin:4,mp=/var/lib/tailscale,backup=1,size=4G",
-		"mp1": "boetticher-thin:1,mp=/unexpected,backup=1,size=1G",
+		"mp0": "boetticher-thin:vm-200-disk-1,mp=/var/lib/tailscale,backup=1,size=4G",
+		"mp1": "boetticher-thin:vm-200-disk-2,mp=/unexpected,backup=1,size=1G",
 	}
 	if err := validateExistingGuestVolumes(current, guest); err == nil || !strings.Contains(err.Error(), "undeclared persistent volume") {
 		t.Fatalf("undeclared LXC mountpoint was accepted: %v", err)
@@ -1756,7 +1757,7 @@ func TestExistingLXCPersistentVolumesRejectUndeclaredMountpoints(t *testing.T) {
 }
 
 func TestExistingLXCPersistentVolumesAcceptProxmoxCanonicalVolumeID(t *testing.T) {
-	guest := GuestPlan{Name: "test-dns", Volumes: []model.PersistentVolumeDeclaration{{
+	guest := GuestPlan{VMID: 110, Name: "test-dns", Volumes: []model.PersistentVolumeDeclaration{{
 		Storage: modelStorageIDForTest, SizeGiB: 8, MountPath: "/var/lib/powerdns", Backup: true,
 	}}}
 	current := map[string]any{"mp0": "boetticher-thin:110/vm-110-disk-1.raw,mp=/var/lib/powerdns,backup=1,size=8G"}
@@ -1766,6 +1767,10 @@ func TestExistingLXCPersistentVolumesAcceptProxmoxCanonicalVolumeID(t *testing.T
 	current["mp0"] = "boetticher-thin:110/vm-110-disk-1.raw,mp=/var/lib/powerdns,backup=1,size=9G"
 	if err := validateExistingGuestVolumes(current, guest); err == nil {
 		t.Fatal("LXC volume with the wrong size was accepted")
+	}
+	current["mp0"] = "boetticher-thin:110/vm-110-disk-9.raw,mp=/var/lib/powerdns,backup=1,size=8G"
+	if err := validateExistingGuestVolumes(current, guest); err == nil {
+		t.Fatal("LXC volume with the wrong canonical VMID/slot identity was accepted")
 	}
 }
 

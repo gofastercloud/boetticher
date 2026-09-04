@@ -150,10 +150,17 @@ func (c *Client) destroyQEMU(ctx context.Context, node string, vmid int) error {
 	if node == "" || vmid <= 0 {
 		return errors.New("Proxmox node and positive VMID are required")
 	}
-	return c.request(ctx, http.MethodDelete, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid)), url.Values{
+	var upid string
+	if err := c.request(ctx, http.MethodDelete, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid)), url.Values{
 		"purge":                      {"1"},
 		"destroy-unreferenced-disks": {"1"},
-	}, nil, nil)
+	}, nil, &upid); err != nil {
+		return err
+	}
+	if upid != "" {
+		return c.WaitTask(ctx, node, upid)
+	}
+	return nil
 }
 
 // DestroyLXC removes an LXC guest and asks Proxmox to purge its configuration

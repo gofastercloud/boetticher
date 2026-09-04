@@ -338,6 +338,26 @@ func TestDestroyLXCWaitsForAsynchronousDeletion(t *testing.T) {
 	}
 }
 
+func TestDestroyQEMUWaitsForAsynchronousDeletion(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodDelete && r.URL.Path == "/api2/json/nodes/node/qemu/910" {
+			if r.URL.Query().Get("purge") != "1" || r.URL.Query().Get("destroy-unreferenced-disks") != "1" {
+				t.Fatalf("QEMU destruction did not request bounded cleanup: %v", r.URL.Query())
+			}
+			return response([]byte(`{"data":"UPID:pve:destroy-qemu"}`))
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:destroy-qemu/status" {
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		}
+		t.Fatalf("unexpected QEMU deletion request: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.DestroyQEMU(context.Background(), "node", 910); err != nil {
+		t.Fatalf("DestroyQEMU() did not wait for the deletion task: %v", err)
+	}
+}
+
 func TestQEMUStatusUsesLiveStatusEndpoint(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method != http.MethodGet || r.URL.Path != "/api2/json/nodes/node/qemu/190/status/current" {

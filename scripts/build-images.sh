@@ -273,9 +273,9 @@ create_base_rootfs() {
   install -D -m 0755 images/base/runtime/install-runtime-state.sh "$rootfs/usr/lib/boetticher/install-runtime-state"
   chroot "$rootfs" useradd --create-home --shell /bin/bash labadmin
   chroot "$rootfs" passwd --lock labadmin
-  mkdir -p "$rootfs/tmp/boetticher-ansible"
-  chroot "$rootfs" chown labadmin:labadmin /tmp/boetticher-ansible
-  chmod 0700 "$rootfs/tmp/boetticher-ansible"
+  mkdir -p "$rootfs/var/lib/boetticher/ansible"
+  chroot "$rootfs" chown root:root /var/lib/boetticher/ansible
+  chmod 0700 "$rootfs/var/lib/boetticher/ansible"
   chroot "$rootfs" visudo -cf /etc/sudoers
   mkdir -p "$rootfs/etc/systemd/journald.conf.d"
   printf '%s\n' '[Journal]' 'SystemMaxUse=256M' 'RuntimeMaxUse=64M' > "$rootfs/etc/systemd/journald.conf.d/boetticher.conf"
@@ -736,7 +736,7 @@ build_firewall() {
     --mkdir /usr/lib/boetticher \
     --mkdir /var/lib/boetticher/identity/ssh \
     --mkdir /var/lib/boetticher/firewall-telemetry \
-    --mkdir /tmp/boetticher-ansible \
+    --mkdir /var/lib/boetticher/ansible \
     --mkdir /etc/ssh/sshd_config.d \
     --mkdir /etc/systemd/journald.conf.d \
     --mkdir /etc/sysctl.d \
@@ -759,7 +759,7 @@ build_firewall() {
     --upload images/firewall/runtime/forwarding.conf:/etc/sysctl.d/boetticher-forwarding.conf \
     --run-command 'useradd --create-home --shell /bin/bash labadmin' \
     --run-command 'passwd --lock labadmin' \
-    --run-command 'chown labadmin:labadmin /tmp/boetticher-ansible && chmod 0700 /tmp/boetticher-ansible' \
+    --run-command 'chown root:root /var/lib/boetticher/ansible && chmod 0700 /var/lib/boetticher/ansible' \
     --run-command 'chown root:root /etc/sudoers.d/boetticher-firewall; chmod 0440 /etc/sudoers.d/boetticher-firewall' \
     --run-command 'chown root:root /usr/lib/boetticher/inspect-firewall; chmod 0755 /usr/lib/boetticher/inspect-firewall' \
     --run-command 'groupadd --system boetticher-telemetry; useradd --system --gid boetticher-telemetry --home-dir /var/lib/boetticher/firewall-telemetry --shell /usr/sbin/nologin boetticher-telemetry' \

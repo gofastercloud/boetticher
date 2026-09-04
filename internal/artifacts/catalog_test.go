@@ -1025,7 +1025,7 @@ func TestFirewallBuildUsesIndividualVirtCustomizeDirectories(t *testing.T) {
 	if strings.Contains(text, "--mkdir /etc/boetticher,/usr/lib/boetticher") {
 		t.Fatal("firewall virt-customize directory inputs must remain individual paths")
 	}
-	for _, directory := range []string{"--mkdir /etc/boetticher", "--mkdir /usr/lib/boetticher", "--mkdir /var/lib/boetticher/identity/ssh", "--mkdir /tmp/boetticher-ansible"} {
+	for _, directory := range []string{"--mkdir /etc/boetticher", "--mkdir /usr/lib/boetticher", "--mkdir /var/lib/boetticher/identity/ssh", "--mkdir /var/lib/boetticher/ansible"} {
 		if !strings.Contains(text, directory) {
 			t.Fatalf("firewall build is missing directory input %q", directory)
 		}

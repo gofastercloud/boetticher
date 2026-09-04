@@ -484,7 +484,7 @@ func TestCreateScopedCredentialsCapturesOnlyReturnedSecret(t *testing.T) {
 			"pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[]`),
 		},
 	}
-	secret, err := CreateScopedCredentials(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher")
+	secret, err := CreateScopedCredentials(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "node")
 	if err != nil || secret != "opaque-token-secret" {
 		t.Fatalf("CreateScopedCredentials() = %q, %v", secret, err)
 	}
@@ -515,7 +515,7 @@ func TestCheckScopedCredentialAvailabilityHoldsExistingToken(t *testing.T) {
 
 func TestRemoveExactScopedCredentialTokenDeletesOnlyTheOwnedToken(t *testing.T) {
 	runner := &staleScopedTokenRunner{}
-	removed, err := RemoveExactScopedCredentialToken(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner")
+	removed, err := RemoveExactScopedCredentialToken(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", "node")
 	if err != nil || !removed {
 		t.Fatalf("RemoveExactScopedCredentialToken() = %t, %v", removed, err)
 	}
@@ -577,7 +577,7 @@ func TestRemoveExactScopedCredentialTokenRefusesUnexpectedOwnership(t *testing.T
 				"pvesh get /access/users/'labadmin@pve'/token --output-format json": test.tokens,
 				"pvesh get /access/acl --output-format json":                        test.acls,
 			}}
-			removed, err := RemoveExactScopedCredentialToken(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner")
+			removed, err := RemoveExactScopedCredentialToken(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", "node")
 			if err == nil || !strings.Contains(err.Error(), "ownership") {
 				t.Fatalf("unexpected scoped credential ownership was accepted: removed=%t err=%v", removed, err)
 			}
@@ -594,7 +594,7 @@ func TestRemoveExactScopedCredentialTokenRefusesUnexpectedRole(t *testing.T) {
 	runner := &fakeRunner{responses: map[string][]byte{
 		"pvesh get /access/roles --output-format json": []byte(`[]`),
 	}}
-	if _, err := RemoveExactScopedCredentialToken(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner"); err == nil || !strings.Contains(err.Error(), "not present") {
+	if _, err := RemoveExactScopedCredentialToken(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", "node"); err == nil || !strings.Contains(err.Error(), "not present") {
 		t.Fatalf("unexpected scoped role was accepted for token removal: %v", err)
 	}
 	for _, command := range runner.commands {
@@ -607,8 +607,8 @@ func TestRemoveExactScopedCredentialTokenRefusesUnexpectedRole(t *testing.T) {
 func TestCheckScopedCredentialReuseAcceptsExistingBoundedToken(t *testing.T) {
 	runner := &fakeRunner{responses: map[string][]byte{
 		"pvesh get /access/roles --output-format json":                      []byte(`[{"roleid":"BoetticherProvisioner","privs":"VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options VM.GuestAgent.Audit VM.PowerMgmt Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit SDN.Audit SDN.Use Sys.AccessNetwork Sys.Audit Sys.Modify","special":0}]`),
-		"pvesh get /access/users --output-format json":                      []byte(`[{"userid":"labadmin@pve"}]`),
-		"pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[{"tokenid":"boetticher"}]`),
+		"pvesh get /access/users --output-format json":                      []byte(`[{"comment":"boetticher automation identity","enable":1,"expire":0,"userid":"labadmin@pve"}]`),
+		"pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[{"expire":0,"privsep":1,"tokenid":"boetticher"}]`),
 	}}
 	if err := CheckScopedCredentialReuse(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
 		t.Fatalf("existing bounded token was not accepted for encrypted-credential reuse: %v", err)
@@ -616,6 +616,22 @@ func TestCheckScopedCredentialReuseAcceptsExistingBoundedToken(t *testing.T) {
 	for _, command := range runner.commands {
 		if strings.Contains(command, " create ") || strings.Contains(command, " set ") || strings.Contains(command, " delete ") {
 			t.Fatalf("credential reuse check mutated Proxmox: %s", command)
+		}
+	}
+}
+
+func TestCheckScopedCredentialReuseRejectsUnexpectedIdentityMetadata(t *testing.T) {
+	runner := &fakeRunner{responses: map[string][]byte{
+		"pvesh get /access/roles --output-format json":                      []byte(`[{"roleid":"BoetticherProvisioner","privs":"` + ScopedProvisionerPrivileges() + `","special":0}]`),
+		"pvesh get /access/users --output-format json":                      []byte(`[{"comment":"operator-owned","enable":1,"expire":0,"userid":"labadmin@pve"}]`),
+		"pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[{"expire":0,"privsep":1,"tokenid":"boetticher"}]`),
+	}}
+	if err := CheckScopedCredentialReuse(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner"); err == nil || !strings.Contains(err.Error(), "unexpected user") {
+		t.Fatalf("unexpected scoped credential metadata was accepted: %v", err)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, " create ") || strings.Contains(command, " set ") || strings.Contains(command, " delete ") {
+			t.Fatalf("metadata check mutated Proxmox: %s", command)
 		}
 	}
 }
@@ -629,7 +645,7 @@ func TestCreateScopedCredentialsCreatesRoleAtCollectionEndpoint(t *testing.T) {
 			"pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[]`),
 		},
 	}
-	if _, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
+	if _, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", "node"); err != nil {
 		t.Fatal(err)
 	}
 	var userACL, tokenACL bool
@@ -654,18 +670,33 @@ func TestCreateScopedCredentialsCreatesRoleAtCollectionEndpoint(t *testing.T) {
 			rootACL = true
 		}
 	}
-	if !userACL || !tokenACL || rootACL || aclCount != len(scopedProvisionerACLPaths())*2 {
+	if !userACL || !tokenACL || rootACL || aclCount != len(scopedProvisionerACLPaths("node"))*2 {
 		t.Fatalf("credential bootstrap ACLs incomplete: user=%t token=%t commands=%v", userACL, tokenACL, runner.commands)
 	}
 }
 
+func TestCreateScopedCredentialsRefusesUnexpectedExistingUser(t *testing.T) {
+	runner := &fakeRunner{responses: map[string][]byte{
+		"pvesh get /access/roles --output-format json": []byte(`[{"roleid":"BoetticherProvisioner","privs":"` + ScopedProvisionerPrivileges() + `","special":0}]`),
+		"pvesh get /access/users --output-format json": []byte(`[{"comment":"operator-owned","enable":1,"expire":0,"userid":"labadmin@pve"}]`),
+	}}
+	if _, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", "node"); err == nil || !strings.Contains(err.Error(), "expected Boetticher identity") {
+		t.Fatalf("unexpected existing Proxmox user was accepted: %v", err)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "pvesh create /access/users") || strings.Contains(command, "pvesh set /access/acl") {
+			t.Fatalf("unexpected existing user triggered mutation: %s", command)
+		}
+	}
+}
+
 func TestEnsureScopedCredentialACLRepairsBackingUserAndToken(t *testing.T) {
-	acls := make([]scopedCredentialACLEntry, 0, len(scopedProvisionerACLPaths())*2)
+	acls := make([]scopedCredentialACLEntry, 0, len(scopedProvisionerACLPaths("node"))*2)
 	for _, subject := range []struct {
 		value string
 		typ   string
 	}{{"labadmin@pve", "user"}, {"labadmin@pve!boetticher", "token"}} {
-		for _, path := range scopedProvisionerACLPaths() {
+		for _, path := range scopedProvisionerACLPaths("node") {
 			acls = append(acls, scopedCredentialACLEntry{Path: path, Propagate: 1, RoleID: "BoetticherProvisioner", Type: subject.typ, UGID: subject.value})
 		}
 	}
@@ -674,17 +705,19 @@ func TestEnsureScopedCredentialACLRepairsBackingUserAndToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	runner := &fakeRunner{responses: map[string][]byte{
-		"pvesh get /access/roles --output-format json": []byte(`[{"roleid":"BoetticherProvisioner","privs":"` + ScopedProvisionerPrivileges() + `","special":0}]`),
-		"pvesh get /access/acl --output-format json":   aclData,
+		"pvesh get /access/roles --output-format json":                      []byte(`[{"roleid":"BoetticherProvisioner","privs":"` + ScopedProvisionerPrivileges() + `","special":0}]`),
+		"pvesh get /access/users --output-format json":                      []byte(`[{"comment":"boetticher automation identity","enable":1,"expire":0,"userid":"labadmin@pve"}]`),
+		"pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[{"expire":0,"privsep":1,"tokenid":"boetticher"}]`),
+		"pvesh get /access/acl --output-format json":                        aclData,
 	}}
-	if err := EnsureScopedCredentialACL(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
+	if err := EnsureScopedCredentialACL(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", "node"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"pvesh get /access/roles --output-format json", "pvesh get /access/acl --output-format json"}
-	for _, path := range scopedProvisionerACLPaths() {
+	want := []string{"pvesh get /access/roles --output-format json", "pvesh get /access/users --output-format json", "pvesh get /access/users/'labadmin@pve'/token --output-format json", "pvesh get /access/acl --output-format json"}
+	for _, path := range scopedProvisionerACLPaths("node") {
 		want = append(want, "pvesh set /access/acl --path '"+path+"' --users 'labadmin@pve' --roles 'BoetticherProvisioner' --propagate 1")
 	}
-	for _, path := range scopedProvisionerACLPaths() {
+	for _, path := range scopedProvisionerACLPaths("node") {
 		want = append(want, "pvesh set /access/acl --path '"+path+"' --tokens 'labadmin@pve!boetticher' --roles 'BoetticherProvisioner' --propagate 1")
 	}
 	want = append(want, "pvesh get /access/acl --output-format json")
@@ -845,7 +878,7 @@ func TestCreateScopedCredentialsStopsOnUserLookupFailure(t *testing.T) {
 	runner := &credentialLookupRunner{responses: map[string]error{
 		"pvesh get /access/users --output-format json": errors.New("permission denied"),
 	}}
-	_, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner")
+	_, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", "node")
 	if err == nil || !strings.Contains(err.Error(), "HOLD: inspect Proxmox users") {
 		t.Fatalf("user lookup failure was not held: %v", err)
 	}
@@ -1182,7 +1215,7 @@ func TestCreateScopedCredentialsUsesNonInteractiveSudoForNonRoot(t *testing.T) {
 			"sudo -n pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[]`),
 		},
 	}
-	secret, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "dave", "labadmin@pve", "boetticher", "BoetticherProvisioner")
+	secret, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "dave", "labadmin@pve", "boetticher", "BoetticherProvisioner", "node")
 	if err != nil || secret != "opaque-token-secret" {
 		t.Fatalf("CreateScopedCredentialsWithRole() = %q, %v", secret, err)
 	}

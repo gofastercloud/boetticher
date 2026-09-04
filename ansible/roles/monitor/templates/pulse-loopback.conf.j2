@@ -157,7 +157,7 @@ server {
     location = /api/alerts/incidents/note {
         if ($ssl_client_verify != SUCCESS) { return 403; }
         limit_except POST { deny all; }
-        if ($ssl_client_s_dn ~ "CN=aiops-pulse-read(?:,|$)") { return 403; }
+        if ($ssl_client_s_dn != "CN=aiops-pulse-note,O=boetticher") { return 403; }
         proxy_pass http://127.0.0.1:7655;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;

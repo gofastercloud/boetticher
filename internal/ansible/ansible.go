@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/dns"
@@ -271,7 +272,7 @@ func Inventory(s model.Site) (string, error) {
 		b.WriteString("firewall\n")
 	}
 	b.WriteString("\n")
-	b.WriteString("[managed:vars]\nansible_connection=ssh\nansible_python_interpreter=/usr/bin/python3\nansible_remote_tmp=/tmp/boetticher-ansible\nansible_host_key_checking=true\n")
+	b.WriteString("[managed:vars]\nansible_connection=ssh\nansible_python_interpreter=/usr/bin/python3\nansible_remote_tmp=/var/lib/boetticher/ansible\nansible_host_key_checking=true\n")
 	return b.String(), nil
 }
 
@@ -502,7 +503,7 @@ func runWithSSHConfig(ctx context.Context, playbook, inventory string, variables
 	if limit != "" {
 		args = append(args, "--limit", limit)
 	}
-	command := exec.CommandContext(ctx, executable, args...)
+	command := exec.Command(executable, args...)
 	command.Stdin = strings.NewReader(string(variables))
 	timingPath, timingCleanup := prepareTaskTiming(playbook)
 	defer timingCleanup()
@@ -514,7 +515,7 @@ func runWithSSHConfig(ctx context.Context, playbook, inventory string, variables
 	command.Stdout = &output
 	command.Stderr = &output
 	started := time.Now()
-	err = command.Run()
+	err = runInProcessGroup(ctx, command)
 	changed := ansibleOutputChanged(output.Bytes())
 	telemetry.Record(ctx, telemetry.Event{
 		Category: "ansible", Operation: "playbook", Target: ansibleTarget(limit),
@@ -530,6 +531,27 @@ func runWithSSHConfig(ctx context.Context, playbook, inventory string, variables
 		return result, fmt.Errorf("ansible-playbook failed: %w: %s", err, diagnostic)
 	}
 	return result, nil
+}
+
+func runInProcessGroup(ctx context.Context, command *exec.Cmd) error {
+	if command == nil {
+		return errors.New("Ansible command is required")
+	}
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := command.Start(); err != nil {
+		return err
+	}
+	wait := make(chan error, 1)
+	go func() { wait <- command.Wait() }()
+	select {
+	case err := <-wait:
+		return err
+	case <-ctx.Done():
+		if command.Process != nil {
+			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+		}
+		return errors.Join(ctx.Err(), <-wait)
+	}
 }
 
 func startTemporarySSHAgent(identityData []byte) (map[string]string, func() error, error) {

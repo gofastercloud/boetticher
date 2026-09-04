@@ -198,6 +198,11 @@
           ssl_crl /var/lib/boetticher/identity/logging/client-ca.crl.pem;
           ssl_verify_client on;
           ssl_protocols TLSv1.2 TLSv1.3;
+          set $boetticher_logging_client_allowed 0;
+{% for endpoint in logging_upload_configs.keys() | sort %}
+          if ($ssl_client_s_dn = "CN=client-{{ endpoint }}.{{ domain }},O=boetticher") { set $boetticher_logging_client_allowed 1; }
+{% endfor %}
+          if ($boetticher_logging_client_allowed = 0) { return 403; }
           location = /upload {
               proxy_pass http://127.0.0.1:{{ logging_plan.collector_backend_port }};
               proxy_pass_request_headers on;

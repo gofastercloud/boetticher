@@ -1172,8 +1172,8 @@ func privilegedCommand(user, command string) string {
 	return "sudo -n sh -c " + shellQuote(command)
 }
 
-func CreateScopedCredentials(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID string) (string, error) {
-	return CreateScopedCredentialsWithRole(ctx, runner, address, initialUser, userID, tokenID, "BoetticherProvisioner")
+func CreateScopedCredentials(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID, node string) (string, error) {
+	return CreateScopedCredentialsWithRole(ctx, runner, address, initialUser, userID, tokenID, "BoetticherProvisioner", node)
 }
 
 // CheckScopedCredentialAvailability verifies the reserved provisioning
@@ -1222,7 +1222,7 @@ const scopedCredentialComment = "boetticher automation identity"
 // cannot recover Proxmox's one-time token value. The surrounding role must
 // still be the exact bounded Boetticher role; it never removes the user,
 // role, root access, or any other token.
-func RemoveExactScopedCredentialToken(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID, role string) (bool, error) {
+func RemoveExactScopedCredentialToken(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID, role, node string) (bool, error) {
 	if !safeID(userID) || !safeID(tokenID) || !safeID(role) {
 		return false, errors.New("Proxmox identity and token IDs must be simple identifiers")
 	}
@@ -1264,7 +1264,7 @@ func RemoveExactScopedCredentialToken(ctx context.Context, runner CommandRunner,
 	if err != nil {
 		return false, fmt.Errorf("HOLD: inspect Proxmox ACLs before token replacement: %w", err)
 	}
-	if err := validateScopedCredentialTokenOwnership(usersOutput, tokensOutput, aclOutput, userID, tokenID, role); err != nil {
+	if err := validateScopedCredentialTokenOwnership(usersOutput, tokensOutput, aclOutput, userID, tokenID, role, node); err != nil {
 		return false, fmt.Errorf("HOLD: scoped Proxmox token ownership is not the expected Boetticher identity: %w", err)
 	}
 	if err := removeLegacyScopedCredentialACLs(ctx, runner, address, initialUser, aclOutput, userID, tokenID, role); err != nil {
@@ -1314,6 +1314,9 @@ func CheckScopedCredentialReuse(ctx context.Context, runner CommandRunner, addre
 	if !users[userID] {
 		return fmt.Errorf("HOLD: encrypted Proxmox credentials reference missing user %s", userID)
 	}
+	if err := validateScopedCredentialUserOwnership(usersOutput, userID); err != nil {
+		return fmt.Errorf("HOLD: encrypted Proxmox credentials reference an unexpected user %s: %w", userID, err)
+	}
 	tokensOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users/"+shellQuote(userID)+"/token --output-format json"))
 	if err != nil {
 		return fmt.Errorf("HOLD: inspect Proxmox tokens for %s: %w", userID, err)
@@ -1324,6 +1327,9 @@ func CheckScopedCredentialReuse(ctx context.Context, runner CommandRunner, addre
 	}
 	if !tokens[tokenID] {
 		return fmt.Errorf("HOLD: encrypted Proxmox credentials reference missing token %s!%s", userID, tokenID)
+	}
+	if err := validateScopedCredentialTokenMetadata(tokensOutput, tokenID); err != nil {
+		return fmt.Errorf("HOLD: encrypted Proxmox credentials reference an unexpected token %s!%s: %w", userID, tokenID, err)
 	}
 	return nil
 }
@@ -1603,41 +1609,12 @@ type scopedCredentialACLEntry struct {
 	UGID      string `json:"ugid"`
 }
 
-func validateScopedCredentialTokenOwnership(usersOutput, tokensOutput, aclOutput []byte, userID, tokenID, role string) error {
-	var users []scopedCredentialUserEntry
-	if err := decodeAccessList(usersOutput, &users); err != nil {
-		return fmt.Errorf("decode scoped credential users: %w", err)
+func validateScopedCredentialTokenOwnership(usersOutput, tokensOutput, aclOutput []byte, userID, tokenID, role, node string) error {
+	if err := validateScopedCredentialUserOwnership(usersOutput, userID); err != nil {
+		return err
 	}
-	userFound := false
-	for _, user := range users {
-		if user.UserID != userID {
-			continue
-		}
-		if user.Comment != scopedCredentialComment || user.Enable != 1 || user.Expire != 0 {
-			return errors.New("scoped credential user metadata is unexpected")
-		}
-		userFound = true
-	}
-	if !userFound {
-		return errors.New("scoped credential user is absent")
-	}
-
-	var tokens []scopedCredentialTokenEntry
-	if err := decodeAccessList(tokensOutput, &tokens); err != nil {
-		return fmt.Errorf("decode scoped credential tokens: %w", err)
-	}
-	tokenFound := false
-	for _, token := range tokens {
-		if token.TokenID != tokenID {
-			continue
-		}
-		if token.Privsep != 1 || token.Expire != 0 {
-			return errors.New("scoped credential token metadata is unexpected")
-		}
-		tokenFound = true
-	}
-	if !tokenFound {
-		return errors.New("scoped credential token is absent")
+	if err := validateScopedCredentialTokenMetadata(tokensOutput, tokenID); err != nil {
+		return err
 	}
 
 	var acls []scopedCredentialACLEntry
@@ -1648,8 +1625,12 @@ func validateScopedCredentialTokenOwnership(usersOutput, tokensOutput, aclOutput
 		userID:                 "user",
 		userID + "!" + tokenID: "token",
 	}
-	allowedPaths := make(map[string]bool, len(scopedProvisionerACLPaths()))
-	for _, path := range scopedProvisionerACLPaths() {
+	paths := scopedProvisionerACLPaths(node)
+	if len(paths) == 0 {
+		return errors.New("scoped credential ACL node is malformed")
+	}
+	allowedPaths := make(map[string]bool, len(paths))
+	for _, path := range paths {
 		allowedPaths[path] = true
 	}
 	seenLegacy := make(map[string]bool, len(expected))
@@ -1685,13 +1666,47 @@ func validateScopedCredentialTokenOwnership(usersOutput, tokensOutput, aclOutput
 		return nil
 	}
 	for ugid := range expected {
-		for _, path := range scopedProvisionerACLPaths() {
+		for _, path := range paths {
 			if !seenScoped[ugid+"\x00"+path] {
 				return fmt.Errorf("scoped credential ACL %q at %s is absent", ugid, path)
 			}
 		}
 	}
 	return nil
+}
+
+func validateScopedCredentialUserOwnership(output []byte, userID string) error {
+	var users []scopedCredentialUserEntry
+	if err := decodeAccessList(output, &users); err != nil {
+		return fmt.Errorf("decode scoped credential users: %w", err)
+	}
+	for _, user := range users {
+		if user.UserID != userID {
+			continue
+		}
+		if user.Comment != scopedCredentialComment || user.Enable != 1 || user.Expire != 0 {
+			return errors.New("scoped credential user metadata is unexpected")
+		}
+		return nil
+	}
+	return errors.New("scoped credential user is absent")
+}
+
+func validateScopedCredentialTokenMetadata(output []byte, tokenID string) error {
+	var tokens []scopedCredentialTokenEntry
+	if err := decodeAccessList(output, &tokens); err != nil {
+		return fmt.Errorf("decode scoped credential tokens: %w", err)
+	}
+	for _, token := range tokens {
+		if token.TokenID != tokenID {
+			continue
+		}
+		if token.Privsep != 1 || token.Expire != 0 {
+			return errors.New("scoped credential token metadata is unexpected")
+		}
+		return nil
+	}
+	return errors.New("scoped credential token is absent")
 }
 
 func requireBuiltInRole(output []byte, wanted, wantedPrivileges string) error {
@@ -1715,9 +1730,13 @@ func requireBuiltInRole(output []byte, wanted, wantedPrivileges string) error {
 	return errors.New("role is not present")
 }
 
-func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID, role string) (string, error) {
+func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID, role, node string) (string, error) {
 	if !safeID(userID) || !safeID(tokenID) || !safeID(role) {
 		return "", errors.New("Proxmox identity and token IDs must be simple identifiers")
+	}
+	aclPaths := scopedProvisionerACLPaths(node)
+	if len(aclPaths) == 0 {
+		return "", errors.New("Proxmox node identifier is required and must be safe for scoped ACLs")
 	}
 	privileges := ScopedProvisionerPrivileges()
 	roleOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/roles --output-format json"))
@@ -1747,8 +1766,10 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, createUser)); err != nil {
 			return "", fmt.Errorf("create Proxmox automation user: %w", err)
 		}
+	} else if err := validateScopedCredentialUserOwnership(usersOutput, userID); err != nil {
+		return "", fmt.Errorf("HOLD: existing Proxmox user %s is not the expected Boetticher identity: %w", userID, err)
 	}
-	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--users", userID, role); err != nil {
+	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--users", userID, role, aclPaths); err != nil {
 		return "", fmt.Errorf("assign bounded Proxmox role to user: %w", err)
 	}
 	tokensOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users/"+shellQuote(userID)+"/token --output-format json"))
@@ -1776,7 +1797,7 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 	if response.Value == "" {
 		return "", errors.New("Proxmox token response did not contain a secret")
 	}
-	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--tokens", userID+"!"+tokenID, role); err != nil {
+	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--tokens", userID+"!"+tokenID, role, aclPaths); err != nil {
 		return "", fmt.Errorf("assign bounded Proxmox role to token: %w", err)
 	}
 	return response.Value, nil
@@ -1785,9 +1806,13 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 // EnsureScopedCredentialACL repairs the bounded user and token ACLs for an
 // existing privilege-separated provisioning identity. Proxmox restricts a
 // token to the permissions of its backing user, so both ACLs are required.
-func EnsureScopedCredentialACL(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID, role string) error {
+func EnsureScopedCredentialACL(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID, role, node string) error {
 	if !safeID(userID) || !safeID(tokenID) || !safeID(role) {
 		return errors.New("Proxmox identity and token IDs must be simple identifiers")
+	}
+	aclPaths := scopedProvisionerACLPaths(node)
+	if len(aclPaths) == 0 {
+		return errors.New("Proxmox node identifier is required and must be safe for scoped ACLs")
 	}
 	roleOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/roles --output-format json"))
 	if err != nil {
@@ -1799,6 +1824,20 @@ func EnsureScopedCredentialACL(ctx context.Context, runner CommandRunner, addres
 		}
 		return fmt.Errorf("validate scoped Proxmox role: role %q is absent", role)
 	}
+	usersOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users --output-format json"))
+	if err != nil {
+		return fmt.Errorf("inspect scoped Proxmox user: %w", err)
+	}
+	if err := validateScopedCredentialUserOwnership(usersOutput, userID); err != nil {
+		return fmt.Errorf("validate scoped Proxmox user: %w", err)
+	}
+	tokensOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users/"+shellQuote(userID)+"/token --output-format json"))
+	if err != nil {
+		return fmt.Errorf("inspect scoped Proxmox token: %w", err)
+	}
+	if err := validateScopedCredentialTokenMetadata(tokensOutput, tokenID); err != nil {
+		return fmt.Errorf("validate scoped Proxmox token: %w", err)
+	}
 	aclOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/acl --output-format json"))
 	if err != nil {
 		return fmt.Errorf("inspect existing scoped Proxmox ACLs: %w", err)
@@ -1806,24 +1845,24 @@ func EnsureScopedCredentialACL(ctx context.Context, runner CommandRunner, addres
 	if err := removeLegacyScopedCredentialACLs(ctx, runner, address, initialUser, aclOutput, userID, tokenID, role); err != nil {
 		return fmt.Errorf("remove legacy root ACLs: %w", err)
 	}
-	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--users", userID, role); err != nil {
+	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--users", userID, role, aclPaths); err != nil {
 		return fmt.Errorf("assign bounded Proxmox role to user: %w", err)
 	}
-	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--tokens", userID+"!"+tokenID, role); err != nil {
+	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--tokens", userID+"!"+tokenID, role, aclPaths); err != nil {
 		return fmt.Errorf("assign bounded Proxmox role to token: %w", err)
 	}
 	updatedACL, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/acl --output-format json"))
 	if err != nil {
 		return fmt.Errorf("verify scoped Proxmox ACLs: %w", err)
 	}
-	if err := validateScopedProvisionerACL(updatedACL, userID, tokenID, role); err != nil {
+	if err := validateScopedProvisionerACL(updatedACL, userID, tokenID, role, node); err != nil {
 		return fmt.Errorf("verify scoped Proxmox ACLs: %w", err)
 	}
 	return nil
 }
 
-func setScopedCredentialACL(ctx context.Context, runner CommandRunner, address, initialUser, subjectFlag, subject, role string) error {
-	for _, aclPath := range scopedProvisionerACLPaths() {
+func setScopedCredentialACL(ctx context.Context, runner CommandRunner, address, initialUser, subjectFlag, subject, role string, paths []string) error {
+	for _, aclPath := range paths {
 		setACL := "pvesh set /access/acl --path " + shellQuote(aclPath) + " " + subjectFlag + " " + shellQuote(subject) + " --roles " + shellQuote(role) + " --propagate 1"
 		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, setACL)); err != nil {
 			return err
@@ -1832,8 +1871,11 @@ func setScopedCredentialACL(ctx context.Context, runner CommandRunner, address, 
 	return nil
 }
 
-func scopedProvisionerACLPaths() []string {
-	paths := []string{"/nodes", "/sdn", "/storage/local", "/storage/boetticher-thin", "/storage/boetticher-backups"}
+func scopedProvisionerACLPaths(node string) []string {
+	if !safeNodeID(node) {
+		return nil
+	}
+	paths := []string{"/nodes/" + node, "/sdn", "/storage/local", "/storage/boetticher-thin", "/storage/boetticher-backups"}
 	for _, vmid := range []int{model.ProxmoxVMID, model.DNS01VMID, model.MonitorVMID, model.LoggingVMID, model.LegacyStreamDeckVMID, model.PrinterVMID, model.AirVPNGuestVMID, model.ArrVMID, 200, 210, 240, 250} {
 		paths = append(paths, "/vms/"+strconv.Itoa(vmid))
 	}
@@ -1868,14 +1910,18 @@ func removeLegacyScopedCredentialACLs(ctx context.Context, runner CommandRunner,
 	return nil
 }
 
-func validateScopedProvisionerACL(aclOutput []byte, userID, tokenID, role string) error {
+func validateScopedProvisionerACL(aclOutput []byte, userID, tokenID, role, node string) error {
 	var acls []scopedCredentialACLEntry
 	if err := decodeAccessList(aclOutput, &acls); err != nil {
 		return fmt.Errorf("decode ACL listing: %w", err)
 	}
 	expected := map[string]string{userID: "user", userID + "!" + tokenID: "token"}
-	allowedPaths := make(map[string]bool, len(scopedProvisionerACLPaths()))
-	for _, path := range scopedProvisionerACLPaths() {
+	paths := scopedProvisionerACLPaths(node)
+	if len(paths) == 0 {
+		return errors.New("scoped credential ACL node is malformed")
+	}
+	allowedPaths := make(map[string]bool, len(paths))
+	for _, path := range paths {
 		allowedPaths[path] = true
 	}
 	seen := make(map[string]bool, len(expected)*len(allowedPaths))
@@ -1894,7 +1940,7 @@ func validateScopedProvisionerACL(aclOutput []byte, userID, tokenID, role string
 		seen[key] = true
 	}
 	for ugid := range expected {
-		for _, path := range scopedProvisionerACLPaths() {
+		for _, path := range paths {
 			if !seen[ugid+"\x00"+path] {
 				return fmt.Errorf("scoped credential ACL %q at %s is absent", ugid, path)
 			}

@@ -177,9 +177,12 @@ func runEnrollOperation(args []string, out io.Writer) (runErr error) {
 		if credentials.APIUser != "labadmin@pve" || credentials.TokenID != "boetticher" {
 			return fmt.Errorf("HOLD: encrypted Proxmox credentials identify %s!%s, expected labadmin@pve!boetticher", credentials.APIUser, credentials.TokenID)
 		}
+		if err := proxmox.CheckScopedCredentialReuse(ctx, runner, s.BootstrapAddress, *initialUser, credentials.APIUser, credentials.TokenID, "BoetticherProvisioner"); err != nil {
+			return err
+		}
 	} else {
 		if *replaceScopedCredentials {
-			removed, removeErr := proxmox.RemoveExactScopedCredentialToken(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner")
+			removed, removeErr := proxmox.RemoveExactScopedCredentialToken(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner", sshDiscovery.Node)
 			if removeErr != nil {
 				return removeErr
 			}
@@ -231,12 +234,12 @@ func runEnrollOperation(args []string, out io.Writer) (runErr error) {
 			}
 			fmt.Fprintln(out, "Proxmox API CA in SOPS: PASS (stored)")
 		}
-		if err := proxmox.EnsureScopedCredentialACL(ctx, runner, s.BootstrapAddress, *initialUser, credentials.APIUser, credentials.TokenID, "BoetticherProvisioner"); err != nil {
+		if err := proxmox.EnsureScopedCredentialACL(ctx, runner, s.BootstrapAddress, *initialUser, credentials.APIUser, credentials.TokenID, "BoetticherProvisioner", sshDiscovery.Node); err != nil {
 			return fmt.Errorf("reconcile scoped Proxmox API credentials: %w", err)
 		}
 		fmt.Fprintln(out, "Existing encrypted Proxmox API credentials: PASS (reuse)")
 	} else {
-		tokenSecret, createErr := proxmox.CreateScopedCredentialsWithRole(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner")
+		tokenSecret, createErr := proxmox.CreateScopedCredentialsWithRole(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner", sshDiscovery.Node)
 		if createErr != nil {
 			return fmt.Errorf("create scoped Proxmox API credentials: %w", createErr)
 		}

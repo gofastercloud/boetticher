@@ -3,15 +3,9 @@ name: Release bundle
 on:
   push:
     tags: ['v0.5.*']
-  workflow_dispatch:
-    inputs:
-      release_version:
-        description: Release version to build
-        required: true
-        default: 0.5.1
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -19,7 +13,7 @@ concurrency:
 
 jobs:
   release:
-    name: Build, qualify, and publish the signed release bundle
+    name: Build and qualify the signed release bundle
     runs-on: ubuntu-24.04
     env:
       GOCACHE: ${{ github.workspace }}/.cache/go-build
@@ -31,6 +25,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Scan repository history for secrets
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
@@ -60,7 +55,7 @@ jobs:
         id: release_identity
         shell: bash
         env:
-          RELEASE_VERSION_INPUT: ${{ inputs.release_version || github.ref_name }}
+          RELEASE_VERSION_INPUT: ${{ github.ref_name }}
           RELEASE_KEY_ID: ${{ secrets.BOETTICHER_RELEASE_KEY_ID }}
           RELEASE_TRUSTED_KEY_DATA: ${{ secrets.BOETTICHER_RELEASE_TRUSTED_KEYS }}
         run: |
@@ -197,14 +192,49 @@ jobs:
             '(.release_version == $release) and (.source_commit == $source)' \
             "$RUNNER_TEMP/controller-import.json" >/dev/null
 
-      - name: Publish the release only for a validated tag
-        if: github.ref_type == 'tag'
+      - name: Upload validated release outputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boetticher-release-${{ github.ref_name }}
+          path: |
+            dist/boetticher-${{ steps.release_identity.outputs.version }}
+            dist/boetticher-${{ steps.release_identity.outputs.version }}.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish the validated signed release
+    needs: release
+    if: github.ref_type == 'tag' && needs.release.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download validated release outputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: boetticher-release-${{ github.ref_name }}
+          path: dist
+
+      - name: Verify downloaded release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_version="${GITHUB_REF_NAME#v}"
+          test -f "dist/boetticher-${release_version}"
+          test -f "dist/boetticher-${release_version}.tar.gz"
+          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 2
+          sha256sum "dist/boetticher-${release_version}" "dist/boetticher-${release_version}.tar.gz"
+
+      - name: Publish the release only for the validated tag
         env:
-          RELEASE_VERSION: ${{ steps.release_identity.outputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+          release_version="${GITHUB_REF_NAME#v}"
           gh release create "$GITHUB_REF_NAME" \
-            "dist/boetticher-${RELEASE_VERSION}" \
-            "dist/boetticher-${RELEASE_VERSION}.tar.gz" \
+            "dist/boetticher-${release_version}" \
+            "dist/boetticher-${release_version}.tar.gz" \
             --verify-tag "$GITHUB_REF_NAME" \
             --generate-notes

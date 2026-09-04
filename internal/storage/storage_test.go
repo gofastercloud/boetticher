@@ -122,6 +122,8 @@ func TestInitializationCommandRequiresExplicitReinitializeForOldLayouts(t *testi
 		"refusing a mounted data disk",
 		"refusing a disk with active swap",
 		"refusing a disk already used by LVM",
+		"unexpected_lvs=\"$(lvs --noheadings --all -o lv_name vg_boetticher",
+		"refusing to reset storage with unexpected logical volumes",
 		"refusing to reset storage while Proxmox QEMU guests are configured",
 		"refusing to reset storage while Proxmox containers are configured",
 		"pvesm remove boetticher-thin",

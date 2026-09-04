@@ -187,6 +187,8 @@ func InitializationCommand(device string, confirmed, reinitialize bool) (string,
 		lines = append(lines,
 			"  [ \"$(lvs --noheadings -o lv_attr "+VolumeGroup+"/"+ThinPool+" | xargs | cut -c1)\" = t ] || { echo 'boetticher thin pool is missing or not thin' >&2; exit 44; }",
 			"  if lvs --noheadings "+VolumeGroup+"/"+BackupLogicalVol+" >/dev/null 2>&1; then [ \"$(blkid -s TYPE -o value /dev/"+VolumeGroup+"/"+BackupLogicalVol+")\" = "+BackupFilesystem+" ] || { echo 'boetticher backup filesystem is not ext4' >&2; exit 46; }; fi",
+			"  unexpected_lvs=\"$(lvs --noheadings --all -o lv_name "+VolumeGroup+" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed 's/^\\[//;s/\\]$//' | awk '$1 !~ /^("+ThinPool+"|"+BackupLogicalVol+"|"+ThinPool+"_tdata|"+ThinPool+"_tmeta|lvol0_pmspare)$/ { print $1 }')\"",
+			"  [ -z \"$unexpected_lvs\" ] || { echo \"refusing to reset storage with unexpected logical volumes: $unexpected_lvs\" >&2; exit 47; }",
 		)
 	} else {
 		lines = append(lines,
