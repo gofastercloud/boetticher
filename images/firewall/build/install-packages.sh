@@ -5,6 +5,10 @@ if [ "$#" -eq 0 ]; then
   echo "HOLD: firewall package installer requires at least one package" >&2
   exit 2
 fi
+if ! command -v timeout >/dev/null 2>&1; then
+  echo "HOLD: firewall package installer requires GNU timeout" >&2
+  exit 2
+fi
 
 efi_mounted_by_installer=0
 cleanup() {
@@ -53,8 +57,8 @@ if [ "$efi_type" != vfat ]; then
 fi
 
 rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list
-DEBIAN_FRONTEND=noninteractive apt-get --no-download upgrade --yes --no-install-recommends
-DEBIAN_FRONTEND=noninteractive apt-get --no-download install --yes --no-install-recommends "$@"
+DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=30s 30m apt-get --no-download upgrade --yes --no-install-recommends
+DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=30s 30m apt-get --no-download install --yes --no-install-recommends "$@"
 apt-get clean
 rm -rf /var/lib/apt/lists/*
 rm -f /etc/resolv.conf

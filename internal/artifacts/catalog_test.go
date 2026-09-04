@@ -1171,6 +1171,9 @@ func TestFirewallOfflineUpgradeMountsEFIForPackageTriggers(t *testing.T) {
 	if strings.Contains(installerText, "trap cleanup EXIT HUP INT TERM") {
 		t.Fatal("firewall package installer can swallow cancellation status in its cleanup trap")
 	}
+	if got := strings.Count(installerText, "timeout --signal=TERM --kill-after=30s 30m apt-get"); got != 2 {
+		t.Fatalf("firewall package installer must bound both EFI-mounted package transactions, found %d deadlines", got)
+	}
 	mountIndex := strings.Index(installerText, "mount -t vfat")
 	upgradeIndex := strings.Index(installerText, "apt-get --no-download upgrade")
 	installIndex := strings.Index(installerText, "apt-get --no-download install")
