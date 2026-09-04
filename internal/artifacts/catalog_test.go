@@ -1188,6 +1188,9 @@ func TestFirewallOfflineUpgradeMountsEFIForPackageTriggers(t *testing.T) {
 		t.Fatal(err)
 	}
 	supervisorText := string(supervisor)
+	if strings.Contains(installerText, "HOLD:") || strings.Contains(supervisorText, "HOLD:") {
+		t.Fatal("firewall image build helpers expose a non-binary operator result")
+	}
 	for _, required := range []string{
 		"bounded_launching=0",
 		"pending_bounded_signal=",

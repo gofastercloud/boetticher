@@ -32,7 +32,7 @@ bounded_signal() {
 
 run_bounded_command() {
   if [ "$#" -lt 3 ]; then
-    echo "HOLD: bounded command requires a deadline, kill grace, and command" >&2
+    echo "FAIL: bounded command requires a deadline, kill grace, and command" >&2
     return 2
   fi
   duration=$1
