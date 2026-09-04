@@ -13,6 +13,7 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/model"
+	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 )
 
 const (
@@ -779,7 +780,7 @@ func componentSourceMAC(s model.Site, component model.Component) string {
 		return component.MAC
 	}
 	if component.Module != "" {
-		return model.ManagedModuleMAC(component.VMID)
+		return networkmodel.ManagedModuleMAC(component.VMID)
 	}
 	return ""
 }

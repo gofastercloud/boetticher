@@ -201,18 +201,6 @@ func TestGatewayUpstreamMACIsLocallyAdministeredUnicastAndDoesNotCollide(t *test
 	}
 }
 
-func TestManagedModuleMACIsStableAndSeparateFromGatewayNICs(t *testing.T) {
-	if got, want := ManagedModuleMAC(270), "02:00:00:03:01:0e"; got != want {
-		t.Fatalf("ManagedModuleMAC(270) = %q, want %q", got, want)
-	}
-	if ManagedModuleMAC(0) != "" || ManagedModuleMAC(0x10000) != "" {
-		t.Fatal("ManagedModuleMAC accepted an invalid VMID")
-	}
-	if ManagedModuleMAC(270) == GatewayInterfaceMAC(2) || ManagedModuleMAC(270) == DefaultGatewayUpstreamMAC {
-		t.Fatal("managed module MAC collides with gateway identity")
-	}
-}
-
 func TestGatewayPublicationIsTypedAndManagedOnly(t *testing.T) {
 	site := NewSite("installation", "age1example", GatewayModeManaged)
 	site.Gateway.Publish = []GatewayPublication{{Service: "dns"}}

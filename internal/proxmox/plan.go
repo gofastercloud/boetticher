@@ -449,7 +449,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		}
 		guestMAC := component.MAC
 		if guestMAC == "" && component.Module != "" {
-			guestMAC = model.ManagedModuleMAC(component.VMID)
+			guestMAC = networkmodel.ManagedModuleMAC(component.VMID)
 		}
 		guest := GuestPlan{
 			VMID: component.VMID, Name: component.Name, Hostname: component.Hostname, Zone: component.Zone,

@@ -20,6 +20,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/artifacts"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
+	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 )
 
 type recordingArgsRunner struct {
@@ -300,7 +301,7 @@ func TestAirVPNBifrostPlanUsesStableMACFilterIdentity(t *testing.T) {
 	}
 	for _, guest := range plan.Guests {
 		if guest.Name == "lab-bifrost-01" {
-			if guest.MAC != model.ManagedModuleMAC(210) || !strings.Contains(lxcNetworkParam(guest), "macaddr="+model.ManagedModuleMAC(210)+",ip=10.10.20.60/24") {
+			if guest.MAC != networkmodel.ManagedModuleMAC(210) || !strings.Contains(lxcNetworkParam(guest), "macaddr="+networkmodel.ManagedModuleMAC(210)+",ip=10.10.20.60/24") {
 				t.Fatalf("AirVPN Bifrost network identity = %#v", guest)
 			}
 			return
@@ -407,7 +408,7 @@ func TestComposedFirewallKindComesFromDeclaredArtifact(t *testing.T) {
 }
 
 func TestLXCNetworkParamUsesStaticMACForAirVPNGuest(t *testing.T) {
-	guest := GuestPlan{VLAN: 20, Address: "10.10.20.60", Gateway: "10.10.20.1", MAC: model.ManagedModuleMAC(210)}
+	guest := GuestPlan{VLAN: 20, Address: "10.10.20.60", Gateway: "10.10.20.1", MAC: networkmodel.ManagedModuleMAC(210)}
 	want := "name=eth0,bridge=vmbr1,tag=20,firewall=1,macaddr=02:00:00:03:00:d2,ip=10.10.20.60/24,gw=10.10.20.1"
 	if got := lxcNetworkParam(guest); got != want {
 		t.Fatalf("lxcNetworkParam() = %q, want %q", got, want)
