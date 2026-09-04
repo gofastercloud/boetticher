@@ -129,35 +129,30 @@ contract.
 
 ## Live qualification status
 
-The 2026-09-04 read-only lab inspection is a qualification hold, not release
-evidence. The Proxmox host is reachable and has the headless power policy
-active, but still contains the prior six-guest deployment: VMIDs 100, 110,
-111, 120, 130, and 140. That is not a clean 0.5.1 installation. The physical
-bridges and internal management route are present.
+The 2026-09-04 read-only inspection after reinstall is a qualification hold,
+not release evidence. The Proxmox host is reachable with no guests, the
+internal NVMe holds the Proxmox root storage, and the stable 1 TB build disk is
+present separately. The failing 2 TB disk is no longer attached. The managed
+guest-storage PV/VG/LVM setup and the 0.5.1 platform deployment remain
+NOT TESTED.
 
-The same host is not currently safe for further qualification: the current
-kernel journal reports recurring write I/O failures on the 2 TB USB-backed
-`/dev/sda` data disk, marks the device offline, and propagates buffer errors
-through the legacy guest volumes. The native builder uses the separate 1 TB
-`/dev/sdb` disk; its completed `image-base` build passed, but the subsequent
-multi-artifact build was stopped when the data-disk failures were observed.
-No repair or reinitialization of the data disk has been attempted.
-
-The Companion reports `eth0` on SERVERS, `wlan0` as the HOME default route,
-NetworkManager active, and the StreamDeck service active. Its kiosk and Pulse
-agent services are not active in this prequalification state. No 0.5.1 source
-revision or release bundle has been deployed, so the enroll/plan/Apply/revoke/
-commit lifecycle, interruption cleanup, recovery usability, and idempotent
-second deployment remain NOT TESTED.
+The Companion has not been reset or re-enrolled. Its previous HOME Wi-Fi and
+SERVERS Ethernet state is therefore context only, not current 0.5.1 evidence.
+No 0.5.1 source revision or release bundle has been deployed, so the
+enroll/plan/Apply/revoke/commit lifecycle, interruption cleanup, recovery
+usability, Companion journey, and idempotent second deployment remain NOT
+TESTED.
 
 ## Local 0.5.1 test build
 
-On 2026-09-04, exact source revision `0e3cb2870da42ae6e62b5752349a187f5094b33f`
-was built through the isolated native Linux maintainer path on the clean
-development host. All 13 checked-in appliance definitions completed image
-construction, Trivy scanning, and smoke qualification. A local signed test
-bundle was assembled from those bytes; the release-built controller imported
-it successfully, including the signed controller digest and size binding.
+On 2026-09-04, all 13 checked-in appliance definitions completed image
+construction, Trivy scanning, and smoke qualification through the isolated
+native Linux maintainer path on T580. After the maintainer and documentation
+changes reached exact source revision `98d362a`, the all-target build and
+all-target qualification each reported 13/13 reusable artifacts and performed
+no image construction or Trivy scan. Reuse required current definition/base
+identity, artifact bytes, and complete qualification evidence.
+
 This is local qualification only. It is not hosted release evidence and has
 not been deployed to Proxmox or the Companion.
 
