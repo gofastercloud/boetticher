@@ -70,6 +70,7 @@ var PublicBuildInputs = []string{
 // build inputs, but they are not embedded in an installed operator binary.
 var NativeBuilderSupportInputs = []string{
 	"cmd/artifact-reuse",
+	"scripts/install-debian-archive-keyring.sh",
 	"scripts/local-builder-setup.sh",
 	"scripts/native-builder-run.sh",
 }
