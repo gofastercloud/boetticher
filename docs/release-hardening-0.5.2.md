@@ -122,11 +122,11 @@ The interactive operator journey now permits `deploy` to render a fresh live
 plan and request an explicit `APPLY` approval. Supplying `--plan DIGEST` remains
 required for non-interactive runs and for exact scripted qualification.
 
-At source checkpoint `4f6c471`, the repeatable measurements are:
+At source checkpoint `50335db`, the repeatable measurements are:
 
 | Measure | 0.5.2 checkpoint |
 | --- | ---: |
-| Controller source LOC | 43,419 |
+| Controller source LOC | 43,387 |
 | Controller test LOC | 22,802 |
 | Compiled repository packages | 50 |
 | Controller dependency closure | 1,139 |
@@ -141,11 +141,12 @@ At source checkpoint `4f6c471`, the repeatable measurements are:
 | PKI implementation LOC | 580 |
 | PKI test LOC | 126 |
 | Non-test mTLS reference files | 17 |
-| Lines changed from frozen 0.5.1 checkpoint | 2,000 added / 1,467 deleted |
+| Lines changed from frozen 0.5.1 checkpoint | 2,188 added / 1,677 deleted |
 
-The full local `make ci` gate passes at this checkpoint. This is source and
-local qualification evidence only; hosted release evidence, live Proxmox
-qualification, and Companion qualification remain outstanding.
+The full local `make ci` gate passed at `24eb715`; the current maintainer-only
+source-packaging addition passed its focused artifact test and shell checks.
+This is source and local qualification evidence only; hosted release evidence,
+live Proxmox qualification, and Companion qualification remain outstanding.
 
 ## Frozen default topology
 
