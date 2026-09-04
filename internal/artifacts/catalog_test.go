@@ -967,6 +967,38 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	}
 }
 
+func TestPackageInstallMountsCompletePrivateChrootDevices(t *testing.T) {
+	buildScript, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(buildScript)
+	for _, required := range []string{
+		`mount --rbind /dev "$rootfs/dev"`,
+		`mount --make-rslave "$rootfs/dev"`,
+		`mountpoint -q "$rootfs/dev/pts"`,
+		`FAIL: chroot devpts mount is unavailable: $rootfs/dev/pts`,
+		`mount --rbind /sys "$rootfs/sys"`,
+		`mount --make-rslave "$rootfs/sys"`,
+		`FAIL: could not unmount chroot path: $mount_path`,
+		`findmnt -R -o TARGET,SOURCE,FSTYPE,PROPAGATION "$rootfs"`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("package installation does not preserve the private chroot mount contract: missing %q", required)
+		}
+	}
+	if strings.Contains(text, `mount --bind /dev "$rootfs/dev"`) {
+		t.Fatal("package installation omits the devpts submount from its chroot")
+	}
+	devBind := strings.Index(text, `mount --rbind /dev "$rootfs/dev"`)
+	devSlave := strings.Index(text, `mount --make-rslave "$rootfs/dev"`)
+	sysBind := strings.Index(text, `mount --rbind /sys "$rootfs/sys"`)
+	sysSlave := strings.Index(text, `mount --make-rslave "$rootfs/sys"`)
+	if devBind < 0 || devSlave <= devBind || sysBind < 0 || sysSlave <= sysBind {
+		t.Fatal("chroot mount propagation is not isolated immediately after recursive bind")
+	}
+}
+
 func TestAIOpsArtifactPinsUnmodifiedHolmesAndIsolation(t *testing.T) {
 	root := filepath.Join("..", "..")
 	definition, err := os.ReadFile(filepath.Join(root, "images", "aiops", "image.yaml"))
