@@ -729,6 +729,22 @@ func TestEnsureScopedCredentialACLRepairsBackingUserAndToken(t *testing.T) {
 	}
 }
 
+func TestScopedProvisionerACLPathsIncludeStorageCollection(t *testing.T) {
+	paths := scopedProvisionerACLPaths("node")
+	for _, want := range []string{"/storage", "/storage/local", "/storage/boetticher-thin", "/storage/boetticher-backups"} {
+		found := false
+		for _, path := range paths {
+			if path == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("scoped ACL paths omit %q: %v", want, paths)
+		}
+	}
+}
+
 func TestCreatePulseMonitoringCredentialsUsesBoundedAPIOnlyIdentity(t *testing.T) {
 	runner := &fakeRunner{
 		responses: map[string][]byte{
