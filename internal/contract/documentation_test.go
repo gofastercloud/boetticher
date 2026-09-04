@@ -61,9 +61,15 @@ func TestPublicDocumentationMatchesV03Model(t *testing.T) {
 	for _, want := range []string{
 		"boetticher deploy [--plan DIGEST] [--site DIR] [--age-identity PATH] [--confirm]",
 		"boetticher enroll [--site DIR] [--bootstrap-address ADDRESS] [--operator-key PATH] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--known-hosts PATH] [--proxmox-ca PATH] [--initial-user USER] [--insecure] [--trunk-interface IFACE] [--replace-scoped-credentials] [--dry-run]",
+		"boetticher companion add|setup|status|migrate ...",
 	} {
 		if !strings.Contains(commands, want) {
 			t.Errorf("command reference is missing %q", want)
+		}
+	}
+	for _, want := range []string{"companion add --mac", model.CompanionHostname, model.CompanionAddress, "desired state only"} {
+		if !strings.Contains(start, want) && !strings.Contains(lab, want) {
+			t.Errorf("Companion documentation is missing %q", want)
 		}
 	}
 }

@@ -133,20 +133,22 @@ show compatible choices. Generic USB export remains available for actual guest
 peripherals such as printers and serial hardware.
 
 StreamDeck is a capability of a Boetticher companion device, not a Proxmox
-module. Attach the supported StreamDeck directly to the companion Pi and use
-`boetticher companion setup` and `boetticher companion status`; the companion
-receives no Proxmox credentials or USB passthrough configuration.
+module. Attach the supported StreamDeck directly to the Companion Pi. The
+Companion receives no Proxmox credentials or USB passthrough configuration.
 
 On a 0.4 site, `boetticher companion migrate` can move the exact old
 `lab-streamdeck-01` guest to this arrangement. A fresh 0.5 site has no such
 guest to clean up.
 
-After the platform has been deployed and the Pi's host key is enrolled, set up
-the companion from the signed release you imported during bootstrap:
+After the core platform is healthy, add the physical `eth0` MAC to desired
+state, deploy its fixed `10.10.20.50` SERVERS reservation and bastion route,
+then set up the Companion from the signed release imported during bootstrap:
 
 ```text
-boetticher companion setup 192.0.2.50 --site ./my-boetticher --identity-file ~/.ssh/id_ed25519 --known-hosts ./my-boetticher/generated/ssh/companion_known_hosts --confirm
-boetticher companion status 192.0.2.50 --site ./my-boetticher
+boetticher companion add --mac COMPANION_ETH0_MAC --confirm --site ./my-boetticher
+boetticher deploy --site ./my-boetticher
+boetticher companion setup --host-key 'ssh-ed25519 VERIFIED_HOST_KEY' --confirm --site ./my-boetticher
+boetticher companion status --site ./my-boetticher
 ```
 
 ### Names, dashboards, and logs

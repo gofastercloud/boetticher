@@ -78,10 +78,28 @@ The Companion is outside the Proxmox module model. In the physical lab layout:
 * `wlan0` connects to HOME and remains the Pi's default route; and
 * `eth0` carries the deterministic route to the lab networks and Pulse.
 
-The Pi's SERVERS address should be a DHCP reservation. The Companion setup
-installs only the display, StreamDeck, and optional Pulse-agent capability;
-the Pi receives no Proxmox credentials. Direct USB permissions are limited to
-the configured device identity and unrelated USB configuration is preserved.
+The Companion is opt-in after the core lab is established. `companion add`
+takes the physical `eth0` MAC and derives one fixed identity:
+
+| Field | Fixed value |
+| --- | --- |
+| Hostname | `lab-display-01` |
+| Zone | SERVERS |
+| Address | `10.10.20.50` |
+| Address source | Kea reservation bound to the supplied `eth0` MAC |
+
+Adding the Companion changes desired state only. A subsequent `deploy` applies
+the Kea reservation and permits the enrolled `lab-jump` account to open only
+`10.10.20.50:22`. `companion setup` and `companion status` use that route
+through the Proxmox bastion; they do not accept an arbitrary Pi address or
+expose the rest of SERVERS through the bastion.
+
+The Pi may keep a HOME-side Wi-Fi address for its default route, initial OS
+preparation, or recovery. That address is not stored as Boetticher's Companion
+identity. Setup installs only the display, StreamDeck, and optional Pulse-agent
+capability; the Pi receives no Proxmox credentials. Direct USB permissions are
+limited to the configured device identity and unrelated USB configuration is
+preserved.
 
 ## Storage and headless operation
 

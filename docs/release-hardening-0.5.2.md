@@ -98,6 +98,18 @@ The target operator path is:
 init -> enroll -> update -> deploy -> status
 ```
 
+The optional Companion is a separate post-setup journey:
+
+```text
+companion add --mac MAC -> deploy -> companion setup -> companion status
+```
+
+`companion add` records the physical `eth0` identity in desired state and
+derives `lab-display-01` at `10.10.20.50` on SERVERS. It performs no live
+mutation. The explicit deploy applies the DHCP/DDNS reservation and exact
+bastion destination before setup reaches the Pi through that route. HOME-side
+addresses are not part of the persisted Companion contract.
+
 The live baseline has not yet measured prompt count or elapsed operator
 journey. Current enrollment still exposes bootstrap address, operator-key,
 known-hosts, Proxmox CA, recovery/storage confirmations, and physical trunk
@@ -158,9 +170,11 @@ lab-dns-01
 lab-monitor-01
 ```
 
-The Companion is external and optional. The reference physical qualification
-will enable the selected second NIC as the `vmbr1` VLAN trunk during initial
-enrollment, while preserving HOME management on `vmbr0`.
+The Companion is external, optional, and absent from the default plan until its
+physical Ethernet MAC is added. The reference physical qualification will
+enable the selected second NIC as the `vmbr1` VLAN trunk during initial
+enrollment, preserve HOME management on `vmbr0`, then add and deploy the fixed
+SERVERS reservation before configuring the Pi.
 
 ## Evidence boundaries
 

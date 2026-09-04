@@ -41,6 +41,21 @@ boetticher status --site my-boetticher --live
 Keep an independent copy of the age recovery identity created during setup.
 The guide has the calm version of the rest.
 
+The optional Companion is deliberately added after the core lab is healthy and
+the guarded physical trunk is attached. Give Boetticher the Pi's physical
+`eth0` MAC, deploy the derived SERVERS reservation and bastion route, then
+configure the Pi at its fixed lab address:
+
+```text
+boetticher companion add --mac COMPANION_ETH0_MAC --confirm --site my-boetticher
+boetticher deploy --site my-boetticher
+boetticher companion setup --host-key 'ssh-ed25519 VERIFIED_HOST_KEY' --confirm --site my-boetticher
+boetticher companion status --site my-boetticher
+```
+
+The fixed identity is `lab-display-01` at `10.10.20.50`; a HOME-side address is
+not saved as the managed Companion endpoint.
+
 ## Built with a lot of excellent open source
 
 Boetticher is the small connector between a pile of brilliant projects. Huge

@@ -127,6 +127,31 @@ the default route. The Proxmox second NIC is the tagged internal trunk. See
 the [lab guide](lab.html) for the exact physical contract and switch
 implications.
 
+### Add the optional Companion
+
+Finish the core deployment and confirm `status --details --live` first. Attach
+the separately guarded Proxmox physical trunk, then connect the Pi's `eth0` to
+an untagged SERVERS port and record that physical interface's MAC:
+
+```text
+boetticher companion add --mac COMPANION_ETH0_MAC --dry-run --site ./my-boetticher
+boetticher companion add --mac COMPANION_ETH0_MAC --confirm --site ./my-boetticher
+boetticher deploy --site ./my-boetticher
+boetticher companion setup --dry-run --site ./my-boetticher
+boetticher companion setup --host-key 'ssh-ed25519 VERIFIED_HOST_KEY' --confirm --site ./my-boetticher
+boetticher companion status --site ./my-boetticher
+```
+
+`companion add` changes desired state only. It derives `lab-display-01` at
+`10.10.20.50` on SERVERS; the following `deploy` applies that Kea reservation,
+DDNS identity, and the exact Proxmox-bastion route. Setup and status then use
+that address automatically. They do not accept an arbitrary target address.
+
+The Pi may retain HOME Wi-Fi as its default route, but a temporary HOME address
+is bootstrap or recovery context only. Boetticher neither saves it nor uses it
+as the managed Companion identity. Supply `--host-key` on the first setup only
+after independently verifying the Pi's SSH host key.
+
 ## Everyday operations
 
 Use the consolidated read-only view first:

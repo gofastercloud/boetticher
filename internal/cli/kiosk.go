@@ -37,9 +37,11 @@ const companionStreamDeckIdentity = "companion-streamdeck"
 
 func runCompanion(args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: boetticher companion setup|status|migrate ADDRESS [options]")
+		return errors.New("usage: boetticher companion add|setup|status|migrate [options]")
 	}
 	switch args[0] {
+	case "add":
+		return runCompanionAdd(args[1:], out)
 	case "setup":
 		return runCompanionSetup(args[1:], out)
 	case "status":
@@ -51,8 +53,102 @@ func runCompanion(args []string, out io.Writer) error {
 	}
 }
 
+func runCompanionAdd(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("companion add", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	siteDir := fs.String("site", ".", "private site repository directory")
+	mac := fs.String("mac", "", "physical Ethernet MAC of the Companion eth0 interface")
+	confirm := fs.Bool("confirm", false, "save the Companion desired state")
+	dryRun := fs.Bool("dry-run", false, "show the derived reservation without changing desired state")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 0 {
+		return errors.New("companion add does not accept positional arguments")
+	}
+	if *dryRun && *confirm {
+		return errors.New("--dry-run and --confirm cannot be used together")
+	}
+	canonicalMAC, err := canonicalMACAddress(*mac)
+	if err != nil {
+		return fmt.Errorf("companion add requires --mac for the physical eth0 interface: %w", err)
+	}
+	config, err := site.LoadConfig(*siteDir)
+	if err != nil {
+		return err
+	}
+	companion := &model.CompanionConfig{}
+	if config.Companion != nil {
+		*companion = *config.Companion
+	}
+	enabled := true
+	companion.Enabled = &enabled
+	companion.EthernetMAC = canonicalMAC
+	if companion.Display == nil {
+		companion.Display = &model.CompanionCapabilityConfig{Enabled: &enabled}
+	}
+	if companion.StreamDeck == nil {
+		companion.StreamDeck = &model.CompanionCapabilityConfig{Enabled: &enabled}
+	}
+	if companion.PulseAgent == nil {
+		companion.PulseAgent = &model.CompanionCapabilityConfig{Enabled: &enabled}
+	}
+	config.Companion = companion
+
+	reservation, ok := model.CompanionReservation(companion)
+	if !ok {
+		return errors.New("companion identity did not produce the fixed SERVERS reservation")
+	}
+	reservations := make([]model.DHCPReservation, 0, len(config.DHCPReservations))
+	for _, existing := range config.DHCPReservations {
+		existingMAC, parseErr := canonicalMACAddress(existing.MAC)
+		exact := parseErr == nil && existing.Zone == reservation.Zone && strings.EqualFold(existing.Hostname, reservation.Hostname) && existing.Address == reservation.Address && existingMAC == reservation.MAC && existing.VMID == 0
+		if exact {
+			// Adopt an exact generic reservation into the typed Companion
+			// authority instead of persisting two competing representations.
+			continue
+		}
+		if strings.EqualFold(existing.Hostname, reservation.Hostname) || existing.Address == reservation.Address || parseErr == nil && existingMAC == reservation.MAC {
+			return fmt.Errorf("existing DHCP reservation %s conflicts with the fixed Companion identity; remove or reconcile it first", existing.Hostname)
+		}
+		reservations = append(reservations, existing)
+	}
+	config.DHCPReservations = reservations
+	if err := validateComposedConfig(config); err != nil {
+		return fmt.Errorf("validate Companion desired state: %w", err)
+	}
+
+	fmt.Fprintln(out, "Companion plan")
+	fmt.Fprintf(out, "  Hostname  %s\n", reservation.Hostname)
+	fmt.Fprintf(out, "  Zone      %s\n", reservation.Zone)
+	fmt.Fprintf(out, "  Address   %s\n", reservation.Address)
+	fmt.Fprintf(out, "  MAC       %s\n", reservation.MAC)
+	fmt.Fprintln(out, "  Mutation  desired state only; no DHCP, SSH, or Pi change")
+	if *dryRun {
+		fmt.Fprintln(out, "Companion add: PASS dry-run only; desired state was not changed")
+		return nil
+	}
+	if !*confirm {
+		return errors.New("companion add changes desired state only; review the fixed reservation and rerun with --confirm")
+	}
+	if err := site.SaveConfig(*siteDir, config); err != nil {
+		return fmt.Errorf("save Companion desired state: %w", err)
+	}
+	fmt.Fprintln(out, "Companion add: PASS desired state saved; no deployment performed")
+	if config.Gateway.Mode == model.GatewayModeManaged {
+		if config.PhysicalNetwork.Mode != model.ModePhysicalTrunk {
+			fmt.Fprintln(out, "Next action: attach the guarded physical trunk, then run deploy to apply the reservation and bastion route before companion setup")
+		} else {
+			fmt.Fprintln(out, "Next action: run deploy to apply the reservation and bastion route, then run companion setup")
+		}
+	} else {
+		fmt.Fprintln(out, "Next action: apply the generated external-firewall reservation contract and bastion route, then run companion setup")
+	}
+	return nil
+}
+
 func runCompanionMigrate(args []string, out io.Writer) error {
-	args, err := normalizeKioskArgs(args)
+	args, err := normalizeCompanionMigrationArgs(args)
 	if err != nil {
 		return err
 	}
@@ -111,7 +207,7 @@ func runCompanionMigrate(args []string, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "Legacy StreamDeck: %s VMID %d at %s\n", proxmox.LegacyStreamDeckName, model.LegacyStreamDeckVMID, address)
 	fmt.Fprintf(out, "Local cleanup: %d USB binding(s), %d retained module record(s)\n", removedBindings, removedRetained)
-	fmt.Fprintln(out, "Result: StreamDeck will be a companion capability; no Proxmox guest will be recreated")
+	fmt.Fprintln(out, "Result: StreamDeck is staged as a disabled Companion capability; add the physical eth0 MAC separately")
 	if *dryRun {
 		fmt.Fprintln(out, "Companion migration: PASS dry-run only; no site, SSH, or Proxmox changes made")
 		return nil
@@ -157,14 +253,11 @@ func runCompanionMigrate(args []string, out io.Writer) error {
 		fmt.Fprintln(out, "Legacy guest: PASS exact StreamDeck LXC was already absent")
 	}
 	fmt.Fprintf(out, "Companion migration: PASS %s migrated; unrelated USB mappings were not selected\n", address)
+	fmt.Fprintln(out, "Next action: run companion add --mac MAC --confirm for this site")
 	return nil
 }
 
 func runCompanionSetup(args []string, out io.Writer) error {
-	args, err := normalizeKioskArgs(args)
-	if err != nil {
-		return err
-	}
 	fs := flag.NewFlagSet("companion setup", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
@@ -179,12 +272,8 @@ func runCompanionSetup(args []string, out io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 1 {
-		return errors.New("one Raspberry Pi IPv4 address is required")
-	}
-	address := fs.Arg(0)
-	if err := sshconfig.ValidateBootstrapAddress(address); err != nil {
-		return err
+	if fs.NArg() != 0 {
+		return errors.New("companion setup uses the configured SERVERS reservation and does not accept an address")
 	}
 	if *port < 1 || *port > 65535 {
 		return fmt.Errorf("SSH port %d is outside 1-65535", *port)
@@ -199,6 +288,11 @@ func runCompanionSetup(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	reservation, ok := model.CompanionReservation(s.Companion)
+	if !ok {
+		return errors.New("companion is not configured; run boetticher companion add --mac MAC first")
+	}
+	address := reservation.Address
 	capabilities := s.Companion.Capabilities()
 	if *identity == "" {
 		*identity = s.SSHIdentityFile
@@ -214,7 +308,11 @@ func runCompanionSetup(args []string, out io.Writer) error {
 	if err := validateKioskSSHInputs(*identity, *knownHosts, *dryRun); err != nil {
 		return err
 	}
-	sshContent, err := sshconfig.RenderDirect(address, *user, *identity, *knownHosts, *port)
+	platformKnownHosts := deploymentKnownHosts(*siteDir)
+	if err := validateKioskSSHInputs(*identity, platformKnownHosts, *dryRun); err != nil {
+		return err
+	}
+	sshContent, err := sshconfig.RenderCompanion(s, *user, *identity, platformKnownHosts, *knownHosts, *port)
 	if err != nil {
 		return err
 	}
@@ -254,18 +352,18 @@ func runCompanionSetup(args []string, out io.Writer) error {
 	if err := validateKioskSSHInputs(*identity, *knownHosts, false); err != nil {
 		return err
 	}
-	if _, err := sshconfig.ReadHostKey(*knownHosts, address); err != nil {
+	if _, err := sshconfig.ReadHostKey(*knownHosts, model.CompanionHostname); err != nil {
 		if *hostKey == "" {
 			return fmt.Errorf("refusing unknown Raspberry Pi host key: %w; enroll an independently verified key with --host-key", err)
 		}
 		if err := os.MkdirAll(filepath.Dir(*knownHosts), 0700); err != nil {
 			return fmt.Errorf("create SSH known-hosts directory: %w", err)
 		}
-		if err := sshconfig.AddKnownHostKey(*knownHosts, address, *hostKey); err != nil {
+		if err := sshconfig.AddKnownHostKey(*knownHosts, model.CompanionHostname, *hostKey); err != nil {
 			return err
 		}
 	} else if *hostKey != "" {
-		if err := sshconfig.AddKnownHostKey(*knownHosts, address, *hostKey); err != nil {
+		if err := sshconfig.AddKnownHostKey(*knownHosts, model.CompanionHostname, *hostKey); err != nil {
 			return err
 		}
 	}
@@ -354,7 +452,7 @@ func runCompanionSetup(args []string, out io.Writer) error {
 	inventoryPath := filepath.Join(workspace, "inventory.ini")
 	sshConfigPath := filepath.Join(workspace, "ssh.conf")
 	playbook := filepath.Join(sourceRoot, "ansible", "companion.yml")
-	inventory := "# Temporary Boetticher companion inventory.\n[kiosk]\nboetticher-companion ansible_host=" + address + "\n\n[kiosk:vars]\nansible_python_interpreter=/usr/bin/python3\n"
+	inventory := "# Temporary Boetticher companion inventory.\n[kiosk]\nboetticher-companion\n\n[kiosk:vars]\nansible_python_interpreter=/usr/bin/python3\n"
 	if err := os.WriteFile(inventoryPath, []byte(inventory), 0600); err != nil {
 		return fmt.Errorf("write temporary companion inventory: %w", err)
 	}
@@ -400,10 +498,6 @@ func revokeAndRemoveCompanionCertificate(siteDir string, s model.Site, name stri
 }
 
 func runCompanionStatus(args []string, out io.Writer) error {
-	args, err := normalizeKioskArgs(args)
-	if err != nil {
-		return err
-	}
 	fs := flag.NewFlagSet("companion status", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
@@ -415,12 +509,8 @@ func runCompanionStatus(args []string, out io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if fs.NArg() != 1 {
-		return errors.New("one Raspberry Pi IPv4 address is required")
-	}
-	address := fs.Arg(0)
-	if err := sshconfig.ValidateBootstrapAddress(address); err != nil {
-		return err
+	if fs.NArg() != 0 {
+		return errors.New("companion status uses the configured SERVERS reservation and does not accept an address")
 	}
 	if *port < 1 || *port > 65535 {
 		return fmt.Errorf("SSH port %d is outside 1-65535", *port)
@@ -429,6 +519,11 @@ func runCompanionStatus(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	reservation, ok := model.CompanionReservation(s.Companion)
+	if !ok {
+		return errors.New("companion is not configured; run boetticher companion add --mac MAC first")
+	}
+	address := reservation.Address
 	if *identity == "" {
 		*identity = s.SSHIdentityFile
 	}
@@ -443,10 +538,14 @@ func runCompanionStatus(args []string, out io.Writer) error {
 	if err := validateKioskSSHInputs(*identity, *knownHosts, false); err != nil {
 		return err
 	}
-	if _, err := sshconfig.ReadHostKey(*knownHosts, address); err != nil {
+	if _, err := sshconfig.ReadHostKey(*knownHosts, model.CompanionHostname); err != nil {
 		return fmt.Errorf("refusing companion status without an enrolled host key: %w", err)
 	}
-	sshContent, err := sshconfig.RenderDirect(address, *user, *identity, *knownHosts, *port)
+	platformKnownHosts := deploymentKnownHosts(*siteDir)
+	if err := validateKioskSSHInputs(*identity, platformKnownHosts, false); err != nil {
+		return err
+	}
+	sshContent, err := sshconfig.RenderCompanion(s, *user, *identity, platformKnownHosts, *knownHosts, *port)
 	if err != nil {
 		return err
 	}
@@ -459,7 +558,7 @@ func runCompanionStatus(args []string, out io.Writer) error {
 	if err := os.WriteFile(sshPath, []byte(sshContent), 0600); err != nil {
 		return fmt.Errorf("write temporary companion status SSH configuration: %w", err)
 	}
-	runner := proxmox.SSHRunner{ConfigFile: sshPath, HostAlias: "boetticher-companion", HostKeyAlias: "boetticher-companion"}
+	runner := companionStatusSSHRunner(sshPath)
 	statusOutput, runErr := runner.Run(context.Background(), address, *user, "for unit in boetticher-streamdeck.service pulse-kiosk.service pulse-agent.service; do printf '%s ' \"$unit\"; systemctl is-active \"$unit\" 2>/dev/null || true; done")
 	if runErr != nil {
 		return fmt.Errorf("read companion service status: %w", runErr)
@@ -487,6 +586,10 @@ func runCompanionStatus(args []string, out io.Writer) error {
 	return nil
 }
 
+func companionStatusSSHRunner(configPath string) proxmox.SSHRunner {
+	return proxmox.SSHRunner{ConfigFile: configPath, HostAlias: "boetticher-companion", HostKeyAlias: model.CompanionHostname}
+}
+
 func companionStreamDeckBinary(siteDir string, dryRun bool) (string, error) {
 	if dryRun {
 		return filepath.Join(siteDir, "generated", "release", filepath.FromSlash(artifacts.CompanionStreamDeckPath)), nil
@@ -498,22 +601,14 @@ func companionStreamDeckBinary(siteDir string, dryRun bool) (string, error) {
 	return path, nil
 }
 
-func normalizeKioskArgs(args []string) ([]string, error) {
+func normalizeCompanionMigrationArgs(args []string) ([]string, error) {
 	valueFlags := map[string]bool{
-		"--site":          true,
-		"-site":           true,
-		"--age-identity":  true,
-		"-age-identity":   true,
-		"--user":          true,
-		"-user":           true,
-		"--identity-file": true,
-		"-identity-file":  true,
-		"--known-hosts":   true,
-		"-known-hosts":    true,
-		"--host-key":      true,
-		"-host-key":       true,
-		"--port":          true,
-		"-port":           true,
+		"--site":         true,
+		"-site":          true,
+		"--age-identity": true,
+		"-age-identity":  true,
+		"--proxmox-ca":   true,
+		"-proxmox-ca":    true,
 	}
 	var normalized []string
 	var addresses []string
@@ -535,7 +630,7 @@ func normalizeKioskArgs(args []string) ([]string, error) {
 		normalized = append(normalized, arg)
 	}
 	if len(addresses) != 1 {
-		return nil, errors.New("one Raspberry Pi IPv4 address is required")
+		return nil, errors.New("one legacy Proxmox IPv4 address is required")
 	}
 	return append(normalized, addresses[0]), nil
 }

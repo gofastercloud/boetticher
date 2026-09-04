@@ -138,6 +138,10 @@
         "enabled": {
           "type": "boolean"
         },
+        "ethernet_mac": {
+          "description": "Physical Ethernet MAC used for the fixed SERVERS reservation.",
+          "type": "string"
+        },
         "pulse_agent": {
           "$ref": "#/$defs/CompanionCapabilityConfig"
         },

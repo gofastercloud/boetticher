@@ -63,6 +63,9 @@ const (
 	AirVPNGuestAddress          = "10.10.5.20"
 	ArrGuestAddress             = "10.10.20.110"
 	ArrGuestMAC                 = "02:00:00:00:02:10"
+	CompanionZone               = "SERVERS"
+	CompanionHostname           = "lab-display-01"
+	CompanionAddress            = "10.10.20.50"
 	InfraVLAN                   = 10
 	InfraNetwork                = "10.10.10.0/24"
 	InfraGateway                = "10.10.10.1"
@@ -636,12 +639,6 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 			UserGuestIDMin: UserGuestIDMin, UserGuestIDMax: UserGuestIDMax,
 			UserWorkloadsManaged: false,
 		},
-		Companion: &CompanionConfig{
-			Enabled:    boolPointer(true),
-			Display:    &CompanionCapabilityConfig{Enabled: boolPointer(true)},
-			StreamDeck: &CompanionCapabilityConfig{Enabled: boolPointer(true)},
-			PulseAgent: &CompanionCapabilityConfig{Enabled: boolPointer(true)},
-		},
 		Components: []Component{
 			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: ProxmoxManagementAddress, Role: "Proxmox host", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork, TagMonitoringAgent}, URL: "https://proxmox." + DefaultDomain + ":8006", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Logging: true},
 		},
@@ -957,6 +954,9 @@ func (s Site) Validate() error {
 	if err := s.validateUSBExports(); err != nil {
 		return err
 	}
+	if err := validateCompanion(s.Companion); err != nil {
+		return err
+	}
 	expectedZones := map[string]struct {
 		typ     ZoneType
 		vlan    int
@@ -1161,6 +1161,26 @@ func (s Site) Validate() error {
 	}
 	if err := validateDeclarations(s); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateCompanion(companion *CompanionConfig) error {
+	if companion == nil {
+		return nil
+	}
+	if companion.EthernetMAC == "" {
+		if companion.Capabilities().Enabled {
+			return errors.New("companion.ethernet_mac is required when the companion is enabled")
+		}
+		return nil
+	}
+	parsed, err := net.ParseMAC(companion.EthernetMAC)
+	if err != nil || len(parsed) != 6 {
+		return errors.New("companion.ethernet_mac must be an Ethernet MAC")
+	}
+	if parsed[0]&0x01 != 0 {
+		return errors.New("companion.ethernet_mac must be unicast")
 	}
 	return nil
 }

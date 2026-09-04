@@ -63,6 +63,12 @@ func validateModuleConfigShape(data []byte) error {
 		for index := 0; index+1 < len(companion.Content); index += 2 {
 			name := companion.Content[index].Value
 			value := companion.Content[index+1]
+			if name == "ethernet_mac" {
+				if value.Tag != "!!str" {
+					return errors.New("site.yml: companion.ethernet_mac: expected a string")
+				}
+				continue
+			}
 			if name == "enabled" {
 				if value.Tag != "!!bool" && value.Tag != "!!null" {
 					return errors.New("site.yml: companion.enabled: expected a boolean")

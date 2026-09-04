@@ -76,12 +76,12 @@ func TestKioskCertificatePolicyUsesStringifiedChromeEntries(t *testing.T) {
 	}
 }
 
-func TestNormalizeKioskArgsAcceptsAddressBeforeOptions(t *testing.T) {
-	got, err := normalizeKioskArgs([]string{"192.0.2.50", "--site", "./site", "--port", "2222"})
+func TestNormalizeCompanionMigrationArgsAcceptsAddressBeforeOptions(t *testing.T) {
+	got, err := normalizeCompanionMigrationArgs([]string{"192.0.2.50", "--site", "./site", "--proxmox-ca", "./ca.pem"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"--site", "./site", "--port", "2222", "192.0.2.50"}
+	want := []string{"--site", "./site", "--proxmox-ca", "./ca.pem", "192.0.2.50"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("normalized args = %#v, want %#v", got, want)
 	}
@@ -91,13 +91,18 @@ func TestKioskSetupDryRunDoesNotTouchPKIOrPi(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("BOETTICHER_RUNTIME_DIR", filepath.Join(t.TempDir(), "runtime"))
 	config := model.ConfigFromSite(model.NewDefaultSite("installation", "age1example"))
+	config.BootstrapAddress = "192.0.2.10"
+	enabled := true
+	config.Companion = &model.CompanionConfig{
+		Enabled: &enabled, EthernetMAC: "dc:a6:32:e9:dd:82",
+		Display: &model.CompanionCapabilityConfig{Enabled: &enabled}, StreamDeck: &model.CompanionCapabilityConfig{Enabled: &enabled}, PulseAgent: &model.CompanionCapabilityConfig{Enabled: &enabled},
+	}
 	if err := site.SaveConfig(dir, config); err != nil {
 		t.Fatal(err)
 	}
 
 	var output bytes.Buffer
 	err := runCompanionSetup([]string{
-		"192.0.2.50",
 		"--site", dir,
 		"--identity-file", filepath.Join(dir, "missing-identity"),
 		"--dry-run",
@@ -108,6 +113,9 @@ func TestKioskSetupDryRunDoesNotTouchPKIOrPi(t *testing.T) {
 	if !strings.Contains(output.String(), "Companion setup: PASS dry-run only") {
 		t.Fatalf("unexpected dry-run output: %s", output.String())
 	}
+	if !strings.Contains(output.String(), "Companion target: pi@"+model.CompanionAddress+":22") {
+		t.Fatalf("setup did not derive the SERVERS address: %s", output.String())
+	}
 	if _, err := os.Stat(filepath.Join(os.Getenv("BOETTICHER_RUNTIME_DIR"), "installation", "pki", kioskClientName)); !os.IsNotExist(err) {
 		t.Fatalf("dry-run created kiosk PKI runtime: %v", err)
 	}
@@ -116,6 +124,9 @@ func TestKioskSetupDryRunDoesNotTouchPKIOrPi(t *testing.T) {
 func TestKioskSetupRequiresConfirmationForMutation(t *testing.T) {
 	dir := t.TempDir()
 	config := model.ConfigFromSite(model.NewDefaultSite("installation", "age1example"))
+	config.BootstrapAddress = "192.0.2.10"
+	enabled := true
+	config.Companion = &model.CompanionConfig{Enabled: &enabled, EthernetMAC: "dc:a6:32:e9:dd:82"}
 	if err := site.SaveConfig(dir, config); err != nil {
 		t.Fatal(err)
 	}
@@ -125,12 +136,120 @@ func TestKioskSetupRequiresConfirmationForMutation(t *testing.T) {
 	}
 	var output bytes.Buffer
 	err := runCompanionSetup([]string{
-		"192.0.2.50",
 		"--site", dir,
 		"--identity-file", identity,
 	}, &output)
 	if err == nil || !strings.Contains(err.Error(), "--confirm") {
 		t.Fatalf("mutation without confirmation error = %v", err)
+	}
+}
+
+func TestCompanionAddRecordsTypedIdentityAndDerivedReservationOnly(t *testing.T) {
+	dir := t.TempDir()
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	if err := site.SaveConfig(dir, config); err != nil {
+		t.Fatal(err)
+	}
+
+	var preview bytes.Buffer
+	if err := runCompanionAdd([]string{"--site", dir, "--mac", "DC:A6:32:E9:DD:82", "--dry-run"}, &preview); err != nil {
+		t.Fatal(err)
+	}
+	unchanged, err := site.LoadConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.Companion != nil {
+		t.Fatalf("dry-run changed desired state: %#v", unchanged.Companion)
+	}
+	if !strings.Contains(preview.String(), model.CompanionHostname) || !strings.Contains(preview.String(), model.CompanionAddress) || !strings.Contains(preview.String(), "desired state only") {
+		t.Fatalf("companion preview omitted its derived plan: %s", preview.String())
+	}
+
+	var output bytes.Buffer
+	if err := runCompanionAdd([]string{"--site", dir, "--mac", "DC:A6:32:E9:DD:82", "--confirm"}, &output); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := site.LoadConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Companion == nil || saved.Companion.EthernetMAC != "dc:a6:32:e9:dd:82" || !saved.Companion.Capabilities().Enabled {
+		t.Fatalf("typed companion identity was not saved: %#v", saved.Companion)
+	}
+	if len(saved.DHCPReservations) != 0 {
+		t.Fatalf("derived reservation was duplicated in site.yml: %#v", saved.DHCPReservations)
+	}
+	resolved, err := site.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved.DHCPReservations) != 1 || resolved.DHCPReservations[0].Address != model.CompanionAddress || resolved.DHCPReservations[0].MAC != "dc:a6:32:e9:dd:82" {
+		t.Fatalf("derived reservation is missing: %#v", resolved.DHCPReservations)
+	}
+}
+
+func TestCompanionSetupRequiresCompanionAdd(t *testing.T) {
+	dir := t.TempDir()
+	if err := site.SaveConfig(dir, model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))); err != nil {
+		t.Fatal(err)
+	}
+	err := runCompanionSetup([]string{"--site", dir, "--dry-run"}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "companion add --mac") {
+		t.Fatalf("setup accepted an unconfigured companion: %v", err)
+	}
+}
+
+func TestCompanionSetupRejectsAnArbitraryAddress(t *testing.T) {
+	dir := t.TempDir()
+	enabled := true
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	config.Companion = &model.CompanionConfig{Enabled: &enabled, EthernetMAC: "dc:a6:32:e9:dd:82"}
+	if err := site.SaveConfig(dir, config); err != nil {
+		t.Fatal(err)
+	}
+	err := runCompanionSetup([]string{"192.168.4.6", "--site", dir, "--dry-run"}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "does not accept an address") {
+		t.Fatalf("setup accepted an arbitrary address: %v", err)
+	}
+}
+
+func TestCompanionStatusRunnerPinsTheLogicalHostIdentity(t *testing.T) {
+	runner := companionStatusSSHRunner("/tmp/companion-ssh.conf")
+	if runner.ConfigFile != "/tmp/companion-ssh.conf" || runner.HostAlias != "boetticher-companion" || runner.HostKeyAlias != model.CompanionHostname {
+		t.Fatalf("unexpected Companion status runner: %#v", runner)
+	}
+}
+
+func TestCompanionAddAdoptsOnlyAnExactGenericReservation(t *testing.T) {
+	dir := t.TempDir()
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	config.DHCPReservations = []model.DHCPReservation{{
+		Zone: model.CompanionZone, Hostname: model.CompanionHostname, Address: model.CompanionAddress, MAC: "dc:a6:32:e9:dd:82",
+	}}
+	if err := site.SaveConfig(dir, config); err != nil {
+		t.Fatal(err)
+	}
+	if err := runCompanionAdd([]string{"--site", dir, "--mac", "dc:a6:32:e9:dd:82", "--confirm"}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := site.LoadConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.DHCPReservations) != 0 {
+		t.Fatalf("exact generic reservation was not adopted: %#v", saved.DHCPReservations)
+	}
+
+	conflictDir := t.TempDir()
+	config.Companion = nil
+	config.DHCPReservations[0].MAC = "dc:a6:32:e9:dd:83"
+	if err := site.SaveConfig(conflictDir, config); err != nil {
+		t.Fatal(err)
+	}
+	err = runCompanionAdd([]string{"--site", conflictDir, "--mac", "dc:a6:32:e9:dd:82", "--confirm"}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("conflicting reservation was adopted: %v", err)
 	}
 }
 

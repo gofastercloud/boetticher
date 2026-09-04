@@ -42,8 +42,8 @@ func TestMigrateLegacyStreamDeckConfigRemovesOnlyLegacyState(t *testing.T) {
 		t.Fatalf("migration removed unrelated state incorrectly: %#v", config)
 	}
 	capabilities := config.Companion.Capabilities()
-	if !capabilities.Enabled || !capabilities.Display || !capabilities.StreamDeck || !capabilities.PulseAgent {
-		t.Fatalf("migration did not enable explicit companion capabilities: %#v", capabilities)
+	if capabilities.Enabled || config.Companion == nil {
+		t.Fatalf("migration enabled the companion before its Ethernet MAC was recorded: %#v", capabilities)
 	}
 }
 

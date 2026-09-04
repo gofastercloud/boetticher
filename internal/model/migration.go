@@ -56,10 +56,16 @@ func MigrateLegacyStreamDeckConfig(data []byte) (config SiteConfig, removedBindi
 	}
 	if _, ok := document["companion"]; !ok {
 		document["companion"] = map[string]any{
-			"enabled":     true,
+			"enabled":     false,
 			"display":     map[string]any{"enabled": true},
 			"streamdeck":  map[string]any{"enabled": true},
 			"pulse_agent": map[string]any{"enabled": true},
+		}
+	} else if companion, ok := document["companion"].(map[string]any); ok {
+		if mac, _ := companion["ethernet_mac"].(string); mac == "" {
+			// The migrated capability cannot become reachable on reservation-only
+			// SERVERS until the operator records the physical eth0 identity.
+			companion["enabled"] = false
 		}
 	}
 	migrated, err := yaml.Marshal(document)

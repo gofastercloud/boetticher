@@ -21,13 +21,19 @@ func Render(s model.Site, generatedAt time.Time) (string, error) {
 	return render(s, generatedAt, "")
 }
 
-// RenderDirect renders a short-lived, host-key-pinned SSH configuration for
-// one external companion. It deliberately has no include, proxy, command, or
-// forwarding directives so Ansible cannot inherit a user's broader SSH
-// configuration while configuring a fresh Raspberry Pi.
-func RenderDirect(address, user, identity, knownHosts string, port int) (string, error) {
-	if err := ValidateBootstrapAddress(address); err != nil {
-		return "", fmt.Errorf("external appliance address: %w", err)
+// RenderCompanion renders a short-lived, host-key-pinned route through the
+// enrolled Proxmox bastion to the fixed Companion SERVERS reservation. Platform
+// and Companion host trust remain in separate site-scoped files.
+func RenderCompanion(s model.Site, user, identity, platformKnownHosts, companionKnownHosts string, port int) (string, error) {
+	if err := s.Validate(); err != nil {
+		return "", err
+	}
+	reservation, ok := model.CompanionReservation(s.Companion)
+	if !ok {
+		return "", errors.New("companion is not configured with an Ethernet MAC")
+	}
+	if err := ValidateBootstrapAddress(s.BootstrapAddress); err != nil {
+		return "", fmt.Errorf("Proxmox bastion address: %w", err)
 	}
 	if !validSSHUser(user) {
 		return "", fmt.Errorf("SSH user %q is not a valid Unix account name", user)
@@ -39,16 +45,27 @@ func RenderDirect(address, user, identity, knownHosts string, port int) (string,
 	if err != nil {
 		return "", err
 	}
-	knownHosts, err = quoteOpenSSHPath("SSH known-hosts file", model.ExpandUserPath(knownHosts))
+	platformKnownHosts, err = quoteOpenSSHPath("platform SSH known-hosts file", model.ExpandUserPath(platformKnownHosts))
+	if err != nil {
+		return "", err
+	}
+	companionKnownHosts, err = quoteOpenSSHPath("Companion SSH known-hosts file", model.ExpandUserPath(companionKnownHosts))
 	if err != nil {
 		return "", err
 	}
 	var b strings.Builder
-	b.WriteString("# Temporary Boetticher Raspberry Pi setup transport. Do not edit.\n")
-	fmt.Fprintf(&b, "Host boetticher-companion %s\n", address)
-	fmt.Fprintf(&b, "    HostName %s\n    Port %d\n    User %s\n", address, port, user)
+	b.WriteString("# Temporary Boetticher Companion transport. Do not edit.\n")
+	b.WriteString("Host lab-bastion\n")
+	fmt.Fprintf(&b, "    HostName %s\n    Port 22\n    User lab-jump\n", s.BootstrapAddress)
+	fmt.Fprintf(&b, "    HostKeyAlias %s\n", model.LogicalProxmoxIdentity)
 	b.WriteString("    ConnectTimeout 10\n    BatchMode yes\n    PasswordAuthentication no\n    KbdInteractiveAuthentication no\n    PubkeyAuthentication yes\n    StrictHostKeyChecking yes\n")
-	fmt.Fprintf(&b, "    UserKnownHostsFile %s\n    IdentityFile %s\n", knownHosts, identity)
+	fmt.Fprintf(&b, "    UserKnownHostsFile %s\n    IdentityFile %s\n", platformKnownHosts, identity)
+	b.WriteString("    IdentitiesOnly yes\n    ControlMaster no\n    ForwardAgent no\n    ForwardX11 no\n    RequestTTY no\n    ChannelTimeout direct-tcpip=10\n\n")
+	b.WriteString("Host boetticher-companion\n")
+	fmt.Fprintf(&b, "    HostName %s\n    Port %d\n    User %s\n", reservation.Address, port, user)
+	fmt.Fprintf(&b, "    HostKeyAlias %s\n", reservation.Hostname)
+	b.WriteString("    ProxyJump lab-bastion\n    ConnectTimeout 10\n    BatchMode yes\n    PasswordAuthentication no\n    KbdInteractiveAuthentication no\n    PubkeyAuthentication yes\n    StrictHostKeyChecking yes\n")
+	fmt.Fprintf(&b, "    UserKnownHostsFile %s\n    IdentityFile %s\n", companionKnownHosts, identity)
 	b.WriteString("    IdentitiesOnly yes\n    ControlMaster no\n    ForwardAgent no\n    ForwardX11 no\n    RequestTTY no\n")
 	return b.String(), nil
 }
@@ -172,6 +189,9 @@ func BastionDestinations(s model.Site) []string {
 		for _, m := range retained.Guests {
 			destinations = appendBastionDestinations(destinations, m)
 		}
+	}
+	if reservation, ok := model.CompanionReservation(s.Companion); ok {
+		destinations = append(destinations, fmt.Sprintf("%s:%d", reservation.Address, 22))
 	}
 	sort.Strings(destinations)
 	return destinations
