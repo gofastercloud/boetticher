@@ -69,6 +69,9 @@ func TestExtractSourceArchiveReaderAcceptsProvisioningTreesAndRejectsArtifacts(t
 func TestExtractNativeBuilderOutputReaderRejectsUnsafeEntries(t *testing.T) {
 	var archive bytes.Buffer
 	tarWriter := tar.NewWriter(&archive)
+	if err := tarWriter.WriteHeader(&tar.Header{Name: "generated/", Typeflag: tar.TypeDir, Mode: 0o700}); err != nil {
+		t.Fatal(err)
+	}
 	data := []byte("qualified\n")
 	if err := tarWriter.WriteHeader(&tar.Header{Name: "generated/artifacts/result/smoke.txt", Mode: 0o600, Size: int64(len(data))}); err != nil {
 		t.Fatal(err)
