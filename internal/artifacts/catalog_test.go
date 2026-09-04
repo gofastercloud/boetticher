@@ -1189,6 +1189,12 @@ func TestFirewallOfflineUpgradeMountsEFIForPackageTriggers(t *testing.T) {
 	}
 	supervisorText := string(supervisor)
 	for _, required := range []string{
+		"bounded_launching=0",
+		"pending_bounded_signal=",
+		"pending_bounded_status=",
+		`if [ "$bounded_launching" -eq 1 ] && [ -z "$active_bounded_pid" ]; then`,
+		"pending_bounded_signal=$signal",
+		"pending_bounded_status=$status",
 		"setsid timeout --signal=TERM --kill-after=\"$kill_after\" \"$duration\" \"$@\" &",
 		"active_bounded_pid=$!",
 		"kill -s \"$signal\" \"$active_bounded_pid\"",
@@ -1198,6 +1204,13 @@ func TestFirewallOfflineUpgradeMountsEFIForPackageTriggers(t *testing.T) {
 		if !strings.Contains(supervisorText, required) {
 			t.Fatalf("firewall process supervisor does not forward bounded cancellation: missing %q", required)
 		}
+	}
+	launchingIndex := strings.Index(supervisorText, "bounded_launching=1")
+	launchIndex := strings.Index(supervisorText, "setsid timeout")
+	recordIndex := strings.Index(supervisorText, "active_bounded_pid=$!")
+	launchedIndex := strings.Index(supervisorText, "bounded_launching=0\n  if [ -n \"$pending_bounded_signal\" ]")
+	if launchingIndex < 0 || launchIndex <= launchingIndex || recordIndex <= launchIndex || launchedIndex <= recordIndex {
+		t.Fatal("firewall process supervisor does not defer signals across launch-to-PID assignment")
 	}
 	mountIndex := strings.Index(installerText, "mount -t vfat")
 	upgradeIndex := strings.Index(installerText, "apt-get --no-download upgrade")
