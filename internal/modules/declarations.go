@@ -175,8 +175,6 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		}
 		declaration.Certificates = append(declaration.Certificates,
 			model.CertificateRequest{Identity: "aiops." + site.Network.Domain, SANs: []string{"aiops." + site.Network.Domain, "lab-aiops-01." + site.Network.Domain}, Consumer: "boetticher-aiops-server"},
-			model.CertificateRequest{Identity: "aiops-pulse-read", SANs: []string{"aiops-pulse-read." + site.Network.Domain}, Consumer: "boetticher-aiops-pulse-read"},
-			model.CertificateRequest{Identity: "aiops-pulse-note", SANs: []string{"aiops-pulse-note." + site.Network.Domain}, Consumer: "boetticher-aiops-pulse-note"},
 			model.CertificateRequest{Identity: "aiops-log-read", SANs: []string{"aiops-log-read." + site.Network.Domain}, Consumer: "boetticher-aiops-log-read"},
 			model.CertificateRequest{Identity: "aiops-router-client", SANs: []string{"aiops-router-client." + site.Network.Domain}, Consumer: "boetticher-aiops-router"},
 		)

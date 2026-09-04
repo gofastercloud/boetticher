@@ -77,13 +77,11 @@ server {
         proxy_set_header Remote-Role "";
     }
 
-    # AIOps identities are constrained by certificate identity as well as their
-    # Pulse token. Exact read locations reject the note identity; the exact note
-    # location rejects the read identity. The catch-all below rejects both.
+    # AIOps uses distinct scoped Pulse bearer tokens. These exact routes expose
+    # only the operations those tokens authorize; the catch-all remains mTLS
+    # protected for the browser UI.
     location = /api/alerts/active {
-        if ($ssl_client_verify != SUCCESS) { return 403; }
         limit_except GET { deny all; }
-        if ($ssl_client_s_dn ~ "CN=aiops-pulse-note(?:,|$)") { return 403; }
         set $boetticher_pulse_proxy_secret "";
         if ($boetticher_pulse_proxy_user != "") {
             set $boetticher_pulse_proxy_secret $boetticher_pulse_proxy_shared_secret;
@@ -92,14 +90,13 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Authorization $http_authorization;
         proxy_set_header X-Proxy-Secret $boetticher_pulse_proxy_secret;
         proxy_set_header Remote-User $boetticher_pulse_proxy_user;
         proxy_set_header Remote-Role $boetticher_pulse_proxy_role;
     }
     location = /api/alerts/incidents {
-        if ($ssl_client_verify != SUCCESS) { return 403; }
         limit_except GET { deny all; }
-        if ($ssl_client_s_dn ~ "CN=aiops-pulse-note(?:,|$)") { return 403; }
         set $boetticher_pulse_proxy_secret "";
         if ($boetticher_pulse_proxy_user != "") {
             set $boetticher_pulse_proxy_secret $boetticher_pulse_proxy_shared_secret;
@@ -108,14 +105,13 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Authorization $http_authorization;
         proxy_set_header X-Proxy-Secret $boetticher_pulse_proxy_secret;
         proxy_set_header Remote-User $boetticher_pulse_proxy_user;
         proxy_set_header Remote-Role $boetticher_pulse_proxy_role;
     }
     location ~ ^/api/resources/[^/]+(?:/metrics)?$ {
-        if ($ssl_client_verify != SUCCESS) { return 403; }
         limit_except GET { deny all; }
-        if ($ssl_client_s_dn ~ "CN=aiops-pulse-note(?:,|$)") { return 403; }
         set $boetticher_pulse_proxy_secret "";
         if ($boetticher_pulse_proxy_user != "") {
             set $boetticher_pulse_proxy_secret $boetticher_pulse_proxy_shared_secret;
@@ -124,14 +120,13 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Authorization $http_authorization;
         proxy_set_header X-Proxy-Secret $boetticher_pulse_proxy_secret;
         proxy_set_header Remote-User $boetticher_pulse_proxy_user;
         proxy_set_header Remote-Role $boetticher_pulse_proxy_role;
     }
     location = /api/metrics-store/history {
-        if ($ssl_client_verify != SUCCESS) { return 403; }
         limit_except GET { deny all; }
-        if ($ssl_client_s_dn ~ "CN=aiops-pulse-note(?:,|$)") { return 403; }
         set $boetticher_pulse_proxy_secret "";
         if ($boetticher_pulse_proxy_user != "") {
             set $boetticher_pulse_proxy_secret $boetticher_pulse_proxy_shared_secret;
@@ -140,18 +135,18 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Authorization $http_authorization;
         proxy_set_header X-Proxy-Secret $boetticher_pulse_proxy_secret;
         proxy_set_header Remote-User $boetticher_pulse_proxy_user;
         proxy_set_header Remote-Role $boetticher_pulse_proxy_role;
     }
     location = /api/alerts/incidents/note {
-        if ($ssl_client_verify != SUCCESS) { return 403; }
         limit_except POST { deny all; }
-        if ($ssl_client_s_dn != "CN=aiops-pulse-note,O=boetticher") { return 403; }
         proxy_pass http://127.0.0.1:7655;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Authorization $http_authorization;
     }
 
     location / {

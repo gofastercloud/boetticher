@@ -29,8 +29,6 @@
   args:
     creates: "/var/lib/boetticher/identity/tls/{{ item.file }}.key.pem"
   loop:
-    - {file: pulse-read, identity: aiops-pulse-read}
-    - {file: pulse-note, identity: aiops-pulse-note}
     - {file: log-query-client, identity: aiops-log-read}
     - {file: ai-router-client, identity: aiops-router-client}
   when: boetticher_deploy_phase | default('full') != 'health'
@@ -41,7 +39,7 @@
     owner: root
     group: boetticher-aiops
     mode: '0640'
-  loop: [pulse-read, pulse-note, log-query-client, ai-router-client]
+  loop: [log-query-client, ai-router-client]
   when: boetticher_deploy_phase | default('full') != 'health'
 
 - name: Generate exact AIOps service-client CSRs locally
@@ -60,8 +58,6 @@
   args:
     creates: "/var/lib/boetticher/identity/tls/{{ item.file }}.csr.pem"
   loop:
-    - {file: pulse-read, identity: aiops-pulse-read}
-    - {file: pulse-note, identity: aiops-pulse-note}
     - {file: log-query-client, identity: aiops-log-read}
     - {file: ai-router-client, identity: aiops-router-client}
   when: boetticher_deploy_phase | default('full') != 'health'
@@ -71,7 +67,7 @@
     src: "/var/lib/boetticher/identity/tls/{{ item }}.csr.pem"
     dest: "{{ pki_csr_output_dir }}/{{ item }}.csr.pem"
     flat: true
-  loop: [pulse-read, pulse-note, log-query-client, ai-router-client]
+  loop: [log-query-client, ai-router-client]
   when: pki_bootstrap_phase | default(false) | bool
 
 - name: Require Smallstep AIOps server and retained client certificates
@@ -80,8 +76,6 @@
       - step_ca_root_cert_pem is defined
       - step_ca_intermediate_cert_pem is defined
       - client_ca_pem is defined
-      - (pki_bootstrap_phase | default(false) | bool) or (aiops_pulse_read_cert_pem | default('') | length > 0)
-      - (pki_bootstrap_phase | default(false) | bool) or (aiops_pulse_note_cert_pem | default('') | length > 0)
       - (pki_bootstrap_phase | default(false) | bool) or (aiops_log_read_cert_pem | default('') | length > 0)
       - (pki_bootstrap_phase | default(false) | bool) or (aiops_router_client_cert_pem | default('') | length > 0)
     fail_msg: "AIOps requires the Smallstep server and retained client identities before activation"
@@ -123,21 +117,17 @@
     group: boetticher-aiops
     mode: '0640'
   loop:
-    - {file: pulse-read.crt.pem, content: "{{ aiops_pulse_read_cert_pem | default('') }}"}
-    - {file: pulse-note.crt.pem, content: "{{ aiops_pulse_note_cert_pem | default('') }}"}
     - {file: log-query-client.crt.pem, content: "{{ aiops_log_read_cert_pem | default('') }}"}
     - {file: ai-router-client.crt.pem, content: "{{ aiops_router_client_cert_pem | default('') }}"}
     - {file: ca.crt.pem, content: "{{ client_ca_pem | default('') }}"}
   no_log: true
   when:
-    - aiops_pulse_read_cert_pem | default('') | length > 0
-    - aiops_pulse_note_cert_pem | default('') | length > 0
     - aiops_log_read_cert_pem | default('') | length > 0
     - aiops_router_client_cert_pem | default('') | length > 0
 
 - name: Record that all AIOps endpoint identities are installed
   ansible.builtin.set_fact:
-    aiops_server_identity_ready: "{{ aiops_step_ca_marker.stat.exists | default(false) | bool and aiops_pulse_read_cert_pem | default('') | length > 0 and aiops_pulse_note_cert_pem | default('') | length > 0 and aiops_log_read_cert_pem | default('') | length > 0 and aiops_router_client_cert_pem | default('') | length > 0 }}"
+    aiops_server_identity_ready: "{{ aiops_step_ca_marker.stat.exists | default(false) | bool and aiops_log_read_cert_pem | default('') | length > 0 and aiops_router_client_cert_pem | default('') | length > 0 }}"
 
 - name: Pin the selected provider-neutral model alias
   ansible.builtin.copy:

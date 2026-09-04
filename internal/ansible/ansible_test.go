@@ -545,8 +545,8 @@ func TestMonitorFrontendUsesTokensForScopedReadRoutes(t *testing.T) {
 	if !strings.Contains(text, "location ^~ /api/agents/") {
 		t.Fatal("monitor frontend does not proxy the supported Pulse agent routes")
 	}
-	if got := strings.Count(text, "if ($ssl_client_verify != SUCCESS) { return 403; }"); got != 6 {
-		t.Fatalf("monitor frontend mTLS guards = %d, want the five exact AIOps routes and the catch-all", got)
+	if got := strings.Count(text, "if ($ssl_client_verify != SUCCESS) { return 403; }"); got != 1 {
+		t.Fatalf("monitor frontend mTLS guards = %d, want only the browser catch-all", got)
 	}
 	for _, route := range []string{"location = /api/health", "location = /api/state/summary", "location = /api/resources"} {
 		start := strings.Index(text, route)
@@ -960,7 +960,6 @@ func TestAIOpsRoleUsesSmallstepServerCertificateAndRetainsClientIdentities(t *te
 		"step_ca_intermediate_cert_pem is defined",
 		"include_tasks: ../../tasks/step-ca-endpoint.yml",
 		"step_ca_endpoint_subject: \"aiops.{{ domain }}\"",
-		"pulse-read.crt.pem",
 		"ai-router-client.crt.pem",
 	} {
 		if !strings.Contains(text, required) {
@@ -2073,7 +2072,7 @@ func TestSharedClientCAFrontendsRestrictClientIdentities(t *testing.T) {
 	}
 }
 
-func TestLoggingAndPulseWriteRoutesRequireExactClientIdentities(t *testing.T) {
+func TestLoggingUploadRetainsClientIdentityAndPulseWritesUseScopedTokens(t *testing.T) {
 	logging, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "logging", "tasks", "main.yml"))
 	if err != nil {
 		t.Fatal(err)
@@ -2093,8 +2092,18 @@ func TestLoggingAndPulseWriteRoutesRequireExactClientIdentities(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(frontend), `if ($ssl_client_s_dn != "CN=aiops-pulse-note,O=boetticher") { return 403; }`) {
-		t.Fatal("Pulse incident-note route does not require the exact note client identity")
+	frontendText := string(frontend)
+	noteStart := strings.Index(frontendText, "location = /api/alerts/incidents/note")
+	if noteStart < 0 {
+		t.Fatal("Pulse incident-note route is missing")
+	}
+	noteEnd := strings.Index(frontendText[noteStart:], "\n    }")
+	if noteEnd < 0 {
+		t.Fatal("Pulse incident-note route is unterminated")
+	}
+	noteRoute := frontendText[noteStart : noteStart+noteEnd]
+	if strings.Contains(noteRoute, "$ssl_client_verify") || strings.Contains(noteRoute, "$ssl_client_s_dn") || !strings.Contains(noteRoute, "Authorization $http_authorization") {
+		t.Fatal("Pulse incident-note route does not use the scoped bearer-token boundary")
 	}
 }
 
