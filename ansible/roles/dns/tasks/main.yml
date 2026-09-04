@@ -22,6 +22,11 @@
   changed_when: false
   when: inventory_hostname in groups.get('dns', [])
 
+- name: Determine whether this pass owns Smallstep CA convergence
+  ansible.builtin.set_fact:
+    boetticher_manage_step_ca: "{{ inventory_hostname == 'lab-dns-01' and not (boetticher_skip_step_ca | default(false) | bool) }}"
+  when: inventory_hostname == 'lab-dns-01'
+
 - name: Create the unprivileged Smallstep CA service account
   ansible.builtin.user:
     name: boetticher-step-ca
@@ -29,7 +34,7 @@
     home: /var/lib/boetticher/step-ca
     create_home: false
     shell: /usr/sbin/nologin
-  when: inventory_hostname == 'lab-dns-01'
+  when: boetticher_manage_step_ca
 
 - name: Create the Smallstep CA state directories
   ansible.builtin.file:
@@ -44,7 +49,7 @@
     - {path: /var/lib/boetticher/step-ca/config, mode: '0750'}
     - {path: /var/lib/boetticher/step-ca/db, mode: '0750'}
     - {path: /var/lib/boetticher/step-ca/secrets, mode: '0700'}
-  when: inventory_hostname == 'lab-dns-01'
+  when: boetticher_manage_step_ca
 
 - name: Install the Smallstep CA password
   ansible.builtin.copy:
@@ -54,7 +59,7 @@
     group: boetticher-step-ca
     mode: '0600'
   no_log: true
-  when: inventory_hostname == 'lab-dns-01'
+  when: boetticher_manage_step_ca
 
 - name: Initialize the Smallstep CA configuration once
   ansible.builtin.command:
@@ -82,13 +87,13 @@
   environment:
     STEPPATH: /var/lib/boetticher/step-ca
   no_log: true
-  when: inventory_hostname == 'lab-dns-01'
+  when: boetticher_manage_step_ca
 
 - name: Remove the generated Smallstep root private key from the online CA
   ansible.builtin.file:
     path: /var/lib/boetticher/step-ca/secrets/root_ca_key
     state: absent
-  when: inventory_hostname == 'lab-dns-01'
+  when: boetticher_manage_step_ca
 
 - name: Set Smallstep CA state ownership for the unprivileged service
   ansible.builtin.file:
@@ -96,7 +101,7 @@
     owner: boetticher-step-ca
     group: boetticher-step-ca
     recurse: true
-  when: inventory_hostname == 'lab-dns-01'
+  when: boetticher_manage_step_ca
 
 - name: Install the cold-root public certificate for Smallstep
   ansible.builtin.copy:
@@ -106,7 +111,7 @@
     group: boetticher-step-ca
     mode: '0644'
   no_log: true
-  when: inventory_hostname == 'lab-dns-01'
+  when: boetticher_manage_step_ca
 
 - name: Install the online Smallstep intermediate certificate
   ansible.builtin.copy:
@@ -116,7 +121,7 @@
     group: boetticher-step-ca
     mode: '0644'
   no_log: true
-  when: inventory_hostname == 'lab-dns-01'
+  when: boetticher_manage_step_ca
 
 - name: Check whether the online Smallstep intermediate key is already encrypted
   ansible.builtin.shell: >-
@@ -125,7 +130,7 @@
   register: step_ca_key_encrypted
   changed_when: false
   failed_when: false
-  when: inventory_hostname == 'lab-dns-01'
+  when: boetticher_manage_step_ca
 
 - name: Import and encrypt the online Smallstep intermediate key once
   block:
@@ -159,7 +164,7 @@
       ansible.builtin.fail:
         msg: "Smallstep intermediate key conversion failed; no online CA was started"
   when:
-    - inventory_hostname == 'lab-dns-01'
+    - boetticher_manage_step_ca
     - step_ca_key_encrypted.rc != 0 or step_ca_init.changed
 
 - name: Install the Smallstep CA service
@@ -170,7 +175,7 @@
     group: root
     mode: '0644'
   notify: reload systemd
-  when: inventory_hostname == 'lab-dns-01'
+  when: boetticher_manage_step_ca
 
 - name: Enable the Smallstep CA service
   ansible.builtin.systemd_service:
@@ -178,7 +183,7 @@
     enabled: true
     state: started
     daemon_reload: true
-  when: inventory_hostname == 'lab-dns-01'
+  when: boetticher_manage_step_ca
 
 - name: Check the installed PowerDNS version
   ansible.builtin.command: pdns_server --version

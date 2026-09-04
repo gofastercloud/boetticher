@@ -659,14 +659,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	runtimeVariables["client_ca_pem"] = authority.RootCertPEM + authority.IssuingCertPEM
 	runtimeVariables["pulse_server_ca_pem"] = authority.RootCertPEM + authority.IssuingCertPEM
-	stepCAPassword, loadErr := platformSecrets.Get("step_ca_password")
-	if loadErr != nil {
-		return fmt.Errorf("load encrypted Smallstep CA password: %w", loadErr)
-	}
 	runtimeVariables["step_ca_root_cert_pem"] = authority.RootCertPEM
 	runtimeVariables["step_ca_intermediate_cert_pem"] = authority.IssuingCertPEM
-	runtimeVariables["step_ca_intermediate_key_pem"] = authority.IssuingKeyPEM
-	runtimeVariables["step_ca_password"] = stepCAPassword
+	runtimeVariables["boetticher_skip_step_ca"] = true
 	if proxmoxCredentials, loadErr := site.LoadProxmoxCredentials(*siteDir, s, *ageIdentity); loadErr != nil {
 		return fmt.Errorf("load encrypted Proxmox credentials for API trust projection: %w", loadErr)
 	} else if proxmoxCredentials.CAPEM != "" {
@@ -933,6 +928,31 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 					if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, guest.Name, report, temporaryPrivateKey); err != nil {
 						return fmt.Errorf("HOLD: configure DNS guest %s before dependent appliances: %w", guest.Name, err)
 					}
+				}
+				if guest.Name == "lab-dns-01" {
+					stepCAPassword, loadErr := platformSecrets.Get("step_ca_password")
+					if loadErr != nil {
+						return fmt.Errorf("load encrypted Smallstep CA password: %w", loadErr)
+					}
+					runtimeVariables["boetticher_skip_step_ca"] = false
+					runtimeVariables["step_ca_intermediate_key_pem"] = authority.IssuingKeyPEM
+					runtimeVariables["step_ca_password"] = stepCAPassword
+					variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
+					if err != nil {
+						return fmt.Errorf("encode Smallstep CA variables: %w", err)
+					}
+					variables = append(variables, '\n')
+					if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, guest.Name, report, temporaryPrivateKey); err != nil {
+						return fmt.Errorf("HOLD: configure Smallstep CA on %s: %w", guest.Name, err)
+					}
+					delete(runtimeVariables, "step_ca_intermediate_key_pem")
+					delete(runtimeVariables, "step_ca_password")
+					runtimeVariables["boetticher_skip_step_ca"] = true
+					variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
+					if err != nil {
+						return fmt.Errorf("encode post-CA Ansible variables: %w", err)
+					}
+					variables = append(variables, '\n')
 				}
 				if guest.Name == "lab-dns-01" && s.Gateway.Mode == model.GatewayModeManaged {
 					needsRestart, err := installPowerDNSTSIG(ctx, guestRunner, guest.Address, dnsPlan, secretValues["firewall-ddns-tsig"])
