@@ -23,7 +23,6 @@ type crlCacheRevocation struct {
 }
 
 type crlCacheInput struct {
-	RootKeyPEM     string               `json:"root_key_pem"`
 	RootCertPEM    string               `json:"root_cert_pem"`
 	IssuingKeyPEM  string               `json:"issuing_key_pem"`
 	IssuingCertPEM string               `json:"issuing_cert_pem"`
@@ -89,7 +88,6 @@ func crlCacheKey(authority pki.Authority, revocations []pki.Revocation) (string,
 		return entries[i].Name < entries[j].Name
 	})
 	payload, err := json.Marshal(crlCacheInput{
-		RootKeyPEM:     authority.RootKeyPEM,
 		RootCertPEM:    authority.RootCertPEM,
 		IssuingKeyPEM:  authority.IssuingKeyPEM,
 		IssuingCertPEM: authority.IssuingCertPEM,
