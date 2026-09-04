@@ -38,6 +38,9 @@ remote_output="$remote_root/output"
 remote_native_root="$remote_root/root"
 remote_native_output="$remote_native_root$remote_output"
 
+native_image_targets='image-base image-dns-blocky image-logging image-monitoring image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-aiops image-gatus image-network-probe image-firewall'
+native_scan_names='boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-firewall boetticher-tailnet-router boetticher-airvpn boetticher-bifrost boetticher-printer boetticher-arr boetticher-aiops boetticher-gatus boetticher-network-probe'
+
 case "$builder_ssh" in
   *[![:alnum:]@._:-]*) fail 'BOETTICHER_LOCAL_BUILDER_SSH contains unsupported characters' ;;
 esac
@@ -160,6 +163,79 @@ sync_native_source() {
   rm -f -- "$source_archive"
 }
 
+artifact_module() {
+  artifact=$1
+  module=${artifact#image-}
+  [ "$module" = dns-blocky ] && module=dns
+  printf '%s\n' "$module"
+}
+
+remote_artifact_reusable() {
+  artifact=$1
+  module=$(artifact_module "$artifact")
+  native_ssh "cd $remote_source && env GOCACHE=/var/cache/boetticher/go /opt/boetticher/go/current/bin/go run ./cmd/artifact-reuse -root $remote_output -module $module" >/dev/null 2>&1
+}
+
+filter_reusable_targets() {
+  operation=$1
+  shift
+  mode=$1
+  original_args=$*
+  reusable=0
+  pending=
+  case "$operation:$mode" in
+    build:images)
+      shift
+      selected=$*
+      [ -n "$selected" ] || selected=$native_image_targets
+      for target in $selected; do
+        if remote_artifact_reusable "$target"; then
+          printf 'measurement stage=artifact_reuse status=hit artifact=%s\n' "${target#image-}"
+          reusable=$((reusable + 1))
+        else
+          pending="$pending $target"
+        fi
+      done
+      ;;
+    scan:scan-images)
+      shift
+      selected=$*
+      [ -n "$selected" ] || selected=$native_scan_names
+      for target in $selected; do
+        image_target=image-${target#boetticher-}
+        [ "$target" = boetticher-dns-blocky ] && image_target=image-dns-blocky
+        if remote_artifact_reusable "$image_target"; then
+          printf 'measurement stage=artifact_reuse status=hit artifact=%s\n' "$target"
+          reusable=$((reusable + 1))
+        else
+          pending="$pending $target"
+        fi
+      done
+      ;;
+    build:*|scan:*)
+      target=$1
+      case "$operation:$target" in
+        build:image-*) image_target=$target ;;
+        scan:scan-*) image_target=image-${target#scan-} ;;
+        *) image_target= ;;
+      esac
+      if [ -n "$image_target" ] && remote_artifact_reusable "$image_target"; then
+        printf 'measurement stage=artifact_reuse status=hit artifact=%s\n' "${image_target#image-}"
+        reusable=1
+      fi
+      ;;
+  esac
+  if [ "$reusable" -gt 0 ] && [ -z "$pending" ]; then
+    return 0
+  fi
+  if [ "$reusable" -gt 0 ]; then
+    native_filtered_args="$mode $pending"
+  else
+    native_filtered_args="$original_args"
+  fi
+  return 1
+}
+
 setup_native_builder() {
   [ "$artifact_output" = generated/artifacts ] || fail 'native builder mode requires the default generated/artifacts output path'
   sync_native_source
@@ -187,6 +263,10 @@ run_native_builder() {
   [ "$artifact_output" = generated/artifacts ] || fail 'native builder mode requires the default generated/artifacts output path'
   validate_remote_target "$runner" "$@"
   sync_native_source
+  if filter_reusable_targets "$runner" "$@"; then
+    return 0
+  fi
+  set -- $native_filtered_args
   case "$runner" in
     build) script=./scripts/build-images.sh ;;
     scan) script=./scripts/scan-images.sh ;;

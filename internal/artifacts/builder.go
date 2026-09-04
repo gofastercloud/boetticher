@@ -68,6 +68,7 @@ var PublicBuildInputs = []string{
 // are transferred to the isolated build host so it can execute the public
 // build inputs, but they are not embedded in an installed operator binary.
 var NativeBuilderSupportInputs = []string{
+	"cmd/artifact-reuse",
 	"scripts/local-builder-setup.sh",
 	"scripts/native-builder-run.sh",
 }
