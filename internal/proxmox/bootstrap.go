@@ -634,6 +634,7 @@ func (r SSHRunner) isolatedSSHConfig() ([]byte, error) {
 	}
 	lines := strings.SplitAfter(string(data), "\n")
 	inTarget := false
+	inBastion := false
 	foundTarget := false
 	var filtered strings.Builder
 	for _, line := range lines {
@@ -645,16 +646,29 @@ func (r SSHRunner) isolatedSSHConfig() ([]byte, error) {
 		fields := strings.Fields(trimmed)
 		if len(fields) > 1 && strings.EqualFold(strings.TrimSuffix(fields[0], "="), "host") {
 			inTarget = false
+			inBastion = false
 			for _, alias := range fields[1:] {
 				if alias == r.HostAlias {
 					inTarget = true
 					foundTarget = true
-					break
+				}
+				if alias == "lab-bastion" {
+					inBastion = true
 				}
 			}
 		}
 		if inTarget && len(fields) > 1 && strings.EqualFold(strings.TrimSuffix(fields[0], "="), "identityfile") {
 			continue
+		}
+		if inBastion && len(fields) > 1 {
+			switch strings.ToLower(strings.TrimSuffix(fields[0], "=")) {
+			case "controlmaster":
+				line = "    ControlMaster no\n"
+			case "controlpersist":
+				continue
+			case "controlpath":
+				line = "    ControlPath none\n"
+			}
 		}
 		filtered.WriteString(line)
 	}

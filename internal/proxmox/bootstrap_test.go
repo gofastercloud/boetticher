@@ -292,7 +292,7 @@ func TestSSHRunnerUsesInMemoryIdentityOnInheritedDescriptor(t *testing.T) {
 
 func TestSSHRunnerIsolatesTargetIdentityButPreservesProxyJumpIdentity(t *testing.T) {
 	path := t.TempDir() + "/boetticher.conf"
-	config := "Host lab-bastion\n    IdentityFile /tmp/operator\nHost lab-dns-01\n    IdentityFile /tmp/operator\n    ProxyJump lab-bastion\n"
+	config := "Host lab-bastion\n    IdentityFile /tmp/operator\n    ControlMaster auto\n    ControlPersist 60\n    ControlPath ~/.ssh/control-%C\nHost lab-dns-01\n    IdentityFile /tmp/operator\n    ProxyJump lab-bastion\n"
 	if err := os.WriteFile(path, []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -304,6 +304,9 @@ func TestSSHRunnerIsolatesTargetIdentityButPreservesProxyJumpIdentity(t *testing
 	text := string(filtered)
 	if strings.Count(text, "IdentityFile /tmp/operator") != 1 || !strings.Contains(text, "Host lab-bastion") || !strings.Contains(text, "ProxyJump lab-bastion") {
 		t.Fatalf("isolated SSH configuration lost the bastion identity or retained the target identity: %s", text)
+	}
+	if !strings.Contains(text, "ControlMaster no") || !strings.Contains(text, "ControlPath none") || strings.Contains(text, "ControlPersist 60") {
+		t.Fatalf("isolated SSH configuration retained bastion multiplexing: %s", text)
 	}
 }
 
