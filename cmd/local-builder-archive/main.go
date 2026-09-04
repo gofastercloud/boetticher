@@ -24,7 +24,7 @@ func main() {
 		if *root == "" {
 			fatal("source mode requires -root")
 		}
-		archive, err := artifacts.BuildSourceArchive(*root)
+		archive, err := artifacts.BuildNativeSourceArchive(*root)
 		if err != nil {
 			fatal("build source archive: %v", err)
 		}
