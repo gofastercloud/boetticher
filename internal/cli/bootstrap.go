@@ -251,6 +251,9 @@ func runEnrollOperation(args []string, out io.Writer) (runErr error) {
 			fmt.Fprintln(out, "Proxmox API CA in SOPS: PASS (stored)")
 		}
 	}
+	if err := proxmox.EnsureScopedCredentialAuditACL(ctx, runner, s.BootstrapAddress, *initialUser, credentials.APIUser, credentials.TokenID); err != nil {
+		return fmt.Errorf("reconcile scoped Proxmox audit access: %w", err)
+	}
 	client, err := proxmox.NewClient(proxmox.Config{
 		BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", User: credentials.APIUser,
 		TokenID: credentials.TokenID, TokenSecret: credentials.TokenSecret, CAFile: *proxmoxCA, CAPEM: proxmoxCAPEM, Insecure: *insecure,

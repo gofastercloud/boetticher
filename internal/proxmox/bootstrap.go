@@ -1863,6 +1863,76 @@ func EnsureScopedCredentialACL(ctx context.Context, runner CommandRunner, addres
 	return nil
 }
 
+// EnsureScopedCredentialAuditACL grants only the read-only Sys.Audit
+// privilege at the Proxmox root path. Cluster-level read APIs (notably backup
+// job inspection) are authorized at / rather than a node or resource path;
+// keeping this privilege in a separate role avoids widening the provisioner
+// role's mutation privileges at the root.
+func EnsureScopedCredentialAuditACL(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID string) error {
+	const role = "BoetticherAuditor"
+	if !safeID(userID) || !safeID(tokenID) {
+		return errors.New("Proxmox identity and token IDs must be simple identifiers")
+	}
+	roleOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/roles --output-format json"))
+	if err != nil {
+		return fmt.Errorf("inspect Proxmox audit role: %w", err)
+	}
+	if exists, roleErr := validateScopedRoleJSON(roleOutput, role, "Sys.Audit"); roleErr != nil {
+		return fmt.Errorf("validate Proxmox audit role: %w", roleErr)
+	} else if !exists {
+		command := "pvesh create /access/roles --roleid " + shellQuote(role) + " --privs 'Sys.Audit'"
+		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, command)); err != nil {
+			return fmt.Errorf("create Proxmox audit role: %w", err)
+		}
+	}
+	usersOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users --output-format json"))
+	if err != nil {
+		return fmt.Errorf("inspect Proxmox audit user: %w", err)
+	}
+	if err := validateScopedCredentialUserOwnership(usersOutput, userID); err != nil {
+		return fmt.Errorf("validate Proxmox audit user: %w", err)
+	}
+	tokensOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users/"+shellQuote(userID)+"/token --output-format json"))
+	if err != nil {
+		return fmt.Errorf("inspect Proxmox audit token: %w", err)
+	}
+	if err := validateScopedCredentialTokenMetadata(tokensOutput, tokenID); err != nil {
+		return fmt.Errorf("validate Proxmox audit token: %w", err)
+	}
+	for _, subject := range []struct {
+		flag  string
+		value string
+	}{{"--users", userID}, {"--tokens", userID + "!" + tokenID}} {
+		command := "pvesh set /access/acl --path '/' " + subject.flag + " " + shellQuote(subject.value) + " --roles '" + role + "' --propagate 1"
+		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, command)); err != nil {
+			return fmt.Errorf("assign Proxmox audit role: %w", err)
+		}
+	}
+	aclOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/acl --output-format json"))
+	if err != nil {
+		return fmt.Errorf("verify Proxmox audit ACL: %w", err)
+	}
+	var acls []scopedCredentialACLEntry
+	if err := decodeAccessList(aclOutput, &acls); err != nil {
+		return fmt.Errorf("decode Proxmox audit ACL: %w", err)
+	}
+	expected := map[string]struct{}{userID: {}, userID + "!" + tokenID: {}}
+	seen := map[string]bool{}
+	for _, acl := range acls {
+		if _, ok := expected[acl.UGID]; !ok || acl.RoleID != role {
+			continue
+		}
+		if acl.Path != "/" || acl.Propagate != 1 || seen[acl.UGID] {
+			return errors.New("Proxmox audit ACL is unexpected")
+		}
+		seen[acl.UGID] = true
+	}
+	if len(seen) != len(expected) {
+		return errors.New("Proxmox audit ACL is incomplete")
+	}
+	return nil
+}
+
 func setScopedCredentialACL(ctx context.Context, runner CommandRunner, address, initialUser, subjectFlag, subject, role string, paths []string) error {
 	for _, aclPath := range paths {
 		setACL := "pvesh set /access/acl --path " + shellQuote(aclPath) + " " + subjectFlag + " " + shellQuote(subject) + " --roles " + shellQuote(role) + " --propagate 1"
