@@ -53,6 +53,34 @@ before opening a pull request.
 If you are unsure whether an idea belongs here, open an issue or draft pull
 request early. A small conversation is cheaper than a heroic rebase.
 
+## Rehearse the release workflow
+
+The first supported platform and base release is `0.1.0`; module appliances
+retain their independent `1.0.0` versions. Keep `boetticher/v3`, schema 3, and
+the bundle and artifact ABIs separate from that release label.
+
+After a release change reaches `main`, run the complete hosted build without
+publishing:
+
+```sh
+gh workflow run release.yml --ref main -f release_version=0.1.0
+gh run list --workflow release.yml --event workflow_dispatch --limit 1
+gh run watch RUN_ID --exit-status
+```
+
+The repository must have `BOETTICHER_RELEASE_KEY_ID`,
+`BOETTICHER_RELEASE_SIGNING_KEY`, and `BOETTICHER_RELEASE_TRUSTED_KEYS`
+configured as Actions secrets. A manual rehearsal uses those values only on
+the ephemeral runner, builds and qualifies all 13 artifacts, assembles and
+imports the signed bundle with its matching controller, and retains no release
+artifact. It must not create a GitHub Release.
+
+Only a pushed, exact `v0.1.x` tag uploads the validated outputs and enters the
+approval-protected `release` environment. Run the manual rehearsal before
+creating a tag. While the tagged publish job waits, download and inspect that
+run's exact controller and bundle, complete the clean-install acceptance, and
+approve publication only if those bytes pass.
+
 ## Reporting security issues
 
 Please do not put credentials, private keys, live addresses, private site

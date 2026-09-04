@@ -31,7 +31,7 @@ func TestEmbeddedSchemaProjectsTypedModuleConstraints(t *testing.T) {
 	}
 	for field, want := range map[string]any{
 		"api_version":      "boetticher/v3",
-		"platform_version": "0.5.1",
+		"platform_version": "0.1.0",
 		"schema_version":   float64(3),
 	} {
 		if got := document.Properties[field].Const; got != want {

@@ -133,7 +133,7 @@ The usual operator loop is:
 ```text
 boetticher init --site-dir ./my-boetticher
 boetticher enroll --site ./my-boetticher --bootstrap-address PROXMOX_HOME_IP --operator-key ~/.ssh/id_ed25519.pub --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem
-boetticher bundle import ./boetticher-0.5.1.tar.gz --site ./my-boetticher
+boetticher bundle import ./boetticher-0.1.0.tar.gz --site ./my-boetticher
 boetticher deploy --site ./my-boetticher
 boetticher status --site ./my-boetticher --details --live
 ```

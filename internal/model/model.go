@@ -21,7 +21,7 @@ const (
 	APIVersion = "boetticher/v3"
 	// ReleaseVersion identifies the controller/release line. It is distinct
 	// from the persisted configuration schema, artifact ABI, and bundle format.
-	ReleaseVersion              = "0.5.1"
+	ReleaseVersion              = "0.1.0"
 	SchemaVersion               = 3
 	ConfigSchemaVersion         = SchemaVersion
 	ArtifactABIVersion          = "boetticher/artifact/v1"

@@ -39,7 +39,7 @@ func runRecovery(args []string, out io.Writer) error {
 	case "storage":
 		return runStorage(args[1:], out)
 	default:
-		return fmt.Errorf("recovery target %q is not implemented in 0.5.1", args[0])
+		return fmt.Errorf("recovery target %q is not implemented in %s", args[0], model.ReleaseVersion)
 	}
 }
 

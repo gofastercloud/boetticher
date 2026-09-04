@@ -1,5 +1,5 @@
 name: boetticher-base
-version: 0.5.1
+version: 0.1.0
 distribution: debian
 release: trixie
 architecture: amd64

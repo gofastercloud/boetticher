@@ -12,7 +12,7 @@ This page is generated from the same usage menu as `boetticher help`. Most days 
 ## The usual loop
 
 ```text
-boetticher bundle import ./boetticher-0.5.1.tar.gz --site ./my-boetticher
+boetticher bundle import ./boetticher-0.1.0.tar.gz --site ./my-boetticher
 boetticher deploy --site ./my-boetticher
 boetticher status --site ./my-boetticher --details --live
 ```

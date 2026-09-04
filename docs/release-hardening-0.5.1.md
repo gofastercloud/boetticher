@@ -1,5 +1,9 @@
 # Boetticher 0.5.1 release hardening
 
+> Historical engineering record: `0.5.1` was an internal pre-release
+> milestone, not a supported public release. The first supported release is
+> numbered `0.1.0`; the labels and measurements below are retained unchanged.
+
 This document records the reproducible comparison for the 0.5.1 release-hardening
 work. It describes the resulting architecture and qualification evidence as the
 work progresses; it is not itself release evidence.

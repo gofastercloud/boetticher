@@ -72,6 +72,14 @@ func TestPublicDocumentationMatchesV03Model(t *testing.T) {
 			t.Errorf("Companion documentation is missing %q", want)
 		}
 	}
+	for name, document := range map[string]string{"README.md": readme, "docs/index.md": home, "docs/start.md": start, "docs/lab.md": lab, "docs/commands.md": commands} {
+		if !strings.Contains(document, model.ReleaseVersion) {
+			t.Errorf("%s is missing current release %s", name, model.ReleaseVersion)
+		}
+		if strings.Contains(document, "0.5.1") {
+			t.Errorf("%s retains the internal 0.5.1 milestone as the public release", name)
+		}
+	}
 }
 
 func TestCommandReferenceIsGeneratedFromCLIContract(t *testing.T) {

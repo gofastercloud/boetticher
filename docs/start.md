@@ -54,7 +54,7 @@ builder guest or runtime builder cache. Import the signed release bundle,
 review its live plan, apply exactly that digest, and inspect the result:
 
 ```text
-boetticher bundle import ./boetticher-0.5.1.tar.gz --site ./my-boetticher
+boetticher bundle import ./boetticher-0.1.0.tar.gz --site ./my-boetticher
 boetticher deploy --site ./my-boetticher
 boetticher status --site ./my-boetticher --details --live
 ```

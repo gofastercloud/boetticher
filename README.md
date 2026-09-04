@@ -15,7 +15,7 @@ VMs and Linux Containers remain yours.
 The name is a tiny chemistry-show wink. The result is less *Breaking Bad* and
 more *breaking out the good gear*.
 
-Version 0.5.1 keeps the everyday rhythm small: import a signed release bundle,
+Version 0.1.0 keeps the everyday rhythm small: import a signed release bundle,
 make a live plan, deploy that exact plan, and check the lab. StreamDeck now
 lives on the external companion Pi rather than in a Proxmox guest.
 
@@ -33,7 +33,7 @@ real values:
 ```text
 boetticher init --site-dir my-boetticher
 boetticher enroll --site my-boetticher --bootstrap-address PROXMOX_HOME_IP --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem
-boetticher bundle import ./boetticher-0.5.1.tar.gz --site my-boetticher
+boetticher bundle import ./boetticher-0.1.0.tar.gz --site my-boetticher
 boetticher deploy --site my-boetticher
 boetticher status --site my-boetticher --live
 ```
