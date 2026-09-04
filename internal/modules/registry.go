@@ -40,7 +40,6 @@ type ModuleDefinition struct {
 	DependsOn           []string
 	Requires            []Capability
 	Provides            []Capability
-	GuestIDs            []int
 	ReservedVMIDStart   int
 	ReservedVMIDEnd     int
 	Placement           PlacementRequirement
@@ -75,38 +74,38 @@ func FirstPartyRegistry() Registry {
 			Name: "dns", Description: "Mandatory DNS and NTP platform capability", Version: "1.0.0", Policy: Mandatory,
 			Configuration: nil,
 
-			Requires: []Capability{CapabilityGateway}, Provides: []Capability{CapabilityDNS, CapabilityNTP}, GuestIDs: []int{model.DNS01VMID}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeInfrastructure}, Guests: []model.Component{
+			Requires: []Capability{CapabilityGateway}, Provides: []Capability{CapabilityDNS, CapabilityNTP}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeInfrastructure}, Guests: []model.Component{
 				{Name: "lab-dns-01", VMID: model.DNS01VMID, Hostname: "lab-dns-01", Zone: "INFRA", Address: "10.10.10.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 		"monitoring": {
 			Name: "monitoring", Description: "Pulse platform monitoring with Proxmox API data and tagged-host hardware telemetry", Version: "1.0.0", Policy: DefaultOn,
-			Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityMonitoring}, GuestIDs: []int{model.MonitorVMID}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeInfrastructure}, Guests: []model.Component{
+			Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityMonitoring}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeInfrastructure}, Guests: []model.Component{
 				{Name: "lab-monitor-01", VMID: model.MonitorVMID, Hostname: "lab-monitor-01", Zone: "INFRA", Address: "10.10.10.20", Role: "Pulse monitoring", DNSAliases: []string{"monitor"}, URL: "https://monitor." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 		"firewall": {
 			Name: "firewall", Description: "Managed Debian gateway, nftables, and Kea capability", Version: "1.0.0", Policy: DefaultOn,
-			Provides: []Capability{CapabilityGateway}, GuestIDs: []int{model.ProxmoxVMID}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeManagement}, Guests: []model.Component{
+			Provides: []Capability{CapabilityGateway}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeManagement}, Guests: []model.Component{
 				{Name: "lab-fw-01", VMID: model.ProxmoxVMID, Hostname: "lab-fw-01", Address: "10.10.99.1", Role: "Debian firewall", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 		"logging": {
 			Name: "logging", Description: "Optional central systemd journal collection", Version: "1.0.0", Policy: DefaultOff,
-			DependsOn: []string{"dns"}, Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityLogging}, GuestIDs: []int{model.LoggingVMID}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeInfrastructure}, Guests: []model.Component{
+			DependsOn: []string{"dns"}, Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityLogging}, Placement: PlacementRequirement{ZoneType: model.ZoneTypeInfrastructure}, Guests: []model.Component{
 				{Name: "lab-log-01", VMID: model.LoggingVMID, Hostname: "lab-log-01", Zone: "INFRA", Address: "10.10.10.40", Role: "Central systemd journal", DNSAliases: []string{"logs"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 		"tailnet-router": {
 			Name: "tailnet-router", Description: "Tailscale subnet router for the TRANSIT security edge", Version: "1.0.0", Policy: DefaultOff,
-			Requires: []Capability{CapabilityGateway, CapabilityDNS}, Provides: []Capability{CapabilityTailnetAccess}, GuestIDs: []int{200}, ReservedVMIDStart: 200, ReservedVMIDEnd: 209,
+			Requires: []Capability{CapabilityGateway, CapabilityDNS}, Provides: []Capability{CapabilityTailnetAccess}, ReservedVMIDStart: 200, ReservedVMIDEnd: 209,
 			StaticDeviceSlots: 1, Placement: PlacementRequirement{ZoneType: model.ZoneTypeTransit}, Guests: []model.Component{
 				{Name: "lab-tailnet-01", VMID: 200, Hostname: "lab-tailnet-01", Address: "10.10.5.10", Role: "Tailnet subnet router", DNSAliases: []string{"tailnet-router", "tailnet"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 		"airvpn": {
 			Name: "airvpn", Description: "AirVPN WireGuard external egress transit node", Version: "1.0.0", Policy: DefaultOff,
-			Requires: []Capability{CapabilityGateway, CapabilityDNS, CapabilityNTP}, Provides: []Capability{CapabilityAirVPNTransit}, GuestIDs: []int{model.AirVPNGuestVMID}, ReservedVMIDStart: 260, ReservedVMIDEnd: 269,
+			Requires: []Capability{CapabilityGateway, CapabilityDNS, CapabilityNTP}, Provides: []Capability{CapabilityAirVPNTransit}, ReservedVMIDStart: 260, ReservedVMIDEnd: 269,
 			Configuration: []model.ModuleConfigField{{Key: "servers", Type: model.ModuleConfigString, Prompt: "AirVPN server selector", Description: "AirVPN named server, country, or region selector used once to generate the retained WireGuard profile", Required: true}},
 			Placement:     PlacementRequirement{ZoneType: model.ZoneTypeTransit}, Guests: []model.Component{
 				{Name: "lab-airvpn-01", VMID: model.AirVPNGuestVMID, Hostname: "lab-airvpn-01", Address: model.AirVPNGuestAddress, Role: "AirVPN WireGuard transit", DNSAliases: []string{"airvpn"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
@@ -115,7 +114,7 @@ func FirstPartyRegistry() Registry {
 		"arr": {
 			Name: "arr", Description: "AirVPN-routed Sonarr and Radarr video services", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
 			AllowedNetworkModes: []model.ModuleNetworkMode{model.ModuleNetworkAirVPN}, DefaultNetworkMode: model.ModuleNetworkAirVPN,
-			DependsOn: []string{"airvpn"}, Requires: []Capability{CapabilityAirVPNTransit, CapabilityDNS, CapabilityNTP}, GuestIDs: []int{model.ArrVMID}, ReservedVMIDStart: 270, ReservedVMIDEnd: 279,
+			DependsOn: []string{"airvpn"}, Requires: []Capability{CapabilityAirVPNTransit, CapabilityDNS, CapabilityNTP}, ReservedVMIDStart: 270, ReservedVMIDEnd: 279,
 			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
 				{Name: "lab-arr-01", VMID: model.ArrVMID, Hostname: "lab-arr-01", Address: model.ArrGuestAddress, MAC: model.ArrGuestMAC, Role: "Sonarr and Radarr video services", DNSAliases: []string{"sonarr", "radarr"}, URL: "https://sonarr." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
@@ -134,14 +133,14 @@ func FirstPartyRegistry() Registry {
 					{Key: "model", Type: model.ModuleConfigString, Prompt: "Provider model identifier", Required: true},
 				}},
 			},
-			Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityAIAPI}, GuestIDs: []int{210}, ReservedVMIDStart: 210, ReservedVMIDEnd: 219,
+			Requires: []Capability{CapabilityDNS}, Provides: []Capability{CapabilityAIAPI}, ReservedVMIDStart: 210, ReservedVMIDEnd: 219,
 			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
 				{Name: "lab-bifrost-01", VMID: 210, Hostname: "lab-bifrost-01", Address: "10.10.20.60", Role: "Bifrost AI API router", DNSAliases: []string{"bifrost", "ai"}, URL: "https://bifrost." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 		"printer": {
 			Name: "printer", Description: "OctoPrint management for one USB-connected Ender-3 V3 SE", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
-			Requires: []Capability{CapabilityDNS}, GuestIDs: []int{model.PrinterVMID}, ReservedVMIDStart: 230, ReservedVMIDEnd: 239,
+			Requires: []Capability{CapabilityDNS}, ReservedVMIDStart: 230, ReservedVMIDEnd: 239,
 			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
 				{Name: "lab-printer-01", VMID: model.PrinterVMID, Hostname: "lab-printer-01", Address: "10.10.20.80", Role: "OctoPrint for Ender-3 V3 SE", DNSAliases: []string{"octoprint", "printer"}, URL: "https://octoprint." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
@@ -150,12 +149,12 @@ func FirstPartyRegistry() Registry {
 		"aiops": {
 			Name: "aiops", Description: "Read-only HolmesGPT incident investigation", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
 			Configuration: []model.ModuleConfigField{{Key: "model_alias", Type: model.ModuleConfigModelAlias, Prompt: "AI Router model alias", Description: "An alias explicitly declared by the Bifrost module", Required: true, Resolver: "bifrost-model-alias"}},
-			DependsOn:     []string{"monitoring", "logging", "bifrost"}, Requires: []Capability{CapabilityMonitoring, CapabilityLogging, CapabilityAIAPI, CapabilityDNS, CapabilityNTP}, GuestIDs: []int{240}, ReservedVMIDStart: 240, ReservedVMIDEnd: 249,
+			DependsOn:     []string{"monitoring", "logging", "bifrost"}, Requires: []Capability{CapabilityMonitoring, CapabilityLogging, CapabilityAIAPI, CapabilityDNS, CapabilityNTP}, ReservedVMIDStart: 240, ReservedVMIDEnd: 249,
 			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
 				{Name: "lab-aiops-01", VMID: 240, Hostname: "lab-aiops-01", Zone: "SERVERS", Address: "10.10.20.90", Role: "HolmesGPT AIOps investigation", DNSAliases: []string{"aiops"}, URL: "https://aiops." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
-		"gatus": {Name: "gatus", Description: "Generated status page for declared services", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true, DependsOn: []string{"monitoring"}, Requires: []Capability{CapabilityDNS}, GuestIDs: []int{model.GatusVMID}, ReservedVMIDStart: 250, ReservedVMIDEnd: 259, Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{{Name: "lab-gatus-01", VMID: model.GatusVMID, Hostname: "lab-gatus-01", Address: "10.10.20.100", Role: "Gatus status page", DNSAliases: []string{"gatus"}, URL: "https://gatus." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true}}},
+		"gatus": {Name: "gatus", Description: "Generated status page for declared services", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true, DependsOn: []string{"monitoring"}, Requires: []Capability{CapabilityDNS}, ReservedVMIDStart: 250, ReservedVMIDEnd: 259, Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{{Name: "lab-gatus-01", VMID: model.GatusVMID, Hostname: "lab-gatus-01", Address: "10.10.20.100", Role: "Gatus status page", DNSAliases: []string{"gatus"}, URL: "https://gatus." + model.DefaultDomain, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true}}},
 	}}
 }
 
@@ -370,9 +369,6 @@ func (r Registry) Validate() error {
 			if definition.ReservedVMIDStart != 0 && (guest.VMID < definition.ReservedVMIDStart || guest.VMID > definition.ReservedVMIDEnd) {
 				return fmt.Errorf("module %s guest VMID %d is outside its reserved block", definition.Name, guest.VMID)
 			}
-			if guest.VMID != 0 && !containsInt(definition.GuestIDs, guest.VMID) {
-				return fmt.Errorf("module %s guest VMID %d is not declared in GuestIDs", definition.Name, guest.VMID)
-			}
 		}
 	}
 	for vmid, owner := range reserved {
@@ -454,15 +450,6 @@ func supportedPlacementZoneType(value model.ZoneType) bool {
 	default:
 		return false
 	}
-}
-
-func containsInt(values []int, wanted int) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
 }
 
 // resolve accepts a resolved lookup projection for synthetic registry tests

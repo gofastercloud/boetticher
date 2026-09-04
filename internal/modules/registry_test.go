@@ -416,7 +416,7 @@ func TestPrinterComposesMinimalOctoPrintDeclaration(t *testing.T) {
 func TestRegistryRejectsUnsupportedUSBDeviceType(t *testing.T) {
 	registry := NewRegistry([]ModuleDefinition{{
 		Name: "bad-usb", Version: "1.0.0", Policy: DefaultOff,
-		GuestIDs: []int{240}, ReservedVMIDStart: 240, ReservedVMIDEnd: 249,
+		ReservedVMIDStart: 240, ReservedVMIDEnd: 249,
 		Guests:          []model.Component{{Name: "bad-usb", VMID: 240, Address: "10.10.20.90"}},
 		USBRequirements: []model.USBRequirement{{Name: "device", Guest: "bad-usb", DeviceType: "block", Access: "rw", Required: true, AllowedIdentities: []model.USBIdentity{{VendorID: "1234", ProductID: "5678"}}}},
 	}})
