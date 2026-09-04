@@ -316,6 +316,9 @@ func TestSSHRunnerStreamsTemporaryIdentityAndConfigToProcess(t *testing.T) {
 	}
 	t.Setenv("PATH", fakeBin+":"+os.Getenv("PATH"))
 	t.Setenv("BOETTICHER_TEST_CAPTURE", capture)
+	previousSSH := sshExecutable
+	sshExecutable = filepath.Join(fakeBin, "ssh")
+	t.Cleanup(func() { sshExecutable = previousSSH })
 	configPath := t.TempDir() + "/boetticher.conf"
 	config := "Host lab-bastion\n    IdentityFile /tmp/operator\nHost lab-dns-01\n    IdentityFile /tmp/operator\n    ProxyJump lab-bastion\n"
 	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {

@@ -584,8 +584,10 @@ func (r SSHRunner) runArgsStream(ctx context.Context, address, user string, comm
 	return nil
 }
 
+var sshExecutable = "/usr/bin/ssh"
+
 func newSSHProcess(args []string) *exec.Cmd {
-	process := exec.Command("ssh", args...)
+	process := exec.Command(sshExecutable, args...)
 	process.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	return process
 }

@@ -277,6 +277,16 @@ func ExtractSourceArchiveReader(reader io.Reader, root string) error {
 	}, "embedded source", 256<<20, 64<<20)
 }
 
+// ExtractNativeBuilderOutputReader imports only generated output returned by
+// the isolated maintainer builder. The builder is local tooling, but its
+// output still crosses a trust boundary and must not be extracted with an
+// unconstrained system tar command.
+func ExtractNativeBuilderOutputReader(reader io.Reader, root string) error {
+	return extractArchiveReader(reader, root, func(clean string) bool {
+		return clean == "generated" || strings.HasPrefix(clean, "generated/")
+	}, "native builder output", 32<<30, 8<<30)
+}
+
 func extractArchiveReader(reader io.Reader, root string, allowed func(string) bool, label string, maxBytes, maxArchiveEntrySize int64) error {
 	if reader == nil || root == "" {
 		return fmt.Errorf("builder artifact archive and destination root are required")

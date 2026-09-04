@@ -63,6 +63,16 @@ func RemoveLegacyStreamDeck(ctx context.Context, client *Client, node string) er
 	if err != nil || !present {
 		return err
 	}
+	// Inspect again immediately before the destructive request. Proxmox does
+	// not provide compare-and-delete, so deletion must never rely only on the
+	// earlier migration preflight observation.
+	present, err = InspectLegacyStreamDeck(ctx, client, node)
+	if err != nil || !present {
+		if err != nil {
+			return err
+		}
+		return errors.New("HOLD: legacy StreamDeck guest disappeared before removal")
+	}
 	if err := client.DestroyLXC(ctx, node, model.LegacyStreamDeckVMID); err != nil {
 		return fmt.Errorf("remove legacy StreamDeck guest %s: %w", LegacyStreamDeckName, err)
 	}

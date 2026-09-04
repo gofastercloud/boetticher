@@ -66,6 +66,42 @@ func TestExtractSourceArchiveReaderAcceptsProvisioningTreesAndRejectsArtifacts(t
 	}
 }
 
+func TestExtractNativeBuilderOutputReaderRejectsUnsafeEntries(t *testing.T) {
+	var archive bytes.Buffer
+	tarWriter := tar.NewWriter(&archive)
+	data := []byte("qualified\n")
+	if err := tarWriter.WriteHeader(&tar.Header{Name: "generated/artifacts/result/smoke.txt", Mode: 0o600, Size: int64(len(data))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tarWriter.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	destination := t.TempDir()
+	if err := ExtractNativeBuilderOutputReader(bytes.NewReader(archive.Bytes()), destination); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, "generated", "artifacts", "result", "smoke.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"../outside", "generated/../outside", "generated/unsafe/../result"} {
+		var invalid bytes.Buffer
+		invalidWriter := tar.NewWriter(&invalid)
+		if err := invalidWriter.WriteHeader(&tar.Header{Name: name, Mode: 0o600, Size: 0}); err != nil {
+			t.Fatal(err)
+		}
+		if err := invalidWriter.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := ExtractNativeBuilderOutputReader(bytes.NewReader(invalid.Bytes()), t.TempDir()); err == nil {
+			t.Fatalf("native output extractor accepted unsafe path %q", name)
+		}
+	}
+}
+
 func TestBuildSourceArchiveExcludesSiteSecrets(t *testing.T) {
 	root := t.TempDir()
 	for _, relative := range PublicBuildInputs {

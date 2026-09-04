@@ -175,6 +175,9 @@ func BuildReleaseBundleWithMetadataAndCompanion(output string, metadata ReleaseB
 	if err := validateOutputPath(output); err != nil {
 		return ReleaseManifest{}, err
 	}
+	if metadata.BuildWorkflow != "local" && (metadata.ControllerSHA256 == "" || metadata.ControllerSizeBytes <= 0) {
+		return ReleaseManifest{}, errors.New("non-local release bundle requires a controller digest and size binding")
+	}
 
 	manifest := ReleaseManifest{
 		FormatVersion: ReleaseBundleFormatVersion, ReleaseVersion: metadata.ReleaseVersion,
@@ -408,6 +411,9 @@ func ImportReleaseBundle(bundlePath, destination string, trusted []TrustedReleas
 	if manifest.ReleaseVersion == "" || manifest.ReleaseVersion != platformVersion || manifest.SiteAPIVersion != siteAPIVersion || manifest.SchemaVersion != schemaVersion || manifest.Architecture != Architecture {
 		return ReleaseManifest{}, errors.New("release bundle compatibility does not match this controller")
 	}
+	if err := validateExecutingControllerBinding(manifest); err != nil {
+		return ReleaseManifest{}, err
+	}
 
 	parent := filepath.Dir(destination)
 	if err := pathguard.MkdirAll(parent, 0700); err != nil {
@@ -553,6 +559,9 @@ func validateReleaseManifest(manifest ReleaseManifest) error {
 	if (manifest.ControllerSHA256 == "") != (manifest.ControllerSizeBytes == 0) || (manifest.ControllerSHA256 != "" && (!isSHA256(manifest.ControllerSHA256) || manifest.ControllerSizeBytes < 0 || manifest.ControllerSizeBytes > MaxReleaseFileBytes)) {
 		return errors.New("release controller binding is incomplete or invalid")
 	}
+	if manifest.BuildWorkflow != "local" && (manifest.ControllerSHA256 == "" || manifest.ControllerSizeBytes <= 0) {
+		return errors.New("non-local release manifest is missing its controller binding")
+	}
 	if len(manifest.Artifacts) == 0 || len(manifest.Files) == 0 {
 		return errors.New("release manifest has no artifacts or files")
 	}
@@ -636,6 +645,31 @@ func validateReleaseManifest(manifest ReleaseManifest) error {
 		if _, ok := seenArtifacts[file.Artifact]; !ok {
 			return fmt.Errorf("release member %q references an unknown artifact", path)
 		}
+	}
+	return nil
+}
+
+func validateExecutingControllerBinding(manifest ReleaseManifest) error {
+	if manifest.ControllerSHA256 == "" {
+		return nil
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve executing controller for release binding: %w", err)
+	}
+	info, err := os.Stat(executable)
+	if err != nil {
+		return fmt.Errorf("inspect executing controller for release binding: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("executing controller is not a regular file")
+	}
+	actual, err := ContentSHA256ForFile(executable)
+	if err != nil {
+		return fmt.Errorf("hash executing controller for release binding: %w", err)
+	}
+	if !strings.EqualFold(actual, manifest.ControllerSHA256) || info.Size() != manifest.ControllerSizeBytes {
+		return fmt.Errorf("release controller binding does not match the executing controller")
 	}
 	return nil
 }

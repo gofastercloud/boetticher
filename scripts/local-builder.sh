@@ -81,13 +81,13 @@ run_linux() {
 
 native_ssh() {
   if [ -n "$builder_identity" ] && [ -n "$builder_known_hosts" ]; then
-    ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o ForwardAgent=no -o ForwardX11=no -o UserKnownHostsFile="$builder_known_hosts" -o IdentitiesOnly=yes -i "$builder_identity" "$builder_ssh" "$@"
+    /usr/bin/ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o ForwardAgent=no -o ForwardX11=no -o UserKnownHostsFile="$builder_known_hosts" -o IdentitiesOnly=yes -i "$builder_identity" "$builder_ssh" "$@"
   elif [ -n "$builder_identity" ]; then
-    ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o ForwardAgent=no -o ForwardX11=no -o IdentitiesOnly=yes -i "$builder_identity" "$builder_ssh" "$@"
+    /usr/bin/ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o ForwardAgent=no -o ForwardX11=no -o IdentitiesOnly=yes -i "$builder_identity" "$builder_ssh" "$@"
   elif [ -n "$builder_known_hosts" ]; then
-    ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o ForwardAgent=no -o ForwardX11=no -o UserKnownHostsFile="$builder_known_hosts" "$builder_ssh" "$@"
+    /usr/bin/ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o ForwardAgent=no -o ForwardX11=no -o UserKnownHostsFile="$builder_known_hosts" "$builder_ssh" "$@"
   else
-    ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o ForwardAgent=no -o ForwardX11=no "$builder_ssh" "$@"
+    /usr/bin/ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=yes -o ForwardAgent=no -o ForwardX11=no "$builder_ssh" "$@"
   fi
 }
 
@@ -148,15 +148,16 @@ sync_native_source() {
   require_native_workspace
   [ -n "$builder_ssh" ] || fail 'BOETTICHER_LOCAL_BUILDER_SSH is required for the native Linux build host'
   native_ssh 'rm -rf -- /var/lib/boetticher/local-builder/source; install -d -m 0755 /var/lib/boetticher/local-builder/source'
-  tar -C "$repo_root" \
-    --no-xattrs \
-    --no-mac-metadata \
-    --exclude .git \
-    --exclude .runtime \
-    --exclude secrets \
-    --exclude generated/artifacts \
-    --exclude generated/runtime \
-    -cf - . | native_ssh 'tar -xf - -C /var/lib/boetticher/local-builder/source'
+  source_archive=$(mktemp "${TMPDIR:-/tmp}/boetticher-source.XXXXXX")
+  if ! GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/local-builder-archive -mode source -root "$repo_root" > "$source_archive"; then
+    rm -f -- "$source_archive"
+    fail 'could not create the public native-builder source archive'
+  fi
+  if ! native_ssh 'tar --extract --gzip --file=- --no-same-owner --no-same-permissions --directory=/var/lib/boetticher/local-builder/source' < "$source_archive"; then
+    rm -f -- "$source_archive"
+    fail 'could not transfer the public native-builder source archive'
+  fi
+  rm -f -- "$source_archive"
 }
 
 setup_native_builder() {
@@ -168,8 +169,16 @@ setup_native_builder() {
 
 pull_native_output() {
   mkdir -p "$repo_root/generated"
-  native_ssh \
-    "tar -C $remote_native_output -cf - generated" | tar -C "$repo_root" -xf -
+  output_archive=$(mktemp "${TMPDIR:-/tmp}/boetticher-native-output.XXXXXX")
+  if ! native_ssh "tar -C $remote_native_output -cf - generated" > "$output_archive"; then
+    rm -f -- "$output_archive"
+    fail 'could not retrieve native builder output'
+  fi
+  if ! GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/local-builder-archive -mode output -root "$repo_root" < "$output_archive"; then
+    rm -f -- "$output_archive"
+    fail 'native builder output failed bounded archive validation'
+  fi
+  rm -f -- "$output_archive"
 }
 
 run_native_builder() {

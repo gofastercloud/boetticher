@@ -907,6 +907,34 @@ func TestEnsureLXCRejectsUndeclaredPersistentVolumeBeforeMigration(t *testing.T)
 	}
 }
 
+func TestEnsureLXCRejectsUnownedGuestBeforeMutation(t *testing.T) {
+	guest := GuestPlan{
+		VMID: 110, Name: "test-dns", Hostname: "test-dns", Owner: "boetticher/module/dns",
+		Tags: []string{"boetticher", "managed", "module", "module-dns", "boetticher-module-dns", "backup"},
+	}
+	mutations := 0
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/110/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
+			return response([]byte(`{"data":{"name":"user-lxc","hostname":"user-lxc","tags":"user-managed"}}`))
+		default:
+			mutations++
+			t.Fatalf("unowned LXC triggered mutation: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	err := ensureLXC(context.Background(), client, Plan{Node: "node"}, guest)
+	if err == nil || !strings.Contains(err.Error(), "unowned container") {
+		t.Fatalf("unowned LXC was not held before mutation: %v", err)
+	}
+	if mutations != 0 {
+		t.Fatalf("unowned LXC issued %d mutation requests", mutations)
+	}
+}
+
 func TestEnsureLXCRetainsVerifiedPersistentVolumeAcrossRootReplacement(t *testing.T) {
 	guest := GuestPlan{
 		VMID: 110, Name: "test-dns", Hostname: "test-dns", Owner: "boetticher/module/dns",
@@ -1429,10 +1457,16 @@ func TestLegacyLXCRecreationSkipsAlreadyMigratedState(t *testing.T) {
 }
 
 func TestDiscardLegacyLXCRestoresRunningGuestAfterDestroyFailure(t *testing.T) {
-	guest := GuestPlan{VMID: 110, Name: "lab-dns-01"}
+	guest := GuestPlan{VMID: 110, Name: "lab-dns-01", Hostname: "lab-dns-01", Owner: "boetticher/module/dns", DiskGiB: 8,
+		Tags:    []string{"boetticher", "managed", "module", "module-dns", "boetticher-module-dns", "backup"},
+		Volumes: []model.PersistentVolumeDeclaration{{Name: "powerdns", Module: "dns", Guest: "lab-dns-01", Storage: modelStorageIDForTest, SizeGiB: 8, MountPath: "/var/lib/powerdns", Backup: true}}}
 	stopped, restored := false, false
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/110/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
+			return response([]byte(`{"data":{"name":"lab-dns-01","hostname":"lab-dns-01","tags":"boetticher;managed;module;module-dns;boetticher-module-dns;backup","unprivileged":1,"rootfs":"local:110/vm-110-disk-0.raw,size=8G","mp0":"local:110/vm-110-disk-1.raw,mp=/var/lib/powerdns,backup=1,size=8G"}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/current":
 			return response([]byte(`{"data":{"status":"running"}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/stop":
@@ -1501,8 +1535,10 @@ func TestEnsureLXCRecreatesExactLegacyStateBeforePersistentVolumeMigration(t *te
 			case 1:
 				return jsonResponse(current)
 			case 2:
-				return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+				return jsonResponse(current)
 			case 3:
+				return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+			case 4:
 				if !created {
 					t.Fatal("created LXC identity was read before creation")
 				}
@@ -1591,6 +1627,10 @@ func TestReplaceLXCDetachesPersistentVolumesBeforeDestroy(t *testing.T) {
 	var detached []string
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/110/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
+			return response([]byte(`{"data":{"name":"test-dns","hostname":"test-dns","mp0":"boetticher-thin:vm-110-disk-1,mp=/var/lib/powerdns,backup=1,size=8G","mp1":"boetticher-thin:vm-110-disk-2,mp=/var/lib/boetticher/identity/ssh,backup=1,size=1G"}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/current":
 			return response([]byte(`{"data":{"status":"stopped"}}`))
 		case r.Method == http.MethodPut && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
@@ -1610,7 +1650,7 @@ func TestReplaceLXCDetachesPersistentVolumesBeforeDestroy(t *testing.T) {
 		}
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	guest := GuestPlan{VMID: 110, Name: "test-dns", Volumes: []model.PersistentVolumeDeclaration{
+	guest := GuestPlan{VMID: 110, Name: "test-dns", Hostname: "test-dns", Volumes: []model.PersistentVolumeDeclaration{
 		{Name: "powerdns-database", Guest: "lab-dns-01", Module: "dns", Storage: modelStorageIDForTest, SizeGiB: 8, MountPath: "/var/lib/powerdns", Backup: true},
 		{Name: "ssh-identity", Guest: "lab-dns-01", Module: "dns", Storage: modelStorageIDForTest, SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/ssh", Backup: true},
 	}}
@@ -1627,7 +1667,7 @@ func TestReplaceLXCDetachesPersistentVolumesBeforeDestroy(t *testing.T) {
 }
 
 func TestReplaceLXCRestoresRunningGuestAfterDetachFailure(t *testing.T) {
-	guest := GuestPlan{VMID: 110, Name: "test-dns", Volumes: []model.PersistentVolumeDeclaration{{
+	guest := GuestPlan{VMID: 110, Name: "test-dns", Hostname: "test-dns", Volumes: []model.PersistentVolumeDeclaration{{
 		Name: "powerdns-database", Guest: "lab-dns-01", Module: "dns", Storage: modelStorageIDForTest,
 		SizeGiB: 8, MountPath: "/var/lib/powerdns", Backup: true,
 	}}}
@@ -1637,6 +1677,10 @@ func TestReplaceLXCRestoresRunningGuestAfterDetachFailure(t *testing.T) {
 	stopped, restored := false, false
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/110/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
+			return response([]byte(`{"data":{"name":"test-dns","hostname":"test-dns","mp0":"boetticher-thin:vm-110-disk-1,mp=/var/lib/powerdns,backup=1,size=8G"}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/current":
 			return response([]byte(`{"data":{"status":"running"}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/stop":

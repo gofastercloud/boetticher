@@ -58,6 +58,34 @@ func PurgeModule(ctx context.Context, client *Client, plan Plan, module string) 
 				return fmt.Errorf("refusing to purge %s: persistent-volume ownership proof failed: %w", guest.Name, err)
 			}
 		}
+		// Re-observe the complete destructive identity after all read-side
+		// validation and immediately before deletion. Proxmox has no compare-
+		// and-delete API, so this is the narrowest safe boundary available to
+		// the client and prevents a stale first observation from authorizing a
+		// later purge after an ownership-relevant change.
+		kind, current, err = client.GuestConfig(ctx, plan.Node, guest.VMID)
+		if err != nil {
+			return fmt.Errorf("reinspect module guest %d before purge: %w", guest.VMID, err)
+		}
+		if kind != guest.Kind {
+			return fmt.Errorf("HOLD: refusing to purge %s at VMID %d because the occupant changed to %s", guest.Name, guest.VMID, kind)
+		}
+		if err := validateExistingGuest(current, guest); err != nil {
+			return fmt.Errorf("HOLD: refusing to purge %s after reinspection: ownership proof failed: %w", guest.Name, err)
+		}
+		switch guest.Kind {
+		case KindQEMU:
+			if err := validateNoUndeclaredQEMUPersistentVolumes(current, guest); err != nil {
+				return fmt.Errorf("HOLD: refusing to purge %s after reinspection: persistent-volume ownership proof failed: %w", guest.Name, err)
+			}
+			if err := validateExistingQEMUVolumes(current, plan, guest); err != nil {
+				return fmt.Errorf("HOLD: refusing to purge %s after reinspection: persistent-volume ownership proof failed: %w", guest.Name, err)
+			}
+		case KindLXC:
+			if err := validateExistingGuestVolumes(current, guest); err != nil {
+				return fmt.Errorf("HOLD: refusing to purge %s after reinspection: persistent-volume ownership proof failed: %w", guest.Name, err)
+			}
+		}
 		var purgeErr error
 		switch guest.Kind {
 		case KindQEMU:

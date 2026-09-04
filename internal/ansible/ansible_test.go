@@ -660,7 +660,12 @@ func TestRunWithIdentityUsesAndCleansTemporarySSHAgent(t *testing.T) {
 	ansiblePath := filepath.Join(tempDir, "ansible-playbook")
 	previousFinder := findAnsiblePlaybook
 	findAnsiblePlaybook = func() (string, error) { return ansiblePath, nil }
-	t.Cleanup(func() { findAnsiblePlaybook = previousFinder })
+	previousAgent, previousAdd := sshAgentExecutable, sshAddExecutable
+	sshAgentExecutable, sshAddExecutable = filepath.Join(tempDir, "ssh-agent"), filepath.Join(tempDir, "ssh-add")
+	t.Cleanup(func() {
+		findAnsiblePlaybook = previousFinder
+		sshAgentExecutable, sshAddExecutable = previousAgent, previousAdd
+	})
 	t.Setenv("PATH", tempDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("BOETTICHER_TEST_AGENT_SOCKET", filepath.Join(tempDir, "agent.sock"))
 	t.Setenv("BOETTICHER_TEST_AGENT_IDENTITY", identityPath)

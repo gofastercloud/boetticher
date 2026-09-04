@@ -1516,6 +1516,9 @@ func ensureLXCWithRetainedVolumes(ctx context.Context, client *Client, plan Plan
 				return ensureLXCWithRetainedVolumes(ctx, client, recreatedPlan, guest, nil)
 			}
 		}
+		if err := validateExistingGuestIdentityFields(current, guest); err != nil {
+			return fmt.Errorf("HOLD: refusing to reconcile unowned container %s: %w", guest.Name, err)
+		}
 		if err := validateNoUndeclaredLXCVolumes(current, guest); err != nil {
 			return err
 		}
@@ -1828,6 +1831,16 @@ func legacyLXCRootfsMatches(observed string, guest GuestPlan) bool {
 }
 
 func discardLegacyLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) (err error) {
+	kind, current, err := client.GuestConfig(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("reinspect %s before legacy LXC recreation: %w", guest.Name, err)
+	}
+	if kind != KindLXC {
+		return fmt.Errorf("HOLD: guest %s changed to %s before legacy LXC recreation", guest.Name, kind)
+	}
+	if err := validateLegacyLXCRecreation(current, guest); err != nil {
+		return fmt.Errorf("HOLD: guest %s failed the final legacy identity check: %w", guest.Name, err)
+	}
 	status, err := client.LXCStatus(ctx, plan.Node, guest.VMID)
 	if err != nil {
 		return fmt.Errorf("inspect %s status before legacy LXC recreation: %w", guest.Name, err)
@@ -2016,6 +2029,20 @@ func isLoopDevice(value string) bool {
 // must pass those references back to creation; size-only parameters would
 // allocate fresh volumes and silently discard retained state.
 func replaceLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) (retained map[string]string, err error) {
+	kind, refreshed, err := client.GuestConfig(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return nil, fmt.Errorf("reinspect %s before appliance replacement: %w", guest.Name, err)
+	}
+	if kind != KindLXC {
+		return nil, fmt.Errorf("HOLD: refusing to replace %s at VMID %d because the occupant is %s, expected LXC", guest.Name, guest.VMID, kind)
+	}
+	if err := validateExistingGuestDestructiveIdentity(refreshed, guest); err != nil {
+		return nil, fmt.Errorf("HOLD: refusing to replace unowned container %s: %w", guest.Name, err)
+	}
+	if err := validateNoUndeclaredLXCVolumes(refreshed, guest); err != nil {
+		return nil, err
+	}
+	current = refreshed
 	retained, err = retainedLXCPersistentVolumeAttachments(current, guest)
 	if err != nil {
 		return nil, err
@@ -2330,6 +2357,9 @@ func migrateLXCPersistentVolumes(ctx context.Context, client *Client, plan Plan,
 	if len(migrations) == 0 {
 		return nil
 	}
+	if err := validateExistingGuestDestructiveIdentity(current, guest); err != nil {
+		return fmt.Errorf("HOLD: refusing to migrate unowned container %s: %w", guest.Name, err)
+	}
 
 	status, err := client.LXCStatus(ctx, plan.Node, guest.VMID)
 	if err != nil {
@@ -2567,6 +2597,21 @@ func verifyStoredArtifact(entries []StorageContent, filename, checksum string, a
 
 func validateExistingGuest(current map[string]any, expected GuestPlan) error {
 	if err := validateExistingGuestIdentity(current, expected); err != nil {
+		return err
+	}
+	got, _ := current["tags"].(string)
+	if canonicalTags(got) != canonicalTags(strings.Join(expected.Tags, ";")) {
+		return fmt.Errorf("guest %s has unexpected tags %q, expected %q", expected.Name, got, strings.Join(expected.Tags, ";"))
+	}
+	return nil
+}
+
+// validateExistingGuestDestructiveIdentity proves the immutable ownership
+// fields immediately before a move, detach, or destroy. It deliberately does
+// not compare the artifact description because callers use it while replacing
+// an otherwise correctly owned root filesystem.
+func validateExistingGuestDestructiveIdentity(current map[string]any, expected GuestPlan) error {
+	if err := validateExistingGuestIdentityFields(current, expected); err != nil {
 		return err
 	}
 	got, _ := current["tags"].(string)

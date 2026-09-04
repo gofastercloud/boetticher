@@ -31,6 +31,11 @@ import (
 const maxAnsibleOutputBytes = 64 * 1024
 const maxAnsibleDiagnosticBytes = 16 * 1024
 
+var (
+	sshAgentExecutable = "/usr/bin/ssh-agent"
+	sshAddExecutable   = "/usr/bin/ssh-add"
+)
+
 // The appliance inventory is small, but the network and services passes touch
 // several independent guests. Eight forks removes avoidable host batching
 // without creating unbounded load on a homelab controller or gateway. An
@@ -555,7 +560,7 @@ func runInProcessGroup(ctx context.Context, command *exec.Cmd) error {
 }
 
 func startTemporarySSHAgent(identityData []byte) (map[string]string, func() error, error) {
-	agent := exec.Command("ssh-agent", "-s")
+	agent := exec.Command(sshAgentExecutable, "-s")
 	output, err := agent.Output()
 	if err != nil {
 		return nil, func() error { return nil }, fmt.Errorf("start temporary Ansible SSH agent: %w", err)
@@ -565,14 +570,14 @@ func startTemporarySSHAgent(identityData []byte) (map[string]string, func() erro
 		return nil, func() error { return nil }, err
 	}
 	stop := func() error {
-		kill := exec.Command("ssh-agent", "-k")
+		kill := exec.Command(sshAgentExecutable, "-k")
 		kill.Env = append(os.Environ(), "SSH_AUTH_SOCK="+environment["SSH_AUTH_SOCK"], "SSH_AGENT_PID="+environment["SSH_AGENT_PID"])
 		if output, err := kill.CombinedOutput(); err != nil {
 			return fmt.Errorf("ssh-agent cleanup failed: %w (%s)", err, strings.TrimSpace(string(output)))
 		}
 		return nil
 	}
-	add := exec.Command("ssh-add", "-")
+	add := exec.Command(sshAddExecutable, "-")
 	add.Env = append(os.Environ(), "SSH_AUTH_SOCK="+environment["SSH_AUTH_SOCK"], "SSH_AGENT_PID="+environment["SSH_AGENT_PID"])
 	add.Stdin = bytes.NewReader(identityData)
 	if output, err := add.CombinedOutput(); err != nil {

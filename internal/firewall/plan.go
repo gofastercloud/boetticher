@@ -660,7 +660,7 @@ func policyRules(s model.Site) []PolicyRule {
 			Description:     "boetticher ARR media acquisition through AirVPN only",
 			SourceCIDR:      arr.Address + "/32",
 			SourceMAC:       arr.MAC,
-			DestinationCIDR: "0.0.0.0/0",
+			DestinationCIDR: model.AirVPNGuestAddress + "/32",
 		})
 	}
 	for _, declaration := range s.Declarations {
@@ -937,6 +937,16 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 	b.WriteString("  chain forward {\n    type filter hook forward priority filter; policy drop;\n    ct state established,related accept comment \"boetticher:forward-established\"\n")
 	if len(plan.AirVPNSources) > 0 {
 		b.WriteString("    ip saddr @airvpn_sources oifname \"wan0\" counter log prefix \"boetticher AIRVPN-DIRECT-DROP \" drop comment \"boetticher:drop:airvpn-direct-wan\"\n")
+	}
+	for _, rule := range plan.Rules {
+		if rule.Route != "airvpn" || rule.SourceCIDR == "" || rule.SourceMAC == "" {
+			continue
+		}
+		parsedMAC, parseErr := net.ParseMAC(rule.SourceMAC)
+		if parseErr != nil || len(parsedMAC) != 6 {
+			return "", fmt.Errorf("firewall rule %s has an invalid source MAC", rule.Name)
+		}
+		fmt.Fprintf(&b, "    iifname \"%s\" ether saddr %s ip saddr != %s counter log prefix \"boetticher AIRVPN-SOURCE-MISMATCH-DROP \" drop comment \"boetticher:drop:airvpn-source-mismatch\"\n", strings.ToLower(rule.From)+"0", parsedMAC.String(), rule.SourceCIDR)
 	}
 	if plan.Upstream != nil {
 		for _, publication := range plan.Publications {

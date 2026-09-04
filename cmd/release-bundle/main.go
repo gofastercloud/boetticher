@@ -35,6 +35,9 @@ func main() {
 	if *output == "" || *sourceCommit == "" || *workflow == "" || *keyID == "" || *privateKeyPath == "" || flag.NArg() != 0 {
 		fatal("usage: release-bundle -output PATH -source-commit COMMIT -workflow NAME -key-id ID -private-key PATH [-site DIR] [-companion-binary PATH]")
 	}
+	if *workflow != "local" && *controllerBinary == "" {
+		fatal("non-local release bundle requires -controller-binary")
+	}
 	if *artifactRoot == "" {
 		*artifactRoot = filepath.Join(*siteDir, "generated", "artifacts")
 	}

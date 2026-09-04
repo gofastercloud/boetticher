@@ -81,7 +81,7 @@ func runSSHJourney(configPath string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, "ssh", "-F", model.ExpandUserPath(configPath), "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no", "dns01", "true")
+	command := exec.CommandContext(ctx, "/usr/bin/ssh", "-F", model.ExpandUserPath(configPath), "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no", "dns01", "true")
 	if err := command.Run(); err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return errors.New("authenticated SSH journey timed out")
