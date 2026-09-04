@@ -594,7 +594,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		runtimeVariables["firewall_ruleset"] = ruleset
 		runtimeVariables["firewall_ruleset_sha256"] = firewall.RulesetDigest(ruleset)
 	}
-	authority, err := site.LoadAuthority(*siteDir, s, *ageIdentity)
+	authority, err := site.LoadAuthorityWithRootKey(*siteDir, s, *ageIdentity)
 	if err != nil {
 		return fmt.Errorf("load platform CA chain: %w", err)
 	}

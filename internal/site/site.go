@@ -275,6 +275,17 @@ func RuntimeDir(s model.Site) string {
 }
 
 func LoadAuthority(dir string, s model.Site, ageIdentityPath string) (pki.Authority, error) {
+	return loadAuthority(dir, s, ageIdentityPath, false)
+}
+
+// LoadAuthorityWithRootKey is reserved for the bounded deployment path that
+// must generate root-signed revocation material. Normal PKI operations keep
+// the cold root key out of memory by using LoadAuthority.
+func LoadAuthorityWithRootKey(dir string, s model.Site, ageIdentityPath string) (pki.Authority, error) {
+	return loadAuthority(dir, s, ageIdentityPath, true)
+}
+
+func loadAuthority(dir string, s model.Site, ageIdentityPath string, includeRootKey bool) (pki.Authority, error) {
 	values, err := LoadEncryptedDocument(dir, ageIdentityPath, filepath.Join("secrets", "boetticher.sops.yaml"))
 	if err != nil {
 		return pki.Authority{}, err
@@ -298,7 +309,15 @@ func LoadAuthority(dir string, s model.Site, ageIdentityPath string) (pki.Author
 	if err != nil {
 		return pki.Authority{}, err
 	}
-	return pki.Authority{RootCertPEM: rootCert, IssuingKeyPEM: issuingKey, IssuingCertPEM: issuingCert}, nil
+	authority := pki.Authority{RootCertPEM: rootCert, IssuingKeyPEM: issuingKey, IssuingCertPEM: issuingCert}
+	if includeRootKey {
+		rootKey, keyErr := get("root_key_pem_b64")
+		if keyErr != nil {
+			return pki.Authority{}, keyErr
+		}
+		authority.RootKeyPEM = rootKey
+	}
+	return authority, nil
 }
 
 // StoreEncryptedDocument encrypts a secret document with the pinned in-process
