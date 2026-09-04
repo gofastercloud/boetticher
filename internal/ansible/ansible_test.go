@@ -946,7 +946,7 @@ func TestBifrostRoleUsesSmallstepServerCertificateAndRetainsClientMTLS(t *testin
 	}
 }
 
-func TestAIOpsRoleUsesSmallstepServerCertificateAndRetainsClientIdentities(t *testing.T) {
+func TestAIOpsRoleUsesSmallstepEndpointIdentities(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "aiops", "tasks", "main.yml"))
 	if err != nil {
 		t.Fatal(err)
@@ -958,12 +958,15 @@ func TestAIOpsRoleUsesSmallstepServerCertificateAndRetainsClientIdentities(t *te
 		"include_tasks: ../../tasks/step-ca-endpoint.yml",
 		"step_ca_endpoint_subject: \"aiops.{{ domain }}\"",
 		"ai-router-client.crt.pem",
+		"step_ca_endpoint_subject: aiops-log-read",
+		"log-query-client.crt.pem",
+		"log-query-client.step-ca",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("AIOps TLS contract is missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"aiops_server_cert_pem", "aiops.csr.pem"} {
+	for _, forbidden := range []string{"aiops_server_cert_pem", "aiops_log_read_cert_pem", "log-query-client.csr.pem", "pki_csr_output_dir"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("AIOps role retains controller server-certificate exchange %q", forbidden)
 		}

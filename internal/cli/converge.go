@@ -668,12 +668,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		runtimeVariables["proxmox_ca_pem"] = proxmoxCredentials.CAPEM
 	}
 	inventoryPath := filepath.Join(*siteDir, "generated", "ansible", "inventory.ini")
-	csrDir := filepath.Join(site.RuntimeDir(s), "pki")
-	if err := os.MkdirAll(csrDir, 0700); err != nil {
-		return fmt.Errorf("create controller PKI runtime directory: %w", err)
-	}
 	runtimeVariables["pki_bootstrap_phase"] = true
-	runtimeVariables["pki_csr_output_dir"] = csrDir
 	if err := report.timed("credentials-pki", "local", "projections", func() error {
 		return writeModelProjectionsWithResolverAndAirVPN(*siteDir, s, endpointLookup, airvpnMetadata)
 	}); err != nil {
@@ -1075,17 +1070,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return err
 	}
 	report.recordMutation("Services", "appliance runtime configuration", "reconciled", true)
-	var aiopsCertificates map[string]string
-	if modules.IsEnabled(s, "aiops") {
-		aiopsCertificates, err = signAIOpsCertificates(authority, csrDir)
-		if err != nil {
-			return fmt.Errorf("sign AIOps endpoint certificates: %w", err)
-		}
-	}
 	runtimeVariables["pki_bootstrap_phase"] = false
-	for name, certificate := range aiopsCertificates {
-		runtimeVariables[name] = certificate
-	}
 	variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
 	if err != nil {
 		return err
@@ -1697,32 +1682,6 @@ func verifyDNSReadiness(ctx context.Context, runner proxmox.CommandRunner, addre
 		return fmt.Errorf("authoritative, NTP, and Blocky resolver checks failed: %w", err)
 	}
 	return nil
-}
-
-func signAIOpsCertificates(authority pki.Authority, csrDir string) (map[string]string, error) {
-	readCSR := func(name string) (string, error) {
-		data, err := os.ReadFile(filepath.Join(csrDir, name+".csr.pem"))
-		if err != nil {
-			return "", fmt.Errorf("read %s CSR: %w", name, err)
-		}
-		return string(data), nil
-	}
-	result := make(map[string]string, 4)
-	clientRequests := []struct{ file, identity, variable string }{
-		{"log-query-client", "aiops-log-read", "aiops_log_read_cert_pem"},
-	}
-	for _, request := range clientRequests {
-		csr, err := readCSR(request.file)
-		if err != nil {
-			return nil, err
-		}
-		certificate, err := signOrReuseServiceClientCertificate(authority, csr, csrDir, request.file, request.identity)
-		if err != nil {
-			return nil, fmt.Errorf("sign %s CSR: %w", request.file, err)
-		}
-		result[request.variable] = certificate.ChainPEM
-	}
-	return result, nil
 }
 
 func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, s model.Site, authority pki.Authority, controllerCertificate pki.ClientCertificate, pulseAdmin *pulse.Client, pulseBaseURL, routerForwardAddress string, runtimeVariables map[string]any, ansiblePlaybook, inventoryPath string, report *deploymentReport, identityData []byte) error {
