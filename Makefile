@@ -89,7 +89,7 @@ local-image-scan:
 
 image-check:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./internal/artifacts
-	sh -n scripts/benchmark-artifact-compression.sh scripts/build-images.sh scripts/scan-images.sh scripts/local-builder.sh scripts/local-builder-storage.sh scripts/local-builder-setup.sh scripts/install-debian-archive-keyring.sh scripts/native-builder-run.sh scripts/smoke-appliance.sh scripts/smoke-firewall-image.sh images/base/first-boot/boetticher-first-boot.sh images/base/runtime/install-runtime-state.sh
+	sh -n scripts/benchmark-artifact-compression.sh scripts/build-images.sh scripts/scan-images.sh scripts/local-builder.sh scripts/local-builder-storage.sh scripts/local-builder-setup.sh scripts/install-debian-archive-keyring.sh scripts/native-builder-run.sh scripts/smoke-appliance.sh scripts/smoke-firewall-image.sh images/base/first-boot/boetticher-first-boot.sh images/base/runtime/install-runtime-state.sh images/firewall/build/install-packages.sh images/firewall/build/process-supervisor.sh
 	@test -z "$$(rg -n 'BOETTICHER_IMAGE_BUILD_COMMAND|exec sh -c' scripts || true)"
 
 image-base image-dns-blocky image-logging image-monitoring image-firewall image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-aiops image-gatus image-network-probe images:

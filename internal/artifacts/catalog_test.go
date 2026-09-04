@@ -8,9 +8,13 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	buildbundle "github.com/gofastercloud/boetticher"
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -927,7 +931,7 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(buildScript), "base_packages=$(awk") || !strings.Contains(string(buildScript), "--include=\"$base_packages\"") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Check-Valid-Until=false") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Retries=3") || !strings.Contains(string(buildScript), "debian-security-snapshot.sources") || !strings.Contains(string(buildScript), "apt-get --no-download upgrade --yes --no-install-recommends") {
+	if !strings.Contains(string(buildScript), "base_packages=$(awk") || !strings.Contains(string(buildScript), "--include=\"$base_packages\"") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Check-Valid-Until=false") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Retries=3") || !strings.Contains(string(buildScript), "debian-security-snapshot.sources") {
 		t.Fatal("base builder does not use the pinned Debian snapshot")
 	}
 	if !strings.Contains(string(buildScript), `dpkg-query -W -f='\${binary:Package}\\t\${Version}\\n'`) {
@@ -936,6 +940,11 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	if strings.Contains(string(buildScript), "systemctl disable --now systemd-networkd-wait-online.service") {
 		t.Fatal("firewall image customization tries to start or stop systemd in an offline image")
 	}
+	firewallPackageInstaller, err := os.ReadFile(filepath.Join("..", "..", "images", "firewall", "build", "install-packages.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firewallBuildContract := string(buildScript) + "\n" + string(firewallPackageInstaller)
 	for _, required := range []string{
 		"prepare_firewall_package_cache",
 		"virt-cat -a \"$input\" /var/lib/dpkg/status",
@@ -945,7 +954,7 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 		"--tar-in \"$package_lists_tar\":/var/lib/apt/lists",
 		"apt-get --no-download install",
 	} {
-		if !strings.Contains(string(buildScript), required) {
+		if !strings.Contains(firewallBuildContract, required) {
 			t.Fatalf("firewall local package-cache build is missing %q", required)
 		}
 	}
@@ -1121,6 +1130,201 @@ func TestFirewallBuildUsesIndividualVirtCustomizeDirectories(t *testing.T) {
 		if !strings.Contains(text, directory) {
 			t.Fatalf("firewall build is missing directory input %q", directory)
 		}
+	}
+}
+
+func TestFirewallOfflineUpgradeMountsEFIForPackageTriggers(t *testing.T) {
+	root := filepath.Join("..", "..")
+	buildScript, err := os.ReadFile(filepath.Join(root, "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildText := string(buildScript)
+	for _, required := range []string{
+		"--upload images/firewall/build/process-supervisor.sh:/tmp/boetticher-firewall-process-supervisor",
+		"--upload images/firewall/build/install-packages.sh:/tmp/boetticher-firewall-install-packages",
+		"--run-command \"sh /tmp/boetticher-firewall-install-packages $firewall_package_names\"",
+		"--delete /tmp/boetticher-firewall-process-supervisor",
+		"--delete /tmp/boetticher-firewall-install-packages",
+	} {
+		if !strings.Contains(buildText, required) {
+			t.Fatalf("firewall image build does not run the bounded package installer: missing %q", required)
+		}
+	}
+
+	installer, err := os.ReadFile(filepath.Join(root, "images", "firewall", "build", "install-packages.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	installerText := string(installer)
+	for _, required := range []string{
+		"trap cleanup EXIT",
+		"trap 'bounded_signal HUP 129' HUP",
+		"trap 'bounded_signal INT 130' INT",
+		"trap 'bounded_signal TERM 143' TERM",
+		". /tmp/boetticher-firewall-process-supervisor",
+		"mountpoint -q /boot/efi",
+		"mount -t vfat -o umask=077 /dev/sda15 /boot/efi",
+		"run_bounded_command 2m 10s mount -t vfat -o umask=077 /dev/sda15 /boot/efi",
+		"run_bounded_command 30s 5s findmnt --noheadings --source /dev/sda15 --target /boot/efi --types vfat",
+		"run_bounded_command 30s 5s sync -f /boot/efi",
+		"run_bounded_command 30s 5s umount /boot/efi",
+		"apt-get --no-download upgrade --yes --no-install-recommends",
+		"apt-get --no-download install --yes --no-install-recommends",
+		"umount /boot/efi",
+	} {
+		if !strings.Contains(installerText, required) {
+			t.Fatalf("firewall package installer does not preserve the EFI upgrade contract: missing %q", required)
+		}
+	}
+	if strings.Contains(installerText, "trap cleanup EXIT HUP INT TERM") {
+		t.Fatal("firewall package installer can swallow cancellation status in its cleanup trap")
+	}
+	if got := strings.Count(installerText, "run_bounded_command 30m 30s apt-get"); got != 2 {
+		t.Fatalf("firewall package installer must bound both EFI-mounted package transactions, found %d deadlines", got)
+	}
+	supervisor, err := os.ReadFile(filepath.Join(root, "images", "firewall", "build", "process-supervisor.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	supervisorText := string(supervisor)
+	if strings.Contains(installerText, "HOLD:") || strings.Contains(supervisorText, "HOLD:") {
+		t.Fatal("firewall image build helpers expose a non-binary operator result")
+	}
+	for _, required := range []string{
+		"bounded_launching=0",
+		"pending_bounded_signal=",
+		"pending_bounded_status=",
+		`if [ "$bounded_launching" -eq 1 ] && [ -z "$active_bounded_pid" ]; then`,
+		"pending_bounded_signal=$signal",
+		"pending_bounded_status=$status",
+		"setsid timeout --signal=TERM --kill-after=\"$kill_after\" \"$duration\" \"$@\" &",
+		"active_bounded_pid=$!",
+		"kill -s \"$signal\" \"$active_bounded_pid\"",
+		"kill -s \"$signal\" -- \"-$active_bounded_pid\"",
+		"wait \"$active_bounded_pid\"",
+	} {
+		if !strings.Contains(supervisorText, required) {
+			t.Fatalf("firewall process supervisor does not forward bounded cancellation: missing %q", required)
+		}
+	}
+	launchingIndex := strings.Index(supervisorText, "bounded_launching=1")
+	launchIndex := strings.Index(supervisorText, "setsid timeout")
+	recordIndex := strings.Index(supervisorText, "active_bounded_pid=$!")
+	launchedIndex := strings.Index(supervisorText, "bounded_launching=0\n  if [ -n \"$pending_bounded_signal\" ]")
+	if launchingIndex < 0 || launchIndex <= launchingIndex || recordIndex <= launchIndex || launchedIndex <= recordIndex {
+		t.Fatal("firewall process supervisor does not defer signals across launch-to-PID assignment")
+	}
+	mountIndex := strings.Index(installerText, "mount -t vfat")
+	upgradeIndex := strings.Index(installerText, "apt-get --no-download upgrade")
+	installIndex := strings.Index(installerText, "apt-get --no-download install")
+	if mountIndex < 0 || upgradeIndex <= mountIndex || installIndex <= upgradeIndex {
+		t.Fatal("firewall package installer does not keep the EFI system partition mounted through package triggers")
+	}
+}
+
+func TestFirewallPackageSupervisorForwardsPIDSignal(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the firewall process supervisor executes in the Linux image builder")
+	}
+	for _, tool := range []string{"setsid", "timeout"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Fatalf("Linux firewall build prerequisite %s is unavailable: %v", tool, err)
+		}
+	}
+
+	supervisor, err := filepath.Abs(filepath.Join("..", "..", "images", "firewall", "build", "process-supervisor.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	temporary := t.TempDir()
+	childPath := filepath.Join(temporary, "child.sh")
+	driverPath := filepath.Join(temporary, "driver.sh")
+	startedPath := filepath.Join(temporary, "started")
+	terminatedPath := filepath.Join(temporary, "terminated")
+	child := `#!/bin/sh
+set -eu
+terminated=$1
+started=$2
+trap 'printf "%s\n" terminated > "$terminated"; exit 0' TERM
+printf '%s\n' started > "$started"
+while :; do sleep 1; done
+`
+	driver := `#!/bin/sh
+set -eu
+supervisor=$1
+child=$2
+terminated=$3
+started=$4
+. "$supervisor"
+trap 'bounded_signal TERM 143' TERM
+run_bounded_command 30s 5s sh "$child" "$terminated" "$started"
+`
+	if err := os.WriteFile(childPath, []byte(child), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(driverPath, []byte(driver), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var output strings.Builder
+	command := exec.Command("sh", driverPath, supervisor, childPath, terminatedPath, startedPath)
+	command.Stdout = &output
+	command.Stderr = &output
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- command.Wait() }()
+	finished := false
+	defer func() {
+		if finished {
+			return
+		}
+		_ = command.Process.Signal(syscall.SIGTERM)
+		select {
+		case <-waited:
+		case <-time.After(time.Second):
+			_ = command.Process.Kill()
+			<-waited
+		}
+	}()
+
+	startedDeadline := time.NewTimer(5 * time.Second)
+	defer startedDeadline.Stop()
+	startedPoll := time.NewTicker(20 * time.Millisecond)
+	defer startedPoll.Stop()
+waitForStart:
+	for {
+		select {
+		case err := <-waited:
+			finished = true
+			t.Fatalf("bounded child exited before signalling readiness: %v; output: %s", err, output.String())
+		case <-startedDeadline.C:
+			t.Fatal("bounded child did not start before the deadline")
+		case <-startedPoll.C:
+			if _, err := os.Stat(startedPath); err == nil {
+				break waitForStart
+			} else if !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := command.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-waited:
+		finished = true
+		exitError, ok := err.(*exec.ExitError)
+		if !ok || exitError.ExitCode() != 143 {
+			t.Fatalf("installer signal status = %v, want 143; output: %s", err, output.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("installer did not forward PID-level cancellation before the deadline")
+	}
+	if _, err := os.Stat(terminatedPath); err != nil {
+		t.Fatalf("bounded child did not receive cancellation: %v; output: %s", err, output.String())
 	}
 }
 
