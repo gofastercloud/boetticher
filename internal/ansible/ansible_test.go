@@ -51,6 +51,52 @@ func TestGatusRoleUsesEndpointOwnedSmallstepCertificate(t *testing.T) {
 	}
 }
 
+func TestPrinterRoleUsesSmallstepServerCertificateAndRetainsClientMTLS(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "printer", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, required := range []string{
+		"include_tasks: ../../tasks/step-ca-endpoint.yml",
+		"step_ca_endpoint_subject: \"octoprint.{{ domain }}\"",
+		"step_ca_endpoint_key_path: /var/lib/boetticher/identity/tls/octoprint.key.pem",
+		"ssl_verify_client on;",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Printer TLS contract is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"octoprint_server_cert_pem", "octoprint.csr.pem", "ansible.builtin.fetch:"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("Printer role retains controller server-certificate exchange %q", forbidden)
+		}
+	}
+}
+
+func TestArrRoleUsesSmallstepServerCertificateAndRetainsClientMTLS(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "arr", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, required := range []string{
+		"include_tasks: ../../tasks/step-ca-endpoint.yml",
+		"step_ca_endpoint_subject: \"sonarr.{{ domain }}\"",
+		"step_ca_endpoint_key_path: /var/lib/boetticher/identity/tls/arr.key.pem",
+		"ssl_verify_client on;",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("arr TLS contract is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"arr_server_cert_pem", "arr.csr.pem", "ansible.builtin.fetch:"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("arr role retains controller server-certificate exchange %q", forbidden)
+		}
+	}
+}
+
 func TestARRRoleSeedsConfigurationWithoutOverwritingApplicationState(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "arr", "tasks", "main.yml"))
 	if err != nil {

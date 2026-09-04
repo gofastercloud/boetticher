@@ -1083,29 +1083,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return err
 	}
 	report.recordMutation("Services", "appliance runtime configuration", "reconciled", true)
-	var octoprintCertificate pki.ServerCertificate
-	var arrCertificate pki.ServerCertificate
 	var aiopsCertificates map[string]string
-	if modules.IsEnabled(s, "printer") {
-		octoprintCSR, readErr := os.ReadFile(filepath.Join(csrDir, "octoprint.csr.pem"))
-		if readErr != nil {
-			return fmt.Errorf("read endpoint-generated OctoPrint CSR: %w", readErr)
-		}
-		octoprintCertificate, err = signOrReuseServerCertificate(authority, string(octoprintCSR), csrDir, "octoprint", "octoprint", s.Network.Domain, []string{"printer." + s.Network.Domain, "lab-printer-01." + s.Network.Domain})
-		if err != nil {
-			return fmt.Errorf("sign OctoPrint endpoint CSR: %w", err)
-		}
-	}
-	if modules.IsEnabled(s, "arr") {
-		arrCSR, readErr := os.ReadFile(filepath.Join(csrDir, "arr.csr.pem"))
-		if readErr != nil {
-			return fmt.Errorf("read endpoint-generated arr CSR: %w", readErr)
-		}
-		arrCertificate, err = signOrReuseServerCertificate(authority, string(arrCSR), csrDir, "arr", "sonarr", s.Network.Domain, []string{"radarr." + s.Network.Domain, "lab-arr-01." + s.Network.Domain})
-		if err != nil {
-			return fmt.Errorf("sign arr endpoint CSR: %w", err)
-		}
-	}
 	if modules.IsEnabled(s, "aiops") {
 		aiopsCertificates, err = signAIOpsCertificates(authority, s, csrDir)
 		if err != nil {
@@ -1113,12 +1091,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		}
 	}
 	runtimeVariables["pki_bootstrap_phase"] = false
-	if modules.IsEnabled(s, "printer") {
-		runtimeVariables["octoprint_server_cert_pem"] = octoprintCertificate.ChainPEM
-	}
-	if modules.IsEnabled(s, "arr") {
-		runtimeVariables["arr_server_cert_pem"] = arrCertificate.ChainPEM
-	}
 	for name, certificate := range aiopsCertificates {
 		runtimeVariables[name] = certificate
 	}
