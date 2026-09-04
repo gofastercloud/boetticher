@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
 
+# shellcheck source=images/firewall/build/process-supervisor.sh
+. /tmp/boetticher-firewall-process-supervisor
+
 if [ "$#" -eq 0 ]; then
   echo "HOLD: firewall package installer requires at least one package" >&2
   exit 2
@@ -9,17 +12,22 @@ if ! command -v timeout >/dev/null 2>&1; then
   echo "HOLD: firewall package installer requires GNU timeout" >&2
   exit 2
 fi
+if ! command -v setsid >/dev/null 2>&1; then
+  echo "HOLD: firewall package installer requires setsid" >&2
+  exit 2
+fi
 
 efi_mounted_by_installer=0
 cleanup() {
   status=$?
-  trap - EXIT HUP INT TERM
+  trap - EXIT
+  trap '' HUP INT TERM
   if [ "$efi_mounted_by_installer" -eq 1 ] && mountpoint -q /boot/efi; then
-    if ! sync; then
+    if ! timeout --signal=TERM --kill-after=5s 30s sync -f /boot/efi; then
       echo "HOLD: firewall package installer could not flush the EFI system partition" >&2
       status=2
     fi
-    if ! umount /boot/efi; then
+    if ! timeout --signal=TERM --kill-after=5s 30s umount /boot/efi; then
       echo "HOLD: firewall package installer could not unmount the EFI system partition" >&2
       status=2
     fi
@@ -27,9 +35,9 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'bounded_signal HUP 129' HUP
+trap 'bounded_signal INT 130' INT
+trap 'bounded_signal TERM 143' TERM
 
 if [ -L /boot/efi ]; then
   echo "HOLD: firewall EFI mount point must not be a symbolic link" >&2
@@ -57,8 +65,9 @@ if [ "$efi_type" != vfat ]; then
 fi
 
 rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list
-DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=30s 30m apt-get --no-download upgrade --yes --no-install-recommends
-DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=30s 30m apt-get --no-download install --yes --no-install-recommends "$@"
+export DEBIAN_FRONTEND=noninteractive
+run_bounded_command 30m apt-get --no-download upgrade --yes --no-install-recommends
+run_bounded_command 30m apt-get --no-download install --yes --no-install-recommends "$@"
 apt-get clean
 rm -rf /var/lib/apt/lists/*
 rm -f /etc/resolv.conf

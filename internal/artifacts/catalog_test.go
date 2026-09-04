@@ -8,9 +8,13 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	buildbundle "github.com/gofastercloud/boetticher"
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -1137,8 +1141,10 @@ func TestFirewallOfflineUpgradeMountsEFIForPackageTriggers(t *testing.T) {
 	}
 	buildText := string(buildScript)
 	for _, required := range []string{
+		"--upload images/firewall/build/process-supervisor.sh:/tmp/boetticher-firewall-process-supervisor",
 		"--upload images/firewall/build/install-packages.sh:/tmp/boetticher-firewall-install-packages",
 		"--run-command \"sh /tmp/boetticher-firewall-install-packages $firewall_package_names\"",
+		"--delete /tmp/boetticher-firewall-process-supervisor",
 		"--delete /tmp/boetticher-firewall-install-packages",
 	} {
 		if !strings.Contains(buildText, required) {
@@ -1153,9 +1159,10 @@ func TestFirewallOfflineUpgradeMountsEFIForPackageTriggers(t *testing.T) {
 	installerText := string(installer)
 	for _, required := range []string{
 		"trap cleanup EXIT",
-		"trap 'exit 129' HUP",
-		"trap 'exit 130' INT",
-		"trap 'exit 143' TERM",
+		"trap 'bounded_signal HUP 129' HUP",
+		"trap 'bounded_signal INT 130' INT",
+		"trap 'bounded_signal TERM 143' TERM",
+		". /tmp/boetticher-firewall-process-supervisor",
 		"mountpoint -q /boot/efi",
 		"mount -t vfat -o umask=077 /dev/sda15 /boot/efi",
 		"findmnt --noheadings --output SOURCE --target /boot/efi",
@@ -1171,14 +1178,138 @@ func TestFirewallOfflineUpgradeMountsEFIForPackageTriggers(t *testing.T) {
 	if strings.Contains(installerText, "trap cleanup EXIT HUP INT TERM") {
 		t.Fatal("firewall package installer can swallow cancellation status in its cleanup trap")
 	}
-	if got := strings.Count(installerText, "timeout --signal=TERM --kill-after=30s 30m apt-get"); got != 2 {
+	if got := strings.Count(installerText, "run_bounded_command 30m apt-get"); got != 2 {
 		t.Fatalf("firewall package installer must bound both EFI-mounted package transactions, found %d deadlines", got)
+	}
+	if got := strings.Count(installerText, "timeout --signal=TERM --kill-after=5s 30s"); got != 2 {
+		t.Fatalf("firewall package installer must bound both EFI cleanup operations, found %d deadlines", got)
+	}
+	supervisor, err := os.ReadFile(filepath.Join(root, "images", "firewall", "build", "process-supervisor.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	supervisorText := string(supervisor)
+	for _, required := range []string{
+		"setsid timeout --signal=TERM --kill-after=30s \"$duration\" \"$@\" &",
+		"active_bounded_pid=$!",
+		"kill -s \"$signal\" \"$active_bounded_pid\"",
+		"kill -s \"$signal\" -- \"-$active_bounded_pid\"",
+		"wait \"$active_bounded_pid\"",
+	} {
+		if !strings.Contains(supervisorText, required) {
+			t.Fatalf("firewall process supervisor does not forward bounded cancellation: missing %q", required)
+		}
 	}
 	mountIndex := strings.Index(installerText, "mount -t vfat")
 	upgradeIndex := strings.Index(installerText, "apt-get --no-download upgrade")
 	installIndex := strings.Index(installerText, "apt-get --no-download install")
 	if mountIndex < 0 || upgradeIndex <= mountIndex || installIndex <= upgradeIndex {
 		t.Fatal("firewall package installer does not keep the EFI system partition mounted through package triggers")
+	}
+}
+
+func TestFirewallPackageSupervisorForwardsPIDSignal(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the firewall process supervisor executes in the Linux image builder")
+	}
+	for _, tool := range []string{"setsid", "timeout"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Fatalf("Linux firewall build prerequisite %s is unavailable: %v", tool, err)
+		}
+	}
+
+	supervisor, err := filepath.Abs(filepath.Join("..", "..", "images", "firewall", "build", "process-supervisor.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	temporary := t.TempDir()
+	childPath := filepath.Join(temporary, "child.sh")
+	driverPath := filepath.Join(temporary, "driver.sh")
+	startedPath := filepath.Join(temporary, "started")
+	terminatedPath := filepath.Join(temporary, "terminated")
+	child := `#!/bin/sh
+set -eu
+terminated=$1
+started=$2
+trap 'printf "%s\n" terminated > "$terminated"; exit 0' TERM
+printf '%s\n' started > "$started"
+while :; do sleep 1; done
+`
+	driver := `#!/bin/sh
+set -eu
+supervisor=$1
+child=$2
+terminated=$3
+started=$4
+. "$supervisor"
+trap 'bounded_signal TERM 143' TERM
+run_bounded_command 30s sh "$child" "$terminated" "$started"
+`
+	if err := os.WriteFile(childPath, []byte(child), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(driverPath, []byte(driver), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var output strings.Builder
+	command := exec.Command("sh", driverPath, supervisor, childPath, terminatedPath, startedPath)
+	command.Stdout = &output
+	command.Stderr = &output
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- command.Wait() }()
+	finished := false
+	defer func() {
+		if finished {
+			return
+		}
+		_ = command.Process.Signal(syscall.SIGTERM)
+		select {
+		case <-waited:
+		case <-time.After(time.Second):
+			_ = command.Process.Kill()
+			<-waited
+		}
+	}()
+
+	startedDeadline := time.NewTimer(5 * time.Second)
+	defer startedDeadline.Stop()
+	startedPoll := time.NewTicker(20 * time.Millisecond)
+	defer startedPoll.Stop()
+waitForStart:
+	for {
+		select {
+		case err := <-waited:
+			finished = true
+			t.Fatalf("bounded child exited before signalling readiness: %v; output: %s", err, output.String())
+		case <-startedDeadline.C:
+			t.Fatal("bounded child did not start before the deadline")
+		case <-startedPoll.C:
+			if _, err := os.Stat(startedPath); err == nil {
+				break waitForStart
+			} else if !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := command.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-waited:
+		finished = true
+		exitError, ok := err.(*exec.ExitError)
+		if !ok || exitError.ExitCode() != 143 {
+			t.Fatalf("installer signal status = %v, want 143; output: %s", err, output.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("installer did not forward PID-level cancellation before the deadline")
+	}
+	if _, err := os.Stat(terminatedPath); err != nil {
+		t.Fatalf("bounded child did not receive cancellation: %v; output: %s", err, output.String())
 	}
 }
 

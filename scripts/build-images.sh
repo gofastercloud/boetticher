@@ -778,8 +778,10 @@ build_firewall() {
     --mkdir /var/lib/apt/lists \
     --tar-in "$package_archive_tar":/var/cache/apt/archives \
     --tar-in "$package_lists_tar":/var/lib/apt/lists \
+    --upload images/firewall/build/process-supervisor.sh:/tmp/boetticher-firewall-process-supervisor \
     --upload images/firewall/build/install-packages.sh:/tmp/boetticher-firewall-install-packages \
     --run-command "sh /tmp/boetticher-firewall-install-packages $firewall_package_names" \
+    --delete /tmp/boetticher-firewall-process-supervisor \
     --delete /tmp/boetticher-firewall-install-packages \
     --mkdir /etc/boetticher \
     --mkdir /usr/lib/boetticher \
