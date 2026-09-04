@@ -38,10 +38,10 @@ var (
 )
 
 // The appliance inventory is small, but the network and services passes touch
-// several independent guests. Eight forks removes avoidable host batching
-// without creating unbounded load on a homelab controller or gateway. An
+// several independent guests. Two forks keep concurrent SSH handshakes bounded
+// while the temporary deployment key deliberately disables multiplexing. An
 // explicit operator setting remains authoritative.
-const defaultAnsibleForks = "8"
+const defaultAnsibleForks = "2"
 
 const (
 	// The converge orchestrator establishes the network foundation before its
