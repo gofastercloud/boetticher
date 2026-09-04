@@ -636,6 +636,28 @@ func TestLogicalDNSIntentExpandsToAllManagedDNSEndpoints(t *testing.T) {
 	}
 }
 
+func TestDeclaredEndpointsReachOnlyTheSmallstepCADestination(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	rules := policyRules(site)
+	foundMonitor := false
+	for _, rule := range rules {
+		if strings.Contains(rule.Name, "HTTPS to Smallstep CA") {
+			if rule.Name == "lab-monitor-01 HTTPS to Smallstep CA" {
+				foundMonitor = true
+				if rule.SourceCIDR != "10.10.10.20/32" || rule.DestinationCIDR != "10.10.10.10/32" || !reflect.DeepEqual(rule.Ports, []string{StepCAPort}) {
+					t.Fatalf("Smallstep monitor rule = %#v", rule)
+				}
+			}
+			if rule.Name == "lab-proxmox-01 HTTPS to Smallstep CA" || rule.SourceCIDR == "10.10.0.0/16" {
+				t.Fatalf("Smallstep CA rule is broader than a declared endpoint: %#v", rule)
+			}
+		}
+	}
+	if !foundMonitor {
+		t.Fatal("default monitoring endpoint has no Smallstep CA rule")
+	}
+}
+
 func TestAirVPNSelectedSourcesUseTransitWithoutDirectWANFallback(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("airvpn", "age1airvpn", model.GatewayModeManaged))
 	airvpnEnabled, bifrostEnabled := true, true

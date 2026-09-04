@@ -20,6 +20,7 @@ const (
 	FilterTable = "boetticher_filter"
 	NATTable    = "boetticher_nat"
 	DDNSPort    = "53001"
+	StepCAPort  = "9443"
 )
 
 type Interface struct {
@@ -592,6 +593,29 @@ func policyRules(s model.Site) []PolicyRule {
 					DestinationCIDR: monitor.Address + "/32",
 				})
 			}
+		}
+	}
+	// Endpoint-owned certificates renew through the online CA on the primary
+	// DNS guest. Permit only declared Boetticher endpoints to reach that fixed
+	// CA address; this is not a zone-wide allowance or a general HTTPS rule.
+	if ca, ok := componentReference(s, "dns"); ok && ca.Address != "" {
+		for _, source := range s.PlatformComponents() {
+			if source.Name == "lab-proxmox-01" || source.Name == ca.Name || source.Address == "" {
+				continue
+			}
+			rules = append(rules, PolicyRule{
+				Sequence:        len(rules) + 1,
+				Name:            source.Name + " HTTPS to Smallstep CA",
+				From:            source.Zone,
+				To:              "INFRA",
+				Action:          "allow",
+				Protocol:        "tcp",
+				Ports:           []string{StepCAPort},
+				Counter:         "boetticher_" + strings.ToLower(strings.ReplaceAll(source.Name, "-", "_")) + "_https_to_smallstep_ca",
+				Description:     "boetticher " + source.Name + " HTTPS to Smallstep CA",
+				SourceCIDR:      source.Address + "/32",
+				DestinationCIDR: ca.Address + "/32",
+			})
 		}
 	}
 	// These are gateway-local services. Forwarding rules below deliberately
