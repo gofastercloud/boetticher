@@ -77,7 +77,10 @@
     {{ step_ca_endpoint_certificate_path | quote }}.new
     --roots {{ step_ca_endpoint_root_path | quote }};
     test -s {{ step_ca_endpoint_key_path | quote }}.new;
-    chmod 0600 {{ step_ca_endpoint_key_path | quote }}.new;
+    chown {{ step_ca_endpoint_certificate_owner | default('root') }}:{{ step_ca_endpoint_certificate_group | default('root') }} {{ step_ca_endpoint_certificate_path | quote }}.new;
+    chmod {{ step_ca_endpoint_certificate_mode | default('0644') }} {{ step_ca_endpoint_certificate_path | quote }}.new;
+    chown {{ step_ca_endpoint_key_owner | default('root') }}:{{ step_ca_endpoint_key_group | default('root') }} {{ step_ca_endpoint_key_path | quote }}.new;
+    chmod {{ step_ca_endpoint_key_mode | default('0600') }} {{ step_ca_endpoint_key_path | quote }}.new;
     mv -f {{ step_ca_endpoint_certificate_path | quote }}.new {{ step_ca_endpoint_certificate_path | quote }};
     mv -f {{ step_ca_endpoint_key_path | quote }}.new {{ step_ca_endpoint_key_path | quote }};
     install -o root -g root -m 0644 /dev/null {{ step_ca_endpoint_marker_path | quote }}
@@ -98,6 +101,12 @@
       key={{ step_ca_endpoint_key_path | quote }}
       root={{ step_ca_endpoint_root_path | quote }}
       intermediate={{ step_ca_endpoint_intermediate_path | quote }}
+      cert_owner={{ step_ca_endpoint_certificate_owner | default('root') | quote }}
+      cert_group={{ step_ca_endpoint_certificate_group | default('root') | quote }}
+      cert_mode={{ step_ca_endpoint_certificate_mode | default('0644') | quote }}
+      key_owner={{ step_ca_endpoint_key_owner | default('root') | quote }}
+      key_group={{ step_ca_endpoint_key_group | default('root') | quote }}
+      key_mode={{ step_ca_endpoint_key_mode | default('0600') | quote }}
       ca_url={{ ('https://lab-dns-01.' ~ domain ~ ':9443') | quote }}
       work=$(mktemp -d /run/boetticher-{{ step_ca_endpoint_name | replace(' ', '-') }}-renew.XXXXXX)
       trap 'rm -rf "$work"' EXIT
@@ -108,10 +117,13 @@
           /usr/local/bin/step ca renew --force --expires-in 240h "$work/certificate.pem" "$work/key.pem" --ca-url "$ca_url" --root "$root"
           /usr/local/bin/step certificate bundle "$work/certificate.pem" "$intermediate" "$work/bundle.pem" --force
           /usr/local/bin/step certificate verify "$work/bundle.pem" --roots "$root"
-          chmod 0600 "$work/key.pem"
+          chown "$cert_owner:$cert_group" "$work/bundle.pem"
+          chmod "$cert_mode" "$work/bundle.pem"
+          chown "$key_owner:$key_group" "$work/key.pem"
+          chmod "$key_mode" "$work/key.pem"
           mv -f "$work/bundle.pem" "$cert"
           mv -f "$work/key.pem" "$key"
-          systemctl reload {{ step_ca_endpoint_reload_service | quote }}
+          systemctl try-reload-or-restart {{ step_ca_endpoint_reload_service | quote }}
       fi
 
 - name: Install the {{ step_ca_endpoint_name }} certificate renewal service

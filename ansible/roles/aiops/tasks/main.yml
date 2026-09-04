@@ -29,7 +29,6 @@
   args:
     creates: "/var/lib/boetticher/identity/tls/{{ item.file }}.key.pem"
   loop:
-    - {file: aiops, identity: "aiops.{{ domain }}"}
     - {file: pulse-read, identity: aiops-pulse-read}
     - {file: pulse-note, identity: aiops-pulse-note}
     - {file: log-query-client, identity: aiops-log-read}
@@ -42,26 +41,7 @@
     owner: root
     group: boetticher-aiops
     mode: '0640'
-  loop: [aiops, pulse-read, pulse-note, log-query-client, ai-router-client]
-  when: boetticher_deploy_phase | default('full') != 'health'
-
-- name: Generate the AIOps server CSR locally
-  ansible.builtin.command:
-    argv:
-      - openssl
-      - req
-      - -new
-      - -sha256
-      - -key
-      - /var/lib/boetticher/identity/tls/aiops.key.pem
-      - -subj
-      - "/CN=aiops.{{ domain }}"
-      - -addext
-      - "subjectAltName=DNS:aiops.{{ domain }},DNS:lab-aiops-01.{{ domain }}"
-      - -out
-      - /var/lib/boetticher/identity/tls/aiops.csr.pem
-  args:
-    creates: /var/lib/boetticher/identity/tls/aiops.csr.pem
+  loop: [pulse-read, pulse-note, log-query-client, ai-router-client]
   when: boetticher_deploy_phase | default('full') != 'health'
 
 - name: Generate exact AIOps service-client CSRs locally
@@ -86,27 +66,56 @@
     - {file: ai-router-client, identity: aiops-router-client}
   when: boetticher_deploy_phase | default('full') != 'health'
 
-- name: Fetch AIOps CSRs during PKI bootstrap
+- name: Fetch AIOps client CSRs during PKI bootstrap
   ansible.builtin.fetch:
     src: "/var/lib/boetticher/identity/tls/{{ item }}.csr.pem"
     dest: "{{ pki_csr_output_dir }}/{{ item }}.csr.pem"
     flat: true
-  loop: [aiops, pulse-read, pulse-note, log-query-client, ai-router-client]
+  loop: [pulse-read, pulse-note, log-query-client, ai-router-client]
   when: pki_bootstrap_phase | default(false) | bool
 
-- name: Require controller-issued AIOps certificates and platform CA
+- name: Require Smallstep AIOps server and retained client certificates
   ansible.builtin.assert:
     that:
+      - step_ca_root_cert_pem is defined
+      - step_ca_intermediate_cert_pem is defined
       - client_ca_pem is defined
-      - (pki_bootstrap_phase | default(false) | bool) or (aiops_server_cert_pem | default('') | length > 0)
       - (pki_bootstrap_phase | default(false) | bool) or (aiops_pulse_read_cert_pem | default('') | length > 0)
       - (pki_bootstrap_phase | default(false) | bool) or (aiops_pulse_note_cert_pem | default('') | length > 0)
       - (pki_bootstrap_phase | default(false) | bool) or (aiops_log_read_cert_pem | default('') | length > 0)
       - (pki_bootstrap_phase | default(false) | bool) or (aiops_router_client_cert_pem | default('') | length > 0)
-    fail_msg: "AIOps requires all five controller-signed endpoint identities before activation"
+    fail_msg: "AIOps requires the Smallstep server and retained client identities before activation"
   no_log: true
 
-- name: Install controller-issued AIOps certificates and platform CA
+- name: Issue and renew the AIOps server certificate from Smallstep
+  ansible.builtin.include_tasks: ../../tasks/step-ca-endpoint.yml
+  vars:
+    step_ca_endpoint_name: AIOps
+    step_ca_endpoint_subject: "aiops.{{ domain }}"
+    step_ca_endpoint_sans: ["aiops.{{ domain }}", "lab-aiops-01.{{ domain }}"]
+    step_ca_endpoint_root_path: /var/lib/boetticher/identity/tls/step-ca-root.crt
+    step_ca_endpoint_intermediate_path: /var/lib/boetticher/identity/tls/step-ca-intermediate.crt
+    step_ca_endpoint_certificate_path: /var/lib/boetticher/identity/tls/aiops.crt.pem
+    step_ca_endpoint_key_path: /var/lib/boetticher/identity/tls/aiops.key.pem
+    step_ca_endpoint_marker_path: /var/lib/boetticher/identity/tls/aiops.step-ca
+    step_ca_endpoint_renewal_script: /usr/local/sbin/boetticher-renew-aiops-certificate
+    step_ca_endpoint_renewal_service: /etc/systemd/system/boetticher-renew-aiops-certificate.service
+    step_ca_endpoint_renewal_timer: /etc/systemd/system/boetticher-renew-aiops-certificate.timer
+    step_ca_endpoint_reload_service: boetticher-aiops
+    step_ca_endpoint_write_paths: /var/lib/boetticher/identity/tls /run
+    step_ca_endpoint_certificate_owner: root
+    step_ca_endpoint_certificate_group: boetticher-aiops
+    step_ca_endpoint_certificate_mode: '0640'
+    step_ca_endpoint_key_owner: root
+    step_ca_endpoint_key_group: boetticher-aiops
+    step_ca_endpoint_key_mode: '0640'
+
+- name: Check whether the AIOps server certificate is ready
+  ansible.builtin.stat:
+    path: /var/lib/boetticher/identity/tls/aiops.step-ca
+  register: aiops_step_ca_marker
+
+- name: Install retained AIOps client certificates and platform CA
   ansible.builtin.copy:
     dest: "/var/lib/boetticher/identity/tls/{{ item.file }}"
     content: "{{ item.content }}"
@@ -114,7 +123,6 @@
     group: boetticher-aiops
     mode: '0640'
   loop:
-    - {file: aiops.crt.pem, content: "{{ aiops_server_cert_pem | default('') }}"}
     - {file: pulse-read.crt.pem, content: "{{ aiops_pulse_read_cert_pem | default('') }}"}
     - {file: pulse-note.crt.pem, content: "{{ aiops_pulse_note_cert_pem | default('') }}"}
     - {file: log-query-client.crt.pem, content: "{{ aiops_log_read_cert_pem | default('') }}"}
@@ -122,7 +130,6 @@
     - {file: ca.crt.pem, content: "{{ client_ca_pem | default('') }}"}
   no_log: true
   when:
-    - aiops_server_cert_pem | default('') | length > 0
     - aiops_pulse_read_cert_pem | default('') | length > 0
     - aiops_pulse_note_cert_pem | default('') | length > 0
     - aiops_log_read_cert_pem | default('') | length > 0
@@ -130,7 +137,7 @@
 
 - name: Record that all AIOps endpoint identities are installed
   ansible.builtin.set_fact:
-    aiops_server_identity_ready: "{{ aiops_server_cert_pem | default('') | length > 0 and aiops_pulse_read_cert_pem | default('') | length > 0 and aiops_pulse_note_cert_pem | default('') | length > 0 and aiops_log_read_cert_pem | default('') | length > 0 and aiops_router_client_cert_pem | default('') | length > 0 }}"
+    aiops_server_identity_ready: "{{ aiops_step_ca_marker.stat.exists | default(false) | bool and aiops_pulse_read_cert_pem | default('') | length > 0 and aiops_pulse_note_cert_pem | default('') | length > 0 and aiops_log_read_cert_pem | default('') | length > 0 and aiops_router_client_cert_pem | default('') | length > 0 }}"
 
 - name: Pin the selected provider-neutral model alias
   ansible.builtin.copy:

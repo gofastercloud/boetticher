@@ -1748,7 +1748,6 @@ func signAIOpsCertificates(authority pki.Authority, s model.Site, csrDir string)
 		file, identity, variable string
 		aliases                  []string
 	}{
-		{"aiops", "aiops", "aiops_server_cert_pem", []string{"lab-aiops-01." + s.Network.Domain}},
 		{"log-query", "log-query", "log_query_server_cert_pem", []string{"logs." + s.Network.Domain, "lab-log-01." + s.Network.Domain}},
 	}
 	result := make(map[string]string, 6)
