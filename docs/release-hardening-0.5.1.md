@@ -97,9 +97,9 @@ repeated after clean-install deployment using the same exclusions.
 
 | Measure | 0.5.0 baseline | 0.5.1 source checkpoint |
 | --- | ---: | ---: |
-| Controller source LOC | 45,629 | 43,252 |
-| Controller test LOC | 23,065 | 22,390 |
-| Compiled repository packages | 49 | 48 |
+| Controller source LOC | 45,629 | 43,512 |
+| Controller test LOC | 23,065 | 22,532 |
+| Compiled repository packages | 49 | 50 |
 | Controller dependency closure | 1,140 | 1,139 |
 | Release controller size, local trust-data build | 53,899,362 bytes | 53,765,378 bytes |
 | Default Proxmox guests | 6 | 3 |
@@ -110,6 +110,7 @@ repeated after clean-install deployment using the same exclusions.
 | Ansible roles | 17 | 17 |
 | Unreachable functions | 24 | 0 |
 | Runtime mutation mechanisms | 4 | 4 |
+| Repository lines changed from baseline | — | 4,795 added / 6,919 deleted / -2,124 net |
 | Direct Go requirements | 13 | 14 |
 | Total Go requirement entries | 154 | 154 |
 | Module graph | 392 | 392 |
