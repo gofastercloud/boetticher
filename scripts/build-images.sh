@@ -225,11 +225,19 @@ fi
 unmount_rootfs_mounts() {
   rootfs=$1
   for mount_path in "$rootfs/root/.cache/pip" "$rootfs/var/cache/apt/archives" "$rootfs/dev" "$rootfs/proc" "$rootfs/sys"; do
-    if mountpoint -q "$mount_path" && ! umount -R "$mount_path" 2>/dev/null; then
-      return 1
+    if mountpoint -q "$mount_path"; then
+      if ! umount -R "$mount_path"; then
+        echo "FAIL: could not unmount chroot path: $mount_path" >&2
+        findmnt -R -o TARGET,SOURCE,FSTYPE,PROPAGATION "$rootfs" >&2 || true
+        return 1
+      fi
     fi
   done
-  ! findmnt -R -n -o TARGET "$rootfs" 2>/dev/null | grep -q .
+  if findmnt -R -n -o TARGET "$rootfs" 2>/dev/null | grep -q .; then
+    echo "FAIL: chroot mounts remain after cleanup: $rootfs" >&2
+    findmnt -R -o TARGET,SOURCE,FSTYPE,PROPAGATION "$rootfs" >&2 || true
+    return 1
+  fi
 }
 
 cleanup() {
@@ -406,9 +414,17 @@ install_packages() {
       mv "$resolver_backup" "$rootfs/etc/resolv.conf"
     fi
   }
-  mount --bind /dev "$rootfs/dev"
+  mount --rbind /dev "$rootfs/dev"
+  mount --make-rslave "$rootfs/dev"
+  if ! mountpoint -q "$rootfs/dev/pts"; then
+    echo "FAIL: chroot devpts mount is unavailable: $rootfs/dev/pts" >&2
+    unmount_rootfs_mounts "$rootfs" || true
+    restore_resolver
+    return 1
+  fi
   mount -t proc proc "$rootfs/proc"
   mount --rbind /sys "$rootfs/sys"
+  mount --make-rslave "$rootfs/sys"
   mount --bind "$package_cache" "$rootfs/var/cache/apt/archives"
   if ! chroot "$rootfs" apt-get -o Acquire::Retries=3 update || ! chroot "$rootfs" env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install --yes --no-install-recommends "$@"; then
     unmount_rootfs_mounts "$rootfs" || true
