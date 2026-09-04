@@ -1072,9 +1072,8 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	report.complete()
 	report.start("services", "Configure services and runtime credentials")
 	var loggingClientCertificates map[string]string
-	var loggingCollectorCertificate string
 	if modules.IsEnabled(s, "logging") {
-		loggingClientCertificates, loggingCollectorCertificate, err = signLoggingCertificates(authority, s, csrDir)
+		loggingClientCertificates, err = signLoggingCertificates(authority, s, csrDir)
 		if err != nil {
 			return fmt.Errorf("sign logging transport certificates: %w", err)
 		}
@@ -1085,7 +1084,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	report.recordMutation("Services", "appliance runtime configuration", "reconciled", true)
 	var aiopsCertificates map[string]string
 	if modules.IsEnabled(s, "aiops") {
-		aiopsCertificates, err = signAIOpsCertificates(authority, s, csrDir)
+		aiopsCertificates, err = signAIOpsCertificates(authority, csrDir)
 		if err != nil {
 			return fmt.Errorf("sign AIOps endpoint certificates: %w", err)
 		}
@@ -1095,7 +1094,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		runtimeVariables[name] = certificate
 	}
 	runtimeVariables["logging_client_certificates"] = loggingClientCertificates
-	runtimeVariables["logging_collector_certificate"] = loggingCollectorCertificate
 	variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
 	if err != nil {
 		return err
@@ -1709,7 +1707,7 @@ func verifyDNSReadiness(ctx context.Context, runner proxmox.CommandRunner, addre
 	return nil
 }
 
-func signLoggingCertificates(authority pki.Authority, s model.Site, csrDir string) (map[string]string, string, error) {
+func signLoggingCertificates(authority pki.Authority, s model.Site, csrDir string) (map[string]string, error) {
 	clients := map[string]string{}
 	for _, component := range s.PlatformComponents() {
 		if !component.Logging || component.Name == "lab-log-01" {
@@ -1717,26 +1715,18 @@ func signLoggingCertificates(authority pki.Authority, s model.Site, csrDir strin
 		}
 		csr, err := os.ReadFile(filepath.Join(csrDir, "logging-"+component.Name+".csr.pem"))
 		if err != nil {
-			return nil, "", fmt.Errorf("read %s logging CSR: %w", component.Name, err)
+			return nil, fmt.Errorf("read %s logging CSR: %w", component.Name, err)
 		}
 		certificate, err := signOrReuseEndpointClientCertificate(authority, string(csr), csrDir, "logging-"+component.Name, component.Name, s.Network.Domain)
 		if err != nil {
-			return nil, "", fmt.Errorf("sign %s logging CSR: %w", component.Name, err)
+			return nil, fmt.Errorf("sign %s logging CSR: %w", component.Name, err)
 		}
 		clients[component.Name] = certificate.ChainPEM
 	}
-	collectorCSR, err := os.ReadFile(filepath.Join(csrDir, "logging-collector.csr.pem"))
-	if err != nil {
-		return nil, "", fmt.Errorf("read logging collector CSR: %w", err)
-	}
-	collector, err := signOrReuseServerCertificate(authority, string(collectorCSR), csrDir, "logging-collector", "logs", s.Network.Domain, []string{"lab-log-01." + s.Network.Domain})
-	if err != nil {
-		return nil, "", fmt.Errorf("sign logging collector CSR: %w", err)
-	}
-	return clients, collector.ChainPEM, nil
+	return clients, nil
 }
 
-func signAIOpsCertificates(authority pki.Authority, s model.Site, csrDir string) (map[string]string, error) {
+func signAIOpsCertificates(authority pki.Authority, csrDir string) (map[string]string, error) {
 	readCSR := func(name string) (string, error) {
 		data, err := os.ReadFile(filepath.Join(csrDir, name+".csr.pem"))
 		if err != nil {
@@ -1744,24 +1734,7 @@ func signAIOpsCertificates(authority pki.Authority, s model.Site, csrDir string)
 		}
 		return string(data), nil
 	}
-	serverRequests := []struct {
-		file, identity, variable string
-		aliases                  []string
-	}{
-		{"log-query", "log-query", "log_query_server_cert_pem", []string{"logs." + s.Network.Domain, "lab-log-01." + s.Network.Domain}},
-	}
-	result := make(map[string]string, 6)
-	for _, request := range serverRequests {
-		csr, err := readCSR(request.file)
-		if err != nil {
-			return nil, err
-		}
-		certificate, err := signOrReuseServerCertificate(authority, csr, csrDir, request.file, request.identity, s.Network.Domain, request.aliases)
-		if err != nil {
-			return nil, fmt.Errorf("sign %s CSR: %w", request.file, err)
-		}
-		result[request.variable] = certificate.ChainPEM
-	}
+	result := make(map[string]string, 4)
 	clientRequests := []struct{ file, identity, variable string }{
 		{"pulse-read", "aiops-pulse-read", "aiops_pulse_read_cert_pem"},
 		{"pulse-note", "aiops-pulse-note", "aiops_pulse_note_cert_pem"},
