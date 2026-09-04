@@ -22,7 +22,10 @@ cleanup() {
   fi
   exit "$status"
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if [ -L /boot/efi ]; then
   echo "HOLD: firewall EFI mount point must not be a symbolic link" >&2

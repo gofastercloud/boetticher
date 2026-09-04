@@ -1152,7 +1152,10 @@ func TestFirewallOfflineUpgradeMountsEFIForPackageTriggers(t *testing.T) {
 	}
 	installerText := string(installer)
 	for _, required := range []string{
-		"trap cleanup EXIT HUP INT TERM",
+		"trap cleanup EXIT",
+		"trap 'exit 129' HUP",
+		"trap 'exit 130' INT",
+		"trap 'exit 143' TERM",
 		"mountpoint -q /boot/efi",
 		"mount -t vfat -o umask=077 /dev/sda15 /boot/efi",
 		"findmnt --noheadings --output SOURCE --target /boot/efi",
@@ -1164,6 +1167,9 @@ func TestFirewallOfflineUpgradeMountsEFIForPackageTriggers(t *testing.T) {
 		if !strings.Contains(installerText, required) {
 			t.Fatalf("firewall package installer does not preserve the EFI upgrade contract: missing %q", required)
 		}
+	}
+	if strings.Contains(installerText, "trap cleanup EXIT HUP INT TERM") {
+		t.Fatal("firewall package installer can swallow cancellation status in its cleanup trap")
 	}
 	mountIndex := strings.Index(installerText, "mount -t vfat")
 	upgradeIndex := strings.Index(installerText, "apt-get --no-download upgrade")
