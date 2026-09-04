@@ -222,11 +222,19 @@ if [ "${BOETTICHER_SKIP_PROVENANCE:-0}" != 1 ]; then
   write_builder_provenance
 fi
 
+unmount_rootfs_mounts() {
+  rootfs=$1
+  for mount_path in "$rootfs/root/.cache/pip" "$rootfs/var/cache/apt/archives" "$rootfs/dev" "$rootfs/proc" "$rootfs/sys"; do
+    if mountpoint -q "$mount_path" && ! umount -R "$mount_path" 2>/dev/null; then
+      return 1
+    fi
+  done
+  ! findmnt -R -n -o TARGET "$rootfs" 2>/dev/null | grep -q .
+}
+
 cleanup() {
   if [ -n "${ACTIVE_ROOT:-}" ] && [ -d "$ACTIVE_ROOT" ]; then
-    umount -R "$ACTIVE_ROOT/dev" 2>/dev/null || true
-    umount -R "$ACTIVE_ROOT/proc" 2>/dev/null || true
-    umount -R "$ACTIVE_ROOT/sys" 2>/dev/null || true
+    unmount_rootfs_mounts "$ACTIVE_ROOT" || true
   fi
 }
 trap cleanup EXIT INT TERM
@@ -250,6 +258,10 @@ artifact_for() {
 
 create_base_rootfs() {
   rootfs=$1
+  if ! unmount_rootfs_mounts "$rootfs"; then
+    echo "HOLD: stale mounts remain in disposable base rootfs: $rootfs" >&2
+    return 1
+  fi
   base_inputs_digest=$(sha256sum "$base_definition" images/base/runtime/* images/base/first-boot/* "$script_path" | sha256sum | awk '{print $1}')
   base_cache_key=$(printf '%s\n' "$base_release" "$mirror" "$base_packages" "$base_inputs_digest" | sha256sum | awk '{print $1}')
   base_cache="$cache_root/base/$base_cache_key"
@@ -342,6 +354,10 @@ prepare_rootfs() {
   if [ ! -d "$(rootfs_for boetticher-base)/etc" ]; then
     create_base_rootfs "$(rootfs_for boetticher-base)"
   fi
+  if ! unmount_rootfs_mounts "$rootfs"; then
+    echo "HOLD: stale mounts remain in disposable worker rootfs: $rootfs" >&2
+    return 1
+  fi
   rm -rf "$rootfs"
   cp -a --reflink=auto "$(rootfs_for boetticher-base)" "$rootfs"
   ACTIVE_ROOT=$rootfs
@@ -362,7 +378,9 @@ pip_install() {
   else
     status=$?
   fi
-  umount -R "$rootfs/root/.cache/pip" || true
+  if ! umount -R "$rootfs/root/.cache/pip"; then
+    return 1
+  fi
   return "$status"
 }
 
@@ -393,18 +411,15 @@ install_packages() {
   mount --rbind /sys "$rootfs/sys"
   mount --bind "$package_cache" "$rootfs/var/cache/apt/archives"
   if ! chroot "$rootfs" apt-get -o Acquire::Retries=3 update || ! chroot "$rootfs" env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install --yes --no-install-recommends "$@"; then
-    umount -R "$rootfs/var/cache/apt/archives" || true
-    umount -R "$rootfs/dev" || true
-    umount -R "$rootfs/proc" || true
-    umount -R "$rootfs/sys" || true
+    unmount_rootfs_mounts "$rootfs" || true
     restore_resolver
     return 1
   fi
-  umount -R "$rootfs/var/cache/apt/archives" || true
   rm -rf "$rootfs/var/cache/apt/archives/"* "$rootfs/var/lib/apt/lists/"*
-  umount -R "$rootfs/dev" || true
-  umount -R "$rootfs/proc" || true
-  umount -R "$rootfs/sys" || true
+  if ! unmount_rootfs_mounts "$rootfs"; then
+    restore_resolver
+    return 1
+  fi
   restore_resolver
 }
 
