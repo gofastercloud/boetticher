@@ -150,13 +150,13 @@ Maintainers may use `BOETTICHER_LOCAL_BUILDER_SSH`,
 `BOETTICHER_LOCAL_BUILDER_IDENTITY`, and
 `BOETTICHER_LOCAL_BUILDER_KNOWN_HOSTS` with `make local-builder-init`,
 `make local-image`, and `make local-images` for isolated native/Linux image
-construction. Set `BOETTICHER_LOCAL_BUILDER_DEVICE` to the exact stable build
-disk and run `make local-builder-storage-init` once to create and persist the
-mount at `/var/lib/boetticher/local-builder`. This maintainer-only initializer
-is separate from `storage initialize`, which owns the operator's dedicated
-Proxmox data disk. The native build path is development tooling and does not
-change the operator lifecycle or substitute for official hosted release
-evidence. The official workflow builds all
+construction. The standard workspace at `/var/lib/boetticher/local-builder`
+must remain on the build host's root filesystem; the optional
+`local-builder-storage-init` path is for a separate maintainer host only. It is
+separate from `storage initialize`, which owns the operator's dedicated
+Proxmox guest-storage disk. The native build path is development tooling and
+does not change the operator lifecycle or substitute for official hosted
+release evidence. The official workflow builds all
 supported artifacts, scans and qualifies their final bytes, binds evidence to
 those bytes, and assembles the signed bundle from one exact source revision.
 

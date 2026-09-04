@@ -92,13 +92,6 @@ func ReadFileLimited(path string, maxBytes int64) ([]byte, error) {
 	return data, nil
 }
 
-// ReadDir returns directory entries from a descriptor-walked directory. The
-// returned entries are intended for name/type inspection followed by ReadFile
-// or another descriptor-relative operation.
-func ReadDir(path string) ([]os.DirEntry, error) {
-	return ReadDirLimited(path, 0)
-}
-
 // ReadDirLimited reads at most limit+1 entries from a directory. A positive
 // limit therefore lets callers reject oversized generated-state directories
 // without materializing their complete contents.

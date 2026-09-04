@@ -11,9 +11,9 @@ Usage:
   scripts/local-builder.sh scan scan-TARGET
 
 On macOS, set BOETTICHER_LOCAL_BUILDER_SSH to the native amd64 Linux build
-host. Set BOETTICHER_LOCAL_BUILDER_DEVICE and explicit confirmation before
-init-storage. On Linux, this script runs the native builder directly. The
-build host must provide the persistent cache and output mount.
+host. On Linux, this script runs the native builder directly. The standard
+workspace is /var/lib/boetticher/local-builder on the build host's root
+filesystem; it must not be a Proxmox guest-storage disk.
 USAGE
 }
 
@@ -101,14 +101,12 @@ validate_native_connection() {
   fi
 }
 
-require_native_mount() {
+require_native_workspace() {
   validate_native_connection
-  mount_check='test -d /var/lib/boetticher/local-builder && mountpoint -q /var/lib/boetticher/local-builder && test -w /var/lib/boetticher/local-builder && test -f /var/lib/boetticher/local-builder/.boetticher-native-builder'
-  if [ -n "$builder_device" ]; then
-    mount_check="$mount_check && [ \"\$(readlink -f \"\$(findmnt -no SOURCE /var/lib/boetticher/local-builder)\")\" = \"\$(readlink -f '$builder_device')\" ]"
-  fi
-  if ! native_ssh "$mount_check"; then
-    fail 'native build host must mount the dedicated build disk at /var/lib/boetticher/local-builder'
+  [ -z "$builder_device" ] || fail 'BOETTICHER_LOCAL_BUILDER_DEVICE is only valid for the separate maintainer storage initializer'
+  workspace_check='test -d /var/lib/boetticher/local-builder && test -w /var/lib/boetticher/local-builder && test "$(findmnt -no TARGET -T /var/lib/boetticher/local-builder)" = /'
+  if ! native_ssh "$workspace_check"; then
+    fail 'native build host must keep /var/lib/boetticher/local-builder on its root filesystem'
   fi
 }
 
@@ -147,7 +145,7 @@ validate_remote_target() {
 }
 
 sync_native_source() {
-  require_native_mount
+  require_native_workspace
   [ -n "$builder_ssh" ] || fail 'BOETTICHER_LOCAL_BUILDER_SSH is required for the native Linux build host'
   native_ssh 'rm -rf -- /var/lib/boetticher/local-builder/source; install -d -m 0755 /var/lib/boetticher/local-builder/source'
   tar -C "$repo_root" \
