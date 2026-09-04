@@ -23,6 +23,18 @@
     group: boetticher-aiops
     mode: '0750'
 
+- name: Remove retired AIOps Pulse client-certificate identities
+  ansible.builtin.file:
+    path: "/var/lib/boetticher/identity/tls/{{ item }}"
+    state: absent
+  loop:
+    - pulse-read.key.pem
+    - pulse-read.crt.pem
+    - pulse-read.csr.pem
+    - pulse-note.key.pem
+    - pulse-note.crt.pem
+    - pulse-note.csr.pem
+
 - name: Generate AIOps endpoint private keys locally
   ansible.builtin.command:
     argv: [openssl, genpkey, -algorithm, EC, -pkeyopt, ec_paramgen_curve:P-256, -out, "/var/lib/boetticher/identity/tls/{{ item.file }}.key.pem"]
