@@ -1880,7 +1880,7 @@ func scopedProvisionerACLPaths(node string) []string {
 	// Proxmox checks Datastore.Allocate against the storage collection when
 	// updating a storage definition, so the collection path must be granted in
 	// addition to the bounded content paths used for artifact operations.
-	paths := []string{"/nodes/" + node, "/sdn", "/storage", "/storage/local", "/storage/boetticher-thin", "/storage/boetticher-backups"}
+	paths := []string{"/nodes/" + node, "/sdn", "/cluster/backup", "/storage", "/storage/local", "/storage/boetticher-thin", "/storage/boetticher-backups"}
 	for _, vmid := range []int{model.ProxmoxVMID, model.DNS01VMID, model.MonitorVMID, model.LoggingVMID, model.LegacyStreamDeckVMID, model.PrinterVMID, model.AirVPNGuestVMID, model.ArrVMID, 200, 210, 240, 250} {
 		paths = append(paths, "/vms/"+strconv.Itoa(vmid))
 	}
