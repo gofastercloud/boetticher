@@ -97,11 +97,11 @@ repeated after clean-install deployment using the same exclusions.
 
 | Measure | 0.5.0 baseline | 0.5.1 source checkpoint |
 | --- | ---: | ---: |
-| Controller source LOC | 45,629 | 43,187 |
-| Controller test LOC | 23,065 | 22,312 |
+| Controller source LOC | 45,629 | 43,252 |
+| Controller test LOC | 23,065 | 22,390 |
 | Compiled repository packages | 49 | 48 |
 | Controller dependency closure | 1,140 | 1,139 |
-| Release controller size, local trust-data build | 53,899,362 bytes | 53,748,850 bytes |
+| Release controller size, local trust-data build | 53,899,362 bytes | 53,765,378 bytes |
 | Default Proxmox guests | 6 | 3 |
 | Public command menu entries | 9 | 9 |
 | Advanced command entries | 33 | 21 |
@@ -117,9 +117,9 @@ repeated after clean-install deployment using the same exclusions.
 | AWS SDK v2 modules | 19 | 19 |
 | Azure SDK modules | 6 | 6 |
 | KMS-named modules | 2 | 2 |
-| Lines added in `origin/0.5.0...HEAD` | — | 3,981 |
-| Lines deleted in `origin/0.5.0...HEAD` | — | 6,886 |
-| Net repository change | — | -2,905 |
+| Lines added in `origin/0.5.0...HEAD` | — | 4,209 |
+| Lines deleted in `origin/0.5.0...HEAD` | — | 6,897 |
+| Net repository change | — | -2,688 |
 
 The direct-requirement increase is the explicit declaration of the already
 transitive `golang.org/x/crypto` dependency used for the in-memory Apply
@@ -149,6 +149,17 @@ agent services are not active in this prequalification state. No 0.5.1 source
 revision or release bundle has been deployed, so the enroll/plan/Apply/revoke/
 commit lifecycle, interruption cleanup, recovery usability, and idempotent
 second deployment remain NOT TESTED.
+
+## Local 0.5.1 test build
+
+On 2026-09-04, exact source revision `0e3cb2870da42ae6e62b5752349a187f5094b33f`
+was built through the isolated native Linux maintainer path on the clean
+development host. All 13 checked-in appliance definitions completed image
+construction, Trivy scanning, and smoke qualification. A local signed test
+bundle was assembled from those bytes; the release-built controller imported
+it successfully, including the signed controller digest and size binding.
+This is local qualification only. It is not hosted release evidence and has
+not been deployed to Proxmox or the Companion.
 
 ## 0.5.1 target lifecycle
 
