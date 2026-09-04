@@ -2049,7 +2049,7 @@ func TestSharedClientCAFrontendsRestrictClientIdentities(t *testing.T) {
 		required []string
 	}{
 		{role: "bifrost", required: []string{
-			`if ($ssl_client_s_dn !~ "^(?:CN=client-operator\.{{ domain | regex_escape }},O=boetticher|CN=aiops-router-client,O=boetticher)$") { return 403; }`,
+			`if ($ssl_client_s_dn !~ "^(?:CN=client-operator\\.{{ domain | regex_escape }}(?:,O=boetticher)?|CN=aiops-router-client(?:,O=boetticher)?)$") { return 403; }`,
 			`if ($ssl_client_s_dn ~ "CN=aiops-router-client(?:,|$)") { return 403; }`,
 		}},
 		{role: "arr", required: []string{`if ($ssl_client_s_dn != "CN=client-operator.{{ domain }},O=boetticher") { return 403; }`}},

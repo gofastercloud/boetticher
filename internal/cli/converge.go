@@ -1710,7 +1710,6 @@ func signAIOpsCertificates(authority pki.Authority, csrDir string) (map[string]s
 	result := make(map[string]string, 4)
 	clientRequests := []struct{ file, identity, variable string }{
 		{"log-query-client", "aiops-log-read", "aiops_log_read_cert_pem"},
-		{"ai-router-client", "aiops-router-client", "aiops_router_client_cert_pem"},
 	}
 	for _, request := range clientRequests {
 		csr, err := readCSR(request.file)
