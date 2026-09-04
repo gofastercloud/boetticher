@@ -1159,6 +1159,43 @@ func TestDNSRoleChecksPowerDNSVersionOutputOnEitherStream(t *testing.T) {
 	}
 }
 
+func TestDNSRoleInstallsSmallstepWithColdRootBoundary(t *testing.T) {
+	tasksPath := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
+	tasks, err := os.ReadFile(tasksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	servicePath := filepath.Join("..", "..", "ansible", "roles", "dns", "templates", "step-ca.service.j2")
+	service, err := os.ReadFile(servicePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(tasks) + string(service)
+	for _, expected := range []string{
+		"name: boetticher-step-ca",
+		"/usr/local/bin/step",
+		"--password-file",
+		"--acme",
+		"step_ca_root_cert_pem",
+		"step_ca_intermediate_cert_pem",
+		"step_ca_intermediate_key_pem",
+		"Remove the generated Smallstep root private key from the online CA",
+		"User=boetticher-step-ca",
+		"NoNewPrivileges=true",
+		"ProtectSystem=strict",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("Smallstep CA runtime contract is missing %q", expected)
+		}
+	}
+	if strings.Contains(text, "step_ca_root_key_pem") || strings.Contains(text, "root_key_pem_b64") {
+		t.Fatal("DNS role attempts to deliver the cold root private key")
+	}
+	if strings.Index(string(tasks), "Remove the generated Smallstep root private key from the online CA") < strings.Index(string(tasks), "Initialize the Smallstep CA configuration once") {
+		t.Fatal("DNS role removes the generated root key before initializing Smallstep")
+	}
+}
+
 func TestDNSRoleUsesPowerDNS49CommandNames(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
 	data, err := os.ReadFile(path)

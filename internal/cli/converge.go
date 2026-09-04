@@ -659,6 +659,14 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	runtimeVariables["client_ca_pem"] = authority.RootCertPEM + authority.IssuingCertPEM
 	runtimeVariables["pulse_server_ca_pem"] = authority.RootCertPEM + authority.IssuingCertPEM
+	stepCAPassword, loadErr := platformSecrets.Get("step_ca_password")
+	if loadErr != nil {
+		return fmt.Errorf("load encrypted Smallstep CA password: %w", loadErr)
+	}
+	runtimeVariables["step_ca_root_cert_pem"] = authority.RootCertPEM
+	runtimeVariables["step_ca_intermediate_cert_pem"] = authority.IssuingCertPEM
+	runtimeVariables["step_ca_intermediate_key_pem"] = authority.IssuingKeyPEM
+	runtimeVariables["step_ca_password"] = stepCAPassword
 	if proxmoxCredentials, loadErr := site.LoadProxmoxCredentials(*siteDir, s, *ageIdentity); loadErr != nil {
 		return fmt.Errorf("load encrypted Proxmox credentials for API trust projection: %w", loadErr)
 	} else if proxmoxCredentials.CAPEM != "" {

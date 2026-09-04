@@ -409,6 +409,10 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 	if err != nil {
 		return err
 	}
+	stepCAPassword, err := randomSecret()
+	if err != nil {
+		return err
+	}
 	// Plaintext exists only in process memory and is piped directly to SOPS.
 	document := map[string]string{
 		"installation_id":         s.SecretMetadata.InstallationID,
@@ -420,6 +424,7 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 		"ddns_tsig_secret":        ddnsSecret,
 		"pulse_admin_password":    pulseAdminPassword,
 		"pulse_proxy_auth_secret": pulseProxyAuthSecret,
+		"step_ca_password":        stepCAPassword,
 	}
 	return StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), document)
 }

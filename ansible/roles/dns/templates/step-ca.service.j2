@@ -1,0 +1,20 @@
+[Unit]
+Description=Boetticher Smallstep online certificate authority
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=boetticher-step-ca
+Group=boetticher-step-ca
+ExecStart=/usr/local/bin/step-ca /var/lib/boetticher/step-ca/config/ca.json --password-file /var/lib/boetticher/step-ca/secrets/password
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/boetticher/step-ca/db
+
+[Install]
+WantedBy=multi-user.target
