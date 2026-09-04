@@ -169,23 +169,8 @@ func TestGenerateCRLRevokesExactCertificateSerial(t *testing.T) {
 	if crl.RevokedCertificateEntries[0].SerialNumber.Text(16) == second.Serial {
 		t.Fatal("CRL revoked an unrelated certificate")
 	}
-	remainingBlock, _ := pem.Decode(rest)
-	if remainingBlock == nil || remainingBlock.Type != "X509 CRL" {
-		t.Fatalf("root CRL PEM block = %#v", remainingBlock)
-	}
-	rootCRL, err := x509.ParseRevocationList(remainingBlock.Bytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	root, err := parseCert(authority.RootCertPEM)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := rootCRL.CheckSignatureFrom(root); err != nil {
-		t.Fatalf("root CRL signature did not verify: %v", err)
-	}
-	if len(rootCRL.RevokedCertificateEntries) != 0 {
-		t.Fatalf("root CRL unexpectedly revoked certificates: %#v", rootCRL.RevokedCertificateEntries)
+	if len(rest) != 0 {
+		t.Fatalf("CRL contains unexpected trailing material: %q", rest)
 	}
 }
 
@@ -212,6 +197,22 @@ func TestValidateCRLRequiresCurrentAuthorityAndExactRevocations(t *testing.T) {
 	}
 	if err := ValidateCRL(authority, crl+"tampered", revocations, now.Add(time.Minute)); err == nil {
 		t.Fatal("tampered CRL was accepted")
+	}
+}
+
+func TestValidateCRLDoesNotRequireTheColdRootKey(t *testing.T) {
+	now := time.Date(2026, time.August, 29, 0, 0, 0, 0, time.UTC)
+	authority, err := GenerateAuthority(now, "lab.home.arpa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	crl, err := GenerateCRL(authority, nil, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority.RootKeyPEM = ""
+	if err := ValidateCRL(authority, crl, nil, now.Add(time.Minute)); err != nil {
+		t.Fatalf("CRL validation required the cold root key: %v", err)
 	}
 }
 

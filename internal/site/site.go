@@ -286,10 +286,6 @@ func LoadAuthority(dir string, s model.Site, ageIdentityPath string) (pki.Author
 		}
 		return pki.Decode(value)
 	}
-	rootKey, err := get("root_key_pem_b64")
-	if err != nil {
-		return pki.Authority{}, err
-	}
 	rootCert, err := get("root_cert_pem_b64")
 	if err != nil {
 		return pki.Authority{}, err
@@ -302,7 +298,7 @@ func LoadAuthority(dir string, s model.Site, ageIdentityPath string) (pki.Author
 	if err != nil {
 		return pki.Authority{}, err
 	}
-	return pki.Authority{RootKeyPEM: rootKey, RootCertPEM: rootCert, IssuingKeyPEM: issuingKey, IssuingCertPEM: issuingCert}, nil
+	return pki.Authority{RootCertPEM: rootCert, IssuingKeyPEM: issuingKey, IssuingCertPEM: issuingCert}, nil
 }
 
 // StoreEncryptedDocument encrypts a secret document with the pinned in-process
