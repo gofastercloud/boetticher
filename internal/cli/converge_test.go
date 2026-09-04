@@ -709,6 +709,7 @@ func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 	text := string(data)
 	for _, required := range []string{
 		"readTokenRefreshed := false",
+		`pki.IssueClient(authority, "client-operator"`,
 		"pulse.NewReadClient(pulse.ClientConfig{",
 		"CAPEM:",
 		"pulseRead.StateSummary(ctx)",
@@ -720,6 +721,9 @@ func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 		if !strings.Contains(text, required) {
 			t.Fatalf("Pulse read-token recovery is missing %q", required)
 		}
+	}
+	if !strings.Contains(text, "ClientCertPEM: pulseOperatorCertificate.ChainPEM") || !strings.Contains(text, "ClientKeyPEM: pulseOperatorCertificate.KeyPEM") {
+		t.Fatal("Pulse admin client does not use the operator mTLS certificate")
 	}
 	if strings.Contains(text, "pulseAdmin.ValidateReadToken(ctx, readToken)") {
 		t.Fatal("AIOps Pulse token validation must use the dedicated read client")
