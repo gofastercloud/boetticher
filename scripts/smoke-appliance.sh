@@ -84,6 +84,8 @@ case "$name" in
     test -x "$rootfs/usr/bin/journalctl"
     test -d "$rootfs/etc/boetticher" -a -d "$rootfs/usr/lib/boetticher"
     test -x "$rootfs/usr/lib/boetticher/install-runtime-state"
+    test -x "$rootfs/usr/local/bin/step"
+    chroot "$rootfs" /usr/local/bin/step version 2>&1 | grep -Fq 'Smallstep CLI/0.30.6'
     test -f "$rootfs/etc/systemd/journald.conf.d/boetticher.conf"
     test -f "$rootfs/etc/systemd/journal-upload.conf"
     run visudo -cf /etc/sudoers
@@ -92,6 +94,9 @@ case "$name" in
     test ! -e "$rootfs/root/.ssh/authorized_keys"
     ;;
   boetticher-dns-blocky)
+    printf '%s\n' 'boetticher smoke check: Smallstep CA binary'
+    test -x "$rootfs/usr/local/bin/step-ca"
+    chroot "$rootfs" /usr/local/bin/step-ca version 2>&1 | grep -Fq 'Smallstep CA/0.30.2'
     printf '%s\n' 'boetticher smoke check: blocky version'
     chroot "$rootfs" /usr/local/bin/blocky version 2>&1 | grep -Fq '0.34.0'
     printf '%s\n' 'boetticher smoke check: PowerDNS and Chrony binaries'

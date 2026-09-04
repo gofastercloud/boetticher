@@ -172,6 +172,12 @@ holmes_source_root=holmesgpt-3d201559c0f3648a6c567aece09662f4f407bcc9
 gatus_source_url=https://github.com/TwiN/gatus/archive/refs/tags/v5.36.0.tar.gz
 gatus_source_sha256=b5543af591e602281406049ee2f822a6529a8f14be0cd54df5a31c210520159a
 arr_nginx_package_version=1.26.3-3+deb13u7
+step_cli_version=0.30.6
+step_cli_url=https://github.com/smallstep/cli/releases/download/v0.30.6/step_linux_0.30.6_amd64.tar.gz
+step_cli_sha256=e44a5dc5f880a694b24a0f2941a69a81b0bc6ee053170fdfde18453d4d5816de
+step_ca_version=0.30.2
+step_ca_url=https://github.com/smallstep/certificates/releases/download/v0.30.2/step-ca_linux_0.30.2_amd64.tar.gz
+step_ca_sha256=126615795bafe3f2d3f890e2d628fa6e2857315fb48d0671d34b23047cc37d73
 sonarr_version=4.0.19.2979
 sonarr_release_url=https://github.com/Sonarr/Sonarr/releases/download/v4.0.19.2979/Sonarr.main.4.0.19.2979.linux-x64.tar.gz
 sonarr_release_sha256=b691b3584c31c0b5514058dee81071c923f63d59a37d19e32f92fa13eaa153db
@@ -281,6 +287,7 @@ create_base_rootfs() {
   printf '%s\n' '[Journal]' 'SystemMaxUse=256M' 'RuntimeMaxUse=64M' > "$rootfs/etc/systemd/journald.conf.d/boetticher.conf"
   install -D -m 0644 images/base/runtime/sshd.conf "$rootfs/etc/ssh/sshd_config.d/boetticher.conf"
   install -D -m 0644 images/base/runtime/sshd-host-key.conf "$rootfs/etc/ssh/sshd_config.d/boetticher-host-key.conf"
+  install_step_cli "$rootfs"
   # Host keys are endpoint identity and must be generated after deployment.
   rm -f "$rootfs"/etc/ssh/ssh_host_*
   rm -f "$rootfs/root/.ssh/authorized_keys" "$rootfs/home/labadmin/.ssh/authorized_keys"
@@ -294,6 +301,32 @@ create_base_rootfs() {
   rm -rf "$base_cache"
   mv "$cache_tmp" "$base_cache"
   measurement_emit "build_cache" "kind=base" "status=stored" "key=$base_cache_key"
+}
+
+install_step_cli() {
+  rootfs=$1
+  archive="$cache_root/downloads/step_linux_${step_cli_version}_amd64.tar.gz"
+  download_cached "$archive" "$step_cli_url" "$step_cli_sha256" sha256sum
+  install -D -m 0755 /dev/null "$rootfs/usr/local/bin/step"
+  tar -xOf "$archive" "step_${step_cli_version}/bin/step" > "$rootfs/usr/local/bin/step"
+  chmod 0755 "$rootfs/usr/local/bin/step"
+  if ! chroot "$rootfs" /usr/local/bin/step version 2>&1 | grep -Fq "Smallstep CLI/${step_cli_version}"; then
+    echo "HOLD: Smallstep CLI is not the qualified ${step_cli_version} release" >&2
+    return 2
+  fi
+}
+
+install_step_ca() {
+  rootfs=$1
+  archive="$cache_root/downloads/step-ca_linux_${step_ca_version}_amd64.tar.gz"
+  download_cached "$archive" "$step_ca_url" "$step_ca_sha256" sha256sum
+  install -D -m 0755 /dev/null "$rootfs/usr/local/bin/step-ca"
+  tar -xOf "$archive" step-ca > "$rootfs/usr/local/bin/step-ca"
+  chmod 0755 "$rootfs/usr/local/bin/step-ca"
+  if ! chroot "$rootfs" /usr/local/bin/step-ca version 2>&1 | grep -Fq "Smallstep CA/${step_ca_version}"; then
+    echo "HOLD: Smallstep CA is not the qualified ${step_ca_version} release" >&2
+    return 2
+  fi
 }
 
 write_artifact_identity() {
@@ -480,6 +513,7 @@ build_base() {
 build_dns_blocky() {
   printf '%s\n' 'boetticher build stage: dns blocky'
   rootfs=$(prepare_rootfs boetticher-dns-blocky)
+  install_step_ca "$rootfs"
   install_powerdns "$rootfs"
   install -D -m 0644 images/dns/common/filtering-policy.hosts "$rootfs/etc/boetticher/dns/filtering/boetticher.hosts"
   mkdir -p "$rootfs/usr/local/bin"
