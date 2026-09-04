@@ -163,7 +163,9 @@ simplification, and an exact-source local bundle containing all 13 artifacts
 was signed and imported successfully by a controller built with the matching
 release trust root. Reuse required matching artifact coordinates, content
 bytes, base dependency, and complete qualification evidence; source-only
-definition changes did not invalidate those bytes.
+definition changes did not invalidate those bytes. The exact current bundle was
+then rebuilt from documentation checkpoint `b697d04`; its matching trusted
+controller imported all 13 artifacts successfully.
 
 This is local qualification only. It is not hosted release evidence and has
 not been deployed to Proxmox or the Companion.
