@@ -571,9 +571,11 @@ func artifactKey(artifact model.Artifact) string {
 	return strings.Join([]string{artifact.Name, artifact.Version, artifact.Architecture, artifact.Kind, artifact.ContentSHA256}, "|")
 }
 
-// ResolveQualifiedArtifacts binds every appliance in a Proxmox plan to
-// controller-side qualification evidence. It does not mutate Proxmox or the
-// canonical model. Missing evidence is a HOLD before any guest mutation.
+// ResolveQualifiedArtifacts binds every appliance in a Proxmox plan to an
+// authenticated release artifact or local maintainer artifact. It does not
+// mutate Proxmox or the canonical model. Local artifacts still require a
+// qualified evidence record; imported releases are authenticated by manifest
+// signature and exact artifact bytes.
 func ResolveQualifiedArtifacts(root string, plan Plan, require bool) (Plan, error) {
 	resolved := plan
 	resolved.Guests = append([]GuestPlan(nil), plan.Guests...)

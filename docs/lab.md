@@ -146,8 +146,9 @@ as Boetticher cleanup ownership.
 ## Release and maintainer builds
 
 Operators use a signed release bundle. The controller verifies the exact
-manifest bytes, artifact digests, trust root, qualification evidence, and
-bundle compatibility before deployment. Runtime deployment has no image-builder
+manifest bytes, artifact digests, trust root, and bundle compatibility before
+deployment. Optional maintainer evidence may be inspected but is not required
+for operator import. Runtime deployment has no image-builder
 guest, builder VMID, builder cache lifecycle, or controller-to-builder source
 transfer.
 
@@ -161,16 +162,14 @@ must remain on the build host's root filesystem; the optional
 separate from `storage initialize`, which owns the operator's dedicated
 Proxmox guest-storage disk. The native build path is development tooling and
 does not change the operator lifecycle or substitute for official hosted
-release evidence. The official workflow builds all
-supported artifacts, scans and qualifies their final bytes, binds evidence to
-those bytes, and assembles the signed bundle from one exact source revision.
-Native maintainer runs reuse a qualified artifact only when its artifact
-coordinates, signed content digest, base dependency, bytes, and qualification
-evidence all resolve successfully; otherwise they rebuild or requalify that
-artifact and its dependency closure. The release manifest signs the exact
-artifact bytes and evidence digests. Release source provenance remains the
-exact source revision used for controller and bundle assembly, while the
-build-definition digest is provenance only.
+release evidence. The official workflow builds the supported artifacts and
+assembles a signed bundle from one exact source revision; scans, SBOMs, smoke
+output, and provenance remain maintainer evidence attachments. Native
+maintainer runs reuse an artifact when its coordinates, signed content digest,
+base dependency, and bytes resolve successfully; missing evidence does not
+trigger a rebuild. The release manifest signs the exact artifact bytes. Release
+source provenance remains the exact source revision used for controller and
+bundle assembly, while the build-definition digest is provenance only.
 
 ## Recovery
 

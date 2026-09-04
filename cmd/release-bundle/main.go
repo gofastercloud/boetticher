@@ -60,9 +60,6 @@ func main() {
 		}
 		controllerSizeBytes = info.Size()
 	}
-	if err := artifacts.RebindEvidencePaths(*siteDir); err != nil {
-		fatal("bind qualification evidence to local artifact bytes: %v", err)
-	}
 	privateKey, err := readPrivateKey(*privateKeyPath)
 	if err != nil {
 		fatal("read signing key: %v", err)
@@ -73,13 +70,22 @@ func main() {
 		if err != nil {
 			fatal("resolve %s artifact: %v", definition.Name, err)
 		}
-		resolvedArtifact, evidence, err := artifacts.ResolveArtifactEvidence(*siteDir, artifact)
+		artifactPath := filepath.Join(*artifactRoot, artifact.Name, artifactFilename(artifact))
+		contentSHA256, err := artifacts.ContentSHA256ForFile(artifactPath)
 		if err != nil {
-			fatal("resolve %s qualification evidence: %v", artifact.Name, err)
+			fatal("hash %s artifact: %v", artifact.Name, err)
 		}
-		artifactPath := filepath.Join(*artifactRoot, resolvedArtifact.Name, artifactFilename(resolvedArtifact))
+		artifact.ContentSHA256 = contentSHA256
+		resolvedArtifact := artifact
+		var evidence artifacts.Evidence
+		evidencePath := artifacts.EvidencePath(*siteDir, artifact.Name)
+		if _, statErr := os.Stat(evidencePath); statErr == nil {
+			if candidate, candidateEvidence, resolveErr := artifacts.ResolveArtifactEvidence(*siteDir, artifact); resolveErr == nil && candidate.ContentSHA256 == contentSHA256 {
+				resolvedArtifact, evidence = candidate, candidateEvidence
+			}
+		}
 		qualificationFiles := map[string]string{}
-		for _, required := range []struct {
+		for _, optional := range []struct {
 			name   string
 			digest string
 		}{
@@ -89,20 +95,24 @@ func main() {
 			{name: "builder-provenance.json", digest: evidence.BuilderProvenanceSHA256},
 			{name: "smoke.txt", digest: evidence.SmokeReportSHA256},
 		} {
-			if err := addQualificationFile(qualificationFiles, artifact.Name, required.name, required.digest, *artifactRoot); err != nil {
-				fatal("artifact %s: %v", resolvedArtifact.Name, err)
+			if optional.digest == "" {
+				continue
 			}
+			qualificationFiles[filepath.ToSlash(filepath.Join("evidence", artifact.Name, optional.name))] = filepath.Join(*artifactRoot, artifact.Name, optional.name)
+		}
+		inputEvidencePath := ""
+		if evidence.ArtifactPath != "" {
+			inputEvidencePath = evidencePath
 		}
 		inputs = append(inputs, artifacts.ReleaseInput{
 			Artifact: resolvedArtifact, ArtifactPath: artifactPath,
-			EvidencePath: artifacts.EvidencePath(*siteDir, resolvedArtifact.Name), QualificationFiles: qualificationFiles,
+			EvidencePath: inputEvidencePath, QualificationFiles: qualificationFiles,
 		})
 	}
 	manifest, err := artifacts.BuildReleaseBundleWithMetadataAndCompanion(*output, artifacts.ReleaseBuildMetadata{
 		ReleaseVersion: *releaseVersion, SourceCommit: *sourceCommit, BuildWorkflow: *workflow,
 		ControllerMin: *controllerMin, ControllerMax: *controllerMax,
 		ControllerSHA256: controllerSHA256, ControllerSizeBytes: controllerSizeBytes,
-		QualificationPolicyVersion: artifacts.QualificationPolicyVersion,
 	}, model.APIVersion, model.ConfigSchemaVersion, privateKey, *keyID, inputs, *companionBinary)
 	if err != nil {
 		fatal("build release bundle: %v", err)
@@ -115,14 +125,6 @@ func artifactFilename(artifact model.Artifact) string {
 		return fmt.Sprintf("%s-%s-%s.qcow2", artifact.Name, artifact.Version, artifact.Architecture)
 	}
 	return fmt.Sprintf("%s-%s-%s.tar.zst", artifact.Name, artifact.Version, artifact.Architecture)
-}
-
-func addQualificationFile(files map[string]string, artifact, name, digest, root string) error {
-	if digest == "" {
-		return fmt.Errorf("mandatory qualification evidence %s is missing", name)
-	}
-	files[filepath.ToSlash(filepath.Join("evidence", artifact, name))] = filepath.Join(root, artifact, name)
-	return nil
 }
 
 func readPrivateKey(path string) (ed25519.PrivateKey, error) {

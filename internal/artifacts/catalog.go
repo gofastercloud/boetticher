@@ -410,7 +410,27 @@ func definitionSHA256(definition Definition) (string, error) {
 	if artifactName == "" {
 		artifactName = "boetticher-" + definition.Name
 	}
+	baseDigest := ""
+	if artifactName != BaseName {
+		for _, candidate := range Definitions() {
+			if candidate.ArtifactName != definition.Base {
+				continue
+			}
+			var err error
+			baseDigest, err = definitionSHA256(candidate)
+			if err != nil {
+				return "", fmt.Errorf("hash base definition %s: %w", definition.Base, err)
+			}
+			break
+		}
+		if baseDigest == "" {
+			return "", fmt.Errorf("base definition %s is not declared", definition.Base)
+		}
+	}
 	identity := fmt.Sprintf("%s/%s/%s/%s/%s/%s", definition.Base, definition.BaseVersion, artifactName, definition.Version, definition.Architecture, definition.Kind)
+	if baseDigest != "" {
+		identity += "/" + baseDigest
+	}
 	hash := sha256.New()
 	if _, err := io.WriteString(hash, identity+"\x00"); err != nil {
 		return "", err

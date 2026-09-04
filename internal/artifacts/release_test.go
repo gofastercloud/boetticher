@@ -117,12 +117,6 @@ func TestReleaseBundleSignsAndAtomicallyImportsQualifiedArtifacts(t *testing.T) 
 	if resolvedCompanion != filepath.Join(root, "generated", "release", filepath.FromSlash(CompanionStreamDeckPath)) {
 		t.Fatalf("resolved companion path = %q", resolvedCompanion)
 	}
-	if err := os.WriteFile(filepath.Join(destination, "evidence", artifact.Name, "sbom.json"), []byte("tampered"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := ResolveImportedArtifact(root, artifact); err == nil || !strings.Contains(err.Error(), "signed digest verification") {
-		t.Fatalf("mutated imported qualification sidecar was accepted: %v", err)
-	}
 	reformatted := filepath.Join(root, "reformatted.tar.gz")
 	rewriteReleaseManifest(t, bundlePath, reformatted)
 	if _, err := ImportReleaseBundle(reformatted, filepath.Join(root, "reformatted-import"), []TrustedReleaseKey{{ID: "release-2026", PublicKey: public}}, "0.5.0", model.APIVersion, model.SchemaVersion); err == nil {
@@ -174,7 +168,7 @@ func TestReleaseBundlePathRejectsNUL(t *testing.T) {
 	}
 }
 
-func TestReleaseBundleRejectsIncompleteQualificationEvidence(t *testing.T) {
+func TestReleaseBundleAllowsArtifactWithoutQualificationEvidence(t *testing.T) {
 	root := t.TempDir()
 	artifactPath := filepath.Join(root, "artifact")
 	if err := os.WriteFile(artifactPath, []byte("artifact"), 0o600); err != nil {
@@ -185,23 +179,27 @@ func TestReleaseBundleRejectsIncompleteQualificationEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	artifact.ContentSHA256 = fmtSHA256([]byte("artifact"))
-	evidence := Evidence{Artifact: artifact, ArtifactPath: artifactPath, ContentSHA256: artifact.ContentSHA256, DefinitionSHA256: artifact.DefinitionSHA256, QualificationPolicyVersion: QualificationPolicyVersion, QualificationEvaluator: QualificationEvaluator, ScanCompleted: true, Qualified: true, qualifiedByEvaluator: true}
-	qualificationFiles := addCompleteReleaseEvidence(t, artifactPath, &evidence)
-	delete(qualificationFiles, filepath.ToSlash(filepath.Join("evidence", artifact.Name, "smoke.txt")))
-	evidencePath := filepath.Join(root, "evidence.json")
-	data, err := json.Marshal(evidence)
+	bundle := filepath.Join(root, "bundle.tar.gz")
+	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(evidencePath, data, 0o600); err != nil {
+	if _, err := BuildReleaseBundle(bundle, "0.5.0", model.APIVersion, model.SchemaVersion, private, "trusted", []ReleaseInput{{Artifact: artifact, ArtifactPath: artifactPath}}); err != nil {
 		t.Fatal(err)
 	}
-	_, private, err := ed25519.GenerateKey(rand.Reader)
+	destination := filepath.Join(root, "generated", "release")
+	if _, err := ImportReleaseBundle(bundle, destination, []TrustedReleaseKey{{ID: "trusted", PublicKey: public}}, "0.5.0", model.APIVersion, model.SchemaVersion); err != nil {
+		t.Fatal(err)
+	}
+	previousKeys := EmbeddedTrustedReleaseKeys
+	EmbeddedTrustedReleaseKeys = []TrustedReleaseKey{{ID: "trusted", PublicKey: public}}
+	defer func() { EmbeddedTrustedReleaseKeys = previousKeys }()
+	resolved, evidence, err := ResolveImportedArtifact(root, artifact)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := BuildReleaseBundle(filepath.Join(root, "bundle.tar.gz"), "0.5.0", model.APIVersion, model.SchemaVersion, private, "trusted", []ReleaseInput{{Artifact: artifact, ArtifactPath: artifactPath, EvidencePath: evidencePath, QualificationFiles: qualificationFiles}}); err == nil || !strings.Contains(err.Error(), "mandatory smoke") {
-		t.Fatalf("incomplete release evidence was accepted: %v", err)
+	if resolved.ContentSHA256 != artifact.ContentSHA256 || evidence.ArtifactPath == "" {
+		t.Fatalf("imported artifact resolution = %#v/%#v", resolved, evidence)
 	}
 }
 

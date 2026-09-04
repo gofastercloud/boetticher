@@ -47,7 +47,7 @@ type ReleaseManifest struct {
 	ControllerMax              string            `json:"controller_max_version"`
 	ControllerSHA256           string            `json:"controller_sha256,omitempty"`
 	ControllerSizeBytes        int64             `json:"controller_size_bytes,omitempty"`
-	QualificationPolicyVersion string            `json:"qualification_policy_version"`
+	QualificationPolicyVersion string            `json:"qualification_policy_version,omitempty"`
 	Artifacts                  []ReleaseArtifact `json:"artifacts"`
 	Files                      []ReleaseFile     `json:"files"`
 	CompanionBinary            *ReleaseFile      `json:"companion_binary,omitempty"`
@@ -70,7 +70,7 @@ type ReleaseBuildMetadata struct {
 type ReleaseArtifact struct {
 	Artifact     model.Artifact `json:"artifact"`
 	ArtifactPath string         `json:"artifact_path"`
-	EvidencePath string         `json:"evidence_path"`
+	EvidencePath string         `json:"evidence_path,omitempty"`
 }
 
 type ReleaseFile struct {
@@ -81,9 +81,9 @@ type ReleaseFile struct {
 	Artifact  string `json:"artifact"`
 }
 
-// ReleaseInput is the source-side material assembled by CI. Qualification
-// inputs are copied as evidence files and are never re-evaluated from an
-// untrusted path during import.
+// ReleaseInput is the source-side material assembled by the maintainer build.
+// Qualification evidence is optional release transparency; artifact bytes and
+// their signed manifest identity are the operator trust boundary.
 type ReleaseInput struct {
 	Artifact           model.Artifact
 	ArtifactPath       string
@@ -148,7 +148,6 @@ func BuildReleaseBundle(output string, platformVersion, siteAPIVersion string, s
 	return BuildReleaseBundleWithMetadata(output, ReleaseBuildMetadata{
 		ReleaseVersion: platformVersion, SourceCommit: "local-build", BuildWorkflow: "local",
 		ControllerMin: platformVersion, ControllerMax: platformVersion,
-		QualificationPolicyVersion: QualificationPolicyVersion,
 	}, siteAPIVersion, schemaVersion, privateKey, keyID, inputs)
 }
 
@@ -188,9 +187,6 @@ func BuildReleaseBundleWithMetadataAndCompanion(output string, metadata ReleaseB
 		ControllerSHA256: metadata.ControllerSHA256, ControllerSizeBytes: metadata.ControllerSizeBytes,
 		QualificationPolicyVersion: metadata.QualificationPolicyVersion,
 	}
-	if manifest.QualificationPolicyVersion == "" {
-		manifest.QualificationPolicyVersion = QualificationPolicyVersion
-	}
 	members := make([]releaseMember, 0, len(inputs)*2)
 	var totalMemberBytes int64
 	seenArtifacts := make(map[string]struct{}, len(inputs))
@@ -216,59 +212,37 @@ func BuildReleaseBundleWithMetadataAndCompanion(output string, metadata ReleaseB
 		}
 		members = append(members, artifactMember)
 		artifactPath = artifactMember.Path
-		manifest.Artifacts = append(manifest.Artifacts, ReleaseArtifact{Artifact: input.Artifact, ArtifactPath: artifactPath, EvidencePath: filepath.ToSlash(filepath.Join("evidence", input.Artifact.Name+".json"))})
-
-		evidenceBytes, err := pathguard.ReadFileLimited(input.EvidencePath, maxEvidenceJSONBytes)
-		if err != nil {
-			return ReleaseManifest{}, fmt.Errorf("read qualification evidence %s: %w", input.Artifact.Name, err)
-		}
-		var evidence Evidence
-		if err := json.Unmarshal(evidenceBytes, &evidence); err != nil {
-			return ReleaseManifest{}, fmt.Errorf("decode qualification evidence %s: %w", input.Artifact.Name, err)
-		}
-		if !evidence.Qualified || !artifactIdentityMatches(evidence.Artifact, input.Artifact) || evidence.ContentSHA256 != input.Artifact.ContentSHA256 {
-			return ReleaseManifest{}, fmt.Errorf("qualification evidence for %s is not bound to the requested artifact", input.Artifact.Name)
-		}
-		if err := validateReleaseQualification(evidence); err != nil {
-			return ReleaseManifest{}, fmt.Errorf("qualification evidence for %s: %w", input.Artifact.Name, err)
-		}
-		evidence.ArtifactPath = artifactPath
-		rewrittenEvidence, err := json.MarshalIndent(evidence, "", "  ")
-		if err != nil {
-			return ReleaseManifest{}, fmt.Errorf("encode qualification evidence %s: %w", input.Artifact.Name, err)
-		}
-		evidencePath := filepath.ToSlash(filepath.Join("evidence", input.Artifact.Name+".json"))
-		evidenceMember, err := newInlineReleaseMember(evidencePath, append(rewrittenEvidence, '\n'), "evidence", input.Artifact.Name)
-		if err != nil {
-			return ReleaseManifest{}, fmt.Errorf("prepare qualification evidence %s: %w", input.Artifact.Name, err)
-		}
-		totalMemberBytes += evidenceMember.Size
-		if totalMemberBytes > MaxReleaseBundleBytes {
-			return ReleaseManifest{}, errors.New("release bundle exceeds the permitted uncompressed size")
-		}
-		members = append(members, evidenceMember)
-		for _, required := range releaseQualificationFiles() {
-			name := filepath.ToSlash(filepath.Join("evidence", input.Artifact.Name, required.filename))
-			source, exists := input.QualificationFiles[name]
-			if !exists {
-				return ReleaseManifest{}, fmt.Errorf("qualification file %s is missing mandatory %s evidence", name, required.name)
+		releaseArtifact := ReleaseArtifact{Artifact: input.Artifact, ArtifactPath: artifactPath}
+		if input.EvidencePath != "" {
+			evidenceBytes, err := pathguard.ReadFileLimited(input.EvidencePath, maxEvidenceJSONBytes)
+			if err != nil {
+				return ReleaseManifest{}, fmt.Errorf("read qualification evidence %s: %w", input.Artifact.Name, err)
 			}
-			member, memberErr := newReleaseMember(name, source, "evidence", input.Artifact.Name)
-			if memberErr != nil {
-				return ReleaseManifest{}, fmt.Errorf("read qualification file %s: %w", name, memberErr)
+			var evidence Evidence
+			if err := json.Unmarshal(evidenceBytes, &evidence); err != nil {
+				return ReleaseManifest{}, fmt.Errorf("decode qualification evidence %s: %w", input.Artifact.Name, err)
 			}
-			if member.SHA256 != required.digest(evidence) {
-				return ReleaseManifest{}, fmt.Errorf("qualification file %s does not match its evidence digest", name)
+			if !evidence.Qualified || !artifactIdentityMatches(evidence.Artifact, input.Artifact) || evidence.ContentSHA256 != input.Artifact.ContentSHA256 {
+				return ReleaseManifest{}, fmt.Errorf("qualification evidence for %s is not bound to the requested artifact", input.Artifact.Name)
 			}
-			if releaseMemberExists(members, name) {
-				return ReleaseManifest{}, fmt.Errorf("release bundle repeats file %q", name)
+			evidence.ArtifactPath = artifactPath
+			rewrittenEvidence, err := json.MarshalIndent(evidence, "", "  ")
+			if err != nil {
+				return ReleaseManifest{}, fmt.Errorf("encode qualification evidence %s: %w", input.Artifact.Name, err)
 			}
-			totalMemberBytes += member.Size
+			evidencePath := filepath.ToSlash(filepath.Join("evidence", input.Artifact.Name+".json"))
+			evidenceMember, err := newInlineReleaseMember(evidencePath, append(rewrittenEvidence, '\n'), "evidence", input.Artifact.Name)
+			if err != nil {
+				return ReleaseManifest{}, fmt.Errorf("prepare qualification evidence %s: %w", input.Artifact.Name, err)
+			}
+			totalMemberBytes += evidenceMember.Size
 			if totalMemberBytes > MaxReleaseBundleBytes {
 				return ReleaseManifest{}, errors.New("release bundle exceeds the permitted uncompressed size")
 			}
-			members = append(members, member)
+			members = append(members, evidenceMember)
+			releaseArtifact.EvidencePath = evidencePath
 		}
+		manifest.Artifacts = append(manifest.Artifacts, releaseArtifact)
 		for name, source := range input.QualificationFiles {
 			if err := validateBundlePath(name); err != nil {
 				return ReleaseManifest{}, err
@@ -553,7 +527,7 @@ func verifyManifest(manifestBytes []byte, signature ManifestSignature, trusted [
 }
 
 func validateReleaseManifest(manifest ReleaseManifest) error {
-	if manifest.FormatVersion != ReleaseBundleFormatVersion || manifest.ReleaseVersion == "" || manifest.SourceCommit == "" || manifest.BuildWorkflow == "" || manifest.SiteAPIVersion == "" || manifest.SchemaVersion <= 0 || manifest.ArtifactABIVersion != ArtifactABIVersion || manifest.Architecture != Architecture || manifest.ControllerMin == "" || manifest.ControllerMax == "" || manifest.QualificationPolicyVersion == "" {
+	if manifest.FormatVersion != ReleaseBundleFormatVersion || manifest.ReleaseVersion == "" || manifest.SourceCommit == "" || manifest.BuildWorkflow == "" || manifest.SiteAPIVersion == "" || manifest.SchemaVersion <= 0 || manifest.ArtifactABIVersion != ArtifactABIVersion || manifest.Architecture != Architecture || manifest.ControllerMin == "" || manifest.ControllerMax == "" {
 		return errors.New("release manifest has incomplete or unsupported compatibility fields")
 	}
 	if (manifest.ControllerSHA256 == "") != (manifest.ControllerSizeBytes == 0) || (manifest.ControllerSHA256 != "" && (!isSHA256(manifest.ControllerSHA256) || manifest.ControllerSizeBytes < 0 || manifest.ControllerSizeBytes > MaxReleaseFileBytes)) {
@@ -602,14 +576,16 @@ func validateReleaseManifest(manifest ReleaseManifest) error {
 	}
 	seenArtifacts := map[string]struct{}{}
 	for _, artifact := range manifest.Artifacts {
-		if artifact.Artifact.Name == "" || artifact.Artifact.ContentSHA256 == "" || !isSHA256(artifact.Artifact.ContentSHA256) || artifact.ArtifactPath == "" || artifact.EvidencePath == "" {
+		if artifact.Artifact.Name == "" || artifact.Artifact.ContentSHA256 == "" || !isSHA256(artifact.Artifact.ContentSHA256) || artifact.ArtifactPath == "" {
 			return errors.New("release artifact identity is incomplete")
 		}
 		if err := validateBundlePath(artifact.ArtifactPath); err != nil {
 			return err
 		}
-		if err := validateBundlePath(artifact.EvidencePath); err != nil {
-			return err
+		if artifact.EvidencePath != "" {
+			if err := validateBundlePath(artifact.EvidencePath); err != nil {
+				return err
+			}
 		}
 		if got, err := releaseFileArtifact(artifact.ArtifactPath, "artifact"); err != nil || got != artifact.Artifact.Name {
 			if err != nil {
@@ -617,20 +593,18 @@ func validateReleaseManifest(manifest ReleaseManifest) error {
 			}
 			return fmt.Errorf("release artifact %s has an invalid content path", artifact.Artifact.Name)
 		}
-		if artifact.EvidencePath != filepath.ToSlash(filepath.Join("evidence", artifact.Artifact.Name+".json")) {
-			return fmt.Errorf("release artifact %s has an invalid evidence path", artifact.Artifact.Name)
-		}
-		if files[artifact.ArtifactPath].Kind != "artifact" || files[artifact.EvidencePath].Kind != "evidence" {
-			return fmt.Errorf("release artifact %s is missing its mandatory members", artifact.Artifact.Name)
+		if files[artifact.ArtifactPath].Kind != "artifact" {
+			return fmt.Errorf("release artifact %s is missing its artifact member", artifact.Artifact.Name)
 		}
 		if files[artifact.ArtifactPath].SHA256 != artifact.Artifact.ContentSHA256 || files[artifact.ArtifactPath].Artifact != artifact.Artifact.Name {
 			return fmt.Errorf("release artifact %s content member is not bound to its identity", artifact.Artifact.Name)
 		}
-		for _, required := range releaseQualificationFiles() {
-			path := filepath.ToSlash(filepath.Join("evidence", artifact.Artifact.Name, required.filename))
-			member, exists := files[path]
-			if !exists || member.Kind != "evidence" || member.Artifact != artifact.Artifact.Name {
-				return fmt.Errorf("release artifact %s is missing mandatory %s evidence", artifact.Artifact.Name, required.name)
+		if artifact.EvidencePath != "" {
+			if artifact.EvidencePath != filepath.ToSlash(filepath.Join("evidence", artifact.Artifact.Name+".json")) {
+				return fmt.Errorf("release artifact %s has an invalid evidence path", artifact.Artifact.Name)
+			}
+			if files[artifact.EvidencePath].Kind != "evidence" || files[artifact.EvidencePath].Artifact != artifact.Artifact.Name {
+				return fmt.Errorf("release artifact %s is missing its evidence member", artifact.Artifact.Name)
 			}
 		}
 		if _, exists := seenArtifacts[artifact.Artifact.Name]; exists {
@@ -697,34 +671,6 @@ func releaseFileArtifact(path, kind string) (string, error) {
 	default:
 		return "", fmt.Errorf("release member path %q has unknown kind %q", path, kind)
 	}
-}
-
-type releaseQualificationFile struct {
-	name     string
-	filename string
-	digest   func(Evidence) string
-}
-
-func releaseQualificationFiles() []releaseQualificationFile {
-	return []releaseQualificationFile{
-		{name: "package manifest", filename: "package-manifest.txt", digest: func(e Evidence) string { return e.PackageManifestSHA }},
-		{name: "SBOM", filename: "sbom.json", digest: func(e Evidence) string { return e.SBOMSHA256 }},
-		{name: "Trivy report", filename: "trivy.json", digest: func(e Evidence) string { return e.TrivyReportSHA256 }},
-		{name: "builder provenance", filename: "builder-provenance.json", digest: func(e Evidence) string { return e.BuilderProvenanceSHA256 }},
-		{name: "smoke", filename: "smoke.txt", digest: func(e Evidence) string { return e.SmokeReportSHA256 }},
-	}
-}
-
-func validateReleaseQualification(evidence Evidence) error {
-	if !evidence.Qualified || evidence.QualificationEvaluator != QualificationEvaluator || evidence.QualificationPolicyVersion != QualificationPolicyVersion || !evidence.ScanCompleted {
-		return errors.New("release artifact qualification evidence is not complete and authorized")
-	}
-	for _, required := range releaseQualificationFiles() {
-		if !sha256Pattern.MatchString(required.digest(evidence)) {
-			return fmt.Errorf("release qualification requires a %s digest", required.name)
-		}
-	}
-	return nil
 }
 
 // ImportedReleaseManifest reads the manifest from a release tree that has
@@ -795,7 +741,6 @@ func ResolveImportedArtifact(root string, requested model.Artifact) (model.Artif
 	}
 	releaseRoot := filepath.Join(root, "generated", "release")
 	artifactPath := filepath.Join(releaseRoot, filepath.FromSlash(selected.ArtifactPath))
-	evidencePath := filepath.Join(releaseRoot, filepath.FromSlash(selected.EvidencePath))
 	manifestFiles := make(map[string]ReleaseFile, len(manifest.Files))
 	for _, file := range manifest.Files {
 		manifestFiles[file.Path] = file
@@ -808,38 +753,18 @@ func ResolveImportedArtifact(root string, requested model.Artifact) (model.Artif
 	if hex.EncodeToString(artifactSum[:]) != selected.Artifact.ContentSHA256 {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("imported artifact %s content digest differs from manifest", requested.Name)
 	}
-	evidenceData, err := readImportedReleaseMember(evidencePath, manifestFiles, selected.EvidencePath)
-	if err != nil {
-		return model.Artifact{}, Evidence{}, fmt.Errorf("read imported evidence %s: %w", requested.Name, err)
-	}
-	var evidence Evidence
-	if err := json.Unmarshal(evidenceData, &evidence); err != nil {
-		return model.Artifact{}, Evidence{}, err
-	}
-	if !evidence.Qualified || !artifactIdentityMatches(evidence.Artifact, requested) || (requested.ContentSHA256 != "" && evidence.ContentSHA256 != requested.ContentSHA256) || evidence.ContentSHA256 != selected.Artifact.ContentSHA256 || (evidence.Artifact.ContentSHA256 != "" && evidence.Artifact.ContentSHA256 != selected.Artifact.ContentSHA256) {
-		return model.Artifact{}, Evidence{}, fmt.Errorf("imported evidence for %s is not bound to the manifest", requested.Name)
-	}
-	if err := validateReleaseQualification(evidence); err != nil {
-		return model.Artifact{}, Evidence{}, fmt.Errorf("imported evidence for %s: %w", requested.Name, err)
-	}
-	for _, required := range []struct{ digest, suffix string }{
-		{evidence.PackageManifestSHA, "package-manifest.txt"},
-		{evidence.SBOMSHA256, "sbom.json"},
-		{evidence.TrivyReportSHA256, "trivy.json"},
-		{evidence.BuilderProvenanceSHA256, "builder-provenance.json"},
-		{evidence.SmokeReportSHA256, "smoke.txt"},
-	} {
-		if required.digest == "" {
-			continue
+	evidence := Evidence{ArtifactPath: artifactPath}
+	if selected.EvidencePath != "" {
+		evidencePath := filepath.Join(releaseRoot, filepath.FromSlash(selected.EvidencePath))
+		evidenceData, err := readImportedReleaseMember(evidencePath, manifestFiles, selected.EvidencePath)
+		if err != nil {
+			return model.Artifact{}, Evidence{}, fmt.Errorf("read imported evidence %s: %w", requested.Name, err)
 		}
-		memberPath := filepath.Join(releaseRoot, "evidence", requested.Name, required.suffix)
-		data, readErr := readImportedReleaseMember(memberPath, manifestFiles, filepath.ToSlash(filepath.Join("evidence", requested.Name, required.suffix)))
-		if readErr != nil {
-			return model.Artifact{}, Evidence{}, fmt.Errorf("read imported %s: %w", required.suffix, readErr)
+		if err := json.Unmarshal(evidenceData, &evidence); err != nil {
+			return model.Artifact{}, Evidence{}, err
 		}
-		sum := sha256.Sum256(data)
-		if hex.EncodeToString(sum[:]) != required.digest {
-			return model.Artifact{}, Evidence{}, fmt.Errorf("imported %s digest differs from evidence", required.suffix)
+		if !evidence.Qualified || !artifactIdentityMatches(evidence.Artifact, requested) || evidence.ContentSHA256 != selected.Artifact.ContentSHA256 || (evidence.Artifact.ContentSHA256 != "" && evidence.Artifact.ContentSHA256 != selected.Artifact.ContentSHA256) {
+			return model.Artifact{}, Evidence{}, fmt.Errorf("imported evidence for %s is not bound to the manifest", requested.Name)
 		}
 	}
 	evidence.ArtifactPath = artifactPath
@@ -919,7 +844,7 @@ func ActivateImportedRelease(staged, active string) error {
 }
 
 func validateReleaseInput(input ReleaseInput) error {
-	if input.Artifact.Name == "" || input.Artifact.ContentSHA256 == "" || !isSHA256(input.Artifact.ContentSHA256) || input.ArtifactPath == "" || input.EvidencePath == "" {
+	if input.Artifact.Name == "" || input.Artifact.ContentSHA256 == "" || !isSHA256(input.Artifact.ContentSHA256) || input.ArtifactPath == "" {
 		return errors.New("release input has incomplete artifact identity")
 	}
 	if strings.ContainsAny(input.Artifact.Name, "/\\\x00") || input.Artifact.Name == "." || input.Artifact.Name == ".." {
@@ -928,8 +853,10 @@ func validateReleaseInput(input ReleaseInput) error {
 	if err := validateSourcePath(input.ArtifactPath); err != nil {
 		return err
 	}
-	if err := validateSourcePath(input.EvidencePath); err != nil {
-		return err
+	if input.EvidencePath != "" {
+		if err := validateSourcePath(input.EvidencePath); err != nil {
+			return err
+		}
 	}
 	return nil
 }

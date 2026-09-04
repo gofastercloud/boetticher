@@ -54,27 +54,18 @@ files in a maintainer cache. Generated projections exclude `artifacts`,
 | Non-test client-certificate issue/cache references | 22 |
 | Module definitions | 11 |
 
-The release bundle contains one top-level qualification record per artifact.
-The standard artifact cache contains the artifact blob plus eight supporting
-files, including build log, provenance, content checksum, package inventory,
-SBOM, smoke output, and Trivy output. The portable release evidence currently
-also contains a rewritten evidence record and signed manifest members. These
-are four distinct representations of qualification identity to review:
-artifact bytes, evidence record, evidence sidecars, and signed release
-manifest.
+The signed release manifest contains one exact content identity per artifact.
+Maintainer output may additionally carry a qualification record, package
+inventory, SBOM, smoke output, Trivy output, and provenance for transparency;
+those are optional evidence attachments, not operator trust authorities.
 
 The current reuse rule is based on artifact coordinates, effective build-input
-identity, base dependency, artifact bytes, and complete qualification
-evidence. The qualification statement now treats `ArtifactPath` as an
-optional local cache hint rather than an identity field; when it is absent,
-the resolver derives the fixed cache path from artifact coordinates. The
-0.5.2 target is to preserve content-bound qualification while allowing
-existing bytes to be requalified or have missing evidence regenerated where
-supported, instead of treating a missing sidecar as an image-build failure.
-The native maintainer path now reports that distinction explicitly: an existing
-blob with missing or malformed qualification is preserved for scan-only
-requalification, while a missing blob, changed build inputs, or wrong bytes
-remain build failures.
+identity, base dependency, and artifact bytes. `ArtifactPath` is only an
+optional local cache hint; when it is absent, the resolver derives the fixed
+cache path from artifact coordinates. Missing, malformed, or absent maintainer
+evidence does not force a rebuild. The native maintainer path reports that
+condition separately, while a missing blob, changed build inputs, or wrong
+bytes remain build failures.
 
 ## PKI and operator baseline
 

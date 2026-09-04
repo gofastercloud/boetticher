@@ -90,13 +90,12 @@ hosted build, scan, qualification, signed-bundle, and exact-source release
 gates.
 
 Qualified artifacts are reusable when their artifact coordinates, signed
-content digest, base dependency, artifact bytes, and complete qualification
-evidence still match. Controller, documentation, test, release-import, and
-maintainer-wrapper changes do not force unrelated image reconstruction. The
-release manifest signs the exact artifact bytes and evidence digests; the
-source revision and any build-definition digest remain provenance, not a
-runtime rebuild trigger. Missing or mismatched evidence fails closed and sends
-the artifact through the normal build and qualification path.
+content digest, base dependency, and bytes still match. Controller,
+documentation, test, release-import, and maintainer-wrapper changes do not
+force unrelated image reconstruction. The release manifest signs the exact
+artifact bytes; source and build-definition revisions remain provenance, not a
+runtime rebuild trigger. Missing maintainer evidence is reported separately
+and does not force image reconstruction.
 
 For a three-drive development machine, keep the operating system on the
 internal NVMe boot drive, put the persistent Linux build root, downloads,
