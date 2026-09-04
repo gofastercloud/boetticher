@@ -658,6 +658,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return err
 	}
 	runtimeVariables["client_ca_pem"] = authority.RootCertPEM + authority.IssuingCertPEM
+	// Nginx uses the issuing CA as its direct client trust anchor so the
+	// issuing-CA CRL can be checked without requiring a separate root CRL.
+	runtimeVariables["client_issuing_ca_pem"] = authority.IssuingCertPEM
 	runtimeVariables["pulse_server_ca_pem"] = authority.RootCertPEM + authority.IssuingCertPEM
 	runtimeVariables["step_ca_root_cert_pem"] = authority.RootCertPEM
 	runtimeVariables["step_ca_intermediate_cert_pem"] = authority.IssuingCertPEM

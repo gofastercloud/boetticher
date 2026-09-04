@@ -240,6 +240,9 @@ func TestEndpointClientTrustProjectionIncludesRootAndIssuingCAs(t *testing.T) {
 	if !strings.Contains(string(data), "runtimeVariables[\"client_ca_pem\"] = authority.RootCertPEM + authority.IssuingCertPEM") {
 		t.Fatal("endpoint mTLS trust projection does not include the complete platform CA chain")
 	}
+	if !strings.Contains(string(data), "runtimeVariables[\"client_issuing_ca_pem\"] = authority.IssuingCertPEM") {
+		t.Fatal("Pulse nginx mTLS trust projection does not pin the issuing CA")
+	}
 }
 
 func TestAIOpsCanaryUsesCompleteControllerCertificateChain(t *testing.T) {

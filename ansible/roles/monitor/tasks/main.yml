@@ -235,7 +235,7 @@
 
 - name: Install the client CA for Pulse mTLS
   ansible.builtin.copy:
-    content: "{{ client_ca_pem }}"
+    content: "{{ client_issuing_ca_pem }}"
     dest: /etc/boetticher/tls/client-ca.pem
     owner: root
     group: root
