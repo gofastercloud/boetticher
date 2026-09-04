@@ -221,6 +221,17 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Upload non-publishing rehearsal outputs
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boetticher-rehearsal-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/boetticher-${{ steps.release_identity.outputs.version }}
+            dist/boetticher-${{ steps.release_identity.outputs.version }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
     name: Publish the validated signed release
     needs: release
