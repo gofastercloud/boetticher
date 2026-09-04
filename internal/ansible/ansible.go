@@ -695,7 +695,9 @@ func ansibleEnvironment(playbook, timingPath, phase string) []string {
 		environment = append(environment, entry)
 	}
 	environment = setEnvironmentValue(environment, "PATH", safeControllerPath)
-	environment = setEnvironmentValue(environment, "ANSIBLE_CONFIG", "/dev/null")
+	// Ansible 2.21 rejects configuration paths without a supported extension;
+	// this nonexistent .cfg path still disables discovery of ambient config.
+	environment = setEnvironmentValue(environment, "ANSIBLE_CONFIG", "/dev/null.cfg")
 	environment = setEnvironmentValue(environment, "ANSIBLE_FORKS", defaultAnsibleForks)
 	environment = setEnvironmentValue(environment, "PYTHONNOUSERSITE", "1")
 	strategy := defaultAnsibleStrategy

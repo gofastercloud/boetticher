@@ -615,7 +615,7 @@ func TestAnsibleEnvironmentClearsAmbientConfiguration(t *testing.T) {
 			values[key] = value
 		}
 	}
-	if values["ANSIBLE_CONFIG"] != "/dev/null" || values["ANSIBLE_FORKS"] != defaultAnsibleForks || values["PYTHONNOUSERSITE"] != "1" || values["PATH"] != safeControllerPath {
+	if values["ANSIBLE_CONFIG"] != "/dev/null.cfg" || values["ANSIBLE_FORKS"] != defaultAnsibleForks || values["PYTHONNOUSERSITE"] != "1" || values["PATH"] != safeControllerPath {
 		t.Fatalf("Ansible environment did not apply the bounded controller contract: %#v", values)
 	}
 	for _, key := range []string{"ANSIBLE_COLLECTIONS_PATH", "PYTHONPATH", "VIRTUAL_ENV"} {
