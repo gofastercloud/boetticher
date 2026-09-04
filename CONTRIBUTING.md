@@ -72,8 +72,9 @@ The repository must have `BOETTICHER_RELEASE_KEY_ID`,
 `BOETTICHER_RELEASE_SIGNING_KEY`, and `BOETTICHER_RELEASE_TRUSTED_KEYS`
 configured as Actions secrets. A manual rehearsal uses those values only on
 the ephemeral runner, builds and qualifies all 13 artifacts, assembles and
-imports the signed bundle with its matching controller, and retains no release
-artifact. It must not create a GitHub Release.
+imports the signed bundle with its matching controller, then uploads a
+short-lived rehearsal artifact containing only the controller and bundle. It
+must not create a GitHub Release.
 
 Only a pushed, exact `v0.1.x` tag uploads the validated outputs and enters the
 approval-protected `release` environment. Run the manual rehearsal before
