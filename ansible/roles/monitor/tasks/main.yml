@@ -91,11 +91,33 @@
       - --not-after
       - 5m
   delegate_to: lab-dns-01
-  register: monitor_step_ca_token
+  register: monitor_step_ca_token_raw
   changed_when: false
   no_log: true
   environment:
     STEPPATH: /var/lib/boetticher/step-ca
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - step_ca_root_cert_pem is defined
+    - not monitor_step_ca_marker.stat.exists
+    - not (pki_bootstrap_phase | default(false) | bool)
+
+- name: Keep only the Smallstep Pulse certificate token
+  ansible.builtin.set_fact:
+    monitor_step_ca_token_value: "{{ monitor_step_ca_token_raw.stdout_lines | last }}"
+  no_log: true
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - step_ca_root_cert_pem is defined
+    - not monitor_step_ca_marker.stat.exists
+    - not (pki_bootstrap_phase | default(false) | bool)
+
+- name: Require a clean Smallstep Pulse certificate token
+  ansible.builtin.assert:
+    that:
+      - monitor_step_ca_token_value is match('^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$')
+    fail_msg: "Smallstep returned an invalid Pulse certificate token"
+  no_log: true
   when:
     - inventory_hostname == 'lab-monitor-01'
     - step_ca_root_cert_pem is defined
@@ -112,7 +134,7 @@
       - /etc/boetticher/tls/monitor.crt.pem.new
       - /etc/boetticher/tls/monitor.key.pem.new
       - --token
-      - "{{ monitor_step_ca_token.stdout }}"
+      - "{{ monitor_step_ca_token_value }}"
       - --ca-url
       - https://lab-dns-01.{{ domain }}:9443
       - --root
