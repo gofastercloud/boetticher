@@ -22,6 +22,17 @@ func main() {
 	if err != nil {
 		fatal("resolve artifact definition: %v", err)
 	}
+	evidence, err := artifacts.LoadEvidence(*root, artifact.Name)
+	if err != nil {
+		fatal("load artifact qualification evidence: %v", err)
+	}
+	// Build-input identity is a maintainer cache key, not an operator trust
+	// decision. Keep it here so a relevant image-input change rebuilds the
+	// artifact, while runtime/release resolution can reuse unchanged bytes
+	// across source-only revisions.
+	if evidence.DefinitionSHA256 != artifact.DefinitionSHA256 {
+		fatal("artifact build inputs changed for %s", artifact.Name)
+	}
 	if _, _, err := artifacts.ResolveArtifactEvidence(*root, artifact); err != nil {
 		fatal("artifact is not reusable: %v", err)
 	}
