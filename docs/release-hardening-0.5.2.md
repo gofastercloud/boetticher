@@ -116,6 +116,40 @@ The current operator controller uses the Boetticher binary, system SSH, and
 Ansible for deployment. It does not require the native image builder. Smallstep
 `step`/`step-ca` are not present in the frozen operator baseline.
 
+The current 0.5.2 source checkpoint has added the pinned Smallstep binaries to
+the appliance build inputs, added deterministic Apple trust-profile export,
+removed the unused Pulse reconciler identity, and made the Companion and
+controller Pulse read paths token-only. The browser, logging, AIOps, and
+module-specific mTLS paths remain pending classification or migration; the
+Smallstep CA is not yet the issuance authority for those paths.
+
+The interactive operator journey now permits `deploy` to render a fresh live
+plan and request an explicit `APPLY` approval. Supplying `--plan DIGEST` remains
+required for non-interactive runs and for exact scripted qualification.
+
+At the pushed source checkpoint `0c2f80d`, the repeatable measurements are:
+
+| Measure | 0.5.2 checkpoint |
+| --- | ---: |
+| Controller source LOC | 43,768 |
+| Controller test LOC | 22,810 |
+| Compiled repository packages | 50 |
+| Controller dependency closure | 1,139 |
+| Stripped controller | 53,781,890 bytes |
+| Public command entries | 9 |
+| Advanced command entries | 21 |
+| Default Proxmox guests | 3 |
+| Signed release artifact identities | 13 |
+| Fresh site generated projections | 9 |
+| Ansible roles | 17 |
+| Unreachable functions | 0 |
+| PKI implementation LOC | 807 |
+| Lines changed from frozen 0.5.1 checkpoint | 642 added / 219 deleted |
+
+The full local `make ci` gate passes at this checkpoint. This is source and
+local qualification evidence only; hosted release evidence, live Proxmox
+qualification, and Companion qualification remain outstanding.
+
 ## Frozen default topology
 
 The default plan contains exactly:
