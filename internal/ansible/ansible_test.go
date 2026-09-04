@@ -28,6 +28,29 @@ func TestGatusRolePreparesConfigDirectoryAndReloadsNginx(t *testing.T) {
 	}
 }
 
+func TestGatusRoleUsesEndpointOwnedSmallstepCertificate(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "gatus", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, required := range []string{
+		"include_tasks: ../../tasks/step-ca-endpoint.yml",
+		"step_ca_endpoint_subject: \"gatus.{{ domain }}\"",
+		"step_ca_endpoint_key_path: /var/lib/boetticher/identity/tls/gatus.key.pem",
+		"step_ca_endpoint_reload_service: nginx",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Gatus role is missing endpoint-owned certificate contract %q", required)
+		}
+	}
+	for _, forbidden := range []string{"gatus_server_cert_pem", "gatus.csr.pem", "ansible.builtin.fetch:"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("Gatus role retains controller certificate exchange %q", forbidden)
+		}
+	}
+}
+
 func TestARRRoleSeedsConfigurationWithoutOverwritingApplicationState(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "arr", "tasks", "main.yml"))
 	if err != nil {

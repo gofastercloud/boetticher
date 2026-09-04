@@ -1,0 +1,161 @@
+- name: Require the Smallstep trust material for {{ step_ca_endpoint_name }}
+  ansible.builtin.assert:
+    that:
+      - step_ca_root_cert_pem is defined
+      - step_ca_intermediate_cert_pem is defined
+    fail_msg: "{{ step_ca_endpoint_name }} requires the Smallstep root and intermediate certificates"
+  no_log: true
+
+- name: Install the Smallstep root trust for {{ step_ca_endpoint_name }}
+  ansible.builtin.copy:
+    content: "{{ step_ca_root_cert_pem }}"
+    dest: "{{ step_ca_endpoint_root_path }}"
+    owner: root
+    group: root
+    mode: '0644'
+  no_log: true
+
+- name: Install the Smallstep intermediate chain for {{ step_ca_endpoint_name }}
+  ansible.builtin.copy:
+    content: "{{ step_ca_intermediate_cert_pem }}"
+    dest: "{{ step_ca_endpoint_intermediate_path }}"
+    owner: root
+    group: root
+    mode: '0644'
+  no_log: true
+
+- name: Check whether {{ step_ca_endpoint_name }} already has a Smallstep certificate
+  ansible.builtin.stat:
+    path: "{{ step_ca_endpoint_marker_path }}"
+  register: step_ca_endpoint_marker
+
+- name: Create a one-time {{ step_ca_endpoint_name }} certificate token
+  ansible.builtin.shell: >-
+    /usr/local/bin/step ca token {{ step_ca_endpoint_subject | quote }}
+    {% for san in step_ca_endpoint_sans %}--san {{ san | quote }} {% endfor %}
+    --provisioner boetticher
+    --provisioner-password-file /var/lib/boetticher/step-ca/secrets/password
+    --ca-url https://lab-dns-01.{{ domain }}:9443
+    --root /var/lib/boetticher/step-ca/certs/root_ca.crt
+    --cert-not-after 720h
+    --not-after 5m
+  args:
+    executable: /bin/sh
+  delegate_to: lab-dns-01
+  register: step_ca_endpoint_token
+  changed_when: false
+  no_log: true
+  environment:
+    STEPPATH: /var/lib/boetticher/step-ca
+  when: not step_ca_endpoint_marker.stat.exists
+
+- name: Issue the {{ step_ca_endpoint_name }} certificate with an endpoint-owned key
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/step
+      - ca
+      - certificate
+      - "{{ step_ca_endpoint_subject }}"
+      - "{{ step_ca_endpoint_certificate_path }}.new"
+      - "{{ step_ca_endpoint_key_path }}.new"
+      - --token
+      - "{{ step_ca_endpoint_token.stdout }}"
+      - --ca-url
+      - "https://lab-dns-01.{{ domain }}:9443"
+      - --root
+      - "{{ step_ca_endpoint_root_path }}"
+      - --bundle
+      - --force
+  changed_when: true
+  no_log: true
+  when: not step_ca_endpoint_marker.stat.exists
+
+- name: Verify and activate the new {{ step_ca_endpoint_name }} certificate pair
+  ansible.builtin.shell: >-
+    set -eu;
+    /usr/local/bin/step certificate verify
+    {{ step_ca_endpoint_certificate_path | quote }}.new
+    --roots {{ step_ca_endpoint_root_path | quote }};
+    test -s {{ step_ca_endpoint_key_path | quote }}.new;
+    chmod 0600 {{ step_ca_endpoint_key_path | quote }}.new;
+    mv -f {{ step_ca_endpoint_certificate_path | quote }}.new {{ step_ca_endpoint_certificate_path | quote }};
+    mv -f {{ step_ca_endpoint_key_path | quote }}.new {{ step_ca_endpoint_key_path | quote }};
+    install -o root -g root -m 0644 /dev/null {{ step_ca_endpoint_marker_path | quote }}
+  args:
+    executable: /bin/sh
+  when: not step_ca_endpoint_marker.stat.exists
+
+- name: Install the {{ step_ca_endpoint_name }} certificate renewal helper
+  ansible.builtin.copy:
+    dest: "{{ step_ca_endpoint_renewal_script }}"
+    owner: root
+    group: root
+    mode: '0750'
+    content: |
+      #!/bin/sh
+      set -eu
+      cert={{ step_ca_endpoint_certificate_path | quote }}
+      key={{ step_ca_endpoint_key_path | quote }}
+      root={{ step_ca_endpoint_root_path | quote }}
+      intermediate={{ step_ca_endpoint_intermediate_path | quote }}
+      ca_url={{ ('https://lab-dns-01.' ~ domain ~ ':9443') | quote }}
+      work=$(mktemp -d /run/boetticher-{{ step_ca_endpoint_name | replace(' ', '-') }}-renew.XXXXXX)
+      trap 'rm -rf "$work"' EXIT
+      /usr/local/bin/step certificate verify "$cert" --roots "$root"
+      if /usr/local/bin/step certificate needs-renewal "$cert" --roots "$root"; then
+          cp -- "$cert" "$work/certificate.pem"
+          cp -- "$key" "$work/key.pem"
+          /usr/local/bin/step ca renew --force --expires-in 240h "$work/certificate.pem" "$work/key.pem" --ca-url "$ca_url" --root "$root"
+          /usr/local/bin/step certificate bundle "$work/certificate.pem" "$intermediate" "$work/bundle.pem" --force
+          /usr/local/bin/step certificate verify "$work/bundle.pem" --roots "$root"
+          chmod 0600 "$work/key.pem"
+          mv -f "$work/bundle.pem" "$cert"
+          mv -f "$work/key.pem" "$key"
+          systemctl reload {{ step_ca_endpoint_reload_service | quote }}
+      fi
+
+- name: Install the {{ step_ca_endpoint_name }} certificate renewal service
+  ansible.builtin.copy:
+    dest: "{{ step_ca_endpoint_renewal_service }}"
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Renew the {{ step_ca_endpoint_name }} endpoint certificate
+      After=network-online.target
+
+      [Service]
+      Type=oneshot
+      ExecStart={{ step_ca_endpoint_renewal_script }}
+      User=root
+      NoNewPrivileges=true
+      PrivateTmp=true
+      ProtectHome=true
+      ProtectSystem=strict
+      ReadWritePaths={{ step_ca_endpoint_write_paths }}
+
+- name: Install the {{ step_ca_endpoint_name }} certificate renewal timer
+  ansible.builtin.copy:
+    dest: "{{ step_ca_endpoint_renewal_timer }}"
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Check the {{ step_ca_endpoint_name }} endpoint certificate for renewal
+
+      [Timer]
+      OnCalendar=*:0/15
+      Persistent=true
+      RandomizedDelaySec=5m
+
+      [Install]
+      WantedBy=timers.target
+
+- name: Enable the {{ step_ca_endpoint_name }} certificate renewal timer
+  ansible.builtin.systemd_service:
+    name: "{{ step_ca_endpoint_renewal_timer | basename }}"
+    enabled: true
+    state: started
+    daemon_reload: true

@@ -1086,7 +1086,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	var bifrostCertificate pki.ServerCertificate
 	var octoprintCertificate pki.ServerCertificate
 	var arrCertificate pki.ServerCertificate
-	var gatusCertificate pki.ServerCertificate
 	var aiopsCertificates map[string]string
 	if modules.IsEnabled(s, "bifrost") {
 		bifrostCSR, readErr := os.ReadFile(filepath.Join(csrDir, "bifrost.csr.pem"))
@@ -1124,16 +1123,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return fmt.Errorf("sign AIOps endpoint certificates: %w", err)
 		}
 	}
-	if modules.IsEnabled(s, "gatus") {
-		csr, readErr := os.ReadFile(filepath.Join(csrDir, "gatus.csr.pem"))
-		if readErr != nil {
-			return fmt.Errorf("read endpoint-generated Gatus CSR: %w", readErr)
-		}
-		gatusCertificate, err = signOrReuseServerCertificate(authority, string(csr), csrDir, "gatus", "gatus", s.Network.Domain, []string{"lab-gatus-01." + s.Network.Domain})
-		if err != nil {
-			return fmt.Errorf("sign Gatus endpoint CSR: %w", err)
-		}
-	}
 	runtimeVariables["pki_bootstrap_phase"] = false
 	if modules.IsEnabled(s, "bifrost") {
 		runtimeVariables["bifrost_server_cert_pem"] = bifrostCertificate.ChainPEM
@@ -1143,9 +1132,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	if modules.IsEnabled(s, "arr") {
 		runtimeVariables["arr_server_cert_pem"] = arrCertificate.ChainPEM
-	}
-	if modules.IsEnabled(s, "gatus") {
-		runtimeVariables["gatus_server_cert_pem"] = gatusCertificate.ChainPEM
 	}
 	for name, certificate := range aiopsCertificates {
 		runtimeVariables[name] = certificate
