@@ -763,6 +763,9 @@ func ImportedReleaseManifest(root string) (ReleaseManifest, string, error) {
 	if err := validateReleaseManifest(manifest); err != nil {
 		return ReleaseManifest{}, "", err
 	}
+	if err := validateExecutingControllerBinding(manifest); err != nil {
+		return ReleaseManifest{}, "", err
+	}
 	sum := sha256.Sum256(data)
 	return manifest, hex.EncodeToString(sum[:]), nil
 }

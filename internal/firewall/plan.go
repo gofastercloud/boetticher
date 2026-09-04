@@ -659,7 +659,7 @@ func policyRules(s model.Site) []PolicyRule {
 			Route:           "airvpn",
 			Description:     "boetticher ARR media acquisition through AirVPN only",
 			SourceCIDR:      arr.Address + "/32",
-			SourceMAC:       arr.MAC,
+			SourceMAC:       componentSourceMAC(s, arr),
 			DestinationCIDR: model.AirVPNGuestAddress + "/32",
 		})
 	}
@@ -750,7 +750,7 @@ func policyRulesForIntent(s model.Site, module string, intent model.NetworkInten
 			From: source.Zone, To: to, Action: "allow", Protocol: intent.Protocol,
 			Ports: append([]string(nil), intent.Ports...), Counter: "boetticher_module_" + safeRuleToken(module),
 			NAT: nat, Route: route, Description: "module " + module + ": " + intent.Purpose,
-			SourceCIDR: source.Address + "/32", DestinationHost: parsed.Hostname(),
+			SourceCIDR: source.Address + "/32", SourceMAC: componentSourceMAC(s, source), DestinationHost: parsed.Hostname(),
 		}}
 	}
 	destinations := componentReferences(s, intent.Destination)
@@ -768,10 +768,20 @@ func policyRulesForIntent(s model.Site, module string, intent model.NetworkInten
 			From: source.Zone, To: destination.Zone, Action: "allow", Protocol: intent.Protocol,
 			Ports: append([]string(nil), intent.Ports...), Counter: "boetticher_module_" + safeRuleToken(module),
 			Description: "module " + module + ": " + intent.Purpose,
-			SourceCIDR:  source.Address + "/32", DestinationCIDR: destination.Address + "/32",
+			SourceCIDR:  source.Address + "/32", SourceMAC: componentSourceMAC(s, source), DestinationCIDR: destination.Address + "/32",
 		})
 	}
 	return rules
+}
+
+func componentSourceMAC(s model.Site, component model.Component) string {
+	if component.MAC != "" {
+		return component.MAC
+	}
+	if moduleNetworkMode(s, component.Module) == model.ModuleNetworkAirVPN {
+		return model.ManagedModuleMAC(component.VMID)
+	}
+	return ""
 }
 
 func moduleNetworkMode(s model.Site, module string) model.ModuleNetworkMode {

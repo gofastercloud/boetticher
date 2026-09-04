@@ -42,6 +42,27 @@ func TestClientUsesTokenAndDecodesEnvelope(t *testing.T) {
 	}
 }
 
+func TestSetGuestMACFilterUsesGuestFirewallOptions(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method != http.MethodPut || r.URL.Path != "/api2/json/nodes/node/lxc/210/firewall/options" {
+			t.Fatalf("unexpected guest firewall request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		for key, want := range map[string]string{"enable": "1", "macfilter": "1", "policy_in": "ACCEPT", "policy_out": "ACCEPT"} {
+			if got := r.Form.Get(key); got != want {
+				t.Fatalf("guest firewall option %s = %q, want %q", key, got, want)
+			}
+		}
+		return response([]byte(`{"data":null}`))
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.SetGuestMACFilter(context.Background(), "node", KindLXC, 210); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestNewClientRejectsNonIPv4APIHosts(t *testing.T) {
 	for _, baseURL := range []string{"https://pve.example:8006/api2/json", "https://user@192.0.2.10:8006/api2/json", "https://[::1]:8006/api2/json"} {
 		if _, err := NewClient(Config{BaseURL: baseURL}); err == nil {

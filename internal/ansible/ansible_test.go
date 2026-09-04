@@ -690,6 +690,28 @@ func TestRunWithIdentityUsesAndCleansTemporarySSHAgent(t *testing.T) {
 	}
 }
 
+func TestStartTemporarySSHAgentCleansUpAfterIdentityLoadFailure(t *testing.T) {
+	tempDir := t.TempDir()
+	stopped := filepath.Join(tempDir, "stopped")
+	if err := os.WriteFile(filepath.Join(tempDir, "ssh-agent"), []byte("#!/bin/sh\nif [ \"$1\" = \"-s\" ]; then printf 'SSH_AUTH_SOCK=%s; export SSH_AUTH_SOCK;\\nSSH_AGENT_PID=4242; export SSH_AGENT_PID;\\n' \"$BOETTICHER_TEST_AGENT_SOCKET\"; else : > \"$BOETTICHER_TEST_AGENT_STOPPED\"; fi\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, "ssh-add"), []byte("#!/bin/sh\nprintf '%s\\n' 'rejected' >&2\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	previousAgent, previousAdd := sshAgentExecutable, sshAddExecutable
+	sshAgentExecutable, sshAddExecutable = filepath.Join(tempDir, "ssh-agent"), filepath.Join(tempDir, "ssh-add")
+	t.Cleanup(func() { sshAgentExecutable, sshAddExecutable = previousAgent, previousAdd })
+	t.Setenv("BOETTICHER_TEST_AGENT_SOCKET", filepath.Join(tempDir, "agent.sock"))
+	t.Setenv("BOETTICHER_TEST_AGENT_STOPPED", stopped)
+	if _, _, err := startTemporarySSHAgent([]byte("temporary identity")); err == nil {
+		t.Fatal("identity-load failure was accepted")
+	}
+	if _, err := os.Stat(stopped); err != nil {
+		t.Fatalf("temporary agent was not cleaned up after identity-load failure: %v", err)
+	}
+}
+
 func TestFailureDiagnosticKeepsOnlyBoundedErrorLines(t *testing.T) {
 	output := []byte("TASK [secret task] ***\nchanged: [host]\nfatal: [host]: FAILED! => {\"msg\":\"failed\"}\nPLAY RECAP ***\nhost : ok=1 unreachable=0 failed=1\n")
 	got := failureDiagnostic(output)

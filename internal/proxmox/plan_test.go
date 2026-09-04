@@ -281,6 +281,34 @@ func TestArrPlanUsesDeclarationOwnedDHCPIdentity(t *testing.T) {
 	t.Fatal("arr guest is missing")
 }
 
+func TestAirVPNBifrostPlanUsesStableMACFilterIdentity(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	enabled := true
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "europe"}
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
+		Enabled: &enabled, Network: model.ModuleNetworkAirVPN,
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key"}},
+		Models:    []model.BifrostModelConfig{{Alias: "selected", Upstream: "provider", Model: "provider/model"}},
+	}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, guest := range plan.Guests {
+		if guest.Name == "lab-bifrost-01" {
+			if guest.MAC != model.ManagedModuleMAC(210) || !strings.Contains(lxcNetworkParam(guest), "macaddr="+model.ManagedModuleMAC(210)+",ip=10.10.20.60/24") {
+				t.Fatalf("AirVPN Bifrost network identity = %#v", guest)
+			}
+			return
+		}
+	}
+	t.Fatal("AirVPN Bifrost guest is missing")
+}
+
 func TestComposedDNSGuestsReceiveOnlyTheirOwnPersistentVolumes(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	site, _, err := modules.Compose(config)
@@ -375,6 +403,14 @@ func TestComposedFirewallKindComesFromDeclaredArtifact(t *testing.T) {
 		if guest.Name == "lab-fw-01" && guest.Kind != KindLXC {
 			t.Fatalf("firewall kind was inferred from its name instead of its artifact: %#v", guest)
 		}
+	}
+}
+
+func TestLXCNetworkParamUsesStaticMACForAirVPNGuest(t *testing.T) {
+	guest := GuestPlan{VLAN: 20, Address: "10.10.20.60", Gateway: "10.10.20.1", MAC: model.ManagedModuleMAC(210)}
+	want := "name=eth0,bridge=vmbr1,tag=20,firewall=1,macaddr=02:00:00:03:00:d2,ip=10.10.20.60/24,gw=10.10.20.1"
+	if got := lxcNetworkParam(guest); got != want {
+		t.Fatalf("lxcNetworkParam() = %q, want %q", got, want)
 	}
 }
 

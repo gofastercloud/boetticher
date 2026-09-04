@@ -447,9 +447,15 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		if component.VMID == 0 {
 			continue
 		}
+		guestMAC := component.MAC
+		if guestMAC == "" && component.Module != "" {
+			if config, ok := s.ModuleConfig[component.Module]; ok && config.Network == model.ModuleNetworkAirVPN {
+				guestMAC = model.ManagedModuleMAC(component.VMID)
+			}
+		}
 		guest := GuestPlan{
 			VMID: component.VMID, Name: component.Name, Hostname: component.Hostname, Zone: component.Zone,
-			Address: component.Address, MAC: component.MAC, Gateway: gatewayFor(component.Zone), VLAN: vlanFor(s, component.Zone),
+			Address: component.Address, MAC: guestMAC, Gateway: gatewayFor(component.Zone), VLAN: vlanFor(s, component.Zone),
 			Kind: KindLXC, Cores: 2, MemoryMiB: 1024, DiskGiB: 8,
 			Monitoring: component.Monitoring, Backup: component.Backup, Tags: componentTags(s, component.Name), ManagedUSBSlots: usbSlots[component.VMID],
 		}
@@ -672,8 +678,11 @@ func vlanFor(s model.Site, zoneName string) int {
 }
 
 func lxcNetworkParam(guest GuestPlan) string {
-	if guest.MAC != "" {
+	if guest.MAC == model.ArrGuestMAC {
 		return fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,macaddr=%s,ip=dhcp", guest.VLAN, guest.MAC)
+	}
+	if guest.MAC != "" {
+		return fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,macaddr=%s,ip=%s/24,gw=%s", guest.VLAN, guest.MAC, guest.Address, guest.Gateway)
 	}
 	return fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,ip=%s/24,gw=%s", guest.VLAN, guest.Address, gatewayFor(guest.Zone))
 }
@@ -1519,6 +1528,9 @@ func ensureLXCWithRetainedVolumes(ctx context.Context, client *Client, plan Plan
 		if err := validateExistingGuestIdentityFields(current, guest); err != nil {
 			return fmt.Errorf("HOLD: refusing to reconcile unowned container %s: %w", guest.Name, err)
 		}
+		if err := ensureGuestMACFilter(ctx, client, plan, guest); err != nil {
+			return err
+		}
 		if err := validateNoUndeclaredLXCVolumes(current, guest); err != nil {
 			return err
 		}
@@ -1632,6 +1644,24 @@ func ensureLXCWithRetainedVolumes(ctx context.Context, client *Client, plan Plan
 	}
 	if err := validateExistingGuestVolumes(current, guest); err != nil {
 		return fmt.Errorf("HOLD: verify created container %s persistent volumes: %w", guest.Name, err)
+	}
+	if err := ensureGuestMACFilter(ctx, client, plan, guest); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureGuestMACFilter enables Proxmox's guest-level MAC filtering for module
+// guests with a declared stable MAC. This is the hypervisor/bridge boundary
+// that prevents a compromised guest from replacing the MAC used by the
+// gateway's source-identity rules. Policies remain ACCEPT so Boetticher's
+// managed gateway remains the owner of service authorization.
+func ensureGuestMACFilter(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
+	if guest.MAC == "" || guest.Owner == "" {
+		return nil
+	}
+	if err := client.SetGuestMACFilter(ctx, plan.Node, guest.Kind, guest.VMID); err != nil {
+		return fmt.Errorf("HOLD: enable Proxmox MAC filtering for %s: %w", guest.Name, err)
 	}
 	return nil
 }
@@ -2503,6 +2533,14 @@ func validateNoUndeclaredLXCVolumes(current map[string]any, expected GuestPlan) 
 		}
 	}
 	return nil
+}
+
+// ValidateNoUndeclaredLXCPersistentVolumes is the narrow public check used by
+// cleanup paths that intentionally expect a rootfs-only LXC. It prevents the
+// Proxmox purge flag from deleting an attached volume that was never part of
+// the cleanup operation's ownership proof.
+func ValidateNoUndeclaredLXCPersistentVolumes(current map[string]any, guestName string) error {
+	return validateNoUndeclaredLXCVolumes(current, GuestPlan{Name: guestName})
 }
 
 func lxcPersistentVolumeMatches(observed, wanted string, vmid, disk int) bool {

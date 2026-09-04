@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -567,24 +568,73 @@ func startTemporarySSHAgent(identityData []byte) (map[string]string, func() erro
 	}
 	environment, err := parseSSHAgentEnvironment(output)
 	if err != nil {
+		if cleanupErr := stopTemporarySSHAgent(environment); cleanupErr != nil {
+			return nil, func() error { return nil }, errors.Join(err, fmt.Errorf("cleanup temporary Ansible SSH agent: %w", cleanupErr))
+		}
 		return nil, func() error { return nil }, err
 	}
 	stop := func() error {
-		kill := exec.Command(sshAgentExecutable, "-k")
-		kill.Env = append(os.Environ(), "SSH_AUTH_SOCK="+environment["SSH_AUTH_SOCK"], "SSH_AGENT_PID="+environment["SSH_AGENT_PID"])
-		if output, err := kill.CombinedOutput(); err != nil {
-			return fmt.Errorf("ssh-agent cleanup failed: %w (%s)", err, strings.TrimSpace(string(output)))
-		}
-		return nil
+		return stopTemporarySSHAgent(environment)
 	}
 	add := exec.Command(sshAddExecutable, "-")
 	add.Env = append(os.Environ(), "SSH_AUTH_SOCK="+environment["SSH_AUTH_SOCK"], "SSH_AGENT_PID="+environment["SSH_AGENT_PID"])
 	add.Stdin = bytes.NewReader(identityData)
 	if output, err := add.CombinedOutput(); err != nil {
-		_ = stop()
-		return nil, func() error { return nil }, fmt.Errorf("load temporary Ansible SSH identity: %w (%s)", err, strings.TrimSpace(string(output)))
+		loadErr := fmt.Errorf("load temporary Ansible SSH identity: %w (%s)", err, strings.TrimSpace(string(output)))
+		if cleanupErr := stop(); cleanupErr != nil {
+			return nil, func() error { return nil }, errors.Join(loadErr, fmt.Errorf("cleanup temporary Ansible SSH agent: %w", cleanupErr))
+		}
+		return nil, func() error { return nil }, loadErr
 	}
 	return environment, stop, nil
+}
+
+func stopTemporarySSHAgent(environment map[string]string) error {
+	if environment == nil {
+		return errors.New("ssh-agent environment is unavailable")
+	}
+	socket, socketOK := environment["SSH_AUTH_SOCK"]
+	pid, pidOK := environment["SSH_AGENT_PID"]
+	if socketOK && pidOK {
+		kill := exec.Command(sshAgentExecutable, "-k")
+		kill.Env = append(os.Environ(), "SSH_AUTH_SOCK="+socket, "SSH_AGENT_PID="+pid)
+		if output, err := kill.CombinedOutput(); err == nil {
+			return nil
+		} else if validAgentPID(pid) {
+			if killErr := syscall.Kill(parseAgentPID(pid), syscall.SIGTERM); killErr == nil {
+				return nil
+			} else {
+				return fmt.Errorf("ssh-agent cleanup failed: %w (%s); direct termination failed: %v", err, strings.TrimSpace(string(output)), killErr)
+			}
+		} else {
+			return fmt.Errorf("ssh-agent cleanup failed: %w (%s)", err, strings.TrimSpace(string(output)))
+		}
+	}
+	if validAgentPID(pid) {
+		if err := syscall.Kill(parseAgentPID(pid), syscall.SIGTERM); err == nil {
+			return nil
+		} else {
+			return fmt.Errorf("ssh-agent direct cleanup failed: %w", err)
+		}
+	}
+	return errors.New("ssh-agent returned no safe cleanup process id")
+}
+
+func validAgentPID(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func parseAgentPID(value string) int {
+	pid, _ := strconv.Atoi(value)
+	return pid
 }
 
 func parseSSHAgentEnvironment(output []byte) (map[string]string, error) {
@@ -599,17 +649,17 @@ func parseSSHAgentEnvironment(output []byte) (map[string]string, error) {
 			if value == "" || strings.IndexFunc(value, func(r rune) bool {
 				return r == '\x00' || r == '\r' || r == '\n' || r == ' ' || r == '\t'
 			}) >= 0 {
-				return nil, errors.New("ssh-agent returned an unsafe environment value")
+				return values, errors.New("ssh-agent returned an unsafe environment value")
 			}
 			values[key] = value
 		}
 	}
 	if values["SSH_AUTH_SOCK"] == "" || values["SSH_AGENT_PID"] == "" {
-		return nil, errors.New("ssh-agent did not return SSH_AUTH_SOCK and SSH_AGENT_PID")
+		return values, errors.New("ssh-agent did not return SSH_AUTH_SOCK and SSH_AGENT_PID")
 	}
 	for _, r := range values["SSH_AGENT_PID"] {
 		if r < '0' || r > '9' {
-			return nil, errors.New("ssh-agent returned an invalid process id")
+			return values, errors.New("ssh-agent returned an invalid process id")
 		}
 	}
 	return values, nil

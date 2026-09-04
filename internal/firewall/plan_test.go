@@ -667,7 +667,7 @@ func TestAirVPNSelectedSourcesUseTransitWithoutDirectWANFallback(t *testing.T) {
 			break
 		}
 	}
-	if selectedRule.From != "SERVERS" || selectedRule.To != "TRANSIT" || selectedRule.SourceCIDR != "10.10.20.60/32" || selectedRule.NAT {
+	if selectedRule.From != "SERVERS" || selectedRule.To != "TRANSIT" || selectedRule.SourceCIDR != "10.10.20.60/32" || selectedRule.SourceMAC != model.ManagedModuleMAC(210) || selectedRule.NAT {
 		t.Fatalf("selected-source transit rule is incomplete: %#v", selectedRule)
 	}
 	plan, err = BindAirVPNEndpoint(plan, func(host string) ([]net.IP, error) {
@@ -690,7 +690,7 @@ func TestAirVPNSelectedSourcesUseTransitWithoutDirectWANFallback(t *testing.T) {
 	}
 	for _, expected := range []string{
 		`ip saddr @airvpn_sources oifname "wan0" counter log prefix "boetticher AIRVPN-DIRECT-DROP " drop`,
-		`iifname "servers0" oifname "transit0" ip saddr 10.10.20.60/32 ip daddr @boetticher_endpoint_1 tcp dport 443 counter accept`,
+		`iifname "servers0" ether saddr 02:00:00:03:00:d2 oifname "transit0" ip saddr 10.10.20.60/32 ip daddr @boetticher_endpoint_1 tcp dport 443 counter accept`,
 		"oifname \"wan0\" ip saddr != @airvpn_sources ip saddr 10.10.20.0/24 masquerade comment \"boetticher:nat-servers\"",
 		"oifname \"wan0\" ip saddr 10.10.5.20/32 ip daddr @boetticher_endpoint_0 udp dport 1637 masquerade comment \"boetticher:nat-airvpn-handshake\"",
 		`iifname "transit0" oifname "wan0" counter log prefix "boetticher TRANSIT-INTERNET-DROP " drop`,
@@ -767,6 +767,15 @@ func TestArrAirVPNEgressIsBoundedAndFailClosed(t *testing.T) {
 	}
 	if strings.Contains(ruleset, `ether saddr 02:00:00:00:02:10 oifname "transit0" ip saddr 10.10.20.110/32 ip daddr 0.0.0.0/0`) {
 		t.Fatal("ARR AirVPN rule still permits every TRANSIT destination")
+	}
+}
+
+func TestAirVPNModuleIntentCarriesStableSourceMAC(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	site.ModuleConfig = map[string]model.ModuleConfig{"bifrost": {Network: model.ModuleNetworkAirVPN}}
+	component := model.Component{Name: "lab-bifrost-01", VMID: 210, Module: "bifrost", Address: "10.10.20.60"}
+	if got, want := componentSourceMAC(site, component), model.ManagedModuleMAC(210); got != want {
+		t.Fatalf("AirVPN module source MAC = %q, want %q", got, want)
 	}
 }
 

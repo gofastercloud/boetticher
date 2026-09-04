@@ -969,6 +969,9 @@ func cleanupNetworkProbes(ctx context.Context, client *proxmox.Client, node stri
 		if kind != proxmox.KindLXC || !hasExactProxmoxTag(tags, networktest.HarnessTag) || !hasExactDescriptionField(description, "installation", s.SecretMetadata.InstallationID) {
 			return fmt.Errorf("reserved VMID %d is occupied by an unknown guest", id)
 		}
+		if err := proxmox.ValidateNoUndeclaredLXCPersistentVolumes(current, fmt.Sprintf("network probe %d", id)); err != nil {
+			return fmt.Errorf("refusing to purge network probe %d: %w", id, err)
+		}
 		status, statusErr := client.LXCStatus(ctx, node, id)
 		if statusErr != nil && !proxmox.IsNotFound(statusErr) {
 			return fmt.Errorf("inspect owned network probe %d status: %w", id, statusErr)
@@ -977,6 +980,18 @@ func cleanupNetworkProbes(ctx context.Context, client *proxmox.Client, node stri
 			if err := client.StopLXC(ctx, node, id); err != nil {
 				return fmt.Errorf("stop owned network probe %d: %w", id, err)
 			}
+		}
+		kind, current, err = client.GuestConfig(ctx, node, id)
+		if err != nil {
+			return fmt.Errorf("reinspect owned network probe %d before purge: %w", id, err)
+		}
+		tags, _ = current["tags"].(string)
+		description, _ = current["description"].(string)
+		if kind != proxmox.KindLXC || !hasExactProxmoxTag(tags, networktest.HarnessTag) || !hasExactDescriptionField(description, "installation", s.SecretMetadata.InstallationID) {
+			return fmt.Errorf("HOLD: network probe %d ownership changed before purge", id)
+		}
+		if err := proxmox.ValidateNoUndeclaredLXCPersistentVolumes(current, fmt.Sprintf("network probe %d", id)); err != nil {
+			return fmt.Errorf("HOLD: network probe %d storage ownership changed before purge: %w", id, err)
 		}
 		if err := client.DestroyLXC(ctx, node, id); err != nil {
 			return fmt.Errorf("destroy owned network probe %d: %w", id, err)
