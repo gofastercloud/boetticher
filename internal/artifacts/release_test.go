@@ -37,6 +37,8 @@ func TestReleaseBundleSignsAndAtomicallyImportsQualifiedArtifacts(t *testing.T) 
 		QualificationPolicyVersion: QualificationPolicyVersion, QualificationEvaluator: QualificationEvaluator,
 		ScanCompleted: true, Qualified: true, qualifiedByEvaluator: true,
 	}
+	evidence.DefinitionSHA256 = strings.Repeat("a", 64)
+	evidence.Artifact.DefinitionSHA256 = evidence.DefinitionSHA256
 	qualificationFiles := addCompleteReleaseEvidence(t, artifactPath, &evidence)
 	data, err := json.MarshalIndent(evidence, "", "  ")
 	if err != nil {

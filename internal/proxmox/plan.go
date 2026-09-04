@@ -568,7 +568,7 @@ func deploymentOrder(s model.Site, guest GuestPlan) int {
 }
 
 func artifactKey(artifact model.Artifact) string {
-	return strings.Join([]string{artifact.Name, artifact.Version, artifact.Architecture, artifact.Kind, artifact.DefinitionSHA256, artifact.ContentSHA256}, "|")
+	return strings.Join([]string{artifact.Name, artifact.Version, artifact.Architecture, artifact.Kind, artifact.ContentSHA256}, "|")
 }
 
 // ResolveQualifiedArtifacts binds every appliance in a Proxmox plan to
@@ -2772,7 +2772,7 @@ func guestArtifactNeedsReplacement(current map[string]any, expected GuestPlan) b
 		return false
 	}
 	observed, _ := current["description"].(string)
-	return normalizeArtifactDescription(observed) != artifactDescription(expected.Artifact)
+	return !artifactDescriptionMatches(observed, expected.Artifact)
 }
 
 // InspectGuestArtifact performs the one live guest-config read needed before
@@ -2863,7 +2863,22 @@ func uploadFirewallCloudInit(ctx context.Context, client *Client, plan Plan, vmi
 }
 
 func artifactDescription(artifact model.Artifact) string {
-	return fmt.Sprintf("boetticher-artifact=%s@%s definition=%s content=%s", artifact.Name, artifact.Version, artifact.DefinitionSHA256, artifact.ContentSHA256)
+	return fmt.Sprintf("boetticher-artifact=%s@%s content=%s", artifact.Name, artifact.Version, artifact.ContentSHA256)
+}
+
+func artifactDescriptionMatches(observed string, expected model.Artifact) bool {
+	observed = normalizeArtifactDescription(observed)
+	if observed == artifactDescription(expected) {
+		return true
+	}
+	// Accept the prior description format during a normal upgrade. The content
+	// digest is the immutable artifact identity; the old definition field was
+	// only build provenance and must not force a root-disk replacement.
+	parts := strings.Fields(observed)
+	return len(parts) == 3 &&
+		parts[0] == fmt.Sprintf("boetticher-artifact=%s@%s", expected.Name, expected.Version) &&
+		strings.HasPrefix(parts[1], "definition=") &&
+		parts[2] == "content="+expected.ContentSHA256
 }
 
 func ensureExistingGuestTags(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) error {

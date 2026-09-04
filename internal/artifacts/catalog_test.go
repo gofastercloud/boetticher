@@ -35,6 +35,40 @@ func TestEvidenceUsesActualArtifactBytes(t *testing.T) {
 	}
 }
 
+func TestQualifiedArtifactReuseIgnoresSourceDefinitionRevision(t *testing.T) {
+	root := t.TempDir()
+	artifactPath := filepath.Join(root, "logging.tar.zst")
+	if err := os.WriteFile(artifactPath, []byte("qualified appliance bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	requested, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	qualifiedDefinition := requested
+	qualifiedDefinition.DefinitionSHA256 = strings.Repeat("a", 64)
+	evidence, err := EvidenceForFile(artifactPath, qualifiedDefinition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = artifactPath
+	evidence = completeQualificationEvidence(t, evidence)
+	evidence, err = QualifyEvidence(evidence, ScanSummary{Completed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteEvidence(root, requested.Name, evidence); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _, err := ResolveArtifactEvidence(root, requested)
+	if err != nil {
+		t.Fatalf("qualified bytes were rejected after a source-only definition change: %v", err)
+	}
+	if resolved.ContentSHA256 != evidence.ContentSHA256 {
+		t.Fatalf("resolved content digest = %q, want %q", resolved.ContentSHA256, evidence.ContentSHA256)
+	}
+}
+
 func TestQualificationInputRejectsMissingOrEmptyEvidence(t *testing.T) {
 	root := t.TempDir()
 	if _, err := QualificationInputSHA256(filepath.Join(root, "missing"), "SBOM"); err == nil {

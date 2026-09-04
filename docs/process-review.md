@@ -479,11 +479,14 @@ without weakening user-supplied configuration validation.
 ### Artifact and supply-chain checks
 
 Artifact evidence is among the least theatrical code in the repository. It
-checks evaluator identity, qualified state, definition identity, content
+checks evaluator identity, qualified state, artifact coordinates, content
 digest, path containment, qualification input hashes, and actual file hashes;
 then `ResolveQualifiedArtifacts` binds each guest declaration to that evidence
-before mutation. Builder cache ownership and evidence rebinding after transfer
-are similarly justified.
+before mutation. The signed release manifest authenticates the artifact and
+evidence digests; a build-definition digest is retained only as provenance, so
+source-only controller changes do not invalidate unchanged image bytes.
+Builder cache ownership and evidence rebinding after transfer are similarly
+justified.
 
 The operator pain is mostly latency and vocabulary. Keep the checks, but show a
 single artifact readiness result with the artifact ID, digest short form,

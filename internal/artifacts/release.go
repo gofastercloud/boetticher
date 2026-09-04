@@ -226,7 +226,7 @@ func BuildReleaseBundleWithMetadataAndCompanion(output string, metadata ReleaseB
 		if err := json.Unmarshal(evidenceBytes, &evidence); err != nil {
 			return ReleaseManifest{}, fmt.Errorf("decode qualification evidence %s: %w", input.Artifact.Name, err)
 		}
-		if !evidence.Qualified || evidence.Artifact != input.Artifact || evidence.ContentSHA256 != input.Artifact.ContentSHA256 {
+		if !evidence.Qualified || !artifactIdentityMatches(evidence.Artifact, input.Artifact) || evidence.ContentSHA256 != input.Artifact.ContentSHA256 {
 			return ReleaseManifest{}, fmt.Errorf("qualification evidence for %s is not bound to the requested artifact", input.Artifact.Name)
 		}
 		if err := validateReleaseQualification(evidence); err != nil {
@@ -816,7 +816,7 @@ func ResolveImportedArtifact(root string, requested model.Artifact) (model.Artif
 	if err := json.Unmarshal(evidenceData, &evidence); err != nil {
 		return model.Artifact{}, Evidence{}, err
 	}
-	if !evidence.Qualified || !artifactIdentityMatches(evidence.Artifact, requested) || (requested.ContentSHA256 != "" && evidence.ContentSHA256 != requested.ContentSHA256) || evidence.ContentSHA256 != selected.Artifact.ContentSHA256 || (evidence.Artifact.ContentSHA256 != "" && evidence.Artifact.ContentSHA256 != selected.Artifact.ContentSHA256) || evidence.DefinitionSHA256 != requested.DefinitionSHA256 || evidence.ArtifactPath != selected.ArtifactPath {
+	if !evidence.Qualified || !artifactIdentityMatches(evidence.Artifact, requested) || (requested.ContentSHA256 != "" && evidence.ContentSHA256 != requested.ContentSHA256) || evidence.ContentSHA256 != selected.Artifact.ContentSHA256 || (evidence.Artifact.ContentSHA256 != "" && evidence.Artifact.ContentSHA256 != selected.Artifact.ContentSHA256) || evidence.ArtifactPath != selected.ArtifactPath {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("imported evidence for %s is not bound to the manifest", requested.Name)
 	}
 	if err := validateReleaseQualification(evidence); err != nil {

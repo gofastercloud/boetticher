@@ -35,9 +35,10 @@ type Definition struct {
 	Inputs       []string
 }
 
-// Evidence binds concrete bytes and qualification outputs to a deterministic
-// artifact definition. Build timestamps and tool versions are evidence only;
-// they never become desired-state inputs.
+// Evidence binds concrete bytes and qualification outputs to an artifact
+// identity. DefinitionSHA256 remains useful build provenance, but the signed
+// artifact content digest is the trust boundary and is independent of the
+// current checkout's source revision.
 type Evidence struct {
 	Artifact                   model.Artifact    `json:"artifact"`
 	ArtifactPath               string            `json:"artifact_path,omitempty"`
@@ -136,8 +137,10 @@ func LoadEvidence(root, name string) (Evidence, error) {
 }
 
 // ResolveArtifactEvidence proves that a qualification record describes the
-// requested definition and, when a local artifact path is recorded, that the
-// path still contains the qualified bytes.
+// requested artifact coordinates and, when a local artifact path is recorded,
+// that the path still contains the qualified bytes. The build-definition
+// digest is provenance only; changing source without changing artifact bytes
+// must not invalidate a qualified artifact.
 func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artifact, Evidence, error) {
 	evidence, err := LoadEvidence(root, requested.Name)
 	if err != nil {
@@ -149,8 +152,8 @@ func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artif
 	if evidence.QualificationEvaluator != QualificationEvaluator {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s qualification evaluator is not authorized", requested.Name)
 	}
-	if evidence.DefinitionSHA256 != requested.DefinitionSHA256 || !artifactIdentityMatches(evidence.Artifact, requested) {
-		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact evidence does not match requested definition for %s", requested.Name)
+	if !artifactIdentityMatches(evidence.Artifact, requested) {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact evidence does not match requested artifact for %s", requested.Name)
 	}
 	if evidence.ContentSHA256 == "" {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s has no content checksum", requested.Name)
@@ -197,12 +200,13 @@ func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artif
 }
 
 func artifactIdentityMatches(observed, requested model.Artifact) bool {
+	if observed.Name != requested.Name || observed.Version != requested.Version || observed.Architecture != requested.Architecture || observed.Kind != requested.Kind {
+		return false
+	}
 	if observed.ContentSHA256 != "" && requested.ContentSHA256 != "" && observed.ContentSHA256 != requested.ContentSHA256 {
 		return false
 	}
-	observed.ContentSHA256 = ""
-	requested.ContentSHA256 = ""
-	return observed == requested
+	return true
 }
 
 // verifyQualificationInputs checks any qualification outputs that were
