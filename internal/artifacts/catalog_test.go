@@ -1165,8 +1165,10 @@ func TestFirewallOfflineUpgradeMountsEFIForPackageTriggers(t *testing.T) {
 		". /tmp/boetticher-firewall-process-supervisor",
 		"mountpoint -q /boot/efi",
 		"mount -t vfat -o umask=077 /dev/sda15 /boot/efi",
-		"findmnt --noheadings --output SOURCE --target /boot/efi",
-		"findmnt --noheadings --output FSTYPE --target /boot/efi",
+		"run_bounded_command 2m 10s mount -t vfat -o umask=077 /dev/sda15 /boot/efi",
+		"run_bounded_command 30s 5s findmnt --noheadings --source /dev/sda15 --target /boot/efi --types vfat",
+		"run_bounded_command 30s 5s sync -f /boot/efi",
+		"run_bounded_command 30s 5s umount /boot/efi",
 		"apt-get --no-download upgrade --yes --no-install-recommends",
 		"apt-get --no-download install --yes --no-install-recommends",
 		"umount /boot/efi",
@@ -1178,11 +1180,8 @@ func TestFirewallOfflineUpgradeMountsEFIForPackageTriggers(t *testing.T) {
 	if strings.Contains(installerText, "trap cleanup EXIT HUP INT TERM") {
 		t.Fatal("firewall package installer can swallow cancellation status in its cleanup trap")
 	}
-	if got := strings.Count(installerText, "run_bounded_command 30m apt-get"); got != 2 {
+	if got := strings.Count(installerText, "run_bounded_command 30m 30s apt-get"); got != 2 {
 		t.Fatalf("firewall package installer must bound both EFI-mounted package transactions, found %d deadlines", got)
-	}
-	if got := strings.Count(installerText, "timeout --signal=TERM --kill-after=5s 30s"); got != 2 {
-		t.Fatalf("firewall package installer must bound both EFI cleanup operations, found %d deadlines", got)
 	}
 	supervisor, err := os.ReadFile(filepath.Join(root, "images", "firewall", "build", "process-supervisor.sh"))
 	if err != nil {
@@ -1190,7 +1189,7 @@ func TestFirewallOfflineUpgradeMountsEFIForPackageTriggers(t *testing.T) {
 	}
 	supervisorText := string(supervisor)
 	for _, required := range []string{
-		"setsid timeout --signal=TERM --kill-after=30s \"$duration\" \"$@\" &",
+		"setsid timeout --signal=TERM --kill-after=\"$kill_after\" \"$duration\" \"$@\" &",
 		"active_bounded_pid=$!",
 		"kill -s \"$signal\" \"$active_bounded_pid\"",
 		"kill -s \"$signal\" -- \"-$active_bounded_pid\"",
@@ -1243,7 +1242,7 @@ terminated=$3
 started=$4
 . "$supervisor"
 trap 'bounded_signal TERM 143' TERM
-run_bounded_command 30s sh "$child" "$terminated" "$started"
+run_bounded_command 30s 5s sh "$child" "$terminated" "$started"
 `
 	if err := os.WriteFile(childPath, []byte(child), 0o600); err != nil {
 		t.Fatal(err)

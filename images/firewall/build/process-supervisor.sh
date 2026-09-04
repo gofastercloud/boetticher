@@ -23,13 +23,14 @@ bounded_signal() {
 }
 
 run_bounded_command() {
-  duration=$1
-  shift
-  if [ "$#" -eq 0 ]; then
-    echo "HOLD: bounded command is required" >&2
+  if [ "$#" -lt 3 ]; then
+    echo "HOLD: bounded command requires a deadline, kill grace, and command" >&2
     return 2
   fi
-  setsid timeout --signal=TERM --kill-after=30s "$duration" "$@" &
+  duration=$1
+  kill_after=$2
+  shift 2
+  setsid timeout --signal=TERM --kill-after="$kill_after" "$duration" "$@" &
   active_bounded_pid=$!
   if wait "$active_bounded_pid"; then
     bounded_status=0
