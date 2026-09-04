@@ -186,7 +186,7 @@ radarr_release_url=https://github.com/Radarr/Radarr/releases/download/v6.3.0.105
 radarr_release_sha256=41d6455c037ff267c5ad5a0f0de4502cebe8f89ec3d051da97851933d48a4047
 firewall_package_names='nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony openssh-server sudo cloud-init systemd-journal-remote curl jq openssl qemu-guest-agent'
 case "${BOETTICHER_LOCAL_FAST:-0}" in
-  0|1) firewall_upgrade_command='DEBIAN_FRONTEND=noninteractive apt-get --no-download upgrade --yes --no-install-recommends' ;;
+  0|1) ;;
   *) echo 'HOLD: BOETTICHER_LOCAL_FAST must be 0 or 1' >&2; exit 2 ;;
 esac
 mkdir -p "$output_root" "$work_root" "$cache_root/apt" "$cache_root/downloads" "$cache_root/base"
@@ -778,9 +778,9 @@ build_firewall() {
     --mkdir /var/lib/apt/lists \
     --tar-in "$package_archive_tar":/var/cache/apt/archives \
     --tar-in "$package_lists_tar":/var/lib/apt/lists \
-    --run-command "rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; $firewall_upgrade_command" \
-    --run-command 'DEBIAN_FRONTEND=noninteractive apt-get --no-download install --yes --no-install-recommends nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony openssh-server sudo cloud-init systemd-journal-remote curl jq openssl qemu-guest-agent' \
-    --run-command 'apt-get clean; rm -rf /var/lib/apt/lists/*; rm -f /etc/resolv.conf' \
+    --upload images/firewall/build/install-packages.sh:/tmp/boetticher-firewall-install-packages \
+    --run-command "sh /tmp/boetticher-firewall-install-packages $firewall_package_names" \
+    --delete /tmp/boetticher-firewall-install-packages \
     --mkdir /etc/boetticher \
     --mkdir /usr/lib/boetticher \
     --mkdir /var/lib/boetticher/identity/ssh \

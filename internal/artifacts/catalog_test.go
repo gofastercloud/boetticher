@@ -927,7 +927,7 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(buildScript), "base_packages=$(awk") || !strings.Contains(string(buildScript), "--include=\"$base_packages\"") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Check-Valid-Until=false") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Retries=3") || !strings.Contains(string(buildScript), "debian-security-snapshot.sources") || !strings.Contains(string(buildScript), "apt-get --no-download upgrade --yes --no-install-recommends") {
+	if !strings.Contains(string(buildScript), "base_packages=$(awk") || !strings.Contains(string(buildScript), "--include=\"$base_packages\"") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Check-Valid-Until=false") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Retries=3") || !strings.Contains(string(buildScript), "debian-security-snapshot.sources") {
 		t.Fatal("base builder does not use the pinned Debian snapshot")
 	}
 	if !strings.Contains(string(buildScript), `dpkg-query -W -f='\${binary:Package}\\t\${Version}\\n'`) {
@@ -936,6 +936,11 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	if strings.Contains(string(buildScript), "systemctl disable --now systemd-networkd-wait-online.service") {
 		t.Fatal("firewall image customization tries to start or stop systemd in an offline image")
 	}
+	firewallPackageInstaller, err := os.ReadFile(filepath.Join("..", "..", "images", "firewall", "build", "install-packages.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firewallBuildContract := string(buildScript) + "\n" + string(firewallPackageInstaller)
 	for _, required := range []string{
 		"prepare_firewall_package_cache",
 		"virt-cat -a \"$input\" /var/lib/dpkg/status",
@@ -945,7 +950,7 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 		"--tar-in \"$package_lists_tar\":/var/lib/apt/lists",
 		"apt-get --no-download install",
 	} {
-		if !strings.Contains(string(buildScript), required) {
+		if !strings.Contains(firewallBuildContract, required) {
 			t.Fatalf("firewall local package-cache build is missing %q", required)
 		}
 	}
@@ -1121,6 +1126,50 @@ func TestFirewallBuildUsesIndividualVirtCustomizeDirectories(t *testing.T) {
 		if !strings.Contains(text, directory) {
 			t.Fatalf("firewall build is missing directory input %q", directory)
 		}
+	}
+}
+
+func TestFirewallOfflineUpgradeMountsEFIForPackageTriggers(t *testing.T) {
+	root := filepath.Join("..", "..")
+	buildScript, err := os.ReadFile(filepath.Join(root, "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	buildText := string(buildScript)
+	for _, required := range []string{
+		"--upload images/firewall/build/install-packages.sh:/tmp/boetticher-firewall-install-packages",
+		"--run-command \"sh /tmp/boetticher-firewall-install-packages $firewall_package_names\"",
+		"--delete /tmp/boetticher-firewall-install-packages",
+	} {
+		if !strings.Contains(buildText, required) {
+			t.Fatalf("firewall image build does not run the bounded package installer: missing %q", required)
+		}
+	}
+
+	installer, err := os.ReadFile(filepath.Join(root, "images", "firewall", "build", "install-packages.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	installerText := string(installer)
+	for _, required := range []string{
+		"trap cleanup EXIT HUP INT TERM",
+		"mountpoint -q /boot/efi",
+		"mount -t vfat -o umask=077 /dev/sda15 /boot/efi",
+		"findmnt --noheadings --output SOURCE --target /boot/efi",
+		"findmnt --noheadings --output FSTYPE --target /boot/efi",
+		"apt-get --no-download upgrade --yes --no-install-recommends",
+		"apt-get --no-download install --yes --no-install-recommends",
+		"umount /boot/efi",
+	} {
+		if !strings.Contains(installerText, required) {
+			t.Fatalf("firewall package installer does not preserve the EFI upgrade contract: missing %q", required)
+		}
+	}
+	mountIndex := strings.Index(installerText, "mount -t vfat")
+	upgradeIndex := strings.Index(installerText, "apt-get --no-download upgrade")
+	installIndex := strings.Index(installerText, "apt-get --no-download install")
+	if mountIndex < 0 || upgradeIndex <= mountIndex || installIndex <= upgradeIndex {
+		t.Fatal("firewall package installer does not keep the EFI system partition mounted through package triggers")
 	}
 }
 
