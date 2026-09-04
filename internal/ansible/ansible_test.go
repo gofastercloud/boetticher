@@ -1439,8 +1439,8 @@ func TestMonitoringRoleUsesExistingTLSBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(tasks) + string(template)
-	if !strings.Contains(string(tasks), "content: \"{{ client_issuing_ca_pem }}\"") {
-		t.Fatal("Pulse nginx mTLS trust does not use the issuing CA trust anchor")
+	if !strings.Contains(string(tasks), "content: \"{{ client_crl_bundle_pem }}\"") {
+		t.Fatal("Pulse nginx mTLS trust does not use the complete client CRL bundle")
 	}
 	for _, expected := range []string{"step_ca_root_cert_pem", "step_ca_intermediate_cert_pem", "client_ca_pem", "client_crl_pem", "ssl_crl /etc/boetticher/tls/client-ca.crl.pem", "ssl_verify_client optional", "ssl_verify_depth 3;", "if ($ssl_client_verify != SUCCESS) { return 403; }", "proxy_pass http://127.0.0.1:7655"} {
 		if !strings.Contains(text, expected) {

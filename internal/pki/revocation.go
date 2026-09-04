@@ -63,6 +63,13 @@ func GenerateCRL(authority Authority, revocations []Revocation, now time.Time) (
 	return issuingCRL, nil
 }
 
+// GenerateRootCRL creates an empty root-CA CRL for TLS stacks that validate
+// revocation across the complete leaf-to-root client chain. The root key is
+// already present in the operator-owned authority used during deployment.
+func GenerateRootCRL(authority Authority, now time.Time) (string, error) {
+	return generateCARevocationList(authority.RootCertPEM, authority.RootKeyPEM, nil, now)
+}
+
 // ValidateCRL verifies the controller-issued issuing-CA CRL against the
 // current authority and exact revocation set. It is used before a cached CRL
 // is reused; a cache hit must not bypass trust or revocation validation.
