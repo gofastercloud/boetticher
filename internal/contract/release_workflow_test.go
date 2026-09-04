@@ -39,7 +39,7 @@ func TestReleaseWorkflowHasNonPublishingManualRehearsal(t *testing.T) {
 		`^0\.1\.[0-9]+$`,
 		"manual release rehearsal must run from main",
 		"name: Upload non-publishing rehearsal outputs\n        if: github.event_name == 'workflow_dispatch'",
-		"name: boetticher-rehearsal-${{ github.run_id }}",
+		"name: boetticher-rehearsal-${{ github.run_id }}-${{ github.run_attempt }}",
 		"retention-days: 7",
 		"name: Upload validated release outputs\n        if: github.event_name == 'push' && github.ref_type == 'tag'",
 		"github.event_name == 'push' && github.ref_type == 'tag'",
