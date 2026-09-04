@@ -54,7 +54,27 @@ child_pid=
 cleanup() {
 	status=$?
 	if [ -n "$child_pid" ]; then
-		kill -TERM -- -"$child_pid" 2>/dev/null || kill -TERM "$child_pid" 2>/dev/null || true
+		# setsid may fork when the caller is not already a process-group
+		# leader. Resolve the session leader and terminate every process in
+		# that private session so background image workers cannot escape.
+		cleanup_pid=$child_pid
+		child_session_pid=$(ps -eo pid=,ppid= | awk -v parent="$child_pid" '$2 == parent {print $1; exit}')
+		case "$child_session_pid" in
+			''|*[!0-9]*) ;;
+			*) cleanup_pid=$child_session_pid ;;
+		esac
+		child_session=$(ps -o sid= -p "$cleanup_pid" 2>/dev/null | tr -d ' ' || true)
+		case "$child_session" in
+			''|*[!0-9]*) kill -TERM "$child_pid" 2>/dev/null || true ;;
+			*)
+				for session_pid in $(ps -eo pid=,sid= | awk -v sid="$child_session" '$2 == sid {print $1}'); do
+					case "$session_pid" in
+						''|*[!0-9]*) ;;
+						*) kill -TERM "$session_pid" 2>/dev/null || true ;;
+					esac
+				done
+				;;
+		esac
 		wait "$child_pid" 2>/dev/null || true
 	fi
 	if [ "$mounted_proc" -eq 1 ]; then
@@ -108,7 +128,7 @@ mounted_fuse=1
 mount -t proc proc "$native_root/proc"
 mounted_proc=1
 
-setsid chroot "$native_root" /usr/bin/env \
+/usr/bin/setsid --wait chroot "$native_root" /usr/bin/env \
   GOROOT=/opt/boetticher/go/current \
   PATH=/opt/boetticher/go/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
   XDG_RUNTIME_DIR=/tmp/boetticher-runtime \
