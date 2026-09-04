@@ -11,11 +11,13 @@ import (
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/gofastercloud/boetticher/internal/model"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 	"github.com/gofastercloud/boetticher/internal/pathguard"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
@@ -1265,6 +1267,9 @@ func RemoveExactScopedCredentialToken(ctx context.Context, runner CommandRunner,
 	if err := validateScopedCredentialTokenOwnership(usersOutput, tokensOutput, aclOutput, userID, tokenID, role); err != nil {
 		return false, fmt.Errorf("HOLD: scoped Proxmox token ownership is not the expected Boetticher identity: %w", err)
 	}
+	if err := removeLegacyScopedCredentialACLs(ctx, runner, address, initialUser, aclOutput, userID, tokenID, role); err != nil {
+		return false, fmt.Errorf("HOLD: remove legacy root ACLs for scoped Proxmox token: %w", err)
+	}
 	removeToken := "pvesh delete /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID)
 	if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, removeToken)); err != nil {
 		return false, fmt.Errorf("remove exact stale Proxmox token %s!%s: %w", userID, tokenID, err)
@@ -1643,20 +1648,47 @@ func validateScopedCredentialTokenOwnership(usersOutput, tokensOutput, aclOutput
 		userID:                 "user",
 		userID + "!" + tokenID: "token",
 	}
-	seen := make(map[string]bool, len(expected))
+	allowedPaths := make(map[string]bool, len(scopedProvisionerACLPaths()))
+	for _, path := range scopedProvisionerACLPaths() {
+		allowedPaths[path] = true
+	}
+	seenLegacy := make(map[string]bool, len(expected))
+	seenScoped := make(map[string]bool, len(expected)*len(allowedPaths))
 	for _, acl := range acls {
 		expectedType, relevant := expected[acl.UGID]
 		if !relevant {
 			continue
 		}
-		if seen[acl.UGID] || acl.Path != "/" || acl.Propagate != 1 || acl.RoleID != role || acl.Type != expectedType {
+		if acl.Propagate != 1 || acl.RoleID != role || acl.Type != expectedType {
 			return errors.New("scoped credential ACL is unexpected")
 		}
-		seen[acl.UGID] = true
+		if acl.Path == "/" {
+			if seenLegacy[acl.UGID] || len(seenScoped) > 0 {
+				return errors.New("scoped credential ACL is unexpected")
+			}
+			seenLegacy[acl.UGID] = true
+			continue
+		}
+		if !allowedPaths[acl.Path] || seenLegacy[acl.UGID] {
+			return errors.New("scoped credential ACL is unexpected")
+		}
+		key := acl.UGID + "\x00" + acl.Path
+		if seenScoped[key] {
+			return errors.New("scoped credential ACL is unexpected")
+		}
+		seenScoped[key] = true
+	}
+	if len(seenLegacy) > 0 {
+		if len(seenLegacy) != len(expected) {
+			return errors.New("scoped credential ACL is incomplete")
+		}
+		return nil
 	}
 	for ugid := range expected {
-		if !seen[ugid] {
-			return fmt.Errorf("scoped credential ACL %q is absent", ugid)
+		for _, path := range scopedProvisionerACLPaths() {
+			if !seenScoped[ugid+"\x00"+path] {
+				return fmt.Errorf("scoped credential ACL %q at %s is absent", ugid, path)
+			}
 		}
 	}
 	return nil
@@ -1757,6 +1789,13 @@ func EnsureScopedCredentialACL(ctx context.Context, runner CommandRunner, addres
 	if !safeID(userID) || !safeID(tokenID) || !safeID(role) {
 		return errors.New("Proxmox identity and token IDs must be simple identifiers")
 	}
+	aclOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/acl --output-format json"))
+	if err != nil {
+		return fmt.Errorf("inspect existing scoped Proxmox ACLs: %w", err)
+	}
+	if err := removeLegacyScopedCredentialACLs(ctx, runner, address, initialUser, aclOutput, userID, tokenID, role); err != nil {
+		return fmt.Errorf("remove legacy root ACLs: %w", err)
+	}
 	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--users", userID, role); err != nil {
 		return fmt.Errorf("assign bounded Proxmox role to user: %w", err)
 	}
@@ -1767,9 +1806,49 @@ func EnsureScopedCredentialACL(ctx context.Context, runner CommandRunner, addres
 }
 
 func setScopedCredentialACL(ctx context.Context, runner CommandRunner, address, initialUser, subjectFlag, subject, role string) error {
-	setACL := "pvesh set /access/acl --path / " + subjectFlag + " " + shellQuote(subject) + " --roles " + shellQuote(role) + " --propagate 1"
-	_, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, setACL))
-	return err
+	for _, aclPath := range scopedProvisionerACLPaths() {
+		setACL := "pvesh set /access/acl --path " + shellQuote(aclPath) + " " + subjectFlag + " " + shellQuote(subject) + " --roles " + shellQuote(role) + " --propagate 1"
+		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, setACL)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func scopedProvisionerACLPaths() []string {
+	paths := []string{"/nodes", "/sdn", "/storage/local", "/storage/boetticher-thin", "/storage/boetticher-backups"}
+	for _, vmid := range []int{model.ProxmoxVMID, model.DNS01VMID, model.MonitorVMID, model.LoggingVMID, model.LegacyStreamDeckVMID, model.PrinterVMID, model.AirVPNGuestVMID, model.ArrVMID, 200, 210, 240, 250} {
+		paths = append(paths, "/vms/"+strconv.Itoa(vmid))
+	}
+	return paths
+}
+
+func removeLegacyScopedCredentialACLs(ctx context.Context, runner CommandRunner, address, initialUser string, aclOutput []byte, userID, tokenID, role string) error {
+	var acls []scopedCredentialACLEntry
+	if err := decodeAccessList(aclOutput, &acls); err != nil {
+		return fmt.Errorf("decode ACL listing: %w", err)
+	}
+	for _, subject := range []struct {
+		flag  string
+		value string
+		typ   string
+	}{{"--users", userID, "user"}, {"--tokens", userID + "!" + tokenID, "token"}} {
+		found := false
+		for _, acl := range acls {
+			if acl.UGID == subject.value && acl.Type == subject.typ && acl.Path == "/" && acl.Propagate == 1 && acl.RoleID == role {
+				found = true
+				break
+			}
+		}
+		if !found {
+			continue
+		}
+		command := "pvesh delete /access/acl --path / " + subject.flag + " " + shellQuote(subject.value) + " --roles " + shellQuote(role)
+		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, command)); err != nil {
+			return fmt.Errorf("remove root %s ACL: %w", subject.typ, err)
+		}
+	}
+	return nil
 }
 
 // accessIDs decodes the small JSON listings returned by pvesh for users and

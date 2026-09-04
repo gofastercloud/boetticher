@@ -48,6 +48,8 @@ func (r *staleScopedTokenRunner) Run(_ context.Context, _ string, _ string, comm
 		return []byte(`[{"expire":0,"privsep":1,"tokenid":"boetticher"}]`), nil
 	case "pvesh get /access/acl --output-format json":
 		return []byte(`[{"path":"/","propagate":1,"roleid":"BoetticherProvisioner","type":"user","ugid":"labadmin@pve"},{"path":"/","propagate":1,"roleid":"BoetticherProvisioner","type":"token","ugid":"labadmin@pve!boetticher"}]`), nil
+	case "pvesh delete /access/acl --path / --users 'labadmin@pve' --roles 'BoetticherProvisioner'", "pvesh delete /access/acl --path / --tokens 'labadmin@pve!boetticher' --roles 'BoetticherProvisioner'":
+		return nil, nil
 	case "pvesh delete /access/users/'labadmin@pve'/token/'boetticher'":
 		r.removed = true
 		return nil, nil
@@ -527,7 +529,9 @@ func TestRemoveExactScopedCredentialTokenDeletesOnlyTheOwnedToken(t *testing.T) 
 		t.Fatalf("token replacement did not prove scoped credential ACL ownership: %#v", runner.commands)
 	}
 	for _, command := range runner.commands {
-		if strings.Contains(command, "pvesh delete ") && command != deleteCommand {
+		legacyUserACL := "pvesh delete /access/acl --path / --users 'labadmin@pve' --roles 'BoetticherProvisioner'"
+		legacyTokenACL := "pvesh delete /access/acl --path / --tokens 'labadmin@pve!boetticher' --roles 'BoetticherProvisioner'"
+		if strings.Contains(command, "pvesh delete ") && command != deleteCommand && command != legacyUserACL && command != legacyTokenACL {
 			t.Fatalf("token replacement issued an unexpected deletion: %s", command)
 		}
 		for _, forbidden := range []string{"/access/users/'labadmin@pve' --", "/access/roles", "root@pam"} {
@@ -628,6 +632,8 @@ func TestCreateScopedCredentialsCreatesRoleAtCollectionEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	var userACL, tokenACL bool
+	var rootACL bool
+	aclCount := 0
 	for _, command := range runner.commands {
 		if strings.Contains(command, "pvesh create /access/roles") {
 			if !strings.Contains(command, "pvesh create /access/roles --roleid 'BoetticherProvisioner'") {
@@ -640,20 +646,31 @@ func TestCreateScopedCredentialsCreatesRoleAtCollectionEndpoint(t *testing.T) {
 		if strings.Contains(command, "pvesh set /access/acl") && strings.Contains(command, "--tokens 'labadmin@pve!boetticher'") && strings.Contains(command, "--roles 'BoetticherProvisioner'") {
 			tokenACL = true
 		}
+		if strings.Contains(command, "pvesh set /access/acl") {
+			aclCount++
+		}
+		if strings.Contains(command, "--path /") {
+			rootACL = true
+		}
 	}
-	if !userACL || !tokenACL {
+	if !userACL || !tokenACL || rootACL || aclCount != len(scopedProvisionerACLPaths())*2 {
 		t.Fatalf("credential bootstrap ACLs incomplete: user=%t token=%t commands=%v", userACL, tokenACL, runner.commands)
 	}
 }
 
 func TestEnsureScopedCredentialACLRepairsBackingUserAndToken(t *testing.T) {
-	runner := &fakeRunner{}
+	runner := &fakeRunner{responses: map[string][]byte{
+		"pvesh get /access/acl --output-format json": []byte(`[]`),
+	}}
 	if err := EnsureScopedCredentialACL(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{
-		"pvesh set /access/acl --path / --users 'labadmin@pve' --roles 'BoetticherProvisioner' --propagate 1",
-		"pvesh set /access/acl --path / --tokens 'labadmin@pve!boetticher' --roles 'BoetticherProvisioner' --propagate 1",
+	want := []string{"pvesh get /access/acl --output-format json"}
+	for _, path := range scopedProvisionerACLPaths() {
+		want = append(want, "pvesh set /access/acl --path '"+path+"' --users 'labadmin@pve' --roles 'BoetticherProvisioner' --propagate 1")
+	}
+	for _, path := range scopedProvisionerACLPaths() {
+		want = append(want, "pvesh set /access/acl --path '"+path+"' --tokens 'labadmin@pve!boetticher' --roles 'BoetticherProvisioner' --propagate 1")
 	}
 	if !reflect.DeepEqual(runner.commands, want) {
 		t.Fatalf("scoped credential ACL repair commands = %#v, want %#v", runner.commands, want)
