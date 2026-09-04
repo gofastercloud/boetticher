@@ -117,22 +117,24 @@ Ansible for deployment. It does not require the native image builder. Smallstep
 `step`/`step-ca` are not present in the frozen operator baseline.
 
 The current 0.5.2 source checkpoint has added the pinned Smallstep binaries to
-the appliance build inputs, added deterministic Apple trust-profile export,
-removed the unused Pulse reconciler identity, and made the Companion and
-controller Pulse read paths token-only. The browser, logging, AIOps, and
-module-specific mTLS paths remain pending classification or migration; the
-Smallstep CA is not yet the issuance authority for those paths.
+the appliance build inputs, staged an unprivileged `step-ca` service on
+`lab-dns-01`, added deterministic Apple trust-profile export, removed the unused
+Pulse reconciler identity, and made the Companion and controller Pulse read
+paths token-only. The browser, logging, AIOps, and module-specific mTLS paths
+remain pending classification or migration; leaf issuance is not yet switched
+from the bespoke issuer.
 
 The interactive operator journey now permits `deploy` to render a fresh live
 plan and request an explicit `APPLY` approval. Supplying `--plan DIGEST` remains
 required for non-interactive runs and for exact scripted qualification.
 
-At the pushed source checkpoint `0c2f80d`, the repeatable measurements are:
+At the source checkpoint before this documentation update, the repeatable
+measurements are:
 
 | Measure | 0.5.2 checkpoint |
 | --- | ---: |
-| Controller source LOC | 43,768 |
-| Controller test LOC | 22,810 |
+| Controller source LOC | 43,781 |
+| Controller test LOC | 22,847 |
 | Compiled repository packages | 50 |
 | Controller dependency closure | 1,139 |
 | Stripped controller | 53,781,890 bytes |
@@ -144,7 +146,7 @@ At the pushed source checkpoint `0c2f80d`, the repeatable measurements are:
 | Ansible roles | 17 |
 | Unreachable functions | 0 |
 | PKI implementation LOC | 807 |
-| Lines changed from frozen 0.5.1 checkpoint | 642 added / 219 deleted |
+| Lines changed from frozen 0.5.1 checkpoint | 870 added / 219 deleted |
 
 The full local `make ci` gate passes at this checkpoint. This is source and
 local qualification evidence only; hosted release evidence, live Proxmox
