@@ -679,10 +679,10 @@ func vlanFor(s model.Site, zoneName string) int {
 
 func lxcNetworkParam(guest GuestPlan) string {
 	if guest.MAC == model.ArrGuestMAC {
-		return fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,macaddr=%s,ip=dhcp", guest.VLAN, guest.MAC)
+		return fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,hwaddr=%s,ip=dhcp", guest.VLAN, guest.MAC)
 	}
 	if guest.MAC != "" {
-		return fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,macaddr=%s,ip=%s/24,gw=%s", guest.VLAN, guest.MAC, guest.Address, guest.Gateway)
+		return fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,hwaddr=%s,ip=%s/24,gw=%s", guest.VLAN, guest.MAC, guest.Address, guest.Gateway)
 	}
 	return fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,ip=%s/24,gw=%s", guest.VLAN, guest.Address, gatewayFor(guest.Zone))
 }

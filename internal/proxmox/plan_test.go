@@ -273,7 +273,7 @@ func TestArrPlanUsesDeclarationOwnedDHCPIdentity(t *testing.T) {
 	}
 	for _, guest := range plan.Guests {
 		if guest.Name == "lab-arr-01" {
-			if guest.MAC != model.ArrGuestMAC || lxcNetworkParam(guest) != "name=eth0,bridge=vmbr1,tag=20,firewall=1,macaddr="+model.ArrGuestMAC+",ip=dhcp" {
+			if guest.MAC != model.ArrGuestMAC || lxcNetworkParam(guest) != "name=eth0,bridge=vmbr1,tag=20,firewall=1,hwaddr="+model.ArrGuestMAC+",ip=dhcp" {
 				t.Fatalf("arr guest network identity = %#v", guest)
 			}
 			return
@@ -301,7 +301,7 @@ func TestAirVPNBifrostPlanUsesStableMACFilterIdentity(t *testing.T) {
 	}
 	for _, guest := range plan.Guests {
 		if guest.Name == "lab-bifrost-01" {
-			if guest.MAC != networkmodel.ManagedModuleMAC(210) || !strings.Contains(lxcNetworkParam(guest), "macaddr="+networkmodel.ManagedModuleMAC(210)+",ip=10.10.20.60/24") {
+			if guest.MAC != networkmodel.ManagedModuleMAC(210) || !strings.Contains(lxcNetworkParam(guest), "hwaddr="+networkmodel.ManagedModuleMAC(210)+",ip=10.10.20.60/24") {
 				t.Fatalf("AirVPN Bifrost network identity = %#v", guest)
 			}
 			return
@@ -409,7 +409,7 @@ func TestComposedFirewallKindComesFromDeclaredArtifact(t *testing.T) {
 
 func TestLXCNetworkParamUsesStaticMACForAirVPNGuest(t *testing.T) {
 	guest := GuestPlan{VLAN: 20, Address: "10.10.20.60", Gateway: "10.10.20.1", MAC: networkmodel.ManagedModuleMAC(210)}
-	want := "name=eth0,bridge=vmbr1,tag=20,firewall=1,macaddr=02:00:00:03:00:d2,ip=10.10.20.60/24,gw=10.10.20.1"
+	want := "name=eth0,bridge=vmbr1,tag=20,firewall=1,hwaddr=02:00:00:03:00:d2,ip=10.10.20.60/24,gw=10.10.20.1"
 	if got := lxcNetworkParam(guest); got != want {
 		t.Fatalf("lxcNetworkParam() = %q, want %q", got, want)
 	}
