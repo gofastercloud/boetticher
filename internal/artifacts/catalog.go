@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -40,7 +41,10 @@ type Definition struct {
 // artifact content digest is the trust boundary and is independent of the
 // current checkout's source revision.
 type Evidence struct {
-	Artifact                   model.Artifact    `json:"artifact"`
+	Artifact model.Artifact `json:"artifact"`
+	// ArtifactPath is an optional local cache hint, not part of artifact
+	// identity. Portable qualification statements may omit it; resolvers derive
+	// the deterministic cache path from the artifact coordinates in that case.
 	ArtifactPath               string            `json:"artifact_path,omitempty"`
 	ContentSHA256              string            `json:"content_sha256"`
 	SizeBytes                  int64             `json:"size_bytes"`
@@ -161,14 +165,17 @@ func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artif
 	if evidence.Artifact.ContentSHA256 != "" && evidence.Artifact.ContentSHA256 != evidence.ContentSHA256 {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s nested content checksum differs from evidence", requested.Name)
 	}
-	if evidence.ArtifactPath == "" {
-		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s qualification evidence has no artifact path", requested.Name)
-	}
 	root, err = filepath.Abs(root)
 	if err != nil {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("resolve artifact evidence root: %w", err)
 	}
 	path := evidence.ArtifactPath
+	if path == "" {
+		path, err = cacheArtifactPath(root, evidence.Artifact)
+		if err != nil {
+			return model.Artifact{}, Evidence{}, fmt.Errorf("resolve artifact %s cache path: %w", requested.Name, err)
+		}
+	}
 	if !filepath.IsAbs(path) {
 		path = filepath.Join(root, path)
 	}
@@ -207,6 +214,26 @@ func artifactIdentityMatches(observed, requested model.Artifact) bool {
 		return false
 	}
 	return true
+}
+
+func cacheArtifactPath(root string, artifact model.Artifact) (string, error) {
+	if err := validateEvidenceName(artifact.Name); err != nil {
+		return "", err
+	}
+	if artifact.Version == "" || artifact.Architecture == "" || strings.ContainsAny(artifact.Version+artifact.Architecture, "/\\\x00") {
+		return "", errors.New("artifact version and architecture must be plain path components")
+	}
+	var suffix string
+	switch artifact.Kind {
+	case "qemu":
+		suffix = ".qcow2"
+	case "lxc":
+		suffix = ".tar.zst"
+	default:
+		return "", fmt.Errorf("unsupported artifact kind %q", artifact.Kind)
+	}
+	filename := fmt.Sprintf("%s-%s-%s%s", artifact.Name, artifact.Version, artifact.Architecture, suffix)
+	return filepath.Join(root, "generated", "artifacts", artifact.Name, filename), nil
 }
 
 // verifyQualificationInputs checks any qualification outputs that were

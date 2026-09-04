@@ -816,7 +816,7 @@ func ResolveImportedArtifact(root string, requested model.Artifact) (model.Artif
 	if err := json.Unmarshal(evidenceData, &evidence); err != nil {
 		return model.Artifact{}, Evidence{}, err
 	}
-	if !evidence.Qualified || !artifactIdentityMatches(evidence.Artifact, requested) || (requested.ContentSHA256 != "" && evidence.ContentSHA256 != requested.ContentSHA256) || evidence.ContentSHA256 != selected.Artifact.ContentSHA256 || (evidence.Artifact.ContentSHA256 != "" && evidence.Artifact.ContentSHA256 != selected.Artifact.ContentSHA256) || evidence.ArtifactPath != selected.ArtifactPath {
+	if !evidence.Qualified || !artifactIdentityMatches(evidence.Artifact, requested) || (requested.ContentSHA256 != "" && evidence.ContentSHA256 != requested.ContentSHA256) || evidence.ContentSHA256 != selected.Artifact.ContentSHA256 || (evidence.Artifact.ContentSHA256 != "" && evidence.Artifact.ContentSHA256 != selected.Artifact.ContentSHA256) {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("imported evidence for %s is not bound to the manifest", requested.Name)
 	}
 	if err := validateReleaseQualification(evidence); err != nil {

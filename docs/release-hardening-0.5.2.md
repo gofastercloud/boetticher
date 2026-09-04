@@ -65,11 +65,12 @@ manifest.
 
 The current reuse rule is based on artifact coordinates, effective build-input
 identity, base dependency, artifact bytes, and complete qualification
-evidence. Missing or malformed evidence currently sends the artifact through
-the normal build/qualification path instead of repairing evidence in place.
-The 0.5.2 target is to preserve the content-bound qualification while allowing
+evidence. The qualification statement now treats `ArtifactPath` as an
+optional local cache hint rather than an identity field; when it is absent,
+the resolver derives the fixed cache path from artifact coordinates. The
+0.5.2 target is to preserve content-bound qualification while allowing
 existing bytes to be requalified or have missing evidence regenerated where
-supported.
+supported, instead of treating a missing sidecar as an image-build failure.
 
 ## PKI and operator baseline
 

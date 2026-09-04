@@ -37,7 +37,10 @@ func TestEvidenceUsesActualArtifactBytes(t *testing.T) {
 
 func TestQualifiedArtifactReuseIgnoresSourceDefinitionRevision(t *testing.T) {
 	root := t.TempDir()
-	artifactPath := filepath.Join(root, "logging.tar.zst")
+	artifactPath := filepath.Join(root, "generated", "artifacts", "boetticher-logging", "boetticher-logging-1.0.0-amd64.tar.zst")
+	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(artifactPath, []byte("qualified appliance bytes"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -57,6 +60,7 @@ func TestQualifiedArtifactReuseIgnoresSourceDefinitionRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	evidence.ArtifactPath = ""
 	if err := WriteEvidence(root, requested.Name, evidence); err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +321,7 @@ func TestResolveArtifactEvidenceRejectsChangedQualificationInputs(t *testing.T) 
 	}
 }
 
-func TestWriteEvidenceRequiresControllerVisibleArtifactBytes(t *testing.T) {
+func TestWriteEvidenceAllowsPortableQualificationStatement(t *testing.T) {
 	artifact, err := ArtifactFor("logging")
 	if err != nil {
 		t.Fatal(err)
@@ -327,8 +331,21 @@ func TestWriteEvidenceRequiresControllerVisibleArtifactBytes(t *testing.T) {
 		ContentSHA256:    strings.Repeat("c", 64),
 		DefinitionSHA256: artifact.DefinitionSHA256,
 	})
-	if err := WriteEvidence(t.TempDir(), artifact.Name, evidence); err == nil || !strings.Contains(err.Error(), "artifact path") {
-		t.Fatalf("evidence without a verifiable artifact path was accepted: %v", err)
+	evidence.QualificationPolicyVersion = QualificationPolicyVersion
+	evidence.QualificationEvaluator = QualificationEvaluator
+	evidence.ScanCompleted = true
+	evidence.Qualified = true
+	evidence.qualifiedByEvaluator = true
+	root := t.TempDir()
+	if err := WriteEvidence(root, artifact.Name, evidence); err != nil {
+		t.Fatalf("portable qualification statement was rejected: %v", err)
+	}
+	loaded, err := LoadEvidence(root, artifact.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ArtifactPath != "" {
+		t.Fatalf("portable evidence retained a cache path: %q", loaded.ArtifactPath)
 	}
 }
 
