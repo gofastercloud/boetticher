@@ -563,6 +563,25 @@ func TestArtifactDefinitionDigestBindsBuildInputs(t *testing.T) {
 	}
 }
 
+func TestFirewallDefinitionBindsCompiledTelemetryInputs(t *testing.T) {
+	definition, ok := Lookup("firewall")
+	if !ok {
+		t.Fatal("firewall artifact definition is missing")
+	}
+	for _, required := range []string{"cmd/boetticher-firewall-telemetry", "internal/firewalltelemetry"} {
+		found := false
+		for _, input := range definition.Inputs {
+			if input == required {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("firewall artifact definition omits compiled input %q", required)
+		}
+	}
+}
+
 func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	root := filepath.Join("..", "..", "images")
 	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "tailnet-router/image.yaml", "bifrost/image.yaml", "printer/image.yaml", "aiops/image.yaml"}

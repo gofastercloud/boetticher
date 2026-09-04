@@ -38,7 +38,8 @@ if [ -e "$run_pid_file" ]; then
         printf '%s\n' 'HOLD: another native builder run is active' >&2
         exit 2
       fi
-      rm -f -- "$run_pid_file"
+      printf '%s\n' 'HOLD: previous native builder cleanup left a run marker; inspect mounts and remove it only after verification' >&2
+      exit 2
       ;;
   esac
 fi
@@ -51,6 +52,7 @@ mounted_fuse=0
 mounted_pts=0
 mounted_proc=0
 child_pid=
+cleanup_failed=0
 cleanup() {
 	status=$?
 	if [ -n "$child_pid" ]; then
@@ -58,46 +60,73 @@ cleanup() {
 		# leader. Resolve the session leader and terminate every process in
 		# that private session so background image workers cannot escape.
 		cleanup_pid=$child_pid
-		child_session_pid=$(ps -eo pid=,ppid= | awk -v parent="$child_pid" '$2 == parent {print $1; exit}')
+		if ! child_session_pid=$(ps -eo pid=,ppid= | awk -v parent="$child_pid" '$2 == parent {print $1; exit}'); then
+			cleanup_failed=1
+			child_session_pid=
+		fi
 		case "$child_session_pid" in
 			''|*[!0-9]*) ;;
 			*) cleanup_pid=$child_session_pid ;;
 		esac
-		child_session=$(ps -o sid= -p "$cleanup_pid" 2>/dev/null | tr -d ' ' || true)
+		if ! child_session=$(ps -o sid= -p "$cleanup_pid" 2>/dev/null | tr -d ' '); then
+			cleanup_failed=1
+			child_session=
+		fi
 		case "$child_session" in
-			''|*[!0-9]*) kill -TERM "$child_pid" 2>/dev/null || true ;;
+			''|*[!0-9]*)
+				if kill -0 "$child_pid" 2>/dev/null && ! kill -TERM "$child_pid" 2>/dev/null; then
+					cleanup_failed=1
+				fi
+				;;
 			*)
-				for session_pid in $(ps -eo pid=,sid= | awk -v sid="$child_session" '$2 == sid {print $1}'); do
+				if ! session_pids=$(ps -eo pid=,sid= | awk -v sid="$child_session" '$2 == sid {print $1}'); then
+					cleanup_failed=1
+					session_pids=
+				fi
+				for session_pid in $session_pids; do
 					case "$session_pid" in
 						''|*[!0-9]*) ;;
-						*) kill -TERM "$session_pid" 2>/dev/null || true ;;
+						*)
+							if kill -0 "$session_pid" 2>/dev/null && ! kill -TERM "$session_pid" 2>/dev/null; then
+								cleanup_failed=1
+							fi
+							;;
 					esac
 				done
 				;;
 		esac
 		wait "$child_pid" 2>/dev/null || true
+		if [ -n "$child_session" ]; then
+			remaining_session_pids=$(ps -eo pid=,sid= | awk -v sid="$child_session" '$2 == sid {print $1}' || true)
+			[ -z "$remaining_session_pids" ] || cleanup_failed=1
+		fi
 	fi
 	if [ "$mounted_proc" -eq 1 ]; then
-    umount "$native_root/proc" 2>/dev/null || true
-  fi
-  if [ "$mounted_pts" -eq 1 ]; then
-    umount "$native_root/dev/pts" 2>/dev/null || true
-  fi
-  if [ "$mounted_kvm" -eq 1 ]; then
-    umount "$native_root/dev/kvm" 2>/dev/null || true
-  fi
-  if [ "$mounted_fuse" -eq 1 ]; then
-    umount "$native_root/dev/fuse" 2>/dev/null || true
-  fi
-  if [ "$mounted_dev" -eq 1 ]; then
-    umount "$native_root/dev" 2>/dev/null || true
-  fi
-  if [ -f "$run_pid_file" ]; then
-    IFS=' ' read -r recorded_run_id recorded_pid < "$run_pid_file" || true
-    if [ "$recorded_pid" = "$$" ] && { [ -z "$native_run_id" ] || [ "$recorded_run_id" = "$native_run_id" ]; }; then
-      rm -f -- "$run_pid_file"
-    fi
-  fi
+		umount "$native_root/proc" 2>/dev/null || cleanup_failed=1
+	fi
+	if [ "$mounted_pts" -eq 1 ]; then
+		umount "$native_root/dev/pts" 2>/dev/null || cleanup_failed=1
+	fi
+	if [ "$mounted_kvm" -eq 1 ]; then
+		umount "$native_root/dev/kvm" 2>/dev/null || cleanup_failed=1
+	fi
+	if [ "$mounted_fuse" -eq 1 ]; then
+		umount "$native_root/dev/fuse" 2>/dev/null || cleanup_failed=1
+	fi
+	if [ "$mounted_dev" -eq 1 ]; then
+		umount "$native_root/dev" 2>/dev/null || cleanup_failed=1
+	fi
+	if [ "$cleanup_failed" -eq 0 ] && [ -f "$run_pid_file" ]; then
+		IFS=' ' read -r recorded_run_id recorded_pid < "$run_pid_file" || true
+		if [ "$recorded_pid" = "$$" ] && { [ -z "$native_run_id" ] || [ "$recorded_run_id" = "$native_run_id" ]; }; then
+			rm -f -- "$run_pid_file" || cleanup_failed=1
+		fi
+	fi
+	if [ "$cleanup_failed" -ne 0 ]; then
+		printf '%s\n' 'HOLD: native builder cleanup did not complete; run marker retained for operator inspection' >&2
+		[ "$status" -eq 0 ] && status=2
+	fi
+	exit "$status"
 }
 trap cleanup EXIT HUP INT TERM
 install -d -m 0755 "$native_root/dev" "$native_root/proc"

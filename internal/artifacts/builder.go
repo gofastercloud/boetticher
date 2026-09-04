@@ -230,12 +230,12 @@ func addArchiveFile(root, path string, entry fs.DirEntry, writer *tar.Writer) er
 	if err != nil || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("build input escapes source root: %s", path)
 	}
-	file, err := os.Open(path)
+	file, openedInfo, err := openEvidenceFile(path, "public build input")
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	header, err := tar.FileInfoHeader(info, "")
+	header, err := tar.FileInfoHeader(openedInfo, "")
 	if err != nil {
 		return err
 	}
@@ -244,7 +244,7 @@ func addArchiveFile(root, path string, entry fs.DirEntry, writer *tar.Writer) er
 	// Source file modification times are not desired-state inputs. A fixed
 	// timestamp keeps the transferred source bundle deterministic.
 	header.ModTime = time.Unix(0, 0).UTC()
-	if info.Mode()&0o111 != 0 {
+	if openedInfo.Mode()&0o111 != 0 {
 		header.Mode = 0o755
 	} else {
 		header.Mode = 0o644

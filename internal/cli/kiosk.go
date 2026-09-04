@@ -136,18 +136,20 @@ func runCompanionMigrate(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if present {
+		rootRunner := proxmoxRootSSHRunner(migrated, *siteDir)
+		if _, err := rootRunner.RunArgs(context.Background(), migrated.BootstrapAddress, "root", proxmox.LegacyStreamDeckUSBRemovalArgs()); err != nil {
+			return fmt.Errorf("remove exact legacy StreamDeck USB mapping before guest removal: %w; legacy site state remains available for retry", err)
+		}
+		if err := proxmox.RemoveLegacyStreamDeck(context.Background(), client, node); err != nil {
+			return fmt.Errorf("remove legacy StreamDeck guest: %w; legacy site state remains available for retry", err)
+		}
+	}
 	if err := site.ApplyLegacyStreamDeckMigration(*siteDir, config, filteredRetained); err != nil {
-		return fmt.Errorf("commit companion migration state: %w", err)
+		return fmt.Errorf("commit companion migration state after legacy guest removal: %w; the old guest was removed and must not be recreated", err)
 	}
 	if err := writeModelProjections(*siteDir, migrated); err != nil {
-		return fmt.Errorf("refresh migrated projections: %w; migration state is committed and the old guest was not removed", err)
-	}
-	rootRunner := proxmoxRootSSHRunner(migrated, *siteDir)
-	if _, err := rootRunner.RunArgs(context.Background(), migrated.BootstrapAddress, "root", proxmox.LegacyStreamDeckUSBRemovalArgs()); err != nil {
-		return fmt.Errorf("remove exact legacy StreamDeck USB mapping before guest removal: %w; migration state is committed and the old guest was not removed", err)
-	}
-	if err := proxmox.RemoveLegacyStreamDeck(context.Background(), client, node); err != nil {
-		return fmt.Errorf("remove legacy StreamDeck guest: %w; migration state is committed", err)
+		return fmt.Errorf("refresh migrated projections: %w; migrated site state is committed after legacy guest removal", err)
 	}
 	if present {
 		fmt.Fprintln(out, "Legacy guest: PASS exact owned StreamDeck LXC removed and verified absent")
