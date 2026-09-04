@@ -1800,7 +1800,6 @@ func TestPulseProxyAuthMapsOnlyApprovedClientIdentities(t *testing.T) {
 	for _, expected := range []string{
 		"CN=client-operator.{{ domain }},O=boetticher",
 		"CN=client-lab-display-01-kiosk.{{ domain }},O=boetticher",
-		"CN=client-boetticher-reconciler.{{ domain }},O=boetticher",
 		"location = /api/health",
 		"location = /api/state/summary",
 		"location = /api/resources",

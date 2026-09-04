@@ -1169,19 +1169,19 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return fmt.Errorf("open Pulse API tunnel through Proxmox bastion: %w", err)
 		}
 		pulseBaseURL := "https://" + pulseForward.Address()
-		clientCertificate, issueErr := pki.IssueClient(authority, "boetticher-reconciler", s.Network.Domain, time.Now().UTC())
-		if issueErr != nil {
-			return fmt.Errorf("issue runtime Pulse reconciliation certificate: %w", issueErr)
-		}
 		pulseAdmin, clientErr := pulse.NewAdminClient(pulse.ClientConfig{
 			BaseURL: pulseBaseURL, AdminUser: "admin", AdminPassword: pulseAdminPassword,
-			CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
+			CAPEM:      authority.RootCertPEM,
 			ServerName: "monitor." + s.Network.Domain,
 		})
 		if clientErr != nil {
 			return clientErr
 		}
 		if aiopsEnabled {
+			clientCertificate, issueErr := pki.IssueClient(authority, "boetticher-reconciler", s.Network.Domain, time.Now().UTC())
+			if issueErr != nil {
+				return fmt.Errorf("issue runtime AIOps canary certificate: %w", issueErr)
+			}
 			aiRouterForward, err = bastionRunner.StartLocalForward(ctx, s.BootstrapAddress, "lab-jump", "10.10.20.60", 443)
 			if err != nil {
 				return fmt.Errorf("open AI Router canary tunnel through Proxmox bastion: %w", err)

@@ -23,10 +23,6 @@ server {
         set $boetticher_pulse_proxy_user kiosk;
         set $boetticher_pulse_proxy_role kiosk;
     }
-    if ($ssl_client_s_dn = "CN=client-boetticher-reconciler.{{ domain }},O=boetticher") {
-        set $boetticher_pulse_proxy_user reconciler;
-        set $boetticher_pulse_proxy_role admin;
-    }
     include /run/boetticher/pulse-proxy-auth.conf;
 
     # The companion StreamDeck capability and controller read client are read-only and use
