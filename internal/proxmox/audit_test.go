@@ -133,3 +133,15 @@ func TestPurgeModuleHoldsForUndeclaredPersistentVolume(t *testing.T) {
 		t.Fatalf("undeclared persistent volume was not held: %v", err)
 	}
 }
+
+func TestQEMUPurgeRejectsUndeclaredDiskForms(t *testing.T) {
+	guest := GuestPlan{Name: "lab-fw-01", Volumes: nil}
+	for _, key := range []string{"unused0", "sata1", "virtio1", "efidisk0", "tpmstate0", "ide3"} {
+		if err := validateNoUndeclaredQEMUPersistentVolumes(map[string]any{"scsi0": "local:100/vm-100-disk-0.qcow2", key: "foreign"}, guest); err == nil {
+			t.Fatalf("undeclared QEMU disk key %s was accepted", key)
+		}
+	}
+	if err := validateNoUndeclaredQEMUPersistentVolumes(map[string]any{"scsi0": "root", "ide2": "local:cloudinit"}, guest); err != nil {
+		t.Fatalf("declared cloud-init auxiliary disk was rejected: %v", err)
+	}
+}

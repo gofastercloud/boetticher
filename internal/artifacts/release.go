@@ -1111,7 +1111,7 @@ func validateOutputPath(path string) error {
 
 func validateBundlePath(name string) error {
 	clean := filepath.ToSlash(filepath.Clean(name))
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(name) || strings.Contains(clean, "\\") || clean != name {
+	if name == "" || strings.ContainsRune(name, 0) || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") || filepath.IsAbs(name) || strings.Contains(clean, "\\") || clean != name {
 		return fmt.Errorf("release member path %q is unsafe", name)
 	}
 	if !strings.HasPrefix(clean, "artifacts/") && !strings.HasPrefix(clean, "evidence/") && !strings.HasPrefix(clean, "companion/") {

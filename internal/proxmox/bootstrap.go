@@ -1789,6 +1789,16 @@ func EnsureScopedCredentialACL(ctx context.Context, runner CommandRunner, addres
 	if !safeID(userID) || !safeID(tokenID) || !safeID(role) {
 		return errors.New("Proxmox identity and token IDs must be simple identifiers")
 	}
+	roleOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/roles --output-format json"))
+	if err != nil {
+		return fmt.Errorf("inspect scoped Proxmox role: %w", err)
+	}
+	if exists, roleErr := validateScopedRoleJSON(roleOutput, role, ScopedProvisionerPrivileges()); roleErr != nil || !exists {
+		if roleErr != nil {
+			return fmt.Errorf("validate scoped Proxmox role: %w", roleErr)
+		}
+		return fmt.Errorf("validate scoped Proxmox role: role %q is absent", role)
+	}
 	aclOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/acl --output-format json"))
 	if err != nil {
 		return fmt.Errorf("inspect existing scoped Proxmox ACLs: %w", err)
@@ -1801,6 +1811,13 @@ func EnsureScopedCredentialACL(ctx context.Context, runner CommandRunner, addres
 	}
 	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--tokens", userID+"!"+tokenID, role); err != nil {
 		return fmt.Errorf("assign bounded Proxmox role to token: %w", err)
+	}
+	updatedACL, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/acl --output-format json"))
+	if err != nil {
+		return fmt.Errorf("verify scoped Proxmox ACLs: %w", err)
+	}
+	if err := validateScopedProvisionerACL(updatedACL, userID, tokenID, role); err != nil {
+		return fmt.Errorf("verify scoped Proxmox ACLs: %w", err)
 	}
 	return nil
 }
@@ -1846,6 +1863,41 @@ func removeLegacyScopedCredentialACLs(ctx context.Context, runner CommandRunner,
 		command := "pvesh delete /access/acl --path / " + subject.flag + " " + shellQuote(subject.value) + " --roles " + shellQuote(role)
 		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, command)); err != nil {
 			return fmt.Errorf("remove root %s ACL: %w", subject.typ, err)
+		}
+	}
+	return nil
+}
+
+func validateScopedProvisionerACL(aclOutput []byte, userID, tokenID, role string) error {
+	var acls []scopedCredentialACLEntry
+	if err := decodeAccessList(aclOutput, &acls); err != nil {
+		return fmt.Errorf("decode ACL listing: %w", err)
+	}
+	expected := map[string]string{userID: "user", userID + "!" + tokenID: "token"}
+	allowedPaths := make(map[string]bool, len(scopedProvisionerACLPaths()))
+	for _, path := range scopedProvisionerACLPaths() {
+		allowedPaths[path] = true
+	}
+	seen := make(map[string]bool, len(expected)*len(allowedPaths))
+	for _, acl := range acls {
+		expectedType, relevant := expected[acl.UGID]
+		if !relevant {
+			continue
+		}
+		if acl.Path == "/" || !allowedPaths[acl.Path] || acl.Propagate != 1 || acl.RoleID != role || acl.Type != expectedType {
+			return errors.New("scoped credential ACL is unexpected")
+		}
+		key := acl.UGID + "\x00" + acl.Path
+		if seen[key] {
+			return errors.New("scoped credential ACL is duplicated")
+		}
+		seen[key] = true
+	}
+	for ugid := range expected {
+		for _, path := range scopedProvisionerACLPaths() {
+			if !seen[ugid+"\x00"+path] {
+				return fmt.Errorf("scoped credential ACL %q at %s is absent", ugid, path)
+			}
 		}
 	}
 	return nil

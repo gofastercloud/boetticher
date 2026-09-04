@@ -3,6 +3,7 @@ package proxmox
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -659,19 +660,34 @@ func TestCreateScopedCredentialsCreatesRoleAtCollectionEndpoint(t *testing.T) {
 }
 
 func TestEnsureScopedCredentialACLRepairsBackingUserAndToken(t *testing.T) {
+	acls := make([]scopedCredentialACLEntry, 0, len(scopedProvisionerACLPaths())*2)
+	for _, subject := range []struct {
+		value string
+		typ   string
+	}{{"labadmin@pve", "user"}, {"labadmin@pve!boetticher", "token"}} {
+		for _, path := range scopedProvisionerACLPaths() {
+			acls = append(acls, scopedCredentialACLEntry{Path: path, Propagate: 1, RoleID: "BoetticherProvisioner", Type: subject.typ, UGID: subject.value})
+		}
+	}
+	aclData, err := json.Marshal(acls)
+	if err != nil {
+		t.Fatal(err)
+	}
 	runner := &fakeRunner{responses: map[string][]byte{
-		"pvesh get /access/acl --output-format json": []byte(`[]`),
+		"pvesh get /access/roles --output-format json": []byte(`[{"roleid":"BoetticherProvisioner","privs":"` + ScopedProvisionerPrivileges() + `","special":0}]`),
+		"pvesh get /access/acl --output-format json":   aclData,
 	}}
 	if err := EnsureScopedCredentialACL(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"pvesh get /access/acl --output-format json"}
+	want := []string{"pvesh get /access/roles --output-format json", "pvesh get /access/acl --output-format json"}
 	for _, path := range scopedProvisionerACLPaths() {
 		want = append(want, "pvesh set /access/acl --path '"+path+"' --users 'labadmin@pve' --roles 'BoetticherProvisioner' --propagate 1")
 	}
 	for _, path := range scopedProvisionerACLPaths() {
 		want = append(want, "pvesh set /access/acl --path '"+path+"' --tokens 'labadmin@pve!boetticher' --roles 'BoetticherProvisioner' --propagate 1")
 	}
+	want = append(want, "pvesh get /access/acl --output-format json")
 	if !reflect.DeepEqual(runner.commands, want) {
 		t.Fatalf("scoped credential ACL repair commands = %#v, want %#v", runner.commands, want)
 	}

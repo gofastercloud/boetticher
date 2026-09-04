@@ -1198,15 +1198,29 @@ func validateExistingQEMUVolumes(current map[string]any, plan Plan, guest GuestP
 
 func validateNoUndeclaredQEMUPersistentVolumes(current map[string]any, expected GuestPlan) error {
 	for key := range current {
-		if !strings.HasPrefix(key, "scsi") {
+		if strings.HasPrefix(key, "scsi") {
+			index, ok := qemuSCSIIndex(key)
+			if ok && index == 0 {
+				continue
+			}
+			if !ok || index > len(expected.Volumes) {
+				return fmt.Errorf("HOLD: guest %s has an undeclared persistent volume %s", expected.Name, key)
+			}
 			continue
 		}
-		index, ok := qemuSCSIIndex(key)
-		if !ok || index == 0 {
-			continue
+		for _, prefix := range []string{"sata", "virtio", "efidisk", "tpmstate", "unused"} {
+			if strings.HasPrefix(key, prefix) {
+				return fmt.Errorf("HOLD: guest %s has an undeclared persistent volume %s", expected.Name, key)
+			}
 		}
-		if index > len(expected.Volumes) {
+		if strings.HasPrefix(key, "ide") && key != "ide2" {
 			return fmt.Errorf("HOLD: guest %s has an undeclared persistent volume %s", expected.Name, key)
+		}
+		if key == "ide2" {
+			observed, _ := current[key].(string)
+			if observed != "local:cloudinit" {
+				return fmt.Errorf("HOLD: guest %s has an unexpected auxiliary disk %s", expected.Name, key)
+			}
 		}
 	}
 	return nil

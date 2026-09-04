@@ -150,6 +150,12 @@ func TestReleaseBundleRejectsUntrustedKeyBeforeCreatingDestination(t *testing.T)
 	}
 }
 
+func TestReleaseBundlePathRejectsNUL(t *testing.T) {
+	if err := validateBundlePath("artifacts/example/" + string(rune(0))); err == nil {
+		t.Fatal("NUL-containing release member path was accepted")
+	}
+}
+
 func TestReleaseBundleRejectsIncompleteQualificationEvidence(t *testing.T) {
 	root := t.TempDir()
 	artifactPath := filepath.Join(root, "artifact")
