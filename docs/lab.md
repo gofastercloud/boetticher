@@ -165,6 +165,11 @@ does not change the operator lifecycle or substitute for official hosted
 release evidence. The official workflow builds all
 supported artifacts, scans and qualifies their final bytes, binds evidence to
 those bytes, and assembles the signed bundle from one exact source revision.
+Native maintainer runs reuse a qualified artifact only when its effective
+build-input digest, base dependency, bytes, and qualification evidence all
+resolve successfully; otherwise they rebuild or requalify that artifact and
+its dependency closure. Release source provenance remains the exact source
+revision used for controller and bundle assembly.
 
 ## Recovery
 

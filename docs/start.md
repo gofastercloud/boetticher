@@ -90,6 +90,15 @@ iteration; they do not create Proxmox guests and do not replace the official
 hosted build, scan, qualification, signed-bundle, and exact-source release
 gates.
 
+Qualified artifacts are reusable when their artifact definition digest, base
+dependency, artifact bytes, and complete qualification evidence still match.
+Controller, documentation, test, release-import, and maintainer-wrapper
+changes do not force unrelated image reconstruction. Changes to an image's
+declared inputs invalidate that artifact and its dependants; missing or
+mismatched evidence fails closed and sends the artifact through the normal
+build and qualification path. The official release still records one exact
+source revision separately from each artifact's effective build-input identity.
+
 For a three-drive development machine, keep the operating system on the
 internal NVMe boot drive, put the persistent Linux build root, downloads,
 caches, and generated maintainer artifacts there, and use the stable 1 TB drive
