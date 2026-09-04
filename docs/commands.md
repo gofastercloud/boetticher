@@ -7,14 +7,13 @@ description: A generated menu of every public Boetticher command form.
 
 # Command reference
 
-This page is generated from the same usage menu as `boetticher help`. Most days you will change the site, make a live plan, deploy its digest, and check status. Add `--help` to any command for the friendly, full explanation.
+This page is generated from the same usage menu as `boetticher help`. Most days you will change the site, deploy the reviewed live plan, and check status. Add `--help` to any command for the friendly, full explanation.
 
 ## The usual loop
 
 ```text
 boetticher bundle import ./boetticher-0.5.1.tar.gz --site ./my-boetticher
-boetticher plan --site ./my-boetticher --live --json
-boetticher deploy --plan sha256:... --site ./my-boetticher
+boetticher deploy --site ./my-boetticher
 boetticher status --site ./my-boetticher --details --live
 ```
 
@@ -24,7 +23,7 @@ boetticher status --site ./my-boetticher --details --live
 boetticher init [--site-dir DIR] [--age-identity PATH] [--external-firewall] [--storage-profile single-disk|dedicated-data-disk] [--storage-device /dev/disk/by-id/DEVICE]
 boetticher enroll [--site DIR] [--bootstrap-address ADDRESS] [--operator-key PATH] [--age-identity PATH] [--recovery-confirmed] [--storage-confirmed] [--known-hosts PATH] [--proxmox-ca PATH] [--initial-user USER] [--insecure] [--trunk-interface IFACE] [--replace-scoped-credentials] [--dry-run]
 boetticher plan [--site DIR] [--live] [--json]
-boetticher deploy --plan DIGEST [--site DIR] [--age-identity PATH] [--confirm]
+boetticher deploy [--plan DIGEST] [--site DIR] [--age-identity PATH] [--confirm]
 boetticher status [--site DIR] [--live] [--details] [--json]
 boetticher module list|configure|enable|disable NAME [--site DIR] [--confirm] [--json]
 boetticher network reservation|record add|remove|list [--site DIR]

@@ -14,13 +14,13 @@ than downloaded at runtime, so `module list` always shows the complete menu.
 ```text
 boetticher module list --site ./my-boetticher
 boetticher module configure printer --site ./my-boetticher
-boetticher plan --site ./my-boetticher --live --json
-boetticher deploy --plan sha256:PLAN_DIGEST --site ./my-boetticher
+boetticher deploy --site ./my-boetticher
 ```
 
 `module configure`, `module enable`, and `module disable` change the desired
 settings in your site directory; deployment remains a separate, deliberate
-step. Make a live plan after the change, then deploy the digest you reviewed.
+step. Interactive deploy makes the live plan and asks you to approve it; scripted
+deployments can still pass the exact digest explicitly.
 `status --details` is the consolidated read-only operational view. Try
 `--dry-run` whenever you want a preview without saving anything.
 
@@ -117,8 +117,7 @@ Later deployments reuse that profile. Rotate it only when you mean to:
 
 ```text
 boetticher module secrets airvpn rotate --confirm --site ./my-boetticher
-boetticher plan --site ./my-boetticher --live --json
-boetticher deploy --plan sha256:PLAN_DIGEST --site ./my-boetticher
+boetticher deploy --site ./my-boetticher
 ```
 
 Traffic from an AirVPN-selected module leaves through `lab-airvpn-01`

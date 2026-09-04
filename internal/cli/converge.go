@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -46,6 +48,56 @@ func runDeploy(args []string, out io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return runDeployWithContext(ctx, args, out)
+}
+
+func stdinIsTerminal() bool {
+	info, err := os.Stdin.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+func guideInteractiveDeploy(siteDir, ageIdentity string, out io.Writer) (string, error) {
+	var planOutput bytes.Buffer
+	if err := runPlanRequest(planRequest{
+		siteDir: siteDir, ageIdentity: ageIdentity, live: true,
+	}, &planOutput); err != nil {
+		return "", fmt.Errorf("prepare live deployment plan: %w", err)
+	}
+	digest, err := planDigestFromOutput(planOutput.String())
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(out, &planOutput); err != nil {
+		return "", err
+	}
+	fmt.Fprintf(out, "Apply this exact live plan (%s)? Type APPLY to continue: ", digest)
+	answer, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("read deployment approval: %w", err)
+	}
+	if strings.TrimSpace(answer) != "APPLY" {
+		return "", errors.New("deployment not approved")
+	}
+	return digest, nil
+}
+
+func planDigestFromOutput(output string) (string, error) {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "Digest:") {
+			continue
+		}
+		digest := strings.TrimSpace(strings.TrimPrefix(line, "Digest:"))
+		if len(digest) != len("sha256:")+64 || !strings.HasPrefix(digest, "sha256:") {
+			return "", errors.New("live deployment plan returned an invalid digest")
+		}
+		for _, char := range digest[len("sha256:"):] {
+			if !strings.ContainsRune("0123456789abcdef", char) {
+				return "", errors.New("live deployment plan returned an invalid digest")
+			}
+		}
+		return digest, nil
+	}
+	return "", errors.New("live deployment plan did not return a digest")
 }
 
 func validateDeployRecoveryOptions(gatewayMode string, replaceFirewall, recreateLegacyLXCs, confirm, dryRun bool) error {
@@ -160,7 +212,14 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return err
 	}
 	if !*dryRun && *planDigestFlag == "" {
-		return errors.New("deploy requires --plan DIGEST; run boetticher plan --live first")
+		if !stdinIsTerminal() {
+			return errors.New("deploy requires --plan DIGEST when stdin is not an interactive terminal; run boetticher plan --live first")
+		}
+		approvedDigest, approveErr := guideInteractiveDeploy(*siteDir, *ageIdentity, out)
+		if approveErr != nil {
+			return approveErr
+		}
+		*planDigestFlag = approvedDigest
 	}
 	report.dryRun = *dryRun
 	report.start("validate", "Validate desired state")

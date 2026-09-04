@@ -930,3 +930,23 @@ func TestVerifyFirewallBootstrapNetworkChecksStableRolesAndAddresses(t *testing.
 		t.Fatalf("read-only bootstrap network probes unnecessarily require sudo: %s", command)
 	}
 }
+
+func TestPlanDigestFromOutputRequiresCanonicalSHA256Digest(t *testing.T) {
+	want := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	got, err := planDigestFromOutput("Deployment plan: PASS\n  Digest: " + want + "\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("digest = %q, want %q", got, want)
+	}
+	for _, output := range []string{
+		"Deployment plan: PASS\n",
+		"  Digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg\n",
+		"  Digest: sha256:0123456789abcdef\n",
+	} {
+		if _, err := planDigestFromOutput(output); err == nil {
+			t.Fatalf("plan digest parser accepted invalid output %q", output)
+		}
+	}
+}

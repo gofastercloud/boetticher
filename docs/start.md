@@ -55,8 +55,7 @@ review its live plan, apply exactly that digest, and inspect the result:
 
 ```text
 boetticher bundle import ./boetticher-0.5.1.tar.gz --site ./my-boetticher
-boetticher plan --site ./my-boetticher --live --json
-boetticher deploy --plan sha256:PLAN_DIGEST --site ./my-boetticher
+boetticher deploy --site ./my-boetticher
 boetticher status --site ./my-boetticher --details --live
 ```
 
