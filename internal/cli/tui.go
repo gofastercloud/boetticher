@@ -13,7 +13,6 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/application"
 	"github.com/gofastercloud/boetticher/internal/model"
-	"github.com/gofastercloud/boetticher/internal/pki"
 	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/tui"
@@ -124,10 +123,6 @@ func readTUIObservability(ctx context.Context, siteDir string) (application.Metr
 	if err != nil {
 		return application.Metrics{}, fmt.Errorf("load Pulse read credential: %w", err)
 	}
-	certificate, err := pki.IssueClient(authority, "boetticher-tui", s.Network.Domain, time.Now().UTC())
-	if err != nil {
-		return application.Metrics{}, fmt.Errorf("issue Pulse client certificate: %w", err)
-	}
 	forward, err := proxmoxBastionSSHRunner(s, siteDir).StartLocalForward(ctx, s.BootstrapAddress, "lab-jump", "10.10.10.20", 443)
 	if err != nil {
 		return application.Metrics{}, fmt.Errorf("open Pulse API tunnel: %w", err)
@@ -135,7 +130,7 @@ func readTUIObservability(ctx context.Context, siteDir string) (application.Metr
 	defer forward.Close()
 	client, err := pulse.NewReadClient(pulse.ClientConfig{
 		BaseURL: "https://" + forward.Address(), APIToken: token,
-		CAPEM: authority.IssuingCertPEM, ClientCertPEM: certificate.CertPEM, ClientKeyPEM: certificate.KeyPEM,
+		CAPEM:      authority.RootCertPEM,
 		ServerName: "monitor." + s.Network.Domain,
 	})
 	if err != nil {

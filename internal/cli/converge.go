@@ -1153,13 +1153,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		} else if tokenErr != nil {
 			return fmt.Errorf("load encrypted Pulse read token: %w", tokenErr)
 		}
-		readClientCertificate, clientErr := pki.IssueClient(authority, "boetticher-pulse-read", s.Network.Domain, time.Now().UTC())
-		if clientErr != nil {
-			return fmt.Errorf("issue Pulse read client certificate: %w", clientErr)
-		}
 		pulseRead, clientErr := pulse.NewReadClient(pulse.ClientConfig{
 			BaseURL: pulseBaseURL, APIToken: readToken,
-			CAPEM: authority.IssuingCertPEM, ClientCertPEM: readClientCertificate.CertPEM, ClientKeyPEM: readClientCertificate.KeyPEM,
+			CAPEM:      authority.RootCertPEM,
 			ServerName: "monitor." + s.Network.Domain,
 		})
 		if clientErr != nil {
@@ -1180,7 +1176,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			report.recordMutation("Secrets", "pulse_api_token", "credential refreshed", true)
 			pulseRead, clientErr = pulse.NewReadClient(pulse.ClientConfig{
 				BaseURL: pulseBaseURL, APIToken: readToken,
-				CAPEM: authority.IssuingCertPEM, ClientCertPEM: readClientCertificate.CertPEM, ClientKeyPEM: readClientCertificate.KeyPEM,
+				CAPEM:      authority.RootCertPEM,
 				ServerName: "monitor." + s.Network.Domain,
 			})
 			if clientErr != nil {
@@ -1813,13 +1809,9 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 	if err != nil {
 		return err
 	}
-	pulseReadCertificate, err := pki.IssueClient(authority, "boetticher-pulse-read", s.Network.Domain, time.Now().UTC())
-	if err != nil {
-		return fmt.Errorf("issue AIOps Pulse read client certificate: %w", err)
-	}
 	pulseRead, err := pulse.NewReadClient(pulse.ClientConfig{
 		BaseURL: pulseBaseURL, APIToken: readToken,
-		CAPEM: authority.IssuingCertPEM, ClientCertPEM: pulseReadCertificate.CertPEM, ClientKeyPEM: pulseReadCertificate.KeyPEM,
+		CAPEM:      authority.RootCertPEM,
 		ServerName: "monitor." + s.Network.Domain,
 	})
 	if err != nil {
@@ -1839,7 +1831,7 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 		report.recordMutation("Secrets", "aiops_pulse_read_token", "credential refreshed", true)
 		pulseRead, err = pulse.NewReadClient(pulse.ClientConfig{
 			BaseURL: pulseBaseURL, APIToken: readToken,
-			CAPEM: authority.IssuingCertPEM, ClientCertPEM: pulseReadCertificate.CertPEM, ClientKeyPEM: pulseReadCertificate.KeyPEM,
+			CAPEM:      authority.RootCertPEM,
 			ServerName: "monitor." + s.Network.Domain,
 		})
 		if err != nil {
