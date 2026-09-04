@@ -48,6 +48,7 @@ var PublicBuildInputs = []string{
 	"internal/logging",
 	"internal/model",
 	"internal/modules",
+	"internal/network",
 	"internal/networktest",
 	"internal/pathguard",
 	"internal/streamdeck",

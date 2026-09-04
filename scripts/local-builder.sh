@@ -36,6 +36,7 @@ remote_root=/var/lib/boetticher/local-builder
 remote_source="$remote_root/source"
 remote_output="$remote_root/output"
 remote_native_root="$remote_root/root"
+remote_native_source="$remote_native_root$remote_source"
 remote_native_output="$remote_native_root$remote_output"
 
 native_image_targets='image-base image-dns-blocky image-logging image-monitoring image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-aiops image-gatus image-network-probe image-firewall'
@@ -159,6 +160,11 @@ sync_native_source() {
   if ! native_ssh 'tar --extract --gzip --file=- --no-same-owner --no-same-permissions --directory=/var/lib/boetticher/local-builder/source' < "$source_archive"; then
     rm -f -- "$source_archive"
     fail 'could not transfer the public native-builder source archive'
+  fi
+  native_ssh "rm -rf -- $remote_native_source; install -d -m 0755 $remote_native_source"
+  if ! native_ssh "tar --extract --gzip --file=- --no-same-owner --no-same-permissions --directory=$remote_native_source" < "$source_archive"; then
+    rm -f -- "$source_archive"
+    fail 'could not refresh the isolated native-builder source archive'
   fi
   rm -f -- "$source_archive"
 }

@@ -38,6 +38,9 @@ func main() {
 		if err := artifacts.ExtractNativeBuilderOutputReader(os.Stdin, *root); err != nil {
 			fatal("extract native builder output: %v", err)
 		}
+		if err := artifacts.RebindEvidencePaths(*root); err != nil {
+			fatal("rebind native builder evidence: %v", err)
+		}
 	default:
 		fatal("usage: local-builder-archive -mode source -root CHECKOUT or -mode output -root CHECKOUT")
 	}
