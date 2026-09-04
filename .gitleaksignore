@@ -4,3 +4,15 @@
 6aeb12cfe20a5acc5ebd5c51f4a04e3b936733e6:internal/artifacts/catalog_test.go:generic-api-key:344
 6aeb12cfe20a5acc5ebd5c51f4a04e3b936733e6:internal/artifacts/catalog_test.go:generic-api-key:345
 6aeb12cfe20a5acc5ebd5c51f4a04e3b936733e6:scripts/build-images.sh:generic-api-key:39
+
+# Public Tailscale signing-key checksum metadata in the archived pre-0.1 module commit.
+1069f71a641c19e0ca18ef5348ecd20108818c3a:images/tailnet-router/image.yaml:generic-api-key:12
+1069f71a641c19e0ca18ef5348ecd20108818c3a:internal/artifacts/catalog_test.go:generic-api-key:581
+1069f71a641c19e0ca18ef5348ecd20108818c3a:scripts/build-images.sh:generic-api-key:60
+
+# Public PowerDNS signing-key checksum and fingerprint metadata in archived history.
+c27c981845d960146559ad785f576e4e22c391a9:images/dns/image.yaml:generic-api-key:17
+c27c981845d960146559ad785f576e4e22c391a9:images/dns/image.yaml:generic-api-key:18
+c27c981845d960146559ad785f576e4e22c391a9:internal/artifacts/catalog_test.go:generic-api-key:164
+c27c981845d960146559ad785f576e4e22c391a9:internal/artifacts/catalog_test.go:generic-api-key:165
+c27c981845d960146559ad785f576e4e22c391a9:scripts/build-images.sh:generic-api-key:29
