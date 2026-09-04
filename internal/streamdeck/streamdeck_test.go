@@ -24,22 +24,32 @@ func TestConfigRejectsUnknownFieldsAndUnsafePulseURL(t *testing.T) {
 	if err == nil {
 		t.Fatal("unsafe Pulse URL was accepted")
 	}
-	_, err = LoadConfig(strings.NewReader(`{"pulse_url":"https://monitor.example","client_certificate":"cert","client_key":"key","ca_certificate":"ca","unexpected":true}`))
+	_, err = LoadConfig(strings.NewReader(`{"pulse_url":"https://monitor.example","ca_certificate":"ca","unexpected":true}`))
 	if err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("unknown configuration field error = %v", err)
 	}
 }
 
 func TestConfigPinsSupportedStreamDeckIdentity(t *testing.T) {
-	config, err := LoadConfig(strings.NewReader(`{"pulse_url":"https://monitor.example","vendor_id":4057,"product_id":109,"model":"Stream Deck MK.2","client_certificate":"cert","client_key":"key","ca_certificate":"ca"}`))
+	config, err := LoadConfig(strings.NewReader(`{"pulse_url":"https://monitor.example","vendor_id":4057,"product_id":109,"model":"Stream Deck MK.2","ca_certificate":"ca"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if config.VendorID != DefaultVendorID || config.ProductID != DefaultProductID || config.Model != DefaultModel {
 		t.Fatalf("loaded StreamDeck identity = %#v", config)
 	}
-	if _, err := LoadConfig(strings.NewReader(`{"pulse_url":"https://monitor.example","vendor_id":4660,"product_id":109,"model":"Stream Deck MK.2","client_certificate":"cert","client_key":"key","ca_certificate":"ca"}`)); err == nil || !strings.Contains(err.Error(), "unsupported StreamDeck identity") {
+	if _, err := LoadConfig(strings.NewReader(`{"pulse_url":"https://monitor.example","vendor_id":4660,"product_id":109,"model":"Stream Deck MK.2","ca_certificate":"ca"}`)); err == nil || !strings.Contains(err.Error(), "unsupported StreamDeck identity") {
 		t.Fatalf("unsupported StreamDeck identity was accepted: %v", err)
+	}
+}
+
+func TestConfigHasNoClientCertificateIdentity(t *testing.T) {
+	data, err := json.Marshal(Config{PulseURL: "https://monitor.example", VendorID: DefaultVendorID, ProductID: DefaultProductID, Model: DefaultModel, CACertificate: "/etc/boetticher/ca.pem"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "client_certificate") || strings.Contains(string(data), "client_key") {
+		t.Fatalf("StreamDeck config retains a client certificate identity: %s", data)
 	}
 }
 

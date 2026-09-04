@@ -278,7 +278,6 @@ func runCompanionSetup(args []string, out io.Writer) error {
 		}
 	}
 	var pulseReadToken string
-	var streamDeckCertificate pki.ClientCertificate
 	if capabilities.StreamDeck {
 		pulseReadToken, err = site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_api_token")
 		if err != nil {
@@ -306,12 +305,6 @@ func runCompanionSetup(args []string, out io.Writer) error {
 			return err
 		}
 	}
-	if capabilities.StreamDeck {
-		streamDeckCertificate, err = ensureCompanionStreamDeckCertificate(*siteDir, s, authority)
-		if err != nil {
-			return err
-		}
-	}
 	password := ""
 	if capabilities.Display {
 		password, err = kioskImportPassword()
@@ -333,13 +326,10 @@ func runCompanionSetup(args []string, out io.Writer) error {
 		"kiosk_pulse_agent_token":          pulseAgentToken,
 		"streamdeck_binary":                streamDeckBinary,
 		"streamdeck_pulse_token":           pulseReadToken,
-		"streamdeck_client_identity":       companionStreamDeckIdentity,
 		"streamdeck_vendor_id":             streamdeck.DefaultVendorID,
 		"streamdeck_product_id":            streamdeck.DefaultProductID,
 		"streamdeck_model":                 streamdeck.DefaultModel,
 		"streamdeck_serial":                "",
-		"streamdeck_client_key_pem":        streamDeckCertificate.KeyPEM,
-		"streamdeck_client_cert_pem":       streamDeckCertificate.ChainPEM,
 		"kiosk_certificate_selector":       certificateSelector,
 		"kiosk_certificate_policy":         certificatePolicy,
 		"kiosk_client_subject":             "client-" + kioskClientName + "." + s.Network.Domain,
@@ -693,70 +683,6 @@ func ensureKioskClientCertificate(siteDir string, s model.Site, authority pki.Au
 	if err := writePublic(filepath.Join(siteDir, "generated", "pki", kioskClientName+".yaml"), []byte(metadata)); err != nil {
 		return pki.ClientCertificate{}, err
 	}
-	return certificate, nil
-}
-
-func ensureCompanionStreamDeckCertificate(siteDir string, s model.Site, authority pki.Authority) (pki.ClientCertificate, error) {
-	now := time.Now().UTC()
-	runtimeDir := filepath.Join(site.RuntimeDir(s), "pki", companionStreamDeckIdentity)
-	paths := []string{
-		filepath.Join(runtimeDir, "client.key.pem"),
-		filepath.Join(runtimeDir, "client.crt.pem"),
-		filepath.Join(runtimeDir, "chain.crt.pem"),
-	}
-	existing := make([][]byte, len(paths))
-	present := 0
-	for index, path := range paths {
-		data, err := pathguard.ReadFile(path)
-		if err == nil {
-			existing[index] = data
-			present++
-			continue
-		}
-		if !errors.Is(err, os.ErrNotExist) {
-			return pki.ClientCertificate{}, fmt.Errorf("read companion StreamDeck PKI runtime: %w", err)
-		}
-	}
-	if present == len(paths) {
-		certificate, err := validateCachedServiceClientCertificate(authority, string(existing[0]), string(existing[1]), string(existing[2]), companionStreamDeckIdentity, now)
-		if err == nil {
-			return certificate, nil
-		}
-	}
-	certificate, err := pki.IssueServiceClient(authority, companionStreamDeckIdentity, now)
-	if err != nil {
-		return pki.ClientCertificate{}, fmt.Errorf("issue companion StreamDeck client certificate: %w", err)
-	}
-	if err := publishKioskClientIdentity(runtimeDir, certificate); err != nil {
-		return pki.ClientCertificate{}, err
-	}
-	metadata := fmt.Sprintf("name: %s\nfingerprint: %s\nserial: %s\ncreated_at: %s\n", companionStreamDeckIdentity, certificate.Fingerprint, certificate.Serial, now.Format(time.RFC3339))
-	if err := writePublic(filepath.Join(siteDir, "generated", "pki", companionStreamDeckIdentity+".yaml"), []byte(metadata)); err != nil {
-		return pki.ClientCertificate{}, err
-	}
-	return certificate, nil
-}
-
-func validateCachedServiceClientCertificate(authority pki.Authority, keyPEM, certPEM, chainPEM, identity string, now time.Time) (pki.ClientCertificate, error) {
-	pair, err := tls.X509KeyPair([]byte(chainPEM), []byte(keyPEM))
-	if err != nil {
-		return pki.ClientCertificate{}, err
-	}
-	request, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: identity}}, pair.PrivateKey)
-	if err != nil {
-		return pki.ClientCertificate{}, err
-	}
-	requestPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: request})
-	certificate, err := pki.ValidateServiceClientCertificate(authority, chainPEM, string(requestPEM), identity, now)
-	if err != nil {
-		return pki.ClientCertificate{}, err
-	}
-	if strings.TrimSpace(certificate.CertPEM) != strings.TrimSpace(certPEM) {
-		return pki.ClientCertificate{}, errors.New("cached companion StreamDeck certificate does not match its chain")
-	}
-	certificate.KeyPEM = keyPEM
-	certificate.CertPEM = certPEM
-	certificate.ChainPEM = chainPEM
 	return certificate, nil
 }
 

@@ -18,14 +18,12 @@ const (
 )
 
 type Config struct {
-	PulseURL          string `json:"pulse_url"`
-	VendorID          uint16 `json:"vendor_id"`
-	ProductID         uint16 `json:"product_id"`
-	Model             string `json:"model"`
-	Serial            string `json:"serial,omitempty"`
-	ClientCertificate string `json:"client_certificate"`
-	ClientKey         string `json:"client_key"`
-	CACertificate     string `json:"ca_certificate"`
+	PulseURL      string `json:"pulse_url"`
+	VendorID      uint16 `json:"vendor_id"`
+	ProductID     uint16 `json:"product_id"`
+	Model         string `json:"model"`
+	Serial        string `json:"serial,omitempty"`
+	CACertificate string `json:"ca_certificate"`
 }
 
 func LoadConfig(reader io.Reader) (Config, error) {
@@ -62,14 +60,8 @@ func (c Config) Validate() error {
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return errors.New("StreamDeck pulse_url must be an HTTPS origin without query or fragment")
 	}
-	for name, value := range map[string]string{
-		"client_certificate": c.ClientCertificate,
-		"client_key":         c.ClientKey,
-		"ca_certificate":     c.CACertificate,
-	} {
-		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("StreamDeck configuration requires %s", name)
-		}
+	if strings.TrimSpace(c.CACertificate) == "" {
+		return errors.New("StreamDeck configuration requires ca_certificate")
 	}
 	return nil
 }

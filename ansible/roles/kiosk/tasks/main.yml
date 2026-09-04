@@ -855,10 +855,7 @@
   ansible.builtin.assert:
     that:
       - streamdeck_binary | default('') | length > 0
-      - streamdeck_client_key_pem | default('') | length > 0
-      - streamdeck_client_cert_pem | default('') | length > 0
       - streamdeck_pulse_token | default('') | length > 0
-      - streamdeck_client_identity | default('') is match('^[A-Za-z0-9_.-]+$')
       - streamdeck_vendor_id | int == 4057
       - streamdeck_product_id | int == 109
       - streamdeck_model | default('') == 'Stream Deck MK.2'
@@ -910,7 +907,7 @@
   notify: restart companion streamdeck
   when: kiosk_streamdeck_enabled | default(true) | bool
 
-- name: Install the StreamDeck private-CA identity
+- name: Install the StreamDeck private-CA trust
   ansible.builtin.copy:
     dest: "{{ item.dest }}"
     content: "{{ item.content }}"
@@ -918,11 +915,18 @@
     group: streamdeck
     mode: "{{ item.mode }}"
   loop:
-    - {dest: /var/lib/boetticher/companion-streamdeck/client.key.pem, content: "{{ streamdeck_client_key_pem }}", mode: '0640'}
-    - {dest: /var/lib/boetticher/companion-streamdeck/client.crt.pem, content: "{{ streamdeck_client_cert_pem }}", mode: '0640'}
     - {dest: /var/lib/boetticher/companion-streamdeck/ca.pem, content: "{{ kiosk_root_ca_pem }}", mode: '0644'}
   no_log: true
   notify: restart companion streamdeck
+  when: kiosk_streamdeck_enabled | default(true) | bool
+
+- name: Remove the superseded StreamDeck client certificate identity
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/lib/boetticher/companion-streamdeck/client.key.pem
+    - /var/lib/boetticher/companion-streamdeck/client.crt.pem
   when: kiosk_streamdeck_enabled | default(true) | bool
 
 - name: Render the exact local StreamDeck configuration
@@ -931,7 +935,7 @@
     owner: root
     group: streamdeck
     mode: '0640'
-    content: "{{ {'pulse_url': kiosk_pulse_url, 'vendor_id': streamdeck_vendor_id | int, 'product_id': streamdeck_product_id | int, 'model': streamdeck_model, 'serial': streamdeck_serial | default(''), 'client_certificate': '/var/lib/boetticher/companion-streamdeck/client.crt.pem', 'client_key': '/var/lib/boetticher/companion-streamdeck/client.key.pem', 'ca_certificate': '/var/lib/boetticher/companion-streamdeck/ca.pem'} | to_nice_json }}\n"
+    content: "{{ {'pulse_url': kiosk_pulse_url, 'vendor_id': streamdeck_vendor_id | int, 'product_id': streamdeck_product_id | int, 'model': streamdeck_model, 'serial': streamdeck_serial | default(''), 'ca_certificate': '/var/lib/boetticher/companion-streamdeck/ca.pem'} | to_nice_json }}\n"
   notify: restart companion streamdeck
   when: kiosk_streamdeck_enabled | default(true) | bool
 

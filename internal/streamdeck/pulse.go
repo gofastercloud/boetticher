@@ -64,15 +64,10 @@ func NewPulseClient(config Config, token string) (*PulseClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	certificate, err := tls.LoadX509KeyPair(config.ClientCertificate, config.ClientKey)
-	if err != nil {
-		return nil, fmt.Errorf("load StreamDeck Pulse client certificate: %w", err)
-	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{
-		MinVersion:   tls.VersionTLS12,
-		RootCAs:      roots,
-		Certificates: []tls.Certificate{certificate},
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    roots,
 	}
 	return newPulseClient(config.PulseURL, token, &http.Client{
 		Transport: transport,
