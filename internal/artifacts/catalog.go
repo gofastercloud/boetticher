@@ -236,6 +236,14 @@ func cacheArtifactPath(root string, artifact model.Artifact) (string, error) {
 	return filepath.Join(root, "generated", "artifacts", artifact.Name, filename), nil
 }
 
+// ArtifactCachePath returns the deterministic maintainer cache location for
+// an artifact. The path is a local lookup hint only; artifact trust remains
+// bound to the content digest in the qualification statement and release
+// manifest.
+func ArtifactCachePath(root string, artifact model.Artifact) (string, error) {
+	return cacheArtifactPath(root, artifact)
+}
+
 // verifyQualificationInputs checks any qualification outputs that were
 // recorded beside the artifact. The content digest and completed Trivy gate
 // are authoritative; manifests, SBOMs, and provenance are optional outputs.

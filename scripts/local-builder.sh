@@ -173,7 +173,21 @@ artifact_module() {
 remote_artifact_reusable() {
   artifact=$1
   module=$(artifact_module "$artifact")
-  native_ssh "/usr/sbin/chroot $remote_native_root /bin/sh -c 'cd /var/lib/boetticher/local-builder/source && env GOROOT=/opt/boetticher/go/current PATH=/opt/boetticher/go/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin GOCACHE=/var/cache/boetticher/go /opt/boetticher/go/current/bin/go run ./cmd/artifact-reuse -root $remote_output -module $module'" >/dev/null 2>&1
+  status=$(native_ssh "/usr/sbin/chroot $remote_native_root /bin/sh -c 'cd /var/lib/boetticher/local-builder/source && env GOROOT=/opt/boetticher/go/current PATH=/opt/boetticher/go/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin GOCACHE=/var/cache/boetticher/go /opt/boetticher/go/current/bin/go run ./cmd/artifact-reuse -root $remote_output -module $module'" 2>/dev/null) || return 1
+  case "$status" in
+    reusable\ *) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+remote_artifact_needs_qualification() {
+  artifact=$1
+  module=$(artifact_module "$artifact")
+  status=$(native_ssh "/usr/sbin/chroot $remote_native_root /bin/sh -c 'cd /var/lib/boetticher/local-builder/source && env GOROOT=/opt/boetticher/go/current PATH=/opt/boetticher/go/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin GOCACHE=/var/cache/boetticher/go /opt/boetticher/go/current/bin/go run ./cmd/artifact-reuse -root $remote_output -module $module'" 2>/dev/null) || return 1
+  case "$status" in
+    qualification-needed\ *) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 filter_reusable_targets() {
@@ -189,26 +203,37 @@ filter_reusable_targets() {
       selected=$*
       [ -n "$selected" ] || selected=$native_image_targets
       base_reusable=0
+      base_available=0
       if remote_artifact_reusable image-base; then
         printf 'measurement stage=artifact_reuse status=hit artifact=base\n'
         base_reusable=1
+        base_available=1
         reusable=1
+      elif remote_artifact_needs_qualification image-base; then
+        printf 'measurement stage=artifact_reuse status=qualification-needed artifact=base\n'
+        base_available=1
+        reusable=$((reusable + 1))
       fi
       case " $selected " in
-        *" image-base "*) ;;
-        *) [ "$base_reusable" -eq 1 ] || pending="$pending image-base" ;;
+		*" image-base "*) ;;
+		*) [ "$base_available" -eq 1 ] || pending="$pending image-base" ;;
       esac
       for target in $selected; do
 		if [ "$target" = image-base ] && [ "$base_reusable" -eq 1 ]; then
 			continue
 		fi
-		if [ "$target" != image-base ] && [ "$base_reusable" -ne 1 ]; then
+		if [ "$target" = image-base ] && [ "$base_available" -eq 1 ]; then
+			continue
+		elif [ "$target" != image-base ] && [ "$base_available" -ne 1 ]; then
 			pending="$pending $target"
 		elif remote_artifact_reusable "$target"; then
           printf 'measurement stage=artifact_reuse status=hit artifact=%s\n' "${target#image-}"
           reusable=$((reusable + 1))
-        else
-          pending="$pending $target"
+		elif remote_artifact_needs_qualification "$target"; then
+		  printf 'measurement stage=artifact_reuse status=qualification-needed artifact=%s\n' "${target#image-}"
+		  reusable=$((reusable + 1))
+		else
+		  pending="$pending $target"
         fi
       done
       ;;
@@ -235,11 +260,16 @@ filter_reusable_targets() {
         *) image_target= ;;
       esac
       if [ "$operation" = build ] && [ "$image_target" != image-base ] && [ -n "$image_target" ] && ! remote_artifact_reusable image-base; then
-        native_filtered_args="images image-base $target"
-        return 1
+        if ! remote_artifact_needs_qualification image-base; then
+          native_filtered_args="images image-base $target"
+          return 1
+        fi
       fi
       if [ -n "$image_target" ] && remote_artifact_reusable "$image_target"; then
         printf 'measurement stage=artifact_reuse status=hit artifact=%s\n' "${image_target#image-}"
+        reusable=1
+      elif [ "$operation" = build ] && [ -n "$image_target" ] && remote_artifact_needs_qualification "$image_target"; then
+        printf 'measurement stage=artifact_reuse status=qualification-needed artifact=%s\n' "${image_target#image-}"
         reusable=1
       fi
       ;;

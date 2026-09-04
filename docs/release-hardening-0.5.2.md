@@ -71,6 +71,10 @@ the resolver derives the fixed cache path from artifact coordinates. The
 0.5.2 target is to preserve content-bound qualification while allowing
 existing bytes to be requalified or have missing evidence regenerated where
 supported, instead of treating a missing sidecar as an image-build failure.
+The native maintainer path now reports that distinction explicitly: an existing
+blob with missing or malformed qualification is preserved for scan-only
+requalification, while a missing blob, changed build inputs, or wrong bytes
+remain build failures.
 
 ## PKI and operator baseline
 

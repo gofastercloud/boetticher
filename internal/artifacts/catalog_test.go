@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	buildbundle "github.com/gofastercloud/boetticher"
+	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 func TestEvidenceUsesActualArtifactBytes(t *testing.T) {
@@ -70,6 +71,27 @@ func TestQualifiedArtifactReuseIgnoresSourceDefinitionRevision(t *testing.T) {
 	}
 	if resolved.ContentSHA256 != evidence.ContentSHA256 {
 		t.Fatalf("resolved content digest = %q, want %q", resolved.ContentSHA256, evidence.ContentSHA256)
+	}
+}
+
+func TestArtifactCachePathDerivesOnlySafeCoordinatePaths(t *testing.T) {
+	path, err := ArtifactCachePath("/tmp/site", model.Artifact{
+		Name: "boetticher-logging", Version: "1.0.0", Architecture: "amd64", Kind: "lxc",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "/tmp/site/generated/artifacts/boetticher-logging/boetticher-logging-1.0.0-amd64.tar.zst"; path != want {
+		t.Fatalf("cache path = %q, want %q", path, want)
+	}
+	for _, artifact := range []model.Artifact{
+		{Name: "../outside", Version: "1.0.0", Architecture: "amd64", Kind: "lxc"},
+		{Name: "boetticher-test", Version: "../outside", Architecture: "amd64", Kind: "lxc"},
+		{Name: "boetticher-test", Version: "1.0.0", Architecture: "amd64", Kind: "unknown"},
+	} {
+		if _, err := ArtifactCachePath("/tmp/site", artifact); err == nil {
+			t.Fatalf("unsafe artifact coordinate was accepted: %#v", artifact)
+		}
 	}
 }
 
