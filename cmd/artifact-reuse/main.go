@@ -40,6 +40,10 @@ func main() {
 	// artifact, while runtime/release resolution can reuse unchanged bytes
 	// across source-only revisions.
 	if evidence.DefinitionSHA256 != artifact.DefinitionSHA256 {
+		if artifactBlobPresent(artifactPath) {
+			fmt.Printf("qualification-needed %s\n", artifact.Name)
+			return
+		}
 		fatal("artifact build inputs changed for %s", artifact.Name)
 	}
 	if evidence.Artifact.Name != artifact.Name || evidence.Artifact.Version != artifact.Version || evidence.Artifact.Architecture != artifact.Architecture || evidence.Artifact.Kind != artifact.Kind {
@@ -47,8 +51,12 @@ func main() {
 	}
 	if evidence.ContentSHA256 != "" && artifactBlobPresent(artifactPath) {
 		actual, hashErr := artifacts.ContentSHA256ForFile(artifactPath)
-		if hashErr != nil || actual != evidence.ContentSHA256 {
-			fatal("artifact bytes do not match qualification evidence for %s", artifact.Name)
+		if hashErr != nil {
+			fatal("read artifact bytes for %s: %v", artifact.Name, hashErr)
+		}
+		if actual != evidence.ContentSHA256 {
+			fmt.Printf("qualification-needed %s\n", artifact.Name)
+			return
 		}
 	}
 	if _, _, err := artifacts.ResolveArtifactEvidence(*root, artifact); err != nil {
