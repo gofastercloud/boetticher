@@ -78,21 +78,22 @@ remain build failures.
 
 ## PKI and operator baseline
 
-The bespoke PKI implementation is `internal/pki` plus controller-side
-certificate and revocation caches. It currently generates the root and issuing
-authorities, signs server and client CSRs, creates CRLs, manages client
-certificate create/export/revoke commands, and persists certificate metadata
-and revocation projections. A fresh current qualification site emits no PKI
-files, but the source lifecycle supports `generated/pki`, runtime PKI identity
-directories, certificate caches, and revocation caches.
+The remaining `internal/pki` implementation generates the root and issuing
+authorities, creates CRLs, and supports the deliberate browser/device client
+certificate create/export/revoke path. Endpoint service certificates are now
+issued and renewed by the unprivileged Smallstep CA on `lab-dns-01`; endpoint
+private keys stay on their owning guest. The controller no longer signs
+endpoint CSRs or persists managed endpoint certificate caches. Runtime PKI
+directories and `generated/pki` therefore describe only deliberate operator or
+kiosk identities and revocation projections.
 
-The current default service model contains broad client-certificate/mTLS
-consumers in logging, monitoring, AIOps, the TUI, network probes, kiosk, and
-Companion/StreamDeck paths. The source baseline records 15 certificate-request
-declarations and 31 non-test files containing mTLS or client-certificate
-configuration. These references must be classified as removed, replaced by a
-scoped application credential, or explicitly retained with a threat
-justification before the old PKI code is deleted.
+The current default service model contains deliberate client-certificate/mTLS
+consumers in logging, the Bifrost model canary, bounded journal-query access,
+network probes, kiosk, and browser/device access. Pulse, StreamDeck, and the
+controller-facing AIOps paths use scoped application credentials. Each
+remaining certificate path has an explicit endpoint owner and threat-model
+reason; the controller no longer carries a generic endpoint certificate cache
+or endpoint CSR signer.
 
 The current normal clean-install path is approximately:
 
