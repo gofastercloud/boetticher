@@ -150,11 +150,52 @@ func TestBuildSourceArchiveExcludesSiteSecrets(t *testing.T) {
 			t.Fatal(err)
 		}
 		entries++
-		if strings.Contains(header.Name, "site.yml") || strings.Contains(header.Name, "secrets") {
+		if header.Name == "site.yml" || strings.Contains(header.Name, "secrets") {
 			t.Fatalf("build archive included site state: %s", header.Name)
 		}
 	}
 	if entries == 0 {
 		t.Fatal("public build archive was empty")
+	}
+}
+
+func TestBuildNativeSourceArchiveIncludesOnlyBuilderSupport(t *testing.T) {
+	root := t.TempDir()
+	for _, relative := range append(append([]string(nil), PublicBuildInputs...), NativeBuilderSupportInputs...) {
+		path := filepath.Join(root, relative)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(relative+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	archive, err := BuildNativeSourceArchive(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gzipReader, err := gzip.NewReader(bytes.NewReader(archive))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tarReader := tar.NewReader(gzipReader)
+	entries := map[string]bool{}
+	for {
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries[header.Name] = true
+	}
+	for _, relative := range NativeBuilderSupportInputs {
+		if !entries[relative] {
+			t.Fatalf("native source archive omitted builder support input %s", relative)
+		}
+	}
+	if entries["site.yml"] || entries["secrets/runtime.sops.yaml"] {
+		t.Fatal("native source archive included site state")
 	}
 }

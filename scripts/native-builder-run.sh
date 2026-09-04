@@ -50,8 +50,14 @@ mounted_kvm=0
 mounted_fuse=0
 mounted_pts=0
 mounted_proc=0
+child_pid=
 cleanup() {
-  if [ "$mounted_proc" -eq 1 ]; then
+	status=$?
+	if [ -n "$child_pid" ]; then
+		kill -TERM -- -"$child_pid" 2>/dev/null || kill -TERM "$child_pid" 2>/dev/null || true
+		wait "$child_pid" 2>/dev/null || true
+	fi
+	if [ "$mounted_proc" -eq 1 ]; then
     umount "$native_root/proc" 2>/dev/null || true
   fi
   if [ "$mounted_pts" -eq 1 ]; then
@@ -102,7 +108,7 @@ mounted_fuse=1
 mount -t proc proc "$native_root/proc"
 mounted_proc=1
 
-chroot "$native_root" /usr/bin/env \
+setsid chroot "$native_root" /usr/bin/env \
   GOROOT=/opt/boetticher/go/current \
   PATH=/opt/boetticher/go/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
   XDG_RUNTIME_DIR=/tmp/boetticher-runtime \
@@ -111,4 +117,12 @@ chroot "$native_root" /usr/bin/env \
   BOETTICHER_ARTIFACT_OUTPUT=/var/lib/boetticher/local-builder/output/generated/artifacts \
   BOETTICHER_EVIDENCE_ROOT=/var/lib/boetticher/local-builder/output \
   BOETTICHER_LOCAL_FAST=1 \
-  /bin/sh -c 'cd /var/lib/boetticher/local-builder/source && exec "$@"' /bin/sh "$script" "$@"
+  /bin/sh -c 'cd /var/lib/boetticher/local-builder/source && exec "$@"' /bin/sh "$script" "$@" &
+child_pid=$!
+if wait "$child_pid"; then
+	status=0
+else
+	status=$?
+fi
+child_pid=
+exit "$status"

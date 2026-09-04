@@ -52,12 +52,24 @@ var PublicBuildInputs = []string{
 	"internal/pathguard",
 	"internal/streamdeck",
 	"internal/usbexport",
+	"ansible/companion.yml",
+	"ansible/site.yml",
+	"ansible/roles",
 	"images",
+	"pi/kiosk",
 	"scripts/benchmark-artifact-compression.sh",
 	"scripts/build-images.sh",
 	"scripts/scan-images.sh",
 	"scripts/smoke-appliance.sh",
 	"scripts/smoke-firewall-image.sh",
+}
+
+// NativeBuilderSupportInputs are maintainer-only orchestration scripts. They
+// are transferred to the isolated build host so it can execute the public
+// build inputs, but they are not embedded in an installed operator binary.
+var NativeBuilderSupportInputs = []string{
+	"scripts/local-builder-setup.sh",
+	"scripts/native-builder-run.sh",
 }
 
 // CompanionSourceInputs are the public provisioning assets needed by a
@@ -82,10 +94,21 @@ var AnsibleSourceInputs = []string{
 // smuggle a site file or credential into the maintainer image build through a
 // path traversal or linked file.
 func BuildSourceArchive(root string) ([]byte, error) {
+	return buildSourceArchive(root, PublicBuildInputs)
+}
+
+// BuildNativeSourceArchive returns the public build inputs plus the two
+// maintainer-only scripts needed to run the isolated native builder.
+func BuildNativeSourceArchive(root string) ([]byte, error) {
+	inputs := append(append([]string(nil), PublicBuildInputs...), NativeBuilderSupportInputs...)
+	return buildSourceArchive(root, inputs)
+}
+
+func buildSourceArchive(root string, inputs []string) ([]byte, error) {
 	if root == "" {
 		return nil, fmt.Errorf("build source root is required")
 	}
-	paths := append([]string(nil), PublicBuildInputs...)
+	paths := append([]string(nil), inputs...)
 	sort.Strings(paths)
 	return deterministicArchive(func(tarWriter *tar.Writer) error {
 		for _, relative := range paths {
