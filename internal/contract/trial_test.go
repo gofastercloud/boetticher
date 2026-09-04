@@ -8,7 +8,6 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/appliance"
 	"github.com/gofastercloud/boetticher/internal/artifacts"
-	"github.com/gofastercloud/boetticher/internal/logging"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
@@ -19,14 +18,6 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	base := model.NewDefaultSite("trial", "age1trial")
 	if base.PhysicalNetwork.Mode != model.ModeVirtualOnly {
 		t.Fatalf("default trial is not virtual-only: %q", base.PhysicalNetwork.Mode)
-	}
-	builder := artifacts.Builder()
-	if builder.VMID != model.BuilderVMID || builder.Hostname != "lab-builder-01" || !builder.Temporary || builder.Network != "bootstrap-upstream-only" {
-		t.Fatalf("default trial builder contract is incomplete: %#v", builder)
-	}
-	buildCloudInit := proxmox.RenderBuilderCloudInit()
-	if !strings.Contains(buildCloudInit.UserData, "./scripts/build-images.sh images") || !strings.Contains(buildCloudInit.UserData, "./scripts/scan-images.sh scan-images") || strings.Contains(strings.ToLower(buildCloudInit.UserData), "age identity") {
-		t.Fatal("temporary builder does not run the first-party build/qualification path with public inputs only")
 	}
 	buildScript, err := os.ReadFile(filepath.Join(repoRoot, "scripts", "build-images.sh"))
 	if err != nil {
@@ -39,6 +30,21 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	if !strings.Contains(buildText, "export GOTOOLCHAIN=local") {
 		t.Fatal("builder does not pin construction to its installed Debian Go toolchain")
 	}
+	nativeStorage := string(mustRead(t, filepath.Join(repoRoot, "scripts", "local-builder-storage.sh")))
+	for _, required := range []string{"BOETTICHER_LOCAL_BUILDER_DEVICE", "test -b", "lsblk -ndo TYPE", "refusing the Linux system disk", "wipefs -n", "mkfs.ext4 -F -L boetticher-builder", "/etc/fstab", "mountpoint -q", ".boetticher-native-builder"} {
+		if !strings.Contains(nativeStorage, required) {
+			t.Fatalf("native builder storage contract is missing %s", required)
+		}
+	}
+	nativeRun := string(mustRead(t, filepath.Join(repoRoot, "scripts", "native-builder-run.sh")))
+	if !strings.Contains(nativeRun, "GOROOT=/opt/boetticher/go/current") {
+		t.Fatal("native builder does not provide GOROOT for the trimmed Go toolchain")
+	}
+	for _, required := range []string{".native-builder-run.pid", "BOETTICHER_NATIVE_RUN_ID", "another native builder run is active", "kill -0"} {
+		if !strings.Contains(nativeRun+string(mustRead(t, filepath.Join(repoRoot, "scripts", "local-builder.sh"))), required) {
+			t.Fatalf("native builder interruption contract is missing %s", required)
+		}
+	}
 	if !strings.Contains(buildText, `if [ "$(id -u)" -ne 0 ]`) || !strings.Contains(buildText, "requires root in the supported Linux builder environment") {
 		t.Fatal("real appliance construction does not fail closed when mount/build privileges are unavailable")
 	}
@@ -47,7 +53,7 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 			t.Fatalf("hosted qualification contract is missing %s", required)
 		}
 	}
-	for _, artifact := range []string{"boetticher-base", "boetticher-firewall", "boetticher-dns-blocky", "boetticher-logging", "boetticher-monitoring", "boetticher-portal"} {
+	for _, artifact := range []string{"boetticher-base", "boetticher-firewall", "boetticher-dns-blocky", "boetticher-monitoring"} {
 		if !strings.Contains(buildText, artifact) {
 			t.Fatalf("default trial builder does not produce %s", artifact)
 		}
@@ -56,7 +62,7 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"module=${name#boetticher-}", "[ \"$module\" = dns-blocky ] && module=dns", "if ! GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact"} {
+	for _, required := range []string{"module=${name#boetticher-}", "[ \"$module\" = dns-blocky ] && module=dns", "-smoke \"$smoke\"", "if ! GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact"} {
 		if !strings.Contains(string(scanSource), required) {
 			t.Fatalf("artifact qualification does not derive and fail-closed validate module identity: %s", required)
 		}
@@ -66,18 +72,18 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	bootstrapText := string(bootstrapSource)
-	for _, required := range []string{"EnsureBuilderVM", "RebindEvidencePaths", "DestroyBuilderVM", "createBuilderKnownHosts", "CheckBuilderCapacity", "RunStream", "ExtractBuildArchiveFile"} {
-		if !strings.Contains(bootstrapText, required) {
-			t.Fatalf("bootstrap does not complete the builder qualification lifecycle: %s", required)
+	for _, forbidden := range []string{"buildDefaultArtifacts", "EnsureBuilderVM", "builderBuildCommand", "runBootstrapCleanup", "BuilderArtifactTargets"} {
+		if strings.Contains(bootstrapText, forbidden) {
+			t.Fatalf("controller retains runtime builder machinery %s", forbidden)
 		}
 	}
 	builderSource, err := os.ReadFile(filepath.Join(repoRoot, "internal", "proxmox", "plan.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"BuilderVMID", "DestroyBuilderVM", "WaitForGuestAbsent", "cleanupBuilderSnippets", "ResizeQEMUDisk"} {
-		if !strings.Contains(string(builderSource), required) {
-			t.Fatalf("temporary builder lifecycle is missing %s", required)
+	for _, forbidden := range []string{"BuilderVMID", "DestroyBuilderVM", "WaitForGuestAbsent", "cleanupBuilderSnippets", "ResizeQEMUDisk"} {
+		if strings.Contains(string(builderSource), forbidden) {
+			t.Fatalf("temporary builder lifecycle remains in product code: %s", forbidden)
 		}
 	}
 	deploySource, err := os.ReadFile(filepath.Join(repoRoot, "internal", "cli", "converge.go"))
@@ -105,8 +111,16 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(plan.Guests) != 3 {
+		t.Fatalf("default trial has %d guests, want firewall, DNS, and monitoring only", len(plan.Guests))
+	}
+	for _, guest := range plan.Guests {
+		if guest.Name == "lab-dns-02" || guest.Name == "lab-log-01" || guest.Name == "lab-portal-01" {
+			t.Fatalf("deleted/default-off guest remains in the default plan: %s", guest.Name)
+		}
+	}
 	if _, err := proxmox.ResolveQualifiedArtifacts(t.TempDir(), plan, true); err == nil {
-		t.Fatal("fresh trial unexpectedly accepted without builder qualification evidence")
+		t.Fatal("fresh trial unexpectedly accepted without appliance qualification evidence")
 	}
 
 	evidenceRoot := t.TempDir()
@@ -121,7 +135,7 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		evidence.ArtifactPath = artifactPath
-		for filename, content := range map[string]string{"package-manifest.txt": "package: trial\n", "sbom.json": "{}\n", "trivy.json": "{\"Results\":[]}\n", "builder-provenance.json": "{\"platform\":\"debian-13-amd64\",\"input_image\":\"debian-13-genericcloud-amd64-20260327-2429\",\"kernel\":\"6.1.0\",\"go\":\"go version go1.26.5 linux/amd64\",\"trivy\":\"Version: 0.69.3\",\"mmdebstrap\":\"mmdebstrap 1.5.0\",\"architecture\":\"amd64\",\"boetticher_version\":\"0.4.0\"}\n"} {
+		for filename, content := range map[string]string{"package-manifest.txt": "package: trial\n", "sbom.json": "{}\n", "trivy.json": "{\"Results\":[]}\n", "builder-provenance.json": "{\"platform\":\"debian-13-amd64\",\"input_image\":\"debian-13-genericcloud-amd64-20260327-2429\",\"kernel\":\"6.1.0\",\"go\":\"go version go1.26.5 linux/amd64\",\"trivy\":\"Version: 0.69.3\",\"mmdebstrap\":\"mmdebstrap 1.5.0\",\"architecture\":\"amd64\",\"boetticher_version\":\"0.5.1\"}\n"} {
 			if err := os.WriteFile(filepath.Join(filepath.Dir(artifactPath), filename), []byte(content), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -130,7 +144,7 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 		evidence.SBOMSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactPath), "sbom.json"), "SBOM")
 		evidence.TrivyReportSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactPath), "trivy.json"), "Trivy report")
 		evidence.BuilderProvenanceSHA256, _ = artifacts.QualificationInputSHA256(filepath.Join(filepath.Dir(artifactPath), "builder-provenance.json"), "builder provenance")
-		evidence.Builder = artifacts.BuilderProvenance{Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429", Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3", MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.4.0"}
+		evidence.Builder = artifacts.BuilderProvenance{Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429", Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3", MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.5.1"}
 		evidence, err = artifacts.QualifyEvidence(evidence, artifacts.ScanSummary{Completed: true})
 		if err != nil {
 			t.Fatal(err)
@@ -150,10 +164,6 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	}
 	if resolved.Guests[0].Name != "lab-fw-01" {
 		t.Fatalf("trial plan did not begin with the firewall dependency: %s", resolved.Guests[0].Name)
-	}
-	loggingPlan, err := logging.PlanFromSite(site)
-	if err != nil || loggingPlan.Collector != logging.CollectorName || !loggingPlan.MTLS {
-		t.Fatalf("logging vertical slice is not present: %#v %v", loggingPlan, err)
 	}
 	for _, component := range site.PlatformComponents() {
 		if component.Module != "" && !contains(component.Tags, model.ModuleOwnershipTag(component.Module)) {
@@ -175,13 +185,6 @@ func TestFreshDefaultTrialOrchestrationContract(t *testing.T) {
 	runtimeConfig, err := appliance.RenderRuntimeConfig(site, dnsGuest, dnsDeclaration)
 	if err != nil || !strings.Contains(string(runtimeConfig), "boetticher-dns-blocky") {
 		t.Fatalf("default Blocky runtime contract missing: %v", err)
-	}
-	loggingConfig, err := logging.PlanFromSite(site)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(logging.CollectorConfiguration(loggingConfig), "MaxUse=8G") || !strings.Contains(logging.CollectorServiceOverride(loggingConfig), "/var/log/journal/remote") {
-		t.Fatal("logging collector does not have the executable bounded journal contract")
 	}
 	if _, err := proxmox.RenderFirewallCloudInitWithKey(plan.Guests[0], "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator"); err != nil {
 		t.Fatalf("firewall first-boot SSH contract is not renderable: %v", err)

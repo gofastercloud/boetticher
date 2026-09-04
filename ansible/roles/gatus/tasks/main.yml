@@ -5,24 +5,30 @@
 - name: Install generated Gatus configuration
   ansible.builtin.copy: {dest: /etc/boetticher/gatus/config.yaml, content: "{{ gatus_config }}", owner: root, group: gatus, mode: '0640'}
   notify: restart gatus
-- name: Generate Gatus endpoint key and CSR
-  ansible.builtin.shell: "set -eu; install -d -m 0700 /var/lib/boetticher/identity/tls; test -e /var/lib/boetticher/identity/tls/gatus.key.pem || openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 -out /var/lib/boetticher/identity/tls/gatus.key.pem; test -e /var/lib/boetticher/identity/tls/gatus.csr.pem || openssl req -new -sha256 -key /var/lib/boetticher/identity/tls/gatus.key.pem -subj '/CN=gatus.{{ domain }}' -addext 'subjectAltName=DNS:gatus.{{ domain }},DNS:lab-gatus-01.{{ domain }}' -out /var/lib/boetticher/identity/tls/gatus.csr.pem"
-  args: {executable: /bin/sh}
-- name: Fetch Gatus CSR during PKI bootstrap
-  ansible.builtin.fetch: {src: /var/lib/boetticher/identity/tls/gatus.csr.pem, dest: "{{ pki_csr_output_dir }}/gatus.csr.pem", flat: true}
-  when: pki_bootstrap_phase | default(false) | bool
-- name: Require and install controller-issued Gatus certificate
-  ansible.builtin.copy: {dest: /var/lib/boetticher/identity/tls/gatus.crt.pem, content: "{{ gatus_server_cert_pem }}", owner: root, group: root, mode: '0644'}
-  when: gatus_server_cert_pem is defined and gatus_server_cert_pem | length > 0
-  no_log: true
+- name: Issue and renew the Gatus endpoint certificate from Smallstep
+  ansible.builtin.include_tasks: ../../tasks/step-ca-endpoint.yml
+  vars:
+    step_ca_endpoint_name: Gatus
+    step_ca_endpoint_subject: "gatus.{{ domain }}"
+    step_ca_endpoint_sans: ["gatus.{{ domain }}", "lab-gatus-01.{{ domain }}"]
+    step_ca_endpoint_root_path: /var/lib/boetticher/identity/tls/step-ca-root.crt
+    step_ca_endpoint_intermediate_path: /var/lib/boetticher/identity/tls/step-ca-intermediate.crt
+    step_ca_endpoint_certificate_path: /var/lib/boetticher/identity/tls/gatus.crt.pem
+    step_ca_endpoint_key_path: /var/lib/boetticher/identity/tls/gatus.key.pem
+    step_ca_endpoint_marker_path: /var/lib/boetticher/identity/tls/gatus.step-ca
+    step_ca_endpoint_renewal_script: /usr/local/sbin/boetticher-renew-gatus-certificate
+    step_ca_endpoint_renewal_service: /etc/systemd/system/boetticher-renew-gatus-certificate.service
+    step_ca_endpoint_renewal_timer: /etc/systemd/system/boetticher-renew-gatus-certificate.timer
+    step_ca_endpoint_reload_service: nginx
+    step_ca_endpoint_write_paths: /var/lib/boetticher/identity/tls /run
 - name: Configure Gatus HTTPS frontend
   ansible.builtin.copy: {dest: /etc/nginx/sites-available/gatus.conf, content: "server { listen 10.10.20.100:443 ssl; server_name gatus.{{ domain }} lab-gatus-01.{{ domain }}; ssl_certificate /var/lib/boetticher/identity/tls/gatus.crt.pem; ssl_certificate_key /var/lib/boetticher/identity/tls/gatus.key.pem; location / { proxy_pass http://127.0.0.1:8080; } }"}
-  when: gatus_server_cert_pem is defined and gatus_server_cert_pem | length > 0
+  when: step_ca_root_cert_pem is defined and not (pki_bootstrap_phase | default(false) | bool)
 - name: Enable Gatus nginx site and services
   ansible.builtin.file: {src: /etc/nginx/sites-available/gatus.conf, dest: /etc/nginx/sites-enabled/gatus.conf, state: link}
   notify: reload nginx
-  when: gatus_server_cert_pem is defined and gatus_server_cert_pem | length > 0
+  when: step_ca_root_cert_pem is defined and not (pki_bootstrap_phase | default(false) | bool)
 - name: Enable Gatus and nginx
   ansible.builtin.service: {name: "{{ item }}", enabled: true, state: started}
   loop: [gatus, nginx]
-  when: gatus_server_cert_pem is defined and gatus_server_cert_pem | length > 0
+  when: step_ca_root_cert_pem is defined and not (pki_bootstrap_phase | default(false) | bool)

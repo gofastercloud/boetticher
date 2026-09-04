@@ -5,72 +5,163 @@ section: start
 description: Set up a fresh Boetticher lab, then settle into the day-to-day rhythm.
 ---
 
-# Start with a fresh host and a cup of something good
+# Start here
 
-Boetticher starts from a fresh, supported Proxmox VE installation on amd64 hardware. You will also need a macOS or Linux controller with the Boetticher binary, SSH, and Ansible Core; the current HOME-side address for Proxmox; its root CA certificate; and a private place for your site directory.
+Boetticher starts from a fresh, supported amd64 Proxmox VE installation. You
+also need a macOS or Linux controller with the Boetticher binary, SSH, and
+Ansible Core; the Proxmox HOME address; its API CA certificate; and a private
+site directory.
 
-The default setup needs one Ethernet port. A physical VLAN trunk or an external firewall needs a second port and a VLAN-aware switch—great future experiments, but not a requirement for day one.
+The default setup is virtual-only and requires no switch change. HOME remains
+on `vmbr0`; the internal VLAN-aware `vmbr1` has no physical member. The
+fixed network still uses VLANs 5, 10, 20, 30, 40, and 99. Attach a physical
+trunk only through the guarded advanced command documented in the
+[lab guide](lab.html).
 
-## The happy path
+## Install and enroll
 
-Replace <code>PROXMOX_HOME_IP</code> and the certificate path with your real values. The HOME address is the one your existing router gave Proxmox; it is not a new lab address.
+Replace `PROXMOX_HOME_IP`, the public-key path, and the certificate path with
+your values. The operator public-key file must match the private identity used
+to reach the fresh host. Enrollment records the observed Proxmox identity,
+creates durable scoped API access, configures the bastion and headless power
+policy, and does not arm deployment-only root access.
 
 ```text
-boetticher init --site-dir my-boetticher
-boetticher bootstrap-endpoint set PROXMOX_HOME_IP --site my-boetticher
-boetticher preflight --site my-boetticher --live
-boetticher bootstrap --site my-boetticher --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem
-boetticher deploy --site my-boetticher --dry-run --proxmox-ca /path/to/pve-root-ca.pem
-boetticher deploy --site my-boetticher --proxmox-ca /path/to/pve-root-ca.pem
-boetticher status --site my-boetticher --live
+boetticher init --site-dir ./my-boetticher
+boetticher enroll --site ./my-boetticher   --bootstrap-address PROXMOX_HOME_IP   --operator-key ~/.ssh/id_ed25519.pub   --recovery-confirmed   --proxmox-ca /path/to/pve-root-ca.pem
 ```
 
-`init` makes your little private site repository and its age recovery identity. Keep an independent copy of that identity somewhere sensible before you need it. If you choose the dedicated-data storage profile, pause at the confirmation and make sure the selected disk really is the spare one.
+The Proxmox installer hostname does not need to be a special Boetticher name.
+The enrollment path discovers the one standalone Proxmox node returned by the
+host and API, then binds live operations to that observed node. Keep the
+hostname stable after enrollment.
 
-<aside class="callout">
-  <p><strong>Bring your own firewall?</strong> Add <code>--external-firewall</code> to <code>init</code>, then select and record the physical trunk explicitly during live preflight and bootstrap:</p>
-  <pre><code>boetticher preflight --site my-boetticher --live --record --trunk-interface IFACE
-boetticher bootstrap --site my-boetticher --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem --trunk-interface IFACE</code></pre>
-  <p>Your appliance must provide the six VLANs, gateway addresses, DHCP where applicable, DNS/NTP routes, NAT, and zone separation. That is a proper architectural handoff, not a cosmetic setting; the <a href="lab.html#when-you-want-to-go-bigger">lab guide</a> has the compact contract.</p>
-</aside>
-
-## Your everyday rhythm
-
-Once the lab is up, the regular loop stays boring in the best possible way:
+If the site uses the dedicated-data-disk profile, initialize the exact stable
+device after reviewing it:
 
 ```text
-boetticher deploy --site ./my-boetticher --dry-run
+boetticher init --site-dir ./my-boetticher   --storage-profile dedicated-data-disk   --storage-device /dev/disk/by-id/DEVICE
+boetticher storage initialize --site ./my-boetticher --storage-confirmed
+```
+
+Initialization is the guarded destructive path for the selected device. It
+does not format an unspecified disk or an unknown Proxmox workload.
+
+## Deploy a signed release
+
+Operators consume built artifacts; the normal deployment path has no image
+builder guest or runtime builder cache. Import the signed release bundle,
+review its live plan, apply exactly that digest, and inspect the result:
+
+```text
+boetticher bundle import ./boetticher-0.5.1.tar.gz --site ./my-boetticher
 boetticher deploy --site ./my-boetticher
-boetticher status --site ./my-boetticher --live
-boetticher doctor --site ./my-boetticher --live
+boetticher status --site ./my-boetticher --details --live
 ```
 
-Without <code>--live</code>, a command reads the site directory on your controller. With it, the command also asks the running lab what is happening. <code>status --live</code> is the quick “is the lab okay?” view; <code>doctor --live</code> is the useful “what should I do next?” companion.
+The controller rejects stale or mismatched plan digests before temporary Apply
+authority is acquired. A successful deployment revokes that temporary identity
+before recording last-applied state.
 
-To add something new, configure it first and deploy when you like the plan:
+## Local maintainer image builds
+
+Image construction remains available for maintainers on a native Linux build
+host, isolated from the operator lifecycle. On macOS, configure the explicit
+SSH route first. The standard workspace is
+`/var/lib/boetticher/local-builder` on the build host's root filesystem:
+
+```text
+export BOETTICHER_LOCAL_BUILDER_SSH=root@BUILD_HOST
+export BOETTICHER_LOCAL_BUILDER_IDENTITY=/path/to/operator-key
+export BOETTICHER_LOCAL_BUILDER_KNOWN_HOSTS=/path/to/build-host-known_hosts
+make local-builder-init
+make local-image LOCAL_IMAGE_TARGET=image-firewall
+make local-images LOCAL_IMAGE_TARGETS="image-dns-blocky image-monitoring"
+```
+
+The optional `local-builder-storage-init` path is only for a separate
+maintainer host that deliberately keeps a dedicated build disk. It is not part
+of this lab layout and must never target the Proxmox guest-storage disk.
+
+The native host keeps its downloads, build root, cache, and generated
+maintainer artifacts on the root filesystem. These targets are useful for local
+iteration; they do not create Proxmox guests and do not replace the official
+hosted build, scan, qualification, signed-bundle, and exact-source release
+gates.
+
+Qualified artifacts are reusable when their artifact coordinates, signed
+content digest, base dependency, and bytes still match. Controller,
+documentation, test, release-import, and maintainer-wrapper changes do not
+force unrelated image reconstruction. The release manifest signs the exact
+artifact bytes; source and build-definition revisions remain provenance, not a
+runtime rebuild trigger. Missing maintainer evidence is reported separately
+and does not force image reconstruction.
+
+For a three-drive development machine, keep the operating system on the
+internal NVMe boot drive, put the persistent Linux build root, downloads,
+caches, and generated maintainer artifacts there, and use the stable 1 TB drive
+as the dedicated Proxmox guest-storage PV/VG/LVM store. The failing 2 TB drive
+is retired after its guests are removed. This is a maintainer layout. A normal operator
+chooses the one- or two-disk storage profile and downloads qualified release
+artifacts; they do not need this local build arrangement.
+
+## Optional modules and the Companion
+
+The default Proxmox platform is the firewall, one DNS/NTP guest, and Pulse
+monitoring. Logging is optional and off by default. Gatus is optional and is
+not required for platform health. Pulse remains narrow: historical telemetry,
+Proxmox and guest health, a health API, and the read-only Companion
+integration.
 
 ```text
 boetticher module list --site ./my-boetticher
 boetticher module configure gatus --site ./my-boetticher
-boetticher deploy --site ./my-boetticher
+boetticher plan --site ./my-boetticher --live --json
+boetticher deploy --plan sha256:PLAN_DIGEST --site ./my-boetticher
+boetticher status --site ./my-boetticher --details --live
 ```
 
-The [modules guide](modules.html) is where the interesting extras live. The [command menu](commands.html) is there whenever a flag escapes your brain.
+The Companion Pi is external to the Proxmox module model. In the physical lab
+it uses `eth0` on the SERVERS access port (VLAN 20) and `wlan0` on HOME as
+the default route. The Proxmox second NIC is the tagged internal trunk. See
+the [lab guide](lab.html) for the exact physical contract and switch
+implications.
 
-## If the first run gets a little weird
+### Add the optional Companion
 
-Start with the final line from the command that stopped, then work the small ladder:
-
-1. `boetticher status --site ./my-boetticher --live`
-2. `boetticher doctor --site ./my-boetticher --live`
-3. `boetticher deploy --site ./my-boetticher --dry-run`
-4. Fix the one thing it calls out, then deploy again.
-
-For a changed Proxmox HOME address, use the address you already know:
+Finish the core deployment and confirm `status --details --live` first. Attach
+the separately guarded Proxmox physical trunk, then connect the Pi's `eth0` to
+an untagged SERVERS port and record that physical interface's MAC:
 
 ```text
-boetticher bootstrap-endpoint set PROXMOX_HOME_IP --site ./my-boetticher
-boetticher preflight --site ./my-boetticher --live
+boetticher companion add --mac COMPANION_ETH0_MAC --dry-run --site ./my-boetticher
+boetticher companion add --mac COMPANION_ETH0_MAC --confirm --site ./my-boetticher
+boetticher deploy --site ./my-boetticher
+boetticher companion setup --dry-run --site ./my-boetticher
+boetticher companion setup --host-key 'ssh-ed25519 VERIFIED_HOST_KEY' --confirm --site ./my-boetticher
+boetticher companion status --site ./my-boetticher
 ```
 
-No range scans, no panic cleanup, no ritual sacrifice of a VM. The [lab guide](lab.html#recovery-without-drama) covers the calm recovery order for storage, DNS, a missing platform guest, or a lost age identity.
+`companion add` changes desired state only. It derives `lab-display-01` at
+`10.10.20.50` on SERVERS; the following `deploy` applies that Kea reservation,
+DDNS identity, and the exact Proxmox-bastion route. Setup and status then use
+that address automatically. They do not accept an arbitrary target address.
+
+The Pi may retain HOME Wi-Fi as its default route, but a temporary HOME address
+is bootstrap or recovery context only. Boetticher neither saves it nor uses it
+as the managed Companion identity. Supply `--host-key` on the first setup only
+after independently verifying the Pi's SSH host key.
+
+## Everyday operations
+
+Use the consolidated read-only view first:
+
+```text
+boetticher status --site ./my-boetticher --details --live
+boetticher plan --site ./my-boetticher --live --json
+```
+
+Change desired state with `module configure`, reservations, or `update`,
+then deploy the reviewed plan. Use `boetticher recover` only for its named,
+exact recovery target. Preserve the independent Age identity, operator/root
+recovery path, certificate material, and off-host backups.

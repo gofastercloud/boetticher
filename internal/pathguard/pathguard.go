@@ -92,10 +92,13 @@ func ReadFileLimited(path string, maxBytes int64) ([]byte, error) {
 	return data, nil
 }
 
-// ReadDir returns directory entries from a descriptor-walked directory. The
-// returned entries are intended for name/type inspection followed by ReadFile
-// or another descriptor-relative operation.
-func ReadDir(path string) ([]os.DirEntry, error) {
+// ReadDirLimited reads at most limit+1 entries from a directory. A positive
+// limit therefore lets callers reject oversized generated-state directories
+// without materializing their complete contents.
+func ReadDirLimited(path string, limit int) ([]os.DirEntry, error) {
+	if limit < 0 {
+		return nil, errors.New("directory entry limit cannot be negative")
+	}
 	fd, _, err := openDirectory(path, false, 0)
 	if err != nil {
 		return nil, &os.PathError{Op: "open directory", Path: path, Err: err}
@@ -106,9 +109,16 @@ func ReadDir(path string) ([]os.DirEntry, error) {
 		return nil, errors.New("open directory descriptor failed")
 	}
 	defer file.Close()
-	entries, err := file.ReadDir(-1)
+	readLimit := limit
+	if limit > 0 {
+		readLimit++
+	}
+	entries, err := file.ReadDir(readLimit)
 	if err != nil {
 		return nil, &os.PathError{Op: "read directory", Path: path, Err: err}
+	}
+	if limit > 0 && len(entries) > limit {
+		return nil, fmt.Errorf("directory %s exceeds maximum of %d entries", path, limit)
 	}
 	return entries, nil
 }

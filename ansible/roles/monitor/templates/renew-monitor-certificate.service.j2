@@ -1,0 +1,13 @@
+[Unit]
+Description=Renew the Pulse endpoint certificate
+After=network-online.target boetticher-step-ca.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/boetticher-renew-monitor-certificate
+User=root
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/etc/boetticher/tls /run

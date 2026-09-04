@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"sort"
 	"strings"
 
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -171,8 +170,4 @@ func ValidateProbeAddress(probe Probe) error {
 		return errors.New("probe address is invalid")
 	}
 	return nil
-}
-
-func SortResults(results []Result) {
-	sort.Slice(results, func(i, j int) bool { return results[i].Name < results[j].Name })
 }

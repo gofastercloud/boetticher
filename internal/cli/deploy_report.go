@@ -465,7 +465,7 @@ func deploymentRetryAdvice(operationErr, cleanupErr error) string {
 
 func deploymentNextAction(operationErr, cleanupErr error) string {
 	if cleanupErr != nil {
-		return "Run boetticher doctor --live and complete the temporary-authority recovery procedure."
+		return "Run boetticher status --details --live and complete the temporary-authority recovery procedure."
 	}
 	if operationErr == nil {
 		return "No action required."
@@ -474,7 +474,7 @@ func deploymentNextAction(operationErr, cleanupErr error) string {
 	if strings.Contains(message, "preflight") || strings.Contains(message, "credential") || strings.Contains(message, "artifact") || strings.Contains(message, "network contract") {
 		return "Correct the named prerequisite, then run boetticher deploy --site <site>."
 	}
-	return "Run boetticher doctor --live, correct the reported failure, then run boetticher deploy --site <site>."
+	return "Run boetticher status --details --live, correct the reported failure, then run boetticher deploy --site <site>."
 }
 
 func deploymentFailureComponent(err error) string {

@@ -17,6 +17,7 @@ func runUpdate(args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
+	bundle := fs.String("bundle", "", "import an authenticated offline release bundle")
 	dryRun := fs.Bool("dry-run", false, "validate and show the desired-state update without writing")
 	confirm := fs.Bool("confirm", false, "authorize the desired-state update")
 	if err := fs.Parse(args); err != nil {
@@ -24,6 +25,12 @@ func runUpdate(args []string, out io.Writer) error {
 	}
 	if *dryRun && *confirm {
 		return errors.New("--dry-run and --confirm cannot be used together")
+	}
+	if *bundle != "" {
+		if *dryRun || *confirm {
+			return errors.New("--bundle cannot be combined with --dry-run or --confirm")
+		}
+		return runBundleImport([]string{*bundle, "--site", *siteDir}, out)
 	}
 
 	original, err := pathguard.ReadFile(filepath.Join(*siteDir, "site.yml"))
@@ -68,9 +75,6 @@ func runUpdate(args []string, out io.Writer) error {
 	if err := writeModelProjections(*siteDir, resolved); err != nil {
 		return rollbackUpdate(*siteDir, original, originalSite, fmt.Errorf("refresh generated projections: %w", err))
 	}
-	if err := rebuildPortal(*siteDir, resolved); err != nil {
-		return rollbackUpdate(*siteDir, original, originalSite, fmt.Errorf("refresh portal projection: %w", err))
-	}
 	fmt.Fprintln(out, "Updated desired configuration atomically. No deployment was performed; run boetticher deploy, then boetticher status.")
 	return nil
 }
@@ -81,9 +85,6 @@ func rollbackUpdate(dir string, originalConfig []byte, originalSite model.Site, 
 	}
 	if err := writeModelProjections(dir, originalSite); err != nil {
 		return fmt.Errorf("Problem: %w; desired configuration was restored but generated projections could not be restored: %v", cause, err)
-	}
-	if err := rebuildPortal(dir, originalSite); err != nil {
-		return fmt.Errorf("Problem: %w; desired configuration and model projections were restored but portal could not be restored: %v", cause, err)
 	}
 	return fmt.Errorf("Problem: %w; desired configuration and generated projections were restored", cause)
 }

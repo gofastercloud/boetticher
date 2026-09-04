@@ -1,6 +1,7 @@
 package site
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,5 +41,22 @@ func TestLoadClientRevocationsCanonicalizesSerials(t *testing.T) {
 	}
 	if _, err := pki.ParseSerial(revocations[0].Serial); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLoadClientRevocationsRejectsTooManyEntries(t *testing.T) {
+	dir := t.TempDir()
+	revokedDir := filepath.Join(dir, "generated", "pki", "revoked")
+	if err := os.MkdirAll(revokedDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index <= maxRevocationEntries; index++ {
+		path := filepath.Join(revokedDir, "client-"+fmt.Sprint(index)+".yaml")
+		if err := os.WriteFile(path, []byte("name: operator\nserial: "+fmt.Sprint(index+1)+"\nstatus: revoked\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := LoadClientRevocations(dir); err == nil {
+		t.Fatal("oversized revocation directory was accepted")
 	}
 }

@@ -12,16 +12,64 @@
 - name: Require the exact controller-issued kiosk identity inputs
   ansible.builtin.assert:
     that:
-      - kiosk_client_key_pem | default('') | length > 0
-      - kiosk_client_cert_pem | default('') | length > 0
+      - (not (kiosk_display_enabled | default(true) | bool)) or (kiosk_client_key_pem | default('') | length > 0)
+      - (not (kiosk_display_enabled | default(true) | bool)) or (kiosk_client_cert_pem | default('') | length > 0)
       - kiosk_root_ca_pem | default('') | length > 0
       - kiosk_issuing_ca_pem | default('') | length > 0
-      - kiosk_pulse_agent_token | default('') | length > 0
-      - kiosk_client_subject | default('') is match('^client-[A-Za-z0-9_.-]+$')
-      - kiosk_client_nickname | default('') is match('^[A-Za-z0-9_. -]+$')
+      - (not (kiosk_pulse_agent_enabled | default(true) | bool)) or (kiosk_pulse_agent_token | default('') | length > 0)
+      - (not (kiosk_display_enabled | default(true) | bool)) or (kiosk_client_subject | default('') is match('^client-[A-Za-z0-9_.-]+$'))
+      - (not (kiosk_display_enabled | default(true) | bool)) or (kiosk_client_nickname | default('') is match('^[A-Za-z0-9_. -]+$'))
       - kiosk_pulse_url | default('') is match('^https://[A-Za-z0-9.-]+$')
-    fail_msg: "The kiosk requires a validated Boetticher client identity and HTTPS Pulse URL"
+    fail_msg: "The companion requires validated Boetticher identities and an HTTPS Pulse URL"
   no_log: true
+
+- name: Create the companion configuration directory
+  ansible.builtin.file:
+    path: /etc/boetticher
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Permit unprivileged companion services to traverse their state parent
+  ansible.builtin.file:
+    path: /var/lib/boetticher
+    state: directory
+    owner: root
+    group: root
+    mode: '0751'
+
+- name: Require the standard NetworkManager eth0 profile for the lab route
+  ansible.builtin.command:
+    argv: [nmcli, connection, show, netplan-eth0]
+  register: kiosk_eth0_profile
+  changed_when: false
+
+- name: Configure the dual-homed companion lab route
+  ansible.builtin.command:
+    argv:
+      - nmcli
+      - connection
+      - modify
+      - netplan-eth0
+      - connection.interface-name
+      - eth0
+      - ipv4.method
+      - auto
+      - ipv4.never-default
+      - 'yes'
+      - ipv4.ignore-auto-dns
+      - 'yes'
+      - ipv4.dns
+      - 10.10.10.10
+      - ipv4.dns-priority
+      - '-50'
+      - ipv4.dns-search
+      - '~lab.home.arpa'
+      - ipv4.routes
+      - 10.10.0.0/16 10.10.20.1
+  changed_when: false
+  when: kiosk_eth0_profile.rc == 0
 
 - name: Measure the existing log footprint before enabling log2ram
   ansible.builtin.command: du -smx /var/log
@@ -84,23 +132,31 @@
   ansible.builtin.apt:
     name:
       - ca-certificates
-      - cage
-      - chromium
       - chrony
-      - dbus
-      - dbus-user-session
-      - lm-sensors
-      - libnss3-tools
       - log2ram
       - openssh-server
       - openssl
       - smartmontools
-      - seatd
       - unattended-upgrades
       - util-linux
     state: present
     update_cache: true
     cache_valid_time: 3600
+
+- name: Install display-only companion packages
+  ansible.builtin.apt:
+    name:
+      - cage
+      - chromium
+      - dbus
+      - dbus-user-session
+      - lm-sensors
+      - libnss3-tools
+      - seatd
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: kiosk_display_enabled | default(true) | bool
 
 - name: Enable unattended package-list refresh and upgrades
   ansible.builtin.copy:
@@ -162,11 +218,13 @@
   loop:
     - {dest: /usr/local/share/ca-certificates/boetticher-pulse-root.crt, content: "{{ kiosk_root_ca_pem }}"}
     - {dest: /usr/local/share/ca-certificates/boetticher-pulse-issuing.crt, content: "{{ kiosk_issuing_ca_pem }}"}
+  when: kiosk_pulse_agent_enabled | default(true) | bool
 
 - name: Refresh system CA trust for Pulse host-agent HTTPS
   ansible.builtin.command: update-ca-certificates
   register: kiosk_pulse_agent_ca_update
   changed_when: "'0 added, 0 removed' not in kiosk_pulse_agent_ca_update.stdout"
+  when: kiosk_pulse_agent_enabled | default(true) | bool
 
 - name: Install the exact pinned ARM64 Pulse host-agent binary
   ansible.builtin.get_url:
@@ -177,17 +235,20 @@
     group: root
     mode: '0755'
   notify: restart pulse-agent
+  when: kiosk_pulse_agent_enabled | default(true) | bool
 
 - name: Verify the pinned ARM64 Pulse host-agent version
   ansible.builtin.command: /usr/local/bin/pulse-agent --version
   register: kiosk_pulse_agent_version_result
   changed_when: false
+  when: kiosk_pulse_agent_enabled | default(true) | bool
 
 - name: Prove the expected Pulse host-agent version is installed
   ansible.builtin.assert:
     that:
       - kiosk_pulse_agent_version in kiosk_pulse_agent_version_result.stdout
     fail_msg: "Installed Pulse host-agent did not report the pinned version"
+  when: kiosk_pulse_agent_enabled | default(true) | bool
 
 - name: Create Pulse agent credential and state directories
   ansible.builtin.file:
@@ -200,6 +261,7 @@
     - {path: /etc/systemd/system/pulse-agent.service.d, mode: '0755'}
     - {path: /var/lib/boetticher/credentials, mode: '0700'}
     - {path: /var/lib/boetticher/pulse-agent, mode: '0700'}
+  when: kiosk_pulse_agent_enabled | default(true) | bool
 
 - name: Inspect the existing encrypted Pulse agent credential
   ansible.builtin.stat:
@@ -207,6 +269,7 @@
   register: kiosk_pulse_agent_credential
   changed_when: false
   no_log: true
+  when: kiosk_pulse_agent_enabled | default(true) | bool
 
 - name: Inspect the applied Pulse agent credential revision
   ansible.builtin.stat:
@@ -214,18 +277,22 @@
   register: kiosk_pulse_agent_credential_revision
   changed_when: false
   no_log: true
+  when: kiosk_pulse_agent_enabled | default(true) | bool
 
 - name: Read the applied Pulse agent credential revision
   ansible.builtin.slurp:
     src: /var/lib/boetticher/credentials/pulse-agent-token.sha256
   register: kiosk_pulse_agent_credential_revision_content
-  when: kiosk_pulse_agent_credential_revision.stat.exists
+  when:
+    - kiosk_pulse_agent_enabled | default(true) | bool
+    - kiosk_pulse_agent_credential_revision.stat.exists
   no_log: true
 
 - name: Calculate the desired Pulse agent credential revision
   ansible.builtin.set_fact:
     kiosk_pulse_agent_credential_revision_wanted: "{{ kiosk_pulse_agent_token | hash('sha256') }}"
   no_log: true
+  when: kiosk_pulse_agent_enabled | default(true) | bool
 
 - name: Determine whether the Pulse agent credential needs an update
   ansible.builtin.set_fact:
@@ -234,9 +301,12 @@
          or not kiosk_pulse_agent_credential_revision.stat.exists
          or (kiosk_pulse_agent_credential_revision_content.content | default('') | b64decode | trim) != kiosk_pulse_agent_credential_revision_wanted }}
   no_log: true
+  when: kiosk_pulse_agent_enabled | default(true) | bool
 
 - name: Encrypt the Pulse agent report token into the systemd credential store
-  when: kiosk_pulse_agent_credential_needs_update | bool
+  when:
+    - kiosk_pulse_agent_enabled | default(true) | bool
+    - kiosk_pulse_agent_credential_needs_update | bool
   block:
     - name: Create the temporary Pulse credential staging directory
       ansible.builtin.file:
@@ -290,6 +360,7 @@
     group: root
     mode: '0644'
   notify: restart pulse-agent
+  when: kiosk_pulse_agent_enabled | default(true) | bool
 
 - name: Install the Pulse agent encrypted credential drop-in
   ansible.builtin.copy:
@@ -303,6 +374,7 @@
   notify:
     - reload systemd
     - restart pulse-agent
+  when: kiosk_pulse_agent_enabled | default(true) | bool
 
 - name: Create the unprivileged kiosk account
   ansible.builtin.user:
@@ -317,6 +389,7 @@
       - render
       - input
     append: true
+  when: kiosk_display_enabled | default(true) | bool
 
 - name: Create kiosk application and NSS directories
   ansible.builtin.file:
@@ -334,6 +407,7 @@
     - {path: /etc/chromium/policies/managed, owner: root, group: root, mode: '0755'}
     - {path: /etc/ssh/sshd_config.d, owner: root, group: root, mode: '0755'}
     - {path: /etc/systemd/system/pulse-kiosk.service.d, owner: root, group: root, mode: '0755'}
+  when: kiosk_display_enabled | default(true) | bool
 
 - name: Install the kiosk visualizer
   ansible.builtin.copy:
@@ -342,6 +416,7 @@
     owner: kiosk
     group: kiosk
     mode: '0644'
+  when: kiosk_display_enabled | default(true) | bool
 
 - name: Install the local kiosk telemetry helper
   ansible.builtin.copy:
@@ -350,6 +425,7 @@
     owner: root
     group: root
     mode: '0755'
+  when: kiosk_display_enabled | default(true) | bool
 
 - name: Install the kiosk refresh extension
   ansible.builtin.copy:
@@ -361,6 +437,7 @@
   loop:
     - {src: "{{ kiosk_source_dir }}/pulse-refresh-extension/manifest.json", dest: /home/kiosk/pulse-refresh-extension/manifest.json}
     - {src: "{{ kiosk_source_dir }}/pulse-refresh-extension/reload.js", dest: /home/kiosk/pulse-refresh-extension/reload.js}
+  when: kiosk_display_enabled | default(true) | bool
 
 - name: Install the kiosk statistics systemd units
   ansible.builtin.copy:
@@ -372,6 +449,7 @@
   loop:
     - {src: "{{ kiosk_source_dir }}/systemd/pulse-kiosk-stats.service", dest: /etc/systemd/system/pulse-kiosk-stats.service}
     - {src: "{{ kiosk_source_dir }}/systemd/pulse-kiosk-stats.timer", dest: /etc/systemd/system/pulse-kiosk-stats.timer}
+  when: kiosk_display_enabled | default(true) | bool
 
 - name: Install the CAGE PAM session
   ansible.builtin.copy:
@@ -383,6 +461,7 @@
       auth           required        pam_unix.so nullok
       account        required        pam_unix.so
       session        required        pam_unix.so
+  when: kiosk_display_enabled | default(true) | bool
 
 - name: Install the Pulse kiosk systemd service
   ansible.builtin.template:
@@ -392,6 +471,7 @@
     group: root
     mode: '0644'
   notify: reload systemd
+  when: kiosk_display_enabled | default(true) | bool
 
 - name: Install the Pulse kiosk service drop-in
   ansible.builtin.template:
@@ -401,6 +481,7 @@
     group: root
     mode: '0644'
   notify: reload systemd
+  when: kiosk_display_enabled | default(true) | bool
 
 - name: Install Chromium kiosk certificate auto-selection policy
   ansible.builtin.template:
@@ -410,6 +491,7 @@
     group: root
     mode: '0644'
   notify: restart pulse-kiosk
+  when: kiosk_display_enabled | default(true) | bool
 
 - name: Install the SSH hardening drop-in
   ansible.builtin.copy:
@@ -439,6 +521,7 @@
       - --empty-password
   args:
     creates: /home/kiosk/.pki/nssdb/cert9.db
+  when: kiosk_display_enabled | default(true) | bool
 
 - name: Check for the Boetticher root CA in the kiosk NSS database
   become_user: kiosk
@@ -453,6 +536,7 @@
   register: kiosk_root_ca
   changed_when: false
   failed_when: false
+  when: kiosk_display_enabled | default(true) | bool
 
 - name: Import the Boetticher root CA into the kiosk NSS database
   become_user: kiosk
@@ -469,7 +553,9 @@
       - -a
       - -i
       - /usr/local/share/ca-certificates/boetticher-pulse-root.crt
-  when: kiosk_root_ca.rc != 0
+  when:
+    - kiosk_display_enabled | default(true) | bool
+    - kiosk_root_ca.rc != 0
   no_log: true
 
 - name: Check for the Boetticher issuing CA in the kiosk NSS database
@@ -485,6 +571,7 @@
   register: kiosk_issuing_ca
   changed_when: false
   failed_when: false
+  when: kiosk_display_enabled | default(true) | bool
 
 - name: Import the Boetticher issuing CA into the kiosk NSS database
   become_user: kiosk
@@ -501,7 +588,9 @@
       - -a
       - -i
       - /usr/local/share/ca-certificates/boetticher-pulse-issuing.crt
-  when: kiosk_issuing_ca.rc != 0
+  when:
+    - kiosk_display_enabled | default(true) | bool
+    - kiosk_issuing_ca.rc != 0
   no_log: true
 
 - name: Check for the kiosk client certificate in the NSS database
@@ -511,6 +600,7 @@
   register: kiosk_client_certificate
   changed_when: false
   failed_when: false
+  when: kiosk_display_enabled | default(true) | bool
 
 - name: Read the kiosk client certificate serial from the NSS database
   become_user: kiosk
@@ -525,7 +615,9 @@
   register: kiosk_nss_client_certificate_serial
   changed_when: false
   failed_when: false
-  when: kiosk_client_certificate.rc == 0
+  when:
+    - kiosk_display_enabled | default(true) | bool
+    - kiosk_client_certificate.rc == 0
   no_log: true
 
 - name: Remove an outdated kiosk client certificate from NSS
@@ -533,14 +625,17 @@
   ansible.builtin.command:
     argv: [certutil, -D, -d, sql:/home/kiosk/.pki/nssdb, -n, "{{ kiosk_client_nickname }}"]
   when:
+    - kiosk_display_enabled | default(true) | bool
     - kiosk_client_certificate.rc == 0
     - (kiosk_nss_client_certificate_serial.stdout | default('') | trim | lower) != (kiosk_client_certificate_serial | lower)
   no_log: true
 
 - name: Import the controller-issued kiosk identity into NSS
-  when: >-
-    kiosk_client_certificate.rc != 0 or
-    (kiosk_nss_client_certificate_serial.stdout | default('') | trim | lower) != (kiosk_client_certificate_serial | lower)
+  when:
+    - kiosk_display_enabled | default(true) | bool
+    - >-
+      kiosk_client_certificate.rc != 0 or
+      (kiosk_nss_client_certificate_serial.stdout | default('') | trim | lower) != (kiosk_client_certificate_serial | lower)
   block:
     - name: Stage kiosk identity material for NSS import
       ansible.builtin.file:
@@ -610,6 +705,7 @@
     owner: kiosk
     group: kiosk
     mode: '0700'
+  when: kiosk_display_enabled | default(true) | bool
 
 - name: Set kiosk ownership on NSS database files
   ansible.builtin.file:
@@ -622,11 +718,13 @@
     - /home/kiosk/.pki/nssdb/cert9.db
     - /home/kiosk/.pki/nssdb/key4.db
     - /home/kiosk/.pki/nssdb/pkcs11.txt
+  when: kiosk_display_enabled | default(true) | bool
 
 - name: Set graphical target as the kiosk boot target
   ansible.builtin.command: systemctl set-default graphical.target
   register: kiosk_default_target
   changed_when: "'Created symlink' in kiosk_default_target.stdout or 'Removed' in kiosk_default_target.stdout"
+  when: kiosk_display_enabled | default(true) | bool
 
 - name: Enable seatd and baseline maintenance timers
   ansible.builtin.systemd_service:
@@ -634,12 +732,18 @@
     enabled: true
     state: started
   loop:
-    - seatd.service
     - apt-daily.timer
     - apt-daily-upgrade.timer
     - fstrim.timer
     - log2ram.service
     - log2ram-daily.timer
+
+- name: Enable seatd for the graphical companion display
+  ansible.builtin.systemd_service:
+    name: seatd.service
+    enabled: true
+    state: started
+  when: kiosk_display_enabled | default(true) | bool
 
 - name: Enable and start the kiosk services
   ansible.builtin.systemd_service:
@@ -651,3 +755,335 @@
     - pulse-kiosk-stats.timer
     - pulse-kiosk.service
     - pulse-agent.service
+  when: >-
+    (item in ['pulse-kiosk-stats.timer', 'pulse-kiosk.service'] and kiosk_display_enabled | default(true) | bool) or
+    (item == 'pulse-agent.service' and kiosk_pulse_agent_enabled | default(true) | bool)
+
+- name: Inspect optional companion capability unit files
+  ansible.builtin.stat:
+    path: "{{ item.path }}"
+  register: companion_capability_units
+  loop:
+    - {unit: pulse-kiosk.service, path: /etc/systemd/system/pulse-kiosk.service, enabled: "{{ kiosk_display_enabled | default(true) | bool }}"}
+    - {unit: pulse-kiosk-stats.timer, path: /etc/systemd/system/pulse-kiosk-stats.timer, enabled: "{{ kiosk_display_enabled | default(true) | bool }}"}
+    - {unit: pulse-agent.service, path: /etc/systemd/system/pulse-agent.service, enabled: "{{ kiosk_pulse_agent_enabled | default(true) | bool }}"}
+    - {unit: boetticher-streamdeck.service, path: /etc/systemd/system/boetticher-streamdeck.service, enabled: "{{ kiosk_streamdeck_enabled | default(true) | bool }}"}
+  changed_when: false
+
+- name: Stop disabled companion capabilities
+  ansible.builtin.systemd_service:
+    name: "{{ item.unit }}"
+    enabled: false
+    state: stopped
+    daemon_reload: true
+  loop:
+    - {unit: pulse-kiosk.service, enabled: "{{ kiosk_display_enabled | default(true) | bool }}"}
+    - {unit: pulse-kiosk-stats.timer, enabled: "{{ kiosk_display_enabled | default(true) | bool }}"}
+    - {unit: pulse-agent.service, enabled: "{{ kiosk_pulse_agent_enabled | default(true) | bool }}"}
+    - {unit: boetticher-streamdeck.service, enabled: "{{ kiosk_streamdeck_enabled | default(true) | bool }}"}
+  when:
+    - not (item.enabled | bool)
+    - >-
+      (companion_capability_units.results
+      | selectattr('item.unit', 'equalto', item.unit)
+      | map(attribute='stat.exists')
+      | first
+      | default(false)
+      | bool)
+
+- name: Remove disabled Pulse agent material
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /usr/local/bin/pulse-agent
+    - /etc/systemd/system/pulse-agent.service
+    - /etc/systemd/system/pulse-agent.service.d/10-boetticher-credentials.conf
+    - /var/lib/boetticher/credentials/pulse-agent-token.cred
+    - /var/lib/boetticher/credentials/pulse-agent-token.sha256
+    - /var/lib/boetticher/pulse-agent
+    - /usr/local/share/ca-certificates/boetticher-pulse-root.crt
+    - /usr/local/share/ca-certificates/boetticher-pulse-issuing.crt
+  when: not (kiosk_pulse_agent_enabled | default(true) | bool)
+
+- name: Refresh system CA trust after removing disabled Pulse agent material
+  ansible.builtin.command: update-ca-certificates
+  changed_when: false
+  when: not (kiosk_pulse_agent_enabled | default(true) | bool)
+
+- name: Remove disabled display capability material
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/pulse-kiosk.service
+    - /etc/systemd/system/pulse-kiosk-stats.service
+    - /etc/systemd/system/pulse-kiosk-stats.timer
+    - /etc/systemd/system/pulse-kiosk.service.d/20-pulse-dashboard.conf
+    - /usr/local/libexec/pulse-kiosk-stats
+    - /etc/chromium/policies/managed/boetticher-kiosk.json
+    - /etc/pam.d/cage
+    - /home/kiosk/visualizer
+    - /home/kiosk/pulse-refresh-extension
+    - /home/kiosk/.pki/nssdb
+  when: not (kiosk_display_enabled | default(true) | bool)
+
+- name: Remove disabled StreamDeck capability material
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/boetticher-streamdeck.service
+    - /usr/local/libexec/boetticher-streamdeck
+    - /etc/boetticher/streamdeck.json
+    - /etc/udev/rules.d/70-boetticher-streamdeck.rules
+    - /var/lib/boetticher/companion-streamdeck
+    - /var/lib/boetticher/credentials/companion-streamdeck-pulse-token.cred
+    - /var/lib/boetticher/credentials/companion-streamdeck-pulse-token.sha256
+    - /var/lib/boetticher/streamdeck
+  when: not (kiosk_streamdeck_enabled | default(true) | bool)
+
+- name: Reload systemd after removing disabled companion units
+  ansible.builtin.command: systemctl daemon-reload
+  changed_when: false
+  when: >-
+    not (kiosk_display_enabled | default(true) | bool) or
+    not (kiosk_streamdeck_enabled | default(true) | bool) or
+    not (kiosk_pulse_agent_enabled | default(true) | bool)
+
+- name: Require the exact companion StreamDeck identity inputs
+  ansible.builtin.assert:
+    that:
+      - streamdeck_binary | default('') | length > 0
+      - streamdeck_pulse_token | default('') | length > 0
+      - streamdeck_vendor_id | int == 4057
+      - streamdeck_product_id | int == 109
+      - streamdeck_model | default('') == 'Stream Deck MK.2'
+      - streamdeck_serial | default('') is match('^[A-Za-z0-9_.-]*$')
+    fail_msg: "StreamDeck requires the pinned binary, exact USB identity, private Pulse CA, and scoped read credential"
+  when: kiosk_streamdeck_enabled | default(true) | bool
+  no_log: true
+
+- name: Create the exact StreamDeck USB group
+  ansible.builtin.group:
+    name: streamdeck
+    system: true
+  when: kiosk_streamdeck_enabled | default(true) | bool
+
+- name: Create the unprivileged companion StreamDeck account
+  ansible.builtin.user:
+    name: streamdeck
+    comment: Boetticher companion StreamDeck
+    home: /var/lib/boetticher/streamdeck
+    shell: /usr/sbin/nologin
+    create_home: true
+    password_lock: true
+    system: true
+    groups: streamdeck
+    append: true
+  when: kiosk_streamdeck_enabled | default(true) | bool
+
+- name: Create companion StreamDeck state and identity directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: /var/lib/boetticher/streamdeck, owner: streamdeck, group: streamdeck, mode: '0750'}
+    - {path: /var/lib/boetticher/companion-streamdeck, owner: root, group: streamdeck, mode: '0750'}
+    - {path: /var/lib/boetticher/credentials, owner: root, group: root, mode: '0700'}
+    - {path: /etc/udev/rules.d, owner: root, group: root, mode: '0755'}
+  when: kiosk_streamdeck_enabled | default(true) | bool
+
+- name: Install the release-built ARM64 StreamDeck binary
+  ansible.builtin.copy:
+    src: "{{ streamdeck_binary }}"
+    dest: /usr/local/libexec/boetticher-streamdeck
+    owner: root
+    group: root
+    mode: '0755'
+  notify: restart companion streamdeck
+  when: kiosk_streamdeck_enabled | default(true) | bool
+
+- name: Install the StreamDeck private-CA trust
+  ansible.builtin.copy:
+    dest: "{{ item.dest }}"
+    content: "{{ item.content }}"
+    owner: root
+    group: streamdeck
+    mode: "{{ item.mode }}"
+  loop:
+    - {dest: /var/lib/boetticher/companion-streamdeck/ca.pem, content: "{{ kiosk_root_ca_pem }}", mode: '0644'}
+  no_log: true
+  notify: restart companion streamdeck
+  when: kiosk_streamdeck_enabled | default(true) | bool
+
+- name: Remove the superseded StreamDeck client certificate identity
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/lib/boetticher/companion-streamdeck/client.key.pem
+    - /var/lib/boetticher/companion-streamdeck/client.crt.pem
+  when: kiosk_streamdeck_enabled | default(true) | bool
+
+- name: Render the exact local StreamDeck configuration
+  ansible.builtin.copy:
+    dest: /etc/boetticher/streamdeck.json
+    owner: root
+    group: streamdeck
+    mode: '0640'
+    content: "{{ {'pulse_url': kiosk_pulse_url, 'vendor_id': streamdeck_vendor_id | int, 'product_id': streamdeck_product_id | int, 'model': streamdeck_model, 'serial': streamdeck_serial | default(''), 'ca_certificate': '/var/lib/boetticher/companion-streamdeck/ca.pem'} | to_nice_json }}\n"
+  notify: restart companion streamdeck
+  when: kiosk_streamdeck_enabled | default(true) | bool
+
+- name: Install the exact StreamDeck udev permission rule
+  ansible.builtin.copy:
+    dest: /etc/udev/rules.d/70-boetticher-streamdeck.rules
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      SUBSYSTEM=="usb", ATTR{idVendor}=="0fd9", ATTR{idProduct}=="006d"{% if streamdeck_serial | default('') | length > 0 %}, ATTR{serial}=="{{ streamdeck_serial }}"{% endif %}, GROUP="streamdeck", MODE="0660"
+      KERNEL=="hidraw*", ATTRS{idVendor}=="0fd9", ATTRS{idProduct}=="006d"{% if streamdeck_serial | default('') | length > 0 %}, ATTRS{serial}=="{{ streamdeck_serial }}"{% endif %}, GROUP="streamdeck", MODE="0660"
+  register: companion_streamdeck_udev_rule
+  notify: restart companion streamdeck
+  when: kiosk_streamdeck_enabled | default(true) | bool
+
+- name: Reload exact StreamDeck udev permissions
+  ansible.builtin.command: udevadm control --reload-rules
+  changed_when: false
+  when:
+    - kiosk_streamdeck_enabled | default(true) | bool
+    - companion_streamdeck_udev_rule is changed
+
+- name: Apply exact StreamDeck udev permissions to connected devices
+  ansible.builtin.command: udevadm trigger --action=change --subsystem-match=hidraw
+  changed_when: false
+  when:
+    - kiosk_streamdeck_enabled | default(true) | bool
+    - companion_streamdeck_udev_rule is changed
+
+- name: Apply exact StreamDeck USB permissions to connected devices
+  ansible.builtin.command: udevadm trigger --action=change --subsystem-match=usb
+  changed_when: false
+  when:
+    - kiosk_streamdeck_enabled | default(true) | bool
+    - companion_streamdeck_udev_rule is changed
+
+- name: Install the hardened companion StreamDeck service
+  ansible.builtin.template:
+    src: boetticher-streamdeck.service.j2
+    dest: /etc/systemd/system/boetticher-streamdeck.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - reload systemd
+    - restart companion streamdeck
+  when: kiosk_streamdeck_enabled | default(true) | bool
+
+- name: Inspect the existing encrypted StreamDeck Pulse credential
+  ansible.builtin.stat:
+    path: /var/lib/boetticher/credentials/companion-streamdeck-pulse-token.cred
+  register: companion_streamdeck_credential
+  changed_when: false
+  no_log: true
+  when: kiosk_streamdeck_enabled | default(true) | bool
+
+- name: Inspect the applied StreamDeck Pulse credential revision
+  ansible.builtin.stat:
+    path: /var/lib/boetticher/credentials/companion-streamdeck-pulse-token.sha256
+  register: companion_streamdeck_credential_revision
+  changed_when: false
+  no_log: true
+  when: kiosk_streamdeck_enabled | default(true) | bool
+
+- name: Read the applied StreamDeck Pulse credential revision
+  ansible.builtin.slurp:
+    src: /var/lib/boetticher/credentials/companion-streamdeck-pulse-token.sha256
+  register: companion_streamdeck_credential_revision_content
+  when:
+    - kiosk_streamdeck_enabled | default(true) | bool
+    - companion_streamdeck_credential_revision.stat.exists
+  no_log: true
+
+- name: Calculate the desired StreamDeck Pulse credential revision
+  ansible.builtin.set_fact:
+    companion_streamdeck_credential_revision_wanted: "{{ streamdeck_pulse_token | hash('sha256') }}"
+  no_log: true
+  when: kiosk_streamdeck_enabled | default(true) | bool
+
+- name: Determine whether the StreamDeck Pulse credential needs an update
+  ansible.builtin.set_fact:
+    companion_streamdeck_credential_needs_update: >-
+      {{ not companion_streamdeck_credential.stat.exists
+         or not companion_streamdeck_credential_revision.stat.exists
+         or (companion_streamdeck_credential_revision_content.content | default('') | b64decode | trim) != companion_streamdeck_credential_revision_wanted }}
+  no_log: true
+  when: kiosk_streamdeck_enabled | default(true) | bool
+
+- name: Encrypt the scoped StreamDeck Pulse credential
+  when:
+    - kiosk_streamdeck_enabled | default(true) | bool
+    - companion_streamdeck_credential_needs_update | bool
+  block:
+    - name: Create the temporary StreamDeck credential staging directory
+      ansible.builtin.file:
+        path: /run/boetticher-companion
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+    - name: Stage the scoped StreamDeck Pulse credential
+      ansible.builtin.copy:
+        dest: /run/boetticher-companion/pulse-token
+        content: "{{ streamdeck_pulse_token }}"
+        owner: root
+        group: root
+        mode: '0600'
+      no_log: true
+    - name: Encrypt the scoped StreamDeck Pulse credential in staging
+      ansible.builtin.command:
+        argv: [systemd-creds, encrypt, --name=pulse-token, /run/boetticher-companion/pulse-token, /run/boetticher-companion/pulse-token.cred]
+      no_log: true
+
+    - name: Install the changed scoped StreamDeck Pulse credential
+      ansible.builtin.copy:
+        remote_src: true
+        src: /run/boetticher-companion/pulse-token.cred
+        dest: /var/lib/boetticher/credentials/companion-streamdeck-pulse-token.cred
+        owner: root
+        group: root
+        mode: '0600'
+      no_log: true
+      notify:
+        - reload systemd
+        - restart companion streamdeck
+
+    - name: Record the applied StreamDeck Pulse credential revision
+      ansible.builtin.copy:
+        dest: /var/lib/boetticher/credentials/companion-streamdeck-pulse-token.sha256
+        content: "{{ companion_streamdeck_credential_revision_wanted }}\n"
+        owner: root
+        group: root
+        mode: '0600'
+      no_log: true
+  always:
+    - name: Remove the staged StreamDeck Pulse credential material
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /run/boetticher-companion/pulse-token
+        - /run/boetticher-companion/pulse-token.cred
+
+- name: Enable and start the companion StreamDeck service
+  ansible.builtin.systemd_service:
+    name: boetticher-streamdeck.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: kiosk_streamdeck_enabled | default(true) | bool

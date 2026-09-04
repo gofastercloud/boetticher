@@ -1,6 +1,0 @@
----
-- name: restart streamdeck
-  ansible.builtin.systemd_service:
-    name: streamdeck-status.service
-    state: restarted
-    daemon_reload: true

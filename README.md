@@ -5,7 +5,7 @@
 </p>
 
 > Turn a clean Proxmox host into a proper little homelab—with networking, DNS,
-> monitoring, logs, backups, and the good bits already wired together.
+> monitoring, backups, and the good bits already wired together.
 
 Boetticher is a small, opinionated builder for a single-node Proxmox lab. You
 describe the lab once, then use one friendly command-line tool to build it and
@@ -15,12 +15,15 @@ VMs and Linux Containers remain yours.
 The name is a tiny chemistry-show wink. The result is less *Breaking Bad* and
 more *breaking out the good gear*.
 
+Version 0.5.1 keeps the everyday rhythm small: import a signed release bundle,
+make a live plan, deploy that exact plan, and check the lab. StreamDeck now
+lives on the external companion Pi rather than in a Proxmox guest.
+
 ## Start here
 
 The [Boetticher guide](https://gofastercloud.github.io/boetticher/) is the nice
 place to read: a short first-run walkthrough, a map of the lab, modules, and a
-generated command menu. It is published from the same versioned source that
-the local Boetticher portal carries, so there is one guide to keep useful.
+generated command menu.
 
 ## Quickstart
 
@@ -29,16 +32,29 @@ real values:
 
 ```text
 boetticher init --site-dir my-boetticher
-boetticher bootstrap-endpoint set PROXMOX_HOME_IP --site my-boetticher
-boetticher preflight --site my-boetticher --live
-boetticher bootstrap --site my-boetticher --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem
-boetticher deploy --site my-boetticher --dry-run --proxmox-ca /path/to/pve-root-ca.pem
-boetticher deploy --site my-boetticher --proxmox-ca /path/to/pve-root-ca.pem
+boetticher enroll --site my-boetticher --bootstrap-address PROXMOX_HOME_IP --recovery-confirmed --proxmox-ca /path/to/pve-root-ca.pem
+boetticher bundle import ./boetticher-0.5.1.tar.gz --site my-boetticher
+boetticher deploy --site my-boetticher
 boetticher status --site my-boetticher --live
 ```
 
 Keep an independent copy of the age recovery identity created during setup.
 The guide has the calm version of the rest.
+
+The optional Companion is deliberately added after the core lab is healthy and
+the guarded physical trunk is attached. Give Boetticher the Pi's physical
+`eth0` MAC, deploy the derived SERVERS reservation and bastion route, then
+configure the Pi at its fixed lab address:
+
+```text
+boetticher companion add --mac COMPANION_ETH0_MAC --confirm --site my-boetticher
+boetticher deploy --site my-boetticher
+boetticher companion setup --host-key 'ssh-ed25519 VERIFIED_HOST_KEY' --confirm --site my-boetticher
+boetticher companion status --site my-boetticher
+```
+
+The fixed identity is `lab-display-01` at `10.10.20.50`; a HOME-side address is
+not saved as the managed Companion endpoint.
 
 ## Built with a lot of excellent open source
 

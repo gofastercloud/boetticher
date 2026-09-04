@@ -1,9 +1,0 @@
-name: boetticher-portal
-version: 1.0.0
-kind: lxc
-base: boetticher-base
-base_version: 0.4.0
-architecture: amd64
-services:
-  - nginx
-runtime_config: /etc/boetticher/module.yaml

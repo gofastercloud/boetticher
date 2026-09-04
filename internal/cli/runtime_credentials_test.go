@@ -128,41 +128,6 @@ func TestAirVPNCredentialUsesOnlyItsServiceRuntimePath(t *testing.T) {
 	}
 }
 
-func TestStreamDeckUsesSharedPulseTokenOnlyInPostPulseProjection(t *testing.T) {
-	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
-	enabled := true
-	config.Modules.StreamDeck = &model.NetworkToggleModuleConfig{Enabled: &enabled}
-	config.USBExports = []model.USBExportBinding{{Module: "streamdeck", Requirement: "display", Port: "1-2.5", VendorID: "0fd9", ProductID: "006d"}}
-	site, _, err := modules.Compose(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	initial, err := deploymentCredentialBindings(site)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, binding := range initial {
-		if binding.Guest == "lab-streamdeck-01" {
-			t.Fatal("StreamDeck credential was included before Pulse read-token validation")
-		}
-	}
-	bindings, err := streamDeckCredentialBindings(site)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(bindings) != 1 || bindings[0].SecretKey != "pulse_api_token" || bindings[0].Spec.Unit != "streamdeck-status.service" {
-		t.Fatalf("unexpected StreamDeck credential binding: %#v", bindings)
-	}
-	dropIns, err := credentialDropIns(bindings)
-	if err != nil {
-		t.Fatal(err)
-	}
-	projection := dropIns["lab-streamdeck-01"]["streamdeck-status.service"]
-	if !strings.Contains(projection, "LoadCredentialEncrypted=pulse-token:/var/lib/boetticher/credentials/streamdeck-pulse-token.cred") || strings.Contains(projection, "synthetic-secret") {
-		t.Fatalf("StreamDeck credential projection is incomplete or leaked a value: %q", projection)
-	}
-}
-
 func TestCredentialNameMatchesAnsibleNormalizationForValidReferences(t *testing.T) {
 	if got := credentialName("OpenRouter__api_key."); got != "openrouter--api-key-" {
 		t.Fatalf("credential name normalization = %q", got)

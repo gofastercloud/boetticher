@@ -24,8 +24,6 @@
         - inventory_hostname in groups.get('firewall', [])
         - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
         - not (boetticher_skip_firewall | default(false) | bool)
-    - role: portal
-      when: inventory_hostname == 'lab-portal-01'
     - role: tailnet-router
       when:
         - inventory_hostname in groups.get('tailnet-router', [])
@@ -40,8 +38,6 @@
       when: inventory_hostname in groups.get('printer', [])
     - role: arr
       when: inventory_hostname in groups.get('arr', [])
-    - role: streamdeck
-      when: inventory_hostname in groups.get('streamdeck', [])
     - role: aiops
       when: inventory_hostname in groups.get('aiops', [])
     - role: gatus

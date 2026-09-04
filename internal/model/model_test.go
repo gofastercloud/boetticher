@@ -27,6 +27,55 @@ func TestRevisionIsIndependentOfComponentOrder(t *testing.T) {
 	}
 }
 
+func TestCompanionIsOptInAndDerivesOneServersReservation(t *testing.T) {
+	s := NewSite("installation", "age1example", GatewayModeManaged)
+	if capabilities := s.Companion.Capabilities(); capabilities.Enabled {
+		t.Fatalf("new site enables the optional companion: %#v", capabilities)
+	}
+
+	enabled := true
+	s.Companion = &CompanionConfig{
+		Enabled:     &enabled,
+		EthernetMAC: "dc:a6:32:e9:dd:82",
+		Display:     &CompanionCapabilityConfig{Enabled: &enabled},
+		StreamDeck:  &CompanionCapabilityConfig{Enabled: &enabled},
+		PulseAgent:  &CompanionCapabilityConfig{Enabled: &enabled},
+	}
+	config := ConfigFromSite(s)
+	resolved := config.BaseSite()
+	if err := resolved.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved.DHCPReservations) != 1 {
+		t.Fatalf("companion reservations = %#v", resolved.DHCPReservations)
+	}
+	reservation := resolved.DHCPReservations[0]
+	if reservation.Zone != CompanionZone || reservation.Hostname != CompanionHostname || reservation.Address != CompanionAddress || reservation.MAC != "dc:a6:32:e9:dd:82" || reservation.VMID != 0 {
+		t.Fatalf("unexpected companion reservation: %#v", reservation)
+	}
+
+	roundTrip := ConfigFromSite(resolved)
+	if roundTrip.Companion == nil || roundTrip.Companion.EthernetMAC != "dc:a6:32:e9:dd:82" {
+		t.Fatalf("companion identity did not round-trip: %#v", roundTrip.Companion)
+	}
+	if len(roundTrip.DHCPReservations) != 0 {
+		t.Fatalf("derived companion reservation leaked into operator reservations: %#v", roundTrip.DHCPReservations)
+	}
+}
+
+func TestEnabledCompanionRequiresValidEthernetMAC(t *testing.T) {
+	for _, mac := range []string{"", "not-a-mac", "01:00:5e:00:00:01"} {
+		t.Run(mac, func(t *testing.T) {
+			enabled := true
+			s := NewSite("installation", "age1example", GatewayModeManaged)
+			s.Companion = &CompanionConfig{Enabled: &enabled, EthernetMAC: mac}
+			if err := s.Validate(); err == nil || !strings.Contains(err.Error(), "companion") {
+				t.Fatalf("invalid companion MAC %q was accepted: %v", mac, err)
+			}
+		})
+	}
+}
+
 func TestNormalizeDoesNotMutateNestedInputSlices(t *testing.T) {
 	site := NewDefaultSite("installation", "age1example")
 	site.Network.Zones[1].DNSAddresses = []string{"10.10.10.11", "10.10.10.10"}
@@ -38,7 +87,6 @@ func TestNormalizeDoesNotMutateNestedInputSlices(t *testing.T) {
 		Guests:          []Component{{Name: "guest", DNSAliases: []string{"z", "a"}}},
 		NetworkIntents:  []NetworkIntent{{Ports: []string{"443", "80"}}},
 		Certificates:    []CertificateRequest{{SANs: []string{"z.example", "a.example"}}},
-		Portal:          []PortalEntry{{URLs: []string{"https://z.example", "https://a.example"}, Docs: []string{"z.md", "a.md"}}},
 		Security:        GuestSecurityDeclaration{Devices: []DeviceRequirement{{Name: "device"}}, Capabilities: []string{"CAP_B", "CAP_A"}},
 		USBRequirements: []USBRequirement{{AllowedIdentities: []USBIdentity{{VendorID: "0002", ProductID: "0002"}}}},
 	}}
@@ -156,6 +204,18 @@ func TestBootstrapAddressRequiresCanonicalIPv4(t *testing.T) {
 	}
 }
 
+func TestInstallationIDIsSafeForRuntimePaths(t *testing.T) {
+	for _, installationID := range []string{"../escape", "/absolute", "with/slash", ""} {
+		site := NewDefaultSite(installationID, "age1example")
+		if err := site.Validate(); err == nil {
+			t.Fatalf("unsafe installation ID %q was accepted", installationID)
+		}
+	}
+	if err := NewDefaultSite("installation-01", "age1example").Validate(); err != nil {
+		t.Fatalf("safe installation ID was rejected: %v", err)
+	}
+}
+
 func TestExternalGatewayOmitsManagedFirewall(t *testing.T) {
 	site := NewSite("installation", "age1example", GatewayModeExternal)
 	if err := site.Validate(); err != nil {
@@ -255,10 +315,7 @@ func TestCoreInfrastructureUsesInfraAddresses(t *testing.T) {
 	site := NewDefaultSite("installation", "age1example")
 	want := map[string]string{
 		"lab-dns-01":     "10.10.10.10",
-		"lab-dns-02":     "10.10.10.11",
 		"lab-monitor-01": "10.10.10.20",
-		"lab-log-01":     "10.10.10.40",
-		"lab-portal-01":  "10.10.10.30",
 	}
 	found := make(map[string]bool, len(want))
 	for _, component := range site.Components {

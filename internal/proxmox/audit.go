@@ -45,6 +45,47 @@ func PurgeModule(ctx context.Context, client *Client, plan Plan, module string) 
 		if err := validateExistingGuest(current, guest); err != nil {
 			return fmt.Errorf("refusing to purge %s: ownership proof failed: %w", guest.Name, err)
 		}
+		switch guest.Kind {
+		case KindQEMU:
+			if err := validateNoUndeclaredQEMUPersistentVolumes(current, guest); err != nil {
+				return fmt.Errorf("refusing to purge %s: persistent-volume ownership proof failed: %w", guest.Name, err)
+			}
+			if err := validateExistingQEMUVolumes(current, plan, guest); err != nil {
+				return fmt.Errorf("refusing to purge %s: persistent-volume ownership proof failed: %w", guest.Name, err)
+			}
+		case KindLXC:
+			if err := validateExistingGuestVolumes(current, guest); err != nil {
+				return fmt.Errorf("refusing to purge %s: persistent-volume ownership proof failed: %w", guest.Name, err)
+			}
+		}
+		// Re-observe the complete destructive identity after all read-side
+		// validation and immediately before deletion. Proxmox has no compare-
+		// and-delete API, so this is the narrowest safe boundary available to
+		// the client and prevents a stale first observation from authorizing a
+		// later purge after an ownership-relevant change.
+		kind, current, err = client.GuestConfig(ctx, plan.Node, guest.VMID)
+		if err != nil {
+			return fmt.Errorf("reinspect module guest %d before purge: %w", guest.VMID, err)
+		}
+		if kind != guest.Kind {
+			return fmt.Errorf("HOLD: refusing to purge %s at VMID %d because the occupant changed to %s", guest.Name, guest.VMID, kind)
+		}
+		if err := validateExistingGuest(current, guest); err != nil {
+			return fmt.Errorf("HOLD: refusing to purge %s after reinspection: ownership proof failed: %w", guest.Name, err)
+		}
+		switch guest.Kind {
+		case KindQEMU:
+			if err := validateNoUndeclaredQEMUPersistentVolumes(current, guest); err != nil {
+				return fmt.Errorf("HOLD: refusing to purge %s after reinspection: persistent-volume ownership proof failed: %w", guest.Name, err)
+			}
+			if err := validateExistingQEMUVolumes(current, plan, guest); err != nil {
+				return fmt.Errorf("HOLD: refusing to purge %s after reinspection: persistent-volume ownership proof failed: %w", guest.Name, err)
+			}
+		case KindLXC:
+			if err := validateExistingGuestVolumes(current, guest); err != nil {
+				return fmt.Errorf("HOLD: refusing to purge %s after reinspection: persistent-volume ownership proof failed: %w", guest.Name, err)
+			}
+		}
 		var purgeErr error
 		switch guest.Kind {
 		case KindQEMU:
@@ -91,51 +132,6 @@ const (
 	PlatformOwnership = "boetticher platform"
 	UserOwnership     = "user-managed"
 )
-
-type BuilderAudit struct {
-	Exists bool
-	Owned  bool
-	Name   string
-	Status string
-}
-
-// InspectBuilder is a read-only check for the transient bootstrap builder.
-// A present builder is actionable state: successful bootstrap removes it, and
-// an unowned object at the reserved VMID is a collision, never a resource to
-// adopt.
-func InspectBuilder(ctx context.Context, client *Client, node string) (BuilderAudit, error) {
-	if client == nil || node == "" {
-		return BuilderAudit{}, fmt.Errorf("Proxmox client and node are required")
-	}
-	kind, current, err := client.GuestConfig(ctx, node, model.BuilderVMID)
-	if IsNotFound(err) {
-		return BuilderAudit{}, nil
-	}
-	if err != nil {
-		return BuilderAudit{}, fmt.Errorf("inspect temporary builder: %w", err)
-	}
-	if kind != KindQEMU {
-		return BuilderAudit{Exists: true, Name: fmt.Sprintf("%s guest at VMID %d", kind, model.BuilderVMID)}, nil
-	}
-	audit := classifyBuilder(current)
-	status, err := client.QEMUStatus(ctx, node, model.BuilderVMID)
-	if err != nil {
-		return BuilderAudit{}, fmt.Errorf("inspect temporary builder status: %w", err)
-	}
-	audit.Status = status
-	return audit, nil
-}
-
-func classifyBuilder(current map[string]any) BuilderAudit {
-	name, _ := current["name"].(string)
-	status, _ := current["status"].(string)
-	return BuilderAudit{
-		Exists: true,
-		Owned:  name == "lab-builder-01" && hasOwnerTag(currentTags(current), builderOwnerTag),
-		Name:   name,
-		Status: status,
-	}
-}
 
 // ClassifyGuests is deliberately a pure ownership projection. Unknown guests
 // are informational and never become part of the desired-state plan.
@@ -193,48 +189,4 @@ func ClassifyGuests(plan Plan, discovered []GuestSummary) []GuestAudit {
 		return result[i].Kind < result[j].Kind
 	})
 	return result
-}
-
-// AuditGuests lists both Proxmox guest kinds and inspects owned guest config.
-// It never imports, mutates, or deletes an unknown guest.
-func AuditGuests(ctx context.Context, client *Client, plan Plan) ([]GuestAudit, error) {
-	if client == nil {
-		return nil, fmt.Errorf("Proxmox client is required")
-	}
-	vms, err := client.ListVMs(ctx, plan.Node)
-	if err != nil {
-		return nil, fmt.Errorf("list Proxmox VMs: %w", err)
-	}
-	lxcs, err := client.ListLXCs(ctx, plan.Node)
-	if err != nil {
-		return nil, fmt.Errorf("list Proxmox LXCs: %w", err)
-	}
-	discovered := append(vms, lxcs...)
-	audits := ClassifyGuests(plan, discovered)
-	for i := range audits {
-		if audits[i].Ownership != PlatformOwnership || audits[i].Result != "PASS" {
-			continue
-		}
-		kind, config, configErr := client.GuestConfig(ctx, plan.Node, audits[i].VMID)
-		if configErr != nil {
-			audits[i].Result = "DRIFT"
-			audits[i].Detail = fmt.Sprintf("owned guest configuration could not be inspected: %v", configErr)
-			continue
-		}
-		if kind != audits[i].Kind {
-			audits[i].Result = "DRIFT"
-			audits[i].Detail = fmt.Sprintf("kind is %s; expected %s", kind, audits[i].Kind)
-			continue
-		}
-		for _, expected := range plan.Guests {
-			if expected.VMID == audits[i].VMID && expected.Kind == audits[i].Kind {
-				if err := validateExistingGuest(config, expected); err != nil {
-					audits[i].Result = "DRIFT"
-					audits[i].Detail = err.Error()
-				}
-				break
-			}
-		}
-	}
-	return audits, nil
 }

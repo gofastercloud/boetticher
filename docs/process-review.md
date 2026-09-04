@@ -478,12 +478,14 @@ without weakening user-supplied configuration validation.
 
 ### Artifact and supply-chain checks
 
-Artifact evidence is among the least theatrical code in the repository. It
-checks evaluator identity, qualified state, definition identity, content
-digest, path containment, qualification input hashes, and actual file hashes;
-then `ResolveQualifiedArtifacts` binds each guest declaration to that evidence
-before mutation. Builder cache ownership and evidence rebinding after transfer
-are similarly justified.
+Artifact trust is centred on the signed release manifest, exact artifact
+coordinates, and content digest; `ResolveQualifiedArtifacts` binds each guest
+declaration to those authenticated bytes before mutation. Maintainer evidence
+such as scans, SBOMs, package inventories, smoke output, and provenance may be
+attached for review, but is not a second operator trust authority. A
+build-definition digest remains provenance and cache input identity; source-only
+controller changes do not invalidate unchanged image bytes. Builder cache
+ownership and evidence rebinding after transfer remain maintainer concerns.
 
 The operator pain is mostly latency and vocabulary. Keep the checks, but show a
 single artifact readiness result with the artifact ID, digest short form,

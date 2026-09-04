@@ -7,12 +7,12 @@ set -eu
 target=${1:-images}
 shift || true
 case "$target" in
-  image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-arr|image-streamdeck|image-gatus|image-network-probe|images) ;;
+	image-base|image-dns-blocky|image-logging|image-monitoring|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-arr|image-gatus|image-network-probe|images) ;;
   image-airvpn) ;;
   *) echo "unknown image target: $target" >&2; exit 2 ;;
 esac
 
-default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-portal image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-streamdeck image-aiops image-gatus image-network-probe image-firewall"
+default_image_targets="image-base image-dns-blocky image-logging image-monitoring image-tailnet-router image-airvpn image-bifrost image-printer image-arr image-aiops image-gatus image-network-probe image-firewall"
 if [ "$target" = images ]; then
   selected_image_targets="$*"
   if [ -z "$selected_image_targets" ]; then
@@ -20,7 +20,7 @@ if [ "$target" = images ]; then
   fi
   for selected_target in $selected_image_targets; do
     case "$selected_target" in
-      image-base|image-dns-blocky|image-logging|image-monitoring|image-portal|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-arr|image-streamdeck|image-gatus|image-network-probe) ;;
+	  image-base|image-dns-blocky|image-logging|image-monitoring|image-firewall|image-tailnet-router|image-bifrost|image-aiops|image-printer|image-arr|image-gatus|image-network-probe) ;;
       image-airvpn) ;;
       *) echo "unknown selected image target: $selected_target" >&2; exit 2 ;;
     esac
@@ -30,7 +30,7 @@ else
 fi
 
 if [ "$(uname -s)" != Linux ]; then
-  echo "HOLD: appliance construction requires the supported Linux builder environment; use boetticher bootstrap on macOS" >&2
+  echo "HOLD: appliance construction requires the supported Linux maintainer environment; use make local-builder-init and make local-image from macOS" >&2
   exit 2
 fi
 
@@ -172,12 +172,23 @@ holmes_source_root=holmesgpt-3d201559c0f3648a6c567aece09662f4f407bcc9
 gatus_source_url=https://github.com/TwiN/gatus/archive/refs/tags/v5.36.0.tar.gz
 gatus_source_sha256=b5543af591e602281406049ee2f822a6529a8f14be0cd54df5a31c210520159a
 arr_nginx_package_version=1.26.3-3+deb13u7
+step_cli_version=0.30.6
+step_cli_url=https://github.com/smallstep/cli/releases/download/v0.30.6/step_linux_0.30.6_amd64.tar.gz
+step_cli_sha256=e44a5dc5f880a694b24a0f2941a69a81b0bc6ee053170fdfde18453d4d5816de
+step_ca_version=0.30.2
+step_ca_url=https://github.com/smallstep/certificates/releases/download/v0.30.2/step-ca_linux_0.30.2_amd64.tar.gz
+step_ca_sha256=126615795bafe3f2d3f890e2d628fa6e2857315fb48d0671d34b23047cc37d73
 sonarr_version=4.0.19.2979
 sonarr_release_url=https://github.com/Sonarr/Sonarr/releases/download/v4.0.19.2979/Sonarr.main.4.0.19.2979.linux-x64.tar.gz
 sonarr_release_sha256=b691b3584c31c0b5514058dee81071c923f63d59a37d19e32f92fa13eaa153db
 radarr_version=6.3.0.10514
 radarr_release_url=https://github.com/Radarr/Radarr/releases/download/v6.3.0.10514/Radarr.master.6.3.0.10514.linux-core-x64.tar.gz
 radarr_release_sha256=41d6455c037ff267c5ad5a0f0de4502cebe8f89ec3d051da97851933d48a4047
+firewall_package_names='nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony openssh-server sudo cloud-init systemd-journal-remote curl jq openssl qemu-guest-agent'
+case "${BOETTICHER_LOCAL_FAST:-0}" in
+  0|1) firewall_upgrade_command='DEBIAN_FRONTEND=noninteractive apt-get --no-download upgrade --yes --no-install-recommends' ;;
+  *) echo 'HOLD: BOETTICHER_LOCAL_FAST must be 0 or 1' >&2; exit 2 ;;
+esac
 mkdir -p "$output_root" "$work_root" "$cache_root/apt" "$cache_root/downloads" "$cache_root/base"
 
 provenance_path="$(dirname "$output_root")/builder-provenance.json"
@@ -201,7 +212,7 @@ write_builder_provenance() {
     --arg libguestfs "$(version_or_unavailable guestfish)" \
     --arg qemu_img "$(version_or_unavailable qemu-img)" \
     --arg architecture amd64 \
-    --arg boetticher_version 0.4.0 \
+    --arg boetticher_version "${BOETTICHER_RELEASE_VERSION:-0.5.1}" \
     '{platform:$platform,input_image:$input_image,kernel:$kernel,go:$go,trivy:$trivy,mmdebstrap:$mmdebstrap,libguestfs:$libguestfs,qemu_img:$qemu_img,architecture:$architecture,boetticher_version:$boetticher_version}' \
     > "$provenance_path"
   chmod 0644 "$provenance_path"
@@ -211,11 +222,19 @@ if [ "${BOETTICHER_SKIP_PROVENANCE:-0}" != 1 ]; then
   write_builder_provenance
 fi
 
+unmount_rootfs_mounts() {
+  rootfs=$1
+  for mount_path in "$rootfs/root/.cache/pip" "$rootfs/var/cache/apt/archives" "$rootfs/dev" "$rootfs/proc" "$rootfs/sys"; do
+    if mountpoint -q "$mount_path" && ! umount -R "$mount_path" 2>/dev/null; then
+      return 1
+    fi
+  done
+  ! findmnt -R -n -o TARGET "$rootfs" 2>/dev/null | grep -q .
+}
+
 cleanup() {
   if [ -n "${ACTIVE_ROOT:-}" ] && [ -d "$ACTIVE_ROOT" ]; then
-    umount -R "$ACTIVE_ROOT/dev" 2>/dev/null || true
-    umount -R "$ACTIVE_ROOT/proc" 2>/dev/null || true
-    umount -R "$ACTIVE_ROOT/sys" 2>/dev/null || true
+    unmount_rootfs_mounts "$ACTIVE_ROOT" || true
   fi
 }
 trap cleanup EXIT INT TERM
@@ -232,13 +251,17 @@ artifact_for() {
 	name=$1
 	version=1.0.0
 	if [ "$name" = boetticher-base ]; then
-		version=0.4.0
+		version=0.5.1
 	fi
 	printf '%s/%s/%s-%s-amd64.tar.zst' "$output_root" "$name" "$name" "$version"
 }
 
 create_base_rootfs() {
   rootfs=$1
+  if ! unmount_rootfs_mounts "$rootfs"; then
+    echo "HOLD: stale mounts remain in disposable base rootfs: $rootfs" >&2
+    return 1
+  fi
   base_inputs_digest=$(sha256sum "$base_definition" images/base/runtime/* images/base/first-boot/* "$script_path" | sha256sum | awk '{print $1}')
   base_cache_key=$(printf '%s\n' "$base_release" "$mirror" "$base_packages" "$base_inputs_digest" | sha256sum | awk '{print $1}')
   base_cache="$cache_root/base/$base_cache_key"
@@ -254,6 +277,7 @@ create_base_rootfs() {
   mkdir -p "$rootfs"
   mmdebstrap --variant=minbase --architectures=amd64 \
     --aptopt=Acquire::Check-Valid-Until=false \
+    --aptopt=Acquire::Retries=3 \
     --aptopt=Acquire::Languages=none \
     --include="$base_packages" \
     "$base_release" "$rootfs" "$mirror"
@@ -267,14 +291,15 @@ create_base_rootfs() {
   install -D -m 0755 images/base/runtime/install-runtime-state.sh "$rootfs/usr/lib/boetticher/install-runtime-state"
   chroot "$rootfs" useradd --create-home --shell /bin/bash labadmin
   chroot "$rootfs" passwd --lock labadmin
-  mkdir -p "$rootfs/tmp/boetticher-ansible"
-  chroot "$rootfs" chown labadmin:labadmin /tmp/boetticher-ansible
-  chmod 0700 "$rootfs/tmp/boetticher-ansible"
+  mkdir -p "$rootfs/var/lib/boetticher/ansible"
+  chroot "$rootfs" chown root:root /var/lib/boetticher/ansible
+  chmod 0700 "$rootfs/var/lib/boetticher/ansible"
   chroot "$rootfs" visudo -cf /etc/sudoers
   mkdir -p "$rootfs/etc/systemd/journald.conf.d"
   printf '%s\n' '[Journal]' 'SystemMaxUse=256M' 'RuntimeMaxUse=64M' > "$rootfs/etc/systemd/journald.conf.d/boetticher.conf"
   install -D -m 0644 images/base/runtime/sshd.conf "$rootfs/etc/ssh/sshd_config.d/boetticher.conf"
   install -D -m 0644 images/base/runtime/sshd-host-key.conf "$rootfs/etc/ssh/sshd_config.d/boetticher-host-key.conf"
+  install_step_cli "$rootfs"
   # Host keys are endpoint identity and must be generated after deployment.
   rm -f "$rootfs"/etc/ssh/ssh_host_*
   rm -f "$rootfs/root/.ssh/authorized_keys" "$rootfs/home/labadmin/.ssh/authorized_keys"
@@ -290,6 +315,32 @@ create_base_rootfs() {
   measurement_emit "build_cache" "kind=base" "status=stored" "key=$base_cache_key"
 }
 
+install_step_cli() {
+  rootfs=$1
+  archive="$cache_root/downloads/step_linux_${step_cli_version}_amd64.tar.gz"
+  download_cached "$archive" "$step_cli_url" "$step_cli_sha256" sha256sum
+  install -D -m 0755 /dev/null "$rootfs/usr/local/bin/step"
+  tar -xOf "$archive" "step_${step_cli_version}/bin/step" > "$rootfs/usr/local/bin/step"
+  chmod 0755 "$rootfs/usr/local/bin/step"
+  if ! chroot "$rootfs" /usr/local/bin/step version 2>&1 | grep -Fq "Smallstep CLI/${step_cli_version}"; then
+    echo "HOLD: Smallstep CLI is not the qualified ${step_cli_version} release" >&2
+    return 2
+  fi
+}
+
+install_step_ca() {
+  rootfs=$1
+  archive="$cache_root/downloads/step-ca_linux_${step_ca_version}_amd64.tar.gz"
+  download_cached "$archive" "$step_ca_url" "$step_ca_sha256" sha256sum
+  install -D -m 0755 /dev/null "$rootfs/usr/local/bin/step-ca"
+  tar -xOf "$archive" step-ca > "$rootfs/usr/local/bin/step-ca"
+  chmod 0755 "$rootfs/usr/local/bin/step-ca"
+  if ! chroot "$rootfs" /usr/local/bin/step-ca version 2>&1 | grep -Fq "Smallstep CA/${step_ca_version}"; then
+    echo "HOLD: Smallstep CA is not the qualified ${step_ca_version} release" >&2
+    return 2
+  fi
+}
+
 write_artifact_identity() {
   rootfs=$1
   module=$2
@@ -302,6 +353,10 @@ prepare_rootfs() {
   rootfs=$(rootfs_for "$name")
   if [ ! -d "$(rootfs_for boetticher-base)/etc" ]; then
     create_base_rootfs "$(rootfs_for boetticher-base)"
+  fi
+  if ! unmount_rootfs_mounts "$rootfs"; then
+    echo "HOLD: stale mounts remain in disposable worker rootfs: $rootfs" >&2
+    return 1
   fi
   rm -rf "$rootfs"
   cp -a --reflink=auto "$(rootfs_for boetticher-base)" "$rootfs"
@@ -323,7 +378,9 @@ pip_install() {
   else
     status=$?
   fi
-  umount -R "$rootfs/root/.cache/pip" || true
+  if ! umount -R "$rootfs/root/.cache/pip"; then
+    return 1
+  fi
   return "$status"
 }
 
@@ -353,19 +410,16 @@ install_packages() {
   mount -t proc proc "$rootfs/proc"
   mount --rbind /sys "$rootfs/sys"
   mount --bind "$package_cache" "$rootfs/var/cache/apt/archives"
-  if ! chroot "$rootfs" apt-get update || ! chroot "$rootfs" env DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends "$@"; then
-    umount -R "$rootfs/var/cache/apt/archives" || true
-    umount -R "$rootfs/dev" || true
-    umount -R "$rootfs/proc" || true
-    umount -R "$rootfs/sys" || true
+  if ! chroot "$rootfs" apt-get -o Acquire::Retries=3 update || ! chroot "$rootfs" env DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=3 install --yes --no-install-recommends "$@"; then
+    unmount_rootfs_mounts "$rootfs" || true
     restore_resolver
     return 1
   fi
-  umount -R "$rootfs/var/cache/apt/archives" || true
   rm -rf "$rootfs/var/cache/apt/archives/"* "$rootfs/var/lib/apt/lists/"*
-  umount -R "$rootfs/dev" || true
-  umount -R "$rootfs/proc" || true
-  umount -R "$rootfs/sys" || true
+  if ! unmount_rootfs_mounts "$rootfs"; then
+    restore_resolver
+    return 1
+  fi
   restore_resolver
 }
 
@@ -430,15 +484,21 @@ package_lxc() {
   printf '%s\n' "boetticher package stage: $name smoke"
   destination="$output_root/$name"
   mkdir -p "$destination"
-  ./scripts/smoke-appliance.sh "$name" "$rootfs"
+  ./scripts/smoke-appliance.sh "$name" "$rootfs" > "$destination/smoke.txt"
   printf '%s\n' "boetticher package stage: $name manifest"
   chroot "$rootfs" dpkg-query -W -f='${binary:Package}\t${Version}\n' | sort > "$destination/package-manifest.txt"
   printf '%s\n' "boetticher package stage: $name archive"
   artifact_path=$(artifact_for "$name")
+  artifact_temporary="$artifact_path.tmp.$$"
+  rm -f -- "$artifact_temporary"
   compression_timing="$work_root/$name-compression.time"
-  /usr/bin/time -f '%e %U %S' -o "$compression_timing" \
+  if ! /usr/bin/time -f '%e %U %S' -o "$compression_timing" \
     sh -c 'tar --numeric-owner --xattrs --acls -C "$1" -cf - . | zstd -T0 "-$2" -o "$3"' \
-    sh "$rootfs" "$zstd_level" "$artifact_path"
+    sh "$rootfs" "$zstd_level" "$artifact_temporary"; then
+    rm -f -- "$artifact_temporary"
+    return 1
+  fi
+  mv -f -- "$artifact_temporary" "$artifact_path"
   compression_finished=$(timing_now_ms)
   artifact_size=$(stat -c '%s' "$artifact_path")
   compression_wall_ms=$(awk '{printf "%d", $1 * 1000}' "$compression_timing")
@@ -468,6 +528,7 @@ build_base() {
 build_dns_blocky() {
   printf '%s\n' 'boetticher build stage: dns blocky'
   rootfs=$(prepare_rootfs boetticher-dns-blocky)
+  install_step_ca "$rootfs"
   install_powerdns "$rootfs"
   install -D -m 0644 images/dns/common/filtering-policy.hosts "$rootfs/etc/boetticher/dns/filtering/boetticher.hosts"
   mkdir -p "$rootfs/usr/local/bin"
@@ -531,14 +592,6 @@ build_monitoring() {
   install -D -m 0644 images/monitoring/runtime/pulse.service "$rootfs/etc/systemd/system/pulse.service"
   write_artifact_identity "$rootfs" monitoring
   package_lxc boetticher-monitoring
-}
-
-build_portal() {
-  printf '%s\n' 'boetticher build stage: portal'
-  rootfs=$(prepare_rootfs boetticher-portal)
-  install_packages "$rootfs" nginx
-  write_artifact_identity "$rootfs" portal
-  package_lxc boetticher-portal
 }
 
 build_tailnet_router() {
@@ -637,21 +690,6 @@ build_arr() {
   package_lxc boetticher-arr
 }
 
-build_streamdeck() {
-  printf '%s\n' 'boetticher build stage: streamdeck'
-  rootfs=$(prepare_rootfs boetticher-streamdeck)
-  chroot "$rootfs" groupadd --system --gid 2200 streamdeck
-  chroot "$rootfs" useradd --system --uid 2200 --gid 2200 --home-dir /var/lib/streamdeck --create-home --shell /usr/sbin/nologin streamdeck
-  CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o "$rootfs/usr/local/libexec/boetticher-streamdeck" ./cmd/boetticher-streamdeck
-  chroot "$rootfs" chown root:root /usr/local/libexec/boetticher-streamdeck
-  chroot "$rootfs" chmod 0755 /usr/local/libexec/boetticher-streamdeck
-  chroot "$rootfs" apt-get clean
-  rm -rf "$rootfs/var/lib/apt/lists/"*
-  install -D -m 0644 images/streamdeck/runtime/streamdeck-status.service "$rootfs/etc/systemd/system/streamdeck-status.service"
-  write_artifact_identity "$rootfs" streamdeck
-  package_lxc boetticher-streamdeck
-}
-
 build_aiops() {
   printf '%s\n' 'boetticher build stage: aiops'
   rootfs=$(prepare_rootfs boetticher-aiops)
@@ -679,6 +717,34 @@ build_aiops() {
   package_lxc boetticher-aiops
 }
 
+prepare_firewall_package_cache() {
+  input=$1
+  package_cache="$cache_root/apt/boetticher-firewall"
+  archive_cache="$package_cache/archives"
+  lists_cache="$package_cache/lists"
+  state_root="$work_root/firewall-apt-state"
+  package_key=$(printf '%s\n' "$firewall_package_names" "$base_release" "$mirror" images/base/runtime/debian-snapshot.sources images/base/runtime/debian-security-snapshot.sources | sha256sum | awk '{print $1}')
+  if [ -f "$package_cache/.complete-$package_key" ] && [ -d "$archive_cache" ] && [ -d "$lists_cache" ]; then
+    printf '%s\n' "measurement stage=package_cache kind=firewall status=hit key=$package_key"
+    return
+  fi
+  rm -rf -- "$package_cache" "$state_root"
+  mkdir -p "$archive_cache" "$lists_cache" "$state_root/lists"
+  virt-cat -a "$input" /var/lib/dpkg/status > "$state_root/status"
+  printf '%s\n' \
+    'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260825T000000Z/ trixie main' \
+    'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20260825T000000Z/ trixie-security main' \
+    > "$state_root/sources.list"
+  apt_options="-o Dir::Etc::sourcelist=$state_root/sources.list -o Dir::Etc::sourceparts=- -o Dir::State=$state_root/ -o Dir::State::status=$state_root/status -o Dir::State::lists=$state_root/lists/ -o Dir::Cache::archives=$archive_cache/ -o APT::Architecture=amd64 -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3"
+  apt-get $apt_options update
+  apt-get $apt_options --download-only install --yes --no-install-recommends $firewall_package_names
+  apt-get $apt_options --download-only upgrade --yes --no-install-recommends
+  cp -a "$state_root/lists/." "$lists_cache/"
+  test -n "$(find "$archive_cache" -type f -name '*.deb' -print -quit)"
+  touch "$package_cache/.complete-$package_key"
+  printf '%s\n' "measurement stage=package_cache kind=firewall status=stored key=$package_key"
+}
+
 build_firewall() {
   printf '%s\n' 'boetticher build stage: firewall'
   for tool in qemu-img virt-customize virt-cat sha512sum; do
@@ -696,20 +762,30 @@ build_firewall() {
   telemetry_binary="$work_root/boetticher-firewall-telemetry"
   CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$telemetry_binary" ./cmd/boetticher-firewall-telemetry
   go run ./cmd/artifact-identity -module firewall > "$artifact_identity"
+  prepare_firewall_package_cache "$input"
+  package_cache="$cache_root/apt/boetticher-firewall"
+  package_archive_tar="$work_root/firewall-package-archives.tar"
+  package_lists_tar="$work_root/firewall-package-lists.tar"
+  rm -f -- "$package_archive_tar" "$package_lists_tar"
+  tar -C "$package_cache/archives" -cf "$package_archive_tar" .
+  tar -C "$package_cache/lists" -cf "$package_lists_tar" .
   cp "$input" "$image"
-  virt-customize -a "$image" \
-    --network \
+  virt-customize -a "$image" --smp 4 --memsize 4096 \
+    --no-network \
     --upload images/base/runtime/debian-snapshot.sources:/etc/apt/sources.list.d/boetticher-debian.sources \
     --upload images/base/runtime/debian-security-snapshot.sources:/etc/apt/sources.list.d/boetticher-debian-security.sources \
-    --run-command 'rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; apt-get -o Acquire::Check-Valid-Until=false update' \
-    --run-command 'DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes --no-install-recommends' \
-    --run-command 'DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony openssh-server sudo cloud-init systemd-journal-remote curl jq openssl qemu-guest-agent' \
-    --run-command 'apt-get clean; rm -rf /var/lib/apt/lists/*' \
+    --mkdir /var/cache/apt/archives \
+    --mkdir /var/lib/apt/lists \
+    --tar-in "$package_archive_tar":/var/cache/apt/archives \
+    --tar-in "$package_lists_tar":/var/lib/apt/lists \
+    --run-command "rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; $firewall_upgrade_command" \
+    --run-command 'DEBIAN_FRONTEND=noninteractive apt-get --no-download install --yes --no-install-recommends nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony openssh-server sudo cloud-init systemd-journal-remote curl jq openssl qemu-guest-agent' \
+    --run-command 'apt-get clean; rm -rf /var/lib/apt/lists/*; rm -f /etc/resolv.conf' \
     --mkdir /etc/boetticher \
     --mkdir /usr/lib/boetticher \
     --mkdir /var/lib/boetticher/identity/ssh \
     --mkdir /var/lib/boetticher/firewall-telemetry \
-    --mkdir /tmp/boetticher-ansible \
+    --mkdir /var/lib/boetticher/ansible \
     --mkdir /etc/ssh/sshd_config.d \
     --mkdir /etc/systemd/journald.conf.d \
     --mkdir /etc/sysctl.d \
@@ -732,7 +808,7 @@ build_firewall() {
     --upload images/firewall/runtime/forwarding.conf:/etc/sysctl.d/boetticher-forwarding.conf \
     --run-command 'useradd --create-home --shell /bin/bash labadmin' \
     --run-command 'passwd --lock labadmin' \
-    --run-command 'chown labadmin:labadmin /tmp/boetticher-ansible && chmod 0700 /tmp/boetticher-ansible' \
+    --run-command 'chown root:root /var/lib/boetticher/ansible && chmod 0700 /var/lib/boetticher/ansible' \
     --run-command 'chown root:root /etc/sudoers.d/boetticher-firewall; chmod 0440 /etc/sudoers.d/boetticher-firewall' \
     --run-command 'chown root:root /usr/lib/boetticher/inspect-firewall; chmod 0755 /usr/lib/boetticher/inspect-firewall' \
     --run-command 'groupadd --system boetticher-telemetry; useradd --system --gid boetticher-telemetry --home-dir /var/lib/boetticher/firewall-telemetry --shell /usr/sbin/nologin boetticher-telemetry' \
@@ -748,7 +824,7 @@ build_firewall() {
     --run-command 'if systemctl list-unit-files systemd-networkd-wait-online.service >/dev/null 2>&1; then systemctl disable systemd-networkd-wait-online.service; fi'
   sha256sum "$image" > "$destination/content.sha256"
   virt-cat -a "$image" /var/lib/boetticher/package-manifest.txt > "$destination/package-manifest.txt"
-  ./scripts/smoke-firewall-image.sh "$image"
+  ./scripts/smoke-firewall-image.sh "$image" > "$destination/smoke.txt"
 }
 
 image_artifact_name() {
@@ -762,6 +838,7 @@ launch_image_worker() {
   worker_root="$work_root/workers/$worker_name"
   worker_log="$output_root/$worker_artifact/build.log"
   mkdir -p "$worker_root" "$(dirname "$worker_log")"
+  : > "$worker_root/timings.log"
   BOETTICHER_IMAGE_WORK="$worker_root" \
   BOETTICHER_BASE_ROOTFS="$base_rootfs" \
   BOETTICHER_SKIP_PROVENANCE=1 \
@@ -934,11 +1011,6 @@ build_monitoring_target() {
   build_monitoring
 }
 
-build_portal_target() {
-  [ -f "$(artifact_for boetticher-base)" ] || build_base
-  build_portal
-}
-
 build_tailnet_router_target() {
   [ -f "$(artifact_for boetticher-base)" ] || build_base
   build_tailnet_router
@@ -962,11 +1034,6 @@ build_printer_target() {
 build_arr_target() {
   [ -f "$(artifact_for boetticher-base)" ] || build_base
   build_arr
-}
-
-build_streamdeck_target() {
-  [ -f "$(artifact_for boetticher-base)" ] || build_base
-  build_streamdeck
 }
 
 build_aiops_target() {
@@ -1005,13 +1072,11 @@ case "$target" in
   image-dns-blocky) run_timed_image_target "$target" build_dns_blocky_target ;;
   image-logging) run_timed_image_target "$target" build_logging_target ;;
   image-monitoring) run_timed_image_target "$target" build_monitoring_target ;;
-  image-portal) run_timed_image_target "$target" build_portal_target ;;
   image-tailnet-router) run_timed_image_target "$target" build_tailnet_router_target ;;
   image-airvpn) run_timed_image_target "$target" build_airvpn_target ;;
   image-bifrost) run_timed_image_target "$target" build_bifrost_target ;;
   image-printer) run_timed_image_target "$target" build_printer_target ;;
   image-arr) run_timed_image_target "$target" build_arr_target ;;
-  image-streamdeck) run_timed_image_target "$target" build_streamdeck_target ;;
   image-aiops) run_timed_image_target "$target" build_aiops_target ;;
   image-gatus) run_timed_image_target "$target" build_gatus_target ;;
   image-network-probe) run_timed_image_target "$target" build_network_probe_target ;;

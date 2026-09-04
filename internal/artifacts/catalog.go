@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -35,11 +36,15 @@ type Definition struct {
 	Inputs       []string
 }
 
-// Evidence binds concrete bytes and qualification outputs to a deterministic
-// artifact definition. Build timestamps and tool versions are evidence only;
-// they never become desired-state inputs.
+// Evidence binds concrete bytes and qualification outputs to an artifact
+// identity. DefinitionSHA256 remains useful build provenance, but the signed
+// artifact content digest is the trust boundary and is independent of the
+// current checkout's source revision.
 type Evidence struct {
-	Artifact                   model.Artifact    `json:"artifact"`
+	Artifact model.Artifact `json:"artifact"`
+	// ArtifactPath is an optional local cache hint, not part of artifact
+	// identity. Portable qualification statements may omit it; resolvers derive
+	// the deterministic cache path from the artifact coordinates in that case.
 	ArtifactPath               string            `json:"artifact_path,omitempty"`
 	ContentSHA256              string            `json:"content_sha256"`
 	SizeBytes                  int64             `json:"size_bytes"`
@@ -47,6 +52,7 @@ type Evidence struct {
 	SBOMSHA256                 string            `json:"sbom_sha256,omitempty"`
 	TrivyReportSHA256          string            `json:"trivy_report_sha256,omitempty"`
 	BuilderProvenanceSHA256    string            `json:"builder_provenance_sha256,omitempty"`
+	SmokeReportSHA256          string            `json:"smoke_report_sha256,omitempty"`
 	QualificationPolicyVersion string            `json:"qualification_policy_version,omitempty"`
 	QualificationEvaluator     string            `json:"qualification_evaluator,omitempty"`
 	ScanCompleted              bool              `json:"scan_completed"`
@@ -104,6 +110,7 @@ func QualifyEvidence(evidence Evidence, scan ScanSummary) (Evidence, error) {
 	evidence.QualificationEvaluator = QualificationEvaluator
 	evidence.ScanCompleted = true
 	evidence.Qualified = true
+	evidence.Artifact.ContentSHA256 = evidence.ContentSHA256
 	evidence.qualifiedByEvaluator = true
 	return evidence, nil
 }
@@ -134,8 +141,10 @@ func LoadEvidence(root, name string) (Evidence, error) {
 }
 
 // ResolveArtifactEvidence proves that a qualification record describes the
-// requested definition and, when a local artifact path is recorded, that the
-// path still contains the qualified bytes.
+// requested artifact coordinates and, when a local artifact path is recorded,
+// that the path still contains the qualified bytes. The build-definition
+// digest is provenance only; changing source without changing artifact bytes
+// must not invalidate a qualified artifact.
 func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artifact, Evidence, error) {
 	evidence, err := LoadEvidence(root, requested.Name)
 	if err != nil {
@@ -147,27 +156,38 @@ func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artif
 	if evidence.QualificationEvaluator != QualificationEvaluator {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s qualification evaluator is not authorized", requested.Name)
 	}
-	if evidence.DefinitionSHA256 != requested.DefinitionSHA256 || evidence.Artifact != requested {
-		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact evidence does not match requested definition for %s", requested.Name)
+	if !artifactIdentityMatches(evidence.Artifact, requested) {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact evidence does not match requested artifact for %s", requested.Name)
 	}
 	if evidence.ContentSHA256 == "" {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s has no content checksum", requested.Name)
 	}
-	if evidence.ArtifactPath == "" {
-		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s qualification evidence has no artifact path", requested.Name)
+	if evidence.Artifact.ContentSHA256 != "" && evidence.Artifact.ContentSHA256 != evidence.ContentSHA256 {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s nested content checksum differs from evidence", requested.Name)
 	}
-	if !filepath.IsAbs(evidence.ArtifactPath) {
-		root, err := filepath.Abs(root)
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("resolve artifact evidence root: %w", err)
+	}
+	path := evidence.ArtifactPath
+	if path == "" {
+		path, err = cacheArtifactPath(root, evidence.Artifact)
 		if err != nil {
-			return model.Artifact{}, Evidence{}, fmt.Errorf("resolve artifact evidence root: %w", err)
+			return model.Artifact{}, Evidence{}, fmt.Errorf("resolve artifact %s cache path: %w", requested.Name, err)
 		}
-		path := filepath.Join(root, evidence.ArtifactPath)
-		relative, err := filepath.Rel(root, path)
-		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s path escapes evidence root", requested.Name)
-		}
-		evidence.ArtifactPath = path
 	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, path)
+	}
+	path = filepath.Clean(path)
+	relative, err := filepath.Rel(root, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s path escapes evidence root", requested.Name)
+	}
+	if err := pathguard.ValidateNoSymlinkComponents(path); err != nil {
+		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s path is not controller-owned: %w", requested.Name, err)
+	}
+	evidence.ArtifactPath = path
 	if err := validateQualificationDigests(evidence); err != nil {
 		return model.Artifact{}, Evidence{}, fmt.Errorf("artifact %s qualification evidence is incomplete: %w", requested.Name, err)
 	}
@@ -186,6 +206,44 @@ func ResolveArtifactEvidence(root string, requested model.Artifact) (model.Artif
 	return resolved, evidence, nil
 }
 
+func artifactIdentityMatches(observed, requested model.Artifact) bool {
+	if observed.Name != requested.Name || observed.Version != requested.Version || observed.Architecture != requested.Architecture || observed.Kind != requested.Kind {
+		return false
+	}
+	if observed.ContentSHA256 != "" && requested.ContentSHA256 != "" && observed.ContentSHA256 != requested.ContentSHA256 {
+		return false
+	}
+	return true
+}
+
+func cacheArtifactPath(root string, artifact model.Artifact) (string, error) {
+	if err := validateEvidenceName(artifact.Name); err != nil {
+		return "", err
+	}
+	if artifact.Version == "" || artifact.Architecture == "" || strings.ContainsAny(artifact.Version+artifact.Architecture, "/\\\x00") {
+		return "", errors.New("artifact version and architecture must be plain path components")
+	}
+	var suffix string
+	switch artifact.Kind {
+	case "qemu":
+		suffix = ".qcow2"
+	case "lxc":
+		suffix = ".tar.zst"
+	default:
+		return "", fmt.Errorf("unsupported artifact kind %q", artifact.Kind)
+	}
+	filename := fmt.Sprintf("%s-%s-%s%s", artifact.Name, artifact.Version, artifact.Architecture, suffix)
+	return filepath.Join(root, "generated", "artifacts", artifact.Name, filename), nil
+}
+
+// ArtifactCachePath returns the deterministic maintainer cache location for
+// an artifact. The path is a local lookup hint only; artifact trust remains
+// bound to the content digest in the qualification statement and release
+// manifest.
+func ArtifactCachePath(root string, artifact model.Artifact) (string, error) {
+	return cacheArtifactPath(root, artifact)
+}
+
 // verifyQualificationInputs checks any qualification outputs that were
 // recorded beside the artifact. The content digest and completed Trivy gate
 // are authoritative; manifests, SBOMs, and provenance are optional outputs.
@@ -202,6 +260,8 @@ func verifyQualificationInputs(evidence Evidence) error {
 		{name: "package manifest", filename: "package-manifest.txt", expected: evidence.PackageManifestSHA},
 		{name: "SBOM", filename: "sbom.json", expected: evidence.SBOMSHA256},
 		{name: "Trivy report", filename: "trivy.json", expected: evidence.TrivyReportSHA256},
+		{name: "builder provenance", filename: "builder-provenance.json", expected: evidence.BuilderProvenanceSHA256},
+		{name: "smoke report", filename: "smoke.txt", expected: evidence.SmokeReportSHA256},
 	}
 	for _, input := range inputs {
 		if input.expected == "" {
@@ -225,9 +285,11 @@ func validateQualificationDigests(evidence Evidence) error {
 		return fmt.Errorf("content_sha256 must be a SHA-256 digest")
 	}
 	for name, value := range map[string]string{
-		"package_manifest_sha256": evidence.PackageManifestSHA,
-		"sbom_sha256":             evidence.SBOMSHA256,
-		"trivy_report_sha256":     evidence.TrivyReportSHA256,
+		"package_manifest_sha256":   evidence.PackageManifestSHA,
+		"sbom_sha256":               evidence.SBOMSHA256,
+		"trivy_report_sha256":       evidence.TrivyReportSHA256,
+		"builder_provenance_sha256": evidence.BuilderProvenanceSHA256,
+		"smoke_report_sha256":       evidence.SmokeReportSHA256,
 	} {
 		if value == "" {
 			continue
@@ -256,7 +318,7 @@ func validateQualificationDigests(evidence Evidence) error {
 
 const (
 	BaseName      = "boetticher-base"
-	BaseVersion   = "0.4.0"
+	BaseVersion   = "0.5.1"
 	Architecture  = "amd64"
 	DebianRelease = "13"
 	ModuleVersion = "1.0.0"
@@ -275,14 +337,12 @@ func Definitions() []Definition {
 		{Name: "dns", ArtifactName: "boetticher-dns-blocky", BuildTarget: "image-dns-blocky", ScanTarget: "boetticher-dns-blocky", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/dns", "internal/dns", "internal/model", "internal/modules", "cmd/render-blocky-config")},
 		{Name: "logging", ArtifactName: "boetticher-logging", BuildTarget: "image-logging", ScanTarget: "boetticher-logging", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/logging", "internal/logging", "cmd/boetticher-log-query")},
 		{Name: "monitoring", ArtifactName: "boetticher-monitoring", BuildTarget: "image-monitoring", ScanTarget: "boetticher-monitoring", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/monitoring")},
-		{Name: "portal", ArtifactName: "boetticher-portal", BuildTarget: "image-portal", ScanTarget: "boetticher-portal", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/portal")},
-		{Name: "firewall", ArtifactName: "boetticher-firewall", BuildTarget: "image-firewall", ScanTarget: "boetticher-firewall", Version: ModuleVersion, Kind: "qemu", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/firewall", "scripts/smoke-firewall-image.sh")},
+		{Name: "firewall", ArtifactName: "boetticher-firewall", BuildTarget: "image-firewall", ScanTarget: "boetticher-firewall", Version: ModuleVersion, Kind: "qemu", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/firewall", "cmd/boetticher-firewall-telemetry", "internal/firewalltelemetry", "internal/network", "scripts/smoke-firewall-image.sh")},
 		{Name: "tailnet-router", ArtifactName: "boetticher-tailnet-router", BuildTarget: "image-tailnet-router", ScanTarget: "boetticher-tailnet-router", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/tailnet-router", "internal/model", "internal/modules")},
 		{Name: "airvpn", ArtifactName: "boetticher-airvpn", BuildTarget: "image-airvpn", ScanTarget: "boetticher-airvpn", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/airvpn", "internal/model", "internal/modules")},
 		{Name: "bifrost", ArtifactName: "boetticher-bifrost", BuildTarget: "image-bifrost", ScanTarget: "boetticher-bifrost", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/bifrost", "internal/bifrost", "cmd/boetticher-bifrost", "internal/model", "internal/modules")},
 		{Name: "printer", ArtifactName: "boetticher-printer", BuildTarget: "image-printer", ScanTarget: "boetticher-printer", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/printer", "internal/model", "internal/modules", "internal/usbexport")},
 		{Name: "arr", ArtifactName: "boetticher-arr", BuildTarget: "image-arr", ScanTarget: "boetticher-arr", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/arr", "internal/model", "internal/modules")},
-		{Name: "streamdeck", ArtifactName: "boetticher-streamdeck", BuildTarget: "image-streamdeck", ScanTarget: "boetticher-streamdeck", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/streamdeck", "internal/streamdeck", "cmd/boetticher-streamdeck", "internal/model", "internal/modules", "internal/usbexport")},
 		{Name: "aiops", ArtifactName: "boetticher-aiops", BuildTarget: "image-aiops", ScanTarget: "boetticher-aiops", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/aiops", "internal/aiops", "internal/model", "internal/modules", "cmd/boetticher-aiops")},
 		{Name: "gatus", ArtifactName: "boetticher-gatus", BuildTarget: "image-gatus", ScanTarget: "boetticher-gatus", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/gatus", "internal/model", "internal/modules", "internal/gatus")},
 		{Name: "network-probe", ArtifactName: "boetticher-network-probe", BuildTarget: "image-network-probe", ScanTarget: "boetticher-network-probe", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "cmd/boetticher-network-probe", "internal/networktest", "images/network-probe")},
@@ -292,22 +352,6 @@ func Definitions() []Definition {
 func Lookup(module string) (Definition, bool) {
 	for _, definition := range Definitions() {
 		if definition.Name == module {
-			return definition, true
-		}
-	}
-	return Definition{}, false
-}
-
-// DefinitionForArtifact resolves the one build/scan mapping for a concrete
-// artifact identity. Consumers use this instead of maintaining a second
-// target table.
-func DefinitionForArtifact(name string) (Definition, bool) {
-	for _, definition := range Definitions() {
-		artifactName := definition.ArtifactName
-		if artifactName == "" {
-			artifactName = "boetticher-" + definition.Name
-		}
-		if artifactName == name {
 			return definition, true
 		}
 	}
@@ -366,7 +410,27 @@ func definitionSHA256(definition Definition) (string, error) {
 	if artifactName == "" {
 		artifactName = "boetticher-" + definition.Name
 	}
+	baseDigest := ""
+	if artifactName != BaseName {
+		for _, candidate := range Definitions() {
+			if candidate.ArtifactName != definition.Base {
+				continue
+			}
+			var err error
+			baseDigest, err = definitionSHA256(candidate)
+			if err != nil {
+				return "", fmt.Errorf("hash base definition %s: %w", definition.Base, err)
+			}
+			break
+		}
+		if baseDigest == "" {
+			return "", fmt.Errorf("base definition %s is not declared", definition.Base)
+		}
+	}
 	identity := fmt.Sprintf("%s/%s/%s/%s/%s/%s", definition.Base, definition.BaseVersion, artifactName, definition.Version, definition.Architecture, definition.Kind)
+	if baseDigest != "" {
+		identity += "/" + baseDigest
+	}
 	hash := sha256.New()
 	if _, err := io.WriteString(hash, identity+"\x00"); err != nil {
 		return "", err
@@ -527,9 +591,4 @@ func ContentSHA256ForFile(path string) (string, error) {
 		return "", err
 	}
 	return evidence.ContentSHA256, nil
-}
-
-func digest(value string) string {
-	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])
 }

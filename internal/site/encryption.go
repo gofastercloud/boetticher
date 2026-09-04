@@ -22,14 +22,7 @@ import (
 
 const (
 	bundledSOPSVersion = "3.13.3"
-	bundledAgeVersion  = "1.3.1"
 )
-
-// BundledEncryptionVersions identifies the cryptographic implementations
-// compiled into the controller binary.
-func BundledEncryptionVersions() (sopsVersion, ageVersion string) {
-	return bundledSOPSVersion, bundledAgeVersion
-}
 
 // Store and recover only the SOPS YAML/Age contract used by Boetticher. The
 // upstream libraries are linked into the controller, so no SOPS, age, or

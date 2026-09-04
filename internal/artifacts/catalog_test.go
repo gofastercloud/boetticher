@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	buildbundle "github.com/gofastercloud/boetticher"
+	"github.com/gofastercloud/boetticher/internal/model"
 )
 
 func TestEvidenceUsesActualArtifactBytes(t *testing.T) {
@@ -32,6 +33,65 @@ func TestEvidenceUsesActualArtifactBytes(t *testing.T) {
 	hash := sha256.Sum256(content)
 	if evidence.ContentSHA256 != hex.EncodeToString(hash[:]) || evidence.ContentSHA256 == artifact.DefinitionSHA256 || evidence.Qualified {
 		t.Fatalf("evidence does not bind actual bytes: %#v", evidence)
+	}
+}
+
+func TestQualifiedArtifactReuseIgnoresSourceDefinitionRevision(t *testing.T) {
+	root := t.TempDir()
+	artifactPath := filepath.Join(root, "generated", "artifacts", "boetticher-logging", "boetticher-logging-1.0.0-amd64.tar.zst")
+	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(artifactPath, []byte("qualified appliance bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	requested, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	qualifiedDefinition := requested
+	qualifiedDefinition.DefinitionSHA256 = strings.Repeat("a", 64)
+	evidence, err := EvidenceForFile(artifactPath, qualifiedDefinition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = artifactPath
+	evidence = completeQualificationEvidence(t, evidence)
+	evidence, err = QualifyEvidence(evidence, ScanSummary{Completed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = ""
+	if err := WriteEvidence(root, requested.Name, evidence); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _, err := ResolveArtifactEvidence(root, requested)
+	if err != nil {
+		t.Fatalf("qualified bytes were rejected after a source-only definition change: %v", err)
+	}
+	if resolved.ContentSHA256 != evidence.ContentSHA256 {
+		t.Fatalf("resolved content digest = %q, want %q", resolved.ContentSHA256, evidence.ContentSHA256)
+	}
+}
+
+func TestArtifactCachePathDerivesOnlySafeCoordinatePaths(t *testing.T) {
+	path, err := ArtifactCachePath("/tmp/site", model.Artifact{
+		Name: "boetticher-logging", Version: "1.0.0", Architecture: "amd64", Kind: "lxc",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "/tmp/site/generated/artifacts/boetticher-logging/boetticher-logging-1.0.0-amd64.tar.zst"; path != want {
+		t.Fatalf("cache path = %q, want %q", path, want)
+	}
+	for _, artifact := range []model.Artifact{
+		{Name: "../outside", Version: "1.0.0", Architecture: "amd64", Kind: "lxc"},
+		{Name: "boetticher-test", Version: "../outside", Architecture: "amd64", Kind: "lxc"},
+		{Name: "boetticher-test", Version: "1.0.0", Architecture: "amd64", Kind: "unknown"},
+	} {
+		if _, err := ArtifactCachePath("/tmp/site", artifact); err == nil {
+			t.Fatalf("unsafe artifact coordinate was accepted: %#v", artifact)
+		}
 	}
 }
 
@@ -127,6 +187,9 @@ func TestResolveArtifactEvidenceRejectsChangedBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if evidence.Artifact.ContentSHA256 != evidence.ContentSHA256 {
+		t.Fatal("qualified evidence did not bind the content digest into its artifact identity")
+	}
 	if err := WriteEvidence(root, artifact.Name, evidence); err != nil {
 		t.Fatal(err)
 	}
@@ -187,6 +250,68 @@ func TestQualifiedArtifactCacheJourneys(t *testing.T) {
 	}
 }
 
+func TestResolveArtifactEvidenceRejectsAbsolutePathOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	external := t.TempDir()
+	artifact, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactPath := filepath.Join(external, "artifact.bin")
+	if err := os.WriteFile(artifactPath, []byte("qualified appliance"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := EvidenceForFile(artifactPath, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = artifactPath
+	evidence = completeQualificationEvidence(t, evidence)
+	evidence, err = QualifyEvidence(evidence, ScanSummary{Completed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteEvidence(root, artifact.Name, evidence); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveArtifactEvidence(root, artifact); err == nil || !strings.Contains(err.Error(), "escapes evidence root") {
+		t.Fatalf("absolute artifact path outside root was accepted: %v", err)
+	}
+}
+
+func TestResolveArtifactEvidenceRejectsSymlinkedPathComponent(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	artifact, err := ArtifactFor("logging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifactPath := filepath.Join(outside, "artifact.bin")
+	if err := os.WriteFile(artifactPath, []byte("qualified appliance"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "linked")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := EvidenceForFile(artifactPath, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence.ArtifactPath = filepath.Join(link, "artifact.bin")
+	evidence = completeQualificationEvidence(t, evidence)
+	evidence, err = QualifyEvidence(evidence, ScanSummary{Completed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteEvidence(root, artifact.Name, evidence); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ResolveArtifactEvidence(root, artifact); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("symlinked artifact path component was accepted: %v", err)
+	}
+}
+
 func TestResolveArtifactEvidenceRejectsChangedQualificationInputs(t *testing.T) {
 	root := t.TempDir()
 	artifactPath := filepath.Join(root, "artifact.bin")
@@ -218,7 +343,7 @@ func TestResolveArtifactEvidenceRejectsChangedQualificationInputs(t *testing.T) 
 	}
 }
 
-func TestWriteEvidenceRequiresControllerVisibleArtifactBytes(t *testing.T) {
+func TestWriteEvidenceAllowsPortableQualificationStatement(t *testing.T) {
 	artifact, err := ArtifactFor("logging")
 	if err != nil {
 		t.Fatal(err)
@@ -228,8 +353,21 @@ func TestWriteEvidenceRequiresControllerVisibleArtifactBytes(t *testing.T) {
 		ContentSHA256:    strings.Repeat("c", 64),
 		DefinitionSHA256: artifact.DefinitionSHA256,
 	})
-	if err := WriteEvidence(t.TempDir(), artifact.Name, evidence); err == nil || !strings.Contains(err.Error(), "artifact path") {
-		t.Fatalf("evidence without a verifiable artifact path was accepted: %v", err)
+	evidence.QualificationPolicyVersion = QualificationPolicyVersion
+	evidence.QualificationEvaluator = QualificationEvaluator
+	evidence.ScanCompleted = true
+	evidence.Qualified = true
+	evidence.qualifiedByEvaluator = true
+	root := t.TempDir()
+	if err := WriteEvidence(root, artifact.Name, evidence); err != nil {
+		t.Fatalf("portable qualification statement was rejected: %v", err)
+	}
+	loaded, err := LoadEvidence(root, artifact.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ArtifactPath != "" {
+		t.Fatalf("portable evidence retained a cache path: %q", loaded.ArtifactPath)
 	}
 }
 
@@ -410,7 +548,7 @@ func completeQualificationEvidence(t *testing.T, evidence Evidence) Evidence {
 		evidence.Builder = BuilderProvenance{
 			Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429",
 			Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3",
-			MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.4.0",
+			MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.5.1",
 		}
 		return evidence
 	}
@@ -418,7 +556,7 @@ func completeQualificationEvidence(t *testing.T, evidence Evidence) Evidence {
 		"package-manifest.txt":    "package: boetticher-test\n",
 		"sbom.json":               `{"bomFormat":"CycloneDX","specVersion":"1.5"}` + "\n",
 		"trivy.json":              `{"Results":[]}` + "\n",
-		"builder-provenance.json": `{"platform":"debian-13-amd64","input_image":"debian-13-genericcloud-amd64-20260327-2429","kernel":"6.1.0","go":"go version go1.26.5 linux/amd64","trivy":"Version: 0.69.3","mmdebstrap":"mmdebstrap 1.5.0","architecture":"amd64","boetticher_version":"0.4.0"}` + "\n",
+		"builder-provenance.json": `{"platform":"debian-13-amd64","input_image":"debian-13-genericcloud-amd64-20260327-2429","kernel":"6.1.0","go":"go version go1.26.5 linux/amd64","trivy":"Version: 0.69.3","mmdebstrap":"mmdebstrap 1.5.0","architecture":"amd64","boetticher_version":"0.5.1"}` + "\n",
 	}
 	for filename, content := range inputs {
 		if err := os.WriteFile(filepath.Join(filepath.Dir(evidence.ArtifactPath), filename), []byte(content), 0o600); err != nil {
@@ -432,7 +570,7 @@ func completeQualificationEvidence(t *testing.T, evidence Evidence) Evidence {
 	evidence.Builder = BuilderProvenance{
 		Platform: "debian-13-amd64", InputImage: "debian-13-genericcloud-amd64-20260327-2429",
 		Kernel: "6.1.0", Go: "go version go1.26.5 linux/amd64", Trivy: "Version: 0.69.3",
-		MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.4.0",
+		MMDebstrap: "mmdebstrap 1.5.0", Architecture: "amd64", BoetticherVersion: "0.5.1",
 	}
 	return evidence
 }
@@ -498,9 +636,28 @@ func TestArtifactDefinitionDigestBindsBuildInputs(t *testing.T) {
 	}
 }
 
+func TestFirewallDefinitionBindsCompiledTelemetryInputs(t *testing.T) {
+	definition, ok := Lookup("firewall")
+	if !ok {
+		t.Fatal("firewall artifact definition is missing")
+	}
+	for _, required := range []string{"cmd/boetticher-firewall-telemetry", "internal/firewalltelemetry"} {
+		found := false
+		for _, input := range definition.Inputs {
+			if input == required {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("firewall artifact definition omits compiled input %q", required)
+		}
+	}
+}
+
 func TestCheckedInImageDefinitionsUseThePinnedBase(t *testing.T) {
 	root := filepath.Join("..", "..", "images")
-	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "portal/image.yaml", "tailnet-router/image.yaml", "bifrost/image.yaml", "printer/image.yaml", "streamdeck/image.yaml", "aiops/image.yaml"}
+	paths := []string{"base/debian.yaml", "dns/image.yaml", "dns/blocky/image.yaml", "logging/image.yaml", "monitoring/image.yaml", "firewall/image.yaml", "tailnet-router/image.yaml", "bifrost/image.yaml", "printer/image.yaml", "aiops/image.yaml"}
 	for _, relative := range paths {
 		data, err := os.ReadFile(filepath.Join(root, relative))
 		if err != nil {
@@ -679,7 +836,7 @@ func TestIssue22BuildAndQualificationPathsPreserveEvidenceWithBoundedWork(t *tes
 	}
 	buildText := string(buildScript)
 	scanText := string(scanScript)
-	if !strings.Contains(buildText, "BOETTICHER_BASE_ROOTFS") || !strings.Contains(buildText, "BOETTICHER_SKIP_PROVENANCE=1") || !strings.Contains(buildText, `timing_emit "artifact_build"`) {
+	if !strings.Contains(buildText, "BOETTICHER_BASE_ROOTFS") || !strings.Contains(buildText, "BOETTICHER_SKIP_PROVENANCE=1") || !strings.Contains(buildText, `timing_emit "artifact_build"`) || !strings.Contains(buildText, "artifact_temporary=") || !strings.Contains(buildText, "mv -f -- \"$artifact_temporary\" \"$artifact_path\"") {
 		t.Fatal("bounded image workers do not isolate their base rootfs, provenance, and timing contract")
 	}
 	if !strings.Contains(buildText, `timing_emit "artifact_build_all"`) || !strings.Contains(buildText, "pid_a=") || !strings.Contains(buildText, "pid_b=") || !strings.Contains(buildText, "memory-heavy") {
@@ -770,7 +927,7 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(buildScript), "base_packages=$(awk") || !strings.Contains(string(buildScript), "--include=\"$base_packages\"") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Check-Valid-Until=false") || !strings.Contains(string(buildScript), "debian-security-snapshot.sources") || !strings.Contains(string(buildScript), "apt-get upgrade --yes --no-install-recommends") {
+	if !strings.Contains(string(buildScript), "base_packages=$(awk") || !strings.Contains(string(buildScript), "--include=\"$base_packages\"") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Check-Valid-Until=false") || !strings.Contains(string(buildScript), "--aptopt=Acquire::Retries=3") || !strings.Contains(string(buildScript), "debian-security-snapshot.sources") || !strings.Contains(string(buildScript), "apt-get --no-download upgrade --yes --no-install-recommends") {
 		t.Fatal("base builder does not use the pinned Debian snapshot")
 	}
 	if !strings.Contains(string(buildScript), `dpkg-query -W -f='\${binary:Package}\\t\${Version}\\n'`) {
@@ -778,6 +935,19 @@ func TestBaseDefinitionPinsTheDebianSnapshotInput(t *testing.T) {
 	}
 	if strings.Contains(string(buildScript), "systemctl disable --now systemd-networkd-wait-online.service") {
 		t.Fatal("firewall image customization tries to start or stop systemd in an offline image")
+	}
+	for _, required := range []string{
+		"prepare_firewall_package_cache",
+		"virt-cat -a \"$input\" /var/lib/dpkg/status",
+		"--no-network",
+		"BOETTICHER_LOCAL_FAST",
+		"--tar-in \"$package_archive_tar\":/var/cache/apt/archives",
+		"--tar-in \"$package_lists_tar\":/var/lib/apt/lists",
+		"apt-get --no-download install",
+	} {
+		if !strings.Contains(string(buildScript), required) {
+			t.Fatalf("firewall local package-cache build is missing %q", required)
+		}
 	}
 	smokeFirewall, err := os.ReadFile(filepath.Join("..", "..", "scripts", "smoke-firewall-image.sh"))
 	if err != nil {
@@ -880,7 +1050,6 @@ func TestApplianceBuildEmbedsDefinitionIdentityWithoutContentEvidence(t *testing
 		"write_artifact_identity \"$rootfs\" dns",
 		"write_artifact_identity \"$rootfs\" logging",
 		"write_artifact_identity \"$rootfs\" monitoring",
-		"write_artifact_identity \"$rootfs\" portal",
 		"ConditionPathExists=/etc/blocky/config.yml",
 		"-upload \"$artifact_identity:/usr/lib/boetticher/artifact.json\"",
 	} {
@@ -948,7 +1117,7 @@ func TestFirewallBuildUsesIndividualVirtCustomizeDirectories(t *testing.T) {
 	if strings.Contains(text, "--mkdir /etc/boetticher,/usr/lib/boetticher") {
 		t.Fatal("firewall virt-customize directory inputs must remain individual paths")
 	}
-	for _, directory := range []string{"--mkdir /etc/boetticher", "--mkdir /usr/lib/boetticher", "--mkdir /var/lib/boetticher/identity/ssh", "--mkdir /tmp/boetticher-ansible"} {
+	for _, directory := range []string{"--mkdir /etc/boetticher", "--mkdir /usr/lib/boetticher", "--mkdir /var/lib/boetticher/identity/ssh", "--mkdir /var/lib/boetticher/ansible"} {
 		if !strings.Contains(text, directory) {
 			t.Fatalf("firewall build is missing directory input %q", directory)
 		}
@@ -1123,7 +1292,7 @@ func TestBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {
 		}
 		entries[header.Name] = true
 	}
-	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "images/tailnet-router/image.yaml", "cmd/boetticher-bifrost/main.go", "internal/bifrost/router.go", "images/streamdeck/runtime/streamdeck-status.service", "cmd/boetticher-streamdeck/main.go", "internal/streamdeck/pulse.go", "cmd/qualify-artifact/main.go", "cmd/boetticher-aiops/main.go", "cmd/boetticher-log-query/main.go", "internal/aiops/aiops.go", "internal/gatus/gatus.go", "internal/usbexport/plan.go"} {
+	for _, required := range []string{"buildbundle.go", "scripts/build-images.sh", "images/base/debian.yaml", "images/tailnet-router/image.yaml", "cmd/boetticher-bifrost/main.go", "internal/bifrost/router.go", "cmd/boetticher-streamdeck/main.go", "internal/streamdeck/pulse.go", "cmd/qualify-artifact/main.go", "cmd/boetticher-aiops/main.go", "cmd/boetticher-log-query/main.go", "internal/aiops/aiops.go", "internal/gatus/gatus.go", "internal/usbexport/plan.go"} {
 		if !entries[required] {
 			t.Fatalf("archive omitted public build input %s", required)
 		}
@@ -1171,6 +1340,82 @@ func TestEmbeddedBuildSourceArchiveIsAllowListedAndDeterministic(t *testing.T) {
 	for _, forbidden := range []string{"site.yml", "generated/model.json", "secrets.yaml", "identity.txt"} {
 		if entries[forbidden] {
 			t.Fatalf("embedded archive included forbidden build input %s", forbidden)
+		}
+	}
+}
+
+func TestEmbeddedCompanionSourceArchiveContainsOnlyProvisioningAssets(t *testing.T) {
+	archiveBytes, err := BuildEmbeddedCompanionSourceArchive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := gzip.NewReader(strings.NewReader(string(archiveBytes)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := tar.NewReader(reader)
+	entries := map[string]bool{}
+	for {
+		header, err := archive.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries[header.Name] = true
+	}
+	for _, required := range []string{
+		"ansible/companion.yml",
+		"ansible/roles/kiosk/tasks/main.yml",
+		"ansible/roles/kiosk/templates/boetticher-streamdeck.service.j2",
+		"pi/kiosk/visualizer/index.html",
+	} {
+		if !entries[required] {
+			t.Fatalf("embedded companion archive omitted %s", required)
+		}
+	}
+	for _, forbidden := range []string{"site.yml", "generated/model.json", "secrets.yaml", "identity.txt"} {
+		if entries[forbidden] {
+			t.Fatalf("embedded companion archive included forbidden state %s", forbidden)
+		}
+	}
+}
+
+func TestEmbeddedAnsibleSourceArchiveContainsDeploymentRolesOnly(t *testing.T) {
+	archiveBytes, err := BuildEmbeddedAnsibleSourceArchive()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := gzip.NewReader(strings.NewReader(string(archiveBytes)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := tar.NewReader(reader)
+	entries := map[string]bool{}
+	for {
+		header, err := archive.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		entries[header.Name] = true
+	}
+	for _, required := range []string{
+		"ansible/site.yml",
+		"ansible/roles/base/tasks/main.yml",
+		"ansible/roles/monitor/templates/pulse-loopback.conf.j2",
+		"ansible/roles/kiosk/templates/boetticher-streamdeck.service.j2",
+	} {
+		if !entries[required] {
+			t.Fatalf("embedded Ansible archive omitted %s", required)
+		}
+	}
+	for _, forbidden := range []string{"site.yml", "generated/model.json", "secrets.yaml", "identity.txt", "pi/kiosk/visualizer/index.html"} {
+		if entries[forbidden] {
+			t.Fatalf("embedded Ansible archive included forbidden source or state %s", forbidden)
 		}
 	}
 }

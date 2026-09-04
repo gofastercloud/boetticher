@@ -43,8 +43,8 @@ func TestProbeDNSNameRespectsSANDBOXNamespaceIsolation(t *testing.T) {
 	if got := probeDNSName("SANDBOX", "lab.home.arpa"); got != "example.com" {
 		t.Fatalf("SANDBOX DNS probe name = %q, want example.com", got)
 	}
-	if got := probeDNSName("TRUSTED", "lab.home.arpa"); got != "portal.lab.home.arpa" {
-		t.Fatalf("private-zone DNS probe name = %q, want portal.lab.home.arpa", got)
+	if got := probeDNSName("TRUSTED", "lab.home.arpa"); got != "monitor.lab.home.arpa" {
+		t.Fatalf("private-zone DNS probe name = %q, want monitor.lab.home.arpa", got)
 	}
 }
 
@@ -112,13 +112,35 @@ func TestResponseDetailPreservesProbeOutputWhenExecutionFails(t *testing.T) {
 	}
 }
 
+func TestNetworkProbeOwnershipUsesExactTagsAndDescriptionFields(t *testing.T) {
+	if !hasExactProxmoxTag("boetticher;managed;boetticher-network-probe", "boetticher-network-probe") {
+		t.Fatal("canonical network-probe tag was not recognized")
+	}
+	for _, tags := range []string{"boetticher;managed;not-boetticher-network-probe", "boetticher-network-probe-foreign"} {
+		if hasExactProxmoxTag(tags, "boetticher-network-probe") {
+			t.Fatalf("foreign tag %q was accepted", tags)
+		}
+	}
+	if !hasExactDescriptionField("boetticher-network-probe installation=installation-01 run=run-01", "installation", "installation-01") {
+		t.Fatal("canonical installation description field was not recognized")
+	}
+	for _, description := range []string{
+		"boetticher-network-probe installation=installation-01-foreign",
+		"boetticher-network-probe preinstallation=installation-01",
+	} {
+		if hasExactDescriptionField(description, "installation", "installation-01") {
+			t.Fatalf("foreign description %q was accepted", description)
+		}
+	}
+}
+
 func TestFinishNetworkTestRendersBinaryOperatorResults(t *testing.T) {
 	report := networktest.Report{
 		RunID:   "run-1",
 		Overall: "INCONCLUSIVE",
 		Cleanup: "HOLD: reserved VMID 910 is occupied by an unknown guest",
 		Results: []networktest.Result{
-			{Name: "tcp/TRUSTED/portal", Status: "INCONCLUSIVE", Detail: "HOLD: the path could not be established"},
+			{Name: "tcp/TRUSTED/monitor", Status: "INCONCLUSIVE", Detail: "HOLD: the path could not be established"},
 		},
 	}
 	var output bytes.Buffer
@@ -131,7 +153,7 @@ func TestFinishNetworkTestRendersBinaryOperatorResults(t *testing.T) {
 			t.Fatalf("human output exposed %q: %s", forbidden, text)
 		}
 	}
-	for _, want := range []string{"Network test run-1: FAIL", "FAIL         tcp/TRUSTED/portal", "Cleanup: FAIL", "Reason:"} {
+	for _, want := range []string{"Network test run-1: FAIL", "FAIL         tcp/TRUSTED/monitor", "Cleanup: FAIL", "Reason:"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("human output missing %q: %s", want, text)
 		}

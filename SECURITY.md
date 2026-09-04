@@ -35,6 +35,6 @@ process. Those maintainers know their software best.
 ## In scope
 
 The Boetticher CLI, generated configuration, secret handling, bootstrap,
-ownership checks, SSH bastion behaviour, and portal output are in scope. The
+ownership checks, SSH bastion behaviour, and generated operator output are in scope. The
 [third-party notices](THIRD_PARTY_NOTICES.md) link to the projects that do the
 heavy lifting underneath.

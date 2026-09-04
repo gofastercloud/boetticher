@@ -9,8 +9,7 @@
 secrets/
 
 # Appliance bytes, scan roots, and qualification cache are runtime state.
-generated/artifacts/
-generated/runtime/
+/generated/
 *.tar.zst
 *.qcow2
 .trivy/

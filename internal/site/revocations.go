@@ -20,6 +20,11 @@ type revocationRecord struct {
 	RevokedAt string `yaml:"revoked_at"`
 }
 
+const (
+	maxRevocationEntries     = 256
+	maxRevocationRecordBytes = 64 << 10
+)
+
 // LoadClientRevocations loads certificate-specific revocation records and
 // fails closed when a record cannot produce enforceable CRL material.
 func LoadClientRevocations(dir string) ([]pki.Revocation, error) {
@@ -27,7 +32,7 @@ func LoadClientRevocations(dir string) ([]pki.Revocation, error) {
 	if err := pathguard.ValidateNoSymlinkComponents(revokedDir); err != nil {
 		return nil, err
 	}
-	entries, err := pathguard.ReadDir(revokedDir)
+	entries, err := pathguard.ReadDirLimited(revokedDir, maxRevocationEntries)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -44,7 +49,7 @@ func LoadClientRevocations(dir string) ([]pki.Revocation, error) {
 		if err := pathguard.ValidateNoSymlinkComponents(path); err != nil {
 			return nil, err
 		}
-		data, err := pathguard.ReadFile(path)
+		data, err := pathguard.ReadFileLimited(path, maxRevocationRecordBytes)
 		if err != nil {
 			return nil, fmt.Errorf("read client revocation %s: %w", entry.Name(), err)
 		}

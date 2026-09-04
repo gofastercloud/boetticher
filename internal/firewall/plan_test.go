@@ -10,6 +10,7 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
+	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 )
 
 func TestManagedPlanUsesOneUntaggedFirewallInterfacePerZone(t *testing.T) {
@@ -269,10 +270,8 @@ func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 	}
 	for _, expected := range []string{
 		"10.10.5.10/32 ip daddr 10.10.20.60/32 tcp dport 443",
-		"10.10.5.10/32 ip daddr 10.10.10.30/32 tcp dport 443",
 		"10.10.5.10/32 ip daddr 10.10.10.20/32 tcp dport 443",
 		"10.10.10.20/32 ip daddr 10.10.99.5/32 tcp dport 8006",
-		"10.10.99.5/32 ip daddr 10.10.10.40/32 tcp dport 19532",
 		"10.10.99.5/32 ip daddr 10.10.5.10/32 tcp dport 22",
 		"set boetticher_endpoint_29 { type ipv4_addr; elements = { 198.51.100.10, 198.51.100.11 } }",
 		"10.10.20.60/32 ip daddr @boetticher_endpoint_29 tcp dport 443",
@@ -372,9 +371,40 @@ func TestEndpointResolutionFailsClosed(t *testing.T) {
 	}
 }
 
+func TestEndpointResolutionRejectsPrivateAddress(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("private-endpoint", "age1privateendpoint", model.GatewayModeManaged))
+	enabled := true
+	config.Modules.Bifrost = &model.BifrostModuleConfig{
+		Enabled:   &enabled,
+		Upstreams: []model.BifrostUpstreamConfig{{Name: "provider", BaseURL: "https://provider.example/v1", APIKeySecret: "provider_api_key"}},
+		Models:    []model.BifrostModelConfig{{Alias: "selected", Upstream: "provider", Model: "provider/model"}},
+	}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := PlanFromSite(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = renderNFTWithResolver(plan, func(string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("10.10.20.1")}, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "non-public IPv4") {
+		t.Fatalf("private endpoint address was accepted: %v", err)
+	}
+}
+
 func TestQualifiedModuleLoggingIntentResolvesCollector(t *testing.T) {
-	rule := policyRuleForIntent(model.NewDefaultSite("installation", "age1example"), "logging", model.NetworkIntent{
-		Source: "lab-portal-01", Destination: "logs.lab.home.arpa", Protocol: "tcp", Ports: []string{"19532"}, Purpose: "native journal upload",
+	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
+	enabled := true
+	config.Modules.Logging = &model.ToggleModuleConfig{Enabled: &enabled}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule := policyRuleForIntent(site, "logging", model.NetworkIntent{
+		Source: "lab-monitor-01", Destination: "logs.lab.home.arpa", Protocol: "tcp", Ports: []string{"19532"}, Purpose: "native journal upload",
 	})
 	if rule.DestinationCIDR != "10.10.10.40/32" || rule.To != "INFRA" {
 		t.Fatalf("qualified logging destination resolved incorrectly: %#v", rule)
@@ -451,7 +481,7 @@ func TestExternalComposedContractCarriesModuleRouteAndOperatorBoundary(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"10.10.0.0/16", "10.10.5.10", "10.10.5.0/24", "10.10.5.1", "subnet-route", "route approval", "accept-dns=false", "Bifrost HTTPS", "portal HTTPS", "monitoring HTTPS", "openrouter.ai", "required return routing", "Proxmox API", "SSH", "enforcement is NOT ACTIVE", "operator implementation responsibility"} {
+	for _, expected := range []string{"10.10.0.0/16", "10.10.5.10", "10.10.5.0/24", "10.10.5.1", "subnet-route", "route approval", "accept-dns=false", "Bifrost HTTPS", "monitoring HTTPS", "openrouter.ai", "required return routing", "Proxmox API", "SSH", "enforcement is NOT ACTIVE", "operator implementation responsibility"} {
 		if !strings.Contains(strings.ToLower(contract), strings.ToLower(expected)) {
 			t.Errorf("external module contract missing %q", expected)
 		}
@@ -566,30 +596,7 @@ func TestExternalPlanHasPolicyButNoManagedInterfaces(t *testing.T) {
 	}
 }
 
-func TestPortalHTTPSIsAllowedFromModeledClientZones(t *testing.T) {
-	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	ruleset, err := RenderNFT(plan)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, expected := range []string{
-		"iifname \"transit0\" oifname \"infra0\" ip saddr 10.10.5.0/24 ip daddr 10.10.10.30/32 tcp dport 443 counter accept",
-		"iifname \"servers0\" oifname \"infra0\" ip saddr 10.10.20.0/24 ip daddr 10.10.10.30/32 tcp dport 443 counter accept",
-		"iifname \"trusted0\" oifname \"infra0\" ip saddr 10.10.30.0/24 ip daddr 10.10.10.30/32 tcp dport 443 counter accept",
-	} {
-		if !strings.Contains(ruleset, expected) {
-			t.Errorf("Portal client-zone rule missing %q:\\n%s", expected, ruleset)
-		}
-	}
-	if strings.Index(ruleset, "iifname \"transit0\" oifname \"infra0\" ip saddr 10.10.5.0/24 ip daddr 10.10.10.30/32") > strings.Index(ruleset, "TRANSIT-INFRA-DROP") {
-		t.Fatal("TRANSIT-to-Portal allow occurs after the TRANSIT default deny")
-	}
-}
-
-func TestTailnetRouterUsesBothDNSAndNTPEndpoints(t *testing.T) {
+func TestTailnetRouterUsesTheSingleDNSAndNTPService(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	enabled := true
 	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &enabled}
@@ -607,8 +614,8 @@ func TestTailnetRouterUsesBothDNSAndNTPEndpoints(t *testing.T) {
 		}
 	}
 	for purpose, destinations := range seen {
-		if len(destinations) != 2 || !destinations["10.10.10.10/32"] || !destinations["10.10.10.11/32"] {
-			t.Fatalf("Tailnet %s destinations = %v, want both DNS endpoints", purpose, destinations)
+		if len(destinations) != 1 || !destinations["10.10.10.10/32"] {
+			t.Fatalf("Tailnet %s destinations = %v, want the single DNS endpoint", purpose, destinations)
 		}
 	}
 }
@@ -624,8 +631,30 @@ func TestLogicalDNSIntentExpandsToAllManagedDNSEndpoints(t *testing.T) {
 		seen[rule.DestinationCIDR] = true
 		names[rule.Name] = true
 	}
-	if len(seen) != 2 || len(names) != 2 || !seen["10.10.10.10/32"] || !seen["10.10.10.11/32"] {
-		t.Fatalf("logical DNS intent destinations = %v, names = %v, want both managed DNS endpoints with unique names", seen, names)
+	if len(seen) != 1 || len(names) != 1 || !seen["10.10.10.10/32"] {
+		t.Fatalf("logical DNS intent destinations = %v, names = %v, want the managed DNS endpoint", seen, names)
+	}
+}
+
+func TestDeclaredEndpointsReachOnlyTheSmallstepCADestination(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	rules := policyRules(site)
+	foundMonitor := false
+	for _, rule := range rules {
+		if strings.Contains(rule.Name, "HTTPS to Smallstep CA") {
+			if rule.Name == "lab-monitor-01 HTTPS to Smallstep CA" {
+				foundMonitor = true
+				if rule.SourceCIDR != "10.10.10.20/32" || rule.DestinationCIDR != "10.10.10.10/32" || !reflect.DeepEqual(rule.Ports, []string{StepCAPort}) {
+					t.Fatalf("Smallstep monitor rule = %#v", rule)
+				}
+			}
+			if rule.Name == "lab-proxmox-01 HTTPS to Smallstep CA" || rule.SourceCIDR == "10.10.0.0/16" {
+				t.Fatalf("Smallstep CA rule is broader than a declared endpoint: %#v", rule)
+			}
+		}
+	}
+	if !foundMonitor {
+		t.Fatal("default monitoring endpoint has no Smallstep CA rule")
 	}
 }
 
@@ -661,7 +690,7 @@ func TestAirVPNSelectedSourcesUseTransitWithoutDirectWANFallback(t *testing.T) {
 			break
 		}
 	}
-	if selectedRule.From != "SERVERS" || selectedRule.To != "TRANSIT" || selectedRule.SourceCIDR != "10.10.20.60/32" || selectedRule.NAT {
+	if selectedRule.From != "SERVERS" || selectedRule.To != "TRANSIT" || selectedRule.SourceCIDR != "10.10.20.60/32" || selectedRule.SourceMAC != networkmodel.ManagedModuleMAC(210) || selectedRule.NAT {
 		t.Fatalf("selected-source transit rule is incomplete: %#v", selectedRule)
 	}
 	plan, err = BindAirVPNEndpoint(plan, func(host string) ([]net.IP, error) {
@@ -684,7 +713,7 @@ func TestAirVPNSelectedSourcesUseTransitWithoutDirectWANFallback(t *testing.T) {
 	}
 	for _, expected := range []string{
 		`ip saddr @airvpn_sources oifname "wan0" counter log prefix "boetticher AIRVPN-DIRECT-DROP " drop`,
-		`iifname "servers0" oifname "transit0" ip saddr 10.10.20.60/32 ip daddr @boetticher_endpoint_1 tcp dport 443 counter accept`,
+		`iifname "servers0" ether saddr 02:00:00:03:00:d2 oifname "transit0" ip saddr 10.10.20.60/32 ip daddr @boetticher_endpoint_1 tcp dport 443 counter accept`,
 		"oifname \"wan0\" ip saddr != @airvpn_sources ip saddr 10.10.20.0/24 masquerade comment \"boetticher:nat-servers\"",
 		"oifname \"wan0\" ip saddr 10.10.5.20/32 ip daddr @boetticher_endpoint_0 udp dport 1637 masquerade comment \"boetticher:nat-airvpn-handshake\"",
 		`iifname "transit0" oifname "wan0" counter log prefix "boetticher TRANSIT-INTERNET-DROP " drop`,
@@ -722,7 +751,7 @@ func TestArrAirVPNEgressIsBoundedAndFailClosed(t *testing.T) {
 			break
 		}
 	}
-	if egress.From != "SERVERS" || egress.To != "TRANSIT" || egress.Action != "allow" || egress.Protocol != "any" || egress.SourceCIDR != model.ArrGuestAddress+"/32" || egress.DestinationCIDR != "0.0.0.0/0" || egress.NAT || egress.Route != "airvpn" {
+	if egress.From != "SERVERS" || egress.To != "TRANSIT" || egress.Action != "allow" || egress.Protocol != "any" || egress.SourceCIDR != model.ArrGuestAddress+"/32" || egress.SourceMAC != model.ArrGuestMAC || egress.DestinationCIDR != model.AirVPNGuestAddress+"/32" || egress.NAT || egress.Route != "airvpn" {
 		t.Fatalf("ARR AirVPN egress rule = %#v", egress)
 	}
 	if !reflect.DeepEqual(plan.AirVPNSources, []string{model.ArrGuestAddress + "/32"}) {
@@ -747,7 +776,8 @@ func TestArrAirVPNEgressIsBoundedAndFailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`iifname "servers0" oifname "transit0" ip saddr 10.10.20.110/32 ip daddr 0.0.0.0/0 counter accept`,
+		`iifname "servers0" ether saddr 02:00:00:00:02:10 oifname "transit0" ip saddr 10.10.20.110/32 ip daddr 10.10.5.20/32 counter accept`,
+		`iifname "servers0" ether saddr 02:00:00:00:02:10 ip saddr != 10.10.20.110/32 counter log prefix "boetticher AIRVPN-SOURCE-MISMATCH-DROP " drop`,
 		`ip saddr @airvpn_sources oifname "wan0" counter log prefix "boetticher AIRVPN-DIRECT-DROP " drop`,
 		`oifname "wan0" ip saddr != @airvpn_sources ip saddr 10.10.20.0/24 masquerade comment "boetticher:nat-servers"`,
 	} {
@@ -757,5 +787,31 @@ func TestArrAirVPNEgressIsBoundedAndFailClosed(t *testing.T) {
 	}
 	if strings.Contains(ruleset, `oifname "wan0" ip saddr 10.10.20.110/32 masquerade`) {
 		t.Fatal("ARR AirVPN source has a direct WAN NAT rule")
+	}
+	if strings.Contains(ruleset, `ether saddr 02:00:00:00:02:10 oifname "transit0" ip saddr 10.10.20.110/32 ip daddr 0.0.0.0/0`) {
+		t.Fatal("ARR AirVPN rule still permits every TRANSIT destination")
+	}
+}
+
+func TestAirVPNModuleIntentCarriesStableSourceMAC(t *testing.T) {
+	site := model.NewDefaultSite("installation", "age1example")
+	site.ModuleConfig = map[string]model.ModuleConfig{"bifrost": {Network: model.ModuleNetworkAirVPN}}
+	component := model.Component{Name: "lab-bifrost-01", VMID: 210, Module: "bifrost", Address: "10.10.20.60"}
+	if got, want := componentSourceMAC(site, component), networkmodel.ManagedModuleMAC(210); got != want {
+		t.Fatalf("AirVPN module source MAC = %q, want %q", got, want)
+	}
+}
+
+func TestRenderRejectsInvalidSourceMAC(t *testing.T) {
+	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Rules = []PolicyRule{{
+		Name: "invalid-source-mac", From: "SERVERS", To: "TRANSIT", Action: "allow", Protocol: "any",
+		SourceCIDR: "10.10.20.110/32", DestinationCIDR: "0.0.0.0/0", SourceMAC: "not-a-mac",
+	}}
+	if _, err := RenderNFT(plan); err == nil || !strings.Contains(err.Error(), "invalid source MAC") {
+		t.Fatalf("invalid source MAC was rendered: %v", err)
 	}
 }

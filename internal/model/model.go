@@ -18,9 +18,15 @@ import (
 )
 
 const (
-	APIVersion                  = "boetticher/v3"
+	APIVersion = "boetticher/v3"
+	// ReleaseVersion identifies the controller/release line. It is distinct
+	// from the persisted configuration schema, artifact ABI, and bundle format.
+	ReleaseVersion              = "0.5.1"
 	SchemaVersion               = 3
-	PlatformVersion             = "0.4.0"
+	ConfigSchemaVersion         = SchemaVersion
+	ArtifactABIVersion          = "boetticher/artifact/v1"
+	BundleFormatVersion         = "boetticher/release-bundle/v1"
+	PlatformVersion             = ReleaseVersion
 	QualifiedGatewayImage       = "debian-13-genericcloud-amd64-20260327-2429"
 	QualifiedGatewayImageURL    = "https://cloud.debian.org/images/cloud/trixie/20260327-2429/debian-13-genericcloud-amd64-20260327-2429.qcow2"
 	QualifiedGatewayImageSHA512 = "09559ec27d263997827dd8cddf76e97ea8e0f1803380aa501ea7eaa4b4968cd76ffef4ec7eb07ef1a9ccbeb0925a5020492ea9ed53eb167d62f3a2285039912c"
@@ -41,37 +47,25 @@ const (
 	LogicalProxmoxIdentity      = "lab-proxmox-01"
 	ProxmoxVMID                 = 100
 	DNS01VMID                   = 110
-	DNS02VMID                   = 111
 	MonitorVMID                 = 120
 	GatusVMID                   = 250
-	PortalVMID                  = 130
 	LoggingVMID                 = 140
-	BuilderVMID                 = 190
-	BuilderCacheOwnerVMID       = 191
-	BuilderCacheStorage         = "local-lvm"
-	BuilderCacheVolumeName      = "vm-191-boetticher-builder-cache"
-	BuilderCacheDiskGiB         = 64
 	PrinterVMID                 = 230
-	StreamDeckVMID              = 220
+	LegacyStreamDeckVMID        = 220
 	AirVPNGuestVMID             = 260
 	ArrVMID                     = 270
 	ArrDownloadsVolumeGiB       = 500
 	ArrDownloadsMountPath       = "/var/lib/arr/downloads"
-	BuilderCores                = 4
-	BuilderMemoryMiB            = 8192
-	BuilderDiskGiB              = 32
-	BuilderMinimumFreeGiB       = 20
-	BuilderMAC                  = "02:00:00:00:01:90"
 	DefaultGatewayUpstreamMAC   = "02:00:00:00:01:01"
-	BuilderGoVersion            = "1.26.5"
-	BuilderGoURL                = "https://go.dev/dl/go1.26.5.linux-amd64.tar.gz"
-	BuilderGoSHA256             = "5c2c3b16caefa1d968a94c1daca04a7ca301a496d9b086e17ad77bb81393f053"
 	TransitVLAN                 = 5
 	TransitNetwork              = "10.10.5.0/24"
 	TransitGateway              = "10.10.5.1"
 	AirVPNGuestAddress          = "10.10.5.20"
 	ArrGuestAddress             = "10.10.20.110"
 	ArrGuestMAC                 = "02:00:00:00:02:10"
+	CompanionZone               = "SERVERS"
+	CompanionHostname           = "lab-display-01"
+	CompanionAddress            = "10.10.20.50"
 	InfraVLAN                   = 10
 	InfraNetwork                = "10.10.10.0/24"
 	InfraGateway                = "10.10.10.1"
@@ -98,8 +92,6 @@ const (
 	TagDNS                      = "dns"
 	TagNTP                      = "ntp"
 	TagObservability            = "observability"
-	TagPortal                   = "portal"
-	TagCorePortal               = "boetticher-core-portal"
 	TagMonitoringAgent          = "monitoring-agent"
 )
 
@@ -207,7 +199,7 @@ func GatewayUpstreamMACConflicts(value string) bool {
 			return true
 		}
 	}
-	return canonical == strings.ToLower(BuilderMAC)
+	return false
 }
 
 func ValidateGatewayUpstreamMAC(value string) error {
@@ -249,6 +241,7 @@ type Site struct {
 	Components             []Component             `json:"components"`
 	Modules                []ResolvedModule        `json:"modules,omitempty"`
 	ModuleConfig           map[string]ModuleConfig `json:"module_config,omitempty"`
+	Companion              *CompanionConfig        `json:"companion,omitempty"`
 	Declarations           []ModuleDeclaration     `json:"declarations,omitempty"`
 	USBExports             []USBExportBinding      `json:"usb_exports,omitempty"`
 	RetainedModules        []RetainedModule        `json:"retained_modules,omitempty"`
@@ -569,13 +562,6 @@ type BackupDeclaration struct {
 	Policy string `json:"policy"`
 }
 
-type PortalEntry struct {
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	URLs        []string `json:"urls,omitempty"`
-	Docs        []string `json:"docs,omitempty"`
-}
-
 type ModuleDeclaration struct {
 	Module           string                        `json:"module"`
 	Artifact         Artifact                      `json:"artifact"`
@@ -589,7 +575,6 @@ type ModuleDeclaration struct {
 	Certificates     []CertificateRequest          `json:"certificates,omitempty"`
 	Monitoring       []MonitoringDeclaration       `json:"monitoring,omitempty"`
 	Backups          []BackupDeclaration           `json:"backups,omitempty"`
-	Portal           []PortalEntry                 `json:"portal,omitempty"`
 	Security         GuestSecurityDeclaration      `json:"security,omitempty"`
 	USBRequirements  []USBRequirement              `json:"usb_requirements,omitempty"`
 	AdvertisedRoutes []string                      `json:"advertised_routes,omitempty"`
@@ -613,9 +598,7 @@ func NewDefaultSite(installationID, ageRecipient string) Site {
 	for _, component := range []Component{
 		{Name: "lab-fw-01", VMID: ProxmoxVMID, Hostname: "lab-fw-01", Zone: "MGMT", Address: "10.10.99.1", Role: "Debian firewall", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "firewall"},
 		{Name: "lab-dns-01", VMID: DNS01VMID, Hostname: "lab-dns-01", Zone: "INFRA", Address: "10.10.10.10", Role: "DNS/NTP", DNSAliases: []string{"dns01", "dns"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "dns"},
-		{Name: "lab-dns-02", VMID: DNS02VMID, Hostname: "lab-dns-02", Zone: "INFRA", Address: "10.10.10.11", Role: "DNS/NTP", DNSAliases: []string{"dns02"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "dns"},
 		{Name: "lab-monitor-01", VMID: MonitorVMID, Hostname: "lab-monitor-01", Zone: "INFRA", Address: "10.10.10.20", Role: "Pulse monitoring", DNSAliases: []string{"monitor"}, URL: "https://monitor." + DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "monitoring"},
-		{Name: "lab-log-01", VMID: LoggingVMID, Hostname: "lab-log-01", Zone: "INFRA", Address: "10.10.10.40", Role: "Central systemd journal", DNSAliases: []string{"logs"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Module: "logging"},
 	} {
 		component.Tags = []string{TagBoetticher, TagManaged, TagModule, "module-" + component.Module, ModuleOwnershipTag(component.Module), TagBackup}
 		component.SSHUser, component.SSHPort = DefaultAdminSSHUser, 22
@@ -641,11 +624,11 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 			Domain: DefaultDomain,
 			Zones: []Zone{
 				{Name: "TRANSIT", Type: ZoneTypeTransit, VLAN: TransitVLAN, Network: TransitNetwork, Gateway: TransitGateway, AddressMode: "none"},
-				{Name: "INFRA", Type: ZoneTypeInfrastructure, VLAN: InfraVLAN, Network: InfraNetwork, Gateway: InfraGateway, AddressMode: "static", DNSAddresses: []string{"10.10.10.10", "10.10.10.11"}, NTPAddresses: []string{"10.10.10.10", "10.10.10.11"}},
-				{Name: "SERVERS", Type: ZoneTypeServers, VLAN: 20, Network: "10.10.20.0/24", Gateway: "10.10.20.1", AddressMode: "reservations-only", DNSAddresses: []string{"10.10.10.10", "10.10.10.11"}, NTPAddresses: []string{"10.10.10.10", "10.10.10.11"}},
-				{Name: "TRUSTED", Type: ZoneTypeTrusted, VLAN: 30, Network: "10.10.30.0/24", Gateway: "10.10.30.1", AddressMode: "dynamic-reservations", DNSAddresses: []string{"10.10.10.10", "10.10.10.11"}, NTPAddresses: []string{"10.10.10.10", "10.10.10.11"}},
+				{Name: "INFRA", Type: ZoneTypeInfrastructure, VLAN: InfraVLAN, Network: InfraNetwork, Gateway: InfraGateway, AddressMode: "static", DNSAddresses: []string{"10.10.10.10"}, NTPAddresses: []string{"10.10.10.10"}},
+				{Name: "SERVERS", Type: ZoneTypeServers, VLAN: 20, Network: "10.10.20.0/24", Gateway: "10.10.20.1", AddressMode: "reservations-only", DNSAddresses: []string{"10.10.10.10"}, NTPAddresses: []string{"10.10.10.10"}},
+				{Name: "TRUSTED", Type: ZoneTypeTrusted, VLAN: 30, Network: "10.10.30.0/24", Gateway: "10.10.30.1", AddressMode: "dynamic-reservations", DNSAddresses: []string{"10.10.10.10"}, NTPAddresses: []string{"10.10.10.10"}},
 				{Name: "SANDBOX", Type: ZoneTypeSandbox, VLAN: 40, Network: "10.10.40.0/24", Gateway: "10.10.40.1", AddressMode: "dynamic", DNSAddresses: []string{"10.10.40.1"}, NTPAddresses: []string{"10.10.40.1"}},
-				{Name: "MGMT", Type: ZoneTypeManagement, VLAN: 99, Network: "10.10.99.0/24", Gateway: "10.10.99.1", AddressMode: "static", DNSAddresses: []string{"10.10.10.10", "10.10.10.11"}, NTPAddresses: []string{"10.10.10.10", "10.10.10.11"}},
+				{Name: "MGMT", Type: ZoneTypeManagement, VLAN: 99, Network: "10.10.99.0/24", Gateway: "10.10.99.1", AddressMode: "static", DNSAddresses: []string{"10.10.10.10"}, NTPAddresses: []string{"10.10.10.10"}},
 			},
 		},
 		PhysicalNetwork: PhysicalNetwork{Mode: ModeVirtualOnly},
@@ -658,7 +641,6 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 		},
 		Components: []Component{
 			{Name: "lab-proxmox-01", Hostname: "lab-proxmox-01", Zone: "MGMT", Address: ProxmoxManagementAddress, Role: "Proxmox host", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagNetwork, TagMonitoringAgent}, URL: "https://proxmox." + DefaultDomain + ":8006", Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: false, ProductOwned: true, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Logging: true},
-			{Name: "lab-portal-01", VMID: PortalVMID, Hostname: "lab-portal-01", Zone: "INFRA", Address: "10.10.10.30", Role: "Generated platform portal", Tags: []string{TagBoetticher, TagManaged, TagPlatform, TagInfra, TagPortal, TagCorePortal, TagBackup}, URL: "https://portal." + DefaultDomain, DNSAliases: []string{"portal"}, SSHUser: DefaultAdminSSHUser, SSHPort: 22, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true, Logging: true},
 		},
 	}
 	return site
@@ -671,6 +653,7 @@ func (s Site) Normalize() Site {
 	copySite.Components = cloneComponents(s.Components)
 	copySite.Modules = cloneResolvedModules(s.Modules)
 	copySite.ModuleConfig = cloneModuleConfig(s.ModuleConfig)
+	copySite.Companion = cloneCompanionConfig(s.Companion)
 	copySite.Declarations = cloneModuleDeclarations(s.Declarations)
 	copySite.USBExports = append([]USBExportBinding(nil), s.USBExports...)
 	copySite.RetainedModules = cloneRetainedModules(s.RetainedModules)
@@ -798,11 +781,6 @@ func cloneModuleDeclarations(input []ModuleDeclaration) []ModuleDeclaration {
 			declaration.Monitoring[j].Checks = append([]string(nil), input[i].Monitoring[j].Checks...)
 		}
 		declaration.Backups = append([]BackupDeclaration(nil), input[i].Backups...)
-		declaration.Portal = append([]PortalEntry(nil), input[i].Portal...)
-		for j := range declaration.Portal {
-			declaration.Portal[j].URLs = append([]string(nil), input[i].Portal[j].URLs...)
-			declaration.Portal[j].Docs = append([]string(nil), input[i].Portal[j].Docs...)
-		}
 		declaration.Security.Devices = append([]DeviceRequirement(nil), input[i].Security.Devices...)
 		declaration.Security.Capabilities = append([]string(nil), input[i].Security.Capabilities...)
 		declaration.USBRequirements = append([]USBRequirement(nil), input[i].USBRequirements...)
@@ -892,7 +870,7 @@ func (s Site) validateUSBExports() error {
 
 func (s Site) Validate() error {
 	if s.APIVersion != APIVersion || s.SchemaVersion != SchemaVersion {
-		return fmt.Errorf("site schema %q/%d is not supported by boetticher v0.4; recreate the site with boetticher init", s.APIVersion, s.SchemaVersion)
+		return fmt.Errorf("site schema %q/%d is not supported by boetticher %s; recreate the site with boetticher init", s.APIVersion, s.SchemaVersion, ReleaseVersion)
 	}
 	if s.PlatformVersion == "" {
 		return errors.New("platform_version is required")
@@ -965,8 +943,8 @@ func (s Site) Validate() error {
 	if s.Ownership != (OwnershipPolicy{PlatformGuestIDMin: PlatformGuestIDMin, PlatformGuestIDMax: PlatformGuestIDMax, ModuleGuestIDMin: ModuleGuestIDMin, ModuleGuestIDMax: ModuleGuestIDMax, UserGuestIDMin: UserGuestIDMin, UserGuestIDMax: UserGuestIDMax, UserWorkloadsManaged: false}) {
 		return errors.New("ownership policy must reserve 100-199 for platform, 200-499 for official modules, and 500-899 for user workloads; user workloads are not managed")
 	}
-	if s.SecretMetadata.InstallationID == "" || s.SecretMetadata.AgeRecipient == "" {
-		return fmt.Errorf("secret_metadata must contain installation_id and public age_recipient")
+	if !modelTokenPattern.MatchString(s.SecretMetadata.InstallationID) || s.SecretMetadata.AgeRecipient == "" {
+		return fmt.Errorf("secret_metadata must contain a safe installation_id and public age_recipient")
 	}
 	if bifrost, ok := s.ModuleConfig["bifrost"]; ok && (bifrost.Enabled != nil && *bifrost.Enabled || len(bifrost.Upstreams) > 0 || len(bifrost.Models) > 0) {
 		if err := ValidateBifrostConfig(bifrost); err != nil {
@@ -974,6 +952,9 @@ func (s Site) Validate() error {
 		}
 	}
 	if err := s.validateUSBExports(); err != nil {
+		return err
+	}
+	if err := validateCompanion(s.Companion); err != nil {
 		return err
 	}
 	expectedZones := map[string]struct {
@@ -1002,13 +983,13 @@ func (s Site) Validate() error {
 		seenVLANs[z.VLAN] = z.Name
 		expected, ok := expectedZones[z.Name]
 		if !ok {
-			return fmt.Errorf("zone %s does not match the fixed 0.4 network contract", z.Name)
+			return fmt.Errorf("zone %s does not match the fixed network contract", z.Name)
 		}
 		if !validZoneType(z.Type) {
 			return fmt.Errorf("zone %s has unknown semantic type %q", z.Name, z.Type)
 		}
 		if z.Type != expected.typ || z.VLAN != expected.vlan || z.Network != expected.network || z.Gateway != expected.gateway {
-			return fmt.Errorf("zone %s does not match the fixed 0.4 network contract", z.Name)
+			return fmt.Errorf("zone %s does not match the fixed network contract", z.Name)
 		}
 		if _, _, err := net.ParseCIDR(z.Network); err != nil {
 			return fmt.Errorf("zone %s has invalid network: %w", z.Name, err)
@@ -1104,7 +1085,7 @@ func (s Site) Validate() error {
 		}
 	}
 	if len(seenZones) != len(expectedZones) {
-		return fmt.Errorf("0.4 requires exactly TRANSIT, INFRA, SERVERS, TRUSTED, SANDBOX, and MGMT zones")
+		return fmt.Errorf("the fixed platform contract requires exactly TRANSIT, INFRA, SERVERS, TRUSTED, SANDBOX, and MGMT zones")
 	}
 	if err := validateDHCPReservations(s); err != nil {
 		return err
@@ -1120,7 +1101,6 @@ func (s Site) Validate() error {
 		vmid    int
 	}{
 		"lab-proxmox-01": {address: ProxmoxManagementAddress, vmid: 0},
-		"lab-portal-01":  {address: "10.10.10.30", vmid: PortalVMID},
 	}
 	composed := len(s.Declarations) > 0
 	for _, component := range s.Components {
@@ -1133,10 +1113,6 @@ func (s Site) Validate() error {
 			address string
 			vmid    int
 		}{address: "10.10.10.10", vmid: DNS01VMID}
-		requiredComponents["lab-dns-02"] = struct {
-			address string
-			vmid    int
-		}{address: "10.10.10.11", vmid: DNS02VMID}
 	}
 	if composed && resolvedModuleEnabled(s.Modules, "monitoring", true) {
 		requiredComponents["lab-monitor-01"] = struct {
@@ -1144,7 +1120,7 @@ func (s Site) Validate() error {
 			vmid    int
 		}{address: "10.10.10.20", vmid: MonitorVMID}
 	}
-	if composed && resolvedModuleEnabled(s.Modules, "logging", true) {
+	if composed && resolvedModuleEnabled(s.Modules, "logging", false) {
 		requiredComponents["lab-log-01"] = struct {
 			address string
 			vmid    int
@@ -1185,6 +1161,26 @@ func (s Site) Validate() error {
 	}
 	if err := validateDeclarations(s); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateCompanion(companion *CompanionConfig) error {
+	if companion == nil {
+		return nil
+	}
+	if companion.EthernetMAC == "" {
+		if companion.Capabilities().Enabled {
+			return errors.New("companion.ethernet_mac is required when the companion is enabled")
+		}
+		return nil
+	}
+	parsed, err := net.ParseMAC(companion.EthernetMAC)
+	if err != nil || len(parsed) != 6 {
+		return errors.New("companion.ethernet_mac must be an Ethernet MAC")
+	}
+	if parsed[0]&0x01 != 0 {
+		return errors.New("companion.ethernet_mac must be unicast")
 	}
 	return nil
 }

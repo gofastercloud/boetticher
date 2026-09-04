@@ -17,48 +17,15 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gofastercloud/boetticher/internal/model"
 	networkmodel "github.com/gofastercloud/boetticher/internal/network"
+	"github.com/gofastercloud/boetticher/internal/pathguard"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
 	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
 
 type CommandRunner interface {
 	Run(ctx context.Context, address, user, command string) ([]byte, error)
-}
-
-// CheckBuilderCapacity verifies the disposable builder has enough free space
-// for the full appliance construction before any build work starts.
-func CheckBuilderCapacity(ctx context.Context, runner CommandRunner, address, user string, minimumFreeGiB int) error {
-	if runner == nil || minimumFreeGiB <= 0 {
-		return errors.New("builder capacity check requires a runner and positive minimum")
-	}
-	output, err := runner.Run(ctx, address, user, "df -Pk /")
-	if err != nil {
-		return fmt.Errorf("inspect temporary builder capacity: %w", err)
-	}
-	availableKiB, err := parseAvailableKiB(output)
-	if err != nil {
-		return fmt.Errorf("inspect temporary builder capacity: %w", err)
-	}
-	wantedKiB := int64(minimumFreeGiB) * 1024 * 1024
-	if availableKiB < wantedKiB {
-		return fmt.Errorf("HOLD: temporary builder has %d GiB free, need at least %d GiB", availableKiB/(1024*1024), minimumFreeGiB)
-	}
-	return nil
-}
-
-func parseAvailableKiB(output []byte) (int64, error) {
-	for _, line := range strings.Split(string(output), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 5 || fields[0] == "Filesystem" {
-			continue
-		}
-		available, err := strconv.ParseInt(fields[3], 10, 64)
-		if err == nil && available >= 0 {
-			return available, nil
-		}
-	}
-	return 0, errors.New("df output did not contain a valid available-space value")
 }
 
 // ArgsCommandRunner executes a fixed remote executable with separate
@@ -153,52 +120,6 @@ func WaitForCommand(ctx context.Context, runner CommandRunner, address, user, co
 	return fmt.Errorf("HOLD: command readiness failed for %s@%s after %d attempts: %w", user, address, attempts, lastErr)
 }
 
-// WaitForQEMUIPv4ViaNeighbor discovers a DHCP-backed temporary guest before
-// cloud-init can install qemu-guest-agent. The exact builder MAC is the only
-// accepted identity; unrelated HOME neighbors are never returned.
-func WaitForQEMUIPv4ViaNeighbor(ctx context.Context, runner CommandRunner, address, user, mac string, attempts int, interval time.Duration) (string, error) {
-	if runner == nil || address == "" || user == "" || attempts < 1 {
-		return "", errors.New("builder neighbor readiness inputs are invalid")
-	}
-	parsedMAC, err := net.ParseMAC(mac)
-	if err != nil || len(parsedMAC) != 6 {
-		return "", errors.New("builder neighbor readiness requires a valid MAC")
-	}
-	if interval <= 0 {
-		interval = time.Second
-	}
-	var lastErr error
-	for attempt := 0; attempt < attempts; attempt++ {
-		output, runErr := runner.Run(ctx, address, user, "/usr/sbin/ip -4 neigh show dev vmbr0")
-		if runErr != nil {
-			lastErr = runErr
-		} else {
-			for _, line := range strings.Split(string(output), "\n") {
-				fields := strings.Fields(line)
-				if len(fields) < 4 || fields[1] != "lladdr" {
-					continue
-				}
-				candidateIP := net.ParseIP(fields[0]).To4()
-				candidateMAC, parseErr := net.ParseMAC(fields[2])
-				if candidateIP != nil && parseErr == nil && len(candidateMAC) == 6 && candidateMAC.String() == parsedMAC.String() {
-					return candidateIP.String(), nil
-				}
-			}
-			lastErr = errors.New("builder MAC is not present in the Proxmox HOME neighbor table")
-		}
-		if attempt+1 < attempts {
-			timer := time.NewTimer(interval)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return "", fmt.Errorf("builder neighbor readiness cancelled: %w", ctx.Err())
-			case <-timer.C:
-			}
-		}
-	}
-	return "", fmt.Errorf("HOLD: builder DHCP address was not observed for MAC %s after %d attempts: %w", parsedMAC, attempts, lastErr)
-}
-
 type SSHRunner struct {
 	Port            int
 	KnownHosts      string
@@ -213,6 +134,9 @@ type SSHRunner struct {
 	// network target remains the supplied address. It is used for bootstrap
 	// connections whose address is not resolvable through HOME DNS.
 	HostKeyAlias string
+	// identityData is an operation-scoped private key supplied through an
+	// inherited file descriptor. It is never written to disk or put in argv.
+	identityData []byte
 }
 
 // FreshConnection returns a runner that bypasses OpenSSH connection
@@ -222,6 +146,28 @@ type SSHRunner struct {
 func (r SSHRunner) FreshConnection() SSHRunner {
 	r.freshConnection = true
 	return r
+}
+
+// WithIdentityData returns a runner that supplies an operation-scoped private
+// key from memory. The caller owns the byte slice and must wipe it after the
+// bounded operation and its cleanup have completed.
+func (r SSHRunner) WithIdentityData(identityData []byte) SSHRunner {
+	r.IdentityFile = ""
+	r.identityData = identityData
+	return r
+}
+
+// ClearIdentityData wipes the operation-scoped private key held by the runner.
+// Copies of SSHRunner share the same backing slice, so this also clears copies
+// retained by short-lived clients or interfaces.
+func (r *SSHRunner) ClearIdentityData() {
+	if r == nil {
+		return
+	}
+	for index := range r.identityData {
+		r.identityData[index] = 0
+	}
+	r.identityData = nil
 }
 
 type SSHPhysicalNetworkDiscovery struct {
@@ -266,6 +212,9 @@ func DiscoverPhysicalNetworkViaSSH(ctx context.Context, runner CommandRunner, ad
 	var interfaces []NetworkInterface
 	if err := json.Unmarshal(output, &interfaces); err != nil {
 		return SSHPhysicalNetworkDiscovery{}, fmt.Errorf("HOLD: decode Proxmox physical network evidence: %w", err)
+	}
+	if err := enrichNetworkInterfaceHardware(ctx, runner, address, initialUser, interfaces); err != nil {
+		return SSHPhysicalNetworkDiscovery{}, fmt.Errorf("HOLD: enrich Proxmox physical network evidence: %w", err)
 	}
 	routeOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "ip -j route show default"))
 	if err != nil {
@@ -368,6 +317,9 @@ func (f *SSHLocalForward) Close() error {
 func (r SSHRunner) StartLocalForward(ctx context.Context, address, user, targetAddress string, targetPort int) (*SSHLocalForward, error) {
 	if ctx == nil {
 		return nil, errors.New("SSH local forward context is required")
+	}
+	if len(r.identityData) > 0 {
+		return nil, errors.New("SSH local forward does not support an in-memory operation identity")
 	}
 	if err := r.validateConfig(); err != nil {
 		return nil, err
@@ -548,10 +500,6 @@ func (r SSHRunner) runArgsStream(ctx context.Context, address, user string, comm
 	if err := r.validateConfig(); err != nil {
 		return err
 	}
-	args, err := r.commandArgs(address, user, commandArgs)
-	if err != nil {
-		return err
-	}
 	started := time.Now()
 	status := 1
 	defer func() {
@@ -560,13 +508,67 @@ func (r SSHRunner) runArgsStream(ctx context.Context, address, user string, comm
 			Status: status, Duration: time.Since(started), Success: status == 0,
 		})
 	}()
+	var isolatedConfigPath string
+	if len(r.identityData) > 0 && r.ConfigFile != "" && r.HostAlias != "" {
+		configData, configErr := r.isolatedSSHConfig()
+		if configErr != nil {
+			return configErr
+		}
+		configFile, createErr := os.CreateTemp("", "boetticher-ssh-config-")
+		if createErr != nil {
+			return fmt.Errorf("create isolated SSH configuration: %w", createErr)
+		}
+		isolatedConfigPath = configFile.Name()
+		defer os.Remove(isolatedConfigPath)
+		if chmodErr := configFile.Chmod(0600); chmodErr != nil {
+			_ = configFile.Close()
+			return fmt.Errorf("protect isolated SSH configuration: %w", chmodErr)
+		}
+		if _, writeErr := configFile.Write(configData); writeErr != nil {
+			_ = configFile.Close()
+			return fmt.Errorf("write isolated SSH configuration: %w", writeErr)
+		}
+		if closeErr := configFile.Close(); closeErr != nil {
+			return fmt.Errorf("close isolated SSH configuration: %w", closeErr)
+		}
+		r.ConfigFile = isolatedConfigPath
+	}
+	args, err := r.commandArgs(address, user, commandArgs)
+	if err != nil {
+		return err
+	}
 	process := newSSHProcess(args)
 	process.Stdin = stdin
 	process.Stdout = stdout
+	var identityReader, identityWriter *os.File
+	if len(r.identityData) > 0 {
+		var pipeErr error
+		identityReader, identityWriter, pipeErr = os.Pipe()
+		if pipeErr != nil {
+			return fmt.Errorf("prepare in-memory SSH identity: %w", pipeErr)
+		}
+		process.ExtraFiles = []*os.File{identityReader}
+		defer identityReader.Close()
+	}
 	stderr := &boundedOutput{limit: 64 << 10}
 	process.Stderr = stderr
 	if err := process.Start(); err != nil {
+		if identityWriter != nil {
+			_ = identityWriter.Close()
+		}
 		return fmt.Errorf("start SSH command: %w", err)
+	}
+	if identityWriter != nil {
+		if _, err := identityWriter.Write(r.identityData); err != nil {
+			_ = identityWriter.Close()
+			if process.Process != nil {
+				_ = syscall.Kill(-process.Process.Pid, syscall.SIGKILL)
+			}
+			return fmt.Errorf("stream in-memory SSH identity: %w", err)
+		}
+		if err := identityWriter.Close(); err != nil {
+			return fmt.Errorf("close in-memory SSH identity: %w", err)
+		}
 	}
 	done := make(chan error, 1)
 	go waitForSSHProcess(ctx, process, done)
@@ -582,8 +584,10 @@ func (r SSHRunner) runArgsStream(ctx context.Context, address, user string, comm
 	return nil
 }
 
+var sshExecutable = "/usr/bin/ssh"
+
 func newSSHProcess(args []string) *exec.Cmd {
-	process := exec.Command("ssh", args...)
+	process := exec.Command(sshExecutable, args...)
 	process.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	return process
 }
@@ -603,6 +607,14 @@ func waitForSSHProcess(ctx context.Context, process *exec.Cmd, done chan<- error
 }
 
 func (r SSHRunner) validateConfig() error {
+	for label, path := range map[string]string{"known-hosts": r.KnownHosts, "identity": r.IdentityFile} {
+		if path == "" {
+			continue
+		}
+		if err := pathguard.ValidateNoSymlinkComponents(path); err != nil {
+			return fmt.Errorf("validate SSH %s path: %w", label, err)
+		}
+	}
 	if r.ConfigFile == "" {
 		return nil
 	}
@@ -610,6 +622,46 @@ func (r SSHRunner) validateConfig() error {
 		return fmt.Errorf("validate SSH execution configuration: %w", err)
 	}
 	return nil
+}
+
+func (r SSHRunner) isolatedSSHConfig() ([]byte, error) {
+	if r.ConfigFile == "" || r.HostAlias == "" {
+		return nil, errors.New("isolated SSH configuration requires a config file and host alias")
+	}
+	data, err := os.ReadFile(r.ConfigFile)
+	if err != nil {
+		return nil, fmt.Errorf("read SSH configuration for temporary identity: %w", err)
+	}
+	lines := strings.SplitAfter(string(data), "\n")
+	inTarget := false
+	foundTarget := false
+	var filtered strings.Builder
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") || trimmed == "" {
+			filtered.WriteString(line)
+			continue
+		}
+		fields := strings.Fields(trimmed)
+		if len(fields) > 1 && strings.EqualFold(strings.TrimSuffix(fields[0], "="), "host") {
+			inTarget = false
+			for _, alias := range fields[1:] {
+				if alias == r.HostAlias {
+					inTarget = true
+					foundTarget = true
+					break
+				}
+			}
+		}
+		if inTarget && len(fields) > 1 && strings.EqualFold(strings.TrimSuffix(fields[0], "="), "identityfile") {
+			continue
+		}
+		filtered.WriteString(line)
+	}
+	if !foundTarget {
+		return nil, fmt.Errorf("isolated SSH configuration has no host alias %q", r.HostAlias)
+	}
+	return []byte(filtered.String()), nil
 }
 
 type boundedOutput struct {
@@ -698,6 +750,11 @@ func (r SSHRunner) connectionArgs(address, user, batchMode string) ([]string, st
 		// not let an unrelated local agent identity consume the server's
 		// authentication budget before that key is tried.
 		args = append(args, "-o", "IdentitiesOnly=yes", "-i", r.IdentityFile)
+	} else if len(r.identityData) > 0 {
+		// runArgsStream supplies an isolated config when a generated host alias
+		// is used. Its target block has no durable operator identity; the
+		// bastion block retains that identity so ProxyJump can still authenticate.
+		args = append(args, "-o", "IdentitiesOnly=yes", "-i", "/dev/fd/3")
 	}
 	if r.HostKeyAlias != "" {
 		if !safeNodeID(r.HostKeyAlias) {
@@ -718,13 +775,26 @@ func (r SSHRunner) connectionArgs(address, user, batchMode string) ([]string, st
 	return args, user + "@" + target, nil
 }
 
-func InstallOperatorKey(ctx context.Context, runner CommandRunner, address, initialUser, publicKey string) error {
-	if err := validatePublicKey(publicKey); err != nil {
-		return err
+// InstallTemporaryRootAccess installs one exact operation-scoped root key on
+// the host. The caller must authenticate this one mutation with independent
+// operator recovery authority, only after the immutable Apply plan is
+// accepted. Cleanup removes this exact public-key line and does not alter any
+// other root key, password, or SSH policy.
+func InstallTemporaryRootAccess(ctx context.Context, runner CommandRunner, address, user, publicKey string) error {
+	if runner == nil {
+		return errors.New("temporary root acquisition runner is required")
 	}
-	command := "umask 077; install -d -m 700 ~/.ssh; touch ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys; grep -qxF " + shellQuote(publicKey) + " ~/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(publicKey) + " >> ~/.ssh/authorized_keys"
-	_, err := runner.Run(ctx, address, initialUser, command)
-	return err
+	if user != "root" {
+		return errors.New("temporary root acquisition requires the root recovery transport")
+	}
+	if err := validatePublicKey(publicKey); err != nil {
+		return fmt.Errorf("temporary root acquisition key: %w", err)
+	}
+	command := "set -eu; umask 077; install -d -m 700 -o root -g root /root/.ssh; touch /root/.ssh/authorized_keys; chown root:root /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys; grep -qxF -- " + shellQuote(publicKey) + " /root/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(publicKey) + " >> /root/.ssh/authorized_keys"
+	if _, err := runner.Run(ctx, address, user, command); err != nil {
+		return fmt.Errorf("install temporary root access: %w", err)
+	}
+	return nil
 }
 
 func ConfigureIdentities(ctx context.Context, runner CommandRunner, address, initialUser, adminPublicKey string, allowedDestinations []string) error {
@@ -743,9 +813,60 @@ func ConfigureIdentities(ctx context.Context, runner CommandRunner, address, ini
 	// Public keys and destination addresses are the only values interpolated;
 	// credentials are never placed in this command.
 	jumpKey := "restrict,port-forwarding,permitopen=\"" + strings.Join(allowedDestinations, "\",permitopen=\"") + "\" " + publicKeyLine(adminPublicKey)
-	command := "set -eu; id -u labadmin >/dev/null 2>&1 || useradd --create-home --shell /bin/bash labadmin; passwd --lock labadmin; gpasswd --delete labadmin sudo >/dev/null 2>&1 || true; id -u lab-jump >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin lab-jump; install -d -m 700 -o lab-jump -g lab-jump /home/lab-jump; install -d -m 700 /root/.ssh /home/labadmin/.ssh /etc/ssh/sshd_config.d; touch /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /root/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /root/.ssh/authorized_keys; install -m 600 /dev/null /home/labadmin/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /home/labadmin/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /home/labadmin/.ssh/authorized_keys; install -m 600 /dev/null /home/lab-jump.authorized_keys; printf '%s\\n' " + shellQuote(jumpKey) + " > /home/lab-jump.authorized_keys; chown lab-jump:lab-jump /home/lab-jump.authorized_keys; chown -R labadmin:labadmin /home/labadmin/.ssh; rm -f /etc/sudoers.d/boetticher-labadmin; cat > /etc/ssh/sshd_config.d/90-boetticher-jump.conf <<'EOF'\nAllowUsers root labadmin lab-jump lab-netprobe\nMatch User lab-jump\n    AuthorizedKeysFile /home/lab-jump.authorized_keys\n    PermitTTY no\n    X11Forwarding no\n    AllowAgentForwarding no\n    AllowTcpForwarding local\n    PermitOpen " + strings.Join(allowedDestinations, " ") + "\nEOF\nvisudo -cf /etc/sudoers\nsshd -t\nsystemctl reload ssh || systemctl reload sshd"
+	command := "set -eu; if ! command -v visudo >/dev/null 2>&1; then apt_sources=\"$(mktemp /run/boetticher-apt-sources.XXXXXX)\"; trap 'rm -f \"$apt_sources\"' EXIT; printf '%s\\n' 'deb http://deb.debian.org/debian trixie main' 'deb http://deb.debian.org/debian trixie-updates main' 'deb http://security.debian.org/debian-security trixie-security main' > \"$apt_sources\"; apt-get -o Dir::Etc::sourcelist=\"$apt_sources\" -o Dir::Etc::sourceparts=- -o Acquire::Retries=3 update; apt-get -o Dir::Etc::sourcelist=\"$apt_sources\" -o Dir::Etc::sourceparts=- -o Acquire::Retries=3 install --yes --no-install-recommends sudo; fi; id -u labadmin >/dev/null 2>&1 || useradd --create-home --shell /bin/bash labadmin; passwd --lock labadmin; gpasswd --delete labadmin sudo >/dev/null 2>&1 || true; id -u lab-jump >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin lab-jump; install -d -m 700 -o lab-jump -g lab-jump /home/lab-jump; install -d -m 700 /home/labadmin/.ssh /etc/ssh/sshd_config.d; install -m 600 /dev/null /home/labadmin/.ssh/authorized_keys; grep -qxF " + shellQuote(adminPublicKey) + " /home/labadmin/.ssh/authorized_keys || printf '%s\\n' " + shellQuote(adminPublicKey) + " >> /home/labadmin/.ssh/authorized_keys; install -m 600 /dev/null /home/lab-jump.authorized_keys; printf '%s\\n' " + shellQuote(jumpKey) + " > /home/lab-jump.authorized_keys; chown lab-jump:lab-jump /home/lab-jump.authorized_keys; chown -R labadmin:labadmin /home/labadmin/.ssh; rm -f /etc/sudoers.d/boetticher-labadmin; cat > /etc/ssh/sshd_config.d/90-boetticher-jump.conf <<'EOF'\nAllowUsers root labadmin lab-jump lab-netprobe\nMatch User lab-jump\n    AuthorizedKeysFile /home/lab-jump.authorized_keys\n    PermitTTY no\n    X11Forwarding no\n    AllowAgentForwarding no\n    AllowTcpForwarding local\n    PermitOpen " + strings.Join(allowedDestinations, " ") + "\nEOF\nvisudo -cf /etc/sudoers\nsshd -t\nsystemctl reload ssh || systemctl reload sshd"
 	_, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, command))
 	return err
+}
+
+// ConfigureBastionPolicy reconciles only the host-side restricted jump policy.
+// It deliberately does not install or modify any user key, so Apply can
+// refresh the policy while its temporary root key remains the only
+// deployment-owned root identity.
+func ConfigureBastionPolicy(ctx context.Context, runner CommandRunner, address, user string, allowedDestinations []string) error {
+	if runner == nil {
+		return errors.New("bastion policy runner is required")
+	}
+	if len(allowedDestinations) == 0 {
+		return errors.New("at least one bastion destination is required")
+	}
+	for _, destination := range allowedDestinations {
+		host, port, splitErr := net.SplitHostPort(destination)
+		if splitErr != nil || net.ParseIP(host) == nil || (port != "22" && port != "443") || strings.ContainsAny(destination, "'\n\r") {
+			return fmt.Errorf("invalid bastion destination %q", destination)
+		}
+	}
+	command := "set -eu; install -d -m 700 /etc/ssh/sshd_config.d; cat > /etc/ssh/sshd_config.d/90-boetticher-jump.conf <<'EOF'\nAllowUsers root labadmin lab-jump lab-netprobe\nMatch User lab-jump\n    AuthorizedKeysFile /home/lab-jump.authorized_keys\n    PermitTTY no\n    X11Forwarding no\n    AllowAgentForwarding no\n    AllowTcpForwarding local\n    PermitOpen " + strings.Join(allowedDestinations, " ") + "\nEOF\nsshd -t\nsystemctl reload ssh || systemctl reload sshd"
+	if _, err := runner.Run(ctx, address, user, privilegedCommand(user, command)); err != nil {
+		return fmt.Errorf("configure host bastion policy: %w", err)
+	}
+	return nil
+}
+
+// ConfigureHeadlessPowerPolicy makes a Proxmox host safe to operate as an
+// unattended appliance on laptop-class hardware. The policy is explicit so a
+// distribution default or a vendor-specific laptop setting cannot suspend the
+// host when its lid closes or when no interactive session is present.
+func ConfigureHeadlessPowerPolicy(ctx context.Context, runner CommandRunner, address, user string) error {
+	if runner == nil {
+		return errors.New("headless power policy runner is required")
+	}
+	command := "set -eu; dir=/etc/systemd/logind.conf.d; file=$dir/90-boetticher-headless.conf; install -d -m 755 \"$dir\"; tmp=$(mktemp \"$file.XXXXXX\"); trap 'rm -f \"$tmp\"' EXIT; printf '%s\\n' '[Login]' 'HandleLidSwitch=ignore' 'HandleLidSwitchExternalPower=ignore' 'HandleLidSwitchDocked=ignore' 'HandleSuspendKey=ignore' 'HandleHibernateKey=ignore' 'IdleAction=ignore' >\"$tmp\"; install -m 644 \"$tmp\" \"$file\"; systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target; systemctl restart systemd-logind"
+	if _, err := runner.Run(ctx, address, user, privilegedCommand(user, command)); err != nil {
+		return fmt.Errorf("configure headless power policy: %w", err)
+	}
+	return nil
+}
+
+// CheckHeadlessPowerPolicy verifies the host policy without changing it.
+func CheckHeadlessPowerPolicy(ctx context.Context, runner CommandRunner, address, user string) error {
+	if runner == nil {
+		return errors.New("headless power policy check runner is required")
+	}
+	command := "set -eu; file=/etc/systemd/logind.conf.d/90-boetticher-headless.conf; for setting in 'HandleLidSwitch=ignore' 'HandleLidSwitchExternalPower=ignore' 'HandleLidSwitchDocked=ignore' 'HandleSuspendKey=ignore' 'HandleHibernateKey=ignore' 'IdleAction=ignore'; do grep -qxF \"$setting\" \"$file\"; done; for unit in sleep.target suspend.target hibernate.target hybrid-sleep.target; do systemctl is-enabled \"$unit\" 2>&1 | grep -qxF masked; done"
+	if _, err := runner.Run(ctx, address, user, privilegedCommand(user, command)); err != nil {
+		return fmt.Errorf("headless power policy is not active: %w", err)
+	}
+	return nil
 }
 
 // RestoreTemporaryRootAccess re-arms the deployment-only root key inside one
@@ -811,9 +932,10 @@ func RestoreTemporaryRootAccess(ctx context.Context, runner CommandRunner, addre
 
 var retainedModuleServices = map[string][]string{
 	"tailnet-router": {"tailscaled"},
+	"airvpn":         {"boetticher-airvpn.service"},
 	"bifrost":        {"bifrost", "nginx"},
 	"printer":        {"octoprint", "nginx"},
-	"streamdeck":     {"streamdeck-status.service"},
+	"arr":            {"sonarr", "radarr", "nginx"},
 	"aiops":          {"boetticher-aiops", "boetticher-aiops.socket", "holmes"},
 	"gatus":          {"gatus", "nginx"},
 }
@@ -886,7 +1008,6 @@ func InactivateRetainedModule(ctx context.Context, runner CommandRunner, address
 }
 
 const guestHostPublicKeyPath = "/var/lib/boetticher/identity/ssh/ssh_host_ed25519_key.pub"
-const builderHostPublicKeyPath = "/etc/ssh/ssh_host_ed25519_key.pub"
 
 // ReadGuestHostKey obtains the appliance's generated host key through the
 // already-authenticated Proxmox host boundary. It is intentionally separate
@@ -894,14 +1015,6 @@ const builderHostPublicKeyPath = "/etc/ssh/ssh_host_ed25519_key.pub"
 // for the subsequent root or credential-bearing connection.
 func ReadGuestHostKey(ctx context.Context, runner CommandRunner, address, user string, kind GuestKind, vmid int) (string, error) {
 	return readGuestHostKey(ctx, runner, address, user, kind, vmid, guestHostPublicKeyPath, true)
-}
-
-// ReadBuilderHostKey obtains the temporary builder's host key through the
-// already-authenticated Proxmox host boundary. The key is enrolled before the
-// builder's first network SSH connection; ssh-keyscan is deliberately not a
-// trust source.
-func ReadBuilderHostKey(ctx context.Context, runner CommandRunner, address, user string, vmid int) (string, error) {
-	return readGuestHostKey(ctx, runner, address, user, KindQEMU, vmid, builderHostPublicKeyPath, false)
 }
 
 func readGuestHostKey(ctx context.Context, runner CommandRunner, address, user string, kind GuestKind, vmid int, publicKeyPath string, rootOnly bool) (string, error) {
@@ -963,10 +1076,14 @@ func normalizeGuestHostKey(value string) (string, error) {
 	return strings.Join(fields[:2], " "), nil
 }
 
-// RevokeTemporaryRootAccess removes the deployment-only root SSH identity
-// without deleting unrelated operator or recovery keys.
-// The host form also removes root from the explicit AllowUsers contract before
-// deleting its key, and both forms are idempotent for retry-safe cleanup.
+func removeTemporaryAuthorizedKeyCommand(publicKey string) string {
+	return "root_file=/root/.ssh/authorized_keys; root_tmp=/root/.ssh/authorized_keys.boetticher-cleanup; admin_file=/home/labadmin/.ssh/authorized_keys; admin_tmp=/home/labadmin/.ssh/authorized_keys.boetticher-cleanup; trap 'rm -f \"$root_tmp\" \"$admin_tmp\"' EXIT; remove_key() { file=\"$1\"; tmp=\"$2\"; owner=\"$3\"; group=\"$4\"; if [ -f \"$file\" ]; then if grep -Fvx -- " + shellQuote(publicKey) + " \"$file\" >\"$tmp\"; then install -m 600 -o \"$owner\" -g \"$group\" \"$tmp\" \"$file\"; else status=$?; [ \"$status\" -eq 1 ] || exit \"$status\"; rm -f \"$file\"; fi; fi; }; remove_key \"$root_file\" \"$root_tmp\" root root; remove_key \"$admin_file\" \"$admin_tmp\" labadmin labadmin"
+}
+
+// RevokeTemporaryRootAccess removes one exact deployment-only root SSH
+// identity from an owned host or guest. It never changes independent operator
+// recovery keys, root password state, or the host's root AllowUsers contract.
+// The operation is idempotent for retry-safe cleanup.
 func RevokeTemporaryRootAccess(ctx context.Context, runner CommandRunner, address, user, publicKey string, host bool) error {
 	if runner == nil {
 		return errors.New("temporary root cleanup runner is required")
@@ -977,13 +1094,69 @@ func RevokeTemporaryRootAccess(ctx context.Context, runner CommandRunner, addres
 	if err := validatePublicKey(publicKey); err != nil {
 		return fmt.Errorf("temporary root cleanup key: %w", err)
 	}
-	removeKey := "file=/root/.ssh/authorized_keys; tmp=/root/.ssh/authorized_keys.boetticher-cleanup; trap 'rm -f \"$tmp\"' EXIT; if [ -f \"$file\" ]; then if grep -Fvx -- " + shellQuote(publicKey) + " \"$file\" >\"$tmp\"; then install -m 600 -o root -g root \"$tmp\" \"$file\"; else status=$?; [ \"$status\" -eq 1 ] || exit \"$status\"; rm -f \"$file\"; fi; fi; passwd --lock root"
+	removeKey := removeTemporaryAuthorizedKeyCommand(publicKey)
 	command := "set -eu; " + removeKey
 	if host {
-		command = "set -eu; file=/etc/ssh/sshd_config.d/90-boetticher-jump.conf; if grep -qxF 'AllowUsers root labadmin lab-jump lab-netprobe' \"$file\"; then sed -i 's/^AllowUsers root labadmin lab-jump lab-netprobe$/AllowUsers labadmin lab-jump lab-netprobe/' \"$file\"; elif ! grep -qxF 'AllowUsers labadmin lab-jump lab-netprobe' \"$file\"; then exit 74; fi; sshd -t; systemctl reload ssh || systemctl reload sshd; " + removeKey
+		command += "; file=/etc/ssh/sshd_config.d/90-boetticher-jump.conf; grep -qxF 'AllowUsers root labadmin lab-jump lab-netprobe' \"$file\"; sshd -t"
 	}
 	if _, err := runner.Run(ctx, address, user, command); err != nil {
 		return fmt.Errorf("revoke temporary root access: %w", err)
+	}
+	return nil
+}
+
+// RevokeTemporaryRootAccessThroughHost removes the exact deployment-only key
+// from one guest through the independent Proxmox root recovery transport. It
+// is the cleanup fallback when the guest network or guest SSH service is no
+// longer available after an interrupted Apply.
+func RevokeTemporaryRootAccessThroughHost(ctx context.Context, runner CommandRunner, address, user string, kind GuestKind, vmid int, publicKey string) error {
+	if runner == nil {
+		return errors.New("temporary guest cleanup runner is required")
+	}
+	if user != "root" {
+		return errors.New("temporary guest cleanup requires the root transport")
+	}
+	if vmid <= 0 {
+		return errors.New("temporary guest cleanup requires a positive guest VMID")
+	}
+	if kind != KindQEMU && kind != KindLXC {
+		return fmt.Errorf("temporary guest cleanup does not support guest kind %q", kind)
+	}
+	if err := validatePublicKey(publicKey); err != nil {
+		return fmt.Errorf("temporary guest cleanup key: %w", err)
+	}
+	guestCommand := "set -eu; " + removeTemporaryAuthorizedKeyCommand(publicKey)
+	var command string
+	switch kind {
+	case KindQEMU:
+		command = fmt.Sprintf("/usr/sbin/qm guest exec %d -- /bin/sh -c %s", vmid, shellQuote(guestCommand))
+	case KindLXC:
+		command = fmt.Sprintf("/usr/sbin/pct exec %d -- /bin/sh -c %s", vmid, shellQuote(guestCommand))
+	}
+	output, err := runner.Run(ctx, address, user, command)
+	if err != nil {
+		return fmt.Errorf("revoke temporary root access in guest %d through Proxmox: %w", vmid, err)
+	}
+	if kind == KindQEMU {
+		var result map[string]json.RawMessage
+		if err := json.Unmarshal(bytes.TrimSpace(output), &result); err != nil {
+			return fmt.Errorf("decode guest-agent cleanup result for guest %d: %w", vmid, err)
+		}
+		var exited, exitCode int
+		if err := json.Unmarshal(result["exited"], &exited); err != nil || exited != 1 {
+			return fmt.Errorf("guest-agent cleanup for guest %d did not finish", vmid)
+		}
+		if err := json.Unmarshal(result["exitcode"], &exitCode); err != nil {
+			return fmt.Errorf("decode guest-agent cleanup exit code for guest %d: %w", vmid, err)
+		}
+		if exitCode != 0 {
+			var errData string
+			_ = json.Unmarshal(result["err-data"], &errData)
+			if errData != "" {
+				return fmt.Errorf("guest-agent cleanup for guest %d exited %d: %s", vmid, exitCode, strings.TrimSpace(errData))
+			}
+			return fmt.Errorf("guest-agent cleanup for guest %d exited %d", vmid, exitCode)
+		}
 	}
 	return nil
 }
@@ -1001,8 +1174,8 @@ func privilegedCommand(user, command string) string {
 	return "sudo -n sh -c " + shellQuote(command)
 }
 
-func CreateScopedCredentials(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID string) (string, error) {
-	return CreateScopedCredentialsWithRole(ctx, runner, address, initialUser, userID, tokenID, "BoetticherProvisioner")
+func CreateScopedCredentials(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID, node string) (string, error) {
+	return CreateScopedCredentialsWithRole(ctx, runner, address, initialUser, userID, tokenID, "BoetticherProvisioner", node)
 }
 
 // CheckScopedCredentialAvailability verifies the reserved provisioning
@@ -1051,7 +1224,7 @@ const scopedCredentialComment = "boetticher automation identity"
 // cannot recover Proxmox's one-time token value. The surrounding role must
 // still be the exact bounded Boetticher role; it never removes the user,
 // role, root access, or any other token.
-func RemoveExactScopedCredentialToken(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID, role string) (bool, error) {
+func RemoveExactScopedCredentialToken(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID, role, node string) (bool, error) {
 	if !safeID(userID) || !safeID(tokenID) || !safeID(role) {
 		return false, errors.New("Proxmox identity and token IDs must be simple identifiers")
 	}
@@ -1093,8 +1266,11 @@ func RemoveExactScopedCredentialToken(ctx context.Context, runner CommandRunner,
 	if err != nil {
 		return false, fmt.Errorf("HOLD: inspect Proxmox ACLs before token replacement: %w", err)
 	}
-	if err := validateScopedCredentialTokenOwnership(usersOutput, tokensOutput, aclOutput, userID, tokenID, role); err != nil {
+	if err := validateScopedCredentialTokenOwnership(usersOutput, tokensOutput, aclOutput, userID, tokenID, role, node); err != nil {
 		return false, fmt.Errorf("HOLD: scoped Proxmox token ownership is not the expected Boetticher identity: %w", err)
+	}
+	if err := removeLegacyScopedCredentialACLs(ctx, runner, address, initialUser, aclOutput, userID, tokenID, role); err != nil {
+		return false, fmt.Errorf("HOLD: remove legacy root ACLs for scoped Proxmox token: %w", err)
 	}
 	removeToken := "pvesh delete /access/users/" + shellQuote(userID) + "/token/" + shellQuote(tokenID)
 	if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, removeToken)); err != nil {
@@ -1140,6 +1316,9 @@ func CheckScopedCredentialReuse(ctx context.Context, runner CommandRunner, addre
 	if !users[userID] {
 		return fmt.Errorf("HOLD: encrypted Proxmox credentials reference missing user %s", userID)
 	}
+	if err := validateScopedCredentialUserOwnership(usersOutput, userID); err != nil {
+		return fmt.Errorf("HOLD: encrypted Proxmox credentials reference an unexpected user %s: %w", userID, err)
+	}
 	tokensOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users/"+shellQuote(userID)+"/token --output-format json"))
 	if err != nil {
 		return fmt.Errorf("HOLD: inspect Proxmox tokens for %s: %w", userID, err)
@@ -1150,6 +1329,9 @@ func CheckScopedCredentialReuse(ctx context.Context, runner CommandRunner, addre
 	}
 	if !tokens[tokenID] {
 		return fmt.Errorf("HOLD: encrypted Proxmox credentials reference missing token %s!%s", userID, tokenID)
+	}
+	if err := validateScopedCredentialTokenMetadata(tokensOutput, tokenID); err != nil {
+		return fmt.Errorf("HOLD: encrypted Proxmox credentials reference an unexpected token %s!%s: %w", userID, tokenID, err)
 	}
 	return nil
 }
@@ -1263,6 +1445,13 @@ func ReplacePulseMonitoringCredentials(ctx context.Context, runner CommandRunner
 	usersOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users --output-format json"))
 	if err != nil {
 		return "", fmt.Errorf("HOLD: inspect Pulse monitoring users before token replacement: %w", err)
+	}
+	users, err := accessIDs(usersOutput, "userid", "id")
+	if err != nil {
+		return "", fmt.Errorf("HOLD: decode Pulse monitoring users before token replacement: %w", err)
+	}
+	if !users[PulseMonitoringUser] {
+		return CreatePulseMonitoringCredentials(ctx, runner, address, initialUser)
 	}
 	tokensCommand := "pvesh get /access/users/" + shellQuote(PulseMonitoringUser) + "/token --output-format json"
 	tokensOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, tokensCommand))
@@ -1422,41 +1611,12 @@ type scopedCredentialACLEntry struct {
 	UGID      string `json:"ugid"`
 }
 
-func validateScopedCredentialTokenOwnership(usersOutput, tokensOutput, aclOutput []byte, userID, tokenID, role string) error {
-	var users []scopedCredentialUserEntry
-	if err := decodeAccessList(usersOutput, &users); err != nil {
-		return fmt.Errorf("decode scoped credential users: %w", err)
+func validateScopedCredentialTokenOwnership(usersOutput, tokensOutput, aclOutput []byte, userID, tokenID, role, node string) error {
+	if err := validateScopedCredentialUserOwnership(usersOutput, userID); err != nil {
+		return err
 	}
-	userFound := false
-	for _, user := range users {
-		if user.UserID != userID {
-			continue
-		}
-		if user.Comment != scopedCredentialComment || user.Enable != 1 || user.Expire != 0 {
-			return errors.New("scoped credential user metadata is unexpected")
-		}
-		userFound = true
-	}
-	if !userFound {
-		return errors.New("scoped credential user is absent")
-	}
-
-	var tokens []scopedCredentialTokenEntry
-	if err := decodeAccessList(tokensOutput, &tokens); err != nil {
-		return fmt.Errorf("decode scoped credential tokens: %w", err)
-	}
-	tokenFound := false
-	for _, token := range tokens {
-		if token.TokenID != tokenID {
-			continue
-		}
-		if token.Privsep != 1 || token.Expire != 0 {
-			return errors.New("scoped credential token metadata is unexpected")
-		}
-		tokenFound = true
-	}
-	if !tokenFound {
-		return errors.New("scoped credential token is absent")
+	if err := validateScopedCredentialTokenMetadata(tokensOutput, tokenID); err != nil {
+		return err
 	}
 
 	var acls []scopedCredentialACLEntry
@@ -1467,23 +1627,88 @@ func validateScopedCredentialTokenOwnership(usersOutput, tokensOutput, aclOutput
 		userID:                 "user",
 		userID + "!" + tokenID: "token",
 	}
-	seen := make(map[string]bool, len(expected))
+	paths := scopedProvisionerACLPaths(node)
+	if len(paths) == 0 {
+		return errors.New("scoped credential ACL node is malformed")
+	}
+	allowedPaths := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		allowedPaths[path] = true
+	}
+	seenLegacy := make(map[string]bool, len(expected))
+	seenScoped := make(map[string]bool, len(expected)*len(allowedPaths))
 	for _, acl := range acls {
 		expectedType, relevant := expected[acl.UGID]
 		if !relevant {
 			continue
 		}
-		if seen[acl.UGID] || acl.Path != "/" || acl.Propagate != 1 || acl.RoleID != role || acl.Type != expectedType {
+		if acl.Propagate != 1 || acl.RoleID != role || acl.Type != expectedType {
 			return errors.New("scoped credential ACL is unexpected")
 		}
-		seen[acl.UGID] = true
+		if acl.Path == "/" {
+			if seenLegacy[acl.UGID] || len(seenScoped) > 0 {
+				return errors.New("scoped credential ACL is unexpected")
+			}
+			seenLegacy[acl.UGID] = true
+			continue
+		}
+		if !allowedPaths[acl.Path] || seenLegacy[acl.UGID] {
+			return errors.New("scoped credential ACL is unexpected")
+		}
+		key := acl.UGID + "\x00" + acl.Path
+		if seenScoped[key] {
+			return errors.New("scoped credential ACL is unexpected")
+		}
+		seenScoped[key] = true
+	}
+	if len(seenLegacy) > 0 {
+		if len(seenLegacy) != len(expected) {
+			return errors.New("scoped credential ACL is incomplete")
+		}
+		return nil
 	}
 	for ugid := range expected {
-		if !seen[ugid] {
-			return fmt.Errorf("scoped credential ACL %q is absent", ugid)
+		for _, path := range paths {
+			if !seenScoped[ugid+"\x00"+path] {
+				return fmt.Errorf("scoped credential ACL %q at %s is absent", ugid, path)
+			}
 		}
 	}
 	return nil
+}
+
+func validateScopedCredentialUserOwnership(output []byte, userID string) error {
+	var users []scopedCredentialUserEntry
+	if err := decodeAccessList(output, &users); err != nil {
+		return fmt.Errorf("decode scoped credential users: %w", err)
+	}
+	for _, user := range users {
+		if user.UserID != userID {
+			continue
+		}
+		if user.Comment != scopedCredentialComment || user.Enable != 1 || user.Expire != 0 {
+			return errors.New("scoped credential user metadata is unexpected")
+		}
+		return nil
+	}
+	return errors.New("scoped credential user is absent")
+}
+
+func validateScopedCredentialTokenMetadata(output []byte, tokenID string) error {
+	var tokens []scopedCredentialTokenEntry
+	if err := decodeAccessList(output, &tokens); err != nil {
+		return fmt.Errorf("decode scoped credential tokens: %w", err)
+	}
+	for _, token := range tokens {
+		if token.TokenID != tokenID {
+			continue
+		}
+		if token.Privsep != 1 || token.Expire != 0 {
+			return errors.New("scoped credential token metadata is unexpected")
+		}
+		return nil
+	}
+	return errors.New("scoped credential token is absent")
 }
 
 func requireBuiltInRole(output []byte, wanted, wantedPrivileges string) error {
@@ -1507,9 +1732,13 @@ func requireBuiltInRole(output []byte, wanted, wantedPrivileges string) error {
 	return errors.New("role is not present")
 }
 
-func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID, role string) (string, error) {
+func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID, role, node string) (string, error) {
 	if !safeID(userID) || !safeID(tokenID) || !safeID(role) {
 		return "", errors.New("Proxmox identity and token IDs must be simple identifiers")
+	}
+	aclPaths := scopedProvisionerACLPaths(node)
+	if len(aclPaths) == 0 {
+		return "", errors.New("Proxmox node identifier is required and must be safe for scoped ACLs")
 	}
 	privileges := ScopedProvisionerPrivileges()
 	roleOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/roles --output-format json"))
@@ -1539,8 +1768,10 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, createUser)); err != nil {
 			return "", fmt.Errorf("create Proxmox automation user: %w", err)
 		}
+	} else if err := validateScopedCredentialUserOwnership(usersOutput, userID); err != nil {
+		return "", fmt.Errorf("HOLD: existing Proxmox user %s is not the expected Boetticher identity: %w", userID, err)
 	}
-	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--users", userID, role); err != nil {
+	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--users", userID, role, aclPaths); err != nil {
 		return "", fmt.Errorf("assign bounded Proxmox role to user: %w", err)
 	}
 	tokensOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users/"+shellQuote(userID)+"/token --output-format json"))
@@ -1568,7 +1799,7 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 	if response.Value == "" {
 		return "", errors.New("Proxmox token response did not contain a secret")
 	}
-	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--tokens", userID+"!"+tokenID, role); err != nil {
+	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--tokens", userID+"!"+tokenID, role, aclPaths); err != nil {
 		return "", fmt.Errorf("assign bounded Proxmox role to token: %w", err)
 	}
 	return response.Value, nil
@@ -1577,23 +1808,147 @@ func CreateScopedCredentialsWithRole(ctx context.Context, runner CommandRunner, 
 // EnsureScopedCredentialACL repairs the bounded user and token ACLs for an
 // existing privilege-separated provisioning identity. Proxmox restricts a
 // token to the permissions of its backing user, so both ACLs are required.
-func EnsureScopedCredentialACL(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID, role string) error {
+func EnsureScopedCredentialACL(ctx context.Context, runner CommandRunner, address, initialUser, userID, tokenID, role, node string) error {
 	if !safeID(userID) || !safeID(tokenID) || !safeID(role) {
 		return errors.New("Proxmox identity and token IDs must be simple identifiers")
 	}
-	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--users", userID, role); err != nil {
+	aclPaths := scopedProvisionerACLPaths(node)
+	if len(aclPaths) == 0 {
+		return errors.New("Proxmox node identifier is required and must be safe for scoped ACLs")
+	}
+	roleOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/roles --output-format json"))
+	if err != nil {
+		return fmt.Errorf("inspect scoped Proxmox role: %w", err)
+	}
+	if exists, roleErr := validateScopedRoleJSON(roleOutput, role, ScopedProvisionerPrivileges()); roleErr != nil || !exists {
+		if roleErr != nil {
+			return fmt.Errorf("validate scoped Proxmox role: %w", roleErr)
+		}
+		return fmt.Errorf("validate scoped Proxmox role: role %q is absent", role)
+	}
+	usersOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users --output-format json"))
+	if err != nil {
+		return fmt.Errorf("inspect scoped Proxmox user: %w", err)
+	}
+	if err := validateScopedCredentialUserOwnership(usersOutput, userID); err != nil {
+		return fmt.Errorf("validate scoped Proxmox user: %w", err)
+	}
+	tokensOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/users/"+shellQuote(userID)+"/token --output-format json"))
+	if err != nil {
+		return fmt.Errorf("inspect scoped Proxmox token: %w", err)
+	}
+	if err := validateScopedCredentialTokenMetadata(tokensOutput, tokenID); err != nil {
+		return fmt.Errorf("validate scoped Proxmox token: %w", err)
+	}
+	aclOutput, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/acl --output-format json"))
+	if err != nil {
+		return fmt.Errorf("inspect existing scoped Proxmox ACLs: %w", err)
+	}
+	if err := removeLegacyScopedCredentialACLs(ctx, runner, address, initialUser, aclOutput, userID, tokenID, role); err != nil {
+		return fmt.Errorf("remove legacy root ACLs: %w", err)
+	}
+	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--users", userID, role, aclPaths); err != nil {
 		return fmt.Errorf("assign bounded Proxmox role to user: %w", err)
 	}
-	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--tokens", userID+"!"+tokenID, role); err != nil {
+	if err := setScopedCredentialACL(ctx, runner, address, initialUser, "--tokens", userID+"!"+tokenID, role, aclPaths); err != nil {
 		return fmt.Errorf("assign bounded Proxmox role to token: %w", err)
+	}
+	updatedACL, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, "pvesh get /access/acl --output-format json"))
+	if err != nil {
+		return fmt.Errorf("verify scoped Proxmox ACLs: %w", err)
+	}
+	if err := validateScopedProvisionerACL(updatedACL, userID, tokenID, role, node); err != nil {
+		return fmt.Errorf("verify scoped Proxmox ACLs: %w", err)
 	}
 	return nil
 }
 
-func setScopedCredentialACL(ctx context.Context, runner CommandRunner, address, initialUser, subjectFlag, subject, role string) error {
-	setACL := "pvesh set /access/acl --path / " + subjectFlag + " " + shellQuote(subject) + " --roles " + shellQuote(role) + " --propagate 1"
-	_, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, setACL))
-	return err
+func setScopedCredentialACL(ctx context.Context, runner CommandRunner, address, initialUser, subjectFlag, subject, role string, paths []string) error {
+	for _, aclPath := range paths {
+		setACL := "pvesh set /access/acl --path " + shellQuote(aclPath) + " " + subjectFlag + " " + shellQuote(subject) + " --roles " + shellQuote(role) + " --propagate 1"
+		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, setACL)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func scopedProvisionerACLPaths(node string) []string {
+	if !safeNodeID(node) {
+		return nil
+	}
+	paths := []string{"/nodes/" + node, "/sdn", "/storage/local", "/storage/boetticher-thin", "/storage/boetticher-backups"}
+	for _, vmid := range []int{model.ProxmoxVMID, model.DNS01VMID, model.MonitorVMID, model.LoggingVMID, model.LegacyStreamDeckVMID, model.PrinterVMID, model.AirVPNGuestVMID, model.ArrVMID, 200, 210, 240, 250} {
+		paths = append(paths, "/vms/"+strconv.Itoa(vmid))
+	}
+	return paths
+}
+
+func removeLegacyScopedCredentialACLs(ctx context.Context, runner CommandRunner, address, initialUser string, aclOutput []byte, userID, tokenID, role string) error {
+	var acls []scopedCredentialACLEntry
+	if err := decodeAccessList(aclOutput, &acls); err != nil {
+		return fmt.Errorf("decode ACL listing: %w", err)
+	}
+	for _, subject := range []struct {
+		flag  string
+		value string
+		typ   string
+	}{{"--users", userID, "user"}, {"--tokens", userID + "!" + tokenID, "token"}} {
+		found := false
+		for _, acl := range acls {
+			if acl.UGID == subject.value && acl.Type == subject.typ && acl.Path == "/" && acl.Propagate == 1 && acl.RoleID == role {
+				found = true
+				break
+			}
+		}
+		if !found {
+			continue
+		}
+		command := "pvesh delete /access/acl --path / " + subject.flag + " " + shellQuote(subject.value) + " --roles " + shellQuote(role)
+		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, command)); err != nil {
+			return fmt.Errorf("remove root %s ACL: %w", subject.typ, err)
+		}
+	}
+	return nil
+}
+
+func validateScopedProvisionerACL(aclOutput []byte, userID, tokenID, role, node string) error {
+	var acls []scopedCredentialACLEntry
+	if err := decodeAccessList(aclOutput, &acls); err != nil {
+		return fmt.Errorf("decode ACL listing: %w", err)
+	}
+	expected := map[string]string{userID: "user", userID + "!" + tokenID: "token"}
+	paths := scopedProvisionerACLPaths(node)
+	if len(paths) == 0 {
+		return errors.New("scoped credential ACL node is malformed")
+	}
+	allowedPaths := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		allowedPaths[path] = true
+	}
+	seen := make(map[string]bool, len(expected)*len(allowedPaths))
+	for _, acl := range acls {
+		expectedType, relevant := expected[acl.UGID]
+		if !relevant {
+			continue
+		}
+		if acl.Path == "/" || !allowedPaths[acl.Path] || acl.Propagate != 1 || acl.RoleID != role || acl.Type != expectedType {
+			return errors.New("scoped credential ACL is unexpected")
+		}
+		key := acl.UGID + "\x00" + acl.Path
+		if seen[key] {
+			return errors.New("scoped credential ACL is duplicated")
+		}
+		seen[key] = true
+	}
+	for ugid := range expected {
+		for _, path := range paths {
+			if !seen[ugid+"\x00"+path] {
+				return fmt.Errorf("scoped credential ACL %q at %s is absent", ugid, path)
+			}
+		}
+	}
+	return nil
 }
 
 // accessIDs decodes the small JSON listings returned by pvesh for users and

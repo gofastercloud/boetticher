@@ -11,14 +11,18 @@ import (
 	"github.com/gofastercloud/boetticher/internal/pathguard"
 )
 
-const retainedModulesPath = "generated/retained-modules.json"
+const (
+	retainedModulesPath      = "generated/retained-modules.json"
+	maxRetainedModulesBytes  = 1 << 20
+	maxRetainedModuleEntries = 64
+)
 
 func LoadRetainedModules(dir string) ([]model.RetainedModule, error) {
 	path := filepath.Join(dir, retainedModulesPath)
 	if err := pathguard.ValidateNoSymlinkComponents(path); err != nil {
 		return nil, fmt.Errorf("validate retained modules path: %w", err)
 	}
-	data, err := pathguard.ReadFile(path)
+	data, err := pathguard.ReadFileLimited(path, maxRetainedModulesBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -29,6 +33,9 @@ func LoadRetainedModules(dir string) ([]model.RetainedModule, error) {
 	if err := json.Unmarshal(data, &retained); err != nil {
 		return nil, err
 	}
+	if len(retained) > maxRetainedModuleEntries {
+		return nil, fmt.Errorf("retained module state exceeds maximum of %d modules", maxRetainedModuleEntries)
+	}
 	if err := validateRetainedModules(retained); err != nil {
 		return nil, err
 	}
@@ -36,14 +43,18 @@ func LoadRetainedModules(dir string) ([]model.RetainedModule, error) {
 }
 
 func SaveRetainedModules(dir string, retained []model.RetainedModule) error {
-	if err := validateRetainedModules(retained); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(retained, "", "  ")
+	data, err := marshalRetainedModules(retained)
 	if err != nil {
 		return err
 	}
 	return atomicWrite(filepath.Join(dir, retainedModulesPath), append(data, '\n'), 0600)
+}
+
+func marshalRetainedModules(retained []model.RetainedModule) ([]byte, error) {
+	if err := validateRetainedModules(retained); err != nil {
+		return nil, err
+	}
+	return json.MarshalIndent(retained, "", "  ")
 }
 
 func validateRetainedModules(retained []model.RetainedModule) error {

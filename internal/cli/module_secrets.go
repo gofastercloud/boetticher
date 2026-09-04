@@ -1,15 +1,18 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
+	"github.com/gofastercloud/boetticher/internal/airvpn"
 	"golang.org/x/term"
 
 	"github.com/gofastercloud/boetticher/internal/model"
@@ -77,15 +80,26 @@ func runModuleSecretRotate(name string, args []string, out io.Writer) error {
 	if !ok || declaration.Generation != "api-generated" {
 		return errors.New("AirVPN WireGuard profile is not a Core-managed generated secret")
 	}
-	changed, err := site.RemovePlatformSecrets(flags.siteDir, s, flags.ageIdentity, []string{"airvpn_wireguard_config"})
+	config := s.ModuleConfig[name]
+	if strings.TrimSpace(config.Servers) == "" {
+		return errors.New("AirVPN profile rotation requires a configured server selector")
+	}
+	home, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("rotate encrypted AirVPN WireGuard profile: %w", err)
+		return errors.New("controller home directory is unavailable for the AirVPN API key")
 	}
-	if changed {
-		fmt.Fprintln(out, "airvpn_wireguard_config: rotation requested; deploy will generate a new profile")
-	} else {
-		fmt.Fprintln(out, "airvpn_wireguard_config: already absent; next deploy will generate a profile")
+	apiKey, err := readAirVPNAPIKey(filepath.Join(home, airVPNAPIKeyRelativePath))
+	if err != nil {
+		return errors.New("controller AirVPN API key is unavailable")
 	}
+	profile, err := (airvpn.Client{}).Generate(context.Background(), strings.TrimSpace(string(apiKey)), config.Servers)
+	if err != nil {
+		return fmt.Errorf("generate AirVPN WireGuard profile: %w", err)
+	}
+	if err := site.StorePlatformSecret(flags.siteDir, s, flags.ageIdentity, "airvpn_wireguard_config", profile.Config); err != nil {
+		return fmt.Errorf("store encrypted AirVPN WireGuard profile: %w", err)
+	}
+	fmt.Fprintln(out, "airvpn_wireguard_config: rotated and retained; run boetticher plan then deploy")
 	return nil
 }
 

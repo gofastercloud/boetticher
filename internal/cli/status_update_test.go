@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/site"
 	statusmodel "github.com/gofastercloud/boetticher/internal/status"
 )
 
@@ -47,6 +48,61 @@ func TestStatusJSONUsesSemanticModelAndDeterministicExit(t *testing.T) {
 	}
 }
 
+func TestStatusReportsInterruptedDeploymentJournalReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	writeTestSiteConfig(t, dir, model.ConfigFromSite(model.NewSite("status-operation", "age1statusoperation", model.GatewayModeManaged)))
+	state := site.OperationState{
+		ID: "run-1", Kind: "deploy", Phase: site.PhaseVerify, ModelRevision: "model-1", PlanDigest: strings.Repeat("a", 64),
+		TemporaryPublicKey:   "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA boetticher-apply",
+		TemporaryHostAddress: "192.0.2.10",
+	}
+	if err := site.SaveOperationState(dir, state); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := runStatus([]string{"--site", dir, "--json"}, &output); err == nil {
+		t.Fatal("status unexpectedly reported a healthy platform with an incomplete deployment journal")
+	}
+	var report statusmodel.Report
+	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
+		t.Fatalf("status JSON is invalid: %v\n%s", err, output.String())
+	}
+	found := false
+	for _, check := range report.Checks {
+		if check.Component != "deployment operation state" {
+			continue
+		}
+		found = true
+		if check.State != statusmodel.ActionRequired || check.Evidence != statusmodel.HOLD || !strings.Contains(check.Reason, "temporary Apply cleanup") {
+			t.Fatalf("unexpected interrupted operation check: %#v", check)
+		}
+	}
+	if !found {
+		t.Fatal("status omitted the deployment operation journal check")
+	}
+	loaded, found, err := site.LoadOperationState(dir)
+	if err != nil || !found || loaded.ID != state.ID || loaded.Phase != state.Phase {
+		t.Fatalf("status mutated operation journal: %#v found=%t err=%v", loaded, found, err)
+	}
+}
+
+func TestHumanStatusMapsRichEvidenceToBinaryOutcome(t *testing.T) {
+	var output bytes.Buffer
+	printStatus(&output, statusmodel.Report{
+		OverallState: statusmodel.ActionRequired,
+		ObservedAt:   "2026-09-04T00:00:00Z",
+		Checks: []statusmodel.Check{{
+			Component: "deployment operation state", State: statusmodel.ActionRequired,
+			Evidence: statusmodel.HOLD, Tier: statusmodel.TierLocal,
+			Reason: "temporary Apply cleanup is pending", NextAction: "replay cleanup",
+		}},
+	}, true)
+	text := output.String()
+	if strings.Contains(text, "HOLD") || !strings.Contains(text, "FAIL") || !strings.Contains(text, "temporary Apply cleanup is pending") {
+		t.Fatalf("human status exposed non-binary evidence or lost details: %s", text)
+	}
+}
+
 func TestUpdateDryRunDoesNotMutateAndConfirmRefreshesDesiredState(t *testing.T) {
 	dir := t.TempDir()
 	config := model.ConfigFromSite(model.NewSite("update-test", "age1update", model.GatewayModeManaged))
@@ -57,7 +113,7 @@ func TestUpdateDryRunDoesNotMutateAndConfirmRefreshesDesiredState(t *testing.T) 
 	if err := runUpdate([]string{"--site", dir, "--dry-run"}, &dryRun); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(dryRun.String(), "0.3.34 -> 0.4.0") || !strings.Contains(dryRun.String(), "deploy has not been called") {
+	if !strings.Contains(dryRun.String(), "0.3.34 -> 0.5.1") || !strings.Contains(dryRun.String(), "deploy has not been called") {
 		t.Fatalf("dry-run did not explain the guarded update: %s", dryRun.String())
 	}
 	if got, err := os.ReadFile(filepath.Join(dir, "site.yml")); err != nil || !bytes.Equal(got, original) {
@@ -172,12 +228,5 @@ func TestLoadStatusReportDropsQualificationOnlyChecks(t *testing.T) {
 	got := loadStatusReport(dir, revision)
 	if len(got.Checks) != 1 || got.Checks[0].Component != "canonical platform model validates" || got.OverallState != statusmodel.Healthy {
 		t.Fatalf("qualification-only check was not filtered: %#v", got)
-	}
-}
-
-func TestPreflightRecordRequiresLive(t *testing.T) {
-	var output bytes.Buffer
-	if err := runPreflight([]string{"--record"}, &output); err == nil || !strings.Contains(err.Error(), "requires --live") {
-		t.Fatalf("preflight accepted persistence without live inspection: %v", err)
 	}
 }

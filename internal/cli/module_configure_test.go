@@ -228,7 +228,7 @@ func TestConfigureAIOpsUsesOnlyDeclaredRouterAlias(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &report); err != nil {
 		t.Fatalf("AIOps configure JSON is invalid: %v: %s", err, output.String())
 	}
-	if report.Status != "PLAN_ONLY" || len(report.Dependencies) != 1 || report.Dependencies[0] != "bifrost" {
+	if report.Status != "PLAN_ONLY" || len(report.Dependencies) != 2 || report.Dependencies[0] != "logging" || report.Dependencies[1] != "bifrost" {
 		t.Fatalf("unexpected AIOps configure report: %#v", report)
 	}
 	if strings.Contains(output.String(), "present") {

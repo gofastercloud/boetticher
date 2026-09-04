@@ -1,0 +1,35 @@
+[Unit]
+Description=Boetticher companion StreamDeck display
+After=network-online.target systemd-udev-settle.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=streamdeck
+Group=streamdeck
+ExecStart=/usr/local/libexec/boetticher-streamdeck
+LoadCredentialEncrypted=pulse-token:/var/lib/boetticher/credentials/companion-streamdeck-pulse-token.cred
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=no
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+DevicePolicy=closed
+DeviceAllow=char-usb_device rw
+DeviceAllow=char-hidraw rw
+ReadWritePaths=/var/lib/boetticher/streamdeck
+StateDirectory=boetticher/streamdeck
+UMask=0077
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=multi-user.target

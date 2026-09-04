@@ -1,0 +1,243 @@
+name: Release bundle
+
+on:
+  push:
+    tags: ['v0.5.*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and qualify the signed release bundle
+    runs-on: ubuntu-24.04
+    env:
+      GOCACHE: ${{ github.workspace }}/.cache/go-build
+      GOMODCACHE: ${{ github.workspace }}/.cache/go-mod
+      BOETTICHER_ARTIFACT_OUTPUT: ${{ github.workspace }}/generated/artifacts
+
+    steps:
+      - name: Check out the exact release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Scan repository history for secrets
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: '0.12.6'
+
+      - name: Install the source-gate dependencies
+        run: python -m pip install --disable-pip-version-check ansible-core==2.19.1
+
+      - name: Normalize and validate release identity
+        id: release_identity
+        shell: bash
+        env:
+          RELEASE_VERSION_INPUT: ${{ github.ref_name }}
+          RELEASE_KEY_ID: ${{ secrets.BOETTICHER_RELEASE_KEY_ID }}
+          RELEASE_TRUSTED_KEY_DATA: ${{ secrets.BOETTICHER_RELEASE_TRUSTED_KEYS }}
+        run: |
+          set -euo pipefail
+          input_release_version="${RELEASE_VERSION_INPUT:-}"
+          release_version="${input_release_version#v}"
+          if [[ ! "$release_version" =~ ^0\.5\.[0-9]+$ ]]; then
+            echo "unsupported release version: $release_version" >&2
+            exit 1
+          fi
+          source_revision="$(git rev-parse HEAD)"
+          [ "$source_revision" = "$GITHUB_SHA" ] || { echo "checkout is not the exact workflow revision" >&2; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            [ "$GITHUB_REF_NAME" = "v$release_version" ] || { echo "release input does not match the pushed tag" >&2; exit 1; }
+            tag_revision="$(git rev-list -n 1 "$GITHUB_REF_NAME")"
+            [ "$tag_revision" = "$GITHUB_SHA" ] || { echo "release tag does not identify the workflow revision" >&2; exit 1; }
+          fi
+          [ -n "${RELEASE_KEY_ID:-}" ] || { echo "release signing key id is not configured" >&2; exit 1; }
+          [ -n "${RELEASE_TRUSTED_KEY_DATA:-}" ] || { echo "release trusted public key data is not configured" >&2; exit 1; }
+          printf 'version=%s\n' "$release_version" >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Linux appliance build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            debian-archive-keyring curl jq libguestfs-tools mmdebstrap qemu-utils time zstd
+          sudo ./scripts/install-debian-archive-keyring.sh
+
+      - name: Run the complete source and contract gate
+        run: make ci
+
+      - name: Install the pinned Trivy release
+        shell: bash
+        env:
+          TRIVY_VERSION: 0.69.3
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/trivy.tar.gz"
+          checksums="$RUNNER_TEMP/trivy-checksums.txt"
+          curl --fail --location --silent --show-error --output "$archive" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl --fail --location --silent --show-error --output "$checksums" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_checksums.txt"
+          expected="$(awk -v name="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" '$2 == name { print $1 }' "$checksums")"
+          [ -n "$expected" ] || { echo "Trivy checksum entry is missing" >&2; exit 1; }
+          printf '%s  %s\n' "$expected" "$archive" | sha256sum --check --status
+          sudo tar --extract --file "$archive" --directory /usr/local/bin trivy
+          trivy --version | grep -Fq "Version: ${TRIVY_VERSION}"
+
+      - name: Build every checked-in appliance definition
+        env:
+          RELEASE_VERSION: ${{ steps.release_identity.outputs.version }}
+        run: |
+          sudo -E env \
+            PATH="$PATH" \
+            GOCACHE="$GOCACHE" \
+            GOMODCACHE="$GOMODCACHE" \
+            BOETTICHER_RELEASE_VERSION="$RELEASE_VERSION" \
+            BOETTICHER_ARTIFACT_OUTPUT="$BOETTICHER_ARTIFACT_OUTPUT" \
+            BOETTICHER_IMAGE_WORK="$RUNNER_TEMP/boetticher-image-build" \
+            BOETTICHER_CACHE_ROOT="$RUNNER_TEMP/boetticher-cache" \
+            ./scripts/build-images.sh images
+
+      - name: Scan, smoke-qualify, and record evidence for every artifact
+        run: |
+          sudo -E env \
+            PATH="$PATH" \
+            GOCACHE="$GOCACHE" \
+            GOMODCACHE="$GOMODCACHE" \
+            BOETTICHER_ARTIFACT_OUTPUT="$BOETTICHER_ARTIFACT_OUTPUT" \
+            BOETTICHER_SCAN_LOG_ROOT="$RUNNER_TEMP/boetticher-scan-logs" \
+            ./scripts/scan-images.sh scan-images
+
+      - name: Build the controller with the release trust root
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.release_identity.outputs.version }}
+          RELEASE_TRUSTED_KEY_DATA: ${{ secrets.BOETTICHER_RELEASE_TRUSTED_KEYS }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          go build -trimpath -ldflags "-s -w -X github.com/gofastercloud/boetticher/internal/artifacts.EmbeddedTrustedReleaseKeyData=${RELEASE_TRUSTED_KEY_DATA}" \
+            -o "dist/boetticher-${RELEASE_VERSION}" ./cmd/boetticher
+
+      - name: Assemble the complete signed release bundle
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.release_identity.outputs.version }}
+          RELEASE_KEY_ID: ${{ secrets.BOETTICHER_RELEASE_KEY_ID }}
+          RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.BOETTICHER_RELEASE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          [ -n "${RELEASE_SIGNING_PRIVATE_KEY:-}" ] || { echo "release signing key is not configured" >&2; exit 1; }
+          signing_key="$RUNNER_TEMP/boetticher-release-signing-key"
+          trap 'rm -f "$signing_key"' EXIT
+          printf '%s' "$RELEASE_SIGNING_PRIVATE_KEY" > "$signing_key"
+          mkdir -p dist
+          make release-bundle \
+            OUTPUT="$RUNNER_TEMP/boetticher-${RELEASE_VERSION}.tar.gz" \
+            RELEASE_VERSION="$RELEASE_VERSION" \
+            SOURCE_COMMIT="$GITHUB_SHA" \
+            WORKFLOW="$GITHUB_WORKFLOW_REF" \
+            KEY_ID="$RELEASE_KEY_ID" \
+            PRIVATE_KEY="$signing_key" \
+            CONTROLLER_BINARY="dist/boetticher-${RELEASE_VERSION}"
+          cp "$RUNNER_TEMP/boetticher-${RELEASE_VERSION}.tar.gz" "dist/boetticher-${RELEASE_VERSION}.tar.gz"
+
+      - name: Verify final manifest identity and artifact binding
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.release_identity.outputs.version }}
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/boetticher-${RELEASE_VERSION}.tar.gz"
+          manifest="$RUNNER_TEMP/boetticher-${RELEASE_VERSION}-manifest.json"
+          tar -xOzf "$bundle" manifest.json > "$manifest"
+          jq -e --arg release "$RELEASE_VERSION" --arg source "$GITHUB_SHA" \
+            --arg controller_sha "$(sha256sum "dist/boetticher-${RELEASE_VERSION}" | awk '{print $1}')" \
+            --argjson controller_size "$(stat -c '%s' "dist/boetticher-${RELEASE_VERSION}")" \
+            '(.release_version == $release) and (.source_commit == $source) and (.controller_sha256 == $controller_sha) and (.controller_size_bytes == $controller_size) and (.artifacts | length > 0) and (.files | length > 0)' \
+            "$manifest" >/dev/null
+          sha256sum "$bundle" "$manifest"
+
+      - name: Prove the release controller imports the exact bundle
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.release_identity.outputs.version }}
+        run: |
+          set -euo pipefail
+          check_site="$RUNNER_TEMP/boetticher-controller-bundle-check"
+          mkdir -p "$check_site"
+          "dist/boetticher-${RELEASE_VERSION}" bundle import \
+            "$RUNNER_TEMP/boetticher-${RELEASE_VERSION}.tar.gz" \
+            --site "$check_site" --json > "$RUNNER_TEMP/controller-import.json"
+          jq -e --arg release "$RELEASE_VERSION" --arg source "$GITHUB_SHA" \
+            '(.release_version == $release) and (.source_commit == $source)' \
+            "$RUNNER_TEMP/controller-import.json" >/dev/null
+
+      - name: Upload validated release outputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: boetticher-release-${{ github.ref_name }}
+          path: |
+            dist/boetticher-${{ steps.release_identity.outputs.version }}
+            dist/boetticher-${{ steps.release_identity.outputs.version }}.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish the validated signed release
+    needs: release
+    if: github.ref_type == 'tag' && needs.release.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download validated release outputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: boetticher-release-${{ github.ref_name }}
+          path: dist
+
+      - name: Verify downloaded release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_version="${GITHUB_REF_NAME#v}"
+          test -f "dist/boetticher-${release_version}"
+          test -f "dist/boetticher-${release_version}.tar.gz"
+          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 2
+          sha256sum "dist/boetticher-${release_version}" "dist/boetticher-${release_version}.tar.gz"
+
+      - name: Publish the release only for the validated tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_version="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/boetticher-${release_version}" \
+            "dist/boetticher-${release_version}.tar.gz" \
+            --verify-tag "$GITHUB_REF_NAME" \
+            --generate-notes

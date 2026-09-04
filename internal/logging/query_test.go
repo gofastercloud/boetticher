@@ -1,7 +1,6 @@
 package logging
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -70,15 +69,4 @@ func TestJournalQueryIsTypedAndBounded(t *testing.T) {
 	if got := QueryArguments(valid); !reflect.DeepEqual(got, want) {
 		t.Fatalf("args=%q", got)
 	}
-}
-
-type recordingRunner struct {
-	name string
-	args []string
-}
-
-func (r *recordingRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
-	r.name = name
-	r.args = args
-	return []byte("{}\n"), nil
 }

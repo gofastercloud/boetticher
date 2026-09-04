@@ -31,7 +31,7 @@ func TestEmbeddedSchemaProjectsTypedModuleConstraints(t *testing.T) {
 	}
 	for field, want := range map[string]any{
 		"api_version":      "boetticher/v3",
-		"platform_version": "0.4.0",
+		"platform_version": "0.5.1",
 		"schema_version":   float64(3),
 	} {
 		if got := document.Properties[field].Const; got != want {
@@ -52,7 +52,7 @@ func TestEmbeddedSchemaProjectsTypedModuleConstraints(t *testing.T) {
 	if _, ok := dns.Properties["enabled"]; ok {
 		t.Fatal("DNS module schema exposes forbidden enabled field")
 	}
-	for _, name := range []string{"DNSModuleConfig", "MandatoryModuleConfig"} {
+	for _, name := range []string{"DNSModuleConfig"} {
 		definition, ok := document.Definitions[name]
 		if !ok {
 			t.Fatalf("schema definition %s is missing", name)
@@ -72,7 +72,7 @@ func TestEmbeddedSchemaProjectsTypedModuleConstraints(t *testing.T) {
 	if err := json.Unmarshal(logging, &loggingRef); err != nil {
 		t.Fatal(err)
 	}
-	if loggingRef.Ref != "#/$defs/MandatoryModuleConfig" {
+	if loggingRef.Ref != "#/$defs/ToggleModuleConfig" {
 		t.Fatalf("logging module schema ref = %q", loggingRef.Ref)
 	}
 	for _, name := range []string{"monitoring", "firewall", "tailnet-router"} {
@@ -86,7 +86,7 @@ func TestEmbeddedSchemaProjectsTypedModuleConstraints(t *testing.T) {
 			t.Fatalf("%s module schema ref = %q", name, ref.Ref)
 		}
 	}
-	for _, name := range []string{"printer", "streamdeck", "gatus"} {
+	for _, name := range []string{"printer", "gatus"} {
 		var ref struct {
 			Ref string `json:"$ref"`
 		}

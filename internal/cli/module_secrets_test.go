@@ -108,7 +108,7 @@ func TestModuleSecretCLIListSetAndRemoveNeverPrintsValue(t *testing.T) {
 		t.Fatalf("secret value leaked from set output: %q", output.String())
 	}
 	output.Reset()
-	if err := Run([]string{"module", "status", "bifrost", "--site", siteDir, "--age-identity", identityPath}, &output, &output); err != nil {
+	if err := Run([]string{"module", "secrets", "bifrost", "list", "--site", siteDir, "--age-identity", identityPath}, &output, &output); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(output.String(), "openrouter_api_key\truntime\toperator-supplied\tPASS present") || strings.Contains(output.String(), secret) {

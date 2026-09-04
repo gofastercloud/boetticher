@@ -52,39 +52,24 @@ func ParseSerial(serial string) (*big.Int, error) {
 }
 
 // GenerateCRL creates the current enforceable client revocation material for
-// the issuing and root CAs. The issuing CRL is emitted first because existing
-// Go consumers parse the first CRL; the empty root CRL follows so TLS
-// frontends can perform revocation checking across the complete trust chain.
+// the issuing CA. Managed client certificates are issued by the intermediate;
+// normal operations must not require decrypting the cold root key merely to
+// create an empty root CRL.
 func GenerateCRL(authority Authority, revocations []Revocation, now time.Time) (string, error) {
 	issuingCRL, err := generateCARevocationList(authority.IssuingCertPEM, authority.IssuingKeyPEM, revocations, now)
 	if err != nil {
 		return "", fmt.Errorf("create issuing CA CRL: %w", err)
 	}
-	rootCRL, err := generateCARevocationList(authority.RootCertPEM, authority.RootKeyPEM, nil, now)
-	if err != nil {
-		return "", fmt.Errorf("create root CA CRL: %w", err)
-	}
-	return issuingCRL + rootCRL, nil
+	return issuingCRL, nil
 }
 
-// ValidateCRL verifies the complete controller-issued CRL bundle against the
+// ValidateCRL verifies the controller-issued issuing-CA CRL against the
 // current authority and exact revocation set. It is used before a cached CRL
 // is reused; a cache hit must not bypass trust or revocation validation.
 func ValidateCRL(authority Authority, crlPEM string, revocations []Revocation, now time.Time) error {
-	root, err := parseCert(authority.RootCertPEM)
-	if err != nil {
-		return fmt.Errorf("parse root certificate: %w", err)
-	}
 	issuing, err := parseCert(authority.IssuingCertPEM)
 	if err != nil {
 		return fmt.Errorf("parse issuing certificate: %w", err)
-	}
-	rootKey, err := parseECKey(authority.RootKeyPEM)
-	if err != nil {
-		return fmt.Errorf("parse root key: %w", err)
-	}
-	if !samePublicKey(rootKey.Public(), root.PublicKey) {
-		return errors.New("root private key does not match the root certificate")
 	}
 	issuingKey, err := parseECKey(authority.IssuingKeyPEM)
 	if err != nil {
@@ -94,25 +79,19 @@ func ValidateCRL(authority Authority, crlPEM string, revocations []Revocation, n
 		return errors.New("issuing private key does not match the issuing certificate")
 	}
 
-	crls, err := parseCRLBundle(crlPEM)
+	crl, err := parseCRL(crlPEM)
 	if err != nil {
 		return err
 	}
-	if err := validateParsedCRL(crls[0], issuing, now); err != nil {
+	if err := validateParsedCRL(crl, issuing, now); err != nil {
 		return fmt.Errorf("validate issuing CRL: %w", err)
-	}
-	if err := validateParsedCRL(crls[1], root, now); err != nil {
-		return fmt.Errorf("validate root CRL: %w", err)
-	}
-	if len(crls[1].RevokedCertificateEntries) != 0 {
-		return errors.New("root CRL unexpectedly contains revoked certificates")
 	}
 
 	expected, err := normalizedRevocations(revocations, now)
 	if err != nil {
 		return err
 	}
-	actual := crls[0].RevokedCertificateEntries
+	actual := crl.RevokedCertificateEntries
 	if len(actual) != len(expected) {
 		return fmt.Errorf("issuing CRL contains %d revoked certificates, expected %d", len(actual), len(expected))
 	}
@@ -161,25 +140,19 @@ func normalizedRevocations(revocations []Revocation, now time.Time) ([]normalize
 	return expected, nil
 }
 
-func parseCRLBundle(value string) ([]*x509.RevocationList, error) {
-	rest := []byte(value)
-	crls := make([]*x509.RevocationList, 0, 2)
-	for range 2 {
-		block, remaining := pem.Decode(rest)
-		if block == nil || block.Type != "X509 CRL" {
-			return nil, errors.New("CRL bundle must contain an issuing and root CRL")
-		}
-		crl, err := x509.ParseRevocationList(block.Bytes)
-		if err != nil {
-			return nil, fmt.Errorf("parse CRL bundle: %w", err)
-		}
-		crls = append(crls, crl)
-		rest = remaining
+func parseCRL(value string) (*x509.RevocationList, error) {
+	block, rest := pem.Decode([]byte(value))
+	if block == nil || block.Type != "X509 CRL" {
+		return nil, errors.New("CRL must contain an issuing CA CRL")
 	}
 	if len(bytes.TrimSpace(rest)) != 0 {
-		return nil, errors.New("CRL bundle contains unexpected trailing data")
+		return nil, errors.New("CRL contains unexpected trailing data")
 	}
-	return crls, nil
+	crl, err := x509.ParseRevocationList(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse CRL: %w", err)
+	}
+	return crl, nil
 }
 
 func validateParsedCRL(crl *x509.RevocationList, issuer *x509.Certificate, now time.Time) error {

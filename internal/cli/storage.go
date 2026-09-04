@@ -8,8 +8,6 @@ import (
 	"io"
 	"os"
 
-	"github.com/gofastercloud/boetticher/internal/model"
-	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/storage"
 )
@@ -52,7 +50,10 @@ func runStorage(args []string, out io.Writer) error {
 				if commandErr != nil {
 					return commandErr
 				}
-				runner := proxmox.SSHRunner{KnownHosts: *knownHosts, StrictHostKey: "yes", HostKeyAlias: model.LogicalProxmoxIdentity}
+				runner := proxmoxRootSSHRunner(s, *siteDir)
+				if *knownHosts != "" {
+					runner.KnownHosts = *knownHosts
+				}
 				data, runErr := runner.Run(context.Background(), s.BootstrapAddress, *initialUser, command)
 				if runErr != nil {
 					return runErr
@@ -84,7 +85,10 @@ func runStorage(args []string, out io.Writer) error {
 		}
 		return errors.New("dedicated storage initialization is destructive; repeat with --storage-confirmed after reviewing the stable device")
 	}
-	runner := proxmox.SSHRunner{KnownHosts: *knownHosts, StrictHostKey: "yes", HostKeyAlias: model.LogicalProxmoxIdentity}
+	runner := proxmoxRootSSHRunner(s, *siteDir)
+	if *knownHosts != "" {
+		runner.KnownHosts = *knownHosts
+	}
 	if command == "recover" {
 		if err := storage.ConfigureUSBTransportCompatibility(context.Background(), runner, s.BootstrapAddress, *initialUser, plan.Device, *reboot, *allowSharedBridge); err != nil {
 			return err
@@ -98,9 +102,6 @@ func runStorage(args []string, out io.Writer) error {
 		return nil
 	}
 	if err := storage.Initialize(context.Background(), runner, s.BootstrapAddress, *initialUser, plan.Device, true, *reinitialize); err != nil {
-		return err
-	}
-	if err := writeStorageProjection(*siteDir, s); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "Dedicated storage initialized: %s\n", plan.Device)

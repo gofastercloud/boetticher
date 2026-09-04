@@ -3,3 +3,10 @@ kiosk_log2ram_size: 128M
 kiosk_log2ram_size_mb: 128
 kiosk_log2ram_system_max_use: 64M
 kiosk_log2ram_runtime_max_use: 32M
+kiosk_display_enabled: true
+kiosk_streamdeck_enabled: true
+kiosk_pulse_agent_enabled: true
+streamdeck_vendor_id: 4057
+streamdeck_product_id: 109
+streamdeck_model: Stream Deck MK.2
+streamdeck_serial: ''

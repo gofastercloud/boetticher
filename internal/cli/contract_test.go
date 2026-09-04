@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/site"
 )
 
@@ -62,7 +61,6 @@ func TestQuickstartOfflineCommandsExecute(t *testing.T) {
 	if !presence["pulse_proxy_auth_secret"] {
 		t.Fatal("init did not create the Core-owned Pulse proxy credential")
 	}
-	run("bootstrap-endpoint", "set", "192.0.2.10", "--site", siteDir)
 	run("config", "validate", "--site", siteDir)
 	run("module", "list", "--site", siteDir)
 	var deployOutput bytes.Buffer
@@ -119,7 +117,7 @@ func TestRootShortHelpListsCurrentCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := output.String()
-	for _, command := range []string{"boetticher init", "boetticher deploy", "boetticher status", "boetticher module", "boetticher doctor", "boetticher update", "boetticher help --advanced"} {
+	for _, command := range []string{"boetticher init", "boetticher enroll", "boetticher plan", "boetticher deploy", "boetticher status", "boetticher module", "boetticher network", "boetticher update", "boetticher help --advanced"} {
 		if !strings.Contains(text, command) {
 			t.Errorf("root short help omitted %s: %s", command, text)
 		}
@@ -133,10 +131,9 @@ func TestRootShortHelpListsCurrentCommands(t *testing.T) {
 
 func TestPublicHelpPathsDoNotFail(t *testing.T) {
 	for _, args := range [][]string{
-		{"init", "--help"}, {"preflight", "-h"}, {"bootstrap", "--help"}, {"deploy", "--help"}, {"status", "--help"}, {"update", "--help"},
-		{"verify", "--help"}, {"doctor", "--help"}, {"network", "--help"}, {"firewall", "--help"},
-		{"dhcp", "--help"}, {"dns", "--help"}, {"pki", "--help"}, {"access", "--help"}, {"portal", "--help"}, {"network", "test", "--help"},
-		{"module", "--help"}, {"module", "secrets", "--help"}, {"modules", "--help"}, {"config", "--help"}, {"logs", "--help"}, {"aiops", "--help"}, {"upgrade", "--help"},
+		{"init", "--help"}, {"enroll", "--help"}, {"bundle", "--help"}, {"deploy", "--help"}, {"status", "--help"}, {"update", "--help"},
+		{"network", "--help"}, {"firewall", "--help"}, {"dhcp", "--help"}, {"dns", "--help"}, {"pki", "--help"}, {"access", "--help"}, {"network", "test", "--help"},
+		{"module", "--help"}, {"module", "secrets", "--help"}, {"config", "--help"}, {"logs", "--help"}, {"aiops", "--help"},
 	} {
 		var output bytes.Buffer
 		if err := Run(args, &output, &output); err != nil {
@@ -148,38 +145,12 @@ func TestPublicHelpPathsDoNotFail(t *testing.T) {
 	}
 }
 
-func TestPluralModuleNamespaceUsesGenericLifecycleAndRejectsUnknownCommands(t *testing.T) {
-	dir := t.TempDir()
-	config, err := model.RenderSiteConfig(model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "site.yml"), config, 0600); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"tailnet-router", "bifrost", "aiops"} {
-		var output bytes.Buffer
-		if err := Run([]string{"modules", name, "show", "--site", dir}, &output, &output); err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(output.String(), "Module "+name) || !strings.Contains(output.String(), "Policy       default-off") {
-			t.Fatalf("plural module show did not use the generic module lifecycle output for %s: %s", name, output.String())
-		}
-	}
-	var output bytes.Buffer
-	if err := Run([]string{"modules", "tailnet-router", "routes", "--site", dir}, &output, &output); err == nil || !strings.Contains(err.Error(), "unknown module command") {
-		t.Fatalf("unsupported module-specific command was accepted: %v", err)
-	}
-	if err := Run([]string{"modules", "not-real", "show", "--site", dir}, &output, &output); err == nil || !strings.Contains(err.Error(), "unknown first-party module") {
-		t.Fatalf("unknown module was accepted: %v", err)
-	}
-}
-
 func TestNestedHelpPathsArePathAwareAndSubstantive(t *testing.T) {
 	paths := []string{
 		"firewall diff", "dhcp leases", "network trunk status", "pki trust export",
-		"module disable", "module configure printer", "modules printer configure",
-		"config schema", "portal build",
+		"companion add", "companion setup", "companion status",
+		"module disable", "module configure printer",
+		"config schema",
 	}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
@@ -256,27 +227,23 @@ func validateCommandForm(t *testing.T, fields []string) {
 		t.Fatalf("invalid command form: %q", fields)
 	}
 	known := map[string]map[string]bool{
-		"init":               {"--site-dir": true, "--age-identity": true, "--external-firewall": true, "--storage-profile": true, "--storage-device": true},
-		"bootstrap-endpoint": {"--site": true},
-		"preflight":          {"--site": true, "--live": true, "--record": true, "--bootstrap-address": true, "--trunk-interface": true},
-		"bootstrap":          {"--site": true, "--recovery-confirmed": true, "--replace-scoped-credentials": true, "--trunk-interface": true, "--dry-run": true, "--proxmox-ca": true, "--insecure": true},
-		"deploy":             {"--site": true, "--dry-run": true, "--confirm": true, "--replace-firewall": true, "--recreate-legacy-lxcs": true, "--proxmox-ca": true, "--insecure": true},
-		"status":             {"--site": true, "--live": true, "--verbose": true, "--json": true},
-		"update":             {"--site": true, "--dry-run": true, "--confirm": true},
-		"logs":               {"--site": true, "--unit": true, "--since": true, "--priority": true, "--limit": true},
-		"ssh-config":         {"--site": true, "--output": true, "--force": true, "--check": true, "--install-include": true},
-		"verify":             {"--site": true, "--proxmox-ca": true, "--insecure": true},
-		"doctor":             {"--site": true, "--live": true, "--proxmox-ca": true, "--insecure": true},
-		"upgrade":            {"--site": true},
-		"access":             {"--site": true},
-		"portal":             {"--site": true, "--output": true, "--docs": true},
-		"network":            {"--site": true},
-		"pki":                {"--site": true},
-		"firewall":           {"--site": true, "--live": true, "--json": true},
-		"dhcp":               {"--site": true, "--live": true, "--json": true},
-		"storage":            {"--site": true, "--live": true, "--storage-confirmed": true, "--reinitialize": true, "--reboot": true, "--allow-shared-usb-bridge-quirk": true},
-		"module":             {"--site": true, "--dry-run": true, "--confirm": true, "--purge": true, "--age-identity": true, "--proxmox-ca": true, "--insecure": true},
-		"config":             {"--site": true},
+		"init":       {"--site-dir": true, "--age-identity": true, "--external-firewall": true, "--storage-profile": true, "--storage-device": true},
+		"bundle":     {"--site": true, "--json": true},
+		"enroll":     {"--site": true, "--bootstrap-address": true, "--operator-key": true, "--age-identity": true, "--recovery-confirmed": true, "--storage-confirmed": true, "--proxmox-ca": true},
+		"plan":       {"--site": true, "--live": true, "--json": true},
+		"deploy":     {"--plan": true, "--site": true, "--dry-run": true, "--confirm": true, "--replace-firewall": true, "--recreate-legacy-lxcs": true},
+		"status":     {"--site": true, "--live": true, "--details": true, "--json": true},
+		"update":     {"--site": true, "--dry-run": true, "--confirm": true},
+		"logs":       {"--site": true, "--unit": true, "--since": true, "--priority": true, "--limit": true},
+		"ssh-config": {"--site": true, "--output": true, "--force": true, "--check": true, "--install-include": true},
+		"access":     {"--site": true},
+		"network":    {"--site": true},
+		"pki":        {"--site": true},
+		"firewall":   {"--site": true, "--live": true, "--json": true},
+		"dhcp":       {"--site": true, "--live": true, "--json": true},
+		"storage":    {"--site": true, "--live": true, "--storage-confirmed": true, "--reinitialize": true, "--reboot": true, "--allow-shared-usb-bridge-quirk": true},
+		"module":     {"--site": true, "--dry-run": true, "--confirm": true, "--purge": true, "--age-identity": true, "--proxmox-ca": true, "--insecure": true},
+		"config":     {"--site": true},
 	}
 	command := fields[1]
 	if _, ok := known[command]; !ok {

@@ -1,6 +1,7 @@
 package proxmox
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -83,16 +85,10 @@ type Plan struct {
 	// ArtifactFiles is controller-local evidence and is intentionally excluded
 	// from canonical model output. It maps qualified definitions to the exact
 	// bytes that may be imported into Proxmox.
-	ArtifactFiles      map[string]string `json:"-"`
-	OperatorPublicKey  string            `json:"-"`
-	CloudInitFiles     CloudInitFiles    `json:"-"`
-	BuilderCacheVolume string            `json:"-"`
-	// BuilderArtifactTargets is an operation-local bootstrap optimization. It
-	// narrows a fresh builder run to artifacts whose controller-side
-	// qualification evidence is missing or invalid; the builder still applies
-	// its own smoke, scan, and qualification gates to every selected target.
-	BuilderArtifactTargets []string `json:"-"`
-	DestructiveConfirmed   bool     `json:"-"`
+	ArtifactFiles        map[string]string `json:"-"`
+	OperatorPublicKey    string            `json:"-"`
+	CloudInitFiles       CloudInitFiles    `json:"-"`
+	DestructiveConfirmed bool              `json:"-"`
 	// ForceFirewallRootReplacement is a deliberately narrow recovery action.
 	// It replaces only the managed firewall root disk after the attached
 	// declared persistent volumes have been proven, and never applies to any
@@ -128,6 +124,50 @@ type NetworkInterface struct {
 	Bond            string `json:"bond"`
 	SpeedMbps       int    `json:"speed"`
 	Active          bool   `json:"active"`
+}
+
+type ipLinkHardware struct {
+	Iface    string `json:"ifname"`
+	LinkType string `json:"link_type"`
+	Address  string `json:"address"`
+}
+
+// enrichNetworkInterfaceHardware fills the stable hardware identity that
+// some Proxmox versions omit for an otherwise valid physical interface. The
+// read-only Linux link evidence is joined by the exact interface name and is
+// accepted only for Ethernet devices with a six-byte MAC address.
+func enrichNetworkInterfaceHardware(ctx context.Context, runner CommandRunner, address, user string, interfaces []NetworkInterface) error {
+	if runner == nil || len(interfaces) == 0 {
+		return nil
+	}
+	output, err := runner.Run(ctx, address, user, "ip -j link show")
+	if err != nil {
+		return fmt.Errorf("read Linux physical interface identity: %w", err)
+	}
+	if len(bytes.TrimSpace(output)) == 0 {
+		return nil
+	}
+	var links []ipLinkHardware
+	if err := json.Unmarshal(output, &links); err != nil {
+		return fmt.Errorf("decode Linux physical interface identity: %w", err)
+	}
+	byName := make(map[string]string, len(links))
+	for _, link := range links {
+		if link.Iface == "" || link.LinkType != "ether" {
+			continue
+		}
+		mac, err := net.ParseMAC(link.Address)
+		if err != nil || len(mac) != 6 {
+			continue
+		}
+		byName[link.Iface] = strings.ToLower(mac.String())
+	}
+	for index := range interfaces {
+		if interfaces[index].Type == "eth" && interfaces[index].HWAddr == "" {
+			interfaces[index].HWAddr = byName[interfaces[index].Iface]
+		}
+	}
+	return nil
 }
 
 func (n *NetworkInterface) UnmarshalJSON(data []byte) error {
@@ -407,9 +447,13 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		if component.VMID == 0 {
 			continue
 		}
+		guestMAC := component.MAC
+		if guestMAC == "" && component.Module != "" {
+			guestMAC = networkmodel.ManagedModuleMAC(component.VMID)
+		}
 		guest := GuestPlan{
 			VMID: component.VMID, Name: component.Name, Hostname: component.Hostname, Zone: component.Zone,
-			Address: component.Address, MAC: component.MAC, Gateway: gatewayFor(component.Zone), VLAN: vlanFor(s, component.Zone),
+			Address: component.Address, MAC: guestMAC, Gateway: gatewayFor(component.Zone), VLAN: vlanFor(s, component.Zone),
 			Kind: KindLXC, Cores: 2, MemoryMiB: 1024, DiskGiB: 8,
 			Monitoring: component.Monitoring, Backup: component.Backup, Tags: componentTags(s, component.Name), ManagedUSBSlots: usbSlots[component.VMID],
 		}
@@ -457,21 +501,6 @@ func PlanFromSite(s model.Site) (Plan, error) {
 				guest.Persistent = fixturePersistent(component.Module, component.Name)
 			}
 		}
-		if component.Name == "lab-portal-01" {
-			if artifact, artifactErr := artifacts.ArtifactFor("portal"); artifactErr == nil {
-				guest.Artifact = artifact
-			}
-			guest.Owner = "boetticher/core/portal"
-			guest.Persistent = fixturePersistent("portal", component.Name)
-			guest.Volumes = fixtureVolumes("portal", component.Name)
-			for index := range guest.Volumes {
-				for _, resolved := range storagePlan.Volumes {
-					if resolved.Module == guest.Volumes[index].Module && resolved.Name == guest.Volumes[index].Name && resolved.Guest == guest.Volumes[index].Guest {
-						guest.Volumes[index].Storage = resolved.Storage
-					}
-				}
-			}
-		}
 		if component.Module != "" && guest.Artifact.Kind != "" {
 			switch guest.Artifact.Kind {
 			case string(KindQEMU):
@@ -491,8 +520,6 @@ func PlanFromSite(s model.Site) (Plan, error) {
 			guest.NICs = gatewayNICs(s)
 		case "lab-monitor-01":
 			guest.MemoryMiB, guest.DiskGiB = 2048, 16
-		case "lab-portal-01":
-			guest.Cores, guest.MemoryMiB, guest.DiskGiB = 1, 512, 4
 		}
 		guests = append(guests, guest)
 	}
@@ -513,9 +540,6 @@ func PlanFromSite(s model.Site) (Plan, error) {
 // keeps appliance ordering correct for capability providers and future
 // first-party modules without making VMID order an implicit dependency.
 func deploymentOrder(s model.Site, guest GuestPlan) int {
-	if guest.Owner == "boetticher/core/portal" {
-		return 1000000
-	}
 	const moduleOwnerPrefix = "boetticher/module/"
 	if strings.HasPrefix(guest.Owner, moduleOwnerPrefix) {
 		name := strings.TrimPrefix(guest.Owner, moduleOwnerPrefix)
@@ -544,22 +568,39 @@ func deploymentOrder(s model.Site, guest GuestPlan) int {
 }
 
 func artifactKey(artifact model.Artifact) string {
-	return strings.Join([]string{artifact.Name, artifact.Version, artifact.Architecture, artifact.Kind, artifact.DefinitionSHA256, artifact.ContentSHA256}, "|")
+	return strings.Join([]string{artifact.Name, artifact.Version, artifact.Architecture, artifact.Kind, artifact.ContentSHA256}, "|")
 }
 
-// ResolveQualifiedArtifacts binds every appliance in a Proxmox plan to
-// controller-side qualification evidence. It does not mutate Proxmox or the
-// canonical model. Missing evidence is a HOLD before any guest mutation.
+// ResolveQualifiedArtifacts binds every appliance in a Proxmox plan to an
+// authenticated release artifact or local maintainer artifact. It does not
+// mutate Proxmox or the canonical model. Local artifacts still require a
+// qualified evidence record; imported releases are authenticated by manifest
+// signature and exact artifact bytes.
 func ResolveQualifiedArtifacts(root string, plan Plan, require bool) (Plan, error) {
 	resolved := plan
 	resolved.Guests = append([]GuestPlan(nil), plan.Guests...)
 	resolved.ArtifactFiles = map[string]string{}
+	_, _, importedErr := artifacts.ImportedReleaseManifest(root)
+	importedRelease := importedErr == nil
+	if importedErr != nil && !errors.Is(importedErr, os.ErrNotExist) {
+		releaseManifestPath := filepath.Join(root, "generated", "release", artifacts.ReleaseManifestName)
+		if _, statErr := os.Stat(releaseManifestPath); statErr == nil {
+			return Plan{}, fmt.Errorf("HOLD: imported release is invalid: %w", importedErr)
+		}
+	}
 	for index := range resolved.Guests {
 		guest := &resolved.Guests[index]
 		if guest.Artifact.Name == "" {
 			continue
 		}
-		artifact, evidence, err := artifacts.ResolveArtifactEvidence(root, guest.Artifact)
+		var artifact model.Artifact
+		var evidence artifacts.Evidence
+		var err error
+		if importedRelease {
+			artifact, evidence, err = artifacts.ResolveImportedArtifact(root, guest.Artifact)
+		} else {
+			artifact, evidence, err = artifacts.ResolveArtifactEvidence(root, guest.Artifact)
+		}
 		if err != nil {
 			if require {
 				return Plan{}, fmt.Errorf("HOLD: %s: %w", guest.Name, err)
@@ -615,11 +656,6 @@ func volumesForGuest(volumes []model.PersistentVolumeDeclaration, guest string) 
 	return filtered
 }
 
-func fixtureVolumes(module, guest string) []model.PersistentVolumeDeclaration {
-	identity := model.PersistentVolumeDeclaration{Name: "ssh-identity", Module: module, Guest: guest, SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/ssh", Placement: model.StorageDefault, Backup: true}
-	return []model.PersistentVolumeDeclaration{identity}
-}
-
 func gatewayNICs(s model.Site) []GuestNIC {
 	nics := []GuestNIC{{Name: "wan0", Bridge: "vmbr0", Method: "dhcp", MAC: s.Gateway.Upstream.MAC}}
 	for _, zoneType := range []model.ZoneType{model.ZoneTypeTrusted, model.ZoneTypeServers, model.ZoneTypeSandbox, model.ZoneTypeManagement, model.ZoneTypeTransit, model.ZoneTypeInfrastructure} {
@@ -642,8 +678,11 @@ func vlanFor(s model.Site, zoneName string) int {
 }
 
 func lxcNetworkParam(guest GuestPlan) string {
-	if guest.MAC != "" {
+	if guest.MAC == model.ArrGuestMAC {
 		return fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,macaddr=%s,ip=dhcp", guest.VLAN, guest.MAC)
+	}
+	if guest.MAC != "" {
+		return fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,macaddr=%s,ip=%s/24,gw=%s", guest.VLAN, guest.MAC, guest.Address, guest.Gateway)
 	}
 	return fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,ip=%s/24,gw=%s", guest.VLAN, guest.Address, gatewayFor(guest.Zone))
 }
@@ -672,9 +711,6 @@ func ProvisionModule(ctx context.Context, client *Client, plan Plan, module stri
 	found := false
 	for _, guest := range plan.Guests {
 		matches := guest.Owner == "boetticher/module/"+module
-		if module == "portal" {
-			matches = guest.Name == "lab-portal-01"
-		}
 		if !matches || guest.Kind != KindLXC {
 			continue
 		}
@@ -702,297 +738,6 @@ func EnsureFirewallVM(ctx context.Context, client *Client, plan Plan) error {
 		}
 	}
 	return errors.New("foundation plan has no firewall VM")
-}
-
-const builderOwnerTag = "boetticher-builder"
-
-const builderCacheSerial = "boetticher-builder-cache"
-
-// EnsureBuilderCacheVolume allocates one separately owned cache volume for
-// disposable builder VM190. The cache volume is owned by the reserved
-// platform storage identity VM191, so destroying VM190 cannot remove it.
-
-func EnsureBuilderCacheVolume(ctx context.Context, client *Client, node string, runner ArgsCommandRunner, address, user string) (string, error) {
-	if client == nil || node == "" || runner == nil || address == "" || user == "" {
-		return "", errors.New("Proxmox client and privileged cache-volume runner are required")
-	}
-	if kind, _, err := client.GuestConfig(ctx, node, model.BuilderCacheOwnerVMID); err == nil {
-		return "", fmt.Errorf("HOLD: builder cache owner VMID %d is occupied by a %s guest", model.BuilderCacheOwnerVMID, kind)
-	} else if !IsNotFound(err) {
-		return "", fmt.Errorf("inspect builder cache owner VMID %d: %w", model.BuilderCacheOwnerVMID, err)
-	}
-	volumeID := model.BuilderCacheStorage + ":" + model.BuilderCacheVolumeName
-	entries, err := client.StorageContent(ctx, node, model.BuilderCacheStorage, "images")
-	if err != nil {
-		return "", fmt.Errorf("inspect builder cache storage: %w", err)
-	}
-	for _, entry := range entries {
-		if entry.VolID == volumeID {
-			return volumeID, nil
-		}
-	}
-	allocArgs := []string{"pvesm", "alloc", model.BuilderCacheStorage, strconv.Itoa(model.BuilderCacheOwnerVMID), model.BuilderCacheVolumeName, fmt.Sprintf("%dG", model.BuilderCacheDiskGiB), "--format", "raw"}
-	if user != "root" {
-		allocArgs = append([]string{"sudo", "-n"}, allocArgs...)
-	}
-	if _, err := runner.RunArgs(ctx, address, user, allocArgs); err != nil {
-		return "", fmt.Errorf("allocate persistent builder cache volume: %w", err)
-	}
-	entries, err = client.StorageContent(ctx, node, model.BuilderCacheStorage, "images")
-	if err != nil {
-		return "", fmt.Errorf("verify persistent builder cache volume: %w", err)
-	}
-	for _, entry := range entries {
-		if entry.VolID == volumeID {
-			return volumeID, nil
-		}
-	}
-	return "", fmt.Errorf("HOLD: Proxmox did not expose allocated builder cache volume %s", volumeID)
-}
-
-// EnsureBuilderVM creates the transient Linux build environment from the
-// pinned Debian input. It is Core bootstrap infrastructure, not a module or a
-// user workload, and an existing object must prove that ownership before it is
-// touched.
-func EnsureBuilderVM(ctx context.Context, client *Client, plan Plan, publicKey string) (created bool, err error) {
-	if client == nil {
-		return false, errors.New("Proxmox client is required")
-	}
-	buildTargets := append([]string(nil), plan.BuilderArtifactTargets...)
-	if len(buildTargets) == 0 {
-		buildTargets, err = builderArtifactTargets(plan)
-	}
-	if err != nil {
-		return false, fmt.Errorf("resolve builder artifact targets: %w", err)
-	}
-	if plan.BuilderCacheVolume != model.BuilderCacheStorage+":"+model.BuilderCacheVolumeName {
-		return false, fmt.Errorf("HOLD: persistent builder cache volume is required and must be canonical: %q", plan.BuilderCacheVolume)
-	}
-	kind, current, err := client.GuestConfig(ctx, plan.Node, model.BuilderVMID)
-	if err == nil {
-		if kind != KindQEMU {
-			return false, fmt.Errorf("HOLD: VMID %d is occupied by an unowned %s guest, not the temporary builder", model.BuilderVMID, kind)
-		}
-		if name, _ := current["name"].(string); name != "lab-builder-01" {
-			return false, fmt.Errorf("HOLD: VMID %d is not the expected temporary builder", model.BuilderVMID)
-		}
-		if !hasOwnerTag(currentTags(current), builderOwnerTag) {
-			return false, fmt.Errorf("HOLD: VMID %d lacks canonical builder ownership proof %q", model.BuilderVMID, builderOwnerTag)
-		}
-		if err := DestroyBuilderVM(ctx, client, plan.Node); err != nil {
-			return false, fmt.Errorf("remove existing temporary builder before a fresh build: %w", err)
-		}
-	} else if !IsNotFound(err) {
-		return false, fmt.Errorf("inspect temporary builder: %w", err)
-	}
-	image, err := client.EnsureCloudImage(ctx, plan.Node, "local", plan.GatewayImage+".qcow2", plan.GatewayImageURL, plan.GatewaySHA512)
-	if err != nil {
-		return false, fmt.Errorf("prepare pinned builder input: %w", err)
-	}
-	builder := artifacts.Builder()
-	params := url.Values{
-		"name":      {"lab-builder-01"},
-		"memory":    {strconv.Itoa(builder.MemoryMiB)},
-		"cores":     {strconv.Itoa(builder.Cores)},
-		"cpu":       {"host"},
-		"scsihw":    {"virtio-scsi-single"},
-		"ostype":    {"l26"},
-		"onboot":    {"0"},
-		"agent":     {"1"},
-		"boot":      {"order=scsi0;ide2;net0"},
-		"tags":      {strings.Join([]string{model.TagBoetticher, model.TagManaged, model.TagPlatform, builderOwnerTag}, ";")},
-		"net0":      {"virtio,bridge=vmbr0,macaddr=" + model.BuilderMAC},
-		"ide2":      {"local:cloudinit"},
-		"ipconfig0": {"ip=dhcp"},
-		"ciuser":    {model.DefaultAdminSSHUser},
-	}
-	params.Set("scsi1", plan.BuilderCacheVolume+",format=raw,serial="+builderCacheSerial)
-	cloudInit, err := RenderBuilderCloudInitWithKeyAndTargets(publicKey, buildTargets)
-	if err != nil {
-		return false, fmt.Errorf("render builder cloud-init: %w", err)
-	}
-	// Arm snippet cleanup before the first upload. A partial upload must not
-	// leave VM190-specific cloud-init material behind on Proxmox.
-	snippetsUploaded := true
-	defer func() {
-		if err != nil && snippetsUploaded {
-			if cleanupErr := cleanupBuilderSnippets(ctx, client, plan.Node); cleanupErr != nil {
-				err = errors.Join(err, cleanupErr)
-			}
-		}
-	}()
-	for _, snippet := range []struct {
-		key   string
-		value string
-	}{
-		{key: "meta", value: cloudInit.MetaData},
-		{key: "user", value: cloudInit.UserData},
-		{key: "network", value: cloudInit.NetworkConfig},
-	} {
-		key, value := snippet.key, snippet.value
-		if value == "" {
-			return false, errors.New("builder cloud-init input is incomplete")
-		}
-		names := cloudInitSnippetNames(model.BuilderVMID)
-		if err := client.UploadStorageText(ctx, plan.Node, "local", "snippets", names[key], value); err != nil {
-			return false, fmt.Errorf("upload builder cloud-init %s: %w", key, err)
-		}
-	}
-	params.Set("cicustom", cloudInitCICustom(model.BuilderVMID))
-	params.Set("ipconfig0", "ip=dhcp")
-	// Arm caller cleanup before submitting the create task. Proxmox may have
-	// created the guest even when the API request or task wait reports an
-	// error, and a failed attempt must not leave a dirty builder behind.
-	created = true
-	if err := client.CreateVM(ctx, plan.Node, model.BuilderVMID, params); err != nil {
-		return created, fmt.Errorf("create temporary builder: %w", err)
-	}
-	snippetsUploaded = false
-	upid, err := client.ImportDisk(ctx, plan.Node, model.BuilderVMID, image, plan.Storage, "qcow2")
-	if err != nil {
-		return created, fmt.Errorf("import builder input: %w", err)
-	}
-	if err := client.WaitTask(ctx, plan.Node, upid); err != nil {
-		return created, fmt.Errorf("wait for builder input: %w", err)
-	}
-	if err := client.ResizeQEMUDisk(ctx, plan.Node, model.BuilderVMID, "scsi0", builder.DiskGiB); err != nil {
-		return created, fmt.Errorf("size builder disk: %w", err)
-	}
-	return created, nil
-}
-
-// WaitForQEMUIPv4 waits for the guest agent to report a routable IPv4 address
-// for a temporary DHCP-backed appliance. Hostnames and guessed addresses are
-// not accepted as reachability evidence.
-func WaitForQEMUIPv4(ctx context.Context, client *Client, node string, vmid, attempts int, interval time.Duration) (string, error) {
-	if client == nil || node == "" || vmid <= 0 || attempts < 1 {
-		return "", errors.New("QEMU address readiness identity is invalid")
-	}
-	if interval <= 0 {
-		interval = time.Second
-	}
-	var lastErr error
-	for attempt := 0; attempt < attempts; attempt++ {
-		interfaces, err := client.QEMUAgentNetworkInterfaces(ctx, node, vmid)
-		if err == nil {
-			for _, iface := range interfaces {
-				for _, address := range iface.IPAddresses {
-					ip := net.ParseIP(address.IPAddress).To4()
-					if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
-						continue
-					}
-					return ip.String(), nil
-				}
-			}
-		} else {
-			lastErr = err
-		}
-		if attempt+1 < attempts {
-			timer := time.NewTimer(interval)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return "", fmt.Errorf("QEMU address readiness cancelled: %w", ctx.Err())
-			case <-timer.C:
-			}
-		}
-	}
-	if lastErr == nil {
-		lastErr = errors.New("guest agent reported no routable IPv4 address")
-	}
-	return "", fmt.Errorf("HOLD: QEMU guest %d did not report a routable IPv4 address after %d attempts: %w", vmid, attempts, lastErr)
-}
-
-func DestroyBuilderVM(ctx context.Context, client *Client, node string) (returnErr error) {
-	if client == nil || node == "" {
-		return errors.New("Proxmox client and node are required")
-	}
-	kind, current, err := client.GuestConfig(ctx, node, model.BuilderVMID)
-	if IsNotFound(err) {
-		return cleanupBuilderSnippets(ctx, client, node)
-	}
-	if err != nil {
-		return fmt.Errorf("inspect temporary builder before destruction: %w", err)
-	}
-	if kind != KindQEMU {
-		return fmt.Errorf("HOLD: refusing to destroy VMID %d because it is an unowned %s guest", model.BuilderVMID, kind)
-	}
-	if name, _ := current["name"].(string); name != "lab-builder-01" || !hasOwnerTag(currentTags(current), builderOwnerTag) {
-		return fmt.Errorf("HOLD: refusing to destroy unproven VMID %d builder ownership", model.BuilderVMID)
-	}
-	// Once identity and ownership are proven, remove only the exact builder
-	// snippets even if stopping or deletion later fails. This leaves no stale
-	// VM190 bootstrap material after a bounded cleanup attempt.
-	defer func() {
-		if cleanupErr := cleanupBuilderSnippets(ctx, client, node); cleanupErr != nil {
-			returnErr = errors.Join(returnErr, cleanupErr)
-		}
-	}()
-	status, err := client.QEMUStatus(ctx, node, model.BuilderVMID)
-	if err != nil {
-		return fmt.Errorf("inspect temporary builder status: %w", err)
-	}
-	if status == "running" {
-		if err := client.StopVM(ctx, node, model.BuilderVMID); err != nil {
-			return fmt.Errorf("stop temporary builder: %w", err)
-		}
-	}
-	if disk, _ := current["scsi1"].(string); disk != "" {
-		if !strings.HasPrefix(disk, model.BuilderCacheStorage+":"+model.BuilderCacheVolumeName) || !strings.Contains(disk, "serial="+builderCacheSerial) {
-			return fmt.Errorf("HOLD: refusing to detach unexpected builder disk %q", disk)
-		}
-		if err := client.SetVMConfig(ctx, node, model.BuilderVMID, url.Values{"delete": {"scsi1"}}); err != nil {
-			return fmt.Errorf("detach persistent builder cache volume: %w", err)
-		}
-	}
-	if err := client.DestroyQEMUKeepingUnreferencedDisks(ctx, node, model.BuilderVMID); err != nil {
-		return fmt.Errorf("destroy temporary builder: %w", err)
-	}
-	if err := WaitForGuestAbsent(ctx, client, node, model.BuilderVMID, 30, time.Second); err != nil {
-		return err
-	}
-	return cleanupBuilderSnippets(ctx, client, node)
-}
-
-// WaitForGuestAbsent verifies that Proxmox has finished removing a guest.
-// Cleanup never treats an accepted delete request as proof that the reserved
-// identity is available for a fresh builder.
-func WaitForGuestAbsent(ctx context.Context, client *Client, node string, vmid, attempts int, interval time.Duration) error {
-	if client == nil || node == "" || vmid <= 0 || attempts < 1 {
-		return errors.New("guest absence readiness identity is invalid")
-	}
-	if interval <= 0 {
-		interval = time.Second
-	}
-	for attempt := 0; attempt < attempts; attempt++ {
-		_, _, err := client.GuestConfig(ctx, node, vmid)
-		if IsNotFound(err) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("inspect guest %d while waiting for removal: %w", vmid, err)
-		}
-		if attempt+1 < attempts {
-			timer := time.NewTimer(interval)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
-			}
-		}
-	}
-	return fmt.Errorf("HOLD: guest %d remains present after deletion", vmid)
-}
-
-func cleanupBuilderSnippets(ctx context.Context, client *Client, node string) error {
-	names := cloudInitSnippetNames(model.BuilderVMID)
-	for _, name := range []string{names["meta"], names["user"], names["network"]} {
-		if err := client.DeleteStorageSnippet(ctx, node, "local", name); err != nil && !IsNotFound(err) {
-			return fmt.Errorf("remove builder cloud-init snippet %s: %w", name, err)
-		}
-	}
-	return nil
 }
 
 func EnsureVirtualBridge(ctx context.Context, client *Client, node string) error {
@@ -1460,6 +1205,36 @@ func validateExistingQEMUVolumes(current map[string]any, plan Plan, guest GuestP
 	return nil
 }
 
+func validateNoUndeclaredQEMUPersistentVolumes(current map[string]any, expected GuestPlan) error {
+	for key := range current {
+		if strings.HasPrefix(key, "scsi") {
+			index, ok := qemuSCSIIndex(key)
+			if ok && index == 0 {
+				continue
+			}
+			if !ok || index > len(expected.Volumes) {
+				return fmt.Errorf("HOLD: guest %s has an undeclared persistent volume %s", expected.Name, key)
+			}
+			continue
+		}
+		for _, prefix := range []string{"sata", "virtio", "efidisk", "tpmstate", "unused"} {
+			if strings.HasPrefix(key, prefix) {
+				return fmt.Errorf("HOLD: guest %s has an undeclared persistent volume %s", expected.Name, key)
+			}
+		}
+		if strings.HasPrefix(key, "ide") && key != "ide2" {
+			return fmt.Errorf("HOLD: guest %s has an undeclared persistent volume %s", expected.Name, key)
+		}
+		if key == "ide2" {
+			observed, _ := current[key].(string)
+			if observed != "local:cloudinit" {
+				return fmt.Errorf("HOLD: guest %s has an unexpected auxiliary disk %s", expected.Name, key)
+			}
+		}
+	}
+	return nil
+}
+
 // validateForcedFirewallRootReplacementVolumes proves that a manual firewall
 // root recovery cannot detach, overwrite, or silently adopt a persistent disk.
 // Storage migration remains permitted afterwards, so the source storage does
@@ -1750,6 +1525,12 @@ func ensureLXCWithRetainedVolumes(ctx context.Context, client *Client, plan Plan
 				return ensureLXCWithRetainedVolumes(ctx, client, recreatedPlan, guest, nil)
 			}
 		}
+		if err := validateExistingGuestIdentityFields(current, guest); err != nil {
+			return fmt.Errorf("HOLD: refusing to reconcile unowned container %s: %w", guest.Name, err)
+		}
+		if err := ensureGuestMACFilter(ctx, client, plan, guest); err != nil {
+			return err
+		}
 		if err := validateNoUndeclaredLXCVolumes(current, guest); err != nil {
 			return err
 		}
@@ -1826,8 +1607,8 @@ func ensureLXCWithRetainedVolumes(ctx context.Context, client *Client, plan Plan
 			if err != nil {
 				return fmt.Errorf("validate retained persistent volume %s for %s: %w", volume.Name, guest.Name, err)
 			}
-			if !lxcPersistentVolumeMatches(value, expected) {
-				return fmt.Errorf("HOLD: retained persistent volume %s for %s does not prove the declared storage, mount path, backup setting, and size", key, guest.Name)
+			if !lxcPersistentVolumeMatches(value, expected, guest.VMID, index+1) {
+				return fmt.Errorf("HOLD: retained persistent volume %s for %s does not prove the declared storage, canonical volume identity, mount path, backup setting, and size", key, guest.Name)
 			}
 			params.Set(key, value)
 			continue
@@ -1863,6 +1644,24 @@ func ensureLXCWithRetainedVolumes(ctx context.Context, client *Client, plan Plan
 	}
 	if err := validateExistingGuestVolumes(current, guest); err != nil {
 		return fmt.Errorf("HOLD: verify created container %s persistent volumes: %w", guest.Name, err)
+	}
+	if err := ensureGuestMACFilter(ctx, client, plan, guest); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureGuestMACFilter enables Proxmox's guest-level MAC filtering for module
+// guests with a declared stable MAC. This is the hypervisor/bridge boundary
+// that prevents a compromised guest from replacing the MAC used by the
+// gateway's source-identity rules. Policies remain ACCEPT so Boetticher's
+// managed gateway remains the owner of service authorization.
+func ensureGuestMACFilter(ctx context.Context, client *Client, plan Plan, guest GuestPlan) error {
+	if guest.MAC == "" || guest.Owner == "" {
+		return nil
+	}
+	if err := client.SetGuestNetworkFilters(ctx, plan.Node, guest.Kind, guest.VMID, guest.MAC != model.ArrGuestMAC); err != nil {
+		return fmt.Errorf("HOLD: enable Proxmox MAC filtering for %s: %w", guest.Name, err)
 	}
 	return nil
 }
@@ -1980,7 +1779,7 @@ func validateLegacyLXCRecreation(current map[string]any, guest GuestPlan) error 
 		}
 		mountpoint := fmt.Sprintf("mp%d", index)
 		observed, _ := current[mountpoint].(string)
-		if !exactLegacyLXCRawVolume(observed, guest.VMID, index+1) || !lxcVolumeMatchesPersistentIdentity(observed, expected) {
+		if !exactLegacyLXCRawVolume(observed, guest.VMID, index+1) || !lxcVolumeMatchesPersistentIdentity(observed, expected, guest.VMID, index+1) {
 			return fmt.Errorf("HOLD: guest %s persistent volume %s does not have the exact legacy raw layout", guest.Name, mountpoint)
 		}
 	}
@@ -2062,6 +1861,16 @@ func legacyLXCRootfsMatches(observed string, guest GuestPlan) bool {
 }
 
 func discardLegacyLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan) (err error) {
+	kind, current, err := client.GuestConfig(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return fmt.Errorf("reinspect %s before legacy LXC recreation: %w", guest.Name, err)
+	}
+	if kind != KindLXC {
+		return fmt.Errorf("HOLD: guest %s changed to %s before legacy LXC recreation", guest.Name, kind)
+	}
+	if err := validateLegacyLXCRecreation(current, guest); err != nil {
+		return fmt.Errorf("HOLD: guest %s failed the final legacy identity check: %w", guest.Name, err)
+	}
 	status, err := client.LXCStatus(ctx, plan.Node, guest.VMID)
 	if err != nil {
 		return fmt.Errorf("inspect %s status before legacy LXC recreation: %w", guest.Name, err)
@@ -2250,6 +2059,20 @@ func isLoopDevice(value string) bool {
 // must pass those references back to creation; size-only parameters would
 // allocate fresh volumes and silently discard retained state.
 func replaceLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) (retained map[string]string, err error) {
+	kind, refreshed, err := client.GuestConfig(ctx, plan.Node, guest.VMID)
+	if err != nil {
+		return nil, fmt.Errorf("reinspect %s before appliance replacement: %w", guest.Name, err)
+	}
+	if kind != KindLXC {
+		return nil, fmt.Errorf("HOLD: refusing to replace %s at VMID %d because the occupant is %s, expected LXC", guest.Name, guest.VMID, kind)
+	}
+	if err := validateExistingGuestDestructiveIdentity(refreshed, guest); err != nil {
+		return nil, fmt.Errorf("HOLD: refusing to replace unowned container %s: %w", guest.Name, err)
+	}
+	if err := validateNoUndeclaredLXCVolumes(refreshed, guest); err != nil {
+		return nil, err
+	}
+	current = refreshed
 	retained, err = retainedLXCPersistentVolumeAttachments(current, guest)
 	if err != nil {
 		return nil, err
@@ -2289,10 +2112,11 @@ func replaceLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 	return retained, nil
 }
 
-// lxcBootstrapKeyParams is the only operator-key input accepted by appliance
-// creation. Proxmox writes this key into the container's root bootstrap
-// identity; the image first-boot service copies it to labadmin and Core removes
-// the root bootstrap copy after successful convergence.
+// lxcBootstrapKeyParams is the durable operator bootstrap input accepted by
+// appliance creation. Proxmox writes this key into the container's root
+// bootstrap identity; the image first-boot service copies it to labadmin and
+// removes the root bootstrap copy. Temporary Apply authority is installed
+// separately after the immutable plan is accepted.
 func lxcBootstrapKeyParams(publicKey string) (url.Values, error) {
 	if publicKey == "" {
 		return url.Values{}, nil
@@ -2537,6 +2361,7 @@ func migrateLXCPersistentVolumes(ctx context.Context, client *Client, plan Plan,
 		storage    string
 		volume     model.PersistentVolumeDeclaration
 		observed   string
+		disk       int
 	}
 	migrations := make([]migration, 0, len(guest.Volumes))
 	for index, volume := range guest.Volumes {
@@ -2554,13 +2379,16 @@ func migrateLXCPersistentVolumes(ctx context.Context, client *Client, plan Plan,
 		if observedStorage == expectedStorage {
 			continue
 		}
-		if !lxcVolumeMatchesPersistentIdentity(observed, expected) {
-			return fmt.Errorf("HOLD: refusing to migrate guest %s persistent volume %s=%q; its mount path, backup setting, or size does not prove the declared contract %q", guest.Name, mountpoint, observed, expected)
+		if !lxcVolumeMatchesPersistentIdentity(observed, expected, guest.VMID, index+1) {
+			return fmt.Errorf("HOLD: refusing to migrate guest %s persistent volume %s=%q; its canonical volume identity, mount path, backup setting, or size does not prove the declared contract %q", guest.Name, mountpoint, observed, expected)
 		}
-		migrations = append(migrations, migration{mountpoint: mountpoint, storage: expectedStorage, volume: volume, observed: observed})
+		migrations = append(migrations, migration{mountpoint: mountpoint, storage: expectedStorage, volume: volume, observed: observed, disk: index + 1})
 	}
 	if len(migrations) == 0 {
 		return nil
+	}
+	if err := validateExistingGuestDestructiveIdentity(current, guest); err != nil {
+		return fmt.Errorf("HOLD: refusing to migrate unowned container %s: %w", guest.Name, err)
 	}
 
 	status, err := client.LXCStatus(ctx, plan.Node, guest.VMID)
@@ -2606,7 +2434,7 @@ func migrateLXCPersistentVolumes(ctx context.Context, client *Client, plan Plan,
 		if lxcVolumeStorageID(observed) == migration.storage {
 			continue
 		}
-		if !lxcVolumeMatchesPersistentIdentity(observed, expected) {
+		if !lxcVolumeMatchesPersistentIdentity(observed, expected, guest.VMID, migration.disk) {
 			return fmt.Errorf("HOLD: guest %s persistent volume %s changed before migration", guest.Name, migration.mountpoint)
 		}
 		digest, _ := refreshed["digest"].(string)
@@ -2632,14 +2460,14 @@ func lxcVolumeStorageID(value string) string {
 	return storage
 }
 
-func lxcVolumeMatchesPersistentIdentity(observed, expected string) bool {
+func lxcVolumeMatchesPersistentIdentity(observed, expected string, vmid, disk int) bool {
 	observedParts := strings.Split(observed, ",")
 	expectedParts := strings.Split(expected, ",")
-	if len(observedParts) == 0 || len(expectedParts) == 0 {
+	if len(observedParts) == 0 || len(expectedParts) == 0 || vmid <= 0 || disk <= 0 {
 		return false
 	}
-	_, expectedSize, expectedOK := strings.Cut(expectedParts[0], ":")
-	if !expectedOK || expectedSize == "" || lxcVolumeStorageID(observed) == "" {
+	expectedStorage, expectedSize, expectedOK := strings.Cut(expectedParts[0], ":")
+	if !expectedOK || expectedStorage == "" || expectedSize == "" || lxcVolumeStorageID(observed) == "" || !lxcCanonicalVolumeIdentity(observed, vmid, disk) {
 		return false
 	}
 	observedOptions := qemuVolumeOptions(observedParts[1:])
@@ -2647,6 +2475,16 @@ func lxcVolumeMatchesPersistentIdentity(observed, expected string) bool {
 	return observedOptions["mp"] == expectedOptions["mp"] &&
 		observedOptions["backup"] == expectedOptions["backup"] &&
 		observedOptions["size"] == expectedSize+"G"
+}
+
+func lxcCanonicalVolumeIdentity(observed string, vmid, disk int) bool {
+	first, _, _ := strings.Cut(observed, ",")
+	_, volumeID, ok := strings.Cut(first, ":")
+	if !ok {
+		return false
+	}
+	canonical := fmt.Sprintf("vm-%d-disk-%d", vmid, disk)
+	return volumeID == canonical || volumeID == fmt.Sprintf("%d/%s.raw", vmid, canonical)
 }
 
 func retainedLXCPersistentVolumeAttachments(current map[string]any, guest GuestPlan) (map[string]string, error) {
@@ -2658,8 +2496,8 @@ func retainedLXCPersistentVolumeAttachments(current map[string]any, guest GuestP
 		}
 		mountpoint := fmt.Sprintf("mp%d", index)
 		observed, _ := current[mountpoint].(string)
-		if !lxcPersistentVolumeMatches(observed, expected) {
-			return nil, fmt.Errorf("HOLD: refusing to retain guest %s persistent volume %s because its storage, mount path, backup setting, or size no longer proves the declared contract", guest.Name, mountpoint)
+		if !lxcPersistentVolumeMatches(observed, expected, guest.VMID, index+1) {
+			return nil, fmt.Errorf("HOLD: refusing to retain guest %s persistent volume %s because its storage, canonical volume identity, mount path, backup setting, or size no longer proves the declared contract", guest.Name, mountpoint)
 		}
 		retained[mountpoint] = observed
 	}
@@ -2674,7 +2512,7 @@ func validateExistingGuestVolumes(current map[string]any, expected GuestPlan) er
 		}
 		key := fmt.Sprintf("mp%d", index)
 		observed, _ := current[key].(string)
-		if !lxcPersistentVolumeMatches(observed, wanted) {
+		if !lxcPersistentVolumeMatches(observed, wanted, expected.VMID, index+1) {
 			return fmt.Errorf("HOLD: guest %s has persistent volume %s=%q, expected %q", expected.Name, key, observed, wanted)
 		}
 	}
@@ -2697,10 +2535,18 @@ func validateNoUndeclaredLXCVolumes(current map[string]any, expected GuestPlan) 
 	return nil
 }
 
-func lxcPersistentVolumeMatches(observed, wanted string) bool {
+// ValidateNoUndeclaredLXCPersistentVolumes is the narrow public check used by
+// cleanup paths that intentionally expect a rootfs-only LXC. It prevents the
+// Proxmox purge flag from deleting an attached volume that was never part of
+// the cleanup operation's ownership proof.
+func ValidateNoUndeclaredLXCPersistentVolumes(current map[string]any, guestName string) error {
+	return validateNoUndeclaredLXCVolumes(current, GuestPlan{Name: guestName})
+}
+
+func lxcPersistentVolumeMatches(observed, wanted string, vmid, disk int) bool {
 	return lxcVolumeStorageID(observed) != "" &&
 		lxcVolumeStorageID(observed) == lxcVolumeStorageID(wanted) &&
-		lxcVolumeMatchesPersistentIdentity(observed, wanted)
+		lxcVolumeMatchesPersistentIdentity(observed, wanted, vmid, disk)
 }
 
 func ensureArtifactInStorage(ctx context.Context, client *Client, node, storage, content, filename, checksum, source string) error {
@@ -2798,6 +2644,21 @@ func validateExistingGuest(current map[string]any, expected GuestPlan) error {
 	return nil
 }
 
+// validateExistingGuestDestructiveIdentity proves the immutable ownership
+// fields immediately before a move, detach, or destroy. It deliberately does
+// not compare the artifact description because callers use it while replacing
+// an otherwise correctly owned root filesystem.
+func validateExistingGuestDestructiveIdentity(current map[string]any, expected GuestPlan) error {
+	if err := validateExistingGuestIdentityFields(current, expected); err != nil {
+		return err
+	}
+	got, _ := current["tags"].(string)
+	if canonicalTags(got) != canonicalTags(strings.Join(expected.Tags, ";")) {
+		return fmt.Errorf("guest %s has unexpected tags %q, expected %q", expected.Name, got, strings.Join(expected.Tags, ";"))
+	}
+	return nil
+}
+
 func validateExistingGuestIdentity(current map[string]any, expected GuestPlan) error {
 	if err := validateExistingGuestIdentityFields(current, expected); err != nil {
 		return err
@@ -2841,11 +2702,7 @@ func validateExistingGuestIdentityFields(current map[string]any, expected GuestP
 			}
 		}
 	}
-	if expected.Owner == "boetticher/core/portal" {
-		if !hasOwnerTag(currentTags(current), model.TagCorePortal) {
-			return fmt.Errorf("HOLD: guest %s lacks canonical ownership proof %q", expected.Name, model.TagCorePortal)
-		}
-	} else if expected.Owner != "" {
+	if expected.Owner != "" {
 		module := strings.TrimPrefix(expected.Owner, "boetticher/module/")
 		ownerTag := model.ModuleOwnershipTag(module)
 		if ownerTag == "" || !hasOwnerTag(currentTags(current), ownerTag) {
@@ -2917,7 +2774,7 @@ func guestArtifactNeedsReplacement(current map[string]any, expected GuestPlan) b
 		return false
 	}
 	observed, _ := current["description"].(string)
-	return normalizeArtifactDescription(observed) != artifactDescription(expected.Artifact)
+	return !artifactDescriptionMatches(observed, expected.Artifact)
 }
 
 // InspectGuestArtifact performs the one live guest-config read needed before
@@ -2940,15 +2797,6 @@ func InspectGuestArtifact(ctx context.Context, client *Client, node string, gues
 		return true, false, nil
 	}
 	return true, guestArtifactNeedsReplacement(current, guest), nil
-}
-
-// GuestArtifactNeedsReplacement reports whether one existing guest needs the
-// explicitly confirmed appliance-rootfs replacement. A missing guest is not a
-// replacement, and kind mismatches remain the responsibility of the normal
-// ensure path so its existing HOLD is preserved.
-func GuestArtifactNeedsReplacement(ctx context.Context, client *Client, node string, guest GuestPlan) (bool, error) {
-	_, replacement, err := InspectGuestArtifact(ctx, client, node, guest)
-	return replacement, err
 }
 
 func normalizeArtifactDescription(value string) string {
@@ -3017,15 +2865,26 @@ func uploadFirewallCloudInit(ctx context.Context, client *Client, plan Plan, vmi
 }
 
 func artifactDescription(artifact model.Artifact) string {
-	return fmt.Sprintf("boetticher-artifact=%s@%s definition=%s content=%s", artifact.Name, artifact.Version, artifact.DefinitionSHA256, artifact.ContentSHA256)
+	return fmt.Sprintf("boetticher-artifact=%s@%s content=%s", artifact.Name, artifact.Version, artifact.ContentSHA256)
+}
+
+func artifactDescriptionMatches(observed string, expected model.Artifact) bool {
+	observed = normalizeArtifactDescription(observed)
+	if observed == artifactDescription(expected) {
+		return true
+	}
+	// Accept the prior description format during a normal upgrade. The content
+	// digest is the immutable artifact identity; the old definition field was
+	// only build provenance and must not force a root-disk replacement.
+	parts := strings.Fields(observed)
+	return len(parts) == 3 &&
+		parts[0] == fmt.Sprintf("boetticher-artifact=%s@%s", expected.Name, expected.Version) &&
+		strings.HasPrefix(parts[1], "definition=") &&
+		parts[2] == "content="+expected.ContentSHA256
 }
 
 func ensureExistingGuestTags(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) error {
-	if guest.Owner == "boetticher/core/portal" {
-		if !hasOwnerTag(currentTags(current), model.TagCorePortal) {
-			return fmt.Errorf("HOLD: refusing to establish ownership for %s; canonical tag %q is absent", guest.Name, model.TagCorePortal)
-		}
-	} else if guest.Owner != "" {
+	if guest.Owner != "" {
 		module := strings.TrimPrefix(guest.Owner, "boetticher/module/")
 		ownerTag := model.ModuleOwnershipTag(module)
 		if ownerTag == "" || !hasOwnerTag(currentTags(current), ownerTag) {

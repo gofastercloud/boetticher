@@ -75,7 +75,7 @@ func runWithContext(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("load Pulse read credential: %w", err)
 	}
-	pulseClient, err := mtlsClient(credentials, "pulse-read-cert", "pulse-read-key")
+	pulseClient, err := tokenClient(credentials)
 	if err != nil {
 		return fmt.Errorf("configure Pulse read client: %w", err)
 	}
@@ -83,7 +83,7 @@ func runWithContext(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("load Pulse note credential: %w", err)
 	}
-	noteClient, err := mtlsClient(credentials, "pulse-note-cert", "pulse-note-key")
+	noteClient, err := tokenClient(credentials)
 	if err != nil {
 		return fmt.Errorf("configure Pulse note client: %w", err)
 	}
@@ -312,6 +312,19 @@ func mtlsClient(directory, certificateName, keyName string) (*http.Client, error
 		return nil, fmt.Errorf("client CA contains no certificates")
 	}
 	transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, Certificates: []tls.Certificate{certificate}}, DisableCompression: true, MaxIdleConnsPerHost: 2, ResponseHeaderTimeout: 10 * time.Second}
+	return aiops.NewBoundedHTTPClient(transport), nil
+}
+
+func tokenClient(directory string) (*http.Client, error) {
+	ca, err := os.ReadFile(directory + "/client-ca")
+	if err != nil {
+		return nil, err
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(ca) {
+		return nil, fmt.Errorf("client CA contains no certificates")
+	}
+	transport := &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots}, DisableCompression: true, MaxIdleConnsPerHost: 2, ResponseHeaderTimeout: 10 * time.Second}
 	return aiops.NewBoundedHTTPClient(transport), nil
 }
 

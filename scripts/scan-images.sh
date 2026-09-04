@@ -8,20 +8,18 @@ if ! command -v trivy >/dev/null 2>&1; then
   exit 2
 fi
 
-default_scan_names="boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-firewall boetticher-portal boetticher-tailnet-router boetticher-airvpn boetticher-bifrost boetticher-printer boetticher-arr boetticher-streamdeck boetticher-aiops boetticher-gatus boetticher-network-probe"
+default_scan_names="boetticher-base boetticher-dns-blocky boetticher-logging boetticher-monitoring boetticher-firewall boetticher-tailnet-router boetticher-airvpn boetticher-bifrost boetticher-printer boetticher-arr boetticher-aiops boetticher-gatus boetticher-network-probe"
 case "$target" in
   scan-base) names="boetticher-base" ;;
   scan-dns-blocky) names="boetticher-dns-blocky" ;;
   scan-logging) names="boetticher-logging" ;;
   scan-monitoring) names="boetticher-monitoring" ;;
   scan-firewall) names="boetticher-firewall" ;;
-  scan-portal) names="boetticher-portal" ;;
   scan-tailnet-router) names="boetticher-tailnet-router" ;;
   scan-airvpn) names="boetticher-airvpn" ;;
   scan-bifrost) names="boetticher-bifrost" ;;
   scan-printer) names="boetticher-printer" ;;
   scan-arr) names="boetticher-arr" ;;
-  scan-streamdeck) names="boetticher-streamdeck" ;;
   scan-aiops) names="boetticher-aiops" ;;
   scan-gatus) names="boetticher-gatus" ;;
   scan-network-probe) names="boetticher-network-probe" ;;
@@ -35,7 +33,7 @@ case "$target" in
 esac
 for name in $names; do
   case "$name" in
-    boetticher-base|boetticher-dns-blocky|boetticher-logging|boetticher-monitoring|boetticher-firewall|boetticher-portal|boetticher-tailnet-router|boetticher-airvpn|boetticher-bifrost|boetticher-printer|boetticher-arr|boetticher-streamdeck|boetticher-aiops|boetticher-gatus|boetticher-network-probe) ;;
+	    boetticher-base|boetticher-dns-blocky|boetticher-logging|boetticher-monitoring|boetticher-firewall|boetticher-tailnet-router|boetticher-airvpn|boetticher-bifrost|boetticher-printer|boetticher-arr|boetticher-aiops|boetticher-gatus|boetticher-network-probe) ;;
     *) echo "unknown selected scan artifact: $name" >&2; exit 2 ;;
   esac
 done
@@ -61,7 +59,7 @@ artifact_filename() {
   name=$1
   version=1.0.0
   if [ "$name" = boetticher-base ]; then
-    version=0.4.0
+		version=0.5.1
   fi
   printf '%s-%s-amd64.tar.zst' "$name" "$version"
 }
@@ -96,6 +94,7 @@ scan_one() {
   summary="$root/$name/trivy.txt"
   manifest="$root/$name/package-manifest.txt"
   sbom="$root/$name/sbom.json"
+  smoke="$root/$name/smoke.txt"
   if [ ! -f "$artifact" ]; then
     echo "HOLD: artifact is not built: $artifact" >&2
     exit 2
@@ -104,10 +103,17 @@ scan_one() {
   if [ -s "$provenance" ]; then
     cp "$provenance" "$root/$name/builder-provenance.json"
     provenance_arg="-provenance $root/$name/builder-provenance.json"
+  else
+    echo "HOLD: builder provenance is missing: $provenance" >&2
+    exit 2
   fi
   mkdir -p "$(dirname "$report")"
   if [ ! -s "$manifest" ]; then
     echo "HOLD: package manifest is missing for $name: $manifest" >&2
+    exit 2
+  fi
+  if [ ! -s "$smoke" ]; then
+    echo "HOLD: boot/smoke evidence is missing for $name: $smoke" >&2
     exit 2
   fi
   rm -rf "$scan_root"
@@ -151,7 +157,7 @@ scan_one() {
   [ "$module" = dns-blocky ] && module=dns
   if ! GOCACHE=${GOCACHE:-/tmp/boetticher-gocache} go run ./cmd/qualify-artifact \
     -artifact "$artifact" -report "$report" -manifest "$manifest" -sbom "$sbom" \
-    $provenance_arg \
+    -smoke "$smoke" $provenance_arg \
     -evidence-root "$evidence_root" -module "$module"; then
     exit 1
   fi
@@ -164,6 +170,7 @@ launch_scan_worker() {
   worker_log="$scan_log_root/$worker_name.log"
   worker_timing="$scan_log_root/$worker_name.timing"
   mkdir -p "$scan_log_root"
+  : > "$worker_timing"
   (
     timing_log="$worker_timing"
     scan_one "$worker_name"

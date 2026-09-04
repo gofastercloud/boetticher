@@ -1,5 +1,5 @@
 api_version: boetticher/v3
-platform_version: 0.4.0
+platform_version: 0.5.1
 schema_version: 3
 storage_profile: single-disk
 gateway:
@@ -30,24 +30,24 @@ network:
       network: 10.10.10.0/24
       gateway: 10.10.10.1
       address_mode: static
-      dns_addresses: [10.10.10.10, 10.10.10.11]
-      ntp_addresses: [10.10.10.10, 10.10.10.11]
+      dns_addresses: [10.10.10.10]
+      ntp_addresses: [10.10.10.10]
     - name: SERVERS
       type: servers
       vlan: 20
       network: 10.10.20.0/24
       gateway: 10.10.20.1
       address_mode: reservations-only
-      dns_addresses: [10.10.10.10, 10.10.10.11]
-      ntp_addresses: [10.10.10.10, 10.10.10.11]
+      dns_addresses: [10.10.10.10]
+      ntp_addresses: [10.10.10.10]
     - name: TRUSTED
       type: trusted
       vlan: 30
       network: 10.10.30.0/24
       gateway: 10.10.30.1
       address_mode: dynamic-reservations
-      dns_addresses: [10.10.10.10, 10.10.10.11]
-      ntp_addresses: [10.10.10.10, 10.10.10.11]
+      dns_addresses: [10.10.10.10]
+      ntp_addresses: [10.10.10.10]
     - name: SANDBOX
       type: sandbox
       vlan: 40
@@ -62,8 +62,8 @@ network:
       network: 10.10.99.0/24
       gateway: 10.10.99.1
       address_mode: static
-      dns_addresses: [10.10.10.10, 10.10.10.11]
-      ntp_addresses: [10.10.10.10, 10.10.10.11]
+      dns_addresses: [10.10.10.10]
+      ntp_addresses: [10.10.10.10]
 secret_metadata:
   installation_id: generated-by-boetticher-init
   age_recipient: generated-by-boetticher-init

@@ -1,12 +1,16 @@
 package cli
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -31,19 +35,69 @@ import (
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/pki"
-	"github.com/gofastercloud/boetticher/internal/portal"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
 	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
 	"github.com/gofastercloud/boetticher/internal/storage"
 	"github.com/gofastercloud/boetticher/internal/telemetry"
+	"golang.org/x/crypto/ssh"
 )
 
 func runDeploy(args []string, out io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return runDeployWithContext(ctx, args, out)
+}
+
+func stdinIsTerminal() bool {
+	info, err := os.Stdin.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+func guideInteractiveDeploy(siteDir, ageIdentity string, out io.Writer) (string, error) {
+	var planOutput bytes.Buffer
+	if err := runPlanRequest(planRequest{
+		siteDir: siteDir, ageIdentity: ageIdentity, live: true,
+	}, &planOutput); err != nil {
+		return "", fmt.Errorf("prepare live deployment plan: %w", err)
+	}
+	digest, err := planDigestFromOutput(planOutput.String())
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(out, &planOutput); err != nil {
+		return "", err
+	}
+	fmt.Fprintf(out, "Apply this exact live plan (%s)? Type APPLY to continue: ", digest)
+	answer, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("read deployment approval: %w", err)
+	}
+	if strings.TrimSpace(answer) != "APPLY" {
+		return "", errors.New("deployment not approved")
+	}
+	return digest, nil
+}
+
+func planDigestFromOutput(output string) (string, error) {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "Digest:") {
+			continue
+		}
+		digest := strings.TrimSpace(strings.TrimPrefix(line, "Digest:"))
+		if len(digest) != len("sha256:")+64 || !strings.HasPrefix(digest, "sha256:") {
+			return "", errors.New("live deployment plan returned an invalid digest")
+		}
+		for _, char := range digest[len("sha256:"):] {
+			if !strings.ContainsRune("0123456789abcdef", char) {
+				return "", errors.New("live deployment plan returned an invalid digest")
+			}
+		}
+		return digest, nil
+	}
+	return "", errors.New("live deployment plan did not return a digest")
 }
 
 func validateDeployRecoveryOptions(gatewayMode string, replaceFirewall, recreateLegacyLXCs, confirm, dryRun bool) error {
@@ -61,12 +115,32 @@ func validateDeployRecoveryOptions(gatewayMode string, replaceFirewall, recreate
 	return nil
 }
 
-func runDeployWithContext(ctx context.Context, args []string, out io.Writer) error {
+func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (resultErr error) {
 	report := newDeploymentReport(out)
 	ctx = telemetry.WithObserver(ctx, report)
+	lockSiteDir, dryRun := deploymentLockInputs(args)
+	var operationLock *site.OperationLock
+	if !dryRun {
+		var lockErr error
+		operationLock, lockErr = site.AcquireOperationLock(lockSiteDir)
+		if lockErr != nil {
+			return lockErr
+		}
+		defer func() {
+			if unlockErr := operationLock.Release(); unlockErr != nil {
+				resultErr = combineDeploymentErrors(resultErr, unlockErr)
+			}
+		}()
+	}
 	var cleanup func(context.Context) error
+	var commit func() error
+	var markOperationFailure func(error)
 	operationErr := runDeployOperation(ctx, args, out, report, func(fn func(context.Context) error) {
 		cleanup = fn
+	}, func(fn func() error) {
+		commit = fn
+	}, func(fn func(error)) {
+		markOperationFailure = fn
 	})
 	if cleanup != nil {
 		report.setCleanup(true, false, nil)
@@ -82,30 +156,97 @@ func runDeployWithContext(ctx context.Context, args []string, out io.Writer) err
 		}
 		operationErr = combineDeploymentErrors(operationErr, cleanupErr)
 	}
+	if operationErr != nil && markOperationFailure != nil {
+		markOperationFailure(operationErr)
+	}
+	if operationErr == nil && commit != nil {
+		if commitErr := commit(); commitErr != nil {
+			if markOperationFailure != nil {
+				markOperationFailure(commitErr)
+			}
+			operationErr = combineDeploymentErrors(operationErr, commitErr)
+		}
+	}
 	operationErr = report.finalize(operationErr)
-	return deploymentErrorForOperator(operationErr)
+	resultErr = deploymentErrorForOperator(operationErr)
+	return resultErr
 }
 
-func runDeployOperation(ctx context.Context, args []string, out io.Writer, report *deploymentReport, registerCleanup deploymentCleanupRegistrar) (err error) {
+func deploymentLockInputs(args []string) (string, bool) {
+	siteDir := "."
+	dryRun := false
+	for index := 0; index < len(args); index++ {
+		switch args[index] {
+		case "--dry-run":
+			dryRun = true
+		case "--site":
+			if index+1 < len(args) {
+				index++
+				siteDir = args[index]
+			}
+		default:
+			if strings.HasPrefix(args[index], "--site=") {
+				siteDir = strings.TrimPrefix(args[index], "--site=")
+			}
+		}
+	}
+	if siteDir == "" {
+		siteDir = "."
+	}
+	return siteDir, dryRun
+}
+
+func runDeployOperation(ctx context.Context, args []string, out io.Writer, report *deploymentReport, registerCleanup deploymentCleanupRegistrar, registerCommit func(func() error), registerOperationFailure func(func(error))) (err error) {
+	var operationState site.OperationState
+	operationStarted := false
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
 	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
-	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
-	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS")
 	dryRun := fs.Bool("dry-run", false, "render and validate policy without connecting")
-	rotateAirVPN := fs.Bool("rotate-airvpn-profile", false, "explicitly regenerate and retain the AirVPN WireGuard profile")
+	planDigestFlag := fs.String("plan", "", "exact immutable plan digest produced by boetticher plan --live")
 	replaceFirewall := fs.Bool("replace-firewall", false, "replace only the managed firewall root disk after proving its persistent volumes")
 	recreateLegacyLXCs := fs.Bool("recreate-legacy-lxcs", false, "discard only proven legacy local-raw LXC state and recreate those appliances on planned storage")
 	confirm := fs.Bool("confirm", false, "confirm destructive appliance replacement or purge actions")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if !*dryRun && *planDigestFlag == "" {
+		if !stdinIsTerminal() {
+			return errors.New("deploy requires --plan DIGEST when stdin is not an interactive terminal; run boetticher plan --live first")
+		}
+		approvedDigest, approveErr := guideInteractiveDeploy(*siteDir, *ageIdentity, out)
+		if approveErr != nil {
+			return approveErr
+		}
+		*planDigestFlag = approvedDigest
+	}
 	report.dryRun = *dryRun
 	report.start("validate", "Validate desired state")
 	s, err := site.Load(*siteDir)
 	if err != nil {
 		return err
+	}
+	if !*dryRun {
+		if err := recoverInterruptedDeployment(ctx, *siteDir, s, out); err != nil {
+			return err
+		}
+	}
+	releaseManifest := artifacts.ReleaseManifest{ReleaseVersion: model.ReleaseVersion}
+	releaseDigest := ""
+	if !*dryRun {
+		var releaseErr error
+		releaseManifest, releaseDigest, releaseErr = artifacts.ImportedReleaseManifest(*siteDir)
+		if releaseErr != nil {
+			return fmt.Errorf("authenticated release bundle is required before deployment: %w", releaseErr)
+		}
+	}
+	pendingPurge, hasPendingPurge, err := loadPendingModulePurge(*siteDir, s)
+	if err != nil {
+		return fmt.Errorf("validate pending module purge: %w", err)
+	}
+	if hasPendingPurge && !*dryRun && !*confirm {
+		return fmt.Errorf("module %s purge is pending; deploy requires --confirm to apply the destructive operation", pendingPurge.intent.Module)
 	}
 	if err := validateDeployRecoveryOptions(s.Gateway.Mode, *replaceFirewall, *recreateLegacyLXCs, *confirm, *dryRun); err != nil {
 		return err
@@ -116,10 +257,58 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	report.setIdentity(model.PlatformVersion, modelRevision)
 	report.setTimingPath(filepath.Join(site.RuntimeDir(s), "deploy", report.runID+".json"))
+	if !*dryRun {
+		operationState = site.OperationState{
+			ID:            report.runID,
+			Kind:          "deploy",
+			Phase:         site.PhasePlan,
+			ModelRevision: modelRevision,
+			BundleDigest:  releaseDigest,
+		}
+		if err := site.SaveOperationState(*siteDir, operationState); err != nil {
+			return fmt.Errorf("record deployment PLAN phase: %w", err)
+		}
+		operationStarted = true
+		if registerOperationFailure != nil {
+			registerOperationFailure(func(cause error) {
+				if !operationStarted {
+					return
+				}
+				if journalErr := saveDeployOperationPhase(*siteDir, &operationState, site.PhaseFailed, cause); journalErr != nil {
+					fmt.Fprintf(out, "      FAIL: could not persist deployment failure journal: %s\n", compactError(journalErr))
+				}
+			})
+		}
+		if registerCommit != nil {
+			registerCommit(func() error {
+				if !operationStarted {
+					return nil
+				}
+				if err := saveDeployOperationPhase(*siteDir, &operationState, site.PhaseCommit, nil); err != nil {
+					return fmt.Errorf("record deployment commit phase: %w", err)
+				}
+				if err := site.SaveLastAppliedState(*siteDir, site.LastAppliedState{
+					ModelRevision: modelRevision,
+					PlanDigest:    operationState.PlanDigest,
+					BundleDigest:  releaseDigest,
+				}); err != nil {
+					return fmt.Errorf("record last-applied deployment state: %w", err)
+				}
+				if err := site.ClearOperationState(*siteDir); err != nil {
+					return fmt.Errorf("clear committed deployment operation: %w", err)
+				}
+				operationStarted = false
+				return nil
+			})
+		}
+	}
 	var airvpnProfile *preparedAirVPNProfile
 	if err := report.timed("validate", "provider", "airvpn-profile", func() error {
 		var profileErr error
-		airvpnProfile, profileErr = prepareAirVPNProfile(ctx, *siteDir, s, *ageIdentity, *dryRun, *rotateAirVPN)
+		// Deployment only consumes the retained encrypted profile. Provider
+		// generation is an explicit operator operation, so PLAN never creates
+		// credentials or depends on WAN access.
+		airvpnProfile, profileErr = prepareAirVPNProfile(ctx, *siteDir, s, *ageIdentity, true, false)
 		return profileErr
 	}); err != nil {
 		return err
@@ -166,6 +355,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			fmt.Fprintln(out, "  External contract: generated")
 		}
 		fmt.Fprintln(out, "  Destructive actions: not applied (dry-run)")
+		if hasPendingPurge {
+			fmt.Fprintf(out, "  Pending purge: PASS %s (%d exact owned guest(s)); deploy --confirm will apply it\n", pendingPurge.intent.Module, len(pendingPurge.intent.Guests))
+		}
 		var plan proxmox.Plan
 		if err := report.timed("artifacts", "local", "proxmox-plan", func() error {
 			var planErr error
@@ -201,40 +393,16 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return nil
 	}
 	report.start("artifacts", "Resolve qualified artifacts")
-	ansibleRoot, err := applianceBuildSourceRoot()
+	ansibleRoot, cleanupAnsibleSource, err := ansibleSourceRoot()
 	if err != nil {
 		return fmt.Errorf("resolve Ansible playbook source: %w", err)
 	}
+	defer cleanupAnsibleSource()
 	ansiblePlaybook := filepath.Join(ansibleRoot, "ansible", "site.yml")
 	endpointLookup := net.LookupIP
-	rootRunner := proxmoxRootSSHRunner(s, *siteDir)
-	if s.Gateway.Mode == model.GatewayModeManaged {
-		if err := proxmox.WaitForSSH(ctx, rootRunner, s.BootstrapAddress, "root", 1, 0); err != nil {
-			return fmt.Errorf("HOLD: temporary root deployment authority is unavailable; rerun bootstrap or recovery: %w", err)
-		}
-		endpointLookup = endpointLookupWithFallback(net.LookupIP, remoteEndpointResolver(ctx, rootRunner, s.BootstrapAddress, "root"))
-	}
-	if airvpnMetadata != nil {
-		if err := report.timed("artifacts", "provider", "airvpn-endpoint", func() error {
-			var bindErr error
-			firewallPlan, bindErr = firewall.BindAirVPNEndpoint(firewallPlan, endpointLookup)
-			return bindErr
-		}); err != nil {
-			return err
-		}
-		// Carry the resolved, non-secret endpoint addresses into every later
-		// variables/projection render. The profile pointer in the plan is the
-		// runtime-only metadata authority for this deployment.
-		airvpnMetadata = firewallPlan.AirVPN
-	}
-	backupPlan, err := backup.PlanFromSite(s)
-	if err != nil {
-		return err
-	}
-	storagePlan, err := storage.PlanFromSite(s)
-	if err != nil {
-		return err
-	}
+	recoveryRunner := proxmoxRootSSHRunner(s, *siteDir)
+	var backupPlan backup.Plan
+	var storagePlan storage.Plan
 	var proxmoxPlan proxmox.Plan
 	if err := report.timed("artifacts", "local", "proxmox-plan", func() error {
 		var planErr error
@@ -250,6 +418,126 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}); err != nil {
 		return err
 	}
+	var proxmoxClient *proxmox.Client
+	var node string
+	var guestStates map[int]deploymentGuestArtifactState
+	var rootRunner proxmox.SSHRunner
+	if airvpnMetadata != nil {
+		if err := report.timed("artifacts", "provider", "airvpn-endpoint", func() error {
+			var bindErr error
+			firewallPlan, bindErr = firewall.BindAirVPNEndpoint(firewallPlan, endpointLookup)
+			return bindErr
+		}); err != nil {
+			return err
+		}
+		airvpnMetadata = firewallPlan.AirVPN
+	}
+	if backupPlan, err = backup.PlanFromSite(s); err != nil {
+		return err
+	}
+	if storagePlan, err = storage.PlanFromSite(s); err != nil {
+		return err
+	}
+	proxmoxClient, _, err = loadProxmoxClientWithSnippetUser(*siteDir, s, *ageIdentity, "", false, model.DefaultAdminSSHUser)
+	if err != nil {
+		return fmt.Errorf("load Proxmox client for platform deployment: %w", err)
+	}
+	node, err = proxmoxClient.SingleNode(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve live Proxmox node: %w", err)
+	}
+	proxmoxPlan.Node = node
+	proxmoxPlan.DestructiveConfirmed = *confirm
+	proxmoxPlan.ForceFirewallRootReplacement = *replaceFirewall
+	proxmoxPlan.ForceLegacyLXCRecreation = *recreateLegacyLXCs
+	if err := validateLiveDeploymentPrerequisitesWithResolver(ctx, proxmoxClient, nil, *siteDir, s, proxmoxPlan, storagePlan, endpointLookup); err != nil {
+		return fmt.Errorf("live preflight failed before Proxmox mutation: %w", err)
+	}
+	guestPlans := deploymentGuestPlans(s, proxmoxPlan)
+	guestStates, err = inspectDeploymentGuestStates(ctx, proxmoxClient, node, guestPlans)
+	if err != nil {
+		return fmt.Errorf("observe planned guest state: %w", err)
+	}
+	if *recreateLegacyLXCs {
+		var legacyLXCTargets []string
+		if err := report.timed("artifacts", "preflight", "legacy-lxc-recovery", func() error {
+			var validateErr error
+			legacyLXCTargets, validateErr = proxmox.ValidateLegacyLXCRecreation(ctx, proxmoxClient, proxmoxPlan)
+			return validateErr
+		}); err != nil {
+			return fmt.Errorf("live preflight failed before legacy LXC recovery: %w", err)
+		}
+		fmt.Fprintf(out, "Legacy LXC recovery preflight: PASS %d exact legacy appliance(s)\n", len(legacyLXCTargets))
+	}
+	planDigest, err := digestDeploymentPlan(deploymentPlan{
+		Version: deploymentPlanFormatVersion, ReleaseVersion: releaseManifest.ReleaseVersion,
+		ReleaseDigest: releaseDigest, ModelRevision: modelRevision, Live: true,
+		Proxmox: proxmoxPlan, Firewall: firewallPlan, Storage: storagePlan, Backup: backupPlan,
+		Observations:    deploymentObservations{Node: node, Guests: deploymentGuestObservations(guestPlans, guestStates)},
+		ReplaceFirewall: *replaceFirewall, RecreateLegacy: *recreateLegacyLXCs,
+	})
+	if err != nil {
+		return fmt.Errorf("digest immutable deployment plan: %w", err)
+	}
+	operationState.PlanDigest = planDigest
+	operationState.BundleDigest = releaseDigest
+	operationState.Phase = site.PhaseApply
+	if *planDigestFlag != "" && *planDigestFlag != planDigest {
+		return fmt.Errorf("stale deployment plan: supplied %s, current live plan is %s", *planDigestFlag, planDigest)
+	}
+	if registerCleanup == nil {
+		return errors.New("deployment cleanup registration is required before Apply authority")
+	}
+	durableOperatorPublicKey, err := operatorPublicKeyForSite(s)
+	if err != nil {
+		return fmt.Errorf("resolve durable operator identity before Apply: %w", err)
+	}
+	temporaryPrivateKey, deploymentPublicKey, err := newTemporaryRootIdentity()
+	if err != nil {
+		return err
+	}
+	cleanupGuests, err := operationCleanupGuests(proxmoxPlan)
+	if err != nil {
+		for index := range temporaryPrivateKey {
+			temporaryPrivateKey[index] = 0
+		}
+		return err
+	}
+	operationState.TemporaryPublicKey = deploymentPublicKey
+	operationState.TemporaryHostAddress = s.BootstrapAddress
+	operationState.TemporaryCleanupGuests = cleanupGuests
+	if err := site.SaveOperationState(*siteDir, operationState); err != nil {
+		for index := range temporaryPrivateKey {
+			temporaryPrivateKey[index] = 0
+		}
+		return fmt.Errorf("journal temporary Apply authority before mutation: %w", err)
+	}
+	rootCleanup := newTemporaryRootCleanup(s, *siteDir, deploymentPublicKey, temporaryPrivateKey)
+	// Mark the host as owned before the first remote authority mutation. If key
+	// installation fails after changing authorized_keys, the registered cleanup
+	// still attempts to remove this exact key.
+	rootCleanup.hostEstablished()
+	registerCleanup(func(cleanupCtx context.Context) error {
+		journalErr := saveDeployOperationPhase(*siteDir, &operationState, site.PhaseCleanup, nil)
+		cleanupErr := rootCleanup.revoke(cleanupCtx)
+		return combineDeploymentErrors(journalErr, cleanupErr)
+	})
+	if err := proxmox.InstallTemporaryRootAccess(ctx, recoveryRunner, s.BootstrapAddress, "root", deploymentPublicKey); err != nil {
+		return fmt.Errorf("acquire temporary Apply authority: %w", err)
+	}
+	rootRunner = recoveryRunner.WithIdentityData(temporaryPrivateKey).FreshConnection()
+	// Host operations use the HOME-side address directly. Removing the
+	// generated host alias also prevents its durable operator IdentityFile from
+	// entering the temporary-root authentication set.
+	rootRunner.ConfigFile = ""
+	rootRunner.HostAlias = ""
+	rootRunner.HostKeyAlias = model.LogicalProxmoxIdentity
+	if err := proxmoxClient.SetSnippetRunner(rootRunner, s.BootstrapAddress, "root"); err != nil {
+		return fmt.Errorf("bind temporary Apply authority to Proxmox host operations: %w", err)
+	}
+	if err := validateLiveDeploymentPrerequisitesWithResolver(ctx, proxmoxClient, rootRunner, *siteDir, s, proxmoxPlan, storagePlan, endpointLookup); err != nil {
+		return fmt.Errorf("live preflight failed after exact plan acceptance: %w", err)
+	}
 	report.complete()
 	report.start("credentials-pki", "Prepare credentials and PKI")
 	if err := report.timed("credentials-pki", "local", "static-readiness", func() error {
@@ -261,16 +549,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err != nil {
 		return err
 	}
-	operatorPublicKey, err := loadBootstrapOperatorKey(*siteDir)
-	if err != nil {
-		return err
-	}
 	var variables []byte
 	if err := report.timed("credentials-pki", "local", "ansible-variables", func() error {
 		if airvpnMetadata == nil {
-			variables, err = ansible.VariablesWithOperatorKey(s, operatorPublicKey)
+			variables, err = ansible.VariablesWithOperatorKey(s, durableOperatorPublicKey)
 		} else {
-			variables, err = ansible.VariablesWithOperatorKeyAndAirVPN(s, operatorPublicKey, *airvpnMetadata)
+			variables, err = ansible.VariablesWithOperatorKeyAndAirVPN(s, durableOperatorPublicKey, *airvpnMetadata)
 		}
 		return err
 	}); err != nil {
@@ -284,31 +568,10 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err != nil {
 		return err
 	}
-	portalSourceDir, err := absolutePortalSourceDir(*siteDir)
-	if err != nil {
-		return err
-	}
-	portalContentDigest, err := portal.ContentDigest(portalSourceDir)
-	if err != nil {
-		return fmt.Errorf("digest generated portal: %w", err)
-	}
-	portalArchiveDir := filepath.Join(site.RuntimeDir(s), "portal")
-	portalSourceArchive := filepath.Join(portalArchiveDir, portalContentDigest+".tar")
-	if err := report.timed("credentials-pki", "local", "portal-archive", func() error {
-		return portal.ContentArchive(portalSourceDir, portalSourceArchive)
-	}); err != nil {
-		return fmt.Errorf("archive generated portal: %w", err)
-	}
-	runtimeVariables["portal_source_dir"] = portalSourceDir
-	runtimeVariables["portal_content_digest"] = portalContentDigest
-	runtimeVariables["portal_source_archive"] = portalSourceArchive
 	runtimeVariables["boetticher_appliance_artifact"] = true
 	// Agent installation is enabled only in the post-Pulse bootstrap pass,
 	// after the scoped report token and encrypted credential projection exist.
 	runtimeVariables["pulse_agent_install_enabled"] = false
-	// StreamDeck activation is enabled only in the post-Pulse pass, after its
-	// shared read token and encrypted credential projection exist.
-	runtimeVariables["streamdeck_runtime_credentials_ready"] = false
 	monitoringEnabled := modules.IsEnabled(s, "monitoring")
 	aiopsEnabled := modules.IsEnabled(s, "aiops")
 	secretValues := map[string]string{}
@@ -396,24 +659,16 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	runtimeVariables["client_ca_pem"] = authority.RootCertPEM + authority.IssuingCertPEM
 	runtimeVariables["pulse_server_ca_pem"] = authority.RootCertPEM + authority.IssuingCertPEM
-	if *proxmoxCA != "" {
-		proxmoxCAPEM, readErr := os.ReadFile(*proxmoxCA)
-		if readErr != nil {
-			return fmt.Errorf("read Proxmox API CA file: %w", readErr)
-		}
-		runtimeVariables["proxmox_ca_pem"] = string(proxmoxCAPEM)
-	} else if proxmoxCredentials, loadErr := site.LoadProxmoxCredentials(*siteDir, s, *ageIdentity); loadErr != nil {
+	runtimeVariables["step_ca_root_cert_pem"] = authority.RootCertPEM
+	runtimeVariables["step_ca_intermediate_cert_pem"] = authority.IssuingCertPEM
+	runtimeVariables["boetticher_skip_step_ca"] = true
+	if proxmoxCredentials, loadErr := site.LoadProxmoxCredentials(*siteDir, s, *ageIdentity); loadErr != nil {
 		return fmt.Errorf("load encrypted Proxmox credentials for API trust projection: %w", loadErr)
 	} else if proxmoxCredentials.CAPEM != "" {
 		runtimeVariables["proxmox_ca_pem"] = proxmoxCredentials.CAPEM
 	}
 	inventoryPath := filepath.Join(*siteDir, "generated", "ansible", "inventory.ini")
-	csrDir := filepath.Join(site.RuntimeDir(s), "pki")
-	if err := os.MkdirAll(csrDir, 0700); err != nil {
-		return fmt.Errorf("create controller PKI runtime directory: %w", err)
-	}
 	runtimeVariables["pki_bootstrap_phase"] = true
-	runtimeVariables["pki_csr_output_dir"] = csrDir
 	if err := report.timed("credentials-pki", "local", "projections", func() error {
 		return writeModelProjectionsWithResolverAndAirVPN(*siteDir, s, endpointLookup, airvpnMetadata)
 	}); err != nil {
@@ -426,13 +681,13 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	}
 	variables = append(variables, '\n')
 	report.complete()
-	proxmoxPlan.OperatorPublicKey = operatorPublicKey
+	proxmoxPlan.OperatorPublicKey = durableOperatorPublicKey
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		for _, guest := range proxmoxPlan.Guests {
 			if guest.Name != "lab-fw-01" {
 				continue
 			}
-			cloudInit, renderErr := proxmox.RenderFirewallCloudInitWithKey(guest, operatorPublicKey)
+			cloudInit, renderErr := proxmox.RenderFirewallCloudInitWithKey(guest, durableOperatorPublicKey)
 			if renderErr != nil {
 				return fmt.Errorf("render firewall first-boot cloud-init: %w", renderErr)
 			}
@@ -443,48 +698,35 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	proxmoxPlan.PrivilegedRunner = rootRunner
 	proxmoxPlan.PrivilegedAddress = s.BootstrapAddress
 	proxmoxPlan.PrivilegedUser = "root"
-	rootCleanup := newTemporaryRootCleanup(s, *siteDir, operatorPublicKey)
-	registerCleanup(rootCleanup.revoke)
 	report.start("proxmox", "Reconcile Proxmox platform and storage")
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		// Reconcile the live host-side jump policy from the same canonical
-		// destination list as the generated projection, including any
-		// product-owned retained guests that remain in the SSH contract.
-		// Arm cleanup before the remote command because the command can make
-		// partial changes before reporting an error.
-		rootCleanup.hostEstablished()
-		if err := proxmox.ConfigureIdentities(ctx, rootRunner, s.BootstrapAddress, "root", operatorPublicKey, jumpDestinations(s)); err != nil {
-			return fmt.Errorf("reconcile Proxmox administrative and bastion identities: %w", err)
+		// Host identity reconciliation is an apply action. Keep it behind the
+		// durable plan journal so every live mutation has a recoverable owner.
+		// Reconcile the live host-side jump policy from the canonical destinations
+		// only after the read-only preflight and APPLY journal are complete.
+		if err := proxmox.ConfigureBastionPolicy(ctx, rootRunner, s.BootstrapAddress, "root", jumpDestinations(s)); err != nil {
+			return fmt.Errorf("reconcile Proxmox bastion policy: %w", err)
 		}
 	}
-	if err := proxmox.WaitForSSH(ctx, rootRunner, s.BootstrapAddress, "root", 1, 0); err != nil {
-		return fmt.Errorf("HOLD: temporary root deployment authority is unavailable; rerun bootstrap or recovery: %w", err)
-	}
-	proxmoxClient, _, err := loadProxmoxClientWithSnippetUser(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure, "root")
-	if err != nil {
-		return fmt.Errorf("load Proxmox client for platform deployment: %w", err)
-	}
-	node, err := proxmoxClient.SingleNode(ctx)
-	if err != nil {
-		return fmt.Errorf("resolve live Proxmox node: %w", err)
-	}
-	proxmoxPlan.Node = node
-	proxmoxPlan.DestructiveConfirmed = *confirm
-	proxmoxPlan.ForceFirewallRootReplacement = *replaceFirewall
-	proxmoxPlan.ForceLegacyLXCRecreation = *recreateLegacyLXCs
-	if err := validateLiveDeploymentPrerequisitesWithResolver(ctx, proxmoxClient, rootRunner, *siteDir, s, proxmoxPlan, storagePlan, endpointLookup); err != nil {
-		return fmt.Errorf("live preflight failed before Proxmox mutation: %w", err)
-	}
-	if *recreateLegacyLXCs {
-		var legacyLXCTargets []string
-		if err := report.timed("proxmox", "preflight", "legacy-lxc-recovery", func() error {
-			var validateErr error
-			legacyLXCTargets, validateErr = proxmox.ValidateLegacyLXCRecreation(ctx, proxmoxClient, proxmoxPlan)
-			return validateErr
+	if hasPendingPurge {
+		pendingPurge.plan.Node = proxmoxPlan.Node
+		if err := report.timed("proxmox", "apply", "module-purge", func() error {
+			return proxmox.PurgeModule(ctx, proxmoxClient, pendingPurge.plan, pendingPurge.intent.Module)
 		}); err != nil {
-			return fmt.Errorf("live preflight failed before legacy LXC recovery: %w", err)
+			return err
 		}
-		fmt.Fprintf(out, "Legacy LXC recovery preflight: PASS %d exact legacy appliance(s)\n", len(legacyLXCTargets))
+		report.recordMutation("Proxmox", pendingPurge.intent.Module, "owned module guests purged", true)
+		declaration, ok := findDeclaration(pendingPurge.purgeSite, pendingPurge.intent.Module)
+		if !ok {
+			return fmt.Errorf("module %s purge declaration disappeared during deployment", pendingPurge.intent.Module)
+		}
+		if err := site.PurgeModuleSecrets(*siteDir, pendingPurge.purgeSite, *ageIdentity, pendingPurge.intent.Module, declaration); err != nil {
+			return fmt.Errorf("remove module secrets after purge: %w", err)
+		}
+		if err := site.ClearPurgeIntent(*siteDir); err != nil {
+			return fmt.Errorf("commit module purge completion: %w", err)
+		}
+		report.recordMutation("Generated state", "module purge intent", "cleared after verified purge", true)
 	}
 	var pulseProxmoxToken string
 	if monitoringEnabled {
@@ -574,10 +816,14 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	report.start("appliances", "Reconcile appliance guests")
 	var firewallRunner proxmox.SSHRunner
 	if s.Gateway.Mode == model.GatewayModeManaged {
-		firewallRunner = applianceSSHRunner(s, *siteDir, "lab-fw-01")
+		firewallRunner = applianceSSHRunnerWithIdentity(s, *siteDir, "lab-fw-01", temporaryPrivateKey)
 		firewallGuest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
+		// Cloud-init may have installed the temporary key before SSH becomes
+		// reachable. Register the exact owned guest before the readiness probe
+		// so cleanup can fall back through the Proxmox host if boot stalls.
+		rootCleanup.guestEstablished(firewallGuest)
 		if err := report.timed("appliances", "readiness", firewallGuest.Name, func() error {
-			return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, firewallRunner.FreshConnection(), firewallGuest, operatorPublicKey, deploymentKnownHosts(*siteDir), firewallGuest.Hostname+"."+s.Network.Domain, func() {
+			return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, firewallRunner.FreshConnection(), firewallGuest, deploymentPublicKey, deploymentKnownHosts(*siteDir), firewallGuest.Hostname+"."+s.Network.Domain, func() {
 				rootCleanup.guestEstablished(firewallGuest)
 			})
 		}); err != nil {
@@ -589,7 +835,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		if err := installCredentialsForGuest(ctx, firewallRunner, "lab-fw-01", credentialBindings, secretValues); err != nil {
 			return fmt.Errorf("install managed gateway credentials: %w", err)
 		}
-		if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, "lab-fw-01", report); err != nil {
+		if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, "lab-fw-01", report, temporaryPrivateKey); err != nil {
 			return fmt.Errorf("HOLD: configure managed gateway before dependent appliances: %w", err)
 		}
 		if err := report.timed("appliances", "readiness", firewallGuest.Name+"/gateway", func() error {
@@ -598,11 +844,11 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return fmt.Errorf("HOLD: managed gateway did not pass runtime readiness before dependent appliances: %w", err)
 		}
 	}
-	guestStates := map[int]deploymentGuestArtifactState{}
 	if err := report.timed("appliances", "preflight", "guest-state", func() error {
-		var err error
-		guestStates, err = inspectDeploymentGuestStates(ctx, proxmoxClient, proxmoxPlan.Node, deploymentGuestPlans(s, proxmoxPlan))
-		return err
+		if guestStates == nil {
+			return errors.New("live guest observations were not captured before APPLY")
+		}
+		return nil
 	}); err != nil {
 		return err
 	}
@@ -611,16 +857,13 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return fmt.Errorf("resolve DNS readiness contract: %w", err)
 	}
 	for _, module := range deploymentModuleNames(s) {
-		if !modules.IsEnabled(s, module) && module != "portal" {
+		if !modules.IsEnabled(s, module) {
 			continue
 		}
 		replacedGuests := make([]proxmox.GuestPlan, 0)
 		missingGuests := make([]proxmox.GuestPlan, 0)
 		for _, candidate := range proxmoxPlan.Guests {
 			matches := candidate.Owner == "boetticher/module/"+module
-			if module == "portal" {
-				matches = candidate.Name == "lab-portal-01"
-			}
 			if !matches || candidate.Kind != proxmox.KindLXC {
 				continue
 			}
@@ -657,15 +900,15 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		}
 		for _, guest := range proxmoxPlan.Guests {
 			matches := guest.Owner == "boetticher/module/"+module
-			if module == "portal" {
-				matches = guest.Name == "lab-portal-01"
-			}
 			if !matches || guest.Kind != proxmox.KindLXC {
 				continue
 			}
-			guestRunner := applianceSSHRunner(s, *siteDir, guest.Name)
+			guestRunner := applianceSSHRunnerWithIdentity(s, *siteDir, guest.Name, temporaryPrivateKey)
+			// Register before waiting for SSH: first boot may already have
+			// accepted the temporary key while the guest service is still down.
+			rootCleanup.guestEstablished(guest)
 			if err := report.timed("appliances", "readiness", guest.Name, func() error {
-				return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, guestRunner.FreshConnection(), guest, operatorPublicKey, deploymentKnownHosts(*siteDir), guest.Hostname+"."+s.Network.Domain, func() {
+				return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, guestRunner.FreshConnection(), guest, deploymentPublicKey, deploymentKnownHosts(*siteDir), guest.Hostname+"."+s.Network.Domain, func() {
 					rootCleanup.guestEstablished(guest)
 				})
 			}); err != nil {
@@ -677,9 +920,34 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			if module == "dns" {
 				state := guestStates[guest.VMID]
 				if needsInitialDNSConfiguration(state) {
-					if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, guest.Name, report); err != nil {
+					if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, guest.Name, report, temporaryPrivateKey); err != nil {
 						return fmt.Errorf("HOLD: configure DNS guest %s before dependent appliances: %w", guest.Name, err)
 					}
+				}
+				if guest.Name == "lab-dns-01" {
+					stepCAPassword, loadErr := platformSecrets.Get("step_ca_password")
+					if loadErr != nil {
+						return fmt.Errorf("load encrypted Smallstep CA password: %w", loadErr)
+					}
+					runtimeVariables["boetticher_skip_step_ca"] = false
+					runtimeVariables["step_ca_intermediate_key_pem"] = authority.IssuingKeyPEM
+					runtimeVariables["step_ca_password"] = stepCAPassword
+					variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
+					if err != nil {
+						return fmt.Errorf("encode Smallstep CA variables: %w", err)
+					}
+					variables = append(variables, '\n')
+					if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, guest.Name, report, temporaryPrivateKey); err != nil {
+						return fmt.Errorf("HOLD: configure Smallstep CA on %s: %w", guest.Name, err)
+					}
+					delete(runtimeVariables, "step_ca_intermediate_key_pem")
+					delete(runtimeVariables, "step_ca_password")
+					runtimeVariables["boetticher_skip_step_ca"] = true
+					variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
+					if err != nil {
+						return fmt.Errorf("encode post-CA Ansible variables: %w", err)
+					}
+					variables = append(variables, '\n')
 				}
 				if guest.Name == "lab-dns-01" && s.Gateway.Mode == model.GatewayModeManaged {
 					needsRestart, err := installPowerDNSTSIG(ctx, guestRunner, guest.Address, dnsPlan, secretValues["firewall-ddns-tsig"])
@@ -741,9 +1009,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			var finalVariables []byte
 			var variablesErr error
 			if airvpnMetadata == nil {
-				finalVariables, variablesErr = ansible.VariablesWithOperatorKeyAndUpstream(s, upstream, operatorPublicKey)
+				finalVariables, variablesErr = ansible.VariablesWithOperatorKeyAndUpstream(s, upstream, durableOperatorPublicKey)
 			} else {
-				finalVariables, variablesErr = ansible.VariablesWithOperatorKeyAndUpstreamAndAirVPN(s, upstream, operatorPublicKey, *airvpnMetadata)
+				finalVariables, variablesErr = ansible.VariablesWithOperatorKeyAndUpstreamAndAirVPN(s, upstream, durableOperatorPublicKey, *airvpnMetadata)
 			}
 			if variablesErr != nil {
 				return fmt.Errorf("HOLD: render published service Ansible variables: %w", variablesErr)
@@ -761,7 +1029,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 				return fmt.Errorf("HOLD: encode published service Ansible variables: %w", err)
 			}
 			variables = append(variables, '\n')
-			if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, "lab-fw-01", report); err != nil {
+			if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, "lab-fw-01", report, temporaryPrivateKey); err != nil {
 				return fmt.Errorf("HOLD: activate published services on managed gateway: %w", err)
 			}
 			if err := report.timed("network", "readiness", "lab-fw-01/gateway", func() error {
@@ -793,134 +1061,28 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	// readiness checks above before this all-host bootstrap/network pass. That
 	// foundation barrier makes independent host progress safe; the later
 	// health phase remains the final live gate.
-	if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report); err != nil {
+	if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report, temporaryPrivateKey); err != nil {
 		return err
 	}
 	report.complete()
 	report.start("services", "Configure services and runtime credentials")
-	loggingClientCertificates, loggingCollectorCertificate, err := signLoggingCertificates(authority, s, csrDir)
-	if err != nil {
-		return fmt.Errorf("sign logging transport certificates: %w", err)
-	}
-	if err := installModuleRuntimeConfigs(ctx, *siteDir, s, proxmoxPlan); err != nil {
+	if err := installModuleRuntimeConfigs(ctx, *siteDir, s, proxmoxPlan, temporaryPrivateKey); err != nil {
 		return err
 	}
 	report.recordMutation("Services", "appliance runtime configuration", "reconciled", true)
-	portalCSR, err := os.ReadFile(filepath.Join(csrDir, "portal.csr.pem"))
-	if err != nil {
-		return fmt.Errorf("read endpoint-generated portal CSR: %w", err)
-	}
-	var monitorCertificate pki.ServerCertificate
-	var bifrostCertificate pki.ServerCertificate
-	var octoprintCertificate pki.ServerCertificate
-	var arrCertificate pki.ServerCertificate
-	var streamDeckCertificate pki.ClientCertificate
-	var gatusCertificate pki.ServerCertificate
-	var aiopsCertificates map[string]string
-	if monitoringEnabled {
-		monitorCSR, readErr := os.ReadFile(filepath.Join(csrDir, "monitor.csr.pem"))
-		if readErr != nil {
-			return fmt.Errorf("read endpoint-generated monitor CSR: %w", readErr)
-		}
-		monitorCertificate, err = signOrReuseServerCertificate(authority, string(monitorCSR), csrDir, "monitor", "monitor", s.Network.Domain, []string{"lab-monitor-01." + s.Network.Domain})
-		if err != nil {
-			return fmt.Errorf("sign monitor endpoint CSR: %w", err)
-		}
-	}
-	if modules.IsEnabled(s, "bifrost") {
-		bifrostCSR, readErr := os.ReadFile(filepath.Join(csrDir, "bifrost.csr.pem"))
-		if readErr != nil {
-			return fmt.Errorf("read endpoint-generated Bifrost CSR: %w", readErr)
-		}
-		bifrostCertificate, err = signOrReuseServerCertificate(authority, string(bifrostCSR), csrDir, "bifrost", "bifrost", s.Network.Domain, []string{"ai." + s.Network.Domain, "lab-bifrost-01." + s.Network.Domain})
-		if err != nil {
-			return fmt.Errorf("sign Bifrost endpoint CSR: %w", err)
-		}
-	}
-	if modules.IsEnabled(s, "printer") {
-		octoprintCSR, readErr := os.ReadFile(filepath.Join(csrDir, "octoprint.csr.pem"))
-		if readErr != nil {
-			return fmt.Errorf("read endpoint-generated OctoPrint CSR: %w", readErr)
-		}
-		octoprintCertificate, err = signOrReuseServerCertificate(authority, string(octoprintCSR), csrDir, "octoprint", "octoprint", s.Network.Domain, []string{"printer." + s.Network.Domain, "lab-printer-01." + s.Network.Domain})
-		if err != nil {
-			return fmt.Errorf("sign OctoPrint endpoint CSR: %w", err)
-		}
-	}
-	if modules.IsEnabled(s, "arr") {
-		arrCSR, readErr := os.ReadFile(filepath.Join(csrDir, "arr.csr.pem"))
-		if readErr != nil {
-			return fmt.Errorf("read endpoint-generated arr CSR: %w", readErr)
-		}
-		arrCertificate, err = signOrReuseServerCertificate(authority, string(arrCSR), csrDir, "arr", "sonarr", s.Network.Domain, []string{"radarr." + s.Network.Domain, "lab-arr-01." + s.Network.Domain})
-		if err != nil {
-			return fmt.Errorf("sign arr endpoint CSR: %w", err)
-		}
-	}
-	if modules.IsEnabled(s, "streamdeck") {
-		streamDeckCSR, readErr := os.ReadFile(filepath.Join(csrDir, "streamdeck.csr.pem"))
-		if readErr != nil {
-			return fmt.Errorf("read endpoint-generated StreamDeck CSR: %w", readErr)
-		}
-		streamDeckCertificate, err = signOrReuseServiceClientCertificate(authority, string(streamDeckCSR), csrDir, "streamdeck", "lab-streamdeck-01")
-		if err != nil {
-			return fmt.Errorf("sign StreamDeck client CSR: %w", err)
-		}
-	}
-	if modules.IsEnabled(s, "aiops") {
-		aiopsCertificates, err = signAIOpsCertificates(authority, s, csrDir)
-		if err != nil {
-			return fmt.Errorf("sign AIOps endpoint certificates: %w", err)
-		}
-	}
-	if modules.IsEnabled(s, "gatus") {
-		csr, readErr := os.ReadFile(filepath.Join(csrDir, "gatus.csr.pem"))
-		if readErr != nil {
-			return fmt.Errorf("read endpoint-generated Gatus CSR: %w", readErr)
-		}
-		gatusCertificate, err = signOrReuseServerCertificate(authority, string(csr), csrDir, "gatus", "gatus", s.Network.Domain, []string{"lab-gatus-01." + s.Network.Domain})
-		if err != nil {
-			return fmt.Errorf("sign Gatus endpoint CSR: %w", err)
-		}
-	}
-	portalCertificate, err := signOrReuseServerCertificate(authority, string(portalCSR), csrDir, "portal", "portal", s.Network.Domain, []string{"lab-portal-01." + s.Network.Domain})
-	if err != nil {
-		return fmt.Errorf("sign portal endpoint CSR: %w", err)
-	}
 	runtimeVariables["pki_bootstrap_phase"] = false
-	if monitoringEnabled {
-		runtimeVariables["monitor_server_cert_pem"] = monitorCertificate.ChainPEM
-	}
-	if modules.IsEnabled(s, "bifrost") {
-		runtimeVariables["bifrost_server_cert_pem"] = bifrostCertificate.ChainPEM
-	}
-	if modules.IsEnabled(s, "printer") {
-		runtimeVariables["octoprint_server_cert_pem"] = octoprintCertificate.ChainPEM
-	}
-	if modules.IsEnabled(s, "arr") {
-		runtimeVariables["arr_server_cert_pem"] = arrCertificate.ChainPEM
-	}
-	if modules.IsEnabled(s, "streamdeck") {
-		runtimeVariables["streamdeck_client_cert_pem"] = streamDeckCertificate.ChainPEM
-	}
-	if modules.IsEnabled(s, "gatus") {
-		runtimeVariables["gatus_server_cert_pem"] = gatusCertificate.ChainPEM
-	}
-	for name, certificate := range aiopsCertificates {
-		runtimeVariables[name] = certificate
-	}
-	runtimeVariables["portal_server_cert_pem"] = portalCertificate.ChainPEM
-	runtimeVariables["logging_client_certificates"] = loggingClientCertificates
-	runtimeVariables["logging_collector_certificate"] = loggingCollectorCertificate
 	variables, err = json.MarshalIndent(runtimeVariables, "", "  ")
 	if err != nil {
 		return err
 	}
 	variables = append(variables, '\n')
-	if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseServices, report); err != nil {
+	if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseServices, report, temporaryPrivateKey); err != nil {
 		return fmt.Errorf("install endpoint-signed certificates: %w", err)
 	}
 	report.complete()
+	if err := saveDeployOperationPhase(*siteDir, &operationState, site.PhaseVerify, nil); err != nil {
+		return fmt.Errorf("record deployment verify phase: %w", err)
+	}
 	report.start("health", "Run live health gates")
 	var pulseForward *proxmox.SSHLocalForward
 	var aiRouterForward *proxmox.SSHLocalForward
@@ -940,24 +1102,24 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return fmt.Errorf("open Pulse API tunnel through Proxmox bastion: %w", err)
 		}
 		pulseBaseURL := "https://" + pulseForward.Address()
-		clientCertificate, issueErr := pki.IssueClient(authority, "boetticher-reconciler", s.Network.Domain, time.Now().UTC())
-		if issueErr != nil {
-			return fmt.Errorf("issue runtime Pulse reconciliation certificate: %w", issueErr)
-		}
 		pulseAdmin, clientErr := pulse.NewAdminClient(pulse.ClientConfig{
 			BaseURL: pulseBaseURL, AdminUser: "admin", AdminPassword: pulseAdminPassword,
-			CAPEM: authority.IssuingCertPEM, ClientCertPEM: clientCertificate.CertPEM, ClientKeyPEM: clientCertificate.KeyPEM,
+			CAPEM:      authority.RootCertPEM,
 			ServerName: "monitor." + s.Network.Domain,
 		})
 		if clientErr != nil {
 			return clientErr
 		}
 		if aiopsEnabled {
+			clientCertificate, issueErr := pki.IssueClient(authority, "boetticher-reconciler", s.Network.Domain, time.Now().UTC())
+			if issueErr != nil {
+				return fmt.Errorf("issue runtime AIOps canary certificate: %w", issueErr)
+			}
 			aiRouterForward, err = bastionRunner.StartLocalForward(ctx, s.BootstrapAddress, "lab-jump", "10.10.20.60", 443)
 			if err != nil {
 				return fmt.Errorf("open AI Router canary tunnel through Proxmox bastion: %w", err)
 			}
-			if err := qualifyAndConfigureAIOps(ctx, *siteDir, *ageIdentity, s, authority, clientCertificate, pulseAdmin, pulseBaseURL, aiRouterForward.Address(), runtimeVariables, ansiblePlaybook, inventoryPath, report); err != nil {
+			if err := qualifyAndConfigureAIOps(ctx, *siteDir, *ageIdentity, s, authority, clientCertificate, pulseAdmin, pulseBaseURL, aiRouterForward.Address(), runtimeVariables, ansiblePlaybook, inventoryPath, report, temporaryPrivateKey); err != nil {
 				return fmt.Errorf("HOLD: AIOps qualification failed: %w", err)
 			}
 		}
@@ -983,13 +1145,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		} else if tokenErr != nil {
 			return fmt.Errorf("load encrypted Pulse read token: %w", tokenErr)
 		}
-		readClientCertificate, clientErr := pki.IssueClient(authority, "boetticher-pulse-read", s.Network.Domain, time.Now().UTC())
-		if clientErr != nil {
-			return fmt.Errorf("issue Pulse read client certificate: %w", clientErr)
-		}
 		pulseRead, clientErr := pulse.NewReadClient(pulse.ClientConfig{
 			BaseURL: pulseBaseURL, APIToken: readToken,
-			CAPEM: authority.IssuingCertPEM, ClientCertPEM: readClientCertificate.CertPEM, ClientKeyPEM: readClientCertificate.KeyPEM,
+			CAPEM:      authority.RootCertPEM,
 			ServerName: "monitor." + s.Network.Domain,
 		})
 		if clientErr != nil {
@@ -1010,7 +1168,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			report.recordMutation("Secrets", "pulse_api_token", "credential refreshed", true)
 			pulseRead, clientErr = pulse.NewReadClient(pulse.ClientConfig{
 				BaseURL: pulseBaseURL, APIToken: readToken,
-				CAPEM: authority.IssuingCertPEM, ClientCertPEM: readClientCertificate.CertPEM, ClientKeyPEM: readClientCertificate.KeyPEM,
+				CAPEM:      authority.RootCertPEM,
 				ServerName: "monitor." + s.Network.Domain,
 			})
 			if clientErr != nil {
@@ -1026,20 +1184,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return healthErr
 		})
 		if err != nil {
-			if !(modules.IsEnabled(s, "streamdeck") && pulse.IsForbidden(err)) {
-				return fmt.Errorf("verify Pulse health: %w", err)
-			}
-			if refreshErr := refreshPulseReadToken(); refreshErr != nil {
-				return fmt.Errorf("refresh Pulse read token after forbidden health response: %w", refreshErr)
-			}
-			err = report.timed("health", "health", "pulse-refresh", func() error {
-				var healthErr error
-				health, healthErr = pulseRead.Health(ctx)
-				return healthErr
-			})
-			if err != nil {
-				return fmt.Errorf("verify Pulse health after read-token refresh: %w", err)
-			}
+			return fmt.Errorf("verify Pulse health: %w", err)
 		}
 		if !strings.EqualFold(health.Status, "healthy") {
 			return fmt.Errorf("verify Pulse health: unexpected status %q", health.Status)
@@ -1095,7 +1240,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 						StrictHostKey: "yes", HostKeyAlias: model.LogicalProxmoxIdentity,
 					}
 				} else {
-					agentRunner = applianceSSHRunner(s, *siteDir, target)
+					agentRunner = applianceSSHRunnerWithIdentity(s, *siteDir, target, temporaryPrivateKey)
 				}
 				if err := installCredentialsForGuest(ctx, agentRunner, target, agentBindings, map[string]string{"pulse_agent_token": agentToken}); err != nil {
 					return fmt.Errorf("install Pulse agent credential on %s: %w", target, err)
@@ -1125,48 +1270,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			}
 			agentVariables = append(agentVariables, '\n')
 			for _, target := range ansible.MonitoringAgentTargets(s) {
-				if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, agentVariables, target, report); err != nil {
+				if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, agentVariables, target, report, temporaryPrivateKey); err != nil {
 					return fmt.Errorf("install Pulse agent on %s: %w", target, err)
 				}
 			}
 		}
 
-		streamDeckBindings, bindingErr := streamDeckCredentialBindings(s)
-		if bindingErr != nil {
-			return bindingErr
-		}
-		if len(streamDeckBindings) > 0 {
-			streamDeckRunner := applianceSSHRunner(s, *siteDir, "lab-streamdeck-01")
-			if err := installCredentialsForGuest(ctx, streamDeckRunner, "lab-streamdeck-01", streamDeckBindings, map[string]string{"pulse_api_token": readToken}); err != nil {
-				return fmt.Errorf("install StreamDeck Pulse credential: %w", err)
-			}
-			streamDeckDropIns, dropInErr := credentialDropIns(streamDeckBindings)
-			if dropInErr != nil {
-				return dropInErr
-			}
-			existingDropIns, ok := runtimeVariables["credential_dropins"].(map[string]map[string]string)
-			if !ok {
-				existingDropIns = map[string]map[string]string{}
-			}
-			for guest, dropIns := range streamDeckDropIns {
-				if existingDropIns[guest] == nil {
-					existingDropIns[guest] = map[string]string{}
-				}
-				for unit, content := range dropIns {
-					existingDropIns[guest][unit] = content
-				}
-			}
-			runtimeVariables["credential_dropins"] = existingDropIns
-			runtimeVariables["streamdeck_runtime_credentials_ready"] = true
-			streamDeckVariables, marshalErr := json.MarshalIndent(runtimeVariables, "", "  ")
-			if marshalErr != nil {
-				return marshalErr
-			}
-			streamDeckVariables = append(streamDeckVariables, '\n')
-			if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, streamDeckVariables, "lab-streamdeck-01", ansible.PhaseHealth, report); err != nil {
-				return fmt.Errorf("install StreamDeck runtime: %w", err)
-			}
-		}
 	}
 	if pulseForward != nil {
 		if err := pulseForward.Close(); err != nil {
@@ -1198,11 +1307,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return err
 	}
 	report.recordMutation("Generated state", "site projections", "persisted", true)
-	if err := report.timed("persist", "local", "portal", func() error {
-		return rebuildPortal(*siteDir, s)
-	}); err != nil {
-		return err
-	}
 	report.complete()
 	return nil
 }
@@ -1275,12 +1379,108 @@ func waitForDeploymentRoot(ctx context.Context, hostRunner proxmox.CommandRunner
 	return fmt.Errorf("initial root transport failed after bounded guest re-arm attempts: %w", lastErr)
 }
 
-func absolutePortalSourceDir(siteDir string) (string, error) {
-	absoluteSiteDir, err := filepath.Abs(siteDir)
+type interruptedDeploymentCleanup func(context.Context, string, model.Site, []proxmox.GuestPlan, string) error
+
+// recoverInterruptedDeployment removes authority left by a controller crash.
+// It runs before a new deploy operation is journaled and uses only the
+// independent operator/root transport; no private temporary key is needed for
+// this recovery because the host can remove the exact public-key line from
+// each bounded guest.
+func recoverInterruptedDeployment(ctx context.Context, siteDir string, s model.Site, out io.Writer) error {
+	return recoverInterruptedDeploymentWith(ctx, siteDir, s, out, func(cleanupCtx context.Context, cleanupSiteDir string, cleanupSite model.Site, guests []proxmox.GuestPlan, publicKey string) error {
+		return revokeTemporaryRootAccessForGuestsWithFallback(cleanupCtx, cleanupSite, cleanupSiteDir, guests, publicKey, true, proxmox.RevokeTemporaryRootAccess, proxmox.RevokeTemporaryRootAccessThroughHost)
+	})
+}
+
+func recoverInterruptedDeploymentWith(ctx context.Context, siteDir string, s model.Site, out io.Writer, cleanup interruptedDeploymentCleanup) error {
+	state, found, err := site.LoadOperationState(siteDir)
 	if err != nil {
-		return "", fmt.Errorf("resolve portal source directory: %w", err)
+		return fmt.Errorf("HOLD: load interrupted deployment state: %w", err)
 	}
-	return filepath.Join(absoluteSiteDir, "generated", "portal"), nil
+	if !found {
+		return nil
+	}
+	if state.TemporaryPublicKey == "" {
+		if state.Phase != site.PhasePlan && state.Phase != site.PhaseFailed {
+			return fmt.Errorf("HOLD: interrupted deployment phase %s has no recoverable temporary public key; use independent operator/root recovery before retrying", state.Phase)
+		}
+		if err := site.ClearOperationState(siteDir); err != nil {
+			return fmt.Errorf("HOLD: clear interrupted pre-Apply journal: %w", err)
+		}
+		if out != nil {
+			fmt.Fprintln(out, "Interrupted deployment cleanup: PASS no temporary Apply authority was armed")
+		}
+		return nil
+	}
+	if state.TemporaryHostAddress != s.BootstrapAddress {
+		return fmt.Errorf("HOLD: interrupted deployment host address changed from %s to %s; use independent operator/root recovery before retrying", state.TemporaryHostAddress, s.BootstrapAddress)
+	}
+	if cleanup == nil {
+		return errors.New("HOLD: interrupted deployment cleanup is not configured")
+	}
+	guests, err := operationGuestPlans(state.TemporaryCleanupGuests)
+	if err != nil {
+		return fmt.Errorf("HOLD: decode interrupted deployment cleanup targets: %w", err)
+	}
+	journalErr := saveDeployOperationPhase(siteDir, &state, site.PhaseCleanup, nil)
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	cleanupErr := cleanup(cleanupCtx, siteDir, s, guests, state.TemporaryPublicKey)
+	cancel()
+	if cleanupErr != nil {
+		recoveryErr := fmt.Errorf("HOLD: interrupted deployment cleanup failed: %w", cleanupErr)
+		if journalErr != nil {
+			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("record cleanup phase: %w", journalErr))
+		}
+		if failureJournalErr := saveDeployOperationPhase(siteDir, &state, site.PhaseFailed, cleanupErr); failureJournalErr != nil {
+			recoveryErr = errors.Join(recoveryErr, fmt.Errorf("record cleanup failure: %w", failureJournalErr))
+		}
+		return recoveryErr
+	}
+	if journalErr != nil {
+		return fmt.Errorf("HOLD: temporary Apply authority was removed but cleanup journal could not be recorded: %w", journalErr)
+	}
+	if err := site.ClearOperationState(siteDir); err != nil {
+		return fmt.Errorf("HOLD: temporary Apply authority was removed but interrupted deployment journal could not be cleared: %w", err)
+	}
+	if out != nil {
+		fmt.Fprintln(out, "Interrupted deployment cleanup: PASS temporary Apply authority removed")
+	}
+	return nil
+}
+
+func operationCleanupGuests(plan proxmox.Plan) ([]site.OperationGuest, error) {
+	guests := make([]site.OperationGuest, 0, len(plan.Guests))
+	for _, guest := range plan.Guests {
+		if guest.Owner == "" {
+			continue
+		}
+		if guest.Name == "" || guest.VMID <= 0 || guest.Address == "" {
+			return nil, fmt.Errorf("guest %s has incomplete identity for temporary cleanup", guest.Name)
+		}
+		kind := string(guest.Kind)
+		if kind != string(proxmox.KindQEMU) && kind != string(proxmox.KindLXC) {
+			return nil, fmt.Errorf("guest %s has unsupported kind %q for temporary cleanup", guest.Name, kind)
+		}
+		guests = append(guests, site.OperationGuest{Name: guest.Name, Kind: kind, VMID: guest.VMID, Address: guest.Address})
+	}
+	return guests, nil
+}
+
+func operationGuestPlans(guests []site.OperationGuest) ([]proxmox.GuestPlan, error) {
+	plans := make([]proxmox.GuestPlan, 0, len(guests))
+	for _, guest := range guests {
+		var kind proxmox.GuestKind
+		switch guest.Kind {
+		case string(proxmox.KindQEMU):
+			kind = proxmox.KindQEMU
+		case string(proxmox.KindLXC):
+			kind = proxmox.KindLXC
+		default:
+			return nil, fmt.Errorf("unsupported temporary cleanup guest kind %q", guest.Kind)
+		}
+		plans = append(plans, proxmox.GuestPlan{Name: guest.Name, Kind: kind, VMID: guest.VMID, Address: guest.Address, Owner: "boetticher/recovery"})
+	}
+	return plans, nil
 }
 
 func artifactQualificationStatus(artifact model.Artifact) string {
@@ -1296,16 +1496,14 @@ func artifactQualificationStatus(artifact model.Artifact) string {
 // deploymentModuleNames returns the resolved module graph order carried by
 // Site. The managed firewall is handled immediately above because dependent
 // guests must not be created until its management leg and forwarding policy
-// are ready. The Core portal follows active modules because it consumes the
-// generated platform model but does not provide a module capability.
+// are ready.
 func deploymentModuleNames(s model.Site) []string {
-	result := make([]string, 0, len(s.Modules)+1)
+	result := make([]string, 0, len(s.Modules))
 	for _, module := range s.Modules {
 		if module.Enabled && module.Name != "firewall" {
 			result = append(result, module.Name)
 		}
 	}
-	result = append(result, "portal")
 	return result
 }
 
@@ -1325,13 +1523,17 @@ func needsInitialDNSConfiguration(state deploymentGuestArtifactState) bool {
 func deploymentGuestPlans(s model.Site, plan proxmox.Plan) []proxmox.GuestPlan {
 	seen := make(map[int]bool)
 	guests := make([]proxmox.GuestPlan, 0, len(plan.Guests))
+	for _, guest := range plan.Guests {
+		if guest.Owner != "boetticher/module/firewall" {
+			continue
+		}
+		seen[guest.VMID] = true
+		guests = append(guests, guest)
+	}
 	for _, module := range deploymentModuleNames(s) {
 		for _, guest := range plan.Guests {
 			matches := guest.Owner == "boetticher/module/"+module
-			if module == "portal" {
-				matches = guest.Name == "lab-portal-01"
-			}
-			if !matches || guest.Kind != proxmox.KindLXC || seen[guest.VMID] {
+			if !matches || seen[guest.VMID] {
 				continue
 			}
 			seen[guest.VMID] = true
@@ -1397,21 +1599,38 @@ func inspectDeploymentGuestStates(ctx context.Context, client *proxmox.Client, n
 	return states, nil
 }
 
-func loadBootstrapOperatorKey(siteDir string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(siteDir, "generated", "bootstrap.json"))
+func newTemporaryRootIdentity() ([]byte, string, error) {
+	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		return "", fmt.Errorf("read bootstrap operator key evidence: %w", err)
+		return nil, "", fmt.Errorf("generate temporary Apply identity: %w", err)
 	}
-	var evidence struct {
-		OperatorPublicKey string `json:"operator_public_key"`
+	privateBlock, err := ssh.MarshalPrivateKey(private, "")
+	for index := range private {
+		private[index] = 0
 	}
-	if err := json.Unmarshal(data, &evidence); err != nil {
-		return "", fmt.Errorf("decode bootstrap operator key evidence: %w", err)
+	if err != nil {
+		return nil, "", fmt.Errorf("encode temporary Apply identity: %w", err)
 	}
-	if evidence.OperatorPublicKey == "" {
-		return "", errors.New("HOLD: bootstrap operator public key evidence is absent; rerun bootstrap")
+	privatePEM := pem.EncodeToMemory(privateBlock)
+	if len(privatePEM) == 0 {
+		return nil, "", errors.New("encode temporary Apply identity produced no private-key data")
 	}
-	return evidence.OperatorPublicKey, nil
+	wipePrivatePEM := func() {
+		for index := range privatePEM {
+			privatePEM[index] = 0
+		}
+	}
+	publicKey, err := ssh.NewPublicKey(public)
+	if err != nil {
+		wipePrivatePEM()
+		return nil, "", fmt.Errorf("encode temporary Apply public identity: %w", err)
+	}
+	publicLine := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(publicKey))) + " boetticher-apply"
+	if err := proxmox.ValidatePublicKey(publicLine); err != nil {
+		wipePrivatePEM()
+		return nil, "", fmt.Errorf("validate temporary Apply public identity: %w", err)
+	}
+	return privatePEM, publicLine, nil
 }
 
 func verifyGatewayReadiness(ctx context.Context, runner proxmox.CommandRunner, address string) error {
@@ -1465,86 +1684,12 @@ func verifyDNSReadiness(ctx context.Context, runner proxmox.CommandRunner, addre
 	return nil
 }
 
-func signLoggingCertificates(authority pki.Authority, s model.Site, csrDir string) (map[string]string, string, error) {
-	clients := map[string]string{}
-	for _, component := range s.PlatformComponents() {
-		if !component.Logging || component.Name == "lab-log-01" {
-			continue
-		}
-		csr, err := os.ReadFile(filepath.Join(csrDir, "logging-"+component.Name+".csr.pem"))
-		if err != nil {
-			return nil, "", fmt.Errorf("read %s logging CSR: %w", component.Name, err)
-		}
-		certificate, err := signOrReuseEndpointClientCertificate(authority, string(csr), csrDir, "logging-"+component.Name, component.Name, s.Network.Domain)
-		if err != nil {
-			return nil, "", fmt.Errorf("sign %s logging CSR: %w", component.Name, err)
-		}
-		clients[component.Name] = certificate.ChainPEM
-	}
-	collectorCSR, err := os.ReadFile(filepath.Join(csrDir, "logging-collector.csr.pem"))
-	if err != nil {
-		return nil, "", fmt.Errorf("read logging collector CSR: %w", err)
-	}
-	collector, err := signOrReuseServerCertificate(authority, string(collectorCSR), csrDir, "logging-collector", "logs", s.Network.Domain, []string{"lab-log-01." + s.Network.Domain})
-	if err != nil {
-		return nil, "", fmt.Errorf("sign logging collector CSR: %w", err)
-	}
-	return clients, collector.ChainPEM, nil
-}
-
-func signAIOpsCertificates(authority pki.Authority, s model.Site, csrDir string) (map[string]string, error) {
-	readCSR := func(name string) (string, error) {
-		data, err := os.ReadFile(filepath.Join(csrDir, name+".csr.pem"))
-		if err != nil {
-			return "", fmt.Errorf("read %s CSR: %w", name, err)
-		}
-		return string(data), nil
-	}
-	serverRequests := []struct {
-		file, identity, variable string
-		aliases                  []string
-	}{
-		{"aiops", "aiops", "aiops_server_cert_pem", []string{"lab-aiops-01." + s.Network.Domain}},
-		{"log-query", "log-query", "log_query_server_cert_pem", []string{"logs." + s.Network.Domain, "lab-log-01." + s.Network.Domain}},
-	}
-	result := make(map[string]string, 6)
-	for _, request := range serverRequests {
-		csr, err := readCSR(request.file)
-		if err != nil {
-			return nil, err
-		}
-		certificate, err := signOrReuseServerCertificate(authority, csr, csrDir, request.file, request.identity, s.Network.Domain, request.aliases)
-		if err != nil {
-			return nil, fmt.Errorf("sign %s CSR: %w", request.file, err)
-		}
-		result[request.variable] = certificate.ChainPEM
-	}
-	clientRequests := []struct{ file, identity, variable string }{
-		{"pulse-read", "aiops-pulse-read", "aiops_pulse_read_cert_pem"},
-		{"pulse-note", "aiops-pulse-note", "aiops_pulse_note_cert_pem"},
-		{"log-query-client", "aiops-log-read", "aiops_log_read_cert_pem"},
-		{"ai-router-client", "aiops-router-client", "aiops_router_client_cert_pem"},
-	}
-	for _, request := range clientRequests {
-		csr, err := readCSR(request.file)
-		if err != nil {
-			return nil, err
-		}
-		certificate, err := signOrReuseServiceClientCertificate(authority, csr, csrDir, request.file, request.identity)
-		if err != nil {
-			return nil, fmt.Errorf("sign %s CSR: %w", request.file, err)
-		}
-		result[request.variable] = certificate.ChainPEM
-	}
-	return result, nil
-}
-
-func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, s model.Site, authority pki.Authority, controllerCertificate pki.ClientCertificate, pulseAdmin *pulse.Client, pulseBaseURL, routerForwardAddress string, runtimeVariables map[string]any, ansiblePlaybook, inventoryPath string, report *deploymentReport) error {
+func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, s model.Site, authority pki.Authority, controllerCertificate pki.ClientCertificate, pulseAdmin *pulse.Client, pulseBaseURL, routerForwardAddress string, runtimeVariables map[string]any, ansiblePlaybook, inventoryPath string, report *deploymentReport, identityData []byte) error {
 	modelConfig, err := selectedAIOpsModel(s)
 	if err != nil {
 		return err
 	}
-	runner := applianceSSHRunner(s, siteDir, "lab-bifrost-01")
+	runner := applianceSSHRunnerWithIdentity(s, siteDir, "lab-bifrost-01", identityData)
 	var metadata []byte
 	err = report.timed("health", "health", "bifrost", func() error {
 		var metadataErr error
@@ -1582,13 +1727,9 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 	if err != nil {
 		return err
 	}
-	pulseReadCertificate, err := pki.IssueClient(authority, "boetticher-pulse-read", s.Network.Domain, time.Now().UTC())
-	if err != nil {
-		return fmt.Errorf("issue AIOps Pulse read client certificate: %w", err)
-	}
 	pulseRead, err := pulse.NewReadClient(pulse.ClientConfig{
 		BaseURL: pulseBaseURL, APIToken: readToken,
-		CAPEM: authority.IssuingCertPEM, ClientCertPEM: pulseReadCertificate.CertPEM, ClientKeyPEM: pulseReadCertificate.KeyPEM,
+		CAPEM:      authority.RootCertPEM,
 		ServerName: "monitor." + s.Network.Domain,
 	})
 	if err != nil {
@@ -1608,7 +1749,7 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 		report.recordMutation("Secrets", "aiops_pulse_read_token", "credential refreshed", true)
 		pulseRead, err = pulse.NewReadClient(pulse.ClientConfig{
 			BaseURL: pulseBaseURL, APIToken: readToken,
-			CAPEM: authority.IssuingCertPEM, ClientCertPEM: pulseReadCertificate.CertPEM, ClientKeyPEM: pulseReadCertificate.KeyPEM,
+			CAPEM:      authority.RootCertPEM,
 			ServerName: "monitor." + s.Network.Domain,
 		})
 		if err != nil {
@@ -1645,7 +1786,7 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 		}
 	}
 	values := map[string]string{"aiops_webhook_secret": webhookSecret, "aiops_pulse_read_token": readToken, "aiops_pulse_note_token": noteToken}
-	aiopsRunner := applianceSSHRunner(s, siteDir, "lab-aiops-01")
+	aiopsRunner := applianceSSHRunnerWithIdentity(s, siteDir, "lab-aiops-01", identityData)
 	if err := installCredentialsForGuest(ctx, aiopsRunner, "lab-aiops-01", bindings, values); err != nil {
 		return err
 	}
@@ -1665,7 +1806,7 @@ func qualifyAndConfigureAIOps(ctx context.Context, siteDir, ageIdentity string, 
 	if err != nil {
 		return err
 	}
-	return runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, append(variables, '\n'), "lab-aiops-01", ansible.PhaseHealth, report)
+	return runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, append(variables, '\n'), "lab-aiops-01", ansible.PhaseHealth, report, identityData)
 }
 
 func selectedAIOpsModel(s model.Site) (model.BifrostModelConfig, error) {
@@ -1750,7 +1891,7 @@ func loadOrCreatePulseToken(siteDir, ageIdentity string, s model.Site, key strin
 // non-secret appliance contract. Module declarations remain the source of
 // guest identity and runtime configuration; the SSH runner is only the Core
 // transport used to install the already-validated document.
-func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Site, plan proxmox.Plan) error {
+func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Site, plan proxmox.Plan, identityData []byte) error {
 	declarations := make(map[string]model.ModuleDeclaration, len(s.Declarations))
 	for _, declaration := range s.Declarations {
 		declarations[declaration.Module] = declaration
@@ -1762,7 +1903,7 @@ func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Si
 		}
 	}
 	for _, guest := range s.PlatformComponents() {
-		if guest.Module == "" && guest.Name != "lab-portal-01" {
+		if guest.Module == "" {
 			continue
 		}
 		resolvedGuest, ok := resolvedGuests[guest.Name]
@@ -1770,7 +1911,7 @@ func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Si
 			return fmt.Errorf("runtime artifact identity for %s: qualified artifact content checksum is missing", guest.Name)
 		}
 		if guest.Module == "" {
-			runner := applianceSSHRunner(s, siteDir, guest.Name)
+			runner := applianceSSHRunnerWithIdentity(s, siteDir, guest.Name, identityData)
 			if err := appliance.InstallArtifactIdentity(ctx, runner, guest.Address, "root", resolvedGuest.Artifact); err != nil {
 				return fmt.Errorf("install artifact identity for %s: %w", guest.Name, err)
 			}
@@ -1788,7 +1929,7 @@ func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Si
 		if err != nil {
 			return fmt.Errorf("render runtime configuration for %s: %w", guest.Name, err)
 		}
-		runner := applianceSSHRunner(s, siteDir, guest.Name)
+		runner := applianceSSHRunnerWithIdentity(s, siteDir, guest.Name, identityData)
 		if err := appliance.InstallRuntimeConfig(ctx, runner, guest.Address, "root", config); err != nil {
 			return fmt.Errorf("install runtime configuration for %s: %w", guest.Name, err)
 		}
@@ -1813,17 +1954,30 @@ func applianceSSHRunner(s model.Site, siteDir, hostAlias string) proxmox.SSHRunn
 	}
 }
 
+func applianceSSHRunnerWithIdentity(s model.Site, siteDir, hostAlias string, identityData []byte) proxmox.SSHRunner {
+	runner := applianceSSHRunner(s, siteDir, hostAlias)
+	if len(identityData) > 0 {
+		runner = runner.WithIdentityData(identityData).FreshConnection()
+	}
+	return runner
+}
+
 type temporaryRootCleanup struct {
 	s                 model.Site
 	siteDir           string
 	operatorPublicKey string
+	identityData      []byte
 	host              bool
 	guests            []proxmox.GuestPlan
 	guestNames        map[string]struct{}
 }
 
-func newTemporaryRootCleanup(s model.Site, siteDir, operatorPublicKey string) *temporaryRootCleanup {
-	return &temporaryRootCleanup{s: s, siteDir: siteDir, operatorPublicKey: operatorPublicKey, guestNames: make(map[string]struct{})}
+func newTemporaryRootCleanup(s model.Site, siteDir, operatorPublicKey string, identityData ...[]byte) *temporaryRootCleanup {
+	var keyData []byte
+	if len(identityData) > 0 {
+		keyData = identityData[0]
+	}
+	return &temporaryRootCleanup{s: s, siteDir: siteDir, operatorPublicKey: operatorPublicKey, identityData: keyData, guestNames: make(map[string]struct{})}
 }
 
 func (c *temporaryRootCleanup) hostEstablished() {
@@ -1839,43 +1993,63 @@ func (c *temporaryRootCleanup) guestEstablished(guest proxmox.GuestPlan) {
 }
 
 func (c *temporaryRootCleanup) revoke(ctx context.Context) error {
+	defer c.clearIdentityData()
 	if !c.host && len(c.guests) == 0 {
 		return nil
 	}
-	return revokeTemporaryRootAccessForGuests(ctx, c.s, c.siteDir, c.guests, c.operatorPublicKey, c.host)
+	return revokeTemporaryRootAccessForGuestsWithFallback(ctx, c.s, c.siteDir, c.guests, c.operatorPublicKey, c.host, proxmox.RevokeTemporaryRootAccess, proxmox.RevokeTemporaryRootAccessThroughHost, c.identityData)
 }
 
-func revokeTemporaryRootAccessForGuests(ctx context.Context, s model.Site, siteDir string, guests []proxmox.GuestPlan, operatorPublicKey string, host bool) error {
-	return revokeTemporaryRootAccessForGuestsWith(ctx, s, siteDir, guests, operatorPublicKey, host, proxmox.RevokeTemporaryRootAccess)
+func (c *temporaryRootCleanup) clearIdentityData() {
+	if c == nil {
+		return
+	}
+	for index := range c.identityData {
+		c.identityData[index] = 0
+	}
+	c.identityData = nil
 }
 
 type temporaryRootRevoker func(context.Context, proxmox.CommandRunner, string, string, string, bool) error
+type temporaryRootGuestRevoker func(context.Context, proxmox.CommandRunner, string, string, proxmox.GuestKind, int, string) error
 
-func revokeTemporaryRootAccessForGuestsWith(ctx context.Context, s model.Site, siteDir string, guests []proxmox.GuestPlan, operatorPublicKey string, host bool, revoke temporaryRootRevoker) error {
+func revokeTemporaryRootAccessForGuestsWith(ctx context.Context, s model.Site, siteDir string, guests []proxmox.GuestPlan, operatorPublicKey string, host bool, revoke temporaryRootRevoker, identityData ...[]byte) error {
+	return revokeTemporaryRootAccessForGuestsWithFallback(ctx, s, siteDir, guests, operatorPublicKey, host, revoke, nil, identityData...)
+}
+
+func revokeTemporaryRootAccessForGuestsWithFallback(ctx context.Context, s model.Site, siteDir string, guests []proxmox.GuestPlan, operatorPublicKey string, host bool, revoke temporaryRootRevoker, hostRevoke temporaryRootGuestRevoker, identityData ...[]byte) error {
+	var guestIdentityData []byte
+	if len(identityData) > 0 {
+		guestIdentityData = identityData[0]
+	}
 	type target struct {
 		name    string
 		address string
+		kind    proxmox.GuestKind
+		vmid    int
 		isHost  bool
 		runner  proxmox.CommandRunner
 	}
-	targets := make([]target, 0, len(guests)+1)
+	targets := make([]target, 0, len(guests))
 	for _, guest := range guests {
 		if guest.Owner == "" || guest.Address == "" {
 			continue
 		}
-		targets = append(targets, target{name: guest.Name, address: guest.Address, runner: applianceSSHRunner(s, siteDir, guest.Name)})
+		guestRunner := applianceSSHRunner(s, siteDir, guest.Name)
+		if len(guestIdentityData) > 0 {
+			guestRunner = guestRunner.WithIdentityData(guestIdentityData)
+		}
+		targets = append(targets, target{name: guest.Name, address: guest.Address, kind: guest.Kind, vmid: guest.VMID, runner: guestRunner})
 	}
-	if host {
-		targets = append(targets, target{name: model.LogicalProxmoxIdentity, address: s.BootstrapAddress, isHost: true, runner: proxmoxRootSSHRunner(s, siteDir)})
-	}
-	if len(targets) == 0 {
+	if len(targets) == 0 && !host {
 		return nil
 	}
 
 	// Cleanup is a security boundary, not a best-effort loop. An unreachable
 	// guest must not prevent attempts against every other exact target,
-	// especially the Proxmox host. Run the independent revocations together so
-	// one slow SSH failure cannot consume the entire bounded cleanup window.
+	// especially the Proxmox host. Try direct guest cleanup concurrently, then
+	// use the independent host recovery path for guests whose SSH is gone. The
+	// host is revoked last so it remains available for those fallback attempts.
 	errs := make([]error, len(targets))
 	var wg sync.WaitGroup
 	for index, item := range targets {
@@ -1883,11 +2057,25 @@ func revokeTemporaryRootAccessForGuestsWith(ctx context.Context, s model.Site, s
 		go func(index int, item target) {
 			defer wg.Done()
 			if err := revoke(ctx, item.runner, item.address, "root", operatorPublicKey, item.isHost); err != nil {
+				if hostRevoke != nil && host {
+					hostRunner := proxmoxRootSSHRunner(s, siteDir)
+					if fallbackErr := hostRevoke(ctx, hostRunner, s.BootstrapAddress, "root", item.kind, item.vmid, operatorPublicKey); fallbackErr == nil {
+						return
+					} else {
+						errs[index] = fmt.Errorf("revoke root access on %s: direct: %w; host fallback: %v", item.name, err, fallbackErr)
+						return
+					}
+				}
 				errs[index] = fmt.Errorf("revoke root access on %s: %w", item.name, err)
 			}
 		}(index, item)
 	}
 	wg.Wait()
+	if host {
+		if err := revoke(ctx, proxmoxRootSSHRunner(s, siteDir), s.BootstrapAddress, "root", operatorPublicKey, true); err != nil {
+			errs = append(errs, fmt.Errorf("revoke root access on %s: %w", model.LogicalProxmoxIdentity, err))
+		}
+	}
 	return errors.Join(errs...)
 }
 
@@ -1980,64 +2168,21 @@ func proxmoxBastionSSHRunner(s model.Site, siteDir string) proxmox.SSHRunner {
 	}
 }
 
-func remoteEndpointResolver(ctx context.Context, runner proxmox.ArgsCommandRunner, address, user string) func(string) ([]net.IP, error) {
-	return func(host string) ([]net.IP, error) {
-		if strings.TrimSpace(host) != host || host == "" || strings.ContainsAny(host, " \t\r\n/") {
-			return nil, errors.New("endpoint hostname is invalid")
-		}
-		output, err := runner.RunArgs(ctx, address, user, []string{"getent", "ahostsv4", host})
-		if err != nil {
-			return nil, err
-		}
-		seen := map[string]struct{}{}
-		addresses := make([]net.IP, 0)
-		for _, line := range strings.Split(string(output), "\n") {
-			fields := strings.Fields(line)
-			if len(fields) == 0 {
-				continue
-			}
-			ip := net.ParseIP(fields[0])
-			if ip == nil || ip.To4() == nil {
-				continue
-			}
-			ip = ip.To4()
-			if _, ok := seen[ip.String()]; ok {
-				continue
-			}
-			seen[ip.String()] = struct{}{}
-			addresses = append(addresses, ip)
-		}
-		if len(addresses) == 0 {
-			return nil, fmt.Errorf("remote resolver returned no IPv4 addresses for %s", host)
-		}
-		return addresses, nil
-	}
-}
-
-func endpointLookupWithFallback(primary, fallback func(string) ([]net.IP, error)) func(string) ([]net.IP, error) {
-	return func(host string) ([]net.IP, error) {
-		addresses, primaryErr := primary(host)
-		for _, address := range addresses {
-			if address != nil && address.To4() != nil {
-				return addresses, nil
-			}
-		}
-		if fallback == nil {
-			return nil, primaryErr
-		}
-		fallbackAddresses, fallbackErr := fallback(host)
-		if fallbackErr != nil {
-			if primaryErr != nil {
-				return nil, fmt.Errorf("controller resolver: %v; Proxmox resolver: %w", primaryErr, fallbackErr)
-			}
-			return nil, fallbackErr
-		}
-		return fallbackAddresses, nil
-	}
-}
-
 func deploymentKnownHosts(siteDir string) string {
 	return filepath.Join(siteDir, "generated", "ssh", "known_hosts")
+}
+
+func saveDeployOperationPhase(siteDir string, state *site.OperationState, phase site.OperationPhase, cause error) error {
+	if state == nil {
+		return errors.New("deployment operation state is nil")
+	}
+	state.Phase = phase
+	state.Error = ""
+	if cause != nil {
+		state.Error = compactError(cause)
+	}
+	state.UpdatedAt = ""
+	return site.SaveOperationState(siteDir, *state)
 }
 
 func retireReplacedHostKey(siteDir string, s model.Site, guest proxmox.GuestPlan) error {
@@ -2062,45 +2207,55 @@ func operatorIdentityFile(s model.Site) string {
 	return identity
 }
 
-func checkBootstrapEndpoint(siteDir string, s model.Site) error {
-	data, err := os.ReadFile(filepath.Join(siteDir, "generated", "bootstrap.json"))
+func operatorPublicKeyForSite(s model.Site) (string, error) {
+	identity := operatorIdentityFile(s)
+	if identity == "" {
+		return "", errors.New("durable operator SSH identity is not configured")
+	}
+	publicPath := identity + ".pub"
+	publicData, err := os.ReadFile(publicPath)
+	if err == nil {
+		publicKey := strings.TrimSpace(string(publicData))
+		if err := proxmox.ValidatePublicKey(publicKey); err != nil {
+			return "", fmt.Errorf("validate durable operator public key: %w", err)
+		}
+		return publicKey, nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("read durable operator public key: %w", err)
+	}
+	privateData, err := os.ReadFile(identity)
 	if err != nil {
-		return fmt.Errorf("bootstrap evidence is absent; run bootstrap first: %w", err)
+		return "", fmt.Errorf("read durable operator identity: %w", err)
 	}
-	var evidence struct {
-		BootstrapAddress string `json:"bootstrap_address"`
-		SSHHostKey       string `json:"ssh_host_key"`
+	signer, parseErr := ssh.ParsePrivateKey(privateData)
+	for index := range privateData {
+		privateData[index] = 0
 	}
-	if err := json.Unmarshal(data, &evidence); err != nil {
-		return fmt.Errorf("decode bootstrap evidence: %w", err)
+	if parseErr != nil {
+		return "", fmt.Errorf("derive durable operator public key: %w (provide %s)", parseErr, publicPath)
 	}
-	if evidence.BootstrapAddress != s.BootstrapAddress {
-		return fmt.Errorf("recorded address %s is stale; use boetticher bootstrap-endpoint set ADDRESS then regenerate SSH configuration", evidence.BootstrapAddress)
+	publicKey := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey())))
+	if err := proxmox.ValidatePublicKey(publicKey); err != nil {
+		return "", fmt.Errorf("validate derived durable operator public key: %w", err)
 	}
-	trustedKey, err := sshconfig.ReadHostKey(deploymentKnownHosts(siteDir), model.LogicalProxmoxIdentity)
-	if err != nil {
-		return fmt.Errorf("Proxmox host key is not enrolled in the site trust file: %w", err)
-	}
-	if trustedKey != evidence.SSHHostKey {
-		return errors.New("recorded Proxmox host key does not match the enrolled site trust key")
-	}
-	return nil
+	return publicKey, nil
 }
 
-func runTrackedAnsible(ctx context.Context, playbook, inventory string, variables []byte, limit string, report *deploymentReport) error {
-	return runTrackedAnsiblePhase(ctx, playbook, inventory, variables, limit, ansible.PhaseFull, report)
+func runTrackedAnsible(ctx context.Context, playbook, inventory string, variables []byte, limit string, report *deploymentReport, identityData []byte) error {
+	return runTrackedAnsiblePhase(ctx, playbook, inventory, variables, limit, ansible.PhaseFull, report, identityData)
 }
 
-func runTrackedAnsiblePhase(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string, report *deploymentReport) error {
+func runTrackedAnsiblePhase(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string, report *deploymentReport, identityData []byte) error {
 	started := time.Now()
 	var (
 		result ansible.RunResult
 		err    error
 	)
 	if limit == "" {
-		result, err = ansible.RunWithMutationPhase(ctx, playbook, inventory, variables, phase)
+		result, err = ansible.RunWithMutationPhase(ctx, playbook, inventory, variables, phase, identityData)
 	} else {
-		result, err = ansible.RunLimitedWithMutationPhase(ctx, playbook, inventory, variables, limit, phase)
+		result, err = ansible.RunLimitedWithMutationPhase(ctx, playbook, inventory, variables, limit, phase, identityData)
 	}
 	if result.Changed {
 		target := limit

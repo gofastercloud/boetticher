@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"math/big"
 	"regexp"
-	"strings"
 	"time"
 )
 
@@ -33,151 +32,9 @@ type ClientCertificate struct {
 	Serial      string
 }
 
-type ServerCertificate struct {
-	Name        string
-	CertPEM     string
-	ChainPEM    string
-	Fingerprint string
-}
-
 // CertificateRenewalWindow is the safety margin used when deciding whether a
-// previously issued managed certificate can be reused.
+// cached browser or device certificate can be reused.
 const CertificateRenewalWindow = 30 * 24 * time.Hour
-
-// SignServerCSR signs a CSR whose key was generated on the managed endpoint.
-// The requested identity is checked against the model before the issuing CA
-// is allowed to sign it. The returned certificate deliberately contains no
-// private key.
-func SignServerCSR(authority Authority, csrPEM, name, domain string, aliases []string, now time.Time) (ServerCertificate, error) {
-	if err := ValidateClientName(name); err != nil {
-		return ServerCertificate{}, err
-	}
-	block, _ := pem.Decode([]byte(csrPEM))
-	if block == nil || block.Type != "CERTIFICATE REQUEST" {
-		return ServerCertificate{}, fmt.Errorf("server CSR PEM block missing")
-	}
-	csr, err := x509.ParseCertificateRequest(block.Bytes)
-	if err != nil {
-		return ServerCertificate{}, fmt.Errorf("parse server CSR: %w", err)
-	}
-	if err := csr.CheckSignature(); err != nil {
-		return ServerCertificate{}, fmt.Errorf("verify server CSR signature: %w", err)
-	}
-	wantNames := append([]string{name + "." + domain}, aliases...)
-	if csr.Subject.CommonName != wantNames[0] || len(csr.IPAddresses) != 0 || len(csr.EmailAddresses) != 0 || len(csr.URIs) != 0 || !sameDNSNames(csr.DNSNames, wantNames) {
-		return ServerCertificate{}, fmt.Errorf("server CSR identity is not approved for %s", name)
-	}
-	issuingKey, err := parseECKey(authority.IssuingKeyPEM)
-	if err != nil {
-		return ServerCertificate{}, fmt.Errorf("parse issuing key: %w", err)
-	}
-	issuingCert, err := parseCert(authority.IssuingCertPEM)
-	if err != nil {
-		return ServerCertificate{}, fmt.Errorf("parse issuing certificate: %w", err)
-	}
-	template, err := certificateTemplate(wantNames[0], now, false)
-	if err != nil {
-		return ServerCertificate{}, err
-	}
-	template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}
-	template.DNSNames = append([]string(nil), wantNames...)
-	der, err := x509.CreateCertificate(rand.Reader, template, issuingCert, csr.PublicKey, issuingKey)
-	if err != nil {
-		return ServerCertificate{}, fmt.Errorf("sign server CSR: %w", err)
-	}
-	fingerprint := sha256.Sum256(der)
-	return ServerCertificate{
-		Name: name, CertPEM: marshalCert(der), ChainPEM: marshalCert(der) + authority.IssuingCertPEM,
-		Fingerprint: fmt.Sprintf("sha256:%x", fingerprint[:]),
-	}, nil
-}
-
-// SignClientCSR signs a client-auth CSR whose private key remains on the
-// managed endpoint. The identity is limited to the modelled endpoint name.
-func SignClientCSR(authority Authority, csrPEM, name, domain string, now time.Time) (ClientCertificate, error) {
-	if err := ValidateClientName(name); err != nil {
-		return ClientCertificate{}, err
-	}
-	return signClientCSR(authority, csrPEM, name, "client-"+name+"."+domain, now)
-}
-
-// SignServiceClientCSR signs a CSR for one explicitly approved service
-// identity. Unlike endpoint client certificates, these identities are not
-// derived from a guest name and carry no DNS or other subject alternatives.
-func SignServiceClientCSR(authority Authority, csrPEM, identity string, now time.Time) (ClientCertificate, error) {
-	if err := ValidateClientName(identity); err != nil {
-		return ClientCertificate{}, err
-	}
-	return signClientCSR(authority, csrPEM, identity, identity, now)
-}
-
-func signClientCSR(authority Authority, csrPEM, name, wanted string, now time.Time) (ClientCertificate, error) {
-	block, _ := pem.Decode([]byte(csrPEM))
-	if block == nil || block.Type != "CERTIFICATE REQUEST" {
-		return ClientCertificate{}, fmt.Errorf("client CSR PEM block missing")
-	}
-	csr, err := x509.ParseCertificateRequest(block.Bytes)
-	if err != nil {
-		return ClientCertificate{}, fmt.Errorf("parse client CSR: %w", err)
-	}
-	if err := csr.CheckSignature(); err != nil {
-		return ClientCertificate{}, fmt.Errorf("verify client CSR signature: %w", err)
-	}
-	if csr.Subject.CommonName != wanted || len(csr.DNSNames) != 0 || len(csr.IPAddresses) != 0 || len(csr.EmailAddresses) != 0 || len(csr.URIs) != 0 {
-		return ClientCertificate{}, fmt.Errorf("client CSR identity is not approved for %s", name)
-	}
-	issuingKey, err := parseECKey(authority.IssuingKeyPEM)
-	if err != nil {
-		return ClientCertificate{}, fmt.Errorf("parse issuing key: %w", err)
-	}
-	issuingCert, err := parseCert(authority.IssuingCertPEM)
-	if err != nil {
-		return ClientCertificate{}, fmt.Errorf("parse issuing certificate: %w", err)
-	}
-	template, err := certificateTemplate(wanted, now, false)
-	if err != nil {
-		return ClientCertificate{}, err
-	}
-	template.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}
-	der, err := x509.CreateCertificate(rand.Reader, template, issuingCert, csr.PublicKey, issuingKey)
-	if err != nil {
-		return ClientCertificate{}, fmt.Errorf("sign client CSR: %w", err)
-	}
-	fingerprint := sha256.Sum256(der)
-	return ClientCertificate{
-		Name: name, CertPEM: marshalCert(der), ChainPEM: marshalCert(der) + authority.IssuingCertPEM,
-		Fingerprint: fmt.Sprintf("sha256:%x", fingerprint[:]),
-		Serial:      template.SerialNumber.Text(16),
-	}, nil
-}
-
-// ValidateServerCertificate validates a cached server certificate against the
-// current CSR and authority. The chain must contain exactly the leaf and the
-// current issuing certificate. Only a certificate with enough remaining
-// lifetime to cross the renewal window is reusable.
-func ValidateServerCertificate(authority Authority, chainPEM, csrPEM, name, domain string, aliases []string, now time.Time) (ServerCertificate, error) {
-	if err := ValidateClientName(name); err != nil {
-		return ServerCertificate{}, err
-	}
-	wantNames := append([]string{name + "." + domain}, aliases...)
-	csr, err := parseAndValidateCSR(csrPEM, wantNames[0], wantNames, true)
-	if err != nil {
-		return ServerCertificate{}, err
-	}
-	leaf, issuing, err := parseCertificateChain(chainPEM)
-	if err != nil {
-		return ServerCertificate{}, err
-	}
-	if err := validateCachedCertificate(authority, leaf, issuing, csr, wantNames, x509.ExtKeyUsageServerAuth, now); err != nil {
-		return ServerCertificate{}, err
-	}
-	return ServerCertificate{
-		Name:        name,
-		CertPEM:     marshalCert(leaf.Raw),
-		ChainPEM:    marshalCert(leaf.Raw) + authority.IssuingCertPEM,
-		Fingerprint: certificateFingerprint(leaf.Raw),
-	}, nil
-}
 
 // ValidateClientCertificate validates a cached endpoint client certificate
 // against the current CSR and authority.
@@ -186,7 +43,7 @@ func ValidateClientCertificate(authority Authority, chainPEM, csrPEM, name, doma
 		return ClientCertificate{}, err
 	}
 	wanted := "client-" + name + "." + domain
-	csr, err := parseAndValidateCSR(csrPEM, wanted, nil, false)
+	csr, err := parseAndValidateCSR(csrPEM, wanted)
 	if err != nil {
 		return ClientCertificate{}, err
 	}
@@ -194,7 +51,7 @@ func ValidateClientCertificate(authority Authority, chainPEM, csrPEM, name, doma
 	if err != nil {
 		return ClientCertificate{}, err
 	}
-	if err := validateCachedCertificate(authority, leaf, issuing, csr, nil, x509.ExtKeyUsageClientAuth, now); err != nil {
+	if err := validateCachedCertificate(authority, leaf, issuing, csr, x509.ExtKeyUsageClientAuth, now); err != nil {
 		return ClientCertificate{}, err
 	}
 	return ClientCertificate{
@@ -206,33 +63,7 @@ func ValidateClientCertificate(authority Authority, chainPEM, csrPEM, name, doma
 	}, nil
 }
 
-// ValidateServiceClientCertificate validates a cached certificate for a
-// fixed service identity which has no DNS SANs.
-func ValidateServiceClientCertificate(authority Authority, chainPEM, csrPEM, identity string, now time.Time) (ClientCertificate, error) {
-	if err := ValidateClientName(identity); err != nil {
-		return ClientCertificate{}, err
-	}
-	csr, err := parseAndValidateCSR(csrPEM, identity, nil, false)
-	if err != nil {
-		return ClientCertificate{}, err
-	}
-	leaf, issuing, err := parseCertificateChain(chainPEM)
-	if err != nil {
-		return ClientCertificate{}, err
-	}
-	if err := validateCachedCertificate(authority, leaf, issuing, csr, nil, x509.ExtKeyUsageClientAuth, now); err != nil {
-		return ClientCertificate{}, err
-	}
-	return ClientCertificate{
-		Name:        identity,
-		CertPEM:     marshalCert(leaf.Raw),
-		ChainPEM:    marshalCert(leaf.Raw) + authority.IssuingCertPEM,
-		Fingerprint: certificateFingerprint(leaf.Raw),
-		Serial:      leaf.SerialNumber.Text(16),
-	}, nil
-}
-
-func parseAndValidateCSR(csrPEM, wanted string, wantNames []string, server bool) (*x509.CertificateRequest, error) {
+func parseAndValidateCSR(csrPEM, wanted string) (*x509.CertificateRequest, error) {
 	block, rest := pem.Decode([]byte(csrPEM))
 	if block == nil || block.Type != "CERTIFICATE REQUEST" {
 		return nil, fmt.Errorf("certificate request PEM block missing")
@@ -250,11 +81,7 @@ func parseAndValidateCSR(csrPEM, wanted string, wantNames []string, server bool)
 	if csr.Subject.CommonName != wanted || len(csr.EmailAddresses) != 0 || len(csr.IPAddresses) != 0 || len(csr.URIs) != 0 {
 		return nil, fmt.Errorf("certificate request identity is not approved for %s", wanted)
 	}
-	if server {
-		if !sameDNSNames(csr.DNSNames, wantNames) {
-			return nil, fmt.Errorf("server certificate request SANs are not approved for %s", wanted)
-		}
-	} else if len(csr.DNSNames) != 0 {
+	if len(csr.DNSNames) != 0 {
 		return nil, fmt.Errorf("client certificate request must not contain DNS SANs")
 	}
 	return csr, nil
@@ -281,7 +108,7 @@ func parseCertificateChain(chainPEM string) (*x509.Certificate, *x509.Certificat
 	return certificates[0], certificates[1], nil
 }
 
-func validateCachedCertificate(authority Authority, leaf, issuing *x509.Certificate, csr *x509.CertificateRequest, wantNames []string, usage x509.ExtKeyUsage, now time.Time) error {
+func validateCachedCertificate(authority Authority, leaf, issuing *x509.Certificate, csr *x509.CertificateRequest, usage x509.ExtKeyUsage, now time.Time) error {
 	if leaf == nil || issuing == nil || csr == nil {
 		return fmt.Errorf("cached certificate inputs are incomplete")
 	}
@@ -305,12 +132,8 @@ func validateCachedCertificate(authority Authority, leaf, issuing *x509.Certific
 	if leaf.Subject.CommonName != csr.Subject.CommonName || !certificateSubjectMatches(leaf.Subject, csr.Subject.CommonName) {
 		return fmt.Errorf("cached certificate subject does not match the CSR")
 	}
-	if len(wantNames) == 0 {
-		if len(leaf.DNSNames) != 0 || len(leaf.EmailAddresses) != 0 || len(leaf.IPAddresses) != 0 || len(leaf.URIs) != 0 {
-			return fmt.Errorf("cached client certificate contains subject alternatives")
-		}
-	} else if !sameDNSNames(leaf.DNSNames, wantNames) || len(leaf.EmailAddresses) != 0 || len(leaf.IPAddresses) != 0 || len(leaf.URIs) != 0 {
-		return fmt.Errorf("cached server certificate SANs do not match the approved identity")
+	if len(leaf.DNSNames) != 0 || len(leaf.EmailAddresses) != 0 || len(leaf.IPAddresses) != 0 || len(leaf.URIs) != 0 {
+		return fmt.Errorf("cached client certificate contains subject alternatives")
 	}
 	csrKey, err := x509.MarshalPKIXPublicKey(csr.PublicKey)
 	if err != nil {
@@ -348,29 +171,6 @@ func certificateSubjectMatches(subject pkix.Name, commonName string) bool {
 func certificateFingerprint(der []byte) string {
 	fingerprint := sha256.Sum256(der)
 	return fmt.Sprintf("sha256:%x", fingerprint[:])
-}
-
-func sameDNSNames(got, want []string) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	counts := map[string]int{}
-	for _, name := range got {
-		counts[strings.ToLower(strings.TrimSuffix(name, "."))]++
-	}
-	for _, name := range want {
-		key := strings.ToLower(strings.TrimSuffix(name, "."))
-		counts[key]--
-		if counts[key] < 0 {
-			return false
-		}
-	}
-	for _, count := range counts {
-		if count != 0 {
-			return false
-		}
-	}
-	return true
 }
 
 var clientNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)

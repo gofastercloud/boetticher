@@ -40,6 +40,14 @@ require_executable() {
   fi
 }
 
+require_chroot_executable() {
+  label=$1
+  path=$2
+  if ! chroot "$rootfs" test -x "$path"; then
+    fail_check "$label: $path"
+  fi
+}
+
 printf '%s\n' 'boetticher smoke check: module descriptor absence'
 test ! -e "$rootfs/etc/boetticher/module.yaml"
 printf '%s\n' 'boetticher smoke check: artifact identity presence'
@@ -76,6 +84,8 @@ case "$name" in
     test -x "$rootfs/usr/bin/journalctl"
     test -d "$rootfs/etc/boetticher" -a -d "$rootfs/usr/lib/boetticher"
     test -x "$rootfs/usr/lib/boetticher/install-runtime-state"
+    test -x "$rootfs/usr/local/bin/step"
+    chroot "$rootfs" /usr/local/bin/step version 2>&1 | grep -Fq 'Smallstep CLI/0.30.6'
     test -f "$rootfs/etc/systemd/journald.conf.d/boetticher.conf"
     test -f "$rootfs/etc/systemd/journal-upload.conf"
     run visudo -cf /etc/sudoers
@@ -84,6 +94,9 @@ case "$name" in
     test ! -e "$rootfs/root/.ssh/authorized_keys"
     ;;
   boetticher-dns-blocky)
+    printf '%s\n' 'boetticher smoke check: Smallstep CA binary'
+    test -x "$rootfs/usr/local/bin/step-ca"
+    chroot "$rootfs" /usr/local/bin/step-ca version 2>&1 | grep -Fq 'Smallstep CA/0.30.2'
     printf '%s\n' 'boetticher smoke check: blocky version'
     chroot "$rootfs" /usr/local/bin/blocky version 2>&1 | grep -Fq '0.34.0'
     printf '%s\n' 'boetticher smoke check: PowerDNS and Chrony binaries'
@@ -133,9 +146,6 @@ case "$name" in
       echo "monitoring artifact contains a monitoring credential" >&2
       exit 1
     fi
-    ;;
-  boetticher-portal)
-    test -x "$rootfs/usr/sbin/nginx"
     ;;
   boetticher-tailnet-router)
     test -x "$rootfs/usr/bin/tailscale"
@@ -231,18 +241,6 @@ case "$name" in
       exit 1
     fi
     ;;
-  boetticher-streamdeck)
-    test -x "$rootfs/usr/local/libexec/boetticher-streamdeck"
-    test ! -e "$rootfs/opt/streamdeck"
-    test ! -e "$rootfs/usr/src/boetticher-streamdeck"
-    chroot "$rootfs" getent passwd streamdeck | grep -Fq ':2200:2200:'
-    test -f "$rootfs/etc/systemd/system/streamdeck-status.service"
-    grep -Fq 'User=streamdeck' "$rootfs/etc/systemd/system/streamdeck-status.service"
-    grep -Fq 'DevicePolicy=closed' "$rootfs/etc/systemd/system/streamdeck-status.service"
-    grep -Fq 'DeviceAllow=char-usb_device rw' "$rootfs/etc/systemd/system/streamdeck-status.service"
-    grep -Fq 'ProtectSystem=strict' "$rootfs/etc/systemd/system/streamdeck-status.service"
-    grep -Fq 'MemoryDenyWriteExecute=yes' "$rootfs/etc/systemd/system/streamdeck-status.service"
-    ;;
   boetticher-aiops)
     test -x "$rootfs/usr/local/libexec/boetticher-aiops"
     test -f "$rootfs/etc/systemd/system/boetticher-aiops.service"
@@ -275,10 +273,12 @@ case "$name" in
     ;;
   boetticher-network-probe)
     for path in /usr/sbin/arping /usr/bin/dig /usr/bin/iperf3 /usr/bin/nc /usr/bin/nmap /usr/bin/tcpdump /usr/bin/curl /usr/bin/openssl /usr/bin/jq; do
-      test -x "$rootfs$path"
+      require_chroot_executable "network-probe dependency is missing" "$path"
     done
-    test -x "$rootfs/usr/local/libexec/boetticher-network-probe"
-    test ! -e "$rootfs/etc/systemd/system/boetticher-network-probe.service"
+    require_chroot_executable 'network-probe executable is missing' /usr/local/libexec/boetticher-network-probe
+    if [ -e "$rootfs/etc/systemd/system/boetticher-network-probe.service" ]; then
+      fail_check "network-probe artifact contains an unexpected systemd service: $rootfs/etc/systemd/system/boetticher-network-probe.service"
+    fi
     ;;
   *)
     echo "unknown smoke target: $name" >&2

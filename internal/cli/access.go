@@ -22,14 +22,14 @@ func runAccess(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(out, "Bootstrap")
+	fmt.Fprintln(out, "Enrollment")
 	if s.BootstrapAddress == "" {
-		fmt.Fprintln(out, "  Proxmox       bootstrap endpoint not configured")
+		fmt.Fprintln(out, "  Proxmox       enrollment endpoint not configured")
 	} else {
 		fmt.Fprintf(out, "  Proxmox       ssh proxmox\n                https://%s:8006\n", s.BootstrapAddress)
 	}
 	fmt.Fprintln(out, "Supported operator access")
-	fmt.Fprintln(out, "  Platform      boetticher CLI and generated portal/status surfaces")
+	fmt.Fprintln(out, "  Platform      boetticher CLI and status --details")
 	fmt.Fprintln(out, "  Web           native product UI/API where provided")
 	fmt.Fprintln(out, "  Break-glass   Proxmox console/exec for explicit recovery")
 	if s.Gateway.Mode == model.GatewayModeManaged {

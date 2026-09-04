@@ -1,0 +1,177 @@
+#!/bin/sh
+set -eu
+
+operation=${1:-}
+shift || true
+case "$operation" in
+  build) script=./scripts/build-images.sh ;;
+  scan) script=./scripts/scan-images.sh ;;
+  *) printf 'HOLD: unsupported native builder operation: %s\n' "$operation" >&2; exit 2 ;;
+esac
+
+native_root=${BOETTICHER_NATIVE_ROOT:-/var/lib/boetticher/local-builder/root}
+native_source=${BOETTICHER_NATIVE_SOURCE:-/var/lib/boetticher/local-builder/source}
+native_output=${BOETTICHER_NATIVE_OUTPUT:-/var/lib/boetticher/local-builder/output}
+native_run_id=${BOETTICHER_NATIVE_RUN_ID:-$$}
+for path in "$native_root" "$native_source" "$native_output"; do
+  case "$path" in
+    /var/lib/boetticher/local-builder/*) ;;
+    *) printf 'HOLD: native builder path is outside its fixed workspace: %s\n' "$path" >&2; exit 2 ;;
+  esac
+done
+[ -x "$native_root/bin/sh" ] || { printf '%s\n' 'HOLD: isolated native Debian root is not initialized' >&2; exit 2; }
+
+native_guest_source="$native_root/var/lib/boetticher/local-builder/source"
+rm -rf -- "$native_guest_source"
+install -d -m 0755 "$native_guest_source"
+tar -C "$native_source" -cf - . | tar -C "$native_guest_source" -xf -
+install -d -m 0755 "$native_root/var/lib/boetticher/local-builder/output"
+install -d -m 0700 "$native_root/tmp/boetticher-runtime"
+run_pid_file="$native_output/.native-builder-run.pid"
+if [ -e "$run_pid_file" ]; then
+  IFS=' ' read -r existing_run_id existing_pid < "$run_pid_file" || true
+  : "$existing_run_id"
+  case "$existing_pid" in
+    ''|*[!0-9]*) ;;
+    *)
+      if kill -0 "$existing_pid" 2>/dev/null; then
+        printf '%s\n' 'HOLD: another native builder run is active' >&2
+        exit 2
+      fi
+      printf '%s\n' 'HOLD: previous native builder cleanup left a run marker; inspect mounts and remove it only after verification' >&2
+      exit 2
+      ;;
+  esac
+fi
+printf '%s %s\n' "$native_run_id" "$$" > "$run_pid_file"
+chmod 0600 "$run_pid_file"
+
+mounted_dev=0
+mounted_kvm=0
+mounted_fuse=0
+mounted_pts=0
+mounted_proc=0
+child_pid=
+cleanup_failed=0
+cleanup() {
+	status=$?
+	if [ -n "$child_pid" ]; then
+		# setsid may fork when the caller is not already a process-group
+		# leader. Resolve the session leader and terminate every process in
+		# that private session so background image workers cannot escape.
+		cleanup_pid=$child_pid
+		if ! child_session_pid=$(ps -eo pid=,ppid= | awk -v parent="$child_pid" '$2 == parent {print $1; exit}'); then
+			cleanup_failed=1
+			child_session_pid=
+		fi
+		case "$child_session_pid" in
+			''|*[!0-9]*) ;;
+			*) cleanup_pid=$child_session_pid ;;
+		esac
+		if ! child_session=$(ps -o sid= -p "$cleanup_pid" 2>/dev/null | tr -d ' '); then
+			cleanup_failed=1
+			child_session=
+		fi
+		case "$child_session" in
+			''|*[!0-9]*)
+				if kill -0 "$child_pid" 2>/dev/null && ! kill -TERM "$child_pid" 2>/dev/null; then
+					cleanup_failed=1
+				fi
+				;;
+			*)
+				if ! session_pids=$(ps -eo pid=,sid= | awk -v sid="$child_session" '$2 == sid {print $1}'); then
+					cleanup_failed=1
+					session_pids=
+				fi
+				for session_pid in $session_pids; do
+					case "$session_pid" in
+						''|*[!0-9]*) ;;
+						*)
+							if kill -0 "$session_pid" 2>/dev/null && ! kill -TERM "$session_pid" 2>/dev/null; then
+								cleanup_failed=1
+							fi
+							;;
+					esac
+				done
+				;;
+		esac
+		wait "$child_pid" 2>/dev/null || true
+		if [ -n "$child_session" ]; then
+			remaining_session_pids=$(ps -eo pid=,sid= | awk -v sid="$child_session" '$2 == sid {print $1}' || true)
+			[ -z "$remaining_session_pids" ] || cleanup_failed=1
+		fi
+	fi
+	if [ "$mounted_proc" -eq 1 ]; then
+		umount "$native_root/proc" 2>/dev/null || cleanup_failed=1
+	fi
+	if [ "$mounted_pts" -eq 1 ]; then
+		umount "$native_root/dev/pts" 2>/dev/null || cleanup_failed=1
+	fi
+	if [ "$mounted_kvm" -eq 1 ]; then
+		umount "$native_root/dev/kvm" 2>/dev/null || cleanup_failed=1
+	fi
+	if [ "$mounted_fuse" -eq 1 ]; then
+		umount "$native_root/dev/fuse" 2>/dev/null || cleanup_failed=1
+	fi
+	if [ "$mounted_dev" -eq 1 ]; then
+		umount "$native_root/dev" 2>/dev/null || cleanup_failed=1
+	fi
+	if [ "$cleanup_failed" -eq 0 ] && [ -f "$run_pid_file" ]; then
+		IFS=' ' read -r recorded_run_id recorded_pid < "$run_pid_file" || true
+		if [ "$recorded_pid" = "$$" ] && { [ -z "$native_run_id" ] || [ "$recorded_run_id" = "$native_run_id" ]; }; then
+			rm -f -- "$run_pid_file" || cleanup_failed=1
+		fi
+	fi
+	if [ "$cleanup_failed" -ne 0 ]; then
+		printf '%s\n' 'HOLD: native builder cleanup did not complete; run marker retained for operator inspection' >&2
+		[ "$status" -eq 0 ] && status=2
+	fi
+	exit "$status"
+}
+trap cleanup EXIT HUP INT TERM
+install -d -m 0755 "$native_root/dev" "$native_root/proc"
+mount -t tmpfs -o mode=0755,nosuid tmpfs "$native_root/dev"
+mounted_dev=1
+for device in null zero random urandom tty console full; do
+  case "$device" in
+    null) major=1; minor=3 ;;
+    zero) major=1; minor=5 ;;
+    random) major=1; minor=8 ;;
+    urandom) major=1; minor=9 ;;
+    tty) major=5; minor=0 ;;
+    console) major=5; minor=1 ;;
+    full) major=1; minor=7 ;;
+  esac
+  mknod -m 0666 "$native_root/dev/$device" c "$major" "$minor"
+done
+install -d -m 0755 "$native_root/dev/pts"
+mknod -m 0660 "$native_root/dev/kvm" c 10 232
+mknod -m 0666 "$native_root/dev/fuse" c 10 229
+ln -s pts/ptmx "$native_root/dev/ptmx"
+mount -t devpts -o gid=5,mode=620,ptmxmode=666 devpts "$native_root/dev/pts"
+mounted_pts=1
+mount --bind /dev/kvm "$native_root/dev/kvm"
+mounted_kvm=1
+mount --bind /dev/fuse "$native_root/dev/fuse"
+mounted_fuse=1
+mount -t proc proc "$native_root/proc"
+mounted_proc=1
+
+/usr/bin/setsid --wait chroot "$native_root" /usr/bin/env \
+  GOROOT=/opt/boetticher/go/current \
+  PATH=/opt/boetticher/go/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  XDG_RUNTIME_DIR=/tmp/boetticher-runtime \
+  BOETTICHER_CACHE_ROOT=/var/cache/boetticher \
+  BOETTICHER_IMAGE_WORK=/var/tmp/boetticher-image-build \
+  BOETTICHER_ARTIFACT_OUTPUT=/var/lib/boetticher/local-builder/output/generated/artifacts \
+  BOETTICHER_EVIDENCE_ROOT=/var/lib/boetticher/local-builder/output \
+  BOETTICHER_LOCAL_FAST=1 \
+  /bin/sh -c 'cd /var/lib/boetticher/local-builder/source && exec "$@"' /bin/sh "$script" "$@" &
+child_pid=$!
+if wait "$child_pid"; then
+	status=0
+else
+	status=$?
+fi
+child_pid=
+exit "$status"

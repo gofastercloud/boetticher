@@ -5,9 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 )
@@ -26,6 +28,75 @@ func TestGatusRolePreparesConfigDirectoryAndReloadsNginx(t *testing.T) {
 	}
 }
 
+func TestGatusRoleUsesEndpointOwnedSmallstepCertificate(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "gatus", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, required := range []string{
+		"include_tasks: ../../tasks/step-ca-endpoint.yml",
+		"step_ca_endpoint_subject: \"gatus.{{ domain }}\"",
+		"step_ca_endpoint_key_path: /var/lib/boetticher/identity/tls/gatus.key.pem",
+		"step_ca_endpoint_reload_service: nginx",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Gatus role is missing endpoint-owned certificate contract %q", required)
+		}
+	}
+	for _, forbidden := range []string{"gatus_server_cert_pem", "gatus.csr.pem", "ansible.builtin.fetch:"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("Gatus role retains controller certificate exchange %q", forbidden)
+		}
+	}
+}
+
+func TestPrinterRoleUsesSmallstepServerCertificateAndRetainsClientMTLS(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "printer", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, required := range []string{
+		"include_tasks: ../../tasks/step-ca-endpoint.yml",
+		"step_ca_endpoint_subject: \"octoprint.{{ domain }}\"",
+		"step_ca_endpoint_key_path: /var/lib/boetticher/identity/tls/octoprint.key.pem",
+		"ssl_verify_client on;",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Printer TLS contract is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"octoprint_server_cert_pem", "octoprint.csr.pem", "ansible.builtin.fetch:"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("Printer role retains controller server-certificate exchange %q", forbidden)
+		}
+	}
+}
+
+func TestArrRoleUsesSmallstepServerCertificateAndRetainsClientMTLS(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "arr", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, required := range []string{
+		"include_tasks: ../../tasks/step-ca-endpoint.yml",
+		"step_ca_endpoint_subject: \"sonarr.{{ domain }}\"",
+		"step_ca_endpoint_key_path: /var/lib/boetticher/identity/tls/arr.key.pem",
+		"ssl_verify_client on;",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("arr TLS contract is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"arr_server_cert_pem", "arr.csr.pem", "ansible.builtin.fetch:"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("arr role retains controller server-certificate exchange %q", forbidden)
+		}
+	}
+}
+
 func TestARRRoleSeedsConfigurationWithoutOverwritingApplicationState(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "arr", "tasks", "main.yml"))
 	if err != nil {
@@ -37,6 +108,75 @@ func TestARRRoleSeedsConfigurationWithoutOverwritingApplicationState(t *testing.
 	}
 	if !strings.Contains(block, "force: false") {
 		t.Fatal("ARR role overwrites application-managed configuration on every deploy")
+	}
+}
+
+func TestCompanionStreamDeckUsesDirectUSBAndScopedRuntimeFiles(t *testing.T) {
+	playbook, err := os.ReadFile(filepath.Join("..", "..", "ansible", "companion.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(playbook), "    - kiosk") {
+		t.Fatal("companion playbook does not use the companion role")
+	}
+	tasks, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "kiosk", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "kiosk", "templates", "boetticher-streamdeck.service.j2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(tasks) + string(service)
+	for _, expected := range []string{
+		"name: streamdeck",
+		"dest: /usr/local/libexec/boetticher-streamdeck",
+		"dest: /etc/boetticher/streamdeck.json",
+		"ATTR{idVendor}==\"0fd9\", ATTR{idProduct}==\"006d\"",
+		"LoadCredentialEncrypted=pulse-token:/var/lib/boetticher/credentials/companion-streamdeck-pulse-token.cred",
+		"companion-streamdeck-pulse-token.sha256",
+		"companion_streamdeck_credential_needs_update",
+		"/run/boetticher-companion/pulse-token.cred",
+		"DevicePolicy=closed",
+		"DeviceAllow=char-usb_device rw",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("companion StreamDeck contract is missing %q", expected)
+		}
+	}
+	if strings.Contains(text, "/dev/bus/usb/*/*") || strings.Contains(text, "ansible_user_id: root") {
+		t.Fatal("companion StreamDeck role contains broad USB or root-service handling")
+	}
+}
+
+func TestCompanionCapabilityPackagesAndCleanupAreIndependent(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "kiosk", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	displayPackages := ansibleTaskBlock(text, "Install display-only companion packages")
+	if displayPackages == "" || !strings.Contains(displayPackages, "when: kiosk_display_enabled | default(true) | bool") {
+		t.Fatal("display-only companion packages are not capability-gated")
+	}
+	if !strings.Contains(displayPackages, "- chromium") || !strings.Contains(displayPackages, "- libnss3-tools") {
+		t.Fatal("display-only companion package set is incomplete")
+	}
+	if !strings.Contains(text, "Inspect optional companion capability unit files") || !strings.Contains(text, "companion_capability_units.results") {
+		t.Fatal("disabled companion cleanup can attempt to stop units that were never installed")
+	}
+	for _, expected := range []string{
+		"Remove disabled Pulse agent material",
+		"/var/lib/boetticher/credentials/pulse-agent-token.cred",
+		"Remove disabled display capability material",
+		"/home/kiosk/.pki/nssdb",
+		"Remove disabled StreamDeck capability material",
+		"/var/lib/boetticher/credentials/companion-streamdeck-pulse-token.cred",
+		"Reload systemd after removing disabled companion units",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("disabled companion cleanup is missing %q", expected)
+		}
 	}
 }
 
@@ -99,7 +239,7 @@ func TestStableBaseTasksSkipServicesButFinalTasksRemain(t *testing.T) {
 		"Disable the restricted Chrony service in appliances",
 		"Configure appliances to use the platform DNS pair",
 		"Write bounded local journald configuration",
-		"Generate endpoint-local logging CSR",
+		"Issue and renew the endpoint-local logging client certificate from Smallstep",
 		"Install the asynchronous journal-upload configuration skeleton",
 		"Install bounded journal-upload retry policy",
 	} {
@@ -117,34 +257,11 @@ func TestStableBaseTasksSkipServicesButFinalTasksRemain(t *testing.T) {
 			t.Fatalf("runtime base task %q is not available outside the services phase", name)
 		}
 	}
-	for _, name := range []string{
-		"Install the controller-signed endpoint journal certificate",
-		"Enable asynchronous journal upload after endpoint certificate installation",
-	} {
+	for _, name := range []string{"Enable asynchronous journal upload after endpoint certificate installation"} {
 		block := ansibleTaskBlock(text, name)
 		if block == "" || strings.Contains(block, "boetticher_deploy_phase | default('full') != 'services'") {
 			t.Fatalf("final base task %q was incorrectly skipped from the services phase", name)
 		}
-	}
-}
-
-func TestPortalPublicationIsDeferredToServicesPhase(t *testing.T) {
-	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "portal", "tasks", "main.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	block := ansibleTaskBlock(string(contents), "Publish generated portal")
-	if block == "" || !strings.Contains(block, "boetticher_deploy_phase | default('full') != 'bootstrap'") {
-		t.Fatal("portal publication is not deferred from the bootstrap phase")
-	}
-	if !strings.Contains(block, "portal_publication_state.rc | default(1) != 0") {
-		t.Fatal("portal publication does not have a live content and metadata drift gate")
-	}
-	if !strings.Contains(string(contents), "portal_source_archive") || !strings.Contains(block, "ansible.builtin.unarchive") || !strings.Contains(block, "Atomically activate the new portal current link") {
-		t.Fatal("portal publication is not content-addressed and transactional")
-	}
-	if strings.Contains(block, "mode: \"0644\"") || !strings.Contains(block, "-type d \\( ! -user root") {
-		t.Fatal("portal publication must preserve and validate executable directory modes separately from file modes")
 	}
 }
 
@@ -211,29 +328,6 @@ func TestGatusServiceUsesSupportedConfigEnvironment(t *testing.T) {
 	}
 }
 
-func TestStreamDeckIdentityMaterialUsesServiceOwnedPath(t *testing.T) {
-	path := filepath.Join("..", "..", "ansible", "roles", "streamdeck", "tasks", "main.yml")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(data)
-	for _, expected := range []string{
-		"path: /var/lib/streamdeck/tls",
-		"/var/lib/streamdeck/tls/streamdeck.key.pem",
-		"/var/lib/streamdeck/tls/streamdeck.csr.pem",
-		"/var/lib/streamdeck/tls/streamdeck.crt.pem",
-		"/var/lib/streamdeck/tls/ca.pem",
-	} {
-		if !strings.Contains(text, expected) {
-			t.Fatalf("StreamDeck role is missing service-owned identity path %q", expected)
-		}
-	}
-	if strings.Contains(text, "/var/lib/boetticher/identity/tls/streamdeck") {
-		t.Fatal("StreamDeck role still places identity material in the shared identity tree")
-	}
-}
-
 func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	first, err := Inventory(site)
@@ -250,10 +344,8 @@ func TestInventoryContainsBastionAndFixedAddresses(t *testing.T) {
 	for _, expected := range []string{
 		"lab-proxmox-01 ansible_host=10.10.99.5",
 		"lab-dns-01 ansible_host=10.10.10.10",
-		"ansible_remote_tmp=/tmp/boetticher-ansible",
+		"ansible_remote_tmp=/var/lib/boetticher/ansible",
 		"[managed:children]",
-		"[logging]",
-		"lab-log-01 ansible_host=10.10.10.40",
 	} {
 		if !strings.Contains(first, expected) {
 			t.Errorf("inventory missing %q", expected)
@@ -286,7 +378,7 @@ func TestMonitoringAgentTargetsAreTagDrivenAndDefaultToProxmox(t *testing.T) {
 		t.Fatalf("default monitoring-agent targets = %v, want only %q", got, model.LogicalProxmoxIdentity)
 	}
 	for _, component := range site.PlatformComponents() {
-		if component.Name == "lab-monitor-01" || component.Name == "lab-dns-01" || component.Name == "lab-portal-01" {
+		if component.Name == "lab-monitor-01" || component.Name == "lab-dns-01" {
 			for _, tag := range component.Tags {
 				if tag == model.TagMonitoringAgent {
 					t.Fatalf("untargeted component %s carries the monitoring-agent tag", component.Name)
@@ -415,18 +507,6 @@ func TestAIOpsServiceAllowsDeclaredDNSResolvers(t *testing.T) {
 	}
 }
 
-func TestPortalServiceAllowsTheCompleteClientCertificateChain(t *testing.T) {
-	service, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "portal", "tasks", "main.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, expected := range []string{"ssl_client_certificate /etc/boetticher/tls/client-ca.pem;", "ssl_crl /etc/boetticher/tls/client-ca.crl.pem;", "ssl_verify_client on;", "ssl_verify_depth 3;"} {
-		if !strings.Contains(string(service), expected) {
-			t.Fatalf("portal mTLS contract is missing %q", expected)
-		}
-	}
-}
-
 func TestHolmesServiceUsesPinnedConfigDirectoryContract(t *testing.T) {
 	service, err := os.ReadFile(filepath.Join("..", "..", "images", "aiops", "runtime", "holmes.service"))
 	if err != nil {
@@ -447,14 +527,14 @@ func TestHolmesServiceUsesPinnedConfigDirectoryContract(t *testing.T) {
 	}
 }
 
-func TestMonitorFrontendKeepsMTLSExceptForScopedAgentRoutes(t *testing.T) {
+func TestMonitorFrontendUsesTokensForScopedReadRoutes(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "pulse-loopback.conf.j2"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "ssl_verify_client optional") || !strings.Contains(text, "if ($ssl_client_verify != SUCCESS) { return 403; }") {
-		t.Fatal("monitor frontend does not distinguish mTLS UI and token-authenticated agent routes")
+	if !strings.Contains(text, "ssl_verify_client optional") || !strings.Contains(text, "scoped API tokens") {
+		t.Fatal("monitor frontend does not distinguish mTLS UI and token-authenticated read routes")
 	}
 	if strings.Contains(text, "ssl_verify_client off") {
 		t.Fatal("monitor frontend uses an invalid location-scoped client verification directive")
@@ -462,8 +542,22 @@ func TestMonitorFrontendKeepsMTLSExceptForScopedAgentRoutes(t *testing.T) {
 	if !strings.Contains(text, "location ^~ /api/agents/") {
 		t.Fatal("monitor frontend does not proxy the supported Pulse agent routes")
 	}
-	if got := strings.Count(text, "if ($ssl_client_verify != SUCCESS) { return 403; }"); got != 9 {
-		t.Fatalf("monitor frontend mTLS guards = %d, want the three StreamDeck routes, five exact AIOps routes, and the catch-all", got)
+	if got := strings.Count(text, "if ($ssl_client_verify != SUCCESS) { return 403; }"); got != 1 {
+		t.Fatalf("monitor frontend mTLS guards = %d, want only the browser catch-all", got)
+	}
+	for _, route := range []string{"location = /api/health", "location = /api/state/summary", "location = /api/resources"} {
+		start := strings.Index(text, route)
+		if start < 0 {
+			t.Fatalf("monitor frontend omitted %s", route)
+		}
+		end := strings.Index(text[start:], "\n    }")
+		if end < 0 {
+			t.Fatalf("monitor frontend has unterminated %s", route)
+		}
+		block := text[start : start+end]
+		if strings.Contains(block, "$ssl_client_verify") || strings.Contains(block, "$ssl_client_s_dn") {
+			t.Fatalf("token route %s still depends on client certificate identity: %s", route, block)
+		}
 	}
 	if !strings.Contains(text, `CN=aiops-pulse-(?:read|note)`) {
 		t.Fatal("monitor catch-all does not deny the AIOps identities outside their exact routes")
@@ -503,6 +597,47 @@ func TestAnsibleStrategyAllowsParallelConvergenceOnlyAfterFoundation(t *testing.
 	}
 }
 
+func TestAnsibleEnvironmentClearsAmbientConfiguration(t *testing.T) {
+	for key, value := range map[string]string{
+		"ANSIBLE_CONFIG":           "/tmp/attacker.cfg",
+		"ANSIBLE_FORKS":            "999",
+		"ANSIBLE_COLLECTIONS_PATH": "/tmp/collections",
+		"PYTHONPATH":               "/tmp/python",
+		"VIRTUAL_ENV":              "/tmp/venv",
+	} {
+		t.Setenv(key, value)
+	}
+	environment := ansibleEnvironment("ansible/site.yml", "", PhaseFull)
+	values := make(map[string]string, len(environment))
+	for _, entry := range environment {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	if values["ANSIBLE_CONFIG"] != "/dev/null" || values["ANSIBLE_FORKS"] != defaultAnsibleForks || values["PYTHONNOUSERSITE"] != "1" || values["PATH"] != safeControllerPath {
+		t.Fatalf("Ansible environment did not apply the bounded controller contract: %#v", values)
+	}
+	for _, key := range []string{"ANSIBLE_COLLECTIONS_PATH", "PYTHONPATH", "VIRTUAL_ENV"} {
+		if _, ok := values[key]; ok {
+			t.Fatalf("ambient Ansible/Python setting %s survived environment filtering", key)
+		}
+	}
+}
+
+func TestAnsibleProcessGroupStopsOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	err := runInProcessGroup(ctx, exec.Command("sh", "-c", "sleep 30"))
+	if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Fatalf("cancelled Ansible process returned %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("cancelled Ansible process group took %s to terminate", elapsed)
+	}
+}
+
 func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	tempDir := t.TempDir()
 	inventoryPath := filepath.Join(tempDir, "site", "generated", "ansible", "inventory.ini")
@@ -517,14 +652,17 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	forksPath := filepath.Join(tempDir, "forks")
 	inputPath := filepath.Join(tempDir, "input")
 	scriptPath := filepath.Join(tempDir, "ansible-playbook")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ANSIBLE_ARGS_FILE\"\nprintf '%s' \"$ANSIBLE_FORKS\" > \"$ANSIBLE_FORKS_FILE\"\ncat > \"$ANSIBLE_INPUT_FILE\"\nif [ -n \"$BOETTICHER_ANSIBLE_TIMING_FILE\" ]; then printf '%s\\n' '{\"host\":\"lab-fw-01\",\"task\":\"fake task\",\"path\":\"fake.yml:1\",\"status\":\"ok\",\"duration_ms\":3,\"changed\":false,\"markers\":[\"dns-metadata-drift:servers.lab.home.arpa:ALLOW-DNSUPDATE-FROM:20:1:27ee1412f884f2f2:20:27ee1412\"]}' '{\"event\":\"task_batch\",\"task\":\"fake batch\",\"path\":\"fake.yml:2\",\"duration_ms\":7}' >> \"$BOETTICHER_ANSIBLE_TIMING_FILE\"; fi\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$BOETTICHER_TEST_ANSIBLE_ARGS_FILE\"\nprintf '%s' \"$ANSIBLE_FORKS\" > \"$BOETTICHER_TEST_ANSIBLE_FORKS_FILE\"\ncat > \"$BOETTICHER_TEST_ANSIBLE_INPUT_FILE\"\nif [ -n \"$BOETTICHER_ANSIBLE_TIMING_FILE\" ]; then printf '%s\\n' '{\"host\":\"lab-fw-01\",\"task\":\"fake task\",\"path\":\"fake.yml:1\",\"status\":\"ok\",\"duration_ms\":3,\"changed\":false,\"markers\":[\"dns-metadata-drift:servers.lab.home.arpa:ALLOW-DNSUPDATE-FROM:20:1:27ee1412f884f2f2:20:27ee1412\"]}' '{\"event\":\"task_batch\",\"task\":\"fake batch\",\"path\":\"fake.yml:2\",\"duration_ms\":7}' >> \"$BOETTICHER_ANSIBLE_TIMING_FILE\"; fi\n"
 	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
+	previousFinder := findAnsiblePlaybook
+	findAnsiblePlaybook = func() (string, error) { return scriptPath, nil }
+	t.Cleanup(func() { findAnsiblePlaybook = previousFinder })
 	t.Setenv("PATH", tempDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("ANSIBLE_ARGS_FILE", argsPath)
-	t.Setenv("ANSIBLE_FORKS_FILE", forksPath)
-	t.Setenv("ANSIBLE_INPUT_FILE", inputPath)
+	t.Setenv("BOETTICHER_TEST_ANSIBLE_ARGS_FILE", argsPath)
+	t.Setenv("BOETTICHER_TEST_ANSIBLE_FORKS_FILE", forksPath)
+	t.Setenv("BOETTICHER_TEST_ANSIBLE_INPUT_FILE", inputPath)
 	previousForks, hadForks := os.LookupEnv("ANSIBLE_FORKS")
 	if err := os.Unsetenv("ANSIBLE_FORKS"); err != nil {
 		t.Fatal(err)
@@ -537,7 +675,7 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 		}
 	})
 
-	result, err := run(context.Background(), filepath.Join("..", "..", "ansible", "site.yml"), inventoryPath, []byte("{}"), "lab-fw-01", PhaseFull)
+	result, err := run(context.Background(), filepath.Join("..", "..", "ansible", "site.yml"), inventoryPath, []byte("{}"), "lab-fw-01", PhaseFull, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -574,6 +712,83 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	}
 	if !strings.Contains(string(input), `"boetticher_deploy_phase": "full"`) {
 		t.Fatalf("Ansible variables did not contain the deployment phase: %s", input)
+	}
+}
+
+func TestRunWithIdentityUsesAndCleansTemporarySSHAgent(t *testing.T) {
+	tempDir := t.TempDir()
+	inventoryPath := filepath.Join(tempDir, "site", "generated", "ansible", "inventory.ini")
+	sshConfigPath := filepath.Join(tempDir, "site", "generated", "ssh", "boetticher.conf")
+	if err := os.MkdirAll(filepath.Dir(sshConfigPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sshConfigPath, []byte("Host lab-fw-01\n    HostName 192.0.2.10\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	identityPath := filepath.Join(tempDir, "identity")
+	stopPath := filepath.Join(tempDir, "agent-stopped")
+	argsPath := filepath.Join(tempDir, "ansible-args")
+	if err := os.WriteFile(filepath.Join(tempDir, "ssh-agent"), []byte("#!/bin/sh\nif [ \"$1\" = \"-s\" ]; then printf 'SSH_AUTH_SOCK=%s; export SSH_AUTH_SOCK;\\nSSH_AGENT_PID=4242; export SSH_AGENT_PID;\\n' \"$BOETTICHER_TEST_AGENT_SOCKET\"; else : > \"$BOETTICHER_TEST_AGENT_STOPPED\"; fi\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, "ssh-add"), []byte("#!/bin/sh\ncat > \"$BOETTICHER_TEST_AGENT_IDENTITY\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, "ansible-playbook"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$BOETTICHER_TEST_ANSIBLE_ARGS\"\ncat >/dev/null\nprintf '%s\\n' 'ok changed=0 unreachable=0 failed=0'\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	ansiblePath := filepath.Join(tempDir, "ansible-playbook")
+	previousFinder := findAnsiblePlaybook
+	findAnsiblePlaybook = func() (string, error) { return ansiblePath, nil }
+	previousAgent, previousAdd := sshAgentExecutable, sshAddExecutable
+	sshAgentExecutable, sshAddExecutable = filepath.Join(tempDir, "ssh-agent"), filepath.Join(tempDir, "ssh-add")
+	t.Cleanup(func() {
+		findAnsiblePlaybook = previousFinder
+		sshAgentExecutable, sshAddExecutable = previousAgent, previousAdd
+	})
+	t.Setenv("PATH", tempDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("BOETTICHER_TEST_AGENT_SOCKET", filepath.Join(tempDir, "agent.sock"))
+	t.Setenv("BOETTICHER_TEST_AGENT_IDENTITY", identityPath)
+	t.Setenv("BOETTICHER_TEST_AGENT_STOPPED", stopPath)
+	t.Setenv("BOETTICHER_TEST_ANSIBLE_ARGS", argsPath)
+	if _, err := run(context.Background(), filepath.Join("..", "..", "ansible", "site.yml"), inventoryPath, []byte("{}"), "lab-fw-01", PhaseFull, []byte("temporary private key")); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := os.ReadFile(identityPath)
+	if err != nil || string(identity) != "temporary private key" {
+		t.Fatalf("temporary identity was not passed to ssh-add over stdin: err=%v data=%q", err, identity)
+	}
+	if _, err := os.Stat(stopPath); err != nil {
+		t.Fatalf("temporary ssh-agent was not stopped: %v", err)
+	}
+	args, err := os.ReadFile(argsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(args), "-o IdentitiesOnly=no -o ControlMaster=no -o ControlPath=none") || strings.Contains(string(args), "temporary private key") {
+		t.Fatalf("Ansible arguments did not select the temporary agent without exposing key material: %s", args)
+	}
+}
+
+func TestStartTemporarySSHAgentCleansUpAfterIdentityLoadFailure(t *testing.T) {
+	tempDir := t.TempDir()
+	stopped := filepath.Join(tempDir, "stopped")
+	if err := os.WriteFile(filepath.Join(tempDir, "ssh-agent"), []byte("#!/bin/sh\nif [ \"$1\" = \"-s\" ]; then printf 'SSH_AUTH_SOCK=%s; export SSH_AUTH_SOCK;\\nSSH_AGENT_PID=4242; export SSH_AGENT_PID;\\n' \"$BOETTICHER_TEST_AGENT_SOCKET\"; else : > \"$BOETTICHER_TEST_AGENT_STOPPED\"; fi\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tempDir, "ssh-add"), []byte("#!/bin/sh\nprintf '%s\\n' 'rejected' >&2\nexit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	previousAgent, previousAdd := sshAgentExecutable, sshAddExecutable
+	sshAgentExecutable, sshAddExecutable = filepath.Join(tempDir, "ssh-agent"), filepath.Join(tempDir, "ssh-add")
+	t.Cleanup(func() { sshAgentExecutable, sshAddExecutable = previousAgent, previousAdd })
+	t.Setenv("BOETTICHER_TEST_AGENT_SOCKET", filepath.Join(tempDir, "agent.sock"))
+	t.Setenv("BOETTICHER_TEST_AGENT_STOPPED", stopped)
+	if _, _, err := startTemporarySSHAgent([]byte("temporary identity")); err == nil {
+		t.Fatal("identity-load failure was accepted")
+	}
+	if _, err := os.Stat(stopped); err != nil {
+		t.Fatalf("temporary agent was not cleaned up after identity-load failure: %v", err)
 	}
 }
 
@@ -707,6 +922,57 @@ func TestBifrostRestartsWhenAnyRuntimeCredentialIsMissing(t *testing.T) {
 	}
 }
 
+func TestBifrostRoleUsesSmallstepServerCertificateAndRetainsClientMTLS(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "bifrost", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, required := range []string{
+		"step_ca_root_cert_pem is defined",
+		"step_ca_intermediate_cert_pem is defined",
+		"include_tasks: ../../tasks/step-ca-endpoint.yml",
+		"step_ca_endpoint_subject: \"bifrost.{{ domain }}\"",
+		"ssl_verify_client on;",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Bifrost TLS contract is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"bifrost_server_cert_pem", "bifrost.csr.pem", "ansible.builtin.fetch:"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("Bifrost role retains controller server-certificate exchange %q", forbidden)
+		}
+	}
+}
+
+func TestAIOpsRoleUsesSmallstepEndpointIdentities(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "aiops", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, required := range []string{
+		"step_ca_root_cert_pem is defined",
+		"step_ca_intermediate_cert_pem is defined",
+		"include_tasks: ../../tasks/step-ca-endpoint.yml",
+		"step_ca_endpoint_subject: \"aiops.{{ domain }}\"",
+		"ai-router-client.crt.pem",
+		"step_ca_endpoint_subject: aiops-log-read",
+		"log-query-client.crt.pem",
+		"log-query-client.step-ca",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("AIOps TLS contract is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"aiops_server_cert_pem", "aiops_log_read_cert_pem", "log-query-client.csr.pem", "pki_csr_output_dir"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("AIOps role retains controller server-certificate exchange %q", forbidden)
+		}
+	}
+}
+
 func TestMonitoringFrontendHandlersFlushBeforeReconciliation(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
@@ -719,30 +985,23 @@ func TestMonitoringFrontendHandlersFlushBeforeReconciliation(t *testing.T) {
 	}
 }
 
-func TestEndpointTLSKeysAreGeneratedLocallyAndNeverSuppliedByController(t *testing.T) {
-	for _, role := range []string{"monitor", "portal"} {
+func TestEndpointTLSKeysRemainLocallyOwnedAndNeverSuppliedByController(t *testing.T) {
+	for _, role := range []string{"monitor"} {
 		path := filepath.Join("..", "..", "ansible", "roles", role, "tasks", "main.yml")
 		data, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
 		}
 		text := string(data)
-		if !strings.Contains(text, "openssl\n") || !strings.Contains(text, "genpkey") || !strings.Contains(text, "Restrict the "+role+" endpoint private key") {
-			t.Fatalf("%s role does not generate and restrict its endpoint key locally", role)
+		if !strings.Contains(text, "endpoint-owned key") || !strings.Contains(text, role+".key.pem.new") {
+			t.Fatalf("%s role does not generate and activate its endpoint-owned key locally", role)
 		}
 		if strings.Contains(text, role+"_server_key_pem") {
 			t.Fatalf("%s role still accepts a controller-supplied endpoint private key", role)
 		}
-		if !strings.Contains(text, "ansible.builtin.fetch:") || !strings.Contains(text, role+".csr.pem") {
-			t.Fatalf("%s role does not return its CSR to the controller", role)
+		if strings.Contains(text, "ansible.builtin.fetch:") || strings.Contains(text, role+".csr.pem") {
+			t.Fatalf("%s role retains a controller-side CSR exchange", role)
 		}
-	}
-	portal, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "portal", "tasks", "main.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(portal), "Enable and reload the portal nginx service") || !strings.Contains(string(portal), "state: reloaded") {
-		t.Fatal("portal role does not enable and reload nginx after installing its certificate")
 	}
 }
 
@@ -763,7 +1022,7 @@ func TestLoggingCollectorKeyIsReadableByItsServiceUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "path: \"{{ logging_plan.remote_journal_path }}\"\n    state: directory\n    owner: root\n    group: systemd-journal-remote\n    mode: '2770'") || !strings.Contains(text, "Grant the managed administrator read access to collected journals") || !strings.Contains(text, "groups: systemd-journal-remote\n    append: true") || !strings.Contains(text, "path: /var/lib/boetticher/identity/logging/collector.key") || !strings.Contains(text, "group: systemd-journal-remote\n    mode: '0640'") {
+	if !strings.Contains(text, "path: \"{{ logging_plan.remote_journal_path }}\"\n    state: directory\n    owner: root\n    group: systemd-journal-remote\n    mode: '2770'") || !strings.Contains(text, "Grant the managed administrator read access to collected journals") || !strings.Contains(text, "groups: systemd-journal-remote\n    append: true") || !strings.Contains(text, "path: /var/lib/boetticher/identity/logging/collector.key") || !strings.Contains(text, "step_ca_endpoint_key_group: systemd-journal-remote") || !strings.Contains(text, "step_ca_endpoint_key_mode: '0640'") {
 		t.Fatal("logging collector private key is not readable by the systemd-journal-remote service user")
 	}
 }
@@ -823,7 +1082,7 @@ func TestLoggingUploadKeyIsReadableByItsServiceGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "Create endpoint-local logging identity directory") || !strings.Contains(text, "group: systemd-journal\n    mode: '0750'") || !strings.Contains(text, "Allow the upload service to read its private key") || !strings.Contains(text, "group: systemd-journal\n    mode: '0640'") {
+	if !strings.Contains(text, "Create endpoint-local logging identity directory") || !strings.Contains(text, "group: systemd-journal\n    mode: '0750'") || !strings.Contains(text, "Issue and renew the endpoint-local logging client certificate from Smallstep") || !strings.Contains(text, "step_ca_endpoint_key_group: systemd-journal") || !strings.Contains(text, "step_ca_endpoint_key_mode: '0640'") {
 		t.Fatal("journal upload private keys are not readable by the systemd-journal service group")
 	}
 }
@@ -886,6 +1145,19 @@ func TestProxmoxJournalUploadPinsTheCollectorWithoutChangingHomeDNS(t *testing.T
 		if !strings.Contains(text, expected) {
 			t.Fatalf("Proxmox journal upload is missing %q", expected)
 		}
+	}
+}
+
+func TestProxmoxBaseConvergenceDoesNotRequireEnterpriseRepositoryRefresh(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	want := `update_cache: "{{ inventory_hostname not in groups.get('proxmox', []) }}"`
+	if strings.Count(text, want) < 2 {
+		t.Fatalf("Proxmox base apt tasks do not avoid unauthenticated enterprise refreshes: %s", text)
 	}
 }
 
@@ -1004,6 +1276,43 @@ func TestDNSRoleChecksPowerDNSVersionOutputOnEitherStream(t *testing.T) {
 	}
 }
 
+func TestDNSRoleInstallsSmallstepWithColdRootBoundary(t *testing.T) {
+	tasksPath := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
+	tasks, err := os.ReadFile(tasksPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	servicePath := filepath.Join("..", "..", "ansible", "roles", "dns", "templates", "step-ca.service.j2")
+	service, err := os.ReadFile(servicePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(tasks) + string(service)
+	for _, expected := range []string{
+		"name: boetticher-step-ca",
+		"/usr/local/bin/step",
+		"--password-file",
+		"--acme",
+		"step_ca_root_cert_pem",
+		"step_ca_intermediate_cert_pem",
+		"step_ca_intermediate_key_pem",
+		"Remove the generated Smallstep root private key from the online CA",
+		"User=boetticher-step-ca",
+		"NoNewPrivileges=true",
+		"ProtectSystem=strict",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("Smallstep CA runtime contract is missing %q", expected)
+		}
+	}
+	if strings.Contains(text, "step_ca_root_key_pem") || strings.Contains(text, "root_key_pem_b64") {
+		t.Fatal("DNS role attempts to deliver the cold root private key")
+	}
+	if strings.Index(string(tasks), "Remove the generated Smallstep root private key from the online CA") < strings.Index(string(tasks), "Initialize the Smallstep CA configuration once") {
+		t.Fatal("DNS role removes the generated root key before initializing Smallstep")
+	}
+}
+
 func TestDNSRoleUsesPowerDNS49CommandNames(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "dns", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
@@ -1016,7 +1325,7 @@ func TestDNSRoleUsesPowerDNS49CommandNames(t *testing.T) {
 			t.Fatalf("DNS role retains obsolete PowerDNS command namespace %q", forbidden)
 		}
 	}
-	for _, expected := range []string{"pdnsutil list-all-zones", "pdnsutil create-zone", "pdnsutil set-kind {{ item }} MASTER", "pdnsutil replace-rrset", "pdnsutil delete-rrset", "pdnsutil set-meta", "NOTIFY-DNSUPDATE 1", "pdnsutil create-secondary-zone", "pdnsutil replace-rrset \"$zone\" @ NS", "item.name | replace('.' ~ dns_plan.static_zone, '')", "item.value"} {
+	for _, expected := range []string{"pdnsutil list-all-zones", "pdnsutil create-zone", "pdnsutil set-kind {{ item }} MASTER", "pdnsutil replace-rrset", "pdnsutil delete-rrset", "pdnsutil set-meta", "NOTIFY-DNSUPDATE 1", "pdnsutil replace-rrset \"$zone\" @ NS", "item.name | replace('.' ~ dns_plan.static_zone, '')", "item.value"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("DNS role missing qualified PowerDNS command %q", expected)
 		}
@@ -1069,7 +1378,7 @@ func TestDNSRoleAllowsBlockyToTraverseFilteringPolicy(t *testing.T) {
 	}
 }
 
-func TestPowerDNSTemplateUsesCurrentPrimarySecondarySettings(t *testing.T) {
+func TestPowerDNSTemplateUsesCurrentPrimarySetting(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "dns", "templates", "pdns.conf.j2")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -1081,7 +1390,7 @@ func TestPowerDNSTemplateUsesCurrentPrimarySecondarySettings(t *testing.T) {
 			t.Fatalf("PowerDNS template retains obsolete setting %q", forbidden)
 		}
 	}
-	for _, expected := range []string{"secondary=", "primary="} {
+	for _, expected := range []string{"primary=yes"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("PowerDNS template missing current setting %q", expected)
 		}
@@ -1126,10 +1435,54 @@ func TestMonitoringRoleUsesExistingTLSBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(tasks) + string(template)
-	for _, expected := range []string{"monitor_server_cert_pem", "client_ca_pem", "client_crl_pem", "ssl_crl /etc/boetticher/tls/client-ca.crl.pem", "ssl_verify_client optional", "ssl_verify_depth 3;", "if ($ssl_client_verify != SUCCESS) { return 403; }", "proxy_pass http://127.0.0.1:7655"} {
+	for _, expected := range []string{"step_ca_root_cert_pem", "step_ca_intermediate_cert_pem", "client_ca_pem", "client_crl_pem", "ssl_crl /etc/boetticher/tls/client-ca.crl.pem", "ssl_verify_client optional", "ssl_verify_depth 3;", "if ($ssl_client_verify != SUCCESS) { return 403; }", "proxy_pass http://127.0.0.1:7655"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("monitoring role missing TLS/frontend contract %q", expected)
 		}
+	}
+}
+
+func TestMonitoringRoleUsesEndpointOwnedSmallstepRenewal(t *testing.T) {
+	tasks, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"step-ca-root.crt",
+		"step-ca-intermediate.crt",
+		"Create a one-time Pulse certificate token on the online CA",
+		"Issue the Pulse certificate from Smallstep with an endpoint-owned key",
+		"monitor.crt.pem.new",
+		"monitor.key.pem.new",
+		"monitor.step-ca",
+		"boetticher-renew-monitor-certificate.timer",
+	} {
+		if !strings.Contains(string(tasks), name) {
+			t.Fatalf("monitoring role is missing Smallstep renewal contract %q", name)
+		}
+	}
+	script, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "renew-monitor-certificate.sh.j2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"certificate needs-renewal",
+		"ca renew --force --expires-in 240h",
+		"certificate bundle",
+		"certificate verify",
+		"mv -f \"$work/bundle.pem\" \"$cert\"",
+		"systemctl reload nginx",
+	} {
+		if !strings.Contains(string(script), name) {
+			t.Fatalf("monitor renewal helper is missing %q", name)
+		}
+	}
+	service, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "renew-monitor-certificate.service.j2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(service), "User=root") || !strings.Contains(string(service), "ProtectSystem=strict") {
+		t.Fatal("monitor renewal service does not retain the narrow root-owned key boundary")
 	}
 }
 
@@ -1420,7 +1773,7 @@ func TestDNSAppliancePathCannotInstallAResolver(t *testing.T) {
 }
 
 func TestApplianceRolesDoNotMutateModuleSoftware(t *testing.T) {
-	for _, role := range []string{"dns", "monitor", "firewall", "logging", "portal"} {
+	for _, role := range []string{"dns", "monitor", "firewall", "logging"} {
 		path := filepath.Join("..", "..", "ansible", "roles", role, "tasks", "main.yml")
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -1432,7 +1785,7 @@ func TestApplianceRolesDoNotMutateModuleSoftware(t *testing.T) {
 				t.Fatalf("%s appliance role retains software mutation task %q", role, forbidden)
 			}
 		}
-		if role != "portal" && strings.Contains(text, "ansible.builtin.unarchive:") {
+		if strings.Contains(text, "ansible.builtin.unarchive:") {
 			t.Fatalf("%s appliance role retains software mutation task %q", role, "ansible.builtin.unarchive:")
 		}
 		if !strings.Contains(text, "boetticher_appliance_artifact") {
@@ -1645,8 +1998,6 @@ func TestPulseProxyAuthMapsOnlyApprovedClientIdentities(t *testing.T) {
 	for _, expected := range []string{
 		"CN=client-operator.{{ domain }},O=boetticher",
 		"CN=client-lab-display-01-kiosk.{{ domain }},O=boetticher",
-		"CN=client-boetticher-reconciler.{{ domain }},O=boetticher",
-		"CN=(?:lab-streamdeck-01|client-boetticher-pulse-read",
 		"location = /api/health",
 		"location = /api/state/summary",
 		"location = /api/resources",
@@ -1692,6 +2043,67 @@ func TestPulseProxyAuthMapsOnlyApprovedClientIdentities(t *testing.T) {
 	}
 	if !strings.Contains(text[agentStart:agentStart+agentEnd], "proxy_set_header X-Proxy-Secret \"\";") {
 		t.Fatal("Pulse host-agent location does not clear browser proxy auth")
+	}
+}
+
+func TestSharedClientCAFrontendsRestrictClientIdentities(t *testing.T) {
+	checks := []struct {
+		role     string
+		required []string
+	}{
+		{role: "bifrost", required: []string{
+			`if ($ssl_client_s_dn !~ "^(?:CN=client-operator\\.{{ domain | regex_escape }}(?:,O=boetticher)?|CN=aiops-router-client(?:,O=boetticher)?)$") { return 403; }`,
+			`if ($ssl_client_s_dn ~ "CN=aiops-router-client(?:,|$)") { return 403; }`,
+		}},
+		{role: "arr", required: []string{`if ($ssl_client_s_dn != "CN=client-operator.{{ domain }},O=boetticher") { return 403; }`}},
+		{role: "printer", required: []string{`if ($ssl_client_s_dn != "CN=client-operator.{{ domain }},O=boetticher") { return 403; }`}},
+	}
+	for _, check := range checks {
+		data, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", check.role, "tasks", "main.yml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		for _, required := range check.required {
+			if !strings.Contains(text, required) {
+				t.Fatalf("%s frontend is missing exact client identity control %q", check.role, required)
+			}
+		}
+	}
+}
+
+func TestLoggingUploadRetainsClientIdentityAndPulseWritesUseScopedTokens(t *testing.T) {
+	logging, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "logging", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	loggingText := string(logging)
+	for _, required := range []string{
+		"set $boetticher_logging_client_allowed 0;",
+		"logging_upload_configs.keys() | sort",
+		`CN=client-{{ endpoint | regex_escape }}\\.{{ domain | regex_escape }}(?:,O=boetticher)?`,
+		"if ($boetticher_logging_client_allowed = 0) { return 403; }",
+	} {
+		if !strings.Contains(loggingText, required) {
+			t.Fatalf("logging upload route is missing exact client identity control %q", required)
+		}
+	}
+	frontend, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "pulse-loopback.conf.j2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	frontendText := string(frontend)
+	noteStart := strings.Index(frontendText, "location = /api/alerts/incidents/note")
+	if noteStart < 0 {
+		t.Fatal("Pulse incident-note route is missing")
+	}
+	noteEnd := strings.Index(frontendText[noteStart:], "\n    }")
+	if noteEnd < 0 {
+		t.Fatal("Pulse incident-note route is unterminated")
+	}
+	noteRoute := frontendText[noteStart : noteStart+noteEnd]
+	if strings.Contains(noteRoute, "$ssl_client_verify") || strings.Contains(noteRoute, "$ssl_client_s_dn") || !strings.Contains(noteRoute, "Authorization $http_authorization") {
+		t.Fatal("Pulse incident-note route does not use the scoped bearer-token boundary")
 	}
 }
 

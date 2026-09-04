@@ -17,7 +17,7 @@ const RuntimeConfigPath = "/etc/boetticher/module.yaml"
 
 const ArtifactIdentityPath = "/usr/lib/boetticher/artifact.json"
 
-// RuntimeConfig is the non-secret site-specific contract injected into an
+// RuntimeConfig is the non-secret site-specific 0.5 contract injected into an
 // appliance after its immutable rootfs is created.
 type RuntimeConfig struct {
 	APIVersion  string                  `yaml:"api_version"`

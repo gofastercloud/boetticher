@@ -25,7 +25,7 @@ func PrimaryCommandPlan(plan Plan) []PowerDNSCommand {
 		commands = append(commands,
 			PowerDNSCommand{Args: []string{"pdnsutil", "create-zone", zone}},
 			PowerDNSCommand{Args: []string{"pdnsutil", "set-kind", zone, "MASTER"}},
-			PowerDNSCommand{Args: []string{"pdnsutil", "replace-rrset", zone, "@", "NS", "300", "lab-dns-01." + plan.StaticZone + ".", "lab-dns-02." + plan.StaticZone + "."}},
+			PowerDNSCommand{Args: []string{"pdnsutil", "replace-rrset", zone, "@", "NS", "300", "lab-dns-01." + plan.StaticZone + "."}},
 		)
 	}
 	if plan.DDNS.Enabled {

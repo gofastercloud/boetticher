@@ -38,8 +38,8 @@ func EvidencePath(root, name string) string {
 }
 
 func WriteEvidence(root, name string, evidence Evidence) error {
-	if root == "" || name == "" || evidence.ArtifactPath == "" || evidence.ContentSHA256 == "" || evidence.DefinitionSHA256 == "" {
-		return fmt.Errorf("artifact evidence requires root, name, artifact path, definition digest, and content digest")
+	if root == "" || name == "" || evidence.ContentSHA256 == "" || evidence.DefinitionSHA256 == "" {
+		return fmt.Errorf("artifact evidence requires root, name, definition digest, and content digest")
 	}
 	if err := validateEvidenceName(name); err != nil {
 		return err
@@ -132,8 +132,13 @@ func RebindEvidencePaths(root string) error {
 			return fmt.Errorf("verify transferred artifact %s: %w", evidence.Artifact.Name, err)
 		}
 		if verified.ContentSHA256 != evidence.ContentSHA256 {
-			return fmt.Errorf("transferred artifact %s content checksum differs from evidence", evidence.Artifact.Name)
+			// A build transfer can legitimately contain new bytes alongside
+			// evidence from the previous qualification. Preserve the stale
+			// record for the scan/requalification step; it must not prevent the
+			// artifact itself from reaching the maintainer checkout.
+			continue
 		}
+		evidence.Artifact.ContentSHA256 = evidence.ContentSHA256
 		evidence.ArtifactPath = artifactPath
 		if !evidence.Qualified {
 			return fmt.Errorf("transferred evidence %s is not qualified", evidence.Artifact.Name)

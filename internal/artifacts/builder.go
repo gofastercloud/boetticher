@@ -17,39 +17,10 @@ import (
 	"time"
 
 	buildbundle "github.com/gofastercloud/boetticher"
-	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/pathguard"
 )
 
-// BuilderPlan describes the ephemeral Core build environment. It receives
-// public build inputs only and is never a module or a runtime secret holder.
-type BuilderPlan struct {
-	VMID           int
-	Hostname       string
-	Platform       string
-	Temporary      bool
-	Network        string
-	Cores          int
-	MemoryMiB      int
-	DiskGiB        int
-	MinimumFreeGiB int
-}
-
-func Builder() BuilderPlan {
-	return BuilderPlan{
-		VMID:           model.BuilderVMID,
-		Hostname:       "lab-builder-01",
-		Platform:       "debian-13-amd64",
-		Temporary:      true,
-		Network:        "bootstrap-upstream-only",
-		Cores:          model.BuilderCores,
-		MemoryMiB:      model.BuilderMemoryMiB,
-		DiskGiB:        model.BuilderDiskGiB,
-		MinimumFreeGiB: model.BuilderMinimumFreeGiB,
-	}
-}
-
-// PublicBuildInputs is the allow-list for the temporary Linux builder. The
+// PublicBuildInputs is the allow-list for the maintainer Linux image build. The
 // builder receives only reproducible build definitions and the small Go
 // qualification helper; site repositories, generated state, and credentials
 // are intentionally outside this set.
@@ -77,11 +48,16 @@ var PublicBuildInputs = []string{
 	"internal/logging",
 	"internal/model",
 	"internal/modules",
+	"internal/network",
 	"internal/networktest",
 	"internal/pathguard",
 	"internal/streamdeck",
 	"internal/usbexport",
+	"ansible/companion.yml",
+	"ansible/site.yml",
+	"ansible/roles",
 	"images",
+	"pi/kiosk",
 	"scripts/benchmark-artifact-compression.sh",
 	"scripts/build-images.sh",
 	"scripts/scan-images.sh",
@@ -89,15 +65,53 @@ var PublicBuildInputs = []string{
 	"scripts/smoke-firewall-image.sh",
 }
 
+// NativeBuilderSupportInputs are maintainer-only orchestration scripts. They
+// are transferred to the isolated build host so it can execute the public
+// build inputs, but they are not embedded in an installed operator binary.
+var NativeBuilderSupportInputs = []string{
+	"cmd/artifact-reuse",
+	"scripts/install-debian-archive-keyring.sh",
+	"scripts/local-builder-setup.sh",
+	"scripts/native-builder-run.sh",
+}
+
+// CompanionSourceInputs are the public provisioning assets needed by a
+// release controller to configure an external companion without a source
+// checkout. They contain no site state, credentials, or private keys.
+var CompanionSourceInputs = []string{
+	"ansible/companion.yml",
+	"ansible/roles/kiosk",
+	"pi/kiosk",
+}
+
+// AnsibleSourceInputs are the deployment playbook and roles required by an
+// installed release controller. They contain no site state, credentials, or
+// private keys.
+var AnsibleSourceInputs = []string{
+	"ansible/site.yml",
+	"ansible/roles",
+}
+
 // BuildSourceArchive returns a deterministic gzip-compressed tar stream of
 // the public build inputs. It rejects symlinks so a source checkout cannot
-// smuggle a site file or credential into the temporary builder through a
+// smuggle a site file or credential into the maintainer image build through a
 // path traversal or linked file.
 func BuildSourceArchive(root string) ([]byte, error) {
+	return buildSourceArchive(root, PublicBuildInputs)
+}
+
+// BuildNativeSourceArchive returns the public build inputs plus the two
+// maintainer-only scripts needed to run the isolated native builder.
+func BuildNativeSourceArchive(root string) ([]byte, error) {
+	inputs := append(append([]string(nil), PublicBuildInputs...), NativeBuilderSupportInputs...)
+	return buildSourceArchive(root, inputs)
+}
+
+func buildSourceArchive(root string, inputs []string) ([]byte, error) {
 	if root == "" {
 		return nil, fmt.Errorf("build source root is required")
 	}
-	paths := append([]string(nil), PublicBuildInputs...)
+	paths := append([]string(nil), inputs...)
 	sort.Strings(paths)
 	return deterministicArchive(func(tarWriter *tar.Writer) error {
 		for _, relative := range paths {
@@ -134,7 +148,24 @@ func BuildSourceArchive(root string) ([]byte, error) {
 // This keeps bootstrap usable from an installed controller binary without
 // embedding any site repository or secret material.
 func BuildEmbeddedSourceArchive() ([]byte, error) {
-	paths := append([]string(nil), PublicBuildInputs...)
+	return buildEmbeddedArchive(PublicBuildInputs)
+}
+
+// BuildEmbeddedCompanionSourceArchive returns a deterministic archive of the
+// public companion provisioning assets embedded in a release controller.
+func BuildEmbeddedCompanionSourceArchive() ([]byte, error) {
+	return buildEmbeddedArchive(CompanionSourceInputs)
+}
+
+// BuildEmbeddedAnsibleSourceArchive returns the deployment playbook and
+// first-party roles embedded in a release controller. Deployment still reads
+// site-specific variables and secrets from the operator's private site.
+func BuildEmbeddedAnsibleSourceArchive() ([]byte, error) {
+	return buildEmbeddedArchive(AnsibleSourceInputs)
+}
+
+func buildEmbeddedArchive(inputs []string) ([]byte, error) {
+	paths := append([]string(nil), inputs...)
 	sort.Strings(paths)
 	return deterministicArchive(func(tarWriter *tar.Writer) error {
 		for _, relative := range paths {
@@ -201,12 +232,12 @@ func addArchiveFile(root, path string, entry fs.DirEntry, writer *tar.Writer) er
 	if err != nil || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("build input escapes source root: %s", path)
 	}
-	file, err := os.Open(path)
+	file, openedInfo, err := openEvidenceFile(path, "public build input")
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	header, err := tar.FileInfoHeader(info, "")
+	header, err := tar.FileInfoHeader(openedInfo, "")
 	if err != nil {
 		return err
 	}
@@ -215,7 +246,7 @@ func addArchiveFile(root, path string, entry fs.DirEntry, writer *tar.Writer) er
 	// Source file modification times are not desired-state inputs. A fixed
 	// timestamp keeps the transferred source bundle deterministic.
 	header.ModTime = time.Unix(0, 0).UTC()
-	if info.Mode()&0o111 != 0 {
+	if openedInfo.Mode()&0o111 != 0 {
 		header.Mode = 0o755
 	} else {
 		header.Mode = 0o644
@@ -262,39 +293,34 @@ func addEmbeddedArchiveFile(relative string, entry fs.DirEntry, writer *tar.Writ
 	return err
 }
 
-// ExtractBuildArchiveFile streams a builder archive from a controller-side
-// temporary file. The complete archive is never held in memory.
-func ExtractBuildArchiveFile(archivePath, root string) error {
-	if archivePath == "" || root == "" {
-		return fmt.Errorf("builder artifact archive and destination root are required")
-	}
-	file, err := os.Open(archivePath)
-	if err != nil {
-		return fmt.Errorf("open builder artifact archive: %w", err)
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return fmt.Errorf("stat builder artifact archive: %w", err)
-	}
-	if !info.Mode().IsRegular() || info.Size() == 0 {
-		return fmt.Errorf("builder artifact archive must be a non-empty regular file")
-	}
-	return ExtractBuildArchiveReader(file, root)
+// ExtractSourceArchiveReader extracts only the built-in deployment and
+// companion source trees. It is separate from artifact extraction so a source
+// archive cannot write into generated state, and a builder artifact archive
+// cannot be repurposed as a source tree.
+func ExtractSourceArchiveReader(reader io.Reader, root string) error {
+	return extractArchiveReader(reader, root, func(clean string) bool {
+		return strings.HasPrefix(clean, "ansible/") || strings.HasPrefix(clean, "pi/kiosk/")
+	}, "embedded source", 256<<20, 64<<20)
 }
 
-// ExtractBuildArchiveReader accepts a streamed generated artifact tree. It
-// retains path, link, entry-count, and total-output protections while writing
-// each regular file atomically beneath the generated artifact directory.
-func ExtractBuildArchiveReader(reader io.Reader, root string) error {
+// ExtractNativeBuilderOutputReader imports only generated output returned by
+// the isolated maintainer builder. The builder is local tooling, but its
+// output still crosses a trust boundary and must not be extracted with an
+// unconstrained system tar command.
+func ExtractNativeBuilderOutputReader(reader io.Reader, root string) error {
+	return extractArchiveReader(reader, root, func(clean string) bool {
+		return clean == "generated" || strings.HasPrefix(clean, "generated/")
+	}, "native builder output", 32<<30, 8<<30)
+}
+
+func extractArchiveReader(reader io.Reader, root string, allowed func(string) bool, label string, maxBytes, maxArchiveEntrySize int64) error {
 	if reader == nil || root == "" {
 		return fmt.Errorf("builder artifact archive and destination root are required")
 	}
-	const (
-		maxEntries          = 8192
-		maxBytes            = int64(64 << 30)
-		maxArchiveEntrySize = int64(16 << 30)
-	)
+	if allowed == nil || label == "" || maxBytes <= 0 || maxArchiveEntrySize <= 0 {
+		return fmt.Errorf("archive extraction policy is invalid")
+	}
+	const maxEntries = 8192
 	buffered := bufio.NewReader(reader)
 	var tarReader *tar.Reader
 	header, err := buffered.Peek(2)
@@ -326,15 +352,19 @@ func ExtractBuildArchiveReader(reader io.Reader, root string) error {
 		}
 		entries++
 		if entries > maxEntries {
-			return fmt.Errorf("builder artifact archive contains too many entries")
+			return fmt.Errorf("%s archive contains too many entries", label)
 		}
 		if header.Size < 0 || header.Size > maxBytes-totalBytes || header.Size > maxArchiveEntrySize {
-			return fmt.Errorf("builder artifact archive exceeds bounded output size")
+			return fmt.Errorf("%s archive exceeds bounded output size", label)
 		}
 		totalBytes += header.Size
-		clean := path.Clean(header.Name)
-		if clean != "generated/artifacts" && !strings.HasPrefix(clean, "generated/artifacts/") {
-			return fmt.Errorf("builder artifact archive contains unexpected path %q", header.Name)
+		canonicalName := header.Name
+		if header.Typeflag == tar.TypeDir {
+			canonicalName = strings.TrimSuffix(canonicalName, "/")
+		}
+		clean := path.Clean(canonicalName)
+		if header.Name == "" || clean != canonicalName || strings.HasPrefix(clean, "/") || strings.Contains(clean, "\\") || strings.ContainsRune(clean, '\x00') || !allowed(clean) {
+			return fmt.Errorf("%s archive contains unexpected path %q", label, header.Name)
 		}
 		target := filepath.Join(root, filepath.FromSlash(clean))
 		switch header.Typeflag {
@@ -354,7 +384,7 @@ func ExtractBuildArchiveReader(reader io.Reader, root string) error {
 				return fmt.Errorf("builder artifact archive entry %q ended early", header.Name)
 			}
 		default:
-			return fmt.Errorf("builder artifact archive contains unsupported entry %q", header.Name)
+			return fmt.Errorf("%s archive contains unsupported entry %q", label, header.Name)
 		}
 	}
 	return nil

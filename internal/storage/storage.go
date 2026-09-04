@@ -37,7 +37,7 @@ func LocalStorageContent(profile string) ([]string, error) {
 	}
 }
 
-// Plan is the complete, fixed 0.4 storage contract. It describes only
+// Plan is the complete, fixed 0.5 storage contract. It describes only
 // boetticher-owned storage and deliberately has no knobs for arbitrary LVM
 // layouts or additional storage backends.
 type Plan struct {
@@ -93,17 +93,6 @@ func PlanFromSite(s model.Site) (Plan, error) {
 	for _, declaration := range s.Declarations {
 		declarations = append(declarations, declaration.Volumes...)
 	}
-	// Portal is a Core-owned appliance, not a module, but its endpoint identity
-	// still follows the same independent-volume replacement contract.
-	for _, component := range s.PlatformComponents() {
-		if component.Name == "lab-portal-01" {
-			declarations = append(declarations, model.PersistentVolumeDeclaration{
-				Name: "ssh-identity", Module: "portal", Guest: component.Name,
-				SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/ssh",
-				Placement: model.StorageDefault, Backup: true,
-			})
-		}
-	}
 	for _, volume := range declarations {
 		selected := plan.GuestStorage
 		switch volume.Placement {
@@ -138,8 +127,9 @@ type InitializeRunner interface {
 // Initialize runs the one fixed dedicated-disk initializer over the existing
 // fresh-host SSH path. The remote command is intentionally conservative:
 // it adopts only the exact expected layout, refuses a system/active disk, and
-// requires explicit destructive confirmation before it creates a new layout.
-// Reinitialization of a dormant old layout is a separate, opt-in action.
+// requires explicit destructive confirmation before it creates or resets a
+// layout. Reinitialization of the exact Boetticher layout is a separate,
+// opt-in action and refuses to run while any Proxmox guests are configured.
 func Initialize(ctx context.Context, runner InitializeRunner, address, user, device string, confirmed, reinitialize bool) error {
 	if runner == nil {
 		return errors.New("storage initialization runner is required")
@@ -160,11 +150,12 @@ func Initialize(ctx context.Context, runner InitializeRunner, address, user, dev
 	return nil
 }
 
-// InitializationCommand returns a reviewable shell command for the fixed 0.4
+// InitializationCommand returns a reviewable shell command for the fixed 0.5
 // layout. It contains no credentials and accepts only a stable by-id device.
-// An existing unmounted, non-LVM layout remains a refusal unless both the
-// ordinary destructive confirmation and explicit reinitialization flag are
-// supplied.
+// An existing layout remains untouched unless both the ordinary destructive
+// confirmation and explicit reinitialization flag are supplied. A reinitialize
+// operation only resets an exact existing Boetticher VG on the configured
+// device, after refusing configured guests and conflicting storage IDs.
 func InitializationCommand(device string, confirmed, reinitialize bool) (string, error) {
 	if err := validateDevice(device); err != nil {
 		return "", err
@@ -187,18 +178,59 @@ func InitializationCommand(device string, confirmed, reinitialize bool) (string,
 		"while parent=\"$(lsblk -ndo PKNAME \"$root_device\")\"; do [ -z \"$parent\" ] && break; root_device=\"/dev/$parent\"; done",
 		"[ \"$resolved\" != \"$root_device\" ] || { echo 'refusing the Proxmox system disk' >&2; exit 42; }",
 		"is_target_device_or_partition() { candidate=\"$(readlink -f \"$1\")\"; case \"$candidate\" in \"$resolved\"|\"$resolved\"[0-9]*|\"$resolved\"p[0-9]*) return 0;; esac; return 1; }",
+		"layout_create=0",
 		"if vgs --noheadings --select vg_name=" + VolumeGroup + " 2>/dev/null | grep -q .; then",
 		"  pv=\"$(pvs --noheadings --select vg_name=" + VolumeGroup + " -o pv_name | xargs)\"",
 		"  [ \"$(readlink -f \"$pv\")\" = \"$resolved\" ] || { echo 'existing boetticher VG is on an unexpected device' >&2; exit 43; }",
-		"  [ \"$(lvs --noheadings -o lv_attr " + VolumeGroup + "/" + ThinPool + " | xargs | cut -c1)\" = t ] || { echo 'boetticher thin pool is missing or not thin' >&2; exit 44; }",
-		"  lvs --noheadings " + VolumeGroup + "/" + BackupLogicalVol + " >/dev/null || { echo 'boetticher backup LV is missing' >&2; exit 45; }",
-		"  [ \"$(blkid -s TYPE -o value /dev/" + VolumeGroup + "/" + BackupLogicalVol + ")\" = " + BackupFilesystem + " ] || { echo 'boetticher backup filesystem is not ext4' >&2; exit 46; }",
+	}
+	if reinitialize {
+		lines = append(lines,
+			"  [ \"$(lvs --noheadings -o lv_attr "+VolumeGroup+"/"+ThinPool+" | xargs | cut -c1)\" = t ] || { echo 'boetticher thin pool is missing or not thin' >&2; exit 44; }",
+			"  if lvs --noheadings "+VolumeGroup+"/"+BackupLogicalVol+" >/dev/null 2>&1; then [ \"$(blkid -s TYPE -o value /dev/"+VolumeGroup+"/"+BackupLogicalVol+")\" = "+BackupFilesystem+" ] || { echo 'boetticher backup filesystem is not ext4' >&2; exit 46; }; fi",
+			"  unexpected_lvs=\"$(lvs --noheadings --all -o lv_name "+VolumeGroup+" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed 's/^\\[//;s/\\]$//' | awk '$1 !~ /^("+ThinPool+"|"+BackupLogicalVol+"|"+ThinPool+"_tdata|"+ThinPool+"_tmeta|lvol0_pmspare)$/ { print $1 }')\"",
+			"  [ -z \"$unexpected_lvs\" ] || { echo \"refusing to reset storage with unexpected logical volumes: $unexpected_lvs\" >&2; exit 47; }",
+		)
+	} else {
+		lines = append(lines,
+			"  [ \"$(lvs --noheadings -o lv_attr "+VolumeGroup+"/"+ThinPool+" | xargs | cut -c1)\" = t ] || { echo 'boetticher thin pool is missing or not thin' >&2; exit 44; }",
+			"  lvs --noheadings "+VolumeGroup+"/"+BackupLogicalVol+" >/dev/null || { echo 'boetticher backup LV is missing' >&2; exit 45; }",
+			"  [ \"$(blkid -s TYPE -o value /dev/"+VolumeGroup+"/"+BackupLogicalVol+")\" = "+BackupFilesystem+" ] || { echo 'boetticher backup filesystem is not ext4' >&2; exit 46; }",
+		)
+	}
+	if reinitialize {
+		lines = append(lines,
+			"  if [ "+shellQuote(confirmation)+" = yes ]; then",
+			"    if qm list 2>/dev/null | awk 'NR > 1 && NF { found=1 } END { exit found ? 0 : 1 }'; then echo 'refusing to reset storage while Proxmox QEMU guests are configured' >&2; exit 58; fi",
+			"    if pct list 2>/dev/null | awk 'NR > 1 && NF { found=1 } END { exit found ? 0 : 1 }'; then echo 'refusing to reset storage while Proxmox containers are configured' >&2; exit 59; fi",
+			"    if mountpoint -q "+BackupMount+"; then",
+			"      mounted_source=\"$(findmnt -no SOURCE "+BackupMount+")\"",
+			"      [ \"$(readlink -f \"$mounted_source\")\" = \"$(readlink -f /dev/"+VolumeGroup+"/"+BackupLogicalVol+")\" ] || { echo 'refusing to reset an unexpected filesystem mounted at the Boetticher backup path' >&2; exit 60; }",
+			"      umount "+BackupMount,
+			"    fi",
+			"    if pvesm status --storage "+GuestStorageID+" >/dev/null 2>&1; then "+storageConfigurationCheck(GuestStorageID, "type=lvmthin", "vgname="+VolumeGroup, "thinpool="+ThinPool, "content=images", "content=rootdir")+" || { echo 'boetticher guest storage has a conflicting definition' >&2; exit 61; }; fi",
+			"    if pvesm status --storage "+BackupStorageID+" >/dev/null 2>&1; then "+storageConfigurationCheck(BackupStorageID, "type=dir", "path="+BackupMount, "content=backup")+" || { echo 'boetticher backup storage has a conflicting definition' >&2; exit 62; }; fi",
+			"    if pvesm status --storage "+GuestStorageID+" >/dev/null 2>&1; then pvesm remove "+GuestStorageID+"; fi",
+			"    if pvesm status --storage "+BackupStorageID+" >/dev/null 2>&1; then pvesm remove "+BackupStorageID+"; fi",
+			"    sed -i "+shellQuote("\\|[[:space:]]"+BackupMount+"[[:space:]]|d")+" /etc/fstab",
+			"    vgchange --activate n "+VolumeGroup,
+			"    vgremove --yes --force "+VolumeGroup,
+			"    pvremove --yes --force \"$resolved\"",
+			"    wipefs --all --force \"$resolved\"",
+			"    command -v partprobe >/dev/null 2>&1 && partprobe \"$resolved\" || true",
+			"    command -v udevadm >/dev/null 2>&1 && udevadm settle || true",
+			"    if wipefs -n \"$resolved\" | grep -q .; then echo 'refusing to continue while storage signatures remain after reset' >&2; exit 63; fi",
+			"    layout_create=1",
+			"  fi",
+		)
+	}
+	lines = append(lines,
 		"else",
-		"  [ " + shellQuote(confirmation) + " = yes ] || { echo 'dedicated storage initialization is destructive; repeat with explicit confirmation' >&2; exit 50; }",
+		"  [ "+shellQuote(confirmation)+" = yes ] || { echo 'dedicated storage initialization is destructive; repeat with explicit confirmation' >&2; exit 50; }",
 		"  if lsblk -nrpo MOUNTPOINT \"$resolved\" | awk 'NF { found=1 } END { exit found ? 0 : 1 }'; then echo 'refusing a mounted data disk' >&2; exit 51; fi",
 		"  if swapon --noheadings --raw --output NAME 2>/dev/null | ( while IFS= read -r swap; do is_target_device_or_partition \"$swap\" && exit 0; done; exit 1 ); then echo 'refusing a disk with active swap' >&2; exit 52; fi",
 		"  if pvs --noheadings -o pv_name 2>/dev/null | ( while IFS= read -r pv; do pv=\"$(printf %s \"$pv\" | xargs)\"; [ -n \"$pv\" ] && is_target_device_or_partition \"$pv\" && exit 0; done; exit 1 ); then echo 'refusing a disk already used by LVM' >&2; exit 53; fi",
-	}
+		"  layout_create=1",
+	)
 	if reinitialize {
 		lines = append(lines,
 			"  if wipefs -n \"$resolved\" | grep -q .; then",
@@ -212,10 +244,12 @@ func InitializationCommand(device string, confirmed, reinitialize bool) (string,
 		lines = append(lines, "  if wipefs -n \"$resolved\" | grep -q .; then echo 'refusing a disk with existing filesystem signatures; repeat with --reinitialize after reviewing the exact stable device' >&2; exit 54; fi")
 	}
 	lines = append(lines, []string{
+		"fi",
+		"if [ \"$layout_create\" -eq 1 ]; then",
 		"  pvcreate --yes \"$resolved\"",
 		"  vgcreate " + VolumeGroup + " \"$resolved\"",
-		"  lvcreate -l " + ThinPoolPercent + " -T " + VolumeGroup + "/" + ThinPool,
-		"  lvcreate -l " + BackupLVPercent + " -n " + BackupLogicalVol + " " + VolumeGroup,
+		"  lvcreate --yes -l " + ThinPoolPercent + " -T " + VolumeGroup + "/" + ThinPool,
+		"  lvcreate --yes -l " + BackupLVPercent + " -n " + BackupLogicalVol + " " + VolumeGroup,
 		"  mkfs." + BackupFilesystem + " -F /dev/" + VolumeGroup + "/" + BackupLogicalVol,
 		"fi",
 		"install -d -m 0750 -o root -g root " + BackupMount,

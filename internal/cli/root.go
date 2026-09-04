@@ -21,7 +21,10 @@ func RunWithInput(args []string, input io.Reader, out, errOut io.Writer) error {
 }
 
 func run(args []string, input io.Reader, out, errOut io.Writer) error {
-	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+	if len(args) == 0 {
+		return runTUI(nil, input, out, errOut)
+	}
+	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		if len(args) > 1 && args[0] == "help" && args[1] == "--advanced" {
 			advancedUsage(out)
 		} else {
@@ -38,18 +41,16 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runInit(args[1:], out)
 	case "tui":
 		return runTUI(args[1:], input, out, errOut)
-	case "preflight":
-		return runPreflight(args[1:], out)
+	case "enroll":
+		return runEnroll(args[1:], out)
+	case "plan":
+		return runPlan(args[1:], out)
+	case "bundle":
+		return runBundle(args[1:], out)
 	case "ssh-config":
 		return runSSHConfig(args[1:], out)
 	case "access":
 		return runAccess(args[1:], out)
-	case "portal":
-		if len(args) > 1 && args[1] == "build" {
-			return runPortalBuild(args[2:], out)
-		}
-	case "bootstrap-endpoint":
-		return runBootstrapEndpoint(args[1:], out)
 	case "pki":
 		return runPKI(args[1:], out)
 	case "firewall":
@@ -62,22 +63,16 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runStorage(args[1:], out)
 	case "module":
 		return runModuleWithInput(args[1:], input, out, errOut)
-	case "modules":
-		return runModulesWithInput(args[1:], input, out, errOut)
 	case "config":
 		return runConfig(args[1:], out)
 	case "network":
 		return runNetwork(args[1:], out)
 	case "hardware":
 		return runHardware(args[1:], out)
-	case "kiosk":
-		return runKiosk(args[1:], out)
-	case "verify":
-		return runVerify(args[1:], out)
-	case "doctor":
-		return runDoctor(args[1:], out)
-	case "bootstrap":
-		return runBootstrap(args[1:], out)
+	case "companion":
+		return runCompanion(args[1:], out)
+	case "recover":
+		return runRecovery(args[1:], out)
 	case "deploy":
 		return runDeploy(args[1:], out)
 	case "status":
@@ -88,8 +83,6 @@ func run(args []string, input io.Reader, out, errOut io.Writer) error {
 		return runLogs(args[1:], out)
 	case "aiops":
 		return runAIOps(args[1:], out)
-	case "upgrade":
-		return runIntegrationGate(args[0], args[1:], out)
 	}
 	fmt.Fprintln(errOut, "usage: boetticher <command>")
 	return fmt.Errorf("unknown or incomplete command %q", strings.Join(args, " "))
@@ -138,10 +131,6 @@ func normalizedHelpPath(pathParts []string) string {
 	switch pathParts[0] {
 	case "module":
 		return strings.Join(pathParts[:2], " ")
-	case "modules":
-		if len(pathParts) >= 3 {
-			return strings.Join([]string{"modules", "MODULE", pathParts[2]}, " ")
-		}
 	}
 	return ""
 }

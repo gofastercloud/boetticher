@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,6 +17,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
+	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
 
@@ -25,53 +25,10 @@ type dnsReadinessRunner struct {
 	commands []string
 }
 
-type endpointArgsRunner struct {
-	output []byte
-	err    error
-	args   [][]string
-}
-
 type convergeRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f convergeRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return f(request)
-}
-
-func (r *endpointArgsRunner) RunArgs(_ context.Context, _ string, _ string, args []string) ([]byte, error) {
-	r.args = append(r.args, args)
-	return r.output, r.err
-}
-
-func TestRemoteEndpointResolverParsesOnlyUniqueIPv4Addresses(t *testing.T) {
-	runner := &endpointArgsRunner{output: []byte("192.0.2.20 STREAM example\n192.0.2.20 DGRAM example\n2001:db8::20 STREAM example\n")}
-	addresses, err := remoteEndpointResolver(context.Background(), runner, "192.0.2.10", "root")("example.test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(addresses) != 1 || addresses[0].String() != "192.0.2.20" {
-		t.Fatalf("remote endpoint addresses = %v, want one unique IPv4 address", addresses)
-	}
-	if len(runner.args) != 1 || strings.Join(runner.args[0], " ") != "getent ahostsv4 example.test" {
-		t.Fatalf("remote resolver args = %v", runner.args)
-	}
-}
-
-func TestEndpointLookupWithFallbackUsesProxmoxOnlyAfterControllerFailure(t *testing.T) {
-	primaryCalls, fallbackCalls := 0, 0
-	lookup := endpointLookupWithFallback(func(string) ([]net.IP, error) {
-		primaryCalls++
-		return nil, errors.New("controller DNS unavailable")
-	}, func(string) ([]net.IP, error) {
-		fallbackCalls++
-		return []net.IP{net.ParseIP("192.0.2.20")}, nil
-	})
-	addresses, err := lookup("example.test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(addresses) != 1 || addresses[0].String() != "192.0.2.20" || primaryCalls != 1 || fallbackCalls != 1 {
-		t.Fatalf("fallback lookup = %v, primary calls=%d, fallback calls=%d", addresses, primaryCalls, fallbackCalls)
-	}
 }
 
 func (r *dnsReadinessRunner) Run(_ context.Context, _ string, _ string, command string) ([]byte, error) {
@@ -85,7 +42,7 @@ func TestDeploymentModuleNamesFollowResolvedManagedGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := deploymentModuleNames(resolved)
-	want := []string{"dns", "logging", "monitoring", "portal"}
+	want := []string{"dns", "monitoring"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("managed deployment order = %v, want %v", got, want)
 	}
@@ -153,7 +110,7 @@ func TestPublishedServicesActivateAtTheEndOfDNSModule(t *testing.T) {
 	}
 	text := string(data)
 	publicationActivation := strings.Index(text, `if module == "dns" && s.Gateway.Mode == model.GatewayModeManaged && len(firewallPlan.Publications) > 0`)
-	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report); err != nil`)
+	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report, temporaryPrivateKey); err != nil`)
 	if publicationActivation < 0 || allHostsConvergence < 0 || publicationActivation > allHostsConvergence {
 		t.Fatal("published services are not activated immediately after the DNS module")
 	}
@@ -166,7 +123,7 @@ func TestPublishedFirewallIsNotRepeatedInTheAllHostNetworkPhase(t *testing.T) {
 	}
 	text := string(data)
 	finalFirewall := strings.Index(text, `runtimeVariables["boetticher_skip_firewall"] = true`)
-	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report); err != nil`)
+	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report, temporaryPrivateKey); err != nil`)
 	if finalFirewall < 0 || allHostsConvergence < 0 || finalFirewall > allHostsConvergence {
 		t.Fatal("all-host network convergence does not skip the already published firewall")
 	}
@@ -178,7 +135,7 @@ func TestAllHostNetworkConvergenceFollowsRuntimeReadiness(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report); err != nil`)
+	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report, temporaryPrivateKey); err != nil`)
 	gatewayReadiness := strings.Index(text, `return verifyGatewayReadiness(ctx, firewallRunner, "10.10.99.1")`)
 	dnsReadiness := strings.Index(text, `return verifyDNSReadiness(ctx, guestRunner, guest.Address)`)
 	if allHostsConvergence < 0 || gatewayReadiness < 0 || dnsReadiness < 0 || gatewayReadiness > allHostsConvergence || dnsReadiness > allHostsConvergence {
@@ -193,16 +150,6 @@ func TestAnsiblePlaybookIsAvailableFromControllerSource(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "ansible", "site.yml")); err != nil {
 		t.Fatalf("controller source does not contain the Ansible playbook: %v", err)
-	}
-}
-
-func TestPortalSourceDirectoryIsAbsoluteForAnsible(t *testing.T) {
-	got, err := absolutePortalSourceDir("relative-site")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !filepath.IsAbs(got) || !strings.HasSuffix(got, filepath.Join("relative-site", "generated", "portal")) {
-		t.Fatalf("portal source directory = %q, want absolute generated portal path", got)
 	}
 }
 
@@ -234,27 +181,6 @@ func TestProjectionCleanupRejectsSymlinkedGeneratedRoot(t *testing.T) {
 	}
 }
 
-func TestWriteStorageProjectionDoesNotRequireAirVPNProfile(t *testing.T) {
-	config := model.ConfigFromSite(model.NewDefaultSite("installation", "age1example"))
-	config.StorageProfile = "dedicated-data-disk"
-	config.StorageDevice = "/dev/disk/by-id/ata-example-data"
-	enabled := true
-	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "australia"}
-	config.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
-	s, _, err := modules.Compose(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	dir := t.TempDir()
-	if err := writeStorageProjection(dir, s); err != nil {
-		t.Fatalf("write storage projection before AirVPN profile exists: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "generated", "storage", "desired-state.json")); err != nil {
-		t.Fatalf("storage projection was not written: %v", err)
-	}
-}
-
 func TestWriteBootstrapProjectionsDefersAirVPNRuntimeProjections(t *testing.T) {
 	config := model.ConfigFromSite(model.NewDefaultSite("installation", "age1example"))
 	config.StorageProfile = "dedicated-data-disk"
@@ -273,7 +199,6 @@ func TestWriteBootstrapProjectionsDefersAirVPNRuntimeProjections(t *testing.T) {
 	}
 	for _, path := range []string{
 		filepath.Join(dir, "generated", "model.json"),
-		filepath.Join(dir, "generated", "storage", "desired-state.json"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("safe bootstrap projection %s was not written: %v", path, err)
@@ -432,6 +357,147 @@ func TestTemporaryRootCleanupAttemptsEveryTargetAfterFailure(t *testing.T) {
 	}
 }
 
+func TestTemporaryRootCleanupFallsBackThroughIndependentHost(t *testing.T) {
+	operatorKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA operator"
+	guests := []proxmox.GuestPlan{{VMID: 110, Name: "lab-dns-01", Kind: proxmox.KindLXC, Address: "10.10.10.10", Owner: "boetticher/module/dns"}}
+	directCalls := 0
+	hostFallbackCalls := 0
+	hostCleanupCalls := 0
+	direct := func(_ context.Context, _ proxmox.CommandRunner, address, _ string, _ string, host bool) error {
+		if host {
+			hostCleanupCalls++
+			return nil
+		}
+		directCalls++
+		return errors.New("guest SSH unavailable")
+	}
+	hostFallback := func(_ context.Context, _ proxmox.CommandRunner, address, _ string, kind proxmox.GuestKind, vmid int, _ string) error {
+		if address != "192.0.2.10" || kind != proxmox.KindLXC || vmid != 110 {
+			t.Fatalf("unexpected independent host fallback target: %s %s %d", address, kind, vmid)
+		}
+		hostFallbackCalls++
+		return nil
+	}
+	if err := revokeTemporaryRootAccessForGuestsWithFallback(context.Background(), model.Site{BootstrapAddress: "192.0.2.10"}, t.TempDir(), guests, operatorKey, true, direct, hostFallback); err != nil {
+		t.Fatal(err)
+	}
+	if directCalls != 1 || hostFallbackCalls != 1 || hostCleanupCalls != 1 {
+		t.Fatalf("temporary root cleanup calls = direct:%d fallback:%d host:%d", directCalls, hostFallbackCalls, hostCleanupCalls)
+	}
+}
+
+func TestInterruptedDeploymentCleanupUsesPersistedTargets(t *testing.T) {
+	dir := t.TempDir()
+	publicKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA boetticher-apply"
+	state := site.OperationState{
+		ID: "run-1", Kind: "deploy", Phase: site.PhaseVerify, ModelRevision: "model-1", PlanDigest: strings.Repeat("a", 64),
+		TemporaryPublicKey:     publicKey,
+		TemporaryHostAddress:   "192.0.2.10",
+		TemporaryCleanupGuests: []site.OperationGuest{{Name: "lab-fw-01", Kind: "qemu", VMID: 100, Address: "10.10.99.1"}},
+	}
+	if err := site.SaveOperationState(dir, state); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	if err := recoverInterruptedDeploymentWith(context.Background(), dir, model.Site{BootstrapAddress: "192.0.2.10"}, io.Discard, func(_ context.Context, siteDir string, cleanupSite model.Site, guests []proxmox.GuestPlan, gotKey string) error {
+		called = true
+		if siteDir != dir || cleanupSite.BootstrapAddress != "192.0.2.10" || gotKey != publicKey || len(guests) != 1 || guests[0].Name != "lab-fw-01" || guests[0].Kind != proxmox.KindQEMU || guests[0].VMID != 100 || guests[0].Address != "10.10.99.1" {
+			t.Fatalf("unexpected interrupted cleanup: dir=%s site=%#v guests=%#v key=%q", siteDir, cleanupSite, guests, gotKey)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("interrupted deployment cleanup was not invoked")
+	}
+	if _, found, err := site.LoadOperationState(dir); err != nil || found {
+		t.Fatalf("successful interrupted cleanup left operation state: err=%v found=%t", err, found)
+	}
+}
+
+func TestInterruptedDeploymentCleanupFailureLeavesFailedJournal(t *testing.T) {
+	dir := t.TempDir()
+	publicKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA boetticher-apply"
+	if err := site.SaveOperationState(dir, site.OperationState{
+		ID: "run-1", Kind: "deploy", Phase: site.PhaseApply, ModelRevision: "model-1", PlanDigest: strings.Repeat("a", 64), TemporaryPublicKey: publicKey, TemporaryHostAddress: "192.0.2.10",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cleanupErr := errors.New("independent host unavailable")
+	err := recoverInterruptedDeploymentWith(context.Background(), dir, model.Site{BootstrapAddress: "192.0.2.10"}, io.Discard, func(context.Context, string, model.Site, []proxmox.GuestPlan, string) error {
+		return cleanupErr
+	})
+	if err == nil || !strings.Contains(err.Error(), "HOLD: interrupted deployment cleanup failed") {
+		t.Fatalf("cleanup failure did not produce a HOLD: %v", err)
+	}
+	state, found, loadErr := site.LoadOperationState(dir)
+	if loadErr != nil || !found || state.Phase != site.PhaseFailed || state.TemporaryPublicKey != publicKey {
+		t.Fatalf("failed cleanup journal = %#v, found=%t, err=%v", state, found, loadErr)
+	}
+}
+
+func TestInterruptedDeploymentCleanupRejectsHostAddressDrift(t *testing.T) {
+	dir := t.TempDir()
+	publicKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA boetticher-apply"
+	if err := site.SaveOperationState(dir, site.OperationState{
+		ID: "run-1", Kind: "deploy", Phase: site.PhaseApply, ModelRevision: "model-1", PlanDigest: strings.Repeat("a", 64), TemporaryPublicKey: publicKey, TemporaryHostAddress: "192.0.2.11",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	err := recoverInterruptedDeploymentWith(context.Background(), dir, model.Site{BootstrapAddress: "192.0.2.10"}, io.Discard, func(context.Context, string, model.Site, []proxmox.GuestPlan, string) error {
+		called = true
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "host address changed") {
+		t.Fatalf("host address drift was accepted: %v", err)
+	}
+	if called {
+		t.Fatal("host address drift attempted cleanup")
+	}
+}
+
+func TestInterruptedPreApplyJournalIsClearedWithoutCleanup(t *testing.T) {
+	dir := t.TempDir()
+	if err := site.SaveOperationState(dir, site.OperationState{ID: "run-1", Kind: "deploy", Phase: site.PhasePlan, ModelRevision: "model-1"}); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	if err := recoverInterruptedDeploymentWith(context.Background(), dir, model.Site{}, io.Discard, func(context.Context, string, model.Site, []proxmox.GuestPlan, string) error {
+		called = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("pre-Apply journal attempted temporary-authority cleanup")
+	}
+	if _, found, err := site.LoadOperationState(dir); err != nil || found {
+		t.Fatalf("pre-Apply journal was not cleared: err=%v found=%t", err, found)
+	}
+}
+
+func TestInterruptedPreApplyFailureJournalIsClearedWithoutCleanup(t *testing.T) {
+	dir := t.TempDir()
+	if err := site.SaveOperationState(dir, site.OperationState{ID: "run-1", Kind: "deploy", Phase: site.PhaseFailed, ModelRevision: "model-1", Error: "live plan was stale"}); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	if err := recoverInterruptedDeploymentWith(context.Background(), dir, model.Site{}, io.Discard, func(context.Context, string, model.Site, []proxmox.GuestPlan, string) error {
+		called = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("pre-Apply failure journal attempted temporary-authority cleanup")
+	}
+	if _, found, err := site.LoadOperationState(dir); err != nil || found {
+		t.Fatalf("pre-Apply failure journal was not cleared: err=%v found=%t", err, found)
+	}
+}
+
 type deploymentRootTestRunner struct {
 	calls             int
 	lastCommand       string
@@ -503,7 +569,7 @@ func TestDeployReconcilesLiveBastionPolicyFromCanonicalDestinations(t *testing.T
 	}
 	text := string(data)
 	for _, required := range []string{
-		`proxmox.ConfigureIdentities(ctx, rootRunner, s.BootstrapAddress, "root", operatorPublicKey, jumpDestinations(s))`,
+		`proxmox.ConfigureBastionPolicy(ctx, rootRunner, s.BootstrapAddress, "root", jumpDestinations(s))`,
 		`Reconcile the live host-side jump policy`,
 		`proxmox.InactivateRetainedModule(ctx, rootRunner, s.BootstrapAddress, "root", guest.Kind, guest.VMID, module)`,
 		`context.WithTimeout(ctx, deploymentRootTimeout)`,
@@ -511,6 +577,127 @@ func TestDeployReconcilesLiveBastionPolicyFromCanonicalDestinations(t *testing.T
 		if !strings.Contains(text, required) {
 			t.Fatalf("deploy does not reconcile the live bastion policy: missing %q", required)
 		}
+	}
+}
+
+func TestDeployAcquiresTemporaryRootOnlyAfterExactPlanAcceptance(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	digest := strings.Index(text, "planDigest, err := digestDeploymentPlan")
+	accept := strings.Index(text, "if *planDigestFlag != \"\" && *planDigestFlag != planDigest")
+	register := strings.Index(text, "registerCleanup(func(cleanupCtx context.Context) error")
+	acquire := strings.Index(text, "proxmox.InstallTemporaryRootAccess(ctx, recoveryRunner")
+	bind := strings.Index(text, "proxmoxClient.SetSnippetRunner(rootRunner")
+	if digest < 0 || accept < digest || register < accept || acquire < register || bind < acquire {
+		t.Fatalf("temporary Apply authority sequencing is not digest-gated: digest=%d accept=%d register=%d acquire=%d bind=%d", digest, accept, register, acquire, bind)
+	}
+	if strings.Contains(text[:accept], "WaitForSSH(ctx, rootRunner") || strings.Contains(text[:accept], "ConfigureIdentities(ctx, rootRunner") {
+		t.Fatal("deployment uses deployment root authority before exact plan acceptance")
+	}
+	if !strings.Contains(text[acquire:], "temporaryPrivateKey") {
+		t.Fatal("temporary Apply identity is not retained for the bounded Apply lifecycle")
+	}
+	for _, required := range []string{
+		"proxmoxPlan.OperatorPublicKey = durableOperatorPublicKey",
+		"RenderFirewallCloudInitWithKey(guest, durableOperatorPublicKey)",
+		"firewallGuest, deploymentPublicKey",
+		"guest, deploymentPublicKey",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("deployment does not separate durable and temporary identities: missing %q", required)
+		}
+	}
+	journalKey := strings.Index(text, "operationState.TemporaryPublicKey = deploymentPublicKey")
+	journalGuests := strings.Index(text, "operationState.TemporaryCleanupGuests = cleanupGuests")
+	journalSave := -1
+	if journalGuests >= 0 {
+		journalSaveOffset := strings.Index(text[journalGuests:], "site.SaveOperationState(*siteDir, operationState)")
+		if journalSaveOffset >= 0 {
+			journalSave = journalGuests + journalSaveOffset
+		}
+	}
+	if journalKey < accept || journalGuests < journalKey || journalSave < journalGuests || journalSave > acquire {
+		t.Fatalf("temporary Apply authority was not journaled before installation: key=%d guests=%d save=%d acquire=%d", journalKey, journalGuests, journalSave, acquire)
+	}
+	guestRegistration := strings.Index(text, "rootCleanup.guestEstablished(firewallGuest)")
+	guestReadiness := strings.Index(text, "return waitForDeploymentRoot(ctx, rootRunner, s.BootstrapAddress, firewallRunner.FreshConnection()")
+	if guestRegistration < 0 || guestReadiness < 0 || guestRegistration > guestReadiness {
+		t.Fatal("managed gateway was not registered for cleanup before its temporary-root readiness probe")
+	}
+}
+
+func TestTemporaryRootIdentityIsInMemoryAndScoped(t *testing.T) {
+	privateKey, publicKey, err := newTemporaryRootIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(privateKey), "-----BEGIN OPENSSH PRIVATE KEY-----") {
+		t.Fatal("temporary identity is not an OpenSSH private key")
+	}
+	if !strings.HasSuffix(publicKey, " boetticher-apply") {
+		t.Fatalf("temporary identity is not explicitly scoped: %q", publicKey)
+	}
+	if err := proxmox.ValidatePublicKey(publicKey); err != nil {
+		t.Fatalf("temporary public identity is invalid: %v", err)
+	}
+	for index := range privateKey {
+		privateKey[index] = 0
+	}
+}
+
+func TestOperatorPublicKeyForSiteUsesDurablePublicIdentity(t *testing.T) {
+	dir := t.TempDir()
+	identity := filepath.Join(dir, "id_ed25519")
+	publicKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBoetticherTrial operator"
+	if err := os.WriteFile(identity+".pub", []byte(publicKey+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := model.NewDefaultSite("installation", "age1example")
+	s.SSHIdentityFile = identity
+	got, err := operatorPublicKeyForSite(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != publicKey {
+		t.Fatalf("durable operator public key = %q, want %q", got, publicKey)
+	}
+}
+
+func TestDeploymentLockInputsRecognizeSiteAndDryRunFlags(t *testing.T) {
+	if siteDir, dryRun := deploymentLockInputs([]string{"--site", "/tmp/site", "--dry-run"}); siteDir != "/tmp/site" || !dryRun {
+		t.Fatalf("deployment lock inputs = %q, %t", siteDir, dryRun)
+	}
+	if siteDir, dryRun := deploymentLockInputs([]string{"--site=/tmp/site"}); siteDir != "/tmp/site" || dryRun {
+		t.Fatalf("deployment lock inputs = %q, %t", siteDir, dryRun)
+	}
+}
+
+func TestLiveDeploymentObservesManagedFirewallAndModuleGuests(t *testing.T) {
+	s := model.NewDefaultSite("deployment-observations", "age1observations")
+	composed, _, err := modules.Compose(model.ConfigFromSite(s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s = composed
+	plan, err := proxmox.PlanFromSite(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guests := deploymentGuestPlans(s, plan)
+	if len(guests) != 3 {
+		t.Fatalf("live deployment observed %d guests, want the firewall and two default module guests: %#v", len(guests), guests)
+	}
+	foundFirewall := false
+	for _, guest := range guests {
+		if guest.Name == "lab-fw-01" && guest.Kind == proxmox.KindQEMU {
+			foundFirewall = true
+		}
+	}
+	if !foundFirewall {
+		t.Fatalf("live deployment observations omitted the managed firewall QEMU: %#v", guests)
 	}
 }
 
@@ -522,10 +709,9 @@ func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 	text := string(data)
 	for _, required := range []string{
 		"readTokenRefreshed := false",
-		`pki.IssueClient(authority, "boetticher-pulse-read"`,
 		"pulse.NewReadClient(pulse.ClientConfig{",
+		"CAPEM:",
 		"pulseRead.StateSummary(ctx)",
-		"modules.IsEnabled(s, \"streamdeck\") && pulse.IsForbidden(err)",
 		"pulse.IsUnauthorized(err)",
 		"pulseAdmin.CreateReadToken(ctx, \"boetticher monitoring read\")",
 		"site.StorePlatformSecret(*siteDir, s, *ageIdentity, \"pulse_api_token\", readToken)",
@@ -537,6 +723,9 @@ func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 	}
 	if strings.Contains(text, "pulseAdmin.ValidateReadToken(ctx, readToken)") {
 		t.Fatal("AIOps Pulse token validation must use the dedicated read client")
+	}
+	if strings.Contains(text, `pki.IssueClient(authority, "boetticher-pulse-read"`) {
+		t.Fatal("Pulse read clients must use scoped API tokens without client certificates")
 	}
 }
 
@@ -569,7 +758,7 @@ func TestDeploymentModuleNamesFollowResolvedExternalGraph(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := deploymentModuleNames(resolved)
-	want := []string{"dns", "logging", "monitoring", "portal"}
+	want := []string{"dns", "monitoring"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("external deployment order = %v, want %v", got, want)
 	}
@@ -739,5 +928,25 @@ func TestVerifyFirewallBootstrapNetworkChecksStableRolesAndAddresses(t *testing.
 	}
 	if strings.Contains(command, "sudo -n ip") {
 		t.Fatalf("read-only bootstrap network probes unnecessarily require sudo: %s", command)
+	}
+}
+
+func TestPlanDigestFromOutputRequiresCanonicalSHA256Digest(t *testing.T) {
+	want := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	got, err := planDigestFromOutput("Deployment plan: PASS\n  Digest: " + want + "\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("digest = %q, want %q", got, want)
+	}
+	for _, output := range []string{
+		"Deployment plan: PASS\n",
+		"  Digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg\n",
+		"  Digest: sha256:0123456789abcdef\n",
+	} {
+		if _, err := planDigestFromOutput(output); err == nil {
+			t.Fatalf("plan digest parser accepted invalid output %q", output)
+		}
 	}
 }

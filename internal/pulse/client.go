@@ -191,13 +191,17 @@ func newClient(config ClientConfig) (*Client, error) {
 		}
 		transport.TLSClientConfig.Certificates = []tls.Certificate{certificate}
 	}
-	httpClient := config.HTTP
-	if httpClient == nil {
+	var httpClient *http.Client
+	if config.HTTP == nil {
 		timeout := config.Timeout
 		if timeout == 0 {
 			timeout = 30 * time.Second
 		}
-		httpClient = &http.Client{Transport: transport, Timeout: timeout}
+		httpClient = &http.Client{Transport: transport, Timeout: timeout, CheckRedirect: rejectPulseRedirects}
+	} else {
+		clientCopy := *config.HTTP
+		clientCopy.CheckRedirect = rejectPulseRedirects
+		httpClient = &clientCopy
 	}
 	if httpClient.Jar == nil {
 		jar, jarErr := cookiejar.New(nil)
@@ -207,6 +211,10 @@ func newClient(config ClientConfig) (*Client, error) {
 		httpClient.Jar = jar
 	}
 	return &Client{baseURL: baseURL, http: httpClient}, nil
+}
+
+func rejectPulseRedirects(_ *http.Request, _ []*http.Request) error {
+	return errors.New("Pulse HTTP redirects are disabled")
 }
 
 func normalizeBaseURL(value string) (string, error) {
@@ -443,50 +451,6 @@ func (c *Client) ConfigureAIOpsWebhook(ctx context.Context, targetURL, bearerSec
 	}
 	if err := c.adminJSON(ctx, method, path, desired, nil); err != nil {
 		return fmt.Errorf("reconcile Pulse AIOps webhook: %w", err)
-	}
-	return nil
-}
-
-type TokenRecord struct {
-	ID     string   `json:"id"`
-	Name   string   `json:"name"`
-	Scopes []string `json:"scopes"`
-}
-
-// RevokeNamedReadToken removes every exact-name monitoring:read token. Exact
-// identity and scope checks prevent purge from deleting unrelated Pulse tokens.
-func (c *Client) RevokeNamedReadToken(ctx context.Context, name string) error {
-	if !c.admin || strings.TrimSpace(name) == "" {
-		return errors.New("Pulse token revocation requires the admin client and an exact name")
-	}
-	var raw json.RawMessage
-	if err := c.adminJSON(ctx, http.MethodGet, "/security/tokens", nil, &raw); err != nil {
-		return fmt.Errorf("list Pulse tokens: %w", err)
-	}
-	var records []TokenRecord
-	if err := json.Unmarshal(raw, &records); err != nil {
-		var envelope struct {
-			Tokens []TokenRecord `json:"tokens"`
-			Data   []TokenRecord `json:"data"`
-		}
-		if envelopeErr := json.Unmarshal(raw, &envelope); envelopeErr != nil {
-			return fmt.Errorf("decode Pulse token inventory: %w", err)
-		}
-		records = envelope.Tokens
-		if records == nil {
-			records = envelope.Data
-		}
-	}
-	for _, record := range records {
-		if record.Name != name {
-			continue
-		}
-		if record.ID == "" || len(record.Scopes) != 1 || record.Scopes[0] != readScope {
-			return fmt.Errorf("refuse to revoke ambiguous Pulse token named %q", name)
-		}
-		if err := c.adminJSON(ctx, http.MethodDelete, "/security/tokens/"+url.PathEscape(record.ID), nil, nil); err != nil {
-			return fmt.Errorf("revoke Pulse token %s: %w", record.ID, err)
-		}
 	}
 	return nil
 }

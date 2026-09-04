@@ -12,7 +12,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gofastercloud/boetticher/internal/dns"
@@ -20,6 +22,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/gatus"
 	"github.com/gofastercloud/boetticher/internal/logging"
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/pathguard"
 	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
 	"github.com/gofastercloud/boetticher/internal/telemetry"
@@ -28,6 +31,11 @@ import (
 
 const maxAnsibleOutputBytes = 64 * 1024
 const maxAnsibleDiagnosticBytes = 16 * 1024
+
+var (
+	sshAgentExecutable = "/usr/bin/ssh-agent"
+	sshAddExecutable   = "/usr/bin/ssh-add"
+)
 
 // The appliance inventory is small, but the network and services passes touch
 // several independent guests. Eight forks removes avoidable host batching
@@ -215,8 +223,8 @@ func Inventory(s model.Site) (string, error) {
 	}
 	b.WriteString(revision + "\n\n")
 	groups := map[string][]model.Component{
-		"dns": {}, "monitor": {}, "portal": {}, "logging": {},
-		"tailnet-router": {}, "airvpn": {}, "bifrost": {}, "printer": {}, "arr": {}, "streamdeck": {}, "aiops": {}, "gatus": {},
+		"dns": {}, "monitor": {}, "logging": {},
+		"tailnet-router": {}, "airvpn": {}, "bifrost": {}, "printer": {}, "arr": {}, "aiops": {}, "gatus": {},
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		groups["firewall"] = nil
@@ -233,14 +241,11 @@ func Inventory(s model.Site) (string, error) {
 		if component.Name == "lab-monitor-01" {
 			groups["monitor"] = append(groups["monitor"], component)
 		}
-		if component.Name == "lab-portal-01" {
-			groups["portal"] = append(groups["portal"], component)
-		}
 		if component.Name == "lab-log-01" {
 			groups["logging"] = append(groups["logging"], component)
 		}
 		switch component.Module {
-		case "tailnet-router", "airvpn", "bifrost", "printer", "arr", "streamdeck", "aiops", "gatus":
+		case "tailnet-router", "airvpn", "bifrost", "printer", "arr", "aiops", "gatus":
 			groups[component.Module] = append(groups[component.Module], component)
 		}
 	}
@@ -261,19 +266,19 @@ func Inventory(s model.Site) (string, error) {
 		address = s.BootstrapAddress
 	}
 	writeHostAt(&b, *proxmoxComponent, address)
-	for _, group := range []string{"dns", "monitor", "portal", "logging", "tailnet-router", "airvpn", "bifrost", "printer", "arr", "streamdeck", "aiops"} {
+	for _, group := range []string{"dns", "monitor", "logging", "tailnet-router", "airvpn", "bifrost", "printer", "arr", "aiops"} {
 		writeInventoryGroup(&b, group, groups[group])
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		writeInventoryGroup(&b, "firewall", groups["firewall"])
 	}
 	writeInventoryGroup(&b, "gatus", groups["gatus"])
-	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nportal\nlogging\ntailnet-router\nairvpn\nbifrost\nprinter\narr\nstreamdeck\naiops\ngatus\n")
+	b.WriteString("\n[managed:children]\nproxmox\ndns\nmonitor\nlogging\ntailnet-router\nairvpn\nbifrost\nprinter\narr\naiops\ngatus\n")
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		b.WriteString("firewall\n")
 	}
 	b.WriteString("\n")
-	b.WriteString("[managed:vars]\nansible_connection=ssh\nansible_python_interpreter=/usr/bin/python3\nansible_remote_tmp=/tmp/boetticher-ansible\nansible_host_key_checking=true\n")
+	b.WriteString("[managed:vars]\nansible_connection=ssh\nansible_python_interpreter=/usr/bin/python3\nansible_remote_tmp=/var/lib/boetticher/ansible\nansible_host_key_checking=true\n")
 	return b.String(), nil
 }
 
@@ -293,10 +298,6 @@ func writeHostAt(b *strings.Builder, component model.Component, address string) 
 
 func Variables(s model.Site) ([]byte, error) {
 	return variables(s, nil, "", nil)
-}
-
-func VariablesWithUpstream(s model.Site, upstream firewall.UpstreamObservation) ([]byte, error) {
-	return variables(s, &upstream, "", nil)
 }
 
 func VariablesWithOperatorKey(s model.Site, publicKey string) ([]byte, error) {
@@ -352,9 +353,23 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation, operatorPub
 	if err != nil {
 		return nil, err
 	}
-	loggingPlan, err := logging.PlanFromSite(s)
-	if err != nil {
-		return nil, err
+	var loggingPlan logging.Plan
+	var loggingCollectorConfig, loggingServiceOverride, loggingSocketOverride string
+	loggingEnabled := false
+	for _, component := range s.PlatformComponents() {
+		if component.Module == "logging" {
+			loggingEnabled = true
+			break
+		}
+	}
+	if loggingEnabled {
+		loggingPlan, err = logging.PlanFromSite(s)
+		if err != nil {
+			return nil, err
+		}
+		loggingCollectorConfig = logging.CollectorConfiguration(loggingPlan)
+		loggingServiceOverride = logging.CollectorServiceOverride(loggingPlan)
+		loggingSocketOverride = logging.CollectorSocketOverride(loggingPlan)
 	}
 	usbPlan, err := usbexport.PlanFromSite(s)
 	if err != nil {
@@ -367,7 +382,7 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation, operatorPub
 	}
 	loggingUploads := map[string]string{}
 	for _, component := range s.PlatformComponents() {
-		if component.Logging && component.Name != logging.CollectorName {
+		if loggingEnabled && component.Logging && component.Name != logging.CollectorName {
 			loggingUploads[component.Name] = logging.UploadConfiguration(loggingPlan, component.Name)
 		}
 	}
@@ -395,14 +410,12 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation, operatorPub
 		LoggingServiceOverride         string                                           `json:"logging_collector_service_override"`
 		LoggingSocketOverride          string                                           `json:"logging_collector_socket_override"`
 		LoggingUploadConfigs           map[string]string                                `json:"logging_upload_configs"`
-		LoggingClientCertificates      map[string]string                                `json:"logging_client_certificates"`
-		LoggingCollectorCertificate    string                                           `json:"logging_collector_certificate"`
 		ModuleConfigs                  map[string]model.ModuleConfig                    `json:"module_configs"`
 		ModuleDeclarations             []model.ModuleDeclaration                        `json:"module_declarations"`
 		GatusConfig                    string                                           `json:"gatus_config"`
 		USBExportManifests             []usbexport.GuestManifest                        `json:"usb_export_manifests"`
 		NetworkProbeOperatorPublicKey  string                                           `json:"network_probe_operator_public_key,omitempty"`
-	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan, firewallPlan, firewall.GatewayInterfaceConfigurationDigests(firewallPlan), monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, logging.CollectorConfiguration(loggingPlan), logging.CollectorServiceOverride(loggingPlan), logging.CollectorSocketOverride(loggingPlan), loggingUploads, map[string]string{}, "", s.ModuleConfig, s.Declarations, string(gatusConfig), usbPlan, operatorPublicKey}
+	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan, firewallPlan, firewall.GatewayInterfaceConfigurationDigests(firewallPlan), monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, loggingCollectorConfig, loggingServiceOverride, loggingSocketOverride, loggingUploads, s.ModuleConfig, s.Declarations, string(gatusConfig), usbPlan, operatorPublicKey}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err
@@ -418,27 +431,12 @@ func dynamicZoneNames(zones []dns.DynamicZone) []string {
 	return result
 }
 
-// Run executes ansible-playbook with model variables over stdin. This keeps
-// the invocation free of secret values and avoids a plaintext extra-vars
-// file. The playbook itself must obtain any future secret material through an
-// approved runtime mechanism.
-func Run(ctx context.Context, playbook, inventory string, variables []byte) error {
-	_, err := run(ctx, playbook, inventory, variables, "", PhaseFull)
-	return err
-}
-
-// RunWithMutation reports only whether the bounded Ansible recap contained a
-// non-zero changed count. It is intentionally not a per-resource audit log.
-func RunWithMutation(ctx context.Context, playbook, inventory string, variables []byte) (bool, error) {
-	result, err := run(ctx, playbook, inventory, variables, "", PhaseFull)
-	return result.Changed, err
-}
-
-// RunWithMutationPhase is RunWithMutation with an explicit deployment phase
-// exposed to the playbook. The phase is passed as extra-vars over stdin, not
-// as an argv value, so the command line remains free of configuration data.
-func RunWithMutationPhase(ctx context.Context, playbook, inventory string, variables []byte, phase string) (RunResult, error) {
-	return run(ctx, playbook, inventory, variables, "", phase)
+// RunWithMutationPhase runs one bounded root convergence phase with
+// an operation-scoped private key held only by a short-lived local agent. The
+// key is never written to a file or placed in argv; the agent is destroyed
+// before the phase returns.
+func RunWithMutationPhase(ctx context.Context, playbook, inventory string, variables []byte, phase string, identityData []byte) (RunResult, error) {
+	return run(ctx, playbook, inventory, variables, "", phase, identityData)
 }
 
 // RunExternal configures one external appliance through an operator-supplied
@@ -449,41 +447,25 @@ func RunExternal(ctx context.Context, playbook, inventory string, variables []by
 	if !safeInventoryIdentity(user) {
 		return RunResult{}, errors.New("external Ansible user must be one safe inventory identity")
 	}
-	return runWithSSHConfig(ctx, playbook, inventory, variables, "", PhaseFull, sshConfig, user)
-}
-
-// RunLimited executes the same generated playbook against one known inventory
-// identity. The limit is validated before it becomes an Ansible argument so a
-// readiness stage cannot turn into an arbitrary command or host selector.
-func RunLimited(ctx context.Context, playbook, inventory string, variables []byte, limit string) error {
-	_, err := RunLimitedWithMutation(ctx, playbook, inventory, variables, limit)
-	return err
-}
-
-// RunLimitedWithMutation is RunLimited with the same coarse changed signal as
-// RunWithMutation.
-func RunLimitedWithMutation(ctx context.Context, playbook, inventory string, variables []byte, limit string) (bool, error) {
-	if !safeInventoryIdentity(limit) {
-		return false, errors.New("Ansible limit must be one safe inventory identity")
-	}
-	result, err := run(ctx, playbook, inventory, variables, limit, PhaseFull)
-	return result.Changed, err
+	return runWithSSHConfig(ctx, playbook, inventory, variables, "", PhaseFull, sshConfig, user, nil)
 }
 
 // RunLimitedWithMutationPhase is the phase-aware form used by tracked deploy
 // stages that also need to converge a single known inventory identity.
-func RunLimitedWithMutationPhase(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string) (RunResult, error) {
+func RunLimitedWithMutationPhase(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string, identityData []byte) (RunResult, error) {
 	if !safeInventoryIdentity(limit) {
 		return RunResult{}, errors.New("Ansible limit must be one safe inventory identity")
 	}
-	return run(ctx, playbook, inventory, variables, limit, phase)
+	return run(ctx, playbook, inventory, variables, limit, phase, identityData)
 }
 
-func run(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string) (RunResult, error) {
-	return runWithSSHConfig(ctx, playbook, inventory, variables, limit, phase, generatedSSHConfigPath(inventory), "root")
+func run(ctx context.Context, playbook, inventory string, variables []byte, limit, phase string, identityData []byte) (RunResult, error) {
+	return runWithSSHConfig(ctx, playbook, inventory, variables, limit, phase, generatedSSHConfigPath(inventory), "root", identityData)
 }
 
-func runWithSSHConfig(ctx context.Context, playbook, inventory string, variables []byte, limit, phase, sshConfig, user string) (RunResult, error) {
+var findAnsiblePlaybook = ansiblePlaybookExecutable
+
+func runWithSSHConfig(ctx context.Context, playbook, inventory string, variables []byte, limit, phase, sshConfig, user string, identityData []byte) (result RunResult, resultErr error) {
 	var empty RunResult
 	if playbook == "" || inventory == "" || sshConfig == "" || user == "" {
 		return empty, errors.New("Ansible playbook, inventory, SSH configuration, and user are required")
@@ -491,35 +473,60 @@ func runWithSSHConfig(ctx context.Context, playbook, inventory string, variables
 	if err := sshconfig.ValidateExecutionConfig(sshConfig); err != nil {
 		return empty, fmt.Errorf("validate Ansible SSH configuration: %w", err)
 	}
-	executable, err := exec.LookPath("ansible-playbook")
+	executable, err := findAnsiblePlaybook()
 	if err != nil {
-		return empty, fmt.Errorf("ansible-playbook is required: %w", err)
+		return empty, err
 	}
 	variables, err = phaseVariables(variables, phase)
 	if err != nil {
 		return empty, err
 	}
-	args := []string{"-i", inventory, "--user", user, playbook, "--extra-vars", "@/dev/stdin", "--ssh-common-args", "-F " + sshConfig}
+	agentEnvironment := make(map[string]string)
+	stopAgent := func() error { return nil }
+	if len(identityData) > 0 {
+		var agentErr error
+		agentEnvironment, stopAgent, agentErr = startTemporarySSHAgent(identityData)
+		if agentErr != nil {
+			return empty, agentErr
+		}
+	}
+	defer func() {
+		if cleanupErr := stopAgent(); cleanupErr != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("stop temporary Ansible SSH agent: %w", cleanupErr))
+		}
+	}()
+	sshArgs := "-F " + sshConfig
+	if len(identityData) > 0 {
+		// The target inventory user is root and must use the temporary
+		// operation identity. IdentitiesOnly=no lets OpenSSH obtain that key
+		// from the agent while the generated bastion host block retains its
+		// durable, independently enrolled identity.
+		sshArgs += " -o IdentitiesOnly=no -o ControlMaster=no -o ControlPath=none"
+	}
+	args := []string{"-i", inventory, "--user", user, playbook, "--extra-vars", "@/dev/stdin", "--ssh-common-args", sshArgs}
 	if limit != "" {
 		args = append(args, "--limit", limit)
 	}
-	command := exec.CommandContext(ctx, executable, args...)
+	command := exec.Command(executable, args...)
 	command.Stdin = strings.NewReader(string(variables))
 	timingPath, timingCleanup := prepareTaskTiming(playbook)
 	defer timingCleanup()
 	command.Env = ansibleEnvironment(playbook, timingPath, phase)
+	for key, value := range agentEnvironment {
+		command.Env = setEnvironmentValue(command.Env, key, value)
+	}
 	var output boundedOutput
 	command.Stdout = &output
 	command.Stderr = &output
 	started := time.Now()
-	err = command.Run()
+	err = runInProcessGroup(ctx, command)
 	changed := ansibleOutputChanged(output.Bytes())
 	telemetry.Record(ctx, telemetry.Event{
 		Category: "ansible", Operation: "playbook", Target: ansibleTarget(limit),
 		Duration: time.Since(started), Success: err == nil, Changed: changed,
 	})
 	taskTimings, taskBatchTimings := readTaskTimings(timingPath)
-	result := RunResult{Changed: changed, TaskTimings: taskTimings, TaskBatchTimings: taskBatchTimings}
+	result = RunResult{Changed: changed, TaskTimings: taskTimings, TaskBatchTimings: taskBatchTimings}
 	if err != nil {
 		diagnostic := failureDiagnosticWithSupplement(output.Bytes(), output.DiagnosticBytes())
 		if diagnostic == "" {
@@ -528,6 +535,132 @@ func runWithSSHConfig(ctx context.Context, playbook, inventory string, variables
 		return result, fmt.Errorf("ansible-playbook failed: %w: %s", err, diagnostic)
 	}
 	return result, nil
+}
+
+func runInProcessGroup(ctx context.Context, command *exec.Cmd) error {
+	if command == nil {
+		return errors.New("Ansible command is required")
+	}
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := command.Start(); err != nil {
+		return err
+	}
+	wait := make(chan error, 1)
+	go func() { wait <- command.Wait() }()
+	select {
+	case err := <-wait:
+		return err
+	case <-ctx.Done():
+		if command.Process != nil {
+			_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+		}
+		return errors.Join(ctx.Err(), <-wait)
+	}
+}
+
+func startTemporarySSHAgent(identityData []byte) (map[string]string, func() error, error) {
+	agent := exec.Command(sshAgentExecutable, "-s")
+	output, err := agent.Output()
+	if err != nil {
+		return nil, func() error { return nil }, fmt.Errorf("start temporary Ansible SSH agent: %w", err)
+	}
+	environment, err := parseSSHAgentEnvironment(output)
+	if err != nil {
+		if cleanupErr := stopTemporarySSHAgent(environment); cleanupErr != nil {
+			return nil, func() error { return nil }, errors.Join(err, fmt.Errorf("cleanup temporary Ansible SSH agent: %w", cleanupErr))
+		}
+		return nil, func() error { return nil }, err
+	}
+	stop := func() error {
+		return stopTemporarySSHAgent(environment)
+	}
+	add := exec.Command(sshAddExecutable, "-")
+	add.Env = append(os.Environ(), "SSH_AUTH_SOCK="+environment["SSH_AUTH_SOCK"], "SSH_AGENT_PID="+environment["SSH_AGENT_PID"])
+	add.Stdin = bytes.NewReader(identityData)
+	if output, err := add.CombinedOutput(); err != nil {
+		loadErr := fmt.Errorf("load temporary Ansible SSH identity: %w (%s)", err, strings.TrimSpace(string(output)))
+		if cleanupErr := stop(); cleanupErr != nil {
+			return nil, func() error { return nil }, errors.Join(loadErr, fmt.Errorf("cleanup temporary Ansible SSH agent: %w", cleanupErr))
+		}
+		return nil, func() error { return nil }, loadErr
+	}
+	return environment, stop, nil
+}
+
+func stopTemporarySSHAgent(environment map[string]string) error {
+	if environment == nil {
+		return errors.New("ssh-agent environment is unavailable")
+	}
+	socket, socketOK := environment["SSH_AUTH_SOCK"]
+	pid, pidOK := environment["SSH_AGENT_PID"]
+	if socketOK && pidOK {
+		kill := exec.Command(sshAgentExecutable, "-k")
+		kill.Env = append(os.Environ(), "SSH_AUTH_SOCK="+socket, "SSH_AGENT_PID="+pid)
+		if output, err := kill.CombinedOutput(); err == nil {
+			return nil
+		} else if validAgentPID(pid) {
+			if killErr := syscall.Kill(parseAgentPID(pid), syscall.SIGTERM); killErr == nil {
+				return nil
+			} else {
+				return fmt.Errorf("ssh-agent cleanup failed: %w (%s); direct termination failed: %v", err, strings.TrimSpace(string(output)), killErr)
+			}
+		} else {
+			return fmt.Errorf("ssh-agent cleanup failed: %w (%s)", err, strings.TrimSpace(string(output)))
+		}
+	}
+	if validAgentPID(pid) {
+		if err := syscall.Kill(parseAgentPID(pid), syscall.SIGTERM); err == nil {
+			return nil
+		} else {
+			return fmt.Errorf("ssh-agent direct cleanup failed: %w", err)
+		}
+	}
+	return errors.New("ssh-agent returned no safe cleanup process id")
+}
+
+func validAgentPID(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func parseAgentPID(value string) int {
+	pid, _ := strconv.Atoi(value)
+	return pid
+}
+
+func parseSSHAgentEnvironment(output []byte) (map[string]string, error) {
+	values := make(map[string]string, 2)
+	for _, line := range strings.Split(string(output), "\n") {
+		for _, key := range []string{"SSH_AUTH_SOCK", "SSH_AGENT_PID"} {
+			prefix := key + "="
+			if !strings.HasPrefix(line, prefix) {
+				continue
+			}
+			value := strings.SplitN(strings.TrimPrefix(line, prefix), ";", 2)[0]
+			if value == "" || strings.IndexFunc(value, func(r rune) bool {
+				return r == '\x00' || r == '\r' || r == '\n' || r == ' ' || r == '\t'
+			}) >= 0 {
+				return values, errors.New("ssh-agent returned an unsafe environment value")
+			}
+			values[key] = value
+		}
+	}
+	if values["SSH_AUTH_SOCK"] == "" || values["SSH_AGENT_PID"] == "" {
+		return values, errors.New("ssh-agent did not return SSH_AUTH_SOCK and SSH_AGENT_PID")
+	}
+	for _, r := range values["SSH_AGENT_PID"] {
+		if r < '0' || r > '9' {
+			return values, errors.New("ssh-agent returned an invalid process id")
+		}
+	}
+	return values, nil
 }
 
 func phaseVariables(variables []byte, phase string) ([]byte, error) {
@@ -553,10 +686,18 @@ func phaseVariables(variables []byte, phase string) ([]byte, error) {
 }
 
 func ansibleEnvironment(playbook, timingPath, phase string) []string {
-	environment := os.Environ()
-	if _, ok := os.LookupEnv("ANSIBLE_FORKS"); !ok {
-		environment = append(environment, "ANSIBLE_FORKS="+defaultAnsibleForks)
+	environment := make([]string, 0, len(os.Environ())+8)
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(key, "ANSIBLE_") || key == "PYTHONPATH" || key == "PYTHONHOME" || key == "PYTHONUSERBASE" || key == "VIRTUAL_ENV" || key == "PIP_CONFIG_FILE" {
+			continue
+		}
+		environment = append(environment, entry)
 	}
+	environment = setEnvironmentValue(environment, "PATH", safeControllerPath)
+	environment = setEnvironmentValue(environment, "ANSIBLE_CONFIG", "/dev/null")
+	environment = setEnvironmentValue(environment, "ANSIBLE_FORKS", defaultAnsibleForks)
+	environment = setEnvironmentValue(environment, "PYTHONNOUSERSITE", "1")
 	strategy := defaultAnsibleStrategy
 	if phase == PhaseBootstrap || phase == PhaseServices {
 		strategy = parallelAnsibleStrategy
@@ -576,6 +717,36 @@ func ansibleEnvironment(playbook, timingPath, phase string) []string {
 		}
 	}
 	return environment
+}
+
+const safeControllerPath = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
+
+func ansiblePlaybookExecutable() (string, error) {
+	for _, directory := range strings.Split(safeControllerPath, string(os.PathListSeparator)) {
+		candidate := filepath.Join(directory, "ansible-playbook")
+		resolved, err := filepath.EvalSymlinks(candidate)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("inspect ansible-playbook: %w", err)
+		}
+		if !filepath.IsAbs(resolved) {
+			return "", errors.New("ansible-playbook resolved to a non-absolute path")
+		}
+		if err := pathguard.ValidateNoSymlinkComponents(resolved); err != nil {
+			return "", fmt.Errorf("validate ansible-playbook path: %w", err)
+		}
+		info, err := os.Stat(resolved)
+		if err != nil {
+			return "", fmt.Errorf("stat ansible-playbook: %w", err)
+		}
+		if !info.Mode().IsRegular() || info.Mode()&0111 == 0 {
+			return "", errors.New("ansible-playbook must be an executable regular file")
+		}
+		return resolved, nil
+	}
+	return "", errors.New("ansible-playbook is required in a trusted controller executable directory")
 }
 
 func setEnvironmentValue(environment []string, key, value string) []string {

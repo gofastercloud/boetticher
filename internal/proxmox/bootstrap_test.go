@@ -1,10 +1,13 @@
 package proxmox
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -46,6 +49,8 @@ func (r *staleScopedTokenRunner) Run(_ context.Context, _ string, _ string, comm
 		return []byte(`[{"expire":0,"privsep":1,"tokenid":"boetticher"}]`), nil
 	case "pvesh get /access/acl --output-format json":
 		return []byte(`[{"path":"/","propagate":1,"roleid":"BoetticherProvisioner","type":"user","ugid":"labadmin@pve"},{"path":"/","propagate":1,"roleid":"BoetticherProvisioner","type":"token","ugid":"labadmin@pve!boetticher"}]`), nil
+	case "pvesh delete /access/acl --path / --users 'labadmin@pve' --roles 'BoetticherProvisioner'", "pvesh delete /access/acl --path / --tokens 'labadmin@pve!boetticher' --roles 'BoetticherProvisioner'":
+		return nil, nil
 	case "pvesh delete /access/users/'labadmin@pve'/token/'boetticher'":
 		r.removed = true
 		return nil, nil
@@ -197,21 +202,6 @@ func TestReadGuestHostKeyUsesAuthenticatedProxmoxBoundary(t *testing.T) {
 	}
 }
 
-func TestReadBuilderHostKeyUsesAuthenticatedHostBoundaryForNonRoot(t *testing.T) {
-	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA builder\n"
-	runner := &fakeRunner{output: []byte(`{"exited":1,"exitcode":0,"out-data":"` + strings.TrimSuffix(key, " builder\n") + `\n"}`)}
-	got, err := ReadBuilderHostKey(context.Background(), runner, "192.0.2.10", "labadmin", 190)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != strings.TrimSuffix(key, " builder\n") {
-		t.Fatalf("ReadBuilderHostKey() = %q", got)
-	}
-	if !strings.Contains(runner.command, "sudo -n /usr/sbin/qm guest exec 190 -- /bin/cat /etc/ssh/ssh_host_ed25519_key.pub") {
-		t.Fatalf("builder host key was not read through the authenticated host boundary: %q", runner.command)
-	}
-}
-
 func TestSSHRunnerRejectsExecutableConfigBeforeStartingSSH(t *testing.T) {
 	path := t.TempDir() + "/boetticher.conf"
 	if err := os.WriteFile(path, []byte("Host lab-dns-01\n    LocalCommand id\n"), 0600); err != nil {
@@ -259,6 +249,107 @@ func TestSSHRunnerRestrictsAuthenticationToConfiguredIdentity(t *testing.T) {
 	}
 	if !containsString(args, "IdentitiesOnly=yes") || !containsString(args, "-i") || !containsString(args, "/tmp/operator") {
 		t.Fatalf("SSH runner did not restrict authentication to the configured identity: %#v", args)
+	}
+}
+
+func TestSSHRunnerRejectsSymlinkedTrustPaths(t *testing.T) {
+	dir := t.TempDir()
+	external := t.TempDir()
+	if err := os.Symlink(external, filepath.Join(dir, "known-hosts")); err != nil {
+		t.Fatal(err)
+	}
+	runner := SSHRunner{KnownHosts: filepath.Join(dir, "known-hosts", "hosts"), StrictHostKey: "yes"}
+	if err := runner.validateConfig(); err == nil || !strings.Contains(err.Error(), "known-hosts") {
+		t.Fatalf("symlinked known-hosts parent was accepted: %v", err)
+	}
+	if err := os.Symlink(external, filepath.Join(dir, "identity")); err != nil {
+		t.Fatal(err)
+	}
+	runner = SSHRunner{IdentityFile: filepath.Join(dir, "identity", "id_ed25519"), StrictHostKey: "yes"}
+	if err := runner.validateConfig(); err == nil || !strings.Contains(err.Error(), "identity") {
+		t.Fatalf("symlinked identity parent was accepted: %v", err)
+	}
+}
+
+func TestSSHRunnerUsesInMemoryIdentityOnInheritedDescriptor(t *testing.T) {
+	identity := []byte("temporary private key")
+	runner := (SSHRunner{StrictHostKey: "yes"}).WithIdentityData(identity)
+	args, err := runner.commandArgs("192.0.2.10", "root", []string{"true"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !containsString(args, "IdentitiesOnly=yes") || !containsString(args, "/dev/fd/3") {
+		t.Fatalf("in-memory identity did not use the inherited descriptor: %#v", args)
+	}
+	if containsString(args, "temporary private key") || runner.IdentityFile != "" {
+		t.Fatalf("temporary identity leaked into SSH arguments or persistent file configuration: %#v", args)
+	}
+	runner.ClearIdentityData()
+	if len(runner.identityData) != 0 {
+		t.Fatal("ClearIdentityData retained operation-scoped key material")
+	}
+}
+
+func TestSSHRunnerIsolatesTargetIdentityButPreservesProxyJumpIdentity(t *testing.T) {
+	path := t.TempDir() + "/boetticher.conf"
+	config := "Host lab-bastion\n    IdentityFile /tmp/operator\nHost lab-dns-01\n    IdentityFile /tmp/operator\n    ProxyJump lab-bastion\n"
+	if err := os.WriteFile(path, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	runner := SSHRunner{ConfigFile: path, HostAlias: "lab-dns-01"}
+	filtered, err := runner.isolatedSSHConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(filtered)
+	if strings.Count(text, "IdentityFile /tmp/operator") != 1 || !strings.Contains(text, "Host lab-bastion") || !strings.Contains(text, "ProxyJump lab-bastion") {
+		t.Fatalf("isolated SSH configuration lost the bastion identity or retained the target identity: %s", text)
+	}
+}
+
+func TestSSHRunnerStreamsTemporaryIdentityAndConfigToProcess(t *testing.T) {
+	fakeBin := t.TempDir()
+	capture := t.TempDir() + "/capture"
+	fakeSSH := "#!/bin/sh\nset -eu\nconfig=\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"-F\" ]; then config=$2; shift; fi\n  shift\ndone\nprintf '%s' \"$config\" > \"$BOETTICHER_TEST_CAPTURE.path\"\ncat /dev/fd/3 > \"$BOETTICHER_TEST_CAPTURE.identity\"\ncat \"$config\" > \"$BOETTICHER_TEST_CAPTURE.config\"\nprintf '%s\\n' ready\n"
+	if err := os.WriteFile(fakeBin+"/ssh", []byte(fakeSSH), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+":"+os.Getenv("PATH"))
+	t.Setenv("BOETTICHER_TEST_CAPTURE", capture)
+	previousSSH := sshExecutable
+	sshExecutable = filepath.Join(fakeBin, "ssh")
+	t.Cleanup(func() { sshExecutable = previousSSH })
+	configPath := t.TempDir() + "/boetticher.conf"
+	config := "Host lab-bastion\n    IdentityFile /tmp/operator\nHost lab-dns-01\n    IdentityFile /tmp/operator\n    ProxyJump lab-bastion\n"
+	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	identity := []byte("temporary private key")
+	runner := (SSHRunner{ConfigFile: configPath, HostAlias: "lab-dns-01", StrictHostKey: "yes"}).WithIdentityData(identity)
+	var output bytes.Buffer
+	if err := runner.RunStream(context.Background(), "10.10.10.10", "root", "true", &output); err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(output.String()) != "ready" {
+		t.Fatalf("fake SSH process output = %q", output.String())
+	}
+	identityData, err := os.ReadFile(capture + ".identity")
+	if err != nil || string(identityData) != string(identity) {
+		t.Fatalf("temporary identity was not streamed through the inherited descriptor: err=%v", err)
+	}
+	configData, err := os.ReadFile(capture + ".config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(configData), "IdentityFile /tmp/operator") != 1 || !strings.Contains(string(configData), "Host lab-bastion") {
+		t.Fatal("isolated config did not preserve only the bastion identity")
+	}
+	temporaryPath, err := os.ReadFile(capture + ".path")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(string(temporaryPath)); !os.IsNotExist(err) {
+		t.Fatalf("temporary SSH configuration remains after the operation: %v", err)
 	}
 }
 
@@ -337,23 +428,8 @@ func (f *fakeRunner) Run(_ context.Context, address, user, command string) ([]by
 	return f.output, nil
 }
 
-func TestWaitForQEMUIPv4ViaNeighborMatchesOnlyBuilderMAC(t *testing.T) {
-	runner := &fakeRunner{responses: map[string][]byte{
-		"/usr/sbin/ip -4 neigh show dev vmbr0": []byte("192.168.4.50 lladdr aa:bb:cc:dd:ee:ff STALE\n192.168.4.51 lladdr 02:00:00:00:01:90 REACHABLE\n"),
-	}}
-	address, err := WaitForQEMUIPv4ViaNeighbor(context.Background(), runner, "192.168.4.5", "root", "02:00:00:00:01:90", 1, time.Millisecond)
-	if err != nil || address != "192.168.4.51" {
-		t.Fatalf("WaitForQEMUIPv4ViaNeighbor() = %q, %v", address, err)
-	}
-}
-
-func TestWaitForQEMUIPv4ViaNeighborRejectsMissingBuilderMAC(t *testing.T) {
-	runner := &fakeRunner{responses: map[string][]byte{
-		"/usr/sbin/ip -4 neigh show dev vmbr0": []byte("192.168.4.50 lladdr aa:bb:cc:dd:ee:ff STALE\n"),
-	}}
-	if address, err := WaitForQEMUIPv4ViaNeighbor(context.Background(), runner, "192.168.4.5", "root", "02:00:00:00:01:90", 1, time.Millisecond); err == nil || address != "" || !strings.Contains(err.Error(), "HOLD") {
-		t.Fatalf("WaitForQEMUIPv4ViaNeighbor() = %q, %v", address, err)
-	}
+func (f *fakeRunner) RunWithStdin(ctx context.Context, address, user, command string, _ io.Reader) ([]byte, error) {
+	return f.Run(ctx, address, user, command)
 }
 
 func containsString(values []string, wanted string) bool {
@@ -365,23 +441,40 @@ func containsString(values []string, wanted string) bool {
 	return false
 }
 
-func (f *fakeRunner) RunWithStdin(_ context.Context, address, user, command string, _ io.Reader) ([]byte, error) {
-	f.address, f.user, f.command = address, user, command
-	f.commands = append(f.commands, command)
-	return f.output, nil
-}
-
-func TestInstallOperatorKeyUsesSafeConstantRemoteCommand(t *testing.T) {
+func TestInstallTemporaryRootAccessUsesIndependentRecoveryTransport(t *testing.T) {
 	runner := &fakeRunner{}
-	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator"
-	if err := InstallOperatorKey(context.Background(), runner, "192.0.2.10", "root", key); err != nil {
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample boetticher-apply"
+	if err := InstallTemporaryRootAccess(context.Background(), runner, "192.0.2.10", "root", key); err != nil {
 		t.Fatal(err)
 	}
-	if runner.address != "192.0.2.10" || runner.user != "root" || !strings.Contains(runner.command, "authorized_keys") {
-		t.Fatalf("unexpected bootstrap request: %#v", runner)
+	if runner.user != "root" || !strings.Contains(runner.command, "/root/.ssh/authorized_keys") || !strings.Contains(runner.command, "grep -qxF") {
+		t.Fatalf("temporary root acquisition used unexpected command: %#v", runner)
 	}
-	if strings.Contains(runner.command, "StrictHostKeyChecking=no") || strings.Contains(runner.command, "password") {
-		t.Fatalf("bootstrap command weakened SSH or accepted a password argument: %s", runner.command)
+	if strings.Contains(runner.command, "passwd") || strings.Contains(runner.command, "AllowUsers") || strings.Contains(runner.command, "sudo") {
+		t.Fatalf("temporary root acquisition changed durable recovery policy: %s", runner.command)
+	}
+}
+
+func TestRevokeTemporaryRootAccessThroughHostUsesExactOwnedGuestBoundary(t *testing.T) {
+	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample boetticher-apply"
+	for _, guest := range []struct {
+		kind GuestKind
+		vmid int
+		want string
+	}{
+		{kind: KindQEMU, vmid: 100, want: "/usr/sbin/qm guest exec 100 -- /bin/sh -c"},
+		{kind: KindLXC, vmid: 110, want: "/usr/sbin/pct exec 110 -- /bin/sh -c"},
+	} {
+		runner := &fakeRunner{output: []byte(`{"exitcode":0,"exited":1}`)}
+		if err := RevokeTemporaryRootAccessThroughHost(context.Background(), runner, "192.0.2.10", "root", guest.kind, guest.vmid, key); err != nil {
+			t.Fatalf("guest cleanup %s = %v", guest.kind, err)
+		}
+		if !strings.Contains(runner.command, guest.want) || !strings.Contains(runner.command, "/root/.ssh/authorized_keys") || !strings.Contains(runner.command, "grep -Fvx") {
+			t.Fatalf("guest cleanup %s used an unexpected host command: %s", guest.kind, runner.command)
+		}
+		if strings.Contains(runner.command, "passwd") || strings.Contains(runner.command, "AllowUsers") {
+			t.Fatalf("guest cleanup %s changed unrelated recovery state: %s", guest.kind, runner.command)
+		}
 	}
 }
 
@@ -394,7 +487,7 @@ func TestCreateScopedCredentialsCapturesOnlyReturnedSecret(t *testing.T) {
 			"pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[]`),
 		},
 	}
-	secret, err := CreateScopedCredentials(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher")
+	secret, err := CreateScopedCredentials(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "node")
 	if err != nil || secret != "opaque-token-secret" {
 		t.Fatalf("CreateScopedCredentials() = %q, %v", secret, err)
 	}
@@ -425,7 +518,7 @@ func TestCheckScopedCredentialAvailabilityHoldsExistingToken(t *testing.T) {
 
 func TestRemoveExactScopedCredentialTokenDeletesOnlyTheOwnedToken(t *testing.T) {
 	runner := &staleScopedTokenRunner{}
-	removed, err := RemoveExactScopedCredentialToken(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner")
+	removed, err := RemoveExactScopedCredentialToken(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", "node")
 	if err != nil || !removed {
 		t.Fatalf("RemoveExactScopedCredentialToken() = %t, %v", removed, err)
 	}
@@ -440,7 +533,9 @@ func TestRemoveExactScopedCredentialTokenDeletesOnlyTheOwnedToken(t *testing.T) 
 		t.Fatalf("token replacement did not prove scoped credential ACL ownership: %#v", runner.commands)
 	}
 	for _, command := range runner.commands {
-		if strings.Contains(command, "pvesh delete ") && command != deleteCommand {
+		legacyUserACL := "pvesh delete /access/acl --path / --users 'labadmin@pve' --roles 'BoetticherProvisioner'"
+		legacyTokenACL := "pvesh delete /access/acl --path / --tokens 'labadmin@pve!boetticher' --roles 'BoetticherProvisioner'"
+		if strings.Contains(command, "pvesh delete ") && command != deleteCommand && command != legacyUserACL && command != legacyTokenACL {
 			t.Fatalf("token replacement issued an unexpected deletion: %s", command)
 		}
 		for _, forbidden := range []string{"/access/users/'labadmin@pve' --", "/access/roles", "root@pam"} {
@@ -485,7 +580,7 @@ func TestRemoveExactScopedCredentialTokenRefusesUnexpectedOwnership(t *testing.T
 				"pvesh get /access/users/'labadmin@pve'/token --output-format json": test.tokens,
 				"pvesh get /access/acl --output-format json":                        test.acls,
 			}}
-			removed, err := RemoveExactScopedCredentialToken(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner")
+			removed, err := RemoveExactScopedCredentialToken(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", "node")
 			if err == nil || !strings.Contains(err.Error(), "ownership") {
 				t.Fatalf("unexpected scoped credential ownership was accepted: removed=%t err=%v", removed, err)
 			}
@@ -502,7 +597,7 @@ func TestRemoveExactScopedCredentialTokenRefusesUnexpectedRole(t *testing.T) {
 	runner := &fakeRunner{responses: map[string][]byte{
 		"pvesh get /access/roles --output-format json": []byte(`[]`),
 	}}
-	if _, err := RemoveExactScopedCredentialToken(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner"); err == nil || !strings.Contains(err.Error(), "not present") {
+	if _, err := RemoveExactScopedCredentialToken(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", "node"); err == nil || !strings.Contains(err.Error(), "not present") {
 		t.Fatalf("unexpected scoped role was accepted for token removal: %v", err)
 	}
 	for _, command := range runner.commands {
@@ -515,8 +610,8 @@ func TestRemoveExactScopedCredentialTokenRefusesUnexpectedRole(t *testing.T) {
 func TestCheckScopedCredentialReuseAcceptsExistingBoundedToken(t *testing.T) {
 	runner := &fakeRunner{responses: map[string][]byte{
 		"pvesh get /access/roles --output-format json":                      []byte(`[{"roleid":"BoetticherProvisioner","privs":"VM.Allocate VM.Audit VM.Config.CDROM VM.Config.CPU VM.Config.Cloudinit VM.Config.Disk VM.Config.HWType VM.Config.Memory VM.Config.Network VM.Config.Options VM.GuestAgent.Audit VM.PowerMgmt Datastore.Allocate Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit SDN.Audit SDN.Use Sys.AccessNetwork Sys.Audit Sys.Modify","special":0}]`),
-		"pvesh get /access/users --output-format json":                      []byte(`[{"userid":"labadmin@pve"}]`),
-		"pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[{"tokenid":"boetticher"}]`),
+		"pvesh get /access/users --output-format json":                      []byte(`[{"comment":"boetticher automation identity","enable":1,"expire":0,"userid":"labadmin@pve"}]`),
+		"pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[{"expire":0,"privsep":1,"tokenid":"boetticher"}]`),
 	}}
 	if err := CheckScopedCredentialReuse(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
 		t.Fatalf("existing bounded token was not accepted for encrypted-credential reuse: %v", err)
@@ -524,6 +619,22 @@ func TestCheckScopedCredentialReuseAcceptsExistingBoundedToken(t *testing.T) {
 	for _, command := range runner.commands {
 		if strings.Contains(command, " create ") || strings.Contains(command, " set ") || strings.Contains(command, " delete ") {
 			t.Fatalf("credential reuse check mutated Proxmox: %s", command)
+		}
+	}
+}
+
+func TestCheckScopedCredentialReuseRejectsUnexpectedIdentityMetadata(t *testing.T) {
+	runner := &fakeRunner{responses: map[string][]byte{
+		"pvesh get /access/roles --output-format json":                      []byte(`[{"roleid":"BoetticherProvisioner","privs":"` + ScopedProvisionerPrivileges() + `","special":0}]`),
+		"pvesh get /access/users --output-format json":                      []byte(`[{"comment":"operator-owned","enable":1,"expire":0,"userid":"labadmin@pve"}]`),
+		"pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[{"expire":0,"privsep":1,"tokenid":"boetticher"}]`),
+	}}
+	if err := CheckScopedCredentialReuse(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner"); err == nil || !strings.Contains(err.Error(), "unexpected user") {
+		t.Fatalf("unexpected scoped credential metadata was accepted: %v", err)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, " create ") || strings.Contains(command, " set ") || strings.Contains(command, " delete ") {
+			t.Fatalf("metadata check mutated Proxmox: %s", command)
 		}
 	}
 }
@@ -537,10 +648,12 @@ func TestCreateScopedCredentialsCreatesRoleAtCollectionEndpoint(t *testing.T) {
 			"pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[]`),
 		},
 	}
-	if _, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
+	if _, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", "node"); err != nil {
 		t.Fatal(err)
 	}
 	var userACL, tokenACL bool
+	var rootACL bool
+	aclCount := 0
 	for _, command := range runner.commands {
 		if strings.Contains(command, "pvesh create /access/roles") {
 			if !strings.Contains(command, "pvesh create /access/roles --roleid 'BoetticherProvisioner'") {
@@ -553,21 +666,64 @@ func TestCreateScopedCredentialsCreatesRoleAtCollectionEndpoint(t *testing.T) {
 		if strings.Contains(command, "pvesh set /access/acl") && strings.Contains(command, "--tokens 'labadmin@pve!boetticher'") && strings.Contains(command, "--roles 'BoetticherProvisioner'") {
 			tokenACL = true
 		}
+		if strings.Contains(command, "pvesh set /access/acl") {
+			aclCount++
+		}
+		if strings.Contains(command, "--path /") {
+			rootACL = true
+		}
 	}
-	if !userACL || !tokenACL {
+	if !userACL || !tokenACL || rootACL || aclCount != len(scopedProvisionerACLPaths("node"))*2 {
 		t.Fatalf("credential bootstrap ACLs incomplete: user=%t token=%t commands=%v", userACL, tokenACL, runner.commands)
 	}
 }
 
+func TestCreateScopedCredentialsRefusesUnexpectedExistingUser(t *testing.T) {
+	runner := &fakeRunner{responses: map[string][]byte{
+		"pvesh get /access/roles --output-format json": []byte(`[{"roleid":"BoetticherProvisioner","privs":"` + ScopedProvisionerPrivileges() + `","special":0}]`),
+		"pvesh get /access/users --output-format json": []byte(`[{"comment":"operator-owned","enable":1,"expire":0,"userid":"labadmin@pve"}]`),
+	}}
+	if _, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", "node"); err == nil || !strings.Contains(err.Error(), "expected Boetticher identity") {
+		t.Fatalf("unexpected existing Proxmox user was accepted: %v", err)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "pvesh create /access/users") || strings.Contains(command, "pvesh set /access/acl") {
+			t.Fatalf("unexpected existing user triggered mutation: %s", command)
+		}
+	}
+}
+
 func TestEnsureScopedCredentialACLRepairsBackingUserAndToken(t *testing.T) {
-	runner := &fakeRunner{}
-	if err := EnsureScopedCredentialACL(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner"); err != nil {
+	acls := make([]scopedCredentialACLEntry, 0, len(scopedProvisionerACLPaths("node"))*2)
+	for _, subject := range []struct {
+		value string
+		typ   string
+	}{{"labadmin@pve", "user"}, {"labadmin@pve!boetticher", "token"}} {
+		for _, path := range scopedProvisionerACLPaths("node") {
+			acls = append(acls, scopedCredentialACLEntry{Path: path, Propagate: 1, RoleID: "BoetticherProvisioner", Type: subject.typ, UGID: subject.value})
+		}
+	}
+	aclData, err := json.Marshal(acls)
+	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{
-		"pvesh set /access/acl --path / --users 'labadmin@pve' --roles 'BoetticherProvisioner' --propagate 1",
-		"pvesh set /access/acl --path / --tokens 'labadmin@pve!boetticher' --roles 'BoetticherProvisioner' --propagate 1",
+	runner := &fakeRunner{responses: map[string][]byte{
+		"pvesh get /access/roles --output-format json":                      []byte(`[{"roleid":"BoetticherProvisioner","privs":"` + ScopedProvisionerPrivileges() + `","special":0}]`),
+		"pvesh get /access/users --output-format json":                      []byte(`[{"comment":"boetticher automation identity","enable":1,"expire":0,"userid":"labadmin@pve"}]`),
+		"pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[{"expire":0,"privsep":1,"tokenid":"boetticher"}]`),
+		"pvesh get /access/acl --output-format json":                        aclData,
+	}}
+	if err := EnsureScopedCredentialACL(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", "node"); err != nil {
+		t.Fatal(err)
 	}
+	want := []string{"pvesh get /access/roles --output-format json", "pvesh get /access/users --output-format json", "pvesh get /access/users/'labadmin@pve'/token --output-format json", "pvesh get /access/acl --output-format json"}
+	for _, path := range scopedProvisionerACLPaths("node") {
+		want = append(want, "pvesh set /access/acl --path '"+path+"' --users 'labadmin@pve' --roles 'BoetticherProvisioner' --propagate 1")
+	}
+	for _, path := range scopedProvisionerACLPaths("node") {
+		want = append(want, "pvesh set /access/acl --path '"+path+"' --tokens 'labadmin@pve!boetticher' --roles 'BoetticherProvisioner' --propagate 1")
+	}
+	want = append(want, "pvesh get /access/acl --output-format json")
 	if !reflect.DeepEqual(runner.commands, want) {
 		t.Fatalf("scoped credential ACL repair commands = %#v, want %#v", runner.commands, want)
 	}
@@ -671,6 +827,32 @@ func TestReplacePulseMonitoringCredentialsRefusesUnexpectedOwnership(t *testing.
 	}
 }
 
+func TestReplacePulseMonitoringCredentialsCreatesAbsentUser(t *testing.T) {
+	runner := &fakeRunner{responses: map[string][]byte{
+		"pvesh get /access/roles --output-format json":                                                                  []byte(`[{"roleid":"PVEAuditor","privs":"Datastore.Audit Mapping.Audit Pool.Audit SDN.Audit Sys.Audit VM.Audit VM.GuestAgent.Audit","special":1}]`),
+		"pvesh get /access/users --output-format json":                                                                  []byte(`[]`),
+		"pvesh create /access/users --userid 'pulse-monitor@pve' --comment 'Pulse API-only monitoring identity'":        []byte(`{}`),
+		"pvesh get /access/users/'pulse-monitor@pve'/token --output-format json":                                        []byte(`[]`),
+		"pvesh create /access/users/'pulse-monitor@pve'/token/'boetticher-monitoring' --privsep 1 --output-format json": []byte(`{"value":"fresh-monitoring-secret"}`),
+	}}
+	secret, err := ReplacePulseMonitoringCredentials(context.Background(), runner, "192.0.2.10", "root")
+	if err != nil || secret != "fresh-monitoring-secret" {
+		t.Fatalf("absent Pulse monitoring user was not created: secret=%q err=%v", secret, err)
+	}
+	created := false
+	for _, command := range runner.commands {
+		if strings.Contains(command, "pvesh create /access/users --userid 'pulse-monitor@pve'") {
+			created = true
+		}
+		if strings.Contains(command, "pvesh get /access/users/'pulse-monitor@pve'/token") && !created {
+			t.Fatalf("absent Pulse monitoring user queried a token endpoint before creation: %s", command)
+		}
+	}
+	if !created {
+		t.Fatal("absent Pulse monitoring user did not trigger exact user creation")
+	}
+}
+
 func TestCreatePulseMonitoringCredentialsFailsClosedWhenAuditorRoleIsMissing(t *testing.T) {
 	runner := &fakeRunner{responses: map[string][]byte{
 		"pvesh get /access/roles --output-format json": []byte(`[]`),
@@ -699,7 +881,7 @@ func TestCreateScopedCredentialsStopsOnUserLookupFailure(t *testing.T) {
 	runner := &credentialLookupRunner{responses: map[string]error{
 		"pvesh get /access/users --output-format json": errors.New("permission denied"),
 	}}
-	_, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner")
+	_, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", "node")
 	if err == nil || !strings.Contains(err.Error(), "HOLD: inspect Proxmox users") {
 		t.Fatalf("user lookup failure was not held: %v", err)
 	}
@@ -759,16 +941,19 @@ func TestValidateScopedRoleJSONRequiresExactPrivileges(t *testing.T) {
 	}
 }
 
-func TestConfigureIdentitiesInstallsTemporaryRootAccessWithoutLabadminSudo(t *testing.T) {
+func TestConfigureIdentitiesLeavesRootRecoveryUntouched(t *testing.T) {
 	runner := &fakeRunner{}
 	key := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator"
 	if err := ConfigureIdentities(context.Background(), runner, "192.0.2.10", "root", key, []string{"10.10.99.1:22", "10.10.10.20:443"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"passwd --lock labadmin", "/root/.ssh/authorized_keys", "rm -f /etc/sudoers.d/boetticher-labadmin", "visudo -cf /etc/sudoers", "install -d -m 700 -o lab-jump -g lab-jump /home/lab-jump", "chown lab-jump:lab-jump /home/lab-jump.authorized_keys", "AllowUsers root labadmin lab-jump", "Match User lab-jump"} {
+	for _, required := range []string{"command -v visudo", "deb http://deb.debian.org/debian trixie main", "apt-get -o Dir::Etc::sourcelist=", "install --yes --no-install-recommends sudo", "passwd --lock labadmin", "/home/labadmin/.ssh/authorized_keys", "rm -f /etc/sudoers.d/boetticher-labadmin", "visudo -cf /etc/sudoers", "install -d -m 700 -o lab-jump -g lab-jump /home/lab-jump", "chown lab-jump:lab-jump /home/lab-jump.authorized_keys", "AllowUsers root labadmin lab-jump", "Match User lab-jump"} {
 		if !strings.Contains(runner.command, required) {
 			t.Fatalf("identity bootstrap missing %q: %s", required, runner.command)
 		}
+	}
+	if strings.Contains(runner.command, "/root/.ssh/authorized_keys") || strings.Contains(runner.command, "grep -qxF '"+key+"' /root") {
+		t.Fatalf("durable identity setup modified root recovery authorization: %s", runner.command)
 	}
 	for _, forbidden := range []string{"NOPASSWD", "/usr/bin/pvesh *", "/usr/bin/pvesm *", "/bin/sh -c *", "/usr/bin/install *", "/usr/bin/chown *", "/usr/bin/chmod *"} {
 		if strings.Contains(runner.command, forbidden) {
@@ -817,19 +1002,27 @@ func TestRestoreTemporaryRootAccessRejectsGuestAgentFailure(t *testing.T) {
 
 func TestInactivateRetainedModuleUsesBoundedGuestServiceContract(t *testing.T) {
 	for _, guest := range []struct {
-		kind GuestKind
-		want string
+		kind     GuestKind
+		module   string
+		want     string
+		services []string
 	}{
-		{kind: KindQEMU, want: "/usr/sbin/qm guest exec 200 -- /bin/sh -c"},
-		{kind: KindLXC, want: "/usr/sbin/pct exec 200 -- /bin/sh -c"},
+		{kind: KindQEMU, module: "tailnet-router", want: "/usr/sbin/qm guest exec 200 -- /bin/sh -c", services: []string{"tailscaled"}},
+		{kind: KindLXC, module: "airvpn", want: "/usr/sbin/pct exec 200 -- /bin/sh -c", services: []string{"boetticher-airvpn.service"}},
+		{kind: KindLXC, module: "arr", want: "/usr/sbin/pct exec 200 -- /bin/sh -c", services: []string{"sonarr", "radarr", "nginx"}},
 	} {
-		t.Run(string(guest.kind), func(t *testing.T) {
+		t.Run(string(guest.kind)+"/"+guest.module, func(t *testing.T) {
 			runner := &fakeRunner{output: []byte("{\"exitcode\":0,\"exited\":1}")}
-			if err := InactivateRetainedModule(context.Background(), runner, "192.0.2.10", "root", guest.kind, 200, "tailnet-router"); err != nil {
+			if err := InactivateRetainedModule(context.Background(), runner, "192.0.2.10", "root", guest.kind, 200, guest.module); err != nil {
 				t.Fatal(err)
 			}
-			if runner.user != "root" || !strings.Contains(runner.command, guest.want) || !strings.Contains(runner.command, "systemctl disable --now") || !strings.Contains(runner.command, "tailscaled") {
+			if runner.user != "root" || !strings.Contains(runner.command, guest.want) || !strings.Contains(runner.command, "systemctl disable --now") {
 				t.Fatalf("retained inactivation used unexpected command: %#v", runner)
+			}
+			for _, service := range guest.services {
+				if !strings.Contains(runner.command, service) {
+					t.Fatalf("retained %s inactivation omitted service %q: %s", guest.module, service, runner.command)
+				}
 			}
 			for _, forbidden := range []string{"systemctl disable --now '*'", "rm -rf", "sudo", "ssh ", "ansible"} {
 				if strings.Contains(runner.command, forbidden) {
@@ -859,13 +1052,29 @@ func TestRevokeTemporaryRootAccessIsFixedAndIdempotent(t *testing.T) {
 		if strings.Contains(runner.command, "sudo") || strings.Contains(runner.command, "pvesh") || strings.Contains(runner.command, "pvesm") || strings.Contains(runner.command, "sh -c") {
 			t.Fatalf("temporary cleanup exposed an unrelated privilege path: %s", runner.command)
 		}
-		if host && !strings.Contains(runner.command, "AllowUsers root labadmin lab-jump") {
-			t.Fatalf("host cleanup does not verify the temporary AllowUsers state: %s", runner.command)
-		}
-		for _, required := range []string{"grep -Fvx --", "authorized_keys.boetticher-cleanup", "passwd --lock root"} {
-			if !strings.Contains(runner.command, required) {
-				t.Fatalf("temporary cleanup does not remove only the injected key: missing %q in %s", required, runner.command)
+		if host {
+			if !strings.Contains(runner.command, "AllowUsers root labadmin lab-jump lab-netprobe") {
+				t.Fatalf("host cleanup does not verify the persistent AllowUsers state: %s", runner.command)
 			}
+			for _, required := range []string{"authorized_keys.boetticher-cleanup", "/home/labadmin/.ssh/authorized_keys", "grep -Fvx", "sshd -t"} {
+				if !strings.Contains(runner.command, required) {
+					t.Fatalf("host cleanup does not remove the exact temporary key: missing %q in %s", required, runner.command)
+				}
+			}
+			for _, forbidden := range []string{"passwd --lock", "sed -i", "systemctl reload"} {
+				if strings.Contains(runner.command, forbidden) {
+					t.Fatalf("host cleanup changes independent recovery state through %q: %s", forbidden, runner.command)
+				}
+			}
+		} else {
+			for _, required := range []string{"grep -Fvx --", "authorized_keys.boetticher-cleanup", "/home/labadmin/.ssh/authorized_keys"} {
+				if !strings.Contains(runner.command, required) {
+					t.Fatalf("guest cleanup does not remove only the injected key: missing %q in %s", required, runner.command)
+				}
+			}
+		}
+		if strings.Contains(runner.command, "passwd --lock root") {
+			t.Fatalf("temporary cleanup must never change root password state: %s", runner.command)
 		}
 	}
 	if err := RevokeTemporaryRootAccess(context.Background(), &fakeRunner{}, "192.0.2.10", "labadmin", "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIexample operator", false); err == nil {
@@ -873,14 +1082,46 @@ func TestRevokeTemporaryRootAccessIsFixedAndIdempotent(t *testing.T) {
 	}
 }
 
-func TestCheckBuilderCapacityHoldsBelowMinimum(t *testing.T) {
-	runner := &fakeRunner{output: []byte("Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/vda1 33554432 12582912 20971520 38% /\n")}
-	if err := CheckBuilderCapacity(context.Background(), runner, "192.0.2.10", "labadmin", 20); err != nil {
-		t.Fatalf("expected exact minimum builder capacity to pass: %v", err)
+func TestConfigureHeadlessPowerPolicyUsesExplicitUnattendedContract(t *testing.T) {
+	runner := &fakeRunner{}
+	if err := ConfigureHeadlessPowerPolicy(context.Background(), runner, "192.0.2.10", "root"); err != nil {
+		t.Fatal(err)
 	}
-	runner.output = []byte("Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/vda1 33554432 12582912 10485760 69% /\n")
-	if err := CheckBuilderCapacity(context.Background(), runner, "192.0.2.10", "labadmin", 20); err == nil || !strings.Contains(err.Error(), "HOLD") {
-		t.Fatalf("insufficient builder capacity was not held: %v", err)
+	for _, required := range []string{
+		"dir=/etc/systemd/logind.conf.d",
+		"file=$dir/90-boetticher-headless.conf",
+		"HandleLidSwitch=ignore",
+		"HandleLidSwitchExternalPower=ignore",
+		"HandleLidSwitchDocked=ignore",
+		"HandleSuspendKey=ignore",
+		"HandleHibernateKey=ignore",
+		"IdleAction=ignore",
+		"systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target",
+		"systemctl restart systemd-logind",
+	} {
+		if !strings.Contains(runner.command, required) {
+			t.Fatalf("headless power policy missing %q: %s", required, runner.command)
+		}
+	}
+	if strings.Contains(runner.command, "systemctl mask poweroff.target") {
+		t.Fatalf("headless power policy must not mask controlled poweroff: %s", runner.command)
+	}
+}
+
+func TestCheckHeadlessPowerPolicyUsesReadOnlyVerification(t *testing.T) {
+	runner := &fakeRunner{}
+	if err := CheckHeadlessPowerPolicy(context.Background(), runner, "192.0.2.10", "root"); err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"install ", "systemctl mask", "systemctl restart", "mktemp"} {
+		if strings.Contains(runner.command, forbidden) {
+			t.Fatalf("headless power check mutates the host through %q: %s", forbidden, runner.command)
+		}
+	}
+	for _, required := range []string{"90-boetticher-headless.conf", "systemctl is-enabled", "grep -qxF masked"} {
+		if !strings.Contains(runner.command, required) {
+			t.Fatalf("headless power check missing %q: %s", required, runner.command)
+		}
 	}
 }
 
@@ -899,7 +1140,7 @@ func TestDiscoverPhysicalNetworkViaSSHUsesReadOnlyPveshEvidence(t *testing.T) {
 	if err != nil || discovery.Node != "proxmox" || discovery.Discovery.Mode != "physical-trunk" || discovery.Discovery.Trunk == nil || discovery.Discovery.Trunk.Name != "enp5s0" {
 		t.Fatalf("unexpected SSH discovery: %#v, %v", discovery, err)
 	}
-	if len(runner.commands) != 3 || runner.commands[0] != "pvesh get /nodes --output-format json" || runner.commands[1] != "pvesh get /nodes/proxmox/network --output-format json" || runner.commands[2] != "ip -j route show default" {
+	if len(runner.commands) != 4 || runner.commands[0] != "pvesh get /nodes --output-format json" || runner.commands[1] != "pvesh get /nodes/proxmox/network --output-format json" || runner.commands[2] != "ip -j link show" || runner.commands[3] != "ip -j route show default" {
 		t.Fatalf("unexpected discovery commands: %#v", runner.commands)
 	}
 }
@@ -977,7 +1218,7 @@ func TestCreateScopedCredentialsUsesNonInteractiveSudoForNonRoot(t *testing.T) {
 			"sudo -n pvesh get /access/users/'labadmin@pve'/token --output-format json": []byte(`[]`),
 		},
 	}
-	secret, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "dave", "labadmin@pve", "boetticher", "BoetticherProvisioner")
+	secret, err := CreateScopedCredentialsWithRole(context.Background(), runner, "192.0.2.10", "dave", "labadmin@pve", "boetticher", "BoetticherProvisioner", "node")
 	if err != nil || secret != "opaque-token-secret" {
 		t.Fatalf("CreateScopedCredentialsWithRole() = %q, %v", secret, err)
 	}

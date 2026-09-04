@@ -12,7 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ParseSiteConfig is the strict v0.4 site.yml decoder. The version probe gives
+// ParseSiteConfig is the strict 0.5 site.yml decoder. The version probe gives
 // operators a concise recreate-site message before strict decoding reports
 // fields that are not part of the v3 configuration.
 func ParseSiteConfig(data []byte) (SiteConfig, error) {
@@ -27,7 +27,7 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 		return SiteConfig{}, fmt.Errorf("site.yml: api_version is required and must be boetticher/v3")
 	}
 	if probe.APIVersion != APIVersion {
-		return SiteConfig{}, fmt.Errorf("site schema %q is not supported by boetticher v0.4; recreate the site with boetticher init", probe.APIVersion)
+		return SiteConfig{}, fmt.Errorf("site schema %q is not supported by boetticher %s; recreate the site with boetticher init", probe.APIVersion, ReleaseVersion)
 	}
 	if err := validateModuleConfigShape(data); err != nil {
 		return SiteConfig{}, err
@@ -39,7 +39,7 @@ func ParseSiteConfig(data []byte) (SiteConfig, error) {
 		return SiteConfig{}, fmt.Errorf("decode site.yml: %w", err)
 	}
 	for name := range config.Modules.Map() {
-		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "bifrost" && name != "printer" && name != "streamdeck" && name != "aiops" && name != "gatus" && name != "airvpn" && name != "arr" {
+		if name != "dns" && name != "monitoring" && name != "firewall" && name != "logging" && name != "tailnet-router" && name != "bifrost" && name != "printer" && name != "aiops" && name != "gatus" && name != "airvpn" && name != "arr" {
 			return SiteConfig{}, fmt.Errorf("site.yml: modules.%s is not a registered first-party module", name)
 		}
 	}
@@ -56,6 +56,42 @@ func validateModuleConfigShape(data []byte) error {
 	}
 	root := document.Content[0]
 	modules := mappingValue(root, "modules")
+	if companion := mappingValue(root, "companion"); companion != nil {
+		if companion.Kind != yaml.MappingNode {
+			return errors.New("site.yml: companion expected a mapping")
+		}
+		for index := 0; index+1 < len(companion.Content); index += 2 {
+			name := companion.Content[index].Value
+			value := companion.Content[index+1]
+			if name == "ethernet_mac" {
+				if value.Tag != "!!str" {
+					return errors.New("site.yml: companion.ethernet_mac: expected a string")
+				}
+				continue
+			}
+			if name == "enabled" {
+				if value.Tag != "!!bool" && value.Tag != "!!null" {
+					return errors.New("site.yml: companion.enabled: expected a boolean")
+				}
+				continue
+			}
+			if name != "display" && name != "streamdeck" && name != "pulse_agent" {
+				return fmt.Errorf("site.yml: companion.%s: unknown field", name)
+			}
+			if value.Kind != yaml.MappingNode {
+				return fmt.Errorf("site.yml: companion.%s expected a mapping", name)
+			}
+			for fieldIndex := 0; fieldIndex+1 < len(value.Content); fieldIndex += 2 {
+				if value.Content[fieldIndex].Value != "enabled" {
+					return fmt.Errorf("site.yml: companion.%s.%s: unknown field", name, value.Content[fieldIndex].Value)
+				}
+				fieldValue := value.Content[fieldIndex+1]
+				if fieldValue.Tag != "!!bool" && fieldValue.Tag != "!!null" {
+					return fmt.Errorf("site.yml: companion.%s.enabled: expected a boolean", name)
+				}
+			}
+		}
+	}
 	if modules == nil {
 		return nil
 	}
@@ -68,13 +104,13 @@ func validateModuleConfigShape(data []byte) error {
 		allowed := map[string]bool{}
 		switch name {
 		case "dns":
-		case "monitoring", "firewall", "printer", "streamdeck":
+		case "monitoring", "firewall", "printer":
 			allowed["enabled"] = true
-			if name == "printer" || name == "streamdeck" {
+			if name == "printer" {
 				allowed["network"] = true
 			}
 		case "logging":
-			// Logging is mandatory and has no persisted lifecycle fields.
+			allowed["enabled"] = true
 		case "tailnet-router":
 			allowed["enabled"] = true
 		case "bifrost":
@@ -101,7 +137,7 @@ func validateModuleConfigShape(data []byte) error {
 			field := value.Content[fieldIndex].Value
 			fieldValue := value.Content[fieldIndex+1]
 			if !allowed[field] {
-				if (name == "dns" || name == "logging") && field == "enabled" {
+				if name == "dns" && field == "enabled" {
 					return fmt.Errorf("site.yml: modules.%s.enabled: mandatory module cannot be disabled", name)
 				}
 				return fmt.Errorf("site.yml: modules.%s.%s: unknown field", name, field)

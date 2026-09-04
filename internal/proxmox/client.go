@@ -108,6 +108,20 @@ func NewClient(config Config) (*Client, error) {
 	}, nil
 }
 
+// SetSnippetRunner installs the already-authorized host path used for the
+// small set of Proxmox operations that need host-local snippet access. The
+// caller must invoke this only after the exact immutable plan has been
+// accepted and temporary Apply authority has been acquired.
+func (c *Client) SetSnippetRunner(runner StdinCommandRunner, address, user string) error {
+	if c == nil || runner == nil || net.ParseIP(address) == nil || user == "" {
+		return errors.New("authorized snippet runner, IPv4 address, and user are required")
+	}
+	c.snippetRunner = runner
+	c.snippetAddr = address
+	c.snippetUser = user
+	return nil
+}
+
 func (c *Client) Get(ctx context.Context, endpoint string, query url.Values, out any) error {
 	return c.request(ctx, http.MethodGet, endpoint, query, nil, out)
 }
@@ -129,28 +143,24 @@ func (c *Client) Delete(ctx context.Context, endpoint string) error {
 // invoking this destructive operation; the API client deliberately does not
 // infer ownership from a VMID.
 func (c *Client) DestroyQEMU(ctx context.Context, node string, vmid int) error {
-	return c.destroyQEMU(ctx, node, vmid, true)
+	return c.destroyQEMU(ctx, node, vmid)
 }
 
-// DestroyQEMUKeepingUnreferencedDisks removes a guest while retaining disks
-// which are not owned by that guest. It is reserved for the disposable
-// builder, whose separately-owned cache volume must survive VM teardown.
-func (c *Client) DestroyQEMUKeepingUnreferencedDisks(ctx context.Context, node string, vmid int) error {
-	return c.destroyQEMU(ctx, node, vmid, false)
-}
-
-func (c *Client) destroyQEMU(ctx context.Context, node string, vmid int, destroyUnreferencedDisks bool) error {
+func (c *Client) destroyQEMU(ctx context.Context, node string, vmid int) error {
 	if node == "" || vmid <= 0 {
 		return errors.New("Proxmox node and positive VMID are required")
 	}
-	destroy := "0"
-	if destroyUnreferencedDisks {
-		destroy = "1"
-	}
-	return c.request(ctx, http.MethodDelete, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid)), url.Values{
+	var upid string
+	if err := c.request(ctx, http.MethodDelete, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid)), url.Values{
 		"purge":                      {"1"},
-		"destroy-unreferenced-disks": {destroy},
-	}, nil, nil)
+		"destroy-unreferenced-disks": {"1"},
+	}, nil, &upid); err != nil {
+		return err
+	}
+	if upid != "" {
+		return c.WaitTask(ctx, node, upid)
+	}
+	return nil
 }
 
 // DestroyLXC removes an LXC guest and asks Proxmox to purge its configuration
@@ -171,6 +181,28 @@ func (c *Client) DestroyLXC(ctx context.Context, node string, vmid int) error {
 		return c.WaitTask(ctx, node, upid)
 	}
 	return nil
+}
+
+// SetGuestNetworkFilters enables Proxmox guest-level MAC filtering and, for
+// statically addressed guests, source-IP filtering. Callers must already have
+// proved the guest identity; the API method accepts only a fixed guest kind
+// and positive VMID.
+func (c *Client) SetGuestNetworkFilters(ctx context.Context, node string, kind GuestKind, vmid int, ipfilter bool) error {
+	if node == "" || vmid <= 0 || (kind != KindLXC && kind != KindQEMU) {
+		return errors.New("Proxmox node, guest kind, and positive VMID are required")
+	}
+	endpoint := path.Join("/nodes", node, string(kind), strconv.Itoa(vmid), "firewall", "options")
+	ipfilterValue := "0"
+	if ipfilter {
+		ipfilterValue = "1"
+	}
+	return c.Put(ctx, endpoint, url.Values{
+		"enable":     {"1"},
+		"macfilter":  {"1"},
+		"ipfilter":   {ipfilterValue},
+		"policy_in":  {"ACCEPT"},
+		"policy_out": {"ACCEPT"},
+	}, nil)
 }
 
 func (c *Client) Version(ctx context.Context) (string, error) {
@@ -300,10 +332,6 @@ type StorageContent struct {
 	CSum     string `json:"csum"`
 }
 
-func (c *Client) CreateUser(ctx context.Context, userID, comment string) error {
-	return c.Post(ctx, "/access/users", url.Values{"userid": {userID}, "comment": {comment}}, nil)
-}
-
 func (c *Client) CreateToken(ctx context.Context, userID, tokenID string) (string, error) {
 	var result struct {
 		Value string `json:"value"`
@@ -316,10 +344,6 @@ func (c *Client) CreateToken(ctx context.Context, userID, tokenID string) (strin
 		return "", errors.New("Proxmox did not return an API token secret")
 	}
 	return result.Value, nil
-}
-
-func (c *Client) SetACL(ctx context.Context, resource, users, role string) error {
-	return c.Post(ctx, "/access/acl", url.Values{"path": {resource}, "users": {users}, "role": {role}, "propagate": {"1"}}, nil)
 }
 
 func (c *Client) CreateVM(ctx context.Context, node string, vmid int, params url.Values) error {
@@ -365,25 +389,6 @@ func (c *Client) SetVMConfig(ctx context.Context, node string, vmid int, params 
 		return errors.New("Proxmox node and positive VMID are required")
 	}
 	return c.Post(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "config"), params, nil)
-}
-
-// ResizeQEMUDisk grows one QEMU disk by the requested number of GiB. The
-// builder starts from a pinned cloud image and receives an additional bounded
-// growth operation; this never selects or formats a physical device.
-func (c *Client) ResizeQEMUDisk(ctx context.Context, node string, vmid int, disk string, sizeGiB int) error {
-	if node == "" || vmid <= 0 || disk == "" || sizeGiB <= 0 || strings.ContainsAny(disk, "/\\\r\n") {
-		return errors.New("node, positive VMID, disk, and positive size are required")
-	}
-	var upid string
-	if err := c.Put(ctx, path.Join("/nodes", node, "qemu", strconv.Itoa(vmid), "resize"), url.Values{
-		"disk": {disk}, "size": {fmt.Sprintf("+%dG", sizeGiB)},
-	}, &upid); err != nil {
-		return fmt.Errorf("resize QEMU disk: %w", err)
-	}
-	if upid != "" {
-		return c.WaitTask(ctx, node, upid)
-	}
-	return nil
 }
 
 // MoveQEMUPersistentDisk moves one attached Boetticher persistent SCSI disk
@@ -625,8 +630,8 @@ func (c *Client) GuestConfig(ctx context.Context, node string, vmid int) (GuestK
 }
 
 // QEMUAgentNetworkInterfaces reads only guest-agent network evidence. It is
-// used to discover the temporary DHCP-backed builder address; no operator or
-// module identity is inferred from a hostname or arbitrary user address.
+// used by explicit firewall recovery checks; no operator or module identity is
+// inferred from a hostname or arbitrary user address.
 func (c *Client) QEMUAgentNetworkInterfaces(ctx context.Context, node string, vmid int) ([]GuestAgentInterface, error) {
 	if node == "" || vmid <= 0 {
 		return nil, errors.New("node and positive VMID are required")
@@ -644,29 +649,18 @@ func (c *Client) LXCConfig(ctx context.Context, node string, vmid int, out any) 
 	return c.Get(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "config"), nil, out)
 }
 
-func (c *Client) ListVMs(ctx context.Context, node string) ([]GuestSummary, error) {
-	var guests []GuestSummary
-	if err := c.Get(ctx, path.Join("/nodes", node, "qemu"), nil, &guests); err != nil {
-		return nil, err
-	}
-	for i := range guests {
-		guests[i].Kind = KindQEMU
-	}
-	return guests, nil
-}
-
-func (c *Client) ListLXCs(ctx context.Context, node string) ([]GuestSummary, error) {
-	var guests []GuestSummary
-	if err := c.Get(ctx, path.Join("/nodes", node, "lxc"), nil, &guests); err != nil {
-		return nil, err
-	}
-	for i := range guests {
-		guests[i].Kind = KindLXC
-	}
-	return guests, nil
-}
-
 func (c *Client) NodeNetwork(ctx context.Context, node string, out any) error {
+	if interfaces, ok := out.(*[]NetworkInterface); ok {
+		if err := c.Get(ctx, path.Join("/nodes", node, "network"), nil, interfaces); err != nil {
+			return err
+		}
+		if c.snippetRunner != nil && c.snippetAddr != "" && c.snippetUser != "" {
+			if err := enrichNetworkInterfaceHardware(ctx, c.snippetRunner, c.snippetAddr, c.snippetUser, *interfaces); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	return c.Get(ctx, path.Join("/nodes", node, "network"), nil, out)
 }
 
@@ -1115,14 +1109,6 @@ func splitContent(value string) map[string]bool {
 		}
 	}
 	return result
-}
-
-// EnsureLVMThinStorage registers the fixed guest-disk storage created by the
-// dedicated-data-disk initializer. It refuses a conflicting Proxmox storage
-// definition and never discovers or adopts arbitrary user storage.
-func (c *Client) EnsureLVMThinStorage(ctx context.Context, storageID, volumeGroup, thinPool string) error {
-	_, err := c.EnsureLVMThinStorageWithMutation(ctx, storageID, volumeGroup, thinPool)
-	return err
 }
 
 // EnsureLVMThinStorageWithMutation is the coarse mutation-aware form of

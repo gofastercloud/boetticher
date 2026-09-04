@@ -17,7 +17,7 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantOrder := []string{"firewall", "dns", "logging", "monitoring", "aiops", "airvpn", "arr", "bifrost", "gatus", "printer", "streamdeck", "tailnet-router"}
+	wantOrder := []string{"firewall", "dns", "monitoring", "aiops", "airvpn", "arr", "bifrost", "gatus", "logging", "printer", "tailnet-router"}
 	if len(modules) != len(wantOrder) {
 		t.Fatalf("unexpected module resolution: %#v", modules)
 	}
@@ -26,7 +26,7 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 			t.Fatalf("module %d = %s, want %s", index, modules[index].Definition.Name, name)
 		}
 	}
-	if len(site.PlatformComponents()) != 7 {
+	if len(site.PlatformComponents()) != 4 {
 		t.Fatalf("default composition produced %d platform components", len(site.PlatformComponents()))
 	}
 	if !IsEnabled(site, "dns") || !IsEnabled(site, "monitoring") || !IsEnabled(site, "firewall") {
@@ -47,7 +47,7 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 			t.Fatalf("active module %s reported unexpected desired state %q", module.Definition.Name, module.State)
 		}
 	}
-	if len(site.Declarations) != 4 || site.Declarations[0].Artifact.DefinitionSHA256 == "" {
+	if len(site.Declarations) != 3 || site.Declarations[0].Artifact.DefinitionSHA256 == "" {
 		t.Fatalf("default module declarations are incomplete: %#v", site.Declarations)
 	}
 	monitoring, ok := findDeclaration(site, "monitoring")
@@ -66,20 +66,6 @@ func TestDefaultModulesResolveInDeterministicOrder(t *testing.T) {
 	}
 	if len(monitoring.NetworkIntents) != 1 || monitoring.NetworkIntents[0].Source != "lab-monitor-01" || monitoring.NetworkIntents[0].Destination != model.LogicalProxmoxIdentity || monitoring.NetworkIntents[0].Protocol != "tcp" || strings.Join(monitoring.NetworkIntents[0].Ports, ",") != "8006" {
 		t.Fatalf("Pulse Proxmox API network intent is incomplete: %#v", monitoring.NetworkIntents)
-	}
-	logging, ok := findDeclaration(site, "logging")
-	if !ok {
-		t.Fatal("logging declaration is missing")
-	}
-	var proxmoxLoggingIntent model.NetworkIntent
-	for _, intent := range logging.NetworkIntents {
-		if intent.Source == model.LogicalProxmoxIdentity {
-			proxmoxLoggingIntent = intent
-			break
-		}
-	}
-	if proxmoxLoggingIntent.Destination != "logs.lab.home.arpa" || proxmoxLoggingIntent.Protocol != "tcp" || strings.Join(proxmoxLoggingIntent.Ports, ",") != "19532" || proxmoxLoggingIntent.Purpose != "native Proxmox journal upload" {
-		t.Fatalf("Proxmox journal upload network intent is incomplete: %#v", proxmoxLoggingIntent)
 	}
 	for _, declaration := range site.Declarations {
 		for _, guest := range declaration.Guests {
@@ -232,7 +218,7 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	if err := registry.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"tailnet-router", "airvpn", "bifrost", "printer", "streamdeck", "aiops", "gatus"} {
+	for _, name := range []string{"tailnet-router", "airvpn", "bifrost", "printer", "aiops", "gatus"} {
 		definition, ok := registry.Definition(name)
 		if !ok || definition.Policy != DefaultOff {
 			t.Fatalf("%s is not a default-off first-party module: %#v", name, definition)
@@ -249,10 +235,6 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	printer, _ := registry.Definition("printer")
 	if printer.ReservedVMIDStart != 230 || printer.ReservedVMIDEnd != 239 || printer.Guests[0].VMID != model.PrinterVMID || printer.Placement.ZoneType != model.ZoneTypeServers {
 		t.Fatalf("printer identity contract is incomplete: %#v", printer)
-	}
-	streamDeck, _ := registry.Definition("streamdeck")
-	if streamDeck.ReservedVMIDStart != 220 || streamDeck.ReservedVMIDEnd != 229 || streamDeck.Guests[0].VMID != model.StreamDeckVMID || streamDeck.Guests[0].Address != "10.10.20.70" || streamDeck.Placement.ZoneType != model.ZoneTypeServers || len(streamDeck.USBRequirements) != 1 || streamDeck.USBRequirements[0].DeviceType != "raw-usb" {
-		t.Fatalf("streamdeck identity contract is incomplete: %#v", streamDeck)
 	}
 	aiops, _ := registry.Definition("aiops")
 	if aiops.ReservedVMIDStart != 240 || aiops.ReservedVMIDEnd != 249 || aiops.Guests[0].VMID != 240 || aiops.Guests[0].Address != "10.10.20.90" || aiops.Placement.ZoneType != model.ZoneTypeServers {
@@ -431,52 +413,10 @@ func TestPrinterComposesMinimalOctoPrintDeclaration(t *testing.T) {
 	}
 }
 
-func TestStreamDeckComposesReadOnlyPulseDisplayDeclaration(t *testing.T) {
-	config := testConfig(model.GatewayModeManaged)
-	enabled := true
-	config.Modules.StreamDeck = &model.NetworkToggleModuleConfig{Enabled: &enabled}
-	config.USBExports = []model.USBExportBinding{{Module: "streamdeck", Requirement: "display", Port: "1-2.5", VendorID: "0fd9", ProductID: "006d"}}
-	site, _, err := Compose(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	streamDeck, ok := findDeclaration(site, "streamdeck")
-	if !ok {
-		t.Fatal("StreamDeck declaration is missing")
-	}
-	if len(streamDeck.Guests) != 1 || streamDeck.Guests[0].Name != "lab-streamdeck-01" || streamDeck.Guests[0].Address != "10.10.20.70" || streamDeck.Guests[0].MTLS {
-		t.Fatalf("StreamDeck guest contract is incomplete: %#v", streamDeck.Guests)
-	}
-	if !streamDeck.Security.Unprivileged || len(streamDeck.USBRequirements) != 1 || streamDeck.USBRequirements[0].DeviceType != "raw-usb" {
-		t.Fatalf("StreamDeck USB/security contract is incomplete: %#v", streamDeck)
-	}
-	var pulseToken model.SecretDeclaration
-	for _, secret := range streamDeck.Secrets {
-		if secret.Name == "pulse_api_token" {
-			pulseToken = secret
-		}
-	}
-	if pulseToken.Consumer != "streamdeck-status" || pulseToken.Delivery != "systemd-credential" || pulseToken.Lifecycle != model.SecretLifecycleRuntime {
-		t.Fatalf("StreamDeck Pulse token contract is incomplete: %#v", streamDeck.Secrets)
-	}
-	if !hasPersistentState(streamDeck.Persistent, "tls-identity", "/var/lib/boetticher/identity/tls") || !hasPersistentVolume(streamDeck.Volumes, "tls-identity", "/var/lib/boetticher/identity/tls") {
-		t.Fatalf("StreamDeck TLS persistence contract is incomplete: persistent=%#v volumes=%#v", streamDeck.Persistent, streamDeck.Volumes)
-	}
-	if len(streamDeck.Persistent) != 2 || len(streamDeck.Volumes) != 2 {
-		t.Fatalf("StreamDeck persistence contract contains unexpected entries: persistent=%#v volumes=%#v", streamDeck.Persistent, streamDeck.Volumes)
-	}
-	if len(streamDeck.Certificates) != 2 || streamDeck.Certificates[1].Identity != "lab-streamdeck-01" || len(streamDeck.NetworkIntents) != 3 {
-		t.Fatalf("StreamDeck mTLS/network declaration is incomplete: certificates=%#v intents=%#v", streamDeck.Certificates, streamDeck.NetworkIntents)
-	}
-	if len(streamDeck.Monitoring) != 2 || streamDeck.Monitoring[1].Name != "streamdeck-status" {
-		t.Fatalf("StreamDeck monitoring declaration is incomplete: %#v", streamDeck.Monitoring)
-	}
-}
-
 func TestRegistryRejectsUnsupportedUSBDeviceType(t *testing.T) {
 	registry := NewRegistry([]ModuleDefinition{{
 		Name: "bad-usb", Version: "1.0.0", Policy: DefaultOff,
-		GuestIDs: []int{240}, ReservedVMIDStart: 240, ReservedVMIDEnd: 249,
+		ReservedVMIDStart: 240, ReservedVMIDEnd: 249,
 		Guests:          []model.Component{{Name: "bad-usb", VMID: 240, Address: "10.10.20.90"}},
 		USBRequirements: []model.USBRequirement{{Name: "device", Guest: "bad-usb", DeviceType: "block", Access: "rw", Required: true, AllowedIdentities: []model.USBIdentity{{VendorID: "1234", ProductID: "5678"}}}},
 	}})
@@ -648,11 +588,11 @@ func TestDNSConfigurationHasNoLifecycleToggle(t *testing.T) {
 	}
 }
 
-func TestLoggingConfigurationHasNoLifecycleToggle(t *testing.T) {
+func TestLoggingConfigurationCanBeDisabled(t *testing.T) {
 	var config model.ModulesConfig
 	disabled := false
-	if err := config.Set("logging", model.ModuleConfig{Enabled: &disabled}); err == nil || !strings.Contains(err.Error(), "modules.logging.enabled") {
-		t.Fatalf("logging lifecycle toggle was accepted: %v", err)
+	if err := config.Set("logging", model.ModuleConfig{Enabled: &disabled}); err != nil {
+		t.Fatalf("logging disable was rejected: %v", err)
 	}
 }
 

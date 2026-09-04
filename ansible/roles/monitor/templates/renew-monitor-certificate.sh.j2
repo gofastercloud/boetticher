@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+
+cert=/etc/boetticher/tls/monitor.crt.pem
+key=/etc/boetticher/tls/monitor.key.pem
+root=/etc/boetticher/tls/step-ca-root.crt
+intermediate=/etc/boetticher/tls/step-ca-intermediate.crt
+ca_url=https://lab-dns-01.{{ domain }}:9443
+work=$(mktemp -d /run/boetticher-monitor-renew.XXXXXX)
+trap 'rm -rf "$work"' EXIT
+
+/usr/local/bin/step certificate verify "$cert" --roots "$root"
+if /usr/local/bin/step certificate needs-renewal "$cert" --roots "$root"; then
+    cp -- "$cert" "$work/certificate.pem"
+    cp -- "$key" "$work/key.pem"
+    /usr/local/bin/step ca renew --force --expires-in 240h \
+        "$work/certificate.pem" "$work/key.pem" \
+        --ca-url "$ca_url" --root "$root"
+    /usr/local/bin/step certificate bundle \
+        "$work/certificate.pem" "$intermediate" "$work/bundle.pem" --force
+    /usr/local/bin/step certificate verify "$work/bundle.pem" --roots "$root"
+    chmod 0600 "$work/key.pem"
+    mv -f "$work/bundle.pem" "$cert"
+    mv -f "$work/key.pem" "$key"
+    systemctl reload nginx
+fi

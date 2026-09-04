@@ -13,12 +13,14 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/model"
+	networkmodel "github.com/gofastercloud/boetticher/internal/network"
 )
 
 const (
 	FilterTable = "boetticher_filter"
 	NATTable    = "boetticher_nat"
 	DDNSPort    = "53001"
+	StepCAPort  = "9443"
 )
 
 type Interface struct {
@@ -85,6 +87,7 @@ type PolicyRule struct {
 	SourceCIDR      string   `json:"source_cidr,omitempty"`
 	DestinationCIDR string   `json:"destination_cidr,omitempty"`
 	DestinationHost string   `json:"destination_host,omitempty"`
+	SourceMAC       string   `json:"source_mac,omitempty"`
 	UserRuleID      string   `json:"user_rule_id,omitempty"`
 }
 
@@ -592,27 +595,27 @@ func policyRules(s model.Site) []PolicyRule {
 			}
 		}
 	}
-	// Portal is a Core service with its own fixed mTLS-protected frontend.
-	if portal, ok := componentReference(s, "portal"); ok && portal.Address != "" {
-		for _, source := range []string{"TRANSIT", "SERVERS", "TRUSTED"} {
-			for _, zone := range s.Network.Zones {
-				if zone.Name != source {
-					continue
-				}
-				rules = append(rules, PolicyRule{
-					Sequence:        len(rules) + 1,
-					Name:            source + " HTTPS to Portal",
-					From:            source,
-					To:              "INFRA",
-					Action:          "allow",
-					Protocol:        "tcp",
-					Ports:           []string{"443"},
-					Counter:         "boetticher_" + strings.ToLower(source) + "_https_to_portal",
-					Description:     "boetticher " + source + " HTTPS to Portal",
-					SourceCIDR:      zone.Network,
-					DestinationCIDR: portal.Address + "/32",
-				})
+	// Endpoint-owned certificates renew through the online CA on the primary
+	// DNS guest. Permit only declared Boetticher endpoints to reach that fixed
+	// CA address; this is not a zone-wide allowance or a general HTTPS rule.
+	if ca, ok := componentReference(s, "dns"); ok && ca.Address != "" {
+		for _, source := range s.PlatformComponents() {
+			if source.Name == "lab-proxmox-01" || source.Name == ca.Name || source.Address == "" {
+				continue
 			}
+			rules = append(rules, PolicyRule{
+				Sequence:        len(rules) + 1,
+				Name:            source.Name + " HTTPS to Smallstep CA",
+				From:            source.Zone,
+				To:              "INFRA",
+				Action:          "allow",
+				Protocol:        "tcp",
+				Ports:           []string{StepCAPort},
+				Counter:         "boetticher_" + strings.ToLower(strings.ReplaceAll(source.Name, "-", "_")) + "_https_to_smallstep_ca",
+				Description:     "boetticher " + source.Name + " HTTPS to Smallstep CA",
+				SourceCIDR:      source.Address + "/32",
+				DestinationCIDR: ca.Address + "/32",
+			})
 		}
 	}
 	// These are gateway-local services. Forwarding rules below deliberately
@@ -681,7 +684,8 @@ func policyRules(s model.Site) []PolicyRule {
 			Route:           "airvpn",
 			Description:     "boetticher ARR media acquisition through AirVPN only",
 			SourceCIDR:      arr.Address + "/32",
-			DestinationCIDR: "0.0.0.0/0",
+			SourceMAC:       componentSourceMAC(s, arr),
+			DestinationCIDR: model.AirVPNGuestAddress + "/32",
 		})
 	}
 	for _, declaration := range s.Declarations {
@@ -771,7 +775,7 @@ func policyRulesForIntent(s model.Site, module string, intent model.NetworkInten
 			From: source.Zone, To: to, Action: "allow", Protocol: intent.Protocol,
 			Ports: append([]string(nil), intent.Ports...), Counter: "boetticher_module_" + safeRuleToken(module),
 			NAT: nat, Route: route, Description: "module " + module + ": " + intent.Purpose,
-			SourceCIDR: source.Address + "/32", DestinationHost: parsed.Hostname(),
+			SourceCIDR: source.Address + "/32", SourceMAC: componentSourceMAC(s, source), DestinationHost: parsed.Hostname(),
 		}}
 	}
 	destinations := componentReferences(s, intent.Destination)
@@ -789,10 +793,20 @@ func policyRulesForIntent(s model.Site, module string, intent model.NetworkInten
 			From: source.Zone, To: destination.Zone, Action: "allow", Protocol: intent.Protocol,
 			Ports: append([]string(nil), intent.Ports...), Counter: "boetticher_module_" + safeRuleToken(module),
 			Description: "module " + module + ": " + intent.Purpose,
-			SourceCIDR:  source.Address + "/32", DestinationCIDR: destination.Address + "/32",
+			SourceCIDR:  source.Address + "/32", SourceMAC: componentSourceMAC(s, source), DestinationCIDR: destination.Address + "/32",
 		})
 	}
 	return rules
+}
+
+func componentSourceMAC(s model.Site, component model.Component) string {
+	if component.MAC != "" {
+		return component.MAC
+	}
+	if component.Module != "" {
+		return networkmodel.ManagedModuleMAC(component.VMID)
+	}
+	return ""
 }
 
 func moduleNetworkMode(s model.Site, module string) model.ModuleNetworkMode {
@@ -804,7 +818,7 @@ func moduleNetworkMode(s model.Site, module string) model.ModuleNetworkMode {
 
 // componentReferences expands logical service aliases that intentionally name
 // a redundant platform service. In particular, "dns" means every managed DNS
-// endpoint, while dns01/dns02 retain their single-component meaning.
+// endpoint, while dns01 retains its single-component meaning.
 func componentReferences(s model.Site, reference string) []model.Component {
 	reference = strings.TrimSuffix(strings.ToLower(reference), ".")
 	if reference == "dns" {
@@ -959,6 +973,16 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 	if len(plan.AirVPNSources) > 0 {
 		b.WriteString("    ip saddr @airvpn_sources oifname \"wan0\" counter log prefix \"boetticher AIRVPN-DIRECT-DROP \" drop comment \"boetticher:drop:airvpn-direct-wan\"\n")
 	}
+	for _, rule := range plan.Rules {
+		if rule.Route != "airvpn" || rule.SourceCIDR == "" || rule.SourceMAC == "" {
+			continue
+		}
+		parsedMAC, parseErr := net.ParseMAC(rule.SourceMAC)
+		if parseErr != nil || len(parsedMAC) != 6 {
+			return "", fmt.Errorf("firewall rule %s has an invalid source MAC", rule.Name)
+		}
+		fmt.Fprintf(&b, "    iifname \"%s\" ether saddr %s ip saddr != %s counter log prefix \"boetticher AIRVPN-SOURCE-MISMATCH-DROP \" drop comment \"boetticher:drop:airvpn-source-mismatch\"\n", strings.ToLower(rule.From)+"0", parsedMAC.String(), rule.SourceCIDR)
+	}
 	if plan.Upstream != nil {
 		for _, publication := range plan.Publications {
 			fmt.Fprintf(&b, "    iifname \"wan0\" oifname \"%s\" ip saddr %s ip daddr %s %s dport %d counter accept comment \"boetticher:publish-%s-%s\"\n", publication.DestinationIface, upstreamSourceCIDR(*plan.Upstream), publication.DestinationCIDR, publication.Protocol, publication.Port, safeRuleToken(publication.Service), publication.Protocol)
@@ -978,6 +1002,14 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 		}
 		if rule.DestinationCIDR == "" && rule.DestinationHost == "" {
 			continue
+		}
+		sourceMAC := ""
+		if rule.SourceMAC != "" {
+			parsedMAC, parseErr := net.ParseMAC(rule.SourceMAC)
+			if parseErr != nil || len(parsedMAC) != 6 {
+				return "", fmt.Errorf("firewall rule %s has an invalid source MAC", rule.Name)
+			}
+			sourceMAC = " ether saddr " + parsedMAC.String()
 		}
 		destination := rule.DestinationCIDR
 		if destination == "" {
@@ -1003,7 +1035,7 @@ func renderNFTWithResolver(plan Plan, lookup func(string) ([]net.IP, error)) (st
 			if rule.UserRuleID != "" {
 				comment = "boetticher:user-rule:" + rule.UserRuleID + ":" + protocol
 			}
-			fmt.Fprintf(&b, "    iifname \"%s\" oifname \"%s\" ip saddr %s ip daddr %s%s counter accept comment \"%s\"\n", sourceIface, destinationIface, rule.SourceCIDR, destination, protocolText, comment)
+			fmt.Fprintf(&b, "    iifname \"%s\"%s oifname \"%s\" ip saddr %s ip daddr %s%s counter accept comment \"%s\"\n", sourceIface, sourceMAC, destinationIface, rule.SourceCIDR, destination, protocolText, comment)
 		}
 	}
 	for _, rule := range plan.Rules {
@@ -1124,6 +1156,9 @@ func resolveDestinationHostSets(rules []PolicyRule, lookup func(string) ([]net.I
 			ipv4 := ip.To4()
 			if ipv4 == nil {
 				continue
+			}
+			if ipv4.IsPrivate() || ipv4.IsLoopback() || ipv4.IsLinkLocalUnicast() || ipv4.IsUnspecified() || ipv4.IsMulticast() || !ipv4.IsGlobalUnicast() {
+				return nil, fmt.Errorf("HOLD: endpoint %s resolved to a non-public IPv4 address", host)
 			}
 			address := ipv4.String()
 			if _, ok := seen[address]; ok {

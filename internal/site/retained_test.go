@@ -57,3 +57,18 @@ func TestLoadRetainedModulesRejectsSymlinkedStateFile(t *testing.T) {
 		t.Fatal("symlinked retained state file was accepted")
 	}
 }
+
+func TestLoadRetainedModulesRejectsOversizedState(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "generated"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	data := make([]byte, maxRetainedModulesBytes+1)
+	data[0] = '['
+	if err := os.WriteFile(filepath.Join(dir, retainedModulesPath), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadRetainedModules(dir); err == nil {
+		t.Fatal("oversized retained module state was accepted")
+	}
+}

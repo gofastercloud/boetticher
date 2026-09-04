@@ -20,7 +20,7 @@ type Fetcher interface {
 	Fetch(context.Context) (State, error)
 }
 
-type DeckOpener func(context.Context, string) (Deck, error)
+type DeckOpener func(context.Context, Config) (Deck, error)
 
 func Run(ctx context.Context, config Config, client Fetcher, open DeckOpener) error {
 	if client == nil || open == nil {
@@ -36,7 +36,7 @@ func Run(ctx context.Context, config Config, client Fetcher, open DeckOpener) er
 	defer render.Stop()
 	for {
 		if deck == nil && retry == nil {
-			opened, err := open(ctx, config.Serial)
+			opened, err := open(ctx, config)
 			if err == nil && opened == nil {
 				err = fmt.Errorf("StreamDeck opener returned no device")
 			}

@@ -38,52 +38,42 @@
     group: root
     mode: '0600'
 
-- name: Generate the printer endpoint CSR locally
-  ansible.builtin.command:
-    argv:
-      - openssl
-      - req
-      - -new
-      - -sha256
-      - -key
-      - /var/lib/boetticher/identity/tls/octoprint.key.pem
-      - -subj
-      - "/CN=octoprint.{{ domain }}"
-      - -addext
-      - "subjectAltName=DNS:octoprint.{{ domain }},DNS:printer.{{ domain }},DNS:lab-printer-01.{{ domain }}"
-      - -out
-      - /var/lib/boetticher/identity/tls/octoprint.csr.pem
-  args:
-    creates: /var/lib/boetticher/identity/tls/octoprint.csr.pem
-
-- name: Fetch the printer CSR during the PKI bootstrap phase
-  ansible.builtin.fetch:
-    src: /var/lib/boetticher/identity/tls/octoprint.csr.pem
-    dest: "{{ pki_csr_output_dir }}/octoprint.csr.pem"
-    flat: true
-  when: pki_bootstrap_phase | default(false) | bool
-
-- name: Require the controller-issued printer mTLS material
+- name: Require Smallstep printer server and retained client mTLS material
   ansible.builtin.assert:
     that:
+      - step_ca_root_cert_pem | default('') | length > 0
+      - step_ca_intermediate_cert_pem | default('') | length > 0
       - client_ca_pem | default('') | length > 0
       - client_crl_pem | default('') | length > 0
-      - (pki_bootstrap_phase | default(false) | bool) or (octoprint_server_cert_pem is defined and octoprint_server_cert_pem | length > 0)
-    fail_msg: Printer nginx requires the existing Boetticher PKI server certificate and client CA
+    fail_msg: Printer nginx requires Smallstep server trust and retained client CA material
   no_log: true
 
-- name: Install the printer server certificate and client CA
+- name: Issue and renew the printer endpoint certificate from Smallstep
+  ansible.builtin.include_tasks: ../../tasks/step-ca-endpoint.yml
+  vars:
+    step_ca_endpoint_name: Printer
+    step_ca_endpoint_subject: "octoprint.{{ domain }}"
+    step_ca_endpoint_sans: ["octoprint.{{ domain }}", "printer.{{ domain }}", "lab-printer-01.{{ domain }}"]
+    step_ca_endpoint_root_path: /var/lib/boetticher/identity/tls/step-ca-root.crt
+    step_ca_endpoint_intermediate_path: /var/lib/boetticher/identity/tls/step-ca-intermediate.crt
+    step_ca_endpoint_certificate_path: /var/lib/boetticher/identity/tls/octoprint.crt.pem
+    step_ca_endpoint_key_path: /var/lib/boetticher/identity/tls/octoprint.key.pem
+    step_ca_endpoint_marker_path: /var/lib/boetticher/identity/tls/octoprint.step-ca
+    step_ca_endpoint_renewal_script: /usr/local/sbin/boetticher-renew-printer-certificate
+    step_ca_endpoint_renewal_service: /etc/systemd/system/boetticher-renew-printer-certificate.service
+    step_ca_endpoint_renewal_timer: /etc/systemd/system/boetticher-renew-printer-certificate.timer
+    step_ca_endpoint_reload_service: nginx
+    step_ca_endpoint_write_paths: /var/lib/boetticher/identity/tls /run
+
+- name: Install the printer client CA
   ansible.builtin.copy:
-    dest: "{{ item.dest }}"
-    content: "{{ item.content }}"
+    dest: /var/lib/boetticher/identity/tls/client-ca.pem
+    content: "{{ client_ca_pem }}"
     owner: root
     group: root
     mode: '0644'
-  loop:
-    - {dest: /var/lib/boetticher/identity/tls/octoprint.crt.pem, content: "{{ octoprint_server_cert_pem | default('') }}"}
-    - {dest: /var/lib/boetticher/identity/tls/client-ca.pem, content: "{{ client_ca_pem | default('') }}"}
   no_log: true
-  when: octoprint_server_cert_pem | default('') | length > 0
+  when: step_ca_root_cert_pem | default('') | length > 0
   notify: reload printer nginx
 
 - name: Install the current client certificate revocation list for printer mTLS
@@ -95,7 +85,7 @@
     mode: '0644'
   no_log: true
   notify: reload printer nginx
-  when: octoprint_server_cert_pem | default('') | length > 0
+  when: step_ca_root_cert_pem | default('') | length > 0
 
 - name: Configure nginx as the only network listener for OctoPrint
   ansible.builtin.copy:
@@ -117,6 +107,7 @@
           ssl_crl /var/lib/boetticher/identity/tls/client-ca.crl.pem;
           ssl_verify_client on;
           ssl_protocols TLSv1.2 TLSv1.3;
+          if ($ssl_client_s_dn != "CN=client-operator.{{ domain }},O=boetticher") { return 403; }
           client_max_body_size 1G;
           location / {
               proxy_pass http://127.0.0.1:5000;
@@ -130,7 +121,7 @@
               proxy_read_timeout 3600s;
           }
       }
-  when: octoprint_server_cert_pem | default('') | length > 0
+  when: step_ca_root_cert_pem | default('') | length > 0
   notify: reload printer nginx
 
 - name: Remove the distribution nginx default site
@@ -144,7 +135,7 @@
     src: /etc/nginx/sites-available/octoprint.conf
     dest: /etc/nginx/sites-enabled/octoprint.conf
     state: link
-  when: octoprint_server_cert_pem | default('') | length > 0
+  when: step_ca_root_cert_pem | default('') | length > 0
   notify: reload printer nginx
 
 - name: Enable and start OctoPrint and nginx after certificate installation
@@ -153,7 +144,7 @@
     enabled: true
     state: started
   loop: [octoprint, nginx]
-  when: octoprint_server_cert_pem | default('') | length > 0
+  when: step_ca_root_cert_pem | default('') | length > 0
 
 - name: Wait for the OctoPrint backend before advertising the endpoint
   ansible.builtin.uri:
@@ -167,7 +158,7 @@
   delay: 1
   until: octoprint_backend.status | default(0) == 200
   when:
-    - octoprint_server_cert_pem | default('') | length > 0
+    - step_ca_root_cert_pem | default('') | length > 0
     - boetticher_deploy_phase | default('full') in ['full', 'services']
 
 - name: Apply the mTLS frontend before testing its negative path
@@ -180,4 +171,4 @@
     ca_path: /var/lib/boetticher/identity/tls/client-ca.pem
     status_code: 400
     return_content: false
-  when: octoprint_server_cert_pem | default('') | length > 0
+  when: step_ca_root_cert_pem | default('') | length > 0

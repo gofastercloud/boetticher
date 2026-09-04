@@ -41,6 +41,11 @@ class NetworkProbeHostTest(unittest.TestCase):
             self.assertIn(text, source)
         self.assertNotIn("shell=True", source)
 
+    def test_ssh_allow_list_preserves_root_recovery(self):
+        tasks = (SCRIPT.parent / "../tasks/main.yml").resolve().read_text()
+        self.assertIn("replace: 'AllowUsers root labadmin lab-jump lab-netprobe'", tasks)
+        self.assertNotIn("replace: 'AllowUsers labadmin lab-jump lab-netprobe'", tasks)
+
 
 if __name__ == "__main__":
     unittest.main()

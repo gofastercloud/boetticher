@@ -24,68 +24,31 @@ import (
 	"github.com/gofastercloud/boetticher/internal/telemetry"
 )
 
-const builderBuildCommand = `sh -c 'tail -n 0 -F /var/log/boetticher-build.log 2>/dev/null & tail_pid=$!; trap "kill $tail_pid 2>/dev/null || true" EXIT; /usr/local/sbin/boetticher-build'`
-
-func runBootstrapEndpoint(args []string, out io.Writer) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: boetticher bootstrap-endpoint show|set ADDRESS [--site DIR]")
-	}
-	command := args[0]
-	fs := flag.NewFlagSet("bootstrap-endpoint", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	siteDir := fs.String("site", ".", "private site repository directory")
-	if command == "set" {
-		if len(args) < 2 {
-			return fmt.Errorf("bootstrap endpoint address is required")
-		}
-		address := args[1]
-		if err := sshconfig.ValidateBootstrapAddress(address); err != nil {
-			return err
-		}
-		if err := fs.Parse(args[2:]); err != nil {
-			return err
-		}
-		s, err := site.Load(*siteDir)
-		if err != nil {
-			return err
-		}
-		s.BootstrapAddress = net.ParseIP(address).To4().String()
-		if err := site.Save(*siteDir, s); err != nil {
-			return err
-		}
-		if err := writeModelProjections(*siteDir, s); err != nil {
-			return err
-		}
-		if err := rebuildPortal(*siteDir, s); err != nil {
-			return err
-		}
-		fmt.Fprintf(out, "Recorded upstream Proxmox bootstrap address: %s\n", s.BootstrapAddress)
-		return nil
-	}
-	if command != "show" {
-		return fmt.Errorf("unknown bootstrap-endpoint command %q", command)
-	}
-	if err := fs.Parse(args[1:]); err != nil {
-		return err
-	}
-	s, err := site.Load(*siteDir)
-	if err != nil {
-		return err
-	}
-	if s.BootstrapAddress == "" {
-		fmt.Fprintln(out, "Bootstrap endpoint: FAIL not configured; use boetticher bootstrap-endpoint set ADDRESS")
-	} else {
-		fmt.Fprintf(out, "Bootstrap endpoint: %s\n", s.BootstrapAddress)
-	}
-	return nil
+// runEnroll is the normal first-host enrollment entry point. It establishes
+// durable host trust and scoped access; appliance deployment remains a
+// separate signed-bundle operation.
+func runEnroll(args []string, out io.Writer) error {
+	return runEnrollOperation(args, out)
 }
 
-func runBootstrap(args []string, out io.Writer) (runErr error) {
+func runRecovery(args []string, out io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("usage: boetticher recover storage ...")
+	}
+	switch args[0] {
+	case "storage":
+		return runStorage(args[1:], out)
+	default:
+		return fmt.Errorf("recovery target %q is not implemented in 0.5.1", args[0])
+	}
+}
+
+func runEnrollOperation(args []string, out io.Writer) (runErr error) {
 	progress := newBootstrapReport(out, bootstrapPhaseCount)
 	defer func() { runErr = progress.finalize(runErr) }()
 	totalStarted := time.Now()
-	defer func() { progress.emitTiming(out, "bootstrap_total", totalStarted) }()
-	fs := flag.NewFlagSet("bootstrap", flag.ContinueOnError)
+	defer func() { progress.emitTiming(out, "enroll_total", totalStarted) }()
+	fs := flag.NewFlagSet("enroll", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
 	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
@@ -93,37 +56,43 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	storageConfirmed := fs.Bool("storage-confirmed", false, "confirm initialization of the configured dedicated data disk")
 	replaceScopedCredentials := fs.Bool("replace-scoped-credentials", false, "replace the exact stale Boetticher Proxmox API token when its encrypted value is unavailable")
 	operatorKey := fs.String("operator-key", "", "operator SSH public key path")
+	bootstrapAddress := fs.String("bootstrap-address", "", "fresh Proxmox HOME-side IPv4 address")
 	initialUser := fs.String("initial-user", "root", "initial SSH user on the fresh Proxmox host")
 	knownHosts := fs.String("known-hosts", "", "SSH known-hosts file for bootstrap; defaults to the site trust file")
 	proxmoxCA := fs.String("proxmox-ca", "", "Proxmox API CA PEM file")
 	insecure := fs.Bool("insecure", false, "explicitly allow self-signed Proxmox API TLS during bootstrap")
 	trunkInterface := fs.String("trunk-interface", "", "explicit physical trunk interface when discovery finds multiple candidates")
 	dryRun := fs.Bool("dry-run", false, "render and validate the bootstrap plan without connecting")
-	cleanup := fs.Bool("cleanup", false, "remove an exact-owned stale temporary artifact builder without rebuilding")
 	if err := fs.Parse(args); err != nil {
 		return err
-	}
-	if *cleanup {
-		return runBootstrapCleanup(*siteDir, *ageIdentity, *proxmoxCA, *insecure, out, progress)
 	}
 	if *dryRun {
 		progress.total = 1
 	}
-	progress.start("validate", "Validate bootstrap request")
+	progress.start("validate", "Validate enrollment request")
 	if *knownHosts == "" {
-		*knownHosts = deploymentKnownHosts(*siteDir)
+		*knownHosts = defaultSSHKnownHosts()
+		if *knownHosts == "" {
+			return errors.New("operator SSH known-hosts path is unavailable; pass --known-hosts PATH")
+		}
 	}
 	s, err := site.Load(*siteDir)
 	if err != nil {
 		return err
 	}
-	progress.setTimingPath(filepath.Join(site.RuntimeDir(s), "bootstrap", progress.runID+".json"))
+	if *bootstrapAddress != "" {
+		if err := sshconfig.ValidateBootstrapAddress(*bootstrapAddress); err != nil {
+			return err
+		}
+		s.BootstrapAddress = net.ParseIP(*bootstrapAddress).To4().String()
+	}
+	progress.setTimingPath(filepath.Join(site.RuntimeDir(s), "enroll", progress.runID+".json"))
 	plan, err := proxmox.PlanFromSite(s)
 	if err != nil {
 		return err
 	}
 	if s.BootstrapAddress == "" {
-		return errors.New("bootstrap endpoint is not configured; use boetticher bootstrap-endpoint set ADDRESS first")
+		return errors.New("bootstrap endpoint is not configured; pass --bootstrap-address ADDRESS on the first enroll")
 	}
 	modelRevision, revisionErr := s.Revision()
 	if revisionErr != nil {
@@ -135,14 +104,19 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 			return fmt.Errorf("HOLD: Age identity is not usable for this site: %w", err)
 		}
 		if !*recoveryConfirmed {
-			return errors.New("destructive bootstrap requires --recovery-confirmed after an independent Age recovery copy is secured")
+			return errors.New("destructive enrollment requires --recovery-confirmed after an independent Age recovery copy is secured")
 		}
 		if s.StorageProfile == "dedicated-data-disk" && !*storageConfirmed {
-			return errors.New("dedicated-data-disk bootstrap requires --storage-confirmed after reviewing the configured stable device")
+			return errors.New("dedicated-data-disk enrollment requires --storage-confirmed after reviewing the configured stable device")
 		}
 	}
 	if *operatorKey == "" {
 		*operatorKey = defaultOperatorPublicKey()
+	}
+	if s.SSHIdentityFile == "" {
+		if identity := inferredPrivateIdentity(*operatorKey); identity != "" {
+			s.SSHIdentityFile = identity
+		}
 	}
 	if *operatorKey != "" {
 		publicKey, err := readOperatorPublicKey(*operatorKey)
@@ -157,13 +131,11 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	}
 	if *dryRun {
 		progress.complete()
-		fmt.Fprintf(out, "Bootstrap plan: PASS model %s\n", plan.ModelRevision)
+		fmt.Fprintf(out, "Enrollment plan: PASS model %s\n", plan.ModelRevision)
 		fmt.Fprintf(out, "  Proxmox endpoint: %s\n  Gateway mode: %s\n  Gateway upstream MAC: %s\n  Gateway image: %s\n", s.BootstrapAddress, s.Gateway.Mode, s.Gateway.Upstream.MAC, model.QualifiedGatewayImage)
 		fmt.Fprintf(out, "  Storage: %s\n", s.StorageProfile)
 		fmt.Fprintln(out, "  Trust transition: initial administrator → temporary root deployment SSH → scoped API token → durable labadmin")
-		builder := artifacts.Builder()
-		fmt.Fprintf(out, "  Artifact builder: temporary VMID %d (%s, %s)\n", builder.VMID, builder.Hostname, builder.Network)
-		fmt.Fprintln(out, "  Artifact qualification: base, selected appliances, SBOM, Trivy, independent content SHA-256")
+		fmt.Fprintln(out, "  Release source: authenticated offline bundle (no in-lab image builder)")
 		fmt.Fprintln(out, "  Destructive actions: not applied (dry-run)")
 		return nil
 	}
@@ -173,7 +145,7 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	if err != nil {
 		return err
 	}
-	runner := proxmox.SSHRunner{KnownHosts: *knownHosts, StrictHostKey: "ask", HostKeyAlias: model.LogicalProxmoxIdentity}
+	runner := proxmox.SSHRunner{ConfigFile: "/dev/null", KnownHosts: *knownHosts, StrictHostKey: "yes", HostKeyAlias: s.BootstrapAddress, IdentityFile: operatorIdentityFile(s)}
 	ctx := context.Background()
 	ctx = telemetry.WithObserver(ctx, progress)
 	sshDiscovery, err := proxmox.DiscoverPhysicalNetworkViaSSH(ctx, runner, s.BootstrapAddress, *initialUser, s.BootstrapAddress, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
@@ -183,11 +155,11 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	trustedKnownHosts := deploymentKnownHosts(*siteDir)
 	progress.complete()
 	progress.start("trust", "Establish host trust and scoped access")
-	hostKey, err := enrollBootstrapHostKey(*knownHosts, trustedKnownHosts)
+	hostKey, err := enrollBootstrapHostKey(*knownHosts, trustedKnownHosts, s.BootstrapAddress)
 	if err != nil {
-		return fmt.Errorf("HOLD: bootstrap did not establish an operator-verified Proxmox host key: %w", err)
+		return fmt.Errorf("HOLD: enrollment did not establish an operator-verified Proxmox host key: %w", err)
 	}
-	runner = proxmox.SSHRunner{KnownHosts: trustedKnownHosts, StrictHostKey: "yes", HostKeyAlias: model.LogicalProxmoxIdentity}
+	runner = proxmox.SSHRunner{ConfigFile: "/dev/null", KnownHosts: trustedKnownHosts, StrictHostKey: "yes", HostKeyAlias: model.LogicalProxmoxIdentity, IdentityFile: operatorIdentityFile(s)}
 	credentialsPath := filepath.Join(*siteDir, site.ProxmoxSecretsPath)
 	credentialsExist, err := proxmoxCredentialsExist(credentialsPath)
 	if err != nil {
@@ -205,9 +177,12 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 		if credentials.APIUser != "labadmin@pve" || credentials.TokenID != "boetticher" {
 			return fmt.Errorf("HOLD: encrypted Proxmox credentials identify %s!%s, expected labadmin@pve!boetticher", credentials.APIUser, credentials.TokenID)
 		}
+		if err := proxmox.CheckScopedCredentialReuse(ctx, runner, s.BootstrapAddress, *initialUser, credentials.APIUser, credentials.TokenID, "BoetticherProvisioner"); err != nil {
+			return err
+		}
 	} else {
 		if *replaceScopedCredentials {
-			removed, removeErr := proxmox.RemoveExactScopedCredentialToken(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner")
+			removed, removeErr := proxmox.RemoveExactScopedCredentialToken(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner", sshDiscovery.Node)
 			if removeErr != nil {
 				return removeErr
 			}
@@ -229,9 +204,6 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 		}
 		proxmoxCAPEM = string(caData)
 	}
-	if err := proxmox.InstallOperatorKey(ctx, runner, s.BootstrapAddress, *initialUser, publicKey); err != nil {
-		return fmt.Errorf("install operator SSH key: %w", err)
-	}
 	if s.StorageProfile == "dedicated-data-disk" {
 		if err := storage.Initialize(ctx, runner, s.BootstrapAddress, *initialUser, s.StorageDevice, *storageConfirmed, false); err != nil {
 			return err
@@ -241,6 +213,10 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	if err := proxmox.ConfigureIdentities(ctx, runner, s.BootstrapAddress, *initialUser, publicKey, allowedDestinations); err != nil {
 		return fmt.Errorf("configure Proxmox administrative and bastion identities: %w", err)
 	}
+	if err := proxmox.ConfigureHeadlessPowerPolicy(ctx, runner, s.BootstrapAddress, *initialUser); err != nil {
+		return err
+	}
+	fmt.Fprintln(out, "Headless power policy: PASS lid and idle suspend paths disabled")
 	trustClient, err := proxmox.NewClient(proxmox.Config{
 		BaseURL: "https://" + s.BootstrapAddress + ":8006/api2/json", CAFile: *proxmoxCA, CAPEM: proxmoxCAPEM, Insecure: *insecure,
 	})
@@ -258,12 +234,12 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 			}
 			fmt.Fprintln(out, "Proxmox API CA in SOPS: PASS (stored)")
 		}
-		if err := proxmox.EnsureScopedCredentialACL(ctx, runner, s.BootstrapAddress, *initialUser, credentials.APIUser, credentials.TokenID, "BoetticherProvisioner"); err != nil {
+		if err := proxmox.EnsureScopedCredentialACL(ctx, runner, s.BootstrapAddress, *initialUser, credentials.APIUser, credentials.TokenID, "BoetticherProvisioner", sshDiscovery.Node); err != nil {
 			return fmt.Errorf("reconcile scoped Proxmox API credentials: %w", err)
 		}
 		fmt.Fprintln(out, "Existing encrypted Proxmox API credentials: PASS (reuse)")
 	} else {
-		tokenSecret, createErr := proxmox.CreateScopedCredentialsWithRole(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner")
+		tokenSecret, createErr := proxmox.CreateScopedCredentialsWithRole(ctx, runner, s.BootstrapAddress, *initialUser, "labadmin@pve", "boetticher", "BoetticherProvisioner", sshDiscovery.Node)
 		if createErr != nil {
 			return fmt.Errorf("create scoped Proxmox API credentials: %w", createErr)
 		}
@@ -302,7 +278,7 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	discovery = honorRequestedPhysicalMode(discovery, s.PhysicalNetwork.Mode, s.PhysicalNetwork.Trunk.Name, *trunkInterface)
 	printPhysicalDiscovery(out, discovery)
 	if discovery.Mode == networkmodel.ModeSelectionNeeded {
-		return errors.New("multiple eligible trunk interfaces require --trunk-interface selection before bootstrap can mutate networking")
+		return errors.New("multiple eligible trunk interfaces require --trunk-interface selection before enrollment can mutate networking")
 	}
 	if s.Gateway.Mode == model.GatewayModeExternal && discovery.Trunk == nil {
 		return errors.New("external gateway mode requires a distinct physical vmbr1 trunk interface")
@@ -337,9 +313,9 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	var postInterfaces []proxmox.NetworkInterface
 	if err := client.NodeNetwork(ctx, apiNode, &postInterfaces); err != nil {
 		if trunkChanged {
-			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network mutation could not be re-read", err)
+			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: enrollment network mutation could not be re-read", err)
 		}
-		return fmt.Errorf("HOLD: bootstrap network state could not be re-read: %w", err)
+		return fmt.Errorf("HOLD: enrollment network state could not be re-read: %w", err)
 	}
 	configuredTrunk := ""
 	if discovery.Trunk != nil {
@@ -351,9 +327,9 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	}
 	if err != nil {
 		if trunkChanged {
-			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network mutation failed physical validation", err)
+			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: enrollment network mutation failed physical validation", err)
 		}
-		return fmt.Errorf("HOLD: bootstrap network state failed physical validation: %w", err)
+		return fmt.Errorf("HOLD: enrollment network state failed physical validation: %w", err)
 	}
 	s.PhysicalNetwork.Upstream = model.PhysicalNIC{Name: postDiscovery.Upstream.Name, PermanentMAC: postDiscovery.Upstream.PermanentMAC, PCIAddress: postDiscovery.Upstream.PCIAddress}
 	if postDiscovery.Trunk == nil {
@@ -365,15 +341,15 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	}
 	if _, err := proxmox.ValidatePhysicalBinding(s, postInterfaces); err != nil {
 		if trunkChanged {
-			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network binding validation failed", err)
+			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: enrollment network binding validation failed", err)
 		}
-		return fmt.Errorf("HOLD: bootstrap network binding validation failed: %w", err)
+		return fmt.Errorf("HOLD: enrollment network binding validation failed: %w", err)
 	}
 	if err := site.Save(*siteDir, s); err != nil {
 		if trunkChanged {
-			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: bootstrap network binding could not be persisted", err)
+			return rollbackTrunkChange(ctx, client, apiNode, discovery.Trunk.Name, s.BootstrapAddress, "HOLD: enrollment network binding could not be persisted", err)
 		}
-		return fmt.Errorf("HOLD: bootstrap network binding could not be persisted: %w", err)
+		return fmt.Errorf("HOLD: enrollment network binding could not be persisted: %w", err)
 	}
 	plan, err = proxmox.PlanFromSite(s)
 	if err != nil {
@@ -381,27 +357,15 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 	}
 	plan.Node = apiNode
 	progress.complete()
-	progress.start("artifacts", "Build and qualify appliance artifacts")
-	if err := buildDefaultArtifacts(ctx, client, plan, *siteDir, publicKey, *knownHosts, model.ExpandUserPath(s.SSHIdentityFile), runner, runner, s.BootstrapAddress, *initialUser, out, progress); err != nil {
-		return err
-	}
-	plan, err = proxmox.ResolveQualifiedArtifacts(*siteDir, plan, true)
-	if err != nil {
-		return err
-	}
-	progress.complete()
-	progress.start("persist", "Persist bootstrap state")
+	progress.start("persist", "Persist enrollment state")
 	if err := writeBootstrapProjections(*siteDir, s); err != nil {
-		return fmt.Errorf("HOLD: bootstrap network binding was persisted but projections could not be regenerated: %w", err)
+		return fmt.Errorf("HOLD: enrollment network binding was persisted but projections could not be regenerated: %w", err)
 	}
 	if err := writePhysicalDiscovery(*siteDir, s, postDiscovery); err != nil {
-		return fmt.Errorf("HOLD: bootstrap network binding was persisted but physical evidence could not be written: %w", err)
-	}
-	if err := rebuildPortal(*siteDir, s); err != nil {
-		return fmt.Errorf("HOLD: bootstrap network binding was persisted but portal could not be regenerated: %w", err)
+		return fmt.Errorf("HOLD: enrollment network binding was persisted but physical evidence could not be written: %w", err)
 	}
 	if err := site.Save(*siteDir, s); err != nil {
-		return fmt.Errorf("HOLD: bootstrap completed network mutation but physical binding could not be persisted: %w", err)
+		return fmt.Errorf("HOLD: enrollment completed network mutation but physical binding could not be persisted: %w", err)
 	}
 	plan, err = proxmox.PlanFromSite(s)
 	if err != nil {
@@ -425,19 +389,19 @@ func runBootstrap(args []string, out io.Writer) (runErr error) {
 		return err
 	}
 	progress.complete()
-	fmt.Fprintf(out, "Proxmox bootstrap: PASS authenticated with scoped identity on %s\n", version)
+	fmt.Fprintf(out, "Proxmox enrollment: PASS authenticated with scoped identity on %s\n", version)
 	if s.Gateway.Mode == model.GatewayModeManaged {
 		fmt.Fprintln(out, "Managed gateway VM: deferred to boetticher deploy")
 		fmt.Fprintf(out, "Managed gateway upstream MAC: %s (create the matching upstream DHCP reservation)\n", s.Gateway.Upstream.MAC)
 	} else {
 		fmt.Fprintln(out, "External gateway: PASS physical VLAN trunk recorded; appliance remains operator-managed")
 	}
-	fmt.Fprintln(out, "Initial root/bootstrap authentication: no longer required for routine boetticher access")
+	fmt.Fprintln(out, "Initial root enrollment authentication: no longer required for routine boetticher access")
 	return nil
 }
 
-func enrollBootstrapHostKey(sourceKnownHosts, trustedKnownHosts string) (string, error) {
-	operatorVerifiedKey, err := sshconfig.ReadHostKey(sourceKnownHosts, model.LogicalProxmoxIdentity)
+func enrollBootstrapHostKey(sourceKnownHosts, trustedKnownHosts, sourceAlias string) (string, error) {
+	operatorVerifiedKey, err := sshconfig.ReadHostKey(sourceKnownHosts, sourceAlias)
 	if err != nil {
 		return "", fmt.Errorf("read operator-known Proxmox host key from %s: %w", sourceKnownHosts, err)
 	}
@@ -462,34 +426,19 @@ func proxmoxCredentialsExist(path string) (bool, error) {
 	return false, err
 }
 
+func inferredPrivateIdentity(publicKeyPath string) string {
+	path := model.ExpandUserPath(publicKeyPath)
+	if !strings.HasSuffix(path, ".pub") {
+		return ""
+	}
+	return strings.TrimSuffix(path, ".pub")
+}
+
 func emitTiming(out io.Writer, stage string, started time.Time) {
 	if out == nil || stage == "" || started.IsZero() {
 		return
 	}
 	fmt.Fprintf(out, "timing stage=%s duration_ms=%d\n", stage, time.Since(started).Milliseconds())
-}
-
-func emitTransferMeasurement(out io.Writer, stage, transport string, bytes int64, started time.Time) {
-	if out == nil || stage == "" || transport == "" || bytes < 0 || started.IsZero() {
-		return
-	}
-	duration := time.Since(started).Milliseconds()
-	throughput := int64(0)
-	if duration > 0 {
-		throughput = bytes * 1000 / duration
-	}
-	fmt.Fprintf(out, "measurement stage=%s transport=%s bytes=%d duration_ms=%d throughput_bytes_per_second=%d\n", stage, transport, bytes, duration, throughput)
-}
-
-func builderArtifactReturnCommand(compression string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(compression)) {
-	case "", "gzip":
-		return "tar -czf - -C /home/labadmin/build generated/artifacts", nil
-	case "plain", "none":
-		return "tar -cf - -C /home/labadmin/build generated/artifacts", nil
-	default:
-		return "", fmt.Errorf("unsupported builder artifact transport compression %q", compression)
-	}
 }
 
 // honorRequestedPhysicalMode keeps a fresh virtual-only site virtual-only even
@@ -504,408 +453,6 @@ func honorRequestedPhysicalMode(discovery networkmodel.Discovery, desiredMode, c
 		discovery.Status = "PASS"
 	}
 	return discovery
-}
-
-func buildDefaultArtifacts(ctx context.Context, client *proxmox.Client, plan proxmox.Plan, siteDir, publicKey, _ string, identityFile string, hostRunner proxmox.CommandRunner, hostArgsRunner proxmox.ArgsCommandRunner, hostAddress, hostUser string, out io.Writer, progress *bootstrapReport) (returnErr error) {
-	cacheStarted := time.Now()
-	buildTargets, err := proxmox.BuilderArtifactTargetsForMissing(siteDir, plan)
-	if err != nil {
-		return err
-	}
-	if len(buildTargets) == 0 {
-		progress.emitTiming(out, "artifact_cache_hit", cacheStarted)
-		return nil
-	}
-	progress.emitTiming(out, "artifact_cache_check", cacheStarted)
-	if client == nil {
-		return errors.New("Proxmox client is required for appliance construction")
-	}
-	cacheVolume, err := proxmox.EnsureBuilderCacheVolume(ctx, client, plan.Node, hostArgsRunner, hostAddress, hostUser)
-	if err != nil {
-		return fmt.Errorf("prepare persistent builder cache: %w", err)
-	}
-	plan.BuilderCacheVolume = cacheVolume
-	plan.BuilderArtifactTargets = buildTargets
-	transportCompression := strings.ToLower(strings.TrimSpace(os.Getenv("BOETTICHER_BUILDER_TRANSPORT_COMPRESSION")))
-	if transportCompression == "" {
-		transportCompression = "gzip"
-	}
-	returnCommand, err := builderArtifactReturnCommand(transportCompression)
-	if err != nil {
-		return err
-	}
-	builderKnownHosts, err := createBuilderKnownHosts()
-	if err != nil {
-		return fmt.Errorf("create temporary builder known_hosts: %w", err)
-	}
-	defer func() {
-		if cleanupErr := os.Remove(builderKnownHosts); cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
-			if returnErr == nil {
-				returnErr = fmt.Errorf("remove temporary builder known_hosts: %w", cleanupErr)
-			} else {
-				returnErr = fmt.Errorf("%w (temporary builder known_hosts cleanup: %v)", returnErr, cleanupErr)
-			}
-		}
-	}()
-	provisionStarted := time.Now()
-	builderCreated, err := proxmox.EnsureBuilderVM(ctx, client, plan, publicKey)
-	progress.emitTiming(out, "builder_vm_provisioning", provisionStarted)
-	builderAddress := ""
-	builderRunner := proxmox.SSHRunner{KnownHosts: builderKnownHosts, StrictHostKey: "yes", IdentityFile: identityFile}
-	builderSSHUser := "root"
-	buildSucceeded := false
-	builderOutput := ""
-	if builderCreated {
-		defer func() {
-			cleanupContext, cancelCleanup := context.WithTimeout(context.Background(), 2*time.Minute)
-			defer cancelCleanup()
-			var cleanupErr error
-			if !buildSucceeded {
-				if builderAddress != "" {
-					if err := persistBuilderDiagnosticsWithOutput(cleanupContext, builderRunner, builderAddress, builderSSHUser, siteDir, builderOutput); err != nil {
-						cleanupErr = errors.Join(cleanupErr, err)
-					}
-				} else if err := persistBuilderUnavailableDiagnostics(siteDir, returnErr); err != nil {
-					cleanupErr = errors.Join(cleanupErr, err)
-				}
-			}
-			if err := proxmox.DestroyBuilderVM(cleanupContext, client, plan.Node); err != nil {
-				cleanupErr = errors.Join(cleanupErr, err)
-			}
-			if cleanupErr != nil {
-				if returnErr == nil {
-					returnErr = cleanupErr
-				} else {
-					returnErr = fmt.Errorf("%w (temporary builder cleanup: %v)", returnErr, cleanupErr)
-				}
-			}
-		}()
-	}
-	if err != nil {
-		return err
-	}
-	readinessStarted := time.Now()
-	readinessFinished := false
-	defer func() {
-		if !readinessFinished {
-			progress.emitTiming(out, "builder_cloud_init_readiness", readinessStarted)
-		}
-	}()
-	if err := client.StartVM(ctx, plan.Node, model.BuilderVMID); err != nil {
-		return fmt.Errorf("start temporary appliance builder: %w", err)
-	}
-	builderAddress, err = proxmox.WaitForQEMUIPv4(ctx, client, plan.Node, model.BuilderVMID, 60, 5*time.Second)
-	if err != nil {
-		return err
-	}
-	builderHostKey, err := waitForBuilderHostKey(ctx, hostRunner, hostAddress, hostUser, model.BuilderVMID, 60, 5*time.Second)
-	if err != nil {
-		return fmt.Errorf("HOLD: temporary appliance builder host-key enrollment failed: %w", err)
-	}
-	if err := sshconfig.AddHostKey(builderKnownHosts, builderAddress, builderHostKey); err != nil {
-		return fmt.Errorf("enroll temporary appliance builder host key: %w", err)
-	}
-	if err := proxmox.WaitForSSH(ctx, builderRunner, builderAddress, builderSSHUser, 60, 5*time.Second); err != nil {
-		return fmt.Errorf("HOLD: temporary appliance builder SSH is not ready: %w", err)
-	}
-	if err := proxmox.WaitForCommand(ctx, builderRunner, builderAddress, builderSSHUser, "test -f /run/boetticher-builder-ready", 60, 5*time.Second); err != nil {
-		return fmt.Errorf("HOLD: temporary appliance builder cloud-init is not ready: %w", err)
-	}
-	builder := artifacts.Builder()
-	if err := proxmox.CheckBuilderCapacity(ctx, builderRunner, builderAddress, builderSSHUser, builder.MinimumFreeGiB); err != nil {
-		return err
-	}
-	progress.emitTiming(out, "builder_cloud_init_readiness", readinessStarted)
-	readinessFinished = true
-	sourceRoot, sourceErr := applianceBuildSourceRoot()
-	sourcePrepareStarted := time.Now()
-	var archive []byte
-	if sourceErr == nil {
-		archive, err = artifacts.BuildSourceArchive(sourceRoot)
-	} else {
-		archive, err = artifacts.BuildEmbeddedSourceArchive()
-	}
-	if err != nil {
-		return fmt.Errorf("prepare public appliance build inputs: %w", err)
-	}
-	progress.emitTiming(out, "builder_source_archive_prepare", sourcePrepareStarted)
-	sourceTransferStarted := time.Now()
-	if _, err := builderRunner.RunWithStdin(ctx, builderAddress, builderSSHUser, "set -eu; install -d -m 0755 -o labadmin -g labadmin /home/labadmin/build; tar -xzf - -C /home/labadmin/build", bytes.NewReader(archive)); err != nil {
-		return fmt.Errorf("transfer public appliance build definitions: %w", err)
-	}
-	progress.emitTiming(out, "builder_source_transfer", sourceTransferStarted)
-	emitTransferMeasurement(out, "builder_source_transfer", "gzip", int64(len(archive)), sourceTransferStarted)
-	var buildOutputBuffer boundedBuilderOutput
-	buildStarted := time.Now()
-	buildStreamOutput := io.MultiWriter(&buildOutputBuffer, &builderProgressWriter{out: out})
-	if buildErr := builderRunner.RunStream(ctx, builderAddress, builderSSHUser, builderBuildCommand, buildStreamOutput); buildErr != nil {
-		builderOutput = builderFailureOutput(&buildOutputBuffer, buildErr)
-		progress.emitTiming(out, "builder_build_and_qualification", buildStarted)
-		return fmt.Errorf("qualify default appliance artifacts on temporary builder: %w", buildErr)
-	}
-	progress.emitTiming(out, "builder_build_and_qualification", buildStarted)
-	archiveFile, err := os.CreateTemp("", "boetticher-builder-artifacts-*.tar.gz")
-	if err != nil {
-		return fmt.Errorf("create temporary artifact archive: %w", err)
-	}
-	archivePath := archiveFile.Name()
-	defer os.Remove(archivePath)
-	if err := archiveFile.Chmod(0o600); err != nil {
-		_ = archiveFile.Close()
-		return fmt.Errorf("protect temporary artifact archive: %w", err)
-	}
-	returnStarted := time.Now()
-	boundedArchive := &boundedBuilderArchive{writer: archiveFile, limit: maxBuilderArchiveBytes}
-	if err := builderRunner.RunStream(ctx, builderAddress, builderSSHUser, returnCommand, boundedArchive); err != nil {
-		_ = archiveFile.Close()
-		return fmt.Errorf("retrieve qualified appliance evidence: %w", err)
-	}
-	if err := archiveFile.Close(); err != nil {
-		return fmt.Errorf("close qualified appliance evidence: %w", err)
-	}
-	progress.emitTiming(out, "builder_artifact_return_transfer", returnStarted)
-	archiveInfo, err := os.Stat(archivePath)
-	if err != nil {
-		return fmt.Errorf("stat qualified appliance evidence: %w", err)
-	}
-	emitTransferMeasurement(out, "builder_artifact_return", transportCompression, archiveInfo.Size(), returnStarted)
-	extractionStarted := time.Now()
-	if err := artifacts.ExtractBuildArchiveFile(archivePath, siteDir); err != nil {
-		return fmt.Errorf("extract qualified appliance evidence: %w", err)
-	}
-	if err := artifacts.RebindEvidencePaths(siteDir); err != nil {
-		return fmt.Errorf("bind qualified evidence to controller artifact bytes: %w", err)
-	}
-	progress.emitTiming(out, "builder_artifact_return_extraction", extractionStarted)
-	emitTransferMeasurement(out, "builder_artifact_return_extraction", "controller-disk", archiveInfo.Size(), extractionStarted)
-	buildSucceeded = true
-	return nil
-}
-
-func runBootstrapCleanup(siteDir, ageIdentity, proxmoxCA string, insecure bool, out io.Writer, progress *bootstrapReport) error {
-	progress.total = 2
-	progress.start("validate", "Validate temporary builder cleanup request")
-	s, err := site.Load(siteDir)
-	if err != nil {
-		return err
-	}
-	client, _, err := loadProxmoxClient(siteDir, s, ageIdentity, proxmoxCA, insecure)
-	if err != nil {
-		return fmt.Errorf("prepare Proxmox client for temporary builder cleanup: %w", err)
-	}
-	ctx := telemetry.WithObserver(context.Background(), progress)
-	node, err := client.SingleNode(ctx)
-	if err != nil {
-		return fmt.Errorf("identify Proxmox node for temporary builder cleanup: %w", err)
-	}
-	progress.complete()
-	progress.start("cleanup", "Remove exact-owned temporary artifact builder")
-	if err := proxmox.DestroyBuilderVM(ctx, client, node); err != nil {
-		return fmt.Errorf("remove temporary artifact builder: %w", err)
-	}
-	progress.complete()
-	fmt.Fprintf(out, "Temporary artifact builder VMID %d: removed\n", model.BuilderVMID)
-	return nil
-}
-
-func waitForBuilderHostKey(ctx context.Context, runner proxmox.CommandRunner, address, user string, vmid, attempts int, interval time.Duration) (string, error) {
-	if runner == nil {
-		return "", errors.New("authenticated Proxmox host runner is required")
-	}
-	if address == "" || user == "" || vmid <= 0 || attempts < 1 {
-		return "", errors.New("builder host-key enrollment identity is invalid")
-	}
-	if interval <= 0 {
-		interval = time.Second
-	}
-	var lastErr error
-	for attempt := 0; attempt < attempts; attempt++ {
-		if err := ctx.Err(); err != nil {
-			return "", fmt.Errorf("builder host-key enrollment cancelled: %w", err)
-		}
-		key, err := proxmox.ReadBuilderHostKey(ctx, runner, address, user, vmid)
-		if err == nil {
-			return key, nil
-		}
-		lastErr = err
-		if attempt+1 < attempts {
-			timer := time.NewTimer(interval)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return "", fmt.Errorf("builder host-key enrollment cancelled: %w", ctx.Err())
-			case <-timer.C:
-			}
-		}
-	}
-	return "", fmt.Errorf("builder host key was not available after %d attempts: %w", attempts, lastErr)
-}
-
-func createBuilderKnownHosts() (string, error) {
-	file, err := os.CreateTemp("", "boetticher-builder-known-hosts-")
-	if err != nil {
-		return "", err
-	}
-	name := file.Name()
-	if err := file.Chmod(0o600); err != nil {
-		_ = file.Close()
-		_ = os.Remove(name)
-		return "", err
-	}
-	if err := file.Close(); err != nil {
-		_ = os.Remove(name)
-		return "", err
-	}
-	return name, nil
-}
-
-const maxBuilderDiagnosticOutput = 32 << 10
-const maxBuilderArchiveBytes int64 = 8 << 30
-
-func persistBuilderDiagnostics(ctx context.Context, runner proxmox.CommandRunner, address, user, siteDir string) error {
-	return persistBuilderDiagnosticsWithOutput(ctx, runner, address, user, siteDir, "")
-}
-
-func persistBuilderDiagnosticsWithOutput(ctx context.Context, runner proxmox.CommandRunner, address, user, siteDir, buildOutput string) error {
-	if runner == nil || address == "" || user == "" || siteDir == "" {
-		return errors.New("builder diagnostics require an authenticated runner and destination")
-	}
-	commands := []struct {
-		label   string
-		command string
-	}{
-		{label: "cloud-init", command: "cloud-init status --long"},
-		{label: "cloud-final", command: "journalctl -u cloud-final --no-pager --lines=100"},
-		{label: "boetticher-build", command: "tail -n 200 /var/log/boetticher-build.log"},
-		{label: "disk", command: "df -h"},
-		{label: "memory", command: "free -h"},
-		{label: "go", command: "/usr/local/go/bin/go version"},
-		{label: "trivy", command: "trivy --version"},
-		{label: "mmdebstrap", command: "mmdebstrap --version"},
-		{label: "kernel", command: "uname -a"},
-	}
-	var report strings.Builder
-	for _, item := range commands {
-		fmt.Fprintf(&report, "[%s]\n", item.label)
-		output, err := runner.Run(ctx, address, user, item.command)
-		if len(output) > maxBuilderDiagnosticOutput {
-			output = append(output[:maxBuilderDiagnosticOutput], []byte("\n[output truncated]\n")...)
-		}
-		report.Write(output)
-		if err != nil {
-			fmt.Fprintf(&report, "command error: %v\n", err)
-		}
-		report.WriteByte('\n')
-	}
-	if buildOutput != "" {
-		fmt.Fprintf(&report, "[builder-command-output]\n%s\n", buildOutput)
-	}
-	return writeBuilderDiagnostics(siteDir, report.String())
-}
-
-type boundedBuilderOutput struct {
-	buffer bytes.Buffer
-}
-
-func (b *boundedBuilderOutput) Write(data []byte) (int, error) {
-	remaining := maxBuilderDiagnosticOutput - b.buffer.Len()
-	if remaining > 0 {
-		if len(data) > remaining {
-			_, _ = b.buffer.Write(data[:remaining])
-		} else {
-			_, _ = b.buffer.Write(data)
-		}
-	}
-	return len(data), nil
-}
-
-type boundedBuilderArchive struct {
-	writer  io.Writer
-	limit   int64
-	written int64
-}
-
-func (b *boundedBuilderArchive) Write(data []byte) (int, error) {
-	if int64(len(data)) > b.limit-b.written {
-		return 0, fmt.Errorf("builder artifact archive exceeds maximum size of %d bytes", b.limit)
-	}
-	written, err := b.writer.Write(data)
-	b.written += int64(written)
-	return written, err
-}
-
-func (b *boundedBuilderOutput) String() string { return b.buffer.String() }
-
-type builderProgressWriter struct {
-	out  io.Writer
-	line []byte
-}
-
-func (w *builderProgressWriter) Write(data []byte) (int, error) {
-	if w.out == nil {
-		return len(data), nil
-	}
-	w.line = append(w.line, data...)
-	for {
-		index := bytes.IndexByte(w.line, '\n')
-		if index < 0 {
-			break
-		}
-		line := strings.TrimSuffix(string(w.line[:index]), "\r")
-		if strings.HasPrefix(line, "timing ") || strings.HasPrefix(line, "measurement ") || strings.HasPrefix(line, "boetticher build stage: ") || strings.HasPrefix(line, "boetticher package stage: ") {
-			_, _ = fmt.Fprintln(w.out, line)
-		}
-		w.line = w.line[index+1:]
-	}
-	return len(data), nil
-}
-
-func builderFailureOutput(output *boundedBuilderOutput, cause error) string {
-	if cause != nil {
-		_, _ = output.Write([]byte("\n[builder-command-error]\n" + cause.Error() + "\n"))
-	}
-	return output.String()
-}
-
-func persistBuilderUnavailableDiagnostics(siteDir string, cause error) error {
-	if siteDir == "" {
-		return errors.New("builder diagnostics require a destination")
-	}
-	var report strings.Builder
-	report.WriteString("remote builder diagnostics unavailable before a guest address was observed\n")
-	if cause != nil {
-		fmt.Fprintf(&report, "builder lifecycle error: %v\n", cause)
-	}
-	return writeBuilderDiagnostics(siteDir, report.String())
-}
-
-func writeBuilderDiagnostics(siteDir, content string) error {
-	directory := filepath.Join(siteDir, "generated", "runtime")
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return fmt.Errorf("create builder diagnostics directory: %w", err)
-	}
-	temporary, err := os.CreateTemp(directory, ".builder-failure-")
-	if err != nil {
-		return fmt.Errorf("create builder diagnostics file: %w", err)
-	}
-	temporaryName := temporary.Name()
-	defer os.Remove(temporaryName)
-	if err := temporary.Chmod(0o600); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if _, err := temporary.WriteString(content); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("write builder diagnostics: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close builder diagnostics: %w", err)
-	}
-	destination := filepath.Join(directory, "builder-failure.txt")
-	if err := os.Rename(temporaryName, destination); err != nil {
-		return fmt.Errorf("publish builder diagnostics: %w", err)
-	}
-	return nil
 }
 
 func applianceBuildSourceRoot() (string, error) {
@@ -937,4 +484,23 @@ func buildSourceRoot(root string) bool {
 		}
 	}
 	return true
+}
+
+// ansibleSourceRoot resolves the deployment playbook from the release
+// controller's embedded public Ansible tree. A release operation must not
+// execute an unauthenticated filesystem checkout found near the binary.
+func ansibleSourceRoot() (string, func(), error) {
+	archive, archiveErr := artifacts.BuildEmbeddedAnsibleSourceArchive()
+	if archiveErr != nil {
+		return "", func() {}, fmt.Errorf("resolve embedded Ansible source: %w", archiveErr)
+	}
+	workspace, workspaceErr := os.MkdirTemp("", ".boetticher-ansible-source-*")
+	if workspaceErr != nil {
+		return "", func() {}, fmt.Errorf("create embedded Ansible source workspace: %w", workspaceErr)
+	}
+	if extractErr := artifacts.ExtractSourceArchiveReader(bytes.NewReader(archive), workspace); extractErr != nil {
+		_ = os.RemoveAll(workspace)
+		return "", func() {}, fmt.Errorf("extract embedded Ansible source: %w", extractErr)
+	}
+	return workspace, func() { _ = os.RemoveAll(workspace) }, nil
 }

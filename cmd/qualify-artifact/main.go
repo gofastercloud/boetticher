@@ -37,10 +37,11 @@ func main() {
 	manifestPath := flag.String("manifest", "", "package manifest")
 	sbomPath := flag.String("sbom", "", "SBOM")
 	provenancePath := flag.String("provenance", "", "builder provenance evidence")
+	smokePath := flag.String("smoke", "", "boot/smoke qualification evidence")
 	evidenceRoot := flag.String("evidence-root", "generated/artifacts", "evidence output directory")
 	module := flag.String("module", "", "built-in module name")
 	flag.Parse()
-	for name, value := range map[string]string{"artifact": *artifactPath, "report": *reportPath, "module": *module} {
+	for name, value := range map[string]string{"artifact": *artifactPath, "report": *reportPath, "manifest": *manifestPath, "sbom": *sbomPath, "provenance": *provenancePath, "smoke": *smokePath, "module": *module} {
 		if value == "" {
 			fatalf("-%s is required", name)
 		}
@@ -62,25 +63,20 @@ func main() {
 		fatalf("hash artifact: %v", err)
 	}
 	evidence.ArtifactPath = *artifactPath
-	if *manifestPath != "" {
-		evidence.PackageManifestSHA = hashFile(*manifestPath, "package manifest")
-	}
-	if *sbomPath != "" {
-		evidence.SBOMSHA256 = hashFile(*sbomPath, "SBOM")
-	}
+	evidence.PackageManifestSHA = hashFile(*manifestPath, "package manifest")
+	evidence.SBOMSHA256 = hashFile(*sbomPath, "SBOM")
 	evidence.TrivyReportSHA256 = hashBytes(data)
-	if *provenancePath != "" {
-		provenanceData, readErr := artifacts.ReadQualificationInput(*provenancePath, "builder provenance")
-		if readErr != nil {
-			fatalf("read builder provenance: %v", readErr)
-		}
-		var provenance artifacts.BuilderProvenance
-		if err := json.Unmarshal(provenanceData, &provenance); err != nil {
-			fatalf("decode builder provenance: %v", err)
-		}
-		evidence.Builder = provenance
-		evidence.BuilderProvenanceSHA256 = hashBytes(provenanceData)
+	evidence.SmokeReportSHA256 = hashFile(*smokePath, "boot/smoke qualification")
+	provenanceData, readErr := artifacts.ReadQualificationInput(*provenancePath, "builder provenance")
+	if readErr != nil {
+		fatalf("read builder provenance: %v", readErr)
 	}
+	var provenance artifacts.BuilderProvenance
+	if err := json.Unmarshal(provenanceData, &provenance); err != nil {
+		fatalf("decode builder provenance: %v", err)
+	}
+	evidence.Builder = provenance
+	evidence.BuilderProvenanceSHA256 = hashBytes(provenanceData)
 	evidence, err = artifacts.QualifyEvidence(evidence, summary)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "qualify artifact: %v\n", err)

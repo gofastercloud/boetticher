@@ -110,6 +110,37 @@ func ApplyConfigAndPlatformSecrets(dir string, config model.SiteConfig, s model.
 	return nil
 }
 
+// ApplyConfigAndPlatformSecretsAndModuleState is the single desired-state
+// commit used by module configuration. Site YAML, retained resources, and the
+// encrypted secret document are prepared in memory and replaced as one
+// rollback-protected operation.
+func ApplyConfigAndPlatformSecretsAndModuleState(dir string, config model.SiteConfig, s model.Site, ageIdentityPath string, updates map[string]string, retained []model.RetainedModule) error {
+	configData, err := model.RenderSiteConfig(config)
+	if err != nil {
+		return err
+	}
+	retainedData, err := marshalRetainedModules(retained)
+	if err != nil {
+		return err
+	}
+	files := []moduleStateFile{
+		{path: filepath.Join(dir, "site.yml"), data: configData, mode: 0600},
+		{path: filepath.Join(dir, retainedModulesPath), data: append(retainedData, '\n'), mode: 0600},
+	}
+	if len(updates) > 0 {
+		secretPath, err := safeSitePath(dir, filepath.Join("secrets", "boetticher.sops.yaml"))
+		if err != nil {
+			return err
+		}
+		secretData, err := updatedPlatformSecretsData(dir, s, ageIdentityPath, updates)
+		if err != nil {
+			return err
+		}
+		files = append(files, moduleStateFile{path: secretPath, data: secretData, mode: 0600})
+	}
+	return applyModuleStateFiles(files)
+}
+
 func Save(dir string, s model.Site) error {
 	return SaveConfig(dir, model.ConfigFromSite(s))
 }
@@ -255,10 +286,6 @@ func LoadAuthority(dir string, s model.Site, ageIdentityPath string) (pki.Author
 		}
 		return pki.Decode(value)
 	}
-	rootKey, err := get("root_key_pem_b64")
-	if err != nil {
-		return pki.Authority{}, err
-	}
 	rootCert, err := get("root_cert_pem_b64")
 	if err != nil {
 		return pki.Authority{}, err
@@ -271,7 +298,7 @@ func LoadAuthority(dir string, s model.Site, ageIdentityPath string) (pki.Author
 	if err != nil {
 		return pki.Authority{}, err
 	}
-	return pki.Authority{RootKeyPEM: rootKey, RootCertPEM: rootCert, IssuingKeyPEM: issuingKey, IssuingCertPEM: issuingCert}, nil
+	return pki.Authority{RootCertPEM: rootCert, IssuingKeyPEM: issuingKey, IssuingCertPEM: issuingCert}, nil
 }
 
 // StoreEncryptedDocument encrypts a secret document with the pinned in-process
@@ -378,6 +405,10 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 	if err != nil {
 		return err
 	}
+	stepCAPassword, err := randomSecret()
+	if err != nil {
+		return err
+	}
 	// Plaintext exists only in process memory and is piped directly to SOPS.
 	document := map[string]string{
 		"installation_id":         s.SecretMetadata.InstallationID,
@@ -389,6 +420,7 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 		"ddns_tsig_secret":        ddnsSecret,
 		"pulse_admin_password":    pulseAdminPassword,
 		"pulse_proxy_auth_secret": pulseProxyAuthSecret,
+		"step_ca_password":        stepCAPassword,
 	}
 	return StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), document)
 }
@@ -444,29 +476,60 @@ func StorePlatformSecret(dir string, s model.Site, ageIdentityPath, key, value s
 // document rewrite. Plaintext values remain in process memory and are never
 // written to a temporary file or included in an error.
 func UpdatePlatformSecrets(dir string, s model.Site, ageIdentityPath string, updates map[string]string) error {
+	data, err := updatedPlatformSecretsData(dir, s, ageIdentityPath, updates)
+	if err != nil {
+		return err
+	}
+	return StoreEncryptedDocumentBytes(dir, filepath.Join("secrets", "boetticher.sops.yaml"), data)
+}
+
+func updatedPlatformSecretsData(dir string, s model.Site, ageIdentityPath string, updates map[string]string) ([]byte, error) {
 	if len(updates) == 0 {
-		return errors.New("at least one platform secret is required")
+		return nil, errors.New("at least one platform secret is required")
 	}
 	for key, value := range updates {
 		if !platformSecretName.MatchString(key) {
-			return fmt.Errorf("platform secret key %q is unsafe", key)
+			return nil, fmt.Errorf("platform secret key %q is unsafe", key)
 		}
 		if value == "" || strings.ContainsRune(value, '\x00') {
-			return fmt.Errorf("platform secret %s has an empty or invalid value", key)
+			return nil, fmt.Errorf("platform secret %s has an empty or invalid value", key)
 		}
 	}
 	recipient, err := validatedAgeRecipient(ageIdentityPath, s.SecretMetadata.AgeRecipient)
 	if err != nil {
-		return fmt.Errorf("validate Age identity for encrypted platform secret update: %w", err)
+		return nil, fmt.Errorf("validate Age identity for encrypted platform secret update: %w", err)
 	}
 	values, err := LoadEncryptedDocument(dir, ageIdentityPath, filepath.Join("secrets", "boetticher.sops.yaml"))
 	if err != nil {
-		return fmt.Errorf("load encrypted platform secrets: %w", err)
+		return nil, fmt.Errorf("load encrypted platform secrets: %w", err)
 	}
 	for key, value := range updates {
 		values[key] = value
 	}
-	return StoreEncryptedDocument(dir, recipient, filepath.Join("secrets", "boetticher.sops.yaml"), values)
+	plaintext, err := json.MarshalIndent(values, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode encrypted platform secrets: %w", err)
+	}
+	plaintext = append(plaintext, '\n')
+	if len(plaintext) > MaxEncryptedDocumentBytes {
+		return nil, errors.New("encrypt document with SOPS: input exceeds the permitted size")
+	}
+	encrypted, err := encryptSOPSYAML(plaintext, recipient)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt document with SOPS: %w", err)
+	}
+	if len(encrypted) > MaxEncryptedDocumentBytes {
+		return nil, errors.New("encrypt document with SOPS: output exceeds the permitted size")
+	}
+	return encrypted, nil
+}
+
+func StoreEncryptedDocumentBytes(dir, relativePath string, data []byte) error {
+	path, err := safeSitePath(dir, relativePath)
+	if err != nil {
+		return err
+	}
+	return atomicWrite(path, data, 0600)
 }
 
 // PlatformSecretPresence reports only whether each requested key has a

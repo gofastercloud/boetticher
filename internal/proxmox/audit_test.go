@@ -2,6 +2,7 @@ package proxmox
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -54,68 +55,6 @@ func TestClassifyGuestsDetectsOwnedDrift(t *testing.T) {
 	t.Fatal("firewall audit was absent")
 }
 
-func TestClassifyBuilderRequiresCanonicalIdentityAndOwnership(t *testing.T) {
-	owned := classifyBuilder(map[string]any{
-		"name": "lab-builder-01", "status": "stopped", "tags": "boetticher;managed;boetticher-builder",
-	})
-	if !owned.Exists || !owned.Owned || owned.Name != "lab-builder-01" {
-		t.Fatalf("canonical builder was not recognized: %#v", owned)
-	}
-	for _, current := range []map[string]any{
-		{"name": "lab-builder-01", "tags": "boetticher;managed"},
-		{"name": "user-vm-190", "tags": "user"},
-	} {
-		classified := classifyBuilder(current)
-		if !classified.Exists || classified.Owned {
-			t.Fatalf("unowned VMID 190 was accepted as the builder: %#v", classified)
-		}
-	}
-}
-
-func TestInspectBuilderHoldsForWrongGuestKind(t *testing.T) {
-	transport := roundTripFunc(func(r *http.Request) *http.Response {
-		switch r.URL.Path {
-		case "/api2/json/nodes/lab-proxmox-01/qemu/190/config":
-			return apiResponse(404, `{"errors":{"vmid":"not found"}}`)
-		case "/api2/json/nodes/lab-proxmox-01/lxc/190/config":
-			return apiResponse(200, `{"data":{"hostname":"user-lxc-190","status":"stopped","tags":"user"}}`)
-		default:
-			t.Fatalf("unexpected builder inspection request: %s", r.URL.Path)
-			return nil
-		}
-	})
-	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	audit, err := InspectBuilder(context.Background(), client, "lab-proxmox-01")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !audit.Exists || audit.Owned || audit.Name != "lxc guest at VMID 190" {
-		t.Fatalf("wrong-kind builder collision was not held: %#v", audit)
-	}
-}
-
-func TestInspectBuilderUsesLiveStatus(t *testing.T) {
-	transport := roundTripFunc(func(r *http.Request) *http.Response {
-		switch r.URL.Path {
-		case "/api2/json/nodes/lab-proxmox-01/qemu/190/config":
-			return response([]byte(`{"data":{"name":"lab-builder-01","status":"stopped","tags":"boetticher;boetticher-builder"}}`))
-		case "/api2/json/nodes/lab-proxmox-01/qemu/190/status/current":
-			return response([]byte(`{"data":{"status":"running"}}`))
-		default:
-			t.Fatalf("unexpected builder status request: %s", r.URL.Path)
-			return nil
-		}
-	})
-	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	audit, err := InspectBuilder(context.Background(), client, "lab-proxmox-01")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !audit.Exists || !audit.Owned || audit.Status != "running" {
-		t.Fatalf("live builder status was not reported: %#v", audit)
-	}
-}
-
 func TestPurgeModuleHoldsForOppositeGuestKindAtReservedIdentity(t *testing.T) {
 	plan, err := PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {
@@ -148,5 +87,61 @@ func TestPurgeModuleHoldsForOppositeGuestKindAtReservedIdentity(t *testing.T) {
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
 	if err := PurgeModule(context.Background(), client, plan, "dns"); err == nil || !strings.Contains(err.Error(), "HOLD") {
 		t.Fatalf("opposite-kind purge collision was not held: %v", err)
+	}
+}
+
+func TestPurgeModuleHoldsForUndeclaredPersistentVolume(t *testing.T) {
+	plan := Plan{Node: "lab-proxmox-01"}
+	expected := GuestPlan{
+		VMID: 110, Name: "lab-dns-01", Hostname: "lab-dns-01", Kind: KindLXC, Owner: "boetticher/module/dns",
+		Tags: []string{"boetticher", "managed", "module", "module-dns", "boetticher-module-dns", "backup"},
+		Volumes: []model.PersistentVolumeDeclaration{{
+			Name: "powerdns-database", Module: "dns", Guest: "lab-dns-01", Storage: "local", SizeGiB: 8,
+			MountPath: "/var/lib/powerdns", Backup: true,
+		}},
+	}
+	plan.Guests = []GuestPlan{expected}
+	var err error
+	volume, err := persistentVolumeParam(expected.Volumes[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := map[string]any{
+		"name": expected.Name, "hostname": expected.Hostname, "tags": strings.Join(expected.Tags, ";"),
+		"description": artifactDescription(expected.Artifact), "mp0": "local:110/vm-110-disk-1.raw," + strings.TrimPrefix(volume, "local:8") + ",size=8G",
+		"mp1": "local:110/vm-110-disk-99.raw,mp=/unexpected,backup=0,size=1G",
+	}
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		qemuPath := "/api2/json/nodes/lab-proxmox-01/qemu/" + strconv.Itoa(expected.VMID) + "/config"
+		lxcPath := "/api2/json/nodes/lab-proxmox-01/lxc/" + strconv.Itoa(expected.VMID) + "/config"
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == qemuPath:
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == lxcPath:
+			data, marshalErr := json.Marshal(map[string]any{"data": current})
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			return response(data)
+		default:
+			t.Fatalf("purge inspected an undeclared volume before refusing destruction: %s %s", r.Method, r.URL.Path)
+			return nil
+		}
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := PurgeModule(context.Background(), client, plan, "dns"); err == nil || !strings.Contains(err.Error(), "undeclared persistent volume") {
+		t.Fatalf("undeclared persistent volume was not held: %v", err)
+	}
+}
+
+func TestQEMUPurgeRejectsUndeclaredDiskForms(t *testing.T) {
+	guest := GuestPlan{Name: "lab-fw-01", Volumes: nil}
+	for _, key := range []string{"unused0", "sata1", "virtio1", "efidisk0", "tpmstate0", "ide3"} {
+		if err := validateNoUndeclaredQEMUPersistentVolumes(map[string]any{"scsi0": "local:100/vm-100-disk-0.qcow2", key: "foreign"}, guest); err == nil {
+			t.Fatalf("undeclared QEMU disk key %s was accepted", key)
+		}
+	}
+	if err := validateNoUndeclaredQEMUPersistentVolumes(map[string]any{"scsi0": "root", "ide2": "local:cloudinit"}, guest); err != nil {
+		t.Fatalf("declared cloud-init auxiliary disk was rejected: %v", err)
 	}
 }

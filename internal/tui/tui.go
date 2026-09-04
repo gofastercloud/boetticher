@@ -4,56 +4,31 @@
 package tui
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/list"
-	"charm.land/bubbles/v2/textinput"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/google/shlex"
 
+	"github.com/gofastercloud/boetticher/internal/application"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/pathguard"
 	"github.com/gofastercloud/boetticher/internal/site"
 	statusmodel "github.com/gofastercloud/boetticher/internal/status"
 )
 
-// Runner executes an existing Boetticher command. It is injected by the CLI
-// package to avoid a package cycle and to keep one command implementation.
-type Runner func(args []string, input io.Reader, out, errOut io.Writer) error
-
-// Observability is the small, presentation-ready projection of the 0.4.1
-// monitoring contract. Credentials and transport details stay in the CLI.
-type Observability struct {
-	Health       string
-	ActiveAlerts int
-	Nodes        int
-	VMs          int
-	Containers   int
-	Resources    int
-	LastUpdate   string
-}
-
-// ObservabilityReader reads live metrics without changing site state.
-type ObservabilityReader func(context.Context) (Observability, error)
-
 type Options struct {
-	SiteDir       string
-	Offline       bool
-	Runner        Runner
-	Commands      []string
-	Observability ObservabilityReader
+	SiteDir  string
+	Offline  bool
+	Executor application.Executor
+	Commands []application.Command
 }
 
 type mode uint8
@@ -61,19 +36,15 @@ type mode uint8
 const (
 	dashboardMode mode = iota
 	commandsMode
-	argumentMode
 	outputMode
 )
 
-type commandItem struct{ usage string }
+type commandItem struct{ command application.Command }
 
-func (i commandItem) FilterValue() string { return i.usage }
-func (i commandItem) Title() string       { return commandPath(i.usage) }
+func (i commandItem) FilterValue() string { return i.command.Name }
+func (i commandItem) Title() string       { return i.command.Name }
 func (i commandItem) Description() string {
-	if commandPath(i.usage) == "network test" {
-		return "Live path diagnostic; creates temporary probes and cleans them up"
-	}
-	return ""
+	return i.command.Description
 }
 
 type snapshot struct {
@@ -82,14 +53,13 @@ type snapshot struct {
 	loadedAt   time.Time
 	loadError  error
 	liveOutput string
-	metrics    *Observability
+	metrics    *application.Metrics
 }
 
 type modelState struct {
 	options       Options
 	snapshot      snapshot
 	commands      list.Model
-	input         textinput.Model
 	viewport      viewport.Model
 	mode          mode
 	width         int
@@ -105,13 +75,13 @@ type modelState struct {
 type refreshResult struct {
 	report  statusmodel.Report
 	output  string
-	metrics *Observability
+	metrics *application.Metrics
 	err     error
 }
 
 type commandResult struct {
-	command string
-	output  string
+	command application.Command
+	result  application.Result
 	err     error
 }
 
@@ -126,13 +96,13 @@ func Run(options Options) error {
 	if options.SiteDir == "" {
 		options.SiteDir = "."
 	}
-	if options.Runner == nil {
-		return errors.New("TUI command runner is not configured")
+	if options.Executor == nil {
+		return errors.New("TUI application executor is not configured")
 	}
 	initial := loadSnapshot(options.SiteDir)
 	items := make([]list.Item, 0, len(options.Commands))
-	for _, usage := range options.Commands {
-		items = append(items, commandItem{usage: usage})
+	for _, command := range options.Commands {
+		items = append(items, commandItem{command: command})
 	}
 	delegate := list.NewDefaultDelegate()
 	delegate.ShowDescription = true
@@ -141,12 +111,8 @@ func Run(options Options) error {
 	commands.SetShowStatusBar(false)
 	commands.SetShowPagination(false)
 	commands.SetShowHelp(true)
-	input := textinput.New()
-	input.Prompt = "> "
-	input.Placeholder = "command arguments"
-	input.CharLimit = 4096
 	viewportModel := viewport.New()
-	state := modelState{options: options, snapshot: initial, commands: commands, input: input, viewport: viewportModel, mode: dashboardMode}
+	state := modelState{options: options, snapshot: initial, commands: commands, viewport: viewportModel, mode: dashboardMode}
 	program := tea.NewProgram(&state)
 	_, err := program.Run()
 	return err
@@ -181,8 +147,13 @@ func (m *modelState) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.running = false
 		m.progress = nil
 		m.mode = outputMode
-		m.command = msg.command
-		m.output = strings.TrimSpace(msg.output)
+		m.command = msg.command.Name
+		m.output = strings.TrimSpace(msg.result.Output)
+		if msg.result.Report.StatusModelVersion != "" {
+			m.snapshot.report = msg.result.Report
+			m.snapshot.loadedAt = time.Now().UTC()
+		}
+		m.snapshot.metrics = msg.result.Metrics
 		if msg.err != nil {
 			if m.output != "" {
 				m.output += "\n\n"
@@ -208,11 +179,6 @@ func (m *modelState) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.mode == commandsMode {
 		var cmd tea.Cmd
 		m.commands, cmd = m.commands.Update(msg)
-		return m, cmd
-	}
-	if m.mode == argumentMode {
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
 		return m, cmd
 	}
 	if m.mode == outputMode {
@@ -248,69 +214,33 @@ func (m *modelState) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if m.mode == commandsMode {
 			if selected, ok := m.commands.SelectedItem().(commandItem); ok {
-				m.command = commandPath(selected.usage)
-				m.input.SetValue(m.command)
-				m.input.Focus()
-				m.mode = argumentMode
+				return m, m.execute(selected.command)
 			}
-		} else if m.mode == argumentMode {
-			return m, m.execute(m.input.Value())
 		}
 	}
 	return m, nil
 }
 
-func (m *modelState) execute(line string) tea.Cmd {
-	args, err := shlex.Split(strings.TrimSpace(line))
-	if err != nil {
-		m.message = "Invalid command line: " + err.Error()
-		return nil
-	}
-	if len(args) == 0 {
-		m.message = "Enter a command first"
-		return nil
-	}
-	if args[0] == "boetticher" {
-		args = args[1:]
-	}
-	args = addSelectedSite(args, m.options.SiteDir)
-	command := strings.Join(args, " ")
+func (m *modelState) execute(command application.Command) tea.Cmd {
 	m.running = true
-	m.message = "Running " + command
+	m.message = "Running " + command.Name
 	m.progressLines = nil
 	progress := make(chan string, 128)
 	m.progress = progress
 	commandRun := func() tea.Msg {
-		var output bytes.Buffer
-		var errOutput bytes.Buffer
-		var runErr error
-		if containsSensitiveInput(args) {
-			close(progress)
-			return commandResult{command: command, output: "Sensitive operations use the existing secure terminal prompt.\n", err: runInteractive(args)}
-		}
-		progressOutput := &progressWriter{dst: &output, channel: progress}
-		runErr = m.options.Runner(args, strings.NewReader(""), progressOutput, &errOutput)
-		progressOutput.flush()
+		result, runErr := m.options.Executor.Execute(context.Background(), command.Request, func(event application.Event) {
+			if event.Message == "" {
+				return
+			}
+			select {
+			case progress <- event.Message:
+			default:
+			}
+		})
 		close(progress)
-		if errOutput.Len() > 0 {
-			output.WriteString(errOutput.String())
-		}
-		return commandResult{command: command, output: output.String(), err: runErr}
+		return commandResult{command: command, result: result, err: runErr}
 	}
 	return tea.Batch(commandRun, waitForCommandProgress(progress))
-}
-
-func addSelectedSite(args []string, siteDir string) []string {
-	if siteDir == "" || len(args) == 0 || args[0] == "init" || args[0] == "help" || args[0] == "tui" {
-		return args
-	}
-	for _, arg := range args {
-		if arg == "--site" || strings.HasPrefix(arg, "--site=") {
-			return args
-		}
-	}
-	result := append([]string(nil), args...)
-	return append(result, "--site", siteDir)
 }
 
 func waitForCommandProgress(channel <-chan string) tea.Cmd {
@@ -323,87 +253,12 @@ func waitForCommandProgress(channel <-chan string) tea.Cmd {
 	}
 }
 
-type progressWriter struct {
-	dst     io.Writer
-	channel chan<- string
-	partial string
-}
-
-func (w *progressWriter) Write(p []byte) (int, error) {
-	n, err := w.dst.Write(p)
-	if n == 0 {
-		return n, err
-	}
-	w.partial += string(p[:n])
-	for {
-		index := strings.IndexByte(w.partial, '\n')
-		if index < 0 {
-			break
-		}
-		w.send(w.partial[:index])
-		w.partial = w.partial[index+1:]
-	}
-	return n, err
-}
-
-func (w *progressWriter) flush() {
-	if w.partial != "" {
-		w.send(w.partial)
-		w.partial = ""
-	}
-}
-
-func (w *progressWriter) send(line string) {
-	line = strings.TrimSpace(line)
-	if !isProgressLine(line) {
-		return
-	}
-	select {
-	case w.channel <- line:
-	default:
-		// The completed command output remains authoritative. A bounded
-		// TUI channel must not slow or break the underlying operation.
-	}
-}
-
-func isProgressLine(line string) bool {
-	return strings.HasPrefix(line, "[") ||
-		strings.HasPrefix(line, "PASS ") ||
-		strings.HasPrefix(line, "FAIL ") ||
-		strings.HasPrefix(line, "FAIL:") ||
-		strings.HasPrefix(line, "Changed:") ||
-		strings.HasPrefix(line, "Timing:") ||
-		strings.HasPrefix(line, "timing stage=") ||
-		strings.HasPrefix(line, "Bootstrap:") ||
-		strings.HasPrefix(line, "Deployment:") ||
-		strings.HasPrefix(line, "Network test ") ||
-		strings.HasPrefix(line, "Network cleanup:")
-}
-
 func (m *modelState) refresh() tea.Cmd {
 	return func() tea.Msg {
-		var output bytes.Buffer
-		var errOutput bytes.Buffer
-		err := m.options.Runner([]string{"status", "--site", m.options.SiteDir, "--live", "--json"}, strings.NewReader(""), &output, &errOutput)
-		var report statusmodel.Report
-		decodeErr := json.Unmarshal(output.Bytes(), &report)
-		if decodeErr != nil {
-			if err == nil {
-				err = fmt.Errorf("decode live status: %w", decodeErr)
-			}
-		}
-		var metrics *Observability
-		if m.options.Observability != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			observed, metricsErr := m.options.Observability(ctx)
-			cancel()
-			if metricsErr != nil && err == nil {
-				err = metricsErr
-			} else if metricsErr == nil {
-				metrics = &observed
-			}
-		}
-		return refreshResult{report: report, output: output.String(), metrics: metrics, err: err}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		result, err := m.options.Executor.Execute(ctx, application.Request{Operation: application.OperationStatus, SiteDir: m.options.SiteDir, Live: true}, nil)
+		return refreshResult{report: result.Report, output: result.Output, metrics: result.Metrics, err: err}
 	}
 }
 
@@ -413,7 +268,6 @@ func (m *modelState) resize() {
 	}
 	left := min(38, max(28, m.width/3))
 	m.commands.SetSize(left, max(8, m.height-8))
-	m.input.SetWidth(max(20, m.width-left-8))
 	m.viewport.SetWidth(max(20, m.width-left-8))
 	m.viewport.SetHeight(max(5, m.height-10))
 }
@@ -434,17 +288,14 @@ func (m *modelState) mainView() string {
 	if m.width == 0 {
 		return "Loading Boetticher..."
 	}
-	if m.mode == argumentMode {
-		if m.running {
-			body := "Working..."
-			if len(m.progressLines) > 0 {
-				body += "\n\n" + strings.Join(m.progressLines, "\n")
-			} else {
-				body += "\nWaiting for the first progress update..."
-			}
-			return panel(m.command, body)
+	if m.running {
+		body := "Working..."
+		if len(m.progressLines) > 0 {
+			body += "\n\n" + strings.Join(m.progressLines, "\n")
+		} else {
+			body += "\nWaiting for the first progress update..."
 		}
-		return panel("Run command", m.input.View()+"\n\nEnter to run · esc to cancel")
+		return panel(m.command, body)
 	}
 	if m.mode == outputMode {
 		return panel(m.command, m.viewport.View())
@@ -527,34 +378,6 @@ func desiredReport(s model.Site, revision string) statusmodel.Report {
 		checks = append(checks, statusmodel.LegacyCheck{Name: module.Name, Status: status, Detail: detail})
 	}
 	return statusmodel.FromLegacy(revision, time.Now().UTC().Format(time.RFC3339), checks)
-}
-
-func commandPath(usage string) string {
-	usage = strings.TrimPrefix(usage, "boetticher ")
-	if index := strings.IndexByte(usage, '['); index >= 0 {
-		usage = usage[:index]
-	}
-	return strings.TrimSpace(usage)
-}
-
-func containsSensitiveInput(args []string) bool {
-	if len(args) >= 2 && args[0] == "module" && args[1] == "secrets" {
-		return true
-	}
-	for _, arg := range args {
-		if arg == "--secret" {
-			return true
-		}
-	}
-	return false
-}
-
-func runInteractive(args []string) error {
-	command := exec.Command(os.Args[0], args...)
-	command.Stdin = os.Stdin
-	command.Stdout = os.Stdout
-	command.Stderr = os.Stderr
-	return command.Run()
 }
 
 func safeError(err error) string {

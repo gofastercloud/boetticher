@@ -63,45 +63,75 @@ func TestRenderWithKnownHostsUsesSiteScopedTrustFile(t *testing.T) {
 	}
 }
 
-func TestRenderDirectPinsFreshApplianceTransport(t *testing.T) {
-	content, err := RenderDirect("192.0.2.50", "piadmin", "/tmp/operator key", "/tmp/kiosk known_hosts", 22)
+func TestRenderCompanionUsesTheManagedBastionAndSeparateTrustFiles(t *testing.T) {
+	enabled := true
+	s := model.NewDefaultSite("installation", "age1example")
+	s.BootstrapAddress = "192.0.2.10"
+	s.SSHIdentityFile = "/tmp/operator key"
+	s.Companion = &model.CompanionConfig{Enabled: &enabled, EthernetMAC: "dc:a6:32:e9:dd:82"}
+	content, err := RenderCompanion(s, "piadmin", "/tmp/operator key", "/tmp/platform known_hosts", "/tmp/companion known_hosts", 22)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, expected := range []string{
-		"Host boetticher-kiosk 192.0.2.50",
-		"HostName 192.0.2.50",
-		"Port 22",
+		"Host lab-bastion",
+		"HostName 192.0.2.10",
+		"User lab-jump",
+		"HostKeyAlias lab-proxmox-01",
+		`UserKnownHostsFile "/tmp/platform known_hosts"`,
+		"Host boetticher-companion",
+		"HostName " + model.CompanionAddress,
 		"User piadmin",
+		"HostKeyAlias " + model.CompanionHostname,
+		`UserKnownHostsFile "/tmp/companion known_hosts"`,
+		"ProxyJump lab-bastion",
 		"StrictHostKeyChecking yes",
-		`UserKnownHostsFile "/tmp/kiosk known_hosts"`,
-		`IdentityFile "/tmp/operator key"`,
-		"IdentitiesOnly yes",
-		"ForwardAgent no",
-		"RequestTTY no",
 	} {
 		if !strings.Contains(content, expected) {
-			t.Errorf("direct SSH configuration missing %q: %s", expected, content)
+			t.Errorf("companion SSH configuration missing %q: %s", expected, content)
 		}
 	}
-	if strings.Contains(content, "ProxyCommand") || strings.Contains(content, "StrictHostKeyChecking no") {
-		t.Fatal("direct SSH configuration weakened or redirected transport")
+	if strings.Contains(content, "StrictHostKeyChecking no") || strings.Contains(content, "ForwardAgent yes") {
+		t.Fatal("companion SSH configuration weakened its transport")
 	}
 }
 
-func TestRenderDirectRejectsUnsafeTransportInputs(t *testing.T) {
-	for _, address := range []string{"pi.example", "192.0.2.50:22", "2001:db8::50", "192.0.2.050"} {
-		if _, err := RenderDirect(address, "pi", "/tmp/key", "/tmp/known_hosts", 22); err == nil {
-			t.Fatalf("non-canonical address %q was accepted", address)
-		}
-	}
+func TestRenderCompanionRejectsUnsafeTransportInputs(t *testing.T) {
+	enabled := true
+	s := model.NewDefaultSite("installation", "age1example")
+	s.BootstrapAddress = "192.0.2.10"
+	s.Companion = &model.CompanionConfig{Enabled: &enabled, EthernetMAC: "dc:a6:32:e9:dd:82"}
 	for _, user := range []string{"pi;id", "pi user", "1pi"} {
-		if _, err := RenderDirect("192.0.2.50", user, "/tmp/key", "/tmp/known_hosts", 22); err == nil {
+		if _, err := RenderCompanion(s, user, "/tmp/key", "/tmp/platform", "/tmp/companion", 22); err == nil {
 			t.Fatalf("unsafe SSH user %q was accepted", user)
 		}
 	}
-	if _, err := RenderDirect("192.0.2.50", "pi", "/tmp/key\nProxyCommand sh -c id", "/tmp/known_hosts", 22); err == nil {
+	if _, err := RenderCompanion(s, "pi", "/tmp/key\nProxyCommand sh -c id", "/tmp/platform", "/tmp/companion", 22); err == nil {
 		t.Fatal("control-character SSH identity path was accepted")
+	}
+	if _, err := RenderCompanion(s, "pi", "/tmp/key", "/tmp/platform", "/tmp/companion", 0); err == nil {
+		t.Fatal("invalid SSH port was accepted")
+	}
+}
+
+func TestBastionDestinationsIncludesConfiguredCompanionOnly(t *testing.T) {
+	s := model.NewDefaultSite("installation", "age1example")
+	for _, destination := range BastionDestinations(s) {
+		if strings.HasPrefix(destination, model.CompanionAddress+":") {
+			t.Fatalf("disabled companion was exposed through the bastion: %v", destination)
+		}
+	}
+	enabled := true
+	s.Companion = &model.CompanionConfig{Enabled: &enabled, EthernetMAC: "dc:a6:32:e9:dd:82"}
+	destinations := BastionDestinations(s)
+	found := false
+	for _, destination := range destinations {
+		if destination == model.CompanionAddress+":22" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("configured companion is absent from bastion permit-open: %v", destinations)
 	}
 }
 
@@ -268,7 +298,7 @@ func TestBastionPolicyOnlyAllowsModelledHosts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(content, "PermitOpen 10.10.10.10:22") || !strings.Contains(content, "10.10.10.30:443") || strings.Contains(content, "10.10.50.") {
+	if !strings.Contains(content, "PermitOpen 10.10.10.10:22") || !strings.Contains(content, "10.10.10.20:443") || strings.Contains(content, "10.10.50.") {
 		t.Fatalf("unexpected bastion destination policy: %s", content)
 	}
 }
@@ -287,8 +317,6 @@ func TestRenderComposedSiteIncludesDeclaredModuleGuests(t *testing.T) {
 	for _, expected := range []string{
 		"Host lab-fw-01 lab-fw-01.lab.home.arpa",
 		"Host lab-dns-01 lab-dns-01.lab.home.arpa dns01 dns",
-		"Host lab-dns-02 lab-dns-02.lab.home.arpa dns02",
-		"Host lab-log-01 lab-log-01.lab.home.arpa logs",
 		"Host lab-monitor-01 lab-monitor-01.lab.home.arpa monitor",
 	} {
 		if !strings.Contains(content, expected) {
@@ -299,7 +327,7 @@ func TestRenderComposedSiteIncludesDeclaredModuleGuests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, destination := range []string{"10.10.99.1:22", "10.10.10.10:22", "10.10.10.20:22", "10.10.10.20:443", "10.10.10.40:22"} {
+	for _, destination := range []string{"10.10.99.1:22", "10.10.10.10:22", "10.10.10.20:22", "10.10.10.20:443"} {
 		if !strings.Contains(policy, destination) {
 			t.Errorf("composed bastion policy missing module destination %q", destination)
 		}

@@ -21,7 +21,7 @@ func TestAccessDescribesSupportedApplianceManagementBoundary(t *testing.T) {
 	text := output.String()
 	for _, want := range []string{
 		"boetticher CLI",
-		"generated portal/status surfaces",
+		"status --details",
 		"native product UI/API",
 		"Proxmox console/exec",
 		"Core SSH      internal controller transport only",
@@ -31,7 +31,7 @@ func TestAccessDescribesSupportedApplianceManagementBoundary(t *testing.T) {
 			t.Errorf("access output missing %q: %s", want, text)
 		}
 	}
-	if strings.Contains(text, "ssh firewall") || strings.Contains(text, "ssh dns") || strings.Contains(text, "ssh monitor") || strings.Contains(text, "ssh portal") {
+	if strings.Contains(text, "ssh firewall") || strings.Contains(text, "ssh dns") || strings.Contains(text, "ssh monitor") {
 		t.Fatalf("access output presents routine appliance SSH: %s", text)
 	}
 }

@@ -44,7 +44,7 @@
   ansible.builtin.replace:
     path: /etc/ssh/sshd_config.d/90-boetticher-jump.conf
     regexp: '^AllowUsers .*$'
-    replace: 'AllowUsers labadmin lab-jump lab-netprobe'
+    replace: 'AllowUsers root labadmin lab-jump lab-netprobe'
   notify: Validate and reload SSH
 
 - name: Extend restricted SSH policy for the network probe executor

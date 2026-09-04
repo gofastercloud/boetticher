@@ -54,8 +54,8 @@ func (r *bootstrapReport) Observe(event telemetry.Event) {
 
 func newBootstrapReport(out io.Writer, total int) *bootstrapReport {
 	started := time.Now()
-	runID := "bootstrap-" + started.UTC().Format("20060102T150405.000000000Z")
-	return &bootstrapReport{out: out, active: -1, total: total, runID: runID, operation: "bootstrap", startedAt: started}
+	runID := "enroll-" + started.UTC().Format("20060102T150405.000000000Z")
+	return &bootstrapReport{out: out, active: -1, total: total, runID: runID, operation: "enroll", startedAt: started}
 }
 
 func (r *bootstrapReport) setIdentity(platformVersion, modelRevision string) {
@@ -135,11 +135,11 @@ func (r *bootstrapReport) finalize(operationErr error) error {
 	}
 	fmt.Fprintln(r.out, r.measurements.summaryLine())
 	if operationErr == nil {
-		fmt.Fprintln(r.out, "Bootstrap: PASS")
+		fmt.Fprintln(r.out, "Enrollment: PASS")
 		r.renderTimingAvailability(timingErr)
 		return operationErr
 	}
-	fmt.Fprintln(r.out, "Bootstrap: FAIL")
+	fmt.Fprintln(r.out, "Enrollment: FAIL")
 	if r.active >= 0 && r.active < len(r.phases) && !r.phases[r.active].Completed {
 		fmt.Fprintf(r.out, "Failed phase: %s\n", r.phases[r.active].Name)
 	}
@@ -254,15 +254,15 @@ func bootstrapNextAction(err error) string {
 		return "No action required."
 	}
 	if containsAnyFold(err.Error(), "recovery copy", "recovery-confirmed", "age identity") {
-		return "Secure and verify the independent Age recovery copy, then rerun boetticher bootstrap with --recovery-confirmed."
+		return "Secure and verify the independent Age recovery copy, then rerun boetticher enroll with --recovery-confirmed."
 	}
 	if containsAnyFold(err.Error(), "storage-confirmed", "dedicated-data-disk", "storage device") {
-		return "Review the configured storage device, then rerun boetticher bootstrap with --storage-confirmed."
+		return "Review the configured storage device, then rerun boetticher enroll with --storage-confirmed."
 	}
 	if containsAnyFold(err.Error(), "trunk-interface", "physical VLAN", "physical trunk") {
-		return "Choose the intended physical interface, then rerun boetticher bootstrap with --trunk-interface IFACE."
+		return "Choose the intended physical interface, then rerun boetticher enroll with --trunk-interface IFACE."
 	}
-	return "Review the reported failure, then rerun boetticher bootstrap with the same site and trust options."
+	return "Review the reported failure, then rerun boetticher enroll with the same site and trust options."
 }
 
 func containsAnyFold(value string, terms ...string) bool {

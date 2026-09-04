@@ -16,7 +16,7 @@ func RenderExternalContract(s model.Site, plan Plan) (string, error) {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# boetticher external firewall contract\n\nModel revision: `%s`\n\n", plan.ModelRevision)
-	b.WriteString("This contract is generated from the boetticher v0.4 site model. It is desired network intent only: enforcement is NOT ACTIVE in boetticher external-gateway mode. The external gateway is operator-managed; boetticher does not configure, authenticate to, back up, or inspect its internal rule set.\n\n")
+	b.WriteString("This contract is generated from the boetticher 0.5 site model. It is desired network intent only: enforcement is NOT ACTIVE in boetticher external-gateway mode. The external gateway is operator-managed; boetticher does not configure, authenticate to, back up, or inspect its internal rule set.\n\n")
 	b.WriteString("## TRANSIT architecture\n\nTRANSIT is a fixed Core network primitive, not a module-owned network. The operator must provide the gateway interface and routing for the contract below.\n\n| Name | Semantic type | VLAN | CIDR | Gateway |\n| --- | --- | ---: | --- | --- |\n")
 	for _, zone := range s.Normalize().Network.Zones {
 		if zone.Type == model.ZoneTypeTransit {
@@ -59,7 +59,7 @@ func RenderExternalContract(s model.Site, plan Plan) (string, error) {
 			fmt.Fprintf(&b, "- Provider endpoint: `%s:%d`; resolved IPv4 addresses: `%s`; tunnel address: `%s`; profile digest: `%s`.\n", plan.AirVPN.EndpointHost, plan.AirVPN.EndpointPort, strings.Join(plan.AirVPN.EndpointAddresses, ", "), plan.AirVPN.TunnelAddress, plan.AirVPN.SHA256)
 		}
 		for _, route := range plan.PolicyRoutes {
-			fmt.Fprintf(&b, "- Source `%s` uses routing table `%d` at priority `%d`, with default route via `%s` on `%s`; internal site CIDRs remain direct.\n", route.SourceCIDR, route.Table, route.Priority, route.DefaultGateway, route.DefaultInterface)
+			fmt.Fprintf(&b, "- Source `%s` uses routing table `%d` at priority `%d`, with default route via `%s` on `%s`; the selected appliance source is also bound to its declared interface identity; internal site CIDRs remain direct.\n", route.SourceCIDR, route.Table, route.Priority, route.DefaultGateway, route.DefaultInterface)
 		}
 		b.WriteString("- The external gateway must NAT only the exact AirVPN provider UDP handshake from `10.10.5.20`; all other TRANSIT-to-WAN and TRANSIT-to-HOME forwarding remains blocked.\n")
 	}
@@ -69,7 +69,7 @@ func RenderExternalContract(s model.Site, plan Plan) (string, error) {
 	for _, declaration := range s.Declarations {
 		switch declaration.Module {
 		case "tailnet-router":
-			b.WriteString("### tailnet-router\n\n- Address: `10.10.5.10` on TRANSIT (`10.10.5.0/24`, gateway `10.10.5.1`).\n- Advertised route: `10.10.0.0/16`; Tailscale route approval is an operator action.\n- Subnet-route SNAT: enabled.\n- Tailscale runtime: `accept-dns=false`.\n- Permitted internal destinations: Bifrost HTTPS, portal HTTPS, and monitoring HTTPS only, plus DNS/NTP and required Tailscale control/DERP egress.\n- Explicit deny expectations: TRUSTED, SANDBOX, MGMT, Proxmox API, SSH, arbitrary SERVERS workloads, and Internet exit-node behavior remain denied.\n- Required return routing: Tailnet traffic for `10.10.0.0/16` returns through the TRANSIT gateway.\n\n")
+			b.WriteString("### tailnet-router\n\n- Address: `10.10.5.10` on TRANSIT (`10.10.5.0/24`, gateway `10.10.5.1`).\n- Advertised route: `10.10.0.0/16`; Tailscale route approval is an operator action.\n- Subnet-route SNAT: enabled.\n- Tailscale runtime: `accept-dns=false`.\n- Permitted internal destinations: Bifrost HTTPS and monitoring HTTPS only, plus DNS/NTP and required Tailscale control/DERP egress.\n- Explicit deny expectations: TRUSTED, SANDBOX, MGMT, Proxmox API, SSH, arbitrary SERVERS workloads, and Internet exit-node behavior remain denied.\n- Required return routing: Tailnet traffic for `10.10.0.0/16` returns through the TRANSIT gateway.\n\n")
 		case "bifrost":
 			b.WriteString("### bifrost\n\n- Address: `10.10.20.60` in SERVERS.\n- Frontend: HTTPS on `443` with required client certificate; no plaintext listener.\n- Backend: loopback-only `127.0.0.1:4000`.\n- Outbound: only the configured upstream HTTPS endpoint(s), plus DNS/NTP as required; unknown Internet destinations remain denied.\n\n")
 		case "airvpn":
