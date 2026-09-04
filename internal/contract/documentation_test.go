@@ -26,6 +26,7 @@ func TestPublicDocumentationMatchesV03Model(t *testing.T) {
 	home := read("docs/index.md")
 	start := read("docs/start.md")
 	lab := read("docs/lab.md")
+	modules := read("docs/modules.md")
 	commands := read("docs/commands.md")
 	site := model.NewDefaultSite("contract-installation", "age1contract")
 
@@ -72,13 +73,16 @@ func TestPublicDocumentationMatchesV03Model(t *testing.T) {
 			t.Errorf("Companion documentation is missing %q", want)
 		}
 	}
-	for name, document := range map[string]string{"README.md": readme, "docs/index.md": home, "docs/start.md": start, "docs/lab.md": lab, "docs/commands.md": commands} {
+	for name, document := range map[string]string{"README.md": readme, "docs/index.md": home, "docs/start.md": start, "docs/lab.md": lab, "docs/modules.md": modules, "docs/commands.md": commands} {
 		if !strings.Contains(document, model.ReleaseVersion) {
 			t.Errorf("%s is missing current release %s", name, model.ReleaseVersion)
 		}
 		if strings.Contains(document, "0.5.1") {
 			t.Errorf("%s retains the internal 0.5.1 milestone as the public release", name)
 		}
+	}
+	if strings.Contains(modules, "fresh 0.5 site") {
+		t.Error("docs/modules.md retains the internal 0.5 milestone as the fresh-site release")
 	}
 }
 
