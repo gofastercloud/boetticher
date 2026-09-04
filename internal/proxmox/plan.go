@@ -449,9 +449,7 @@ func PlanFromSite(s model.Site) (Plan, error) {
 		}
 		guestMAC := component.MAC
 		if guestMAC == "" && component.Module != "" {
-			if config, ok := s.ModuleConfig[component.Module]; ok && config.Network == model.ModuleNetworkAirVPN {
-				guestMAC = model.ManagedModuleMAC(component.VMID)
-			}
+			guestMAC = model.ManagedModuleMAC(component.VMID)
 		}
 		guest := GuestPlan{
 			VMID: component.VMID, Name: component.Name, Hostname: component.Hostname, Zone: component.Zone,
@@ -1660,7 +1658,7 @@ func ensureGuestMACFilter(ctx context.Context, client *Client, plan Plan, guest 
 	if guest.MAC == "" || guest.Owner == "" {
 		return nil
 	}
-	if err := client.SetGuestMACFilter(ctx, plan.Node, guest.Kind, guest.VMID); err != nil {
+	if err := client.SetGuestNetworkFilters(ctx, plan.Node, guest.Kind, guest.VMID, guest.MAC != model.ArrGuestMAC); err != nil {
 		return fmt.Errorf("HOLD: enable Proxmox MAC filtering for %s: %w", guest.Name, err)
 	}
 	return nil

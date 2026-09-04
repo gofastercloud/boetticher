@@ -778,7 +778,7 @@ func componentSourceMAC(s model.Site, component model.Component) string {
 	if component.MAC != "" {
 		return component.MAC
 	}
-	if moduleNetworkMode(s, component.Module) == model.ModuleNetworkAirVPN {
+	if component.Module != "" {
 		return model.ManagedModuleMAC(component.VMID)
 	}
 	return ""

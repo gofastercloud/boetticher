@@ -183,17 +183,23 @@ func (c *Client) DestroyLXC(ctx context.Context, node string, vmid int) error {
 	return nil
 }
 
-// SetGuestMACFilter enables the Proxmox guest firewall's bridge-level source
-// MAC check. Callers must already have proved the guest identity; the API
-// method intentionally accepts only a fixed guest kind and positive VMID.
-func (c *Client) SetGuestMACFilter(ctx context.Context, node string, kind GuestKind, vmid int) error {
+// SetGuestNetworkFilters enables Proxmox guest-level MAC filtering and, for
+// statically addressed guests, source-IP filtering. Callers must already have
+// proved the guest identity; the API method accepts only a fixed guest kind
+// and positive VMID.
+func (c *Client) SetGuestNetworkFilters(ctx context.Context, node string, kind GuestKind, vmid int, ipfilter bool) error {
 	if node == "" || vmid <= 0 || (kind != KindLXC && kind != KindQEMU) {
 		return errors.New("Proxmox node, guest kind, and positive VMID are required")
 	}
 	endpoint := path.Join("/nodes", node, string(kind), strconv.Itoa(vmid), "firewall", "options")
+	ipfilterValue := "0"
+	if ipfilter {
+		ipfilterValue = "1"
+	}
 	return c.Put(ctx, endpoint, url.Values{
 		"enable":     {"1"},
 		"macfilter":  {"1"},
+		"ipfilter":   {ipfilterValue},
 		"policy_in":  {"ACCEPT"},
 		"policy_out": {"ACCEPT"},
 	}, nil)

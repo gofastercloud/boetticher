@@ -42,7 +42,7 @@ func TestClientUsesTokenAndDecodesEnvelope(t *testing.T) {
 	}
 }
 
-func TestSetGuestMACFilterUsesGuestFirewallOptions(t *testing.T) {
+func TestSetGuestNetworkFiltersUsesGuestFirewallOptions(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method != http.MethodPut || r.URL.Path != "/api2/json/nodes/node/lxc/210/firewall/options" {
 			t.Fatalf("unexpected guest firewall request: %s %s", r.Method, r.URL.Path)
@@ -50,7 +50,7 @@ func TestSetGuestMACFilterUsesGuestFirewallOptions(t *testing.T) {
 		if err := r.ParseForm(); err != nil {
 			t.Fatal(err)
 		}
-		for key, want := range map[string]string{"enable": "1", "macfilter": "1", "policy_in": "ACCEPT", "policy_out": "ACCEPT"} {
+		for key, want := range map[string]string{"enable": "1", "macfilter": "1", "ipfilter": "1", "policy_in": "ACCEPT", "policy_out": "ACCEPT"} {
 			if got := r.Form.Get(key); got != want {
 				t.Fatalf("guest firewall option %s = %q, want %q", key, got, want)
 			}
@@ -58,7 +58,7 @@ func TestSetGuestMACFilterUsesGuestFirewallOptions(t *testing.T) {
 		return response([]byte(`{"data":null}`))
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
-	if err := client.SetGuestMACFilter(context.Background(), "node", KindLXC, 210); err != nil {
+	if err := client.SetGuestNetworkFilters(context.Background(), "node", KindLXC, 210, true); err != nil {
 		t.Fatal(err)
 	}
 }
