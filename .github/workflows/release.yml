@@ -2,7 +2,14 @@ name: Release bundle
 
 on:
   push:
-    tags: ['v0.5.*']
+    tags: ['v0.1.*']
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: Release version to build and qualify without publishing
+        required: true
+        default: '0.1.0'
+        type: string
 
 permissions:
   contents: read
@@ -55,23 +62,31 @@ jobs:
         id: release_identity
         shell: bash
         env:
-          RELEASE_VERSION_INPUT: ${{ github.ref_name }}
+          RELEASE_VERSION_INPUT: ${{ inputs.release_version || github.ref_name }}
           RELEASE_KEY_ID: ${{ secrets.BOETTICHER_RELEASE_KEY_ID }}
           RELEASE_TRUSTED_KEY_DATA: ${{ secrets.BOETTICHER_RELEASE_TRUSTED_KEYS }}
         run: |
           set -euo pipefail
           input_release_version="${RELEASE_VERSION_INPUT:-}"
           release_version="${input_release_version#v}"
-          if [[ ! "$release_version" =~ ^0\.5\.[0-9]+$ ]]; then
+          if [[ ! "$release_version" =~ ^0\.1\.[0-9]+$ ]]; then
             echo "unsupported release version: $release_version" >&2
             exit 1
           fi
           source_revision="$(git rev-parse HEAD)"
           [ "$source_revision" = "$GITHUB_SHA" ] || { echo "checkout is not the exact workflow revision" >&2; exit 1; }
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            if [ "$GITHUB_REF_TYPE" != branch ] || [ "$GITHUB_REF_NAME" != main ]; then
+              echo "manual release rehearsal must run from main" >&2
+              exit 1
+            fi
+          elif [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_TYPE" = tag ]; then
             [ "$GITHUB_REF_NAME" = "v$release_version" ] || { echo "release input does not match the pushed tag" >&2; exit 1; }
             tag_revision="$(git rev-list -n 1 "$GITHUB_REF_NAME")"
             [ "$tag_revision" = "$GITHUB_SHA" ] || { echo "release tag does not identify the workflow revision" >&2; exit 1; }
+          else
+            echo "release workflow requires a main-branch rehearsal or a version tag" >&2
+            exit 1
           fi
           [ -n "${RELEASE_KEY_ID:-}" ] || { echo "release signing key id is not configured" >&2; exit 1; }
           [ -n "${RELEASE_TRUSTED_KEY_DATA:-}" ] || { echo "release trusted public key data is not configured" >&2; exit 1; }
@@ -176,7 +191,7 @@ jobs:
           jq -e --arg release "$RELEASE_VERSION" --arg source "$GITHUB_SHA" \
             --arg controller_sha "$(sha256sum "dist/boetticher-${RELEASE_VERSION}" | awk '{print $1}')" \
             --argjson controller_size "$(stat -c '%s' "dist/boetticher-${RELEASE_VERSION}")" \
-            '(.release_version == $release) and (.source_commit == $source) and (.controller_sha256 == $controller_sha) and (.controller_size_bytes == $controller_size) and (.artifacts | length > 0) and (.files | length > 0)' \
+            '(.release_version == $release) and (.source_commit == $source) and (.controller_sha256 == $controller_sha) and (.controller_size_bytes == $controller_size) and (.artifacts | length == 13) and (.companion_binary != null) and (.files | length > 0)' \
             "$manifest" >/dev/null
           sha256sum "$bundle" "$manifest"
 
@@ -196,6 +211,7 @@ jobs:
             "$RUNNER_TEMP/controller-import.json" >/dev/null
 
       - name: Upload validated release outputs
+        if: github.event_name == 'push' && github.ref_type == 'tag'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: boetticher-release-${{ github.ref_name }}
@@ -208,8 +224,9 @@ jobs:
   publish:
     name: Publish the validated signed release
     needs: release
-    if: github.ref_type == 'tag' && needs.release.result == 'success'
+    if: github.event_name == 'push' && github.ref_type == 'tag' && needs.release.result == 'success'
     runs-on: ubuntu-24.04
+    environment: release
     permissions:
       contents: write
 

@@ -4,7 +4,34 @@ This is the short, human-readable history of the project: the things likely to
 matter when you run or contribute to a lab. It is not a tutorial; the current
 guide lives at [gofastercloud.github.io/boetticher](https://gofastercloud.github.io/boetticher/).
 
-## 0.5.0 — 2026-09-03
+## 0.1.0 — Unreleased
+
+This is the first supported Boetticher release. Earlier prototype through 0.5.x
+labels were internal development milestones and were never published as
+supported GitHub Releases.
+
+- Build the fixed firewall, DNS/NTP, and monitoring foundation from an
+  authenticated signed release bundle.
+- Keep desired-state changes separate from the exact live plan and bounded
+  deployment transaction that applies them.
+- Use endpoint-owned Smallstep certificate issuance while retaining deliberate
+  mTLS identities for browser, logging, and bounded service integrations.
+- Offer bounded first-party modules for logging, Gatus, Bifrost, AIOps,
+  printing, Tailnet routing, AirVPN, and Arr without adopting user workloads.
+- Add the external Companion after core setup through a MAC-bound SERVERS
+  reservation and restricted Proxmox bastion route.
+
+The platform and base appliance are versioned `0.1.0`. Module appliances retain
+their independent `1.0.0` versions and remain bound to exact signed content
+digests. The site API remains `boetticher/v3`, schema 3; this release renumber
+does not reset or weaken those compatibility identities.
+
+## Pre-release development history
+
+The following labels are retained as engineering history, not supported public
+release versions.
+
+### Internal milestone 0.5.0 — 2026-09-03
 
 - Make live deployment consume an authenticated release bundle and an
   immutable plan digest, while keeping site edits and module changes separate
@@ -19,9 +46,9 @@ guide lives at [gofastercloud.github.io/boetticher](https://gofastercloud.github
   the in-tree Bifrost implementation for AIOps.
 - Run the companion StreamDeck capability in Go with `matthewpi/streamdeck`.
 
-## 0.4.0 — 2026-08-29
+### Internal milestone 0.4.0 — 2026-08-29
 
-### Highlights
+#### Highlights
 
 - Make the normal loop `init` → `deploy` → `status`, with separate bootstrap
   and recovery tools for the rare bigger jobs.
@@ -35,7 +62,7 @@ guide lives at [gofastercloud.github.io/boetticher](https://gofastercloud.github
 - Improve host identity checks, appliance replacement, persistent storage, and
   the guarded physical-network workflow.
 
-### Compatibility notes
+#### Compatibility notes
 
 - 0.4 uses the `boetticher/v3` site format and fixed 0.4 network layout.
   Recreate older site settings with `boetticher init`.
@@ -45,7 +72,7 @@ guide lives at [gofastercloud.github.io/boetticher](https://gofastercloud.github
   a rendered configuration alone cannot tell you that a wire, host, or browser
   path is working.
 
-## 0.3.x development series
+### Internal 0.3.x development series
 
 - Established first-party modules, fixed guest names, dedicated ranges for
   platform and user guests, appliance images, persistent data, and `deploy` as
@@ -57,7 +84,7 @@ guide lives at [gofastercloud.github.io/boetticher](https://gofastercloud.github
 - Strengthened Proxmox 9.2 image import, retry, replacement, SSH, and hosted
   builder paths.
 
-## 0.2.0 — Unreleased
+### Internal milestone 0.2.0
 
 - Introduced the managed Debian gateway, role-oriented network zones,
   external-firewall handoff, read-only firewall/DHCP commands, and generated
@@ -65,7 +92,7 @@ guide lives at [gofastercloud.github.io/boetticher](https://gofastercloud.github
 - Replaced the earlier firewall-appliance integration with the current Debian
   gateway design.
 
-## 0.1.0 — Pre-alpha history
+### Prototype foundation
 
 The early prototype established the fixed network layout, encrypted site
 settings, platform boundary, generated portal, SSH bastion, DNS, storage

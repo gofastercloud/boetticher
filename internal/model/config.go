@@ -14,7 +14,7 @@ type SiteConfig struct {
 	// APIVersion identifies the site-file format.
 	APIVersion string `yaml:"api_version" json:"api_version" jsonschema:"const=boetticher/v3" jsonschema_description:"Version marker for this site file."`
 	// PlatformVersion is the Boetticher release targeted by this site.
-	PlatformVersion string `yaml:"platform_version" json:"platform_version,omitempty" jsonschema:"const=0.5.1" jsonschema_description:"Boetticher platform release targeted by this site."`
+	PlatformVersion string `yaml:"platform_version" json:"platform_version,omitempty" jsonschema:"const=0.1.0" jsonschema_description:"Boetticher platform release targeted by this site."`
 	// SchemaVersion identifies the shape of the site file.
 	SchemaVersion int `yaml:"schema_version" json:"schema_version,omitempty" jsonschema:"const=3" jsonschema_description:"Shape version of this site file."`
 	// StorageProfile chooses the fixed single-disk or dedicated-data-disk layout.

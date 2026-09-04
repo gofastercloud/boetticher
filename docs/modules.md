@@ -137,7 +137,7 @@ module. Attach the supported StreamDeck directly to the Companion Pi. The
 Companion receives no Proxmox credentials or USB passthrough configuration.
 
 On a 0.4 site, `boetticher companion migrate` can move the exact old
-`lab-streamdeck-01` guest to this arrangement. A fresh 0.5 site has no such
+`lab-streamdeck-01` guest to this arrangement. A fresh 0.1.0 site has no such
 guest to clean up.
 
 After the core platform is healthy, add the physical `eth0` MAC to desired

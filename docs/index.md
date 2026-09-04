@@ -59,7 +59,7 @@ description: Turn a clean Proxmox host into a useful, friendly, properly wired h
 </aside>
 
 <aside class="callout">
-  <p><strong>The pleasantly boring 0.5.1 network answer:</strong> the simplification keeps all six zones and their existing numbers—VLANs 5, 10, 20, 30, 40, and 99. The default virtual-only setup needs no switch reconfiguration; a physical trunk is still an optional later step.</p>
+  <p><strong>The pleasantly boring 0.1.0 network answer:</strong> the first supported release keeps all six zones and their existing numbers—VLANs 5, 10, 20, 30, 40, and 99. The default virtual-only setup needs no switch reconfiguration; a physical trunk is still an optional later step.</p>
 </aside>
 
 <aside class="callout">
