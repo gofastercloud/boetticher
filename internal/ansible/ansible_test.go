@@ -502,6 +502,34 @@ func TestAnsibleStrategyAllowsParallelConvergenceOnlyAfterFoundation(t *testing.
 	}
 }
 
+func TestAnsibleEnvironmentClearsAmbientConfiguration(t *testing.T) {
+	for key, value := range map[string]string{
+		"ANSIBLE_CONFIG":           "/tmp/attacker.cfg",
+		"ANSIBLE_FORKS":            "999",
+		"ANSIBLE_COLLECTIONS_PATH": "/tmp/collections",
+		"PYTHONPATH":               "/tmp/python",
+		"VIRTUAL_ENV":              "/tmp/venv",
+	} {
+		t.Setenv(key, value)
+	}
+	environment := ansibleEnvironment("ansible/site.yml", "", PhaseFull)
+	values := make(map[string]string, len(environment))
+	for _, entry := range environment {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	if values["ANSIBLE_CONFIG"] != "/dev/null" || values["ANSIBLE_FORKS"] != defaultAnsibleForks || values["PYTHONNOUSERSITE"] != "1" || values["PATH"] != safeControllerPath {
+		t.Fatalf("Ansible environment did not apply the bounded controller contract: %#v", values)
+	}
+	for _, key := range []string{"ANSIBLE_COLLECTIONS_PATH", "PYTHONPATH", "VIRTUAL_ENV"} {
+		if _, ok := values[key]; ok {
+			t.Fatalf("ambient Ansible/Python setting %s survived environment filtering", key)
+		}
+	}
+}
+
 func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	tempDir := t.TempDir()
 	inventoryPath := filepath.Join(tempDir, "site", "generated", "ansible", "inventory.ini")
@@ -516,14 +544,17 @@ func TestRunUsesAnsibleStdinPathForExtraVars(t *testing.T) {
 	forksPath := filepath.Join(tempDir, "forks")
 	inputPath := filepath.Join(tempDir, "input")
 	scriptPath := filepath.Join(tempDir, "ansible-playbook")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$ANSIBLE_ARGS_FILE\"\nprintf '%s' \"$ANSIBLE_FORKS\" > \"$ANSIBLE_FORKS_FILE\"\ncat > \"$ANSIBLE_INPUT_FILE\"\nif [ -n \"$BOETTICHER_ANSIBLE_TIMING_FILE\" ]; then printf '%s\\n' '{\"host\":\"lab-fw-01\",\"task\":\"fake task\",\"path\":\"fake.yml:1\",\"status\":\"ok\",\"duration_ms\":3,\"changed\":false,\"markers\":[\"dns-metadata-drift:servers.lab.home.arpa:ALLOW-DNSUPDATE-FROM:20:1:27ee1412f884f2f2:20:27ee1412\"]}' '{\"event\":\"task_batch\",\"task\":\"fake batch\",\"path\":\"fake.yml:2\",\"duration_ms\":7}' >> \"$BOETTICHER_ANSIBLE_TIMING_FILE\"; fi\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$BOETTICHER_TEST_ANSIBLE_ARGS_FILE\"\nprintf '%s' \"$ANSIBLE_FORKS\" > \"$BOETTICHER_TEST_ANSIBLE_FORKS_FILE\"\ncat > \"$BOETTICHER_TEST_ANSIBLE_INPUT_FILE\"\nif [ -n \"$BOETTICHER_ANSIBLE_TIMING_FILE\" ]; then printf '%s\\n' '{\"host\":\"lab-fw-01\",\"task\":\"fake task\",\"path\":\"fake.yml:1\",\"status\":\"ok\",\"duration_ms\":3,\"changed\":false,\"markers\":[\"dns-metadata-drift:servers.lab.home.arpa:ALLOW-DNSUPDATE-FROM:20:1:27ee1412f884f2f2:20:27ee1412\"]}' '{\"event\":\"task_batch\",\"task\":\"fake batch\",\"path\":\"fake.yml:2\",\"duration_ms\":7}' >> \"$BOETTICHER_ANSIBLE_TIMING_FILE\"; fi\n"
 	if err := os.WriteFile(scriptPath, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
+	previousFinder := findAnsiblePlaybook
+	findAnsiblePlaybook = func() (string, error) { return scriptPath, nil }
+	t.Cleanup(func() { findAnsiblePlaybook = previousFinder })
 	t.Setenv("PATH", tempDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("ANSIBLE_ARGS_FILE", argsPath)
-	t.Setenv("ANSIBLE_FORKS_FILE", forksPath)
-	t.Setenv("ANSIBLE_INPUT_FILE", inputPath)
+	t.Setenv("BOETTICHER_TEST_ANSIBLE_ARGS_FILE", argsPath)
+	t.Setenv("BOETTICHER_TEST_ANSIBLE_FORKS_FILE", forksPath)
+	t.Setenv("BOETTICHER_TEST_ANSIBLE_INPUT_FILE", inputPath)
 	previousForks, hadForks := os.LookupEnv("ANSIBLE_FORKS")
 	if err := os.Unsetenv("ANSIBLE_FORKS"); err != nil {
 		t.Fatal(err)
@@ -598,6 +629,10 @@ func TestRunWithIdentityUsesAndCleansTemporarySSHAgent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tempDir, "ansible-playbook"), []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$BOETTICHER_TEST_ANSIBLE_ARGS\"\ncat >/dev/null\nprintf '%s\\n' 'ok changed=0 unreachable=0 failed=0'\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
+	ansiblePath := filepath.Join(tempDir, "ansible-playbook")
+	previousFinder := findAnsiblePlaybook
+	findAnsiblePlaybook = func() (string, error) { return ansiblePath, nil }
+	t.Cleanup(func() { findAnsiblePlaybook = previousFinder })
 	t.Setenv("PATH", tempDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("BOETTICHER_TEST_AGENT_SOCKET", filepath.Join(tempDir, "agent.sock"))
 	t.Setenv("BOETTICHER_TEST_AGENT_IDENTITY", identityPath)

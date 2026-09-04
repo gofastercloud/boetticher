@@ -13,13 +13,14 @@ import (
 // and current controller authority. Keeping them in the runtime directory
 // avoids putting private keys or secret material in the cache.
 const managedCertificateCacheDirectory = "certificates"
+const maxManagedCertificateCacheBytes = 1 << 20
 
 func signOrReuseServerCertificate(authority pki.Authority, csrPEM, csrDir, cacheName, name, domain string, aliases []string) (pki.ServerCertificate, error) {
 	if err := pki.ValidateClientName(cacheName); err != nil {
 		return pki.ServerCertificate{}, fmt.Errorf("validate certificate cache name: %w", err)
 	}
 	cachePath := managedCertificateCachePath(csrDir, cacheName)
-	if cached, err := pathguard.ReadFile(cachePath); err == nil {
+	if cached, err := pathguard.ReadFileLimited(cachePath, maxManagedCertificateCacheBytes); err == nil {
 		if certificate, validationErr := pki.ValidateServerCertificate(authority, string(cached), csrPEM, name, domain, aliases, time.Now().UTC()); validationErr == nil {
 			return certificate, nil
 		}
@@ -38,7 +39,7 @@ func signOrReuseEndpointClientCertificate(authority pki.Authority, csrPEM, csrDi
 		return pki.ClientCertificate{}, fmt.Errorf("validate certificate cache name: %w", err)
 	}
 	cachePath := managedCertificateCachePath(csrDir, cacheName)
-	if cached, err := pathguard.ReadFile(cachePath); err == nil {
+	if cached, err := pathguard.ReadFileLimited(cachePath, maxManagedCertificateCacheBytes); err == nil {
 		if certificate, validationErr := pki.ValidateClientCertificate(authority, string(cached), csrPEM, name, domain, time.Now().UTC()); validationErr == nil {
 			return certificate, nil
 		}
@@ -57,7 +58,7 @@ func signOrReuseServiceClientCertificate(authority pki.Authority, csrPEM, csrDir
 		return pki.ClientCertificate{}, fmt.Errorf("validate certificate cache name: %w", err)
 	}
 	cachePath := managedCertificateCachePath(csrDir, cacheName)
-	if cached, err := pathguard.ReadFile(cachePath); err == nil {
+	if cached, err := pathguard.ReadFileLimited(cachePath, maxManagedCertificateCacheBytes); err == nil {
 		if certificate, validationErr := pki.ValidateServiceClientCertificate(authority, string(cached), csrPEM, identity, time.Now().UTC()); validationErr == nil {
 			return certificate, nil
 		}

@@ -20,6 +20,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/gatus"
 	"github.com/gofastercloud/boetticher/internal/logging"
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/pathguard"
 	"github.com/gofastercloud/boetticher/internal/pulse"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
 	"github.com/gofastercloud/boetticher/internal/telemetry"
@@ -457,6 +458,8 @@ func run(ctx context.Context, playbook, inventory string, variables []byte, limi
 	return runWithSSHConfig(ctx, playbook, inventory, variables, limit, phase, generatedSSHConfigPath(inventory), "root", identityData)
 }
 
+var findAnsiblePlaybook = ansiblePlaybookExecutable
+
 func runWithSSHConfig(ctx context.Context, playbook, inventory string, variables []byte, limit, phase, sshConfig, user string, identityData []byte) (result RunResult, resultErr error) {
 	var empty RunResult
 	if playbook == "" || inventory == "" || sshConfig == "" || user == "" {
@@ -465,9 +468,9 @@ func runWithSSHConfig(ctx context.Context, playbook, inventory string, variables
 	if err := sshconfig.ValidateExecutionConfig(sshConfig); err != nil {
 		return empty, fmt.Errorf("validate Ansible SSH configuration: %w", err)
 	}
-	executable, err := exec.LookPath("ansible-playbook")
+	executable, err := findAnsiblePlaybook()
 	if err != nil {
-		return empty, fmt.Errorf("ansible-playbook is required: %w", err)
+		return empty, err
 	}
 	variables, err = phaseVariables(variables, phase)
 	if err != nil {
@@ -608,10 +611,18 @@ func phaseVariables(variables []byte, phase string) ([]byte, error) {
 }
 
 func ansibleEnvironment(playbook, timingPath, phase string) []string {
-	environment := os.Environ()
-	if _, ok := os.LookupEnv("ANSIBLE_FORKS"); !ok {
-		environment = append(environment, "ANSIBLE_FORKS="+defaultAnsibleForks)
+	environment := make([]string, 0, len(os.Environ())+8)
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if strings.HasPrefix(key, "ANSIBLE_") || key == "PYTHONPATH" || key == "PYTHONHOME" || key == "PYTHONUSERBASE" || key == "VIRTUAL_ENV" || key == "PIP_CONFIG_FILE" {
+			continue
+		}
+		environment = append(environment, entry)
 	}
+	environment = setEnvironmentValue(environment, "PATH", safeControllerPath)
+	environment = setEnvironmentValue(environment, "ANSIBLE_CONFIG", "/dev/null")
+	environment = setEnvironmentValue(environment, "ANSIBLE_FORKS", defaultAnsibleForks)
+	environment = setEnvironmentValue(environment, "PYTHONNOUSERSITE", "1")
 	strategy := defaultAnsibleStrategy
 	if phase == PhaseBootstrap || phase == PhaseServices {
 		strategy = parallelAnsibleStrategy
@@ -631,6 +642,36 @@ func ansibleEnvironment(playbook, timingPath, phase string) []string {
 		}
 	}
 	return environment
+}
+
+const safeControllerPath = "/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
+
+func ansiblePlaybookExecutable() (string, error) {
+	for _, directory := range strings.Split(safeControllerPath, string(os.PathListSeparator)) {
+		candidate := filepath.Join(directory, "ansible-playbook")
+		resolved, err := filepath.EvalSymlinks(candidate)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("inspect ansible-playbook: %w", err)
+		}
+		if !filepath.IsAbs(resolved) {
+			return "", errors.New("ansible-playbook resolved to a non-absolute path")
+		}
+		if err := pathguard.ValidateNoSymlinkComponents(resolved); err != nil {
+			return "", fmt.Errorf("validate ansible-playbook path: %w", err)
+		}
+		info, err := os.Stat(resolved)
+		if err != nil {
+			return "", fmt.Errorf("stat ansible-playbook: %w", err)
+		}
+		if !info.Mode().IsRegular() || info.Mode()&0111 == 0 {
+			return "", errors.New("ansible-playbook must be an executable regular file")
+		}
+		return resolved, nil
+	}
+	return "", errors.New("ansible-playbook is required in a trusted controller executable directory")
 }
 
 func setEnvironmentValue(environment []string, key, value string) []string {
