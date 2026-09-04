@@ -30,10 +30,8 @@ server {
     include /run/boetticher/pulse-proxy-auth.conf;
 
     # The companion StreamDeck capability and controller read client are read-only and use
-    # scoped API tokens. Keep both mTLS identities limited to exact endpoints.
+    # scoped API tokens. Pulse validates the token and its scope at the application boundary.
     location = /api/health {
-        if ($ssl_client_verify != SUCCESS) { return 403; }
-        if ($ssl_client_s_dn !~ "^CN=(?:companion-streamdeck|client-boetticher-pulse-read\.{{ domain | regex_escape }}),O=boetticher$") { return 403; }
         limit_except GET { deny all; }
         proxy_pass http://127.0.0.1:7655;
         proxy_set_header Host $host;
@@ -45,8 +43,6 @@ server {
         proxy_set_header Remote-Role "";
     }
     location = /api/state/summary {
-        if ($ssl_client_verify != SUCCESS) { return 403; }
-        if ($ssl_client_s_dn !~ "^CN=(?:companion-streamdeck|client-boetticher-pulse-read\.{{ domain | regex_escape }}),O=boetticher$") { return 403; }
         limit_except GET { deny all; }
         proxy_pass http://127.0.0.1:7655;
         proxy_set_header Host $host;
@@ -58,8 +54,6 @@ server {
         proxy_set_header Remote-Role "";
     }
     location = /api/resources {
-        if ($ssl_client_verify != SUCCESS) { return 403; }
-        if ($ssl_client_s_dn !~ "^CN=(?:companion-streamdeck|client-boetticher-pulse-read\.{{ domain | regex_escape }}),O=boetticher$") { return 403; }
         limit_except GET { deny all; }
         proxy_pass http://127.0.0.1:7655;
         proxy_set_header Host $host;

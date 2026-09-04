@@ -461,14 +461,14 @@ func TestHolmesServiceUsesPinnedConfigDirectoryContract(t *testing.T) {
 	}
 }
 
-func TestMonitorFrontendKeepsMTLSExceptForScopedAgentRoutes(t *testing.T) {
+func TestMonitorFrontendUsesTokensForScopedReadRoutes(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "pulse-loopback.conf.j2"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(data)
-	if !strings.Contains(text, "ssl_verify_client optional") || !strings.Contains(text, "if ($ssl_client_verify != SUCCESS) { return 403; }") {
-		t.Fatal("monitor frontend does not distinguish mTLS UI and token-authenticated agent routes")
+	if !strings.Contains(text, "ssl_verify_client optional") || !strings.Contains(text, "scoped API tokens") {
+		t.Fatal("monitor frontend does not distinguish mTLS UI and token-authenticated read routes")
 	}
 	if strings.Contains(text, "ssl_verify_client off") {
 		t.Fatal("monitor frontend uses an invalid location-scoped client verification directive")
@@ -476,8 +476,22 @@ func TestMonitorFrontendKeepsMTLSExceptForScopedAgentRoutes(t *testing.T) {
 	if !strings.Contains(text, "location ^~ /api/agents/") {
 		t.Fatal("monitor frontend does not proxy the supported Pulse agent routes")
 	}
-	if got := strings.Count(text, "if ($ssl_client_verify != SUCCESS) { return 403; }"); got != 9 {
-		t.Fatalf("monitor frontend mTLS guards = %d, want the three StreamDeck routes, five exact AIOps routes, and the catch-all", got)
+	if got := strings.Count(text, "if ($ssl_client_verify != SUCCESS) { return 403; }"); got != 6 {
+		t.Fatalf("monitor frontend mTLS guards = %d, want the five exact AIOps routes and the catch-all", got)
+	}
+	for _, route := range []string{"location = /api/health", "location = /api/state/summary", "location = /api/resources"} {
+		start := strings.Index(text, route)
+		if start < 0 {
+			t.Fatalf("monitor frontend omitted %s", route)
+		}
+		end := strings.Index(text[start:], "\n    }")
+		if end < 0 {
+			t.Fatalf("monitor frontend has unterminated %s", route)
+		}
+		block := text[start : start+end]
+		if strings.Contains(block, "$ssl_client_verify") || strings.Contains(block, "$ssl_client_s_dn") {
+			t.Fatalf("token route %s still depends on client certificate identity: %s", route, block)
+		}
 	}
 	if !strings.Contains(text, `CN=aiops-pulse-(?:read|note)`) {
 		t.Fatal("monitor catch-all does not deny the AIOps identities outside their exact routes")
@@ -1787,7 +1801,6 @@ func TestPulseProxyAuthMapsOnlyApprovedClientIdentities(t *testing.T) {
 		"CN=client-operator.{{ domain }},O=boetticher",
 		"CN=client-lab-display-01-kiosk.{{ domain }},O=boetticher",
 		"CN=client-boetticher-reconciler.{{ domain }},O=boetticher",
-		"CN=(?:companion-streamdeck|client-boetticher-pulse-read",
 		"location = /api/health",
 		"location = /api/state/summary",
 		"location = /api/resources",
