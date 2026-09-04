@@ -1083,20 +1083,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return err
 	}
 	report.recordMutation("Services", "appliance runtime configuration", "reconciled", true)
-	var bifrostCertificate pki.ServerCertificate
 	var octoprintCertificate pki.ServerCertificate
 	var arrCertificate pki.ServerCertificate
 	var aiopsCertificates map[string]string
-	if modules.IsEnabled(s, "bifrost") {
-		bifrostCSR, readErr := os.ReadFile(filepath.Join(csrDir, "bifrost.csr.pem"))
-		if readErr != nil {
-			return fmt.Errorf("read endpoint-generated Bifrost CSR: %w", readErr)
-		}
-		bifrostCertificate, err = signOrReuseServerCertificate(authority, string(bifrostCSR), csrDir, "bifrost", "bifrost", s.Network.Domain, []string{"ai." + s.Network.Domain, "lab-bifrost-01." + s.Network.Domain})
-		if err != nil {
-			return fmt.Errorf("sign Bifrost endpoint CSR: %w", err)
-		}
-	}
 	if modules.IsEnabled(s, "printer") {
 		octoprintCSR, readErr := os.ReadFile(filepath.Join(csrDir, "octoprint.csr.pem"))
 		if readErr != nil {
@@ -1124,9 +1113,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		}
 	}
 	runtimeVariables["pki_bootstrap_phase"] = false
-	if modules.IsEnabled(s, "bifrost") {
-		runtimeVariables["bifrost_server_cert_pem"] = bifrostCertificate.ChainPEM
-	}
 	if modules.IsEnabled(s, "printer") {
 		runtimeVariables["octoprint_server_cert_pem"] = octoprintCertificate.ChainPEM
 	}

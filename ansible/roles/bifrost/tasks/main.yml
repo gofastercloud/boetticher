@@ -60,53 +60,33 @@
     group: root
     mode: '0700'
 
-- name: Generate the Bifrost endpoint private key locally
-  ansible.builtin.command:
-    argv: [openssl, genpkey, -algorithm, EC, -pkeyopt, ec_paramgen_curve:P-256, -out, /var/lib/boetticher/identity/tls/bifrost.key.pem]
-  args:
-    creates: /var/lib/boetticher/identity/tls/bifrost.key.pem
-
-- name: Restrict the Bifrost endpoint private key
-  ansible.builtin.file:
-    path: /var/lib/boetticher/identity/tls/bifrost.key.pem
-    owner: root
-    group: root
-    mode: '0600'
-
-- name: Generate the Bifrost endpoint CSR locally
-  ansible.builtin.command:
-    argv:
-      - openssl
-      - req
-      - -new
-      - -sha256
-      - -key
-      - /var/lib/boetticher/identity/tls/bifrost.key.pem
-      - -subj
-      - "/CN=bifrost.{{ domain }}"
-      - -addext
-      - "subjectAltName=DNS:bifrost.{{ domain }},DNS:ai.{{ domain }},DNS:lab-bifrost-01.{{ domain }}"
-      - -out
-      - /var/lib/boetticher/identity/tls/bifrost.csr.pem
-  args:
-    creates: /var/lib/boetticher/identity/tls/bifrost.csr.pem
-
-- name: Fetch the Bifrost CSR during the PKI bootstrap phase
-  ansible.builtin.fetch:
-    src: /var/lib/boetticher/identity/tls/bifrost.csr.pem
-    dest: "{{ pki_csr_output_dir }}/bifrost.csr.pem"
-    flat: true
-  when: pki_bootstrap_phase | default(false) | bool
-
-- name: Require controller-issued Bifrost server and client-CA material
+- name: Require Smallstep Bifrost server and retained client-CA material
   ansible.builtin.assert:
     that:
+      - step_ca_root_cert_pem is defined
+      - step_ca_intermediate_cert_pem is defined
       - client_ca_pem is defined
       - client_crl_pem is defined
       - client_crl_pem | length > 0
-      - (pki_bootstrap_phase | default(false) | bool) or (bifrost_server_cert_pem is defined and bifrost_server_cert_pem | length > 0)
-    fail_msg: "Bifrost nginx requires the existing Boetticher PKI server certificate and client CA"
+    fail_msg: "Bifrost nginx requires Smallstep server trust and retained client CA material"
   no_log: true
+
+- name: Issue and renew the Bifrost endpoint certificate from Smallstep
+  ansible.builtin.include_tasks: ../../tasks/step-ca-endpoint.yml
+  vars:
+    step_ca_endpoint_name: Bifrost
+    step_ca_endpoint_subject: "bifrost.{{ domain }}"
+    step_ca_endpoint_sans: ["bifrost.{{ domain }}", "ai.{{ domain }}", "lab-bifrost-01.{{ domain }}"]
+    step_ca_endpoint_root_path: /var/lib/boetticher/identity/tls/step-ca-root.crt
+    step_ca_endpoint_intermediate_path: /var/lib/boetticher/identity/tls/step-ca-intermediate.crt
+    step_ca_endpoint_certificate_path: /var/lib/boetticher/identity/tls/bifrost.crt.pem
+    step_ca_endpoint_key_path: /var/lib/boetticher/identity/tls/bifrost.key.pem
+    step_ca_endpoint_marker_path: /var/lib/boetticher/identity/tls/bifrost.step-ca
+    step_ca_endpoint_renewal_script: /usr/local/sbin/boetticher-renew-bifrost-certificate
+    step_ca_endpoint_renewal_service: /etc/systemd/system/boetticher-renew-bifrost-certificate.service
+    step_ca_endpoint_renewal_timer: /etc/systemd/system/boetticher-renew-bifrost-certificate.timer
+    step_ca_endpoint_reload_service: nginx
+    step_ca_endpoint_write_paths: /var/lib/boetticher/identity/tls /run
 
 - name: Install Bifrost server certificate and client CA
   ansible.builtin.copy:
@@ -116,10 +96,9 @@
     group: root
     mode: '0644'
   loop:
-    - {dest: /var/lib/boetticher/identity/tls/bifrost.crt.pem, content: "{{ bifrost_server_cert_pem | default('') }}"}
     - {dest: /var/lib/boetticher/identity/tls/client-ca.pem, content: "{{ client_ca_pem | default('') }}"}
   no_log: true
-  when: bifrost_server_cert_pem | default('') | length > 0
+  when: step_ca_root_cert_pem is defined
   notify: restart nginx
 
 - name: Install the current client certificate revocation list for Bifrost mTLS
@@ -131,7 +110,7 @@
     mode: '0644'
   no_log: true
   notify: restart nginx
-  when: bifrost_server_cert_pem | default('') | length > 0
+  when: step_ca_root_cert_pem is defined
 
 - name: Configure nginx as the only Bifrost listener
   ansible.builtin.copy:
@@ -166,7 +145,7 @@
               proxy_set_header X-Forwarded-Proto https;
           }
       }
-  when: bifrost_server_cert_pem | default('') | length > 0
+  when: step_ca_root_cert_pem is defined and step_ca_intermediate_cert_pem is defined
   notify: restart nginx
 
 - name: Remove the distribution nginx default site
@@ -180,7 +159,7 @@
     src: /etc/nginx/sites-available/bifrost.conf
     dest: /etc/nginx/sites-enabled/bifrost.conf
     state: link
-  when: bifrost_server_cert_pem | default('') | length > 0
+  when: step_ca_root_cert_pem is defined and step_ca_intermediate_cert_pem is defined
   notify: restart nginx
 
 - name: Create the nginx systemd drop-in directory
@@ -213,13 +192,13 @@
   register: bifrost_service_start
   failed_when: false
   loop: [bifrost, nginx]
-  when: bifrost_server_cert_pem | default('') | length > 0
+  when: step_ca_root_cert_pem is defined and step_ca_intermediate_cert_pem is defined
 
 - name: Inspect Bifrost service state after runtime configuration
   ansible.builtin.command: systemctl show bifrost --property=ActiveState --property=SubState --value
   register: bifrost_service_state
   changed_when: false
-  when: bifrost_server_cert_pem | default('') | length > 0
+  when: step_ca_root_cert_pem is defined and step_ca_intermediate_cert_pem is defined
 
 - name: Inspect Bifrost runtime credential materialization
   ansible.builtin.command: >-
@@ -230,7 +209,7 @@
   register: bifrost_runtime_credentials
   changed_when: false
   failed_when: false
-  when: bifrost_server_cert_pem | default('') | length > 0
+  when: step_ca_root_cert_pem is defined and step_ca_intermediate_cert_pem is defined
 
 - name: Collect bounded Bifrost service diagnostics when startup is unhealthy
   ansible.builtin.command: >-
@@ -240,7 +219,8 @@
   changed_when: false
   failed_when: false
   when:
-    - bifrost_server_cert_pem | default('') | length > 0
+    - step_ca_root_cert_pem is defined
+    - step_ca_intermediate_cert_pem is defined
     - >-
       (bifrost_service_start.results | default([]) | selectattr('item', 'equalto', 'bifrost') | selectattr('failed', 'defined') | selectattr('failed') | list | length > 0) or
       (bifrost_service_state.stdout_lines | default([]) != ['active', 'running']) or
@@ -254,7 +234,8 @@
   register: bifrost_recovery_result
   failed_when: false
   when:
-    - bifrost_server_cert_pem | default('') | length > 0
+    - step_ca_root_cert_pem is defined
+    - step_ca_intermediate_cert_pem is defined
     - >-
       (boetticher_credential_dropin_install is changed) or
       (bifrost_service_state.stdout_lines | default([]) != ['active', 'running']) or
@@ -264,7 +245,7 @@
   ansible.builtin.command: systemctl show bifrost --property=ActiveState --property=SubState --value
   register: bifrost_final_service_state
   changed_when: false
-  when: bifrost_server_cert_pem | default('') | length > 0
+  when: step_ca_root_cert_pem is defined and step_ca_intermediate_cert_pem is defined
 
 - name: Collect final bounded Bifrost diagnostics when recovery failed
   ansible.builtin.command: >-
@@ -274,7 +255,8 @@
   changed_when: false
   failed_when: false
   when:
-    - bifrost_server_cert_pem | default('') | length > 0
+    - step_ca_root_cert_pem is defined
+    - step_ca_intermediate_cert_pem is defined
     - bifrost_final_service_state.stdout_lines | default([]) != ['active', 'running']
 
 - name: Require the Bifrost backend to be running after runtime configuration
@@ -284,4 +266,4 @@
     fail_msg: >-
       Bifrost-compatible backend is unhealthy:
       {{ bifrost_final_service_diagnostics.stdout | default(bifrost_service_diagnostics.stdout | default('systemd status unavailable')) | trim }}
-  when: bifrost_server_cert_pem | default('') | length > 0
+  when: step_ca_root_cert_pem is defined and step_ca_intermediate_cert_pem is defined

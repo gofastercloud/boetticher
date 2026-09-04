@@ -879,6 +879,30 @@ func TestBifrostRestartsWhenAnyRuntimeCredentialIsMissing(t *testing.T) {
 	}
 }
 
+func TestBifrostRoleUsesSmallstepServerCertificateAndRetainsClientMTLS(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "bifrost", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, required := range []string{
+		"step_ca_root_cert_pem is defined",
+		"step_ca_intermediate_cert_pem is defined",
+		"include_tasks: ../../tasks/step-ca-endpoint.yml",
+		"step_ca_endpoint_subject: \"bifrost.{{ domain }}\"",
+		"ssl_verify_client on;",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Bifrost TLS contract is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"bifrost_server_cert_pem", "bifrost.csr.pem", "ansible.builtin.fetch:"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("Bifrost role retains controller server-certificate exchange %q", forbidden)
+		}
+	}
+}
+
 func TestMonitoringFrontendHandlersFlushBeforeReconciliation(t *testing.T) {
 	path := filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml")
 	data, err := os.ReadFile(path)
