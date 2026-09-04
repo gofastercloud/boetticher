@@ -103,11 +103,11 @@ repeated after clean-install deployment using the same exclusions.
 
 | Measure | 0.5.0 baseline | 0.5.1 source checkpoint |
 | --- | ---: | ---: |
-| Controller source LOC | 45,629 | 43,512 |
-| Controller test LOC | 23,065 | 22,532 |
+| Controller source LOC | 45,629 | 43,687 |
+| Controller test LOC | 23,065 | 22,689 |
 | Compiled repository packages | 49 | 50 |
 | Controller dependency closure | 1,140 | 1,139 |
-| Release controller size, local trust-data build | 53,899,362 bytes | 53,765,378 bytes |
+| Release controller size, local trust-data build | 53,899,362 bytes | 53,798,434 bytes |
 | Default Proxmox guests | 6 | 3 |
 | Public command menu entries | 9 | 9 |
 | Advanced command entries | 33 | 21 |
@@ -116,7 +116,7 @@ repeated after clean-install deployment using the same exclusions.
 | Ansible roles | 17 | 17 |
 | Unreachable functions | 24 | 0 |
 | Runtime mutation mechanisms | 4 | 4 |
-| Repository lines changed from baseline | — | 4,795 added / 6,919 deleted / -2,124 net |
+| Repository lines changed from baseline | — | 5,226 added / 6,970 deleted / -1,744 net |
 | Direct Go requirements | 13 | 14 |
 | Total Go requirement entries | 154 | 154 |
 | Module graph | 392 | 392 |
@@ -124,9 +124,9 @@ repeated after clean-install deployment using the same exclusions.
 | AWS SDK v2 modules | 19 | 19 |
 | Azure SDK modules | 6 | 6 |
 | KMS-named modules | 2 | 2 |
-| Lines added in `origin/0.5.0...HEAD` | — | 4,209 |
-| Lines deleted in `origin/0.5.0...HEAD` | — | 6,897 |
-| Net repository change | — | -2,688 |
+| Lines added in `origin/0.5.0...HEAD` | — | 5,226 |
+| Lines deleted in `origin/0.5.0...HEAD` | — | 6,970 |
+| Net repository change | — | -1,744 |
 
 The direct-requirement increase is the explicit declaration of the already
 transitive `golang.org/x/crypto` dependency used for the in-memory Apply
