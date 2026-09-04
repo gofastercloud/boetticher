@@ -40,7 +40,7 @@ build:
 
 release-bundle: companion-binary
 	@test -n "$(OUTPUT)" -a -n "$(SOURCE_COMMIT)" -a -n "$(WORKFLOW)" -a -n "$(KEY_ID)" -a -n "$(PRIVATE_KEY)"
-	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run ./cmd/release-bundle -output "$(OUTPUT)" -release "$(RELEASE_VERSION)" -source-commit "$(SOURCE_COMMIT)" -workflow "$(WORKFLOW)" -key-id "$(KEY_ID)" -private-key "$(PRIVATE_KEY)"
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go run ./cmd/release-bundle -output "$(OUTPUT)" -release "$(RELEASE_VERSION)" -source-commit "$(SOURCE_COMMIT)" -workflow "$(WORKFLOW)" -key-id "$(KEY_ID)" -private-key "$(PRIVATE_KEY)" $(if $(CONTROLLER_BINARY),-controller-binary "$(CONTROLLER_BINARY)",)
 
 companion-binary:
 	mkdir -p bin

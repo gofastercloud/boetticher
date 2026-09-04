@@ -98,6 +98,12 @@ and creates the Boetticher-owned LVM layout:
 Use `storage initialize` only after reviewing the exact device. It is the
 guarded destructive operation for a disposable, known-owned layout.
 
+The reference three-drive development host keeps Proxmox and the native
+maintainer build workspace on its internal NVMe boot disk. Its stable 1 TB
+device is reserved for the dedicated Boetticher guest-storage PV/VG/LVM
+layout. The failing 2 TB test disk is retired and disconnected before the next
+clean installation; it is not part of the supported platform layout.
+
 Enrollment also installs and verifies the headless Proxmox power policy:
 lid-close, suspend-key, hibernate-key, and idle actions are ignored, and the
 sleep targets are masked. Deliberate poweroff and reboot remain available.

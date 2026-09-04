@@ -83,6 +83,11 @@ Claims in this document use these boundaries:
 
 One evidence level does not prove a higher level.
 
+The official release workflow also binds the separately published controller
+binary's exact SHA-256 and size into the signed bundle manifest, then checks
+those values before publishing and proves that the release-built controller
+imports that same bundle.
+
 ## 0.5.1 source checkpoint measurements
 
 These are measured after the source hardening and before clean-install
@@ -92,11 +97,11 @@ repeated after clean-install deployment using the same exclusions.
 
 | Measure | 0.5.0 baseline | 0.5.1 source checkpoint |
 | --- | ---: | ---: |
-| Controller source LOC | 45,629 | 42,966 |
-| Controller test LOC | 23,065 | 22,110 |
+| Controller source LOC | 45,629 | 43,187 |
+| Controller test LOC | 23,065 | 22,312 |
 | Compiled repository packages | 49 | 48 |
 | Controller dependency closure | 1,140 | 1,139 |
-| Release controller size, local trust-data build | 53,899,362 bytes | 53,732,322 bytes |
+| Release controller size, local trust-data build | 53,899,362 bytes | 53,748,850 bytes |
 | Default Proxmox guests | 6 | 3 |
 | Public command menu entries | 9 | 9 |
 | Advanced command entries | 33 | 21 |
@@ -112,9 +117,9 @@ repeated after clean-install deployment using the same exclusions.
 | AWS SDK v2 modules | 19 | 19 |
 | Azure SDK modules | 6 | 6 |
 | KMS-named modules | 2 | 2 |
-| Lines added in `origin/0.5.0...HEAD` | — | 3,407 |
-| Lines deleted in `origin/0.5.0...HEAD` | — | 6,764 |
-| Net repository change | — | -3,357 |
+| Lines added in `origin/0.5.0...HEAD` | — | 3,981 |
+| Lines deleted in `origin/0.5.0...HEAD` | — | 6,886 |
+| Net repository change | — | -2,905 |
 
 The direct-requirement increase is the explicit declaration of the already
 transitive `golang.org/x/crypto` dependency used for the in-memory Apply

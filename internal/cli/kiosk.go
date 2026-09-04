@@ -198,9 +198,6 @@ func runCompanionSetup(args []string, out io.Writer) error {
 		return err
 	}
 	capabilities := s.Companion.Capabilities()
-	if !capabilities.Enabled {
-		return errors.New("companion is disabled in site.yml")
-	}
 	if *identity == "" {
 		*identity = s.SSHIdentityFile
 	}
@@ -290,6 +287,16 @@ func runCompanionSetup(args []string, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("load Boetticher PKI authority: %w", err)
 	}
+	if !capabilities.Display {
+		if err := revokeAndRemoveCompanionCertificate(*siteDir, s, kioskClientName, out); err != nil {
+			return fmt.Errorf("revoke disabled kiosk identity: %w", err)
+		}
+	}
+	if !capabilities.StreamDeck {
+		if err := revokeAndRemoveCompanionCertificate(*siteDir, s, companionStreamDeckIdentity, out); err != nil {
+			return fmt.Errorf("revoke disabled StreamDeck identity: %w", err)
+		}
+	}
 	certificate := pki.ClientCertificate{}
 	if capabilities.Display {
 		certificate, err = ensureKioskClientCertificate(*siteDir, s, authority)
@@ -303,9 +310,12 @@ func runCompanionSetup(args []string, out io.Writer) error {
 			return err
 		}
 	}
-	password, err := kioskImportPassword()
-	if err != nil {
-		return fmt.Errorf("generate temporary kiosk import password: %w", err)
+	password := ""
+	if capabilities.Display {
+		password, err = kioskImportPassword()
+		if err != nil {
+			return fmt.Errorf("generate temporary kiosk import password: %w", err)
+		}
 	}
 	variables, err := json.MarshalIndent(map[string]any{
 		"kiosk_become":                     *user != "root",
@@ -365,6 +375,35 @@ func runCompanionSetup(args []string, out io.Writer) error {
 		return fmt.Errorf("configure Raspberry Pi companion: %w", err)
 	}
 	fmt.Fprintf(out, "Companion setup: PASS %s configured; capabilities display=%t streamdeck=%t pulse-agent=%t\n", address, capabilities.Display, capabilities.StreamDeck, capabilities.PulseAgent)
+	return nil
+}
+
+func revokeAndRemoveCompanionCertificate(siteDir string, s model.Site, name string, out io.Writer) error {
+	runtimeDir := filepath.Join(site.RuntimeDir(s), "pki", name)
+	metadataPath := filepath.Join(siteDir, "generated", "pki", name+".yaml")
+	certificatePath := filepath.Join(runtimeDir, "client.crt.pem")
+	metadataExists := false
+	if _, err := os.Lstat(metadataPath); err == nil {
+		metadataExists = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if !metadataExists {
+		if _, err := os.Lstat(certificatePath); errors.Is(err, os.ErrNotExist) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+	}
+	if err := revokeClient(siteDir, runtimeDir, name, out); err != nil {
+		return err
+	}
+	if err := pathguard.RemoveAll(runtimeDir); err != nil {
+		return fmt.Errorf("remove cached certificate: %w", err)
+	}
+	if err := pathguard.RemoveAll(metadataPath); err != nil {
+		return fmt.Errorf("remove cached certificate metadata: %w", err)
+	}
 	return nil
 }
 

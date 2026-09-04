@@ -791,6 +791,66 @@
       | default(false)
       | bool)
 
+- name: Remove disabled Pulse agent material
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /usr/local/bin/pulse-agent
+    - /etc/systemd/system/pulse-agent.service
+    - /etc/systemd/system/pulse-agent.service.d/10-boetticher-credentials.conf
+    - /var/lib/boetticher/credentials/pulse-agent-token.cred
+    - /var/lib/boetticher/credentials/pulse-agent-token.sha256
+    - /var/lib/boetticher/pulse-agent
+    - /usr/local/share/ca-certificates/boetticher-pulse-root.crt
+    - /usr/local/share/ca-certificates/boetticher-pulse-issuing.crt
+  when: not (kiosk_pulse_agent_enabled | default(true) | bool)
+
+- name: Refresh system CA trust after removing disabled Pulse agent material
+  ansible.builtin.command: update-ca-certificates
+  changed_when: false
+  when: not (kiosk_pulse_agent_enabled | default(true) | bool)
+
+- name: Remove disabled display capability material
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/pulse-kiosk.service
+    - /etc/systemd/system/pulse-kiosk-stats.service
+    - /etc/systemd/system/pulse-kiosk-stats.timer
+    - /etc/systemd/system/pulse-kiosk.service.d/20-pulse-dashboard.conf
+    - /usr/local/libexec/pulse-kiosk-stats
+    - /etc/chromium/policies/managed/boetticher-kiosk.json
+    - /etc/pam.d/cage
+    - /home/kiosk/visualizer
+    - /home/kiosk/pulse-refresh-extension
+    - /home/kiosk/.pki/nssdb
+  when: not (kiosk_display_enabled | default(true) | bool)
+
+- name: Remove disabled StreamDeck capability material
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /etc/systemd/system/boetticher-streamdeck.service
+    - /usr/local/libexec/boetticher-streamdeck
+    - /etc/boetticher/streamdeck.json
+    - /etc/udev/rules.d/70-boetticher-streamdeck.rules
+    - /var/lib/boetticher/companion-streamdeck
+    - /var/lib/boetticher/credentials/companion-streamdeck-pulse-token.cred
+    - /var/lib/boetticher/credentials/companion-streamdeck-pulse-token.sha256
+    - /var/lib/boetticher/streamdeck
+  when: not (kiosk_streamdeck_enabled | default(true) | bool)
+
+- name: Reload systemd after removing disabled companion units
+  ansible.builtin.command: systemctl daemon-reload
+  changed_when: false
+  when: >-
+    not (kiosk_display_enabled | default(true) | bool) or
+    not (kiosk_streamdeck_enabled | default(true) | bool) or
+    not (kiosk_pulse_agent_enabled | default(true) | bool)
+
 - name: Require the exact companion StreamDeck identity inputs
   ansible.builtin.assert:
     that:

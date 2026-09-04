@@ -28,6 +28,7 @@ func main() {
 	workflow := flag.String("workflow", "", "release workflow identity included in provenance")
 	controllerMin := flag.String("controller-min", model.ReleaseVersion, "minimum compatible controller release")
 	controllerMax := flag.String("controller-max", model.ReleaseVersion, "maximum compatible controller release")
+	controllerBinary := flag.String("controller-binary", "", "release-built controller binary to bind by digest")
 	keyID := flag.String("key-id", "", "release signing key id")
 	privateKeyPath := flag.String("private-key", "", "0600 file containing base64 or raw Ed25519 private key")
 	flag.Parse()
@@ -39,6 +40,22 @@ func main() {
 	}
 	if *companionBinary == "" {
 		*companionBinary = filepath.Join(*siteDir, "bin", "boetticher-streamdeck-linux-arm64")
+	}
+	controllerSHA256 := ""
+	var controllerSizeBytes int64
+	if *controllerBinary != "" {
+		info, err := os.Lstat(*controllerBinary)
+		if err != nil {
+			fatal("inspect controller binary: %v", err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() < 0 {
+			fatal("controller binary must be a regular, non-symlink file")
+		}
+		controllerSHA256, err = artifacts.ContentSHA256ForFile(*controllerBinary)
+		if err != nil {
+			fatal("hash controller binary: %v", err)
+		}
+		controllerSizeBytes = info.Size()
 	}
 	if err := artifacts.RebindEvidencePaths(*siteDir); err != nil {
 		fatal("bind qualification evidence to local artifact bytes: %v", err)
@@ -81,6 +98,7 @@ func main() {
 	manifest, err := artifacts.BuildReleaseBundleWithMetadataAndCompanion(*output, artifacts.ReleaseBuildMetadata{
 		ReleaseVersion: *releaseVersion, SourceCommit: *sourceCommit, BuildWorkflow: *workflow,
 		ControllerMin: *controllerMin, ControllerMax: *controllerMax,
+		ControllerSHA256: controllerSHA256, ControllerSizeBytes: controllerSizeBytes,
 		QualificationPolicyVersion: artifacts.QualificationPolicyVersion,
 	}, model.APIVersion, model.ConfigSchemaVersion, privateKey, *keyID, inputs, *companionBinary)
 	if err != nil {

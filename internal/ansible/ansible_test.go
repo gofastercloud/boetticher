@@ -96,6 +96,19 @@ func TestCompanionCapabilityPackagesAndCleanupAreIndependent(t *testing.T) {
 	if !strings.Contains(text, "Inspect optional companion capability unit files") || !strings.Contains(text, "companion_capability_units.results") {
 		t.Fatal("disabled companion cleanup can attempt to stop units that were never installed")
 	}
+	for _, expected := range []string{
+		"Remove disabled Pulse agent material",
+		"/var/lib/boetticher/credentials/pulse-agent-token.cred",
+		"Remove disabled display capability material",
+		"/home/kiosk/.pki/nssdb",
+		"Remove disabled StreamDeck capability material",
+		"/var/lib/boetticher/credentials/companion-streamdeck-pulse-token.cred",
+		"Reload systemd after removing disabled companion units",
+	} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("disabled companion cleanup is missing %q", expected)
+		}
+	}
 }
 
 func TestPhaseVariablesExposeOnlySafeDeploymentPhaseMetadata(t *testing.T) {

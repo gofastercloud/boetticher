@@ -129,6 +129,17 @@ jobs:
             BOETTICHER_SCAN_LOG_ROOT="$RUNNER_TEMP/boetticher-scan-logs" \
             ./scripts/scan-images.sh scan-images
 
+      - name: Build the controller with the release trust root
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.release_identity.outputs.version }}
+          RELEASE_TRUSTED_KEY_DATA: ${{ secrets.BOETTICHER_RELEASE_TRUSTED_KEYS }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          go build -trimpath -ldflags "-s -w -X github.com/gofastercloud/boetticher/internal/artifacts.EmbeddedTrustedReleaseKeyData=${RELEASE_TRUSTED_KEY_DATA}" \
+            -o "dist/boetticher-${RELEASE_VERSION}" ./cmd/boetticher
+
       - name: Assemble the complete signed release bundle
         shell: bash
         env:
@@ -149,7 +160,8 @@ jobs:
             SOURCE_COMMIT="$GITHUB_SHA" \
             WORKFLOW="$GITHUB_WORKFLOW_REF" \
             KEY_ID="$RELEASE_KEY_ID" \
-            PRIVATE_KEY="$signing_key"
+            PRIVATE_KEY="$signing_key" \
+            CONTROLLER_BINARY="dist/boetticher-${RELEASE_VERSION}"
           cp "$RUNNER_TEMP/boetticher-${RELEASE_VERSION}.tar.gz" "dist/boetticher-${RELEASE_VERSION}.tar.gz"
 
       - name: Verify final manifest identity and artifact binding
@@ -162,20 +174,11 @@ jobs:
           manifest="$RUNNER_TEMP/boetticher-${RELEASE_VERSION}-manifest.json"
           tar -xOzf "$bundle" manifest.json > "$manifest"
           jq -e --arg release "$RELEASE_VERSION" --arg source "$GITHUB_SHA" \
-            '(.release_version == $release) and (.source_commit == $source) and (.artifacts | length > 0) and (.files | length > 0)' \
+            --arg controller_sha "$(sha256sum "dist/boetticher-${RELEASE_VERSION}" | awk '{print $1}')" \
+            --argjson controller_size "$(stat -c '%s' "dist/boetticher-${RELEASE_VERSION}")" \
+            '(.release_version == $release) and (.source_commit == $source) and (.controller_sha256 == $controller_sha) and (.controller_size_bytes == $controller_size) and (.artifacts | length > 0) and (.files | length > 0)' \
             "$manifest" >/dev/null
           sha256sum "$bundle" "$manifest"
-
-      - name: Build the controller with the release trust root
-        shell: bash
-        env:
-          RELEASE_VERSION: ${{ steps.release_identity.outputs.version }}
-          RELEASE_TRUSTED_KEY_DATA: ${{ secrets.BOETTICHER_RELEASE_TRUSTED_KEYS }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          go build -trimpath -ldflags "-s -w -X github.com/gofastercloud/boetticher/internal/artifacts.EmbeddedTrustedReleaseKeyData=${RELEASE_TRUSTED_KEY_DATA}" \
-            -o "dist/boetticher-${RELEASE_VERSION}" ./cmd/boetticher
 
       - name: Prove the release controller imports the exact bundle
         shell: bash

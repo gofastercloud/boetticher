@@ -45,6 +45,8 @@ type ReleaseManifest struct {
 	Architecture               string            `json:"architecture"`
 	ControllerMin              string            `json:"controller_min_version"`
 	ControllerMax              string            `json:"controller_max_version"`
+	ControllerSHA256           string            `json:"controller_sha256,omitempty"`
+	ControllerSizeBytes        int64             `json:"controller_size_bytes,omitempty"`
 	QualificationPolicyVersion string            `json:"qualification_policy_version"`
 	Artifacts                  []ReleaseArtifact `json:"artifacts"`
 	Files                      []ReleaseFile     `json:"files"`
@@ -60,6 +62,8 @@ type ReleaseBuildMetadata struct {
 	BuildWorkflow              string
 	ControllerMin              string
 	ControllerMax              string
+	ControllerSHA256           string
+	ControllerSizeBytes        int64
 	QualificationPolicyVersion string
 }
 
@@ -178,6 +182,7 @@ func BuildReleaseBundleWithMetadataAndCompanion(output string, metadata ReleaseB
 		SiteAPIVersion: siteAPIVersion, SchemaVersion: schemaVersion,
 		ArtifactABIVersion: ArtifactABIVersion, Architecture: Architecture,
 		ControllerMin: metadata.ControllerMin, ControllerMax: metadata.ControllerMax,
+		ControllerSHA256: metadata.ControllerSHA256, ControllerSizeBytes: metadata.ControllerSizeBytes,
 		QualificationPolicyVersion: metadata.QualificationPolicyVersion,
 	}
 	if manifest.QualificationPolicyVersion == "" {
@@ -544,6 +549,9 @@ func verifyManifest(manifestBytes []byte, signature ManifestSignature, trusted [
 func validateReleaseManifest(manifest ReleaseManifest) error {
 	if manifest.FormatVersion != ReleaseBundleFormatVersion || manifest.ReleaseVersion == "" || manifest.SourceCommit == "" || manifest.BuildWorkflow == "" || manifest.SiteAPIVersion == "" || manifest.SchemaVersion <= 0 || manifest.ArtifactABIVersion != ArtifactABIVersion || manifest.Architecture != Architecture || manifest.ControllerMin == "" || manifest.ControllerMax == "" || manifest.QualificationPolicyVersion == "" {
 		return errors.New("release manifest has incomplete or unsupported compatibility fields")
+	}
+	if (manifest.ControllerSHA256 == "") != (manifest.ControllerSizeBytes == 0) || (manifest.ControllerSHA256 != "" && (!isSHA256(manifest.ControllerSHA256) || manifest.ControllerSizeBytes < 0 || manifest.ControllerSizeBytes > MaxReleaseFileBytes)) {
+		return errors.New("release controller binding is incomplete or invalid")
 	}
 	if len(manifest.Artifacts) == 0 || len(manifest.Files) == 0 {
 		return errors.New("release manifest has no artifacts or files")

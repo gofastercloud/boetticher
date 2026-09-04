@@ -104,7 +104,7 @@ validate_native_connection() {
 require_native_workspace() {
   validate_native_connection
   [ -z "$builder_device" ] || fail 'BOETTICHER_LOCAL_BUILDER_DEVICE is only valid for the separate maintainer storage initializer'
-  workspace_check='test -d /var/lib/boetticher/local-builder && test -w /var/lib/boetticher/local-builder && test "$(findmnt -no TARGET -T /var/lib/boetticher/local-builder)" = /'
+  workspace_check='test ! -L /var/lib/boetticher/local-builder && install -d -m 0755 /var/lib/boetticher/local-builder && test -w /var/lib/boetticher/local-builder && test "$(findmnt -no TARGET -T /var/lib/boetticher/local-builder)" = /'
   if ! native_ssh "$workspace_check"; then
     fail 'native build host must keep /var/lib/boetticher/local-builder on its root filesystem'
   fi

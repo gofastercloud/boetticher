@@ -50,6 +50,12 @@ func TestReleaseBundleSignsAndAtomicallyImportsQualifiedArtifacts(t *testing.T) 
 	if err := os.WriteFile(companionPath, companionBytes, 0700); err != nil {
 		t.Fatal(err)
 	}
+	controllerPath := filepath.Join(root, "boetticher-controller")
+	controllerBytes := []byte("release-built controller")
+	if err := os.WriteFile(controllerPath, controllerBytes, 0700); err != nil {
+		t.Fatal(err)
+	}
+	controllerSHA256 := fmtSHA256(controllerBytes)
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -58,12 +64,16 @@ func TestReleaseBundleSignsAndAtomicallyImportsQualifiedArtifacts(t *testing.T) 
 	manifest, err := BuildReleaseBundleWithMetadataAndCompanion(bundlePath, ReleaseBuildMetadata{
 		ReleaseVersion: "0.5.0", SourceCommit: "local-build", BuildWorkflow: "local",
 		ControllerMin: "0.5.0", ControllerMax: "0.5.0", QualificationPolicyVersion: QualificationPolicyVersion,
+		ControllerSHA256: controllerSHA256, ControllerSizeBytes: int64(len(controllerBytes)),
 	}, model.APIVersion, model.SchemaVersion, private, "release-2026", []ReleaseInput{{Artifact: artifact, ArtifactPath: artifactPath, EvidencePath: evidencePath, QualificationFiles: qualificationFiles}}, companionPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(manifest.Files) != 8 || len(manifest.Artifacts) != 1 || manifest.CompanionBinary == nil {
 		t.Fatalf("unexpected release manifest: %#v", manifest)
+	}
+	if manifest.ControllerSHA256 != controllerSHA256 || manifest.ControllerSizeBytes != int64(len(controllerBytes)) {
+		t.Fatalf("controller binding = %s/%d, want %s/%d", manifest.ControllerSHA256, manifest.ControllerSizeBytes, controllerSHA256, len(controllerBytes))
 	}
 	destination := filepath.Join(root, "generated", "release")
 	imported, err := ImportReleaseBundle(bundlePath, destination, []TrustedReleaseKey{{ID: "release-2026", PublicKey: public}}, "0.5.0", model.APIVersion, model.SchemaVersion)

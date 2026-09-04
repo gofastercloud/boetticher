@@ -134,6 +134,61 @@ func TestKioskSetupRequiresConfirmationForMutation(t *testing.T) {
 	}
 }
 
+func TestDisabledCompanionCertificateTeardownRecordsRevocationAndRemovesCache(t *testing.T) {
+	dir := t.TempDir()
+	runtime := filepath.Join(t.TempDir(), "runtime")
+	t.Setenv("BOETTICHER_RUNTIME_DIR", runtime)
+	s := model.NewDefaultSite("installation", "age1example")
+	authority, err := pki.GenerateAuthority(time.Now().UTC(), s.Network.Domain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issued, err := pki.IssueClient(authority, kioskClientName, s.Network.Domain, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeDir := filepath.Join(site.RuntimeDir(s), "pki", kioskClientName)
+	if err := os.MkdirAll(runtimeDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []struct {
+		path string
+		data []byte
+		mode os.FileMode
+	}{
+		{filepath.Join(runtimeDir, "client.key.pem"), []byte(issued.KeyPEM), 0600},
+		{filepath.Join(runtimeDir, "client.crt.pem"), []byte(issued.CertPEM), 0644},
+		{filepath.Join(runtimeDir, "chain.crt.pem"), []byte(issued.ChainPEM), 0644},
+	} {
+		if err := os.WriteFile(file.path, file.data, file.mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	metadataPath := filepath.Join(dir, "generated", "pki", kioskClientName+".yaml")
+	if err := os.MkdirAll(filepath.Dir(metadataPath), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metadataPath, []byte("name: "+kioskClientName+"\nserial: "+issued.Serial+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "generated", "pki", "revoked"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := revokeAndRemoveCompanionCertificate(dir, s, kioskClientName, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(runtimeDir); !os.IsNotExist(err) {
+		t.Fatalf("cached companion certificate directory remains: %v", err)
+	}
+	if _, err := os.Stat(metadataPath); !os.IsNotExist(err) {
+		t.Fatalf("cached companion certificate metadata remains: %v", err)
+	}
+	revocations, err := site.LoadClientRevocations(dir)
+	if err != nil || len(revocations) != 1 || revocations[0].Serial != issued.Serial {
+		t.Fatalf("companion revocations = %#v, %v", revocations, err)
+	}
+}
+
 func TestValidateKioskSSHInputsRejectsSymlinkedKnownHostsParent(t *testing.T) {
 	dir := t.TempDir()
 	identity := filepath.Join(dir, "id_ed25519")
