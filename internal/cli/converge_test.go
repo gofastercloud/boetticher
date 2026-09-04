@@ -709,7 +709,7 @@ func TestPulseReadTokenRecoveryIsBoundedToUnauthorizedResponses(t *testing.T) {
 	text := string(data)
 	for _, required := range []string{
 		"readTokenRefreshed := false",
-		`pki.IssueClient(authority, "client-operator"`,
+		`pki.IssueClient(authority, "operator"`,
 		"pulse.NewReadClient(pulse.ClientConfig{",
 		"CAPEM:",
 		"pulseRead.StateSummary(ctx)",

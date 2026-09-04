@@ -1102,7 +1102,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return fmt.Errorf("open Pulse API tunnel through Proxmox bastion: %w", err)
 		}
 		pulseBaseURL := "https://" + pulseForward.Address()
-		pulseOperatorCertificate, issueErr := pki.IssueClient(authority, "client-operator", s.Network.Domain, time.Now().UTC())
+		pulseOperatorCertificate, issueErr := pki.IssueClient(authority, "operator", s.Network.Domain, time.Now().UTC())
 		if issueErr != nil {
 			return fmt.Errorf("issue Pulse operator client certificate: %w", issueErr)
 		}
