@@ -1,0 +1,10 @@
+[Unit]
+Description=Check the Pulse endpoint certificate for renewal
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

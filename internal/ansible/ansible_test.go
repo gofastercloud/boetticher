@@ -868,7 +868,7 @@ func TestMonitoringFrontendHandlersFlushBeforeReconciliation(t *testing.T) {
 	}
 }
 
-func TestEndpointTLSKeysAreGeneratedLocallyAndNeverSuppliedByController(t *testing.T) {
+func TestEndpointTLSKeysRemainLocallyOwnedAndNeverSuppliedByController(t *testing.T) {
 	for _, role := range []string{"monitor"} {
 		path := filepath.Join("..", "..", "ansible", "roles", role, "tasks", "main.yml")
 		data, err := os.ReadFile(path)
@@ -876,14 +876,14 @@ func TestEndpointTLSKeysAreGeneratedLocallyAndNeverSuppliedByController(t *testi
 			t.Fatal(err)
 		}
 		text := string(data)
-		if !strings.Contains(text, "openssl\n") || !strings.Contains(text, "genpkey") || !strings.Contains(text, "Restrict the "+role+" endpoint private key") {
-			t.Fatalf("%s role does not generate and restrict its endpoint key locally", role)
+		if !strings.Contains(text, "endpoint-owned key") || !strings.Contains(text, role+".key.pem.new") {
+			t.Fatalf("%s role does not generate and activate its endpoint-owned key locally", role)
 		}
 		if strings.Contains(text, role+"_server_key_pem") {
 			t.Fatalf("%s role still accepts a controller-supplied endpoint private key", role)
 		}
-		if !strings.Contains(text, "ansible.builtin.fetch:") || !strings.Contains(text, role+".csr.pem") {
-			t.Fatalf("%s role does not return its CSR to the controller", role)
+		if strings.Contains(text, "ansible.builtin.fetch:") || strings.Contains(text, role+".csr.pem") {
+			t.Fatalf("%s role retains a controller-side CSR exchange", role)
 		}
 	}
 }
@@ -1318,10 +1318,54 @@ func TestMonitoringRoleUsesExistingTLSBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(tasks) + string(template)
-	for _, expected := range []string{"monitor_server_cert_pem", "client_ca_pem", "client_crl_pem", "ssl_crl /etc/boetticher/tls/client-ca.crl.pem", "ssl_verify_client optional", "ssl_verify_depth 3;", "if ($ssl_client_verify != SUCCESS) { return 403; }", "proxy_pass http://127.0.0.1:7655"} {
+	for _, expected := range []string{"step_ca_root_cert_pem", "step_ca_intermediate_cert_pem", "client_ca_pem", "client_crl_pem", "ssl_crl /etc/boetticher/tls/client-ca.crl.pem", "ssl_verify_client optional", "ssl_verify_depth 3;", "if ($ssl_client_verify != SUCCESS) { return 403; }", "proxy_pass http://127.0.0.1:7655"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("monitoring role missing TLS/frontend contract %q", expected)
 		}
+	}
+}
+
+func TestMonitoringRoleUsesEndpointOwnedSmallstepRenewal(t *testing.T) {
+	tasks, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"step-ca-root.crt",
+		"step-ca-intermediate.crt",
+		"Create a one-time Pulse certificate token on the online CA",
+		"Issue the Pulse certificate from Smallstep with an endpoint-owned key",
+		"monitor.crt.pem.new",
+		"monitor.key.pem.new",
+		"monitor.step-ca",
+		"boetticher-renew-monitor-certificate.timer",
+	} {
+		if !strings.Contains(string(tasks), name) {
+			t.Fatalf("monitoring role is missing Smallstep renewal contract %q", name)
+		}
+	}
+	script, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "renew-monitor-certificate.sh.j2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"certificate needs-renewal",
+		"ca renew --force --expires-in 240h",
+		"certificate bundle",
+		"certificate verify",
+		"mv -f \"$work/bundle.pem\" \"$cert\"",
+		"systemctl reload nginx",
+	} {
+		if !strings.Contains(string(script), name) {
+			t.Fatalf("monitor renewal helper is missing %q", name)
+		}
+	}
+	service, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "monitor", "templates", "renew-monitor-certificate.service.j2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(service), "User=root") || !strings.Contains(string(service), "ProtectSystem=strict") {
+		t.Fatal("monitor renewal service does not retain the narrow root-owned key boundary")
 	}
 }
 

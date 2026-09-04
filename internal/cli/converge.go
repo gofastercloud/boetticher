@@ -1063,22 +1063,11 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return err
 	}
 	report.recordMutation("Services", "appliance runtime configuration", "reconciled", true)
-	var monitorCertificate pki.ServerCertificate
 	var bifrostCertificate pki.ServerCertificate
 	var octoprintCertificate pki.ServerCertificate
 	var arrCertificate pki.ServerCertificate
 	var gatusCertificate pki.ServerCertificate
 	var aiopsCertificates map[string]string
-	if monitoringEnabled {
-		monitorCSR, readErr := os.ReadFile(filepath.Join(csrDir, "monitor.csr.pem"))
-		if readErr != nil {
-			return fmt.Errorf("read endpoint-generated monitor CSR: %w", readErr)
-		}
-		monitorCertificate, err = signOrReuseServerCertificate(authority, string(monitorCSR), csrDir, "monitor", "monitor", s.Network.Domain, []string{"lab-monitor-01." + s.Network.Domain})
-		if err != nil {
-			return fmt.Errorf("sign monitor endpoint CSR: %w", err)
-		}
-	}
 	if modules.IsEnabled(s, "bifrost") {
 		bifrostCSR, readErr := os.ReadFile(filepath.Join(csrDir, "bifrost.csr.pem"))
 		if readErr != nil {
@@ -1126,9 +1115,6 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		}
 	}
 	runtimeVariables["pki_bootstrap_phase"] = false
-	if monitoringEnabled {
-		runtimeVariables["monitor_server_cert_pem"] = monitorCertificate.ChainPEM
-	}
 	if modules.IsEnabled(s, "bifrost") {
 		runtimeVariables["bifrost_server_cert_pem"] = bifrostCertificate.ChainPEM
 	}

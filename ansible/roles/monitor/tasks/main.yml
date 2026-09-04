@@ -14,14 +14,15 @@
   when:
     - inventory_hostname == 'lab-monitor-01'
 
-- name: Require the controller-issued Pulse mTLS material
+- name: Require the Smallstep Pulse TLS and retained mTLS material
   ansible.builtin.assert:
     that:
+      - step_ca_root_cert_pem is defined
+      - step_ca_intermediate_cert_pem is defined
       - client_ca_pem is defined
       - client_crl_pem is defined
       - client_crl_pem | length > 0
-      - (pki_bootstrap_phase | default(false) | bool) or (monitor_server_cert_pem is defined and monitor_server_cert_pem | length > 0)
-    fail_msg: "Pulse mTLS requires controller-issued server and client-CA material"
+    fail_msg: "Pulse TLS requires Smallstep root/intermediate and retained client-CA material"
   no_log: true
   when:
     - inventory_hostname == 'lab-monitor-01'
@@ -36,70 +37,161 @@
   when:
     - inventory_hostname == 'lab-monitor-01'
 
-- name: Generate the monitor endpoint private key locally
-  ansible.builtin.command:
-    argv:
-      - openssl
-      - genpkey
-      - -algorithm
-      - EC
-      - -pkeyopt
-      - ec_paramgen_curve:P-256
-      - -out
-      - /etc/boetticher/tls/monitor.key.pem
-  args:
-    creates: /etc/boetticher/tls/monitor.key.pem
+- name: Check whether Pulse already has a Smallstep-issued certificate
+  ansible.builtin.stat:
+    path: /etc/boetticher/tls/monitor.step-ca
+  register: monitor_step_ca_marker
   when: inventory_hostname == 'lab-monitor-01'
 
-- name: Restrict the monitor endpoint private key
-  ansible.builtin.file:
-    path: /etc/boetticher/tls/monitor.key.pem
-    owner: root
-    group: root
-    mode: '0600'
-  when: inventory_hostname == 'lab-monitor-01'
-
-- name: Generate the monitor endpoint CSR locally
-  ansible.builtin.command:
-    argv:
-      - openssl
-      - req
-      - -new
-      - -sha256
-      - -key
-      - /etc/boetticher/tls/monitor.key.pem
-      - -subj
-      - /CN=monitor.lab.home.arpa
-      - -addext
-      - subjectAltName=DNS:monitor.lab.home.arpa,DNS:lab-monitor-01.lab.home.arpa
-      - -out
-      - /etc/boetticher/tls/monitor.csr.pem
-  args:
-    creates: /etc/boetticher/tls/monitor.csr.pem
-  when: inventory_hostname == 'lab-monitor-01'
-
-- name: Fetch the endpoint-generated monitor CSR to the controller runtime directory
-  ansible.builtin.fetch:
-    src: /etc/boetticher/tls/monitor.csr.pem
-    dest: "{{ pki_csr_output_dir }}/monitor.csr.pem"
-    flat: true
-  when:
-    - inventory_hostname == 'lab-monitor-01'
-    - pki_bootstrap_phase | default(false) | bool
-
-- name: Install Pulse server certificate
+- name: Install the Smallstep root trust on Pulse
   ansible.builtin.copy:
-    content: "{{ monitor_server_cert_pem }}"
-    dest: /etc/boetticher/tls/monitor.crt.pem
+    content: "{{ step_ca_root_cert_pem }}"
+    dest: /etc/boetticher/tls/step-ca-root.crt
     owner: root
     group: root
     mode: '0644'
-  notify: reload nginx
   no_log: true
   when:
     - inventory_hostname == 'lab-monitor-01'
-    - monitor_server_cert_pem is defined
-    - monitor_server_cert_pem | length > 0
+    - step_ca_root_cert_pem is defined
+
+- name: Install the Smallstep intermediate chain on Pulse
+  ansible.builtin.copy:
+    content: "{{ step_ca_intermediate_cert_pem }}"
+    dest: /etc/boetticher/tls/step-ca-intermediate.crt
+    owner: root
+    group: root
+    mode: '0644'
+  no_log: true
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - step_ca_intermediate_cert_pem is defined
+
+- name: Create a one-time Pulse certificate token on the online CA
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/step
+      - ca
+      - token
+      - monitor.{{ domain }}
+      - --san
+      - monitor.{{ domain }}
+      - --san
+      - lab-monitor-01.{{ domain }}
+      - --provisioner
+      - boetticher
+      - --provisioner-password-file
+      - /var/lib/boetticher/step-ca/secrets/password
+      - --ca-url
+      - https://lab-dns-01.{{ domain }}:9443
+      - --root
+      - /var/lib/boetticher/step-ca/certs/root_ca.crt
+      - --cert-not-after
+      - 720h
+      - --not-after
+      - 5m
+  delegate_to: lab-dns-01
+  register: monitor_step_ca_token
+  changed_when: false
+  no_log: true
+  environment:
+    STEPPATH: /var/lib/boetticher/step-ca
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - step_ca_root_cert_pem is defined
+    - not monitor_step_ca_marker.stat.exists
+    - not (pki_bootstrap_phase | default(false) | bool)
+
+- name: Issue the Pulse certificate from Smallstep with an endpoint-owned key
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/step
+      - ca
+      - certificate
+      - monitor.{{ domain }}
+      - /etc/boetticher/tls/monitor.crt.pem.new
+      - /etc/boetticher/tls/monitor.key.pem.new
+      - --token
+      - "{{ monitor_step_ca_token.stdout }}"
+      - --ca-url
+      - https://lab-dns-01.{{ domain }}:9443
+      - --root
+      - /etc/boetticher/tls/step-ca-root.crt
+      - --bundle
+      - --force
+  register: monitor_step_ca_issue
+  changed_when: true
+  no_log: true
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - step_ca_root_cert_pem is defined
+    - not monitor_step_ca_marker.stat.exists
+    - not (pki_bootstrap_phase | default(false) | bool)
+
+- name: Verify and activate the new Pulse certificate pair
+  ansible.builtin.shell: >-
+    set -eu;
+    /usr/local/bin/step certificate verify
+    /etc/boetticher/tls/monitor.crt.pem.new
+    --roots /etc/boetticher/tls/step-ca-root.crt;
+    test -s /etc/boetticher/tls/monitor.key.pem.new;
+    chmod 0600 /etc/boetticher/tls/monitor.key.pem.new;
+    mv -f /etc/boetticher/tls/monitor.crt.pem.new /etc/boetticher/tls/monitor.crt.pem;
+    mv -f /etc/boetticher/tls/monitor.key.pem.new /etc/boetticher/tls/monitor.key.pem;
+    install -o root -g root -m 0644 /dev/null /etc/boetticher/tls/monitor.step-ca
+  args:
+    executable: /bin/sh
+  notify: reload nginx
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - step_ca_root_cert_pem is defined
+    - not monitor_step_ca_marker.stat.exists
+    - not (pki_bootstrap_phase | default(false) | bool)
+
+- name: Install the Pulse certificate renewal helper
+  ansible.builtin.template:
+    src: renew-monitor-certificate.sh.j2
+    dest: /usr/local/sbin/boetticher-renew-monitor-certificate
+    owner: root
+    group: root
+    mode: '0750'
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - step_ca_root_cert_pem is defined
+
+- name: Install the Pulse certificate renewal service
+  ansible.builtin.template:
+    src: renew-monitor-certificate.service.j2
+    dest: /etc/systemd/system/boetticher-renew-monitor-certificate.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - step_ca_root_cert_pem is defined
+
+- name: Install the Pulse certificate renewal timer
+  ansible.builtin.template:
+    src: renew-monitor-certificate.timer.j2
+    dest: /etc/systemd/system/boetticher-renew-monitor-certificate.timer
+    owner: root
+    group: root
+    mode: '0644'
+  notify: reload systemd
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - step_ca_root_cert_pem is defined
+
+- name: Enable the Pulse certificate renewal timer
+  ansible.builtin.systemd_service:
+    name: boetticher-renew-monitor-certificate.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when:
+    - inventory_hostname == 'lab-monitor-01'
+    - step_ca_root_cert_pem is defined
 
 - name: Install the client CA for Pulse mTLS
   ansible.builtin.copy:
@@ -212,8 +304,8 @@
   notify: reload nginx
   when:
     - inventory_hostname == 'lab-monitor-01'
-    - monitor_server_cert_pem is defined
-    - monitor_server_cert_pem | length > 0
+    - step_ca_root_cert_pem is defined
+    - not (pki_bootstrap_phase | default(false) | bool)
 
 - name: Enable the mTLS-protected Pulse frontend
   ansible.builtin.file:
@@ -223,8 +315,8 @@
   notify: reload nginx
   when:
     - inventory_hostname == 'lab-monitor-01'
-    - monitor_server_cert_pem is defined
-    - monitor_server_cert_pem | length > 0
+    - step_ca_root_cert_pem is defined
+    - not (pki_bootstrap_phase | default(false) | bool)
 
 - name: Remove the distribution nginx default site on the monitor
   ansible.builtin.file:
@@ -233,8 +325,8 @@
   notify: reload nginx
   when:
     - inventory_hostname == 'lab-monitor-01'
-    - monitor_server_cert_pem is defined
-    - monitor_server_cert_pem | length > 0
+    - step_ca_root_cert_pem is defined
+    - not (pki_bootstrap_phase | default(false) | bool)
 
 - name: Reload nginx after enabling the monitoring frontend
   ansible.builtin.service:
@@ -242,8 +334,8 @@
     state: reloaded
   when:
     - inventory_hostname == 'lab-monitor-01'
-    - monitor_server_cert_pem is defined
-    - monitor_server_cert_pem | length > 0
+    - step_ca_root_cert_pem is defined
+    - not (pki_bootstrap_phase | default(false) | bool)
 
 - name: Enable monitoring services
   ansible.builtin.service:
