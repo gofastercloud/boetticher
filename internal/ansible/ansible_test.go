@@ -1159,6 +1159,10 @@ func TestProxmoxBaseConvergenceDoesNotRequireEnterpriseRepositoryRefresh(t *test
 	if strings.Count(text, want) < 2 {
 		t.Fatalf("Proxmox base apt tasks do not avoid unauthenticated enterprise refreshes: %s", text)
 	}
+	cache := `cache_valid_time: "{{ 0 if inventory_hostname in groups.get('proxmox', []) else 3600 }}"`
+	if strings.Count(text, cache) < 2 {
+		t.Fatalf("Proxmox base apt tasks still force cache refreshes through cache_valid_time: %s", text)
+	}
 }
 
 func TestPulseAgentPinsTheMonitoringHostnameForTaggedTargets(t *testing.T) {
