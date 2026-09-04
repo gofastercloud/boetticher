@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
@@ -22,6 +23,25 @@ func TestCheckPlatformOwnershipIncludesComposedLoggingGuest(t *testing.T) {
 	external := model.NewSite("verify-external", "age1verify", model.GatewayModeExternal)
 	if err := checkPlatformOwnership(external); err != nil {
 		t.Fatalf("external composed platform was rejected: %v", err)
+	}
+}
+
+func TestParseLeafExpiryAcceptsOpenSSLOutput(t *testing.T) {
+	expiry, err := parseLeafExpiry("issuer=CN = Boetticher Issuing CA\nnotAfter=Sep  4 05:20:00 2027 GMT\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Date(2027, time.September, 4, 5, 20, 0, 0, time.UTC)
+	if !expiry.Equal(want) {
+		t.Fatalf("expiry = %s, want %s", expiry, want)
+	}
+}
+
+func TestParseLeafExpiryRejectsMissingOrMalformedOutput(t *testing.T) {
+	for _, output := range []string{"", "issuer=CN = example\n", "notAfter=not-a-date\n"} {
+		if _, err := parseLeafExpiry(output); err == nil {
+			t.Fatalf("leaf expiry parser accepted %q", output)
+		}
 	}
 }
 

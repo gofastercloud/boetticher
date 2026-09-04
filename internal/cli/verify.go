@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -59,6 +60,7 @@ func collectHealthResults(options healthOptions, s model.Site) ([]statusmodel.Ch
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged && options.live {
 		results = append(results, liveGatewayHealthResults(options.siteDir, s)...)
+		results = append(results, liveSmallstepHealthResults(options.siteDir, s)...)
 	} else if s.Gateway.Mode == model.GatewayModeExternal {
 		results = append(results, statusmodel.CheckResult{Name: "external gateway contract", Status: "STATIC PASS", Detail: "required VLAN, gateway, DHCP, DNS, NTP, and policy intent is generated"})
 	}
@@ -69,6 +71,71 @@ func collectHealthResults(options healthOptions, s model.Site) ([]statusmodel.Ch
 		return nil, "", err
 	}
 	return annotated, observedAt, nil
+}
+
+func liveSmallstepHealthResults(siteDir string, s model.Site) []statusmodel.CheckResult {
+	dns, dnsOK := platformComponentByName(s, "lab-dns-01")
+	monitor, monitorOK := platformComponentByName(s, "lab-monitor-01")
+	if !dnsOK || !monitorOK || dns.Address == "" || monitor.Address == "" {
+		return []statusmodel.CheckResult{
+			{Name: "Smallstep CA service", Status: "FAIL", Detail: "the core DNS and monitoring endpoints are not declared"},
+			{Name: "Pulse leaf certificate", Status: "FAIL", Detail: "the core monitoring endpoint is not declared"},
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	dnsRunner := applianceSSHRunner(s, siteDir, dns.Hostname)
+	caResult := statusmodel.CheckResult{Name: "Smallstep CA service", Tier: statusmodel.TierDeployed}
+	if _, err := dnsRunner.RunArgs(ctx, dns.Address, model.DefaultAdminSSHUser, []string{"/usr/bin/systemctl", "is-active", "--quiet", "boetticher-step-ca"}); err != nil {
+		caResult.Status = "FAIL"
+		caResult.Detail = fmt.Sprintf("online CA service is not active: %v", err)
+	} else {
+		caResult.Status = "PASS"
+		caResult.Detail = "online intermediate service is active on the DNS endpoint"
+	}
+
+	monitorRunner := applianceSSHRunner(s, siteDir, monitor.Hostname)
+	leafResult := statusmodel.CheckResult{Name: "Pulse leaf certificate", Tier: statusmodel.TierDeployed}
+	data, err := monitorRunner.Run(ctx, monitor.Address, model.DefaultAdminSSHUser, "/usr/bin/openssl x509 -in /etc/boetticher/tls/monitor.crt.pem -noout -issuer -enddate")
+	if err != nil {
+		leafResult.Status = "FAIL"
+		leafResult.Detail = fmt.Sprintf("read Pulse leaf certificate: %v", err)
+	} else if expiry, parseErr := parseLeafExpiry(string(data)); parseErr != nil {
+		leafResult.Status = "FAIL"
+		leafResult.Detail = parseErr.Error()
+	} else if !expiry.After(time.Now().UTC()) {
+		leafResult.Status = "FAIL"
+		leafResult.Detail = fmt.Sprintf("Pulse leaf certificate expired at %s", expiry.UTC().Format(time.RFC3339))
+	} else {
+		leafResult.Status = "PASS"
+		leafResult.Detail = fmt.Sprintf("Pulse leaf certificate valid until %s (%s)", expiry.UTC().Format(time.RFC3339), strings.TrimSpace(string(data)))
+	}
+	return []statusmodel.CheckResult{caResult, leafResult}
+}
+
+func platformComponentByName(s model.Site, name string) (model.Component, bool) {
+	for _, component := range s.PlatformComponents() {
+		if component.Name == name {
+			return component, true
+		}
+	}
+	return model.Component{}, false
+}
+
+func parseLeafExpiry(output string) (time.Time, error) {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "notAfter=") {
+			continue
+		}
+		value := strings.Join(strings.Fields(strings.TrimPrefix(line, "notAfter=")), " ")
+		expiry, err := time.Parse("Jan 2 15:04:05 2006 MST", value)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("parse Pulse leaf expiry %q: %w", value, err)
+		}
+		return expiry.UTC(), nil
+	}
+	return time.Time{}, errors.New("Pulse leaf certificate did not report an expiry")
 }
 
 func deploymentOperationHealthResult(siteDir string) statusmodel.CheckResult {
@@ -206,6 +273,8 @@ func annotateVerificationEvidence(results []statusmodel.CheckResult, observedAt 
 		"managed gateway upstream DHCP":                 statusmodel.TierDeployed,
 		"published service mapping":                     statusmodel.TierDeployed,
 		"managed gateway services":                      statusmodel.TierDeployed,
+		"Smallstep CA service":                          statusmodel.TierDeployed,
+		"Pulse leaf certificate":                        statusmodel.TierDeployed,
 		"external gateway contract":                     statusmodel.TierLocal,
 	}
 	for index := range results {

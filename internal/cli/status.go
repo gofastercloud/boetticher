@@ -116,6 +116,8 @@ var healthCheckNames = map[string]struct{}{
 	"managed gateway upstream DHCP":                 {},
 	"published service mapping":                     {},
 	"managed gateway services":                      {},
+	"Smallstep CA service":                          {},
+	"Pulse leaf certificate":                        {},
 	"external gateway contract":                     {},
 }
 
