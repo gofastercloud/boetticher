@@ -88,6 +88,12 @@ binary's exact SHA-256 and size into the signed bundle manifest, then checks
 those values before publishing and proves that the release-built controller
 imports that same bundle.
 
+The signed manifest is also the artifact trust record: it authenticates each
+image's exact content digest and its qualification evidence digests. A
+source-derived build-definition digest is retained as provenance, but it is
+not used as a runtime trust decision or as a reason to rebuild unchanged image
+bytes.
+
 ## 0.5.1 source checkpoint measurements
 
 These are measured after the source hardening and before clean-install
@@ -151,8 +157,13 @@ construction, Trivy scanning, and smoke qualification through the isolated
 native Linux maintainer path on T580. After the maintainer and documentation
 changes reached exact source revision `98d362a`, the all-target build and
 all-target qualification each reported 13/13 reusable artifacts and performed
-no image construction or Trivy scan. Reuse required current definition/base
-identity, artifact bytes, and complete qualification evidence.
+no image construction or Trivy scan. At source revision `9f3fe02`, the same
+13/13 build and qualification reuse checks passed after the artifact trust
+simplification, and an exact-source local bundle containing all 13 artifacts
+was signed and imported successfully by a controller built with the matching
+release trust root. Reuse required matching artifact coordinates, content
+bytes, base dependency, and complete qualification evidence; source-only
+definition changes did not invalidate those bytes.
 
 This is local qualification only. It is not hosted release evidence and has
 not been deployed to Proxmox or the Companion.
