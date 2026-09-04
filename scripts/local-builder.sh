@@ -313,6 +313,7 @@ run_native_builder() {
   validate_remote_target "$runner" "$@"
   sync_native_source
   if filter_reusable_targets "$runner" "$@"; then
+    pull_native_output
     return 0
   fi
   set -- $native_filtered_args
