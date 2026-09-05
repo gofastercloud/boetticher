@@ -1581,11 +1581,6 @@ func validatePulseMonitoringTokenOwnership(usersOutput, tokensOutput, aclOutput 
 		if !relevant {
 			continue
 		}
-		if acl.RoleID == "BoetticherAuditor" {
-			// The read-only root audit role is deliberately separate from
-			// the mutating provisioner ACL and is validated independently.
-			continue
-		}
 		if seen[acl.UGID] || acl.Path != "/" || acl.Propagate != 1 || acl.RoleID != PulseMonitoringRole || acl.Type != expectedType {
 			return errors.New("Pulse monitoring ACL is unexpected")
 		}
@@ -2022,6 +2017,11 @@ func validateScopedProvisionerACL(aclOutput []byte, userID, tokenID, role, node 
 	for _, acl := range acls {
 		expectedType, relevant := expected[acl.UGID]
 		if !relevant {
+			continue
+		}
+		if acl.RoleID == "BoetticherAuditor" {
+			// The read-only root audit role is deliberately separate from
+			// the mutating provisioner ACL and is validated independently.
 			continue
 		}
 		if acl.Path == "/" || !allowedPaths[acl.Path] || acl.Propagate != 1 || acl.RoleID != role || acl.Type != expectedType {
