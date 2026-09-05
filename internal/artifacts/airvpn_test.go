@@ -18,3 +18,14 @@ func TestAirVPNImageBuildCreatesSystemdRuntimeDirectory(t *testing.T) {
 		t.Fatal("AirVPN image build does not pre-create /run/boetticher for systemd namespacing")
 	}
 }
+
+func TestAirVPNServiceCreatesRuntimeDirectoryBeforeNamespaceSetup(t *testing.T) {
+	data, err := os.ReadFile("../../images/airvpn/runtime/boetticher-airvpn.service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "RuntimeDirectory=boetticher") || !strings.Contains(text, "RuntimeDirectoryMode=0700") {
+		t.Fatal("AirVPN service does not ask systemd to create its runtime directory")
+	}
+}
