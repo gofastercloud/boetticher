@@ -326,8 +326,9 @@ type Zone struct {
 }
 
 type SecretMetadata struct {
-	InstallationID string `yaml:"installation_id" json:"installation_id"`
-	AgeRecipient   string `yaml:"age_recipient" json:"age_recipient"`
+	InstallationID   string `yaml:"installation_id" json:"installation_id"`
+	AgeRecipient     string `yaml:"age_recipient" json:"age_recipient"`
+	RootAgeRecipient string `yaml:"root_age_recipient" json:"root_age_recipient"`
 }
 
 type OwnershipPolicy struct {
@@ -633,7 +634,7 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 			},
 		},
 		PhysicalNetwork: PhysicalNetwork{Mode: ModeVirtualOnly},
-		SecretMetadata:  SecretMetadata{InstallationID: installationID, AgeRecipient: ageRecipient},
+		SecretMetadata:  SecretMetadata{InstallationID: installationID, AgeRecipient: ageRecipient, RootAgeRecipient: ageRecipient + "-root"},
 		Ownership: OwnershipPolicy{
 			PlatformGuestIDMin: PlatformGuestIDMin, PlatformGuestIDMax: PlatformGuestIDMax,
 			ModuleGuestIDMin: ModuleGuestIDMin, ModuleGuestIDMax: ModuleGuestIDMax,
@@ -944,8 +945,8 @@ func (s Site) Validate() error {
 	if s.Ownership != (OwnershipPolicy{PlatformGuestIDMin: PlatformGuestIDMin, PlatformGuestIDMax: PlatformGuestIDMax, ModuleGuestIDMin: ModuleGuestIDMin, ModuleGuestIDMax: ModuleGuestIDMax, UserGuestIDMin: UserGuestIDMin, UserGuestIDMax: UserGuestIDMax, UserWorkloadsManaged: false}) {
 		return errors.New("ownership policy must reserve 100-199 for platform, 200-499 for official modules, and 500-899 for user workloads; user workloads are not managed")
 	}
-	if !modelTokenPattern.MatchString(s.SecretMetadata.InstallationID) || s.SecretMetadata.AgeRecipient == "" {
-		return fmt.Errorf("secret_metadata must contain a safe installation_id and public age_recipient")
+	if !modelTokenPattern.MatchString(s.SecretMetadata.InstallationID) || s.SecretMetadata.AgeRecipient == "" || s.SecretMetadata.RootAgeRecipient == "" || s.SecretMetadata.RootAgeRecipient == s.SecretMetadata.AgeRecipient {
+		return fmt.Errorf("secret_metadata must contain a safe installation_id and distinct public age recipients")
 	}
 	if port := s.ModuleConfig["airvpn"].QBittorrentPort; !ValidQBittorrentPort(port) {
 		return errors.New("modules.airvpn.qbittorrent_port: use 0 to disable or a reserved port from 2049 to 65535 excluding ARR web/API ports")

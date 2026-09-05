@@ -40,6 +40,7 @@ func TestQuickstartOfflineCommandsExecute(t *testing.T) {
 	// outside local CI; init and its secret path use the bundled implementation.
 	siteDir := filepath.Join(t.TempDir(), "my-boetticher")
 	identity := filepath.Join(t.TempDir(), "age-identity.txt")
+	rootIdentity := filepath.Join(t.TempDir(), "root-age-identity.txt")
 	run := func(args ...string) string {
 		t.Helper()
 		var output bytes.Buffer
@@ -49,7 +50,7 @@ func TestQuickstartOfflineCommandsExecute(t *testing.T) {
 		return output.String()
 	}
 
-	run("init", "--site-dir", siteDir, "--age-identity", identity)
+	run("init", "--site-dir", siteDir, "--age-identity", identity, "--root-age-identity", rootIdentity)
 	initialized, err := site.Load(siteDir)
 	if err != nil {
 		t.Fatal(err)
@@ -86,8 +87,9 @@ func TestQuickstartOfflineCommandsExecute(t *testing.T) {
 func TestInitConfiguresDedicatedDataDiskWithoutManualSiteEdits(t *testing.T) {
 	siteDir := filepath.Join(t.TempDir(), "my-boetticher")
 	identity := filepath.Join(t.TempDir(), "age-identity.txt")
+	rootIdentity := filepath.Join(t.TempDir(), "root-age-identity.txt")
 	var output bytes.Buffer
-	if err := Run([]string{"init", "--site-dir", siteDir, "--age-identity", identity, "--storage-profile", "dedicated-data-disk", "--storage-device", "/dev/disk/by-id/ata-example-data"}, &output, &output); err != nil {
+	if err := Run([]string{"init", "--site-dir", siteDir, "--age-identity", identity, "--root-age-identity", rootIdentity, "--storage-profile", "dedicated-data-disk", "--storage-device", "/dev/disk/by-id/ata-example-data"}, &output, &output); err != nil {
 		t.Fatalf("init dedicated storage: %v\n%s", err, output.String())
 	}
 	configured, err := site.Load(siteDir)
@@ -227,7 +229,7 @@ func validateCommandForm(t *testing.T, fields []string) {
 		t.Fatalf("invalid command form: %q", fields)
 	}
 	known := map[string]map[string]bool{
-		"init":       {"--site-dir": true, "--age-identity": true, "--external-firewall": true, "--storage-profile": true, "--storage-device": true},
+		"init":       {"--site-dir": true, "--age-identity": true, "--root-age-identity": true, "--external-firewall": true, "--storage-profile": true, "--storage-device": true},
 		"bundle":     {"--site": true, "--json": true},
 		"enroll":     {"--site": true, "--bootstrap-address": true, "--operator-key": true, "--age-identity": true, "--recovery-confirmed": true, "--storage-confirmed": true, "--proxmox-ca": true},
 		"plan":       {"--site": true, "--live": true, "--json": true},

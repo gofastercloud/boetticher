@@ -444,11 +444,15 @@
         },
         "installation_id": {
           "type": "string"
+        },
+        "root_age_recipient": {
+          "type": "string"
         }
       },
       "required": [
         "installation_id",
-        "age_recipient"
+        "age_recipient",
+        "root_age_recipient"
       ],
       "type": "object"
     },

@@ -391,6 +391,16 @@ func TestUserNetworkIntentValidatesReservationsAndDNSOwnership(t *testing.T) {
 	}
 }
 
+func TestSiteRequiresDistinctRootRecipient(t *testing.T) {
+	site := NewSite("installation", "age1routine", GatewayModeManaged)
+	for _, root := range []string{"", "age1routine"} {
+		site.SecretMetadata.RootAgeRecipient = root
+		if err := site.Validate(); err == nil {
+			t.Fatalf("accepted root recipient %q", root)
+		}
+	}
+}
+
 func TestConfigFromSiteExcludesGeneratedModuleReservations(t *testing.T) {
 	user := DHCPReservation{Zone: "SERVERS", Hostname: "app-01", Address: "10.10.20.61", MAC: "02:00:00:00:02:61", VMID: 550}
 	module := DHCPReservation{Zone: "SERVERS", Hostname: "lab-arr-01", Address: ArrGuestAddress, MAC: ArrGuestMAC, VMID: ArrVMID}
