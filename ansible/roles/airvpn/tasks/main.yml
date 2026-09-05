@@ -97,13 +97,11 @@
     owner: root
     group: root
     mode: '0600'
-  no_log: true
 
 - name: Validate the AirVPN guest kill switch
   ansible.builtin.command:
     argv: [nft, -c, -f, /run/boetticher-airvpn.nft.new]
   changed_when: false
-  no_log: true
 
 - name: Install the validated AirVPN guest kill switch
   ansible.builtin.copy:
@@ -157,7 +155,6 @@
 - name: Require the AirVPN WireGuard interface
   ansible.builtin.command: ip link show airvpn0
   changed_when: false
-  no_log: true
   register: airvpn_interface
   retries: 12
   delay: 5
