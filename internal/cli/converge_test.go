@@ -113,7 +113,10 @@ func TestPublishedServicesActivateAtTheEndOfDNSModule(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	publicationActivation := strings.Index(text, `if module == "dns" && s.Gateway.Mode == model.GatewayModeManaged && len(firewallPlan.Publications) > 0`)
+	publicationActivation := strings.Index(text, `if module == "dns" && s.Gateway.Mode == model.GatewayModeManaged {`)
+	if strings.Contains(text, `if module == "dns" && s.Gateway.Mode == model.GatewayModeManaged && len(firewallPlan.Publications) > 0`) {
+		t.Fatal("managed gateway upstream binding is incorrectly limited to published services")
+	}
 	allHostsConvergence := strings.Index(text, `if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report, temporaryPrivateKey); err != nil`)
 	if publicationActivation < 0 || allHostsConvergence < 0 || publicationActivation > allHostsConvergence {
 		t.Fatal("published services are not activated immediately after the DNS module")

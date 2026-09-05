@@ -1068,7 +1068,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 				}
 			}
 		}
-		if module == "dns" && s.Gateway.Mode == model.GatewayModeManaged && len(firewallPlan.Publications) > 0 {
+		if module == "dns" && s.Gateway.Mode == model.GatewayModeManaged {
 			var upstream firewall.UpstreamObservation
 			if err := report.timed("network", "ssh", "gateway-upstream", func() error {
 				var observeErr error
