@@ -930,6 +930,14 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			if !matches || guest.Kind != proxmox.KindLXC {
 				continue
 			}
+			if *onlyModule != "" {
+				// Scoped replacement may follow an earlier failed run whose
+				// artifact state is now current but whose host key is stale.
+				// Remove only this guest's entry before independent pinning.
+				if err := retireReplacedHostKey(*siteDir, s, guest); err != nil {
+					return fmt.Errorf("retire scoped %s host key: %w", guest.Name, err)
+				}
+			}
 			guestRunner := applianceSSHRunnerWithIdentity(s, *siteDir, guest.Name, temporaryPrivateKey)
 			// Register before waiting for SSH: first boot may already have
 			// accepted the temporary key while the guest service is still down.
