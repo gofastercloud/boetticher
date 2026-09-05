@@ -92,6 +92,7 @@ var AnsibleSourceInputs = []string{
 	"ansible/site.yml",
 	"ansible/tasks",
 	"ansible/roles",
+	"ansible/callback_plugins",
 }
 
 // BuildSourceArchive returns a deterministic gzip-compressed tar stream of

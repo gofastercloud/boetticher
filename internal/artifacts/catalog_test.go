@@ -1645,6 +1645,7 @@ func TestEmbeddedAnsibleSourceArchiveContainsDeploymentRolesOnly(t *testing.T) {
 	for _, required := range []string{
 		"ansible/site.yml",
 		"ansible/tasks/step-ca-endpoint.yml",
+		"ansible/callback_plugins/boetticher_timing.py",
 		"ansible/roles/base/tasks/main.yml",
 		"ansible/roles/monitor/templates/pulse-loopback.conf.j2",
 		"ansible/roles/kiosk/templates/boetticher-streamdeck.service.j2",
