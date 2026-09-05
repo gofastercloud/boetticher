@@ -133,6 +133,8 @@ boetticher deploy --site ./my-boetticher
 An AirVPN-selected module retains its existing subnet gateway. The managed
 gateway routes its permitted external destinations through `lab-airvpn-01`
 (`10.10.5.20`), with unreachable fallbacks when the VPN route disappears.
+Selected guests keep IPv6 unrouted and force IPv4 for their package-maintenance
+traffic, so a blocked IPv6 path cannot stall or bypass the AirVPN egress policy.
 Guest and host restrictions deny HOME, direct WAN access, arbitrary internal
 destinations and peer forwarding, including after a policy or connection-state
 change. Exact certificate-renewal, logging and declared application paths are

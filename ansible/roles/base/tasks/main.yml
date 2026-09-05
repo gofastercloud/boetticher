@@ -289,6 +289,19 @@
     - pulse_agent_install_enabled | default(false) | bool
     - inventory_hostname in (pulse_agent_targets | default([]))
 
+- name: Force IPv4 for AirVPN-selected appliance package maintenance
+  ansible.builtin.copy:
+    content: 'Acquire::ForceIPv4 "true";\n'
+    dest: /etc/apt/apt.conf.d/99boetticher-force-ipv4
+    owner: root
+    group: root
+    mode: '0644'
+  when:
+    - pulse_agent_install_enabled | default(false) | bool
+    - inventory_hostname in (pulse_agent_targets | default([]))
+    - inventory_hostname not in groups.get('proxmox', [])
+    - inventory_hostname in (airvpn_selected_guests | default([])) or inventory_hostname == 'lab-airvpn-01'
+
 - name: Require the encrypted Pulse host-agent credential projection
   ansible.builtin.assert:
     that:
