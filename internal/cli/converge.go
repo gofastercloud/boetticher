@@ -2590,5 +2590,12 @@ func runTrackedAnsiblePhase(ctx context.Context, playbook, inventory string, var
 		}
 		report.recordTiming(report.activePhaseID(), "ansible", target, started)
 	}
+	if err != nil {
+		for _, timing := range result.TaskTimings {
+			if strings.EqualFold(timing.Status, "failed") {
+				return fmt.Errorf("%w: failed task %s (%s)", err, timing.Task, timing.Path)
+			}
+		}
+	}
 	return err
 }
