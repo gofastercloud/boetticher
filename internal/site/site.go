@@ -145,7 +145,7 @@ func Save(dir string, s model.Site) error {
 	return SaveConfig(dir, model.ConfigFromSite(s))
 }
 
-func Init(dir, ageIdentityPath string, externalFirewall bool) (model.Site, error) {
+func Init(dir, ageIdentityPath, rootAgeIdentityPath string, externalFirewall bool) (model.Site, error) {
 	if _, err := os.Stat(dir); err == nil {
 		entries, readErr := os.ReadDir(dir)
 		if readErr != nil {
@@ -163,6 +163,16 @@ func Init(dir, ageIdentityPath string, externalFirewall bool) (model.Site, error
 	if err != nil {
 		return model.Site{}, err
 	}
+	if model.ExpandUserPath(rootAgeIdentityPath) == model.ExpandUserPath(ageIdentityPath) {
+		return model.Site{}, errors.New("root Age identity must be distinct from the routine Age identity")
+	}
+	rootRecipient, err := createAgeIdentity(rootAgeIdentityPath)
+	if err != nil {
+		return model.Site{}, err
+	}
+	if rootRecipient == recipient {
+		return model.Site{}, errors.New("root Age identity must use a distinct recipient")
+	}
 	installationID, err := randomID()
 	if err != nil {
 		return model.Site{}, err
@@ -172,6 +182,7 @@ func Init(dir, ageIdentityPath string, externalFirewall bool) (model.Site, error
 		gatewayMode = model.GatewayModeExternal
 	}
 	s := model.NewSite(installationID, recipient, gatewayMode)
+	s.SecretMetadata.RootAgeRecipient = rootRecipient
 	upstreamMAC, err := model.GenerateGatewayUpstreamMAC()
 	if err != nil {
 		return model.Site{}, err
@@ -284,12 +295,18 @@ func LoadAuthority(dir string, s model.Site, ageIdentityPath string) (pki.Author
 // LoadAuthorityWithRootKey is reserved for explicit root-authority operations.
 // It keeps the root key out of the routine platform-secret document; callers
 // that need a separate decryption identity must enforce it at that operation.
-func LoadAuthorityWithRootKey(dir string, s model.Site, ageIdentityPath string) (pki.Authority, error) {
+func LoadAuthorityWithRootKey(dir string, s model.Site, ageIdentityPath, rootAgeIdentityPath string) (pki.Authority, error) {
+	if s.SecretMetadata.RootAgeRecipient == "" {
+		return pki.Authority{}, errors.New("root authority recipient is absent; clean root-authority initialization is required")
+	}
 	authority, err := loadAuthority(dir, s, ageIdentityPath, false)
 	if err != nil {
 		return pki.Authority{}, err
 	}
-	values, err := LoadEncryptedDocument(dir, ageIdentityPath, rootAuthoritySecretsPath)
+	if err := ValidateAgeIdentity(rootAgeIdentityPath, s.SecretMetadata.RootAgeRecipient); err != nil {
+		return pki.Authority{}, fmt.Errorf("validate root Age identity: %w", err)
+	}
+	values, err := LoadEncryptedDocument(dir, rootAgeIdentityPath, rootAuthoritySecretsPath)
 	if err != nil {
 		return pki.Authority{}, err
 	}
@@ -330,7 +347,7 @@ func loadAuthority(dir string, s model.Site, ageIdentityPath string, includeRoot
 	}
 	authority := pki.Authority{RootCertPEM: rootCert, IssuingKeyPEM: issuingKey, IssuingCertPEM: issuingCert}
 	if includeRootKey {
-		return LoadAuthorityWithRootKey(dir, s, ageIdentityPath)
+		return pki.Authority{}, errors.New("root authority requires the dedicated root Age identity")
 	}
 	return authority, nil
 }
@@ -443,6 +460,9 @@ func atomicWrite(path string, data []byte, mode os.FileMode) error {
 }
 
 func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) error {
+	if s.SecretMetadata.RootAgeRecipient == "" || s.SecretMetadata.RootAgeRecipient == s.SecretMetadata.AgeRecipient {
+		return errors.New("root authority requires a distinct root Age recipient")
+	}
 	secret, err := randomID()
 	if err != nil {
 		return err
@@ -478,7 +498,7 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 	if err := StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), document); err != nil {
 		return err
 	}
-	if err := StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, rootAuthoritySecretsPath, map[string]string{"root_key_pem_b64": pki.Encode(authority.RootKeyPEM)}); err != nil {
+	if err := StoreEncryptedDocument(dir, s.SecretMetadata.RootAgeRecipient, rootAuthoritySecretsPath, map[string]string{"root_key_pem_b64": pki.Encode(authority.RootKeyPEM)}); err != nil {
 		return err
 	}
 	rootCRL, err := pki.GenerateRootCRL(authority, time.Now().UTC())

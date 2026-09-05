@@ -606,6 +606,7 @@ func (c SiteConfig) BaseSite() Site {
 	if c.SecretMetadata.AgeRecipient != "" {
 		s.SecretMetadata.AgeRecipient = c.SecretMetadata.AgeRecipient
 	}
+	s.SecretMetadata.RootAgeRecipient = c.SecretMetadata.RootAgeRecipient
 	if c.Ownership.PlatformGuestIDMin != 0 {
 		s.Ownership.PlatformGuestIDMin = c.Ownership.PlatformGuestIDMin
 	}

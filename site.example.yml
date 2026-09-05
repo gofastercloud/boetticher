@@ -67,6 +67,7 @@ network:
 secret_metadata:
   installation_id: generated-by-boetticher-init
   age_recipient: generated-by-boetticher-init
+  root_age_recipient: generated-by-boetticher-init-root
 ownership:
   platform_guest_id_min: 100
   platform_guest_id_max: 199

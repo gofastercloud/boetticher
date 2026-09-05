@@ -61,7 +61,7 @@ func TestParseSiteConfigRejectsUnknownModuleFields(t *testing.T) {
 }
 
 func TestParseSiteConfigAppliesV3Defaults(t *testing.T) {
-	config, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules: {}\nsecret_metadata:\n  installation_id: test\n  age_recipient: age1test\n"))
+	config, err := ParseSiteConfig([]byte("api_version: boetticher/v3\nmodules: {}\nsecret_metadata:\n  installation_id: test\n  age_recipient: age1test\n  root_age_recipient: age1root\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,6 +87,7 @@ modules: {}
 secret_metadata:
   installation_id: test
   age_recipient: age1test
+  root_age_recipient: age1root
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -115,6 +116,7 @@ func TestParseSiteConfigRetainsReservationsAndUserDNSValues(t *testing.T) {
 secret_metadata:
   installation_id: test
   age_recipient: age1test
+  root_age_recipient: age1root
 dhcp_reservations:
   - zone: SERVERS
     hostname: app-01
@@ -245,6 +247,7 @@ modules:
 secret_metadata:
   installation_id: test
   age_recipient: age1test
+  root_age_recipient: age1root
 `)
 	config, err := ParseSiteConfig(valid)
 	if err != nil {
@@ -373,6 +376,7 @@ modules:
 secret_metadata:
   installation_id: test
   age_recipient: age1test
+  root_age_recipient: age1root
 `))
 	if err != nil {
 		t.Fatal(err)

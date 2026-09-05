@@ -16,6 +16,7 @@ func runInit(args []string, out io.Writer) error {
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site-dir", model.DefaultSiteDir, "private site repository directory")
 	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
+	rootAgeIdentity := fs.String("root-age-identity", "", "distinct offline root Age identity path")
 	externalFirewall := fs.Bool("external-firewall", false, "bring your own external firewall; do not create lab-fw-01")
 	storageProfile := fs.String("storage-profile", "single-disk", "fixed storage profile: single-disk or dedicated-data-disk")
 	storageDevice := fs.String("storage-device", "", "stable /dev/disk/by-id device for dedicated-data-disk")
@@ -25,6 +26,9 @@ func runInit(args []string, out io.Writer) error {
 	if *storageProfile != "single-disk" && *storageProfile != "dedicated-data-disk" {
 		return fmt.Errorf("unsupported storage profile %q", *storageProfile)
 	}
+	if *rootAgeIdentity == "" {
+		return errors.New("--root-age-identity is required and must name a distinct offline root identity")
+	}
 	if *storageProfile == "dedicated-data-disk" {
 		if err := model.ValidateStableDevice(*storageDevice); err != nil {
 			return err
@@ -32,7 +36,7 @@ func runInit(args []string, out io.Writer) error {
 	} else if *storageDevice != "" {
 		return errors.New("--storage-device is only valid with --storage-profile dedicated-data-disk")
 	}
-	created, err := site.Init(*siteDir, *ageIdentity, *externalFirewall)
+	created, err := site.Init(*siteDir, *ageIdentity, *rootAgeIdentity, *externalFirewall)
 	if err != nil {
 		return err
 	}
@@ -54,6 +58,7 @@ func runInit(args []string, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "Initialization: PASS private site repository created at %s\n", *siteDir)
 	fmt.Fprintf(out, "Age identity: %s (outside Git)\n", model.ExpandUserPath(*ageIdentity))
+	fmt.Fprintf(out, "Root Age identity: %s (keep offline and outside Git)\n", model.ExpandUserPath(*rootAgeIdentity))
 	fmt.Fprintf(out, "Model: PASS revision %s\n", revision)
 	fmt.Fprintf(out, "Gateway: PASS mode %s\n", created.Gateway.Mode)
 	fmt.Fprintf(out, "Storage: PASS %s\n", created.StorageProfile)
@@ -64,7 +69,7 @@ func runInit(args []string, out io.Writer) error {
 	if created.Gateway.Mode == model.GatewayModeExternal {
 		fmt.Fprintln(out, "Physical network prerequisite: external mode requires a distinct physical vmbr1 trunk before enrollment")
 	}
-	fmt.Fprintln(out, "Enrollment prerequisite: independent Age recovery copy required before enrollment")
-	fmt.Fprintln(out, "Next action: secure the independent Age recovery copy, then run boetticher enroll --site <site> --bootstrap-address ADDRESS")
+	fmt.Fprintln(out, "Enrollment prerequisite: independent routine and root Age recovery copies required before enrollment")
+	fmt.Fprintln(out, "Next action: secure independent routine and root Age recovery copies, then run boetticher enroll --site <site> --bootstrap-address ADDRESS")
 	return nil
 }
