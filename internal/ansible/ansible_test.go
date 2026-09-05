@@ -28,6 +28,23 @@ func TestGatusRolePreparesConfigDirectoryAndReloadsNginx(t *testing.T) {
 	}
 }
 
+func TestGatusRoleInstallsBoetticherRootTrustForEndpointChecks(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "gatus", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, required := range []string{
+		"dest: /usr/local/share/ca-certificates/boetticher-gatus.crt",
+		"content: \"{{ step_ca_root_cert_pem }}\"",
+		"ansible.builtin.command: update-ca-certificates",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("Gatus role is missing endpoint trust setup %q", required)
+		}
+	}
+}
+
 func TestGatusRoleUsesEndpointOwnedSmallstepCertificate(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "gatus", "tasks", "main.yml"))
 	if err != nil {

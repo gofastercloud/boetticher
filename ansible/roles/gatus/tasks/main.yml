@@ -2,6 +2,24 @@
   ansible.builtin.assert: {that: boetticher_appliance_artifact | default(false) | bool, fail_msg: "Gatus requires a qualified immutable appliance artifact"}
 - name: Create Gatus configuration directory
   ansible.builtin.file: {path: /etc/boetticher/gatus, state: directory, owner: root, group: gatus, mode: '0750'}
+- name: Install the Boetticher CA for Gatus endpoint HTTPS
+  ansible.builtin.copy:
+    content: "{{ step_ca_root_cert_pem }}"
+    dest: /usr/local/share/ca-certificates/boetticher-gatus.crt
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart gatus
+  when:
+    - step_ca_root_cert_pem is defined
+    - not (pki_bootstrap_phase | default(false) | bool)
+- name: Refresh system CA trust for Gatus endpoint checks
+  ansible.builtin.command: update-ca-certificates
+  register: gatus_ca_update
+  changed_when: "'0 added, 0 removed' not in gatus_ca_update.stdout"
+  when:
+    - step_ca_root_cert_pem is defined
+    - not (pki_bootstrap_phase | default(false) | bool)
 - name: Install generated Gatus configuration
   ansible.builtin.copy: {dest: /etc/boetticher/gatus/config.yaml, content: "{{ gatus_config }}", owner: root, group: gatus, mode: '0640'}
   notify: restart gatus

@@ -37,7 +37,7 @@ deployments can still pass the exact digest explicitly.
 | `logging` | off | An optional central, searchable systemd journal for sites that need retained cross-host logs. |
 | `monitoring` | on | [Pulse Community](https://github.com/rcourtman/Pulse) dashboards, Proxmox monitoring, and host telemetry. |
 | `firewall` | on in managed-gateway mode | The Debian gateway, DHCP, dynamic DNS, routing, NAT, and zone rules. |
-| `gatus` | off | A tidy status page for supported Boetticher services. |
+| `gatus` | off | A tidy status page for supported Boetticher services. It trusts the site CA for HTTPS endpoint checks. |
 | `bifrost` | off | A lightweight, OpenAI-compatible AI endpoint. It currently serves AIOps. |
 | `aiops` | off | [HolmesGPT](https://github.com/robusta-dev/holmesgpt) investigations that read alerts and journals, then leave a Pulse incident note. |
 | `printer` | off | [OctoPrint](https://octoprint.org/) for one supported USB-connected printer. |
