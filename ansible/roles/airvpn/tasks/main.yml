@@ -13,7 +13,6 @@
       - firewall_plan.airvpn.endpoint_port == 1637
       - firewall_plan.airvpn.endpoint_addresses | default([]) | length > 0
     fail_msg: "AirVPN requires resolved endpoint metadata"
-  no_log: true
 
 - name: Require the systemd credential binding for the retained profile
   ansible.builtin.assert:
