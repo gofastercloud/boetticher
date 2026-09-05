@@ -46,12 +46,12 @@ func collectHealthResults(options healthOptions, s model.Site) ([]statusmodel.Ch
 	sshConfigReady := false
 	if err := sshconfig.Check(options.sshPath, s); err == nil {
 		sshConfigReady = true
-		results = append(results, statusmodel.CheckResult{Name: "generated SSH configuration", Status: "PASS", Detail: "configuration is current and preserves host-key verification"})
+		results = append(results, checkResult(checkGeneratedSSHConfiguration, "PASS", "configuration is current and preserves host-key verification"))
 	} else if !errors.Is(err, os.ErrNotExist) && !strings.Contains(err.Error(), "no such file") {
-		results = append(results, statusmodel.CheckResult{Name: "generated SSH configuration", Status: "FAIL", Detail: err.Error()})
+		results = append(results, checkResult(checkGeneratedSSHConfiguration, "FAIL", err.Error()))
 	}
 	if options.sshJourney {
-		journey := statusmodel.CheckResult{Name: "authenticated SSH journey via Proxmox bastion", Tier: statusmodel.TierJourney}
+		journey := checkResult(checkAuthenticatedSSHJourney, "", "")
 		if !sshConfigReady {
 			journey.Status = "FAIL"
 			journey.Detail = "generated SSH configuration is not current"
@@ -68,7 +68,7 @@ func collectHealthResults(options healthOptions, s model.Site) ([]statusmodel.Ch
 		results = append(results, liveGatewayHealthResults(options.siteDir, s, options.ageIdentity)...)
 		results = append(results, liveSmallstepHealthResults(options.siteDir, s)...)
 	} else if s.Gateway.Mode == model.GatewayModeExternal {
-		results = append(results, statusmodel.CheckResult{Name: "external gateway contract", Status: "STATIC PASS", Detail: "required VLAN, gateway, DHCP, DNS, NTP, and policy intent is generated"})
+		results = append(results, checkResult(checkExternalGatewayContract, "STATIC PASS", "required VLAN, gateway, DHCP, DNS, NTP, and policy intent is generated"))
 	}
 
 	observedAt := time.Now().UTC().Format(time.RFC3339)
@@ -84,14 +84,14 @@ func liveSmallstepHealthResults(siteDir string, s model.Site) []statusmodel.Chec
 	monitor, monitorOK := platformComponentByName(s, "lab-monitor-01")
 	if !dnsOK || !monitorOK || dns.Address == "" || monitor.Address == "" {
 		return []statusmodel.CheckResult{
-			{Name: "Smallstep CA service", Status: "FAIL", Detail: "the core DNS and monitoring endpoints are not declared"},
-			{Name: "Pulse leaf certificate", Status: "FAIL", Detail: "the core monitoring endpoint is not declared"},
+			checkResult(checkSmallstepCAService, "FAIL", "the core DNS and monitoring endpoints are not declared"),
+			checkResult(checkPulseLeafCertificate, "FAIL", "the core monitoring endpoint is not declared"),
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	monitorRunner := applianceSSHRunner(s, siteDir, monitor.Hostname)
-	caResult := statusmodel.CheckResult{Name: "Smallstep CA service", Tier: statusmodel.TierDeployed}
+	caResult := checkResult(checkSmallstepCAService, "", "")
 	healthURL := "https://lab-dns-01." + s.Network.Domain + ":9443/health"
 	resolve := "lab-dns-01." + s.Network.Domain + ":9443:" + dns.Address
 	healthData, err := monitorRunner.RunArgs(ctx, monitor.Address, model.DefaultAdminSSHUser, []string{"/usr/bin/curl", "--silent", "--show-error", "--fail", "--max-time", "5", "--cacert", "/etc/ssl/certs/ca-certificates.crt", "--resolve", resolve, healthURL})
@@ -110,7 +110,7 @@ func liveSmallstepHealthResults(siteDir string, s model.Site) []statusmodel.Chec
 		caResult.Detail = "online CA health endpoint is active on the DNS endpoint"
 	}
 
-	leafResult := statusmodel.CheckResult{Name: "Pulse leaf certificate", Tier: statusmodel.TierDeployed}
+	leafResult := checkResult(checkPulseLeafCertificate, "", "")
 	data, err := monitorRunner.Run(ctx, monitor.Address, model.DefaultAdminSSHUser, "/usr/bin/openssl s_client -connect 10.10.10.20:443 -servername monitor."+shellQuote(s.Network.Domain)+" -CAfile /etc/ssl/certs/ca-certificates.crt -verify_return_error </dev/null 2>/dev/null | /usr/bin/openssl x509 -noout -issuer -enddate")
 	if err != nil {
 		leafResult.Status = "FAIL"
@@ -168,7 +168,7 @@ func parseLeafExpiry(output string) (time.Time, error) {
 }
 
 func deploymentOperationHealthResult(siteDir string) statusmodel.CheckResult {
-	result := statusmodel.CheckResult{Name: "deployment operation state", Tier: statusmodel.TierLocal}
+	result := checkResult(checkDeploymentOperationState, "", "")
 	state, found, err := site.LoadOperationState(siteDir)
 	if err != nil {
 		result.Status = "FAIL"
@@ -194,14 +194,11 @@ func deploymentOperationHealthResult(siteDir string) statusmodel.CheckResult {
 }
 
 func liveGatewayHealthResults(siteDir string, s model.Site, ageIdentity string) []statusmodel.CheckResult {
-	upstreamName := "managed gateway upstream DHCP"
-	publicationName := "published service mapping"
-	servicesName := "managed gateway services"
 	fail := func(detail string) []statusmodel.CheckResult {
 		return []statusmodel.CheckResult{
-			{Name: upstreamName, Status: "FAIL", Detail: detail},
-			{Name: publicationName, Status: "FAIL", Detail: detail},
-			{Name: servicesName, Status: "FAIL", Detail: detail},
+			checkResult(checkManagedGatewayUpstreamDHCP, "FAIL", detail),
+			checkResult(checkPublishedServiceMapping, "FAIL", detail),
+			checkResult(checkManagedGatewayServices, "FAIL", detail),
 		}
 	}
 
@@ -218,15 +215,15 @@ func liveGatewayHealthResults(siteDir string, s model.Site, ageIdentity string) 
 		return fail(err.Error())
 	}
 	serviceDetail := fmt.Sprintf("nftables=%s, kea-dhcp4-server=%s, kea-dhcp-ddns-server=%s, dnsmasq=%s", liveStatus.Services["nftables"], liveStatus.Services["kea-dhcp4-server"], liveStatus.Services["kea-dhcp-ddns-server"], liveStatus.Services["dnsmasq"])
-	services := statusmodel.CheckResult{Name: servicesName, Status: "PASS", Detail: serviceDetail}
+	services := checkResult(checkManagedGatewayServices, "PASS", serviceDetail)
 	if err := validateDHCPServices(liveStatus); err != nil {
 		services.Status = "FAIL"
 		services.Detail = err.Error()
 	}
 
 	upstreamDetail := fmt.Sprintf("MAC %s address %s gateway %s", liveStatus.Upstream.MAC, liveStatus.Upstream.Address, liveStatus.Upstream.Gateway)
-	upstream := statusmodel.CheckResult{Name: upstreamName, Status: "PASS", Detail: upstreamDetail}
-	publication := statusmodel.CheckResult{Name: publicationName}
+	upstream := checkResult(checkManagedGatewayUpstreamDHCP, "PASS", upstreamDetail)
+	publication := checkResult(checkPublishedServiceMapping, "", "")
 	if err := firewall.ValidateUpstreamObservation(plan, liveStatus.Upstream); err != nil {
 		upstream.Status = "FAIL"
 		upstream.Detail = err.Error()
@@ -274,45 +271,31 @@ func liveGatewayHealthResults(siteDir string, s model.Site, ageIdentity string) 
 func healthStatusReport(revision, observedAt string, results []statusmodel.CheckResult) statusmodel.Report {
 	checks := make([]statusmodel.LegacyCheck, 0, len(results))
 	for _, result := range results {
+		definition, err := normalizeCheckResult(&result)
+		if err != nil {
+			// collectHealthResults performs authoritative validation. Keep this
+			// conversion total for callers that render a partial report.
+			definition = checkDefinition{ID: result.ID, Label: result.Name, EvidenceTier: result.Tier}
+		}
 		checks = append(checks, statusmodel.LegacyCheck{
-			Name: result.Name, Status: result.Status, Detail: result.Detail,
-			Tier: result.Tier, ObservedAt: result.ObservedAt,
+			ID: definition.ID, Name: definition.Label, Status: result.Status, Detail: result.Detail,
+			Tier: definition.EvidenceTier, ObservedAt: result.ObservedAt,
 			Reason: result.Reason, NextAction: result.NextAction,
 		})
 	}
 	return statusmodel.FromLegacy(revision, observedAt, checks)
 }
 
-// annotateVerificationEvidence assigns tiers from the verification contract,
-// not from human-readable detail text. The map is deliberately explicit so a
-// renamed or newly introduced check cannot inherit a stronger evidence claim.
+// annotateVerificationEvidence assigns tiers from the typed verification
+// contract, not from human-readable labels or detail text.
 func annotateVerificationEvidence(results []statusmodel.CheckResult, observedAt string) ([]statusmodel.CheckResult, error) {
-	tiers := map[string]statusmodel.EvidenceTier{
-		"canonical platform model validates":            statusmodel.TierLocal,
-		"firewall policy projection":                    statusmodel.TierLocal,
-		"DNS/DDNS projection":                           statusmodel.TierLocal,
-		"Pulse monitoring projection":                   statusmodel.TierLocal,
-		"platform backup projection":                    statusmodel.TierLocal,
-		"storage projection":                            statusmodel.TierLocal,
-		"qualified appliance evidence":                  statusmodel.TierLocal,
-		"deployment operation state":                    statusmodel.TierLocal,
-		"SSH bastion allow-list":                        statusmodel.TierLocal,
-		"generated SSH configuration":                   statusmodel.TierLocal,
-		"authenticated SSH journey via Proxmox bastion": statusmodel.TierJourney,
-		"managed gateway upstream DHCP":                 statusmodel.TierDeployed,
-		"published service mapping":                     statusmodel.TierDeployed,
-		"managed gateway services":                      statusmodel.TierDeployed,
-		"Smallstep CA service":                          statusmodel.TierDeployed,
-		"Pulse leaf certificate":                        statusmodel.TierDeployed,
-		"external gateway contract":                     statusmodel.TierLocal,
-	}
 	for index := range results {
-		if _, ok := tiers[results[index].Name]; !ok {
-			return nil, fmt.Errorf("verification result %q is not in the evidence contract", results[index].Name)
+		definition, err := normalizeCheckResult(&results[index])
+		if err != nil {
+			return nil, err
 		}
-	}
-	for index := range results {
-		results[index].Tier = tiers[results[index].Name]
+		results[index].Name = definition.Label
+		results[index].Tier = definition.EvidenceTier
 		if results[index].ObservedAt == "" {
 			results[index].ObservedAt = observedAt
 		}
@@ -350,12 +333,12 @@ func offlineVerificationResults(siteDir string, s model.Site) []statusmodel.Chec
 }
 
 func offlineVerificationResultsWithResolver(siteDir string, s model.Site, endpointLookup func(string) ([]net.IP, error)) []statusmodel.CheckResult {
-	results := []statusmodel.CheckResult{{Name: "canonical platform model validates", Status: "PASS", Detail: "fixed 0.5 topology and address contract validated locally"}}
+	results := []statusmodel.CheckResult{checkResult(checkCanonicalPlatformModel, "PASS", "fixed 0.5 topology and address contract validated locally")}
 	checks := []struct {
-		name  string
+		id    string
 		check func() error
 	}{
-		{"firewall policy projection", func() error {
+		{checkFirewallPolicyProjection, func() error {
 			plan, err := firewall.PlanFromSite(s)
 			if err != nil {
 				return err
@@ -383,7 +366,7 @@ func offlineVerificationResultsWithResolver(siteDir string, s model.Site, endpoi
 			}
 			return nil
 		}},
-		{"DNS/DDNS projection", func() error {
+		{checkDNSDDNSProjection, func() error {
 			plan, err := dns.PlanFromSite(s)
 			if err != nil {
 				return err
@@ -399,7 +382,7 @@ func offlineVerificationResultsWithResolver(siteDir string, s model.Site, endpoi
 			}
 			return nil
 		}},
-		{"Pulse monitoring projection", func() error {
+		{checkPulseMonitoringProjection, func() error {
 			plan, err := pulse.PlanFromSite(s)
 			if err != nil {
 				return err
@@ -409,7 +392,7 @@ func offlineVerificationResultsWithResolver(siteDir string, s model.Site, endpoi
 			}
 			return nil
 		}},
-		{"platform backup projection", func() error {
+		{checkPlatformBackupProjection, func() error {
 			plan, err := backup.PlanFromSite(s)
 			if err != nil {
 				return err
@@ -419,7 +402,7 @@ func offlineVerificationResultsWithResolver(siteDir string, s model.Site, endpoi
 			}
 			return nil
 		}},
-		{"storage projection", func() error {
+		{checkStorageProjection, func() error {
 			plan, err := storage.PlanFromSite(s)
 			if err != nil {
 				return err
@@ -429,11 +412,11 @@ func offlineVerificationResultsWithResolver(siteDir string, s model.Site, endpoi
 			}
 			return nil
 		}},
-		{"qualified appliance evidence", func() error {
+		{checkQualifiedApplianceEvidence, func() error {
 			_, err := qualifiedProxmoxPlan(siteDir, s)
 			return err
 		}},
-		{"SSH bastion allow-list", func() error {
+		{checkSSHBastionAllowList, func() error {
 			policy, err := sshconfig.RenderBastionPolicy(s)
 			if err != nil {
 				return err
@@ -446,9 +429,9 @@ func offlineVerificationResultsWithResolver(siteDir string, s model.Site, endpoi
 	}
 	for _, check := range checks {
 		if err := check.check(); err != nil {
-			results = append(results, statusmodel.CheckResult{Name: check.name, Status: "FAIL", Detail: err.Error()})
+			results = append(results, checkResult(check.id, "FAIL", err.Error()))
 		} else {
-			results = append(results, statusmodel.CheckResult{Name: check.name, Status: "STATIC PASS", Detail: "deterministic local projection is valid"})
+			results = append(results, checkResult(check.id, "STATIC PASS", "deterministic local projection is valid"))
 		}
 	}
 	return results

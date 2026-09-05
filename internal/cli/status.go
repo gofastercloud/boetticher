@@ -101,32 +101,20 @@ func loadStatusReport(dir, revision string) statusmodel.Report {
 	return filterHealthStatusReport(report)
 }
 
-var healthCheckNames = map[string]struct{}{
-	"desired platform model":                        {},
-	"canonical platform model validates":            {},
-	"firewall policy projection":                    {},
-	"DNS/DDNS projection":                           {},
-	"Pulse monitoring projection":                   {},
-	"platform backup projection":                    {},
-	"storage projection":                            {},
-	"qualified appliance evidence":                  {},
-	"deployment operation state":                    {},
-	"SSH bastion allow-list":                        {},
-	"generated SSH configuration":                   {},
-	"authenticated SSH journey via Proxmox bastion": {},
-	"managed gateway DHCP/DDNS":                     {},
-	"managed gateway upstream DHCP":                 {},
-	"published service mapping":                     {},
-	"managed gateway services":                      {},
-	"Smallstep CA service":                          {},
-	"Pulse leaf certificate":                        {},
-	"external gateway contract":                     {},
-}
-
 func filterHealthStatusReport(report statusmodel.Report) statusmodel.Report {
 	checks := make([]statusmodel.Check, 0, len(report.Checks))
-	for _, check := range report.Checks {
-		if _, ok := healthCheckNames[check.Component]; ok {
+	for index := range report.Checks {
+		check := report.Checks[index]
+		definition, ok := checkDefinitionByID(check.ID)
+		if !ok && check.ID == "" {
+			definition, ok = checkDefinitionByLabel(check.Component)
+			if ok {
+				check.ID = definition.ID
+			}
+		}
+		if ok && definition.HealthVisible {
+			check.Component = definition.Label
+			check.Tier = definition.EvidenceTier
 			checks = append(checks, check)
 		}
 	}
@@ -140,7 +128,7 @@ func filterHealthStatusReport(report statusmodel.Report) statusmodel.Report {
 
 func desiredStatusReport(s model.Site, revision string) statusmodel.Report {
 	now := time.Now().UTC().Format(time.RFC3339)
-	checks := []statusmodel.LegacyCheck{{Name: "desired platform model", Status: "PASS", Detail: "typed v3 desired state composed locally"}}
+	checks := []statusmodel.LegacyCheck{{ID: checkDesiredPlatformModel, Name: "desired platform model", Status: "PASS", Detail: "typed v3 desired state composed locally"}}
 	report := statusmodel.FromLegacy(revision, now, checks)
 	report.OverallState = statusmodel.Overall(report.Checks)
 	return report

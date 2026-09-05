@@ -47,6 +47,7 @@ const (
 
 // Check is one component result in a status report.
 type Check struct {
+	ID         string         `json:"id"`
 	Component  string         `json:"component"`
 	State      OperatorState  `json:"state"`
 	Evidence   EvidenceStatus `json:"evidence_status"`
@@ -70,6 +71,7 @@ type Report struct {
 // status collection and semantic reporting share the shape; it is not a web
 // page or a separate persisted authority.
 type CheckResult struct {
+	ID         string       `json:"id,omitempty"`
 	Name       string       `json:"name"`
 	Status     string       `json:"status"`
 	Detail     string       `json:"detail,omitempty"`
@@ -90,6 +92,7 @@ type Evidence struct {
 // LegacyCheck is the small internal bridge used while existing verification
 // results are presented through the v1 status model.
 type LegacyCheck struct {
+	ID         string
 	Name       string
 	Status     string
 	Detail     string
@@ -132,6 +135,7 @@ func FromLegacy(modelRevision, observedAt string, checks []LegacyCheck) Report {
 			next = nextAction(evidence)
 		}
 		result.Checks = append(result.Checks, Check{
+			ID:         check.ID,
 			Component:  check.Name,
 			State:      operatorState(evidence),
 			Evidence:   evidence,

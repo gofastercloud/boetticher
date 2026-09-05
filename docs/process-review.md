@@ -134,10 +134,10 @@ the check; the existing structure needs tightening:
   `before` state while producing a configuration diff. That is not a harmless
   convenience: a failed baseline can be presented as an empty or misleading
   diff. It should fail closed.
-* `internal/cli/verify.go:238-268` initializes every evidence tier to
-  `TierLocal` and overrides known check names. A newly added or renamed check
-  can therefore receive an incorrectly optimistic evidence tier. Unknown
-  checks should be rejected or explicitly marked unclassified.
+* `internal/cli/verify.go` now resolves evidence through the typed check
+  definition registry. A newly added or renamed check must have a stable ID;
+  unknown IDs are rejected rather than receiving an incorrectly optimistic
+  evidence tier.
 * `internal/cli/verify.go` and `internal/cli/helpers.go:312-320` use a revision
   substring check for projection freshness. This can produce false positives
   and proves neither artifact structure nor semantic identity. It is adequate
@@ -316,10 +316,12 @@ and ruleset/publication path, yielding 15 or 16.
 
 The evidence-tier model in `internal/status/status.go` is valuable: it
 distinguishes local, remote, deployed, journey, and product evidence and
-preserves `HOLD`, `NOT TESTED`, and `INCONCLUSIVE`. The problem is calibration
-and presentation, not the model. Unknown check names default to local, and
-doctor/network-probe output does not consistently follow the binary operator
-contract. A simpler UI can still retain the full raw report underneath.
+preserves `HOLD`, `NOT TESTED`, and `INCONCLUSIVE`. The operator-facing
+verification path now assigns labels and tiers from one typed definition
+registry keyed by stable IDs; legacy label-only projections are normalized
+only when the label is an exact known match, while unknown IDs are rejected.
+Doctor/network-probe output still has separate recovery semantics, so a
+simpler UI must retain the full raw report underneath.
 
 ### `doctor`
 
