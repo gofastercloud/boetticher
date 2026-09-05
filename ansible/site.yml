@@ -18,8 +18,6 @@
   roles:
     - role: airvpn
       when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap', 'services']
-    - role: chrony
-      when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap', 'services']
 
 - name: Configure managed appliance runtime state
   hosts: managed

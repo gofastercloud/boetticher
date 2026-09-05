@@ -295,6 +295,9 @@ func TestAirVPNRoleRunsBeforeBaseAndSelectedClients(t *testing.T) {
 	if strings.Count(text, "    - role: airvpn\n") != 1 || !strings.Contains(text[:airVPNIndex], "hosts: airvpn") {
 		t.Fatal("AirVPN role must run exactly once in the early AirVPN host play")
 	}
+	if strings.Contains(text[:baseIndex], "    - role: chrony\n") {
+		t.Fatal("Chrony must not start before the base role applies the unprivileged appliance options")
+	}
 }
 
 func TestAirVPNRoleRequiresControllerCredentialBeforeStartup(t *testing.T) {
