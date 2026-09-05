@@ -855,6 +855,8 @@ func TestMigrateLXCPersistentVolumesRestoresRunningGuestAfterMoveFailure(t *test
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/start":
 			restored = true
 			return response([]byte(`{"data":"UPID:pve:start"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:start/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
 		default:
 			t.Fatalf("unexpected LXC persistent-volume recovery request: %s %s", r.Method, r.URL.Path)
 			return nil
@@ -1748,6 +1750,8 @@ func TestReplaceLXCRestoresRunningGuestAfterDetachFailure(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/start":
 			restored = true
 			return response([]byte(`{"data":"UPID:pve:start"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:start/status":
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
 		default:
 			t.Fatalf("unexpected LXC root replacement recovery request: %s %s", r.Method, r.URL.Path)
 			return nil
