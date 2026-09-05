@@ -41,7 +41,7 @@ func main() {
 	// across source-only revisions.
 	if evidence.DefinitionSHA256 != artifact.DefinitionSHA256 {
 		if artifactBlobPresent(artifactPath) {
-			fmt.Printf("qualification-needed %s\n", artifact.Name)
+			fmt.Printf("rebuild-needed %s\n", artifact.Name)
 			return
 		}
 		fatal("artifact build inputs changed for %s", artifact.Name)
@@ -55,7 +55,7 @@ func main() {
 			fatal("read artifact bytes for %s: %v", artifact.Name, hashErr)
 		}
 		if actual != evidence.ContentSHA256 {
-			fmt.Printf("qualification-needed %s\n", artifact.Name)
+			fmt.Printf("rebuild-needed %s\n", artifact.Name)
 			return
 		}
 	}

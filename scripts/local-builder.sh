@@ -203,6 +203,16 @@ remote_artifact_needs_qualification() {
   esac
 }
 
+remote_artifact_needs_rebuild() {
+  artifact=$1
+  module=$(artifact_module "$artifact")
+  status=$(native_ssh "/usr/sbin/chroot $remote_native_root /bin/sh -c 'cd /var/lib/boetticher/local-builder/source && env GOROOT=/opt/boetticher/go/current PATH=/opt/boetticher/go/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin GOCACHE=/var/cache/boetticher/go /opt/boetticher/go/current/bin/go run ./cmd/artifact-reuse -root $remote_output -module $module'" 2>/dev/null) || return 1
+  case "$status" in
+    rebuild-needed\ *) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 filter_reusable_targets() {
   operation=$1
   shift
@@ -226,6 +236,8 @@ filter_reusable_targets() {
         printf 'measurement stage=artifact_reuse status=qualification-needed artifact=base\n'
         base_available=1
         reusable=$((reusable + 1))
+      elif remote_artifact_needs_rebuild image-base; then
+        printf 'measurement stage=artifact_reuse status=rebuild-needed artifact=base\n'
       fi
       case " $selected " in
 		*" image-base "*) ;;
@@ -245,6 +257,8 @@ filter_reusable_targets() {
 		elif remote_artifact_needs_qualification "$target"; then
 		  printf 'measurement stage=artifact_reuse status=qualification-needed artifact=%s\n' "${target#image-}"
 		  reusable=$((reusable + 1))
+		elif remote_artifact_needs_rebuild "$target"; then
+		  printf 'measurement stage=artifact_reuse status=rebuild-needed artifact=%s\n' "${target#image-}"
 		else
 		  pending="$pending $target"
         fi
@@ -284,6 +298,8 @@ filter_reusable_targets() {
       elif [ "$operation" = build ] && [ -n "$image_target" ] && remote_artifact_needs_qualification "$image_target"; then
         printf 'measurement stage=artifact_reuse status=qualification-needed artifact=%s\n' "${image_target#image-}"
         reusable=1
+      elif [ "$operation" = build ] && [ -n "$image_target" ] && remote_artifact_needs_rebuild "$image_target"; then
+        printf 'measurement stage=artifact_reuse status=rebuild-needed artifact=%s\n' "${image_target#image-}"
       fi
       ;;
   esac

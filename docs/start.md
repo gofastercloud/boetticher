@@ -95,7 +95,8 @@ documentation, test, release-import, and maintainer-wrapper changes do not
 force unrelated image reconstruction. The release manifest signs the exact
 artifact bytes; source and build-definition revisions remain provenance, not a
 runtime rebuild trigger. Missing maintainer evidence is reported separately
-and does not force image reconstruction.
+and does not force image reconstruction; changed effective build inputs or
+changed bytes are reported as `rebuild-needed` and are never reused.
 
 For a three-drive development machine, keep the operating system on the
 internal NVMe boot drive, put the persistent Linux build root, downloads,

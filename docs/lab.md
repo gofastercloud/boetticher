@@ -225,10 +225,12 @@ release evidence. The official workflow builds the supported artifacts and
 assembles a signed bundle from one exact source revision; scans, SBOMs, smoke
 output, and provenance remain maintainer evidence attachments. Native
 maintainer runs reuse an artifact when its coordinates, signed content digest,
-base dependency, and bytes resolve successfully; missing evidence does not
-trigger a rebuild. The release manifest signs the exact artifact bytes. Release
-source provenance remains the exact source revision used for controller and
-bundle assembly, while the build-definition digest is provenance only.
+base dependency, and bytes resolve successfully; missing evidence is reported
+as `qualification-needed`, while changed effective build inputs or wrong bytes
+are `rebuild-needed` and never reused. The release manifest signs the exact
+artifact bytes. Release source provenance remains the exact source revision
+used for controller and bundle assembly; the effective build-input digest is
+the maintainer cache identity.
 
 ## Optional-module acceptance
 
