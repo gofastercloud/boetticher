@@ -200,6 +200,22 @@ func installCredentialsForGuest(ctx context.Context, runner proxmox.CommandRunne
 			return fmt.Errorf("install %s credential on %s: %w", binding.Spec.Name, guest, err)
 		}
 	}
+	if guest == "lab-airvpn-01" {
+		// The AirVPN role starts its service as part of the same Ansible pass
+		// that first reaches the guest. Install its non-secret systemd binding
+		// alongside the encrypted credential so startup cannot race role order.
+		dropIns, err := credentialDropIns(selected)
+		if err != nil {
+			return fmt.Errorf("render AirVPN credential drop-in: %w", err)
+		}
+		content := dropIns[guest]["boetticher-airvpn.service"]
+		if content == "" {
+			return fmt.Errorf("AirVPN credential drop-in is missing")
+		}
+		if _, err := stdinRunner.RunWithStdin(ctx, selected[0].Address, "root", "install -D -m 0644 /dev/stdin /etc/systemd/system/boetticher-airvpn.service.d/boetticher-credentials.conf", strings.NewReader(content)); err != nil {
+			return fmt.Errorf("install AirVPN credential drop-in on %s: %w", guest, err)
+		}
+	}
 	if _, err := runner.Run(ctx, selected[0].Address, "root", "systemctl daemon-reload"); err != nil {
 		return fmt.Errorf("reload systemd after credential installation on %s: %w", guest, err)
 	}

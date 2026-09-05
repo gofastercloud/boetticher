@@ -167,6 +167,33 @@ func TestCredentialInstallationStreamsValuesOutsideCommands(t *testing.T) {
 	}
 }
 
+func TestAirVPNCredentialInstallationPreparesItsUnitBinding(t *testing.T) {
+	config := model.ConfigFromSite(model.NewSite("airvpn", "age1airvpn", model.GatewayModeManaged))
+	enabled := true
+	config.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "europe"}
+	site, _, err := modules.Compose(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := deploymentCredentialBindings(site)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &credentialDeploymentRunner{}
+	profile := "[Interface]\nPrivateKey=synthetic-private-key\n"
+	if err := installCredentialsForGuest(context.Background(), runner, "lab-airvpn-01", bindings, map[string]string{"airvpn_wireguard_config": profile}); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.values) != 2 || runner.values[0] != profile || !strings.Contains(runner.values[1], "LoadCredentialEncrypted=airvpn-wireguard-config:/var/lib/boetticher/credentials/airvpn-wireguard-config.cred") {
+		t.Fatalf("AirVPN credential and drop-in were not streamed as expected: %#v", runner.values)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, profile) || strings.Contains(command, "synthetic-private-key") {
+			t.Fatalf("AirVPN secret entered a remote command: %s", command)
+		}
+	}
+}
+
 func TestPowerDNSExceptionStreamsProtectedBackendSQL(t *testing.T) {
 	plan, err := dns.PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {
