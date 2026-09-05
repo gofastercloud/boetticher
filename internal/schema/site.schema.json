@@ -28,6 +28,9 @@
         "enabled": {
           "type": "boolean"
         },
+        "qbittorrent_port": {
+          "type": "integer"
+        },
         "servers": {
           "type": "string"
         }
@@ -132,6 +135,9 @@
     "CompanionConfig": {
       "additionalProperties": false,
       "properties": {
+        "blinkt": {
+          "$ref": "#/$defs/CompanionCapabilityConfig"
+        },
         "display": {
           "$ref": "#/$defs/CompanionCapabilityConfig"
         },
@@ -147,6 +153,9 @@
         },
         "streamdeck": {
           "$ref": "#/$defs/CompanionCapabilityConfig"
+        },
+        "streamdeck_serial": {
+          "type": "string"
         }
       },
       "type": "object"
@@ -441,11 +450,15 @@
         },
         "installation_id": {
           "type": "string"
+        },
+        "root_age_recipient": {
+          "type": "string"
         }
       },
       "required": [
         "installation_id",
-        "age_recipient"
+        "age_recipient",
+        "root_age_recipient"
       ],
       "type": "object"
     },

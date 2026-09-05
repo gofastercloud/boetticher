@@ -1,0 +1,75 @@
+---
+- name: Read the physical Raspberry Pi model
+  ansible.builtin.slurp:
+    src: /proc/device-tree/model
+  register: companion_board
+
+- name: Require the supported Pi 4 GPIO layout
+  ansible.builtin.assert:
+    that: "'Raspberry Pi 4 Model B' in (companion_board.content | b64decode)"
+    fail_msg: "Blinkt currently supports the Pi 4 GPIO layout; other boards require an explicit driver mapping"
+
+- name: Install the distro GPIO driver
+  ansible.builtin.apt:
+    name: python3-lgpio
+    state: present
+
+- name: Create the GPIO display account
+  ansible.builtin.user:
+    name: blinkt
+    groups: [gpio, companion]
+    append: true
+    create_home: false
+    system: true
+    shell: /usr/sbin/nologin
+    password_lock: true
+
+- name: Inspect the previous standalone animation
+  ansible.builtin.stat:
+    path: /etc/systemd/system/blinkt-pattern.service
+  register: old_blinkt_unit
+
+- name: Inspect the standalone animation identity
+  ansible.builtin.stat:
+    path: /usr/local/libexec/blinkt-pattern
+    checksum_algorithm: sha256
+  register: old_blinkt_script
+  when: old_blinkt_unit.stat.exists
+
+- name: Require the known standalone animation before taking over GPIO
+  ansible.builtin.assert:
+    that: old_blinkt_script.stat.checksum | default('') in ['00acd8dde8c4ce6008bfb34c50bb1b4623aeff30ec409287b5409d60bb20d1e4', '51aa655f21eb325b4ce18c4ce8295b74cd517b4cfb005e16a4c2ae38d37aef65', '317299fe409b54895c391c0cb04fae57bfa2d0a763072b6f86308b1d7456206c']
+    fail_msg: "An unidentified blinkt-pattern service exists; stop it explicitly before enabling the managed renderer"
+  when: old_blinkt_unit.stat.exists
+
+- name: Stop the known standalone animation and retain its files
+  ansible.builtin.systemd_service:
+    name: blinkt-pattern.service
+    state: stopped
+    enabled: false
+  when: old_blinkt_unit.stat.exists
+
+- name: Install the managed Blinkt renderer
+  ansible.builtin.copy:
+    src: "{{ kiosk_source_dir }}/libexec/boetticher-blinkt"
+    dest: /usr/local/libexec/boetticher-blinkt
+    owner: root
+    group: root
+    mode: '0755'
+  notify: restart boetticher-blinkt
+
+- name: Install the GPIO-scoped renderer service
+  ansible.builtin.template:
+    src: boetticher-blinkt.service.j2
+    dest: /etc/systemd/system/boetticher-blinkt.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart boetticher-blinkt
+
+- name: Start the managed status LEDs
+  ansible.builtin.systemd_service:
+    name: boetticher-blinkt.service
+    enabled: true
+    state: started
+    daemon_reload: true

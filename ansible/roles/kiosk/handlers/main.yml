@@ -12,16 +12,21 @@
   ansible.builtin.systemd_service:
     name: pulse-agent
     state: restarted
+    daemon_reload: true
+  when: kiosk_pulse_agent_enabled | bool
 
-- name: restart pulse-kiosk
+- name: restart seatd
   ansible.builtin.systemd_service:
-    name: pulse-kiosk
+    name: seatd
     state: restarted
+    daemon_reload: true
 
 - name: restart companion streamdeck
+  listen: restart boetticher-streamdeck
   ansible.builtin.systemd_service:
     name: boetticher-streamdeck
     state: restarted
+    daemon_reload: true
 
 - name: restart log2ram
   ansible.builtin.systemd_service:
@@ -32,3 +37,29 @@
   ansible.builtin.systemd_service:
     name: ssh
     state: restarted
+
+- name: restart boetticher-companion
+  ansible.builtin.systemd_service:
+    name: boetticher-companion
+    state: restarted
+    daemon_reload: true
+
+- name: restart boetticher-blinkt
+  ansible.builtin.systemd_service:
+    name: boetticher-blinkt
+    state: restarted
+    daemon_reload: true
+
+- name: restart pulse-kiosk
+  ansible.builtin.systemd_service:
+    name: pulse-kiosk
+    state: restarted
+    daemon_reload: true
+
+- name: reload companion ssh
+  ansible.builtin.systemd_service:
+    name: ssh
+    state: reloaded
+
+- name: apply companion forwarding policy
+  ansible.builtin.command: sysctl -p /etc/sysctl.d/70-boetticher-companion.conf

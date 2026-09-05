@@ -949,7 +949,7 @@ var retainedModuleServices = map[string][]string{
 	"airvpn":         {"boetticher-airvpn.service"},
 	"bifrost":        {"bifrost", "nginx"},
 	"printer":        {"octoprint", "nginx"},
-	"arr":            {"sonarr", "radarr", "nginx"},
+	"arr":            {"sonarr", "radarr", "lidarr", "readarr", "prowlarr", "qbittorrent", "boetticher-arr-peer-firewall", "nginx"},
 	"aiops":          {"boetticher-aiops", "boetticher-aiops.socket", "holmes"},
 	"gatus":          {"gatus", "nginx"},
 }
@@ -979,7 +979,13 @@ func InactivateRetainedModule(ctx context.Context, runner CommandRunner, address
 	}
 	serviceCommands := make([]string, 0, len(services))
 	for _, service := range services {
-		serviceCommands = append(serviceCommands, "systemctl disable --now "+shellQuote(service)+"; if systemctl is-active --quiet "+shellQuote(service)+"; then echo retained service remains active: "+shellQuote(service)+" >&2; exit 1; fi; if systemctl is-enabled --quiet "+shellQuote(service)+"; then echo retained service remains enabled: "+shellQuote(service)+" >&2; exit 1; fi")
+		command := "systemctl disable --now " + shellQuote(service) + "; if systemctl is-active --quiet " + shellQuote(service) + "; then echo retained service remains active: " + shellQuote(service) + " >&2; exit 1; fi; if systemctl is-enabled --quiet " + shellQuote(service) + "; then echo retained service remains enabled: " + shellQuote(service) + " >&2; exit 1; fi"
+		if module == "arr" {
+			// ARR 1.0.0 and 1.0.1 have different bounded service sets. Stop
+			// every known installed service, including retired Readarr.
+			command = "if [ \"$(systemctl show --property=LoadState --value " + shellQuote(service) + ")\" != not-found ]; then " + command + "; fi"
+		}
+		serviceCommands = append(serviceCommands, command)
 	}
 	guestCommand := "set -eu; systemctl daemon-reload; " + strings.Join(serviceCommands, "; ")
 	var command string
@@ -1656,17 +1662,20 @@ func validateScopedCredentialTokenOwnership(usersOutput, tokensOutput, aclOutput
 		if !relevant {
 			continue
 		}
-		if acl.Propagate != 1 || acl.RoleID != role || acl.Type != expectedType {
+		if acl.RoleID != role || acl.Type != expectedType {
 			return errors.New("scoped credential ACL is unexpected")
 		}
 		if acl.Path == "/" {
+			if acl.Propagate != 1 {
+				return errors.New("scoped credential ACL is unexpected")
+			}
 			if seenLegacy[acl.UGID] || len(seenScoped) > 0 {
 				return errors.New("scoped credential ACL is unexpected")
 			}
 			seenLegacy[acl.UGID] = true
 			continue
 		}
-		if !allowedPaths[acl.Path] || seenLegacy[acl.UGID] {
+		if !allowedPaths[acl.Path] || acl.Propagate != scopedProvisionerACLPropagate(acl.Path) || seenLegacy[acl.UGID] {
 			return errors.New("scoped credential ACL is unexpected")
 		}
 		key := acl.UGID + "\x00" + acl.Path
@@ -1949,12 +1958,22 @@ func EnsureScopedCredentialAuditACL(ctx context.Context, runner CommandRunner, a
 
 func setScopedCredentialACL(ctx context.Context, runner CommandRunner, address, initialUser, subjectFlag, subject, role string, paths []string) error {
 	for _, aclPath := range paths {
-		setACL := "pvesh set /access/acl --path " + shellQuote(aclPath) + " " + subjectFlag + " " + shellQuote(subject) + " --roles " + shellQuote(role) + " --propagate 1"
+		setACL := "pvesh set /access/acl --path " + shellQuote(aclPath) + " " + subjectFlag + " " + shellQuote(subject) + " --roles " + shellQuote(role) + " --propagate " + strconv.Itoa(scopedProvisionerACLPropagate(aclPath))
 		if _, err := runner.Run(ctx, address, initialUser, privilegedCommand(initialUser, setACL)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// The storage collection grants only the API collection capability needed to
+// create the fixed storage IDs. Child privileges are granted explicitly below;
+// inheriting them from /storage would authorize arbitrary future storage IDs.
+func scopedProvisionerACLPropagate(path string) int {
+	if path == "/storage" {
+		return 0
+	}
+	return 1
 }
 
 func scopedProvisionerACLPaths(node string) []string {
@@ -2024,7 +2043,7 @@ func validateScopedProvisionerACL(aclOutput []byte, userID, tokenID, role, node 
 			// the mutating provisioner ACL and is validated independently.
 			continue
 		}
-		if acl.Path == "/" || !allowedPaths[acl.Path] || acl.Propagate != 1 || acl.RoleID != role || acl.Type != expectedType {
+		if acl.Path == "/" || !allowedPaths[acl.Path] || acl.Propagate != scopedProvisionerACLPropagate(acl.Path) || acl.RoleID != role || acl.Type != expectedType {
 			return errors.New("scoped credential ACL is unexpected")
 		}
 		key := acl.UGID + "\x00" + acl.Path

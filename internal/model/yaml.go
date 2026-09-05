@@ -63,9 +63,9 @@ func validateModuleConfigShape(data []byte) error {
 		for index := 0; index+1 < len(companion.Content); index += 2 {
 			name := companion.Content[index].Value
 			value := companion.Content[index+1]
-			if name == "ethernet_mac" {
+			if name == "ethernet_mac" || name == "streamdeck_serial" {
 				if value.Tag != "!!str" {
-					return errors.New("site.yml: companion.ethernet_mac: expected a string")
+					return fmt.Errorf("site.yml: companion.%s: expected a string", name)
 				}
 				continue
 			}
@@ -75,7 +75,7 @@ func validateModuleConfigShape(data []byte) error {
 				}
 				continue
 			}
-			if name != "display" && name != "streamdeck" && name != "pulse_agent" {
+			if name != "display" && name != "streamdeck" && name != "pulse_agent" && name != "blinkt" {
 				return fmt.Errorf("site.yml: companion.%s: unknown field", name)
 			}
 			if value.Kind != yaml.MappingNode {

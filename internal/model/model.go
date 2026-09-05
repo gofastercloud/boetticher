@@ -30,12 +30,12 @@ const (
 	QualifiedGatewayImage       = "debian-13-genericcloud-amd64-20260327-2429"
 	QualifiedGatewayImageURL    = "https://cloud.debian.org/images/cloud/trixie/20260327-2429/debian-13-genericcloud-amd64-20260327-2429.qcow2"
 	QualifiedGatewayImageSHA512 = "09559ec27d263997827dd8cddf76e97ea8e0f1803380aa501ea7eaa4b4968cd76ffef4ec7eb07ef1a9ccbeb0925a5020492ea9ed53eb167d62f3a2285039912c"
-	PulseVersion                = "6.1.2"
-	PulseReleaseURL             = "https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-v6.1.2-linux-amd64.tar.gz"
-	PulseReleaseSHA256          = "844cd054bcfce528cbcf434d782e571791cc7b02ef2fe298cf138b1cab1087ea"
-	PulseAgentVersion           = "6.1.2"
-	PulseAgentReleaseURL        = "https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-agent-linux-amd64"
-	PulseAgentReleaseSHA256     = "1f3cfda2b112e82f311f05673f750bc6e5cb05bd0f942f9b84d7612d56f1ba75"
+	PulseVersion                = "6.4.1"
+	PulseReleaseURL             = "https://github.com/rcourtman/Pulse/releases/download/v6.4.1/pulse-v6.4.1-linux-amd64.tar.gz"
+	PulseReleaseSHA256          = "543e967718c6e71763b7a76d9c3c9c992157206810959750b4aa0aa0631bf1e0"
+	PulseAgentVersion           = "6.4.1"
+	PulseAgentReleaseURL        = "https://github.com/rcourtman/Pulse/releases/download/v6.4.1/pulse-agent-linux-amd64"
+	PulseAgentReleaseSHA256     = "974708439f052136cac2a334ad790bf9da12b3f1c8e758ebe7bc0a8d2a505ce9"
 	AuthoritativeDNS            = "PowerDNS Authoritative"
 	AuthoritativeDNSVersion     = "4.9.17"
 	AuthoritativePackageVersion = "4.9.17-1pdns.trixie"
@@ -96,8 +96,8 @@ const (
 )
 
 const (
-	PulseAgentARM64ReleaseURL    = "https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-agent-linux-arm64"
-	PulseAgentARM64ReleaseSHA256 = "20d956ccc93ca5fc8273b0f9c37398cf19271604b40dc6fe3ed8cbd39bef7185"
+	PulseAgentARM64ReleaseURL    = "https://github.com/rcourtman/Pulse/releases/download/v6.4.1/pulse-agent-linux-arm64"
+	PulseAgentARM64ReleaseSHA256 = "7012ab620b5a02803c465882b4ae8af4cde6acef24e7b8c05eff26b093c0ae53"
 )
 
 var modelTokenPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,253}$`)
@@ -326,8 +326,9 @@ type Zone struct {
 }
 
 type SecretMetadata struct {
-	InstallationID string `yaml:"installation_id" json:"installation_id"`
-	AgeRecipient   string `yaml:"age_recipient" json:"age_recipient"`
+	InstallationID   string `yaml:"installation_id" json:"installation_id"`
+	AgeRecipient     string `yaml:"age_recipient" json:"age_recipient"`
+	RootAgeRecipient string `yaml:"root_age_recipient" json:"root_age_recipient"`
 }
 
 type OwnershipPolicy struct {
@@ -375,12 +376,13 @@ type Component struct {
 }
 
 type ModuleConfig struct {
-	Enabled    *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Network    ModuleNetworkMode       `yaml:"network,omitempty" json:"network,omitempty"`
-	Servers    string                  `yaml:"servers,omitempty" json:"servers,omitempty"`
-	ModelAlias string                  `yaml:"model_alias,omitempty" json:"model_alias,omitempty"`
-	Upstreams  []BifrostUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
-	Models     []BifrostModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
+	QBittorrentPort int                     `yaml:"qbittorrent_port,omitempty" json:"qbittorrent_port,omitempty"`
+	Enabled         *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Network         ModuleNetworkMode       `yaml:"network,omitempty" json:"network,omitempty"`
+	Servers         string                  `yaml:"servers,omitempty" json:"servers,omitempty"`
+	ModelAlias      string                  `yaml:"model_alias,omitempty" json:"model_alias,omitempty"`
+	Upstreams       []BifrostUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	Models          []BifrostModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
 }
 
 type USBExportBinding struct {
@@ -634,7 +636,7 @@ func NewSite(installationID, ageRecipient, gatewayMode string) Site {
 			},
 		},
 		PhysicalNetwork: PhysicalNetwork{Mode: ModeVirtualOnly},
-		SecretMetadata:  SecretMetadata{InstallationID: installationID, AgeRecipient: ageRecipient},
+		SecretMetadata:  SecretMetadata{InstallationID: installationID, AgeRecipient: ageRecipient, RootAgeRecipient: ageRecipient + "-root"},
 		Ownership: OwnershipPolicy{
 			PlatformGuestIDMin: PlatformGuestIDMin, PlatformGuestIDMax: PlatformGuestIDMax,
 			ModuleGuestIDMin: ModuleGuestIDMin, ModuleGuestIDMax: ModuleGuestIDMax,
@@ -945,8 +947,11 @@ func (s Site) Validate() error {
 	if s.Ownership != (OwnershipPolicy{PlatformGuestIDMin: PlatformGuestIDMin, PlatformGuestIDMax: PlatformGuestIDMax, ModuleGuestIDMin: ModuleGuestIDMin, ModuleGuestIDMax: ModuleGuestIDMax, UserGuestIDMin: UserGuestIDMin, UserGuestIDMax: UserGuestIDMax, UserWorkloadsManaged: false}) {
 		return errors.New("ownership policy must reserve 100-199 for platform, 200-499 for official modules, and 500-899 for user workloads; user workloads are not managed")
 	}
-	if !modelTokenPattern.MatchString(s.SecretMetadata.InstallationID) || s.SecretMetadata.AgeRecipient == "" {
-		return fmt.Errorf("secret_metadata must contain a safe installation_id and public age_recipient")
+	if !modelTokenPattern.MatchString(s.SecretMetadata.InstallationID) || s.SecretMetadata.AgeRecipient == "" || s.SecretMetadata.RootAgeRecipient == "" || s.SecretMetadata.RootAgeRecipient == s.SecretMetadata.AgeRecipient {
+		return fmt.Errorf("secret_metadata must contain a safe installation_id and distinct public age recipients")
+	}
+	if port := s.ModuleConfig["airvpn"].QBittorrentPort; !ValidQBittorrentPort(port) {
+		return errors.New("modules.airvpn.qbittorrent_port: use 0 to disable or a reserved port from 2049 to 65535 excluding ARR web/API ports")
 	}
 	if bifrost, ok := s.ModuleConfig["bifrost"]; ok && (bifrost.Enabled != nil && *bifrost.Enabled || len(bifrost.Upstreams) > 0 || len(bifrost.Models) > 0) {
 		if err := ValidateBifrostConfig(bifrost); err != nil {
@@ -1173,6 +1178,14 @@ func (s Site) Validate() error {
 func validateCompanion(companion *CompanionConfig) error {
 	if companion == nil {
 		return nil
+	}
+	if len(companion.StreamDeckSerial) > 128 {
+		return errors.New("companion.streamdeck_serial is too long")
+	}
+	for _, r := range companion.StreamDeckSerial {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '.' || r == '-') {
+			return errors.New("companion.streamdeck_serial contains unsupported characters")
+		}
 	}
 	if companion.EthernetMAC == "" {
 		if companion.Capabilities().Enabled {

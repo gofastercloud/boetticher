@@ -115,7 +115,7 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		declaration.Monitoring = append(declaration.Monitoring, model.MonitoringDeclaration{Name: "boetticher-airvpn", Kind: "service", Target: "lab-airvpn-01", Checks: []string{"wireguard", "forwarding", "kill-switch"}, Description: "AirVPN WireGuard transit and fail-closed forwarding health"})
 	case "arr":
 		declaration.Security = model.GuestSecurityDeclaration{Unprivileged: true}
-		declaration.DNSRecords = []model.DNSRecord{{Name: "sonarr." + site.Network.Domain, Type: "A", Address: model.ArrGuestAddress, Owner: "arr"}, {Name: "radarr." + site.Network.Domain, Type: "A", Address: model.ArrGuestAddress, Owner: "arr"}}
+		declaration.DNSRecords = []model.DNSRecord{{Name: "sonarr." + site.Network.Domain, Type: "A", Address: model.ArrGuestAddress, Owner: "arr"}, {Name: "radarr." + site.Network.Domain, Type: "A", Address: model.ArrGuestAddress, Owner: "arr"}, {Name: "lidarr." + site.Network.Domain, Type: "A", Address: model.ArrGuestAddress, Owner: "arr"}, {Name: "prowlarr." + site.Network.Domain, Type: "A", Address: model.ArrGuestAddress, Owner: "arr"}, {Name: "qbittorrent." + site.Network.Domain, Type: "A", Address: model.ArrGuestAddress, Owner: "arr"}}
 		declaration.DHCPReservations = []model.DHCPReservation{{Zone: "SERVERS", Hostname: "lab-arr-01", Address: model.ArrGuestAddress, MAC: model.ArrGuestMAC, VMID: model.ArrVMID}}
 		declaration.NetworkIntents = []model.NetworkIntent{
 			{Source: "lab-arr-01", Destination: "dns", Protocol: "tcp/udp", Ports: []string{"53"}, Direction: "egress", Purpose: "arr DNS resolution"},
@@ -124,11 +124,14 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 		if IsEnabled(site, "logging") {
 			declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: "lab-arr-01", Destination: "logs." + site.Network.Domain, Protocol: "tcp", Ports: []string{"19532"}, Direction: "egress", Purpose: "native journal upload"})
 		}
-		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "sonarr." + site.Network.Domain, SANs: []string{"sonarr." + site.Network.Domain, "radarr." + site.Network.Domain, "lab-arr-01." + site.Network.Domain}, Consumer: "nginx"})
+		declaration.Certificates = append(declaration.Certificates, model.CertificateRequest{Identity: "sonarr." + site.Network.Domain, SANs: []string{"sonarr." + site.Network.Domain, "radarr." + site.Network.Domain, "lidarr." + site.Network.Domain, "prowlarr." + site.Network.Domain, "qbittorrent." + site.Network.Domain, "lab-arr-01." + site.Network.Domain}, Consumer: "nginx"})
 		declaration.Monitoring = append(declaration.Monitoring,
-			model.MonitoringDeclaration{Name: "nginx", Kind: "service", Target: "lab-arr-01", Checks: []string{"nginx", "https", "mtls"}, Description: "Sonarr and Radarr mTLS frontend health"},
+			model.MonitoringDeclaration{Name: "nginx", Kind: "service", Target: "lab-arr-01", Checks: []string{"nginx", "https", "mtls"}, Description: "*arr mTLS frontend health"},
 			model.MonitoringDeclaration{Name: "sonarr", Kind: "service", Target: "lab-arr-01", Checks: []string{"sonarr", "loopback"}, Description: "Sonarr loopback backend health"},
 			model.MonitoringDeclaration{Name: "radarr", Kind: "service", Target: "lab-arr-01", Checks: []string{"radarr", "loopback"}, Description: "Radarr loopback backend health"},
+			model.MonitoringDeclaration{Name: "lidarr", Kind: "service", Target: "lab-arr-01", Checks: []string{"lidarr", "loopback"}, Description: "Lidarr loopback backend health"},
+			model.MonitoringDeclaration{Name: "prowlarr", Kind: "service", Target: "lab-arr-01", Checks: []string{"prowlarr", "loopback"}, Description: "Prowlarr loopback backend health"},
+			model.MonitoringDeclaration{Name: "qbittorrent", Kind: "service", Target: "lab-arr-01", Checks: []string{"qbittorrent", "loopback"}, Description: "qBittorrent loopback WebUI health"},
 		)
 	case "bifrost":
 		config := site.ModuleConfig[name]
@@ -209,6 +212,9 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 			declaration.DHCPReservations[i].DNSOverride = model.AirVPNGuestAddress
 			declaration.DHCPReservations[i].NTPOverride = model.AirVPNGuestAddress
 		}
+	}
+	if name == "airvpn" || name == "tailnet-router" {
+		declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: components[0].Name, Destination: "lab-monitor-01", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "Pulse VPN sensor reports"})
 	}
 	return declaration, nil
 }

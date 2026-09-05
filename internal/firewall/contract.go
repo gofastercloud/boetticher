@@ -75,7 +75,7 @@ func RenderExternalContract(s model.Site, plan Plan) (string, error) {
 		case "airvpn":
 			b.WriteString("### airvpn\n\n- Address: `10.10.5.20` on TRANSIT.\n- The guest is an unprivileged LXC with `/dev/net/tun` and no added Linux capabilities.\n- The guest kill switch permits selected client sources to `airvpn0`, permits only the exact provider handshake on `eth0`, and drops direct-WAN and internal fallback paths.\n- The WireGuard profile is controller-generated, retained as an encrypted site secret, and never included in this contract.\n\n")
 		case "arr":
-			b.WriteString("### arr\n\n- Address: `10.10.20.110` in SERVERS, using its declaration-owned DHCP reservation.\n- Sonarr and Radarr are loopback-only services behind one nginx HTTPS frontend.\n- Frontend access requires the existing Boetticher client certificate; no plaintext listener or HOME-network path is permitted.\n- All external application egress is AirVPN-selected; direct-WAN fallback and LAB-to-HOME NAT remain denied.\n\n")
+			b.WriteString("### arr\n\n- Address: `10.10.20.110` in SERVERS, using its declaration-owned DHCP reservation.\n- Sonarr, Radarr, Lidarr, Prowlarr, and qBittorrent web/API backends are loopback-only behind one nginx HTTPS frontend.\n- Frontend access requires the existing Boetticher operator client certificate; no plaintext web listener or HOME-network path is permitted. The optional qBittorrent peer port accepts forwarded traffic from the AirVPN router only.\n- All external application egress is AirVPN-selected; direct-WAN fallback and LAB-to-HOME NAT remain denied.\n\n")
 		}
 	}
 	b.WriteString("\n## Required behavior\n\n")

@@ -1,0 +1,67 @@
+#!/usr/bin/python3
+"""Fixed VPN observations, without exporting keys, peers or control operations."""
+import json
+import subprocess
+import sys
+import time
+
+
+
+def command(*args):
+    return subprocess.run(args, capture_output=True, text=True, timeout=2, check=True).stdout
+
+
+def evaluate(module, read=command, now=None, wanted=None):
+    now = time.time() if now is None else now
+    checks = {}
+    def check(name, operation):
+        if wanted is not None and name != wanted:
+            return
+        try:
+            checks[name] = bool(operation())
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+            checks[name] = False
+    if module == 'airvpn':
+        check('service', lambda: read('systemctl', 'is-active', 'boetticher-airvpn.service').strip() == 'active')
+        def handshake():
+            rows = read('wg', 'show', 'airvpn0', 'latest-handshakes').splitlines()
+            return len(rows) == 1 and 0 <= now - int(rows[0].split()[1]) <= 180
+        check('handshake', handshake)
+        def forwarding():
+            if read('sysctl', '-n', 'net.ipv4.ip_forward').strip() != '1':
+                return False
+            routes = json.loads(read('ip', '-j', 'route', 'show', 'table', '51820'))
+            return any(route.get('dst') == 'default' and route.get('dev') == 'airvpn0' for route in routes)
+        check('forwarding', forwarding)
+        def guard():
+            rules = json.loads(read('nft', '-j', 'list', 'table', 'inet', 'boetticher_airvpn'))['nftables']
+            drop = any(row.get('chain', {}).get('name') == 'forward' and row['chain'].get('policy') == 'drop' for row in rules)
+            comments = {row.get('rule', {}).get('comment') for row in rules}
+            return drop and {'boetticher:airvpn-no-direct-forward', 'boetticher:airvpn-no-internal-forward'} <= comments
+        check('kill-switch', guard)
+    elif module == 'tailnet-router':
+        check('service', lambda: read('systemctl', 'is-active', 'tailscaled').strip() == 'active')
+        try:
+            status = json.loads(read('tailscale', 'status', '--json'))
+        except (OSError, subprocess.SubprocessError, ValueError):
+            status = {}
+        check('backend', lambda: status.get('BackendState') == 'Running')
+        check('online', lambda: status.get('Self', {}).get('Online') is True)
+        check('advertised-route', lambda: '10.10.0.0/16' in json.loads(read('tailscale', 'debug', 'prefs')).get('AdvertiseRoutes', []))
+        check('approved-route', lambda: '10.10.0.0/16' in status.get('Self', {}).get('PrimaryRoutes', []))
+    else:
+        raise ValueError('unsupported VPN module')
+    return {'module': module, 'observed_at': now, 'checks': checks}
+
+
+def main():
+    if len(sys.argv) != 4 or sys.argv[1] != 'check':
+        raise SystemExit('usage: vpn-health check MODULE CHECK')
+    result = evaluate(sys.argv[2], wanted=sys.argv[3])
+    if sys.argv[3] not in result['checks']:
+        raise SystemExit('unknown sensor')
+    print('true' if result['checks'][sys.argv[3]] else 'false')
+
+
+if __name__ == '__main__':
+    main()

@@ -275,8 +275,8 @@
 
 - name: Refuse an unsupported Pulse release
   ansible.builtin.assert:
-    that: "'6.1.2' in pulse_version.stdout"
-    fail_msg: "The installed Pulse server is not the qualified 6.1.2 release"
+    that: "'6.4.1' in pulse_version.stdout"
+    fail_msg: "The installed Pulse server is not the qualified 6.4.1 release"
   when: inventory_hostname == 'lab-monitor-01'
 
 - name: Create the persistent Pulse state directory

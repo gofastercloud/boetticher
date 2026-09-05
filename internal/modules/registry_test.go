@@ -244,7 +244,7 @@ func TestNewFirstPartyModulesAreDefaultOffAndReserveNonCollidingIdentity(t *test
 	if airvpn.NetworkCapable || airvpn.ReservedVMIDStart != 260 || airvpn.ReservedVMIDEnd != 269 || airvpn.Guests[0].VMID != model.AirVPNGuestVMID || airvpn.Guests[0].Address != model.AirVPNGuestAddress || airvpn.Placement.ZoneType != model.ZoneTypeTransit {
 		t.Fatalf("AirVPN identity contract is incomplete: %#v", airvpn)
 	}
-	if len(airvpn.Configuration) != 1 || airvpn.Configuration[0].Key != "servers" {
+	if len(airvpn.Configuration) != 2 || airvpn.Configuration[0].Key != "servers" || airvpn.Configuration[1].Key != "qbittorrent_port" {
 		t.Fatalf("AirVPN configuration contract is incomplete: %#v", airvpn.Configuration)
 	}
 }

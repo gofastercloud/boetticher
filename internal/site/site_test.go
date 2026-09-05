@@ -83,3 +83,18 @@ func TestCreateAgeIdentityReusesExistingIdentity(t *testing.T) {
 		t.Fatalf("existing Age identity was changed: %q", got)
 	}
 }
+
+func TestInitRejectsRootIdentityWithTheRoutineRecipient(t *testing.T) {
+	identityPath, _ := writeTestAgeIdentity(t)
+	contents, err := os.ReadFile(identityPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootPath := filepath.Join(t.TempDir(), "root-identity.txt")
+	if err := os.WriteFile(rootPath, contents, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Init(filepath.Join(t.TempDir(), "site"), identityPath, rootPath, false); err == nil || !strings.Contains(err.Error(), "distinct recipient") {
+		t.Fatalf("Init accepted matching routine and root identities: %v", err)
+	}
+}

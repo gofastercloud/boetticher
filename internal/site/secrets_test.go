@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"filippo.io/age"
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/pki"
 )
 
 func TestPlatformSecretUpdatePresenceAndRemoval(t *testing.T) {
@@ -66,6 +68,54 @@ func TestPlatformSecretCacheReadsOneDocumentAndPreservesMissingKeySemantics(t *t
 	}
 	if _, err := cache.Get("missing"); !errors.Is(err, ErrPlatformSecretMissing) {
 		t.Fatalf("missing cache value error = %v", err)
+	}
+}
+
+func TestRootKeyIsOutsideRoutinePlatformSecretDocument(t *testing.T) {
+	siteDir := t.TempDir()
+	identityPath, recipient := writeTestAgeIdentity(t)
+	rootIdentityPath, rootRecipient := writeTestAgeIdentity(t)
+	s := model.Site{SecretMetadata: model.SecretMetadata{AgeRecipient: recipient, RootAgeRecipient: rootRecipient}}
+	authority, err := pki.GenerateAuthority(time.Now().UTC(), "lab.home.arpa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeEncryptedSecrets(siteDir, s, authority); err != nil {
+		t.Fatal(err)
+	}
+	platform, err := LoadEncryptedDocument(siteDir, identityPath, "secrets/boetticher.sops.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found := platform["root_key_pem_b64"]; found {
+		t.Fatal("routine platform secret document contains the root private key")
+	}
+	if _, err := LoadEncryptedDocument(siteDir, identityPath, rootAuthoritySecretsPath); err == nil {
+		t.Fatal("routine Age identity decrypted the root authority document")
+	}
+	if _, err := LoadEncryptedDocument(siteDir, rootIdentityPath, "secrets/boetticher.sops.yaml"); err == nil {
+		t.Fatal("root Age identity decrypted the routine platform document")
+	}
+	routine, err := LoadAuthority(siteDir, s, identityPath)
+	if err != nil || routine.RootKeyPEM != "" {
+		t.Fatalf("routine authority unexpectedly loaded root key: %v", err)
+	}
+	if _, err := LoadRootCRL(siteDir, routine, time.Now().UTC()); err != nil {
+		t.Fatalf("load public root CRL: %v", err)
+	}
+	if err := atomicWrite(filepath.Join(siteDir, rootCRLPath), []byte("tampered"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadRootCRL(siteDir, routine, time.Now().UTC()); err == nil {
+		t.Fatal("tampered root CRL was accepted")
+	}
+	root, err := LoadAuthorityWithRootKey(siteDir, s, identityPath, rootIdentityPath)
+	if err != nil || root.RootKeyPEM == "" {
+		t.Fatalf("explicit root authority load failed: %v", err)
+	}
+	wrongRootIdentity, _ := writeTestAgeIdentity(t)
+	if _, err := LoadAuthorityWithRootKey(siteDir, s, identityPath, wrongRootIdentity); err == nil {
+		t.Fatal("unexpected root identity loaded the root authority")
 	}
 }
 

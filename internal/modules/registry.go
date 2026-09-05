@@ -106,17 +106,17 @@ func FirstPartyRegistry() Registry {
 		"airvpn": {
 			Name: "airvpn", Description: "AirVPN WireGuard external egress transit node", Version: "1.0.0", Policy: DefaultOff,
 			Requires: []Capability{CapabilityGateway, CapabilityDNS, CapabilityNTP}, Provides: []Capability{CapabilityAirVPNTransit}, ReservedVMIDStart: 260, ReservedVMIDEnd: 269,
-			Configuration: []model.ModuleConfigField{{Key: "servers", Type: model.ModuleConfigString, Prompt: "AirVPN server selector", Description: "AirVPN named server, country, or region selector used once to generate the retained WireGuard profile", Required: true}},
+			Configuration: []model.ModuleConfigField{{Key: "servers", Type: model.ModuleConfigString, Prompt: "AirVPN server selector", Description: "AirVPN named server, country, or region selector used once to generate the retained WireGuard profile", Required: true}, {Key: "qbittorrent_port", Type: model.ModuleConfigString, Prompt: "AirVPN reserved qBittorrent peer port", Description: "Existing AirVPN TCP/UDP reservation with matching remote and local ports; 0 disables inbound forwarding", Default: "0"}},
 			Placement:     PlacementRequirement{ZoneType: model.ZoneTypeTransit}, Guests: []model.Component{
 				{Name: "lab-airvpn-01", VMID: model.AirVPNGuestVMID, Hostname: "lab-airvpn-01", Address: model.AirVPNGuestAddress, Role: "AirVPN WireGuard transit", DNSAliases: []string{"airvpn"}, Monitoring: true, Backup: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 		"arr": {
-			Name: "arr", Description: "AirVPN-routed Sonarr and Radarr video services", Version: "1.0.0", Policy: DefaultOff, NetworkCapable: true,
+			Name: "arr", Description: "AirVPN-routed Sonarr, Radarr, Lidarr, Prowlarr, and qBittorrent media services", Version: "1.0.1", Policy: DefaultOff, NetworkCapable: true,
 			AllowedNetworkModes: []model.ModuleNetworkMode{model.ModuleNetworkAirVPN}, DefaultNetworkMode: model.ModuleNetworkAirVPN,
 			DependsOn: []string{"airvpn"}, Requires: []Capability{CapabilityAirVPNTransit, CapabilityDNS, CapabilityNTP}, ReservedVMIDStart: 270, ReservedVMIDEnd: 279,
 			Placement: PlacementRequirement{ZoneType: model.ZoneTypeServers}, Guests: []model.Component{
-				{Name: "lab-arr-01", VMID: model.ArrVMID, Hostname: "lab-arr-01", Address: model.ArrGuestAddress, MAC: model.ArrGuestMAC, Role: "Sonarr and Radarr video services", DNSAliases: []string{"sonarr", "radarr"}, URL: "https://sonarr." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
+				{Name: "lab-arr-01", VMID: model.ArrVMID, Hostname: "lab-arr-01", Address: model.ArrGuestAddress, MAC: model.ArrGuestMAC, Role: "Sonarr, Radarr, Lidarr, Prowlarr, and qBittorrent media services", DNSAliases: []string{"sonarr", "radarr", "lidarr", "prowlarr", "qbittorrent"}, URL: "https://sonarr." + model.DefaultDomain, Monitoring: true, Backup: true, MTLS: true, SSHManaged: true, JumpAllowed: true, ProductOwned: true},
 			},
 		},
 		"bifrost": {
@@ -461,6 +461,9 @@ func (r Registry) resolve(config model.SiteConfig, configs map[string]model.Modu
 	}
 	if err := validateModuleNetworkModes(r, configs); err != nil {
 		return nil, err
+	}
+	if port := configs["airvpn"].QBittorrentPort; !model.ValidQBittorrentPort(port) {
+		return nil, fmt.Errorf("modules.airvpn.qbittorrent_port: use 0 to disable or a reserved port from 2049 to 65535 excluding ARR web/API ports")
 	}
 	if airvpn, ok := configs["airvpn"]; ok && (airvpn.Enabled != nil && *airvpn.Enabled || airvpn.Servers != "") {
 		if airvpn.Servers == "" {

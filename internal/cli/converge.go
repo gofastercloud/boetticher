@@ -619,7 +619,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		runtimeVariables["firewall_ruleset"] = ruleset
 		runtimeVariables["firewall_ruleset_sha256"] = firewall.RulesetDigest(ruleset)
 	}
-	authority, err := site.LoadAuthorityWithRootKey(*siteDir, s, *ageIdentity)
+	authority, err := site.LoadAuthority(*siteDir, s, *ageIdentity)
 	if err != nil {
 		return fmt.Errorf("load platform CA chain: %w", err)
 	}
@@ -636,9 +636,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return fmt.Errorf("HOLD: generate enforceable client revocation list: %w", err)
 	}
 	runtimeVariables["client_crl_pem"] = clientCRL
-	rootCRL, err := pki.GenerateRootCRL(authority, time.Now().UTC())
+	rootCRL, err := site.LoadRootCRL(*siteDir, authority, time.Now().UTC())
 	if err != nil {
-		return fmt.Errorf("generate root revocation list for nginx chain validation: %w", err)
+		return fmt.Errorf("load validated root revocation list for nginx chain validation: %w", err)
 	}
 	runtimeVariables["client_crl_bundle_pem"] = clientCRL + rootCRL
 	var pulseAdminPassword string
@@ -1211,6 +1211,16 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		})
 		if clientErr != nil {
 			return clientErr
+		}
+		if s.Companion.Capabilities().Enabled {
+			if _, _, err := loadOrCreatePulseToken(*siteDir, *ageIdentity, s, "companion_read_token", func() (string, error) { return pulseAdmin.CreateReadToken(ctx, "boetticher companion read") }); err != nil {
+				return fmt.Errorf("prepare Companion read credential: %w", err)
+			}
+			if s.Companion.Capabilities().PulseAgent {
+				if _, _, err := loadOrCreatePulseToken(*siteDir, *ageIdentity, s, "companion_agent_token", func() (string, error) { return pulseAdmin.CreateAgentReportToken(ctx, "boetticher companion report") }); err != nil {
+					return fmt.Errorf("prepare Companion report credential: %w", err)
+				}
+			}
 		}
 		if aiopsEnabled && (*onlyModule == "" || *onlyModule == "aiops") {
 			clientCertificate, issueErr := pki.IssueClient(authority, "aiops-router-client", s.Network.Domain, time.Now().UTC())
