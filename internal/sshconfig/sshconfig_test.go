@@ -27,9 +27,6 @@ func TestRenderUsesBastionAndCanonicalHostKey(t *testing.T) {
 		"Host lab-dns-01 lab-dns-01.lab.home.arpa dns01 dns",
 		"HostName 10.10.10.10",
 		"ConnectTimeout 10",
-		"ControlMaster auto",
-		"ControlPersist 60",
-		"ControlPath ~/.ssh/boetticher-control-%C",
 		"ProxyJump lab-bastion",
 		"HostKeyAlias lab-dns-01.lab.home.arpa",
 		"StrictHostKeyChecking yes",
@@ -42,6 +39,22 @@ func TestRenderUsesBastionAndCanonicalHostKey(t *testing.T) {
 	}
 	if strings.Contains(content, "StrictHostKeyChecking no") {
 		t.Error("generated SSH config weakened host-key verification")
+	}
+	for _, alias := range []string{"lab-fw-01", "lab-dns-01"} {
+		start := strings.Index(content, "Host "+alias)
+		if start < 0 {
+			t.Fatalf("generated SSH config is missing %s", alias)
+		}
+		block := content[start:]
+		if end := strings.Index(block[1:], "\nHost "); end >= 0 {
+			block = block[:end+1]
+		}
+		if !strings.Contains(block, "ControlMaster no") || !strings.Contains(block, "ControlPath none") {
+			t.Fatalf("bastion target %s permits stale connection reuse", alias)
+		}
+	}
+	if !strings.Contains(content, "Host lab-proxmox-01 proxmox 192.0.2.10\n    HostName 192.0.2.10\n    ConnectTimeout 10\n    ControlMaster auto") {
+		t.Error("direct Proxmox config lost its operator connection reuse settings")
 	}
 	bastion := strings.Index(content, "Host lab-bastion")
 	end := strings.Index(content[bastion+1:], "\nHost ")
