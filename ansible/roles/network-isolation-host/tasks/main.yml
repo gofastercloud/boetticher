@@ -1,0 +1,71 @@
+---
+- name: Require native nftables on the Proxmox host
+  ansible.builtin.command: /usr/sbin/nft --version
+  changed_when: false
+
+- name: Create the Core network policy directory
+  ansible.builtin.file:
+    path: '{{ item }}'
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop: [/etc/boetticher, /usr/lib/boetticher]
+
+- name: Install the bounded Core bridge isolation observer
+  ansible.builtin.copy:
+    src: boetticher-network-isolation
+    dest: /usr/lib/boetticher/boetticher-network-isolation
+    owner: root
+    group: root
+    mode: '0750'
+
+- name: Install the desired bridge boundary without adopting guest ownership
+  ansible.builtin.copy:
+    content: '{{ host_isolation | to_nice_json }}'
+    dest: /etc/boetticher/network-isolation.json
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Install persistent bridge isolation before guest autostart
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/boetticher-network-isolation.service
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=boetticher bridge and selected-module isolation
+      DefaultDependencies=no
+      After=local-fs.target nftables.service
+      Before=network-pre.target pve-guests.service shutdown.target
+      Wants=network-pre.target
+      Conflicts=shutdown.target
+
+      [Service]
+      Type=simple
+      ExecStartPre=/usr/lib/boetticher/boetticher-network-isolation --bootstrap
+      ExecStart=/usr/lib/boetticher/boetticher-network-isolation
+      ExecStopPost=/usr/lib/boetticher/boetticher-network-isolation --bootstrap
+      Restart=on-failure
+      RestartSec=2s
+      Environment=PYTHONDONTWRITEBYTECODE=1
+      NoNewPrivileges=yes
+      ProtectHome=yes
+      ProtectSystem=strict
+      ReadWritePaths=/run
+
+      [Install]
+      WantedBy=network-pre.target
+
+- name: Apply the blocking baseline before refreshing permitted bindings
+  ansible.builtin.systemd_service:
+    name: boetticher-network-isolation
+    enabled: true
+    state: restarted
+    daemon_reload: true
+
+- name: Verify the Core bridge guard exists
+  ansible.builtin.command: /usr/sbin/nft list table bridge boetticher_isolation
+  changed_when: false

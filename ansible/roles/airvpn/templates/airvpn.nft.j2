@@ -2,36 +2,64 @@ destroy table inet boetticher_airvpn
 destroy table ip boetticher_airvpn_nat
 
 table inet boetticher_airvpn {
+  set non_public_v4 { type ipv4_addr; flags interval; elements = { {{ firewall_non_public_ipv4 | join(', ') }} } }
   chain input {
     type filter hook input priority filter; policy drop;
-    iifname "lo" accept comment "boetticher:airvpn-input-loopback"
-    ct state established,related accept comment "boetticher:airvpn-input-established"
-    iifname "eth0" ip saddr 10.10.99.5 tcp dport 22 accept comment "boetticher:airvpn-input-managed-ssh"
+    iifname "lo" accept
+    meta nfproto ipv6 drop
+    iifname "eth0" ip saddr 10.10.99.5 tcp dport 22 accept
+{% if firewall_plan.airvpn_source_cidrs | default([]) | length > 0 %}
+    iifname "eth0" ip saddr { {{ firewall_plan.airvpn_source_cidrs | join(', ') }} } ip daddr 10.10.5.20 tcp dport 53 accept
+    iifname "eth0" ip saddr { {{ firewall_plan.airvpn_source_cidrs | join(', ') }} } ip daddr 10.10.5.20 udp dport { 53, 123 } accept
+{% endif %}
+    iifname "eth0" ip saddr 10.10.10.10 tcp sport { 5353, 9443 } ct state established accept
+    iifname "eth0" ip saddr 10.10.10.10 udp sport { 5353, 123 } ct state established accept
+{% if logging_plan.enabled | default(false) %}
+    iifname "eth0" ip saddr {{ logging_plan.collector_address }} tcp sport 19532 ct state established accept
+{% endif %}
+{% for address in firewall_plan.airvpn.endpoint_addresses %}
+    iifname "eth0" ip saddr {{ address }} udp sport {{ firewall_plan.airvpn.endpoint_port }} ct state established accept
+{% endfor %}
+    iifname "airvpn0" ip saddr 10.128.0.1 udp sport 53 ct state established accept
+    iifname "airvpn0" ip saddr 10.128.0.1 tcp sport 53 ct state established accept
+    iifname "airvpn0" ip saddr @non_public_v4 drop
+    iifname "airvpn0" ct state established,related accept
   }
-
   chain output {
     type filter hook output priority filter; policy drop;
-    oifname "lo" accept comment "boetticher:airvpn-output-loopback"
-    ct state established,related accept comment "boetticher:airvpn-output-established"
+    oifname "lo" accept
+    meta nfproto ipv6 drop
+    oifname "eth0" ip daddr 10.10.99.5 tcp sport 22 ct state established accept
+{% if firewall_plan.airvpn_source_cidrs | default([]) | length > 0 %}
+    oifname "eth0" ip daddr { {{ firewall_plan.airvpn_source_cidrs | join(', ') }} } tcp sport 53 ct state established accept
+    oifname "eth0" ip daddr { {{ firewall_plan.airvpn_source_cidrs | join(', ') }} } udp sport { 53, 123 } ct state established accept
+{% endif %}
 {% for address in firewall_plan.airvpn.endpoint_addresses %}
     oifname "eth0" ip daddr {{ address }} udp dport {{ firewall_plan.airvpn.endpoint_port }} accept comment "boetticher:airvpn-provider-handshake-{{ loop.index }}"
 {% endfor %}
-    oifname "eth0" ip daddr { {{ dns_plan.nameservers | join(', ') }} } tcp dport 53 accept comment "boetticher:airvpn-dns-tcp"
-    oifname "eth0" ip daddr { {{ dns_plan.nameservers | join(', ') }} } udp dport { 53, 123 } accept comment "boetticher:airvpn-dns-ntp-udp"
+    oifname "eth0" ip daddr 10.10.10.10 tcp dport { 5353, 9443 } accept
+    oifname "eth0" ip daddr 10.10.10.10 udp dport { 5353, 123 } accept
+{% if logging_plan.enabled | default(false) %}
+    oifname "eth0" ip daddr {{ logging_plan.collector_address }} tcp dport 19532 accept
+{% endif %}
+    oifname "airvpn0" ip daddr 10.128.0.1 udp dport 53 accept
+    oifname "airvpn0" ip daddr 10.128.0.1 tcp dport 53 accept
+    ip daddr @non_public_v4 drop
     oifname "airvpn0" accept comment "boetticher:airvpn-output-tunnel"
   }
-
   chain forward {
     type filter hook forward priority filter; policy drop;
-    ct state established,related accept comment "boetticher:airvpn-forward-established"
+    meta nfproto ipv6 drop
+    iifname "eth0" ip daddr @non_public_v4 drop
+    iifname "airvpn0" ip saddr @non_public_v4 drop
 {% if firewall_plan.airvpn_source_cidrs | default([]) | length > 0 %}
     iifname "eth0" oifname "airvpn0" ip saddr { {{ firewall_plan.airvpn_source_cidrs | join(', ') }} } accept comment "boetticher:airvpn-selected-sources"
+    iifname "airvpn0" oifname "eth0" ip daddr { {{ firewall_plan.airvpn_source_cidrs | join(', ') }} } ct state established,related accept
 {% endif %}
     iifname "eth0" oifname "eth0" drop comment "boetticher:airvpn-no-direct-forward"
     iifname "eth0" drop comment "boetticher:airvpn-no-internal-forward"
   }
 }
-
 table ip boetticher_airvpn_nat {
   chain postrouting {
     type nat hook postrouting priority srcnat; policy accept;

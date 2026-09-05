@@ -9,6 +9,7 @@
     that:
       - firewall_plan is defined
       - firewall_plan.mode == 'managed'
+      - firewall_plan.upstream is defined
       - firewall_ruleset is defined
       - firewall_ruleset | length > 0
       - firewall_ruleset_sha256 is defined
@@ -284,6 +285,19 @@
     argv: [nft, -f, /etc/nftables.d/boetticher.nft]
   changed_when: true
 
+- name: Install bounded restricted-state invalidation
+  ansible.builtin.template:
+    src: boetticher-invalidate-restricted-state.j2
+    dest: /usr/lib/boetticher/invalidate-restricted-state
+    owner: root
+    group: root
+    mode: '0750'
+
+- name: Invalidate prohibited state after a policy change
+  ansible.builtin.command: /usr/lib/boetticher/invalidate-restricted-state
+  when: firewall_ruleset_state.rc != 0
+  changed_when: true
+
 - name: Configure Kea DHCPv4 and D2
   ansible.builtin.template:
     src: kea-dhcp4.conf.j2
@@ -347,6 +361,19 @@
     owner: root
     group: root
     mode: '0644'
+
+- name: Bind forwarding readiness to the observed HOME prefix
+  ansible.builtin.template:
+    src: boetticher-verify-home-prefix.j2
+    dest: /usr/lib/boetticher/verify-home-prefix
+    owner: root
+    group: root
+    mode: '0750'
+  when: firewall_plan.upstream is defined
+
+- name: Verify HOME binding before reasserting forwarding
+  ansible.builtin.command: /usr/lib/boetticher/verify-home-prefix
+  changed_when: false
 
 - name: Enable IPv4 forwarding only after policy and services are ready
   ansible.builtin.systemd_service:

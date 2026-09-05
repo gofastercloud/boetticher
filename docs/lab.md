@@ -25,7 +25,7 @@ The managed gateway appliance is pinned to
 | **VLAN 10 INFRA** | `10.10.10.0/24` | DNS, NTP, and monitoring. |
 | **VLAN 20 SERVERS** | `10.10.20.0/24` | Reserved-address servers and applications. |
 | **VLAN 30 TRUSTED** | `10.10.30.0/24` | Trusted client devices. |
-| **VLAN 40 SANDBOX** | `10.10.40.0/24` | Disposable devices and experiments. |
+| **VLAN 40 SANDBOX** | `10.10.40.0/24` | Internet-only clients, isolated from peers and private networks. |
 | **VLAN 99 MGMT** | `10.10.99.0/24` | Proxmox and gateway management. |
 
 The default single-port installation requires no switch change. A physical
@@ -40,6 +40,23 @@ boetticher network trunk attach IFACE --live --confirm --site ./my-boetticher
 
 The trunk operation verifies the observed interface and permanent hardware
 identity before changing the Proxmox bridge. Detach is equally explicit.
+
+SANDBOX may use only DHCP and its dedicated DNS/NTP at `10.10.40.1` locally.
+HOME, the other lab zones, primary DNS/NTP, gateway administration and peers
+are denied. Private destinations and spoofed sources are checked before
+established-connection acceptance. SANDBOX DNS uses public upstreams, does not
+read the gateway host file, and suppresses private lab names and private reverse
+lookups. Its NTP service uses public sources, independently of primary DNS/NTP.
+
+The Proxmox bridge boundary binds virtual clients to their configured NIC MAC
+and current Kea lease. It blocks peer unicast, ARP, rogue DHCP/RA, multicast and
+IPv6 paths; lease permissions expire if the observer cannot refresh them.
+It reads guest NIC configuration without adopting or changing user workloads.
+Physical clients also require verified switch-port and AP isolation, DHCP
+snooping/source protection where applicable, and cross-AP tests. One shared
+uplink cannot establish which physical station sent a cloned MAC/IP pair.
+Unsupported switch/AP controls therefore cannot receive an isolation acceptance
+result, even when virtual and tagged-uplink fixture tests pass.
 
 ## Default platform
 
@@ -195,11 +212,37 @@ Qualify optional modules one at a time. A completed deployment is followed by
 the real module journey: an active process alone does not establish success.
 For AirVPN, verify a recent WireGuard handshake, IPv4 tunnel egress, enabled
 forwarding after repeated deployment, and blocked direct-WAN fallback. For
-Tailscale, verify registration, the advertised subnet route, and access from a
-separate tailnet client; Proxmox API and guest SSH remain denied on that path.
+Tailscale, verify registration, route approval and client route acceptance, then
+exercise both explicitly trusted and untrusted identities. Trusted clients
+inherit the same lab-service policy as TRUSTED, including permitted MGMT
+administration. HOME, SANDBOX, undeclared services and Internet exit-node use
+remain denied. A running daemon or advertised prefix is not route acceptance.
 For logging, verify newly received guest journal entries as well as collector
 health. Client-certificate rejection is a failed upload, even when both
 services are running.
+
+AirVPN-intent checks cover each enabled selected client. HOME and direct core
+DNS/NTP attempts must fail independently of successful public traffic through
+AirVPN, private DNS through the router to core authoritative DNS, and public
+DNS through AirVPN DNS. Direct DNS/DoT and DoH to the configured core public
+upstreams are denied. Arbitrary HTTPS can carry other DoH services; the fixed
+upstream guard is not a claim of universal DoH detection.
+
+Use the existing network probe testers for the staged live run, including the
+second SANDBOX peer probe and `--airvpn` checks. Record the exact deployed
+controller/appliance revisions and correlated packet captures. Exercise cold
+boot, repeat deployment, bad firewall loads, endpoint failure, tunnel removal,
+route loss and pre-existing TCP/UDP flows. Successful public traffic must be
+proved separately from each denied destination; a failed probe transport is a
+failed test, never evidence of isolation. Physical-to-virtual and cross-AP
+results require the actual authorized devices and cannot be inferred from the
+local Linux fixture.
+
+Deployment remains separately authorized: retain management on HOME, establish
+restrictive controls before opening paths, renew affected DHCP leases, and
+invalidate prohibited connection state. Failure must leave restricted paths
+blocked. Prior permissive rulesets are diagnostic evidence, not rollback
+targets.
 
 ARR acceptance requires its dedicated data-disk storage and application
 journeys. Activating storage on an existing single-disk site is a separate

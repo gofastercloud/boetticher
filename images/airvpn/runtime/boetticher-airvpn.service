@@ -1,7 +1,9 @@
 [Unit]
 Description=boetticher AirVPN WireGuard transit
 Wants=network-online.target
-After=network-online.target
+Requires=boetticher-airvpn-firewall.service
+BindsTo=boetticher-airvpn-firewall.service
+After=network-online.target boetticher-airvpn-firewall.service
 
 [Service]
 Type=oneshot
@@ -11,6 +13,7 @@ ExecStartPre=/usr/lib/boetticher/airvpn-prepare
 ExecStart=/usr/bin/wg-quick up /run/boetticher/airvpn0.conf
 ExecStartPost=/usr/lib/boetticher/airvpn-routes-up
 ExecStartPost=/usr/lib/boetticher/airvpn-forwarding-up
+ExecStop=/usr/lib/boetticher/airvpn-forwarding-down
 ExecStop=/usr/bin/wg-quick down /run/boetticher/airvpn0.conf
 ExecStopPost=/usr/lib/boetticher/airvpn-routes-down
 ExecStopPost=/usr/lib/boetticher/airvpn-forwarding-down

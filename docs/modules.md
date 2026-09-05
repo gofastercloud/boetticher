@@ -124,10 +124,37 @@ boetticher module secrets airvpn rotate --confirm --site ./my-boetticher
 boetticher deploy --site ./my-boetticher
 ```
 
-Traffic from an AirVPN-selected module leaves through `lab-airvpn-01`
-(`10.10.5.20`), not through the ordinary WAN path. Local services, DNS, NTP,
-and modules using `network: direct` keep their usual routes. If the tunnel is
-not up, the guest has no direct-Internet escape hatch.
+An AirVPN-selected module retains its existing subnet gateway. The managed
+gateway routes its permitted external destinations through `lab-airvpn-01`
+(`10.10.5.20`), with unreachable fallbacks when the VPN route disappears.
+Guest and host restrictions deny HOME, direct WAN access, arbitrary internal
+destinations and peer forwarding, including after a policy or connection-state
+change. Exact certificate-renewal, logging and declared application paths are
+retained.
+
+Selected clients use `10.10.5.20` for DNS and NTP; ARR receives the same values
+in its DHCP reservation. Private lab DNS goes only to the core authoritative
+listener at `10.10.10.10:5353`. Public DNS uses AirVPN's in-tunnel DNS at
+`10.128.0.1`, with no public-query fallback. NTP uses the narrow core upstream
+exception. These are module services, not general TRANSIT DNS/NTP. Ordinary
+zone defaults are unchanged. AirVPN documents its DNS service in the
+[provider specification](https://airvpn.org/specs/).
+
+### Trusted Tailnet access
+
+The subnet router retains SNAT and derives its allowed lab-service destinations
+from the TRUSTED service policy. It does not inherit TRUSTED Internet egress.
+Its local trusted-client set starts empty. Populating it and creating Tailnet
+grants require separately authorized preparation using verified client
+identities. Review overlapping grants first: a restrictive new grant cannot
+cancel an existing permissive grant. Untrusted clients must remain unable to
+route to any lab destination.
+
+That preparation also configures private-domain split DNS, approves the exact
+subnet route and verifies that each intended client accepts it. DNS acceptance,
+route advertisement, subnet SNAT and exit-node settings are reconciled even
+when the backend already reports `Running`. Route advertisement and daemon
+health alone are insufficient acceptance evidence.
 
 ### Hardware helpers
 
