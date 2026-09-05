@@ -12,6 +12,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/networktest"
+	"github.com/gofastercloud/boetticher/internal/proxmox"
 )
 
 func TestProbeAddressModeUsesDHCPOnlyForDynamicZones(t *testing.T) {
@@ -152,6 +153,17 @@ func TestNetworkProbeOwnershipUsesExactTagsAndDescriptionFields(t *testing.T) {
 	} {
 		if hasExactDescriptionField(description, "installation", "installation-01") {
 			t.Fatalf("foreign description %q was accepted", description)
+		}
+	}
+}
+
+func TestProxmoxPermissionDeniedOnlyMatchesForbidden(t *testing.T) {
+	if !proxmoxPermissionDenied(&proxmox.APIError{StatusCode: 403}) {
+		t.Fatal("403 Proxmox error was not recognized as permission denied")
+	}
+	for _, status := range []int{404, 500, 503} {
+		if proxmoxPermissionDenied(&proxmox.APIError{StatusCode: status}) {
+			t.Fatalf("HTTP %d Proxmox error was treated as permission denied", status)
 		}
 	}
 }

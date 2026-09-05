@@ -15,6 +15,14 @@
     create_home: false
     password_lock: true
 
+- name: Provide the restricted executor home directory
+  ansible.builtin.file:
+    path: /home/lab-netprobe
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Install network probe host executor
   ansible.builtin.copy:
     src: boetticher-network-probe-host

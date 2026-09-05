@@ -46,6 +46,11 @@ class NetworkProbeHostTest(unittest.TestCase):
         self.assertIn("replace: 'AllowUsers root labadmin lab-jump lab-netprobe'", tasks)
         self.assertNotIn("replace: 'AllowUsers labadmin lab-jump lab-netprobe'", tasks)
 
+    def test_restricted_executor_has_a_traversable_home(self):
+        tasks = (SCRIPT.parent / "../tasks/main.yml").resolve().read_text()
+        self.assertIn("path: /home/lab-netprobe", tasks)
+        self.assertIn('mode: "0755"', tasks)
+
 
 if __name__ == "__main__":
     unittest.main()

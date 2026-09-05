@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -118,7 +119,7 @@ func runNetworkTest(args []string, out io.Writer) error {
 			progress.fail(nodeErr)
 			return nodeErr
 		}
-		cleanupErr := cleanupNetworkProbes(context.Background(), client, node, s, nil)
+		cleanupErr := cleanupNetworkProbes(context.Background(), client, node, *siteDir, s, nil)
 		if cleanupErr != nil {
 			progress.fail(cleanupErr)
 		} else {
@@ -175,7 +176,7 @@ func runNetworkTest(args []string, out io.Writer) error {
 		progress.fail(err)
 		return err
 	}
-	if err := cleanupNetworkProbes(ctx, client, node, s, probes); err != nil {
+	if err := cleanupNetworkProbes(ctx, client, node, *siteDir, s, probes); err != nil {
 		progress.fail(err)
 		return err
 	}
@@ -280,7 +281,7 @@ func runNetworkTest(args []string, out io.Writer) error {
 	progress.start("Remove temporary probes")
 	cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), networkTestCleanupTimeout)
 	defer cancelCleanup()
-	cleanupErr := cleanupNetworkProbes(cleanupCtx, client, node, s, probes)
+	cleanupErr := cleanupNetworkProbes(cleanupCtx, client, node, *siteDir, s, probes)
 	if cleanupErr != nil {
 		report.Cleanup = "HOLD: " + cleanupErr.Error()
 		progress.fail(cleanupErr)
@@ -1077,7 +1078,7 @@ func finishNetworkTest(out io.Writer, jsonOutput bool, report networktest.Report
 	return nil
 }
 
-func cleanupNetworkProbes(ctx context.Context, client *proxmox.Client, node string, s model.Site, probes []networktest.Probe) error {
+func cleanupNetworkProbes(ctx context.Context, client *proxmox.Client, node, siteDir string, s model.Site, probes []networktest.Probe) error {
 	ids := make([]int, 0, networktest.VMIDMax-networktest.VMIDMin+1)
 	if len(probes) == 0 {
 		for id := networktest.VMIDMin; id <= networktest.VMIDMax; id++ {
@@ -1093,6 +1094,15 @@ func cleanupNetworkProbes(ctx context.Context, client *proxmox.Client, node stri
 		if err != nil {
 			if proxmox.IsNotFound(err) {
 				continue
+			}
+			if proxmoxPermissionDenied(err) {
+				absent, absenceErr := reservedProbeVMIDAbsent(ctx, siteDir, s, id)
+				if absenceErr != nil {
+					return fmt.Errorf("inspect reserved VMID %d absence: %w", id, absenceErr)
+				}
+				if absent {
+					continue
+				}
 			}
 			return fmt.Errorf("inspect reserved VMID %d: %w", id, err)
 		}
@@ -1128,11 +1138,43 @@ func cleanupNetworkProbes(ctx context.Context, client *proxmox.Client, node stri
 		if err := client.DestroyLXC(ctx, node, id); err != nil {
 			return fmt.Errorf("destroy owned network probe %d: %w", id, err)
 		}
-		if _, _, err := client.GuestConfig(ctx, node, id); err == nil || !proxmox.IsNotFound(err) {
+		if _, _, err := client.GuestConfig(ctx, node, id); err == nil {
 			return fmt.Errorf("verify cleanup of network probe %d", id)
+		} else if !proxmox.IsNotFound(err) {
+			if absent, absenceErr := reservedProbeVMIDAbsent(ctx, siteDir, s, id); absenceErr != nil {
+				return fmt.Errorf("verify cleanup of network probe %d absence: %w", id, absenceErr)
+			} else if !absent {
+				return fmt.Errorf("verify cleanup of network probe %d", id)
+			}
 		}
 	}
 	return nil
+}
+
+func proxmoxPermissionDenied(err error) bool {
+	var apiErr *proxmox.APIError
+	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusForbidden
+}
+
+func reservedProbeVMIDAbsent(ctx context.Context, siteDir string, s model.Site, vmid int) (bool, error) {
+	if vmid < networktest.VMIDMin || vmid > networktest.VMIDMax {
+		return false, fmt.Errorf("VMID %d is outside the reserved network probe range", vmid)
+	}
+	runner := proxmoxRootSSHRunner(s, siteDir)
+	id := strconv.Itoa(vmid)
+	command := "if [ ! -e /etc/pve/lxc/" + id + ".conf ] && [ ! -e /etc/pve/qemu-server/" + id + ".conf ]; then printf absent; else printf present; fi"
+	output, err := runner.FreshConnection().Run(ctx, s.BootstrapAddress, "root", command)
+	if err != nil {
+		return false, err
+	}
+	switch strings.TrimSpace(string(output)) {
+	case "absent":
+		return true, nil
+	case "present":
+		return false, nil
+	default:
+		return false, fmt.Errorf("unexpected reserved VMID %d absence response", vmid)
+	}
 }
 
 func hasExactProxmoxTag(tags, wanted string) bool {
