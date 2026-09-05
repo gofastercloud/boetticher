@@ -58,6 +58,22 @@ uplink cannot establish which physical station sent a cloned MAC/IP pair.
 Unsupported switch/AP controls therefore cannot receive an isolation acceptance
 result, even when virtual and tagged-uplink fixture tests pass.
 
+AirVPN is a selected transit module, not a second default route. Its router
+keeps the existing TRANSIT gateway identity and owns the provider handshake,
+kill switch, and forwarding lifecycle. The router firewall policy is loaded by
+its systemd unit at boot; Ansible reloads it only when the rendered policy
+changes, and reload failure leaves forwarding disabled. The module-local DNS
+service is started on convergence and restarted only after its configuration
+changes. Selected guests retain their existing gateway and use the router's
+split DNS/NTP services; direct HOME/WAN, private destinations, and DoH bypass
+paths remain denied.
+
+`boetticher firewall diff --live` compares only the Boetticher-owned tables.
+The read-only comparison validates the owned chain policies, set definitions
+and membership, per-chain rule order, and rule-expression presence/shape, while ignoring
+only nftables handles and counter values. Comments are retained as diagnostic
+rule identifiers, not as proof by themselves.
+
 ## Default platform
 
 The default installation creates exactly three Proxmox guests. The Proxmox

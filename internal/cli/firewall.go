@@ -374,6 +374,9 @@ func printNFTDiff(out io.Writer, diff firewall.NFTDiff) {
 	for _, item := range diff.UnexpectedRules {
 		fmt.Fprintf(out, "  unexpected rule %s\n", item)
 	}
+	for _, item := range diff.SemanticDrift {
+		fmt.Fprintf(out, "  semantic drift %s\n", item)
+	}
 }
 
 func firewallCounters(siteDir string, s model.Site, live, jsonOutput bool, out io.Writer) error {

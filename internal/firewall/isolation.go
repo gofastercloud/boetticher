@@ -38,7 +38,7 @@ func renderIsolation(b *strings.Builder, plan Plan, destinationSets []destinatio
 	writeIsolationRule(b, `iifname { "sandbox0", "transit0" } meta nfproto ipv6 drop`, "boetticher:drop:input-restricted-ipv6")
 	writeIsolationRule(b, `iifname "sandbox0" ip saddr { 0.0.0.0, 10.10.40.0/24 } ip daddr { 10.10.40.1, 255.255.255.255 } udp sport 68 udp dport 67 accept`, "boetticher:allow:input-sandbox-dhcp")
 	writeIsolationRule(b, `iifname "sandbox0" ip saddr 10.10.40.0/24 ip daddr 10.10.40.1 udp dport { 53, 123 } accept`, "boetticher:allow:input-sandbox-dns-ntp-udp")
-	writeIsolationRule(b, `iifname "sandbox0" ip saddr 10.10.40.0/24 ip daddr 10.10.40.1 tcp dport 53 accept`, "boetticher:allow:input-sandbox-dns-tcp")
+	writeIsolationRule(b, `iifname "sandbox0" ip saddr 10.10.40.0/24 ip daddr 10.10.40.1 tcp dport 53 accept`, "boetticher:allow:restricted-input-sandbox-dns-tcp")
 	writeIsolationRule(b, `iifname "sandbox0" drop`, "boetticher:drop:input-sandbox-default")
 	if len(plan.AirVPNSources) > 0 {
 		// DHCP renewal/rebinding uses the selected guest's leased address as its
