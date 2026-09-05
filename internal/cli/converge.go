@@ -1126,6 +1126,14 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return fmt.Errorf("install endpoint-signed certificates: %w", err)
 		}
 	} else {
+		for _, guest := range proxmoxPlan.Guests {
+			if guest.Owner != "boetticher/module/"+*onlyModule || guest.Kind != proxmox.KindLXC {
+				continue
+			}
+			if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, variables, guest.Name, report, temporaryPrivateKey); err != nil {
+				return fmt.Errorf("install scoped endpoint configuration for %s: %w", guest.Name, err)
+			}
+		}
 		fmt.Fprintf(out, "      Scoped module deployment: service-wide certificate reconciliation skipped (%s)\n", *onlyModule)
 	}
 	report.complete()
