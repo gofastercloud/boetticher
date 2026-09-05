@@ -300,6 +300,29 @@ func TestAirVPNRoleRunsAfterBaseAndBeforeSelectedClients(t *testing.T) {
 	}
 }
 
+func TestAirVPNRoleInstallsItsCredentialDropInBeforeStartup(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "airvpn", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	installIndex := strings.Index(text, "Install the AirVPN credential drop-in before startup")
+	startIndex := strings.Index(text, "Enable and start the AirVPN transit service")
+	if installIndex < 0 || startIndex < 0 || installIndex > startIndex {
+		t.Fatal("AirVPN credential drop-in must be installed before the transit service starts")
+	}
+	for _, required := range []string{
+		"path: /etc/systemd/system/boetticher-airvpn.service.d",
+		"dest: /etc/systemd/system/boetticher-airvpn.service.d/boetticher-credentials.conf",
+		"content: \"{{ credential_dropins[inventory_hostname]['boetticher-airvpn.service'] }}\"",
+		"daemon_reload: true",
+	} {
+		if !strings.Contains(text[:startIndex], required) {
+			t.Fatalf("AirVPN startup credential projection is missing %q", required)
+		}
+	}
+}
+
 func TestStableBaseTasksSkipServicesButFinalTasksRemain(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml"))
 	if err != nil {

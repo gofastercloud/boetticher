@@ -21,6 +21,26 @@
     fail_msg: "AirVPN requires the encrypted WireGuard profile credential binding"
   no_log: true
 
+- name: Create the AirVPN credential drop-in directory before startup
+  ansible.builtin.file:
+    path: /etc/systemd/system/boetticher-airvpn.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Install the AirVPN credential drop-in before startup
+  ansible.builtin.copy:
+    content: "{{ credential_dropins[inventory_hostname]['boetticher-airvpn.service'] }}"
+    dest: /etc/systemd/system/boetticher-airvpn.service.d/boetticher-credentials.conf
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Reload systemd after installing the AirVPN credential binding
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+
 - name: Keep AirVPN forwarding disabled until the tunnel is ready
   ansible.builtin.copy:
     content: |
