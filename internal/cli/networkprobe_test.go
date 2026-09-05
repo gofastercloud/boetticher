@@ -32,7 +32,10 @@ func TestGatewayProbeSkipsManagedTRANSITDiagnosticICMP(t *testing.T) {
 	if gatewayProbeExpected("TRANSIT") {
 		t.Fatal("TRANSIT gateway ICMP was treated as an expected allow")
 	}
-	for _, zone := range []string{"INFRA", "SERVERS", "TRUSTED", "SANDBOX", "MGMT"} {
+	if gatewayProbeExpected("SANDBOX") {
+		t.Fatal("SANDBOX gateway diagnostics must be denied")
+	}
+	for _, zone := range []string{"INFRA", "SERVERS", "TRUSTED", "MGMT"} {
 		if !gatewayProbeExpected(zone) {
 			t.Fatalf("%s gateway ICMP was not treated as an expected allow", zone)
 		}

@@ -1,0 +1,265 @@
+#!/usr/bin/python3
+"""Core-owned vmbr1 isolation. Reads guest NICs; never edits guest ownership.
+
+Kea leases are the authority for SANDBOX IPv4 bindings. Binding permits expire
+in the kernel after five seconds if refresh stops. Missing/ambiguous inventory
+leaves the affected paths blocked. Physical switch/AP proof is separate.
+"""
+import csv
+import io
+import ipaddress
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+import time
+
+TABLE = "boetticher_isolation"
+MAC = re.compile(r"[0-9a-f]{2}(?::[0-9a-f]{2}){5}")
+IFACE = re.compile(r"[A-Za-z0-9_.:-]{1,15}")
+
+
+def command(argv):
+    result = subprocess.run(argv, capture_output=True, text=True, timeout=10)
+    if result.returncode or len(result.stdout) > 4 * 1024 * 1024:
+        raise RuntimeError("bounded network inventory failed")
+    return result.stdout
+
+
+def mac(value):
+    if not isinstance(value, str) or not MAC.fullmatch(value.lower()):
+        raise ValueError("invalid Ethernet identity")
+    return value.lower()
+
+
+def iface(value):
+    if not isinstance(value, str) or not IFACE.fullmatch(value):
+        raise ValueError("invalid interface identity")
+    return json.dumps(value)
+
+
+def ipv4(value):
+    address = ipaddress.IPv4Address(value)
+    if str(address) != value:
+        raise ValueError("noncanonical IPv4 identity")
+    return value
+
+
+def render(config, gateway_port=None, bindings=(), gateway_ports=None, clients=(), physical_port=None, valid_selected=(), anchors=None):
+    if config["bridge"] != "vmbr1" or config["gateway_vmid"] != 100:
+        raise ValueError("unexpected Core bridge identity")
+    gateway_mac = mac(config["gateway_mac"])
+    lines = [f"destroy table bridge {TABLE}", f"table bridge {TABLE} {{",
+             "set sandbox_bindings { type ifname . ether_addr . ipv4_addr; flags timeout; timeout 5s;"]
+    entries = []
+    for item in bindings:
+        address = ipv4(item["ip"])
+        if ipaddress.IPv4Address(address) not in ipaddress.ip_network("10.10.40.0/24") or address in ("10.10.40.0","10.10.40.1","10.10.40.255"):
+            raise ValueError("invalid SANDBOX lease")
+        entries.append(f'{iface(item["port"])} . {mac(item["mac"])} . {address} timeout 5s')
+    if entries:
+        lines.append("elements = { " + ", ".join(entries) + " }")
+    lines += ["}","set sandbox_mac_ip { type ether_addr . ipv4_addr; flags timeout; timeout 5s;"]
+    if bindings:
+        lines += ["elements = { "+", ".join(f'{mac(b["mac"])} . {ipv4(b["ip"])} timeout 5s' for b in bindings)+" }"]
+    lines += ["}","set sandbox_clients { type ifname . ether_addr; flags timeout; timeout 5s;"]
+    if clients:
+        lines += ["elements = { "+", ".join(f'{iface(c["port"])} . {mac(c["mac"])} timeout 5s' for c in clients)+" }"]
+    lines += ["}", "chain sandbox {", "ether type ip6 drop", "ether type vlan vlan type ip6 drop"]
+    if gateway_port:
+        gp = iface(gateway_port)
+        lines += [f"iifname != {gp} ether saddr {gateway_mac} drop", f"oifname != {gp} iifname != {gp} drop"]
+        for arp in ("ether type arp", "ether type vlan vlan type arp"):
+            lines += [f"oifname {gp} {arp} arp daddr ip 10.10.40.1 arp saddr ether . arp saddr ip @sandbox_mac_ip meta iifname . ether saddr . arp saddr ip @sandbox_bindings accept",
+                      f"iifname {gp} ether saddr {gateway_mac} {arp} arp saddr ip 10.10.40.1 accept"]
+        for ip in ("ether type ip", "ether type vlan vlan type ip"):
+            if physical_port:
+                lines += [f"iifname {iface(physical_port)} oifname {gp} {ip} ip saddr {{ 0.0.0.0, 10.10.40.0/24 }} ip daddr {{ 10.10.40.1, 255.255.255.255 }} udp sport 68 udp dport 67 accept"]
+            lines += [f"oifname {gp} {ip} meta iifname . ether saddr @sandbox_clients ip saddr {{ 0.0.0.0, 10.10.40.0/24 }} ip daddr {{ 10.10.40.1, 255.255.255.255 }} udp sport 68 udp dport 67 accept",
+                      f"iifname {gp} ether saddr {gateway_mac} {ip} ip saddr 10.10.40.1 udp sport 67 udp dport 68 accept",
+                      f"oifname {gp} ether daddr {gateway_mac} {ip} meta iifname . ether saddr . ip saddr @sandbox_bindings accept",
+                      f"iifname {gp} ether saddr {gateway_mac} {ip} meta oifname . ether daddr . ip daddr @sandbox_bindings accept"]
+    lines += ["drop", "}", "chain forward { type filter hook forward priority -300; policy accept;",
+              'meta ibrname != "vmbr1" return']
+    for anchor in config.get("anchors",[]):
+        identity=mac(anchor["mac"])
+        port=(anchors or {}).get(identity)
+        if port:
+            lines += [f'ether saddr {identity} iifname != {iface(port)} drop',f'ether daddr {identity} oifname != {iface(port)} drop']
+        else:
+            lines += [f'ether saddr {identity} drop',f'ether daddr {identity} drop']
+    lines += ['meta ibrname "vmbr1" meta ibrpvid 40 jump sandbox',
+              'meta ibrname "vmbr1" ether type vlan vlan id 40 jump sandbox']
+    for guest in config.get("selected", []):
+        vmid = guest["vmid"]
+        if not isinstance(vmid,int) or not 200 <= vmid <= 499:
+            raise ValueError("selected guest is not a bounded module")
+        address, source_mac, gateway = ipv4(guest["address"]), mac(guest["mac"]), mac(guest["gateway_mac"])
+        gateway_output=(gateway_ports or {}).get(gateway)
+        for prefix in (f"veth{vmid}i*", f"fwpr{vmid}p*"):
+            # VMID-bound ports prevent a changed MAC and IP bypassing policy.
+            port = json.dumps(prefix)
+            if vmid not in valid_selected:
+                lines += [f'iifname {port} drop',f'oifname {port} drop']
+                continue
+            for peer in guest.get("peers",[]):
+                peer_mac,peer_ip=mac(peer["mac"]),ipv4(peer["address"])
+                if not isinstance(peer["vmid"],int) or not 100<=peer["vmid"]<=499:
+                    raise ValueError("unbounded direct peer")
+                peer_ports='{ "veth%di0", "fwpr%dp0" }' % (peer["vmid"],peer["vmid"])
+                lines += [f'iifname {port} oifname {peer_ports} ether saddr {source_mac} ether type arp arp saddr ip {address} arp daddr ip {peer_ip} accept',f'iifname {peer_ports} oifname {port} ether saddr {peer_mac} ether type arp arp saddr ip {peer_ip} arp daddr ip {address} accept']
+                for protocol in peer["protocol"].split("/"):
+                    if protocol not in ("tcp","udp") or not all(str(p).isdigit() and 1<=int(p)<=65535 for p in peer["ports"]):
+                        raise ValueError("invalid declared peer protocol")
+                    ports="{ "+", ".join(peer["ports"])+" }"
+                    if peer["incoming"]:
+                        lines += [f'iifname {peer_ports} oifname {port} ether saddr {peer_mac} ip saddr {peer_ip} {protocol} dport {ports} accept',f'iifname {port} oifname {peer_ports} ether saddr {source_mac} ip saddr {address} ether daddr {peer_mac} ip daddr {peer_ip} {protocol} sport {ports} ct state established accept']
+                    else:
+                        lines += [f'iifname {port} oifname {peer_ports} ether saddr {source_mac} ip saddr {address} ether daddr {peer_mac} ip daddr {peer_ip} {protocol} dport {ports} accept',f'iifname {peer_ports} oifname {port} ether saddr {peer_mac} ip saddr {peer_ip} {protocol} sport {ports} ct state established accept']
+            lines += [f'iifname {port} ether saddr != {source_mac} drop',
+                      f'iifname {port} ether type != {{ ip, arp }} drop',
+                      f'iifname {port} ether type ip6 drop',
+                      f'iifname {port} ether type vlan drop',
+                      f'iifname {port} ether type arp arp saddr ip != {{ 0.0.0.0, {address} }} drop',
+                      f'iifname {port} ether type arp arp daddr ip != {ipv4(guest["gateway"])} drop',
+                      f'iifname {port} ether type ip ip saddr != {{ 0.0.0.0, {address} }} drop',
+                      f'iifname {port} ether type ip udp sport 68 udp dport 67 accept',
+                      f'iifname {port} ether type ip ether daddr != {gateway} drop',
+                      f'oifname {port} ether type ip6 drop']
+            if gateway_output:
+                lines += [f'iifname {port} oifname != {iface(gateway_output)} drop',f'oifname {port} iifname != {iface(gateway_output)} drop',f'oifname {port} ether saddr != {gateway} drop']
+            else:
+                lines += [f'iifname {port} drop',f'oifname {port} drop']
+    lines += ["}", "chain source_sandbox {"]
+    for client in clients:
+        lines += [f'ether saddr {mac(client["mac"])} iifname != {iface(client["port"])} drop', f'iifname {iface(client["port"])} ether saddr != {mac(client["mac"])} drop']
+    lines += ["}","chain prerouting { type filter hook prerouting priority -300; policy accept;",'meta ibrname != "vmbr1" return']
+    for anchor in config.get("anchors",[]):
+        identity=mac(anchor["mac"])
+        port=(anchors or {}).get(identity)
+        lines += [f'ether saddr {identity} iifname != {iface(port)} drop' if port else f'ether saddr {identity} drop']
+    lines += ['meta ibrpvid 40 jump source_sandbox','ether type vlan vlan id 40 jump source_sandbox']
+    lines += ["}", "chain input { type filter hook input priority -300; policy accept;",
+              'meta ibrname "vmbr1" meta ibrpvid 40 drop',
+              'meta ibrname "vmbr1" ether type vlan vlan id 40 drop', "}", "}"]
+    return "\n".join(lines) + "\n"
+
+
+def inventory(config):
+    links = json.loads(command(["/usr/sbin/ip", "-j", "link", "show", "master", "vmbr1"]))
+    ports = {item["ifname"] for item in links}
+    node = os.path.basename(os.path.realpath("/etc/pve/local"))
+    if not IFACE.fullmatch(node):
+        raise ValueError("unverified Proxmox node")
+    rows=[]
+    for kind,directory in (("qemu","qemu-server"),("lxc","lxc")):
+        for entry in os.scandir("/etc/pve/local/"+directory):
+            if re.fullmatch(r"[0-9]+\.conf",entry.name) and stat.S_ISREG(entry.stat(follow_symlinks=False).st_mode):
+                fields={}
+                with open(entry.path,encoding="utf-8") as stream:
+                    for line in stream:
+                        key,separator,value=line.partition(":")
+                        if separator and (key in ("name","hostname","tags") or re.fullmatch(r"net[0-9]+",key)):
+                            fields[key]=value.strip()
+                rows.append({"node":node,"type":kind,"vmid":int(entry.name[:-5]),"fields":fields})
+    virtual, gateway_port, gateway_ports, valid_selected = {}, None, {}, []
+    selected={g["vmid"]:g for g in config.get("selected",[])}
+    anchors={}
+    for row in rows:
+        if row.get("node") != node or row.get("type") not in ("qemu","lxc"):
+            continue
+        vmid = row.get("vmid")
+        if not isinstance(vmid,int) or not 1 <= vmid <= 999999999:
+            raise ValueError("invalid observed VMID")
+        fields=row["fields"]
+        tags=set(fields.get("tags","").split(";"))
+        if vmid==100 and (fields.get("name")!="lab-fw-01" or "boetticher-module-firewall" not in tags):
+            raise ValueError("gateway ownership is not verified")
+        for key,value in fields.items():
+            if not re.fullmatch(r"net[0-9]+",key) or not isinstance(value,str):
+                continue
+            attrs=dict(part.split("=",1) for part in value.split(",") if "=" in part)
+            if vmid in selected and key=="net0":
+                guest=selected[vmid]
+                if fields.get("hostname",fields.get("name"))==guest["name"] and "boetticher-module-"+guest["module"] in tags and attrs.get("bridge")=="vmbr1" and attrs.get("tag")==str(guest["vlan"]) and mac(attrs.get("hwaddr",""))==mac(guest["mac"]):
+                    valid_selected.append(vmid)
+            if attrs.get("bridge")!="vmbr1":
+                continue
+            index=int(key[3:])
+            candidates=[p for p in (f"tap{vmid}i{index}",f"veth{vmid}i{index}",f"fwpr{vmid}p{index}") if p in ports]
+            if len(candidates)!=1:
+                continue
+            identities=[value.lower() for value in attrs.values() if MAC.fullmatch(value.lower())]
+            if len(identities)!=1:
+                continue
+            identity=mac(identities[0])
+            for expected in config.get("anchors",[]):
+                if vmid==expected["vmid"] and identity==mac(expected["mac"]) and attrs.get("tag")==str(expected["vlan"]) and fields.get("hostname",fields.get("name"))==expected["name"] and "boetticher-module-"+expected["module"] in tags:
+                    anchors[identity]=candidates[0]
+            if vmid==100:
+                gateway_ports[identity]=candidates[0]
+                if identity==mac(config["gateway_mac"]) and attrs.get("tag")=="40":
+                    gateway_port=candidates[0]
+            elif attrs.get("tag")!="40":
+                continue
+            elif identity in virtual:
+                raise ValueError("duplicate virtual MAC ownership")
+            else:
+                virtual[identity]=candidates[0]
+    trunk=config.get("trunk",{})
+    physical=None
+    if trunk.get("name") in ports:
+        entry=next(item for item in links if item["ifname"]==trunk["name"])
+        if mac(entry.get("permaddr",entry.get("address","")))==mac(trunk.get("permanent_mac","")):
+            physical=trunk["name"]
+    if gateway_port is None:
+        return None, [], gateway_ports, [], physical, valid_selected, anchors
+    try:
+        result=json.loads(command(["/usr/sbin/qm","guest","exec","100","--","/usr/bin/cat","/var/lib/kea/kea-leases4.csv"]))
+    except Exception:
+        return gateway_port, [], gateway_ports, [], physical, valid_selected, anchors
+    if result.get("exitcode")!=0 or result.get("out-truncated"):
+        return gateway_port, [], gateway_ports, [], physical, valid_selected, anchors
+    leases={row["address"]:row for row in csv.DictReader(io.StringIO(result.get("out-data","")))}
+    bindings=[]
+    now=time.time()
+    for address,lease in leases.items():
+        if ipaddress.ip_address(address) not in ipaddress.ip_network("10.10.40.0/24") or lease.get("state","0")!="0" or float(lease["expire"])<=now:
+            continue
+        identity=mac(lease["hwaddr"])
+        port=virtual.get(identity,physical)
+        if port:
+            bindings.append({"port":port,"mac":identity,"ip":address})
+    return gateway_port,bindings,gateway_ports,[{"mac":m,"port":p} for m,p in virtual.items()],physical,valid_selected,anchors
+
+
+def apply(text):
+    result=subprocess.run(["/usr/sbin/nft","-f","-"],input=text,text=True,capture_output=True,timeout=5)
+    if result.returncode:
+        raise RuntimeError("isolation rules failed to load")
+
+
+def main():
+    config=json.load(open("/etc/boetticher/network-isolation.json",encoding="utf-8"))
+    apply(render(config))
+    if sys.argv[1:]==["--bootstrap"]:
+        return
+    while True:
+        try:
+            gateway,bindings,gateway_ports,clients,physical,valid_selected,anchors=inventory(config)
+            apply(render(config,gateway,bindings,gateway_ports,clients,physical,valid_selected,anchors))
+        except Exception:
+            # Revoke current grants immediately on a failed snapshot. If nft
+            # itself is unavailable, existing kernel binding timeouts remain.
+            try:
+                apply(render(config))
+            except Exception:
+                pass
+            print("network isolation refresh failed; paths remain blocked",file=sys.stderr,flush=True)
+        time.sleep(2)
+
+
+if __name__=="__main__":
+    main()

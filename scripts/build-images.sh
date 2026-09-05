@@ -191,7 +191,7 @@ prowlarr_version=2.5.2.5491
 prowlarr_release_url=https://github.com/Prowlarr/Prowlarr/releases/download/v2.5.2.5491/Prowlarr.master.2.5.2.5491.linux-core-x64.tar.gz
 prowlarr_release_sha256=22fe95742869d7af5e16d420c7889185579152ea8324be6c6e4e3cd011f4c37b
 arr_qbittorrent_package_version=5.1.0-2
-firewall_package_names='nftables kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony openssh-server sudo cloud-init systemd-journal-remote curl jq openssl qemu-guest-agent'
+firewall_package_names='nftables conntrack kea-dhcp4-server kea-dhcp-ddns-server dnsmasq chrony openssh-server sudo cloud-init systemd-journal-remote curl jq openssl qemu-guest-agent'
 case "${BOETTICHER_LOCAL_FAST:-0}" in
   0|1) ;;
   *) echo 'HOLD: BOETTICHER_LOCAL_FAST must be 0 or 1' >&2; exit 2 ;;
@@ -635,6 +635,9 @@ build_tailnet_router() {
     return 2
   fi
   rm -f "$rootfs/etc/apt/sources.list.d/tailscale.list" "$rootfs$tailscale_keyring"
+  install -D -m 0644 images/tailnet-router/runtime/boetticher-tailnet-firewall.service "$rootfs/etc/systemd/system/boetticher-tailnet-firewall.service"
+  install -D -m 0600 images/tailnet-router/runtime/bootstrap.nft "$rootfs/etc/nftables.d/tailnet.nft"
+  chroot "$rootfs" systemctl enable boetticher-tailnet-firewall.service
   write_artifact_identity "$rootfs" tailnet-router
   package_lxc boetticher-tailnet-router
 }
@@ -642,9 +645,13 @@ build_tailnet_router() {
 build_airvpn() {
   printf '%s\n' 'boetticher build stage: airvpn'
   rootfs=$(prepare_rootfs boetticher-airvpn)
-  install_packages "$rootfs" wireguard-tools wireguard-go nftables iproute2
+  install_packages "$rootfs" wireguard-tools wireguard-go nftables iproute2 dnsmasq
   install -d -m 0700 "$rootfs/run/boetticher"
   install -D -m 0644 images/airvpn/runtime/boetticher-airvpn.service "$rootfs/etc/systemd/system/boetticher-airvpn.service"
+  install -D -m 0644 images/airvpn/runtime/boetticher-airvpn-firewall.service "$rootfs/etc/systemd/system/boetticher-airvpn-firewall.service"
+  install -D -m 0600 images/airvpn/runtime/bootstrap.nft "$rootfs/etc/nftables.d/airvpn.nft"
+  install -D -m 0644 images/airvpn/runtime/99-boetticher-airvpn.conf "$rootfs/etc/sysctl.d/99-boetticher-airvpn.conf"
+  chroot "$rootfs" systemctl enable boetticher-airvpn-firewall.service
   install -D -m 0755 images/airvpn/runtime/airvpn-prepare "$rootfs/usr/lib/boetticher/airvpn-prepare"
   install -D -m 0755 images/airvpn/runtime/airvpn-routes-up "$rootfs/usr/lib/boetticher/airvpn-routes-up"
   install -D -m 0755 images/airvpn/runtime/airvpn-routes-down "$rootfs/usr/lib/boetticher/airvpn-routes-down"

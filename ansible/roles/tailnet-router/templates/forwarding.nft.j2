@@ -1,0 +1,20 @@
+destroy table inet boetticher_tailnet
+table inet boetticher_tailnet {
+  # Populated only by separately reviewed deployment preparation. Empty means
+  # no routed clients; a permissive external grant cannot bypass this set.
+  set trusted_clients { type ipv4_addr; flags interval;
+{% if tailnet_trusted_clients | default([]) | length > 0 %}
+    elements = { {{ tailnet_trusted_clients | join(', ') }} }
+{% endif %}
+  }
+  chain forward {
+    type filter hook forward priority -10; policy drop;
+    meta nfproto ipv6 drop
+    iifname "tailscale0" ip saddr != @trusted_clients drop
+    oifname "tailscale0" ip daddr != @trusted_clients drop
+{% for service in trusted_lab_services %}
+    iifname "tailscale0" oifname "eth0" ip saddr @trusted_clients ip daddr {{ service.network }} {{ service.protocol }} dport { {{ service.ports | join(', ') }} } accept
+    iifname "eth0" oifname "tailscale0" ip daddr @trusted_clients ip saddr {{ service.network }} {{ service.protocol }} sport { {{ service.ports | join(', ') }} } ct state established,related accept
+{% endfor %}
+  }
+}

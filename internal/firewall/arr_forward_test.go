@@ -54,6 +54,9 @@ func TestARRForwardedPortIsBoundedAndDisabledWithARR(t *testing.T) {
 			t.Fatal(err)
 		}
 		ruleset, err := RenderNFTWithResolver(plan, func(host string) ([]net.IP, error) {
+			if host == "cloudflare-dns.com" || host == "dns.google" {
+				return []net.IP{net.ParseIP("203.0.113.53")}, nil
+			}
 			if host != "airvpn.example" {
 				t.Fatalf("unexpected AirVPN render lookup %q", host)
 			}

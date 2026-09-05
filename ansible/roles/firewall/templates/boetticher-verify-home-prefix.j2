@@ -1,0 +1,7 @@
+#!/usr/bin/python3
+import ipaddress,json,subprocess,sys
+expected=ipaddress.ip_interface({{ firewall_plan.upstream.address | to_json }}).network
+result=subprocess.run(['ip','-4','-j','address','show','dev','wan0'],capture_output=True,text=True,check=True,timeout=5)
+addresses=[ipaddress.ip_interface(a['local']+'/'+str(a['prefixlen'])).network for link in json.loads(result.stdout) for a in link.get('addr_info',[]) if a.get('family')=='inet' and a.get('scope')=='global']
+if len(addresses)!=1 or addresses[0]!=expected:
+    sys.exit('HOME prefix changed or is unavailable; forwarding remains disabled until reviewed deployment')

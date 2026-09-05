@@ -513,11 +513,13 @@ type DNSRecord struct {
 // VMID is optional lookup metadata; MAC remains the network identity and this
 // model never gives boetticher ownership of the guest.
 type DHCPReservation struct {
-	Zone     string `yaml:"zone" json:"zone"`
-	Hostname string `yaml:"hostname" json:"hostname"`
-	Address  string `yaml:"address" json:"address"`
-	MAC      string `yaml:"mac" json:"mac"`
-	VMID     int    `yaml:"vmid,omitempty" json:"vmid,omitempty"`
+	DNSOverride string `yaml:"-" json:"dns_override,omitempty"`
+	NTPOverride string `yaml:"-" json:"ntp_override,omitempty"`
+	Zone        string `yaml:"zone" json:"zone"`
+	Hostname    string `yaml:"hostname" json:"hostname"`
+	Address     string `yaml:"address" json:"address"`
+	MAC         string `yaml:"mac" json:"mac"`
+	VMID        int    `yaml:"vmid,omitempty" json:"vmid,omitempty"`
 }
 
 // UserDNSRecord is an operator-owned record in the private namespace. Value
@@ -1009,6 +1011,9 @@ func (s Site) Validate() error {
 				return errors.New("TRUSTED must provide DHCP reservations")
 			}
 		case ZoneTypeSandbox:
+			if len(z.DNSAddresses) != 1 || z.DNSAddresses[0] != z.Gateway || len(z.NTPAddresses) != 1 || z.NTPAddresses[0] != z.Gateway {
+				return errors.New("SANDBOX DNS and NTP must use only its dedicated gateway address")
+			}
 			if z.AddressMode != "dynamic" {
 				return errors.New("SANDBOX must provide dynamic DHCP")
 			}
@@ -1375,6 +1380,17 @@ func validateDHCPReservations(s Site) error {
 	for _, reservation := range s.DHCPReservations {
 		if reservation.Zone != "SERVERS" {
 			return fmt.Errorf("DHCP reservation %q must use the fixed SERVERS zone", reservation.Hostname)
+		}
+		if reservation.DNSOverride != "" || reservation.NTPOverride != "" {
+			valid := false
+			for _, c := range s.PlatformComponents() {
+				if c.ProductOwned && c.Name == reservation.Hostname && c.Address == reservation.Address && c.VMID == reservation.VMID && s.ModuleConfig[c.Module].Network == ModuleNetworkAirVPN && reservation.DNSOverride == AirVPNGuestAddress && reservation.NTPOverride == AirVPNGuestAddress {
+					valid = true
+				}
+			}
+			if !valid {
+				return fmt.Errorf("DHCP service overrides require an AirVPN-selected managed guest: %s", reservation.Hostname)
+			}
 		}
 		if !IsDNSLabel(reservation.Hostname) {
 			return fmt.Errorf("DHCP reservation hostname %q must be one DNS label", reservation.Hostname)

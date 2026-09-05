@@ -1585,10 +1585,13 @@ func TestFirewallPolicyRoutingCleanupIsIdempotentWhenTableIsAbsent(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, text := range map[string]string{"firewall cleanup task": string(tasksData), "AirVPN down helper": string(templateData)} {
+	for name, text := range map[string]string{"firewall cleanup task": string(tasksData)} {
 		if !strings.Contains(text, "route_status=0") || !strings.Contains(text, "FIB table does not exist") || !strings.Contains(text, "exit \"$route_status\"") {
 			t.Fatalf("%s does not preserve idempotent route-table cleanup", name)
 		}
+	}
+	if !strings.Contains(string(templateData), "unreachable default") || strings.Contains(string(templateData), "rule del") || strings.Contains(string(templateData), "route flush") {
+		t.Fatal("stopping AirVPN policy routing must retain fail-closed fallback")
 	}
 }
 
@@ -1964,7 +1967,7 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 				"--advertise-routes=10.10.0.0/16",
 				"--snat-subnet-routes=true",
 			},
-			forbidden: []string{"advertise-exit-node", "privileged: true", "ansible.builtin.apt:", `regex_search('"BackendState"[[:space:]]*`},
+			forbidden: []string{"--advertise-exit-node=true", "privileged: true", "ansible.builtin.apt:", `regex_search('"BackendState"[[:space:]]*`},
 		},
 		{
 			role: "logging",

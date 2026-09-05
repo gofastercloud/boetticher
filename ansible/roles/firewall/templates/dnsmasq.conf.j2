@@ -5,7 +5,22 @@ port=53
 no-dhcp-interface=sandbox0
 domain-needed
 bogus-priv
+no-hosts
+stop-dns-rebind
 server=9.9.9.9
 server=1.1.1.1
-local=/sandbox.lab.home.arpa/
+local=/{{ domain }}/
+local=/home.arpa/
+local=/local/
+local=/10.in-addr.arpa/
+local=/168.192.in-addr.arpa/
+local=/127.in-addr.arpa/
+local=/254.169.in-addr.arpa/
+local=/ip6.arpa/
+{% for octet in range(64, 128) %}
+local=/{{ octet }}.100.in-addr.arpa/
+{% endfor %}
+{% for octet in range(16, 32) %}
+local=/{{ octet }}.172.in-addr.arpa/
+{% endfor %}
 no-resolv

@@ -166,10 +166,16 @@
         "address": {
           "type": "string"
         },
+        "dns_override": {
+          "type": "string"
+        },
         "hostname": {
           "type": "string"
         },
         "mac": {
+          "type": "string"
+        },
+        "ntp_override": {
           "type": "string"
         },
         "vmid": {

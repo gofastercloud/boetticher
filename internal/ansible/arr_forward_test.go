@@ -33,6 +33,7 @@ func TestAirVPNPeerTemplateRendersOnlyEnabledReservation(t *testing.T) {
     firewall_plan:
       airvpn_source_cidrs: %s
       airvpn: {endpoint_addresses: ['198.51.100.1'], endpoint_port: 1637}
+    firewall_non_public_ipv4: ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']
     dns_plan: {nameservers: ['10.10.10.10']}
   tasks:
     - ansible.builtin.template:

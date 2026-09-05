@@ -552,7 +552,6 @@ func TestPulseHTTPSIsAllowedFromModeledClientZones(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, expected := range []string{
-		"iifname \"transit0\" oifname \"infra0\" ip saddr 10.10.5.0/24 ip daddr 10.10.10.20/32 tcp dport 443 counter accept",
 		"iifname \"servers0\" oifname \"infra0\" ip saddr 10.10.20.0/24 ip daddr 10.10.10.20/32 tcp dport 443 counter accept",
 		"iifname \"trusted0\" oifname \"infra0\" ip saddr 10.10.30.0/24 ip daddr 10.10.10.20/32 tcp dport 443 counter accept",
 	} {
@@ -563,8 +562,8 @@ func TestPulseHTTPSIsAllowedFromModeledClientZones(t *testing.T) {
 	if strings.Contains(ruleset, "iifname \"trusted0\" oifname \"infra0\" ip saddr 10.10.30.0/24 ip daddr @infra_net tcp dport 443 counter accept") {
 		t.Fatal("TRUSTED retains a broad HTTPS-to-INFRA rule")
 	}
-	if strings.Index(ruleset, "iifname \"transit0\" oifname \"infra0\" ip saddr 10.10.5.0/24") > strings.Index(ruleset, "TRANSIT-INFRA-DROP") {
-		t.Fatal("TRANSIT-to-Pulse allow occurs after the TRANSIT default deny")
+	if strings.Contains(ruleset, "ip saddr 10.10.5.0/24 ip daddr 10.10.10.20") {
+		t.Fatal("TRANSIT receives blanket Pulse access")
 	}
 }
 
@@ -729,6 +728,9 @@ func TestAirVPNSelectedSourcesUseTransitWithoutDirectWANFallback(t *testing.T) {
 		if host == "airvpn.example" || host == "provider.example" {
 			return []net.IP{net.ParseIP("198.51.100.44")}, nil
 		}
+		if host == "cloudflare-dns.com" || host == "dns.google" {
+			return []net.IP{net.ParseIP("8.8.8.8")}, nil
+		}
 		return nil, fmt.Errorf("unexpected endpoint %s", host)
 	})
 	if err != nil {
@@ -774,7 +776,7 @@ func TestArrAirVPNEgressIsBoundedAndFailClosed(t *testing.T) {
 			break
 		}
 	}
-	if egress.From != "SERVERS" || egress.To != "TRANSIT" || egress.Action != "allow" || egress.Protocol != "any" || egress.SourceCIDR != model.ArrGuestAddress+"/32" || egress.SourceMAC != model.ArrGuestMAC || egress.DestinationCIDR != model.AirVPNGuestAddress+"/32" || egress.NAT || egress.Route != "airvpn" {
+	if egress.From != "SERVERS" || egress.To != "TRANSIT" || egress.Action != "allow" || egress.Protocol != "any" || egress.SourceCIDR != model.ArrGuestAddress+"/32" || egress.SourceMAC != model.ArrGuestMAC || egress.DestinationCIDR != "0.0.0.0/0" || egress.NAT || egress.Route != "airvpn" {
 		t.Fatalf("ARR AirVPN egress rule = %#v", egress)
 	}
 	if !reflect.DeepEqual(plan.AirVPNSources, []string{model.ArrGuestAddress + "/32"}) {
@@ -793,13 +795,16 @@ func TestArrAirVPNEgressIsBoundedAndFailClosed(t *testing.T) {
 		if host == "airvpn.example" {
 			return []net.IP{net.ParseIP("198.51.100.44")}, nil
 		}
+		if host == "cloudflare-dns.com" || host == "dns.google" {
+			return []net.IP{net.ParseIP("8.8.8.8")}, nil
+		}
 		return nil, fmt.Errorf("unexpected endpoint %s", host)
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`iifname "servers0" ether saddr 02:00:00:00:02:10 oifname "transit0" ip saddr 10.10.20.110/32 ip daddr 10.10.5.20/32 counter accept`,
+		`iifname "servers0" ether saddr 02:00:00:00:02:10 oifname "transit0" ip saddr 10.10.20.110/32 ip daddr 0.0.0.0/0 counter accept`,
 		`iifname "servers0" ether saddr 02:00:00:00:02:10 ip saddr != 10.10.20.110/32 counter log prefix "boetticher AIRVPN-SOURCE-MISMATCH-DROP " drop`,
 		`ip saddr @airvpn_sources oifname "wan0" counter log prefix "boetticher AIRVPN-DIRECT-DROP " drop`,
 		`oifname "wan0" ip saddr != @airvpn_sources ip saddr 10.10.20.0/24 masquerade comment "boetticher:nat-servers"`,
@@ -811,8 +816,8 @@ func TestArrAirVPNEgressIsBoundedAndFailClosed(t *testing.T) {
 	if strings.Contains(ruleset, `oifname "wan0" ip saddr 10.10.20.110/32 masquerade`) {
 		t.Fatal("ARR AirVPN source has a direct WAN NAT rule")
 	}
-	if strings.Contains(ruleset, `ether saddr 02:00:00:00:02:10 oifname "transit0" ip saddr 10.10.20.110/32 ip daddr 0.0.0.0/0`) {
-		t.Fatal("ARR AirVPN rule still permits every TRANSIT destination")
+	if !strings.Contains(ruleset, `ip saddr @airvpn_sources ip daddr @non_public_v4 drop`) {
+		t.Fatal("ARR public destination allowance lacks mandatory private-destination denial")
 	}
 }
 

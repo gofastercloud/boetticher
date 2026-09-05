@@ -16,7 +16,7 @@ func TestPlansUseStableZoneOrderAndAddressModes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := len(probes), 3; got != want {
+	if got, want := len(probes), 4; got != want {
 		t.Fatalf("probe count = %d, want %d", got, want)
 	}
 	if probes[0].Zone != "INFRA" || probes[0].VMID != VMIDMin || probes[0].Address != "10.10.10.250" || probes[0].AddressMode != "static" {

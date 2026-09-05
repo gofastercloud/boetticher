@@ -408,7 +408,12 @@ func variables(s model.Site, upstream *firewall.UpstreamObservation, operatorPub
 		GatusConfig                    string                                           `json:"gatus_config"`
 		USBExportManifests             []usbexport.GuestManifest                        `json:"usb_export_manifests"`
 		NetworkProbeOperatorPublicKey  string                                           `json:"network_probe_operator_public_key,omitempty"`
-	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan, firewallPlan, firewall.GatewayInterfaceConfigurationDigests(firewallPlan), monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, loggingCollectorConfig, loggingServiceOverride, loggingSocketOverride, loggingUploads, s.ModuleConfig, s.Declarations, string(gatusConfig), usbPlan, operatorPublicKey}
+		ApplianceResolvers             map[string][]string                              `json:"appliance_resolvers"`
+		AirVPNSelectedGuests           []string                                         `json:"airvpn_selected_guests"`
+		FirewallNonPublicIPv4          []string                                         `json:"firewall_non_public_ipv4"`
+		TrustedLabServices             []model.TrustedLabService                        `json:"trusted_lab_services"`
+		HostIsolation                  firewall.HostIsolation                           `json:"host_isolation"`
+	}{revision, s.Network.Domain, model.ProxmoxManagementAddress, true, dnsPlan.Implementation, dnsPlan.ImplementationVersion, dnsPlan.PackageVersion, dns.AuthoritativePort, dynamicZoneNames(dnsPlan.DynamicZones), dnsPlan, firewallPlan, firewall.GatewayInterfaceConfigurationDigests(firewallPlan), monitoringPlan, MonitoringAgentTargets(s), model.PulseAgentVersion, model.PulseAgentReleaseURL, model.PulseAgentReleaseSHA256, string(blockyConfig), loggingPlan, loggingCollectorConfig, loggingServiceOverride, loggingSocketOverride, loggingUploads, s.ModuleConfig, s.Declarations, string(gatusConfig), usbPlan, operatorPublicKey, model.ApplianceResolverMap(s), model.AirVPNSelectedNames(s), firewall.NonPublicIPv4, model.TrustedLabServices(), firewall.HostIsolationForSite(s)}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return nil, err

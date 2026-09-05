@@ -34,6 +34,7 @@ const (
 )
 
 type GuestPlan struct {
+	Nameservers     []string                            `json:"nameservers,omitempty"`
 	VMID            int                                 `json:"vmid"`
 	Name            string                              `json:"name"`
 	Kind            GuestKind                           `json:"kind"`
@@ -452,7 +453,8 @@ func PlanFromSite(s model.Site) (Plan, error) {
 			guestMAC = networkmodel.ManagedModuleMAC(component.VMID)
 		}
 		guest := GuestPlan{
-			VMID: component.VMID, Name: component.Name, Hostname: component.Hostname, Zone: component.Zone,
+			Nameservers: model.EffectiveResolvers(s, component),
+			VMID:        component.VMID, Name: component.Name, Hostname: component.Hostname, Zone: component.Zone,
 			Address: component.Address, MAC: guestMAC, Gateway: gatewayFor(component.Zone), VLAN: vlanFor(s, component.Zone),
 			Kind: KindLXC, Cores: 2, MemoryMiB: 1024, DiskGiB: 8,
 			Monitoring: component.Monitoring, Backup: component.Backup, Tags: componentTags(s, component.Name), ManagedUSBSlots: usbSlots[component.VMID],
@@ -1581,8 +1583,8 @@ func ensureLXCWithRetainedVolumes(ctx context.Context, client *Client, plan Plan
 		"tags":         {strings.Join(guest.Tags, ";")},
 		"net0":         {lxcNetworkParam(guest)},
 	}
-	if len(plan.Nameservers) > 0 {
-		params.Set("nameserver", strings.Join(plan.Nameservers, " "))
+	if servers := guestNameservers(plan, guest); len(servers) > 0 {
+		params.Set("nameserver", strings.Join(servers, " "))
 	}
 	if guest.Security.Unprivileged {
 		params.Set("unprivileged", "1")
@@ -2915,10 +2917,11 @@ func ensureExistingGuestTags(ctx context.Context, client *Client, plan Plan, gue
 }
 
 func ensureExistingLXCNameserver(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) error {
-	if len(plan.Nameservers) == 0 {
+	servers := guestNameservers(plan, guest)
+	if len(servers) == 0 {
 		return nil
 	}
-	want := strings.Join(plan.Nameservers, " ")
+	want := strings.Join(servers, " ")
 	got, _ := current["nameserver"].(string)
 	if strings.Join(strings.Fields(got), " ") == strings.Join(strings.Fields(want), " ") {
 		return nil
@@ -2927,6 +2930,13 @@ func ensureExistingLXCNameserver(ctx context.Context, client *Client, plan Plan,
 		return fmt.Errorf("apply platform nameservers to %s: %w", guest.Name, err)
 	}
 	return nil
+}
+
+func guestNameservers(plan Plan, guest GuestPlan) []string {
+	if len(guest.Nameservers) > 0 {
+		return guest.Nameservers
+	}
+	return plan.Nameservers
 }
 
 func currentTags(current map[string]any) string {

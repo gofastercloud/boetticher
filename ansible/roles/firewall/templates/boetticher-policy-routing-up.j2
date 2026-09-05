@@ -1,9 +1,23 @@
 #!/bin/sh
 set -eu
+has_rule() {
+  ip -4 rule show | awk -v priority="$1:" -v source="$2" -v action="$3" -v table="$4" '
+    BEGIN {sub(/\/32$/, "", source)}
+    $1 == priority && $2 == "from" {sub(/\/32$/, "", $3); if ($3 == source && $4 == action && (action == "unreachable" || $5 == table)) found=1}
+    END {exit !found}'
+}
 {% for policy in firewall_plan.policy_routes %}
+# Install an independent terminal rule before the lookup. Even a flushed or
+# missing policy table cannot fall through to the ordinary WAN routing table.
+if ! has_rule {{ policy.priority + 1 }} {{ policy.source_cidr }} unreachable 0; then
+  ip -4 rule add priority {{ policy.priority + 1 }} from {{ policy.source_cidr }} unreachable
+fi
+ip -4 route replace unreachable default metric 32767 table {{ policy.table }}
 {% for route in policy.internal_routes %}
-ip route replace {{ route.destination }}{% if route.gateway %} via {{ route.gateway }}{% endif %} dev {{ route.interface }} table {{ policy.table }}
+ip route replace {{ route.destination }}{% if route.get('gateway') %} via {{ route.gateway }}{% endif %} dev {{ route.interface }} table {{ policy.table }}
 {% endfor %}
-ip route replace default via {{ policy.default_gateway }} dev {{ policy.default_interface }} table {{ policy.table }}
-ip rule replace from {{ policy.source_cidr }} priority {{ policy.priority }} table {{ policy.table }}
+ip route replace default via {{ policy.default_gateway }} dev {{ policy.default_interface }} metric 100 table {{ policy.table }}
+if ! has_rule {{ policy.priority }} {{ policy.source_cidr }} lookup {{ policy.table }}; then
+  ip -4 rule add from {{ policy.source_cidr }} priority {{ policy.priority }} table {{ policy.table }}
+fi
 {% endfor %}

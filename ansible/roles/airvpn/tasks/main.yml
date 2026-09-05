@@ -101,6 +101,34 @@
     argv: [nft, -f, /etc/nftables.d/airvpn.nft]
   changed_when: true
 
+- name: Enable the persistent AirVPN kill switch before forwarding
+  ansible.builtin.systemd_service:
+    name: boetticher-airvpn-firewall.service
+    enabled: true
+    state: restarted
+    daemon_reload: true
+
+- name: Configure AirVPN split DNS without public fallback
+  ansible.builtin.template:
+    src: dnsmasq.conf.j2
+    dest: /etc/dnsmasq.conf
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Start the module-specific AirVPN DNS service
+  ansible.builtin.systemd_service:
+    name: dnsmasq
+    enabled: true
+    state: restarted
+
+- name: Pin the controller-validated provider endpoint without bootstrap DNS
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^.*\s{{ firewall_plan.airvpn.endpoint_host | regex_escape }}\s*# boetticher-airvpn-provider$'
+    line: "{{ firewall_plan.airvpn.endpoint_addresses | first }} {{ firewall_plan.airvpn.endpoint_host }} # boetticher-airvpn-provider"
+    create: true
+
 - name: Enable and start the AirVPN transit service
   ansible.builtin.systemd_service:
     name: boetticher-airvpn.service

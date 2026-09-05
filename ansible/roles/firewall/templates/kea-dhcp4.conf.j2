@@ -29,7 +29,7 @@
         "ddns-replace-client-name": "when-not-present",
         "reservations": [
 {% for reservation in subnet.get('reservations', []) %}
-          {"hw-address": "{{ reservation.mac }}", "ip-address": "{{ reservation.address }}", "hostname": "{{ reservation.hostname }}"}{% if not loop.last %},{% endif %}
+          {"hw-address": "{{ reservation.mac }}", "ip-address": "{{ reservation.address }}", "hostname": "{{ reservation.hostname }}"{% if reservation.get('dns_override') %}, "option-data": [{"name": "domain-name-servers", "data": "{{ reservation.dns_override }}"}, {"name": "ntp-servers", "data": "{{ reservation.ntp_override }}"}]{% endif %}}{% if not loop.last %},{% endif %}
 {% endfor %}
         ]
       }{% if not loop.last %},{% endif %}

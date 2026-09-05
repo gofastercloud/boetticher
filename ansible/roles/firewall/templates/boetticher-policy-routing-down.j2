@@ -1,11 +1,6 @@
 #!/bin/sh
 set -eu
-for priority in $(ip -4 rule show | awk '$NF == {{ firewall_plan.policy_routes[0].table }} {gsub(":", "", $1); print $1}'); do
-  ip -4 rule del priority "$priority"
-done
-route_status=0
-route_output=$(ip -4 route flush table {{ firewall_plan.policy_routes[0].table }} 2>&1) || route_status=$?
-if [ "$route_status" -ne 0 ] && ! printf '%s\n' "$route_output" | grep -Fq 'FIB table does not exist'; then
-  printf '%s\n' "$route_output" >&2
-  exit "$route_status"
-fi
+# Stopping the routing unit must not restore direct-WAN access. Leave lookup
+# and unreachable rules installed until an explicitly reviewed policy change.
+ip -4 route replace unreachable default metric 32767 table {{ firewall_plan.policy_routes[0].table }}
+ip -4 route del default via {{ firewall_plan.policy_routes[0].default_gateway }} dev {{ firewall_plan.policy_routes[0].default_interface }} metric 100 table {{ firewall_plan.policy_routes[0].table }} 2>/dev/null || true

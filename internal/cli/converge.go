@@ -805,6 +805,18 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		}
 	}
 	if s.Gateway.Mode == model.GatewayModeManaged {
+		var isolationVariables map[string]any
+		if err := json.Unmarshal(variables, &isolationVariables); err != nil {
+			return err
+		}
+		isolationVariables["boetticher_network_isolation_only"] = true
+		isolationData, err := json.Marshal(isolationVariables)
+		if err != nil {
+			return err
+		}
+		if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, isolationData, model.LogicalProxmoxIdentity, ansible.PhaseBootstrap, report, temporaryPrivateKey); err != nil {
+			return fmt.Errorf("install Core bridge isolation before guest startup: %w", err)
+		}
 		firewallGuest := proxmox.GuestPlan{VMID: model.ProxmoxVMID, Name: "lab-fw-01", Hostname: "lab-fw-01", Kind: proxmox.KindQEMU, Address: "10.10.99.1"}
 		for _, candidate := range proxmoxPlan.Guests {
 			if candidate.Kind == proxmox.KindQEMU {
@@ -863,6 +875,26 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		}
 		if err := verifyFirewallBootstrapNetwork(ctx, firewallRunner); err != nil {
 			return fmt.Errorf("HOLD: managed gateway bootstrap network is not ready before runtime configuration: %w", err)
+		}
+		upstream, err := observeGatewayUpstream(ctx, firewallRunner, firewallPlan)
+		if err != nil {
+			return fmt.Errorf("verify HOME prefix before opening restricted egress: %w", err)
+		}
+		firewallPlan.Upstream = &upstream
+		boundRules, err := firewall.RenderNFTWithResolver(firewallPlan, endpointLookup)
+		if err != nil {
+			return err
+		}
+		var boundVariables map[string]any
+		if err := json.Unmarshal(variables, &boundVariables); err != nil {
+			return err
+		}
+		boundVariables["firewall_plan"] = firewallPlan
+		boundVariables["firewall_ruleset"] = boundRules
+		boundVariables["firewall_ruleset_sha256"] = firewall.RulesetDigest(boundRules)
+		variables, err = json.Marshal(boundVariables)
+		if err != nil {
+			return err
 		}
 		if err := installCredentialsForGuest(ctx, firewallRunner, "lab-fw-01", credentialBindings, secretValues); err != nil {
 			return fmt.Errorf("install managed gateway credentials: %w", err)
