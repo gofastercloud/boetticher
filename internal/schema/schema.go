@@ -39,6 +39,14 @@ func GenerateSiteSchema() ([]byte, error) {
 	if !ok {
 		return nil, fmt.Errorf("generated SiteConfig schema has no root properties")
 	}
+	if definitions, ok := projection["$defs"].(map[string]any); ok {
+		if reservation, ok := definitions["DHCPReservation"].(map[string]any); ok {
+			if properties, ok := reservation["properties"].(map[string]any); ok {
+				delete(properties, "dns_override")
+				delete(properties, "ntp_override")
+			}
+		}
+	}
 	for field, value := range map[string]any{
 		"api_version":      model.APIVersion,
 		"platform_version": model.PlatformVersion,
