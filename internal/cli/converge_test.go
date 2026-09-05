@@ -993,3 +993,38 @@ func TestPlanDigestFromOutputRequiresCanonicalSHA256Digest(t *testing.T) {
 		}
 	}
 }
+
+func TestScopedModuleDeployDoesNotCallGlobalMutationBoundaries(t *testing.T) {
+	data, err := os.ReadFile("converge.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	start := strings.Index(text, "func runScopedModuleDeploy(")
+	end := strings.Index(text[start:], "\nfunc waitForDeploymentRoot(")
+	if start < 0 || end < 0 {
+		t.Fatal("scoped deployment implementation is missing")
+	}
+	scoped := text[start : start+end]
+	for _, forbidden := range []string{
+		"ConfigureBastionPolicy", "ConfigureIdentities", "EnsureLVMThinStorageWithMutation",
+		"EnsureDirectoryStorageContentWithMutation", "EnsureFirewallVM", "ApplyBackupJobWithRunner",
+		"writeModelProjections", "ConfigureProxmox", "StorePlatformSecret", "PurgeModule",
+	} {
+		if strings.Contains(scoped, forbidden) {
+			t.Fatalf("scoped deployment still reaches global mutation %s", forbidden)
+		}
+	}
+	for _, required := range []string{"ProvisionModule", "installModuleRuntimeConfigs", "runTrackedAnsible", "SaveOperationState", "ClearOperationState"} {
+		if !strings.Contains(scoped, required) {
+			t.Fatalf("scoped deployment omitted required target lifecycle action %s", required)
+		}
+	}
+	if !strings.Contains(scoped, "plan.OperatorPublicKey = durableOperatorPublicKey") || strings.Contains(scoped, "plan.OperatorPublicKey = publicKey") {
+		t.Fatal("scoped deployment can install its temporary key as durable labadmin access")
+	}
+	entry := strings.Index(text, "if *onlyModule != \"\" {")
+	if entry < 0 || !strings.Contains(text[entry:start], "recoverInterruptedDeployment") {
+		t.Fatal("scoped deployment can overwrite an interrupted deployment journal before recovery")
+	}
+}

@@ -376,13 +376,14 @@ type Component struct {
 }
 
 type ModuleConfig struct {
-	QBittorrentPort int                     `yaml:"qbittorrent_port,omitempty" json:"qbittorrent_port,omitempty"`
-	Enabled         *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Network         ModuleNetworkMode       `yaml:"network,omitempty" json:"network,omitempty"`
-	Servers         string                  `yaml:"servers,omitempty" json:"servers,omitempty"`
-	ModelAlias      string                  `yaml:"model_alias,omitempty" json:"model_alias,omitempty"`
-	Upstreams       []BifrostUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
-	Models          []BifrostModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
+	QBittorrentPort       int                     `yaml:"qbittorrent_port,omitempty" json:"qbittorrent_port,omitempty"`
+	TailnetTrustedClients []string                `yaml:"trusted_clients,omitempty" json:"trusted_clients,omitempty"`
+	Enabled               *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Network               ModuleNetworkMode       `yaml:"network,omitempty" json:"network,omitempty"`
+	Servers               string                  `yaml:"servers,omitempty" json:"servers,omitempty"`
+	ModelAlias            string                  `yaml:"model_alias,omitempty" json:"model_alias,omitempty"`
+	Upstreams             []BifrostUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	Models                []BifrostModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
 }
 
 type USBExportBinding struct {
@@ -657,6 +658,10 @@ func (s Site) Normalize() Site {
 	copySite.Components = cloneComponents(s.Components)
 	copySite.Modules = cloneResolvedModules(s.Modules)
 	copySite.ModuleConfig = cloneModuleConfig(s.ModuleConfig)
+	if tailnet, ok := copySite.ModuleConfig["tailnet-router"]; ok {
+		sort.Strings(tailnet.TailnetTrustedClients)
+		copySite.ModuleConfig["tailnet-router"] = tailnet
+	}
 	copySite.Companion = cloneCompanionConfig(s.Companion)
 	copySite.Declarations = cloneModuleDeclarations(s.Declarations)
 	copySite.USBExports = append([]USBExportBinding(nil), s.USBExports...)
@@ -949,6 +954,16 @@ func (s Site) Validate() error {
 	}
 	if !modelTokenPattern.MatchString(s.SecretMetadata.InstallationID) || s.SecretMetadata.AgeRecipient == "" || s.SecretMetadata.RootAgeRecipient == "" || s.SecretMetadata.RootAgeRecipient == s.SecretMetadata.AgeRecipient {
 		return fmt.Errorf("secret_metadata must contain a safe installation_id and distinct public age recipients")
+	}
+	if tailnet, ok := s.ModuleConfig["tailnet-router"]; ok {
+		seen := map[string]bool{}
+		for _, value := range tailnet.TailnetTrustedClients {
+			ip := net.ParseIP(value)
+			if ip == nil || ip.To4() == nil || ip.String() != value || ip.To4()[0] != 100 || ip.To4()[1] < 64 || ip.To4()[1] > 127 || seen[value] {
+				return errors.New("modules.tailnet-router.trusted_clients must contain unique canonical Tailnet IPv4 addresses")
+			}
+			seen[value] = true
+		}
 	}
 	if port := s.ModuleConfig["airvpn"].QBittorrentPort; !ValidQBittorrentPort(port) {
 		return errors.New("modules.airvpn.qbittorrent_port: use 0 to disable or a reserved port from 2049 to 65535 excluding ARR web/API ports")

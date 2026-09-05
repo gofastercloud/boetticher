@@ -69,5 +69,8 @@ func TestAirVPNPeerTemplateRendersOnlyEnabledReservation(t *testing.T) {
 		if !strings.Contains(text, `iifname "eth0" oifname "eth0" drop`) {
 			t.Fatal("forwarding lost the direct-path kill switch")
 		}
+		if !strings.Contains(text, `iifname "eth0" ip saddr 10.10.10.20 tcp sport 443 ct state established accept`) {
+			t.Fatal("AirVPN Pulse reporting reply path is missing")
+		}
 	}
 }

@@ -239,7 +239,7 @@ func TestManagedGatewayAllowsDiagnosticICMPEchoFromInternalZones(t *testing.T) {
 func TestComposedModuleIntentsAreNarrowManagedAllows(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	tailnetEnabled, bifrostEnabled := true, true
-	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
+	config.Modules.TailnetRouter = &model.TailnetRouterConfig{Enabled: &tailnetEnabled}
 	config.Modules.Bifrost = &model.BifrostModuleConfig{
 		Enabled:   &bifrostEnabled,
 		Upstreams: []model.BifrostUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
@@ -439,7 +439,7 @@ func TestCoreModuleGuestsRetainBaselinePolicy(t *testing.T) {
 func TestModuleGuestSourcesRequireSourceSpecificIntent(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	tailnetEnabled, bifrostEnabled := true, true
-	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
+	config.Modules.TailnetRouter = &model.TailnetRouterConfig{Enabled: &tailnetEnabled}
 	config.Modules.Bifrost = &model.BifrostModuleConfig{
 		Enabled:   &bifrostEnabled,
 		Upstreams: []model.BifrostUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
@@ -463,7 +463,7 @@ func TestExternalComposedContractCarriesModuleRouteAndOperatorBoundary(t *testin
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeExternal))
 	firewallDisabled, tailnetEnabled, bifrostEnabled := false, true, true
 	config.Modules.Firewall = &model.ToggleModuleConfig{Enabled: &firewallDisabled}
-	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
+	config.Modules.TailnetRouter = &model.TailnetRouterConfig{Enabled: &tailnetEnabled}
 	config.Modules.Bifrost = &model.BifrostModuleConfig{
 		Enabled:   &bifrostEnabled,
 		Upstreams: []model.BifrostUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},
@@ -598,7 +598,7 @@ func TestExternalPlanHasPolicyButNoManagedInterfaces(t *testing.T) {
 func TestTailnetRouterUsesTheSingleDNSAndNTPService(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	enabled := true
-	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.TailnetRouter = &model.TailnetRouterConfig{Enabled: &enabled}
 	site, _, err := modules.Compose(config)
 	if err != nil {
 		t.Fatal(err)
