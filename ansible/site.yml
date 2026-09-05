@@ -8,6 +8,11 @@
   become: false
   gather_facts: false
   roles:
+    - role: firewall
+      when:
+        - inventory_hostname in groups.get('firewall', [])
+        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
+        - not (boetticher_skip_firewall | default(false) | bool)
     - base
     - role: chrony
       when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
@@ -19,11 +24,6 @@
       when: inventory_hostname in groups.get('monitor', [])
     - role: logging
       when: inventory_hostname in logging_upload_configs or inventory_hostname == 'lab-log-01'
-    - role: firewall
-      when:
-        - inventory_hostname in groups.get('firewall', [])
-        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
-        - not (boetticher_skip_firewall | default(false) | bool)
     - role: tailnet-router
       when:
         - inventory_hostname in groups.get('tailnet-router', [])

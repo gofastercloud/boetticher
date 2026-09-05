@@ -242,6 +242,19 @@ func TestServicePhaseSkipsNetworkOnlyRoles(t *testing.T) {
 	}
 }
 
+func TestFirewallRoleRunsBeforeBaseOnManagedPlay(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "site.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	firewallIndex := strings.Index(text, "- role: firewall")
+	baseIndex := strings.Index(text, "    - base")
+	if firewallIndex < 0 || baseIndex < 0 || firewallIndex > baseIndex {
+		t.Fatal("firewall role must run before base so a replacement gateway enables forwarding before delegated certificate work")
+	}
+}
+
 func TestStableBaseTasksSkipServicesButFinalTasksRemain(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml"))
 	if err != nil {
