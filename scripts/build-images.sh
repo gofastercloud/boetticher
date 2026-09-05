@@ -155,9 +155,9 @@ powerdns_key_sha256=efeb5b1451c76de1dac8eefaddba5af5549e8fd93484728744ea7b4923de
 powerdns_repo=https://repo.powerdns.com/debian
 powerdns_suite=trixie-auth-49
 powerdns_package_version=4.9.17-1pdns.trixie
-pulse_version=6.1.2
-pulse_release_url=https://github.com/rcourtman/Pulse/releases/download/v6.1.2/pulse-v6.1.2-linux-amd64.tar.gz
-pulse_release_sha256=844cd054bcfce528cbcf434d782e571791cc7b02ef2fe298cf138b1cab1087ea
+pulse_version=6.4.1
+pulse_release_url=https://github.com/rcourtman/Pulse/releases/download/v6.4.1/pulse-v6.4.1-linux-amd64.tar.gz
+pulse_release_sha256=543e967718c6e71763b7a76d9c3c9c992157206810959750b4aa0aa0631bf1e0
 tailscale_package_version=1.76.6
 tailscale_key_url=https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg
 tailscale_key_sha256=3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39
@@ -260,6 +260,8 @@ artifact_for() {
 	version=1.0.0
 	if [ "$name" = boetticher-base ]; then
 		version=0.1.0
+	elif [ "$name" = boetticher-monitoring ]; then
+		version=1.0.1
 	fi
 	printf '%s/%s/%s-%s-amd64.tar.zst' "$output_root" "$name" "$name" "$version"
 }

@@ -121,7 +121,7 @@ case "$name" in
     test -x "$rootfs/usr/sbin/nginx"
     test -x "$rootfs/opt/pulse/bin/pulse"
     test -f "$rootfs/opt/pulse/VERSION"
-    grep -Fxq '6.1.2' "$rootfs/opt/pulse/VERSION"
+    grep -Fxq '6.4.1' "$rootfs/opt/pulse/VERSION"
     test -x "$rootfs/usr/lib/boetticher/run-pulse"
     test -f "$rootfs/etc/systemd/system/pulse.service"
     grep -Fxq 'User=pulse' "$rootfs/etc/systemd/system/pulse.service"

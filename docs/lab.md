@@ -51,7 +51,7 @@ host itself is not a guest and uses the fixed management identity
 | --- | --- | --- |
 | `lab-fw-01` | `10.10.99.1` | Managed Debian gateway. |
 | `lab-dns-01` | `10.10.10.10` | Blocky, PowerDNS, and Chrony. |
-| `lab-monitor-01` | `10.10.10.20` · `https://monitor.lab.home.arpa` | Pulse Community 6.1.2 monitoring. |
+| `lab-monitor-01` | `10.10.10.20` · `https://monitor.lab.home.arpa` | Pulse Community 6.4.1 monitoring. |
 
 DNS2 is not a default guest because two guests on one Proxmox host share the
 same physical host, storage, power, and network failure domains. A second DNS

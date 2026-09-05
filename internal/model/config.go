@@ -74,11 +74,13 @@ type ModulesConfig struct {
 // capability types are intentionally added here rather than through a generic
 // daemon or plugin mechanism.
 type CompanionConfig struct {
-	Enabled     *bool                      `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	EthernetMAC string                     `yaml:"ethernet_mac,omitempty" json:"ethernet_mac,omitempty" jsonschema_description:"Physical Ethernet MAC used for the fixed SERVERS reservation."`
-	Display     *CompanionCapabilityConfig `yaml:"display,omitempty" json:"display,omitempty"`
-	StreamDeck  *CompanionCapabilityConfig `yaml:"streamdeck,omitempty" json:"streamdeck,omitempty"`
-	PulseAgent  *CompanionCapabilityConfig `yaml:"pulse_agent,omitempty" json:"pulse_agent,omitempty"`
+	Enabled          *bool                      `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	EthernetMAC      string                     `yaml:"ethernet_mac,omitempty" json:"ethernet_mac,omitempty" jsonschema_description:"Physical Ethernet MAC used for the fixed SERVERS reservation."`
+	Display          *CompanionCapabilityConfig `yaml:"display,omitempty" json:"display,omitempty"`
+	StreamDeck       *CompanionCapabilityConfig `yaml:"streamdeck,omitempty" json:"streamdeck,omitempty"`
+	PulseAgent       *CompanionCapabilityConfig `yaml:"pulse_agent,omitempty" json:"pulse_agent,omitempty"`
+	Blinkt           *CompanionCapabilityConfig `yaml:"blinkt,omitempty" json:"blinkt,omitempty"`
+	StreamDeckSerial string                     `yaml:"streamdeck_serial,omitempty" json:"streamdeck_serial,omitempty"`
 }
 
 type CompanionCapabilityConfig struct {
@@ -90,6 +92,7 @@ type CompanionCapabilities struct {
 	Display    bool
 	StreamDeck bool
 	PulseAgent bool
+	Blinkt     bool
 }
 
 // Capabilities applies one simple rule: a disabled or omitted companion
@@ -105,6 +108,7 @@ func (c *CompanionConfig) Capabilities() CompanionCapabilities {
 		Display:    enabled && capabilityEnabled(c.Display),
 		StreamDeck: enabled && capabilityEnabled(c.StreamDeck),
 		PulseAgent: enabled && capabilityEnabled(c.PulseAgent),
+		Blinkt:     enabled && capabilityEnabled(c.Blinkt),
 	}
 }
 
@@ -385,7 +389,7 @@ func cloneCompanionConfig(value *CompanionConfig) *CompanionConfig {
 	if value == nil {
 		return nil
 	}
-	result := &CompanionConfig{Enabled: cloneBool(value.Enabled), EthernetMAC: value.EthernetMAC}
+	result := &CompanionConfig{Enabled: cloneBool(value.Enabled), EthernetMAC: value.EthernetMAC, StreamDeckSerial: value.StreamDeckSerial}
 	if value.Display != nil {
 		result.Display = &CompanionCapabilityConfig{Enabled: cloneBool(value.Display.Enabled)}
 	}
@@ -394,6 +398,9 @@ func cloneCompanionConfig(value *CompanionConfig) *CompanionConfig {
 	}
 	if value.PulseAgent != nil {
 		result.PulseAgent = &CompanionCapabilityConfig{Enabled: cloneBool(value.PulseAgent.Enabled)}
+	}
+	if value.Blinkt != nil {
+		result.Blinkt = &CompanionCapabilityConfig{Enabled: cloneBool(value.Blinkt.Enabled)}
 	}
 	return result
 }

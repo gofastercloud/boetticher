@@ -1,0 +1,240 @@
+---
+- name: Create the local status access group
+  ansible.builtin.group:
+    name: companion
+    system: true
+
+- name: Create the unprivileged status account
+  ansible.builtin.user:
+    name: companion
+    group: companion
+    system: true
+    create_home: false
+    shell: /usr/sbin/nologin
+    password_lock: true
+
+- name: Allow the operator to read local Companion status
+  ansible.builtin.user:
+    name: "{{ companion_operator_user }}"
+    groups: companion
+    append: true
+  when: companion_operator_user != 'root'
+
+- name: Create the Companion configuration and executable directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: /etc/boetticher, mode: '0755'}
+    - {path: /usr/local/libexec, mode: '0755'}
+    - {path: /var/lib/boetticher, mode: '0751'}
+    - {path: /var/lib/boetticher/credentials, mode: '0700'}
+    - {path: /etc/ssh/sshd_config.d, mode: '0755'}
+    - {path: /etc/systemd/journald.conf.d, mode: '0755'}
+
+- name: Install baseline packages
+  ansible.builtin.apt:
+    name: [ca-certificates, chrony, openssh-server, unattended-upgrades, util-linux, iputils-ping, gnupg, python3-debian, rsync]
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Identify the wired interface by the configured physical MAC
+  ansible.builtin.set_fact:
+    companion_interface: "{{ item }}"
+  loop: "{{ ansible_interfaces }}"
+  when: (ansible_facts[item].macaddress | default('') | lower) == (companion_config.ethernet_mac | lower)
+
+- name: Require the configured Ethernet hardware
+  ansible.builtin.assert:
+    that: companion_interface is defined
+
+- name: Install the persistent MAC-bound lab network profile
+  ansible.builtin.copy:
+    dest: /etc/NetworkManager/system-connections/boetticher-companion.nmconnection
+    owner: root
+    group: root
+    mode: '0600'
+    content: |
+      [connection]
+      id=boetticher-companion
+      uuid={{ companion_config.ethernet_mac | to_uuid }}
+      type=ethernet
+      interface-name={{ companion_interface }}
+      autoconnect=true
+      autoconnect-priority=100
+      [ethernet]
+      mac-address={{ companion_config.ethernet_mac }}
+      [ipv4]
+      method=auto
+      never-default=true
+      ignore-auto-dns=true
+      route1=10.10.0.0/16,{{ companion_config.gateway }}
+      [ipv6]
+      method=disabled
+      never-default=true
+  register: companion_network_profile
+
+- name: Load the persistent lab profile
+  ansible.builtin.command: nmcli connection load /etc/NetworkManager/system-connections/boetticher-companion.nmconnection
+  changed_when: false
+  when: companion_network_profile is changed
+
+- name: Activate the lab profile without holding the SSH connection open
+  ansible.builtin.command:
+    argv: [nmcli, connection, up, boetticher-companion, ifname, "{{ companion_interface }}"]
+  async: 45
+  poll: 0
+  register: companion_network_activation
+  when: companion_network_profile is changed
+
+- name: Wait for the same pinned Companion after network activation
+  ansible.builtin.wait_for_connection:
+    delay: 3
+    timeout: 60
+  when: companion_network_profile is changed
+
+- name: Require successful profile activation
+  ansible.builtin.async_status:
+    jid: "{{ companion_network_activation.ansible_job_id }}"
+  register: companion_activation_result
+  until: companion_activation_result.finished
+  retries: 15
+  delay: 2
+  when: companion_network_profile is changed
+
+- name: Keep the fixed Pulse endpoint resolvable during DNS outages
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: '# {mark} BOETTICHER COMPANION'
+    block: "{{ companion_config.dns_address }} {{ companion_config.dns_name }}"
+
+- name: Keep the Companion from routing between HOME and SERVERS
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/70-boetticher-companion.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      net.ipv4.ip_forward=0
+      net.ipv6.conf.all.forwarding=0
+  notify: apply companion forwarding policy
+
+- name: Enable unattended security updates without automatic reboots
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+      Unattended-Upgrade::Automatic-Reboot "false";
+
+- name: Install the early SSH hardening drop-in
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/00-boetticher-companion.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin prohibit-password
+      X11Forwarding no
+      AllowTcpForwarding no
+      MaxAuthTries 3
+      LoginGraceTime 20
+  notify: reload companion ssh
+
+- name: Validate the complete SSH configuration
+  ansible.builtin.command: /usr/sbin/sshd -t
+  changed_when: false
+
+- name: Inspect effective SSH authentication settings
+  ansible.builtin.command: /usr/sbin/sshd -T
+  register: companion_sshd
+  changed_when: false
+
+- name: Require key-only SSH authentication and no forwarding
+  ansible.builtin.assert:
+    that:
+      - "'passwordauthentication no' in companion_sshd.stdout_lines"
+      - "'kbdinteractiveauthentication no' in companion_sshd.stdout_lines"
+      - "'allowtcpforwarding no' in companion_sshd.stdout_lines"
+      - "'x11forwarding no' in companion_sshd.stdout_lines"
+
+- name: Configure the signed log2ram package repository
+  ansible.builtin.deb822_repository:
+    name: boetticher-log2ram
+    types: deb
+    uris: https://packages.azlux.fr/debian/
+    suites: "{{ ansible_distribution_release }}"
+    components: [main]
+    signed_by: https://azlux.fr/repo.gpg
+    state: present
+  register: companion_log_repository
+
+- name: Retain the Debian 13 log2ram package selection
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/boetticher-log2ram.pref
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      Package: log2ram
+      Pin: origin "packages.azlux.fr"
+      Pin-Priority: 1001
+
+- name: Install log2ram
+  ansible.builtin.apt:
+    name: log2ram
+    state: present
+    update_cache: "{{ companion_log_repository is changed }}"
+
+- name: Measure the existing log footprint
+  ansible.builtin.command: du -smx /var/log
+  register: companion_log_size
+  changed_when: false
+
+- name: Require space for existing logs without deleting operator data
+  ansible.builtin.assert:
+    that: companion_log_size.stdout.split()[0] | int < kiosk_log2ram_size_mb
+    fail_msg: "Existing /var/log exceeds the configured log2ram size; increase its size or rotate logs before setup"
+
+- name: Configure bounded RAM logging
+  ansible.builtin.lineinfile:
+    path: /etc/log2ram.conf
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - {regexp: '^SIZE=', line: 'SIZE={{ kiosk_log2ram_size }}'}
+    - {regexp: '^#?USE_RSYNC=', line: 'USE_RSYNC=true'}
+    - {regexp: '^#?NOTIFICATION=', line: 'NOTIFICATION=false'}
+    - {regexp: '^JOURNALD_AWARE=', line: 'JOURNALD_AWARE=true'}
+  notify: restart log2ram
+
+- name: Bound local journal retention
+  ansible.builtin.copy:
+    dest: /etc/systemd/journald.conf.d/boetticher-kiosk.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Journal]
+      Storage=persistent
+      SystemMaxUse={{ kiosk_log2ram_system_max_use }}
+      RuntimeMaxUse={{ kiosk_log2ram_runtime_max_use }}
+      MaxRetentionSec=14day
+      Compress=yes
+  notify: restart journald
+
+- name: Enable baseline maintenance services
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: [chrony.service, apt-daily.timer, apt-daily-upgrade.timer, fstrim.timer, log2ram.service, log2ram-daily.timer]

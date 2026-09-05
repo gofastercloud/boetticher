@@ -13,6 +13,7 @@ table inet boetticher_airvpn {
     type filter hook output priority filter; policy drop;
     oifname "lo" accept comment "boetticher:airvpn-output-loopback"
     ct state established,related accept comment "boetticher:airvpn-output-established"
+    oifname "eth0" ip daddr 10.10.10.20 tcp dport 443 accept comment "boetticher:airvpn-pulse-reporting"
 {% for address in firewall_plan.airvpn.endpoint_addresses %}
     oifname "eth0" ip daddr {{ address }} udp dport {{ firewall_plan.airvpn.endpoint_port }} accept comment "boetticher:airvpn-provider-handshake-{{ loop.index }}"
 {% endfor %}

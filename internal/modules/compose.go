@@ -152,6 +152,9 @@ func moduleGuestProjections(definition ModuleDefinition, site model.Site) ([]mod
 			component.Zone = zone.Name
 		}
 		component.Module = definition.Name
+		if definition.Name == "airvpn" || definition.Name == "tailnet-router" {
+			component.Tags = append(component.Tags, model.TagMonitoringAgent)
+		}
 		component.Tags = append(component.Tags, model.TagBoetticher, model.TagManaged, model.TagModule, "module-"+definition.Name, model.ModuleOwnershipTag(definition.Name), model.TagBackup)
 		component.SSHUser = model.DefaultAdminSSHUser
 		component.SSHPort = 22

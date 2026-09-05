@@ -33,7 +33,7 @@ The image definitions pin or fetch these components:
 | [Debian](https://www.debian.org/) | 13 / Trixie snapshot | Base and service images | Retain package licences and notices for the exact package set. |
 | [Blocky](https://github.com/0xERR0R/blocky) | 0.34.0 | Client-facing DNS | [Release source and licence](https://github.com/0xERR0R/blocky/releases/tag/v0.34.0) |
 | [PowerDNS Authoritative](https://github.com/PowerDNS/pdns) | 4.9.17 | Authoritative DNS | Review the exact package and source notices for the redistributed build. |
-| [Pulse Community](https://github.com/rcourtman/Pulse) | 6.1.2 | Monitoring image and host agent | [MIT licence](https://github.com/rcourtman/Pulse/blob/v6.1.2/LICENSE) |
+| [Pulse Community](https://github.com/rcourtman/Pulse) | 6.4.1 | Monitoring image and host agent | [MIT licence](https://github.com/rcourtman/Pulse/blob/v6.4.1/LICENSE) |
 | [Gatus](https://github.com/TwiN/gatus) | 5.36.0 | Optional status page | [Release source](https://github.com/TwiN/gatus/releases/tag/v5.36.0); retain its licence and notices. |
 | [LiteLLM](https://github.com/BerriAI/litellm) | 1.89.0 | HolmesGPT dependency in the optional AIOps image | Retain the application licence and locked Python dependency notices. |
 | [HolmesGPT](https://github.com/HolmesGPT/holmesgpt) | 0.40.0 | Optional AIOps image | The image copies or extracts upstream source; retain its applicable licence and notices. |

@@ -317,11 +317,12 @@ func validateQualificationDigests(evidence Evidence) error {
 }
 
 const (
-	BaseName      = "boetticher-base"
-	BaseVersion   = "0.1.0"
-	Architecture  = "amd64"
-	DebianRelease = "13"
-	ModuleVersion = "1.0.0"
+	BaseName          = "boetticher-base"
+	BaseVersion       = "0.1.0"
+	Architecture      = "amd64"
+	DebianRelease     = "13"
+	ModuleVersion     = "1.0.0"
+	MonitoringVersion = "1.0.1"
 )
 
 var commonDefinitionInputs = []string{
@@ -336,7 +337,7 @@ func Definitions() []Definition {
 		{Name: "base", ArtifactName: BaseName, BuildTarget: "image-base", ScanTarget: BaseName, Version: BaseVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append([]string(nil), commonDefinitionInputs...)},
 		{Name: "dns", ArtifactName: "boetticher-dns-blocky", BuildTarget: "image-dns-blocky", ScanTarget: "boetticher-dns-blocky", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/dns", "internal/dns", "internal/model", "internal/modules", "cmd/render-blocky-config")},
 		{Name: "logging", ArtifactName: "boetticher-logging", BuildTarget: "image-logging", ScanTarget: "boetticher-logging", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/logging", "internal/logging", "cmd/boetticher-log-query")},
-		{Name: "monitoring", ArtifactName: "boetticher-monitoring", BuildTarget: "image-monitoring", ScanTarget: "boetticher-monitoring", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/monitoring")},
+		{Name: "monitoring", ArtifactName: "boetticher-monitoring", BuildTarget: "image-monitoring", ScanTarget: "boetticher-monitoring", Version: MonitoringVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/monitoring")},
 		{Name: "firewall", ArtifactName: "boetticher-firewall", BuildTarget: "image-firewall", ScanTarget: "boetticher-firewall", Version: ModuleVersion, Kind: "qemu", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/firewall", "cmd/boetticher-firewall-telemetry", "internal/firewalltelemetry", "internal/network", "scripts/smoke-firewall-image.sh")},
 		{Name: "tailnet-router", ArtifactName: "boetticher-tailnet-router", BuildTarget: "image-tailnet-router", ScanTarget: "boetticher-tailnet-router", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/tailnet-router", "internal/model", "internal/modules")},
 		{Name: "airvpn", ArtifactName: "boetticher-airvpn", BuildTarget: "image-airvpn", ScanTarget: "boetticher-airvpn", Version: ModuleVersion, Kind: "lxc", Architecture: Architecture, Base: BaseName, BaseVersion: BaseVersion, Inputs: append(append([]string(nil), commonDefinitionInputs...), "images/airvpn", "internal/model", "internal/modules")},

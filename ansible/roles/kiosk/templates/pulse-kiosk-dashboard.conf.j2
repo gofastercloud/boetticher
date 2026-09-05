@@ -1,3 +1,0 @@
-[Service]
-ExecStart=
-ExecStart=/usr/bin/cage -- /usr/bin/chromium --kiosk --no-first-run --no-default-browser-check --noerrdialogs --disable-session-crashed-bubble --disable-infobars --disable-pinch --overscroll-history-navigation=0 --disable-features=Translate --ozone-platform=wayland --user-data-dir=/home/kiosk/.config/chromium-kiosk --disable-extensions-except=/home/kiosk/pulse-refresh-extension --load-extension=/home/kiosk/pulse-refresh-extension {{ kiosk_certificate_selector }} {{ kiosk_pulse_url }}

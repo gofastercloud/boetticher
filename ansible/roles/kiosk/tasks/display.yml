@@ -1,0 +1,70 @@
+---
+- name: Install Cage, Chromium and seatd
+  ansible.builtin.apt:
+    name: [cage, chromium, seatd, dbus, dbus-user-session]
+    state: present
+
+- name: Create the kiosk-only seat group
+  ansible.builtin.group:
+    name: kiosk-seat
+    system: true
+
+- name: Create the unprivileged kiosk user
+  ansible.builtin.user:
+    name: kiosk
+    home: /home/kiosk
+    shell: /usr/sbin/nologin
+    create_home: true
+    password_lock: true
+    groups: [kiosk-seat, render, video]
+    append: true
+
+- name: Create writable Chromium directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: kiosk
+    group: kiosk
+    mode: '0700'
+  loop: [/home/kiosk/.config, /home/kiosk/.cache]
+
+- name: Create the seatd service override directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/seatd.service.d
+    state: directory
+    mode: '0755'
+
+- name: Restrict seatd socket access to the kiosk seat group
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/seatd.service.d/boetticher.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Service]
+      ExecStart=
+      ExecStart=/usr/bin/seatd -g kiosk-seat
+  notify: restart seatd
+
+- name: Remove the superseded duplicate Chromium command override
+  ansible.builtin.file:
+    path: /etc/systemd/system/pulse-kiosk.service.d/20-pulse-dashboard.conf
+    state: absent
+  notify: restart pulse-kiosk
+
+- name: Install the Cage kiosk service
+  ansible.builtin.template:
+    src: pulse-kiosk.service.j2
+    dest: /etc/systemd/system/pulse-kiosk.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart pulse-kiosk
+
+- name: Enable seatd and the local kiosk
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop: [seatd.service, pulse-kiosk.service]

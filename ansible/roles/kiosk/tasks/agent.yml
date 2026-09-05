@@ -1,0 +1,51 @@
+---
+- name: Require the Companion-specific report token
+  ansible.builtin.assert:
+    that: kiosk_pulse_agent_token | default('') | length > 0
+  no_log: true
+
+- name: Install the pinned ARM64 host agent
+  ansible.builtin.get_url:
+    url: "{{ kiosk_pulse_agent_release_url }}"
+    dest: /usr/local/bin/pulse-agent
+    checksum: "sha256:{{ kiosk_pulse_agent_release_sha256 }}"
+    owner: root
+    group: root
+    mode: '0755'
+  notify: restart pulse-agent
+
+- name: Require the pinned agent version after installation
+  ansible.builtin.command: /usr/local/bin/pulse-agent --version
+  register: companion_agent_version
+  changed_when: false
+  failed_when: companion_agent_version.rc != 0 or kiosk_pulse_agent_version not in companion_agent_version.stdout
+
+- name: Install the Companion-specific report credential
+  ansible.builtin.include_tasks: credential.yml
+  vars:
+    credential_name: pulse-agent-token
+    credential_file: companion-agent
+    credential_value: "{{ kiosk_pulse_agent_token }}"
+    credential_service: pulse-agent
+
+- name: Remove the old agent credential override
+  ansible.builtin.file:
+    path: /etc/systemd/system/pulse-agent.service.d/10-boetticher-credentials.conf
+    state: absent
+  notify: restart pulse-agent
+
+- name: Install the host-only Pulse agent service
+  ansible.builtin.template:
+    src: pulse-agent.service.j2
+    dest: /etc/systemd/system/pulse-agent.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: restart pulse-agent
+
+- name: Enable local Pulse reporting
+  ansible.builtin.systemd_service:
+    name: pulse-agent.service
+    enabled: true
+    state: started
+    daemon_reload: true

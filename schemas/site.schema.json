@@ -132,6 +132,9 @@
     "CompanionConfig": {
       "additionalProperties": false,
       "properties": {
+        "blinkt": {
+          "$ref": "#/$defs/CompanionCapabilityConfig"
+        },
         "display": {
           "$ref": "#/$defs/CompanionCapabilityConfig"
         },
@@ -147,6 +150,9 @@
         },
         "streamdeck": {
           "$ref": "#/$defs/CompanionCapabilityConfig"
+        },
+        "streamdeck_serial": {
+          "type": "string"
         }
       },
       "type": "object"
