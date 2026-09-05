@@ -392,6 +392,23 @@ func TestTemporaryRootCleanupFallsBackThroughIndependentHost(t *testing.T) {
 	}
 }
 
+func TestTemporaryRootCleanupIgnoresAbsentPlannedGuest(t *testing.T) {
+	operatorKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA operator"
+	guests := []proxmox.GuestPlan{{VMID: 140, Name: "lab-log-01", Kind: proxmox.KindLXC, Address: "10.10.10.40", Owner: "boetticher/module/logging"}}
+	direct := func(_ context.Context, _ proxmox.CommandRunner, _ string, _ string, _ string, host bool) error {
+		if host {
+			return nil
+		}
+		return errors.New("guest SSH unavailable")
+	}
+	hostFallback := func(_ context.Context, _ proxmox.CommandRunner, _ string, _ string, _ proxmox.GuestKind, _ int, _ string) error {
+		return errors.New("Configuration file 'nodes/lab-proxmox-01/lxc/140.conf' does not exist")
+	}
+	if err := revokeTemporaryRootAccessForGuestsWithFallback(context.Background(), model.Site{BootstrapAddress: "192.0.2.10"}, t.TempDir(), guests, operatorKey, true, direct, hostFallback); err != nil {
+		t.Fatalf("absent planned guest cleanup = %v", err)
+	}
+}
+
 func TestInterruptedDeploymentCleanupUsesPersistedTargets(t *testing.T) {
 	dir := t.TempDir()
 	publicKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA boetticher-apply"
