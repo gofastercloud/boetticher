@@ -22,6 +22,8 @@ func TestTailnetPolicyAndHookActivationAreChangeTriggered(t *testing.T) {
 		"notify: reload Tailnet firewall policy",
 		"restart tailscaled after Tailnet hook change",
 		"meta: flush_handlers",
+		"register: tailnet_forwarding_state",
+		"changed_when: true",
 	} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("Tailnet change-triggered lifecycle is missing %q", expected)

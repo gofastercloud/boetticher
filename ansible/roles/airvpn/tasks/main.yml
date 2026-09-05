@@ -92,7 +92,7 @@
 - name: Disable AirVPN forwarding before a changed policy is activated
   ansible.builtin.command:
     argv: [sysctl, -w, net.ipv4.ip_forward=0, net.ipv6.conf.all.forwarding=0, net.ipv6.conf.default.forwarding=0]
-  changed_when: false
+  changed_when: true
   when: airvpn_policy_install.changed
 
 - name: Enable the persistent AirVPN kill switch
@@ -150,7 +150,14 @@
   vars:
     vpn_health_module: airvpn
 
+- name: Read forwarding state after AirVPN tunnel verification
+  ansible.builtin.command:
+    argv: [sysctl, -n, net.ipv4.ip_forward]
+  register: airvpn_forwarding_state
+  changed_when: false
+
 - name: Enable forwarding after AirVPN tunnel verification
   ansible.builtin.command:
     argv: [sysctl, -w, net.ipv4.ip_forward=1]
-  changed_when: false
+  changed_when: true
+  when: airvpn_forwarding_state.stdout | trim != '1'

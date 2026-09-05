@@ -19,7 +19,7 @@ func TestAirVPNReconcilesForwardingAfterActiveTunnelVerification(t *testing.T) {
 		t.Fatal("an already-running tunnel must regain forwarding only after verification")
 	}
 	block := ansibleTaskBlock(text, "Enable forwarding after AirVPN tunnel verification")
-	if !strings.Contains(block, "net.ipv4.ip_forward=1") {
+	if !strings.Contains(block, "net.ipv4.ip_forward=1") || !strings.Contains(block, "changed_when: true") || !strings.Contains(block, "airvpn_forwarding_state.stdout") {
 		t.Fatal("verified AirVPN configuration leaves forwarding disabled")
 	}
 }
