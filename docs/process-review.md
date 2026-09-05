@@ -323,6 +323,17 @@ only when the label is an exact known match, while unknown IDs are rejected.
 Doctor/network-probe output still has separate recovery semantics, so a
 simpler UI must retain the full raw report underneath.
 
+The current bridge observer is deliberately left unchanged in this pass. Its
+inventory subprocesses have a 10-second deadline and the refresh loop sleeps
+for 2 seconds, while dynamic SANDBOX grants expire after 5 seconds. The
+configured worst-case refresh bound is therefore 12 seconds, which is not a
+live isolation acceptance result. Qualification must measure observed refresh
+latency (including command-tail latency) against the 5-second expiry and use a
+longer command deadline only when the resulting fail-closed behavior is
+demonstrated. A follow-up may replace whole-policy refreshes with incremental
+dynamic-set updates, but every grant still needs explicit expiry and immediate
+revocation on failed or stale observations.
+
 ### `doctor`
 
 Doctor is a recovery/audit command rather than a normal health check. It reads
