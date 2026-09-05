@@ -74,6 +74,14 @@ and membership, per-chain rule order, and rule-expression presence/shape, while 
 only nftables handles and counter values. Comments are retained as diagnostic
 rule identifiers, not as proof by themselves.
 
+Tailnet routing follows the same lifecycle boundary. Its owned nftables unit
+loads the boundary at boot and accepts a policy reload only when the reviewed
+trusted-client set changes. The Tailscale daemon is restarted only when its
+credential/bootstrap hook changes or when recovery is required; an unchanged
+convergence does not tear down an established Tailnet session. Backend health,
+route approval, client route acceptance, and private split DNS remain separate
+live checks.
+
 ## Default platform
 
 The default installation creates exactly three Proxmox guests. The Proxmox

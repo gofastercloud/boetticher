@@ -1,0 +1,11 @@
+---
+- name: reload Tailnet firewall policy
+  ansible.builtin.systemd_service:
+    name: boetticher-tailnet-firewall.service
+    state: reloaded
+
+- name: restart tailscaled after Tailnet hook change
+  ansible.builtin.systemd_service:
+    name: tailscaled
+    state: restarted
+    daemon_reload: true

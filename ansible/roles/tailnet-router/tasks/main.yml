@@ -33,11 +33,6 @@
       net.ipv6.conf.all.forwarding=0
       net.ipv6.conf.default.forwarding=0
 
-- name: Disable forwarding before Tailnet policy changes
-  ansible.builtin.command:
-    argv: [sysctl, -w, net.ipv4.ip_forward=0]
-  changed_when: false
-
 - name: Validate exact reviewed Tailnet IPv4 client addresses
   ansible.builtin.command:
     argv:
@@ -60,12 +55,20 @@
     group: root
     mode: '0600'
     validate: '/usr/sbin/nft -c -f %s'
+  register: tailnet_policy_install
+  notify: reload Tailnet firewall policy
+
+- name: Disable Tailnet forwarding before a changed policy is activated
+  ansible.builtin.command:
+    argv: [sysctl, -w, net.ipv4.ip_forward=0]
+  changed_when: false
+  when: tailnet_policy_install.changed
 
 - name: Load the persistent Tailnet boundary before enabling forwarding
   ansible.builtin.systemd_service:
     name: boetticher-tailnet-firewall
     enabled: true
-    state: restarted
+    state: started
     daemon_reload: true
 
 - name: Install the idempotent Tailscale registration helper
@@ -97,6 +100,7 @@
       test -s "$credential"
       tailscale up --timeout=30s --auth-key="file:$credential" --accept-dns=false --advertise-routes=10.10.0.0/16 --snat-subnet-routes=true >/dev/null 2>&1
       enable_forwarding
+  notify: restart tailscaled after Tailnet hook change
 
 - name: Add the bounded TUN credential and bootstrap hook to tailscaled
   ansible.builtin.copy:
@@ -114,7 +118,9 @@
 
       [Service]
       ExecStartPost=/usr/lib/boetticher/tailscale-router-bootstrap
-  notify: reload systemd
+  notify:
+    - reload systemd
+    - restart tailscaled after Tailnet hook change
 
 - name: Enable and start tailscaled with retained state
   ansible.builtin.systemd_service:
@@ -122,6 +128,9 @@
     enabled: true
     state: started
     daemon_reload: true
+
+- name: Apply changed Tailnet policy and hooks before readiness
+  ansible.builtin.meta: flush_handlers
 
 - name: Inspect Tailscale backend state after credential projection
   ansible.builtin.command: tailscale status --json
