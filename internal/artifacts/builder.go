@@ -57,6 +57,7 @@ var PublicBuildInputs = []string{
 	"ansible/site.yml",
 	"ansible/tasks",
 	"ansible/roles",
+	"ansible/callback_plugins",
 	"images",
 	"pi/kiosk",
 	"scripts/benchmark-artifact-compression.sh",
