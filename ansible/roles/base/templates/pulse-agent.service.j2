@@ -7,11 +7,20 @@ Wants=network-online.target
 Type=simple
 User=root
 Group=root
+{% if inventory_hostname in ['lab-airvpn-01', 'lab-tailnet-01'] %}
+Environment=PULSE_CUSTOM_SENSORS_FILE=/etc/boetticher/vpn-sensors.yaml
+{% endif %}
 ExecStart=/usr/local/bin/pulse-agent --url=https://monitor.{{ domain }} --token-file=/run/credentials/pulse-agent.service/pulse-agent-token --enable-host=true --enable-docker=false --enable-kubernetes=false --enable-proxmox=false --enable-commands=false --disable-auto-update --state-dir=/var/lib/boetticher/pulse-agent --cacert=/etc/ssl/certs/ca-certificates.crt --hostname={{ inventory_hostname }}
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=20s
 UMask=0077
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full

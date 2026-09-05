@@ -12,7 +12,7 @@ physical_network:
   mode: virtual-only
 tested_versions:
   gateway: debian-13-genericcloud-amd64-20260327-2429
-  pulse: "6.1.2"
+  pulse: "6.4.1"
 network:
   domain: lab.home.arpa
   zones:

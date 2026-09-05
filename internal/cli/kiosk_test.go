@@ -46,7 +46,7 @@ func TestCompanionProvisioningUsesEmbeddedSources(t *testing.T) {
 	if root == repositoryRoot || strings.HasPrefix(root, repositoryRoot+string(filepath.Separator)) {
 		t.Fatalf("companion provisioning source came from the filesystem checkout: %s", root)
 	}
-	for _, relative := range []string{"ansible/companion.yml", "pi/kiosk/visualizer/index.html"} {
+	for _, relative := range []string{"ansible/companion.yml", "pi/kiosk/libexec/boetticher-blinkt"} {
 		if _, err := os.Stat(filepath.Join(root, relative)); err != nil {
 			t.Fatalf("embedded companion source is incomplete: %v", err)
 		}

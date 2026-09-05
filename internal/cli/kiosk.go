@@ -7,7 +7,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -23,10 +22,13 @@ import (
 
 	"github.com/gofastercloud/boetticher/internal/ansible"
 	"github.com/gofastercloud/boetticher/internal/artifacts"
+	"github.com/gofastercloud/boetticher/internal/companion"
 	"github.com/gofastercloud/boetticher/internal/model"
+	"github.com/gofastercloud/boetticher/internal/modules"
 	"github.com/gofastercloud/boetticher/internal/pathguard"
 	"github.com/gofastercloud/boetticher/internal/pki"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
+	"github.com/gofastercloud/boetticher/internal/secrets"
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
 	"github.com/gofastercloud/boetticher/internal/streamdeck"
@@ -34,6 +36,9 @@ import (
 
 const kioskClientName = "lab-display-01-kiosk"
 const companionStreamDeckIdentity = "companion-streamdeck"
+
+var companionReadCredential = secrets.CredentialSpec{Name: "pulse-token", Unit: "boetticher-companion.service", StorePath: "/var/lib/boetticher/credentials/companion-read.cred", RuntimeRef: "/run/credentials/boetticher-companion.service/pulse-token"}
+var companionAgentCredential = secrets.CredentialSpec{Name: "pulse-agent-token", Unit: "pulse-agent.service", StorePath: "/var/lib/boetticher/credentials/companion-agent.cred", RuntimeRef: "/run/credentials/pulse-agent.service/pulse-agent-token"}
 
 func runCompanion(args []string, out io.Writer) error {
 	if len(args) == 0 {
@@ -58,6 +63,11 @@ func runCompanionAdd(args []string, out io.Writer) error {
 	fs.SetOutput(os.Stderr)
 	siteDir := fs.String("site", ".", "private site repository directory")
 	mac := fs.String("mac", "", "physical Ethernet MAC of the Companion eth0 interface")
+	displayEnabled := fs.Bool("display", true, "enable the HDMI dashboard")
+	deckEnabled := fs.Bool("streamdeck", true, "enable the supported StreamDeck")
+	agentEnabled := fs.Bool("pulse-agent", true, "enable local Pulse reporting")
+	blinktEnabled := fs.Bool("blinkt", false, "enable the eight-LED Blinkt status display")
+	deckSerial := fs.String("streamdeck-serial", "", "select one supported StreamDeck by serial")
 	confirm := fs.Bool("confirm", false, "save the Companion desired state")
 	dryRun := fs.Bool("dry-run", false, "show the derived reservation without changing desired state")
 	if err := fs.Parse(args); err != nil {
@@ -92,6 +102,23 @@ func runCompanionAdd(args []string, out io.Writer) error {
 	}
 	if companion.PulseAgent == nil {
 		companion.PulseAgent = &model.CompanionCapabilityConfig{Enabled: &enabled}
+	}
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "display":
+			companion.Display = &model.CompanionCapabilityConfig{Enabled: displayEnabled}
+		case "streamdeck":
+			companion.StreamDeck = &model.CompanionCapabilityConfig{Enabled: deckEnabled}
+		case "pulse-agent":
+			companion.PulseAgent = &model.CompanionCapabilityConfig{Enabled: agentEnabled}
+		case "blinkt":
+			companion.Blinkt = &model.CompanionCapabilityConfig{Enabled: blinktEnabled}
+		case "streamdeck-serial":
+			companion.StreamDeckSerial = *deckSerial
+		}
+	})
+	if strings.ContainsAny(companion.StreamDeckSerial, "\"'\\\n\r\t") {
+		return errors.New("StreamDeck serial contains unsafe characters")
 	}
 	config.Companion = companion
 
@@ -322,19 +349,11 @@ func runCompanionSetup(args []string, out io.Writer) error {
 	}
 	defer cleanupSource()
 	pulseURL := "https://monitor." + s.Network.Domain
-	certificateSelector, err := kioskCertificateSelector(pulseURL, s.Network.Domain)
-	if err != nil {
-		return err
-	}
-	certificatePolicy, err := kioskCertificatePolicy(pulseURL, s.Network.Domain)
-	if err != nil {
-		return err
-	}
 	streamDeckBinary := ""
 	fmt.Fprintf(out, "Companion target: %s@%s:%d\n", *user, address, *port)
 	fmt.Fprintf(out, "Pulse URL: %s\n", pulseURL)
 	fmt.Fprintf(out, "Companion source: %s\n", filepath.Join(sourceRoot, "pi", "kiosk"))
-	fmt.Fprintf(out, "Capabilities: display=%t streamdeck=%t pulse-agent=%t\n", capabilities.Display, capabilities.StreamDeck, capabilities.PulseAgent)
+	fmt.Fprintf(out, "Capabilities: display=%t streamdeck=%t pulse-agent=%t blinkt=%t\n", capabilities.Display, capabilities.StreamDeck, capabilities.PulseAgent, capabilities.Blinkt)
 	fmt.Fprintf(out, "Host-key trust: %s\n", *knownHosts)
 	if *dryRun {
 		fmt.Fprintln(out, "Companion setup: PASS dry-run only; no PKI, site, SSH, or remote changes made")
@@ -342,6 +361,10 @@ func runCompanionSetup(args []string, out io.Writer) error {
 	}
 	if !*confirm {
 		return errors.New("companion setup changes the remote Pi and local PKI runtime; rerun with --confirm")
+	}
+	statusBinary, err := artifacts.ResolveImportedCompanionStatus(*siteDir)
+	if err != nil {
+		return err
 	}
 	if capabilities.StreamDeck {
 		streamDeckBinary, err = companionStreamDeckBinary(*siteDir, false)
@@ -370,74 +393,45 @@ func runCompanionSetup(args []string, out io.Writer) error {
 
 	var pulseAgentToken string
 	if capabilities.PulseAgent {
-		pulseAgentToken, err = site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_agent_token")
+		pulseAgentToken, err = site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "companion_agent_token")
 		if err != nil {
 			return fmt.Errorf("load encrypted Pulse agent token (run boetticher deploy first): %w", err)
 		}
 	}
-	var pulseReadToken string
-	if capabilities.StreamDeck {
-		pulseReadToken, err = site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "pulse_api_token")
-		if err != nil {
-			return fmt.Errorf("load encrypted Pulse read token (run boetticher deploy first): %w", err)
-		}
+	pulseReadToken, err := site.LoadPlatformSecret(*siteDir, s, *ageIdentity, "companion_read_token")
+	if err != nil {
+		return fmt.Errorf("load Companion read token (run boetticher deploy first): %w", err)
 	}
 	authority, err := site.LoadAuthority(*siteDir, s, *ageIdentity)
 	if err != nil {
 		return fmt.Errorf("load Boetticher PKI authority: %w", err)
 	}
-	if !capabilities.Display {
-		if err := revokeAndRemoveCompanionCertificate(*siteDir, s, kioskClientName, out); err != nil {
-			return fmt.Errorf("revoke disabled kiosk identity: %w", err)
-		}
-	}
-	if !capabilities.StreamDeck {
-		if err := revokeAndRemoveCompanionCertificate(*siteDir, s, companionStreamDeckIdentity, out); err != nil {
-			return fmt.Errorf("revoke disabled StreamDeck identity: %w", err)
-		}
-	}
-	certificate := pki.ClientCertificate{}
-	if capabilities.Display {
-		certificate, err = ensureKioskClientCertificate(*siteDir, s, authority)
-		if err != nil {
-			return err
-		}
-	}
-	password := ""
-	if capabilities.Display {
-		password, err = kioskImportPassword()
-		if err != nil {
-			return fmt.Errorf("generate temporary kiosk import password: %w", err)
-		}
-	}
+	consoleConfig := companion.Config{PulseURL: pulseURL, CAFile: "/etc/boetticher/companion-ca.pem", EthernetMAC: s.Companion.EthernetMAC, Address: reservation.Address, Gateway: "10.10.20.1", DNS: "10.10.10.10", DNSName: "monitor." + s.Network.Domain, DNSAddress: "10.10.10.20", AgentID: "boetticher-companion-" + strings.ReplaceAll(s.Companion.EthernetMAC, ":", ""), AgentHostname: model.CompanionHostname, Display: capabilities.Display, StreamDeck: capabilities.StreamDeck, PulseAgent: capabilities.PulseAgent, Blinkt: capabilities.Blinkt}
+	consoleConfig.AirVPN = modules.IsEnabled(s, "airvpn")
+	consoleConfig.Tailnet = modules.IsEnabled(s, "tailnet-router")
 	variables, err := json.MarshalIndent(map[string]any{
 		"kiosk_become":                     *user != "root",
 		"kiosk_display_enabled":            capabilities.Display,
 		"kiosk_streamdeck_enabled":         capabilities.StreamDeck,
 		"kiosk_pulse_agent_enabled":        capabilities.PulseAgent,
+		"kiosk_blinkt_enabled":             capabilities.Blinkt,
+		"companion_config":                 consoleConfig,
+		"companion_binary":                 statusBinary,
+		"companion_operator_user":          *user,
 		"kiosk_source_dir":                 filepath.Join(sourceRoot, "pi", "kiosk"),
 		"kiosk_pulse_url":                  pulseURL,
-		"kiosk_pulse_agent_hostname":       kioskClientName,
+		"kiosk_pulse_agent_hostname":       model.CompanionHostname,
+		"kiosk_pulse_agent_id":             consoleConfig.AgentID,
 		"kiosk_pulse_agent_version":        model.PulseAgentVersion,
 		"kiosk_pulse_agent_release_url":    model.PulseAgentARM64ReleaseURL,
 		"kiosk_pulse_agent_release_sha256": model.PulseAgentARM64ReleaseSHA256,
-		"kiosk_pulse_agent_token":          pulseAgentToken,
 		"streamdeck_binary":                streamDeckBinary,
-		"streamdeck_pulse_token":           pulseReadToken,
 		"streamdeck_vendor_id":             streamdeck.DefaultVendorID,
 		"streamdeck_product_id":            streamdeck.DefaultProductID,
 		"streamdeck_model":                 streamdeck.DefaultModel,
-		"streamdeck_serial":                "",
-		"kiosk_certificate_selector":       certificateSelector,
-		"kiosk_certificate_policy":         certificatePolicy,
-		"kiosk_client_subject":             "client-" + kioskClientName + "." + s.Network.Domain,
-		"kiosk_client_nickname":            "Boetticher Pulse kiosk",
-		"kiosk_client_key_pem":             certificate.KeyPEM,
-		"kiosk_client_cert_pem":            certificate.CertPEM,
+		"streamdeck_serial":                s.Companion.StreamDeckSerial,
 		"kiosk_root_ca_pem":                authority.RootCertPEM,
 		"kiosk_issuing_ca_pem":             authority.IssuingCertPEM,
-		"kiosk_pkcs12_password":            password,
-		"kiosk_client_certificate_serial":  certificate.Serial,
 	}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode companion Ansible variables: %w", err)
@@ -461,11 +455,57 @@ func runCompanionSetup(args []string, out io.Writer) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err := installCompanionCredentials(ctx, companionStatusSSHRunner(sshConfigPath), address, *user, pulseReadToken, pulseAgentToken, capabilities.PulseAgent); err != nil {
+		return err
+	}
 	if _, err := ansible.RunExternal(ctx, playbook, inventoryPath, variables, sshConfigPath, *user); err != nil {
 		return fmt.Errorf("configure Raspberry Pi companion: %w", err)
 	}
+	for _, name := range []string{kioskClientName, companionStreamDeckIdentity} {
+		if err := revokeAndRemoveCompanionCertificate(*siteDir, s, name, out); err != nil {
+			return fmt.Errorf("retire superseded Companion certificate: %w", err)
+		}
+	}
 	fmt.Fprintf(out, "Companion setup: PASS %s configured; capabilities display=%t streamdeck=%t pulse-agent=%t\n", address, capabilities.Display, capabilities.StreamDeck, capabilities.PulseAgent)
 	return nil
+}
+
+// installCompanionCredentials is deliberately separate from Ansible variables:
+// each token goes only through the host-key-pinned SSH stdin stream and is
+// encrypted by systemd-creds on the Pi before the playbook starts.
+func installCompanionCredentials(ctx context.Context, runner proxmox.SSHRunner, address, user, readToken, agentToken string, agentEnabled bool) error {
+	if _, err := runner.Run(ctx, address, user, companionPrivilegedCommand(user, "install -d -m 0700 -o root -g root /var/lib/boetticher/credentials")); err != nil {
+		return fmt.Errorf("prepare Companion encrypted credential store: %w", err)
+	}
+	privileged := companionCredentialRunner{runner: runner, privileged: user != "root"}
+	if err := secrets.InstallCredential(ctx, privileged, address, user, companionReadCredential, []byte(readToken)); err != nil {
+		return fmt.Errorf("install Companion read credential: %w", err)
+	}
+	if agentEnabled {
+		if err := secrets.InstallCredential(ctx, privileged, address, user, companionAgentCredential, []byte(agentToken)); err != nil {
+			return fmt.Errorf("install Companion report credential: %w", err)
+		}
+	}
+	return nil
+}
+
+type companionCredentialRunner struct {
+	runner     proxmox.SSHRunner
+	privileged bool
+}
+
+func (r companionCredentialRunner) RunWithStdin(ctx context.Context, address, user, command string, stdin io.Reader) ([]byte, error) {
+	if r.privileged {
+		command = "sudo -n " + command
+	}
+	return r.runner.RunWithStdin(ctx, address, user, command, stdin)
+}
+
+func companionPrivilegedCommand(user, command string) string {
+	if user == "root" {
+		return command
+	}
+	return "sudo -n " + command
 }
 
 func revokeAndRemoveCompanionCertificate(siteDir string, s model.Site, name string, out io.Writer) error {
@@ -559,31 +599,38 @@ func runCompanionStatus(args []string, out io.Writer) error {
 		return fmt.Errorf("write temporary companion status SSH configuration: %w", err)
 	}
 	runner := companionStatusSSHRunner(sshPath)
-	statusOutput, runErr := runner.Run(context.Background(), address, *user, "for unit in boetticher-streamdeck.service pulse-kiosk.service pulse-agent.service; do printf '%s ' \"$unit\"; systemctl is-active \"$unit\" 2>/dev/null || true; done")
-	if runErr != nil {
-		return fmt.Errorf("read companion service status: %w", runErr)
+	statusOutput, runErr := runner.Run(context.Background(), address, *user, "/usr/local/libexec/boetticher-companion status")
+	var snapshot companion.Snapshot
+	if err := json.Unmarshal(statusOutput, &snapshot); err != nil {
+		return fmt.Errorf("read Companion status (setup may be required): %w", errors.Join(err, runErr))
 	}
-	values := map[string]string{"streamdeck": "unknown", "display": "unknown", "pulse_agent": "unknown"}
-	for _, line := range strings.Split(strings.TrimSpace(string(statusOutput)), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) != 2 {
-			continue
+	values := map[string]string{}
+	for name, at := range map[string]time.Time{"display": snapshot.RenderedAt, "streamdeck": snapshot.DeckAt, "blinkt": snapshot.BlinktAt} {
+		values[name] = "inactive"
+		if time.Since(at) < 10*time.Second {
+			values[name] = "active"
 		}
-		switch fields[0] {
-		case "boetticher-streamdeck.service":
-			values["streamdeck"] = fields[1]
-		case "pulse-kiosk.service":
-			values["display"] = fields[1]
-		case "pulse-agent.service":
-			values["pulse_agent"] = fields[1]
+	}
+	for _, item := range snapshot.Items {
+		if item.ID == "agent" {
+			values["pulse_agent"] = item.Status
 		}
 	}
 	if *jsonOutput {
-		return json.NewEncoder(out).Encode(map[string]any{"address": address, "services": values})
+		if err := json.NewEncoder(out).Encode(map[string]any{"address": address, "services": values, "capabilities": snapshot}); err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintf(out, "Companion target: %s@%s:%d\n", *user, address, *port)
+		for _, item := range append(snapshot.Items, snapshot.Modules...) {
+			result := "FAIL"
+			if item.Status == companion.Healthy || item.Status == companion.Disabled {
+				result = "PASS"
+			}
+			fmt.Fprintf(out, "%-20s %s  %s\n", item.Label, result, item.Reason)
+		}
 	}
-	fmt.Fprintf(out, "Companion target: %s@%s:%d\n", *user, address, *port)
-	fmt.Fprintf(out, "Display: %s\nStreamDeck: %s\nPulse agent: %s\n", values["display"], values["streamdeck"], values["pulse_agent"])
-	return nil
+	return errors.Join(companion.Check(snapshot), runErr)
 }
 
 func companionStatusSSHRunner(configPath string) proxmox.SSHRunner {
@@ -705,14 +752,6 @@ func kioskCertificateSelectorJSON(pulseURL, domain string) ([]byte, error) {
 			"SUBJECT": map[string]string{"CN": "client-" + kioskClientName + "." + domain},
 		},
 	})
-}
-
-func kioskImportPassword() (string, error) {
-	data := make([]byte, 32)
-	if _, err := rand.Read(data); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(data), nil
 }
 
 func validateKioskClientCertificate(authority pki.Authority, keyPEM, certPEM, chainPEM, domain string, now time.Time) (pki.ClientCertificate, error) {

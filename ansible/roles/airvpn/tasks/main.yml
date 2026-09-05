@@ -116,6 +116,10 @@
 - name: Require an active AirVPN transit service
   ansible.builtin.command: systemctl is-active boetticher-airvpn.service
   changed_when: false
+- name: Configure module-local Pulse VPN sensors
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/tasks/vpn-sensors.yml"
+  vars:
+    vpn_health_module: airvpn
 
 - name: Enable forwarding after AirVPN tunnel verification
   ansible.builtin.command:

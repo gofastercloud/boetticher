@@ -22,6 +22,7 @@ func main() {
 	siteDir := flag.String("site", ".", "site directory containing generated/artifacts")
 	artifactRoot := flag.String("artifact-root", "", "qualified artifact directory; defaults to <site>/generated/artifacts")
 	companionBinary := flag.String("companion-binary", "", "release-built ARM64 companion StreamDeck binary; defaults to <site>/bin/boetticher-streamdeck-linux-arm64")
+	companionStatusBinary := flag.String("companion-status-binary", "", "release-built ARM64 Companion status binary")
 	output := flag.String("output", "", "signed release bundle output path")
 	releaseVersion := flag.String("release", model.ReleaseVersion, "release version")
 	sourceCommit := flag.String("source-commit", "", "source commit included in provenance")
@@ -43,6 +44,9 @@ func main() {
 	}
 	if *companionBinary == "" {
 		*companionBinary = filepath.Join(*siteDir, "bin", "boetticher-streamdeck-linux-arm64")
+	}
+	if *companionStatusBinary == "" {
+		*companionStatusBinary = filepath.Join(*siteDir, "bin", "boetticher-companion-linux-arm64")
 	}
 	controllerSHA256 := ""
 	var controllerSizeBytes int64
@@ -113,7 +117,7 @@ func main() {
 		ReleaseVersion: *releaseVersion, SourceCommit: *sourceCommit, BuildWorkflow: *workflow,
 		ControllerMin: *controllerMin, ControllerMax: *controllerMax,
 		ControllerSHA256: controllerSHA256, ControllerSizeBytes: controllerSizeBytes,
-	}, model.APIVersion, model.ConfigSchemaVersion, privateKey, *keyID, inputs, *companionBinary)
+	}, model.APIVersion, model.ConfigSchemaVersion, privateKey, *keyID, inputs, *companionBinary, *companionStatusBinary)
 	if err != nil {
 		fatal("build release bundle: %v", err)
 	}

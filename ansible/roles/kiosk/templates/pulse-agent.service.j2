@@ -1,20 +1,28 @@
 [Unit]
 Description=Pulse host monitoring agent for the Boetticher kiosk
-After=network-online.target
-Wants=network-online.target
+After=network.target
 
 [Service]
 Type=simple
 User=root
 Group=root
-ExecStart=/usr/local/bin/pulse-agent --url={{ kiosk_pulse_url }} --token-file=/run/credentials/pulse-agent.service/pulse-agent-token --enable-host=true --enable-docker=false --enable-kubernetes=false --enable-proxmox=false --enable-commands=false --disable-auto-update --state-dir=/var/lib/boetticher/pulse-agent --cacert=/etc/ssl/certs/ca-certificates.crt --hostname={{ kiosk_pulse_agent_hostname }}
+LoadCredentialEncrypted=pulse-agent-token:/var/lib/boetticher/credentials/companion-agent.cred
+ExecStart=/usr/local/bin/pulse-agent --url={{ kiosk_pulse_url }} --token-file=/run/credentials/pulse-agent.service/pulse-agent-token --enable-host=true --enable-docker=false --enable-kubernetes=false --enable-proxmox=false --enable-commands=false --disable-auto-update --state-dir=/var/lib/boetticher/pulse-agent --cacert=/etc/boetticher/companion-ca.pem --hostname={{ kiosk_pulse_agent_hostname }} --agent-id={{ kiosk_pulse_agent_id }} --report-ip={{ companion_config.address }} --health-addr=127.0.0.1:9191
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=20s
 UMask=0077
+StateDirectory=boetticher/pulse-agent
+StateDirectoryMode=0700
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
 PrivateTmp=true
 ProtectHome=true
-ProtectSystem=full
+ProtectSystem=strict
 ReadWritePaths=/var/lib/boetticher/pulse-agent
 
 [Install]

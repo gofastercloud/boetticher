@@ -26,7 +26,10 @@ streamdeck-check:
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) go test ./internal/streamdeck ./cmd/boetticher-streamdeck
 
 companion-check:
+	PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=$(UV_CACHE_DIR) uv run --no-project --python 3.13 python -m unittest discover -s ansible/roles/kiosk/tests -p 'test_*.py'
+	PYTHONDONTWRITEBYTECODE=1 UV_CACHE_DIR=$(UV_CACHE_DIR) uv run --no-project --python 3.13 python -m unittest discover -s ansible/tasks/tests -p 'test_*.py'
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o /tmp/boetticher-streamdeck-linux-arm64-check ./cmd/boetticher-streamdeck
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o /tmp/boetticher-companion-linux-arm64-check ./cmd/boetticher-companion
 
 usb-export-test:
 	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ansible/roles/usb-export-host/tests -p 'test_*.py' -v
@@ -45,6 +48,7 @@ release-bundle: companion-binary
 companion-binary:
 	mkdir -p bin
 	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o bin/boetticher-streamdeck-linux-arm64 ./cmd/boetticher-streamdeck
+	GOCACHE=$(GOCACHE) GOMODCACHE=$(GOMODCACHE) GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags '-s -w' -o bin/boetticher-companion-linux-arm64 ./cmd/boetticher-companion
 
 ansible-check:
 	mkdir -p "$(ANSIBLE_LOCAL_TEMP)" "$(ANSIBLE_REMOTE_TEMP)"

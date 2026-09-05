@@ -137,9 +137,51 @@ than to a device name that can change after a reboot. `module configure` will
 show compatible choices. Generic USB export remains available for actual guest
 peripherals such as printers and serial hardware.
 
-StreamDeck is a capability of a Boetticher companion device, not a Proxmox
-module. Attach the supported StreamDeck directly to the Companion Pi. The
-Companion receives no Proxmox credentials or USB passthrough configuration.
+The Companion Pi runs a local HDMI dashboard in Cage/seatd, a host-only Pulse
+agent, an interactive StreamDeck, and optional Blinkt indicators. The initial
+hardware baseline is a Pi 4 with 64-bit Raspberry Pi OS 13 (NetworkManager)
+and the 15-key USB StreamDeck identified as `0fd9:006d`.
+
+StreamDeck is the input device: select a tile to open its HDMI details. The
+bottom row always provides Home, Back, Previous, Next, and Dim/Wake. Any button
+wakes a blank display without also activating that button. These controls
+change local presentation only; they cannot restart guests or run commands.
+
+HDMI, StreamDeck, and Blinkt share fresh status from one local service. The Pi
+holds separate monitoring-read and agent-report tokens, never Proxmox
+credentials. The browser and USB/GPIO renderers have no Pulse tokens. Missing
+or stale data is displayed explicitly, including during network outages.
+
+Enable Blinkt when adding the Companion, or repeat the command with the same
+MAC to change capabilities. Omitted flags preserve existing choices:
+
+```text
+boetticher companion add --mac COMPANION_ETH0_MAC --blinkt=true --confirm --site ./my-boetticher
+```
+
+The eight low-brightness LEDs represent Pi health, lab link, gateway, DNS,
+Proxmox, Pulse, agent reporting, and local displays. When AirVPN is enabled,
+LED 7 and its home tile show AirVPN; when Tailnet Router is enabled, LED 8 and
+its home tile show Tailnet. Agent/peripheral status remains on the Companion
+Health view. Green means healthy,
+amber means warning, red means failure, and a slow blue pulse means fresh data
+is unavailable. Disabled indicators are off. The HDMI screen includes the
+same numbered legend. Dim mode keeps Blinkt visible at its lowest brightness.
+
+VPN status comes from module-local Pulse custom sensors, not direct Pi access
+to the VPN guests. AirVPN checks its service, a recent WireGuard handshake,
+forwarding route, and loaded kill-switch guard. Tailnet checks its service,
+logged-in backend, online state, and advertised/primary lab route. Pulse stores
+the readings and generates alerts; the Companion only reads fresh results.
+A running guest alone never makes a VPN indicator green. These are operational
+state checks, not an end-to-end VPN traffic or leak test.
+After enabling or disabling a VPN module and deploying the platform, rerun
+`companion setup` to refresh the Pi's expected modules and LED mapping.
+
+`companion status` checks functional status, including browser rendering,
+StreamDeck connection, fresh agent reports, and Blinkt updates. A missing
+enabled capability returns a failing exit status. Confirm HDMI and Blinkt
+visually once at the Pi, then exercise navigation and reconnect the StreamDeck.
 
 On a 0.4 site, `boetticher companion migrate` can move the exact old
 `lab-streamdeck-01` guest to this arrangement. A fresh 0.1.0 site has no such

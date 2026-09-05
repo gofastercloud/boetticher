@@ -106,3 +106,8 @@
   failed_when: >-
     tailscale_registered_state.rc != 0 or
     (tailscale_registered_state.stdout | regex_search('"BackendState"\s*:\s*"Running"')) is none
+
+- name: Configure module-local Pulse VPN sensors
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/tasks/vpn-sensors.yml"
+  vars:
+    vpn_health_module: tailnet-router

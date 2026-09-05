@@ -1,0 +1,75 @@
+---
+- name: Select the fixed module sensor set
+  ansible.builtin.set_fact:
+    vpn_sensor_checks: "{{ ['service', 'handshake', 'forwarding', 'kill-switch'] if vpn_health_module == 'airvpn' else ['service', 'backend', 'online', 'advertised-route', 'approved-route'] }}"
+
+- name: Require a known VPN sensor module
+  ansible.builtin.assert:
+    that: vpn_health_module in ['airvpn', 'tailnet-router']
+
+- name: Create the private module sensor directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop: [/etc/boetticher, /usr/local/libexec]
+
+- name: Install the local-only VPN sensor implementation
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/tasks/files/vpn-health"
+    dest: /usr/local/libexec/boetticher-vpn-health
+    owner: root
+    group: root
+    mode: '0700'
+  register: vpn_sensor_program
+
+- name: Install fixed no-argument Pulse sensor commands
+  ansible.builtin.copy:
+    dest: "/usr/local/libexec/boetticher-vpn-{{ vpn_health_module }}-{{ item }}"
+    owner: root
+    group: root
+    mode: '0700'
+    content: |
+      #!/bin/sh
+      exec /usr/local/libexec/boetticher-vpn-health check {{ vpn_health_module }} {{ item }}
+  loop: "{{ vpn_sensor_checks }}"
+  register: vpn_sensor_wrappers
+
+- name: Configure private Pulse custom sensors
+  ansible.builtin.copy:
+    dest: /etc/boetticher/vpn-sensors.yaml
+    owner: root
+    group: root
+    mode: '0600'
+    content: |
+      version: 1
+      sensors:
+      {% for check in vpn_sensor_checks %}
+        - id: boetticher_{{ vpn_health_module | replace('-', '_') }}_{{ check | replace('-', '_') }}
+          name: "{{ vpn_health_module }} / {{ check }}"
+          group: Boetticher VPN
+          subgroup: "{{ vpn_health_module }}"
+          kind: boolean
+          command: /usr/local/libexec/boetticher-vpn-{{ vpn_health_module }}-{{ check }}
+          interval: 15s
+          timeout: 8s
+          staleAfter: 90s
+          criticalBelow: 0.5
+          alertOnError: true
+      {% endfor %}
+  register: vpn_sensor_config
+
+- name: Inspect an existing Pulse agent service
+  ansible.builtin.stat:
+    path: /etc/systemd/system/pulse-agent.service
+  register: vpn_sensor_agent_unit
+
+- name: Reload changed sensors in an already installed agent
+  ansible.builtin.systemd_service:
+    name: pulse-agent.service
+    state: restarted
+  when:
+    - vpn_sensor_agent_unit.stat.exists
+    - vpn_sensor_program is changed or vpn_sensor_wrappers is changed or vpn_sensor_config is changed

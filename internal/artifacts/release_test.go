@@ -20,7 +20,7 @@ import (
 
 func TestReleaseBundleSignsAndAtomicallyImportsQualifiedArtifacts(t *testing.T) {
 	root := t.TempDir()
-	artifactPath := filepath.Join(root, "boetticher-monitoring-1.0.0-amd64.tar.zst")
+	artifactPath := filepath.Join(root, "boetticher-monitoring-1.0.1-amd64.tar.zst")
 	artifactBytes := []byte("qualified monitoring artifact")
 	if err := os.WriteFile(artifactPath, artifactBytes, 0600); err != nil {
 		t.Fatal(err)
@@ -52,6 +52,11 @@ func TestReleaseBundleSignsAndAtomicallyImportsQualifiedArtifacts(t *testing.T) 
 	if err := os.WriteFile(companionPath, companionBytes, 0700); err != nil {
 		t.Fatal(err)
 	}
+	statusPath := filepath.Join(root, "boetticher-companion-linux-arm64")
+	statusBytes := []byte("release-built shared Companion status binary")
+	if err := os.WriteFile(statusPath, statusBytes, 0700); err != nil {
+		t.Fatal(err)
+	}
 	controllerPath, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -73,11 +78,11 @@ func TestReleaseBundleSignsAndAtomicallyImportsQualifiedArtifacts(t *testing.T) 
 		ReleaseVersion: "0.5.0", SourceCommit: "local-build", BuildWorkflow: "local",
 		ControllerMin: "0.5.0", ControllerMax: "0.5.0", QualificationPolicyVersion: QualificationPolicyVersion,
 		ControllerSHA256: controllerSHA256, ControllerSizeBytes: controllerInfo.Size(),
-	}, model.APIVersion, model.SchemaVersion, private, "release-2026", []ReleaseInput{{Artifact: artifact, ArtifactPath: artifactPath, EvidencePath: evidencePath, QualificationFiles: qualificationFiles}}, companionPath)
+	}, model.APIVersion, model.SchemaVersion, private, "release-2026", []ReleaseInput{{Artifact: artifact, ArtifactPath: artifactPath, EvidencePath: evidencePath, QualificationFiles: qualificationFiles}}, companionPath, statusPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(manifest.Files) != 8 || len(manifest.Artifacts) != 1 || manifest.CompanionBinary == nil {
+	if len(manifest.Files) != 9 || len(manifest.Artifacts) != 1 || manifest.CompanionBinary == nil || manifest.CompanionStatusBinary == nil {
 		t.Fatalf("unexpected release manifest: %#v", manifest)
 	}
 	if manifest.ControllerSHA256 != controllerSHA256 || manifest.ControllerSizeBytes != controllerInfo.Size() {
@@ -116,6 +121,19 @@ func TestReleaseBundleSignsAndAtomicallyImportsQualifiedArtifacts(t *testing.T) 
 	}
 	if resolvedCompanion != filepath.Join(root, "generated", "release", filepath.FromSlash(CompanionStreamDeckPath)) {
 		t.Fatalf("resolved companion path = %q", resolvedCompanion)
+	}
+	resolvedStatus, err := ResolveImportedCompanionStatus(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contents, err := os.ReadFile(resolvedStatus); err != nil || string(contents) != string(statusBytes) {
+		t.Fatal("status executable was not authenticated and imported")
+	}
+	if err := os.WriteFile(resolvedStatus, []byte("tampered executable"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveImportedCompanionStatus(root); err == nil {
+		t.Fatal("tampered status executable accepted")
 	}
 	reformatted := filepath.Join(root, "reformatted.tar.gz")
 	rewriteReleaseManifest(t, bundlePath, reformatted)

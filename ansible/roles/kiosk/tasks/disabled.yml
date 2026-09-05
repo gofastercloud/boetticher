@@ -1,0 +1,27 @@
+---
+- name: Inspect the capability unit
+  ansible.builtin.stat:
+    path: "/etc/systemd/system/{{ capability.unit }}"
+  register: companion_optional_unit
+
+- name: Stop and disable the unselected capability
+  ansible.builtin.systemd_service:
+    name: "{{ capability.unit }}"
+    enabled: false
+    state: stopped
+  when:
+    - not (capability.enabled | bool)
+    - companion_optional_unit.stat.exists
+
+- name: Remove disabled agent credentials without removing its retained identity
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/lib/boetticher/credentials/companion-agent.cred
+    - /var/lib/boetticher/credentials/companion-agent.sha256
+    - /var/lib/boetticher/credentials/pulse-agent-token.cred
+    - /var/lib/boetticher/credentials/pulse-agent-token.sha256
+  when:
+    - capability.unit == 'pulse-agent.service'
+    - not (capability.enabled | bool)

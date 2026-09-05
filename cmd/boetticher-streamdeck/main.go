@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/gofastercloud/boetticher/internal/streamdeck"
@@ -30,7 +29,8 @@ func (d *nativeDeck) ProcessImage(image image.Image) ([]byte, error) {
 func (d *nativeDeck) SetButton(ctx context.Context, index int, data []byte) error {
 	return d.deck.Device().SetButton(ctx, index, data)
 }
-func (d *nativeDeck) Close(ctx context.Context) error { return d.deck.Close(ctx) }
+func (d *nativeDeck) Close(ctx context.Context) error                     { return d.deck.Close(ctx) }
+func (d *nativeDeck) SetHandler(handler func(context.Context, int) error) { d.deck.SetHandler(handler) }
 
 func openDeck(ctx context.Context, config streamdeck.Config) (streamdeck.Deck, error) {
 	open := func(ctx context.Context) (*decklib.Device, error) {
@@ -81,24 +81,10 @@ func main() {
 		slog.Error("load StreamDeck configuration", "error", err)
 		os.Exit(1)
 	}
-	credentialDirectory := strings.TrimSpace(os.Getenv("CREDENTIALS_DIRECTORY"))
-	if credentialDirectory == "" {
-		slog.Error("StreamDeck Pulse credential directory is unavailable")
-		os.Exit(1)
-	}
-	token, err := os.ReadFile(credentialDirectory + "/pulse-token")
-	if err != nil {
-		slog.Error("read StreamDeck Pulse credential", "error", err)
-		os.Exit(1)
-	}
-	client, err := streamdeck.NewPulseClient(config, strings.TrimSpace(string(token)))
-	if err != nil {
-		slog.Error("create StreamDeck Pulse client", "error", err)
-		os.Exit(1)
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if err := streamdeck.Run(ctx, config, client, openDeck); err != nil {
+	if err := streamdeck.RunConsole(ctx, config, openDeck); err != nil {
 		slog.Error("StreamDeck runtime stopped", "error", fmt.Sprintf("%T", err))
+		os.Exit(1)
 	}
 }

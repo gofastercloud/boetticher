@@ -201,6 +201,9 @@ func declarationFor(definition ModuleDefinition, site model.Site) (model.ModuleD
 	default:
 		return model.ModuleDeclaration{}, fmt.Errorf("no declaration implementation for first-party module %q", name)
 	}
+	if name == "airvpn" || name == "tailnet-router" {
+		declaration.NetworkIntents = append(declaration.NetworkIntents, model.NetworkIntent{Source: components[0].Name, Destination: "lab-monitor-01", Protocol: "tcp", Ports: []string{"443"}, Direction: "egress", Purpose: "Pulse VPN sensor reports"})
+	}
 	return declaration, nil
 }
 
