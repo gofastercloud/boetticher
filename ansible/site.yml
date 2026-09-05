@@ -11,13 +11,11 @@
         - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
         - firewall_plan.mode == 'managed'
 
-- name: Configure the AirVPN DNS and routing foundation before selected clients
+- name: Prepare the AirVPN host time base before managed appliance configuration
   hosts: airvpn
   become: false
   gather_facts: false
   roles:
-    - role: airvpn
-      when: boetticher_deploy_phase | default('full') in ['full', 'services']
     - role: chrony
       when: boetticher_deploy_phase | default('full') in ['full', 'services']
 
@@ -33,8 +31,6 @@
         - inventory_hostname in groups.get('firewall', [])
         - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
         - not (boetticher_skip_firewall | default(false) | bool)
-    - role: airvpn-client
-      when: inventory_hostname in (airvpn_selected_guests | default([]))
     - base
     - role: chrony
       when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
@@ -53,7 +49,9 @@
     - role: airvpn
       when:
         - inventory_hostname in groups.get('airvpn', [])
-        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
+        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap', 'services']
+    - role: airvpn-client
+      when: inventory_hostname in (airvpn_selected_guests | default([]))
     - role: bifrost
       when: inventory_hostname in groups.get('bifrost', [])
     - role: printer

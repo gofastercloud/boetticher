@@ -277,6 +277,26 @@ func TestFirewallRoleRunsBeforeBaseOnManagedPlay(t *testing.T) {
 	}
 }
 
+func TestAirVPNRoleRunsAfterBaseAndBeforeSelectedClients(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "site.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	baseIndex := strings.Index(text, "    - base")
+	airVPNIndex := strings.Index(text, "    - role: airvpn\n")
+	clientIndex := strings.Index(text, "    - role: airvpn-client\n")
+	if baseIndex < 0 || airVPNIndex < 0 || clientIndex < 0 || baseIndex > airVPNIndex || airVPNIndex > clientIndex {
+		t.Fatal("AirVPN role must run after base credential installation and before selected-client policy")
+	}
+	if !strings.Contains(text[airVPNIndex:], "boetticher_deploy_phase | default('full') in ['full', 'bootstrap', 'services']") {
+		t.Fatal("AirVPN role must run during the services phase after credentials are installed")
+	}
+	if strings.Count(text, "    - role: airvpn\n") != 1 {
+		t.Fatal("AirVPN role must run exactly once in the managed play")
+	}
+}
+
 func TestStableBaseTasksSkipServicesButFinalTasksRemain(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml"))
 	if err != nil {
