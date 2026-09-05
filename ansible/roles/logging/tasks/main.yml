@@ -191,6 +191,9 @@
       {% endfor %}
           if ($boetticher_logging_client_allowed = 0) { return 403; }
           location = /upload {
+              client_max_body_size 0;
+              proxy_request_buffering off;
+              proxy_http_version 1.1;
               proxy_pass http://127.0.0.1:{{ logging_plan.collector_backend_port }};
               proxy_pass_request_headers on;
               proxy_set_header Host $host;
