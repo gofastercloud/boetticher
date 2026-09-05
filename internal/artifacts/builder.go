@@ -55,6 +55,7 @@ var PublicBuildInputs = []string{
 	"internal/usbexport",
 	"ansible/companion.yml",
 	"ansible/site.yml",
+	"ansible/tasks",
 	"ansible/roles",
 	"images",
 	"pi/kiosk",
