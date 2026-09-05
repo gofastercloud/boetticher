@@ -32,6 +32,16 @@ APPS = (("sonarr", 8989, "v3", "tv", "tvCategory"),
         ("radarr", 7878, "v3", "movies", "movieCategory"),
         ("lidarr", 8686, "v1", "music", "musicCategory"),
         ("prowlarr", 9696, "v1", None, None))
+# These identities are part of the pinned appliance image contract. Do not
+# inherit ownership from retained configuration: that could redirect newly
+# generated API credentials to an arbitrary account.
+CONFIG_OWNERS = {
+    "sonarr": (2200, 2200),
+    "radarr": (2201, 2200),
+    "lidarr": (2202, 2200),
+    "prowlarr": (2204, 2200),
+    "qbittorrent": (2205, 2200),
+}
 
 
 class ConfigurationError(Exception):
@@ -75,22 +85,28 @@ def read_config(path):
             return source.read(1024 * 1024 + 1), info
 
 
-def write_config(path, content):
+def validate_config_owner(info, owner):
+    if info is not None and (info.st_uid, info.st_gid) != owner:
+        raise ConfigurationError("application configuration has an unexpected owner")
+
+
+def write_config(path, content, owner):
     check_path(path)
     with parent_directory(path) as directory:
         try:
-            owner = os.stat(path.name, dir_fd=directory, follow_symlinks=False)
-            if not stat.S_ISREG(owner.st_mode):
+            existing = os.stat(path.name, dir_fd=directory, follow_symlinks=False)
+            if not stat.S_ISREG(existing.st_mode):
                 raise ConfigurationError("application configuration is not a regular file")
+            validate_config_owner(existing, owner)
         except FileNotFoundError:
-            owner = os.fstat(directory)
+            pass
         temporary = ".boetticher-" + secrets.token_hex(16)
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
                      0o600, dir_fd=directory)
         try:
             with os.fdopen(fd, "w") as out:
                 if os.geteuid() == 0:
-                    os.fchown(out.fileno(), owner.st_uid, owner.st_gid)
+                    os.fchown(out.fileno(), *owner)
                 out.write(content)
                 out.flush()
                 os.fsync(out.fileno())
@@ -103,8 +119,9 @@ def write_config(path, content):
                 pass
 
 
-def configure_xml(path, port, apply):
+def configure_xml(path, port, apply, owner):
     content, info = read_config(path)
+    validate_config_owner(info, owner)
     root = ET.fromstring(content) if content is not None else ET.Element("Config")
     if root.tag != "Config":
         raise ConfigurationError("application configuration has an unexpected root")
@@ -129,12 +146,13 @@ def configure_xml(path, port, apply):
                 element = ET.SubElement(root, "ApiKey")
             element.text = secrets.token_hex(16)
     if changed and apply:
-        write_config(path, ET.tostring(root, encoding="unicode") + "\n")
+        write_config(path, ET.tostring(root, encoding="unicode") + "\n", owner)
     return changed
 
 
-def configure_qbit(path, domain, apply, peer_port=0):
+def configure_qbit(path, domain, apply, owner, peer_port=0):
     content, info = read_config(path)
+    validate_config_owner(info, owner)
     config = configparser.ConfigParser(interpolation=None, delimiters=("=",), strict=True)
     config.optionxform = str
     if content is not None:
@@ -172,7 +190,7 @@ def configure_qbit(path, domain, apply, peer_port=0):
     if changed and apply:
         out = io.StringIO()
         config.write(out, space_around_delimiters=False)
-        write_config(path, out.getvalue())
+        write_config(path, out.getvalue(), owner)
     return changed
 
 
@@ -366,9 +384,9 @@ def main():
                 raise ConfigurationError("invalid ARR frontend domain")
             changed = False
             for name, port, _, _, _ in APPS:
-                changed |= configure_xml(STATE / name / "config.xml", port, args.mode == "prepare")
+                changed |= configure_xml(STATE / name / "config.xml", port, args.mode == "prepare", CONFIG_OWNERS[name])
             changed |= configure_qbit(STATE / "qbittorrent/qBittorrent/config/qBittorrent.conf",
-                                      args.domain, args.mode == "prepare", args.peer_port)
+                                      args.domain, args.mode == "prepare", CONFIG_OWNERS["qbittorrent"], args.peer_port)
         print("changed" if changed else "unchanged")
     except (ConfigurationError, OSError, ValueError, KeyError, TypeError, ET.ParseError, configparser.Error) as error:
         message = str(error) if isinstance(error, ConfigurationError) else "invalid or inaccessible application state"

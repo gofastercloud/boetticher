@@ -699,7 +699,7 @@ func policyRules(s model.Site) []PolicyRule {
 				Sequence: len(rules) + 1, Name: "AirVPN forwarded qBittorrent peers",
 				From: "TRANSIT", To: arr.Zone, Action: "allow", Protocol: "tcp/udp",
 				Ports: []string{strconv.Itoa(port)}, Counter: "boetticher_arr_forwarded_peer",
-				SourceCIDR: model.AirVPNGuestAddress + "/32", DestinationCIDR: arr.Address + "/32",
+				SourceCIDR: model.AirVPNGuestAddress + "/32", SourceMAC: networkmodel.ManagedModuleMAC(model.AirVPNGuestVMID), DestinationCIDR: arr.Address + "/32",
 				Description: "AirVPN tunnel DNAT and SNAT to the fixed ARR peer port only",
 			})
 		}

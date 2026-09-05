@@ -1,5 +1,6 @@
 import copy
 import importlib.util
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -11,6 +12,7 @@ spec = importlib.util.spec_from_file_location(
     "arr", Path(__file__).parents[1] / "runtime" / "configure.py")
 arr = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(arr)
+TEST_OWNER = (os.getuid(), os.getgid())
 
 
 class API:
@@ -64,8 +66,8 @@ class ReconcileTests(unittest.TestCase):
             path = Path(tmp).resolve() / "qBittorrent.conf"
             path.write_text("[Preferences]\nWebUI\\Password_PBKDF2=@ByteArray(test-only-hash)\n"
                             "[BitTorrent]\nSession\\GlobalDLSpeedLimit=123\n")
-            self.assertTrue(arr.configure_qbit(path, "example.test", True, 45678))
-            self.assertFalse(arr.configure_qbit(path, "example.test", False, 45678))
+            self.assertTrue(arr.configure_qbit(path, "example.test", True, TEST_OWNER, 45678))
+            self.assertFalse(arr.configure_qbit(path, "example.test", False, TEST_OWNER, 45678))
             self.assertIn("PortForwardingEnabled=false", path.read_text())
             self.assertIn("Session\\Port=45678", path.read_text())
             self.assertIn("WebUI\\LocalHostAuth=false", path.read_text())
@@ -144,10 +146,10 @@ class ReconcileTests(unittest.TestCase):
             path = Path(tmp).resolve() / "config.xml"
             path.write_text("<Config><ApiKey>test-only-key</ApiKey><BindAddress>*</BindAddress>"
                             "<Unrelated>keep</Unrelated></Config>")
-            self.assertTrue(arr.configure_xml(path, 8989, False))
+            self.assertTrue(arr.configure_xml(path, 8989, False, TEST_OWNER))
             self.assertIn("<BindAddress>*</BindAddress>", path.read_text())
-            self.assertTrue(arr.configure_xml(path, 8989, True))
-            self.assertFalse(arr.configure_xml(path, 8989, False))
+            self.assertTrue(arr.configure_xml(path, 8989, True, TEST_OWNER))
+            self.assertFalse(arr.configure_xml(path, 8989, False, TEST_OWNER))
             self.assertIn("test-only-key", path.read_text())
             self.assertIn("<Unrelated>keep</Unrelated>", path.read_text())
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
@@ -158,7 +160,7 @@ class ReconcileTests(unittest.TestCase):
             (root / "target").write_text("<Config/>")
             (root / "config.xml").symlink_to(root / "target")
             with self.assertRaises(arr.ConfigurationError):
-                arr.configure_xml(root / "config.xml", 8989, True)
+                arr.configure_xml(root / "config.xml", 8989, True, TEST_OWNER)
 
     def test_atomic_failure_preserves_original_and_removes_staging(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -168,7 +170,7 @@ class ReconcileTests(unittest.TestCase):
             original = path.read_bytes()
             with patch.object(arr.os, "replace", side_effect=OSError("write interrupted")):
                 with self.assertRaises(OSError):
-                    arr.configure_xml(path, 8989, True)
+                    arr.configure_xml(path, 8989, True, TEST_OWNER)
             self.assertEqual(path.read_bytes(), original)
             self.assertEqual(list(root.iterdir()), [path])
 
@@ -188,10 +190,28 @@ class ReconcileTests(unittest.TestCase):
                 directory.symlink_to(outside, target_is_directory=True)
                 return replace(source, target, **kwargs)
             with patch.object(arr.os, "replace", side_effect=swap):
-                arr.configure_xml(path, 8989, True)
+                arr.configure_xml(path, 8989, True, TEST_OWNER)
             self.assertEqual((outside / "config.xml").read_text(), "must not change")
             self.assertIn("<BindAddress>127.0.0.1</BindAddress>",
                           (root / "original/config.xml").read_text())
+
+    def test_existing_configuration_with_unexpected_owner_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp).resolve() / "config.xml"
+            path.write_text("<Config/>")
+            original = path.read_bytes()
+            with self.assertRaises(arr.ConfigurationError):
+                arr.configure_xml(path, 8989, False, (TEST_OWNER[0] + 1, TEST_OWNER[1]))
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_qbit_configuration_with_unexpected_owner_is_rejected_without_rewrite(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp).resolve() / "qBittorrent.conf"
+            path.write_text("[Preferences]\nWebUI\\Address=*\n")
+            original = path.read_bytes()
+            with self.assertRaises(arr.ConfigurationError):
+                arr.configure_qbit(path, "example.test", True, (TEST_OWNER[0] + 1, TEST_OWNER[1]))
+            self.assertEqual(path.read_bytes(), original)
 
 
 if __name__ == "__main__":
