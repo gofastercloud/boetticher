@@ -205,11 +205,18 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	ageIdentity := fs.String("age-identity", model.DefaultAgeIdentity, "external Age identity path")
 	dryRun := fs.Bool("dry-run", false, "render and validate policy without connecting")
 	planDigestFlag := fs.String("plan", "", "exact immutable plan digest produced by boetticher plan --live")
+	onlyModule := fs.String("only-module", "", "reconcile only one enabled optional module guest; core/network state is left unchanged")
 	replaceFirewall := fs.Bool("replace-firewall", false, "replace only the managed firewall root disk after proving its persistent volumes")
 	recreateLegacyLXCs := fs.Bool("recreate-legacy-lxcs", false, "discard only proven legacy local-raw LXC state and recreate those appliances on planned storage")
 	confirm := fs.Bool("confirm", false, "confirm destructive appliance replacement or purge actions")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *onlyModule != "" {
+		definition, ok := modules.FirstPartyRegistry().Definition(*onlyModule)
+		if !ok || definition.Policy == modules.Mandatory || *onlyModule == "firewall" || *onlyModule == "dns" || *onlyModule == "monitoring" {
+			return errors.New("--only-module requires one enabled optional module")
+		}
 	}
 	if !*dryRun && *planDigestFlag == "" {
 		if !stdinIsTerminal() {
@@ -226,6 +233,9 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	s, err := site.Load(*siteDir)
 	if err != nil {
 		return err
+	}
+	if *onlyModule != "" && !modules.IsEnabled(s, *onlyModule) {
+		return fmt.Errorf("--only-module requires enabled module %s", *onlyModule)
 	}
 	if !*dryRun {
 		if err := recoverInterruptedDeployment(ctx, *siteDir, s, out); err != nil {
@@ -867,7 +877,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err != nil {
 		return fmt.Errorf("resolve DNS readiness contract: %w", err)
 	}
-	for _, module := range deploymentModuleNames(s) {
+	for _, module := range deploymentModuleNames(s, *onlyModule) {
 		if !modules.IsEnabled(s, module) {
 			continue
 		}
@@ -1078,12 +1088,16 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	// readiness checks above before this all-host bootstrap/network pass. That
 	// foundation barrier makes independent host progress safe; the later
 	// health phase remains the final live gate.
-	if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report, temporaryPrivateKey); err != nil {
-		return err
+	if *onlyModule == "" {
+		if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseBootstrap, report, temporaryPrivateKey); err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintf(out, "      Scoped module deployment: network and DNS reconciliation skipped (%s)\n", *onlyModule)
 	}
 	report.complete()
 	report.start("services", "Configure services and runtime credentials")
-	if err := installModuleRuntimeConfigs(ctx, *siteDir, s, proxmoxPlan, temporaryPrivateKey); err != nil {
+	if err := installModuleRuntimeConfigs(ctx, *siteDir, s, proxmoxPlan, temporaryPrivateKey, *onlyModule); err != nil {
 		return err
 	}
 	report.recordMutation("Services", "appliance runtime configuration", "reconciled", true)
@@ -1093,8 +1107,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		return err
 	}
 	variables = append(variables, '\n')
-	if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseServices, report, temporaryPrivateKey); err != nil {
-		return fmt.Errorf("install endpoint-signed certificates: %w", err)
+	if *onlyModule == "" {
+		if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, variables, "", ansible.PhaseServices, report, temporaryPrivateKey); err != nil {
+			return fmt.Errorf("install endpoint-signed certificates: %w", err)
+		}
+	} else {
+		fmt.Fprintf(out, "      Scoped module deployment: service-wide certificate reconciliation skipped (%s)\n", *onlyModule)
 	}
 	report.complete()
 	if err := saveDeployOperationPhase(*siteDir, &operationState, site.PhaseVerify, nil); err != nil {
@@ -1132,7 +1150,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		if clientErr != nil {
 			return clientErr
 		}
-		if aiopsEnabled {
+		if aiopsEnabled && (*onlyModule == "" || *onlyModule == "aiops") {
 			clientCertificate, issueErr := pki.IssueClient(authority, "boetticher-reconciler", s.Network.Domain, time.Now().UTC())
 			if issueErr != nil {
 				return fmt.Errorf("issue runtime AIOps canary certificate: %w", issueErr)
@@ -1519,10 +1537,10 @@ func artifactQualificationStatus(artifact model.Artifact) string {
 // Site. The managed firewall is handled immediately above because dependent
 // guests must not be created until its management leg and forwarding policy
 // are ready.
-func deploymentModuleNames(s model.Site) []string {
+func deploymentModuleNames(s model.Site, onlyModule string) []string {
 	result := make([]string, 0, len(s.Modules))
 	for _, module := range s.Modules {
-		if module.Enabled && module.Name != "firewall" {
+		if module.Enabled && module.Name != "firewall" && (onlyModule == "" || module.Name == onlyModule) {
 			result = append(result, module.Name)
 		}
 	}
@@ -1552,7 +1570,7 @@ func deploymentGuestPlans(s model.Site, plan proxmox.Plan) []proxmox.GuestPlan {
 		seen[guest.VMID] = true
 		guests = append(guests, guest)
 	}
-	for _, module := range deploymentModuleNames(s) {
+	for _, module := range deploymentModuleNames(s, "") {
 		for _, guest := range plan.Guests {
 			matches := guest.Owner == "boetticher/module/"+module
 			if !matches || seen[guest.VMID] {
@@ -1913,7 +1931,7 @@ func loadOrCreatePulseToken(siteDir, ageIdentity string, s model.Site, key strin
 // non-secret appliance contract. Module declarations remain the source of
 // guest identity and runtime configuration; the SSH runner is only the Core
 // transport used to install the already-validated document.
-func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Site, plan proxmox.Plan, identityData []byte) error {
+func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Site, plan proxmox.Plan, identityData []byte, onlyModule string) error {
 	declarations := make(map[string]model.ModuleDeclaration, len(s.Declarations))
 	for _, declaration := range s.Declarations {
 		declarations[declaration.Module] = declaration
@@ -1926,6 +1944,9 @@ func installModuleRuntimeConfigs(ctx context.Context, siteDir string, s model.Si
 	}
 	for _, guest := range s.PlatformComponents() {
 		if guest.Module == "" {
+			continue
+		}
+		if onlyModule != "" && guest.Module != onlyModule {
 			continue
 		}
 		resolvedGuest, ok := resolvedGuests[guest.Name]

@@ -21,6 +21,10 @@ boetticher deploy --site ./my-boetticher
 settings in your site directory; deployment remains a separate, deliberate
 step. Interactive deploy makes the live plan and asks you to approve it; scripted
 deployments can still pass the exact digest explicitly.
+For a simple replacement or runtime change, use `deploy --only-module NAME`
+with the reviewed live-plan digest; this limits appliance replacement and
+runtime configuration to that enabled optional module while leaving core and
+network state unchanged.
 `status --details` is the consolidated read-only operational view. Try
 `--dry-run` whenever you want a preview without saving anything.
 

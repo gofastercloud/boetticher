@@ -41,10 +41,14 @@ func TestDeploymentModuleNamesFollowResolvedManagedGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := deploymentModuleNames(resolved)
+	got := deploymentModuleNames(resolved, "")
 	want := []string{"dns", "monitoring"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("managed deployment order = %v, want %v", got, want)
+	}
+	scoped := deploymentModuleNames(resolved, "monitoring")
+	if strings.Join(scoped, ",") != "monitoring" {
+		t.Fatalf("scoped deployment order = %v, want monitoring", scoped)
 	}
 }
 
@@ -795,7 +799,7 @@ func TestDeploymentModuleNamesFollowResolvedExternalGraph(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := deploymentModuleNames(resolved)
+	got := deploymentModuleNames(resolved, "")
 	want := []string{"dns", "monitoring"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("external deployment order = %v, want %v", got, want)
