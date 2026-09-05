@@ -917,9 +917,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 		for _, guest := range replacedGuests {
 			report.recordMutation("Proxmox", guest.Name, "guest replaced", true)
 		}
-		for _, guest := range replacedGuests {
+		// A newly created guest can reuse a stable hostname after an earlier
+		// failed/replaced attempt. Remove only that exact stale host-key entry
+		// before independently pinning the guest's new key.
+		for _, guest := range append(append([]proxmox.GuestPlan{}, missingGuests...), replacedGuests...) {
 			if err := retireReplacedHostKey(*siteDir, s, guest); err != nil {
-				return fmt.Errorf("retire replaced %s host key: %w", guest.Name, err)
+				return fmt.Errorf("retire stale %s host key: %w", guest.Name, err)
 			}
 		}
 		for _, guest := range proxmoxPlan.Guests {
