@@ -1860,6 +1860,36 @@ func TestApplianceRolesDoNotMutateModuleSoftware(t *testing.T) {
 	}
 }
 
+func TestFirewallKeaCredentialDropinIsActivatedAfterProjection(t *testing.T) {
+	path := filepath.Join("..", "..", "ansible", "roles", "base", "tasks", "main.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	start := strings.Index(text, "- name: Activate the firewall Kea DDNS credential drop-in")
+	if start < 0 {
+		t.Fatal("base role is missing firewall Kea credential activation")
+	}
+	end := strings.Index(text[start:], "\n- name:")
+	if end < 0 {
+		end = len(text) - start
+	}
+	task := text[start : start+end]
+	for _, required := range []string{
+		"name: kea-dhcp-ddns-server.service",
+		"state: restarted",
+		"daemon_reload: true",
+		"inventory_hostname in groups.get('firewall', [])",
+		"boetticher_deploy_phase | default('full') in ['full', 'bootstrap']",
+		"credential_dropins[inventory_hostname]['kea-dhcp-ddns-server.service'] is defined",
+	} {
+		if !strings.Contains(task, required) {
+			t.Fatalf("firewall Kea credential activation is missing %q", required)
+		}
+	}
+}
+
 func TestFirewallInterfaceBindingsCarryStableRoleMACs(t *testing.T) {
 	site := model.NewDefaultSite("installation", "age1example")
 	variables, err := Variables(site)
