@@ -2077,6 +2077,11 @@ func revokeTemporaryRootAccessForGuestsWithFallback(ctx context.Context, s model
 					hostRunner := proxmoxRootSSHRunner(s, siteDir)
 					if fallbackErr := hostRevoke(ctx, hostRunner, s.BootstrapAddress, "root", item.kind, item.vmid, operatorPublicKey); fallbackErr == nil {
 						return
+					} else if strings.Contains(strings.ToLower(fallbackErr.Error()), "configuration file") && strings.Contains(strings.ToLower(fallbackErr.Error()), "does not exist") {
+						// A planned guest may not have been created before an
+						// interrupted deployment. Proxmox's exact pct/qm error is
+						// authoritative proof that there is no guest to clean.
+						return
 					} else {
 						errs[index] = fmt.Errorf("revoke root access on %s: direct: %w; host fallback: %v", item.name, err, fallbackErr)
 						return
