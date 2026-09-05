@@ -230,10 +230,27 @@ type AIOpsModuleConfig struct {
 // AirVPNModuleConfig controls the controller-side AirVPN profile generator.
 // The API key lives at the controller-only secret path, never in site.yml.
 type AirVPNModuleConfig struct {
+	// QBittorrentPort is the AirVPN-reserved TCP/UDP peer port; zero disables forwarding.
+	QBittorrentPort int `yaml:"qbittorrent_port,omitempty" json:"qbittorrent_port,omitempty"`
 	// Enabled turns the optional AirVPN transit guest on or off.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	// Servers is the AirVPN server selector, such as europe.
 	Servers string `yaml:"servers" json:"servers"`
+}
+
+// ValidQBittorrentPort excludes local application listeners from provider reservations.
+func ValidQBittorrentPort(port int) bool {
+	if port == 0 {
+		return true
+	}
+	if port < 2049 || port > 65535 {
+		return false
+	}
+	switch port {
+	case 7878, 8080, 8686, 8989, 9696:
+		return false
+	}
+	return true
 }
 
 // Map returns the normalised internal lookup map. It is not written back as
@@ -268,7 +285,7 @@ func (m ModulesConfig) Map() map[string]ModuleConfig {
 		result["gatus"] = ModuleConfig{Enabled: cloneBool(m.Gatus.Enabled), Network: m.Gatus.Network}
 	}
 	if m.AirVPN != nil {
-		result["airvpn"] = ModuleConfig{Enabled: cloneBool(m.AirVPN.Enabled), Servers: m.AirVPN.Servers}
+		result["airvpn"] = ModuleConfig{Enabled: cloneBool(m.AirVPN.Enabled), Servers: m.AirVPN.Servers, QBittorrentPort: m.AirVPN.QBittorrentPort}
 	}
 	if m.Arr != nil {
 		network := m.Arr.Network
@@ -310,7 +327,7 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 		result.Gatus = &NetworkToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	}
 	if config, ok := input["airvpn"]; ok {
-		result.AirVPN = &AirVPNModuleConfig{Enabled: cloneBool(config.Enabled), Servers: config.Servers}
+		result.AirVPN = &AirVPNModuleConfig{Enabled: cloneBool(config.Enabled), Servers: config.Servers, QBittorrentPort: config.QBittorrentPort}
 	}
 	if config, ok := input["arr"]; ok {
 		result.Arr = &ArrModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
@@ -362,10 +379,14 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 		m.Gatus = &NetworkToggleModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network}
 	case "airvpn":
 		servers := config.Servers
+		port := config.QBittorrentPort
 		if servers == "" && m.AirVPN != nil {
 			servers = m.AirVPN.Servers
+			if port == 0 {
+				port = m.AirVPN.QBittorrentPort
+			}
 		}
-		m.AirVPN = &AirVPNModuleConfig{Enabled: cloneBool(config.Enabled), Servers: servers}
+		m.AirVPN = &AirVPNModuleConfig{Enabled: cloneBool(config.Enabled), Servers: servers, QBittorrentPort: port}
 	case "arr":
 		network := config.Network
 		if network == "" && m.Arr != nil {
@@ -647,7 +668,7 @@ func cloneModuleConfig(input map[string]ModuleConfig) map[string]ModuleConfig {
 	}
 	output := make(map[string]ModuleConfig, len(input))
 	for name, config := range input {
-		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Servers: config.Servers, ModelAlias: config.ModelAlias, Upstreams: cloneBifrostUpstreams(config.Upstreams), Models: cloneBifrostModels(config.Models)}
+		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Servers: config.Servers, QBittorrentPort: config.QBittorrentPort, ModelAlias: config.ModelAlias, Upstreams: cloneBifrostUpstreams(config.Upstreams), Models: cloneBifrostModels(config.Models)}
 	}
 	return output
 }

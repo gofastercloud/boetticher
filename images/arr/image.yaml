@@ -1,5 +1,5 @@
 name: boetticher-arr
-version: 1.0.0
+version: 1.0.1
 kind: lxc
 base: boetticher-base
 base_version: 0.1.0
@@ -8,7 +8,10 @@ status: research-only
 runtime:
   sonarr: 4.0.19.2979
   radarr: 6.3.0.10514
+  lidarr: 3.1.4.5029
+  prowlarr: 2.5.2.5491
+  qbittorrent_nox: 5.1.0-2
   nginx: 1.26.3-3+deb13u7
   backend_bind: 127.0.0.1
   frontend_bind: 443
-  external_nfs: proxmox-bind-mount-only
+  media_storage: dedicated-data-disk

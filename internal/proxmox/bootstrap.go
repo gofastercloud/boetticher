@@ -949,7 +949,7 @@ var retainedModuleServices = map[string][]string{
 	"airvpn":         {"boetticher-airvpn.service"},
 	"bifrost":        {"bifrost", "nginx"},
 	"printer":        {"octoprint", "nginx"},
-	"arr":            {"sonarr", "radarr", "nginx"},
+	"arr":            {"sonarr", "radarr", "lidarr", "readarr", "prowlarr", "qbittorrent", "boetticher-arr-peer-firewall", "nginx"},
 	"aiops":          {"boetticher-aiops", "boetticher-aiops.socket", "holmes"},
 	"gatus":          {"gatus", "nginx"},
 }
@@ -979,7 +979,13 @@ func InactivateRetainedModule(ctx context.Context, runner CommandRunner, address
 	}
 	serviceCommands := make([]string, 0, len(services))
 	for _, service := range services {
-		serviceCommands = append(serviceCommands, "systemctl disable --now "+shellQuote(service)+"; if systemctl is-active --quiet "+shellQuote(service)+"; then echo retained service remains active: "+shellQuote(service)+" >&2; exit 1; fi; if systemctl is-enabled --quiet "+shellQuote(service)+"; then echo retained service remains enabled: "+shellQuote(service)+" >&2; exit 1; fi")
+		command := "systemctl disable --now " + shellQuote(service) + "; if systemctl is-active --quiet " + shellQuote(service) + "; then echo retained service remains active: " + shellQuote(service) + " >&2; exit 1; fi; if systemctl is-enabled --quiet " + shellQuote(service) + "; then echo retained service remains enabled: " + shellQuote(service) + " >&2; exit 1; fi"
+		if module == "arr" {
+			// ARR 1.0.0 and 1.0.1 have different bounded service sets. Stop
+			// every known installed service, including retired Readarr.
+			command = "if [ \"$(systemctl show --property=LoadState --value " + shellQuote(service) + ")\" != not-found ]; then " + command + "; fi"
+		}
+		serviceCommands = append(serviceCommands, command)
 	}
 	guestCommand := "set -eu; systemctl daemon-reload; " + strings.Join(serviceCommands, "; ")
 	var command string

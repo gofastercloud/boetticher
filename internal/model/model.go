@@ -375,12 +375,13 @@ type Component struct {
 }
 
 type ModuleConfig struct {
-	Enabled    *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	Network    ModuleNetworkMode       `yaml:"network,omitempty" json:"network,omitempty"`
-	Servers    string                  `yaml:"servers,omitempty" json:"servers,omitempty"`
-	ModelAlias string                  `yaml:"model_alias,omitempty" json:"model_alias,omitempty"`
-	Upstreams  []BifrostUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
-	Models     []BifrostModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
+	QBittorrentPort int                     `yaml:"qbittorrent_port,omitempty" json:"qbittorrent_port,omitempty"`
+	Enabled         *bool                   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Network         ModuleNetworkMode       `yaml:"network,omitempty" json:"network,omitempty"`
+	Servers         string                  `yaml:"servers,omitempty" json:"servers,omitempty"`
+	ModelAlias      string                  `yaml:"model_alias,omitempty" json:"model_alias,omitempty"`
+	Upstreams       []BifrostUpstreamConfig `yaml:"upstreams,omitempty" json:"upstreams,omitempty"`
+	Models          []BifrostModelConfig    `yaml:"models,omitempty" json:"models,omitempty"`
 }
 
 type USBExportBinding struct {
@@ -945,6 +946,9 @@ func (s Site) Validate() error {
 	}
 	if !modelTokenPattern.MatchString(s.SecretMetadata.InstallationID) || s.SecretMetadata.AgeRecipient == "" {
 		return fmt.Errorf("secret_metadata must contain a safe installation_id and public age_recipient")
+	}
+	if port := s.ModuleConfig["airvpn"].QBittorrentPort; !ValidQBittorrentPort(port) {
+		return errors.New("modules.airvpn.qbittorrent_port: use 0 to disable or a reserved port from 2049 to 65535 excluding ARR web/API ports")
 	}
 	if bifrost, ok := s.ModuleConfig["bifrost"]; ok && (bifrost.Enabled != nil && *bifrost.Enabled || len(bifrost.Upstreams) > 0 || len(bifrost.Models) > 0) {
 		if err := ValidateBifrostConfig(bifrost); err != nil {
