@@ -42,7 +42,7 @@ func ApplyBackupJobWithRunner(ctx context.Context, runner CommandRunner, address
 		}
 		jobs = envelope.Data
 	}
-	args := " --id " + shellQuote(plan.JobName) + " --storage " + shellQuote(plan.StorageTarget) + " --schedule " + shellQuote(plan.Schedule) + " --vmid " + shellQuote(plan.VMIDList) + " --prune-backups " + shellQuote(plan.Retention) + " --mode snapshot --compress zstd --enabled 1 --notes-template " + shellQuote(managedBackupMarker+" model revision "+plan.ModelRevision)
+	args := " --storage " + shellQuote(plan.StorageTarget) + " --schedule " + shellQuote(plan.Schedule) + " --vmid " + shellQuote(plan.VMIDList) + " --prune-backups " + shellQuote(plan.Retention) + " --mode snapshot --compress zstd --enabled 1 --notes-template " + shellQuote(managedBackupMarker+" model revision "+plan.ModelRevision)
 	for _, job := range jobs {
 		if job.ID != plan.JobName {
 			continue
