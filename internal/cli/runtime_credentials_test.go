@@ -9,6 +9,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/dns"
 	"github.com/gofastercloud/boetticher/internal/model"
 	"github.com/gofastercloud/boetticher/internal/modules"
+	"github.com/gofastercloud/boetticher/internal/secrets"
 )
 
 type credentialDeploymentRunner struct {
@@ -190,6 +191,32 @@ func TestAirVPNCredentialInstallationPreparesItsUnitBinding(t *testing.T) {
 	for _, command := range runner.commands {
 		if strings.Contains(command, profile) || strings.Contains(command, "synthetic-private-key") {
 			t.Fatalf("AirVPN secret entered a remote command: %s", command)
+		}
+	}
+}
+
+func TestAirVPNGuestPulseOnlyCredentialInstallationDoesNotRequireAirVPNBinding(t *testing.T) {
+	bindings := []deploymentCredential{{
+		Guest:     "lab-airvpn-01",
+		Address:   model.AirVPNGuestAddress,
+		SecretKey: "pulse_agent_token",
+		Spec: secrets.CredentialSpec{
+			Name:       "pulse-agent-token",
+			Unit:       "pulse-agent.service",
+			StorePath:  "/var/lib/boetticher/credentials/pulse-agent-token.cred",
+			RuntimeRef: "/run/credentials/pulse-agent.service/pulse-agent-token",
+		},
+	}}
+	runner := &credentialDeploymentRunner{}
+	if err := installCredentialsForGuest(context.Background(), runner, "lab-airvpn-01", bindings, map[string]string{"pulse_agent_token": "synthetic-pulse-token"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.values) != 1 || runner.values[0] != "synthetic-pulse-token" {
+		t.Fatalf("Pulse-only credential was not streamed exactly once: %#v", runner.values)
+	}
+	for _, command := range runner.commands {
+		if strings.Contains(command, "synthetic-pulse-token") || strings.Contains(command, "boetticher-airvpn.service.d") {
+			t.Fatalf("Pulse-only installation attempted an AirVPN projection: %s", command)
 		}
 	}
 }

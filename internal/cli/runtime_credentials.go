@@ -200,7 +200,14 @@ func installCredentialsForGuest(ctx context.Context, runner proxmox.CommandRunne
 			return fmt.Errorf("install %s credential on %s: %w", binding.Spec.Name, guest, err)
 		}
 	}
-	if guest == "lab-airvpn-01" {
+	airVPNBinding := false
+	for _, binding := range selected {
+		if binding.Spec.Unit == "boetticher-airvpn.service" {
+			airVPNBinding = true
+			break
+		}
+	}
+	if guest == "lab-airvpn-01" && airVPNBinding {
 		// The AirVPN role starts its service as part of the same Ansible pass
 		// that first reaches the guest. Install its non-secret systemd binding
 		// alongside the encrypted credential so startup cannot race role order.
