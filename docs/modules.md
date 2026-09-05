@@ -34,7 +34,7 @@ deployments can still pass the exact digest explicitly.
 | Module | Starts as | What it brings to the lab |
 | --- | --- | --- |
 | `dns` | always on | [Blocky](https://0xerr0r.github.io/blocky/) for client DNS, [PowerDNS](https://doc.powerdns.com/authoritative/) for names Boetticher owns, and [Chrony](https://chrony-project.org/) for time. |
-| `logging` | off | An optional central, searchable systemd journal for sites that need retained cross-host logs. |
+| `logging` | off | An optional central, searchable systemd journal for managed appliance guests. The Proxmox host remains outside the guest upload path. |
 | `monitoring` | on | [Pulse Community](https://github.com/rcourtman/Pulse) dashboards, Proxmox monitoring, and host telemetry. |
 | `firewall` | on in managed-gateway mode | The Debian gateway, DHCP, dynamic DNS, routing, NAT, and zone rules. |
 | `gatus` | off | A tidy status page for supported Boetticher services. It trusts the site CA for HTTPS endpoint checks. |

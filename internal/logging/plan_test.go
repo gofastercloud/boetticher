@@ -24,7 +24,7 @@ func TestPlanProjectsOptionalCollectorAndManagedSources(t *testing.T) {
 	if plan.Collector != logging.CollectorName || plan.CollectorPort != logging.CollectorPort || plan.CollectorBackendPort != logging.CollectorBackendPort || plan.RemoteJournalPath != logging.RemoteJournalPath || !plan.MTLS {
 		t.Fatalf("incomplete logging plan: %#v", plan)
 	}
-	if len(plan.Sources) != 4 || plan.SourceUnitsOptional == false {
+	if len(plan.Sources) != 3 || plan.SourceUnitsOptional == false {
 		t.Fatalf("unexpected managed logging sources: %#v", plan.Sources)
 	}
 	if strings.Contains(logging.CollectorConfiguration(plan), "Requires=") {
