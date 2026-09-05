@@ -44,7 +44,7 @@
       - step_ca_root_cert_pem | default('') | length > 0
       - step_ca_intermediate_cert_pem | default('') | length > 0
       - client_ca_pem | default('') | length > 0
-      - client_crl_pem | default('') | length > 0
+      - client_crl_bundle_pem | default('') | length > 0
     fail_msg: Printer nginx requires Smallstep server trust and retained client CA material
   no_log: true
 
@@ -79,7 +79,7 @@
 - name: Install the current client certificate revocation list for printer mTLS
   ansible.builtin.copy:
     dest: /var/lib/boetticher/identity/tls/client-ca.crl.pem
-    content: "{{ client_crl_pem }}"
+    content: "{{ client_crl_bundle_pem }}"
     owner: root
     group: root
     mode: '0644'
