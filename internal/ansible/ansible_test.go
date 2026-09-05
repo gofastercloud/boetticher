@@ -336,9 +336,6 @@ func TestStableBaseTasksSkipServicesButFinalTasksRemain(t *testing.T) {
 	for _, name := range []string{
 		"Install base packages",
 		"Remove labadmin from the sudo group",
-		"Configure Chrony for unprivileged appliances",
-		"Allow Chrony startup without kernel clock control",
-		"Install Chrony startup override",
 		"Disable the restricted Chrony service in appliances",
 		"Configure appliances to use the platform DNS pair",
 		"Write bounded local journald configuration",
@@ -1350,25 +1347,36 @@ func TestBaseRoleRunsChronyWithoutKernelClockControlInAppliances(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(data)
-	for _, expected := range []string{
-		"content: \"DAEMON_OPTS=\\\"-x\\\"\\n\"",
-		"dest: /etc/default/chrony",
-		"path: /etc/systemd/system/chrony.service.d",
-		"state: directory",
-		"content: \"[Unit]\\nAfter=network-online.target\\nWants=network-online.target\\nConditionCapability=\\n\"",
-		"dest: /etc/systemd/system/chrony.service.d/boetticher.conf",
-		"notify: reload systemd",
-		"name: chronyd-restricted.service",
-		"enabled: false",
-		"state: stopped",
-	} {
+	for _, removed := range []string{"dest: /etc/default/chrony", "dest: /etc/systemd/system/chrony.service.d/boetticher.conf"} {
+		if strings.Contains(text, removed) {
+			t.Fatalf("base role still rewrites image-owned Chrony invariant %q", removed)
+		}
+	}
+	for _, expected := range []string{"name: chronyd-restricted.service", "enabled: false", "state: stopped"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("base role missing %q", expected)
 		}
 	}
-	chronyBlock := ansibleTaskBlock(text, "Configure Chrony for unprivileged appliances")
-	if chronyBlock == "" || !strings.Contains(chronyBlock, "inventory_hostname not in groups.get('proxmox', [])") {
-		t.Fatal("base role does not restrict unprivileged Chrony configuration to appliances")
+	for _, file := range []string{"chrony.default", "chrony.service.conf"} {
+		data, err := os.ReadFile(filepath.Join("..", "..", "images", "base", "runtime", file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(data) == 0 {
+			t.Fatalf("image-owned Chrony invariant %s is empty", file)
+		}
+	}
+	buildData, err := os.ReadFile(filepath.Join("..", "..", "scripts", "build-images.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"images/base/runtime/chrony.default:/etc/default/chrony",
+		"images/base/runtime/chrony.service.conf:/etc/systemd/system/chrony.service.d/boetticher.conf",
+	} {
+		if !strings.Contains(string(buildData), expected) {
+			t.Fatalf("base image build does not install Chrony invariant %q", expected)
+		}
 	}
 }
 
