@@ -144,7 +144,7 @@ func TestRouterBrokerOverwritesModelAndOutputBudget(t *testing.T) {
 	}
 	routerIdentity := "boetticher-holmes-active-investigation"
 	broker := &Broker{Capabilities: registry, Evidence: fixedEvidence{}, Router: NewBoundedHTTPClient(router), RouterURL: "https://router.example/v1/chat/completions", ModelAlias: "operations-investigator", RouterIdentity: routerIdentity, Now: func() time.Time { return now }}
-	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/v1/chat/completions", strings.NewReader(`{"model":"attacker/model","messages":[{"role":"user","content":"x"}],"max_tokens":99999}`))
+	request := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/v1/chat/completions", strings.NewReader(`{"model":"attacker/model","messages":[{"role":"user","content":"x"}],"parallel_tool_calls":false,"max_tokens":99999}`))
 	request.RemoteAddr = "127.0.0.1:1234"
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer "+routerIdentity)
@@ -152,6 +152,9 @@ func TestRouterBrokerOverwritesModelAndOutputBudget(t *testing.T) {
 	broker.RouterHandler().ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("router broker returned %d: %s", response.Code, response.Body.String())
+	}
+	if forwarded.ParallelToolCalls == nil || *forwarded.ParallelToolCalls {
+		t.Fatalf("router broker dropped parallel_tool_calls=false: %#v", forwarded.ParallelToolCalls)
 	}
 	if forwarded.Model != "operations-investigator" || forwarded.MaxTokens != MaxOutputTokens {
 		t.Fatalf("forwarded request retained caller authority: %#v", forwarded)
