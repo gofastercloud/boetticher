@@ -277,7 +277,7 @@ func TestFirewallRoleRunsBeforeBaseOnManagedPlay(t *testing.T) {
 	}
 }
 
-func TestAirVPNRoleRunsAfterBaseAndBeforeSelectedClients(t *testing.T) {
+func TestAirVPNRoleRunsBeforeBaseAndSelectedClients(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "site.yml"))
 	if err != nil {
 		t.Fatal(err)
@@ -286,17 +286,14 @@ func TestAirVPNRoleRunsAfterBaseAndBeforeSelectedClients(t *testing.T) {
 	baseIndex := strings.Index(text, "    - base")
 	airVPNIndex := strings.Index(text, "    - role: airvpn\n")
 	clientIndex := strings.Index(text, "    - role: airvpn-client\n")
-	if baseIndex < 0 || airVPNIndex < 0 || clientIndex < 0 || baseIndex > airVPNIndex || airVPNIndex > clientIndex {
-		t.Fatal("AirVPN role must run after base credential installation and before selected-client policy")
+	if baseIndex < 0 || airVPNIndex < 0 || clientIndex < 0 || airVPNIndex > baseIndex || baseIndex > clientIndex {
+		t.Fatal("AirVPN role must run before base logging setup and selected-client policy")
 	}
-	if !strings.Contains(text[airVPNIndex:], "boetticher_deploy_phase | default('full') in ['full', 'bootstrap', 'services']") {
+	if !strings.Contains(text[airVPNIndex:], "boetticher_deploy_phase | default('full') in ['full', 'services']") {
 		t.Fatal("AirVPN role must run during the services phase after credentials are installed")
 	}
-	if strings.Count(text, "    - role: airvpn\n") != 1 {
-		t.Fatal("AirVPN role must run exactly once in the managed play")
-	}
-	if strings.Contains(text, "hosts: airvpn") {
-		t.Fatal("AirVPN must not have a pre-base host play")
+	if strings.Count(text, "    - role: airvpn\n") != 1 || !strings.Contains(text[:airVPNIndex], "hosts: airvpn") {
+		t.Fatal("AirVPN role must run exactly once in the early AirVPN host play")
 	}
 }
 
