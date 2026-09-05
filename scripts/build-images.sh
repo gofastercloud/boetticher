@@ -780,6 +780,8 @@ build_firewall() {
   go run ./cmd/artifact-identity -module firewall > "$artifact_identity"
   prepare_firewall_package_cache "$input"
   package_cache="$cache_root/apt/boetticher-firewall"
+  step_cli_archive="$cache_root/downloads/step_linux_${step_cli_version}_amd64.tar.gz"
+  download_cached "$step_cli_archive" "$step_cli_url" "$step_cli_sha256" sha256sum
   package_archive_tar="$work_root/firewall-package-archives.tar"
   package_lists_tar="$work_root/firewall-package-lists.tar"
   rm -f -- "$package_archive_tar" "$package_lists_tar"
@@ -796,9 +798,12 @@ build_firewall() {
     --tar-in "$package_lists_tar":/var/lib/apt/lists \
     --upload images/firewall/build/process-supervisor.sh:/tmp/boetticher-firewall-process-supervisor \
     --upload images/firewall/build/install-packages.sh:/tmp/boetticher-firewall-install-packages \
+    --upload "$step_cli_archive:/tmp/boetticher-step-cli.tar.gz" \
     --run-command "sh /tmp/boetticher-firewall-install-packages $firewall_package_names" \
+    --run-command "tar -xOf /tmp/boetticher-step-cli.tar.gz step_${step_cli_version}/bin/step > /usr/local/bin/step && chmod 0755 /usr/local/bin/step && /usr/local/bin/step version | grep -F 'Smallstep CLI/${step_cli_version}'" \
     --delete /tmp/boetticher-firewall-process-supervisor \
     --delete /tmp/boetticher-firewall-install-packages \
+    --delete /tmp/boetticher-step-cli.tar.gz \
     --mkdir /etc/boetticher \
     --mkdir /usr/lib/boetticher \
     --mkdir /var/lib/boetticher/identity/ssh \

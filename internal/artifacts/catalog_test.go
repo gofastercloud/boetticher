@@ -1175,6 +1175,9 @@ func TestFirewallOfflineUpgradeMountsEFIForPackageTriggers(t *testing.T) {
 	for _, required := range []string{
 		"--upload images/firewall/build/process-supervisor.sh:/tmp/boetticher-firewall-process-supervisor",
 		"--upload images/firewall/build/install-packages.sh:/tmp/boetticher-firewall-install-packages",
+		"step_cli_archive=\"$cache_root/downloads/step_linux_${step_cli_version}_amd64.tar.gz\"",
+		"--upload \"$step_cli_archive:/tmp/boetticher-step-cli.tar.gz\"",
+		"tar -xOf /tmp/boetticher-step-cli.tar.gz step_${step_cli_version}/bin/step > /usr/local/bin/step",
 		"--run-command \"sh /tmp/boetticher-firewall-install-packages $firewall_package_names\"",
 		"--delete /tmp/boetticher-firewall-process-supervisor",
 		"--delete /tmp/boetticher-firewall-install-packages",
