@@ -109,7 +109,7 @@ func runNetworkTest(args []string, out io.Writer) error {
 	runID := networkTestRunID()
 	if *cleanupOnly {
 		progress.start("Remove stale exact-owned probes")
-		client, credentials, clientErr := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
+		client, _, clientErr := loadProxmoxClient(*siteDir, s, *ageIdentity, *proxmoxCA, *insecure)
 		if clientErr != nil {
 			progress.fail(clientErr)
 			return clientErr
@@ -118,10 +118,6 @@ func runNetworkTest(args []string, out io.Writer) error {
 		if nodeErr != nil {
 			progress.fail(nodeErr)
 			return nodeErr
-		}
-		if err := proxmox.EnsureScopedCredentialACL(context.Background(), proxmoxRootSSHRunner(s, *siteDir), s.BootstrapAddress, "root", credentials.APIUser, credentials.TokenID, "BoetticherProvisioner", node); err != nil {
-			progress.fail(err)
-			return fmt.Errorf("reconcile reserved network probe ACLs: %w", err)
 		}
 		cleanupErr := cleanupNetworkProbes(context.Background(), client, node, *siteDir, s, nil)
 		if cleanupErr != nil {
@@ -180,17 +176,9 @@ func runNetworkTest(args []string, out io.Writer) error {
 		progress.fail(err)
 		return err
 	}
-	if err := proxmox.EnsureScopedCredentialACL(ctx, proxmoxRootSSHRunner(s, *siteDir), s.BootstrapAddress, "root", credentials.APIUser, credentials.TokenID, "BoetticherProvisioner", node); err != nil {
-		progress.fail(err)
-		return fmt.Errorf("reconcile reserved network probe ACLs: %w", err)
-	}
 	if err := cleanupNetworkProbes(ctx, client, node, *siteDir, s, probes); err != nil {
 		progress.fail(err)
 		return err
-	}
-	if err := proxmox.EnsureScopedCredentialACL(ctx, proxmoxRootSSHRunner(s, *siteDir), s.BootstrapAddress, "root", credentials.APIUser, credentials.TokenID, "BoetticherProvisioner", node); err != nil {
-		progress.fail(err)
-		return fmt.Errorf("reconcile reserved network probe ACLs after cleanup: %w", err)
 	}
 	if err := ensureNetworkProbeArtifact(ctx, client, node, evidence.ArtifactPath, artifact); err != nil {
 		progress.fail(err)
