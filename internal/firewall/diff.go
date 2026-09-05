@@ -219,19 +219,6 @@ func chainKey(family, table, chain string) string { return family + "/" + table 
 
 func setKey(family, table, name string) string { return family + "/" + table + "/" + name }
 
-func expectedTables() []string {
-	return []string{tableKey("inet", FilterTable), tableKey("ip", NATTable)}
-}
-
-func expectedChains() []string {
-	return []string{
-		chainKey("inet", FilterTable, "input"),
-		chainKey("inet", FilterTable, "forward"),
-		chainKey("inet", FilterTable, "output"),
-		chainKey("ip", NATTable, "postrouting"),
-	}
-}
-
 func expectedRuleComments(plan Plan) ([]string, error) {
 	ruleset, err := RenderNFT(plan)
 	if err != nil {
