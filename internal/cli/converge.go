@@ -1063,6 +1063,12 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	for _, guest := range retainedGuests {
 		module := strings.TrimPrefix(guest.Owner, "boetticher/module/")
 		if err := proxmox.InactivateRetainedModule(ctx, rootRunner, s.BootstrapAddress, "root", guest.Kind, guest.VMID, module); err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "configuration file") && strings.Contains(strings.ToLower(err.Error()), "does not exist") {
+				// A retained declaration can outlive a guest that was never
+				// created. Proxmox's exact missing-config result proves there
+				// is no running service set to inactivate.
+				continue
+			}
 			return fmt.Errorf("HOLD: inactivate retained %s guest %s through Proxmox: %w", module, guest.Name, err)
 		}
 	}

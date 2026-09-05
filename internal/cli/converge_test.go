@@ -409,6 +409,17 @@ func TestTemporaryRootCleanupIgnoresAbsentPlannedGuest(t *testing.T) {
 	}
 }
 
+func TestRetainedGuestInactivationIgnoresAbsentGuest(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "inactivate retained %s guest %s through Proxmox") || !strings.Contains(text, "configuration file") || !strings.Contains(text, "does not exist") {
+		t.Fatal("retained guest inactivation does not handle an exact absent Proxmox guest")
+	}
+}
+
 func TestInterruptedDeploymentCleanupUsesPersistedTargets(t *testing.T) {
 	dir := t.TempDir()
 	publicKey := "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA boetticher-apply"
