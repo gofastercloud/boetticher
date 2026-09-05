@@ -297,22 +297,20 @@ func TestAirVPNRoleRunsBeforeBaseAndSelectedClients(t *testing.T) {
 	}
 }
 
-func TestAirVPNRoleInstallsItsCredentialDropInBeforeStartup(t *testing.T) {
+func TestAirVPNRoleRequiresControllerCredentialBeforeStartup(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "airvpn", "tasks", "main.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(contents)
-	installIndex := strings.Index(text, "Install the AirVPN credential drop-in before startup")
+	installIndex := strings.Index(text, "Require the controller-installed AirVPN credential and unit binding")
 	startIndex := strings.Index(text, "Enable and start the AirVPN transit service")
 	if installIndex < 0 || startIndex < 0 || installIndex > startIndex {
-		t.Fatal("AirVPN credential drop-in must be installed before the transit service starts")
+		t.Fatal("AirVPN controller credential check must precede the transit service startup")
 	}
 	for _, required := range []string{
-		"path: /etc/systemd/system/boetticher-airvpn.service.d",
-		"dest: /etc/systemd/system/boetticher-airvpn.service.d/boetticher-credentials.conf",
-		"content: \"{{ credential_dropins[inventory_hostname]['boetticher-airvpn.service'] }}\"",
-		"daemon_reload: true",
+		"/var/lib/boetticher/credentials/airvpn-wireguard-config.cred",
+		"/etc/systemd/system/boetticher-airvpn.service.d/boetticher-credentials.conf",
 		"retries: 12",
 		"delay: 5",
 		"until: airvpn_interface.rc == 0",
