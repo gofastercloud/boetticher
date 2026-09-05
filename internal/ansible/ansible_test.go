@@ -1966,6 +1966,8 @@ func TestFirstPartyRolesKeepRuntimeAndTrustBoundaries(t *testing.T) {
 				"--accept-dns=false",
 				"--advertise-routes=10.10.0.0/16",
 				"--snat-subnet-routes=true",
+				"enable_forwarding()",
+				"enable_forwarding\n",
 			},
 			forbidden: []string{"--advertise-exit-node=true", "privileged: true", "ansible.builtin.apt:", `regex_search('"BackendState"[[:space:]]*`},
 		},
