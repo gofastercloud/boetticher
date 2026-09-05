@@ -58,6 +58,9 @@ trap cleanup_scan_root EXIT HUP INT TERM
 artifact_filename() {
   name=$1
   version=1.0.0
+  if [ "$name" = boetticher-arr ]; then
+    version=1.0.1
+  fi
   if [ "$name" = boetticher-base ]; then
 		version=0.1.0
   fi

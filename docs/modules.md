@@ -47,6 +47,7 @@ network state unchanged.
 | `printer` | off | [OctoPrint](https://octoprint.org/) for one supported USB-connected printer. |
 | `tailnet-router` | off | A small [Tailscale](https://tailscale.com/) subnet router for selected lab networks. |
 | `airvpn` | off | An [AirVPN](https://airvpn.org/) WireGuard exit for a module that explicitly asks to use it. |
+| `arr` | off | AirVPN-routed Sonarr, Radarr, Lidarr, Prowlarr, and qBittorrent media automation in one dedicated-data-disk LXC. |
 
 You still own your own VMs and LXCs. Use Proxmox for those workloads; give them
 a NIC on `vmbr1`, choose a zone VLAN, and let DHCP take care of the ordinary

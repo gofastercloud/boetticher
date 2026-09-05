@@ -1,13 +1,13 @@
 [Unit]
-Description=Sonarr
+Description=Prowlarr
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=sonarr
+User=prowlarr
 Group=arr
-ExecStart=/opt/sonarr/Sonarr -nobrowser -data=/var/lib/arr/sonarr
+ExecStart=/opt/prowlarr/Prowlarr -nobrowser -data=/var/lib/arr/prowlarr
 UMask=0007
 Restart=on-failure
 RestartSec=5s
@@ -15,7 +15,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/arr/sonarr /var/lib/arr/downloads
+ReadWritePaths=/var/lib/arr/prowlarr
 
 [Install]
 WantedBy=multi-user.target
