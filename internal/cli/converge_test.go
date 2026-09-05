@@ -247,8 +247,8 @@ func TestEndpointClientTrustProjectionIncludesRootAndIssuingCAs(t *testing.T) {
 	if !strings.Contains(string(data), "runtimeVariables[\"client_crl_bundle_pem\"] = clientCRL + rootCRL") {
 		t.Fatal("Pulse nginx mTLS projection does not include the root CRL")
 	}
-	if !strings.Contains(string(data), "site.LoadAuthorityWithRootKey") {
-		t.Fatal("deploy does not explicitly load root key for root CRL generation")
+	if !strings.Contains(string(data), "site.LoadRootCRL") || strings.Contains(string(data), "site.LoadAuthorityWithRootKey") {
+		t.Fatal("deploy does not use a persisted public root CRL without decrypting the root key")
 	}
 }
 

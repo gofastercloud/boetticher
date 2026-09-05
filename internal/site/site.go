@@ -274,15 +274,34 @@ func RuntimeDir(s model.Site) string {
 	return filepath.Join(home, ".config", "boetticher", "runtime", s.SecretMetadata.InstallationID)
 }
 
+const rootAuthoritySecretsPath = "secrets/root-authority.sops.yaml"
+const rootCRLPath = "pki/root.crl.pem"
+
 func LoadAuthority(dir string, s model.Site, ageIdentityPath string) (pki.Authority, error) {
 	return loadAuthority(dir, s, ageIdentityPath, false)
 }
 
-// LoadAuthorityWithRootKey is reserved for the bounded deployment path that
-// must generate root-signed revocation material. Normal PKI operations keep
-// the cold root key out of memory by using LoadAuthority.
+// LoadAuthorityWithRootKey is reserved for explicit root-authority operations.
+// It keeps the root key out of the routine platform-secret document; callers
+// that need a separate decryption identity must enforce it at that operation.
 func LoadAuthorityWithRootKey(dir string, s model.Site, ageIdentityPath string) (pki.Authority, error) {
-	return loadAuthority(dir, s, ageIdentityPath, true)
+	authority, err := loadAuthority(dir, s, ageIdentityPath, false)
+	if err != nil {
+		return pki.Authority{}, err
+	}
+	values, err := LoadEncryptedDocument(dir, ageIdentityPath, rootAuthoritySecretsPath)
+	if err != nil {
+		return pki.Authority{}, err
+	}
+	encoded, ok := values["root_key_pem_b64"].(string)
+	if !ok || encoded == "" {
+		return pki.Authority{}, errors.New("encrypted root authority secrets missing root_key_pem_b64")
+	}
+	authority.RootKeyPEM, err = pki.Decode(encoded)
+	if err != nil {
+		return pki.Authority{}, err
+	}
+	return authority, nil
 }
 
 func loadAuthority(dir string, s model.Site, ageIdentityPath string, includeRootKey bool) (pki.Authority, error) {
@@ -311,13 +330,29 @@ func loadAuthority(dir string, s model.Site, ageIdentityPath string, includeRoot
 	}
 	authority := pki.Authority{RootCertPEM: rootCert, IssuingKeyPEM: issuingKey, IssuingCertPEM: issuingCert}
 	if includeRootKey {
-		rootKey, keyErr := get("root_key_pem_b64")
-		if keyErr != nil {
-			return pki.Authority{}, keyErr
-		}
-		authority.RootKeyPEM = rootKey
+		return LoadAuthorityWithRootKey(dir, s, ageIdentityPath)
 	}
 	return authority, nil
+}
+
+// LoadRootCRL loads and validates the public root CRL created during an
+// explicit root-authority operation. It intentionally has no secret input.
+func LoadRootCRL(dir string, authority pki.Authority, now time.Time) (string, error) {
+	path, err := safeSitePath(dir, rootCRLPath)
+	if err != nil {
+		return "", err
+	}
+	data, err := pathguard.ReadFileLimited(path, MaxEncryptedDocumentBytes)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", errors.New("root CRL is absent; this site requires clean root-authority initialization before deployment")
+		}
+		return "", fmt.Errorf("read root CRL: %w", err)
+	}
+	if err := pki.ValidateRootCRL(authority.RootCertPEM, string(data), now); err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 // StoreEncryptedDocument encrypts a secret document with the pinned in-process
@@ -432,7 +467,6 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 	document := map[string]string{
 		"installation_id":         s.SecretMetadata.InstallationID,
 		"bootstrap_secret":        secret,
-		"root_key_pem_b64":        pki.Encode(authority.RootKeyPEM),
 		"root_cert_pem_b64":       pki.Encode(authority.RootCertPEM),
 		"issuing_key_pem_b64":     pki.Encode(authority.IssuingKeyPEM),
 		"issuing_cert_pem_b64":    pki.Encode(authority.IssuingCertPEM),
@@ -441,7 +475,24 @@ func writeEncryptedSecrets(dir string, s model.Site, authority pki.Authority) er
 		"pulse_proxy_auth_secret": pulseProxyAuthSecret,
 		"step_ca_password":        stepCAPassword,
 	}
-	return StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), document)
+	if err := StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, filepath.Join("secrets", "boetticher.sops.yaml"), document); err != nil {
+		return err
+	}
+	if err := StoreEncryptedDocument(dir, s.SecretMetadata.AgeRecipient, rootAuthoritySecretsPath, map[string]string{"root_key_pem_b64": pki.Encode(authority.RootKeyPEM)}); err != nil {
+		return err
+	}
+	rootCRL, err := pki.GenerateRootCRL(authority, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("generate initial root CRL: %w", err)
+	}
+	if err := pki.ValidateRootCRL(authority.RootCertPEM, rootCRL, time.Now().UTC()); err != nil {
+		return fmt.Errorf("validate initial root CRL: %w", err)
+	}
+	path, err := safeSitePath(dir, rootCRLPath)
+	if err != nil {
+		return err
+	}
+	return atomicWrite(path, []byte(rootCRL), 0644)
 }
 
 // LoadPlatformSecret reads one named value from the encrypted platform
