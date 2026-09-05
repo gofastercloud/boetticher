@@ -2172,22 +2172,27 @@ func TestPiKioskUsesLocalCredentialFreeDashboard(t *testing.T) {
 	TestCompanionCleanupFollowsFunctionalCheck(t)
 }
 
-func TestKioskRoleUpdatesCredentialsAndIdentityOnlyOnDrift(t *testing.T) {
+func TestKioskRoleRequiresPrestreamedEncryptedCredentials(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "kiosk", "tasks", "credential.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(contents)
 	for _, required := range []string{
-		"not installed_credential.stat.exists",
-		"credential_revision.content | default('') | b64decode | trim",
-		"credential_value | hash('sha256')",
-		"Record the installed credential revision",
-		"path: /run",
-		"always:",
+		"separately streamed encrypted credential",
+		"installed_credential.stat.exists",
+		"installed_credential.stat.isreg",
+		"installed_credential.stat.pw_name == 'root'",
+		"installed_credential.stat.gr_name == 'root'",
+		"installed_credential.stat.mode == '0600'",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("kiosk role is missing idempotent update guard %q", required)
+		}
+	}
+	for _, forbidden := range []string{"credential_value", "systemd-creds", "ansible.builtin.tempfile", "ansible.builtin.copy"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("kiosk credential verification accepts plaintext transport %q", forbidden)
 		}
 	}
 	// Certificates are retired rather than reimported: the new kiosk has no

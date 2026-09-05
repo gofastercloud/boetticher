@@ -23,7 +23,7 @@ func TestRemoteDataKeepsUpstreamFreshness(t *testing.T) {
 		case "/api/state/summary":
 			_ = json.NewEncoder(w).Encode(map[string]any{"lastUpdate": observed})
 		case "/api/resources":
-			_ = json.NewEncoder(w).Encode(map[string]any{"resources": []map[string]any{{"id": "node:one", "name": "one", "type": "agent", "technology": "proxmox", "sources": []string{"proxmox"}, "status": "online", "lastSeen": observed}}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"resources": []map[string]any{{"id": "node:one", "name": "one", "type": "agent", "platformType": "proxmox", "status": "online", "lastSeen": observed}}})
 		default:
 			http.NotFound(w, r)
 		}
@@ -33,7 +33,7 @@ func TestRemoteDataKeepsUpstreamFreshness(t *testing.T) {
 	collector := Collector{Config: Config{PulseURL: server.URL}, State: state, HTTP: server.Client(), token: "read-only"}
 	collector.remote(context.Background())
 	snapshot := state.Snapshot()
-	if snapshot.Items[4].Status != Waiting || snapshot.Items[5].Status != Waiting || snapshot.Resources[0].Status != Waiting {
+	if snapshot.Items[4].Status != Failure || snapshot.Items[5].Status != Failure || snapshot.Resources[0].Status != Failure {
 		t.Fatal("fresh HTTP hid stale upstream data")
 	}
 	observed = time.Now().UTC()

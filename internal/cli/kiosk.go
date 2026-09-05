@@ -28,6 +28,7 @@ import (
 	"github.com/gofastercloud/boetticher/internal/pathguard"
 	"github.com/gofastercloud/boetticher/internal/pki"
 	"github.com/gofastercloud/boetticher/internal/proxmox"
+	"github.com/gofastercloud/boetticher/internal/secrets"
 	"github.com/gofastercloud/boetticher/internal/site"
 	"github.com/gofastercloud/boetticher/internal/sshconfig"
 	"github.com/gofastercloud/boetticher/internal/streamdeck"
@@ -35,6 +36,9 @@ import (
 
 const kioskClientName = "lab-display-01-kiosk"
 const companionStreamDeckIdentity = "companion-streamdeck"
+
+var companionReadCredential = secrets.CredentialSpec{Name: "pulse-token", Unit: "boetticher-companion.service", StorePath: "/var/lib/boetticher/credentials/companion-read.cred", RuntimeRef: "/run/credentials/boetticher-companion.service/pulse-token"}
+var companionAgentCredential = secrets.CredentialSpec{Name: "pulse-agent-token", Unit: "pulse-agent.service", StorePath: "/var/lib/boetticher/credentials/companion-agent.cred", RuntimeRef: "/run/credentials/pulse-agent.service/pulse-agent-token"}
 
 func runCompanion(args []string, out io.Writer) error {
 	if len(args) == 0 {
@@ -413,7 +417,6 @@ func runCompanionSetup(args []string, out io.Writer) error {
 		"kiosk_blinkt_enabled":             capabilities.Blinkt,
 		"companion_config":                 consoleConfig,
 		"companion_binary":                 statusBinary,
-		"companion_pulse_token":            pulseReadToken,
 		"companion_operator_user":          *user,
 		"kiosk_source_dir":                 filepath.Join(sourceRoot, "pi", "kiosk"),
 		"kiosk_pulse_url":                  pulseURL,
@@ -422,7 +425,6 @@ func runCompanionSetup(args []string, out io.Writer) error {
 		"kiosk_pulse_agent_version":        model.PulseAgentVersion,
 		"kiosk_pulse_agent_release_url":    model.PulseAgentARM64ReleaseURL,
 		"kiosk_pulse_agent_release_sha256": model.PulseAgentARM64ReleaseSHA256,
-		"kiosk_pulse_agent_token":          pulseAgentToken,
 		"streamdeck_binary":                streamDeckBinary,
 		"streamdeck_vendor_id":             streamdeck.DefaultVendorID,
 		"streamdeck_product_id":            streamdeck.DefaultProductID,
@@ -453,6 +455,9 @@ func runCompanionSetup(args []string, out io.Writer) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err := installCompanionCredentials(ctx, companionStatusSSHRunner(sshConfigPath), address, *user, pulseReadToken, pulseAgentToken, capabilities.PulseAgent); err != nil {
+		return err
+	}
 	if _, err := ansible.RunExternal(ctx, playbook, inventoryPath, variables, sshConfigPath, *user); err != nil {
 		return fmt.Errorf("configure Raspberry Pi companion: %w", err)
 	}
@@ -463,6 +468,44 @@ func runCompanionSetup(args []string, out io.Writer) error {
 	}
 	fmt.Fprintf(out, "Companion setup: PASS %s configured; capabilities display=%t streamdeck=%t pulse-agent=%t\n", address, capabilities.Display, capabilities.StreamDeck, capabilities.PulseAgent)
 	return nil
+}
+
+// installCompanionCredentials is deliberately separate from Ansible variables:
+// each token goes only through the host-key-pinned SSH stdin stream and is
+// encrypted by systemd-creds on the Pi before the playbook starts.
+func installCompanionCredentials(ctx context.Context, runner proxmox.SSHRunner, address, user, readToken, agentToken string, agentEnabled bool) error {
+	if _, err := runner.Run(ctx, address, user, companionPrivilegedCommand(user, "install -d -m 0700 -o root -g root /var/lib/boetticher/credentials")); err != nil {
+		return fmt.Errorf("prepare Companion encrypted credential store: %w", err)
+	}
+	privileged := companionCredentialRunner{runner: runner, privileged: user != "root"}
+	if err := secrets.InstallCredential(ctx, privileged, address, user, companionReadCredential, []byte(readToken)); err != nil {
+		return fmt.Errorf("install Companion read credential: %w", err)
+	}
+	if agentEnabled {
+		if err := secrets.InstallCredential(ctx, privileged, address, user, companionAgentCredential, []byte(agentToken)); err != nil {
+			return fmt.Errorf("install Companion report credential: %w", err)
+		}
+	}
+	return nil
+}
+
+type companionCredentialRunner struct {
+	runner     proxmox.SSHRunner
+	privileged bool
+}
+
+func (r companionCredentialRunner) RunWithStdin(ctx context.Context, address, user, command string, stdin io.Reader) ([]byte, error) {
+	if r.privileged {
+		command = "sudo -n " + command
+	}
+	return r.runner.RunWithStdin(ctx, address, user, command, stdin)
+}
+
+func companionPrivilegedCommand(user, command string) string {
+	if user == "root" {
+		return command
+	}
+	return "sudo -n " + command
 }
 
 func revokeAndRemoveCompanionCertificate(siteDir string, s model.Site, name string, out io.Writer) error {

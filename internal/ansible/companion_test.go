@@ -37,27 +37,14 @@ func TestAllCompanionTaskFilesParse(t *testing.T) {
 
 func TestCompanionNewCredentialBoundary(t *testing.T) {
 	credential := companionSource(t, "tasks/credential.yml")
-	for _, required := range []string{"not installed_credential.stat.exists", "credential_value | hash('sha256')", "path: /run", "always:", "state: absent", "mode: '0600'", "remote_src: true", "no_log: true"} {
+	for _, required := range []string{"separately streamed encrypted credential", "installed_credential.stat.exists", "installed_credential.stat.isreg", "installed_credential.stat.pw_name == 'root'", "installed_credential.stat.gr_name == 'root'", "installed_credential.stat.mode == '0600'"} {
 		if !strings.Contains(credential, required) {
 			t.Fatalf("credential safety requirement missing: %s", required)
 		}
 	}
-	var tasks []map[string]any
-	if err := yaml.Unmarshal([]byte(credential), &tasks); err != nil {
-		t.Fatal(err)
-	}
-	for _, task := range tasks {
-		block, ok := task["block"].([]any)
-		if !ok {
-			continue
-		}
-		for _, entry := range block {
-			m := entry.(map[string]any)
-			if m["ansible.builtin.copy"] != nil || m["ansible.builtin.command"] != nil {
-				if m["no_log"] != true {
-					t.Fatal("credential operation may log private material")
-				}
-			}
+	for _, forbidden := range []string{"credential_value", "systemd-creds", "ansible.builtin.tempfile", "ansible.builtin.copy"} {
+		if strings.Contains(credential, forbidden) {
+			t.Fatalf("credential verifier accepts plaintext transport: %s", forbidden)
 		}
 	}
 	status := companionSource(t, "templates/boetticher-companion.service.j2")

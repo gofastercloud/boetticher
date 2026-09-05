@@ -156,6 +156,10 @@ func (s *State) Snapshot() Snapshot {
 				out.Modules[i].Checks[j].Value = "No data"
 			}
 		}
+		out.Modules[i].Status = assertedStatus(out.Modules[i].Status)
+		for j := range out.Modules[i].Checks {
+			out.Modules[i].Checks[j].Status = assertedStatus(out.Modules[i].Checks[j].Status)
+		}
 	}
 	out.Resources = append([]Resource{}, s.data.Resources...)
 	for i := range out.Items {
@@ -164,6 +168,7 @@ func (s *State) Snapshot() Snapshot {
 			out.Items[i].Value = "No data"
 			out.Items[i].Reason = "No fresh observation; check the source connection"
 		}
+		out.Items[i].Status = assertedStatus(out.Items[i].Status)
 	}
 	for i := range out.Resources {
 		if !fresh(out.Resources[i].ObservedAt, now) {
@@ -171,6 +176,7 @@ func (s *State) Snapshot() Snapshot {
 			out.Resources[i].CPU = nil
 			out.Resources[i].Memory = nil
 		}
+		out.Resources[i].Status = assertedStatus(out.Resources[i].Status)
 	}
 	if out.Display || out.StreamDeck {
 		item := &out.Items[7]
@@ -196,6 +202,17 @@ func (s *State) Snapshot() Snapshot {
 		}
 	}
 	return out
+}
+
+// assertedStatus converts incomplete observations into the only two asserted
+// operator outcomes. State retains Waiting internally so the renderer can
+// preserve its precise reason, but no status command or display reports an
+// indeterminate check as passing.
+func assertedStatus(status string) string {
+	if status == Waiting {
+		return Failure
+	}
+	return status
 }
 
 // Action accepts only presentation changes; there is no command execution path.

@@ -10,7 +10,6 @@
       - ansible_python.executable == '/usr/bin/python3'
       - companion_config is defined
       - companion_binary | default('') | length > 0
-      - companion_pulse_token | default('') | length > 0
       - kiosk_root_ca_pem | default('') | length > 0
     fail_msg: "Companion requires Debian 13 ARM64, systemd, and the signed status executable"
   no_log: true
@@ -18,13 +17,10 @@
 - name: Configure the Companion baseline
   ansible.builtin.include_tasks: baseline.yml
 
-- name: Install the Companion read credential
+- name: Require the separately streamed Companion read credential
   ansible.builtin.include_tasks: credential.yml
   vars:
-    credential_name: pulse-token
     credential_file: companion-read
-    credential_value: "{{ companion_pulse_token }}"
-    credential_service: boetticher-companion
 
 - name: Configure the shared local status service
   ansible.builtin.include_tasks: status.yml

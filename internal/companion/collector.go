@@ -251,16 +251,17 @@ func (c *Collector) get(ctx context.Context, path string, out any) error {
 }
 
 type pulseResource struct {
-	ID         string                     `json:"id"`
-	Name       string                     `json:"name"`
-	Type       string                     `json:"type"`
-	Technology string                     `json:"technology"`
-	Status     string                     `json:"status"`
-	Source     string                     `json:"source"`
-	Sources    []string                   `json:"sources"`
-	LastSeen   time.Time                  `json:"lastSeen"`
-	Metrics    map[string]json.RawMessage `json:"metrics"`
-	Agent      *struct {
+	ID           string                     `json:"id"`
+	Name         string                     `json:"name"`
+	Type         string                     `json:"type"`
+	Technology   string                     `json:"technology"`
+	PlatformType string                     `json:"platformType"`
+	Status       string                     `json:"status"`
+	Source       string                     `json:"source"`
+	Sources      []string                   `json:"sources"`
+	LastSeen     time.Time                  `json:"lastSeen"`
+	Metrics      map[string]json.RawMessage `json:"metrics"`
+	Agent        *struct {
 		AgentID      string    `json:"agentId"`
 		Hostname     string    `json:"hostname"`
 		LastReportAt time.Time `json:"lastReportAt"`
@@ -370,13 +371,13 @@ func (c *Collector) remote(ctx context.Context) {
 	nodes := []pulseResource{}
 	agents := []pulseResource{}
 	for _, r := range all {
-		if source(r, "proxmox") || source(r, "pve") {
+		if proxmoxResource(r) {
 			at := r.LastSeen
 			if at.IsZero() || summary.LastUpdate.Before(at) {
 				at = summary.LastUpdate
 			}
 			resources = append(resources, Resource{ID: r.ID, Name: r.Name, Type: r.Type, Status: normalizedStatus(r.Status), CPU: percent(r.Metrics["cpu"]), Memory: percent(r.Metrics["memory"]), ObservedAt: at})
-			if r.Type == "node" || r.Type == "host" || r.Type == "pve" || r.Type == "agent" && r.Technology == "proxmox" {
+			if r.Type == "node" || r.Type == "host" || r.Type == "pve" || r.Type == "agent" && (r.Technology == "proxmox" || r.PlatformType == "proxmox") {
 				nodes = append(nodes, r)
 			}
 		}
@@ -417,6 +418,10 @@ func (c *Collector) remote(ctx context.Context) {
 		}
 		c.State.Update(agent)
 	}
+}
+
+func proxmoxResource(r pulseResource) bool {
+	return source(r, "proxmox") || source(r, "pve") || r.Type == "agent" && (r.Technology == "proxmox" || r.PlatformType == "proxmox")
 }
 
 // Query the configured DNS server directly. net.Resolver.LookupHost can
