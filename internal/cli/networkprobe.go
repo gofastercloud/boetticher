@@ -222,9 +222,10 @@ func runNetworkTest(args []string, out io.Writer) error {
 	progress.start("Create and start temporary probes")
 	created := make([]networktest.Probe, 0, len(probes))
 	var runErr error
+	rootRunner := proxmoxRootSSHRunner(s, *siteDir)
 	for index := range probes {
 		probe := &probes[index]
-		if err := createNetworkProbe(ctx, client, node, storagePlan.GuestStorage, artifact, s, *probe, runID); err != nil {
+		if err := createNetworkProbe(ctx, client, rootRunner, credentials, node, storagePlan.GuestStorage, artifact, s, *probe, runID); err != nil {
 			report.Results = append(report.Results, networktest.Result{Name: "probe/" + probe.Zone, Status: "HOLD", Detail: err.Error(), Started: time.Now().UTC().Format(time.RFC3339), Finished: time.Now().UTC().Format(time.RFC3339)})
 			runErr = err
 			break
@@ -344,7 +345,7 @@ func ensureNetworkProbeArtifact(ctx context.Context, client *proxmox.Client, nod
 	return nil
 }
 
-func createNetworkProbe(ctx context.Context, client *proxmox.Client, node, guestStorage string, artifact model.Artifact, s model.Site, probe networktest.Probe, runID string) error {
+func createNetworkProbe(ctx context.Context, client *proxmox.Client, rootRunner proxmox.SSHRunner, credentials site.ProxmoxCredentials, node, guestStorage string, artifact model.Artifact, s model.Site, probe networktest.Probe, runID string) error {
 	if err := networktest.ValidateProbeAddress(probe); err != nil {
 		return err
 	}
@@ -357,7 +358,15 @@ func createNetworkProbe(ctx context.Context, client *proxmox.Client, node, guest
 		"net0": fmt.Sprintf("name=eth0,bridge=vmbr1,tag=%d,firewall=1,hwaddr=%s,ip=%s", probe.VLAN, probe.MAC, probeAddressMode(probe)),
 	})
 	if err := client.CreateLXC(ctx, node, probe.VMID, params); err != nil {
-		return fmt.Errorf("create network probe %s: %w", probe.Zone, err)
+		if !proxmoxPermissionDenied(err) {
+			return fmt.Errorf("create network probe %s: %w", probe.Zone, err)
+		}
+		if err := createNetworkProbeAsRoot(ctx, client, rootRunner, node, params, s.BootstrapAddress); err != nil {
+			return fmt.Errorf("create network probe %s through root recovery: %w", probe.Zone, err)
+		}
+		if err := proxmox.EnsureScopedCredentialACL(ctx, rootRunner, s.BootstrapAddress, "root", credentials.APIUser, credentials.TokenID, "BoetticherProvisioner", node); err != nil {
+			return fmt.Errorf("restore network probe ACL after root create: %w", err)
+		}
 	}
 	kind, current, err := client.GuestConfig(ctx, node, probe.VMID)
 	if err != nil || kind != proxmox.KindLXC {
@@ -367,6 +376,30 @@ func createNetworkProbe(ctx context.Context, client *proxmox.Client, node, guest
 		return fmt.Errorf("created network probe %s has the wrong hostname", probe.Zone)
 	}
 	return nil
+}
+
+func createNetworkProbeAsRoot(ctx context.Context, client *proxmox.Client, runner proxmox.SSHRunner, node string, params url.Values, address string) error {
+	args := []string{"/usr/sbin/pvesh", "create", "/nodes/" + node + "/lxc"}
+	for _, key := range []string{"vmid", "hostname", "description", "ostemplate", "memory", "cores", "unprivileged", "onboot", "features", "rootfs", "swap", "net0"} {
+		for _, value := range params[key] {
+			args = append(args, "--"+key, value)
+		}
+	}
+	args = append(args, "--output-format", "json")
+	output, err := runner.FreshConnection().RunArgs(ctx, address, "root", args)
+	if err != nil {
+		return err
+	}
+	var response struct {
+		Data string `json:"data"`
+	}
+	if err := json.Unmarshal(output, &response); err != nil {
+		return fmt.Errorf("decode root probe creation task: %w", err)
+	}
+	if response.Data == "" {
+		return errors.New("root probe creation returned no task")
+	}
+	return client.WaitTask(ctx, node, response.Data)
 }
 
 func startNetworkProbe(ctx context.Context, client *proxmox.Client, node, siteDir string, s model.Site, probe *networktest.Probe, artifactDigest, runID string) error {

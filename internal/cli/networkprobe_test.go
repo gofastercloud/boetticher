@@ -106,6 +106,7 @@ func TestNetworkTestUsesImportedArtifactAndRetainedAirVPNPolicy(t *testing.T) {
 		"prepareAirVPNProfile(context.Background(), *siteDir, s, *ageIdentity, true, false)",
 		"firewall.PlanFromSiteWithAirVPN(s, airvpnProfile.Metadata)",
 		"proxmox.EnsureScopedCredentialACL",
+		"createNetworkProbeAsRoot",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("network test is missing qualification path %q", required)
