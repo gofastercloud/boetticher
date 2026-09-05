@@ -105,6 +105,7 @@ func TestNetworkTestUsesImportedArtifactAndRetainedAirVPNPolicy(t *testing.T) {
 		"artifacts.ResolveImportedArtifact(*siteDir, wantedArtifact)",
 		"prepareAirVPNProfile(context.Background(), *siteDir, s, *ageIdentity, true, false)",
 		"firewall.PlanFromSiteWithAirVPN(s, airvpnProfile.Metadata)",
+		"proxmox.EnsureScopedCredentialACL",
 	} {
 		if !strings.Contains(text, required) {
 			t.Fatalf("network test is missing qualification path %q", required)
@@ -164,6 +165,17 @@ func TestProxmoxPermissionDeniedOnlyMatchesForbidden(t *testing.T) {
 	for _, status := range []int{404, 500, 503} {
 		if proxmoxPermissionDenied(&proxmox.APIError{StatusCode: status}) {
 			t.Fatalf("HTTP %d Proxmox error was treated as permission denied", status)
+		}
+	}
+}
+
+func TestTransientLXCUnmountErrorIsNarrowlyRecognized(t *testing.T) {
+	if !transientLXCUnmountError(errors.New("Proxmox task failed: lvremove vm-910-disk-0 error: filesystem in use")) {
+		t.Fatal("filesystem-in-use LV failure was not recognized as transient")
+	}
+	for _, message := range []string{"lvremove failed", "filesystem in use", "permission denied"} {
+		if transientLXCUnmountError(errors.New(message)) {
+			t.Fatalf("unrelated destroy error %q was treated as transient", message)
 		}
 	}
 }

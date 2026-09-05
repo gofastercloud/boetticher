@@ -359,6 +359,23 @@ func TestDestroyLXCWaitsForAsynchronousDeletion(t *testing.T) {
 	}
 }
 
+func TestStartLXCWaitsForAsynchronousStart(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) *http.Response {
+		if r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/910/status/start" {
+			return response([]byte(`{"data":"UPID:pve:start-lxc"}`))
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:start-lxc/status" {
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		}
+		t.Fatalf("unexpected LXC start request: %s %s", r.Method, r.URL.Path)
+		return nil
+	})
+	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	if err := client.StartLXC(context.Background(), "node", 910); err != nil {
+		t.Fatalf("StartLXC() did not wait for the start task: %v", err)
+	}
+}
+
 func TestDestroyQEMUWaitsForAsynchronousDeletion(t *testing.T) {
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		if r.Method == http.MethodDelete && r.URL.Path == "/api2/json/nodes/node/qemu/910" {

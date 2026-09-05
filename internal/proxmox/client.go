@@ -570,7 +570,14 @@ func (c *Client) destroyLXCForReplacement(ctx context.Context, node string, vmid
 }
 
 func (c *Client) StartLXC(ctx context.Context, node string, vmid int) error {
-	return c.Post(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "status", "start"), nil, nil)
+	var upid string
+	if err := c.Post(ctx, path.Join("/nodes", node, "lxc", strconv.Itoa(vmid), "status", "start"), nil, &upid); err != nil {
+		return err
+	}
+	if upid != "" {
+		return c.WaitTask(ctx, node, upid)
+	}
+	return nil
 }
 
 func (c *Client) EnsureLXCRunning(ctx context.Context, node string, vmid int) error {
