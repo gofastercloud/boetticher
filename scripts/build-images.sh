@@ -632,6 +632,7 @@ build_airvpn() {
   printf '%s\n' 'boetticher build stage: airvpn'
   rootfs=$(prepare_rootfs boetticher-airvpn)
   install_packages "$rootfs" wireguard-tools wireguard-go nftables iproute2
+  install -d -m 0700 "$rootfs/run/boetticher"
   install -D -m 0644 images/airvpn/runtime/boetticher-airvpn.service "$rootfs/etc/systemd/system/boetticher-airvpn.service"
   install -D -m 0755 images/airvpn/runtime/airvpn-prepare "$rootfs/usr/lib/boetticher/airvpn-prepare"
   install -D -m 0755 images/airvpn/runtime/airvpn-routes-up "$rootfs/usr/lib/boetticher/airvpn-routes-up"
