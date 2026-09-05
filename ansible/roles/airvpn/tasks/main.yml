@@ -19,7 +19,7 @@
     argv: [sh, -c, "test -s /var/lib/boetticher/credentials/airvpn-wireguard-config.cred && test -s /etc/systemd/system/boetticher-airvpn.service.d/boetticher-credentials.conf"]
   changed_when: false
 
-- name: Keep AirVPN forwarding disabled until the tunnel is ready
+- name: Persist the AirVPN fail-closed forwarding default
   ansible.builtin.copy:
     content: |
       net.ipv4.ip_forward=0
@@ -29,11 +29,6 @@
     owner: root
     group: root
     mode: '0644'
-
-- name: Apply the AirVPN fail-closed forwarding default
-  ansible.builtin.command:
-    argv: [sysctl, -w, net.ipv4.ip_forward=0, net.ipv6.conf.all.forwarding=0, net.ipv6.conf.default.forwarding=0]
-  changed_when: false
 
 - name: Install AirVPN forwarding lifecycle helpers
   ansible.builtin.copy:
@@ -91,17 +86,20 @@
     owner: root
     group: root
     mode: '0600'
+  register: airvpn_policy_install
+  notify: reload AirVPN firewall policy
 
-- name: Apply the AirVPN guest kill switch before starting WireGuard
+- name: Disable AirVPN forwarding before a changed policy is activated
   ansible.builtin.command:
-    argv: [nft, -f, /etc/nftables.d/airvpn.nft]
-  changed_when: true
+    argv: [sysctl, -w, net.ipv4.ip_forward=0, net.ipv6.conf.all.forwarding=0, net.ipv6.conf.default.forwarding=0]
+  changed_when: false
+  when: airvpn_policy_install.changed
 
-- name: Enable the persistent AirVPN kill switch before forwarding
+- name: Enable the persistent AirVPN kill switch
   ansible.builtin.systemd_service:
     name: boetticher-airvpn-firewall.service
     enabled: true
-    state: restarted
+    state: started
     daemon_reload: true
 
 - name: Configure AirVPN split DNS without public fallback
@@ -111,12 +109,16 @@
     owner: root
     group: root
     mode: '0644'
+  notify: restart AirVPN dnsmasq
 
 - name: Start the module-specific AirVPN DNS service
   ansible.builtin.systemd_service:
     name: dnsmasq
     enabled: true
-    state: restarted
+    state: started
+
+- name: Apply changed AirVPN policy and DNS before tunnel readiness
+  ansible.builtin.meta: flush_handlers
 
 - name: Pin the controller-validated provider endpoint without bootstrap DNS
   ansible.builtin.lineinfile:

@@ -289,8 +289,11 @@ func TestAirVPNRoleRunsBeforeBaseAndSelectedClients(t *testing.T) {
 	if baseIndex < 0 || airVPNIndex < 0 || clientIndex < 0 || airVPNIndex > baseIndex || baseIndex > clientIndex {
 		t.Fatal("AirVPN role must run before base logging setup and selected-client policy")
 	}
-	if !strings.Contains(text[airVPNIndex:], "boetticher_deploy_phase | default('full') in ['full', 'bootstrap', 'services']") {
-		t.Fatal("AirVPN role must run during the services phase after credentials are installed")
+	if !strings.Contains(text[airVPNIndex:], "boetticher_deploy_phase | default('full') in ['full', 'bootstrap']") {
+		t.Fatal("AirVPN role must run only in the early full/bootstrap foundation pass")
+	}
+	if strings.Contains(text[airVPNIndex:], "boetticher_deploy_phase | default('full') in ['full', 'bootstrap', 'services']") {
+		t.Fatal("AirVPN role must not run again during the services phase")
 	}
 	if strings.Count(text, "    - role: airvpn\n") != 1 || !strings.Contains(text[:airVPNIndex], "hosts: airvpn") {
 		t.Fatal("AirVPN role must run exactly once in the early AirVPN host play")

@@ -12,6 +12,7 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStartPre=/usr/sbin/sysctl -w net.ipv4.ip_forward=0
 ExecStart=/usr/sbin/nft -f /etc/nftables.d/airvpn.nft
+ExecReload=/usr/sbin/nft -f /etc/nftables.d/airvpn.nft
 ExecStop=/usr/sbin/sysctl -w net.ipv4.ip_forward=0
 
 [Install]

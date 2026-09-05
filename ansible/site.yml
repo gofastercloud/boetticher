@@ -17,7 +17,7 @@
   gather_facts: false
   roles:
     - role: airvpn
-      when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap', 'services']
+      when: boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
 
 - name: Configure managed appliance runtime state
   hosts: managed
