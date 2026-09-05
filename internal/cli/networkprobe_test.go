@@ -66,6 +66,17 @@ func TestPolicyAllowsHonorsSourceAndDestinationCIDRs(t *testing.T) {
 		t.Fatal("non-matching source CIDR was allowed")
 	}
 }
+
+func TestPlatformEndpointProbeUsesIndependentBaseline(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "networkprobe.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "networktest.ExpectedPlatformAccess(source.Zone, component.Zone, \"tcp\", port)") {
+		t.Fatal("platform endpoint probes are not using the independent zone baseline")
+	}
+}
 func TestPolicyAllowsBuiltInHTTPSForDynamicTrustedProbeAddress(t *testing.T) {
 	plan, err := firewall.PlanFromSite(model.NewDefaultSite("installation", "age1example"))
 	if err != nil {

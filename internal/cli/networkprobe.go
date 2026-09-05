@@ -510,7 +510,7 @@ func runNetworkProbeCases(ctx context.Context, siteDir string, s model.Site, pol
 		if endpoint.Port() != "" {
 			port, _ = strconv.Atoi(endpoint.Port())
 		}
-		allowed := policyAllows(policy, source.Zone, component.Zone, "tcp", port, source.Address, component.Address)
+		allowed := networktest.ExpectedPlatformAccess(source.Zone, component.Zone, "tcp", port)
 		add("tcp/"+source.Zone+"/"+component.Name, "tcp", component.Address, port, allowed, map[string]any{"version": 1, "kind": "tcp", "target": component.Address, "port": port})
 		add("nmap/"+source.Zone+"/"+component.Name, "nmap", component.Address, port, allowed, map[string]any{"version": 1, "kind": "nmap", "target": component.Address, "port": port})
 		if component.MTLS && allowed {
