@@ -43,14 +43,7 @@ var (
 // explicit operator setting remains authoritative.
 const defaultAnsibleForks = "1"
 
-const (
-	// The converge orchestrator establishes the network foundation before its
-	// all-host bootstrap pass, and the services pass follows it. Both passes
-	// can progress independent guests without waiting at every task barrier.
-	// Full and health remain linear to preserve ordered limited gates.
-	defaultAnsibleStrategy  = "linear"
-	parallelAnsibleStrategy = "free"
-)
+const defaultAnsibleStrategy = "linear"
 
 const (
 	PhaseFull      = "full"
@@ -700,13 +693,10 @@ func ansibleEnvironment(playbook, timingPath, phase string) []string {
 	environment = setEnvironmentValue(environment, "ANSIBLE_CONFIG", "/dev/null.cfg")
 	environment = setEnvironmentValue(environment, "ANSIBLE_FORKS", defaultAnsibleForks)
 	environment = setEnvironmentValue(environment, "PYTHONNOUSERSITE", "1")
+	// Keep the strategy deterministic and linear for every deploy phase. The
+	// bastion-routed targets deliberately avoid SSH multiplexing, so allowing
+	// free cross-host progression can saturate the small transport boundary.
 	strategy := defaultAnsibleStrategy
-	if phase == PhaseBootstrap || phase == PhaseServices {
-		strategy = parallelAnsibleStrategy
-	}
-	// Keep the strategy deterministic for every deploy phase. In particular,
-	// an ambient ANSIBLE_STRATEGY=free must not weaken ordering in the network
-	// foundation or health phases.
 	environment = setEnvironmentValue(environment, "ANSIBLE_STRATEGY", strategy)
 	environment = setEnvironmentValue(environment, "ANSIBLE_HOST_KEY_CHECKING", "True")
 	environment = setEnvironmentValue(environment, "ANSIBLE_SSH_PIPELINING", "True")

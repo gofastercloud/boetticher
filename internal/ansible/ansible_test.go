@@ -609,8 +609,8 @@ func TestAnsibleStrategyAllowsParallelConvergenceOnlyAfterFoundation(t *testing.
 		want  string
 	}{
 		{phase: PhaseFull, want: defaultAnsibleStrategy},
-		{phase: PhaseBootstrap, want: parallelAnsibleStrategy},
-		{phase: PhaseServices, want: parallelAnsibleStrategy},
+		{phase: PhaseBootstrap, want: defaultAnsibleStrategy},
+		{phase: PhaseServices, want: defaultAnsibleStrategy},
 		{phase: PhaseHealth, want: defaultAnsibleStrategy},
 	} {
 		environment := ansibleEnvironment("ansible/site.yml", "", test.phase)
