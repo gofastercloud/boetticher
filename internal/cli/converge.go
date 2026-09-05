@@ -532,6 +532,10 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	rootRunner.ConfigFile = ""
 	rootRunner.HostAlias = ""
 	rootRunner.HostKeyAlias = model.LogicalProxmoxIdentity
+	allowedDestinations := jumpDestinations(s)
+	if err := proxmox.ConfigureIdentities(ctx, rootRunner, s.BootstrapAddress, "root", durableOperatorPublicKey, allowedDestinations); err != nil {
+		return fmt.Errorf("refresh Proxmox bastion allow-list for desired modules: %w", err)
+	}
 	if err := proxmoxClient.SetSnippetRunner(rootRunner, s.BootstrapAddress, "root"); err != nil {
 		return fmt.Errorf("bind temporary Apply authority to Proxmox host operations: %w", err)
 	}
