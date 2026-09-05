@@ -19,7 +19,6 @@
   ansible.builtin.assert:
     that: credential_dropins[inventory_hostname]['boetticher-airvpn.service'] is defined
     fail_msg: "AirVPN requires the encrypted WireGuard profile credential binding"
-  no_log: true
 
 - name: Create the AirVPN credential drop-in directory before startup
   ansible.builtin.file:
