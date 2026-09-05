@@ -1165,7 +1165,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			return clientErr
 		}
 		if aiopsEnabled && (*onlyModule == "" || *onlyModule == "aiops") {
-			clientCertificate, issueErr := pki.IssueClient(authority, "boetticher-reconciler", s.Network.Domain, time.Now().UTC())
+			clientCertificate, issueErr := pki.IssueClient(authority, "aiops-router-client", s.Network.Domain, time.Now().UTC())
 			if issueErr != nil {
 				return fmt.Errorf("issue runtime AIOps canary certificate: %w", issueErr)
 			}
