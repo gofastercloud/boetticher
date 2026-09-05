@@ -367,7 +367,7 @@ func createNetworkProbe(ctx context.Context, client *proxmox.Client, rootRunner 
 }
 
 func createNetworkProbeAsRoot(ctx context.Context, client *proxmox.Client, runner proxmox.SSHRunner, node string, params url.Values, address string) error {
-	args := []string{"/usr/sbin/pvesh", "create", "/nodes/" + node + "/lxc"}
+	args := []string{"/usr/bin/pvesh", "create", "/nodes/" + node + "/lxc"}
 	for _, key := range []string{"vmid", "hostname", "description", "ostemplate", "memory", "cores", "unprivileged", "onboot", "features", "rootfs", "swap", "net0"} {
 		for _, value := range params[key] {
 			args = append(args, "--"+key, value)
