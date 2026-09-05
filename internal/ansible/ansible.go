@@ -38,10 +38,10 @@ var (
 )
 
 // The appliance inventory is small, but the network and services passes touch
-// several independent guests. Two forks keep concurrent SSH handshakes bounded
+// several independent guests. One fork keeps concurrent SSH handshakes bounded
 // while the temporary deployment key deliberately disables multiplexing. An
 // explicit operator setting remains authoritative.
-const defaultAnsibleForks = "2"
+const defaultAnsibleForks = "1"
 
 const (
 	// The converge orchestrator establishes the network foundation before its
