@@ -47,7 +47,9 @@
         - inventory_hostname in groups.get('tailnet-router', [])
         - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
     - role: airvpn-client
-      when: inventory_hostname in (airvpn_selected_guests | default([]))
+      when:
+        - inventory_hostname in (airvpn_selected_guests | default([]))
+        - boetticher_deploy_phase | default('full') in ['full', 'bootstrap']
     - role: bifrost
       when: inventory_hostname in groups.get('bifrost', [])
     - role: printer

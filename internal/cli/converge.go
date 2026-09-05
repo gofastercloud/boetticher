@@ -1404,7 +1404,7 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 			}
 			agentVariables = append(agentVariables, '\n')
 			for _, target := range ansible.MonitoringAgentTargets(s) {
-				if err := runTrackedAnsible(ctx, ansiblePlaybook, inventoryPath, agentVariables, target, report, temporaryPrivateKey); err != nil {
+				if err := runTrackedAnsiblePhase(ctx, ansiblePlaybook, inventoryPath, agentVariables, target, ansible.PhaseServices, report, temporaryPrivateKey); err != nil {
 					return fmt.Errorf("install Pulse agent on %s: %w", target, err)
 				}
 			}

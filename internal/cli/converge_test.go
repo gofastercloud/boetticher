@@ -649,6 +649,24 @@ func TestDeploymentTimeoutBoundsUndeadlinedCaller(t *testing.T) {
 	}
 }
 
+func TestPulseAgentPassUsesServicesPhaseWithoutNetworkRoleReplay(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	marker := "install Pulse agent on %s"
+	index := strings.Index(text, marker)
+	if index < 0 {
+		t.Fatal("Pulse agent Ansible pass is missing")
+	}
+	prefix := text[:index]
+	call := strings.LastIndex(prefix, "runTrackedAnsiblePhase(")
+	if call < 0 || !strings.Contains(text[call:index], "ansible.PhaseServices") {
+		t.Fatal("Pulse agent pass can replay bootstrap-only network roles")
+	}
+}
+
 func TestDeployAcquiresTemporaryRootOnlyAfterExactPlanAcceptance(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
 	if err != nil {
