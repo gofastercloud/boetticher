@@ -2109,6 +2109,11 @@ func replaceLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 	if err := client.destroyLXCForReplacement(ctx, plan.Node, guest.VMID); err != nil {
 		return nil, fmt.Errorf("destroy %s rootfs for appliance replacement: %w", guest.Name, err)
 	}
+	if client.RestoreReplacementACL != nil {
+		if err := client.RestoreReplacementACL(ctx, guest.VMID); err != nil {
+			return nil, fmt.Errorf("restore %s replacement ACL: %w", guest.Name, err)
+		}
+	}
 	return retained, nil
 }
 

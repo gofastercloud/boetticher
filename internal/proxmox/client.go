@@ -26,12 +26,15 @@ import (
 )
 
 type Client struct {
-	BaseURL       string
-	Token         string
-	HTTP          *http.Client
-	snippetRunner StdinCommandRunner
-	snippetAddr   string
-	snippetUser   string
+	// RestoreReplacementACL restores the accepted provisioning scope after
+	// Proxmox deletes a guest and removes its VMID-specific ACLs.
+	RestoreReplacementACL func(context.Context, int) error
+	BaseURL               string
+	Token                 string
+	HTTP                  *http.Client
+	snippetRunner         StdinCommandRunner
+	snippetAddr           string
+	snippetUser           string
 }
 
 type Config struct {

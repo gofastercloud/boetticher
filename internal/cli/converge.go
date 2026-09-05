@@ -549,6 +549,14 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	if err := proxmox.EnsureScopedCredentialACL(ctx, rootRunner, s.BootstrapAddress, "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", node); err != nil {
 		return fmt.Errorf("repair scoped Proxmox ACLs before module reconciliation: %w", err)
 	}
+	proxmoxClient.RestoreReplacementACL = func(repairCtx context.Context, vmid int) error {
+		for _, guest := range proxmoxPlan.Guests {
+			if guest.VMID == vmid && guest.Kind == proxmox.KindLXC && strings.HasPrefix(guest.Owner, "boetticher/module/") {
+				return proxmox.EnsureScopedCredentialACL(repairCtx, rootRunner, s.BootstrapAddress, "root", "labadmin@pve", "boetticher", "BoetticherProvisioner", node)
+			}
+		}
+		return fmt.Errorf("replacement ACL target %d is outside the accepted plan", vmid)
+	}
 	if err := proxmoxClient.SetSnippetRunner(rootRunner, s.BootstrapAddress, "root"); err != nil {
 		return fmt.Errorf("bind temporary Apply authority to Proxmox host operations: %w", err)
 	}

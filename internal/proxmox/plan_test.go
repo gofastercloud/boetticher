@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1662,6 +1663,8 @@ func TestExistingLXCReconcilesPlatformNameservers(t *testing.T) {
 
 func TestReplaceLXCDetachesPersistentVolumesBeforeDestroy(t *testing.T) {
 	var detached []string
+	destroyed := false
+	repaired := false
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/110/config":
@@ -1680,6 +1683,7 @@ func TestReplaceLXCDetachesPersistentVolumesBeforeDestroy(t *testing.T) {
 			if r.URL.Query().Get("purge") != "0" || r.URL.Query().Get("destroy-unreferenced-disks") != "0" {
 				t.Fatalf("replacement destroy query = %v", r.URL.Query())
 			}
+			destroyed = true
 			return response([]byte(`{"data":null}`))
 		default:
 			t.Fatalf("unexpected LXC replacement request: %s %s", r.Method, r.URL.Path)
@@ -1687,6 +1691,13 @@ func TestReplaceLXCDetachesPersistentVolumesBeforeDestroy(t *testing.T) {
 		}
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	client.RestoreReplacementACL = func(_ context.Context, vmid int) error {
+		if !destroyed || vmid != 110 {
+			t.Fatalf("ACL repair must follow deletion of the exact guest: destroyed=%v vmid=%d", destroyed, vmid)
+		}
+		repaired = true
+		return nil
+	}
 	guest := GuestPlan{VMID: 110, Name: "test-dns", Hostname: "test-dns", Volumes: []model.PersistentVolumeDeclaration{
 		{Name: "powerdns-database", Guest: "lab-dns-01", Module: "dns", Storage: modelStorageIDForTest, SizeGiB: 8, MountPath: "/var/lib/powerdns", Backup: true},
 		{Name: "ssh-identity", Guest: "lab-dns-01", Module: "dns", Storage: modelStorageIDForTest, SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/ssh", Backup: true},
@@ -1700,6 +1711,13 @@ func TestReplaceLXCDetachesPersistentVolumesBeforeDestroy(t *testing.T) {
 	}
 	if !reflect.DeepEqual(detached, []string{"mp0", "mp1"}) {
 		t.Fatalf("detached mount points = %#v, want [mp0 mp1]", detached)
+	}
+	if !repaired {
+		t.Fatal("replacement did not restore the guest ACL before returning for recreation")
+	}
+	client.RestoreReplacementACL = func(context.Context, int) error { return errors.New("ACL repair denied") }
+	if _, err := replaceLXC(context.Background(), client, Plan{Node: "node"}, guest, current); err == nil || !strings.Contains(err.Error(), "ACL repair denied") {
+		t.Fatalf("replacement continued after ACL repair failed: %v", err)
 	}
 }
 
