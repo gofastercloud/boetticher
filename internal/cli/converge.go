@@ -117,6 +117,8 @@ func validateDeployRecoveryOptions(gatewayMode string, replaceFirewall, recreate
 }
 
 func runDeployWithContext(ctx context.Context, args []string, out io.Writer) (resultErr error) {
+	ctx, cancel := withDeploymentTimeout(ctx)
+	defer cancel()
 	report := newDeploymentReport(out)
 	ctx = telemetry.WithObserver(ctx, report)
 	lockSiteDir, dryRun := deploymentLockInputs(args)
@@ -1443,7 +1445,17 @@ func runDeployOperation(ctx context.Context, args []string, out io.Writer, repor
 	return nil
 }
 
-const deploymentRootTimeout = 3 * time.Minute
+const (
+	deploymentRootTimeout = 3 * time.Minute
+	deploymentTimeout     = 30 * time.Minute
+)
+
+func withDeploymentTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, deploymentTimeout)
+}
 
 // runScopedModuleDeploy deliberately starts from a verified full deployment
 // baseline. It reuses that baseline's rendered inventory and variables, then

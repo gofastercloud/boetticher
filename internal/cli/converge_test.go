@@ -621,6 +621,34 @@ func TestDeployReconcilesLiveBastionPolicyFromCanonicalDestinations(t *testing.T
 	}
 }
 
+func TestDeploymentTimeoutPreservesShorterCallerDeadline(t *testing.T) {
+	short, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	got, gotCancel := withDeploymentTimeout(short)
+	defer gotCancel()
+	deadline, ok := got.Deadline()
+	if !ok {
+		t.Fatal("deployment context lost the caller deadline")
+	}
+	shortDeadline, _ := short.Deadline()
+	if !deadline.Equal(shortDeadline) {
+		t.Fatalf("deployment context replaced caller deadline: got %s, want %s", deadline, shortDeadline)
+	}
+}
+
+func TestDeploymentTimeoutBoundsUndeadlinedCaller(t *testing.T) {
+	got, cancel := withDeploymentTimeout(context.Background())
+	defer cancel()
+	deadline, ok := got.Deadline()
+	if !ok {
+		t.Fatal("deployment context did not receive a bounded deadline")
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 || remaining > deploymentTimeout {
+		t.Fatalf("deployment timeout = %s, want no more than %s", remaining, deploymentTimeout)
+	}
+}
+
 func TestDeployAcquiresTemporaryRootOnlyAfterExactPlanAcceptance(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "internal", "cli", "converge.go"))
 	if err != nil {
