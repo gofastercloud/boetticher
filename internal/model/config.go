@@ -61,7 +61,7 @@ type ModulesConfig struct {
 	Monitoring    *ToggleModuleConfig        `yaml:"monitoring,omitempty" json:"monitoring,omitempty"`
 	Firewall      *ToggleModuleConfig        `yaml:"firewall,omitempty" json:"firewall,omitempty"`
 	Logging       *ToggleModuleConfig        `yaml:"logging,omitempty" json:"logging,omitempty"`
-	TailnetRouter *ToggleModuleConfig        `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
+	TailnetRouter *TailnetRouterConfig       `yaml:"tailnet-router,omitempty" json:"tailnet-router,omitempty"`
 	Bifrost       *BifrostModuleConfig       `yaml:"bifrost,omitempty" json:"bifrost,omitempty"`
 	Printer       *NetworkToggleModuleConfig `yaml:"printer,omitempty" json:"printer,omitempty"`
 	AIOps         *AIOpsModuleConfig         `yaml:"aiops,omitempty" json:"aiops,omitempty"`
@@ -179,6 +179,14 @@ type DNSModuleConfig struct{}
 type ToggleModuleConfig struct {
 	// Enabled selects whether an optional module should be deployed.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// TailnetRouterConfig keeps the locally enforced allow-set separate from
+// external Tailnet grants. Empty remains deny-all until an operator records
+// the exact approved Tailnet client addresses.
+type TailnetRouterConfig struct {
+	Enabled        *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	TrustedClients []string `yaml:"trusted_clients,omitempty" json:"trusted_clients,omitempty"`
 }
 
 // NetworkToggleModuleConfig is the on/off setting for an optional module that
@@ -316,7 +324,7 @@ func ModulesConfigFromMap(input map[string]ModuleConfig) ModulesConfig {
 		result.Logging = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
 	}
 	if config, ok := input["tailnet-router"]; ok {
-		result.TailnetRouter = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		result.TailnetRouter = &TailnetRouterConfig{Enabled: cloneBool(config.Enabled), TrustedClients: append([]string(nil), config.TailnetTrustedClients...)}
 	}
 	if config, ok := input["bifrost"]; ok {
 		result.Bifrost = &BifrostModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Upstreams: cloneBifrostUpstreams(config.Upstreams), Models: cloneBifrostModels(config.Models)}
@@ -362,7 +370,7 @@ func (m *ModulesConfig) Set(name string, config ModuleConfig) error {
 		if config.Network != "" {
 			return errors.New("modules.tailnet-router.network: module is not network-capable")
 		}
-		m.TailnetRouter = &ToggleModuleConfig{Enabled: cloneBool(config.Enabled)}
+		m.TailnetRouter = &TailnetRouterConfig{Enabled: cloneBool(config.Enabled), TrustedClients: append([]string(nil), config.TailnetTrustedClients...)}
 	case "bifrost":
 		upstreams := config.Upstreams
 		models := config.Models
@@ -676,7 +684,7 @@ func cloneModuleConfig(input map[string]ModuleConfig) map[string]ModuleConfig {
 	}
 	output := make(map[string]ModuleConfig, len(input))
 	for name, config := range input {
-		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Servers: config.Servers, QBittorrentPort: config.QBittorrentPort, ModelAlias: config.ModelAlias, Upstreams: cloneBifrostUpstreams(config.Upstreams), Models: cloneBifrostModels(config.Models)}
+		output[name] = ModuleConfig{Enabled: cloneBool(config.Enabled), Network: config.Network, Servers: config.Servers, QBittorrentPort: config.QBittorrentPort, TailnetTrustedClients: append([]string(nil), config.TailnetTrustedClients...), ModelAlias: config.ModelAlias, Upstreams: cloneBifrostUpstreams(config.Upstreams), Models: cloneBifrostModels(config.Models)}
 	}
 	return output
 }

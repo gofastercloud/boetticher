@@ -62,7 +62,7 @@ func TestOfflineVerificationAcceptsAllManagedDynamicDNSZones(t *testing.T) {
 func TestOfflineVerificationUsesSuppliedEndpointResolver(t *testing.T) {
 	config := model.ConfigFromSite(model.NewDefaultSite("verify-endpoint", "age1verifyendpoint"))
 	enabled := true
-	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.TailnetRouter = &model.TailnetRouterConfig{Enabled: &enabled}
 	site, _, err := modules.Compose(config)
 	if err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestOfflineVerificationUsesSuppliedEndpointResolver(t *testing.T) {
 func TestOfflineVerificationPreservesEndpointResolutionHold(t *testing.T) {
 	config := model.ConfigFromSite(model.NewDefaultSite("verify-endpoint-hold", "age1verifyendpointhold"))
 	enabled := true
-	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &enabled}
+	config.Modules.TailnetRouter = &model.TailnetRouterConfig{Enabled: &enabled}
 	site, _, err := modules.Compose(config)
 	if err != nil {
 		t.Fatal(err)

@@ -37,6 +37,11 @@ func renderIsolation(b *strings.Builder, plan Plan, destinationSets []destinatio
 	b.WriteString("    iifname \"sandbox0\" ip saddr 10.10.40.0/24 ip daddr 10.10.40.1 tcp dport 53 accept\n")
 	b.WriteString("    iifname \"sandbox0\" drop\n")
 	if len(plan.AirVPNSources) > 0 {
+		// DHCP renewal/rebinding uses the selected guest's leased address as its
+		// source. Return to the ordinary SERVERS DHCP input allowance before the
+		// selected-source default deny, rather than letting a later lease expiry
+		// strand the guest behind the host-isolation binding.
+		b.WriteString("    iifname \"servers0\" ip saddr @airvpn_sources ip daddr 10.10.20.1 udp sport 68 udp dport 67 return\n")
 		b.WriteString("    ip saddr @airvpn_sources drop\n")
 	}
 	b.WriteString("  }\n  chain restricted_forward {\n")

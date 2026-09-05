@@ -294,7 +294,7 @@
           "$ref": "#/$defs/NetworkToggleModuleConfig"
         },
         "tailnet-router": {
-          "$ref": "#/$defs/ToggleModuleConfig"
+          "$ref": "#/$defs/TailnetRouterConfig"
         }
       },
       "type": "object"
@@ -460,6 +460,21 @@
         "age_recipient",
         "root_age_recipient"
       ],
+      "type": "object"
+    },
+    "TailnetRouterConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "trusted_clients": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
       "type": "object"
     },
     "TestedVersions": {

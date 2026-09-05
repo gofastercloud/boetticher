@@ -77,7 +77,7 @@ func TestDeploymentCredentialProjectionContainsOnlyEncryptedPaths(t *testing.T) 
 func TestFirstPartyModuleCredentialsUseEphemeralSystemdPaths(t *testing.T) {
 	config := model.ConfigFromSite(model.NewSite("installation", "age1example", model.GatewayModeManaged))
 	tailnetEnabled, bifrostEnabled := true, true
-	config.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &tailnetEnabled}
+	config.Modules.TailnetRouter = &model.TailnetRouterConfig{Enabled: &tailnetEnabled}
 	config.Modules.Bifrost = &model.BifrostModuleConfig{
 		Enabled:   &bifrostEnabled,
 		Upstreams: []model.BifrostUpstreamConfig{{Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIKeySecret: "openrouter_api_key"}},

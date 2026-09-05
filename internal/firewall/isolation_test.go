@@ -15,7 +15,7 @@ func isolationSite(t *testing.T) model.Site {
 	enabled := true
 	c.Modules.AirVPN = &model.AirVPNModuleConfig{Enabled: &enabled, Servers: "europe"}
 	c.Modules.Arr = &model.ArrModuleConfig{Enabled: &enabled, Network: model.ModuleNetworkAirVPN}
-	c.Modules.TailnetRouter = &model.ToggleModuleConfig{Enabled: &enabled}
+	c.Modules.TailnetRouter = &model.TailnetRouterConfig{Enabled: &enabled}
 	s, _, err := modules.Compose(c)
 	if err != nil {
 		t.Fatal(err)
@@ -59,5 +59,21 @@ func TestMandatoryIsolationPrecedesConnectionState(t *testing.T) {
 	}
 	if !strings.Contains(rules, "192.168.0.0/16") || !strings.Contains(rules, "iifname \"sandbox0\" ip daddr @non_public_v4") {
 		t.Fatal("SANDBOX lacks HOME/non-public destination denial")
+	}
+}
+
+func TestSelectedAirVPNClientCanRenewItsServersDHCPLease(t *testing.T) {
+	p, err := PlanFromSiteWithAirVPN(isolationSite(t), AirVPNProfile{EndpointHost: "vpn.example", EndpointPort: 1637, TunnelAddress: "10.1.2.3", SHA256: strings.Repeat("a", 64)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules, err := RenderNFTWithResolver(p, func(string) ([]net.IP, error) { return []net.IP{net.ParseIP("8.8.4.4")}, nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	allow := `iifname "servers0" ip saddr @airvpn_sources ip daddr 10.10.20.1 udp sport 68 udp dport 67 return`
+	drop := `ip saddr @airvpn_sources drop`
+	if strings.Index(rules, allow) < 0 || strings.Index(rules, allow) > strings.Index(rules, drop) {
+		t.Fatalf("selected-client DHCP renewal is not allowed before the deny: %s", rules)
 	}
 }

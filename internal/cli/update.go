@@ -41,6 +41,9 @@ func runUpdate(args []string, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("Problem: validate update: %w", err)
 	}
+	if config.SecretMetadata.RootAgeRecipient == "" {
+		return errors.New("Problem: this site predates the separate root-authority boundary; it must be recreated with boetticher init")
+	}
 	previousPulse := config.TestedVersions.Pulse
 	pulseUpgrade := previousPulse == "6.1.2"
 	var originalSite model.Site
