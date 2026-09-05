@@ -45,6 +45,19 @@ func TestGatusRoleInstallsBoetticherRootTrustForEndpointChecks(t *testing.T) {
 	}
 }
 
+func TestAirVPNRoleCreatesRuntimeDirectoryBeforeSystemdStart(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "airvpn", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	directory := strings.Index(text, "path: /run/boetticher\n")
+	start := strings.Index(text, "name: Enable and start the AirVPN transit service")
+	if directory < 0 || start < 0 || directory > start {
+		t.Fatal("AirVPN role does not create /run/boetticher before systemd namespacing")
+	}
+}
+
 func TestGatusRoleUsesEndpointOwnedSmallstepCertificate(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("..", "..", "ansible", "roles", "gatus", "tasks", "main.yml"))
 	if err != nil {

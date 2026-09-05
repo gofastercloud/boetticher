@@ -56,6 +56,14 @@
         set -eu
         sysctl -w net.ipv4.ip_forward=0 >/dev/null
 
+- name: Create the AirVPN runtime directory before systemd namespacing
+  ansible.builtin.file:
+    path: /run/boetticher
+    state: directory
+    owner: root
+    group: root
+    mode: '0700'
+
 - name: Create the AirVPN nftables configuration directory
   ansible.builtin.file:
     path: /etc/nftables.d
