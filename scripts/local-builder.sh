@@ -149,6 +149,11 @@ validate_remote_target() {
 }
 
 sync_native_source() {
+  sync_isolated=${1:-1}
+  case "$sync_isolated" in
+    0|1) ;;
+    *) fail 'sync_native_source requires an isolated-source flag of 0 or 1' ;;
+  esac
   require_native_workspace
   [ -n "$builder_ssh" ] || fail 'BOETTICHER_LOCAL_BUILDER_SSH is required for the native Linux build host'
   native_ssh 'rm -rf -- /var/lib/boetticher/local-builder/source; install -d -m 0755 /var/lib/boetticher/local-builder/source'
@@ -161,10 +166,12 @@ sync_native_source() {
     rm -f -- "$source_archive"
     fail 'could not transfer the public native-builder source archive'
   fi
-  native_ssh "rm -rf -- $remote_native_source; install -d -m 0755 $remote_native_source"
-  if ! native_ssh "tar --extract --gzip --file=- --no-same-owner --no-same-permissions --directory=$remote_native_source" < "$source_archive"; then
-    rm -f -- "$source_archive"
-    fail 'could not refresh the isolated native-builder source archive'
+  if [ "$sync_isolated" -eq 1 ]; then
+    native_ssh "rm -rf -- $remote_native_source; install -d -m 0755 $remote_native_source"
+    if ! native_ssh "tar --extract --gzip --file=- --no-same-owner --no-same-permissions --directory=$remote_native_source" < "$source_archive"; then
+      rm -f -- "$source_archive"
+      fail 'could not refresh the isolated native-builder source archive'
+    fi
   fi
   rm -f -- "$source_archive"
 }
@@ -293,7 +300,7 @@ filter_reusable_targets() {
 
 setup_native_builder() {
   [ "$artifact_output" = generated/artifacts ] || fail 'native builder mode requires the default generated/artifacts output path'
-  sync_native_source
+  sync_native_source 0
   native_ssh \
     "env BOETTICHER_LOCAL_NATIVE=1 BOETTICHER_SOURCE_ROOT=$remote_source sh $remote_source/scripts/local-builder-setup.sh"
 }

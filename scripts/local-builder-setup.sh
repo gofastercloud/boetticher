@@ -59,14 +59,20 @@ case "$native_builder" in
       cleanup_native_mounts "$native_root" || exit 2
       if [ ! -x "$native_root/usr/bin/virt-customize" ]; then
         native_temporary="$native_root.tmp.$$"
+        native_stale="$native_root.stale.$$"
         rm -rf -- "$native_temporary"
+        rm -rf -- "$native_stale"
         mkdir -p "$(dirname "$native_root")"
+        if [ -e "$native_root" ]; then
+          mv -- "$native_root" "$native_stale"
+        fi
         mmdebstrap --variant=minbase --architectures=amd64 \
           --include=ca-certificates,curl,debian-archive-keyring,git,jq,libguestfs-tools,mmdebstrap,qemu-utils,time,zstd,linux-image-amd64 \
           --aptopt=Acquire::Retries=3 \
           trixie "$native_temporary" http://deb.debian.org/debian
         cleanup_native_mounts "$native_temporary" || exit 2
         mv -- "$native_temporary" "$native_root"
+        rm -rf -- "$native_stale"
       fi
       install -d -m 0755 "$native_root/var/lib/boetticher/local-builder/source"
       tar -C "$source_root" -cf - . | tar -C "$native_root/var/lib/boetticher/local-builder/source" -xf -
