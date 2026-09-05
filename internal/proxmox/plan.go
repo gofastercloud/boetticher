@@ -33,6 +33,12 @@ const (
 	KindLXC  GuestKind = "lxc"
 )
 
+const (
+	replacementHolderVMIDMin = 910
+	replacementHolderVMIDMax = 919
+	replacementHolderTag     = "boetticher-replacement-holder"
+)
+
 type GuestPlan struct {
 	Nameservers     []string                            `json:"nameservers,omitempty"`
 	VMID            int                                 `json:"vmid"`
@@ -1563,6 +1569,20 @@ func ensureLXCWithRetainedVolumes(ctx context.Context, client *Client, plan Plan
 	if !IsNotFound(err) {
 		return fmt.Errorf("inspect container %s: %w", guest.Name, err)
 	}
+	if plan.DestructiveConfirmed {
+		if holderVMID, holder, holderErr := replacementHolderFor(ctx, client, plan.Node, guest.VMID); holderErr != nil {
+			return holderErr
+		} else if holderVMID != 0 {
+			return recoverLXCReplacement(ctx, client, plan, guest, holderVMID, holder)
+		}
+	}
+	return createLXC(ctx, client, plan, guest, retained, true)
+}
+
+// createLXC creates and verifies one declared appliance. When attachVolumes
+// is false it creates only the disposable rootfs; a replacement holder can
+// then transfer the already-proven persistent mount points back afterwards.
+func createLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan, retained map[string]string, attachVolumes bool) error {
 	if err := validateLXCPrivilegedDeviceAuthority(plan, guest); err != nil {
 		return err
 	}
@@ -1598,7 +1618,13 @@ func ensureLXCWithRetainedVolumes(ctx context.Context, client *Client, plan Plan
 			params.Add(key, value)
 		}
 	}
+	if !attachVolumes && retained != nil {
+		return fmt.Errorf("HOLD: %s cannot create a rootfs-only LXC with retained volume parameters", guest.Name)
+	}
 	for index, volume := range guest.Volumes {
+		if !attachVolumes {
+			break
+		}
 		key := fmt.Sprintf("mp%d", index)
 		if retained != nil {
 			value, ok := retained[key]
@@ -1621,7 +1647,7 @@ func ensureLXCWithRetainedVolumes(ctx context.Context, client *Client, plan Plan
 		}
 		params.Set(key, value)
 	}
-	if retained != nil && len(retained) != len(guest.Volumes) {
+	if attachVolumes && retained != nil && len(retained) != len(guest.Volumes) {
 		return fmt.Errorf("HOLD: retained persistent volumes for %s do not match the declared volume count", guest.Name)
 	}
 	if err := client.CreateLXC(ctx, plan.Node, guest.VMID, params); err != nil {
@@ -1634,7 +1660,7 @@ func ensureLXCWithRetainedVolumes(ctx context.Context, client *Client, plan Plan
 	// contract. Inspect the resulting object before ProvisionModule/Provision
 	// can issue a start request. A missing or altered device allowance is a
 	// HOLD; the newly created guest is never started or configured further.
-	kind, current, err = client.GuestConfig(ctx, plan.Node, guest.VMID)
+	kind, current, err := client.GuestConfig(ctx, plan.Node, guest.VMID)
 	if err != nil {
 		return fmt.Errorf("HOLD: verify created container %s security contract: %w", guest.Name, err)
 	}
@@ -1644,8 +1670,10 @@ func ensureLXCWithRetainedVolumes(ctx context.Context, client *Client, plan Plan
 	if err := validateExistingGuestIdentity(current, guest); err != nil {
 		return fmt.Errorf("HOLD: verify created container %s identity/security contract: %w", guest.Name, err)
 	}
-	if err := validateExistingGuestVolumes(current, guest); err != nil {
-		return fmt.Errorf("HOLD: verify created container %s persistent volumes: %w", guest.Name, err)
+	if attachVolumes {
+		if err := validateExistingGuestVolumes(current, guest); err != nil {
+			return fmt.Errorf("HOLD: verify created container %s persistent volumes: %w", guest.Name, err)
+		}
 	}
 	if err := ensureGuestMACFilter(ctx, client, plan, guest); err != nil {
 		return err
@@ -2056,11 +2084,223 @@ func isLoopDevice(value string) bool {
 	return err == nil && index != "" && parsed >= 0
 }
 
-// replaceLXC detaches only proven persistent mount-point volumes, retains
-// their exact volume references, and removes the disposable rootfs. The caller
-// must pass those references back to creation; size-only parameters would
-// allocate fresh volumes and silently discard retained state.
+func replacementHolderFor(ctx context.Context, client *Client, node string, targetVMID int) (int, map[string]any, error) {
+	for vmid := replacementHolderVMIDMin; vmid <= replacementHolderVMIDMax; vmid++ {
+		kind, current, err := client.GuestConfig(ctx, node, vmid)
+		if err != nil {
+			if IsNotFound(err) {
+				continue
+			}
+			return 0, nil, fmt.Errorf("inspect replacement holder VMID %d: %w", vmid, err)
+		}
+		if kind == KindLXC && replacementHolderMatches(current, targetVMID) {
+			return vmid, current, nil
+		}
+	}
+	return 0, nil, nil
+}
+
+func replacementHolderMatches(current map[string]any, targetVMID int) bool {
+	tags, _ := current["tags"].(string)
+	if !hasExactTag(tags, replacementHolderTag) {
+		return false
+	}
+	description, _ := current["description"].(string)
+	wanted := "target-vmid=" + strconv.Itoa(targetVMID)
+	for _, field := range strings.Fields(description) {
+		if field == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func hasExactTag(tags, wanted string) bool {
+	for _, tag := range strings.Split(tags, ";") {
+		if strings.TrimSpace(tag) == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func ensureReplacementHolder(ctx context.Context, client *Client, plan Plan, guest GuestPlan) (int, map[string]any, error) {
+	if vmid, current, err := replacementHolderFor(ctx, client, plan.Node, guest.VMID); err != nil || vmid != 0 {
+		return vmid, current, err
+	}
+	vmid := 0
+	for candidate := replacementHolderVMIDMin; candidate <= replacementHolderVMIDMax; candidate++ {
+		_, _, err := client.GuestConfig(ctx, plan.Node, candidate)
+		if IsNotFound(err) {
+			vmid = candidate
+			break
+		}
+		if err != nil {
+			return 0, nil, fmt.Errorf("inspect replacement holder VMID %d: %w", candidate, err)
+		}
+	}
+	if vmid == 0 {
+		return 0, nil, errors.New("HOLD: no free VMID is available in the bounded replacement-holder range 910-919")
+	}
+	template, err := lxcTemplate(ctx, client, plan, guest)
+	if err != nil {
+		return 0, nil, err
+	}
+	params := url.Values{
+		"hostname":     {"boetticher-replace-" + strconv.Itoa(guest.VMID)},
+		"description":  {replacementHolderTag + " target-vmid=" + strconv.Itoa(guest.VMID)},
+		"ostemplate":   {template},
+		"memory":       {"128"},
+		"cores":        {"1"},
+		"unprivileged": {"1"},
+		"onboot":       {"0"},
+		"features":     {"nesting=0"},
+		"rootfs":       {fmt.Sprintf("%s:1", plan.Storage)},
+		"tags":         {model.TagBoetticher + ";" + model.TagManaged + ";" + replacementHolderTag},
+	}
+	if err := client.CreateLXC(ctx, plan.Node, vmid, params); err != nil {
+		return 0, nil, fmt.Errorf("create replacement holder %d: %w", vmid, err)
+	}
+	kind, current, err := client.GuestConfig(ctx, plan.Node, vmid)
+	if err != nil {
+		return 0, nil, fmt.Errorf("verify replacement holder %d: %w", vmid, err)
+	}
+	if kind != KindLXC || !replacementHolderMatches(current, guest.VMID) {
+		return 0, nil, fmt.Errorf("HOLD: replacement holder %d failed its ownership identity check", vmid)
+	}
+	return vmid, current, nil
+}
+
+func reassignLXCVolumeToHolder(ctx context.Context, client *Client, plan Plan, guest GuestPlan, holderVMID int, holder map[string]any, mountpoint string, volume model.PersistentVolumeDeclaration) error {
+	sourceKind, source, err := client.GuestConfig(ctx, plan.Node, guest.VMID)
+	if err != nil || sourceKind != KindLXC {
+		return fmt.Errorf("HOLD: source LXC %s changed before persistent-volume hold: %w", guest.Name, err)
+	}
+	holderKind, currentHolder, err := client.GuestConfig(ctx, plan.Node, holderVMID)
+	if err != nil || holderKind != KindLXC {
+		return fmt.Errorf("HOLD: replacement holder %d changed before persistent-volume hold: %w", holderVMID, err)
+	}
+	observed, _ := source[mountpoint].(string)
+	expected, err := persistentVolumeParam(volume)
+	if err != nil {
+		return err
+	}
+	disk, _ := strconv.Atoi(strings.TrimPrefix(mountpoint, "mp"))
+	if !lxcPersistentVolumeMatches(observed, expected, guest.VMID, disk+1) {
+		return fmt.Errorf("HOLD: source persistent volume %s for %s changed before hold", mountpoint, guest.Name)
+	}
+	if _, exists := currentHolder[mountpoint]; exists {
+		return fmt.Errorf("HOLD: replacement holder %d already contains %s", holderVMID, mountpoint)
+	}
+	digest := configDigest(source)
+	targetDigest := configDigest(currentHolder)
+	if err := client.ReassignLXCVolume(ctx, plan.Node, guest.VMID, holderVMID, mountpoint, mountpoint, digest, targetDigest); err != nil {
+		return fmt.Errorf("hold persistent volume %s for %s: %w", mountpoint, guest.Name, err)
+	}
+	return nil
+}
+
+func reassignLXCVolumeFromHolder(ctx context.Context, client *Client, plan Plan, guest GuestPlan, holderVMID int, mountpoint string, volume model.PersistentVolumeDeclaration) error {
+	sourceKind, source, err := client.GuestConfig(ctx, plan.Node, guest.VMID)
+	if err != nil || sourceKind != KindLXC {
+		return fmt.Errorf("HOLD: replacement LXC %s changed before persistent-volume restore: %w", guest.Name, err)
+	}
+	holderKind, holder, err := client.GuestConfig(ctx, plan.Node, holderVMID)
+	if err != nil || holderKind != KindLXC {
+		return fmt.Errorf("HOLD: replacement holder %d changed before persistent-volume restore: %w", holderVMID, err)
+	}
+	expected, err := persistentVolumeParam(volume)
+	if err != nil {
+		return err
+	}
+	disk, _ := strconv.Atoi(strings.TrimPrefix(mountpoint, "mp"))
+	observed, _ := holder[mountpoint].(string)
+	if !lxcPersistentVolumeMatches(observed, expected, holderVMID, disk+1) {
+		return fmt.Errorf("HOLD: replacement holder %d persistent volume %s is not the proven declaration", holderVMID, mountpoint)
+	}
+	if existing, ok := source[mountpoint].(string); ok && existing != "" {
+		return fmt.Errorf("HOLD: replacement LXC %s already contains persistent volume %s", guest.Name, mountpoint)
+	}
+	if err := client.ReassignLXCVolume(ctx, plan.Node, holderVMID, guest.VMID, mountpoint, mountpoint, configDigest(holder), configDigest(source)); err != nil {
+		return fmt.Errorf("restore persistent volume %s for %s: %w", mountpoint, guest.Name, err)
+	}
+	return nil
+}
+
+func restoreLXCVolumesFromHolder(ctx context.Context, client *Client, plan Plan, guest GuestPlan, holderVMID int) error {
+	for index, volume := range guest.Volumes {
+		mountpoint := fmt.Sprintf("mp%d", index)
+		holderKind, holder, err := client.GuestConfig(ctx, plan.Node, holderVMID)
+		if err != nil || holderKind != KindLXC {
+			return fmt.Errorf("inspect replacement holder %d during recovery: %w", holderVMID, err)
+		}
+		if _, exists := holder[mountpoint]; !exists {
+			continue
+		}
+		if err := reassignLXCVolumeFromHolder(ctx, client, plan, guest, holderVMID, mountpoint, volume); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func configDigest(config map[string]any) string {
+	digest, _ := config["digest"].(string)
+	if len(digest) == 40 && isHex(digest) {
+		return digest
+	}
+	return ""
+}
+
+func recoverLXCReplacement(ctx context.Context, client *Client, plan Plan, guest GuestPlan, holderVMID int, holder map[string]any) error {
+	kind, current, err := client.GuestConfig(ctx, plan.Node, guest.VMID)
+	created := false
+	if err != nil {
+		if !IsNotFound(err) {
+			return fmt.Errorf("inspect %s during replacement recovery: %w", guest.Name, err)
+		}
+		if err := createLXC(ctx, client, plan, guest, nil, false); err != nil {
+			return fmt.Errorf("recreate %s while recovering persistent volumes: %w", guest.Name, err)
+		}
+		created = true
+	} else {
+		if kind != KindLXC {
+			return fmt.Errorf("HOLD: replacement target %s is occupied by %s", guest.Name, kind)
+		}
+		if err := validateExistingGuestDestructiveIdentity(current, guest); err != nil {
+			return fmt.Errorf("HOLD: replacement target %s failed ownership recovery: %w", guest.Name, err)
+		}
+		if err := validateNoUndeclaredLXCVolumes(current, guest); err != nil {
+			return err
+		}
+	}
+	for index, volume := range guest.Volumes {
+		mountpoint := fmt.Sprintf("mp%d", index)
+		if err := reassignLXCVolumeFromHolder(ctx, client, plan, guest, holderVMID, mountpoint, volume); err != nil {
+			if created {
+				return fmt.Errorf("recover persistent volume %s for newly created %s: %w", mountpoint, guest.Name, err)
+			}
+			return err
+		}
+	}
+	if err := client.destroyLXCForReplacement(ctx, plan.Node, holderVMID); err != nil {
+		return fmt.Errorf("remove recovered replacement holder %d: %w", holderVMID, err)
+	}
+	return ensureLXCWithRetainedVolumes(ctx, client, plan, guest, nil)
+}
+
+// replaceLXC replaces one LXC appliance while preserving its declared
+// persistent volumes. Proxmox destroys every volume still referenced by an
+// LXC config, so the volumes are first reassigned (without copying bytes) to a
+// short-lived, explicitly marked holder container. The replacement is created
+// with only its new rootfs, the volumes are reassigned back, and the holder is
+// removed only after the target config verifies them.
 func replaceLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan, current map[string]any) (retained map[string]string, err error) {
+	if holderVMID, holder, holderErr := replacementHolderFor(ctx, client, plan.Node, guest.VMID); holderErr != nil {
+		return nil, holderErr
+	} else if holderVMID != 0 {
+		return nil, recoverLXCReplacement(ctx, client, plan, guest, holderVMID, holder)
+	}
 	kind, refreshed, err := client.GuestConfig(ctx, plan.Node, guest.VMID)
 	if err != nil {
 		return nil, fmt.Errorf("reinspect %s before appliance replacement: %w", guest.Name, err)
@@ -2075,8 +2315,7 @@ func replaceLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 		return nil, err
 	}
 	current = refreshed
-	retained, err = retainedLXCPersistentVolumeAttachments(current, guest)
-	if err != nil {
+	if _, err = retainedLXCPersistentVolumeAttachments(current, guest); err != nil {
 		return nil, err
 	}
 	status, err := client.LXCStatus(ctx, plan.Node, guest.VMID)
@@ -2090,33 +2329,72 @@ func replaceLXC(ctx context.Context, client *Client, plan Plan, guest GuestPlan,
 		if err := client.StopLXC(ctx, plan.Node, guest.VMID); err != nil {
 			return nil, fmt.Errorf("stop %s before appliance replacement: %w", guest.Name, err)
 		}
-		defer func() {
-			if err == nil {
-				return
-			}
+	}
+	holderVMID, holder, err := ensureReplacementHolder(ctx, client, plan, guest)
+	if err != nil {
+		if status == "running" {
 			if startErr := client.StartLXC(ctx, plan.Node, guest.VMID); startErr != nil {
+				return nil, fmt.Errorf("%w; additionally failed to restore %s after holder preparation: %v", err, guest.Name, startErr)
+			}
+		}
+		return nil, err
+	}
+	cleanupHolder := true
+	sourceRemoved := false
+	defer func() {
+		if err == nil {
+			return
+		}
+		if cleanupHolder {
+			if cleanupErr := restoreLXCVolumesFromHolder(context.Background(), client, plan, guest, holderVMID); cleanupErr == nil {
+				cleanupErr = client.destroyLXCForReplacement(context.Background(), plan.Node, holderVMID)
+				if cleanupErr != nil {
+					err = fmt.Errorf("%w; additionally failed to clean replacement holder %d: %v", err, holderVMID, cleanupErr)
+				}
+			} else {
+				err = fmt.Errorf("%w; additionally failed to restore replacement holder %d: %v", err, holderVMID, cleanupErr)
+			}
+		}
+		if status == "running" && !sourceRemoved {
+			if startErr := client.StartLXC(context.Background(), plan.Node, guest.VMID); startErr != nil {
 				err = fmt.Errorf("%w; additionally failed to restore %s after appliance replacement failure: %v", err, guest.Name, startErr)
 			}
-		}()
-	}
-	detach := url.Values{}
-	for index := range guest.Volumes {
-		detach.Add("delete", fmt.Sprintf("mp%d", index))
-	}
-	if len(detach) > 0 {
-		if err := client.SetLXCConfig(ctx, plan.Node, guest.VMID, detach); err != nil {
-			return nil, fmt.Errorf("detach persistent volumes from %s before appliance replacement: %w", guest.Name, err)
 		}
+	}()
+
+	for index, volume := range guest.Volumes {
+		mountpoint := fmt.Sprintf("mp%d", index)
+		if err = reassignLXCVolumeToHolder(ctx, client, plan, guest, holderVMID, holder, mountpoint, volume); err != nil {
+			return nil, err
+		}
+		delete(holder, mountpoint)
 	}
 	if err := client.destroyLXCForReplacement(ctx, plan.Node, guest.VMID); err != nil {
 		return nil, fmt.Errorf("destroy %s rootfs for appliance replacement: %w", guest.Name, err)
 	}
+	sourceRemoved = true
 	if client.RestoreReplacementACL != nil {
 		if err := client.RestoreReplacementACL(ctx, guest.VMID); err != nil {
 			return nil, fmt.Errorf("restore %s replacement ACL: %w", guest.Name, err)
 		}
 	}
-	return retained, nil
+	if err := createLXC(ctx, client, plan, guest, nil, false); err != nil {
+		cleanupHolder = false
+		return nil, fmt.Errorf("recreate %s rootfs for appliance replacement: %w", guest.Name, err)
+	}
+	for index, volume := range guest.Volumes {
+		mountpoint := fmt.Sprintf("mp%d", index)
+		if err := reassignLXCVolumeFromHolder(ctx, client, plan, guest, holderVMID, mountpoint, volume); err != nil {
+			cleanupHolder = false
+			return nil, err
+		}
+	}
+	if err := client.destroyLXCForReplacement(ctx, plan.Node, holderVMID); err != nil {
+		cleanupHolder = false
+		return nil, fmt.Errorf("remove replacement holder %d: %w", holderVMID, err)
+	}
+	cleanupHolder = false
+	return nil, nil
 }
 
 // lxcBootstrapKeyParams is the durable operator bootstrap input accepted by

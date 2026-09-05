@@ -25,6 +25,11 @@ For a simple replacement or runtime change, use `deploy --only-module NAME`
 with the reviewed live-plan digest; this limits appliance replacement and
 runtime configuration to that enabled optional module while leaving core and
 network state unchanged.
+When an LXC appliance is replaced, declared persistent mount points are
+reassigned to a short-lived, explicitly tagged holder container before the old
+rootfs is removed. They are reassigned to the new LXC only after its identity
+checks pass; a failed replacement leaves the holder in place for recovery
+rather than deleting the data volume.
 `status --details` is the consolidated read-only operational view. Try
 `--dry-run` whenever you want a preview without saving anything.
 

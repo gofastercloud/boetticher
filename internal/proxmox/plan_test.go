@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -987,20 +986,38 @@ func TestEnsureLXCRetainsVerifiedPersistentVolumeAcrossRootReplacement(t *testin
 	}
 	oldDescription := artifactDescription(model.Artifact{Name: "boetticher-dns-blocky", Version: "1.0.0", Architecture: "amd64", DefinitionSHA256: strings.Repeat("a", 64), ContentSHA256: strings.Repeat("c", 64)})
 	retained := modelStorageIDForTest + ":vm-110-disk-1,mp=/var/lib/powerdns,backup=1,size=8G"
-	destroyed := false
-	created := false
+	sourceDestroyed, holderCreated, holderVolume, targetCreated, holderDestroyed := false, false, false, false, false
+	moveTask := 0
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/110/config":
 			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/910/config":
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api2/json/nodes/node/qemu/91"):
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
-			if !destroyed {
-				return response([]byte(`{"data":{"name":"test-dns","hostname":"test-dns","description":"` + oldDescription + `","tags":"boetticher-module-dns","mp0":"` + retained + `"}}`))
-			}
-			if !created {
+			if sourceDestroyed && !targetCreated {
 				return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
 			}
+			if !sourceDestroyed {
+				return response([]byte(`{"data":{"name":"test-dns","hostname":"test-dns","description":"` + oldDescription + `","tags":"boetticher-module-dns","mp0":"` + retained + `"}}`))
+			}
+			if holderVolume {
+				return response([]byte(`{"data":{"name":"test-dns","hostname":"test-dns","description":"` + artifactDescription(guest.Artifact) + `","tags":"boetticher-module-dns","rootfs":"` + modelStorageIDForTest + `:vm-110-disk-0,size=8G"}}`))
+			}
 			return response([]byte(`{"data":{"name":"test-dns","hostname":"test-dns","description":"` + artifactDescription(guest.Artifact) + `","tags":"boetticher-module-dns","mp0":"` + retained + `"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/910/config":
+			if !holderCreated || holderDestroyed {
+				return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+			}
+			mp := ""
+			if holderVolume {
+				mp = `,"mp0":"` + strings.Replace(retained, "vm-110-", "vm-910-", 1) + `"`
+			}
+			return response([]byte(`{"data":{"name":"boetticher-replace-110","hostname":"boetticher-replace-110","description":"boetticher-replacement-holder target-vmid=110","tags":"boetticher;managed;boetticher-replacement-holder","rootfs":"` + modelStorageIDForTest + `:vm-910-disk-0,size=1G"` + mp + `}}`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api2/json/nodes/node/lxc/91"):
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/current":
 			return response([]byte(`{"data":{"status":"stopped"}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
@@ -1008,28 +1025,49 @@ func TestEnsureLXCRetainsVerifiedPersistentVolumeAcrossRootReplacement(t *testin
 				t.Fatalf("storage content filter = %q, want %q", got, want)
 			}
 			return response([]byte(`{"data":[{"volid":"local:vztmpl/boetticher-dns-blocky-1.0.0-amd64.tar.zst","checksum":"` + guest.Artifact.ContentSHA256 + `"}]}`))
-		case r.Method == http.MethodPut && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
-			if err := r.ParseForm(); err != nil {
-				t.Fatal(err)
-			}
-			if got, want := r.Form["delete"], []string{"mp0"}; !reflect.DeepEqual(got, want) {
-				t.Fatalf("detached mount points = %#v, want %#v", got, want)
-			}
-			return response([]byte(`{"data":null}`))
-		case r.Method == http.MethodDelete && r.URL.Path == "/api2/json/nodes/node/lxc/110":
-			if got, want := r.URL.Query().Get("destroy-unreferenced-disks"), "0"; got != want {
-				t.Fatalf("destroy-unreferenced-disks = %q, want %q", got, want)
-			}
-			destroyed = true
-			return response([]byte(`{"data":null}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc":
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
 			}
-			if got, want := r.Form.Get("mp0"), retained; got != want {
-				t.Fatalf("retained mount = %q, want exact existing reference %q", got, want)
+			switch r.Form.Get("vmid") {
+			case "910":
+				holderCreated = true
+			case "110":
+				if got := r.Form.Get("mp0"); got != "" {
+					t.Fatalf("rootfs-only replacement unexpectedly attached %s", got)
+				}
+				targetCreated = true
+			default:
+				t.Fatalf("unexpected LXC create VMID %q", r.Form.Get("vmid"))
 			}
-			created = true
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodPost && (r.URL.Path == "/api2/json/nodes/node/lxc/110/move_volume" || r.URL.Path == "/api2/json/nodes/node/lxc/910/move_volume"):
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if r.URL.Path == "/api2/json/nodes/node/lxc/110/move_volume" {
+				if r.Form.Get("target-vmid") != "910" || r.Form.Get("volume") != "mp0" || r.Form.Get("target-volume") != "mp0" {
+					t.Fatalf("source-to-holder move parameters = %v", r.Form)
+				}
+				holderVolume = true
+			} else {
+				if r.Form.Get("target-vmid") != "110" || r.Form.Get("volume") != "mp0" || r.Form.Get("target-volume") != "mp0" {
+					t.Fatalf("holder-to-source move parameters = %v", r.Form)
+				}
+				holderVolume = false
+			}
+			moveTask++
+			return response([]byte(`{"data":"UPID:pve:move-` + strconv.Itoa(moveTask) + `"}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/tasks/UPID:pve:move-") && strings.HasSuffix(r.URL.Path, "/status"):
+			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api2/json/nodes/node/lxc/110":
+			if got, want := r.URL.Query().Get("destroy-unreferenced-disks"), "0"; got != want {
+				t.Fatalf("destroy-unreferenced-disks = %q, want %q", got, want)
+			}
+			sourceDestroyed = true
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api2/json/nodes/node/lxc/910":
+			holderDestroyed = true
 			return response([]byte(`{"data":null}`))
 		default:
 			t.Fatalf("unexpected LXC root replacement request: %s %s", r.Method, r.URL.Path)
@@ -1037,8 +1075,17 @@ func TestEnsureLXCRetainsVerifiedPersistentVolumeAcrossRootReplacement(t *testin
 		}
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
+	client.RestoreReplacementACL = func(_ context.Context, vmid int) error {
+		if !sourceDestroyed || vmid != guest.VMID {
+			t.Fatalf("replacement ACL was restored before source deletion: destroyed=%v vmid=%d", sourceDestroyed, vmid)
+		}
+		return nil
+	}
 	if err := ensureLXC(context.Background(), client, Plan{Node: "node", Storage: modelStorageIDForTest, DestructiveConfirmed: true}, guest); err != nil {
 		t.Fatalf("ensureLXC() = %v", err)
+	}
+	if !sourceDestroyed || !holderDestroyed || moveTask != 2 {
+		t.Fatalf("replacement did not complete through the bounded holder: sourceDestroyed=%v holderDestroyed=%v moveTask=%d", sourceDestroyed, holderDestroyed, moveTask)
 	}
 }
 
@@ -1569,6 +1616,8 @@ func TestEnsureLXCRecreatesExactLegacyStateBeforePersistentVolumeMigration(t *te
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/110/config":
 			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api2/json/nodes/node/qemu/9"):
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
 			lxcConfigReads++
 			switch lxcConfigReads {
@@ -1591,6 +1640,8 @@ func TestEnsureLXCRecreatesExactLegacyStateBeforePersistentVolumeMigration(t *te
 				t.Fatalf("unexpected LXC config read %d", lxcConfigReads)
 				return nil
 			}
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api2/json/nodes/node/lxc/9"):
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
 			return response([]byte(`{"data":[{"filename":"boetticher-dns-blocky-1.0.0-amd64.tar.zst","checksum":"` + artifact.ContentSHA256 + `"}]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/current":
@@ -1663,29 +1714,54 @@ func TestExistingLXCReconcilesPlatformNameservers(t *testing.T) {
 	}
 }
 
-func TestReplaceLXCDetachesPersistentVolumesBeforeDestroy(t *testing.T) {
-	var detached []string
-	destroyed := false
-	repaired := false
+func TestReplaceLXCUsesBoundedHolderBeforeRecreation(t *testing.T) {
+	guest := GuestPlan{VMID: 110, Name: "test-dns", Hostname: "test-dns", Artifact: model.Artifact{
+		Name: "boetticher-dns-blocky", Version: "1.0.0", Architecture: "amd64", DefinitionSHA256: strings.Repeat("a", 64), ContentSHA256: strings.Repeat("b", 64),
+	}}
+	oldDescription := artifactDescription(model.Artifact{Name: guest.Artifact.Name, Version: guest.Artifact.Version, Architecture: guest.Artifact.Architecture, DefinitionSHA256: guest.Artifact.DefinitionSHA256, ContentSHA256: strings.Repeat("c", 64)})
+	sourceDestroyed, holderCreated, targetCreated, holderDestroyed := false, false, false, false
 	transport := roundTripFunc(func(r *http.Request) *http.Response {
 		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api2/json/nodes/node/qemu/9"):
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api2/json/nodes/node/lxc/9"):
+			if !holderCreated || holderDestroyed {
+				return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+			}
+			return response([]byte(`{"data":{"name":"boetticher-replace-110","hostname":"boetticher-replace-110","description":"boetticher-replacement-holder target-vmid=110","tags":"boetticher;managed;boetticher-replacement-holder","rootfs":"boetticher-thin:vm-910-disk-0,size=1G"}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/110/config":
 			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
-			return response([]byte(`{"data":{"name":"test-dns","hostname":"test-dns","mp0":"boetticher-thin:vm-110-disk-1,mp=/var/lib/powerdns,backup=1,size=8G","mp1":"boetticher-thin:vm-110-disk-2,mp=/var/lib/boetticher/identity/ssh,backup=1,size=1G"}}`))
+			if sourceDestroyed && !targetCreated {
+				return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+			}
+			description := oldDescription
+			if targetCreated {
+				description = artifactDescription(guest.Artifact)
+			}
+			return response([]byte(`{"data":{"name":"test-dns","hostname":"test-dns","description":"` + description + `"}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/current":
 			return response([]byte(`{"data":{"status":"stopped"}}`))
-		case r.Method == http.MethodPut && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
+		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/storage/local/content":
+			return response([]byte(`{"data":[{"filename":"boetticher-dns-blocky-1.0.0-amd64.tar.zst","checksum":"` + guest.Artifact.ContentSHA256 + `"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc":
 			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
 			}
-			detached = append(detached, r.Form["delete"]...)
+			switch r.Form.Get("vmid") {
+			case "910":
+				holderCreated = true
+			case "110":
+				targetCreated = true
+			default:
+				t.Fatalf("unexpected create VMID %q", r.Form.Get("vmid"))
+			}
 			return response([]byte(`{"data":null}`))
 		case r.Method == http.MethodDelete && r.URL.Path == "/api2/json/nodes/node/lxc/110":
-			if r.URL.Query().Get("purge") != "0" || r.URL.Query().Get("destroy-unreferenced-disks") != "0" {
-				t.Fatalf("replacement destroy query = %v", r.URL.Query())
-			}
-			destroyed = true
+			sourceDestroyed = true
+			return response([]byte(`{"data":null}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/api2/json/nodes/node/lxc/910":
+			holderDestroyed = true
 			return response([]byte(`{"data":null}`))
 		default:
 			t.Fatalf("unexpected LXC replacement request: %s %s", r.Method, r.URL.Path)
@@ -1694,36 +1770,20 @@ func TestReplaceLXCDetachesPersistentVolumesBeforeDestroy(t *testing.T) {
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
 	client.RestoreReplacementACL = func(_ context.Context, vmid int) error {
-		if !destroyed || vmid != 110 {
-			t.Fatalf("ACL repair must follow deletion of the exact guest: destroyed=%v vmid=%d", destroyed, vmid)
+		if !sourceDestroyed || vmid != guest.VMID {
+			t.Fatalf("replacement ACL was restored before source deletion: destroyed=%v vmid=%d", sourceDestroyed, vmid)
 		}
-		repaired = true
 		return nil
 	}
-	guest := GuestPlan{VMID: 110, Name: "test-dns", Hostname: "test-dns", Volumes: []model.PersistentVolumeDeclaration{
-		{Name: "powerdns-database", Guest: "lab-dns-01", Module: "dns", Storage: modelStorageIDForTest, SizeGiB: 8, MountPath: "/var/lib/powerdns", Backup: true},
-		{Name: "ssh-identity", Guest: "lab-dns-01", Module: "dns", Storage: modelStorageIDForTest, SizeGiB: 1, MountPath: "/var/lib/boetticher/identity/ssh", Backup: true},
-	}}
-	current := map[string]any{
-		"mp0": modelStorageIDForTest + ":vm-110-disk-1,mp=/var/lib/powerdns,backup=1,size=8G",
-		"mp1": modelStorageIDForTest + ":vm-110-disk-2,mp=/var/lib/boetticher/identity/ssh,backup=1,size=1G",
-	}
-	if _, err := replaceLXC(context.Background(), client, Plan{Node: "node"}, guest, current); err != nil {
+	if _, err := replaceLXC(context.Background(), client, Plan{Node: "node", Storage: modelStorageIDForTest}, guest, nil); err != nil {
 		t.Fatalf("replaceLXC() = %v", err)
 	}
-	if !reflect.DeepEqual(detached, []string{"mp0", "mp1"}) {
-		t.Fatalf("detached mount points = %#v, want [mp0 mp1]", detached)
-	}
-	if !repaired {
-		t.Fatal("replacement did not restore the guest ACL before returning for recreation")
-	}
-	client.RestoreReplacementACL = func(context.Context, int) error { return errors.New("ACL repair denied") }
-	if _, err := replaceLXC(context.Background(), client, Plan{Node: "node"}, guest, current); err == nil || !strings.Contains(err.Error(), "ACL repair denied") {
-		t.Fatalf("replacement continued after ACL repair failed: %v", err)
+	if !sourceDestroyed || !holderCreated || !targetCreated || !holderDestroyed {
+		t.Fatalf("replacement did not complete through holder: sourceDestroyed=%v holderCreated=%v targetCreated=%v holderDestroyed=%v", sourceDestroyed, holderCreated, targetCreated, holderDestroyed)
 	}
 }
 
-func TestReplaceLXCRestoresRunningGuestAfterDetachFailure(t *testing.T) {
+func TestReplaceLXCRestoresRunningGuestAfterHolderAllocationFailure(t *testing.T) {
 	guest := GuestPlan{VMID: 110, Name: "test-dns", Hostname: "test-dns", Volumes: []model.PersistentVolumeDeclaration{{
 		Name: "powerdns-database", Guest: "lab-dns-01", Module: "dns", Storage: modelStorageIDForTest,
 		SizeGiB: 8, MountPath: "/var/lib/powerdns", Backup: true,
@@ -1736,8 +1796,12 @@ func TestReplaceLXCRestoresRunningGuestAfterDetachFailure(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/qemu/110/config":
 			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api2/json/nodes/node/qemu/9"):
+			return apiResponse(http.StatusNotFound, `{"errors":{"vmid":"not found"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
 			return response([]byte(`{"data":{"name":"test-dns","hostname":"test-dns","mp0":"boetticher-thin:vm-110-disk-1,mp=/var/lib/powerdns,backup=1,size=8G"}}`))
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api2/json/nodes/node/lxc/9"):
+			return response([]byte(`{"data":{"name":"other","hostname":"other","tags":"other"}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/current":
 			return response([]byte(`{"data":{"status":"running"}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/stop":
@@ -1745,8 +1809,6 @@ func TestReplaceLXCRestoresRunningGuestAfterDetachFailure(t *testing.T) {
 			return response([]byte(`{"data":"UPID:pve:stop"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api2/json/nodes/node/tasks/UPID:pve:stop/status":
 			return response([]byte(`{"data":{"status":"stopped","exitstatus":"OK"}}`))
-		case r.Method == http.MethodPut && r.URL.Path == "/api2/json/nodes/node/lxc/110/config":
-			return apiResponse(http.StatusInternalServerError, `{"errors":{"delete":"failure"}}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/api2/json/nodes/node/lxc/110/status/start":
 			restored = true
 			return response([]byte(`{"data":"UPID:pve:start"}`))
@@ -1759,11 +1821,11 @@ func TestReplaceLXCRestoresRunningGuestAfterDetachFailure(t *testing.T) {
 	})
 	client := &Client{BaseURL: "https://pve.example/api2/json", HTTP: &http.Client{Transport: transport}}
 	_, err := replaceLXC(context.Background(), client, Plan{Node: "node"}, guest, current)
-	if err == nil || !strings.Contains(err.Error(), "detach persistent volumes") {
-		t.Fatalf("failed LXC persistent-volume detach = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "no free VMID") {
+		t.Fatalf("failed LXC holder allocation = %v", err)
 	}
 	if !stopped || !restored {
-		t.Fatalf("running LXC was not restored after detach failure: stopped=%t restored=%t", stopped, restored)
+		t.Fatalf("running LXC was not restored after holder allocation failure: stopped=%t restored=%t", stopped, restored)
 	}
 }
 
