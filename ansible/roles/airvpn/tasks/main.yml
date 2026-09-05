@@ -159,6 +159,10 @@
   ansible.builtin.command: ip link show airvpn0
   changed_when: false
   no_log: true
+  register: airvpn_interface
+  retries: 12
+  delay: 5
+  until: airvpn_interface.rc == 0
 
 - name: Require an active AirVPN transit service
   ansible.builtin.command: systemctl is-active boetticher-airvpn.service

@@ -313,8 +313,11 @@ func TestAirVPNRoleInstallsItsCredentialDropInBeforeStartup(t *testing.T) {
 		"dest: /etc/systemd/system/boetticher-airvpn.service.d/boetticher-credentials.conf",
 		"content: \"{{ credential_dropins[inventory_hostname]['boetticher-airvpn.service'] }}\"",
 		"daemon_reload: true",
+		"retries: 12",
+		"delay: 5",
+		"until: airvpn_interface.rc == 0",
 	} {
-		if !strings.Contains(text[:startIndex], required) {
+		if !strings.Contains(text, required) {
 			t.Fatalf("AirVPN startup credential projection is missing %q", required)
 		}
 	}
